@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{
         entity_type::{EntityType, actor::ActorIdentity},
+        npc_recovery::NpcRecovery,
         resources::*, Loc, target::Target,
         recovery::GlobalRecovery,
     },
@@ -23,19 +24,23 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 /// - Juggernaut (Overpower): Use when adjacent to target (heavy strike)
 /// - Kiter: No signature ability — relies on kite behavior + ranged auto-attack
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
+///
+/// Every use waits out the NPC's `NpcRecovery` delay, armed once the ability
+/// is affordable and out of lockout, so NPCs that fire together drift apart.
 
 /// Update frequency: 0.5s (fast enough for Defenders to respond to incoming threats)
 pub fn npc_ability_usage(
     // Query NPCs with Chase or Kite behavior
     mut npc_query: Query<
-        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>),
+        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>, &mut NpcRecovery),
         Or<(With<Chase>, With<Kite>)>
     >,
     target_query: Query<&Loc, With<common_bevy::components::behaviour::PlayerControlled>>,
-    _time: Res<Time>,
+    time: Res<Time>,
     mut writer: MessageWriter<Try>,
 ) {
-    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt) in npc_query.iter_mut() {
+    let now = time.elapsed();
+    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt, mut delay) in npc_query.iter_mut() {
         // Skip if in recovery (ability lockout)
         if let Some(recovery) = recovery_opt {
             if recovery.is_active() {
@@ -66,25 +71,33 @@ pub fn npc_ability_usage(
             continue;
         };
 
-        // Handle Defender Counter specially - reactive ability triggered by threats in queue
+        let stamina_cost = match ability {
+            AbilityType::Lunge => 20.0,
+            AbilityType::Overpower => 40.0,
+            AbilityType::Counter => 30.0,
+            _ => continue,
+        };
+        if stamina.state < stamina_cost {
+            continue;
+        }
+        delay.arm(now);
+        if !delay.is_ready(now) {
+            continue;
+        }
+
+        // Defender uses Counter when threats are in its reaction queue
         if ability == AbilityType::Counter {
-            // Defender uses Counter when threats are in reaction queue
-            if let Some(queue) = queue_opt {
-                if !queue.threats.is_empty() {
-                    // Has threats to counter - check stamina
-                    let counter_stamina_cost = 30.0;
-                    if stamina.state >= counter_stamina_cost {
-                        writer.write(Try {
-                            event: Event::UseAbility {
-                                ent: npc_entity,
-                                ability: AbilityType::Counter,
-                                target: None,
-                            },
-                        });
-                    }
-                }
+            if queue_opt.is_some_and(|queue| !queue.threats.is_empty()) {
+                writer.write(Try {
+                    event: Event::UseAbility {
+                        ent: npc_entity,
+                        ability: AbilityType::Counter,
+                        target: None,
+                    },
+                });
+                delay.spend();
             }
-            continue; // Skip rest of logic for Defenders
+            continue;
         }
 
         // Check if we have a valid target
@@ -101,22 +114,12 @@ pub fn npc_ability_usage(
 
         // Decide whether to use ability based on archetype and distance
         let should_use_ability = match archetype {
-            EnemyArchetype::Berserker => {
-                // Lunge: Gap closer when target is 2-4 hexes away
-                // Don't use if too close (melee range) or too far (out of range)
-                let lunge_stamina_cost = 20.0;
-                distance >= 2 && distance <= 4 && stamina.state >= lunge_stamina_cost
-            }
-            EnemyArchetype::Juggernaut => {
-                // Overpower: Heavy strike when adjacent (1 hex)
-                let overpower_stamina_cost = 40.0;
-                distance == 1 && stamina.state >= overpower_stamina_cost
-            }
-            EnemyArchetype::Kiter | EnemyArchetype::Defender => {
-                // Kiter: auto-attack only (no signature ability)
-                // Defender: Counter is reactive only (handled above)
-                false
-            }
+            // Lunge: gap closer, not in melee range and not out of range
+            EnemyArchetype::Berserker => (2..=4).contains(&distance),
+            // Overpower: heavy strike when adjacent
+            EnemyArchetype::Juggernaut => distance == 1,
+            // Kiter has no signature ability; Defender's Counter is handled above
+            EnemyArchetype::Kiter | EnemyArchetype::Defender => false,
         };
 
         if should_use_ability {
@@ -128,6 +131,7 @@ pub fn npc_ability_usage(
                     target: target.entity,
                 },
             });
+            delay.spend();
         }
     }
 }

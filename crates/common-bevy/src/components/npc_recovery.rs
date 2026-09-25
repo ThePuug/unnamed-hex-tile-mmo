@@ -1,14 +1,18 @@
 //! # NPC Recovery Timer
 
-//! Per-NPC recovery timer that gates attack initiation, creating natural
-//! gaps between threats from each NPC. Independent of player GlobalRecovery.
+//! The random delay an NPC waits before each use of its signature ability.
+//! The delay starts once the NPC can afford the ability again, never at the
+//! use itself: every NPC of an archetype refills stamina at the same rate,
+//! so a delay started at the use would run out while NPCs that fired
+//! together still wait on stamina, and they would fire together again.
+//! Auto-attacks never read it; their cadence is fixed.
 
 use bevy::prelude::*;
 use std::time::Duration;
 
 use crate::spatial_difficulty::EnemyArchetype;
 
-/// Per-archetype recovery duration ranges (milliseconds)
+/// Per-archetype delay ranges (milliseconds)
 const BERSERKER_RECOVERY_MIN_MS: u64 = 1000;
 const BERSERKER_RECOVERY_MAX_MS: u64 = 2000;
 
@@ -18,46 +22,53 @@ const JUGGERNAUT_RECOVERY_MAX_MS: u64 = 5000;
 const DEFENDER_RECOVERY_MIN_MS: u64 = 4000;
 const DEFENDER_RECOVERY_MAX_MS: u64 = 6000;
 
-/// NPC-side recovery timer that prevents attacks during cooldown.
-
-/// After each attack, `recovery_until` is set to `now + random(min..=max)`.
-/// The NPC cannot initiate new attacks while `now < recovery_until`.
+/// An NPC's delay before its next signature ability.
+///
+/// Unarmed until [`arm`](Self::arm) draws `random(min..=max)`; ready once
+/// that has elapsed; [`spend`](Self::spend) on use disarms it again.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct NpcRecovery {
-    /// Server time at which recovery ends (NPC can attack again)
-    pub recovery_until: Duration,
-    /// Minimum recovery duration for this NPC's archetype
+    /// Server time the delay ends, once armed
+    pub ready_at: Option<Duration>,
+    /// Minimum delay for this NPC's archetype
     pub min_ms: u64,
-    /// Maximum recovery duration for this NPC's archetype
+    /// Maximum delay for this NPC's archetype
     pub max_ms: u64,
 }
 
 impl NpcRecovery {
-    /// Create a new NpcRecovery for the given archetype.
-    /// Starts with no recovery (ready to attack immediately).
+    /// Create an unarmed delay for the given archetype.
     pub fn for_archetype(archetype: EnemyArchetype) -> Self {
         let (min_ms, max_ms) = recovery_range(archetype);
         Self {
-            recovery_until: Duration::ZERO,
+            ready_at: None,
             min_ms,
             max_ms,
         }
     }
 
-    /// Check if the NPC is currently recovering (cannot attack)
-    pub fn is_recovering(&self, now: Duration) -> bool {
-        now < self.recovery_until
+    /// Start the delay if it has not started. Call on every check that
+    /// finds the ability affordable; one draw is made per use.
+    pub fn arm(&mut self, now: Duration) {
+        if self.ready_at.is_none() {
+            let duration_ms = rand::Rng::random_range(&mut rand::rng(), self.min_ms..=self.max_ms);
+            self.ready_at = Some(now + Duration::from_millis(duration_ms));
+        }
     }
 
-    /// Set recovery timer after an attack. Randomizes duration within archetype range.
-    pub fn start_recovery(&mut self, now: Duration) {
-        let duration_ms = rand::Rng::random_range(&mut rand::rng(), self.min_ms..=self.max_ms);
-        self.recovery_until = now + Duration::from_millis(duration_ms);
+    /// Whether the delay is armed and has run out
+    pub fn is_ready(&self, now: Duration) -> bool {
+        self.ready_at.is_some_and(|at| now >= at)
+    }
+
+    /// The ability was used: the next delay waits until it is affordable again.
+    pub fn spend(&mut self) {
+        self.ready_at = None;
     }
 }
 
-/// Get the recovery duration range for an archetype.
-/// Kiter returns (0, 0) — no explicit recovery (implicit from flee phase).
+/// Get the delay range for an archetype.
+/// Kiter returns (0, 0) — it has no signature ability.
 pub fn recovery_range(archetype: EnemyArchetype) -> (u64, u64) {
     match archetype {
         EnemyArchetype::Berserker => (BERSERKER_RECOVERY_MIN_MS, BERSERKER_RECOVERY_MAX_MS),
@@ -72,32 +83,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recovery_starts_ready() {
+    fn unarmed_is_not_ready() {
         let recovery = NpcRecovery::for_archetype(EnemyArchetype::Berserker);
-        let now = Duration::from_secs(10);
-        assert!(!recovery.is_recovering(now), "Should be ready to attack initially");
+        assert!(!recovery.is_ready(Duration::from_secs(10)));
     }
 
     #[test]
-    fn recovery_gates_attacks_after_start() {
+    fn armed_is_ready_only_after_the_delay() {
         let mut recovery = NpcRecovery::for_archetype(EnemyArchetype::Berserker);
         let now = Duration::from_secs(10);
-        recovery.start_recovery(now);
-
-        // Still recovering 500ms later (min is 1000ms)
-        let half_sec_later = now + Duration::from_millis(500);
-        assert!(recovery.is_recovering(half_sec_later), "Should be recovering within min duration");
+        recovery.arm(now);
+        assert!(!recovery.is_ready(now + Duration::from_millis(999)));
+        assert!(recovery.is_ready(now + Duration::from_millis(2000)));
     }
 
     #[test]
-    fn recovery_clears_after_max_duration() {
+    fn arming_again_keeps_the_first_draw() {
+        let mut recovery = NpcRecovery::for_archetype(EnemyArchetype::Juggernaut);
+        let now = Duration::from_secs(10);
+        recovery.arm(now);
+        let first = recovery.ready_at;
+        recovery.arm(now + Duration::from_secs(1));
+        assert_eq!(recovery.ready_at, first);
+    }
+
+    #[test]
+    fn spending_disarms() {
         let mut recovery = NpcRecovery::for_archetype(EnemyArchetype::Berserker);
         let now = Duration::from_secs(10);
-        recovery.start_recovery(now);
+        recovery.arm(now);
+        recovery.spend();
+        assert!(!recovery.is_ready(now + Duration::from_secs(60)));
+    }
 
-        // After max duration (2000ms), should be ready
-        let after_max = now + Duration::from_millis(2001);
-        assert!(!recovery.is_recovering(after_max), "Should be ready after max recovery duration");
+    #[test]
+    fn delay_within_range() {
+        let mut recovery = NpcRecovery::for_archetype(EnemyArchetype::Juggernaut);
+        let now = Duration::from_secs(10);
+        recovery.arm(now);
+        let delay = recovery.ready_at.unwrap() - now;
+        assert!(delay.as_millis() >= 3000 && delay.as_millis() <= 5000);
     }
 
     #[test]
@@ -109,30 +134,16 @@ mod tests {
     }
 
     #[test]
-    fn recovery_duration_within_range() {
-        let mut recovery = NpcRecovery::for_archetype(EnemyArchetype::Juggernaut);
-        let now = Duration::from_secs(10);
-        recovery.start_recovery(now);
-
-        let duration = recovery.recovery_until - now;
-        assert!(duration.as_millis() >= 3000, "Juggernaut recovery should be >= 3000ms");
-        assert!(duration.as_millis() <= 5000, "Juggernaut recovery should be <= 5000ms");
-    }
-
-    #[test]
-    fn consecutive_recoveries_can_vary() {
-        // Statistical test: with enough samples, not all should be identical
+    fn consecutive_delays_vary() {
+        // With a 1000ms range and 20 draws, all identical is vanishingly unlikely
         let mut recovery = NpcRecovery::for_archetype(EnemyArchetype::Berserker);
-        let mut durations = Vec::new();
-
-        for i in 0..20 {
-            let now = Duration::from_secs(100 + i * 5);
-            recovery.start_recovery(now);
-            durations.push(recovery.recovery_until - now);
-        }
-
-        // With 1000ms range and 20 samples, extremely unlikely all are identical
-        let all_same = durations.windows(2).all(|w| w[0] == w[1]);
-        assert!(!all_same, "Recovery durations should vary between attacks");
+        let now = Duration::from_secs(100);
+        let delays: Vec<_> = (0..20).map(|_| {
+            recovery.arm(now);
+            let delay = recovery.ready_at.unwrap() - now;
+            recovery.spend();
+            delay
+        }).collect();
+        assert!(!delays.windows(2).all(|w| w[0] == w[1]), "delays should vary between uses");
     }
 }
