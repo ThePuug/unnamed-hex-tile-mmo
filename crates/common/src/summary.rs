@@ -1,8 +1,9 @@
 //! The summary sampling rule: what one height, one water surface and one
-//! canopy stand for a group of tiles at a distance, read from seven of
-//! them. Every producer of a summary — the client's map, the server, the
-//! flyover, the world viewer — reads this one rule, or their silhouettes
-//! differ where they meet.
+//! outcrop stand for a group of tiles at a distance, read from seven of
+//! them, and what canopy each of its nine parts wears, read at the part's
+//! own tile. Every producer of a summary — the client's map, the server,
+//! the flyover, the world viewer — reads this one rule, or their
+//! silhouettes differ where they meet.
 
 use serde::{Deserialize, Serialize};
 
@@ -25,13 +26,13 @@ pub struct TileSample {
 }
 
 /// One summary: the height, the water surface over it or None where it is
-/// dry, the canopy and the outcrop. What every cache holds and the wire
-/// carries.
+/// dry, the canopy of each of its [`part_offsets`] parts, and the outcrop.
+/// What every cache holds and the wire carries.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummaryCell {
     pub z: i32,
     pub water: Option<i32>,
-    pub canopy: Canopy,
+    pub canopy: [Canopy; PARTS],
     pub outcrop: Outcrop,
 }
 
@@ -98,25 +99,24 @@ pub fn sampled_by(r: u32, q: i32, rr: i32) -> Option<(i32, i32)> {
 }
 
 /// The summary at `(sq, sr)` on the lattice of radius `r`, read from its
-/// seven samples: the height by [`select_center_z`], the water by
-/// [`select_center_water`], the canopy by [`Canopy::of`], the outcrop by
-/// [`Outcrop::of`]. None unless the
-/// source has all seven (the client's map while chunks stream in).
+/// [`part_offsets`] tiles: the height by [`select_center_z`], the water by
+/// [`select_center_water`] and the outcrop by [`Outcrop::of`] from the
+/// seven samples, and each part's canopy by [`Canopy::of`] from its own
+/// tile. None unless the source has all nine (the client's map while chunks
+/// stream in).
 pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Option<SummaryCell> {
     let (cq, cr) = center_tile(r, sq, sr);
-    let mut zs = [0i32; SAMPLES];
-    let mut ws = [None; SAMPLES];
-    let mut covers = [Cover::NONE; SAMPLES];
-    for (i, (dq, dr)) in sample_offsets(r).into_iter().enumerate() {
-        let sample = source.sample(cq + dq, cr + dr)?;
-        zs[i] = sample.z;
-        ws[i] = sample.water;
-        covers[i] = sample.cover;
+    let mut read = [None; PARTS];
+    for (i, (dq, dr)) in part_offsets(r).into_iter().enumerate() {
+        read[i] = Some(source.sample(cq + dq, cr + dr)?);
     }
+    let parts: [TileSample; PARTS] = read.map(|sample| sample.expect("every part was read"));
+    let samples = &parts[..SAMPLES];
+    let covers: Vec<Cover> = samples.iter().map(|s| s.cover).collect();
     Some(SummaryCell {
-        z: select_center_z(&zs),
-        water: select_center_water(&ws),
-        canopy: Canopy::of(&covers),
+        z: select_center_z(&samples.iter().map(|s| s.z).collect::<Vec<_>>()),
+        water: select_center_water(&samples.iter().map(|s| s.water).collect::<Vec<_>>()),
+        canopy: parts.map(|part| Canopy::of(part.cover)),
         outcrop: Outcrop::of(&covers),
     })
 }
@@ -170,9 +170,9 @@ mod tests {
     use crate::cover::Content;
 
     /// A source with a hole gives no summary; a whole one gives the three
-    /// rules' answers from the same seven tiles.
+    /// rules' answers from the seven samples, and a canopy at every part.
     #[test]
-    fn a_summary_needs_all_seven_samples() {
+    fn a_summary_needs_every_part() {
         struct Flat(Option<(i32, i32)>);
         impl SummarySource for Flat {
             fn sample(&self, q: i32, r: i32) -> Option<TileSample> {
@@ -183,12 +183,13 @@ mod tests {
                 Some(TileSample { z: 5 + (q == 0 && r == 0) as i32 * 20, water: Some(9), cover })
             }
         }
-        let (dq, dr) = sample_offsets(1)[3];
-        assert_eq!(summarize(1, 0, 0, &Flat(Some((dq, dr)))), None);
-        let cell = summarize(1, 0, 0, &Flat(None)).expect("every sample is there");
+        for (dq, dr) in [sample_offsets(1)[3], part_offsets(1)[PARTS - 1]] {
+            assert_eq!(summarize(1, 0, 0, &Flat(Some((dq, dr)))), None);
+        }
+        let cell = summarize(1, 0, 0, &Flat(None)).expect("every part is there");
         assert_eq!(cell.z, 25, "the peak survives");
         assert_eq!(cell.water, Some(9));
-        assert_eq!(cell.canopy.count(Content::Pine), SAMPLES as u16);
+        assert_eq!(cell.canopy, [Canopy::of(Cover::NONE.with(0, Content::Pine)); PARTS]);
     }
 
     /// Every tile a summary samples names that summary, and no other tile

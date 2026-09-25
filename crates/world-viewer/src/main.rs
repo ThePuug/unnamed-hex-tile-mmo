@@ -929,17 +929,17 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
         .collect();
     let took = t.elapsed();
     let wet = summaries.values().filter(|c| c.water.is_some()).count();
-    let wooded = summaries.values().filter(|c| !c.canopy.is_empty()).count();
+    let wooded = summaries.values().filter(|c| c.canopy.iter().any(|part| !part.is_empty())).count();
     log::info!(
         "LoD r={r} (summaries {s} tiles wide): {} summaries, {} of them water, {} wooded, from {} samples; first tile {:.0} ms, then {:.2} s wall over every core ({:.0} µs per summary, {:.1} per sample)",
         summaries.len(),
         wet,
         wooded,
-        summaries.len() * 7,
+        summaries.len() * common::summary::PARTS,
         first.as_secs_f64() * 1e3,
         took.as_secs_f64(),
         took.as_secs_f64() * 1e6 / summaries.len() as f64,
-        took.as_secs_f64() * 1e6 / (summaries.len() * 7) as f64
+        took.as_secs_f64() * 1e6 / (summaries.len() * common::summary::PARTS) as f64
     );
 
     let summaries = &summaries;
@@ -953,7 +953,7 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
                         // Depth on the water field's blue ramp: pale at a
                         // step deep, deep blue at 30.
                         Some(surface) => lerp_rgb((0.55, 0.75, 0.95), (0.05, 0.15, 0.45), ((surface - cell.z) as f64 / 30.0).clamp(0.0, 1.0)),
-                        None => canopy_color(orogen_ramp(cell.z as f64), cell.canopy),
+                        None => canopy_color(orogen_ramp(cell.z as f64), &cell.canopy),
                     };
                     [(c.0 * 255.0).min(255.0) as u8, (c.1 * 255.0).min(255.0) as u8, (c.2 * 255.0).min(255.0) as u8]
                 })
@@ -1012,10 +1012,13 @@ fn stand_color(ground: (f64, f64, f64), density: f64) -> (f64, f64, f64) {
     }
 }
 
-/// A summary's canopy over the colour beneath it, by its density.
-fn canopy_color(ground: (f64, f64, f64), canopy: common::Canopy) -> (f64, f64, f64) {
+/// A summary's canopy over the colour beneath it: its parts' kinds by
+/// their shares, laid over by their mean density.
+fn canopy_color(ground: (f64, f64, f64), parts: &[common::Canopy]) -> (f64, f64, f64) {
     let kinds = [common::Content::Pine, common::Content::Deciduous, common::Content::Brush];
-    trees_color(ground, kinds.into_iter().flat_map(|k| std::iter::repeat(k).take(canopy.count(k) as usize)), canopy.density())
+    let shares = kinds.into_iter().flat_map(|k| parts.iter().flat_map(move |p| std::iter::repeat(k).take(p.share(k) as usize)));
+    let density = parts.iter().map(|p| p.density()).sum::<f64>() / parts.len() as f64;
+    trees_color(ground, shares, density)
 }
 
 /// What the sky gives each position, on a ramp from the dry ground's tan

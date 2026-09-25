@@ -1157,11 +1157,11 @@ fn collect_and_build_summary_mesh(
     // own covers, which reach exactly as far as that level does, so the
     // ground under the trees is the ground past them and the trees are
     // the tiles' own — and the material lays crowns on it or not by level.
-    let summary_canopy = |sq: i32, sr: i32| -> Option<common::Canopy> {
+    let summary_canopy = |sq: i32, sr: i32| -> Option<[common::Canopy; common_bevy::summary::PARTS]> {
         cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr)).map(|c| c.canopy)
     };
     let last = *common_bevy::summary::LOD_LEVELS.last().expect("a ladder");
-    let canopied: Option<&dyn Fn(i32, i32) -> Option<common::Canopy>> = (radius != last).then_some(&summary_canopy);
+    let canopied: Option<&dyn Fn(i32, i32) -> Option<[common::Canopy; common_bevy::summary::PARTS]>> = (radius != last).then_some(&summary_canopy);
 
     common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse, canopied)
         .as_ref()

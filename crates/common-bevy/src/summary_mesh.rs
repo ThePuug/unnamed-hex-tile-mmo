@@ -20,6 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 use common::cover::{Canopy, Content};
+use common::summary::PARTS;
 
 use crate::{
     chunk::{self, ChunkId},
@@ -62,14 +63,16 @@ pub struct SummaryMeshResult {
     pub mesh_origin: Vec3,
 }
 
-/// A canopy as a vertex carries it: the density, then the density's
-/// pine, deciduous and brush parts, which sum to it. Parts interpolate
-/// across a fan the way a premultiplied colour does — a wood's edge
-/// against bare ground thins without shifting hue — where shares would
-/// fade twice and counts would not blend at all.
-pub fn canopy_vertex(canopy: Canopy) -> [f32; 4] {
-    let part = |kind: Content| canopy.count(kind) as f32 / common::cover::CANOPY_READINGS as f32;
-    [canopy.density() as f32, part(Content::Pine), part(Content::Deciduous), part(Content::Brush)]
+/// A summary's canopy as a vertex carries it: over its nine parts, the
+/// mean density, then the density's pine, deciduous and brush parts,
+/// which sum to it. Parts interpolate across a fan the way a premultiplied
+/// colour does — a wood's edge against bare ground thins without shifting
+/// hue — where shares would fade twice and counts would not blend at all.
+pub fn canopy_vertex(parts: &[Canopy; PARTS]) -> [f32; 4] {
+    let whole = common::cover::CANOPY_WHOLE as f32 * PARTS as f32;
+    let share = |kind: Content| parts.iter().map(|p| p.share(kind) as f32).sum::<f32>() / whole;
+    let density = parts.iter().map(|p| p.filled().min(common::cover::CANOPY_WHOLE) as f32).sum::<f32>() / whole;
+    [density, share(Content::Pine), share(Content::Deciduous), share(Content::Brush)]
 }
 
 /// Cells in a mesh region (radius-9 hex ball).
@@ -186,7 +189,7 @@ pub fn build_summary_mesh_region(
     region_key: MeshRegionKey,
     height: &dyn Fn(i32, i32) -> Option<i32>,
     coarse: Option<&dyn Fn(i32, i32) -> Option<i32>>,
-    canopy: Option<&dyn Fn(i32, i32) -> Option<Canopy>>,
+    canopy: Option<&dyn Fn(i32, i32) -> Option<[Canopy; PARTS]>>,
 ) -> Option<SummaryMeshResult> {
     let lattice = summary_lattice(radius);
     let region_lat = mesh_region_lattice();
@@ -210,7 +213,7 @@ pub fn build_summary_mesh_region(
             }
             heights.insert(cell, height(cell.0, cell.1)?);
             if let Some(canopy) = canopy {
-                canopies.insert(cell, canopy_vertex(canopy(cell.0, cell.1)?));
+                canopies.insert(cell, canopy_vertex(&canopy(cell.0, cell.1)?));
             }
         }
     }
@@ -870,12 +873,12 @@ mod tests {
         let bare = build_summary_mesh_region(1, REGION, &flat, None, None).unwrap();
         assert!(bare.canopy.is_empty());
 
-        let pines = Canopy::of(&[Cover::NONE.with(0, Content::Pine).with(1, Content::Pine); 7]);
-        let one = |q: i32, r: i32| Some(if (q, r) == (0, 0) { pines } else { Canopy::NONE });
+        let pines = [Canopy::of(Cover::NONE.with(0, Content::Pine).with(1, Content::Pine)); PARTS];
+        let one = |q: i32, r: i32| Some(if (q, r) == (0, 0) { pines } else { [Canopy::NONE; PARTS] });
         let result = build_summary_mesh_region(1, REGION, &flat, None, Some(&one)).unwrap();
         assert_eq!(result.canopy.len(), result.positions.len());
-        let own = canopy_vertex(pines);
-        assert!((own[0] - 14.0 / 21.0).abs() < 1e-6 && own[1] == own[0] && own[2] == 0.0, "density, all of it pine");
+        let own = canopy_vertex(&pines);
+        assert!((own[0] - 2.0 / 3.0).abs() < 1e-6 && own[1] == own[0] && own[2] == 0.0, "density, all of it pine");
         let at_centre = result.positions.iter().zip(&result.canopy).find(|(p, _)| p[0].abs() < 1e-4 && p[2].abs() < 1e-4);
         let (_, centre) = at_centre.expect("the origin cell's centre vertex");
         assert_eq!(*centre, own);

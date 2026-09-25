@@ -523,7 +523,10 @@ mod tests {
     #[test]
     fn a_summary_reads_its_samples_as_players_left_them() {
         let r = 4;
-        let pines = |cell: Option<common::summary::SummaryCell>| cell.expect("every sample is there").canopy.count(Content::Pine);
+        let pines = |cell: Option<common::summary::SummaryCell>| -> u16 {
+            cell.expect("every sample is there").canopy.iter().map(|part| part.share(Content::Pine)).sum()
+        };
+        let a_site = common::cover::CANOPY_WHOLE / common::SITES.len() as u16;
         let generated = pines(summarize(r, 0, 0, &Wood));
         let mut changes = WorldChanges::default();
 
@@ -533,7 +536,7 @@ mod tests {
         let before = changes.over(Wood);
         let (dq, dr) = sample_offsets(r)[2];
         changes.set(dq, dr, Cover::NONE);
-        assert_eq!(pines(summarize(r, 0, 0, &changes.over(Wood))), generated - 1, "the felled sample is off the canopy");
+        assert_eq!(pines(summarize(r, 0, 0, &changes.over(Wood))), generated - a_site, "the felled sample is off the canopy");
         assert_eq!(pines(summarize(r, 0, 0, &before)), generated, "a reading already out keeps what it set out with");
         assert_eq!(changes.take_fresh(), vec![(1, 1), (dq, dr)]);
         assert!(changes.take_fresh().is_empty());

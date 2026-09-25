@@ -374,30 +374,43 @@ impl Cover {
     }
 }
 
-/// What stands over the tiles a summary covers, read from the
-/// [`crate::summary::SAMPLES`] sample tiles' slots: how many of those
-/// readings hold pine, deciduous and brush, five bits each, the rest
-/// empty. Lossless for the reading, two bytes on the wire, and the density
-/// and the kinds' shares fall out of it.
+/// What stands over one part of a summary's ground: the share of the
+/// part's growth sites that pine, deciduous and brush hold, in steps of
+/// [`CANOPY_WHOLE`], five bits each, the rest empty. A tile's three sites
+/// read exactly; a part of many tiles rounds each share to the nearest
+/// step. Two bytes on the wire, and the density and the kinds' parts fall
+/// out of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Canopy(u16);
 
-/// The slot readings a canopy is made of, and the most it can count.
-pub const CANOPY_READINGS: u16 = crate::summary::SAMPLES as u16 * SITES.len() as u16;
+/// A part's whole ground, in the steps its shares are counted in: a
+/// multiple of a tile's sites, so a tile's reading is exact.
+pub const CANOPY_WHOLE: u16 = 10 * SITES.len() as u16;
 
 impl Canopy {
     pub const NONE: Canopy = Canopy(0);
 
-    /// The canopy of the sample tiles' covers.
-    pub fn of(covers: &[Cover]) -> Canopy {
-        debug_assert!(covers.len() <= crate::summary::SAMPLES);
-        let mut counts = [0u16; 3];
-        for cover in covers {
-            for (_, slot) in cover.filled() {
-                counts[Self::index(slot)] += 1;
-            }
+    /// The canopy of one tile's cover.
+    pub fn of(cover: Cover) -> Canopy {
+        let mut counts = [0u32; 3];
+        for (_, growth) in cover.filled() {
+            counts[Self::index(growth)] += 1;
         }
-        Canopy(counts[0] | counts[1] << 5 | counts[2] << 10)
+        Self::of_counts(counts, SITES.len() as u32)
+    }
+
+    /// The canopy of a ground of `sites` growth sites holding `counts`
+    /// pine, deciduous and brush, each share rounded to the nearest step.
+    pub fn of_counts(counts: [u32; 3], sites: u32) -> Canopy {
+        let share = |count: u32| ((2 * count * CANOPY_WHOLE as u32 + sites) / (2 * sites)).min(31) as u16;
+        Canopy(share(counts[0]) | share(counts[1]) << 5 | share(counts[2]) << 10)
+    }
+
+    /// The pine, deciduous and brush a ground of `sites` sites holds under
+    /// this canopy: exact where the shares are, as a tile's scaled over
+    /// its part are.
+    pub fn counts(self, sites: u32) -> [u32; 3] {
+        [Content::Pine, Content::Deciduous, Content::Brush].map(|kind| self.share(kind) as u32 * sites / CANOPY_WHOLE as u32)
     }
 
     pub fn from_bits(bits: u16) -> Canopy {
@@ -417,28 +430,28 @@ impl Canopy {
         }
     }
 
-    /// How many readings hold `kind`; the empty ones are the rest.
-    pub fn count(self, kind: Content) -> u16 {
+    /// The steps of the ground `kind` holds; the empty ones are the rest.
+    pub fn share(self, kind: Content) -> u16 {
         match kind {
-            Content::Empty => CANOPY_READINGS - self.filled(),
+            Content::Empty => CANOPY_WHOLE.saturating_sub(self.filled()),
             kind => (self.0 >> (5 * Self::index(kind))) & 31,
         }
     }
 
-    /// How many readings hold anything.
+    /// The steps of the ground holding anything. Rounding each kind's
+    /// share apart can carry the sum a step past the whole.
     pub fn filled(self) -> u16 {
-        self.count(Content::Pine) + self.count(Content::Deciduous) + self.count(Content::Brush)
+        self.share(Content::Pine) + self.share(Content::Deciduous) + self.share(Content::Brush)
     }
 
     pub fn is_empty(self) -> bool {
         self.0 == 0
     }
 
-    /// The share of the readings holding anything, 0 to 1.
+    /// The share of the ground holding anything, 0 to 1.
     pub fn density(self) -> f64 {
-        self.filled() as f64 / CANOPY_READINGS as f64
+        self.filled().min(CANOPY_WHOLE) as f64 / CANOPY_WHOLE as f64
     }
-
 }
 
 /// The rock over the tiles a summary covers, read from the
@@ -593,21 +606,37 @@ mod tests {
         assert!(trees.fullness() <= TILE_SLOTS);
     }
 
-    /// A canopy counts what its covers hold: none from none, every
-    /// reading from a full one, and the kinds' counts from a mixture.
+    /// A tile's canopy is its sites exactly: none from none, the whole
+    /// from a full one, a third a site from a mixture.
     #[test]
-    fn a_canopy_counts_what_its_covers_hold() {
-        let samples = crate::summary::SAMPLES;
-        assert_eq!(Canopy::of(&vec![Cover::NONE; samples]), Canopy::NONE);
+    fn a_tile_canopy_is_its_sites() {
+        assert_eq!(Canopy::of(Cover::NONE), Canopy::NONE);
         let all = |kind: Content| Cover::NONE.with(0, kind).with(1, kind).with(2, kind);
-        let pines = Canopy::of(&vec![all(Content::Pine); samples]);
-        assert_eq!(pines.count(Content::Pine), CANOPY_READINGS);
-        assert_eq!(pines.count(Content::Empty), 0);
+        let pines = Canopy::of(all(Content::Pine));
+        assert_eq!(pines.share(Content::Pine), CANOPY_WHOLE);
+        assert_eq!(pines.share(Content::Empty), 0);
         assert_eq!(pines.density(), 1.0);
         assert_eq!(Canopy::from_bits(pines.bits()), pines);
-        let mixed = Canopy::of(&[all(Content::Pine), all(Content::Deciduous), Cover::NONE.with(1, Content::Brush)]);
-        assert_eq!((mixed.count(Content::Pine), mixed.count(Content::Deciduous), mixed.count(Content::Brush)), (3, 3, 1));
-        assert_eq!(mixed.filled(), 7);
-        assert_eq!(mixed.count(Content::Empty), CANOPY_READINGS - 7);
+        let mixed = Canopy::of(Cover::NONE.with(0, Content::Deciduous).with(1, Content::Brush));
+        let third = CANOPY_WHOLE / 3;
+        assert_eq!((mixed.share(Content::Pine), mixed.share(Content::Deciduous), mixed.share(Content::Brush)), (0, third, third));
+        assert_eq!(mixed.share(Content::Empty), third);
+    }
+
+    /// A tile's canopy spread over a part of many tiles gives back the
+    /// part's trees exactly, and a part short of a few rounds to the
+    /// nearest step and never past the step it came from.
+    #[test]
+    fn a_part_reads_its_counts_back() {
+        let tile = Canopy::of(Cover::NONE.with(0, Content::Pine).with(1, Content::Brush));
+        let sites = 81 * SITES.len() as u32;
+        let counts = tile.counts(sites);
+        assert_eq!(counts, [81, 0, 81]);
+        assert_eq!(Canopy::of_counts(counts, sites), tile);
+        let felled = Canopy::of_counts([counts[0] - 1, 0, counts[2]], sites);
+        assert_eq!(felled, tile, "one tree of 243 sites is under half a step");
+        let cleared = Canopy::of_counts([counts[0] - 40, 0, counts[2]], sites);
+        assert!(cleared.share(Content::Pine) < tile.share(Content::Pine));
+        assert_eq!(cleared.share(Content::Brush), tile.share(Content::Brush));
     }
 }
