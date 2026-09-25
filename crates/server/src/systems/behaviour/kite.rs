@@ -49,9 +49,9 @@ fn score_neighbor(
 /// - Acquires hostile targets within aggro range
 /// - Maintains sticky targeting via TargetLock
 /// - **Flees** when target closes within disengage_distance (< 3 hexes)
-/// - **Repositions** when target is 3-5 hexes away (moves to optimal zone 6-7 hexes)
-/// - **Attacks** when target is in optimal_distance range (5-8 hexes) - instant hit every attack_interval seconds
-/// - **Advances** when target is beyond optimal range (> 8 hexes) - moves closer
+/// - **Repositions** when target is 3-4 hexes away (moves back into the optimal zone)
+/// - **Holds** when target is in optimal_distance range (5-6 hexes), where its auto-attack reaches
+/// - **Advances** when target is beyond optimal range (> 6 hexes) - moves closer
 /// - **Leashes** when too far from spawner (returns to spawn)
 
 /// # Design Pattern
@@ -62,7 +62,7 @@ pub struct Kite {
     pub acquisition_range: u32,      // How far to search for targets (e.g., 15 hexes)
     pub leash_distance: i32,         // Max chase distance from spawn (e.g., 30 hexes)
     pub optimal_distance_min: i32,   // Min optimal attack range (e.g., 5 hexes)
-    pub optimal_distance_max: i32,   // Max optimal attack range (e.g., 8 hexes)
+    pub optimal_distance_max: i32,   // Max optimal attack range: no further than its AttackRange
     pub disengage_distance: i32,     // Flee threshold when target too close (e.g., 3 hexes)
 }
 
@@ -72,8 +72,8 @@ impl Kite {
         Self {
             acquisition_range: 15,        // 15 hexes aggro range
             leash_distance: 30,           // 30 hexes leash
-            optimal_distance_min: 5,      // 5-8 hex optimal zone
-            optimal_distance_max: 8,
+            optimal_distance_min: 5,      // 5-6 hex optimal zone, inside the 6-hex AttackRange
+            optimal_distance_max: 6,
             disengage_distance: 3,        // Flee if < 3 hexes
         }
     }
@@ -97,8 +97,8 @@ impl Kite {
 pub enum KiteAction {
     Flee,        // Move away from target (distance < 3 hexes)
     Reposition,  // Move to optimal zone (distance 3-5 hexes, move to 6-7 hexes)
-    Attack,      // Fire projectile (distance 5-8 hexes)
-    Advance,     // Move closer to target (distance > 8 hexes)
+    Attack,      // Hold and let the auto-attack fire (distance 5-6 hexes)
+    Advance,     // Move closer to target (distance > 6 hexes)
 }
 
 // Kite system implementation
@@ -401,7 +401,7 @@ mod tests {
         assert_eq!(kite.acquisition_range, 15);
         assert_eq!(kite.leash_distance, 30);
         assert_eq!(kite.optimal_distance_min, 5);
-        assert_eq!(kite.optimal_distance_max, 8);
+        assert_eq!(kite.optimal_distance_max, 6);
         assert_eq!(kite.disengage_distance, 3);
     }
 
@@ -444,43 +444,40 @@ mod tests {
         // Distance 6 hexes - ATTACK (mid optimal)
         assert_eq!(kite.determine_action(6), KiteAction::Attack);
 
-        // Distance 8 hexes - ATTACK (max optimal)
-        assert_eq!(kite.determine_action(8), KiteAction::Attack);
-
-        // Distance 9 hexes - NOT attack (too far)
-        assert_ne!(kite.determine_action(9), KiteAction::Attack);
+        // Distance 7 hexes - NOT attack (beyond its attack range)
+        assert_ne!(kite.determine_action(7), KiteAction::Attack);
     }
 
     #[test]
     fn test_determine_action_advance_when_too_far() {
         let kite = Kite::forest_sprite();
 
-        // Distance 9 hexes - ADVANCE (beyond optimal)
-        assert_eq!(kite.determine_action(9), KiteAction::Advance);
+        // Distance 7 hexes - ADVANCE (beyond optimal)
+        assert_eq!(kite.determine_action(7), KiteAction::Advance);
 
         // Distance 15 hexes - ADVANCE (well beyond optimal)
         assert_eq!(kite.determine_action(15), KiteAction::Advance);
 
-        // Distance 8 hexes - NOT advance (in optimal range)
-        assert_ne!(kite.determine_action(8), KiteAction::Advance);
+        // Distance 6 hexes - NOT advance (in optimal range)
+        assert_ne!(kite.determine_action(6), KiteAction::Advance);
     }
 
     #[test]
     fn test_optimal_range_boundaries() {
         let kite = Kite::forest_sprite();
 
-        // Test boundary conditions for optimal range (5-8 hexes)
+        // Test boundary conditions for optimal range (5-6 hexes)
         // Just below optimal (4 hexes) - REPOSITION
         assert_eq!(kite.determine_action(4), KiteAction::Reposition);
 
         // Min optimal (5 hexes) - ATTACK
         assert_eq!(kite.determine_action(5), KiteAction::Attack);
 
-        // Max optimal (8 hexes) - ATTACK
-        assert_eq!(kite.determine_action(8), KiteAction::Attack);
+        // Max optimal (6 hexes) - ATTACK
+        assert_eq!(kite.determine_action(6), KiteAction::Attack);
 
-        // Just above optimal (9 hexes) - ADVANCE
-        assert_eq!(kite.determine_action(9), KiteAction::Advance);
+        // Just above optimal (7 hexes) - ADVANCE
+        assert_eq!(kite.determine_action(7), KiteAction::Advance);
     }
 
     /// Test that Kite behavior handles distance transitions correctly
@@ -493,7 +490,7 @@ mod tests {
         // Player too close (2 hexes) - FLEE
         assert_eq!(kite.determine_action(2), KiteAction::Flee, "Should flee when player at 2 hexes");
 
-        // Player at 4 hexes - REPOSITION (moving to optimal 5-8 range)
+        // Player at 4 hexes - REPOSITION (moving to optimal 5-6 range)
         assert_eq!(kite.determine_action(4), KiteAction::Reposition, "Should reposition at 4 hexes");
 
         // Player at 6 hexes - ATTACK (optimal range)
