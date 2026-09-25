@@ -34,8 +34,17 @@ pub struct WorldChanges {
     /// Shared with the summary tasks in flight, each reading the changes
     /// as they stood when it set out; a change copies it while one holds it.
     tiles: Arc<HashMap<(i32, i32), common::Cover>>,
-    /// Tiles changed since the summaries were last revised.
-    fresh: Vec<(i32, i32)>,
+    /// Changes made since the summaries were last revised.
+    fresh: Vec<Change>,
+}
+
+/// A tile players changed: its cover before the change and after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Change {
+    pub q: i32,
+    pub r: i32,
+    pub before: common::Cover,
+    pub after: common::Cover,
 }
 
 impl WorldChanges {
@@ -53,8 +62,8 @@ impl WorldChanges {
         LaidOver { source, tiles: self.tiles.clone() }
     }
 
-    /// The tiles changed since the last call.
-    pub fn take_fresh(&mut self) -> Vec<(i32, i32)> {
+    /// The changes made since the last call, in the order they were made.
+    pub fn take_fresh(&mut self) -> Vec<Change> {
         std::mem::take(&mut self.fresh)
     }
 
@@ -62,24 +71,26 @@ impl WorldChanges {
     /// `(q, r)`, by the rule a gather follows, with nothing left lying: a
     /// clearing laid down before the world is served, so what the far
     /// ground makes of a change can be seen without making it by hand.
+    /// Every tile it clears is a fresh change, which the summaries take in
+    /// before the first client is sent one.
     pub fn clearing(cover_at: impl Fn(i32, i32) -> common::Cover, (q, r): (i32, i32), radius: i32) -> Self {
-        let mut tiles = HashMap::new();
+        let mut changes = Self::default();
         for dq in -radius..=radius {
             for dr in (-radius).max(-dq - radius)..=radius.min(-dq + radius) {
                 let generated = cover_at(q + dq, r + dr);
                 let cleared = (0..common::TILE_SLOTS as usize)
                     .fold(generated, |cover, k| common::gathering::harvest(cover, k).map_or(cover, |h| h.cover));
                 if cleared != generated {
-                    tiles.insert((q + dq, r + dr), cleared);
+                    changes.set(q + dq, r + dr, generated, cleared);
                 }
             }
         }
-        Self { tiles: Arc::new(tiles), fresh: Vec::new() }
+        changes
     }
 
-    fn set(&mut self, q: i32, r: i32, cover: common::Cover) {
-        Arc::make_mut(&mut self.tiles).insert((q, r), cover);
-        self.fresh.push((q, r));
+    fn set(&mut self, q: i32, r: i32, before: common::Cover, after: common::Cover) {
+        Arc::make_mut(&mut self.tiles).insert((q, r), after);
+        self.fresh.push(Change { q, r, before, after });
     }
 }
 
@@ -164,7 +175,7 @@ impl Ground<'_, '_> {
     fn set(&mut self, writer: &mut MessageWriter<Do>, q: i32, r: i32, cover: common::Cover) {
         let Some((qrz, EntityType::Decorator(decorator))) = self.map.get_by_qr(q, r) else { return };
         self.map.insert(qrz, EntityType::Decorator(Decorator { cover, ..decorator }));
-        self.changes.set(q, r, cover);
+        self.changes.set(q, r, decorator.cover, cover);
         let chunk = loc_to_chunk(qrz);
         for (holder, cache) in &self.holders {
             if cache.sent.contains(&chunk) {
@@ -517,9 +528,10 @@ mod tests {
     }
 
     /// A summary reads its samples as players left them: a tree felled on
-    /// a tile it does not sample leaves it be, one felled on a sample comes
-    /// off its canopy, and a reading taken before the change keeps the
-    /// changes as they stood.
+    /// a tile no part is read at leaves it be, one felled on a sample comes
+    /// off its part's canopy, and a reading taken before the change keeps
+    /// the changes as they stood. Each change is kept fresh, before and
+    /// after, until the summaries take it.
     #[test]
     fn a_summary_reads_its_samples_as_players_left_them() {
         let r = 4;
@@ -528,17 +540,20 @@ mod tests {
         };
         let a_site = common::cover::CANOPY_WHOLE / common::SITES.len() as u16;
         let generated = pines(summarize(r, 0, 0, &Wood));
+        let pine = Cover::NONE.with(0, Content::Pine);
         let mut changes = WorldChanges::default();
 
-        changes.set(1, 1, Cover::NONE);
-        assert_eq!(pines(summarize(r, 0, 0, &changes.over(Wood))), generated, "no summary samples (1, 1)");
+        changes.set(1, 1, pine, Cover::NONE);
+        assert_eq!(pines(summarize(r, 0, 0, &changes.over(Wood))), generated, "no part is read at (1, 1)");
 
         let before = changes.over(Wood);
         let (dq, dr) = sample_offsets(r)[2];
-        changes.set(dq, dr, Cover::NONE);
+        changes.set(dq, dr, pine, Cover::NONE);
         assert_eq!(pines(summarize(r, 0, 0, &changes.over(Wood))), generated - a_site, "the felled sample is off the canopy");
         assert_eq!(pines(summarize(r, 0, 0, &before)), generated, "a reading already out keeps what it set out with");
-        assert_eq!(changes.take_fresh(), vec![(1, 1), (dq, dr)]);
+        let fresh = changes.take_fresh();
+        assert_eq!(fresh.iter().map(|c| (c.q, c.r)).collect::<Vec<_>>(), vec![(1, 1), (dq, dr)]);
+        assert!(fresh.iter().all(|c| c.before == pine && c.after == Cover::NONE));
         assert!(changes.take_fresh().is_empty());
     }
 
@@ -575,6 +590,7 @@ mod tests {
         let wood = |_: i32, _: i32| Cover::NONE.with(0, Content::Pine).with_boulder(4).with_rock(common::Rock::Limestone);
         let changes = WorldChanges::clearing(wood, (10, -4), 2);
         assert_eq!(changes.tiles.len(), 19, "a radius of 2 is 19 tiles");
+        assert_eq!(changes.fresh.len(), 19, "each one a change for the summaries to take");
         let cleared = changes.tiles[&(12, -6)];
         assert_eq!(cleared.content(common::SITE_SLOTS[0][0]), Content::PineStump);
         assert!((0..common::TILE_SLOTS as usize).all(|k| !cleared.content(k).is_pile() && common::gathering::harvest(cleared, k).is_none()));

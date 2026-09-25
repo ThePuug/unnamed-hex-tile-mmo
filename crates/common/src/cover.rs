@@ -392,11 +392,16 @@ impl Canopy {
 
     /// The canopy of one tile's cover.
     pub fn of(cover: Cover) -> Canopy {
+        Self::of_counts(Self::tally(cover), SITES.len() as u32)
+    }
+
+    /// The sites of one tile's cover holding pine, deciduous and brush.
+    pub fn tally(cover: Cover) -> [u32; 3] {
         let mut counts = [0u32; 3];
         for (_, growth) in cover.filled() {
             counts[Self::index(growth)] += 1;
         }
-        Self::of_counts(counts, SITES.len() as u32)
+        counts
     }
 
     /// The canopy of a ground of `sites` growth sites holding `counts`

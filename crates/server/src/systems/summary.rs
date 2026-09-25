@@ -6,7 +6,7 @@ use common_bevy::{
     components::{heading::Heading, Loc},
     geometry::flat_top_tile_center,
     message::{Event, SummaryData, SummaryKey, *},
-    summary::{compute_active_bands, mesh_region_lattice, sampled_by, summarize, summary_lattice, LOD_LEVELS},
+    summary::{compute_active_bands, ladder, mesh_region_lattice, sampled_by, summarize, summary_lattice, SummaryCell, SummarySource, LOD_LEVELS},
     summary_mesh::{MeshRegionKey, visible_lod_regions},
 };
 
@@ -154,15 +154,13 @@ pub fn dispatch_summary_tasks(
             }
             budget -= 1;
             task_queue.waiting.insert(rk, vec![*ent]);
-            let reg = changes.over(registry.clone());
+            let generated = registry.clone();
+            let laid = changes.over(registry.clone());
             let task = AsyncComputeTaskPool::get().spawn(async move {
                 let start = std::time::Instant::now();
                 let rl = mesh_region_lattice();
                 let data: Vec<SummaryData> = rl.tiles_in_cell((rk.mn, rk.mm))
-                    .map(|(sq, sr)| {
-                        let cell = summarize(rk.r, sq, sr, &reg).expect("the registry has every tile");
-                        SummaryData { r: rk.r, sq, sr, cell }
-                    })
+                    .map(|(sq, sr)| SummaryData { r: rk.r, sq, sr, cell: generate(rk.r, sq, sr, &generated, &laid) })
                     .collect();
                 (data, start.elapsed().as_secs_f64() as f32 * 1000.0)
             });
@@ -216,41 +214,62 @@ pub fn poll_summary_tasks(
     task_queue.tasks = pending;
 }
 
-/// Read again every summary a tile players changed is a sample of, at
-/// each level, with the change laid over: into the cache, and to every
-/// client its region was sent to. Only a summary computed, or in a region
-/// being computed, is read again; one never computed reads the change when
-/// it is. A change to a tile no summary samples changes no summary.
+/// The summary at `(sq, sr)` on the lattice of radius `r`: its canopy from
+/// the world as `generated`, which a change then moves through the part's
+/// stats and so never counts twice; the rest from the world as `laid`,
+/// with the players' changes over its samples.
+fn generate(r: u32, sq: i32, sr: i32, generated: &impl SummarySource, laid: &impl SummarySource) -> SummaryCell {
+    let mut cell = summarize(r, sq, sr, laid).expect("the registry has every tile");
+    cell.canopy = common::summary::canopy_parts(r, sq, sr, generated).expect("the registry has every tile");
+    cell
+}
+
+/// Take every change players made into the summaries. The part holding the
+/// changed tile moves at every level by what the change took or left, a
+/// summary never computed being computed first, so no change is missed
+/// and none counted twice; and each summary sampling the tile reads its
+/// outcrop again, as players left it. A summary whose drawing moved goes
+/// to every client its region was sent to.
 pub fn revise_summaries(
     mut writer: MessageWriter<Do>,
     mut changes: ResMut<WorldChanges>,
     registry: Res<EventRegistry>,
     mut summary_cache: ResMut<SummaryCache>,
-    task_queue: Res<SummaryTaskQueue>,
     query: Query<(Entity, &VisibleSummaryCache)>,
 ) {
     let fresh = changes.take_fresh();
     if fresh.is_empty() {
         return;
     }
-    let source = changes.over(registry.clone());
+    let generated = registry.clone();
+    let laid = changes.over(registry.clone());
+    let mut moved: HashSet<SummaryKey> = HashSet::new();
+    for change in &fresh {
+        for (level, sq, sr, part) in ladder(change.q, change.r) {
+            let key = SummaryKey { r: level, sq, sr };
+            let (cell, stats) = summary_cache.touch(key, || generate(level, sq, sr, &generated, &laid));
+            let canopy = stats.change(level, part, change.before, change.after);
+            if cell.canopy[part] != canopy {
+                cell.canopy[part] = canopy;
+                moved.insert(key);
+            }
+        }
+        for &level in &LOD_LEVELS[1..] {
+            let Some((sq, sr)) = sampled_by(level, change.q, change.r) else { continue };
+            let key = SummaryKey { r: level, sq, sr };
+            let Some(cell) = summary_cache.get_mut(&key) else { continue };
+            let outcrop = summarize(level, sq, sr, &laid).expect("the registry has every tile").outcrop;
+            if cell.outcrop != outcrop {
+                cell.outcrop = outcrop;
+                moved.insert(key);
+            }
+        }
+    }
     let region_lat = mesh_region_lattice();
-    let keys: HashSet<SummaryKey> = fresh
-        .into_iter()
-        .flat_map(|(q, r)| LOD_LEVELS.into_iter().filter_map(move |level| sampled_by(level, q, r).map(|(sq, sr)| SummaryKey { r: level, sq, sr })))
-        .collect();
-    for key in keys {
+    for key in moved {
         let (mn, mm) = region_lat.cell_id(key.sq, key.sr);
         let region = MeshRegionKey { r: key.r, mn, mm };
-        let old = summary_cache.get(&key);
-        if old.is_none() && !task_queue.waiting.contains_key(&region) {
-            continue;
-        }
-        let cell = summarize(key.r, key.sq, key.sr, &source).expect("the registry has every tile");
-        if old == Some(cell) {
-            continue;
-        }
-        summary_cache.insert(key, cell);
+        let cell = summary_cache.get(&key).expect("a moved summary is cached");
         let data = SummaryData { r: key.r, sq: key.sq, sr: key.sr, cell };
         for (ent, vis_cache) in &query {
             if vis_cache.sent_regions.contains(&region) {

@@ -86,6 +86,61 @@ pub fn part_offsets(r: u32) -> [(i32, i32); PARTS] {
     [a, b, c, e, f, g, h, (d, d), (2 * d, -d)]
 }
 
+/// The growth sites one part of a summary of radius `r` holds: a finer
+/// summary's tiles, whose ground is the width's third squared, at a tile's
+/// sites each.
+pub fn part_sites(r: u32) -> u32 {
+    (scale(r) as u32 / 3).pow(2) * crate::cover::SITES.len() as u32
+}
+
+/// What stands on each part of a summary, counted: its pine, deciduous and
+/// brush, exact however many tiles the part holds. Set from a summary's
+/// canopy as generated, where each part reads as its tile's scaled over
+/// the part and so exactly; a change to a tile moves its part's counts by
+/// what the change took or left, and the part's canopy is read from them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PartStats([[u32; 3]; PARTS]);
+
+impl PartStats {
+    /// The stats of a summary of radius `r` whose canopy is as generated.
+    pub fn generated(r: u32, canopy: &[Canopy; PARTS]) -> Self {
+        Self(canopy.map(|part| part.counts(part_sites(r))))
+    }
+
+    /// Moves part `part` of a summary of radius `r` from what `before`
+    /// holds to what `after` holds, no count below nothing or past the
+    /// part's sites, and answers the part's canopy now. The counts start
+    /// from an estimate, one tile scaled over the part, so a change can
+    /// take trees the estimate never counted.
+    pub fn change(&mut self, r: u32, part: usize, before: Cover, after: Cover) -> Canopy {
+        let sites = part_sites(r);
+        let (took, left) = (Canopy::tally(before), Canopy::tally(after));
+        for kind in 0..3 {
+            let count = &mut self.0[part][kind];
+            *count = (*count + left[kind]).saturating_sub(took[kind]).min(sites);
+        }
+        self.canopy(r, part)
+    }
+
+    /// Part `part`'s canopy, of a summary of radius `r`.
+    pub fn canopy(&self, r: u32, part: usize) -> Canopy {
+        Canopy::of_counts(self.0[part], part_sites(r))
+    }
+}
+
+/// Each part's canopy of the summary at `(sq, sr)` on the lattice of
+/// radius `r`, read at its own tile: what [`summarize`] reads, from a
+/// source that may differ from the one the rest of the summary is read
+/// from. None unless the source has all nine.
+pub fn canopy_parts(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Option<[Canopy; PARTS]> {
+    let (cq, cr) = center_tile(r, sq, sr);
+    let mut canopy = [Canopy::NONE; PARTS];
+    for (part, (dq, dr)) in part_offsets(r).into_iter().enumerate() {
+        canopy[part] = Canopy::of(source.sample(cq + dq, cr + dr)?.cover);
+    }
+    Some(canopy)
+}
+
 /// The summary on the lattice of radius `r` that reads tile `(q, rr)` as
 /// one of its samples, at lattice coordinates, or None where none does.
 /// The offsets are distinct modulo the width, so at most one summary a
@@ -260,6 +315,29 @@ mod tests {
     #[test]
     fn select_center_z_symmetric_tie() {
         assert_eq!(select_center_z(&[0, 10]), 10);
+    }
+
+    /// A change moves only its own part, by exactly what it took: one of a
+    /// part's nine pines takes its share from ten steps to nine, the part
+    /// felled whole reads bare, and a count never goes below nothing. A
+    /// first-level part is one tile, and reads it exactly.
+    #[test]
+    fn a_change_moves_its_part_by_what_it_took() {
+        let r = 4;
+        let pine = Cover::NONE.with(0, Content::Pine);
+        let generated = [Canopy::of(pine); PARTS];
+        let mut stats = PartStats::generated(r, &generated);
+        assert_eq!(stats.canopy(r, 3), generated[3]);
+        assert_eq!(stats.change(r, 3, pine, Cover::NONE).share(Content::Pine), 9, "one pine of nine");
+        for _ in 1..9 {
+            stats.change(r, 3, pine, Cover::NONE);
+        }
+        assert!(stats.canopy(r, 3).is_empty(), "the part felled whole");
+        assert!(stats.change(r, 3, pine, Cover::NONE).is_empty(), "never below nothing");
+        assert_eq!(stats.canopy(r, 2), generated[2], "the other parts stand");
+
+        let mut tile = PartStats::generated(1, &generated);
+        assert_eq!(tile.change(1, 0, pine, Cover::NONE), Canopy::NONE);
     }
 
     /// The nine parts fall on every residue of the finer lattice modulo the
