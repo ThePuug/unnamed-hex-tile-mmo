@@ -215,6 +215,15 @@ pub fn update_console_menu(
                         TextColor(state_color(!diagnostics_state.cover_hidden)),
                     ));
 
+                    parent.spawn((
+                        Text::new(format!(
+                            "7. Canopy                   [{}]",
+                            if diagnostics_state.canopy_parts_off { "Vertices" } else { "Parts" }
+                        )),
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                        TextColor(state_color(!diagnostics_state.canopy_parts_off)),
+                    ));
+
 
                     parent.spawn((
                         Text::new(""),

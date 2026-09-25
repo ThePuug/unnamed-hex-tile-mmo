@@ -314,6 +314,54 @@ pub fn build_summary_mesh_region(
     })
 }
 
+/// How far a region's parts reach from its centre along either axis of the
+/// finer lattice: the region's cells and the ring around them, a width a
+/// cell, and a part's own offset, two finer steps at most.
+pub const PARTS_LAYER_HALF: i32 = 3 * (crate::summary::MESH_REGION_RADIUS as i32 + 1) + 2;
+
+/// The side of a region's parts layer, in texels.
+pub const PARTS_LAYER_SIDE: u32 = 2 * PARTS_LAYER_HALF as u32 + 1;
+
+/// A region's parts as the terrain shader reads them: a square of
+/// [`PARTS_LAYER_SIDE`] texels, row by row, one to a point of the finer
+/// lattice, with the region's centre tile at the middle. Every part of the
+/// region's cells and of the ring around them holds its canopy's bits at
+/// the point its tile stands on, where the axial offset from the centre,
+/// over the finer step, is the texel's column and row off the middle;
+/// every other texel is bare. The ring is there because a fragment at the
+/// region's edge reads the parts of the cell across it. None until every
+/// one of those cells has its canopy, and at a radius whose width does not
+/// divide into thirds, whose parts stand on no finer lattice.
+pub fn parts_layer(
+    radius: u32,
+    region_key: MeshRegionKey,
+    canopy: &dyn Fn(i32, i32) -> Option<[Canopy; PARTS]>,
+) -> Option<Vec<u16>> {
+    let lattice = summary_lattice(radius);
+    if lattice.scale % 3 != 0 {
+        return None;
+    }
+    let step = lattice.scale / 3;
+    let centre = mesh_region_lattice().cell_center((region_key.mn, region_key.mm));
+    let (cq, cr) = lattice.cell_center(centre);
+    let side = PARTS_LAYER_SIDE as i32;
+    let mut layer = vec![0u16; (side * side) as usize];
+    let reach = crate::summary::MESH_REGION_RADIUS as i32 + 1;
+    for dq in -reach..=reach {
+        for dr in (-reach).max(-dq - reach)..=reach.min(-dq + reach) {
+            let cell = (centre.0 + dq, centre.1 + dr);
+            let parts = canopy(cell.0, cell.1)?;
+            let (tq, tr) = lattice.cell_center(cell);
+            for (part, (oq, or)) in common::summary::part_offsets(radius).into_iter().enumerate() {
+                let column = (tq - cq + oq) / step + PARTS_LAYER_HALF;
+                let row = (tr - cr + or) / step + PARTS_LAYER_HALF;
+                layer[(row * side + column) as usize] = parts[part].bits();
+            }
+        }
+    }
+    Some(layer)
+}
+
 /// Build the water of a mesh region at `radius`: a flat hexagon at its
 /// surface over every cell with water, and a curtain down each edge that
 /// does not meet a flooded neighbour at the same surface, so a river
@@ -861,6 +909,36 @@ mod tests {
         assert_eq!(fan_vertices(&result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
         let leaning = fan_vertices(&result).iter().filter(|(_, n)| n.y < 0.7).count();
         assert!(leaning > 0, "a 20-step cliff produced no steep normals");
+    }
+
+    /// A region's layer puts every part of its cells and ring on a texel of
+    /// its own, the centre cell's centre part at the middle and its corner
+    /// part a finer step up both axes, and waits for a cell with no canopy.
+    #[test]
+    fn a_parts_layer_puts_each_part_on_its_own_texel() {
+        use common::cover::{Canopy, Content, Cover};
+        for radius in [1, 4] {
+            let key = MeshRegionKey { r: radius, mn: 1, mm: -1 };
+            let centre = mesh_region_lattice().cell_center((key.mn, key.mm));
+            let wood = Canopy::of(Cover::NONE.with(0, Content::Pine));
+            let brush = Canopy::of(Cover::NONE.with(0, Content::Brush));
+            let canopy = |q: i32, r: i32| {
+                let mut parts = [wood; PARTS];
+                if (q, r) == centre {
+                    parts[7] = brush;
+                }
+                Some(parts)
+            };
+            let layer = parts_layer(radius, key, &canopy).expect("every cell has its canopy");
+            let reach = crate::summary::MESH_REGION_RADIUS + 1;
+            let cells = 3 * reach * reach + 3 * reach + 1;
+            assert_eq!(layer.iter().filter(|&&t| t != 0).count(), cells as usize * PARTS, "r={radius}");
+            let at = |column: i32, row: i32| layer[(row * PARTS_LAYER_SIDE as i32 + column) as usize];
+            assert_eq!(at(PARTS_LAYER_HALF, PARTS_LAYER_HALF), wood.bits());
+            assert_eq!(at(PARTS_LAYER_HALF + 1, PARTS_LAYER_HALF + 1), brush.bits());
+            let hole = |q: i32, r: i32| if (q, r) == (centre.0 + 10, centre.1) { None } else { canopy(q, r) };
+            assert!(parts_layer(radius, key, &hole).is_none(), "a ring cell without its canopy");
+        }
     }
 
     /// A level built with a canopy carries one per vertex: a cell's own at

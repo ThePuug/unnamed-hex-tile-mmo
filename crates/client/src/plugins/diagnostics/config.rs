@@ -55,6 +55,10 @@ pub struct DiagnosticsState {
     /// The camera goes straight to its wanted pose, showing whatever the
     /// envelope would have hidden.
     pub camera_envelope_off: bool,
+    /// The ground wears the one canopy each summary's vertices carry
+    /// instead of reading its parts, the two drawn in the same frame for a
+    /// measurement of what the parts cost.
+    pub canopy_parts_off: bool,
 }
 
 impl Default for DiagnosticsState {
@@ -68,6 +72,7 @@ impl Default for DiagnosticsState {
             cover_hidden: false,
             camera_closeup: false,
             camera_envelope_off: false,
+            canopy_parts_off: false,
         }
     }
 }

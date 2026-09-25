@@ -22,6 +22,7 @@ pub enum DevConsoleAction {
     ToggleTerrainHidden,
     ToggleCoverHidden,
     ToggleCameraCloseup,
+    ToggleCanopyParts,
 
     // Top-level toggles
     ToggleMetricsOverlay,
@@ -149,6 +150,10 @@ pub fn execute_console_actions(
             DevConsoleAction::ToggleCameraCloseup => {
                 diagnostics_state.camera_closeup = !diagnostics_state.camera_closeup;
                 info!("Camera close-up: {}", if diagnostics_state.camera_closeup { "ON" } else { "off" });
+            }
+            DevConsoleAction::ToggleCanopyParts => {
+                diagnostics_state.canopy_parts_off = !diagnostics_state.canopy_parts_off;
+                info!("Canopy: {}", if diagnostics_state.canopy_parts_off { "vertices" } else { "parts" });
             }
             DevConsoleAction::WriteMetricsSnapshot => {
                 metrics_dump.asked = true;

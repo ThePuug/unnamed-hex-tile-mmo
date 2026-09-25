@@ -741,6 +741,7 @@ pub fn dispatch_summary_tasks(
                     base_normals: Vec::new(),
                     base_coarse: Vec::new(),
                     base_canopy: Vec::new(),
+                    base_parts: Vec::new(),
                     base_indices: Vec::new(),
                     base_tri_count: 0,
                     base_water: Default::default(),
@@ -803,8 +804,10 @@ pub fn update_terrain_cut(
     time: Res<Time>,
     render_origin: Res<crate::resources::RenderOrigin>,
     player_query: Query<&Transform, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
+    diagnostics_state: Res<DiagnosticsState>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
+    let parts_on = u32::from(!diagnostics_state.canopy_parts_off);
     let player = || player_query.single().ok().map(|t| render_origin.world(t.translation));
     #[cfg(feature = "admin")]
     let origin = match flyover.as_ref().filter(|f| f.active) {
@@ -848,11 +851,12 @@ pub fn update_terrain_cut(
         };
         let Some(material) = materials.get(handle) else { continue };
         let canopy = &material.extension.canopy;
-        if material.extension.cut != cut || canopy.lift != lift || canopy.fall != fall {
+        if material.extension.cut != cut || canopy.lift != lift || canopy.fall != fall || material.extension.lattice.on != parts_on {
             if let Some(mut material) = materials.get_mut(handle) {
                 material.extension.cut = cut;
                 material.extension.canopy.lift = lift;
                 material.extension.canopy.fall = fall;
+                material.extension.lattice.on = parts_on;
             }
         }
         // The ring is the tiles' own outer edge, with their ground's
@@ -1072,6 +1076,7 @@ fn collect_and_build_summary_mesh(
         normals: Vec::new(),
         coarse: Vec::new(),
         canopy: Vec::new(),
+        parts: Vec::new(),
         indices: Vec::new(),
         tri_count: 0,
         mesh_origin: Vec3::ZERO,
@@ -1167,6 +1172,9 @@ fn collect_and_build_summary_mesh(
         .as_ref()
         .map_or(empty, |smr| {
             let mut result = with_water(smr, &summary_water);
+            if let Some(canopy) = canopied {
+                result.parts = common_bevy::summary_mesh::parts_layer(radius, region_key, canopy).unwrap_or_default();
+            }
             if radius == common_bevy::summary::LOD_LEVELS[1] {
                 result.cover = crate::plugins::cover::place_cover(radius, region_key, smr.mesh_origin, map, &height);
             }
@@ -1186,6 +1194,7 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
         normals: smr.normals.clone(),
         coarse: smr.coarse.clone(),
         canopy: smr.canopy.clone(),
+        parts: Vec::new(),
         indices: smr.indices.clone(),
         tri_count: smr.tri_count,
         mesh_origin: smr.mesh_origin,
@@ -1248,8 +1257,14 @@ pub fn poll_summary_meshes(
     mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
     water_material: Res<crate::plugins::water::WaterMaterial>,
     client_timers: Res<crate::resources::ClientTimers>,
+    mut canopy_parts: ResMut<crate::plugins::canopy::CanopyParts>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let _t = client_timers.0.scope("sum_poll");
+
+    // A layer outlives its region by a frame at most: the regions gone
+    // since the last run give theirs back before any is claimed.
+    canopy_parts.release(|key| summary_meshes.states.get(key).is_some_and(|state| state.entity.is_some()));
 
     // Poll async tasks, keeping the geometry so the entity can be respawned
     // without a rebuild.
@@ -1264,6 +1279,7 @@ pub fn poll_summary_meshes(
                 state.base_normals = result.normals;
                 state.base_coarse = result.coarse;
                 state.base_canopy = result.canopy;
+                state.base_parts = result.parts;
                 state.base_indices = result.indices;
                 state.base_tri_count = result.tri_count;
                 state.base_water = result.water;
@@ -1289,6 +1305,7 @@ pub fn poll_summary_meshes(
         normals: Vec<[f32; 3]>,
         coarse: Vec<[f32; 4]>,
         canopy: Vec<[f32; 4]>,
+        parts: Vec<u16>,
         indices: Vec<u32>,
         tri_count: u32,
         water: crate::resources::WaterGeometry,
@@ -1304,6 +1321,7 @@ pub fn poll_summary_meshes(
                 normals: state.base_normals.clone(),
                 coarse: state.base_coarse.clone(),
                 canopy: state.base_canopy.clone(),
+                parts: state.base_parts.clone(),
                 indices: state.base_indices.clone(),
                 tri_count: state.base_tri_count,
                 water: state.base_water.clone(),
@@ -1323,6 +1341,8 @@ pub fn poll_summary_meshes(
         let state = summary_meshes.states.get_mut(&build.key).unwrap();
         state.mesh_handle = Some(mesh_handle.clone());
         state.tri_count = build.tri_count;
+        let canopied = crate::resources::TerrainMaterial::canopied(build.key.r);
+        let parts = canopy_parts.image(build.key.r, canopied, &mut images);
 
         let entity = match state.entity {
             Some(entity) => {
@@ -1336,7 +1356,7 @@ pub fn poll_summary_meshes(
                 let entity = commands
                     .spawn((
                         Mesh3d(mesh_handle),
-                        MeshMaterial3d(terrain_material.for_level(build.key.r, &mut materials)),
+                        MeshMaterial3d(terrain_material.for_level(build.key.r, &mut materials, parts)),
                         Transform::from_translation(origin.render_world(state.mesh_origin)),
                         SummaryMesh { region_key: build.key },
                     ))
@@ -1347,6 +1367,11 @@ pub fn poll_summary_meshes(
         };
         state.models_spawned = false;
         state.cards_spawned = false;
+        let tag = match build.parts.is_empty() {
+            true => crate::plugins::canopy::NO_LAYER,
+            false => canopy_parts.write(build.key, build.parts),
+        };
+        commands.entity(entity).insert(bevy::mesh::MeshTag(tag));
 
         if !build.water.indices.is_empty() {
             let water = build_bevy_mesh(&build.water.positions, &build.water.normals, None, &[], &build.water.indices);
@@ -1539,6 +1564,7 @@ mod tests {
                         base_normals: Vec::new(),
                         base_coarse: Vec::new(),
                         base_canopy: Vec::new(),
+                        base_parts: Vec::new(),
                         base_indices: Vec::new(),
                         base_tri_count: 0,
                         base_water: Default::default(),
@@ -1588,6 +1614,7 @@ mod tests {
             base_normals: Vec::new(),
             base_coarse: Vec::new(),
             base_canopy: Vec::new(),
+            base_parts: Vec::new(),
             base_indices: Vec::new(),
             base_tri_count: 0,
             base_water: Default::default(),

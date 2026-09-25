@@ -1,3 +1,4 @@
+pub mod canopy;
 pub mod console;
 pub mod diagnostics;
 #[cfg(feature = "admin")]

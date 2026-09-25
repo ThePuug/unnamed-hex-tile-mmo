@@ -125,6 +125,21 @@ pub struct CanopyLook {
     pub relief_gone: f32,
 }
 
+/// How a level's shaders read its canopy's parts (`plugins::canopy`): the
+/// finer step a part stands on, in tiles, or none where the level wears no
+/// canopy; how far a region's layer reaches from its centre, in steps; the
+/// steps a part's whole ground is counted in; a tile's radius; and whether
+/// the parts are read at all, where otherwise the ground wears the one
+/// canopy each summary's vertices carry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
+pub struct CanopyLattice {
+    pub step: i32,
+    pub half: i32,
+    pub whole: f32,
+    pub radius: f32,
+    pub on: u32,
+}
+
 /// One kind's look as the tree kit hands it over: the mean colour of its
 /// models, a grown crown's width, and a grown tree's height.
 #[derive(Clone, Copy, Debug)]
@@ -166,6 +181,12 @@ pub struct TerrainExtension {
     pub scree: Handle<Image>,
     #[uniform(107)]
     pub canopy: CanopyLook,
+    /// The level's canopy parts, a layer to each region, the layer the
+    /// region's `MeshTag`.
+    #[texture(108, dimension = "2d_array", sample_type = "u_int")]
+    pub parts: Handle<Image>,
+    #[uniform(109)]
+    pub lattice: CanopyLattice,
 }
 
 /// Layers in each texture asset, as texgen's `VARIANTS` writes them: the
@@ -340,12 +361,30 @@ impl TerrainMaterial {
         }
     }
 
+    /// Whether level `r` wears a canopy: every level above the tiles but
+    /// the last.
+    pub fn canopied(r: u32) -> bool {
+        use common_bevy::summary::LOD_LEVELS;
+        r != LOD_LEVELS[0] && r != *LOD_LEVELS.last().expect("a ladder")
+    }
+
+    /// Level `r`'s material, made on first asking, binding `parts`, the
+    /// level's canopy parts.
     pub fn for_level(
         &mut self,
         r: u32,
         materials: &mut Assets<TerrainMaterialAsset>,
+        parts: Handle<Image>,
     ) -> Handle<TerrainMaterialAsset> {
         let canopy = self.canopy_for(r);
+        let scale = common::summary::scale(r);
+        let lattice = CanopyLattice {
+            step: if Self::canopied(r) && scale % 3 == 0 { scale / 3 } else { 0 },
+            half: common_bevy::summary_mesh::PARTS_LAYER_HALF,
+            whole: common::cover::CANOPY_WHOLE as f32,
+            radius: common::camera::HEX_RADIUS,
+            on: 1,
+        };
         self.by_level
             .entry(r)
             .or_insert_with(|| {
@@ -365,6 +404,8 @@ impl TerrainMaterial {
                         cliff: self.cliff.clone(),
                         scree: self.scree.clone(),
                         canopy,
+                        parts,
+                        lattice,
                         ..default()
                     },
                 })
@@ -441,6 +482,7 @@ pub struct SummaryMeshState {
     pub base_normals: Vec<[f32; 3]>,
     pub base_coarse: Vec<[f32; 4]>,
     pub base_canopy: Vec<[f32; 4]>,
+    pub base_parts: Vec<u16>,
     pub base_indices: Vec<u32>,
     pub base_tri_count: u32,
     /// The water standing over the region, built with the ground and drawn
@@ -509,6 +551,10 @@ pub struct SummaryMeshBuildResult {
     /// The canopy per vertex where the level colours its ground by it,
     /// else empty.
     pub canopy: Vec<[f32; 4]>,
+    /// The region's canopy parts as its layer holds them
+    /// (`summary_mesh::parts_layer`) where the level wears a canopy, else
+    /// empty.
+    pub parts: Vec<u16>,
     pub indices: Vec<u32>,
     pub tri_count: u32,
     pub mesh_origin: Vec3,

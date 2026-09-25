@@ -75,6 +75,7 @@ fn main() {
         VignettePlugin,
         WaterPlugin,
         crate::plugins::cover::CoverPlugin,
+        crate::plugins::canopy::CanopyPartsPlugin,
         MaterialPlugin::<ExtendedMaterial<StandardMaterial, crate::resources::TerrainExtension>>::default(),
         MaterialPlugin::<world::DiscMaterial>::default(),
         MaterialPlugin::<world::SkyMaterial>::default(),

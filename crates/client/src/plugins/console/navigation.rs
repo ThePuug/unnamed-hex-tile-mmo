@@ -170,6 +170,9 @@ fn handle_terrain_menu(
     } else if keyboard.just_pressed(KeyCode::Numpad6) {
         action_writer.write(DevConsoleAction::ToggleCoverHidden);
         consumed = Some(KeyCode::Numpad6);
+    } else if keyboard.just_pressed(KeyCode::Numpad7) {
+        action_writer.write(DevConsoleAction::ToggleCanopyParts);
+        consumed = Some(KeyCode::Numpad7);
     }
 
     if let Some(key) = consumed {
