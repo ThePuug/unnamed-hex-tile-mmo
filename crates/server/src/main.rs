@@ -11,13 +11,12 @@ use serde::{Deserialize, Serialize};
 
 use common_bevy::{
     components::{behaviour::*, entity_type::*},
-    message::*,
     plugins::nntree,
     resources::{map::*, *},
 };
 use crate::{
     resources::*,
-    systems::{actor, aoi, combat, engagement_cleanup, engagement_spawner, input, npc_ability_usage, reaction_queue, renet, targeting, world},
+    systems::{actor, aoi, engagement_cleanup, engagement_spawner, input, renet, world},
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Event, Message, Serialize)]
@@ -48,27 +47,19 @@ fn main() {
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
         crate::plugins::behaviour::BehaviourPlugin,
+        crate::plugins::combat::CombatPlugin,
         crate::plugins::metrics::MetricsPlugin::default(),
         crate::plugins::world_streaming::WorldStreamingPlugin,
     ));
 
-    app.add_message::<Do>();
-    app.add_message::<Try>();
     app.add_message::<Tick>();
 
     // Add observers for triggered events
     app.add_observer(renet::do_manage_connections);
     app.add_observer(renet::do_presence);
-    app.add_observer(combat::process_deal_damage);
-    app.add_observer(combat::resolve_threat);
 
     app.add_systems(FixedUpdate, (
         input::apply,
-        common_bevy::systems::combat::resources::regenerate_resources, // Handles all resource regen including leash health regen (100 HP/sec for Returning NPCs)
-        common_bevy::systems::combat::state::update_combat_state,
-        common_bevy::systems::combat::recovery::global_recovery_system, // Tick down recovery lockout
-        common_bevy::systems::combat::synergies::synergy_cleanup_system, // Clean up expired synergies
-        reaction_queue::process_expired_threats,
     ));
 
     app.add_systems(FixedPostUpdate, (
@@ -80,23 +71,10 @@ fn main() {
         renet::write_try,
     ));
 
-    // Core combat and actor systems
+    // Actor systems
     app.add_systems(Update, (
         actor::do_incremental,
         actor::update,
-        targeting::update_targets, // Update targets every frame (detects when targets move)
-        combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // Auto-attack passive for NPCs only (check every 0.5s)
-        npc_ability_usage::npc_ability_usage.run_if(on_timer(Duration::from_millis(500))), // NPCs use signature abilities (check every 0.5s for responsive Defender counters)
-        combat::validate_ability_prerequisites,
-        combat::abilities::auto_attack::handle_auto_attack,
-        combat::abilities::overpower::handle_overpower,
-        combat::abilities::lunge::handle_lunge,
-        combat::abilities::counter::handle_counter,  // Counter ability
-        combat::abilities::kick::handle_kick,        // Kick: reactive knockback
-        combat::abilities::deflect::handle_deflect,
-        // Note: reset_tier_lock_on_ability_use not needed - tier lock persists while held
-        reaction_queue::process_dismiss, // Dismiss front queue threat (no GCD/lockout)
-        common_bevy::systems::combat::resources::check_death, // Check for death from ANY source
     ));
 
     // World, network, and spawner systems
@@ -116,15 +94,10 @@ fn main() {
         crate::systems::gathering::close_windows,
         crate::systems::gathering::try_drop,
         common_bevy::systems::movement::update_burden,
-        common_bevy::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // Update proximity tracking
         engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // Clean up dead/abandoned engagements
         world::do_spawn,
         world::try_spawn,
-    ));
-
-    app.add_systems(Update, (
-        common_bevy::systems::combat::resources::process_respawn,
     ));
 
     app.add_systems(PostUpdate, (
@@ -172,7 +145,6 @@ fn main() {
         qrz::Qrz { q: haven.q, r: haven.r, z: spawn_z }));
     app.insert_resource(registry);
     app.init_resource::<crate::resources::summary_cache::SummaryCache>();
-    app.init_resource::<RunTime>();
     app.init_resource::<engagement_spawner::ActiveSpawners>();
 
     app.run();
