@@ -71,14 +71,20 @@ impl WorldChanges {
     /// `(q, r)`, by the rule a gather follows, with nothing left lying: a
     /// clearing laid down before the world is served, so what the far
     /// ground makes of a change can be seen without making it by hand.
-    /// Every tile it clears is a fresh change, which the summaries take in
-    /// before the first client is sent one.
-    pub fn clearing(cover_at: impl Fn(i32, i32) -> common::Cover, (q, r): (i32, i32), radius: i32) -> Self {
+    /// Where it `fades`, each one falls by a chance that runs from certain
+    /// at the centre to none at the radius, drawn from where it stands, so
+    /// the clearing thins out into the wood the same way every time. Every
+    /// tile it clears is a fresh change, which the summaries take in before
+    /// the first client is sent one.
+    pub fn clearing(cover_at: impl Fn(i32, i32) -> common::Cover, (q, r): (i32, i32), radius: i32, fades: bool) -> Self {
         let mut changes = Self::default();
         for dq in -radius..=radius {
             for dr in (-radius).max(-dq - radius)..=radius.min(-dq + radius) {
                 let generated = cover_at(q + dq, r + dr);
+                let distance = dq.abs().max(dr.abs()).max((dq + dr).abs());
+                let chance = if fades { 1.0 - distance as f64 / (radius + 1) as f64 } else { 1.0 };
                 let cleared = (0..common::TILE_SLOTS as usize)
+                    .filter(|&k| generated.content(k) != common::Content::Spanned && roll(q + dq, r + dr, k) < chance)
                     .fold(generated, |cover, k| common::gathering::harvest(cover, k).map_or(cover, |h| h.cover));
                 if cleared != generated {
                     changes.set(q + dq, r + dr, generated, cleared);
@@ -92,6 +98,17 @@ impl WorldChanges {
         Arc::make_mut(&mut self.tiles).insert((q, r), after);
         self.fresh.push(Change { q, r, before, after });
     }
+}
+
+/// A number in `[0, 1)` fixed by slot `k` of tile `(q, r)`: a splitmix of
+/// the three.
+fn roll(q: i32, r: i32, k: usize) -> f64 {
+    let mut x = (q as u32 as u64) << 32 | r as u32 as u64;
+    x = x.wrapping_add((k as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 31;
+    (x >> 11) as f64 / (1u64 << 53) as f64
 }
 
 /// A summary source with the players' changes laid over its tiles.
@@ -588,12 +605,32 @@ mod tests {
     #[test]
     fn a_clearing_takes_what_stands_within_its_radius() {
         let wood = |_: i32, _: i32| Cover::NONE.with(0, Content::Pine).with_boulder(4).with_rock(common::Rock::Limestone);
-        let changes = WorldChanges::clearing(wood, (10, -4), 2);
+        let changes = WorldChanges::clearing(wood, (10, -4), 2, false);
         assert_eq!(changes.tiles.len(), 19, "a radius of 2 is 19 tiles");
         assert_eq!(changes.fresh.len(), 19, "each one a change for the summaries to take");
         let cleared = changes.tiles[&(12, -6)];
         assert_eq!(cleared.content(common::SITE_SLOTS[0][0]), Content::PineStump);
         assert!((0..common::TILE_SLOTS as usize).all(|k| !cleared.content(k).is_pile() && common::gathering::harvest(cleared, k).is_none()));
         assert!(!changes.tiles.contains_key(&(13, -4)), "three tiles out is untouched");
+    }
+
+    /// A fading clearing takes every tree at its centre, fewer toward its
+    /// edge, and the same trees every time.
+    #[test]
+    fn a_fading_clearing_thins_toward_its_edge() {
+        let wood = |_: i32, _: i32| Cover::NONE.with(0, Content::Pine);
+        let radius = 20;
+        let changes = WorldChanges::clearing(wood, (0, 0), radius, true);
+        assert!(changes.tiles.contains_key(&(0, 0)), "the centre falls");
+        let felled_at = |d: i32| {
+            let ring: Vec<(i32, i32)> = (-d..=d)
+                .flat_map(|q| (-d..=d).map(move |r| (q, r)))
+                .filter(|&(q, r)| q.abs().max(r.abs()).max((q + r).abs()) == d)
+                .collect();
+            ring.iter().filter(|tile| changes.tiles.contains_key(tile)).count() as f64 / ring.len() as f64
+        };
+        let (inner, outer) = (felled_at(3), felled_at(radius - 2));
+        assert!(inner > 0.6 && outer < 0.4, "{inner} near the centre, {outer} near the edge");
+        assert_eq!(WorldChanges::clearing(wood, (0, 0), radius, true).tiles, changes.tiles);
     }
 }

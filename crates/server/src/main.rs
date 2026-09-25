@@ -149,18 +149,20 @@ fn main() {
     // One definition of where the world starts: the difficulty origin and the
     // spawn are the same place, and the z comes from the terrain there.
     let haven = common_bevy::spatial_difficulty::HAVEN_LOCATION;
-    // `CLEARING=<radius>[@<q>,<r>]` fells and mines every tile that far round
-    // the tile named, or the haven, before anything is served: a fixture for
-    // seeing changes from afar.
+    // `CLEARING=<radius>[@<q>,<r>][~]` fells and mines every tile that far
+    // round the tile named, or the haven, before anything is served: a
+    // fixture for seeing changes from afar. With `~` it thins out toward its
+    // edge instead of stopping there.
     let changes = match std::env::var("CLEARING") {
         Ok(spec) => {
-            let (radius, at) = spec.split_once('@').unwrap_or((&spec, ""));
+            let (spec, fades) = spec.strip_suffix('~').map_or((spec.as_str(), false), |s| (s, true));
+            let (radius, at) = spec.split_once('@').unwrap_or((spec, ""));
             let radius: i32 = radius.parse().expect("CLEARING starts with a radius in tiles");
             let at = at.split_once(',').map_or((haven.q, haven.r), |(q, r)| {
                 (q.parse().expect("CLEARING's q is a whole number"), r.parse().expect("CLEARING's r is a whole number"))
             });
-            info!("clearing {radius} tiles round ({}, {})", at.0, at.1);
-            crate::systems::gathering::WorldChanges::clearing(|q, r| registry.cover_at(q, r), at, radius)
+            info!("clearing {radius} tiles round ({}, {}){}", at.0, at.1, if fades { ", fading" } else { "" });
+            crate::systems::gathering::WorldChanges::clearing(|q, r| registry.cover_at(q, r), at, radius, fades)
         }
         Err(_) => default(),
     };
