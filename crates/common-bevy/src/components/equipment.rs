@@ -253,6 +253,18 @@ impl Inventory {
         }
     }
 
+    /// Takes up to `count` of `kind` out of the bag and returns what it
+    /// took; a stack emptied frees its place, and the rest keep their order.
+    pub fn remove(&mut self, kind: common::Stackable, count: u32) -> common::Stack {
+        let Some(at) = self.stock.iter().position(|s| s.kind == kind) else { return common::Stack { kind, count: 0 } };
+        let taken = count.min(self.stock[at].count);
+        self.stock[at].count -= taken;
+        if self.stock[at].count == 0 {
+            self.stock.remove(at);
+        }
+        common::Stack { kind, count: taken }
+    }
+
     /// The pieces in the bag: owned and not worn.
     pub fn bagged<'a>(&'a self, worn: &'a Equipment) -> impl Iterator<Item = Item> + 'a {
         self.items.iter().copied().filter(|&item| !worn.is_worn(item))
@@ -370,6 +382,22 @@ mod tests {
         bag.add(of(stone, bag.room_for(&worn, kind)));
         assert_eq!(bag.room_for(&worn, kind), 0);
         assert!(bag.weight() <= CARRY_LIMIT && bag.weight() + stone.weight() > CARRY_LIMIT);
+    }
+
+    /// Taking out never takes more than the bag holds; a stack emptied
+    /// frees its place and leaves the others in order.
+    #[test]
+    fn taking_out_frees_an_emptied_stack() {
+        let mut bag = Inventory::default();
+        bag.add(of(common::Material::Softwood, 4));
+        bag.add(of(common::Material::Limestone, 3));
+        bag.add(of(common::Material::Hardwood, 2));
+        let limestone = common::Stackable::Material(common::Material::Limestone);
+        assert_eq!(bag.remove(limestone, 1).count, 1);
+        assert_eq!(bag.count(limestone), 2);
+        assert_eq!(bag.remove(limestone, 9).count, 2, "no more than the bag holds");
+        assert_eq!(bag.stock, vec![of(common::Material::Softwood, 4), of(common::Material::Hardwood, 2)]);
+        assert_eq!(bag.remove(limestone, 1).count, 0);
     }
 
     /// A new material needs a free stack; one already carried does not.

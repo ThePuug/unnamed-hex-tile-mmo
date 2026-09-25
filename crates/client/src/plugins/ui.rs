@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, combat_log, combat_ui, equipment_panel, resolved_threats, resource_bars, target_frame, target_indicator, threat_icons, tier_lock_range_indicator, ui};
+use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, combat_log, combat_ui, drop_panel, equipment_panel, resolved_threats, resource_bars, target_frame, target_indicator, threat_icons, tier_lock_range_indicator, ui};
 
 /// Plugin that handles game UI elements
 
@@ -17,6 +17,8 @@ impl Plugin for UiPlugin {
         // Initialize UI resources
         app.init_resource::<character_panel::CharacterPanelState>();
         app.init_resource::<closeup::Turn>();
+        app.init_resource::<bag_panel::BagCursor>();
+        app.init_resource::<drop_panel::DropChoice>();
 
         // Setup systems run once at startup
         app.add_systems(
@@ -75,6 +77,9 @@ impl Plugin for UiPlugin {
                 character_panel_respec::toggle_apply_button,
             ),
         );
+
+        // Dropping from the bag
+        app.add_systems(Update, (bag_panel::handle_numpad, (drop_panel::handle_keys, drop_panel::update).chain()));
 
         // Threat icon systems can run in parallel - no ordering needed
         app.add_systems(

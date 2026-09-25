@@ -109,6 +109,9 @@ pub enum Event {
     Take { ent: Entity, entry: Option<u8> },
     /// Client → Server (Try): close the open loot window
     CloseLoot { ent: Entity },
+    /// Client → Server (Try): drop `count` of `kind` from the bag onto the
+    /// tile the player stands on
+    Drop { ent: Entity, kind: common::Stackable, count: u32 },
     /// Server → Client: what `ent` is seen doing at a gather, or nothing
     /// where None. Sent to every client that sees it, so each shows it.
     Activity { ent: Entity, activity: Option<common::gathering::Activity> },

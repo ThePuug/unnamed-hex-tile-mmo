@@ -401,6 +401,13 @@ pub fn send_try(
                     ent: *l2r.get_by_left(ent).unwrap(),
                 }}, bincode::config::legacy()).unwrap());
             }
+            Event::Drop { ent, kind, count } => {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Drop {
+                    ent: *l2r.get_by_left(ent).unwrap(),
+                    kind: *kind,
+                    count: *count,
+                }}, bincode::config::legacy()).unwrap());
+            }
             Event::Wear { ent, item, on } => {
                 conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Wear {
                     ent: *l2r.get_by_left(ent).unwrap(),

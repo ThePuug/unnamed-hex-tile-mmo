@@ -256,6 +256,10 @@ pub fn write_try(
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::CloseLoot { ent }});
                 }
+                Try { event: Event::Drop { ent: _, kind, count } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    writer.write(Try { event: Event::Drop { ent, kind, count }});
+                }
                 Try { event: Event::UseAbility { ent: _, ability, target } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::UseAbility { ent, ability, target }});

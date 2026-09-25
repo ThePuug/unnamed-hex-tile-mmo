@@ -130,6 +130,13 @@ impl Looting {
     }
 }
 
+/// The player other than `ent` whose open window holds `pile`, lying at
+/// `key`, where one does; `looting` says where a player's window is open.
+/// A lock whose player has gone or closed its window holds nothing.
+fn held_from(pile: &Pile, key: (i32, i32, usize), ent: Entity, looting: impl Fn(Entity) -> Option<Looting>) -> Option<Entity> {
+    pile.locked_to.filter(|&other| other != ent && looting(other).is_some_and(|l| l.key() == key))
+}
+
 /// Whether tile `(q, r)` lies in the reach of a player on `here` facing
 /// `heading`: its own tile or one of the three in its front half.
 fn in_reach(here: Qrz, heading: Heading, q: i32, r: i32) -> bool {
@@ -264,10 +271,8 @@ pub fn try_gather(
             .map_or(position, |stand| stepped(position, stand, &ground.map));
         if cover.content(slot).is_pile() {
             let Some(pile) = piles.0.get(&key) else { continue };
-            let held = pile.locked_to.filter(|&other| {
-                other != ent && players.get(other).is_ok_and(|(_, _, _, _, looting, _)| looting.is_some_and(|l| l.key() == key))
-            });
-            if let Some(other) = held {
+            let looting = |other| players.get(other).ok().and_then(|(_, _, _, _, looting, _)| looting.copied());
+            if let Some(other) = held_from(pile, key, ent, looting) {
                 info!("gather: {ent} asked for the pile at slot {slot} of ({q}, {r}), which {other} has open");
                 continue;
             }
@@ -425,6 +430,79 @@ pub fn close_windows(
     }
 }
 
+/// Where a drop of `kind` lands on tile `(q, r)`, which holds `cover`: the
+/// slot of a pile there already holding `kind` that `open` lets it onto,
+/// or else the free slot nearest `from`, xz from the centre of tile
+/// `frame`. The flag says it lands on a pile already lying there.
+fn landing(
+    cover: common::Cover,
+    (q, r): (i32, i32),
+    piles: &Piles,
+    kind: common::Stackable,
+    open: impl Fn((i32, i32, usize), &Pile) -> bool,
+    frame: (i32, i32),
+    from: Vec2,
+) -> Option<(usize, bool)> {
+    let slots = 0..common::TILE_SLOTS as usize;
+    let onto = slots.clone().find(|&k| {
+        piles.0.get(&(q, r, k)).is_some_and(|pile| pile.stacks.iter().any(|s| s.kind == kind) && open((q, r, k), pile))
+    });
+    let distance = |k: usize| Vec2::from(common_bevy::geometry::slot_point(cover, (q, r), k, frame)).distance_squared(from);
+    let free = || slots.filter(|&k| cover.content(k) == common::Content::Empty).min_by(|&a, &b| distance(a).total_cmp(&distance(b)));
+    onto.map(|k| (k, true)).or_else(|| free().map(|k| (k, false)))
+}
+
+/// Lays what a player drops from its bag on the tile it stands on: onto a
+/// pile there of the same kind that no other player has open, or as a new
+/// pile in the tile's free slot nearest the player. A tile with neither
+/// takes nothing, and the bag keeps it.
+pub fn try_drop(
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
+    mut ground: Ground,
+    mut piles: ResMut<Piles>,
+    mut players: Query<(&Loc, &Position, &mut Inventory, Option<&Looting>)>,
+) {
+    for message in reader.read() {
+        let Try { event: Event::Drop { ent, kind, count } } = message else { continue };
+        let (ent, kind, count) = (*ent, *kind, *count);
+        let Ok((loc, position, bag, looting)) = players.get(ent) else { continue };
+        if bag.count(kind) == 0 {
+            continue;
+        }
+        let (q, r, looting) = (loc.q, loc.r, looting.copied());
+        let Some(cover) = ground.cover(q, r) else {
+            info!("drop: {ent} stands on ({q}, {r}), which the map does not hold");
+            continue;
+        };
+        let open = |key, pile: &Pile| {
+            held_from(pile, key, ent, |other| players.get(other).ok().and_then(|(.., l)| l.copied())).is_none()
+        };
+        let frame = (position.tile.q, position.tile.r);
+        let Some((slot, onto)) = landing(cover, (q, r), &piles, kind, open, frame, position.offset.xz()) else {
+            info!("drop: {ent} at ({q}, {r}) has no free slot and no pile of {kind:?} to drop onto");
+            continue;
+        };
+        let Ok((_, _, mut bag, _)) = players.get_mut(ent) else { continue };
+        let stack = bag.remove(kind, count);
+        writer.write(Do { event: Event::Inventory { ent, bag: bag.clone() } });
+        let key = (q, r, slot);
+        let pile = piles.0.entry(key).or_insert(Pile { stacks: Vec::new(), locked_to: None });
+        match pile.stacks.iter_mut().find(|s| s.kind == kind) {
+            Some(held) => held.count += stack.count,
+            None => pile.stacks.push(stack),
+        }
+        if looting.is_some_and(|l| l.key() == key) {
+            writer.write(Do { event: Event::Loot { ent, entries: Some(pile.stacks.clone()) } });
+        }
+        if !onto {
+            let common::Stackable::Material(material) = kind;
+            ground.set(&mut writer, q, r, common::gathering::left(cover, slot, material));
+        }
+        info!("drop: {ent} dropped {} {kind:?} in slot {slot} of ({q}, {r})", stack.count);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -459,6 +537,32 @@ mod tests {
         assert_eq!(pines(summarize(r, 0, 0, &before)), generated, "a reading already out keeps what it set out with");
         assert_eq!(changes.take_fresh(), vec![(1, 1), (dq, dr)]);
         assert!(changes.take_fresh().is_empty());
+    }
+
+    /// A drop goes onto a pile of its kind that lets it on, or else to the
+    /// free slot nearest the player; a tile with neither takes nothing.
+    #[test]
+    fn a_drop_lands_on_its_pile_or_the_nearest_free_slot() {
+        let softwood = common::Stackable::Material(common::Material::Softwood);
+        let stone = common::Stackable::Material(common::Material::Limestone);
+        let everyone = |_, _: &Pile| true;
+        let tile = (3, -2);
+        let cover = common::gathering::left(Cover::NONE.with_boulder(0), 4, common::Material::Softwood);
+        let mut piles = Piles::default();
+        piles.0.insert((3, -2, 4), Pile { stacks: vec![common::Stack { kind: softwood, count: 4 }], locked_to: None });
+
+        assert_eq!(landing(cover, tile, &piles, softwood, everyone, tile, Vec2::ZERO), Some((4, true)));
+        assert_eq!(landing(cover, tile, &piles, softwood, |_, _: &Pile| false, tile, Vec2::ZERO).map(|l| l.1), Some(false));
+
+        let free = |k: usize| cover.content(k) == Content::Empty;
+        for k in (0..common::TILE_SLOTS as usize).filter(|&k| free(k)) {
+            let at = Vec2::from(common_bevy::geometry::slot_point(cover, tile, k, tile));
+            assert_eq!(landing(cover, tile, &piles, stone, everyone, tile, at), Some((k, false)), "standing on free slot {k}");
+        }
+
+        let full = (0..common::TILE_SLOTS as usize).fold(cover, |c, k| if free(k) { c.with_boulder(k) } else { c });
+        assert_eq!(landing(full, tile, &piles, stone, everyone, tile, Vec2::ZERO), None);
+        assert_eq!(landing(full, tile, &piles, softwood, everyone, tile, Vec2::ZERO), Some((4, true)));
     }
 
     /// A clearing takes every tree and boulder within its radius, leaves

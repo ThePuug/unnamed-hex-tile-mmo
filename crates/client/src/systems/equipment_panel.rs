@@ -56,7 +56,7 @@ pub(crate) const CELL: f32 = 64.0;
 const SLOT: f32 = 56.0;
 const WORN: Color = Color::srgb(0.85, 0.65, 0.13);
 pub(crate) const UNWORN: Color = Color::srgb(0.35, 0.35, 0.35);
-const CURSOR_ROW: Color = Color::srgba(0.25, 0.25, 0.25, 0.9);
+pub(crate) const CURSOR_ROW: Color = Color::srgba(0.25, 0.25, 0.25, 0.9);
 pub(crate) const OTHER_ROW: Color = Color::srgba(0.15, 0.15, 0.15, 0.8);
 
 /// Spawns the tab's content under `content`, hidden until the tab is chosen.

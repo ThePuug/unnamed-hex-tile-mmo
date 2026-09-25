@@ -114,6 +114,7 @@ fn main() {
         crate::systems::gathering::finish_work,
         crate::systems::gathering::interrupt_work,
         crate::systems::gathering::close_windows,
+        crate::systems::gathering::try_drop,
         common_bevy::systems::movement::update_burden,
         common_bevy::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // Update proximity tracking

@@ -12,6 +12,7 @@ pub mod closeup;
 pub mod combat;
 pub mod combat_log; // Combat log panel for event history
 pub mod combat_ui;
+pub mod drop_panel;
 pub mod equipment;
 pub mod equipment_panel;
 pub mod focus;

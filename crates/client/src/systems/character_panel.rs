@@ -939,7 +939,7 @@ pub fn close(state: &mut CharacterPanelState, visibility: &mut Visibility) {
     *visibility = Visibility::Hidden;
 }
 
-const PANE_WIDTH: f32 = 770.0;
+const PANE_WIDTH: f32 = 860.0;
 const PANE: Color = Color::srgba(0.1, 0.1, 0.1, 0.9);
 const PANE_EDGE: Color = Color::srgb(0.4, 0.4, 0.4);
 /// The frame round the strip and the content; a shut tab is its colour.
