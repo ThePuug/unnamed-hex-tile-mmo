@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{resources::*, Loc, recovery::{GlobalRecovery, get_ability_recovery_duration}},
-    message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
+    components::{reaction_queue::ReactionQueue, resources::*, Loc, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+    message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
+    systems::combat::queue::clear_threats,
     resources::map::Map,
 };
 
@@ -14,11 +15,13 @@ pub const DISENGAGE_STAMINA_COST: f32 = 20.0;
 /// `DISENGAGE_TRIGGER`, it leaps `ArchetypeTuning::disengage_leap` tiles,
 /// each the neighbour furthest from the target, straight away from it,
 /// back to where its auto-attack reaches and a melee attacker must close again.
+/// The leap dodges the front threat of its queue, the blow that closed on it.
 pub fn handle_disengage(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
     loc_query: Query<&Loc>,
     mut stamina_query: Query<&mut Stamina>,
+    mut queue_query: Query<&mut ReactionQueue>,
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     map: Res<Map>,
@@ -81,6 +84,12 @@ pub fn handle_disengage(
         writer.write(Do {
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Loc(Loc::new(landing)) },
         });
+
+        if let Ok(mut queue) = queue_query.get_mut(*ent) {
+            if !clear_threats(&mut queue, ClearType::First(1)).is_empty() {
+                writer.write(Do { event: GameEvent::ClearQueue { ent: *ent, clear_type: ClearType::First(1) } });
+            }
+        }
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Disengage, target: *target } });
         commands.entity(*ent).insert(GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Disengage), AbilityType::Disengage));
