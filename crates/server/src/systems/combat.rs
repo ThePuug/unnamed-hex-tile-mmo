@@ -114,6 +114,7 @@ pub fn resolve_threat(
     mut query: Query<(&mut Health, &ActorAttributes)>,
     loc_query: Query<&Loc>,
     all_attrs: Query<&ActorAttributes>,
+    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
     let event = &trigger.event().event;
@@ -125,7 +126,7 @@ pub fn resolve_threat(
 
             // Apply passive mitigation (unified for all damage types), less what the ability pierces
             let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_dominance, dominant_level);
-            let pierce = threat.ability.map_or(0.0, AbilityType::pierce);
+            let pierce = threat.ability.map_or(0.0, |ability| tuning.pierce(ability));
             let final_damage = mitigated + (threat.damage - mitigated) * pierce;
 
             // Apply damage to health

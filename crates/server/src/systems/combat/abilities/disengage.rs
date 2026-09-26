@@ -10,11 +10,9 @@ pub const DISENGAGE_TRIGGER: u32 = 2;
 
 pub const DISENGAGE_STAMINA_COST: f32 = 20.0;
 
-/// Tiles leapt, each one the neighbour furthest from the target
-const LEAP_TILES: usize = 3;
-
 /// Handle Disengage, the Kiter's signature: with its target within
-/// `DISENGAGE_TRIGGER`, it leaps `LEAP_TILES` tiles straight away from it,
+/// `DISENGAGE_TRIGGER`, it leaps `ArchetypeTuning::disengage_leap` tiles,
+/// each the neighbour furthest from the target, straight away from it,
 /// back to where its auto-attack reaches and a melee attacker must close again.
 pub fn handle_disengage(
     mut commands: Commands,
@@ -24,6 +22,7 @@ pub fn handle_disengage(
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     map: Res<Map>,
+    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -57,7 +56,7 @@ pub fn handle_disengage(
         let Some((mut ground, _)) = map.get_by_qr(caster_loc.q, caster_loc.r) else {
             continue;
         };
-        for _ in 0..LEAP_TILES {
+        for _ in 0..tuning.disengage_leap {
             let Some((next, _)) = map.neighbors(ground).into_iter()
                 .max_by_key(|(neighbor, _)| neighbor.flat_distance(target_loc))
                 .filter(|(neighbor, _)| neighbor.flat_distance(target_loc) > ground.flat_distance(target_loc))

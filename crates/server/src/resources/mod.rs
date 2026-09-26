@@ -1,5 +1,6 @@
 pub mod event_registry;
 pub mod summary_cache;
+pub mod tuning;
 
 use bevy::prelude::*;
 use renet::ClientId;

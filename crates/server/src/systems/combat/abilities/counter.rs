@@ -7,16 +7,10 @@ use common_bevy::{
 };
 use crate::resources::RunTime;
 
-/// Share of Technique each countered threat strikes its source for, whatever it carried.
-const TECHNIQUE_SHARE: f32 = 0.5;
-
-/// Share of each countered threat's damage that Counter sends back.
-const REFLECT_SHARE: f32 = 0.2;
-
 /// Reactive counter-attack. Costs 30 stamina and clears as many threats from
 /// the front of the queue as the window holds. Each cleared threat goes back
-/// to its living source wherever it stands, at `TECHNIQUE_SHARE` of Technique
-/// plus `REFLECT_SHARE` of the threat's damage, and lands at once: a
+/// to its living source wherever it stands, at a share of Technique plus a
+/// share of the threat's damage, both `ArchetypeTuning`'s, and lands at once: a
 /// reflection never enters the source's queue, so it cannot be countered.
 pub fn handle_counter(
     mut commands: Commands,
@@ -30,6 +24,7 @@ pub fn handle_counter(
     respawn_query: Query<&RespawnTimer>,
     time: Res<Time>,
     runtime: Res<RunTime>,
+    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -158,7 +153,7 @@ pub fn handle_counter(
                 continue;
             }
 
-            let reflected_damage = caster_attrs.technique() * TECHNIQUE_SHARE + threat.damage * REFLECT_SHARE;
+            let reflected_damage = caster_attrs.technique() * tuning.counter_technique + threat.damage * tuning.counter_reflect;
 
             let Ok(target_attrs) = attrs_query.get(threat.source) else {
                 continue;

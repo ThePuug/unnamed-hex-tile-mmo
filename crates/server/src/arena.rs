@@ -14,7 +14,9 @@
 //! archetype against itself instead of the others, `ordered=1` to fight every
 //! ordered pair, mirrors included, `trace` to print every
 //! fight (1), with a timeline every 5s (2), or every half second for its
-//! first 12s (3).
+//! first 12s (3). Any `ArchetypeTuning` knob may be set by name too, a delay
+//! as `min-max` milliseconds (`b_delay=1500-3500`, `lunge_pierce=0.5`), so a
+//! value is tried without a rebuild.
 //!
 //! Every pairing fights `runs` times, the two swapping ends each run so
 //! neither side's spawn decides it. The report
@@ -41,6 +43,7 @@ use common_bevy::{
 
 use crate::{
     plugins::{behaviour::BehaviourPlugin, combat::CombatPlugin},
+    resources::tuning::ArchetypeTuning,
     systems::{actor, engagement_spawner::spawn_engagement, renet},
 };
 
@@ -81,11 +84,12 @@ struct Settings {
     cap: Duration,
     only: Vec<EnemyArchetype>,
     trace: u8,
+    tuning: ArchetypeTuning,
 }
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: ARCHETYPES.to_vec(), trace: 0 };
+        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: ARCHETYPES.to_vec(), trace: 0, tuning: ArchetypeTuning::default() };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {
@@ -99,7 +103,7 @@ impl Settings {
                 "cap" => settings.cap = Duration::from_secs(value.parse().expect("cap is whole seconds")),
                 "only" => settings.only = value.split(',').map(archetype_named).collect(),
                 "trace" => settings.trace = value.parse().expect("trace is 0 to 3"),
-                _ => panic!("arena has no key {key}"),
+                _ => settings.tuning.set(key, value).unwrap_or_else(|error| panic!("arena: {error}")),
             }
         }
         settings
@@ -210,6 +214,7 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     app.insert_resource(Time::<Fixed>::from_seconds(0.125));
     app.insert_resource(flat_map());
     app.insert_resource(SpawnPoint(Qrz { q: 0, r: 0, z: 1 }));
+    app.insert_resource(settings.tuning.clone());
     app.init_resource::<Tally>();
     app.add_systems(Update, (actor::update, tally_used));
     app.add_systems(PostUpdate, renet::cleanup_despawned);
@@ -222,7 +227,7 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     {
         let mut commands = world.commands();
         for (team, side, q) in [(west, WEST, -DEN_OFFSET), (east, EAST, DEN_OFFSET)] {
-            spawn_engagement(Qrz { q, r: 0, z: 1 }, team.archetype, side, team.level, team.size, |_, _| 0, &mut commands, &time);
+            spawn_engagement(Qrz { q, r: 0, z: 1 }, team.archetype, side, team.level, team.size, |_, _| 0, &settings.tuning, &mut commands, &time);
         }
     }
     world.flush();

@@ -78,6 +78,7 @@ pub fn try_spawn_den(
     query: Query<(&Loc, &Heading), With<PlayerControlled>>,
     time: Res<Time>,
     registry: Res<crate::resources::event_registry::EventRegistry>,
+    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
 ) {
     for message in reader.read() {
         let Try { event: Event::SpawnDen { ent, archetype } } = message else { continue };
@@ -87,7 +88,7 @@ pub fn try_spawn_den(
         info!("den: {archetype:?} at {den:?}, ahead of {ent} at {:?}", **loc);
         let level = calculate_enemy_level(den, HAVEN_LOCATION);
         let npc_count = rand::rng().random_range(1..=3u8);
-        spawn_engagement(den, *archetype, Side::WILD, level, npc_count, |q, r| registry.elevation_at(q, r), &mut commands, &time);
+        spawn_engagement(den, *archetype, Side::WILD, level, npc_count, |q, r| registry.elevation_at(q, r), &tuning, &mut commands, &time);
     }
 }
 
@@ -107,6 +108,7 @@ pub fn spawn_engagement(
     level: u8,
     npc_count: u8,
     elevation: impl Fn(i32, i32) -> i32,
+    tuning: &crate::resources::tuning::ArchetypeTuning,
     commands: &mut Commands,
     time: &Time,
 ) {
@@ -173,6 +175,7 @@ pub fn spawn_engagement(
             commands.entity(npc_entity).insert(worn);
         }
 
+        let (delay_min, delay_max) = tuning.delay(archetype);
         match archetype {
             EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender => {
                 let chase = crate::systems::behaviour::chase::Chase {
@@ -183,7 +186,7 @@ pub fn spawn_engagement(
                 commands.entity(npc_entity).insert((
                     NearestNeighbor::new(npc_entity, npc_loc),
                     chase,
-                    NpcRecovery::for_archetype(archetype),
+                    NpcRecovery::new(delay_min, delay_max),
                     common_bevy::components::AttackRange(attack_range(archetype)),
                     common_bevy::components::target::Target::default(),
                     Heading::default(),
@@ -203,7 +206,7 @@ pub fn spawn_engagement(
                     AirTime::default(),
                     common_bevy::components::AttackRange(attack_range(archetype)),
                     LastAutoAttack::default(),
-                    NpcRecovery::for_archetype(archetype),
+                    NpcRecovery::new(delay_min, delay_max),
                     common_bevy::components::movement_intent_state::MovementIntentState::default(),
                 ));
             }

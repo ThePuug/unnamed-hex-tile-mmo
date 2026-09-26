@@ -12,15 +12,10 @@ pub const CHARGE_RANGE: RangeInclusive<u32> = 1..=6;
 
 pub const CHARGE_STAMINA_COST: f32 = 40.0;
 
-/// Share of Force the impact deals
-const FORCE_SHARE: f32 = 0.6;
-
-/// How long the target is held in place, so a Kiter cannot step straight back out of reach.
-const STAGGER_SECS: f32 = 1.0;
-
 /// Handle Charge, the Juggernaut's signature: it rushes a target within
-/// `CHARGE_RANGE`, lands beside it, strikes for `FORCE_SHARE` of Force and
-/// staggers it for `STAGGER_SECS`. Nothing outruns a Juggernaut for long.
+/// `CHARGE_RANGE`, lands beside it, strikes for a share of Force and holds
+/// it in place, so a Kiter cannot step straight back out of reach; the share
+/// and the hold are `ArchetypeTuning`'s. Nothing outruns a Juggernaut for long.
 pub fn handle_charge(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -29,6 +24,7 @@ pub fn handle_charge(
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
+    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -83,13 +79,13 @@ pub fn handle_charge(
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Loc(Loc::new(landing)) },
         });
 
-        commands.entity(target_ent).insert(Stagger::new(STAGGER_SECS));
+        commands.entity(target_ent).insert(Stagger::new(tuning.charge_stagger));
         let attrs = attrs_query.get(*ent).expect("Charge caster must have ActorAttributes");
         commands.trigger(Try {
             event: GameEvent::DealDamage {
                 source: *ent,
                 target: target_ent,
-                base_damage: attrs.force() * FORCE_SHARE,
+                base_damage: attrs.force() * tuning.charge_force,
                 damage_type: DamageType::Physical,
                 ability: Some(AbilityType::Charge),
             },
