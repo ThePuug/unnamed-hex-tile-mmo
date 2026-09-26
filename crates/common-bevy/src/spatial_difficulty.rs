@@ -83,9 +83,9 @@ pub enum PositioningStrategy {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnemyArchetype {
     #[default]
-    Berserker,   // Highland - Aggressive melee burst (Might, a third Vitality)
+    Berserker,   // Highland - Aggressive melee burst (pure Might)
     Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
-    Kiter,       // Inland (flat) - Ranged harassment (Presence, a tenth Vitality)
+    Kiter,       // Inland (flat) - Ranged harassment (pure Presence)
     Defender,    // Coast - Reactive counter-attacks (pure Grace)
 }
 
@@ -188,15 +188,13 @@ pub struct NpcBuild {
 
 // Archetype builds, balanced against one another in the server's arena
 static BERSERKER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::MightGraceAxis, weight: 2, direction: -1 },
-    Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: -1 },
+    Allocation { field: AttributeField::MightGraceAxis, weight: 1, direction: -1 },
 ];
 static JUGGERNAUT_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: -1 },
 ];
 static KITER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::InstinctPresenceAxis, weight: 9, direction: 1 },
-    Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: -1 },
+    Allocation { field: AttributeField::InstinctPresenceAxis, weight: 1, direction: 1 },
 ];
 static DEFENDER_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::MightGraceAxis, weight: 1, direction: 1 },
