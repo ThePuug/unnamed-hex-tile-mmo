@@ -21,6 +21,8 @@ pub struct ArchetypeTuning {
     pub charge_stagger: f32,
     /// Tiles a Disengage leaps
     pub disengage_leap: usize,
+    /// Share of Force each Volley shot strikes for
+    pub volley_force: f32,
     /// Share of Technique each countered threat strikes its source for
     pub counter_technique: f32,
     /// Share of each countered threat's damage sent back
@@ -32,14 +34,15 @@ impl Default for ArchetypeTuning {
         Self {
             berserker_delay: (1000, 3000),
             juggernaut_delay: (5000, 7000),
-            kiter_delay: (3000, 5000),
-            defender_delay: (2000, 4000),
+            kiter_delay: (1000, 3000),
+            defender_delay: (2500, 4500),
             lunge_pierce: 0.35,
             charge_force: 0.6,
-            charge_stagger: 0.5,
+            charge_stagger: 2.0,
             disengage_leap: 3,
-            counter_technique: 0.5,
-            counter_reflect: 0.2,
+            volley_force: 1.4,
+            counter_technique: 0.55,
+            counter_reflect: 0.7,
         }
     }
 }
@@ -85,6 +88,7 @@ impl ArchetypeTuning {
             "charge_force" => self.charge_force = number()?,
             "charge_stagger" => self.charge_stagger = number()?,
             "disengage_leap" => self.disengage_leap = number()? as usize,
+            "volley_force" => self.volley_force = number()?,
             "counter_technique" => self.counter_technique = number()?,
             "counter_reflect" => self.counter_reflect = number()?,
             _ => return Err(format!("no tuning knob {name}")),

@@ -11,10 +11,10 @@ pub const DISENGAGE_TRIGGER: u32 = 2;
 
 pub const DISENGAGE_STAMINA_COST: f32 = 20.0;
 
-/// Handle Disengage, the Kiter's signature: with its target within
-/// `DISENGAGE_TRIGGER`, it leaps `ArchetypeTuning::disengage_leap` tiles,
-/// each the neighbour furthest from the target, straight away from it,
-/// back to where its auto-attack reaches and a melee attacker must close again.
+/// Handle Disengage, an Instinct skill kept for the Evasive archetype; no
+/// archetype carries it yet. With its target within `DISENGAGE_TRIGGER`, the
+/// caster leaps `ArchetypeTuning::disengage_leap` tiles, each the neighbour
+/// furthest from the target, straight away from it, so a melee attacker must close again.
 /// The leap dodges the front threat of its queue, the blow that closed on it.
 pub fn handle_disengage(
     mut commands: Commands,

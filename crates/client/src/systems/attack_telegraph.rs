@@ -22,8 +22,8 @@ pub struct HitLine {
     pub duration_ms: u64,
 }
 
-/// Spawn attack ball when a ranged auto-attack is inserted into the queue:
-/// one whose source stands further than adjacent from its target.
+/// Spawn attack ball when a ranged shot is inserted into the queue: an
+/// auto-attack or a Volley whose source stands further than adjacent from its target.
 pub fn on_insert_threat(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
@@ -34,7 +34,7 @@ pub fn on_insert_threat(
     for message in reader.read() {
         let Do { event: GameEvent::InsertThreat { ent: target, threat } } = message else { continue };
 
-        if threat.ability != Some(AbilityType::AutoAttack) {
+        if !matches!(threat.ability, Some(AbilityType::AutoAttack | AbilityType::Volley)) {
             continue;
         }
         let (Ok(source_loc), Ok(target_loc)) = (locs.get(threat.source), locs.get(*target)) else { continue };
@@ -68,7 +68,7 @@ pub fn on_insert_threat(
     }
 }
 
-/// Replace attack ball with hit line when damage is applied (ranged auto-attacks only)
+/// Replace attack ball with hit line when damage is applied (ranged shots only)
 pub fn on_apply_damage(
     mut commands: Commands,
     mut reader: MessageReader<Do>,

@@ -41,6 +41,7 @@ impl Plugin for CombatPlugin {
             combat::abilities::auto_attack::handle_auto_attack,
             combat::abilities::charge::handle_charge,
             combat::abilities::disengage::handle_disengage,
+            combat::abilities::volley::handle_volley,
             combat::abilities::overpower::handle_overpower,
             combat::abilities::lunge::handle_lunge,
             combat::abilities::counter::handle_counter,  // Counter ability

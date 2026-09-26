@@ -156,8 +156,10 @@ pub enum AbilityType {
     Kick,
     /// NPC: the Juggernaut's rush onto a target within 6 tiles, staggering it on impact
     Charge,
-    /// NPC: the Kiter's leap away from a target that has closed within 2 tiles
+    /// NPC: a leap away from a target that has closed within 2 tiles, dodging its blow (Instinct's; no archetype carries it yet)
     Disengage,
+    /// NPC: the Kiter's burst of shots within 6 tiles, one per threat it can see
+    Volley,
 }
 
 /// Reasons why an ability usage might fail

@@ -85,7 +85,7 @@ pub enum EnemyArchetype {
     #[default]
     Berserker,   // Highland - Aggressive melee burst (pure Might)
     Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
-    Kiter,       // Inland (flat) - Ranged harassment (pure Presence)
+    Kiter,       // Inland (flat) - Ranged harassment (pure Focus)
     Defender,    // Coast - Reactive counter-attacks (pure Grace)
 }
 
@@ -118,7 +118,7 @@ impl EnemyArchetype {
         match self {
             EnemyArchetype::Berserker => Some(AbilityType::Lunge),
             EnemyArchetype::Juggernaut => Some(AbilityType::Charge),
-            EnemyArchetype::Kiter => Some(AbilityType::Disengage),
+            EnemyArchetype::Kiter => Some(AbilityType::Volley),
             EnemyArchetype::Defender => Some(AbilityType::Counter),
         }
     }
@@ -194,7 +194,7 @@ static JUGGERNAUT_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: -1 },
 ];
 static KITER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::InstinctPresenceAxis, weight: 1, direction: 1 },
+    Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: 1 },
 ];
 static DEFENDER_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::MightGraceAxis, weight: 1, direction: 1 },
@@ -376,7 +376,7 @@ mod tests {
     fn test_archetype_abilities() {
         assert_eq!(EnemyArchetype::Berserker.ability(), Some(AbilityType::Lunge));
         assert_eq!(EnemyArchetype::Juggernaut.ability(), Some(AbilityType::Charge));
-        assert_eq!(EnemyArchetype::Kiter.ability(), Some(AbilityType::Disengage));
+        assert_eq!(EnemyArchetype::Kiter.ability(), Some(AbilityType::Volley));
         assert_eq!(EnemyArchetype::Defender.ability(), Some(AbilityType::Counter));
     }
 
@@ -454,7 +454,7 @@ mod tests {
         for (archetype, lead) in [
             (EnemyArchetype::Berserker, 0),
             (EnemyArchetype::Juggernaut, 2),
-            (EnemyArchetype::Kiter, 5),
+            (EnemyArchetype::Kiter, 3),
             (EnemyArchetype::Defender, 1),
         ] {
             let attrs = calculate_enemy_attributes(10, archetype);
