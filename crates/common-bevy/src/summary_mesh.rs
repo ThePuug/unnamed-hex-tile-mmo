@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 use common::cover::{Canopy, Content};
-use common::summary::PARTS;
+use common::summary::{SummaryCell, PARTS};
 
 use crate::{
     chunk::{self, ChunkId},
@@ -322,20 +322,25 @@ pub const PARTS_LAYER_HALF: i32 = 3 * (crate::summary::MESH_REGION_RADIUS as i32
 /// The side of a region's parts layer, in texels.
 pub const PARTS_LAYER_SIDE: u32 = 2 * PARTS_LAYER_HALF as u32 + 1;
 
+/// The bit of a part's texel set where the part stands under water, above
+/// its canopy's, which take fifteen.
+pub const PART_WET: u16 = 1 << 15;
+
 /// A region's parts as the terrain shader reads them: a square of
 /// [`PARTS_LAYER_SIDE`] texels, row by row, one to a point of the finer
 /// lattice, with the region's centre tile at the middle. Every part of the
-/// region's cells and of the ring around them holds its canopy's bits at
-/// the point its tile stands on, where the axial offset from the centre,
-/// over the finer step, is the texel's column and row off the middle;
-/// every other texel is bare. The ring is there because a fragment at the
-/// region's edge reads the parts of the cell across it. None until every
-/// one of those cells has its canopy, and at a radius whose width does not
-/// divide into thirds, whose parts stand on no finer lattice.
+/// region's cells and of the ring around them holds its canopy's bits and
+/// [`PART_WET`] at the point its tile stands on, where the axial offset
+/// from the centre, over the finer step, is the texel's column and row off
+/// the middle; every other texel is bare and dry. The ring is there
+/// because a fragment at the region's edge reads the parts of the cell
+/// across it. None until every one of those cells is there, and at a
+/// radius whose width does not divide into thirds, whose parts stand on no
+/// finer lattice.
 pub fn parts_layer(
     radius: u32,
     region_key: MeshRegionKey,
-    canopy: &dyn Fn(i32, i32) -> Option<[Canopy; PARTS]>,
+    cells: &dyn Fn(i32, i32) -> Option<SummaryCell>,
 ) -> Option<Vec<u16>> {
     let lattice = summary_lattice(radius);
     if lattice.scale % 3 != 0 {
@@ -350,12 +355,13 @@ pub fn parts_layer(
     for dq in -reach..=reach {
         for dr in (-reach).max(-dq - reach)..=reach.min(-dq + reach) {
             let cell = (centre.0 + dq, centre.1 + dr);
-            let parts = canopy(cell.0, cell.1)?;
+            let summary = cells(cell.0, cell.1)?;
             let (tq, tr) = lattice.cell_center(cell);
             for (part, (oq, or)) in common::summary::part_offsets(radius).into_iter().enumerate() {
                 let column = (tq - cq + oq) / step + PARTS_LAYER_HALF;
                 let row = (tr - cr + or) / step + PARTS_LAYER_HALF;
-                layer[(row * side + column) as usize] = parts[part].bits();
+                let wet = if summary.wet & (1 << part) != 0 { PART_WET } else { 0 };
+                layer[(row * side + column) as usize] = summary.canopy[part].bits() | wet;
             }
         }
     }
@@ -913,7 +919,8 @@ mod tests {
 
     /// A region's layer puts every part of its cells and ring on a texel of
     /// its own, the centre cell's centre part at the middle and its corner
-    /// part a finer step up both axes, and waits for a cell with no canopy.
+    /// part a finer step up both axes, a wet part with its canopy and the
+    /// wet bit, and waits for a cell that is not there.
     #[test]
     fn a_parts_layer_puts_each_part_on_its_own_texel() {
         use common::cover::{Canopy, Content, Cover};
@@ -923,21 +930,23 @@ mod tests {
             let wood = Canopy::of(Cover::NONE.with(0, Content::Pine));
             let brush = Canopy::of(Cover::NONE.with(0, Content::Brush));
             let canopy = |q: i32, r: i32| {
-                let mut parts = [wood; PARTS];
+                let mut cell = SummaryCell { canopy: [wood; PARTS], ..Default::default() };
                 if (q, r) == centre {
-                    parts[7] = brush;
+                    cell.canopy[7] = brush;
+                    cell.wet = 1 << 1;
                 }
-                Some(parts)
+                Some(cell)
             };
-            let layer = parts_layer(radius, key, &canopy).expect("every cell has its canopy");
+            let layer = parts_layer(radius, key, &canopy).expect("every cell is there");
             let reach = crate::summary::MESH_REGION_RADIUS + 1;
             let cells = 3 * reach * reach + 3 * reach + 1;
             assert_eq!(layer.iter().filter(|&&t| t != 0).count(), cells as usize * PARTS, "r={radius}");
             let at = |column: i32, row: i32| layer[(row * PARTS_LAYER_SIDE as i32 + column) as usize];
             assert_eq!(at(PARTS_LAYER_HALF, PARTS_LAYER_HALF), wood.bits());
             assert_eq!(at(PARTS_LAYER_HALF + 1, PARTS_LAYER_HALF + 1), brush.bits());
+            assert_eq!(at(PARTS_LAYER_HALF + 1, PARTS_LAYER_HALF), wood.bits() | PART_WET, "part 1 is one finer step along q");
             let hole = |q: i32, r: i32| if (q, r) == (centre.0 + 10, centre.1) { None } else { canopy(q, r) };
-            assert!(parts_layer(radius, key, &hole).is_none(), "a ring cell without its canopy");
+            assert!(parts_layer(radius, key, &hole).is_none(), "a ring cell that is not there");
         }
     }
 

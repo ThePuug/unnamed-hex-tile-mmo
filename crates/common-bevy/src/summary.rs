@@ -11,7 +11,7 @@ use crate::geometry::flat_top_tile_center;
 
 /// The sampling rule is shared with every producer that has no Bevy, the
 /// world viewer among them.
-pub use common::summary::{part_offsets, sampled_by, select_center_water, select_center_z, summarize, SummaryCell, SummarySource, TileSample, LOD_LEVELS, PARTS};
+pub use common::summary::{part_offsets, sampled_by, select_center_z, summarize, wet_parts, SummaryCell, SummarySource, TileSample, LOD_LEVELS, PARTS};
 
 // ── Constants ──
 

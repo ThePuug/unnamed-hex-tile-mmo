@@ -896,12 +896,14 @@ fn render_water_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
 }
 
 /// The viewport as one of the client's distance bands draws it: summaries
-/// of radius `r`, each the height and water the seven-sample rule selects
-/// from tiles read through the whole stack, on the elevation ramp with
-/// water in blue by depth. What the band costs is logged: the first tile,
-/// which opens the cells, and then the summaries, each seven tiles.
+/// of radius `r`, each the height the summary rule selects from tiles read
+/// through the whole stack, on the elevation ramp, and blue where its
+/// parts' wetness, blended across the triangle of parts around a point,
+/// crosses half, as the terrain paints it. What
+/// the band costs is logged: the first tile, which opens the cells, and
+/// then the summaries, each nine tiles.
 fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8> {
-    use common::summary::{scale as summary_scale, summarize};
+    use common::summary::{part_offsets, scale as summary_scale, summarize};
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
     let s = summary_scale(r) as f64;
@@ -928,7 +930,7 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
         .map(|&(sq, sr)| ((sq, sr), summarize(r, sq, sr, composite).expect("the composite has every tile")))
         .collect();
     let took = t.elapsed();
-    let wet = summaries.values().filter(|c| c.water.is_some()).count();
+    let wet = summaries.values().filter(|c| c.wet != 0).count();
     let wooded = summaries.values().filter(|c| c.canopy.iter().any(|part| !part.is_empty())).count();
     log::info!(
         "LoD r={r} (summaries {s} tiles wide): {} summaries, {} of them water, {} wooded, from {} samples; first tile {:.0} ms, then {:.2} s wall over every core ({:.0} µs per summary, {:.1} per sample)",
@@ -943,17 +945,46 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
     );
 
     let summaries = &summaries;
+    // Whether the part at a point of the finer lattice is wet: the summary
+    // holding that point as a part says. The tiles' parts are the tiles.
+    let step = (s as i32) / 3;
+    let part_wet = |fq: i32, fr: i32| -> f64 {
+        let wet = part_offsets(r).into_iter().enumerate().any(|(part, (oq, or))| {
+            let (pq, pr) = (fq - oq / step, fr - or / step);
+            pq.rem_euclid(3) == 0
+                && pr.rem_euclid(3) == 0
+                && summaries.get(&(pq.div_euclid(3), pr.div_euclid(3))).is_some_and(|c| c.wet & (1 << part) != 0)
+        });
+        wet as u8 as f64
+    };
+    // The terrain shader's `wet_between`: the point in axial units of the
+    // finer lattice, and the three parts of the triangle it lies in.
+    let wet_at = |wx: f64, wy: f64| -> bool {
+        if step == 0 {
+            return summaries[&cell_of(wx, wy)].wet != 0;
+        }
+        let rr = wy * 2.0 / 3f64.sqrt();
+        let (q, rr) = ((wx - rr / 2.0) / step as f64, rr / step as f64);
+        let (bq, br) = (q.floor(), rr.floor());
+        let (fx, fy) = (q - bq, rr - br);
+        let (bq, br) = (bq as i32, br as i32);
+        let wet = if fx + fy < 1.0 {
+            part_wet(bq, br) * (1.0 - fx - fy) + part_wet(bq + 1, br) * fx + part_wet(bq, br + 1) * fy
+        } else {
+            part_wet(bq + 1, br + 1) * (fx + fy - 1.0) + part_wet(bq + 1, br) * (1.0 - fy) + part_wet(bq, br + 1) * (1.0 - fx)
+        };
+        wet >= 0.5
+    };
     (0..h)
         .into_par_iter()
         .flat_map(|py| {
             (0..w)
                 .flat_map(move |px| {
-                    let cell = summaries[&cell_of(origin_x + px as f64 * scale, origin_y + py as f64 * scale)];
-                    let c = match cell.water {
-                        // Depth on the water field's blue ramp: pale at a
-                        // step deep, deep blue at 30.
-                        Some(surface) => lerp_rgb((0.55, 0.75, 0.95), (0.05, 0.15, 0.45), ((surface - cell.z) as f64 / 30.0).clamp(0.0, 1.0)),
-                        None => canopy_color(orogen_ramp(cell.z as f64), &cell.canopy),
+                    let (wx, wy) = (origin_x + px as f64 * scale, origin_y + py as f64 * scale);
+                    let cell = summaries[&cell_of(wx, wy)];
+                    let c = match wet_at(wx, wy) {
+                        true => (0.35, 0.6, 0.9),
+                        false => canopy_color(orogen_ramp(cell.z as f64), &cell.canopy),
                     };
                     [(c.0 * 255.0).min(255.0) as u8, (c.1 * 255.0).min(255.0) as u8, (c.2 * 255.0).min(255.0) as u8]
                 })

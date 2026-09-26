@@ -1089,15 +1089,6 @@ fn collect_and_build_summary_mesh(
     // rule reads them; nothing until the tiles are all there.
     let sampled = |level: u32, sq: i32, sr: i32| common_bevy::summary::summarize(level, sq, sr, map);
 
-    // The water over the region, built once the ground is: at r = 0 the
-    // map's per-tile surface, above it the surface each summary carries.
-    let with_water = |smr: &common_bevy::summary_mesh::SummaryMeshResult, water: &dyn Fn(i32, i32) -> Option<i32>| {
-        let mut result = smr_to_result(smr);
-        let w = common_bevy::summary_mesh::build_water_mesh_region(radius, region_key, water);
-        result.water = crate::resources::WaterGeometry { positions: w.positions, normals: w.normals, indices: w.indices };
-        result
-    };
-
     // The builder also reads the ring of cells around the region, which
     // belong to neighbouring regions, and the coarser level's cells under
     // it: cache lookups are per region, memoised across the build.
@@ -1134,46 +1125,40 @@ fn collect_and_build_summary_mesh(
 
     // The cover stands with the ground: placed here from the map's covers
     // at every level the map reaches, spawned with the ground once the kit
-    // is loaded.
+    // is loaded. The tiles' water is a surface of its own over each tile;
+    // a summary's is painted on its ground from its parts.
     if radius == 0 {
         let tile_water = |q: i32, r: i32| -> Option<i32> { map.water_at(q, r) };
         return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse, None)
             .as_ref()
             .map_or(empty, |smr| {
-                let mut result = with_water(smr, &tile_water);
+                let mut result = smr_to_result(smr);
+                let w = common_bevy::summary_mesh::build_water_mesh_region(0, region_key, &tile_water);
+                result.water = crate::resources::WaterGeometry { positions: w.positions, normals: w.normals, indices: w.indices };
                 result.cover = crate::plugins::cover::place_cover(0, region_key, smr.mesh_origin, map, &height);
                 result
             });
     }
 
-    // Water follows the height's provenance: the cached surface where the
-    // cell was sent, else the same seven samples over the map's tiles, and
-    // nothing where the tiles are not all there.
-    let summary_water = |sq: i32, sr: i32| -> Option<i32> {
-        match cached(radius, sq, sr) {
-            Some(cell) => cell.water,
-            None => sampled(radius, sq, sr)?.water,
-        }
-    };
-
-    // The level's canopy follows the height's provenance too. Every level
-    // above the tiles but the last carries it on the ground as a colour —
-    // the first stands its trees on that ground as well, from the map's
-    // own covers, which reach exactly as far as that level does, so the
-    // ground under the trees is the ground past them and the trees are
-    // the tiles' own — and the material lays crowns on it or not by level.
-    let summary_canopy = |sq: i32, sr: i32| -> Option<[common::Canopy; common_bevy::summary::PARTS]> {
-        cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr)).map(|c| c.canopy)
-    };
+    // The level's parts follow the height's provenance: the cached summary
+    // where it was sent, else the same reading over the map's tiles. Every
+    // level above the tiles but the last carries its canopy and its water
+    // on the ground as a colour — the first stands its trees on that
+    // ground as well, from the map's own covers, which reach exactly as
+    // far as that level does, so the ground under the trees is the ground
+    // past them and the trees are the tiles' own — and the material lays
+    // crowns on it or not by level.
+    let summary = |sq: i32, sr: i32| cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr));
+    let summary_canopy = |sq: i32, sr: i32| -> Option<[common::Canopy; common_bevy::summary::PARTS]> { summary(sq, sr).map(|c| c.canopy) };
     let last = *common_bevy::summary::LOD_LEVELS.last().expect("a ladder");
     let canopied: Option<&dyn Fn(i32, i32) -> Option<[common::Canopy; common_bevy::summary::PARTS]>> = (radius != last).then_some(&summary_canopy);
 
     common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse, canopied)
         .as_ref()
         .map_or(empty, |smr| {
-            let mut result = with_water(smr, &summary_water);
-            if let Some(canopy) = canopied {
-                result.parts = common_bevy::summary_mesh::parts_layer(radius, region_key, canopy).unwrap_or_default();
+            let mut result = smr_to_result(smr);
+            if canopied.is_some() {
+                result.parts = common_bevy::summary_mesh::parts_layer(radius, region_key, &summary).unwrap_or_default();
             }
             if radius == common_bevy::summary::LOD_LEVELS[1] {
                 result.cover = crate::plugins::cover::place_cover(radius, region_key, smr.mesh_origin, map, &height);

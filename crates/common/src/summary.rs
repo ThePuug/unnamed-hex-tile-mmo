@@ -25,13 +25,15 @@ pub struct TileSample {
     pub cover: Cover,
 }
 
-/// One summary: the height, the water surface over it or None where it is
-/// dry, the canopy of each of its [`part_offsets`] parts, and the outcrop.
-/// What every cache holds and the wire carries.
+/// One summary: the height, which of its [`part_offsets`] parts stand
+/// under water, the canopy of each part, and the outcrop. What every cache
+/// holds and the wire carries.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummaryCell {
     pub z: i32,
-    pub water: Option<i32>,
+    /// A bit to each part in [`part_offsets`] order, set where the part's
+    /// tile stands under water above the sea.
+    pub wet: u16,
     pub canopy: [Canopy; PARTS],
     pub outcrop: Outcrop,
 }
@@ -143,11 +145,13 @@ pub fn sampled_by(r: u32, q: i32, rr: i32) -> Option<(i32, i32)> {
 }
 
 /// The summary at `(sq, sr)` on the lattice of radius `r`, read from its
-/// [`part_offsets`] tiles: the height by [`select_center_z`], the water by
-/// [`select_center_water`] and the outcrop by [`Outcrop::of`] from the
-/// seven samples, and each part's canopy by [`Canopy::of`] from its own
-/// tile. None unless the source has all nine (the client's map while chunks
-/// stream in).
+/// [`part_offsets`] tiles: the water by [`wet_parts`] and each part's
+/// canopy by [`Canopy::of`] from its own tile, and the height and the
+/// outcrop by [`select_center_z`] and [`Outcrop::of`] from the seven
+/// samples, unless the summary holds water: then it stands at the highest
+/// ground its water covers, so the water is drawn on the ground and runs
+/// down its valley on the ground's own corners. None unless the source has
+/// all nine (the client's map while chunks stream in).
 pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Option<SummaryCell> {
     let (cq, cr) = center_tile(r, sq, sr);
     let mut read = [None; PARTS];
@@ -157,27 +161,33 @@ pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Optio
     let parts: [TileSample; PARTS] = read.map(|sample| sample.expect("every part was read"));
     let samples = &parts[..SAMPLES];
     let covers: Vec<Cover> = samples.iter().map(|s| s.cover).collect();
+    let (wet, surface) = wet_parts(&parts);
+    let z = match surface {
+        Some(surface) => surface - 1,
+        None => select_center_z(&samples.iter().map(|s| s.z).collect::<Vec<_>>()),
+    };
     Some(SummaryCell {
-        z: select_center_z(&samples.iter().map(|s| s.z).collect::<Vec<_>>()),
-        water: select_center_water(&samples.iter().map(|s| s.water).collect::<Vec<_>>()),
+        z,
+        wet,
         canopy: parts.map(|part| Canopy::of(part.cover)),
         outcrop: Outcrop::of(&covers),
     })
 }
 
-/// The water surface a summary carries: the surface more than half of
-/// the samples share, or None. A lake wider than the summary keeps its
-/// surface; a river narrower than it vanishes into its valley, the way a
-/// valley narrower than a summary vanishes under the height rule.
-pub fn select_center_water(ws: &[Option<i32>]) -> Option<i32> {
-    let mut best: Option<(i32, usize)> = None;
-    for &w in ws.iter().flatten() {
-        let n = ws.iter().filter(|&&x| x == Some(w)).count();
-        if best.map_or(true, |(_, bn)| n > bn) {
-            best = Some((w, n));
-        }
+/// Which of a summary's parts stand under water above the sea, a bit to
+/// each, and the lowest surface over them, or None where none does. A
+/// river is drawn wherever it crosses a part, however narrow the summary
+/// would make it; a surface stepping down the river inside one summary
+/// gives the summary its lowest step. The sea is one plane drawn to the
+/// horizon, so a part under it alone is not wet here.
+pub fn wet_parts(parts: &[TileSample; PARTS]) -> (u16, Option<i32>) {
+    let mut wet = 0;
+    let mut lowest: Option<i32> = None;
+    for (i, surface) in parts.iter().enumerate().filter_map(|(i, p)| p.water.filter(|&w| w > 0).map(|w| (i, w))) {
+        wet |= 1 << i;
+        lowest = Some(lowest.map_or(surface, |l| l.min(surface)));
     }
-    best.filter(|&(_, n)| 2 * n > ws.len()).map(|(w, _)| w)
+    (wet, lowest)
 }
 
 /// Select center_z using extremal deviation from the mean: the tile
@@ -217,23 +227,27 @@ mod tests {
     /// rules' answers from the seven samples, and a canopy at every part.
     #[test]
     fn a_summary_needs_every_part() {
-        struct Flat(Option<(i32, i32)>);
+        /// Ground at 5 with a peak at 25 in the middle, missing one tile,
+        /// and water at 9 over one tile off the peak where it is wet.
+        struct Flat(Option<(i32, i32)>, bool);
         impl SummarySource for Flat {
             fn sample(&self, q: i32, r: i32) -> Option<TileSample> {
                 if self.0 == Some((q, r)) {
                     return None;
                 }
                 let cover = Cover::NONE.with(0, Content::Pine);
-                Some(TileSample { z: 5 + (q == 0 && r == 0) as i32 * 20, water: Some(9), cover })
+                let water = (self.1 && (q, r) == (1, 0)).then_some(9);
+                Some(TileSample { z: 5 + (q == 0 && r == 0) as i32 * 20, water, cover })
             }
         }
         for (dq, dr) in [sample_offsets(1)[3], part_offsets(1)[PARTS - 1]] {
-            assert_eq!(summarize(1, 0, 0, &Flat(Some((dq, dr)))), None);
+            assert_eq!(summarize(1, 0, 0, &Flat(Some((dq, dr)), false)), None);
         }
-        let cell = summarize(1, 0, 0, &Flat(None)).expect("every part is there");
-        assert_eq!(cell.z, 25, "the peak survives");
-        assert_eq!(cell.water, Some(9));
+        let cell = summarize(1, 0, 0, &Flat(None, false)).expect("every part is there");
+        assert_eq!((cell.z, cell.wet), (25, 0), "the peak survives");
         assert_eq!(cell.canopy, [Canopy::of(Cover::NONE.with(0, Content::Pine)); PARTS]);
+        let cell = summarize(1, 0, 0, &Flat(None, true)).expect("every part is there");
+        assert_eq!((cell.z, cell.wet), (8, 1 << 1), "the summary stands under its water");
     }
 
     /// Every tile a summary samples names that summary, and no other tile
@@ -264,16 +278,19 @@ mod tests {
         assert_eq!(select_center_z(&[42]), 42);
     }
 
-    /// Water needs a majority of the samples at one surface: four of seven
-    /// carry it, three do not, and four split between two surfaces do not.
+    /// Every part under water above the sea is wet, however few, and the
+    /// lowest of their surfaces is the summary's; the sea alone wets none.
     #[test]
-    fn select_center_water_needs_a_majority_at_one_surface() {
-        let s = Some(5);
-        assert_eq!(select_center_water(&[s, s, s, s, None, None, None]), Some(5));
-        assert_eq!(select_center_water(&[s, s, s, None, None, None, None]), None);
-        assert_eq!(select_center_water(&[s, s, Some(6), Some(6), None, None, None]), None);
-        assert_eq!(select_center_water(&[s, s, s, s, Some(6), Some(6), Some(6)]), Some(5));
-        assert_eq!(select_center_water(&[None; 7]), None);
+    fn a_part_under_water_is_wet() {
+        let tile = |water| TileSample { z: 3, water, cover: Cover::NONE };
+        let mut parts = [tile(None); PARTS];
+        assert_eq!(wet_parts(&parts), (0, None));
+        parts[8] = tile(Some(6));
+        assert_eq!(wet_parts(&parts), (1 << 8, Some(6)));
+        parts[2] = tile(Some(5));
+        assert_eq!(wet_parts(&parts), (1 << 8 | 1 << 2, Some(5)));
+        parts[0] = tile(Some(0));
+        assert_eq!(wet_parts(&parts), (1 << 8 | 1 << 2, Some(5)), "the sea is the plane's");
     }
 
     #[test]
