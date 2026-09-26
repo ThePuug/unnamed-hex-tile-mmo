@@ -83,7 +83,7 @@ pub enum PositioningStrategy {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnemyArchetype {
     #[default]
-    Berserker,   // Highland - Aggressive melee burst (Might, a tenth Vitality)
+    Berserker,   // Highland - Aggressive melee burst (Might, a third Vitality)
     Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
     Kiter,       // Inland (flat) - Ranged harassment (Presence, a tenth Vitality)
     Defender,    // Coast - Reactive counter-attacks (pure Grace)
@@ -188,7 +188,7 @@ pub struct NpcBuild {
 
 // Archetype builds, balanced against one another in the server's arena
 static BERSERKER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::MightGraceAxis, weight: 9, direction: -1 },
+    Allocation { field: AttributeField::MightGraceAxis, weight: 2, direction: -1 },
     Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: -1 },
 ];
 static JUGGERNAUT_BUILD: &[Allocation] = &[

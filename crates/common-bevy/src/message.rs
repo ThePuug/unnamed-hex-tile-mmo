@@ -161,7 +161,7 @@ pub enum AbilityType {
 }
 
 /// Share of the target's mitigation a Lunge strikes past
-const LUNGE_PIERCE: f32 = 0.42;
+const LUNGE_PIERCE: f32 = 0.25;
 
 impl AbilityType {
     /// Share of the target's Toughness mitigation this ability's damage

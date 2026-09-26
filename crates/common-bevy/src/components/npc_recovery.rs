@@ -13,8 +13,8 @@ use std::time::Duration;
 use crate::spatial_difficulty::EnemyArchetype;
 
 /// Per-archetype delay ranges (milliseconds)
-const BERSERKER_RECOVERY_MIN_MS: u64 = 3000;
-const BERSERKER_RECOVERY_MAX_MS: u64 = 7000;
+const BERSERKER_RECOVERY_MIN_MS: u64 = 7000;
+const BERSERKER_RECOVERY_MAX_MS: u64 = 11000;
 
 const JUGGERNAUT_RECOVERY_MIN_MS: u64 = 3000;
 const JUGGERNAUT_RECOVERY_MAX_MS: u64 = 5000;
