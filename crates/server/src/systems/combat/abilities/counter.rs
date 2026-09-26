@@ -16,7 +16,8 @@ const REFLECT_SHARE: f32 = 0.2;
 /// Reactive counter-attack. Costs 30 stamina and clears as many threats from
 /// the front of the queue as the window holds. Each cleared threat goes back
 /// to its living source wherever it stands, at `TECHNIQUE_SHARE` of Technique
-/// plus `REFLECT_SHARE` of the threat's damage.
+/// plus `REFLECT_SHARE` of the threat's damage, and lands at once: a
+/// reflection never enters the source's queue, so it cannot be countered.
 pub fn handle_counter(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -159,10 +160,6 @@ pub fn handle_counter(
 
             let reflected_damage = caster_attrs.technique() * TECHNIQUE_SHARE + threat.damage * REFLECT_SHARE;
 
-            // Get target's queue and attributes
-            let Ok((_, mut target_queue)) = queue_query.get_mut(threat.source) else {
-                continue;
-            };
             let Ok(target_attrs) = attrs_query.get(threat.source) else {
                 continue;
             };
@@ -178,15 +175,9 @@ pub fn handle_counter(
                 now,                          // Current time
             );
 
-            // Add to target's queue
-            common_bevy::systems::combat::queue::insert_threat(&mut target_queue, reflected_threat, now);
-
-            // Broadcast threat insertion
-            writer.write(Do {
-                event: GameEvent::InsertThreat {
-                    ent: threat.source,
-                    threat: reflected_threat,
-                },
+            // A reflection lands on impact, never queued, so a counter cannot be countered back
+            commands.trigger(Try {
+                event: GameEvent::ResolveThreat { ent: threat.source, threat: reflected_threat },
             });
         }
 
