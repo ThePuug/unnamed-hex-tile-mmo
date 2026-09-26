@@ -688,7 +688,7 @@ impl ActorAttributes {
     /// Moderate scaling: preserves danger from equal-level foes
     pub fn hp_level_multiplier(&self) -> f32 {
         const K: f32 = 0.10;
-        const P: f32 = 1.75;
+        const P: f32 = 2.0;
         Self::level_multiplier(self.total_level(), K, P)
     }
 
