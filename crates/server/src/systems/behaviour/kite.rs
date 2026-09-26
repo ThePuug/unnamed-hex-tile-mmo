@@ -345,7 +345,9 @@ pub fn kite(
 
                     let dt_ms = dt.delta().as_millis() as i16;
                     let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-                    let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
+                    // Step toward the chosen tile while still facing the target, so a fleeing Kiter backs away
+                    let stride = Heading::between(&map, start, *next_tile).unwrap_or(*npc_heading);
+                    let (offset, airtime) = physics::apply(*npc_position, stride, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
 
                     npc_position.offset = offset;
                     npc_airtime.state = airtime;
@@ -379,7 +381,9 @@ pub fn kite(
 
                     let dt_ms = dt.delta().as_millis() as i16;
                     let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
-                    let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
+                    // Step toward the chosen tile while still facing the target, so a fleeing Kiter backs away
+                    let stride = Heading::between(&map, start, *next_tile).unwrap_or(*npc_heading);
+                    let (offset, airtime) = physics::apply(*npc_position, stride, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
 
                     npc_position.offset = offset;
                     npc_airtime.state = airtime;
