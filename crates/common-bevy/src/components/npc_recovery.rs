@@ -13,14 +13,17 @@ use std::time::Duration;
 use crate::spatial_difficulty::EnemyArchetype;
 
 /// Per-archetype delay ranges (milliseconds)
-const BERSERKER_RECOVERY_MIN_MS: u64 = 1000;
-const BERSERKER_RECOVERY_MAX_MS: u64 = 2000;
+const BERSERKER_RECOVERY_MIN_MS: u64 = 3000;
+const BERSERKER_RECOVERY_MAX_MS: u64 = 7000;
 
 const JUGGERNAUT_RECOVERY_MIN_MS: u64 = 3000;
 const JUGGERNAUT_RECOVERY_MAX_MS: u64 = 5000;
 
-const DEFENDER_RECOVERY_MIN_MS: u64 = 4000;
-const DEFENDER_RECOVERY_MAX_MS: u64 = 6000;
+const KITER_RECOVERY_MIN_MS: u64 = 500;
+const KITER_RECOVERY_MAX_MS: u64 = 2500;
+
+const DEFENDER_RECOVERY_MIN_MS: u64 = 2000;
+const DEFENDER_RECOVERY_MAX_MS: u64 = 4000;
 
 /// An NPC's delay before its next signature ability.
 ///
@@ -68,13 +71,12 @@ impl NpcRecovery {
 }
 
 /// Get the delay range for an archetype.
-/// Kiter returns (0, 0) — it has no signature ability.
 pub fn recovery_range(archetype: EnemyArchetype) -> (u64, u64) {
     match archetype {
         EnemyArchetype::Berserker => (BERSERKER_RECOVERY_MIN_MS, BERSERKER_RECOVERY_MAX_MS),
         EnemyArchetype::Juggernaut => (JUGGERNAUT_RECOVERY_MIN_MS, JUGGERNAUT_RECOVERY_MAX_MS),
         EnemyArchetype::Defender => (DEFENDER_RECOVERY_MIN_MS, DEFENDER_RECOVERY_MAX_MS),
-        EnemyArchetype::Kiter => (0, 0),
+        EnemyArchetype::Kiter => (KITER_RECOVERY_MIN_MS, KITER_RECOVERY_MAX_MS),
     }
 }
 
@@ -93,8 +95,9 @@ mod tests {
         let mut recovery = NpcRecovery::for_archetype(EnemyArchetype::Berserker);
         let now = Duration::from_secs(10);
         recovery.arm(now);
-        assert!(!recovery.is_ready(now + Duration::from_millis(999)));
-        assert!(recovery.is_ready(now + Duration::from_millis(2000)));
+        let (min, max) = recovery_range(EnemyArchetype::Berserker);
+        assert!(!recovery.is_ready(now + Duration::from_millis(min - 1)));
+        assert!(recovery.is_ready(now + Duration::from_millis(max)));
     }
 
     #[test]
@@ -122,15 +125,16 @@ mod tests {
         let now = Duration::from_secs(10);
         recovery.arm(now);
         let delay = recovery.ready_at.unwrap() - now;
-        assert!(delay.as_millis() >= 3000 && delay.as_millis() <= 5000);
+        let (min, max) = recovery_range(EnemyArchetype::Juggernaut);
+        assert!(delay.as_millis() >= min as u128 && delay.as_millis() <= max as u128);
     }
 
     #[test]
-    fn archetype_recovery_ranges() {
-        assert_eq!(recovery_range(EnemyArchetype::Berserker), (1000, 2000));
-        assert_eq!(recovery_range(EnemyArchetype::Juggernaut), (3000, 5000));
-        assert_eq!(recovery_range(EnemyArchetype::Defender), (4000, 6000));
-        assert_eq!(recovery_range(EnemyArchetype::Kiter), (0, 0));
+    fn archetype_recovery_ranges_are_ordered() {
+        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender] {
+            let (min, max) = recovery_range(archetype);
+            assert!(min <= max, "{archetype:?} delay range runs backwards");
+        }
     }
 
     #[test]

@@ -123,13 +123,10 @@ pub fn resolve_threat(
             // Scan for strongest Dominance aura affecting this entity
             let (max_dominance, dominant_level) = damage_calc::find_max_dominance_in_range(*ent, &loc_query, &all_attrs);
 
-            // Apply passive mitigation (unified for all damage types)
-            let final_damage = damage_calc::apply_passive_modifiers(
-                threat.damage,
-                attrs,
-                max_dominance,
-                dominant_level,
-            );
+            // Apply passive mitigation (unified for all damage types), less what the ability pierces
+            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_dominance, dominant_level);
+            let pierce = threat.ability.map_or(0.0, AbilityType::pierce);
+            let final_damage = mitigated + (threat.damage - mitigated) * pierce;
 
             // Apply damage to health
             health.state = (health.state - final_damage).max(0.0);

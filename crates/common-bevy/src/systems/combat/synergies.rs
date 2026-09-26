@@ -55,7 +55,7 @@ pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
         AbilityType::Counter => Some(SynergyTrigger::Mitigate),  // Mitigate type
         AbilityType::Deflect => Some(SynergyTrigger::Defensive),
         AbilityType::Kick => Some(SynergyTrigger::Kick),        // Kick: self-synergy
-        AbilityType::AutoAttack => None, // No synergies
+        AbilityType::AutoAttack | AbilityType::Charge | AbilityType::Disengage => None, // No synergies
     }
 }
 

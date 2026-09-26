@@ -7,10 +7,16 @@ use common_bevy::{
 };
 use crate::resources::RunTime;
 
-/// Reactive counter-attack. Costs 30 stamina and clears every visible threat in
-/// the reaction window. Reflection is gated on adjacency — only sources exactly
-/// 1 hex away take damage — at (20% technique) + (30% threat damage) per threat,
-/// capped at 2× technique.
+/// Share of Technique each countered threat strikes its source for, whatever it carried.
+const TECHNIQUE_SHARE: f32 = 0.5;
+
+/// Share of each countered threat's damage that Counter sends back.
+const REFLECT_SHARE: f32 = 0.2;
+
+/// Reactive counter-attack. Costs 30 stamina and clears as many threats from
+/// the front of the queue as the window holds. Each cleared threat goes back
+/// to its living source wherever it stands, at `TECHNIQUE_SHARE` of Technique
+/// plus `REFLECT_SHARE` of the threat's damage.
 pub fn handle_counter(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -66,24 +72,21 @@ pub fn handle_counter(
             }
         }
 
-        // Get caster's attributes and location
+        // Get caster's attributes
         let Ok(caster_attrs) = attrs_query.get(*ent) else {
             continue;
         };
 
-        let caster_loc = {
-            let Ok((loc, _)) = queue_query.get(*ent) else {
-                // No ReactionQueue component - can't use counter
-                writer.write(Do {
-                    event: GameEvent::AbilityFailed {
-                        ent: *ent,
-                        reason: AbilityFailReason::NoTargets,
-                    },
-                });
-                continue;
-            };
-            *loc
-        };
+        if queue_query.get(*ent).is_err() {
+            // No ReactionQueue component - can't use counter
+            writer.write(Do {
+                event: GameEvent::AbilityFailed {
+                    ent: *ent,
+                    reason: AbilityFailReason::NoTargets,
+                },
+            });
+            continue;
+        }
 
         // Get all visible window threats to counter (collect and drop borrow)
         let (visible_threats, _window_size) = {
@@ -109,12 +112,9 @@ pub fn handle_counter(
             continue;
         };
 
-        // Helper to check if we can reflect to a target
+        // A reflection needs a living source to go back to
         let can_reflect_to = |target: Entity| -> bool {
-            respawn_query.get(target).is_err()
-                && entity_query.get(target).ok().map(|(_, loc)| {
-                    caster_loc.flat_distance(loc) as u32 == 1
-                }).unwrap_or(false)
+            respawn_query.get(target).is_err() && entity_query.get(target).is_ok()
         };
 
         // Check stamina (30 cost)
@@ -153,17 +153,11 @@ pub fn handle_counter(
         use common_bevy::systems::combat::queue::create_threat;
 
         for threat in &visible_threats {
-            // Only reflect if target is alive and adjacent
             if !can_reflect_to(threat.source) {
                 continue;
             }
 
-            // Calculate reflected damage for this specific threat (scales with Technique, not Force)
-            let base_reflect = caster_attrs.technique() * 0.2;  // 20% technique minimum
-            let threat_bonus = threat.damage * 0.3;              // 30% of countered damage
-            let uncapped = base_reflect + threat_bonus;
-            let cap = caster_attrs.technique() * 2.0;            // Cap at 2× defender's technique
-            let reflected_damage = uncapped.min(cap);
+            let reflected_damage = caster_attrs.technique() * TECHNIQUE_SHARE + threat.damage * REFLECT_SHARE;
 
             // Get target's queue and attributes
             let Ok((_, mut target_queue)) = queue_query.get_mut(threat.source) else {

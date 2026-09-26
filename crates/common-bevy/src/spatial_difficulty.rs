@@ -83,10 +83,10 @@ pub enum PositioningStrategy {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnemyArchetype {
     #[default]
-    Berserker,   // Highland - Aggressive melee burst (pure Might)
+    Berserker,   // Highland - Aggressive melee burst (Might, a tenth Vitality)
     Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
-    Kiter,       // Inland (flat) - Ranged harassment (pure Presence)
-    Defender,    // Coast - Reactive counter-attacks (pure Focus)
+    Kiter,       // Inland (flat) - Ranged harassment (Presence, a tenth Vitality)
+    Defender,    // Coast - Reactive counter-attacks (pure Grace)
 }
 
 impl EnemyArchetype {
@@ -117,8 +117,8 @@ impl EnemyArchetype {
     pub fn ability(&self) -> Option<AbilityType> {
         match self {
             EnemyArchetype::Berserker => Some(AbilityType::Lunge),
-            EnemyArchetype::Juggernaut => Some(AbilityType::Overpower),
-            EnemyArchetype::Kiter => None,  // Kites + ranged auto-attack only
+            EnemyArchetype::Juggernaut => Some(AbilityType::Charge),
+            EnemyArchetype::Kiter => Some(AbilityType::Disengage),
             EnemyArchetype::Defender => Some(AbilityType::Counter),
         }
     }
@@ -186,18 +186,20 @@ pub struct NpcBuild {
     pub instinct_presence_shift: i8,
 }
 
-// Single-stat build constants
+// Archetype builds, balanced against one another in the server's arena
 static BERSERKER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::MightGraceAxis, weight: 1, direction: -1 },
+    Allocation { field: AttributeField::MightGraceAxis, weight: 9, direction: -1 },
+    Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: -1 },
 ];
 static JUGGERNAUT_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: -1 },
 ];
 static KITER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::InstinctPresenceAxis, weight: 1, direction: 1 },
+    Allocation { field: AttributeField::InstinctPresenceAxis, weight: 9, direction: 1 },
+    Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: -1 },
 ];
 static DEFENDER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: 1 },
+    Allocation { field: AttributeField::MightGraceAxis, weight: 1, direction: 1 },
 ];
 
 impl EnemyArchetype {
@@ -287,10 +289,10 @@ fn distribute_points(level: u8, allocations: &[Allocation]) -> [u8; 6] {
 /// # Examples
 /// ```
 /// # use common_bevy::spatial_difficulty::*;
-/// let attrs = calculate_enemy_attributes(10, EnemyArchetype::Berserker);
-/// // Level 10 Berserker: all 10 points to MightGraceAxis, direction -1
-/// assert_eq!(attrs.might_grace_axis(), -10);
-/// assert_eq!(attrs.vitality_focus_axis(), 0);
+/// let attrs = calculate_enemy_attributes(10, EnemyArchetype::Juggernaut);
+/// // Level 10 Juggernaut: all 10 points to VitalityFocusAxis, direction -1
+/// assert_eq!(attrs.might_grace_axis(), 0);
+/// assert_eq!(attrs.vitality_focus_axis(), -10);
 /// assert_eq!(attrs.instinct_presence_axis(), 0);
 /// ```
 pub fn calculate_enemy_attributes(
@@ -375,8 +377,8 @@ mod tests {
     #[test]
     fn test_archetype_abilities() {
         assert_eq!(EnemyArchetype::Berserker.ability(), Some(AbilityType::Lunge));
-        assert_eq!(EnemyArchetype::Juggernaut.ability(), Some(AbilityType::Overpower));
-        assert_eq!(EnemyArchetype::Kiter.ability(), None);
+        assert_eq!(EnemyArchetype::Juggernaut.ability(), Some(AbilityType::Charge));
+        assert_eq!(EnemyArchetype::Kiter.ability(), Some(AbilityType::Disengage));
         assert_eq!(EnemyArchetype::Defender.ability(), Some(AbilityType::Counter));
     }
 
@@ -450,39 +452,18 @@ mod tests {
     }
 
     #[test]
-    fn test_berserker_single_stat() {
-        // Berserker: pure Might (MightGraceAxis, direction -1)
-        let attrs = calculate_enemy_attributes(10, EnemyArchetype::Berserker);
-        assert_eq!(attrs.might_grace_axis(), -10);
-        assert_eq!(attrs.vitality_focus_axis(), 0);
-        assert_eq!(attrs.instinct_presence_axis(), 0);
-    }
-
-    #[test]
-    fn test_juggernaut_single_stat() {
-        // Juggernaut: pure Vitality (VitalityFocusAxis, direction -1)
-        let attrs = calculate_enemy_attributes(10, EnemyArchetype::Juggernaut);
-        assert_eq!(attrs.might_grace_axis(), 0);
-        assert_eq!(attrs.vitality_focus_axis(), -10);
-        assert_eq!(attrs.instinct_presence_axis(), 0);
-    }
-
-    #[test]
-    fn test_kiter_single_stat() {
-        // Kiter: pure Presence (InstinctPresenceAxis, direction +1)
-        let attrs = calculate_enemy_attributes(10, EnemyArchetype::Kiter);
-        assert_eq!(attrs.might_grace_axis(), 0);
-        assert_eq!(attrs.vitality_focus_axis(), 0);
-        assert_eq!(attrs.instinct_presence_axis(), 10);
-    }
-
-    #[test]
-    fn test_defender_single_stat() {
-        // Defender: pure Focus (VitalityFocusAxis, direction +1)
-        let attrs = calculate_enemy_attributes(10, EnemyArchetype::Defender);
-        assert_eq!(attrs.might_grace_axis(), 0);
-        assert_eq!(attrs.vitality_focus_axis(), 10);
-        assert_eq!(attrs.instinct_presence_axis(), 0);
+    fn test_each_archetype_leads_with_its_attribute() {
+        for (archetype, lead) in [
+            (EnemyArchetype::Berserker, 0),
+            (EnemyArchetype::Juggernaut, 2),
+            (EnemyArchetype::Kiter, 5),
+            (EnemyArchetype::Defender, 1),
+        ] {
+            let attrs = calculate_enemy_attributes(10, archetype);
+            let values = [attrs.might(), attrs.grace(), attrs.vitality(), attrs.focus(), attrs.instinct(), attrs.presence()];
+            let top = (0..6).max_by_key(|&i| values[i]).unwrap();
+            assert_eq!(top, lead, "{archetype:?} should lead with attribute {lead}, got {values:?}");
+        }
     }
 
     #[test]
@@ -502,8 +483,8 @@ mod tests {
     }
 
     #[test]
-    fn test_single_stat_no_cunning() {
-        // Single-stat builds should produce 0 cunning (no instinct investment)
+    fn test_no_archetype_invests_in_instinct() {
+        // No build puts points in Instinct, so no archetype has Cunning
         let attrs = calculate_enemy_attributes(10, EnemyArchetype::Berserker);
         assert_eq!(attrs.cunning(), 0);
 
@@ -513,16 +494,18 @@ mod tests {
 
     #[test]
     fn test_all_points_allocated() {
-        // Total absolute axis + spectrum values should equal level for single-stat builds
-        for level in [1, 5, 10, 15, 20] {
-            let attrs = calculate_enemy_attributes(level, EnemyArchetype::Berserker);
+        // Total absolute axis + spectrum values should equal level for every build
+        for (level, archetype) in [1, 5, 10, 15, 20].into_iter().flat_map(|l| [
+            EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender,
+        ].map(|a| (l, a))) {
+            let attrs = calculate_enemy_attributes(level, archetype);
             let total = attrs.might_grace_axis().unsigned_abs()
                 + attrs.vitality_focus_axis().unsigned_abs()
                 + attrs.instinct_presence_axis().unsigned_abs()
                 + attrs.might_grace_spectrum().unsigned_abs()
                 + attrs.vitality_focus_spectrum().unsigned_abs()
                 + attrs.instinct_presence_spectrum().unsigned_abs();
-            assert_eq!(total, level, "level {level}: all points should be allocated");
+            assert_eq!(total, level, "{archetype:?} at level {level}: all points should be allocated");
         }
     }
 }

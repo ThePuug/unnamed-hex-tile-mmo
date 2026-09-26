@@ -70,11 +70,13 @@ impl Clip {
     }
 
     /// The one-shot an ability plays, if any: a strike for whatever hits,
-    /// the counter for whatever wards.
+    /// the counter for whatever wards. A Disengage is a leap the displacement
+    /// draws; no clip is authored for it.
     pub fn of(ability: AbilityType) -> Option<Clip> {
         match ability {
-            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Lunge | AbilityType::Kick => Some(Clip::Attack),
+            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Lunge | AbilityType::Kick | AbilityType::Charge => Some(Clip::Attack),
             AbilityType::Counter | AbilityType::Deflect => Some(Clip::Counter),
+            AbilityType::Disengage => None,
         }
     }
 }

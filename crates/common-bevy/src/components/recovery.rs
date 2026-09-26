@@ -85,6 +85,8 @@ pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
         AbilityType::AutoAttack => 0.0, // AutoAttack uses its own timer, not GlobalRecovery
         AbilityType::Counter => 4.0,    // Counter-attack: 4s lockout (long window for attacks to land)
         AbilityType::Kick => 4.0,       // Kick: 4s lockout (rewards chaining via self-synergy)
+        AbilityType::Charge => 3.0,     // NPC Juggernaut: 3s lockout
+        AbilityType::Disengage => 2.0,  // NPC Kiter: 2s lockout
     }
 }
 

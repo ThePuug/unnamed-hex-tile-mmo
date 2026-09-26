@@ -20,9 +20,9 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 /// Runs periodically to check if NPCs should use their archetype abilities
 
 /// Ability usage rules:
-/// - Berserker (Lunge): Use when target is 2-4 hexes away (gap closer)
-/// - Juggernaut (Overpower): Use when adjacent to target (heavy strike)
-/// - Kiter: No signature ability — relies on kite behavior + ranged auto-attack
+/// - Berserker (Lunge): Use when target is within 4 hexes, adjacent included (burst and gap closer)
+/// - Juggernaut (Charge): Use when target is within 6 hexes (closes on anything that runs)
+/// - Kiter (Disengage): Use when target has closed within 2 hexes (leaps back out)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
 ///
 /// Every use waits out the NPC's `NpcRecovery` delay, armed once the ability
@@ -73,7 +73,8 @@ pub fn npc_ability_usage(
 
         let stamina_cost = match ability {
             AbilityType::Lunge => 20.0,
-            AbilityType::Overpower => 40.0,
+            AbilityType::Charge => crate::systems::combat::abilities::charge::CHARGE_STAMINA_COST,
+            AbilityType::Disengage => crate::systems::combat::abilities::disengage::DISENGAGE_STAMINA_COST,
             AbilityType::Counter => 30.0,
             _ => continue,
         };
@@ -114,12 +115,12 @@ pub fn npc_ability_usage(
 
         // Decide whether to use ability based on archetype and distance
         let should_use_ability = match archetype {
-            // Lunge: gap closer, not in melee range and not out of range
-            EnemyArchetype::Berserker => (2..=4).contains(&distance),
-            // Overpower: heavy strike when adjacent
-            EnemyArchetype::Juggernaut => distance == 1,
-            // Kiter has no signature ability; Defender's Counter is handled above
-            EnemyArchetype::Kiter | EnemyArchetype::Defender => false,
+            // Lunge: its burst, and its reach to anything within 4
+            EnemyArchetype::Berserker => (1..=4).contains(&distance),
+            EnemyArchetype::Juggernaut => crate::systems::combat::abilities::charge::CHARGE_RANGE.contains(&(distance as u32)),
+            EnemyArchetype::Kiter => distance as u32 <= crate::systems::combat::abilities::disengage::DISENGAGE_TRIGGER,
+            // Defender's Counter is handled above
+            EnemyArchetype::Defender => false,
         };
 
         if should_use_ability {

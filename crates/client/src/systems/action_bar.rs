@@ -105,6 +105,8 @@ pub fn setup(
             Some(AbilityType::Overpower) => "💥",  // Heavy strike
             Some(AbilityType::Deflect) => "🛡",    // Shield / defense
             Some(AbilityType::AutoAttack) => "⚔",  // Auto-attack (not on bar)
+            Some(AbilityType::Charge) => "🐂",      // NPC Juggernaut charge (not on bar)
+            Some(AbilityType::Disengage) => "💨",   // NPC Kiter leap away (not on bar)
             Some(AbilityType::Counter) => "↩",     // Counter / reflect
             Some(AbilityType::Kick) => "🦶",       // Kick / knockback
             None => "🔒",
@@ -136,6 +138,7 @@ pub fn setup(
                 AbilityType::Counter => "30".to_string(),     // 30 stamina
                 AbilityType::Kick => "40".to_string(),        // 40 stamina
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
+                AbilityType::Charge | AbilityType::Disengage => String::new(), // NPC-only
             };
 
             if !cost_text.is_empty() {
@@ -405,8 +408,8 @@ fn get_ability_state(
                 AbilityState::InsufficientResources
             }
         }
-        AbilityType::AutoAttack => {
-            // Passive ability - not on action bar, always "ready" but not shown
+        AbilityType::AutoAttack | AbilityType::Charge | AbilityType::Disengage => {
+            // Passive or NPC-only - not on the player's action bar
             AbilityState::Ready
         }
         AbilityType::Counter => {

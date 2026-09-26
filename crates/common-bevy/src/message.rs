@@ -154,6 +154,27 @@ pub enum AbilityType {
     Counter,
     /// Kick - Clear visible threats, deal 75% Technique damage, knockback adjacent sources 4 tiles (40 stam, 4s recovery)
     Kick,
+    /// NPC: the Juggernaut's rush onto a target within 6 tiles, staggering it on impact
+    Charge,
+    /// NPC: the Kiter's leap away from a target that has closed within 2 tiles
+    Disengage,
+}
+
+/// Share of the target's mitigation a Lunge strikes past
+const LUNGE_PIERCE: f32 = 0.42;
+
+impl AbilityType {
+    /// Share of the target's Toughness mitigation this ability's damage
+    /// strikes past: a Lunge carries the whole body behind it, and a Counter
+    /// returns the attacker's own blow whole. Every other threat resolves
+    /// through mitigation in full.
+    pub fn pierce(self) -> f32 {
+        match self {
+            AbilityType::Lunge => LUNGE_PIERCE,
+            AbilityType::Counter => 1.0,
+            _ => 0.0,
+        }
+    }
 }
 
 /// Reasons why an ability usage might fail
