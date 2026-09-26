@@ -6,13 +6,18 @@
 //! the rules the live server runs, stepped on a manual clock so it goes as
 //! fast as the CPU allows. No networking, terrain or players.
 //!
-//! Keys: `level` (10), `size` NPCs per side (1), `runs` per matchup (20),
-//! `cap` seconds before a fight is a draw (300), `only` a comma list of
-//! archetypes to restrict the matchups to, `trace` to print every fight (1),
-//! with a timeline every 5s (2), or every half second for its first 12s (3).
+//! Keys: `level` (10), `size` NPCs per side (1), `b_level` and `b_size` to
+//! set the second archetype's side apart (the same by default), `runs` per
+//! matchup (20), `cap` seconds after which the side with more health left wins
+//! (300), `only` a comma
+//! list of archetypes to restrict the matchups to, `mirror=1` to fight each
+//! archetype against itself instead of the others, `ordered=1` to fight every
+//! ordered pair, mirrors included, `trace` to print every
+//! fight (1), with a timeline every 5s (2), or every half second for its
+//! first 12s (3).
 //!
-//! Every pairing of distinct archetypes fights `runs` times, the two
-//! swapping ends each run so neither side's spawn decides it. The report
+//! Every pairing fights `runs` times, the two swapping ends each run so
+//! neither side's spawn decides it. The report
 //! gives each pairing's win split, median fight length, the winners' health
 //! left, and where each side's damage came from: auto-attacks, signature
 //! abilities, or reflections.
@@ -57,9 +62,21 @@ const ARCHETYPES: [EnemyArchetype; 4] = [
     EnemyArchetype::Defender,
 ];
 
+/// One side of a fight: `size` NPCs of `archetype` at `level`.
+#[derive(Clone, Copy)]
+struct Team {
+    archetype: EnemyArchetype,
+    level: u8,
+    size: u8,
+}
+
 struct Settings {
     level: u8,
     size: u8,
+    b_level: Option<u8>,
+    b_size: Option<u8>,
+    mirror: bool,
+    ordered: bool,
     runs: u32,
     cap: Duration,
     only: Vec<EnemyArchetype>,
@@ -68,12 +85,16 @@ struct Settings {
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, runs: 20, cap: Duration::from_secs(300), only: ARCHETYPES.to_vec(), trace: 0 };
+        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: ARCHETYPES.to_vec(), trace: 0 };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {
                 "level" => settings.level = value.parse().expect("level is a whole number"),
                 "size" => settings.size = value.parse().expect("size is a whole number"),
+                "b_level" => settings.b_level = Some(value.parse().expect("b_level is a whole number")),
+                "b_size" => settings.b_size = Some(value.parse().expect("b_size is a whole number")),
+                "mirror" => settings.mirror = value == "1",
+                "ordered" => settings.ordered = value == "1",
                 "runs" => settings.runs = value.parse().expect("runs is a whole number"),
                 "cap" => settings.cap = Duration::from_secs(value.parse().expect("cap is whole seconds")),
                 "only" => settings.only = value.split(',').map(archetype_named).collect(),
@@ -82,6 +103,14 @@ impl Settings {
             }
         }
         settings
+    }
+
+    fn team_a(&self, archetype: EnemyArchetype) -> Team {
+        Team { archetype, level: self.level, size: self.size }
+    }
+
+    fn team_b(&self, archetype: EnemyArchetype) -> Team {
+        Team { archetype, level: self.b_level.unwrap_or(self.level), size: self.b_size.unwrap_or(self.size) }
     }
 }
 
@@ -149,6 +178,8 @@ struct Outcome {
     length: Duration,
     /// The winners' remaining health as a fraction of their total
     left: f32,
+    /// Decided on health left at the cap, not by a side dying
+    timed_out: bool,
     dealt: HashMap<Side, Sources>,
 }
 
@@ -171,8 +202,8 @@ fn flat_map() -> Map {
     map
 }
 
-/// Fights `west` against `east`, `size` each, until one side is dead or `cap` passes.
-fn fight(west: EnemyArchetype, east: EnemyArchetype, settings: &Settings) -> Outcome {
+/// Fights `west` against `east` until one side is dead or `cap` passes.
+fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, NNTreePlugin, BehaviourPlugin, CombatPlugin));
     app.insert_resource(TimeUpdateStrategy::ManualDuration(STEP));
@@ -190,8 +221,8 @@ fn fight(west: EnemyArchetype, east: EnemyArchetype, settings: &Settings) -> Out
     let time = world.resource::<Time>().clone();
     {
         let mut commands = world.commands();
-        for (archetype, side, q) in [(west, WEST, -DEN_OFFSET), (east, EAST, DEN_OFFSET)] {
-            spawn_engagement(Qrz { q, r: 0, z: 1 }, archetype, side, settings.level, settings.size, |_, _| 0, &mut commands, &time);
+        for (team, side, q) in [(west, WEST, -DEN_OFFSET), (east, EAST, DEN_OFFSET)] {
+            spawn_engagement(Qrz { q, r: 0, z: 1 }, team.archetype, side, team.level, team.size, |_, _| 0, &mut commands, &time);
         }
     }
     world.flush();
@@ -200,6 +231,11 @@ fn fight(west: EnemyArchetype, east: EnemyArchetype, settings: &Settings) -> Out
     world.resource_mut::<Tally>().sides = roster;
 
     let mut health = app.world_mut().query::<(&Side, &Health)>();
+    let mut full: HashMap<Side, f32> = HashMap::new();
+    for (side, hp) in health.iter(app.world_mut()) {
+        *full.entry(*side).or_default() += hp.max;
+    }
+    let mut timed_out = false;
     let mut elapsed = Duration::ZERO;
     let (winner, left) = loop {
         app.update();
@@ -220,7 +256,12 @@ fn fight(west: EnemyArchetype, east: EnemyArchetype, settings: &Settings) -> Out
             (Some(&(state, max)), None) => break (Some(WEST), state / max),
             (None, Some(&(state, max))) => break (Some(EAST), state / max),
             (None, None) => break (None, 0.0),
-            _ if elapsed >= settings.cap => break (None, 0.0),
+            // At the cap the side with more of its health left wins on points
+            (Some(&(west, _)), Some(&(east, _))) if elapsed >= settings.cap => {
+                timed_out = true;
+                let (west, east) = (west / full[&WEST], east / full[&EAST]);
+                break if west >= east { (Some(WEST), west) } else { (Some(EAST), east) };
+            }
             _ => {}
         }
     };
@@ -232,12 +273,13 @@ fn fight(west: EnemyArchetype, east: EnemyArchetype, settings: &Settings) -> Out
             used.join(", ")
         };
         let hp: Vec<_> = health.iter(app.world_mut()).map(|(s, h)| format!("{}:{:.0}/{:.0}", s.0, h.state, h.max)).collect();
-        println!("  {west:?} (1) v {east:?} (2): winner {:?} after {:.1}s, hp [{}]; 1 used [{}] dealt {:.0}; 2 used [{}] dealt {:.0}",
+        println!("  {}x{:?}@{} (1) v {}x{:?}@{} (2): winner {:?} after {:.1}s, hp [{}]; 1 used [{}] dealt {:.0}; 2 used [{}] dealt {:.0}",
+            west.size, west.archetype, west.level, east.size, east.archetype, east.level,
             winner.map(|s| s.0), elapsed.as_secs_f32(), hp.join(" "),
             used(WEST), tally.dealt.get(&WEST).map_or(0.0, Sources::total),
             used(EAST), tally.dealt.get(&EAST).map_or(0.0, Sources::total));
     }
-    Outcome { winner, length: elapsed, left, dealt: tally.dealt }
+    Outcome { winner, length: elapsed, left, timed_out, dealt: tally.dealt }
 }
 
 /// Prints where every actor stands and what it is doing.
@@ -260,29 +302,43 @@ fn timeline(world: &mut World, elapsed: Duration) {
 /// Runs every pairing and prints the report.
 pub fn run(args: &[String]) {
     let settings = Settings::parse(args);
+    let (a_team, b_team) = (settings.team_a(EnemyArchetype::Berserker), settings.team_b(EnemyArchetype::Berserker));
     println!(
-        "arena: level {}, {} per side, {} runs per pairing, draw after {}s",
-        settings.level, settings.size, settings.runs, settings.cap.as_secs(),
+        "arena: a is {} at level {}, b is {} at level {}; {} runs per pairing, decided on health after {}s",
+        a_team.size, a_team.level, b_team.size, b_team.level, settings.runs, settings.cap.as_secs(),
     );
     println!();
     println!("{:<22} {:>5} {:>5} {:>5}  {:>6}  {:>5}   {:<30} {:<30}",
-        "pairing (a v b)", "a%", "b%", "draw", "median", "left", "a dealt: auto/abil/refl", "b dealt: auto/abil/refl");
+        "pairing (a v b)", "a%", "b%", "capped", "median", "left", "a dealt: auto/abil/refl", "b dealt: auto/abil/refl");
 
-    for (i, &a) in settings.only.iter().enumerate() {
-        for &b in &settings.only[i + 1..] {
-            let (mut a_wins, mut b_wins, mut draws) = (0u32, 0u32, 0u32);
+    let pairings: Vec<(EnemyArchetype, EnemyArchetype)> = if settings.ordered {
+        settings.only.iter().flat_map(|&a| settings.only.iter().map(move |&b| (a, b))).collect()
+    } else if settings.mirror {
+        settings.only.iter().map(|&a| (a, a)).collect()
+    } else {
+        settings.only.iter().enumerate()
+            .flat_map(|(i, &a)| settings.only[i + 1..].iter().map(move |&b| (a, b)))
+            .collect()
+    };
+    for (a, b) in pairings {
+        {
+            let (mut a_wins, mut b_wins, mut capped) = (0u32, 0u32, 0u32);
             let mut lengths = Vec::new();
             let mut left = Vec::new();
             let (mut a_dealt, mut b_dealt) = (Sources::default(), Sources::default());
             for run in 0..settings.runs {
                 // Swap ends every run so the spawn layout favours neither archetype
-                let (west, east, a_side) = if run % 2 == 0 { (a, b, WEST) } else { (b, a, EAST) };
+                let (team_a, team_b) = (settings.team_a(a), settings.team_b(b));
+                let (west, east, a_side) = if run % 2 == 0 { (team_a, team_b, WEST) } else { (team_b, team_a, EAST) };
                 let b_side = if a_side == WEST { EAST } else { WEST };
                 let outcome = fight(west, east, &settings);
                 match outcome.winner {
                     Some(side) if side == a_side => a_wins += 1,
                     Some(_) => b_wins += 1,
-                    None => draws += 1,
+                    None => {}
+                }
+                if outcome.timed_out {
+                    capped += 1;
                 }
                 if outcome.winner.is_some() {
                     lengths.push(outcome.length);
@@ -300,7 +356,7 @@ pub fn run(args: &[String]) {
                 format!("{a:?} v {b:?}"),
                 100.0 * a_wins as f32 / runs,
                 100.0 * b_wins as f32 / runs,
-                100.0 * draws as f32 / runs,
+                100.0 * capped as f32 / runs,
                 median,
                 100.0 * median_left,
                 split(a_dealt, runs),
