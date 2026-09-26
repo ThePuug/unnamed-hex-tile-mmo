@@ -326,12 +326,15 @@ pub fn run(args: &[String]) {
             let mut lengths = Vec::new();
             let mut left = Vec::new();
             let (mut a_dealt, mut b_dealt) = (Sources::default(), Sources::default());
-            for run in 0..settings.runs {
+            let workers = if settings.trace > 0 { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()) };
+            let outcomes = in_parallel(settings.runs, workers, |run| {
                 // Swap ends every run so the spawn layout favours neither archetype
                 let (team_a, team_b) = (settings.team_a(a), settings.team_b(b));
                 let (west, east, a_side) = if run % 2 == 0 { (team_a, team_b, WEST) } else { (team_b, team_a, EAST) };
+                (a_side, fight(west, east, &settings))
+            });
+            for (a_side, outcome) in outcomes {
                 let b_side = if a_side == WEST { EAST } else { WEST };
-                let outcome = fight(west, east, &settings);
                 match outcome.winner {
                     Some(side) if side == a_side => a_wins += 1,
                     Some(_) => b_wins += 1,
@@ -364,6 +367,29 @@ pub fn run(args: &[String]) {
             );
         }
     }
+}
+
+/// Runs `job` for each of `0..count` on up to `workers` threads, results in
+/// order. Each fight is its own app, so fights share nothing but Bevy's
+/// global task pools.
+fn in_parallel<T: Send>(count: u32, workers: usize, job: impl Fn(u32) -> T + Sync) -> Vec<T> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    let next = AtomicU32::new(0);
+    let mut results: Vec<(u32, T)> = std::thread::scope(|scope| {
+        let threads: Vec<_> = (0..workers.min(count as usize)).map(|_| scope.spawn(|| {
+            let mut done = Vec::new();
+            loop {
+                let run = next.fetch_add(1, Ordering::Relaxed);
+                if run >= count {
+                    break done;
+                }
+                done.push((run, job(run)));
+            }
+        })).collect();
+        threads.into_iter().flat_map(|thread| thread.join().expect("arena fight panicked")).collect()
+    });
+    results.sort_by_key(|(run, _)| *run);
+    results.into_iter().map(|(_, result)| result).collect()
 }
 
 /// A side's damage per fight and its split, as `total (auto/ability/reflect %)`
