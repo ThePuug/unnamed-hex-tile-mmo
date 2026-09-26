@@ -49,6 +49,17 @@ const CHASE_ACQUISITION_RANGE: u32 = 15;
 /// asked for it, so the fight starts when the player walks in.
 const DEN_CLEARANCE: i32 = 5;
 
+/// How far an NPC of `archetype` reaches with its auto-attack: a Defender
+/// holds its line two tiles out and reaches from there, a Kiter fires from
+/// the edge of its band.
+fn attack_range(archetype: EnemyArchetype) -> i32 {
+    match archetype {
+        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut => 1,
+        EnemyArchetype::Defender => 2,
+        EnemyArchetype::Kiter => 6,
+    }
+}
+
 /// The range an NPC of `archetype` acquires a target within.
 fn acquisition_range(archetype: EnemyArchetype) -> u32 {
     match archetype {
@@ -167,12 +178,13 @@ pub fn spawn_engagement(
                 let chase = crate::systems::behaviour::chase::Chase {
                     acquisition_range: CHASE_ACQUISITION_RANGE,
                     leash_distance: 30,
-                    attack_range: 1,
+                    attack_range: attack_range(archetype),
                 };
                 commands.entity(npc_entity).insert((
                     NearestNeighbor::new(npc_entity, npc_loc),
                     chase,
                     NpcRecovery::for_archetype(archetype),
+                    common_bevy::components::AttackRange(attack_range(archetype)),
                     common_bevy::components::target::Target::default(),
                     Heading::default(),
                     Position::at_tile(npc_location),
@@ -189,7 +201,7 @@ pub fn spawn_engagement(
                     Heading::default(),
                     Position::at_tile(npc_location),
                     AirTime::default(),
-                    common_bevy::components::AttackRange(6),
+                    common_bevy::components::AttackRange(attack_range(archetype)),
                     LastAutoAttack::default(),
                     NpcRecovery::for_archetype(archetype),
                     common_bevy::components::movement_intent_state::MovementIntentState::default(),
