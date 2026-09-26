@@ -7,8 +7,9 @@
 //! fast as the CPU allows. No networking, terrain or players.
 //!
 //! Keys: `level` (10), `size` NPCs per side (1), `runs` per matchup (20),
-//! `cap` seconds before a fight is a draw (180), `only` a comma list of
-//! archetypes to restrict the matchups to, `trace=1` to print every fight.
+//! `cap` seconds before a fight is a draw (300), `only` a comma list of
+//! archetypes to restrict the matchups to, `trace` to print every fight (1),
+//! with a timeline every 5s (2), or every half second for its first 12s (3).
 //!
 //! Every pairing of distinct archetypes fights `runs` times, the two
 //! swapping ends each run so neither side's spawn decides it. The report
@@ -67,7 +68,7 @@ struct Settings {
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, runs: 20, cap: Duration::from_secs(180), only: ARCHETYPES.to_vec(), trace: 0 };
+        let mut settings = Settings { level: 10, size: 1, runs: 20, cap: Duration::from_secs(300), only: ARCHETYPES.to_vec(), trace: 0 };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {
@@ -76,7 +77,7 @@ impl Settings {
                 "runs" => settings.runs = value.parse().expect("runs is a whole number"),
                 "cap" => settings.cap = Duration::from_secs(value.parse().expect("cap is whole seconds")),
                 "only" => settings.only = value.split(',').map(archetype_named).collect(),
-                "trace" => settings.trace = value.parse().expect("trace is 0, 1 or 2"),
+                "trace" => settings.trace = value.parse().expect("trace is 0 to 3"),
                 _ => panic!("arena has no key {key}"),
             }
         }
@@ -212,7 +213,7 @@ fn fight(west: EnemyArchetype, east: EnemyArchetype, settings: &Settings) -> Out
                 entry.1 += hp.max;
             }
         }
-        if settings.trace > 1 && elapsed.as_millis() % 5000 == 0 {
+        if settings.trace > 1 && elapsed.as_millis() % (if settings.trace > 2 { 500 } else { 5000 }) == 0 && (settings.trace < 3 || elapsed.as_secs() < 12) {
             timeline(world, elapsed);
         }
         match (alive.get(&WEST), alive.get(&EAST)) {
@@ -241,15 +242,19 @@ fn fight(west: EnemyArchetype, east: EnemyArchetype, settings: &Settings) -> Out
 
 /// Prints where every actor stands and what it is doing.
 fn timeline(world: &mut World, elapsed: Duration) {
-    use common_bevy::components::{Loc, resources::CombatState, returning::Returning, target::Target};
-    let mut actors = world.query::<(Entity, &Side, &Loc, &Health, &CombatState, Option<&Target>, Option<&Returning>)>();
-    let lines: Vec<_> = actors.iter(world).map(|(e, side, loc, hp, combat, target, returning)| {
-        format!("{}#{} {:?} hp {:.0}{}{} ->{:?}", side.0, e.index(), (loc.q, loc.r, loc.z), hp.state,
+    use common_bevy::components::{Loc, hex_assignment::AssignedHex, resources::CombatState, returning::Returning, stagger::Stagger, target::Target};
+    let mut actors = world.query::<(Entity, &Side, &Loc, &Health, &CombatState, Option<&Target>, Option<&Returning>, Option<&AssignedHex>, Option<&Stagger>, &common_bevy::components::position::Position)>();
+    let lines: Vec<_> = actors.iter(world).map(|(e, side, loc, hp, combat, target, returning, assigned, stagger, pos)| {
+        format!("{}#{} {:?} pos {:?}+({:.2},{:.2}) hp {:.0}{}{}{}{} ->{:?}", side.0, e.index(), (loc.q, loc.r, loc.z), (pos.tile.q, pos.tile.r), pos.offset.x, pos.offset.z, hp.state,
             if combat.in_combat { " fighting" } else { "" },
             if returning.is_some() { " RETURNING" } else { "" },
+            assigned.map_or(String::new(), |a| format!(" hex {:?}", (a.0.q, a.0.r, a.0.z))),
+            if stagger.is_some() { " STAGGERED" } else { "" },
             target.and_then(|t| t.entity).map(|t| t.index()))
     }).collect();
-    println!("    t={:>5.1}s {}", elapsed.as_secs_f32(), lines.join(" | "));
+    let mut engagements = world.query::<&common_bevy::components::hex_assignment::HexAssignment>();
+    let assigning: Vec<_> = engagements.iter(world).map(|h| format!("{:?}@{:?}", h.target_player.map(|e| e.index()), h.last_player_tile.map(|t| (t.q, t.r)))).collect();
+    println!("    t={:>5.1}s {} || engagements {}", elapsed.as_secs_f32(), lines.join(" | "), assigning.join(" "));
 }
 
 /// Runs every pairing and prints the report.
