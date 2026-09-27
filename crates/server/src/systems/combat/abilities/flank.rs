@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 use common_bevy::{
     components::{
-        heading::Heading, position::Position, resources::*, stunned::Stunned, AttackRange, Loc,
+        engagement::EngagementMember, heading::Heading, hex_assignment::{AssignedHex, HexAssignment},
+        position::Position, resources::*, stunned::Stunned, AttackRange, Loc,
         reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration},
     },
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
@@ -16,6 +17,8 @@ pub const FLANK_STAMINA_COST: f32 = 30.0;
 /// back, and a strike for `flank_intuition` of the caster's Intuition. The
 /// stun holds the target completely: `Stunned` stops its movement and
 /// auto-attacks, and a lockout as long stops its abilities and reactions.
+/// The back tile becomes the Cutthroat's assigned tile, so it holds the flank;
+/// an engagement member assigned there takes the tile the Cutthroat left.
 /// With its back tile taken or not standable, the Cutthroat strikes from
 /// where it stands.
 pub fn handle_flank(
@@ -28,6 +31,8 @@ pub fn handle_flank(
     respawn_query: Query<&RespawnTimer>,
     map: Res<Map>,
     nntree: Res<NNTree>,
+    member_query: Query<&EngagementMember>,
+    mut assignment_query: Query<&mut HexAssignment>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -89,6 +94,23 @@ pub fn handle_flank(
             writer.write(Do {
                 event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Loc(Loc::new(landing)) },
             });
+            if let Ok(mut assignment) = member_query.get(*ent).and_then(|member| assignment_query.get_mut(member.0)) {
+                let left = assignment.get(*ent);
+                let holder = assignment.assignments.iter().find(|&(npc, hex)| *hex == landing && *npc != *ent).map(|(npc, _)| *npc);
+                match (holder, left) {
+                    (Some(holder), Some(left)) => {
+                        assignment.assignments.insert(holder, left);
+                        commands.entity(holder).insert(AssignedHex(left));
+                    }
+                    (Some(holder), None) => {
+                        assignment.remove(holder);
+                        commands.entity(holder).remove::<AssignedHex>();
+                    }
+                    (None, _) => {}
+                }
+                assignment.assignments.insert(*ent, landing);
+            }
+            commands.entity(*ent).insert(AssignedHex(landing));
         }
 
         let attrs = attrs_query.get(*ent).expect("Flank caster must have ActorAttributes");
