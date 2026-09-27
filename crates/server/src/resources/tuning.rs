@@ -26,7 +26,7 @@ pub struct ArchetypeTuning {
     pub hamstring_stacks: u8,
     /// Tiles a Disengage leaps
     pub disengage_leap: usize,
-    /// Share of Technique a Disengage cuts an adjacent attacker for
+    /// Share of Technique a Disengage adds to its caster's next auto-attack
     pub disengage_technique: f32,
     /// Share of Force each Volley shot strikes for
     pub volley_force: f32,

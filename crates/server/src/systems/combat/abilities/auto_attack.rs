@@ -21,6 +21,7 @@ pub fn handle_auto_attack(
     range_query: Query<&common_bevy::components::AttackRange>,
     respawn_query: Query<&common_bevy::components::resources::RespawnTimer>,
     stunned_query: Query<&common_bevy::components::stunned::Stunned>,
+    poised_query: Query<&super::disengage::Poised>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -100,7 +101,11 @@ pub fn handle_auto_attack(
 
         // Deal damage — Gravitas at 25%: auto-attacks are pressure, bought with Presence
         let attrs = attrs_query.get(*ent).expect("Auto-attack caster must have ActorAttributes");
-        let base_damage = attrs.gravitas() * 0.25;
+        let poised = poised_query.get(*ent).map_or(0.0, |poised| poised.0);
+        if poised > 0.0 {
+            commands.entity(*ent).remove::<super::disengage::Poised>();
+        }
+        let base_damage = attrs.gravitas() * 0.25 + poised;
 
         commands.trigger(
             Try {
