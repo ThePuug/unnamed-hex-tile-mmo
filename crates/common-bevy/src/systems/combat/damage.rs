@@ -69,6 +69,14 @@ pub fn calculate_outgoing_damage(
     base_damage
 }
 
+/// An attack's damage within its range: `spread` of `damage` either side of
+/// it, where `draw`, from -1 to 1, falls. A roll, not a crit: every attack's
+/// damage is a range, so two near-even actors trade wins instead of one
+/// winning by a sliver every time.
+pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
+    damage * (1.0 + spread * draw.clamp(-1.0, 1.0))
+}
+
 /// Calculate recovery pushback percentage.
 
 /// Pattern 1 (Nullifying): base × gap × contest_factor
@@ -146,6 +154,15 @@ pub fn apply_passive_modifiers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spread_is_a_range_about_the_damage() {
+        assert_eq!(spread(100.0, 0.2, 0.0), 100.0, "the middle of the range is the damage");
+        assert!((spread(100.0, 0.2, -1.0) - 80.0).abs() < 1e-3, "the low end");
+        assert!((spread(100.0, 0.2, 1.0) - 120.0).abs() < 1e-3, "the high end");
+        assert!(spread(100.0, 0.2, 0.5) > spread(100.0, 0.2, -0.5), "a higher draw hits harder");
+        assert_eq!(spread(100.0, 0.0, 1.0), 100.0, "no spread, no range");
+    }
 
     #[test]
     fn test_gap_factor_equal_levels_is_one() {

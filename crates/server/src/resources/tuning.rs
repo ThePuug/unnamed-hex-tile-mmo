@@ -17,6 +17,8 @@ pub struct ArchetypeTuning {
     pub cutthroat_delay: (u64, u64),
     /// Share of the target's Toughness mitigation a Lunge strikes past
     pub lunge_pierce: f32,
+    /// Share of an attack's damage its roll lands either side of it
+    pub damage_spread: f32,
     /// Share of Force each tick of a Lunge's DoT deals
     pub lunge_dot: f32,
     /// Share of Force a Rattle strikes for
@@ -55,6 +57,7 @@ impl Default for ArchetypeTuning {
             skirmisher_delay: (4000, 6000),
             cutthroat_delay: (3000, 5000),
             lunge_pierce: 0.7,
+            damage_spread: 0.2,
             lunge_dot: 0.15,
             rattle_force: 0.45,
             rattle_daze: 0.1,
@@ -115,6 +118,7 @@ impl ArchetypeTuning {
             "c_delay" => self.cutthroat_delay = range()?,
             "lunge_pierce" => self.lunge_pierce = number()?,
             "lunge_dot" => self.lunge_dot = number()?,
+            "damage_spread" => self.damage_spread = number()?,
             "rattle_force" => self.rattle_force = number()?,
             "rattle_daze" => self.rattle_daze = number()?,
             "rattle_stacks" => self.rattle_stacks = number()? as u8,

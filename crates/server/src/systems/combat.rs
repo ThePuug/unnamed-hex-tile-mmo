@@ -10,7 +10,8 @@ use common_bevy::{
 };
 
 /// System to process DealDamage events (Phase 1: Outgoing damage calculation)
-/// Rolls for crit, calculates outgoing damage, inserts into reaction queue
+/// Rolls the attack's damage within its range (`ArchetypeTuning::damage_spread`,
+/// one roll for its blow and its DoT), and inserts it into the reaction queue
 pub fn process_deal_damage(
     trigger: On<Try>,
     _commands: Commands,
@@ -19,6 +20,7 @@ pub fn process_deal_damage(
     all_attrs: Query<&ActorAttributes>,
     time: Res<Time>,
     runtime: Res<crate::resources::RunTime>,
+    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
     let event = &trigger.event().event;
@@ -47,6 +49,9 @@ pub fn process_deal_damage(
 
         // Calculate outgoing damage (Phase 1)
         let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
+        let draw = rand::Rng::random_range(&mut rand::rng(), -1.0..=1.0);
+        let outgoing = damage_calc::spread(outgoing, tuning.damage_spread, draw);
+        let dot = damage_calc::spread(*dot, tuning.damage_spread, draw);
 
         // Use game world time (server uptime + offset) for consistent time base
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
@@ -72,7 +77,7 @@ pub fn process_deal_damage(
             *damage_type,  // Damage type
             *ability,      // Ability
             now,           // Current time
-            *dot,          // DoT per tick, a wound's
+            dot,           // DoT per tick, a wound's
         );
 
         // Try to insert threat into queue
