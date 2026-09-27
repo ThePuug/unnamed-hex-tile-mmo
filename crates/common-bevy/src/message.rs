@@ -154,7 +154,7 @@ pub enum AbilityType {
     Counter,
     /// Kick - Clear visible threats, deal 75% Technique damage, knockback adjacent sources 4 tiles (40 stam, 4s recovery)
     Kick,
-    /// NPC: the Juggernaut's strike on an adjacent target, stacking a slow
+    /// NPC: the Juggernaut's strike on an adjacent target, stacking a daze that slows its movement and auto-attacks
     Hamstring,
     /// NPC: the Skirmisher's leap clear of the blow at the front of its queue, which strengthens its next auto-attack
     Disengage,
@@ -206,7 +206,7 @@ pub enum Component {
     Mana(Mana),
     PlayerControlled(PlayerControlled),
     Returning(crate::components::returning::Returning),
-    Hamstrung(crate::components::hamstrung::Hamstrung),
+    Dazed(crate::components::dazed::Dazed),
     Slowed(crate::components::slowed::Slowed),
     Stunned(crate::components::stunned::Stunned),
     Stamina(Stamina),
@@ -225,7 +225,7 @@ impl Component {
             Component::Mana(v) => { entity.insert(v); }
             Component::PlayerControlled(v) => { entity.insert(v); }
             Component::Returning(v) => { entity.insert(v); }
-            Component::Hamstrung(v) => { entity.insert(v); }
+            Component::Dazed(v) => { entity.insert(v); }
             Component::Slowed(v) => { entity.insert(v); }
             Component::Stunned(v) => { entity.insert(v); }
             Component::Stamina(v) => { entity.insert(v); }

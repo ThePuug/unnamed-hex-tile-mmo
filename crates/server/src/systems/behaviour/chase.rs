@@ -4,7 +4,7 @@ use rand::seq::IteratorRandom;
 use common_bevy::{
     components::{
         Loc, resources::Health,
-        behaviour::Side, hamstrung::Hamstrung, slowed::Slowed, ActorAttributes, target::Target,
+        behaviour::Side, dazed::Dazed, slowed::Slowed, ActorAttributes, target::Target,
         returning::Returning, stagger::Stagger,
         hex_assignment::AssignedHex,
         engagement::EngagementMember,
@@ -48,7 +48,7 @@ pub fn chase(
         Option<&AssignedHex>,  // Path to assigned hex
         Option<&Stagger>,
         &Side,
-        Option<&Hamstrung>,
+        Option<&Dazed>,
         Option<&Slowed>,
     )>,
     q_target: Query<(&Loc, &Health, &Side)>,
@@ -57,14 +57,14 @@ pub fn chase(
     map: Res<Map>,
     dt: Res<Time>,
 ) {
-    for (npc_entity, &chase_config, npc_loc, mut body, attrs, lock_opt, returning_opt, engagement_member, assigned_hex_opt, stagger_opt, own_side, hamstrung, slowed) in &mut query {
+    for (npc_entity, &chase_config, npc_loc, mut body, attrs, lock_opt, returning_opt, engagement_member, assigned_hex_opt, stagger_opt, own_side, dazed, slowed) in &mut query {
 
         // Staggered — skip all movement and intent broadcasting
         if stagger_opt.is_some() {
             continue;
         }
         let dt_ms = dt.delta().as_millis() as i16;
-        let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, common_bevy::systems::movement::slowed_pace(hamstrung, slowed));
+        let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, common_bevy::systems::movement::slowed_pace(dazed, slowed));
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {

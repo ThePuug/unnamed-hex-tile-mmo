@@ -60,10 +60,10 @@ pub fn speed(own: f32, burdened: bool, pace: f32) -> f32 {
     if burdened { own * BURDENED_PACE } else { own }
 }
 
-/// The share of its speed an entity keeps under what slows it: its
-/// Hamstring stacks and any timed slow, together.
-pub fn slowed_pace(hamstrung: Option<&crate::components::hamstrung::Hamstrung>, slowed: Option<&crate::components::slowed::Slowed>) -> f32 {
-    crate::components::hamstrung::Hamstrung::pace_of(hamstrung) * crate::components::slowed::Slowed::pace_of(slowed)
+/// The share of its speed an entity keeps under what slows it: its daze
+/// and any timed slow, together.
+pub fn slowed_pace(dazed: Option<&crate::components::dazed::Dazed>, slowed: Option<&crate::components::slowed::Slowed>) -> f32 {
+    crate::components::dazed::Dazed::pace_of(dazed) * crate::components::slowed::Slowed::pace_of(slowed)
 }
 
 /// Keeps [`Burdened`] on every entity whose bag weighs past the limit: on

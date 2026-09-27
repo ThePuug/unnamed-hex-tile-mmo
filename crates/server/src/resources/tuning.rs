@@ -20,7 +20,7 @@ pub struct ArchetypeTuning {
     /// Share of Force a Hamstring strikes for
     pub hamstring_force: f32,
     /// Share of its speed each Hamstring stack takes from the target
-    pub hamstring_slow: f32,
+    pub hamstring_daze: f32,
     /// Most stacks a target carries
     pub hamstring_stacks: u8,
     /// Tiles a Disengage leaps
@@ -54,7 +54,7 @@ impl Default for ArchetypeTuning {
             cutthroat_delay: (3000, 5000),
             lunge_pierce: 0.7,
             hamstring_force: 0.45,
-            hamstring_slow: 0.1,
+            hamstring_daze: 0.1,
             hamstring_stacks: 3,
             disengage_leap: 4,
             disengage_technique: 0.5,
@@ -112,7 +112,7 @@ impl ArchetypeTuning {
             "c_delay" => self.cutthroat_delay = range()?,
             "lunge_pierce" => self.lunge_pierce = number()?,
             "hamstring_force" => self.hamstring_force = number()?,
-            "hamstring_slow" => self.hamstring_slow = number()?,
+            "hamstring_daze" => self.hamstring_daze = number()?,
             "hamstring_stacks" => self.hamstring_stacks = number()? as u8,
             "disengage_leap" => self.disengage_leap = number()? as usize,
             "disengage_technique" => self.disengage_technique = number()?,

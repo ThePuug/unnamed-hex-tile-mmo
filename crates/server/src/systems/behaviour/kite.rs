@@ -5,7 +5,7 @@ use qrz::Qrz;
 use common_bevy::{
     components::{
         Loc, resources::Health,
-        behaviour::Side, hamstrung::Hamstrung, slowed::Slowed, stunned::Stunned, equipment::Burdened, ActorAttributes, target::Target,
+        behaviour::Side, dazed::Dazed, slowed::Slowed, stunned::Stunned, equipment::Burdened, ActorAttributes, target::Target,
         returning::Returning, stagger::Stagger,
         engagement::EngagementMember,
     },
@@ -50,7 +50,7 @@ fn score_neighbor(
 /// - Maintains sticky targeting via TargetLock
 /// - **Flees** when target closes within disengage_distance (< 3 hexes)
 /// - **Repositions** when target is 3-4 hexes away (moves back into the optimal zone)
-/// - Flees and repositions only from a target it outruns — slowed, hamstrung
+/// - Flees and repositions only from a target it outruns — slowed, dazed
 ///   or stunned; from one as fast as it, it backs away facing it, shooting
 /// - **Holds** when target is in optimal_distance range (5-6 hexes), where its auto-attack reaches, turning to face it
 /// - **Advances** when target is beyond optimal range (> 6 hexes) - moves closer
@@ -126,25 +126,25 @@ pub fn kite(
         &EngagementMember,
         Option<&Stagger>,
         &Side,
-        Option<&Hamstrung>,
+        Option<&Dazed>,
         Option<&Slowed>,
     )>,
     q_target: Query<(&Loc, &Health, &Side)>,
-    q_pace: Query<(Option<&ActorAttributes>, Option<&Hamstrung>, Option<&Slowed>, Option<&Stunned>, Has<Burdened>)>,
+    q_pace: Query<(Option<&ActorAttributes>, Option<&Dazed>, Option<&Slowed>, Option<&Stunned>, Has<Burdened>)>,
     q_spawner: Query<&Loc, Without<Kite>>,
     nntree: Res<NNTree>,
     map: Res<Map>,
     dt: Res<Time>,
     mut writer: MessageWriter<common_bevy::message::Do>,
 ) {
-    for (npc_entity, kite_config, npc_loc, mut body, attrs, lock_opt, returning_opt, engagement_member, stagger_opt, own_side, hamstrung, slowed) in &mut query {
+    for (npc_entity, kite_config, npc_loc, mut body, attrs, lock_opt, returning_opt, engagement_member, stagger_opt, own_side, dazed, slowed) in &mut query {
 
         // Staggered — skip all movement and intent broadcasting
         if stagger_opt.is_some() {
             continue;
         }
         let dt_ms = dt.delta().as_millis() as i16;
-        let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, common_bevy::systems::movement::slowed_pace(hamstrung, slowed));
+        let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, common_bevy::systems::movement::slowed_pace(dazed, slowed));
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {
@@ -294,11 +294,11 @@ pub fn kite(
 
         // 3. CHECK DISTANCE AND DETERMINE ACTION
         let distance = npc_loc.flat_distance(target_loc);
-        let target_speed = q_pace.get(target_entity).map_or(0.0, |(attrs, hamstrung, slowed, stunned, burdened)| {
+        let target_speed = q_pace.get(target_entity).map_or(0.0, |(attrs, dazed, slowed, stunned, burdened)| {
             if Stunned::holds(stunned) {
                 return 0.0;
             }
-            common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), burdened, common_bevy::systems::movement::slowed_pace(hamstrung, slowed))
+            common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), burdened, common_bevy::systems::movement::slowed_pace(dazed, slowed))
         });
         let action = kite_config.determine_action(distance, movement_speed > target_speed);
 

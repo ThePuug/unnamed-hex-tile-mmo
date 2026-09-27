@@ -204,8 +204,8 @@ pub fn validate_ability_prerequisites(
 // GCD and tier lock are now reset directly by ability systems to prevent race conditions
 
 /// System to automatically trigger auto-attacks when a hostile is in range.
-/// The cadence is fixed by `ActorAttributes::cadence_interval` alone: no
-/// random spread, and an ability's lockout does not pause it. An NPC swings
+/// The cadence is fixed by `ActorAttributes::cadence_interval`, stretched
+/// by a daze: no random spread, and an ability's lockout does not pause it. An NPC swings
 /// wherever it stands; its assigned hex decides only where it walks.
 pub fn process_passive_auto_attack(
     mut query: Query<
@@ -213,7 +213,8 @@ pub fn process_passive_auto_attack(
          &ActorAttributes,
          Option<&common_bevy::components::AttackRange>,
          Option<&common_bevy::components::stunned::Stunned>,
-         Option<&common_bevy::components::heading::Heading>),
+         Option<&common_bevy::components::heading::Heading>,
+         Option<&common_bevy::components::dazed::Dazed>),
         Without<common_bevy::components::behaviour::PlayerControlled>
     >,
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
@@ -226,7 +227,7 @@ pub fn process_passive_auto_attack(
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target, attrs, attack_range_opt, stunned, heading) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, gcd_opt, target, attrs, attack_range_opt, stunned, heading, dazed) in query.iter_mut() {
         if common_bevy::components::stunned::Stunned::holds(stunned) {
             continue;
         }
@@ -238,7 +239,7 @@ pub fn process_passive_auto_attack(
         }
 
         // Check cooldown (tier-based cadence from Presence commitment)
-        let cooldown = attrs.cadence_interval();
+        let cooldown = common_bevy::components::dazed::Dazed::cadence(attrs.cadence_interval(), dazed);
         let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
         if time_since_last_attack < cooldown {
             continue; // Still on cooldown
