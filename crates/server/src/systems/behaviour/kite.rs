@@ -5,7 +5,7 @@ use qrz::Qrz;
 use common_bevy::{
     components::{
         Loc, resources::Health,
-        behaviour::Side, hamstrung::Hamstrung, slowed::Slowed, ActorAttributes, target::Target,
+        behaviour::Side, hamstrung::Hamstrung, slowed::Slowed, stunned::Stunned, equipment::Burdened, ActorAttributes, target::Target,
         returning::Returning, stagger::Stagger,
         engagement::EngagementMember,
     },
@@ -50,6 +50,8 @@ fn score_neighbor(
 /// - Maintains sticky targeting via TargetLock
 /// - **Flees** when target closes within disengage_distance (< 3 hexes)
 /// - **Repositions** when target is 3-4 hexes away (moves back into the optimal zone)
+/// - Flees and repositions only from a target it outruns — slowed, hamstrung
+///   or stunned; one as fast as it it stands and shoots
 /// - **Holds** when target is in optimal_distance range (5-6 hexes), where its auto-attack reaches, turning to face it
 /// - **Advances** when target is beyond optimal range (> 6 hexes) - moves closer
 /// - **Leashes** when too far from spawner (returns to spawn)
@@ -80,9 +82,14 @@ impl Kite {
         }
     }
 
-    /// Determine what action the kiter should take based on distance to target
-    pub fn determine_action(&self, distance_to_target: i32) -> KiteAction {
-        if distance_to_target < self.disengage_distance {
+    /// Determine what action the kiter should take based on distance to
+    /// target, and whether it `outpaces` the target: short of its band it
+    /// backs off only from a target it can outrun, and otherwise stands
+    /// and shoots, since a target as fast as it keeps up with any flight.
+    pub fn determine_action(&self, distance_to_target: i32, outpaces: bool) -> KiteAction {
+        if distance_to_target < self.optimal_distance_min && !outpaces {
+            KiteAction::Attack
+        } else if distance_to_target < self.disengage_distance {
             KiteAction::Flee
         } else if distance_to_target < self.optimal_distance_min {
             KiteAction::Reposition
@@ -121,6 +128,7 @@ pub fn kite(
         Option<&Slowed>,
     )>,
     q_target: Query<(&Loc, &Health, &Side)>,
+    q_pace: Query<(Option<&ActorAttributes>, Option<&Hamstrung>, Option<&Slowed>, Option<&Stunned>, Has<Burdened>)>,
     q_spawner: Query<&Loc, Without<Kite>>,
     nntree: Res<NNTree>,
     map: Res<Map>,
@@ -284,7 +292,13 @@ pub fn kite(
 
         // 3. CHECK DISTANCE AND DETERMINE ACTION
         let distance = npc_loc.flat_distance(target_loc);
-        let action = kite_config.determine_action(distance);
+        let target_speed = q_pace.get(target_entity).map_or(0.0, |(attrs, hamstrung, slowed, stunned, burdened)| {
+            if Stunned::holds(stunned) {
+                return 0.0;
+            }
+            common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), burdened, common_bevy::systems::movement::slowed_pace(hamstrung, slowed))
+        });
+        let action = kite_config.determine_action(distance, movement_speed > target_speed);
 
         // Fetch spawn location for score-based neighbor selection
         let Ok(&spawner_loc) = q_spawner.get(engagement_member.0) else {
@@ -365,14 +379,14 @@ mod tests {
         let kite = Kite::forest_sprite();
 
         // Distance 0 hexes - FLEE
-        assert_eq!(kite.determine_action(0), KiteAction::Flee);
+        assert_eq!(kite.determine_action(0, true), KiteAction::Flee);
 
         // Distance 2 hexes - FLEE
-        assert_eq!(kite.determine_action(2), KiteAction::Flee);
+        assert_eq!(kite.determine_action(2, true), KiteAction::Flee);
 
         // Distance exactly at disengage threshold (3) - NOT flee (>= 3 is safe)
         // NOTE: says "< 3 hexes" so 3 is safe
-        assert_ne!(kite.determine_action(3), KiteAction::Flee);
+        assert_ne!(kite.determine_action(3, true), KiteAction::Flee);
     }
 
     #[test]
@@ -380,13 +394,13 @@ mod tests {
         let kite = Kite::forest_sprite();
 
         // Distance 3 hexes - REPOSITION (too close, but not flee range)
-        assert_eq!(kite.determine_action(3), KiteAction::Reposition);
+        assert_eq!(kite.determine_action(3, true), KiteAction::Reposition);
 
         // Distance 4 hexes - REPOSITION
-        assert_eq!(kite.determine_action(4), KiteAction::Reposition);
+        assert_eq!(kite.determine_action(4, true), KiteAction::Reposition);
 
         // Distance 5 hexes - NOT reposition (in optimal range now)
-        assert_ne!(kite.determine_action(5), KiteAction::Reposition);
+        assert_ne!(kite.determine_action(5, true), KiteAction::Reposition);
     }
 
     #[test]
@@ -394,13 +408,22 @@ mod tests {
         let kite = Kite::forest_sprite();
 
         // Distance 5 hexes - ATTACK (min optimal)
-        assert_eq!(kite.determine_action(5), KiteAction::Attack);
+        assert_eq!(kite.determine_action(5, true), KiteAction::Attack);
 
         // Distance 6 hexes - ATTACK (mid optimal)
-        assert_eq!(kite.determine_action(6), KiteAction::Attack);
+        assert_eq!(kite.determine_action(6, true), KiteAction::Attack);
 
         // Distance 7 hexes - NOT attack (beyond its attack range)
-        assert_ne!(kite.determine_action(7), KiteAction::Attack);
+        assert_ne!(kite.determine_action(7, true), KiteAction::Attack);
+    }
+
+    #[test]
+    fn test_determine_action_stands_against_a_target_it_cannot_outrun() {
+        let kite = Kite::forest_sprite();
+        for distance in 0..kite.optimal_distance_min {
+            assert_eq!(kite.determine_action(distance, false), KiteAction::Attack, "at {distance}");
+        }
+        assert_eq!(kite.determine_action(7, false), KiteAction::Advance);
     }
 
     #[test]
@@ -408,13 +431,13 @@ mod tests {
         let kite = Kite::forest_sprite();
 
         // Distance 7 hexes - ADVANCE (beyond optimal)
-        assert_eq!(kite.determine_action(7), KiteAction::Advance);
+        assert_eq!(kite.determine_action(7, true), KiteAction::Advance);
 
         // Distance 15 hexes - ADVANCE (well beyond optimal)
-        assert_eq!(kite.determine_action(15), KiteAction::Advance);
+        assert_eq!(kite.determine_action(15, true), KiteAction::Advance);
 
         // Distance 6 hexes - NOT advance (in optimal range)
-        assert_ne!(kite.determine_action(6), KiteAction::Advance);
+        assert_ne!(kite.determine_action(6, true), KiteAction::Advance);
     }
 
     #[test]
@@ -423,16 +446,16 @@ mod tests {
 
         // Test boundary conditions for optimal range (5-6 hexes)
         // Just below optimal (4 hexes) - REPOSITION
-        assert_eq!(kite.determine_action(4), KiteAction::Reposition);
+        assert_eq!(kite.determine_action(4, true), KiteAction::Reposition);
 
         // Min optimal (5 hexes) - ATTACK
-        assert_eq!(kite.determine_action(5), KiteAction::Attack);
+        assert_eq!(kite.determine_action(5, true), KiteAction::Attack);
 
         // Max optimal (6 hexes) - ATTACK
-        assert_eq!(kite.determine_action(6), KiteAction::Attack);
+        assert_eq!(kite.determine_action(6, true), KiteAction::Attack);
 
         // Just above optimal (7 hexes) - ADVANCE
-        assert_eq!(kite.determine_action(7), KiteAction::Advance);
+        assert_eq!(kite.determine_action(7, true), KiteAction::Advance);
     }
 
     /// Test that Kite behavior handles distance transitions correctly
@@ -443,16 +466,16 @@ mod tests {
         let kite = Kite::forest_sprite();
 
         // Player too close (2 hexes) - FLEE
-        assert_eq!(kite.determine_action(2), KiteAction::Flee, "Should flee when player at 2 hexes");
+        assert_eq!(kite.determine_action(2, true), KiteAction::Flee, "Should flee when player at 2 hexes");
 
         // Player at 4 hexes - REPOSITION (moving to optimal 5-6 range)
-        assert_eq!(kite.determine_action(4), KiteAction::Reposition, "Should reposition at 4 hexes");
+        assert_eq!(kite.determine_action(4, true), KiteAction::Reposition, "Should reposition at 4 hexes");
 
         // Player at 6 hexes - ATTACK (optimal range)
-        assert_eq!(kite.determine_action(6), KiteAction::Attack, "Should attack at 6 hexes");
+        assert_eq!(kite.determine_action(6, true), KiteAction::Attack, "Should attack at 6 hexes");
 
         // Player too far (10 hexes) - ADVANCE
-        assert_eq!(kite.determine_action(10), KiteAction::Advance, "Should advance at 10 hexes");
+        assert_eq!(kite.determine_action(10, true), KiteAction::Advance, "Should advance at 10 hexes");
     }
 
     #[test]
