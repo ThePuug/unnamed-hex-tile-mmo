@@ -24,7 +24,8 @@
 //!
 //! Every pairing fights `runs` times, the two swapping ends each run so
 //! neither side's spawn decides it. All of a scenario's fights share one
-//! pool of workers, so no pairing waits on another's slowest fight. The report
+//! pool of workers, so no pairing waits on another's slowest fight, and
+//! each fight runs single-threaded on its worker. The report
 //! gives each pairing's win split, median fight length, the winners' health
 //! left, and where each side's damage came from: auto-attacks, signature
 //! abilities, or reflections.
@@ -233,6 +234,13 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     app.add_observer(tally_resolved);
     app.finish();
     app.cleanup();
+    // Fights already fill every core, one to a worker thread: a fight's
+    // systems run on its own thread rather than queue for Bevy's shared
+    // pool, several times faster. Systems whose order is unpinned then run
+    // in one order rather than varying frame to frame as on the server.
+    for (_, schedule) in app.world_mut().resource_mut::<Schedules>().iter_mut() {
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+    }
 
     let world = app.world_mut();
     let time = world.resource::<Time>().clone();
