@@ -29,15 +29,16 @@ pub fn calculate_composure_reduction(
 }
 
 /// System to tick down the global recovery timer.
-/// Applies Composure-based time reduction with gap and contest modifiers.
+/// Applies Composure-based time reduction with gap and contest modifiers,
+/// and a daze's pace, which draws a dazed actor's lockout out.
 pub fn global_recovery_system(
     time: Res<Time>,
     mut commands: Commands,
-    mut query: Query<(Entity, &mut GlobalRecovery, &ActorAttributes)>,
+    mut query: Query<(Entity, &mut GlobalRecovery, &ActorAttributes, Option<&crate::components::dazed::Dazed>)>,
 ) {
     let delta = time.delta_secs();
 
-    for (entity, mut recovery, attrs) in query.iter_mut() {
+    for (entity, mut recovery, attrs, dazed) in query.iter_mut() {
         if recovery.is_active() {
             let composure = attrs.composure();
             let reduction_pct = calculate_composure_reduction(
@@ -55,7 +56,7 @@ pub fn global_recovery_system(
                 1.0 / (1.0 - reduction_pct)
             };
 
-            let effective_delta = delta * speed_multiplier;
+            let effective_delta = delta * speed_multiplier * crate::components::dazed::Dazed::pace_of(dazed);
 
             recovery.tick(effective_delta);
 

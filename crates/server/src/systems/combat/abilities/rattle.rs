@@ -13,7 +13,7 @@ const MIN_PACE: f32 = 0.1;
 /// Handle Rattle, the Juggernaut's signature: a strike on an adjacent
 /// target for `ArchetypeTuning::rattle_force` of Force that adds a stack
 /// to its daze (`Dazed`), up to `rattle_stacks`. Each stack takes
-/// `rattle_daze` of its pace, its movement and its auto-attacks alike,
+/// `rattle_daze` of its pace, its movement, auto-attacks and recovery alike,
 /// so the longer a fight runs the less the target escapes a Juggernaut or
 /// presses one.
 pub fn handle_rattle(

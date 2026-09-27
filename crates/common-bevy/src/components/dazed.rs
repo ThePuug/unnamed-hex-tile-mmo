@@ -2,19 +2,20 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// A daze: what a Juggernaut's Rattles have done to an actor this fight.
-/// Every Rattle adds a stack, and the stacks slow everything it does, its
-/// movement and its auto-attacks alike, so the longer a fight runs the less
-/// it escapes a Juggernaut or presses one. They clear when the actor leaves
-/// combat.
+/// Every Rattle adds a stack, and the stacks slow everything it does: its
+/// movement, its auto-attacks and its recovery from each ability, so the
+/// longer a fight runs the less it escapes a Juggernaut or presses one. They
+/// clear when the actor leaves combat.
 ///
 /// The server works out `pace` from its tuning and sends it, so a client
-/// moves and swings a dazed actor at the pace the server does without
-/// holding the tuning.
+/// moves, swings and recovers a dazed actor at the pace the server does
+/// without holding the tuning.
 #[derive(Clone, Component, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Dazed {
     pub stacks: u8,
     /// Share of its pace the actor keeps, above zero: its speed is this
-    /// share, and its auto-attack interval stretches by its inverse
+    /// share, and its auto-attack interval and its lockouts stretch by its
+    /// inverse
     pub pace: f32,
 }
 
