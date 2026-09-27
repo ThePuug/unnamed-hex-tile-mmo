@@ -137,7 +137,7 @@ pub fn setup(
                 AbilityType::Lunge => "20".to_string(),       // 20 stamina
                 AbilityType::Overpower => "40".to_string(),   // 40 stamina
                 AbilityType::Deflect => "50".to_string(),     // 50 stamina
-                AbilityType::Counter => "30".to_string(),     // 30 stamina
+                AbilityType::Counter => format!("{:.0}", common_bevy::systems::combat::resources::COUNTER_STAMINA_COST),
                 AbilityType::Kick => "40".to_string(),        // 40 stamina
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
                 AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => String::new(), // NPC-only
@@ -415,8 +415,8 @@ fn get_ability_state(
             AbilityState::Ready
         }
         AbilityType::Counter => {
-            // Counter: self-target, no range check, 30 stamina
-            if stamina.step >= 30.0 {
+            // Counter: self-target, no range check
+            if stamina.step >= common_bevy::systems::combat::resources::COUNTER_STAMINA_COST {
                 AbilityState::Ready
             } else {
                 AbilityState::InsufficientResources

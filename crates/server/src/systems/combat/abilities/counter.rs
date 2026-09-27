@@ -7,7 +7,7 @@ use common_bevy::{
 };
 use crate::resources::RunTime;
 
-/// Reactive counter-attack. Costs 30 stamina and clears as many threats from
+/// Reactive counter-attack. Costs `COUNTER_STAMINA_COST` stamina and clears as many threats from
 /// the front of the queue as the window holds. Each cleared threat goes back
 /// to its living source wherever it stands, at a share of the threat's own
 /// damage and nothing more, so a Counter returns what comes in, and lands at
@@ -115,8 +115,7 @@ pub fn handle_counter(
             respawn_query.get(target).is_err() && entity_query.get(target).is_ok()
         };
 
-        // Check stamina (30 cost)
-        let counter_stamina_cost = 30.0;
+        let counter_stamina_cost = common_bevy::systems::combat::resources::COUNTER_STAMINA_COST;
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
         };

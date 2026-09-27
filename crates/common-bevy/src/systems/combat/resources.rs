@@ -4,6 +4,10 @@ use crate::{
     message::{Component as MessageComponent, Event, *},
 };
 
+/// The stamina a Counter costs: more than stamina refills over its lockout,
+/// so a full pool covers three in a row and then one about every six seconds.
+pub const COUNTER_STAMINA_COST: f32 = 60.0;
+
 /// Calculate maximum stamina from actor attributes
 /// Fixed at 100 until we determine which attributes should scale it
 pub fn calculate_max_stamina(_attrs: &ActorAttributes) -> f32 {

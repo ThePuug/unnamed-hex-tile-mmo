@@ -71,7 +71,7 @@ pub fn npc_ability_usage(
             AbilityType::Disengage => crate::systems::combat::abilities::disengage::DISENGAGE_STAMINA_COST,
             AbilityType::Volley => crate::systems::combat::abilities::volley::VOLLEY_STAMINA_COST,
             AbilityType::Flank => crate::systems::combat::abilities::flank::FLANK_STAMINA_COST,
-            AbilityType::Counter => 30.0,
+            AbilityType::Counter => common_bevy::systems::combat::resources::COUNTER_STAMINA_COST,
             _ => continue,
         };
         if stamina.state < stamina_cost {
