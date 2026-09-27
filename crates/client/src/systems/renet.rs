@@ -227,13 +227,12 @@ pub fn write_do(
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                 };
-                // Map the named source the way InsertThreat mapped it
+                // Map the named threat's source the way InsertThreat mapped it
                 let clear_type = match clear_type {
                     ClearType::Threat { source, inserted_at } => ClearType::Threat {
                         source: l2r.get_by_right(&source).copied().unwrap_or(source),
                         inserted_at,
                     },
-                    ClearType::Source(source) => ClearType::Source(l2r.get_by_right(&source).copied().unwrap_or(source)),
                     other => other,
                 };
                 do_writer.write(Do { event: Event::ClearQueue { ent, clear_type } });

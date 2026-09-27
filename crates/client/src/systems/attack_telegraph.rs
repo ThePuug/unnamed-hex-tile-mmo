@@ -132,9 +132,9 @@ pub fn on_clear_queue(
     for message in reader.read() {
         let Do { event: GameEvent::ClearQueue { ent: target, clear_type } } = message else { continue };
 
-        // An expiry or a leap names one source; every other clear takes all
+        // An expiry names one source's threat; every other clear takes all
         let source = match clear_type {
-            ClearType::Threat { source, .. } | ClearType::Source(source) => Some(*source),
+            ClearType::Threat { source, .. } => Some(*source),
             _ => None,
         };
         for (ball_entity, ball) in balls.iter() {
