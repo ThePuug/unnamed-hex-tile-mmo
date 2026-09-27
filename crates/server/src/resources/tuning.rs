@@ -21,8 +21,6 @@ pub struct ArchetypeTuning {
     pub hamstring_force: f32,
     /// Share of its speed each Hamstring stack takes from the target
     pub hamstring_slow: f32,
-    /// Share of the target's Toughness mitigation each stack strips
-    pub hamstring_shred: f32,
     /// Most stacks a target carries
     pub hamstring_stacks: u8,
     /// Tiles a Disengage leaps
@@ -57,7 +55,6 @@ impl Default for ArchetypeTuning {
             lunge_pierce: 0.7,
             hamstring_force: 0.3,
             hamstring_slow: 0.15,
-            hamstring_shred: 0.15,
             hamstring_stacks: 3,
             disengage_leap: 3,
             disengage_technique: 0.5,
@@ -116,7 +113,6 @@ impl ArchetypeTuning {
             "lunge_pierce" => self.lunge_pierce = number()?,
             "hamstring_force" => self.hamstring_force = number()?,
             "hamstring_slow" => self.hamstring_slow = number()?,
-            "hamstring_shred" => self.hamstring_shred = number()?,
             "hamstring_stacks" => self.hamstring_stacks = number()? as u8,
             "disengage_leap" => self.disengage_leap = number()? as usize,
             "disengage_technique" => self.disengage_technique = number()?,

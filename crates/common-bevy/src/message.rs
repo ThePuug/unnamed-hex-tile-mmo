@@ -154,7 +154,7 @@ pub enum AbilityType {
     Counter,
     /// Kick - Clear visible threats, deal 75% Technique damage, knockback adjacent sources 4 tiles (40 stam, 4s recovery)
     Kick,
-    /// NPC: the Juggernaut's strike on an adjacent target, stacking a slow and an armour strip
+    /// NPC: the Juggernaut's strike on an adjacent target, stacking a slow
     Hamstring,
     /// NPC: the Skirmisher's leap clear of the blow at the front of its queue, which strengthens its next auto-attack
     Disengage,

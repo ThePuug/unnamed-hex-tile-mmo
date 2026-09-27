@@ -21,7 +21,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 
 /// Ability usage rules:
 /// - Berserker (Lunge): Use when target is within 4 hexes, adjacent included (burst and gap closer)
-/// - Juggernaut (Hamstring): Use when adjacent to target (each one slows it and strips its armour further)
+/// - Juggernaut (Hamstring): Use when adjacent to target (each one slows it further)
 /// - Kiter (Volley): Use when target is within 6 hexes (a burst from range)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
 /// - Skirmisher (Disengage): Reactive - dodges the blow at the front of its queue, an auto-attack's as overflow

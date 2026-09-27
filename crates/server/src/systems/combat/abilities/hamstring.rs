@@ -10,8 +10,8 @@ pub const HAMSTRING_STAMINA_COST: f32 = 40.0;
 /// Handle Hamstring, the Juggernaut's signature: a strike on an adjacent
 /// target for `ArchetypeTuning::hamstring_force` of Force that adds a stack
 /// to its `Hamstrung`, up to `hamstring_stacks`. Each stack takes
-/// `hamstring_slow` of its speed and strips `hamstring_shred` of its
-/// Toughness, so a Juggernaut grows more dangerous the longer a fight runs.
+/// `hamstring_slow` of its speed, so the longer a fight runs the less the
+/// target escapes a Juggernaut.
 pub fn handle_hamstring(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -72,7 +72,6 @@ pub fn handle_hamstring(
         let hamstrung = Hamstrung {
             stacks,
             pace: (1.0 - tuning.hamstring_slow * stacks as f32).max(0.0),
-            shred: (tuning.hamstring_shred * stacks as f32).min(1.0),
         };
         commands.entity(target_ent).insert(hamstrung);
         writer.write(Do {
