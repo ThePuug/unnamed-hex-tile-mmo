@@ -15,10 +15,14 @@ pub struct ArchetypeTuning {
     pub defender_delay: (u64, u64),
     /// Share of the target's Toughness mitigation a Lunge strikes past
     pub lunge_pierce: f32,
-    /// Share of Force a Charge strikes for
-    pub charge_force: f32,
-    /// Seconds a Charge holds its target in place
-    pub charge_stagger: f32,
+    /// Share of Force a Hamstring strikes for
+    pub hamstring_force: f32,
+    /// Share of its speed each Hamstring stack takes from the target
+    pub hamstring_slow: f32,
+    /// Share of the target's Toughness mitigation each stack strips
+    pub hamstring_shred: f32,
+    /// Most stacks a target carries
+    pub hamstring_stacks: u8,
     /// Tiles a Disengage leaps
     pub disengage_leap: usize,
     /// Share of Force each Volley shot strikes for
@@ -37,8 +41,10 @@ impl Default for ArchetypeTuning {
             kiter_delay: (1000, 3000),
             defender_delay: (2500, 4500),
             lunge_pierce: 0.35,
-            charge_force: 0.6,
-            charge_stagger: 2.0,
+            hamstring_force: 0.6,
+            hamstring_slow: 0.1,
+            hamstring_shred: 0.1,
+            hamstring_stacks: 5,
             disengage_leap: 3,
             volley_force: 1.4,
             counter_technique: 0.55,
@@ -85,8 +91,10 @@ impl ArchetypeTuning {
             "k_delay" => self.kiter_delay = range()?,
             "d_delay" => self.defender_delay = range()?,
             "lunge_pierce" => self.lunge_pierce = number()?,
-            "charge_force" => self.charge_force = number()?,
-            "charge_stagger" => self.charge_stagger = number()?,
+            "hamstring_force" => self.hamstring_force = number()?,
+            "hamstring_slow" => self.hamstring_slow = number()?,
+            "hamstring_shred" => self.hamstring_shred = number()?,
+            "hamstring_stacks" => self.hamstring_stacks = number()? as u8,
             "disengage_leap" => self.disengage_leap = number()? as usize,
             "volley_force" => self.volley_force = number()?,
             "counter_technique" => self.counter_technique = number()?,

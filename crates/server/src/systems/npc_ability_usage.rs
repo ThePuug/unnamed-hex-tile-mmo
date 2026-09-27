@@ -21,7 +21,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 
 /// Ability usage rules:
 /// - Berserker (Lunge): Use when target is within 4 hexes, adjacent included (burst and gap closer)
-/// - Juggernaut (Charge): Use when target is within 6 hexes (closes on anything that runs)
+/// - Juggernaut (Hamstring): Use when adjacent to target (each one slows it and strips its armour further)
 /// - Kiter (Volley): Use when target is within 6 hexes (a burst from range)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
 ///
@@ -73,7 +73,7 @@ pub fn npc_ability_usage(
 
         let stamina_cost = match ability {
             AbilityType::Lunge => 20.0,
-            AbilityType::Charge => crate::systems::combat::abilities::charge::CHARGE_STAMINA_COST,
+            AbilityType::Hamstring => crate::systems::combat::abilities::hamstring::HAMSTRING_STAMINA_COST,
             AbilityType::Disengage => crate::systems::combat::abilities::disengage::DISENGAGE_STAMINA_COST,
             AbilityType::Volley => crate::systems::combat::abilities::volley::VOLLEY_STAMINA_COST,
             AbilityType::Counter => 30.0,
@@ -118,7 +118,7 @@ pub fn npc_ability_usage(
         let should_use_ability = match archetype {
             // Lunge: its burst, and its reach to anything within 4
             EnemyArchetype::Berserker => (1..=4).contains(&distance),
-            EnemyArchetype::Juggernaut => crate::systems::combat::abilities::charge::CHARGE_RANGE.contains(&(distance as u32)),
+            EnemyArchetype::Juggernaut => distance == 1,
             EnemyArchetype::Kiter => distance as u32 <= crate::systems::combat::abilities::volley::VOLLEY_RANGE,
             // Defender's Counter is handled above
             EnemyArchetype::Defender => false,

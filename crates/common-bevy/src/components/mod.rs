@@ -4,6 +4,7 @@ pub mod engagement;
 pub mod entity_type;
 pub mod equipment;
 pub mod gcd;
+pub mod hamstrung;
 pub mod heading;
 pub mod hex_assignment;
 pub mod keybits;

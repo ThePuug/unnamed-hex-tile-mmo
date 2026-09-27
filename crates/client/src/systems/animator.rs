@@ -74,7 +74,7 @@ impl Clip {
     /// draws; no clip is authored for it.
     pub fn of(ability: AbilityType) -> Option<Clip> {
         match ability {
-            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Lunge | AbilityType::Kick | AbilityType::Charge | AbilityType::Volley => Some(Clip::Attack),
+            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Lunge | AbilityType::Kick | AbilityType::Hamstring | AbilityType::Volley => Some(Clip::Attack),
             AbilityType::Counter | AbilityType::Deflect => Some(Clip::Counter),
             AbilityType::Disengage => None,
         }

@@ -117,7 +117,7 @@ impl EnemyArchetype {
     pub fn ability(&self) -> Option<AbilityType> {
         match self {
             EnemyArchetype::Berserker => Some(AbilityType::Lunge),
-            EnemyArchetype::Juggernaut => Some(AbilityType::Charge),
+            EnemyArchetype::Juggernaut => Some(AbilityType::Hamstring),
             EnemyArchetype::Kiter => Some(AbilityType::Volley),
             EnemyArchetype::Defender => Some(AbilityType::Counter),
         }
@@ -139,7 +139,7 @@ impl EnemyArchetype {
         use crate::components::entity_type::actor::Approach;
         match self {
             EnemyArchetype::Berserker => Approach::Direct,
-            EnemyArchetype::Juggernaut => Approach::Overwhelming,
+            EnemyArchetype::Juggernaut => Approach::Binding,
             EnemyArchetype::Kiter => Approach::Distant,
             EnemyArchetype::Defender => Approach::Patient,
         }
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn test_archetype_abilities() {
         assert_eq!(EnemyArchetype::Berserker.ability(), Some(AbilityType::Lunge));
-        assert_eq!(EnemyArchetype::Juggernaut.ability(), Some(AbilityType::Charge));
+        assert_eq!(EnemyArchetype::Juggernaut.ability(), Some(AbilityType::Hamstring));
         assert_eq!(EnemyArchetype::Kiter.ability(), Some(AbilityType::Volley));
         assert_eq!(EnemyArchetype::Defender.ability(), Some(AbilityType::Counter));
     }

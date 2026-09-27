@@ -33,6 +33,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::Behaviour(_) => "Inc:Behaviour",
             Component::PlayerControlled(_) => "Inc:PlayerControlled",
             Component::Returning(_) => "Inc:Returning",
+            Component::Hamstrung(_) => "Inc:Hamstrung",
             Component::Equipment(_) => "Inc:Equipment",
         },
         Event::Gcd { .. } => "Gcd",

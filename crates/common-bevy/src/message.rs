@@ -154,8 +154,8 @@ pub enum AbilityType {
     Counter,
     /// Kick - Clear visible threats, deal 75% Technique damage, knockback adjacent sources 4 tiles (40 stam, 4s recovery)
     Kick,
-    /// NPC: the Juggernaut's rush onto a target within 6 tiles, staggering it on impact
-    Charge,
+    /// NPC: the Juggernaut's strike on an adjacent target, stacking a slow and an armour strip
+    Hamstring,
     /// NPC: a leap away from a target that has closed within 2 tiles, dodging its blow (Instinct's; no archetype carries it yet)
     Disengage,
     /// NPC: the Kiter's burst of shots within 6 tiles, one per threat it can see
@@ -199,6 +199,7 @@ pub enum Component {
     Mana(Mana),
     PlayerControlled(PlayerControlled),
     Returning(crate::components::returning::Returning),
+    Hamstrung(crate::components::hamstrung::Hamstrung),
     Stamina(Stamina),
     TierLock(crate::components::tier_lock::TierLock),
 }
@@ -215,6 +216,7 @@ impl Component {
             Component::Mana(v) => { entity.insert(v); }
             Component::PlayerControlled(v) => { entity.insert(v); }
             Component::Returning(v) => { entity.insert(v); }
+            Component::Hamstrung(v) => { entity.insert(v); }
             Component::Stamina(v) => { entity.insert(v); }
             Component::TierLock(v) => { entity.insert(v); }
             _ => unreachable!("Loc/Heading require special handling"),

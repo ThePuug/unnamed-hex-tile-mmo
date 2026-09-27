@@ -4,7 +4,7 @@ use rand::seq::IteratorRandom;
 use common_bevy::{
     components::{
         Loc, heading::Heading, position::Position, resources::Health,
-        behaviour::Side, AirTime, ActorAttributes, target::Target,
+        behaviour::Side, hamstrung::Hamstrung, AirTime, ActorAttributes, target::Target,
         returning::Returning, stagger::Stagger,
         hex_assignment::AssignedHex,
         engagement::EngagementMember,
@@ -50,6 +50,7 @@ pub fn chase(
         Option<&AssignedHex>,  // Path to assigned hex
         Option<&Stagger>,
         &Side,
+        Option<&Hamstrung>,
     )>,
     q_target: Query<(&Loc, &Health, &Side)>,
     q_spawner: Query<&Loc, Without<Chase>>,  // Query spawner locations
@@ -57,7 +58,7 @@ pub fn chase(
     map: Res<Map>,
     dt: Res<Time>,
 ) {
-    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, engagement_member, assigned_hex_opt, stagger_opt, own_side) in &mut query {
+    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, engagement_member, assigned_hex_opt, stagger_opt, own_side, hamstrung) in &mut query {
 
         // Staggered — skip all movement and intent broadcasting
         if stagger_opt.is_some() {
@@ -105,7 +106,7 @@ pub fn chase(
                 }
 
                 let dt_ms = dt.delta().as_millis() as i16;
-                let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+                let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
                 let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
 
                 npc_position.offset = offset;
@@ -187,7 +188,7 @@ pub fn chase(
                         }
 
                         let dt_ms = dt.delta().as_millis() as i16;
-                        let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+                        let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
                         let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
 
                         npc_position.offset = offset;
@@ -298,7 +299,7 @@ pub fn chase(
 
             // Apply physics
             let dt_ms = dt.delta().as_millis() as i16;
-            let movement_speed = attrs.map(|a| a.movement_speed()).unwrap_or(0.005);
+            let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
             let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
 
             npc_position.offset = offset;

@@ -14,7 +14,7 @@ use crate::{
 /// - No hostile entities within 20 hexes
 pub fn update_combat_state(
     mut writer: MessageWriter<Do>,
-    mut query: Query<(Entity, &Loc, &mut CombatState, Option<&Side>)>,
+    mut query: Query<(Entity, &Loc, &mut CombatState, Option<&Side>, Option<&mut crate::components::hamstrung::Hamstrung>)>,
     entity_query: Query<(Entity, &Loc, Option<&Side>)>,
     nntree: Res<NNTree>,
     time: Res<Time>,
@@ -22,7 +22,7 @@ pub fn update_combat_state(
     let current_time = time.elapsed();
     let combat_exit_timeout = Duration::from_secs(5);
 
-    for (ent, loc, mut combat_state, side) in &mut query {
+    for (ent, loc, mut combat_state, side, hamstrung) in &mut query {
         if !combat_state.in_combat {
             continue; // Already out of combat
         }
@@ -58,6 +58,14 @@ pub fn update_combat_state(
                 component: MessageComponent::CombatState(*combat_state),
             },
         });
+
+        // A fight's Hamstrings end with the fight
+        if let Some(mut hamstrung) = hamstrung.filter(|h| h.stacks > 0) {
+            *hamstrung = default();
+            writer.write(Do {
+                event: Event::Incremental { ent, component: MessageComponent::Hamstrung(*hamstrung) },
+            });
+        }
     }
 }
 

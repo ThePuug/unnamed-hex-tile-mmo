@@ -47,11 +47,13 @@ pub const MOVEMENT_SPEED: f32 = 0.0075;
 /// its gait plays the walk, which the actors' walk stride sets.
 pub const BURDENED_PACE: f32 = 0.2;
 
-/// The speed an entity moves at: its own, or [`BURDENED_PACE`] of it
-/// overburdened.
+/// The speed an entity moves at: its own, [`BURDENED_PACE`] of it
+/// overburdened, times the `pace` a Hamstring leaves it (see
+/// [`Hamstrung::pace_of`](crate::components::hamstrung::Hamstrung::pace_of)).
 /// Every caller of the physics takes its speed through here, so the
 /// server, the owner's prediction and every remote simulation agree.
-pub fn speed(own: f32, burdened: bool) -> f32 {
+pub fn speed(own: f32, burdened: bool, pace: f32) -> f32 {
+    let own = own * pace;
     if burdened { own * BURDENED_PACE } else { own }
 }
 
@@ -652,7 +654,7 @@ mod tests {
         flat_ground(&map, 3);
         let nntree = create_test_nntree();
         let free = calculate_movement(walking(Heading::NORTH, true), 200, &map, &nntree);
-        let slow = MovementInput { movement_speed: speed(MOVEMENT_SPEED, true), ..walking(Heading::NORTH, true) };
+        let slow = MovementInput { movement_speed: speed(MOVEMENT_SPEED, true, 1.0), ..walking(Heading::NORTH, true) };
         let slow = calculate_movement(slow, 200, &map, &nntree);
         let (free, slow) = (free.position.offset.xz(), slow.position.offset.xz());
         assert!(slow.length() > 0.0 && slow.length() < free.length());

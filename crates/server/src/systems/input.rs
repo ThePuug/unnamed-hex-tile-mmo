@@ -194,7 +194,7 @@ pub fn apply(
     mut reader: MessageReader<Do>,
     mut commands: Commands,
     mut buffers: ResMut<InputQueues>,
-    mut query: Query<(&mut Heading, &mut Turn, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>, Has<Burdened>)>,
+    mut query: Query<(&mut Heading, &mut Turn, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>, Has<Burdened>, Option<&common_bevy::components::hamstrung::Hamstrung>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
@@ -202,7 +202,7 @@ pub fn apply(
         let Do { event: Event::Input { ent, key_bits, dt, seq } } = message else { continue };
         let (ent, key_bits, dt, seq) = (*ent, *key_bits, *dt, *seq);
         let Some(buffer) = buffers.get_mut(&ent) else { continue };
-        let Ok((mut heading, mut turn, mut position, mut airtime, attrs, dead, burdened)) = query.get_mut(ent) else { continue };
+        let Ok((mut heading, mut turn, mut position, mut airtime, attrs, dead, burdened, hamstrung)) = query.get_mut(ent) else { continue };
         let Some(front) = buffer.queue.front_mut() else {
             panic!("Queue invariant violation: entity {ent} has empty queue");
         };
@@ -226,7 +226,7 @@ pub fn apply(
         if key_bits.is_pressed(KB_JUMP) && airtime.state.is_none() {
             airtime.state = Some(JUMP_DURATION_MS);
         }
-        let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened);
+        let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened, common_bevy::components::hamstrung::Hamstrung::pace_of(hamstrung));
         let out = calculate_movement(MovementInput {
             position: *position,
             heading: turn.heading,
