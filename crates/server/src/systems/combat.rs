@@ -112,8 +112,7 @@ pub fn resolve_threat(
     trigger: On<Try>,
     _commands: Commands,
     mut query: Query<(&mut Health, &ActorAttributes, Option<&common_bevy::components::hamstrung::Hamstrung>)>,
-    loc_query: Query<&Loc>,
-    all_attrs: Query<&ActorAttributes>,
+    actors: Query<(&Loc, &ActorAttributes)>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -122,7 +121,7 @@ pub fn resolve_threat(
     if let GameEvent::ResolveThreat { ent, threat } = event {
         if let Ok((mut health, attrs, hamstrung)) = query.get_mut(*ent) {
             // Scan for strongest Dominance aura affecting this entity
-            let (max_dominance, dominant_level) = damage_calc::find_max_dominance_in_range(*ent, &loc_query, &all_attrs);
+            let (max_dominance, dominant_level) = damage_calc::find_max_dominance_in_range(*ent, &actors);
 
             // Apply passive mitigation (unified for all damage types), less what the
             // ability pierces and what Hamstrings have stripped

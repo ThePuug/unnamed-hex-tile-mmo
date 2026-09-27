@@ -91,23 +91,23 @@ pub fn calculate_recovery_pushback(
     (base * gap * contest).min(MAX_PUSHBACK)
 }
 
-/// Scan for the strongest Dominance aura within range of target.
+/// Scan for the strongest Dominance aura within range of target, among
+/// `actors`, each read with its own position.
 /// Returns (max_dominance, level_of_dominant_entity).
 pub fn find_max_dominance_in_range(
     target: Entity,
-    loc_query: &bevy::prelude::Query<&crate::components::Loc>,
-    attrs_query: &bevy::prelude::Query<&ActorAttributes>,
+    actors: &bevy::prelude::Query<(&crate::components::Loc, &ActorAttributes)>,
 ) -> (u16, u32) {
     const RADIUS: i32 = 5;
 
-    let Ok(target_loc) = loc_query.get(target) else {
+    let Ok((target_loc, _)) = actors.get(target) else {
         return (0, 0);
     };
 
     let mut max_dominance = 0u16;
     let mut dominant_level = 0u32;
 
-    for (loc, attrs) in loc_query.iter().zip(attrs_query.iter()) {
+    for (loc, attrs) in actors.iter() {
         let distance = target_loc.flat_distance(loc) as i32;
         if distance <= RADIUS {
             let dominance = attrs.dominance();
