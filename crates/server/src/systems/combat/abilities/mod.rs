@@ -3,7 +3,7 @@ pub mod counter;
 pub mod deflect;
 pub mod disengage;
 pub mod flank;
-pub mod hamstring;
+pub mod rattle;
 pub mod kick;
 pub mod lunge;
 pub mod overpower;

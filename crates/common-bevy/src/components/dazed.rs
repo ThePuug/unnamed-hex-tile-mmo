@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// A daze: what a Juggernaut's Hamstrings have done to an actor this fight.
-/// Every Hamstring adds a stack, and the stacks slow everything it does, its
+/// A daze: what a Juggernaut's Rattles have done to an actor this fight.
+/// Every Rattle adds a stack, and the stacks slow everything it does, its
 /// movement and its auto-attacks alike, so the longer a fight runs the less
 /// it escapes a Juggernaut or presses one. They clear when the actor leaves
 /// combat.

@@ -5,18 +5,18 @@ use common_bevy::{
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
 };
 
-pub const HAMSTRING_STAMINA_COST: f32 = 40.0;
+pub const RATTLE_STAMINA_COST: f32 = 40.0;
 
 /// The least pace a daze leaves: a dazed actor still moves and swings.
 const MIN_PACE: f32 = 0.1;
 
-/// Handle Hamstring, the Juggernaut's signature: a strike on an adjacent
-/// target for `ArchetypeTuning::hamstring_force` of Force that adds a stack
-/// to its daze (`Dazed`), up to `hamstring_stacks`. Each stack takes
-/// `hamstring_daze` of its pace, its movement and its auto-attacks alike,
+/// Handle Rattle, the Juggernaut's signature: a strike on an adjacent
+/// target for `ArchetypeTuning::rattle_force` of Force that adds a stack
+/// to its daze (`Dazed`), up to `rattle_stacks`. Each stack takes
+/// `rattle_daze` of its pace, its movement and its auto-attacks alike,
 /// so the longer a fight runs the less the target escapes a Juggernaut or
 /// presses one.
-pub fn handle_hamstring(
+pub fn handle_rattle(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
     loc_query: Query<&Loc>,
@@ -30,7 +30,7 @@ pub fn handle_hamstring(
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
-        let Try { event: GameEvent::UseAbility { ent, ability: AbilityType::Hamstring, target } } = event else {
+        let Try { event: GameEvent::UseAbility { ent, ability: AbilityType::Rattle, target } } = event else {
             continue;
         };
         if respawn_query.get(*ent).is_ok() {
@@ -62,38 +62,38 @@ pub fn handle_hamstring(
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
         };
-        if stamina.state < HAMSTRING_STAMINA_COST {
+        if stamina.state < RATTLE_STAMINA_COST {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::InsufficientStamina } });
             continue;
         }
-        stamina.state -= HAMSTRING_STAMINA_COST;
+        stamina.state -= RATTLE_STAMINA_COST;
         stamina.step = stamina.state;
         writer.write(Do {
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
         });
 
-        let stacks = dazed_query.get(target_ent).map_or(0, |h| h.stacks).saturating_add(1).min(tuning.hamstring_stacks);
+        let stacks = dazed_query.get(target_ent).map_or(0, |h| h.stacks).saturating_add(1).min(tuning.rattle_stacks);
         let dazed = Dazed {
             stacks,
-            pace: (1.0 - tuning.hamstring_daze * stacks as f32).max(MIN_PACE),
+            pace: (1.0 - tuning.rattle_daze * stacks as f32).max(MIN_PACE),
         };
         commands.entity(target_ent).insert(dazed);
         writer.write(Do {
             event: GameEvent::Incremental { ent: target_ent, component: common_bevy::message::Component::Dazed(dazed) },
         });
-        let attrs = attrs_query.get(*ent).expect("Hamstring caster must have ActorAttributes");
+        let attrs = attrs_query.get(*ent).expect("Rattle caster must have ActorAttributes");
         commands.trigger(Try {
             event: GameEvent::DealDamage {
                 source: *ent,
                 target: target_ent,
-                base_damage: attrs.force() * tuning.hamstring_force,
+                base_damage: attrs.force() * tuning.rattle_force,
                 damage_type: DamageType::Physical,
-                ability: Some(AbilityType::Hamstring),
+                ability: Some(AbilityType::Rattle),
                 dot: 0.0,
             },
         });
 
-        writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Hamstring, target: Some(target_ent) } });
-        commands.entity(*ent).insert(GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Hamstring), AbilityType::Hamstring));
+        writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Rattle, target: Some(target_ent) } });
+        commands.entity(*ent).insert(GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Rattle), AbilityType::Rattle));
     }
 }

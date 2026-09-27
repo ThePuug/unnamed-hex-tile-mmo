@@ -121,7 +121,7 @@ impl EnemyArchetype {
     pub fn ability(&self) -> Option<AbilityType> {
         match self {
             EnemyArchetype::Berserker => Some(AbilityType::Lunge),
-            EnemyArchetype::Juggernaut => Some(AbilityType::Hamstring),
+            EnemyArchetype::Juggernaut => Some(AbilityType::Rattle),
             EnemyArchetype::Kiter => Some(AbilityType::Volley),
             EnemyArchetype::Defender => Some(AbilityType::Counter),
             EnemyArchetype::Skirmisher => Some(AbilityType::Disengage),
@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn test_archetype_abilities() {
         assert_eq!(EnemyArchetype::Berserker.ability(), Some(AbilityType::Lunge));
-        assert_eq!(EnemyArchetype::Juggernaut.ability(), Some(AbilityType::Hamstring));
+        assert_eq!(EnemyArchetype::Juggernaut.ability(), Some(AbilityType::Rattle));
         assert_eq!(EnemyArchetype::Kiter.ability(), Some(AbilityType::Volley));
         assert_eq!(EnemyArchetype::Defender.ability(), Some(AbilityType::Counter));
         assert_eq!(EnemyArchetype::Skirmisher.ability(), Some(AbilityType::Disengage));

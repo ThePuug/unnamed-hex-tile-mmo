@@ -41,7 +41,7 @@ impl Plugin for CombatPlugin {
             npc_ability_usage::npc_ability_usage.run_if(on_timer(Duration::from_millis(500))), // NPCs use signature abilities (check every 0.5s for responsive Defender counters)
             combat::validate_ability_prerequisites,
             combat::abilities::auto_attack::handle_auto_attack,
-            combat::abilities::hamstring::handle_hamstring,
+            combat::abilities::rattle::handle_rattle,
             combat::abilities::disengage::handle_disengage,
             combat::abilities::volley::handle_volley,
             combat::abilities::flank::handle_flank,

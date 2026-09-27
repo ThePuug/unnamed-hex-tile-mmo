@@ -19,12 +19,12 @@ pub struct ArchetypeTuning {
     pub lunge_pierce: f32,
     /// Share of Force each tick of a Lunge's DoT deals
     pub lunge_dot: f32,
-    /// Share of Force a Hamstring strikes for
-    pub hamstring_force: f32,
-    /// Share of its speed each Hamstring stack takes from the target
-    pub hamstring_daze: f32,
+    /// Share of Force a Rattle strikes for
+    pub rattle_force: f32,
+    /// Share of its pace each Rattle stack takes from the target
+    pub rattle_daze: f32,
     /// Most stacks a target carries
-    pub hamstring_stacks: u8,
+    pub rattle_stacks: u8,
     /// Tiles a Disengage leaps
     pub disengage_leap: usize,
     /// Share of Technique a Disengage adds to its caster's next auto-attack
@@ -56,9 +56,9 @@ impl Default for ArchetypeTuning {
             cutthroat_delay: (3000, 5000),
             lunge_pierce: 0.7,
             lunge_dot: 0.15,
-            hamstring_force: 0.45,
-            hamstring_daze: 0.1,
-            hamstring_stacks: 3,
+            rattle_force: 0.45,
+            rattle_daze: 0.1,
+            rattle_stacks: 3,
             disengage_leap: 4,
             disengage_technique: 0.5,
             volley_force: 1.2,
@@ -115,9 +115,9 @@ impl ArchetypeTuning {
             "c_delay" => self.cutthroat_delay = range()?,
             "lunge_pierce" => self.lunge_pierce = number()?,
             "lunge_dot" => self.lunge_dot = number()?,
-            "hamstring_force" => self.hamstring_force = number()?,
-            "hamstring_daze" => self.hamstring_daze = number()?,
-            "hamstring_stacks" => self.hamstring_stacks = number()? as u8,
+            "rattle_force" => self.rattle_force = number()?,
+            "rattle_daze" => self.rattle_daze = number()?,
+            "rattle_stacks" => self.rattle_stacks = number()? as u8,
             "disengage_leap" => self.disengage_leap = number()? as usize,
             "disengage_technique" => self.disengage_technique = number()?,
             "volley_force" => self.volley_force = number()?,

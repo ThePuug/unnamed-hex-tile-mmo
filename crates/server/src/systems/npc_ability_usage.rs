@@ -21,7 +21,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 
 /// Ability usage rules:
 /// - Berserker (Lunge): Use when target is within 4 hexes, adjacent included (burst and gap closer)
-/// - Juggernaut (Hamstring): Use when adjacent to target (each one dazes it further)
+/// - Juggernaut (Rattle): Use when adjacent to target (each one dazes it further)
 /// - Kiter (Volley): Use when target is within 6 hexes (a burst from range)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
 /// - Skirmisher (Disengage): Reactive - dodges the blow at the front of its queue, an auto-attack's as overflow
@@ -67,7 +67,7 @@ pub fn npc_ability_usage(
 
         let stamina_cost = match ability {
             AbilityType::Lunge => 20.0,
-            AbilityType::Hamstring => crate::systems::combat::abilities::hamstring::HAMSTRING_STAMINA_COST,
+            AbilityType::Rattle => crate::systems::combat::abilities::rattle::RATTLE_STAMINA_COST,
             AbilityType::Disengage => crate::systems::combat::abilities::disengage::DISENGAGE_STAMINA_COST,
             AbilityType::Volley => crate::systems::combat::abilities::volley::VOLLEY_STAMINA_COST,
             AbilityType::Flank => crate::systems::combat::abilities::flank::FLANK_STAMINA_COST,
