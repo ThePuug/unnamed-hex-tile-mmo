@@ -214,6 +214,10 @@ impl Default for Turn {
 /// blow takes about a quarter of a level-10 actor's health: a fight takes several.
 pub const BASE_HEALTH: f32 = 300.0;
 
+/// Health each point of Vitality adds before level: a Vitality build at level
+/// 10 has about two and a half times the health of one without.
+pub const HEALTH_PER_VITALITY: f32 = 2.8;
+
 #[derive(Clone, Component, Copy, Default)]
 pub struct Actor;
 
@@ -826,7 +830,7 @@ impl ActorAttributes {
     /// signature blows a fight takes.
     pub fn constitution(&self) -> f32 {
         let vitality = self.vitality() as f32;
-        let linear = BASE_HEALTH + (vitality * 3.8);
+        let linear = BASE_HEALTH + (vitality * HEALTH_PER_VITALITY);
         linear * self.hp_level_multiplier()
     }
 
