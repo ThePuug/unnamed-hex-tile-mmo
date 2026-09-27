@@ -11,19 +11,28 @@ use crate::{
 /// finishes the turn; further, it turns on the spot.
 pub const WALK_ARC: u8 = 3;
 
+/// How an NPC moves while it steers: as a player holding no key, Up, or Down.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Walk {
+    Still,
+    Forward,
+    /// Away from what it faces, at `movement::BACK_PACE`
+    Backward,
+}
+
 /// Advance an NPC by `dt` milliseconds as a player's keys would carry it,
 /// through `movement::calculate_movement`, the canonical physics: the
 /// heading in `turn` steps toward `goal` on the turn clock `turn` carries,
-/// no faster than a held turn key, and stops there; the NPC walks forward,
-/// when `walk`, only while the heading is within [`WALK_ARC`] of the goal,
-/// so running from what it faces costs the turn. Returns the new offset
-/// from `position.tile` and the new airborne state.
+/// no faster than a held turn key, and stops there; the NPC takes its
+/// `walk` only while the heading is within [`WALK_ARC`] of the goal, so
+/// running from what it faces costs the turn. Returns the new offset from
+/// `position.tile` and the new airborne state.
 #[allow(clippy::too_many_arguments)]
 pub fn steer(
     position: Position,
     turn: &mut Turn,
     goal: Heading,
-    walk: bool,
+    walk: Walk,
     airtime: Option<i16>,
     movement_speed: f32,
     dt: i16,
@@ -44,8 +53,8 @@ pub fn steer(
         let output = movement::calculate_movement(movement::MovementInput {
             position,
             heading: turn.heading,
-            moving: walk && facing <= WALK_ARC,
-            back: false,
+            moving: walk != Walk::Still && facing <= WALK_ARC,
+            back: walk == Walk::Backward,
             turn: if stepping { way } else { 0 },
             since_step_ms: turn.since_step_ms,
             airtime,
@@ -88,7 +97,7 @@ mod tests {
     #[allow(clippy::too_many_arguments)]
     fn apply(position: Position, heading: Heading, walk: bool, airtime: Option<i16>, movement_speed: f32, dt: i16, map: &Map, nntree: &NNTree) -> (Vec3, Option<i16>) {
         let mut turn = Turn { heading, ..Turn::default() };
-        steer(position, &mut turn, heading, walk, airtime, movement_speed, dt, map, nntree)
+        steer(position, &mut turn, heading, if walk { Walk::Forward } else { Walk::Still }, airtime, movement_speed, dt, map, nntree)
     }
 
     fn standing() -> Position {
@@ -168,7 +177,7 @@ mod tests {
     fn running_from_what_it_faces_costs_the_turn() {
         let (map, nntree) = (create_test_map(), create_test_nntree());
         let mut turn = Turn::default();
-        let (moved, _) = steer(standing(), &mut turn, Heading::NORTH.reversed(), true, None, MOVEMENT_SPEED, 125, &map, &nntree);
+        let (moved, _) = steer(standing(), &mut turn, Heading::NORTH.reversed(), Walk::Forward, None, MOVEMENT_SPEED, 125, &map, &nntree);
         assert!(moved.xz().length() < 1e-6, "turns on the spot: {moved:?}");
         assert_ne!(turn.heading, Heading::NORTH, "and has begun to turn");
     }
@@ -178,7 +187,7 @@ mod tests {
         let (map, nntree) = (create_test_map(), create_test_nntree());
         for dt in [1, 79, 80, 81, 400, 1000] {
             let mut turn = Turn::default();
-            steer(standing(), &mut turn, Heading::NORTH.reversed(), false, None, MOVEMENT_SPEED, dt, &map, &nntree);
+            steer(standing(), &mut turn, Heading::NORTH.reversed(), Walk::Still, None, MOVEMENT_SPEED, dt, &map, &nntree);
             let held = movement::calculate_movement(movement::MovementInput {
                 position: standing(), heading: Heading::NORTH, moving: false, back: false, turn: 1,
                 since_step_ms: movement::TURN_REPEAT_MS, airtime: None, movement_speed: MOVEMENT_SPEED, collides: false,
@@ -193,8 +202,20 @@ mod tests {
         let (map, nntree) = (create_test_map(), create_test_nntree());
         let east = Heading::from_degrees(90.0);
         let mut turn = Turn::default();
-        let (moved, _) = steer(standing(), &mut turn, east, true, None, MOVEMENT_SPEED, 1000, &map, &nntree);
+        let (moved, _) = steer(standing(), &mut turn, east, Walk::Forward, None, MOVEMENT_SPEED, 1000, &map, &nntree);
         assert_eq!(turn.heading, east);
         assert!(Heading::from_world_dir(moved.xz()).is_some_and(|went| went.turn_toward(east).1 <= WALK_ARC), "walked toward the goal: {moved:?}");
+    }
+
+    #[test]
+    fn backing_away_keeps_the_facing_and_gives_ground_slower() {
+        let (map, nntree) = (create_test_map(), create_test_nntree());
+        let east = Heading::from_degrees(90.0);
+        let mut turn = Turn { heading: east, ..Turn::default() };
+        let (backed, _) = steer(standing(), &mut turn, east, Walk::Backward, None, MOVEMENT_SPEED, 125, &map, &nntree);
+        let (walked, _) = apply(standing(), east, true, None, MOVEMENT_SPEED, 125, &map, &nntree);
+        assert_eq!(turn.heading, east, "still faces the goal");
+        assert!(backed.xz().dot(east.to_world_dir()) < 0.0, "gave ground: {backed:?}");
+        assert!(backed.xz().length() < walked.xz().length(), "slower than walking");
     }
 }

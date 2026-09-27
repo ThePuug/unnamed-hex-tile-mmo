@@ -51,7 +51,7 @@ fn score_neighbor(
 /// - **Flees** when target closes within disengage_distance (< 3 hexes)
 /// - **Repositions** when target is 3-4 hexes away (moves back into the optimal zone)
 /// - Flees and repositions only from a target it outruns — slowed, hamstrung
-///   or stunned; one as fast as it it stands and shoots
+///   or stunned; from one as fast as it, it backs away facing it, shooting
 /// - **Holds** when target is in optimal_distance range (5-6 hexes), where its auto-attack reaches, turning to face it
 /// - **Advances** when target is beyond optimal range (> 6 hexes) - moves closer
 /// - **Leashes** when too far from spawner (returns to spawn)
@@ -84,11 +84,12 @@ impl Kite {
 
     /// Determine what action the kiter should take based on distance to
     /// target, and whether it `outpaces` the target: short of its band it
-    /// backs off only from a target it can outrun, and otherwise stands
-    /// and shoots, since a target as fast as it keeps up with any flight.
+    /// turns and runs only from a target it can outrun, and otherwise backs
+    /// away facing it, shooting as it goes, since a target as fast as it
+    /// keeps up with any flight.
     pub fn determine_action(&self, distance_to_target: i32, outpaces: bool) -> KiteAction {
         if distance_to_target < self.optimal_distance_min && !outpaces {
-            KiteAction::Attack
+            KiteAction::BackAway
         } else if distance_to_target < self.disengage_distance {
             KiteAction::Flee
         } else if distance_to_target < self.optimal_distance_min {
@@ -105,6 +106,7 @@ impl Kite {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KiteAction {
     Flee,        // Move away from target (distance < 3 hexes)
+    BackAway,    // Give ground facing a target it cannot outrun, shooting (distance < 5 hexes)
     Reposition,  // Move to optimal zone (distance 3-5 hexes, move to 6-7 hexes)
     Attack,      // Hold and let the auto-attack fire (distance 5-6 hexes)
     Advance,     // Move closer to target (distance > 6 hexes)
@@ -309,7 +311,7 @@ pub fn kite(
 
         // 4. EXECUTE ACTION
         match action {
-            KiteAction::Flee | KiteAction::Reposition => {
+            KiteAction::Flee | KiteAction::Reposition | KiteAction::BackAway => {
                 // Score-based neighbor selection: balances optimal range + leash safety
                 let target_qrz = **target_loc;
                 let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
@@ -324,8 +326,10 @@ pub fn kite(
                     })
                     .max_by_key(|(neighbor, _)| score_neighbor(neighbor, &target_qrz, &spawn_qrz, optimal_mid, kite_config.leash_distance));
 
-                if let Some((next_tile, _)) = best_neighbor {
-                    body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
+                match (best_neighbor, action) {
+                    (Some((next_tile, _)), KiteAction::BackAway) => body.back_toward(npc_loc, start, *next_tile, target_qrz, movement_speed, dt_ms, &map, &nntree),
+                    (Some((next_tile, _)), _) => body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree),
+                    (None, _) => {}
                 }
 
                 commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
@@ -418,10 +422,10 @@ mod tests {
     }
 
     #[test]
-    fn test_determine_action_stands_against_a_target_it_cannot_outrun() {
+    fn test_determine_action_backs_away_from_a_target_it_cannot_outrun() {
         let kite = Kite::forest_sprite();
         for distance in 0..kite.optimal_distance_min {
-            assert_eq!(kite.determine_action(distance, false), KiteAction::Attack, "at {distance}");
+            assert_eq!(kite.determine_action(distance, false), KiteAction::BackAway, "at {distance}");
         }
         assert_eq!(kite.determine_action(7, false), KiteAction::Advance);
     }
