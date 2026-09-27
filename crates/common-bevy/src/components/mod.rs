@@ -18,6 +18,7 @@ pub mod recovery;
 pub mod resources;
 pub mod returning;
 pub mod stagger;
+pub mod slowed;
 pub mod stunned;
 pub mod target;
 pub mod tier_lock;

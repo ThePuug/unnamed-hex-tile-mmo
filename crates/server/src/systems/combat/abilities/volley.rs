@@ -13,6 +13,8 @@ pub const VOLLEY_STAMINA_COST: f32 = 20.0;
 /// `VOLLEY_RANGE`, one shot per threat the Kiter can see — its Concentration
 /// window, so Focus decides how many land — each striking for
 /// `ArchetypeTuning::volley_force` of Force. Every shot is its own threat.
+/// The burst slows its target by `volley_slow` for `volley_slow_secs`, which
+/// is what lets a Kiter open the gap its turn to flee costs it.
 pub fn handle_volley(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -75,6 +77,12 @@ pub fn handle_volley(
                 },
             });
         }
+
+        let slowed = common_bevy::components::slowed::Slowed { pace: 1.0 - tuning.volley_slow, remaining: tuning.volley_slow_secs };
+        commands.entity(target_ent).insert(slowed);
+        writer.write(Do {
+            event: GameEvent::Incremental { ent: target_ent, component: common_bevy::message::Component::Slowed(slowed) },
+        });
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Volley, target: Some(target_ent) } });
         commands.entity(*ent).insert(GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Volley), AbilityType::Volley));

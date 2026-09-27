@@ -15,6 +15,7 @@ use common_bevy::{
         displacing::Displacing,
         equipment::Burdened,
         hamstrung::Hamstrung,
+        slowed::Slowed,
         stunned::Stunned,
         heading::Heading,
         keybits::*,
@@ -24,7 +25,7 @@ use common_bevy::{
     message::{Component, Event, *},
     plugins::nntree::NNTree,
     resources::{map::Map, InputQueues},
-    systems::movement::{calculate_movement, speed, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
+    systems::movement::{calculate_movement, slowed_pace, speed, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
 };
 
 /// Interpolation span in fixed ticks. One tick completes inside a single
@@ -50,7 +51,7 @@ const LOC_SETTLE_SECS: f32 = 0.125;
 pub fn predict_local_player(
     fixed_time: Res<Time<Fixed>>,
     origin: Res<RenderOrigin>,
-    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>, Option<&Hamstrung>, Option<&Stunned>)>,
+    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>, Option<&Hamstrung>, Option<&Slowed>, Option<&Stunned>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
     buffers: Res<InputQueues>,
@@ -59,8 +60,8 @@ pub fn predict_local_player(
 
     for (ent, buffer) in buffers.iter() {
         assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
-        let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, burdened, hamstrung, stunned)) = query.get_mut(ent) else { continue; };
-        let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened, Hamstrung::pace_of(hamstrung));
+        let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, burdened, hamstrung, slowed, stunned)) = query.get_mut(ent) else { continue; };
+        let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened, slowed_pace(hamstrung, slowed));
 
         let (mut offset, mut air) = (position.offset, airtime.state);
         let (mut facing, mut since_step_ms) = (turn.heading, turn.since_step_ms);
@@ -98,7 +99,7 @@ pub fn simulate_remote(
     time: Res<Time>,
     fixed_time: Res<Time<Fixed>>,
     origin: Res<RenderOrigin>,
-    mut query: Query<(Entity, &mut RemoteMotion, &Heading, &mut Position, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>, Option<&common_bevy::components::entity_type::EntityType>, Option<&Hamstrung>), Without<Displacing>>,
+    mut query: Query<(Entity, &mut RemoteMotion, &Heading, &mut Position, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>, Option<&common_bevy::components::entity_type::EntityType>, Option<&Hamstrung>, Option<&Slowed>), Without<Displacing>>,
     buffers: Res<InputQueues>,
     map: Res<Map>,
     nntree: Res<NNTree>,
@@ -106,7 +107,7 @@ pub fn simulate_remote(
     let delta_us = time.delta().as_micros() as u32;
     let tick = fixed_time.timestep().as_secs_f32();
 
-    for (ent, mut motion, heading, mut position, mut airtime, mut visual, attrs, burdened, typ, hamstrung) in &mut query {
+    for (ent, mut motion, heading, mut position, mut airtime, mut visual, attrs, burdened, typ, hamstrung, slowed) in &mut query {
         if buffers.get(&ent).is_some() { continue; }
         // Only a player's pill goes round what stands in a tile.
         let player = matches!(
@@ -118,7 +119,7 @@ pub fn simulate_remote(
         let dt = (motion.residual_us / 1000) as u16;
         motion.residual_us %= 1000;
         if dt > 0 {
-            let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened, Hamstrung::pace_of(hamstrung));
+            let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened, slowed_pace(hamstrung, slowed));
             let out = calculate_movement(MovementInput {
                 position: *position,
                 heading: *heading,

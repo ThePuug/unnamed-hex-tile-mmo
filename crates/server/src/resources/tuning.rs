@@ -30,6 +30,10 @@ pub struct ArchetypeTuning {
     pub disengage_technique: f32,
     /// Share of Force each Volley shot strikes for
     pub volley_force: f32,
+    /// Share of its speed a Volley takes from its target
+    pub volley_slow: f32,
+    /// Seconds a Volley's slow lasts
+    pub volley_slow_secs: f32,
     /// Share of Technique each countered threat strikes its source for
     pub counter_technique: f32,
     /// Share of each countered threat's damage sent back
@@ -52,6 +56,8 @@ impl Default for ArchetypeTuning {
             disengage_leap: 3,
             disengage_technique: 0.5,
             volley_force: 1.4,
+            volley_slow: 0.3,
+            volley_slow_secs: 2.0,
             counter_technique: 0.55,
             counter_reflect: 0.7,
         }
@@ -105,6 +111,8 @@ impl ArchetypeTuning {
             "disengage_leap" => self.disengage_leap = number()? as usize,
             "disengage_technique" => self.disengage_technique = number()?,
             "volley_force" => self.volley_force = number()?,
+            "volley_slow" => self.volley_slow = number()?,
+            "volley_slow_secs" => self.volley_slow_secs = number()?,
             "counter_technique" => self.counter_technique = number()?,
             "counter_reflect" => self.counter_reflect = number()?,
             _ => return Err(format!("no tuning knob {name}")),

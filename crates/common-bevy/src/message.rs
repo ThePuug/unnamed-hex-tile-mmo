@@ -200,6 +200,7 @@ pub enum Component {
     PlayerControlled(PlayerControlled),
     Returning(crate::components::returning::Returning),
     Hamstrung(crate::components::hamstrung::Hamstrung),
+    Slowed(crate::components::slowed::Slowed),
     Stunned(crate::components::stunned::Stunned),
     Stamina(Stamina),
     TierLock(crate::components::tier_lock::TierLock),
@@ -218,6 +219,7 @@ impl Component {
             Component::PlayerControlled(v) => { entity.insert(v); }
             Component::Returning(v) => { entity.insert(v); }
             Component::Hamstrung(v) => { entity.insert(v); }
+            Component::Slowed(v) => { entity.insert(v); }
             Component::Stunned(v) => { entity.insert(v); }
             Component::Stamina(v) => { entity.insert(v); }
             Component::TierLock(v) => { entity.insert(v); }

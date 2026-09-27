@@ -52,13 +52,18 @@ pub const BURDENED_PACE: f32 = 0.2;
 pub const BACK_PACE: f32 = 0.5;
 
 /// The speed an entity moves at: its own, [`BURDENED_PACE`] of it
-/// overburdened, times the `pace` a Hamstring leaves it (see
-/// [`Hamstrung::pace_of`](crate::components::hamstrung::Hamstrung::pace_of)).
+/// overburdened, times the `pace` what slows it leaves it (see [`slowed_pace`]).
 /// Every caller of the physics takes its speed through here, so the
 /// server, the owner's prediction and every remote simulation agree.
 pub fn speed(own: f32, burdened: bool, pace: f32) -> f32 {
     let own = own * pace;
     if burdened { own * BURDENED_PACE } else { own }
+}
+
+/// The share of its speed an entity keeps under what slows it: its
+/// Hamstring stacks and any timed slow, together.
+pub fn slowed_pace(hamstrung: Option<&crate::components::hamstrung::Hamstrung>, slowed: Option<&crate::components::slowed::Slowed>) -> f32 {
+    crate::components::hamstrung::Hamstrung::pace_of(hamstrung) * crate::components::slowed::Slowed::pace_of(slowed)
 }
 
 /// Keeps [`Burdened`] on every entity whose bag weighs past the limit: on
