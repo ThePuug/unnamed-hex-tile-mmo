@@ -19,6 +19,10 @@ pub struct ArchetypeTuning {
     pub lunge_pierce: f32,
     /// Share of an attack's damage its roll lands either side of it
     pub damage_spread: f32,
+    /// Share of Gravitas an auto-attack strikes for
+    pub auto_gravitas: f32,
+    /// Share of Force a Lunge's strike deals
+    pub lunge_force: f32,
     /// Share of Force each tick of a Lunge's DoT deals
     pub lunge_dot: f32,
     /// Share of Force a Rattle strikes for
@@ -58,6 +62,8 @@ impl Default for ArchetypeTuning {
             cutthroat_delay: (3000, 5000),
             lunge_pierce: 0.7,
             damage_spread: 0.2,
+            auto_gravitas: 0.25,
+            lunge_force: 1.0,
             lunge_dot: 0.15,
             rattle_force: 0.45,
             rattle_daze: 0.1,
@@ -119,6 +125,8 @@ impl ArchetypeTuning {
             "lunge_pierce" => self.lunge_pierce = number()?,
             "lunge_dot" => self.lunge_dot = number()?,
             "damage_spread" => self.damage_spread = number()?,
+            "auto_gravitas" => self.auto_gravitas = number()?,
+            "lunge_force" => self.lunge_force = number()?,
             "rattle_force" => self.rattle_force = number()?,
             "rattle_daze" => self.rattle_daze = number()?,
             "rattle_stacks" => self.rattle_stacks = number()? as u8,

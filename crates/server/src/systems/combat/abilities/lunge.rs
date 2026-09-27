@@ -8,7 +8,7 @@ use common_bevy::{
 
 /// Handle Lunge ability (Q key)
 /// - 20 stamina cost
-/// - Base damage from Force meta-attribute (scales with might + level)
+/// - Strikes for `ArchetypeTuning::lunge_force` of Force (scales with might + level)
 /// - 4 hex range
 /// - Teleports caster adjacent to target
 /// - Queues a strike and a wound whose DoT, a bleed, deals `ArchetypeTuning::lunge_dot`
@@ -185,9 +185,9 @@ pub fn handle_lunge(
             },
         });
 
-        // Deal damage (base damage from Force meta-attribute)
+        // Deal damage (a share of the Force meta-attribute)
         let attrs = attrs_query.get(*ent).expect("Lunge caster must have ActorAttributes");
-        let base_damage = attrs.force();
+        let base_damage = attrs.force() * tuning.lunge_force;
 
         commands.trigger(
             Try {

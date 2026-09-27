@@ -24,6 +24,7 @@ pub fn handle_auto_attack(
     stunned_query: Query<&common_bevy::components::stunned::Stunned>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
     poised_query: Query<&super::disengage::Poised>,
+    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -106,13 +107,13 @@ pub fn handle_auto_attack(
             continue;
         }
 
-        // Deal damage — Gravitas at 25%: auto-attacks are pressure, bought with Presence
+        // Deal damage — a share of Gravitas: auto-attacks are pressure, bought with Presence
         let attrs = attrs_query.get(*ent).expect("Auto-attack caster must have ActorAttributes");
         let poised = poised_query.get(*ent).map_or(0.0, |poised| poised.0);
         if poised > 0.0 {
             commands.entity(*ent).remove::<super::disengage::Poised>();
         }
-        let base_damage = attrs.gravitas() * 0.25 + poised;
+        let base_damage = attrs.gravitas() * tuning.auto_gravitas + poised;
 
         commands.trigger(
             Try {
