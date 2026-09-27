@@ -210,6 +210,10 @@ impl Default for Turn {
     }
 }
 
+/// Health every actor has before Vitality and level, sized so one signature
+/// blow takes about a quarter of a level-10 actor's health: a fight takes several.
+pub const BASE_HEALTH: f32 = 300.0;
+
 #[derive(Clone, Component, Copy, Default)]
 pub struct Actor;
 
@@ -818,10 +822,11 @@ impl ActorAttributes {
 
     /// Constitution: Defensive capacity from vitality
     /// Scales with level for progression. Used to calculate max health.
+    /// Every actor has [`BASE_HEALTH`] before Vitality, which sets how many
+    /// signature blows a fight takes.
     pub fn constitution(&self) -> f32 {
         let vitality = self.vitality() as f32;
-        let base = 100.0;
-        let linear = base + (vitality * 3.8);
+        let linear = BASE_HEALTH + (vitality * 3.8);
         linear * self.hp_level_multiplier()
     }
 
@@ -1076,7 +1081,7 @@ mod tests {
         // Level 0, no investment: max_health = base HP * multiplier(0) = base * 1.0
         let attrs = ActorAttributes::default();
         assert_eq!(attrs.total_level(), 0);
-        assert_eq!(attrs.max_health(), 100.0, "Level 0 with no vitality should have base 100 HP");
+        assert_eq!(attrs.max_health(), BASE_HEALTH, "Level 0 with no vitality should have the base health");
     }
 
     // ===== COMMITMENT TIER TESTS (, Layer 2) =====
