@@ -24,7 +24,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 /// - Juggernaut (Hamstring): Use when adjacent to target (each one slows it and strips its armour further)
 /// - Kiter (Volley): Use when target is within 6 hexes (a burst from range)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
-/// - Skirmisher (Disengage): Reactive - dodges once an ability's blow is at the front of its queue
+/// - Skirmisher (Disengage): Reactive - dodges the blow at the front of its queue, an auto-attack's as overflow
 /// - Cutthroat (Flank): Use when target is within melee reach (stuns it and strikes from its back)
 ///
 /// Every use waits out the NPC's `NpcRecovery` delay, armed once the ability
@@ -82,9 +82,10 @@ pub fn npc_ability_usage(
             continue;
         }
 
-        // Skirmisher Disengages from the blow at the front of its queue once an ability's is there
+        // Skirmisher Disengages from the blow at the front of its queue: an ability's
+        // while one is queued, an auto-attack as overflow
         if ability == AbilityType::Disengage {
-            if let Some(blow) = queue_opt.and_then(|queue| (queue.visible_count() > 0).then(|| queue.threats[0])) {
+            if let Some(blow) = queue_opt.and_then(|queue| queue.threats.front().copied()) {
                 writer.write(Try {
                     event: Event::UseAbility { ent: npc_entity, ability: AbilityType::Disengage, target: Some(blow.source) },
                 });
