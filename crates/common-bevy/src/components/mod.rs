@@ -831,9 +831,9 @@ impl ActorAttributes {
     /// Used in contest vs Cunning (affects synergy recovery reduction)
     pub fn finesse(&self) -> u16 { self.grace() }
 
-    /// Toughness: Physical damage resistance from vitality
-    /// Used in contest vs Dominance (affects mitigation vs healing reduction)
-    pub fn toughness(&self) -> u16 { self.vitality() }
+    /// Toughness: Physical damage resistance, contested by Dominance for mitigation.
+    /// No attribute carries it: Vitality's relative slot is open, so nothing is armoured.
+    pub fn toughness(&self) -> u16 { 0 }
 
     /// Impact: Recovery pushback from might
     /// Used in contest vs Composure (extends enemy recovery duration)
