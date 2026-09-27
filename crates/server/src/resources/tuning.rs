@@ -35,7 +35,7 @@ pub struct ArchetypeTuning {
     pub volley_slow: f32,
     /// Seconds a Volley's slow lasts
     pub volley_slow_secs: f32,
-    /// Seconds a Flank stuns its target
+    /// Seconds a Flank's stun holds its target past the strike landing
     pub flank_stun: f32,
     /// Share of Intuition a Flank strikes for
     pub flank_intuition: f32,
@@ -64,7 +64,7 @@ impl Default for ArchetypeTuning {
             volley_force: 1.4,
             volley_slow: 0.3,
             volley_slow_secs: 2.0,
-            flank_stun: 1.5,
+            flank_stun: 0.5,
             flank_intuition: 1.0,
             counter_technique: 0.55,
             counter_reflect: 0.7,

@@ -16,15 +16,31 @@ pub fn gap_window(defender_level: u32, attacker_level: u32) -> Duration {
     Duration::from_secs_f32(3.0 * gap_factor(defender_level, attacker_level))
 }
 
+/// How long a threat from `source_attrs` waits in the queue of
+/// `target_attrs` before it lands: the same for every threat between the
+/// two (INV-003), whatever made it.
+///
+/// Two-step calculation:
+/// 1. **Gap window**: Level difference sets the base window (3s at equal, ~1s at 10 gap, ~0 at 20)
+/// 2. **Reaction contest**: Cunning advantage extends window (up to +50% at max advantage)
+pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttributes) -> Duration {
+    use crate::systems::combat::damage::reaction_contest_factor;
+
+    // Step 1: Level gap sets the base window
+    let base_window = gap_window(target_attrs.total_level(), source_attrs.total_level());
+
+    // Step 2: Cunning advantage (only improves, never reduces below base)
+    let multiplier = reaction_contest_factor(target_attrs.cunning(), source_attrs.finesse());
+    Duration::from_millis((base_window.as_secs_f32() * multiplier * 1000.0) as u64)
+}
+
 /// Create a threat with proper timer calculation (INVARIANT: INV-003)
 
 /// **CRITICAL INVARIANT (INV-003):** All threats from the same source to the same target
 /// MUST have identical timer durations, regardless of which ability created them.
 /// This ensures consistent reaction windows and prevents ability-specific timing quirks.
 
-/// Two-step timer calculation:
-/// 1. **Gap window**: Level difference sets the base window (3s at equal, ~1s at 10 gap, ~0 at 20)
-/// 2. **Reaction contest**: Cunning advantage extends window (up to +50% at max advantage)
+/// The timer is [`threat_window`].
 
 /// # Arguments
 /// * `source` - Attacker entity (source of threat)
@@ -46,22 +62,12 @@ pub fn create_threat(
     ability: Option<crate::message::AbilityType>,
     now: Duration,
 ) -> crate::components::reaction_queue::QueuedThreat {
-    use crate::systems::combat::damage::reaction_contest_factor;
-
-    // Step 1: Level gap sets the base window
-    let base_window = gap_window(target_attrs.total_level(), source_attrs.total_level());
-
-    // Step 2: Cunning advantage (only improves, never reduces below base)
-    let multiplier = reaction_contest_factor(target_attrs.cunning(), source_attrs.finesse());
-    let window_ms = (base_window.as_secs_f32() * multiplier * 1000.0) as u64;
-    let timer_duration = Duration::from_millis(window_ms);
-
     crate::components::reaction_queue::QueuedThreat {
         source,
         damage,
         damage_type,
         inserted_at: now,
-        timer_duration,
+        timer_duration: threat_window(target_attrs, source_attrs),
         ability,
     }
 }
