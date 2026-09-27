@@ -86,7 +86,7 @@ pub enum EnemyArchetype {
     Berserker,   // Highland - Aggressive melee burst (pure Might)
     Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
     Kiter,       // Inland (flat) - Ranged harassment (pure Focus)
-    Defender,    // Coast - Reactive counter-attacks (pure Grace)
+    Defender,    // Coast - Reactive counter-attacks (pure Presence)
 }
 
 impl EnemyArchetype {
@@ -197,7 +197,7 @@ static KITER_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::VitalityFocusAxis, weight: 1, direction: 1 },
 ];
 static DEFENDER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::MightGraceAxis, weight: 1, direction: 1 },
+    Allocation { field: AttributeField::InstinctPresenceAxis, weight: 1, direction: 1 },
 ];
 
 impl EnemyArchetype {
@@ -455,7 +455,7 @@ mod tests {
             (EnemyArchetype::Berserker, 0),
             (EnemyArchetype::Juggernaut, 2),
             (EnemyArchetype::Kiter, 3),
-            (EnemyArchetype::Defender, 1),
+            (EnemyArchetype::Defender, 5),
         ] {
             let attrs = calculate_enemy_attributes(10, archetype);
             let values = [attrs.might(), attrs.grace(), attrs.vitality(), attrs.focus(), attrs.instinct(), attrs.presence()];
