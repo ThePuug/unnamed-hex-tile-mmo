@@ -34,7 +34,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 pub fn npc_ability_usage(
     // Query NPCs with Chase or Kite behavior
     mut npc_query: Query<
-        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>, &mut NpcRecovery),
+        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>, &mut NpcRecovery, Option<&common_bevy::components::heading::Heading>),
         Or<(With<Chase>, With<Kite>)>
     >,
     target_query: Query<&Loc, With<common_bevy::components::behaviour::Side>>,
@@ -42,7 +42,7 @@ pub fn npc_ability_usage(
     mut writer: MessageWriter<Try>,
 ) {
     let now = time.elapsed();
-    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt, mut delay) in npc_query.iter_mut() {
+    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt, mut delay, heading) in npc_query.iter_mut() {
         // Skip if in recovery (ability lockout)
         if let Some(recovery) = recovery_opt {
             if recovery.is_active() {
@@ -131,7 +131,7 @@ pub fn npc_ability_usage(
             EnemyArchetype::Defender | EnemyArchetype::Skirmisher => false,
         };
 
-        if should_use_ability {
+        if should_use_ability && common_bevy::systems::targeting::faces(heading, npc_loc, target_loc) {
             // Send target entity from NPC's Target component
             writer.write(Try {
                 event: Event::UseAbility {

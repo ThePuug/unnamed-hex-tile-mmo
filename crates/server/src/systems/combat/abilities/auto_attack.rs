@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use common_bevy::systems::targeting::faces;
 use common_bevy::{
     components::{
         entity_type::*, Loc, reaction_queue::DamageType,
@@ -21,6 +22,7 @@ pub fn handle_auto_attack(
     range_query: Query<&common_bevy::components::AttackRange>,
     respawn_query: Query<&common_bevy::components::resources::RespawnTimer>,
     stunned_query: Query<&common_bevy::components::stunned::Stunned>,
+    heading_query: Query<&common_bevy::components::heading::Heading>,
     poised_query: Query<&super::disengage::Poised>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -96,6 +98,11 @@ pub fn handle_auto_attack(
                     reason: AbilityFailReason::OutOfRange,
                 },
             });
+            continue;
+        }
+
+        if !faces(heading_query.get(*ent).ok(), caster_loc, target_loc) {
+            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NotFacing } });
             continue;
         }
 

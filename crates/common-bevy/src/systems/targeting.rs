@@ -80,6 +80,13 @@ pub fn is_in_facing_cone(
     delta <= 60.0
 }
 
+/// Whether an attacker at `from` facing `heading` may strike `to`: every
+/// attack, auto-attack or ability, lands only on a target in its facing
+/// cone. An entity with no heading faces every way.
+pub fn faces(heading: Option<&Heading>, from: &Loc, to: &Loc) -> bool {
+    heading.is_none_or(|heading| is_in_facing_cone(*heading, *from, *to))
+}
+
 /// Calculate the angle in degrees from one location to another
 
 /// Returns an angle in the range [0, 360) degrees.

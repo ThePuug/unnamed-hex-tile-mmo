@@ -215,7 +215,8 @@ pub fn process_passive_auto_attack(
         (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &common_bevy::components::target::Target,
          &ActorAttributes,
          Option<&common_bevy::components::AttackRange>,
-         Option<&common_bevy::components::stunned::Stunned>),
+         Option<&common_bevy::components::stunned::Stunned>,
+         Option<&common_bevy::components::heading::Heading>),
         Without<common_bevy::components::behaviour::PlayerControlled>
     >,
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
@@ -228,7 +229,7 @@ pub fn process_passive_auto_attack(
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target, attrs, attack_range_opt, stunned) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, gcd_opt, target, attrs, attack_range_opt, stunned, heading) in query.iter_mut() {
         if common_bevy::components::stunned::Stunned::holds(stunned) {
             continue;
         }
@@ -265,8 +266,8 @@ pub fn process_passive_auto_attack(
         // Check if target is within auto-attack range (manhattan: flat hex distance + z difference)
         let distance = loc.distance(target_loc);
         let max_range = attack_range_opt.copied().unwrap_or_default().0;
-        if distance <= max_range {
-            // Target is in range - trigger auto-attack
+        if distance <= max_range && common_bevy::systems::targeting::faces(heading, loc, target_loc) {
+            // Target is in range and in front - trigger auto-attack
             writer.write(Try {
                 event: GameEvent::UseAbility {
                     ent,

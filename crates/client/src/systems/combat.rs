@@ -158,19 +158,19 @@ pub fn apply_gcd(
 
 /// Auto-attack will only fire if:
 /// - Player has a Target set (via reactive targeting system)
-/// - Target is within its `AttackRange`
+/// - Target is within its `AttackRange` and its facing cone
 /// - No GCD active (attacks are free actions)
 /// - 1.5s has elapsed since last auto-attack
 pub fn player_auto_attack(
     mut writer: MessageWriter<Try>,
-    mut player_query: Query<(Entity, &Loc, &Target, &mut common_bevy::components::LastAutoAttack, Option<&Gcd>, &common_bevy::components::ActorAttributes, Option<&common_bevy::components::AttackRange>)>,
+    mut player_query: Query<(Entity, &Loc, &Target, &mut common_bevy::components::LastAutoAttack, Option<&Gcd>, &common_bevy::components::ActorAttributes, Option<&common_bevy::components::AttackRange>, Option<&common_bevy::components::heading::Heading>)>,
     target_query: Query<&Loc>,
     input_queues: Res<common_bevy::resources::InputQueues>,
     time: Res<Time>,
 ) {
     let now = time.elapsed();
 
-    for (player_ent, player_loc, player_target, mut last_auto_attack, gcd_opt, attrs, attack_range_opt) in &mut player_query {
+    for (player_ent, player_loc, player_target, mut last_auto_attack, gcd_opt, attrs, attack_range_opt, heading) in &mut player_query {
         // Only process local player (entity with InputQueue)
         if input_queues.get(&player_ent).is_none() {
             continue;
@@ -204,6 +204,9 @@ pub fn player_auto_attack(
         let max_range = attack_range_opt.copied().unwrap_or_default().0;
         if player_loc.distance(target_loc) > max_range {
             continue; // Target out of range
+        }
+        if !common_bevy::systems::targeting::faces(heading, player_loc, target_loc) {
+            continue; // Target behind
         }
 
         // Send AutoAttack Try event with target entity

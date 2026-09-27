@@ -173,6 +173,8 @@ pub enum AbilityFailReason {
     OnCooldown,
     InvalidTarget,
     OutOfRange,
+    /// The target stands outside the attacker's facing cone
+    NotFacing,
 }
 
 /// Types of queue clears for reaction abilities

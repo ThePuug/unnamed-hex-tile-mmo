@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use common_bevy::systems::targeting::faces;
 use common_bevy::{
     components::{
         engagement::EngagementMember, heading::Heading, hex_assignment::{AssignedHex, HexAssignment},
@@ -55,12 +56,16 @@ pub fn handle_flank(
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NoTargets } });
             continue;
         }
-        let (Ok((caster_loc, _)), Ok((target_loc, target_heading))) = (loc_query.get(*ent), loc_query.get(target_ent)) else {
+        let (Ok((caster_loc, caster_heading)), Ok((target_loc, target_heading))) = (loc_query.get(*ent), loc_query.get(target_ent)) else {
             continue;
         };
         let distance = caster_loc.flat_distance(target_loc);
         if distance < 1 || distance > AttackRange::default().0 {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
+            continue;
+        }
+        if !faces(caster_heading, caster_loc, target_loc) {
+            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NotFacing } });
             continue;
         }
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {

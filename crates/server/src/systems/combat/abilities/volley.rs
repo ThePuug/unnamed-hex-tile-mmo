@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use common_bevy::systems::targeting::faces;
 use common_bevy::{
     components::{resources::*, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
@@ -23,6 +24,7 @@ pub fn handle_volley(
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
+    heading_query: Query<&common_bevy::components::heading::Heading>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -50,6 +52,10 @@ pub fn handle_volley(
         };
         if caster_loc.flat_distance(target_loc) as u32 > VOLLEY_RANGE {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
+            continue;
+        }
+        if !faces(heading_query.get(*ent).ok(), caster_loc, target_loc) {
+            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NotFacing } });
             continue;
         }
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
