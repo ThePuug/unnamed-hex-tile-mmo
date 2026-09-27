@@ -24,6 +24,7 @@ pub enum NpcType {
     ForestSprite,
     Juggernaut,
     Defender,
+    Skirmisher,
 }
 
 impl NpcType {
@@ -34,6 +35,7 @@ impl NpcType {
             NpcType::ForestSprite => "Forest Sprite",
             NpcType::Juggernaut => "Juggernaut",
             NpcType::Defender => "Defender",
+            NpcType::Skirmisher => "Skirmisher",
         }
     }
 }

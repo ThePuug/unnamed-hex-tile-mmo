@@ -156,7 +156,7 @@ pub enum AbilityType {
     Kick,
     /// NPC: the Juggernaut's strike on an adjacent target, stacking a slow and an armour strip
     Hamstring,
-    /// NPC: a leap away from a target that has closed within 2 tiles, dodging its blow (Instinct's; no archetype carries it yet)
+    /// NPC: the Skirmisher's leap clear of the blow at the front of its queue, cutting an adjacent attacker
     Disengage,
     /// NPC: the Kiter's burst of shots within 6 tiles, one per threat it can see
     Volley,

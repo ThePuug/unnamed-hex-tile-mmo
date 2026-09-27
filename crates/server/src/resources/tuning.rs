@@ -13,6 +13,7 @@ pub struct ArchetypeTuning {
     pub juggernaut_delay: (u64, u64),
     pub kiter_delay: (u64, u64),
     pub defender_delay: (u64, u64),
+    pub skirmisher_delay: (u64, u64),
     /// Share of the target's Toughness mitigation a Lunge strikes past
     pub lunge_pierce: f32,
     /// Share of Force a Hamstring strikes for
@@ -25,6 +26,8 @@ pub struct ArchetypeTuning {
     pub hamstring_stacks: u8,
     /// Tiles a Disengage leaps
     pub disengage_leap: usize,
+    /// Share of Technique a Disengage cuts an adjacent attacker for
+    pub disengage_technique: f32,
     /// Share of Force each Volley shot strikes for
     pub volley_force: f32,
     /// Share of Technique each countered threat strikes its source for
@@ -40,12 +43,14 @@ impl Default for ArchetypeTuning {
             juggernaut_delay: (5000, 7000),
             kiter_delay: (1000, 3000),
             defender_delay: (2500, 4500),
+            skirmisher_delay: (1000, 3000),
             lunge_pierce: 0.35,
             hamstring_force: 0.6,
             hamstring_slow: 0.1,
             hamstring_shred: 0.1,
             hamstring_stacks: 5,
             disengage_leap: 3,
+            disengage_technique: 0.5,
             volley_force: 1.4,
             counter_technique: 0.55,
             counter_reflect: 0.7,
@@ -61,6 +66,7 @@ impl ArchetypeTuning {
             EnemyArchetype::Juggernaut => self.juggernaut_delay,
             EnemyArchetype::Kiter => self.kiter_delay,
             EnemyArchetype::Defender => self.defender_delay,
+            EnemyArchetype::Skirmisher => self.skirmisher_delay,
         }
     }
 
@@ -90,12 +96,14 @@ impl ArchetypeTuning {
             "j_delay" => self.juggernaut_delay = range()?,
             "k_delay" => self.kiter_delay = range()?,
             "d_delay" => self.defender_delay = range()?,
+            "s_delay" => self.skirmisher_delay = range()?,
             "lunge_pierce" => self.lunge_pierce = number()?,
             "hamstring_force" => self.hamstring_force = number()?,
             "hamstring_slow" => self.hamstring_slow = number()?,
             "hamstring_shred" => self.hamstring_shred = number()?,
             "hamstring_stacks" => self.hamstring_stacks = number()? as u8,
             "disengage_leap" => self.disengage_leap = number()? as usize,
+            "disengage_technique" => self.disengage_technique = number()?,
             "volley_force" => self.volley_force = number()?,
             "counter_technique" => self.counter_technique = number()?,
             "counter_reflect" => self.counter_reflect = number()?,
@@ -112,7 +120,7 @@ mod tests {
     #[test]
     fn delays_run_forwards() {
         let tuning = ArchetypeTuning::default();
-        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender] {
+        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher] {
             let (min, max) = tuning.delay(archetype);
             assert!(min <= max, "{archetype:?} delay range runs backwards");
         }

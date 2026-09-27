@@ -24,6 +24,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 /// - Juggernaut (Hamstring): Use when adjacent to target (each one slows it and strips its armour further)
 /// - Kiter (Volley): Use when target is within 6 hexes (a burst from range)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
+/// - Skirmisher (Disengage): Reactive - dodges once an ability's blow is at the front of its queue
 ///
 /// Every use waits out the NPC's `NpcRecovery` delay, armed once the ability
 /// is affordable and out of lockout, so NPCs that fire together drift apart.
@@ -53,18 +54,10 @@ pub fn npc_ability_usage(
             continue;
         };
 
-        let archetype = match actor_impl.identity {
-            ActorIdentity::Npc(npc_type) => {
-                use common_bevy::components::entity_type::actor::NpcType;
-                match npc_type {
-                    NpcType::WildDog => EnemyArchetype::Berserker,
-                    NpcType::Juggernaut => EnemyArchetype::Juggernaut,
-                    NpcType::ForestSprite => EnemyArchetype::Kiter,
-                    NpcType::Defender => EnemyArchetype::Defender,
-                }
-            }
-            _ => continue, // Not an NPC
+        let ActorIdentity::Npc(npc_type) = actor_impl.identity else {
+            continue; // Not an NPC
         };
+        let archetype = EnemyArchetype::of_npc(npc_type);
 
         // Get signature ability for this archetype (None = auto-attack only, skip)
         let Some(ability) = archetype.ability() else {
@@ -84,6 +77,17 @@ pub fn npc_ability_usage(
         }
         delay.arm(now);
         if !delay.is_ready(now) {
+            continue;
+        }
+
+        // Skirmisher Disengages from the blow at the front of its queue once an ability's is there
+        if ability == AbilityType::Disengage {
+            if let Some(blow) = queue_opt.and_then(|queue| (queue.visible_count() > 0).then(|| queue.threats[0])) {
+                writer.write(Try {
+                    event: Event::UseAbility { ent: npc_entity, ability: AbilityType::Disengage, target: Some(blow.source) },
+                });
+                delay.spend();
+            }
             continue;
         }
 
@@ -120,8 +124,8 @@ pub fn npc_ability_usage(
             EnemyArchetype::Berserker => (1..=4).contains(&distance),
             EnemyArchetype::Juggernaut => distance == 1,
             EnemyArchetype::Kiter => distance as u32 <= crate::systems::combat::abilities::volley::VOLLEY_RANGE,
-            // Defender's Counter is handled above
-            EnemyArchetype::Defender => false,
+            // Defender's Counter and Skirmisher's Disengage are handled above
+            EnemyArchetype::Defender | EnemyArchetype::Skirmisher => false,
         };
 
         if should_use_ability {

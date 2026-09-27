@@ -54,7 +54,7 @@ const DEN_CLEARANCE: i32 = 5;
 /// the edge of its band.
 fn attack_range(archetype: EnemyArchetype) -> i32 {
     match archetype {
-        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut => 1,
+        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Skirmisher => 1,
         EnemyArchetype::Defender => 2,
         EnemyArchetype::Kiter => 6,
     }
@@ -64,7 +64,7 @@ fn attack_range(archetype: EnemyArchetype) -> i32 {
 fn acquisition_range(archetype: EnemyArchetype) -> u32 {
     match archetype {
         EnemyArchetype::Kiter => crate::systems::behaviour::kite::Kite::forest_sprite().acquisition_range,
-        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender => CHASE_ACQUISITION_RANGE,
+        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher => CHASE_ACQUISITION_RANGE,
     }
 }
 
@@ -177,7 +177,7 @@ pub fn spawn_engagement(
 
         let (delay_min, delay_max) = tuning.delay(archetype);
         match archetype {
-            EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender => {
+            EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher => {
                 let chase = crate::systems::behaviour::chase::Chase {
                     acquisition_range: CHASE_ACQUISITION_RANGE,
                     leash_distance: 30,
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn no_member_of_a_placed_den_starts_in_acquisition_range() {
         let player = Qrz { q: 104289, r: -4677, z: 0 };
-        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender] {
+        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher] {
             for slot in 0..HEADING_SLOTS {
                 let den = den_ahead(player, Heading::from_slot(slot), archetype);
                 for i in 0..3 {

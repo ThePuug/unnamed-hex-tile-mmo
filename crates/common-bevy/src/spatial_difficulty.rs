@@ -87,6 +87,7 @@ pub enum EnemyArchetype {
     Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
     Kiter,       // Inland (flat) - Ranged harassment (pure Focus)
     Defender,    // Coast - Reactive counter-attacks (pure Presence)
+    Skirmisher,  // Evasive - dodges the blows aimed at it (pure Grace)
 }
 
 impl EnemyArchetype {
@@ -109,6 +110,7 @@ impl EnemyArchetype {
             EnemyArchetype::Berserker => PositioningStrategy::Cluster,
             EnemyArchetype::Juggernaut => PositioningStrategy::Surround,
             EnemyArchetype::Defender => PositioningStrategy::Surround,
+            EnemyArchetype::Skirmisher => PositioningStrategy::Surround,
             EnemyArchetype::Kiter => PositioningStrategy::Orbital,
         }
     }
@@ -120,6 +122,7 @@ impl EnemyArchetype {
             EnemyArchetype::Juggernaut => Some(AbilityType::Hamstring),
             EnemyArchetype::Kiter => Some(AbilityType::Volley),
             EnemyArchetype::Defender => Some(AbilityType::Counter),
+            EnemyArchetype::Skirmisher => Some(AbilityType::Disengage),
         }
     }
 
@@ -131,6 +134,19 @@ impl EnemyArchetype {
             EnemyArchetype::Juggernaut => NpcType::Juggernaut,
             EnemyArchetype::Kiter => NpcType::ForestSprite,
             EnemyArchetype::Defender => NpcType::Defender,
+            EnemyArchetype::Skirmisher => NpcType::Skirmisher,
+        }
+    }
+
+    /// The archetype an NPC of `npc_type` is: the inverse of [`npc_type`](Self::npc_type)
+    pub fn of_npc(npc_type: crate::components::entity_type::actor::NpcType) -> Self {
+        use crate::components::entity_type::actor::NpcType;
+        match npc_type {
+            NpcType::WildDog => EnemyArchetype::Berserker,
+            NpcType::Juggernaut => EnemyArchetype::Juggernaut,
+            NpcType::ForestSprite => EnemyArchetype::Kiter,
+            NpcType::Defender => EnemyArchetype::Defender,
+            NpcType::Skirmisher => EnemyArchetype::Skirmisher,
         }
     }
 
@@ -142,6 +158,7 @@ impl EnemyArchetype {
             EnemyArchetype::Juggernaut => Approach::Binding,
             EnemyArchetype::Kiter => Approach::Distant,
             EnemyArchetype::Defender => Approach::Patient,
+            EnemyArchetype::Skirmisher => Approach::Evasive,
         }
     }
 
@@ -153,6 +170,7 @@ impl EnemyArchetype {
             EnemyArchetype::Juggernaut => Resilience::Vital,
             EnemyArchetype::Kiter => Resilience::Mental,
             EnemyArchetype::Defender => Resilience::Hardened,
+            EnemyArchetype::Skirmisher => Resilience::Shielded,
         }
     }
 }
@@ -199,6 +217,9 @@ static KITER_BUILD: &[Allocation] = &[
 static DEFENDER_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::InstinctPresenceAxis, weight: 1, direction: 1 },
 ];
+static SKIRMISHER_BUILD: &[Allocation] = &[
+    Allocation { field: AttributeField::MightGraceAxis, weight: 1, direction: 1 },
+];
 
 impl EnemyArchetype {
     /// Get the attribute build for this archetype
@@ -224,6 +245,12 @@ impl EnemyArchetype {
             },
             EnemyArchetype::Defender => NpcBuild {
                 allocations: DEFENDER_BUILD,
+                might_grace_shift: 0,
+                vitality_focus_shift: 0,
+                instinct_presence_shift: 0,
+            },
+            EnemyArchetype::Skirmisher => NpcBuild {
+                allocations: SKIRMISHER_BUILD,
                 might_grace_shift: 0,
                 vitality_focus_shift: 0,
                 instinct_presence_shift: 0,
@@ -456,6 +483,7 @@ mod tests {
             (EnemyArchetype::Juggernaut, 2),
             (EnemyArchetype::Kiter, 3),
             (EnemyArchetype::Defender, 5),
+            (EnemyArchetype::Skirmisher, 1),
         ] {
             let attrs = calculate_enemy_attributes(10, archetype);
             let values = [attrs.might(), attrs.grace(), attrs.vitality(), attrs.focus(), attrs.instinct(), attrs.presence()];
@@ -494,7 +522,7 @@ mod tests {
     fn test_all_points_allocated() {
         // Total absolute axis + spectrum values should equal level for every build
         for (level, archetype) in [1, 5, 10, 15, 20].into_iter().flat_map(|l| [
-            EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender,
+            EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher,
         ].map(|a| (l, a))) {
             let attrs = calculate_enemy_attributes(level, archetype);
             let total = attrs.might_grace_axis().unsigned_abs()

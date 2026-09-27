@@ -1,21 +1,19 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{reaction_queue::ReactionQueue, resources::*, Loc, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+    components::{reaction_queue::{DamageType, ReactionQueue}, resources::*, Loc, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     systems::combat::queue::clear_threats,
     resources::map::Map,
 };
 
-/// A Disengage fires when its target is this close or closer.
-pub const DISENGAGE_TRIGGER: u32 = 2;
-
 pub const DISENGAGE_STAMINA_COST: f32 = 20.0;
 
-/// Handle Disengage, an Instinct skill kept for the Evasive archetype; no
-/// archetype carries it yet. With its target within `DISENGAGE_TRIGGER`, the
-/// caster leaps `ArchetypeTuning::disengage_leap` tiles, each the neighbour
-/// furthest from the target, straight away from it, so a melee attacker must close again.
-/// The leap dodges the front threat of its queue, the blow that closed on it.
+/// Handle Disengage, the Skirmisher's signature: a reaction to the blow at
+/// the front of its queue, whose source is the event's target. The caster
+/// leaps `ArchetypeTuning::disengage_leap` tiles, each the neighbour furthest
+/// from that source, and the blow misses: the front threat is cleared. A
+/// source that stood beside it takes a cut as it goes, for
+/// `disengage_technique` of the caster's Technique.
 pub fn handle_disengage(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -26,6 +24,7 @@ pub fn handle_disengage(
     respawn_query: Query<&RespawnTimer>,
     map: Res<Map>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
+    attrs_query: Query<&common_bevy::components::ActorAttributes>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -43,10 +42,6 @@ pub fn handle_disengage(
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NoTargets } });
             continue;
         };
-        if caster_loc.flat_distance(target_loc) as u32 > DISENGAGE_TRIGGER {
-            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
-            continue;
-        }
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
         };
@@ -69,6 +64,7 @@ pub fn handle_disengage(
             ground = next;
         }
         let landing = ground + qrz::Qrz::Z;
+        let adjacent = caster_loc.flat_distance(target_loc) <= 1;
         if landing == **caster_loc {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
             continue;
@@ -89,6 +85,17 @@ pub fn handle_disengage(
             if !clear_threats(&mut queue, ClearType::First(1)).is_empty() {
                 writer.write(Do { event: GameEvent::ClearQueue { ent: *ent, clear_type: ClearType::First(1) } });
             }
+        }
+        if let (true, Some(source), Ok(attrs)) = (adjacent, *target, attrs_query.get(*ent)) {
+            commands.trigger(Try {
+                event: GameEvent::DealDamage {
+                    source: *ent,
+                    target: source,
+                    base_damage: attrs.technique() * tuning.disengage_technique,
+                    damage_type: DamageType::Physical,
+                    ability: Some(AbilityType::Disengage),
+                },
+            });
         }
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Disengage, target: *target } });
