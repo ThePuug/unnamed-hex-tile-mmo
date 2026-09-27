@@ -264,7 +264,7 @@ pub fn process_passive_auto_attack(
 
         // Check if target is within auto-attack range (manhattan: flat hex distance + z difference)
         let distance = loc.distance(target_loc);
-        let max_range = attack_range_opt.map_or(1, |r| r.0);
+        let max_range = attack_range_opt.copied().unwrap_or_default().0;
         if distance <= max_range {
             // Target is in range - trigger auto-attack
             writer.write(Try {

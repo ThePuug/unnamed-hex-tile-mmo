@@ -87,7 +87,7 @@ pub fn handle_auto_attack(
             continue;
         };
 
-        let max_range = range_query.get(*ent).map_or(1, |r| r.0);
+        let max_range = range_query.get(*ent).copied().unwrap_or_default().0;
         if caster_loc.distance(target_loc) > max_range {
             writer.write(Do {
                 event: GameEvent::AbilityFailed {

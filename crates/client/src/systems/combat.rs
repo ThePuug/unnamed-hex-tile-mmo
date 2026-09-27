@@ -158,7 +158,7 @@ pub fn apply_gcd(
 
 /// Auto-attack will only fire if:
 /// - Player has a Target set (via reactive targeting system)
-/// - Target is adjacent (distance == 1)
+/// - Target is within its `AttackRange`
 /// - No GCD active (attacks are free actions)
 /// - 1.5s has elapsed since last auto-attack
 pub fn player_auto_attack(
@@ -201,7 +201,7 @@ pub fn player_auto_attack(
         };
 
         // Check if target is within auto-attack range (manhattan: flat hex distance + z difference)
-        let max_range = attack_range_opt.map_or(1, |r| r.0);
+        let max_range = attack_range_opt.copied().unwrap_or_default().0;
         if player_loc.distance(target_loc) > max_range {
             continue; // Target out of range
         }

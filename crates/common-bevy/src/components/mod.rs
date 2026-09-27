@@ -934,7 +934,8 @@ pub struct LastAutoAttack {
     pub last_attack_time: std::time::Duration,
 }
 
-/// Auto-attack range in hex tiles. Default is 1 (melee).
+/// Auto-attack range in hex tiles. Default is 2, melee reach, so a blow
+/// lands on a target a step away as well as one beside it.
 /// Eventually sourced from equipped weapon; for now set per-archetype at spawn.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct AttackRange(pub i32);
@@ -949,7 +950,7 @@ impl Default for LastAutoAttack {
 
 impl Default for AttackRange {
     fn default() -> Self {
-        Self(1)
+        Self(2)
     }
 }
 

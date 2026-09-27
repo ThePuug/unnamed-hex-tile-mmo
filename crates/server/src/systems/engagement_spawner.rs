@@ -49,14 +49,12 @@ const CHASE_ACQUISITION_RANGE: u32 = 15;
 /// asked for it, so the fight starts when the player walks in.
 const DEN_CLEARANCE: i32 = 5;
 
-/// How far an NPC of `archetype` reaches with its auto-attack: a Defender
-/// holds its line two tiles out and reaches from there, a Kiter fires from
-/// the edge of its band.
+/// How far an NPC of `archetype` reaches with its auto-attack: melee reach,
+/// or for a Kiter the edge of its band, where it fires from.
 fn attack_range(archetype: EnemyArchetype) -> i32 {
     match archetype {
-        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Skirmisher => 1,
-        EnemyArchetype::Defender => 2,
         EnemyArchetype::Kiter => 6,
+        _ => common_bevy::components::AttackRange::default().0,
     }
 }
 

@@ -23,7 +23,7 @@ pub struct HitLine {
 }
 
 /// Spawn attack ball when a ranged shot is inserted into the queue: an
-/// auto-attack or a Volley whose source stands further than adjacent from its target.
+/// auto-attack or a Volley whose source stands beyond melee reach of its target.
 pub fn on_insert_threat(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
@@ -38,7 +38,7 @@ pub fn on_insert_threat(
             continue;
         }
         let (Ok(source_loc), Ok(target_loc)) = (locs.get(threat.source), locs.get(*target)) else { continue };
-        if source_loc.flat_distance(target_loc) <= 1 {
+        if source_loc.flat_distance(target_loc) <= common_bevy::components::AttackRange::default().0 {
             continue;
         }
 
