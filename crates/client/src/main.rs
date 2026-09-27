@@ -117,6 +117,7 @@ fn main() {
         input::tick,
         input::do_confirm,
         movement::simulate_remote,
+        common_bevy::components::stunned::tick_stunned,
         common_bevy::systems::combat::resources::regenerate_resources,
     ));
 

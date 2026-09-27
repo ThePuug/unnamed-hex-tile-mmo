@@ -20,6 +20,7 @@ pub fn handle_auto_attack(
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     range_query: Query<&common_bevy::components::AttackRange>,
     respawn_query: Query<&common_bevy::components::resources::RespawnTimer>,
+    stunned_query: Query<&common_bevy::components::stunned::Stunned>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -31,8 +32,8 @@ pub fn handle_auto_attack(
             continue;
         }
 
-        // Dead casters can't attack
-        if respawn_query.get(*ent).is_ok() {
+        // Dead or stunned casters can't attack
+        if respawn_query.get(*ent).is_ok() || stunned_query.get(*ent).is_ok_and(|s| s.is_active()) {
             continue;
         }
 

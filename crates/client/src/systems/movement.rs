@@ -15,6 +15,7 @@ use common_bevy::{
         displacing::Displacing,
         equipment::Burdened,
         hamstrung::Hamstrung,
+        stunned::Stunned,
         heading::Heading,
         keybits::*,
         position::{Position, VisualPosition},
@@ -49,7 +50,7 @@ const LOC_SETTLE_SECS: f32 = 0.125;
 pub fn predict_local_player(
     fixed_time: Res<Time<Fixed>>,
     origin: Res<RenderOrigin>,
-    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>, Option<&Hamstrung>)>,
+    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>, Option<&Hamstrung>, Option<&Stunned>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
     buffers: Res<InputQueues>,
@@ -58,13 +59,16 @@ pub fn predict_local_player(
 
     for (ent, buffer) in buffers.iter() {
         assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
-        let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, burdened, hamstrung)) = query.get_mut(ent) else { continue; };
+        let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, burdened, hamstrung, stunned)) = query.get_mut(ent) else { continue; };
         let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened, Hamstrung::pace_of(hamstrung));
 
         let (mut offset, mut air) = (position.offset, airtime.state);
         let (mut facing, mut since_step_ms) = (turn.heading, turn.since_step_ms);
         for input in buffer.queue.iter().rev() {
             let Event::Input { key_bits, dt, .. } = input else { unreachable!() };
+            // A stunned player's keys do nothing, as on the server
+            let key_bits = if Stunned::holds(stunned) { KeyBits::default() } else { *key_bits };
+            let key_bits = &key_bits;
             if key_bits.is_pressed(KB_JUMP) && air.is_none() { air = Some(JUMP_DURATION_MS); }
             let out = calculate_movement(MovementInput {
                 position: Position::new(position.tile, offset),

@@ -34,6 +34,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::PlayerControlled(_) => "Inc:PlayerControlled",
             Component::Returning(_) => "Inc:Returning",
             Component::Hamstrung(_) => "Inc:Hamstrung",
+            Component::Stunned(_) => "Inc:Stunned",
             Component::Equipment(_) => "Inc:Equipment",
         },
         Event::Gcd { .. } => "Gcd",

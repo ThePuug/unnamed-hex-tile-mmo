@@ -15,6 +15,7 @@ impl Plugin for BehaviourPlugin {
             FixedUpdate,
             (
                 crate::systems::stagger::tick_stagger,
+                common_bevy::components::stunned::tick_stunned,
                 crate::systems::behaviour::hex_assignment::assign_hexes,
                 crate::systems::behaviour::chase::chase,
                 crate::systems::behaviour::kite::kite,

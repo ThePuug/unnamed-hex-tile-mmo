@@ -214,7 +214,8 @@ pub fn process_passive_auto_attack(
         (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &common_bevy::components::target::Target,
          Option<&common_bevy::components::hex_assignment::AssignedHex>,
          &ActorAttributes,
-         Option<&common_bevy::components::AttackRange>),
+         Option<&common_bevy::components::AttackRange>,
+         Option<&common_bevy::components::stunned::Stunned>),
         Without<common_bevy::components::behaviour::PlayerControlled>
     >,
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
@@ -227,7 +228,10 @@ pub fn process_passive_auto_attack(
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target, assigned_hex_opt, attrs, attack_range_opt) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, gcd_opt, target, assigned_hex_opt, attrs, attack_range_opt, stunned) in query.iter_mut() {
+        if common_bevy::components::stunned::Stunned::holds(stunned) {
+            continue;
+        }
         // Check if on GCD
         if let Some(gcd) = gcd_opt {
             if gcd.is_active(time.elapsed()) {

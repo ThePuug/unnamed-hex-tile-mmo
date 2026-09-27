@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use qrz::Qrz;
 use common_bevy::{
-    components::{position::Position, stagger::Stagger, Loc},
+    components::{behaviour::PlayerControlled, position::Position, stagger::Stagger, stunned::Stunned, Loc},
     message::{Do, Event as GameEvent},
     resources::map::Map,
 };
@@ -86,13 +86,16 @@ pub fn process_knockback(
     }
 }
 
-/// Freeze staggered entities by resetting Position.offset to zero.
+/// Freeze staggered and stunned NPCs by resetting Position.offset to zero.
 /// Runs in FixedUpdate AFTER behavior systems (chase, kite) so it overrides
 /// any movement they computed. Universal — no per-behavior code needed.
+/// A player's stun holds in `input::apply`, where its movement is made.
 pub fn enforce_stagger(
-    mut query: Query<&mut Position, With<Stagger>>,
+    mut query: Query<(&mut Position, Has<Stagger>, Option<&Stunned>), Without<PlayerControlled>>,
 ) {
-    for mut pos in &mut query {
-        pos.offset = Vec3::ZERO;
+    for (mut pos, staggered, stunned) in &mut query {
+        if staggered || Stunned::holds(stunned) {
+            pos.offset = Vec3::ZERO;
+        }
     }
 }
