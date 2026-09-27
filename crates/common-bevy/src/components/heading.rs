@@ -67,6 +67,17 @@ impl Heading {
         self.turned(HEADING_SLOTS as i32 / 2)
     }
 
+    /// The way to turn toward `goal`, 1 clockwise or -1 counter-clockwise,
+    /// and the fewest steps it takes; `(0, 0)` at the goal. The opposite
+    /// heading is reached clockwise.
+    pub fn turn_toward(self, goal: Heading) -> (i8, u8) {
+        match (goal.0 as i32 - self.0 as i32).rem_euclid(HEADING_SLOTS as i32) as u8 {
+            0 => (0, 0),
+            clockwise if clockwise <= HEADING_SLOTS / 2 => (1, clockwise),
+            clockwise => (-1, HEADING_SLOTS - clockwise),
+        }
+    }
+
     /// Unit direction in the ground plane as (x, z): north is -z, east is +x.
     pub fn to_world_dir(self) -> Vec2 {
         let (sin, cos) = self.degrees().to_radians().sin_cos();
@@ -152,6 +163,20 @@ mod tests {
             assert_eq!(heading.degrees(), degrees, "{offset:?}");
             assert_eq!(heading.hex_dir(), offset, "{offset:?} round trips");
             assert_eq!(Heading::from_world_dir(heading.to_world_dir()), Some(heading));
+        }
+    }
+
+    #[test]
+    fn turning_toward_takes_the_short_way() {
+        let north = Heading::NORTH;
+        assert_eq!(north.turn_toward(north), (0, 0));
+        assert_eq!(north.turn_toward(Heading::from_slot(3)), (1, 3));
+        assert_eq!(north.turn_toward(Heading::from_slot(21)), (-1, 3));
+        assert_eq!(north.turn_toward(north.reversed()), (1, HEADING_SLOTS / 2));
+        for slot in 0..HEADING_SLOTS {
+            let goal = Heading::from_slot(slot);
+            let (way, steps) = north.turn_toward(goal);
+            assert_eq!(north.turned(way as i32 * steps as i32), goal, "slot {slot}");
         }
     }
 

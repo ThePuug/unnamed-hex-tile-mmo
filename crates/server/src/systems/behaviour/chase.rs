@@ -3,8 +3,8 @@ use rand::seq::IteratorRandom;
 
 use common_bevy::{
     components::{
-        Loc, heading::Heading, position::Position, resources::Health,
-        behaviour::Side, hamstrung::Hamstrung, AirTime, ActorAttributes, target::Target,
+        Loc, resources::Health,
+        behaviour::Side, hamstrung::Hamstrung, ActorAttributes, target::Target,
         returning::Returning, stagger::Stagger,
         hex_assignment::AssignedHex,
         engagement::EngagementMember,
@@ -12,11 +12,11 @@ use common_bevy::{
     message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
     resources::map::Map,
-    systems::physics,
 };
 use crate::components::{
     target_lock::TargetLock,
 };
+use super::Body;
 
 /// Chase behavior - unified hostile pursuit and engagement
 
@@ -40,9 +40,7 @@ pub fn chase(
         Entity,
         &Chase,
         &Loc,
-        &mut Heading,
-        &mut Position,
-        &mut AirTime,
+        Body,
         Option<&ActorAttributes>,
         Option<&TargetLock>,
         Option<&Returning>,
@@ -58,12 +56,14 @@ pub fn chase(
     map: Res<Map>,
     dt: Res<Time>,
 ) {
-    for (npc_entity, &chase_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, engagement_member, assigned_hex_opt, stagger_opt, own_side, hamstrung) in &mut query {
+    for (npc_entity, &chase_config, npc_loc, mut body, attrs, lock_opt, returning_opt, engagement_member, assigned_hex_opt, stagger_opt, own_side, hamstrung) in &mut query {
 
         // Staggered — skip all movement and intent broadcasting
         if stagger_opt.is_some() {
             continue;
         }
+        let dt_ms = dt.delta().as_millis() as i16;
+        let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {
@@ -97,20 +97,7 @@ pub fn chase(
                 .min_by_key(|(neighbor, _)| neighbor.distance(&spawn_qrz));
 
             if let Some((next_tile, _)) = best_neighbor {
-                if let Some(heading) = Heading::between(&map, start, *next_tile) {
-                    *npc_heading = heading;
-                }
-
-                if npc_loc.z <= next_tile.z && npc_airtime.state.is_none() {
-                    npc_airtime.state = Some(125);
-                }
-
-                let dt_ms = dt.delta().as_millis() as i16;
-                let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
-                let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
-
-                npc_position.offset = offset;
-                npc_airtime.state = airtime;
+                body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
             }
 
             // Clear target while returning
@@ -179,20 +166,7 @@ pub fn chase(
                         .min_by_key(|(neighbor, _)| neighbor.distance(&spawn_qrz));
 
                     if let Some((next_tile, _)) = best_neighbor {
-                        if let Some(heading) = Heading::between(&map, start, *next_tile) {
-                            *npc_heading = heading;
-                        }
-
-                        if npc_loc.z <= next_tile.z && npc_airtime.state.is_none() {
-                            npc_airtime.state = Some(125);
-                        }
-
-                        let dt_ms = dt.delta().as_millis() as i16;
-                        let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
-                        let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
-
-                        npc_position.offset = offset;
-                        npc_airtime.state = airtime;
+                        body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
                     }
 
                     commands.entity(npc_entity).insert(Target::default());
@@ -250,9 +224,7 @@ pub fn chase(
 
         if distance_to_player <= chase_config.attack_range && on_assigned_hex {
             // In attack range AND on assigned hex — face target (auto-attack handles damage)
-            if let Some(heading) = Heading::between(&map, **npc_loc, **target_loc) {
-                *npc_heading = heading;
-            }
+            body.face(npc_loc, **target_loc, dt_ms, &map, &nntree);
             commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
             continue;
         }
@@ -260,9 +232,7 @@ pub fn chase(
         // On assigned hex but not in attack range — hold position, face target.
         // Prevents oscillation when assigned hex is farther than attack range.
         if on_assigned_hex && assigned_hex_opt.is_some() {
-            if let Some(heading) = Heading::between(&map, **npc_loc, **target_loc) {
-                *npc_heading = heading;
-            }
+            body.face(npc_loc, **target_loc, dt_ms, &map, &nntree);
             commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
             continue;
         }
@@ -286,24 +256,7 @@ pub fn chase(
 
         if let Some((next_tile, _)) = best_neighbor {
             // Move toward target
-            if let Some(heading) = Heading::between(&map, start, *next_tile) {
-
-                *npc_heading = heading;
-
-            }
-
-            // Trigger jump if moving upward
-            if npc_loc.z <= next_tile.z && npc_airtime.state.is_none() {
-                npc_airtime.state = Some(125);
-            }
-
-            // Apply physics
-            let dt_ms = dt.delta().as_millis() as i16;
-            let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
-            let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
-
-            npc_position.offset = offset;
-            npc_airtime.state = airtime;
+            body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
 
             // Update Target component for reactive systems
             commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });

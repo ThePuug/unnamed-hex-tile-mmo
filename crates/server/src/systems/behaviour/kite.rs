@@ -4,19 +4,19 @@ use qrz::Qrz;
 
 use common_bevy::{
     components::{
-        Loc, heading::Heading, position::Position, resources::Health,
-        behaviour::Side, hamstrung::Hamstrung, AirTime, ActorAttributes, target::Target,
+        Loc, resources::Health,
+        behaviour::Side, hamstrung::Hamstrung, ActorAttributes, target::Target,
         returning::Returning, stagger::Stagger,
         engagement::EngagementMember,
     },
     message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
     resources::map::Map,
-    systems::physics,
 };
 use crate::components::{
     target_lock::TargetLock,
 };
+use super::Body;
 
 /// Score a neighbor tile for kite movement.
 /// Higher score = more preferred destination.
@@ -50,13 +50,15 @@ fn score_neighbor(
 /// - Maintains sticky targeting via TargetLock
 /// - **Flees** when target closes within disengage_distance (< 3 hexes)
 /// - **Repositions** when target is 3-4 hexes away (moves back into the optimal zone)
-/// - **Holds** when target is in optimal_distance range (5-6 hexes), where its auto-attack reaches
+/// - **Holds** when target is in optimal_distance range (5-6 hexes), where its auto-attack reaches, turning to face it
 /// - **Advances** when target is beyond optimal range (> 6 hexes) - moves closer
 /// - **Leashes** when too far from spawner (returns to spawn)
 
 /// # Design Pattern
 /// Inverse pathfinding: Kiter moves AWAY from player to maintain distance.
 /// Attack timer independent of movement: Continues firing while repositioning.
+/// It turns as a player does (`Body::steer`), so fleeing what it faces
+/// costs the turn, and a chaser as fast as it closes by that much.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Kite {
     pub acquisition_range: u32,      // How far to search for targets (e.g., 15 hexes)
@@ -108,9 +110,7 @@ pub fn kite(
         Entity,
         &mut Kite,
         &Loc,
-        &mut Heading,
-        &mut Position,
-        &mut AirTime,
+        Body,
         Option<&ActorAttributes>,
         Option<&TargetLock>,
         Option<&Returning>,
@@ -126,12 +126,14 @@ pub fn kite(
     dt: Res<Time>,
     mut writer: MessageWriter<common_bevy::message::Do>,
 ) {
-    for (npc_entity, kite_config, npc_loc, mut npc_heading, mut npc_position, mut npc_airtime, attrs, lock_opt, returning_opt, engagement_member, stagger_opt, own_side, hamstrung) in &mut query {
+    for (npc_entity, kite_config, npc_loc, mut body, attrs, lock_opt, returning_opt, engagement_member, stagger_opt, own_side, hamstrung) in &mut query {
 
         // Staggered — skip all movement and intent broadcasting
         if stagger_opt.is_some() {
             continue;
         }
+        let dt_ms = dt.delta().as_millis() as i16;
+        let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
 
         // Check if NPC is already in returning state
         if returning_opt.is_some() {
@@ -165,20 +167,7 @@ pub fn kite(
                 .min_by_key(|(neighbor, _)| neighbor.distance(&spawn_qrz));
 
             if let Some((next_tile, _)) = best_neighbor {
-                if let Some(heading) = Heading::between(&map, start, *next_tile) {
-                    *npc_heading = heading;
-                }
-
-                if npc_loc.z <= next_tile.z && npc_airtime.state.is_none() {
-                    npc_airtime.state = Some(125);
-                }
-
-                let dt_ms = dt.delta().as_millis() as i16;
-                let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
-                let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
-
-                npc_position.offset = offset;
-                npc_airtime.state = airtime;
+                body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
             }
 
             // Clear target while returning
@@ -245,20 +234,7 @@ pub fn kite(
                         .min_by_key(|(neighbor, _)| neighbor.distance(&spawn_qrz));
 
                     if let Some((next_tile, _)) = best_neighbor {
-                        if let Some(heading) = Heading::between(&map, start, *next_tile) {
-                            *npc_heading = heading;
-                        }
-
-                        if npc_loc.z <= next_tile.z && npc_airtime.state.is_none() {
-                            npc_airtime.state = Some(125);
-                        }
-
-                        let dt_ms = dt.delta().as_millis() as i16;
-                        let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
-                        let (offset, airtime) = physics::apply(*npc_position, *npc_heading, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
-
-                        npc_position.offset = offset;
-                        npc_airtime.state = airtime;
+                        body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
                     }
 
                     commands.entity(npc_entity).insert(Target::default());
@@ -309,11 +285,6 @@ pub fn kite(
         let distance = npc_loc.flat_distance(target_loc);
         let action = kite_config.determine_action(distance);
 
-        // Always face target (kiter maintains facing while moving)
-        if let Some(heading) = Heading::between(&map, **npc_loc, **target_loc) {
-            *npc_heading = heading;
-        }
-
         // Fetch spawn location for score-based neighbor selection
         let Ok(&spawner_loc) = q_spawner.get(engagement_member.0) else {
             continue;
@@ -339,25 +310,14 @@ pub fn kite(
                     .max_by_key(|(neighbor, _)| score_neighbor(neighbor, &target_qrz, &spawn_qrz, optimal_mid, kite_config.leash_distance));
 
                 if let Some((next_tile, _)) = best_neighbor {
-                    // Move away from target
-                    if npc_loc.z <= next_tile.z && npc_airtime.state.is_none() {
-                        npc_airtime.state = Some(125);
-                    }
-
-                    let dt_ms = dt.delta().as_millis() as i16;
-                    let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
-                    // Step toward the chosen tile while still facing the target, so a fleeing Kiter backs away
-                    let stride = Heading::between(&map, start, *next_tile).unwrap_or(*npc_heading);
-                    let (offset, airtime) = physics::apply(*npc_position, stride, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
-
-                    npc_position.offset = offset;
-                    npc_airtime.state = airtime;
+                    body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
                 }
 
                 commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
             }
             KiteAction::Attack => {
-                // Stay in place — process_passive_auto_attack handles damage via AttackRange(6)
+                // Stay in place, turning to face the target — process_passive_auto_attack handles damage via AttackRange(6)
+                body.face(npc_loc, **target_loc, dt_ms, &map, &nntree);
                 commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
             }
             KiteAction::Advance => {
@@ -376,18 +336,7 @@ pub fn kite(
                     .max_by_key(|(neighbor, _)| score_neighbor(neighbor, &target_qrz, &spawn_qrz, optimal_mid, kite_config.leash_distance));
 
                 if let Some((next_tile, _)) = best_neighbor {
-                    if npc_loc.z <= next_tile.z && npc_airtime.state.is_none() {
-                        npc_airtime.state = Some(125);
-                    }
-
-                    let dt_ms = dt.delta().as_millis() as i16;
-                    let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), false, Hamstrung::pace_of(hamstrung));
-                    // Step toward the chosen tile while still facing the target, so a fleeing Kiter backs away
-                    let stride = Heading::between(&map, start, *next_tile).unwrap_or(*npc_heading);
-                    let (offset, airtime) = physics::apply(*npc_position, stride, true, npc_airtime.state, movement_speed, dt_ms, &map, &nntree);
-
-                    npc_position.offset = offset;
-                    npc_airtime.state = airtime;
+                    body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
                 }
 
                 commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });

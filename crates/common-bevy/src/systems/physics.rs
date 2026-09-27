@@ -1,34 +1,64 @@
 use bevy::prelude::*;
 
 use crate::{
-    components::{heading::Heading, position::Position},
+    components::{heading::Heading, position::Position, Turn},
     plugins::nntree::*,
     resources::map::*,
     systems::movement,
 };
 
-/// Advance an entity that walks its heading by `dt` milliseconds: the new
-/// offset from `position.tile` and the new airborne state. A thin wrapper
-/// over `movement::calculate_movement`, the canonical physics, for NPCs,
-/// whose heading is set by their behaviour; a player's keys go through
-/// `calculate_movement` itself, which turns and backs.
+/// Bearings short of its goal an NPC walks at: this near, it walks while it
+/// finishes the turn; further, it turns on the spot.
+pub const WALK_ARC: u8 = 3;
+
+/// Advance an NPC by `dt` milliseconds as a player's keys would carry it,
+/// through `movement::calculate_movement`, the canonical physics: the
+/// heading in `turn` steps toward `goal` on the turn clock `turn` carries,
+/// no faster than a held turn key, and stops there; the NPC walks forward,
+/// when `walk`, only while the heading is within [`WALK_ARC`] of the goal,
+/// so running from what it faces costs the turn. Returns the new offset
+/// from `position.tile` and the new airborne state.
 #[allow(clippy::too_many_arguments)]
-pub fn apply(
+pub fn steer(
     position: Position,
-    heading: Heading,
-    moving: bool,
+    turn: &mut Turn,
+    goal: Heading,
+    walk: bool,
     airtime: Option<i16>,
     movement_speed: f32,
     dt: i16,
     map: &Map,
     nntree: &NNTree,
 ) -> (Vec3, Option<i16>) {
-    let input = movement::MovementInput {
-        position, heading, moving, back: false, turn: 0,
-        since_step_ms: movement::TURN_REPEAT_MS, airtime, movement_speed, collides: false,
-    };
-    let output = movement::calculate_movement(input, dt, map, nntree);
-    (output.position.offset, output.airtime)
+    let (mut position, mut airtime, mut left) = (position, airtime, dt);
+    while left > 0 {
+        let (way, steps) = turn.heading.turn_toward(goal);
+        let stepping = steps > 0 && turn.since_step_ms >= movement::TURN_REPEAT_MS;
+        // A slice ends before the step after this one, so the heading stops at the goal.
+        let slice = match (steps, stepping) {
+            (0, _) => left,
+            (_, true) => left.min(movement::TURN_REPEAT_MS as i16),
+            (_, false) => left.min((movement::TURN_REPEAT_MS - turn.since_step_ms) as i16),
+        };
+        let facing = steps - stepping as u8;
+        let output = movement::calculate_movement(movement::MovementInput {
+            position,
+            heading: turn.heading,
+            moving: walk && facing <= WALK_ARC,
+            back: false,
+            turn: if stepping { way } else { 0 },
+            since_step_ms: turn.since_step_ms,
+            airtime,
+            movement_speed,
+            collides: false,
+        }, slice, map, nntree);
+        position.offset = output.position.offset;
+        airtime = output.airtime;
+        turn.heading = output.heading;
+        turn.since_step_ms = output.since_step_ms;
+        left -= slice;
+    }
+    (position.offset, airtime)
 }
 
 #[cfg(test)]
@@ -37,6 +67,7 @@ mod tests {
     use qrz::Qrz;
     use crate::components::entity_type::{decorator::Decorator, EntityType};
     use crate::systems::movement::{JUMP_ASCENT, JUMP_DURATION_MS, MOVEMENT_SPEED};
+    use crate::components::heading::HEADING_SLOTS;
 
     fn create_test_map() -> Map {
         let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
@@ -51,6 +82,13 @@ mod tests {
 
     fn create_test_nntree() -> NNTree {
         NNTree::new_for_test()
+    }
+
+    /// An NPC already facing its goal, rested, for `dt`.
+    #[allow(clippy::too_many_arguments)]
+    fn apply(position: Position, heading: Heading, walk: bool, airtime: Option<i16>, movement_speed: f32, dt: i16, map: &Map, nntree: &NNTree) -> (Vec3, Option<i16>) {
+        let mut turn = Turn { heading, ..Turn::default() };
+        steer(position, &mut turn, heading, walk, airtime, movement_speed, dt, map, nntree)
     }
 
     fn standing() -> Position {
@@ -124,5 +162,39 @@ mod tests {
         let (map, nntree) = (create_test_map(), create_test_nntree());
         let (moved, _) = apply(standing(), Heading::from_slot(11), true, None, MOVEMENT_SPEED, 125, &map, &nntree);
         assert!(moved.xz().length() <= MOVEMENT_SPEED * 125.0 + 1e-4);
+    }
+
+    #[test]
+    fn running_from_what_it_faces_costs_the_turn() {
+        let (map, nntree) = (create_test_map(), create_test_nntree());
+        let mut turn = Turn::default();
+        let (moved, _) = steer(standing(), &mut turn, Heading::NORTH.reversed(), true, None, MOVEMENT_SPEED, 125, &map, &nntree);
+        assert!(moved.xz().length() < 1e-6, "turns on the spot: {moved:?}");
+        assert_ne!(turn.heading, Heading::NORTH, "and has begun to turn");
+    }
+
+    #[test]
+    fn an_npc_turns_no_faster_than_a_held_key() {
+        let (map, nntree) = (create_test_map(), create_test_nntree());
+        for dt in [1, 79, 80, 81, 400, 1000] {
+            let mut turn = Turn::default();
+            steer(standing(), &mut turn, Heading::NORTH.reversed(), false, None, MOVEMENT_SPEED, dt, &map, &nntree);
+            let held = movement::calculate_movement(movement::MovementInput {
+                position: standing(), heading: Heading::NORTH, moving: false, back: false, turn: 1,
+                since_step_ms: movement::TURN_REPEAT_MS, airtime: None, movement_speed: MOVEMENT_SPEED, collides: false,
+            }, dt, &map, &nntree);
+            let goal_steps = HEADING_SLOTS / 2;
+            assert_eq!(turn.heading.slot(), held.heading.slot().min(goal_steps), "after {dt}ms, stopping at the goal");
+        }
+    }
+
+    #[test]
+    fn the_turn_stops_at_the_goal_and_the_walk_follows() {
+        let (map, nntree) = (create_test_map(), create_test_nntree());
+        let east = Heading::from_degrees(90.0);
+        let mut turn = Turn::default();
+        let (moved, _) = steer(standing(), &mut turn, east, true, None, MOVEMENT_SPEED, 1000, &map, &nntree);
+        assert_eq!(turn.heading, east);
+        assert!(Heading::from_world_dir(moved.xz()).is_some_and(|went| went.turn_toward(east).1 <= WALK_ARC), "walked toward the goal: {moved:?}");
     }
 }
