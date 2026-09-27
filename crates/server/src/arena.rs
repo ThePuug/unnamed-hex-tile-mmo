@@ -18,8 +18,13 @@
 //! as `min-max` milliseconds (`b_delay=1500-3500`, `lunge_pierce=0.5`), so a
 //! value is tried without a rebuild.
 //!
+//! `arena serve` runs one scenario per line of stdin, each line the keys
+//! above, and ends each report with a line `end`, so a tuning search tries
+//! values back to back in one process.
+//!
 //! Every pairing fights `runs` times, the two swapping ends each run so
-//! neither side's spawn decides it. The report
+//! neither side's spawn decides it. All of a scenario's fights share one
+//! pool of workers, so no pairing waits on another's slowest fight. The report
 //! gives each pairing's win split, median fight length, the winners' health
 //! left, and where each side's damage came from: auto-attacks, signature
 //! abilities, or reflections.
@@ -311,9 +316,35 @@ fn timeline(world: &mut World, elapsed: Duration) {
     println!("    t={:>5.1}s {} || engagements {}", elapsed.as_secs_f32(), lines.join(" | "), assigning.join(" "));
 }
 
-/// Runs every pairing and prints the report.
+/// Runs the arena: `serve` answers scenarios from stdin, anything else is
+/// one scenario's keys.
 pub fn run(args: &[String]) {
-    let settings = Settings::parse(args);
+    if args.first().is_some_and(|a| a == "serve") {
+        return serve();
+    }
+    report(&Settings::parse(args));
+}
+
+/// Answers each line of stdin as a scenario, closing each report with `end`.
+/// A line that fails reports `error` in its place and the next still runs.
+fn serve() {
+    use std::io::{BufRead, Write};
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else { break };
+        let args: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
+        if args.is_empty() {
+            continue;
+        }
+        if std::panic::catch_unwind(|| report(&Settings::parse(&args))).is_err() {
+            println!("error");
+        }
+        println!("end");
+        std::io::stdout().flush().expect("arena: stdout closed");
+    }
+}
+
+/// Runs every pairing and prints the report.
+fn report(settings: &Settings) {
     let (a_team, b_team) = (settings.team_a(EnemyArchetype::Berserker), settings.team_b(EnemyArchetype::Berserker));
     println!(
         "arena: a is {} at level {}, b is {} at level {}; {} runs per pairing, decided on health after {}s",
@@ -332,52 +363,53 @@ pub fn run(args: &[String]) {
             .flat_map(|(i, &a)| settings.only[i + 1..].iter().map(move |&b| (a, b)))
             .collect()
     };
-    for (a, b) in pairings {
-        {
-            let (mut a_wins, mut b_wins, mut capped) = (0u32, 0u32, 0u32);
-            let mut lengths = Vec::new();
-            let mut left = Vec::new();
-            let (mut a_dealt, mut b_dealt) = (Sources::default(), Sources::default());
-            let workers = if settings.trace > 0 { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()) };
-            let outcomes = in_parallel(settings.runs, workers, |run| {
-                // Swap ends every run so the spawn layout favours neither archetype
-                let (team_a, team_b) = (settings.team_a(a), settings.team_b(b));
-                let (west, east, a_side) = if run % 2 == 0 { (team_a, team_b, WEST) } else { (team_b, team_a, EAST) };
-                (a_side, fight(west, east, &settings))
-            });
-            for (a_side, outcome) in outcomes {
-                let b_side = if a_side == WEST { EAST } else { WEST };
-                match outcome.winner {
-                    Some(side) if side == a_side => a_wins += 1,
-                    Some(_) => b_wins += 1,
-                    None => {}
-                }
-                if outcome.timed_out {
-                    capped += 1;
-                }
-                if outcome.winner.is_some() {
-                    lengths.push(outcome.length);
-                    left.push(outcome.left);
-                }
-                a_dealt.merge(outcome.dealt.get(&a_side).copied().unwrap_or_default());
-                b_dealt.merge(outcome.dealt.get(&b_side).copied().unwrap_or_default());
+    let workers = if settings.trace > 0 { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()) };
+    let runs = settings.runs;
+    let outcomes = in_parallel(pairings.len() as u32 * runs, workers, |job| {
+        let ((a, b), run) = (pairings[(job / runs) as usize], job % runs);
+        // Swap ends every run so the spawn layout favours neither archetype
+        let (team_a, team_b) = (settings.team_a(a), settings.team_b(b));
+        let (west, east, a_side) = if run % 2 == 0 { (team_a, team_b, WEST) } else { (team_b, team_a, EAST) };
+        (a_side, fight(west, east, settings))
+    });
+    for (&(a, b), outcomes) in pairings.iter().zip(outcomes.chunks(runs as usize)) {
+        let (mut a_wins, mut b_wins, mut capped) = (0u32, 0u32, 0u32);
+        let mut lengths = Vec::new();
+        let mut left = Vec::new();
+        let (mut a_dealt, mut b_dealt) = (Sources::default(), Sources::default());
+        for (a_side, outcome) in outcomes {
+            let a_side = *a_side;
+            let b_side = if a_side == WEST { EAST } else { WEST };
+            match outcome.winner {
+                Some(side) if side == a_side => a_wins += 1,
+                Some(_) => b_wins += 1,
+                None => {}
             }
-            lengths.sort();
-            left.sort_by(f32::total_cmp);
-            let median = lengths.get(lengths.len() / 2).map_or(0.0, |d| d.as_secs_f32());
-            let median_left = left.get(left.len() / 2).copied().unwrap_or(0.0);
-            let runs = settings.runs as f32;
-            println!("{:<22} {:>5.0} {:>5.0} {:>5.0}  {:>5.0}s  {:>4.0}%   {:<30} {:<30}",
-                format!("{a:?} v {b:?}"),
-                100.0 * a_wins as f32 / runs,
-                100.0 * b_wins as f32 / runs,
-                100.0 * capped as f32 / runs,
-                median,
-                100.0 * median_left,
-                split(a_dealt, runs),
-                split(b_dealt, runs),
-            );
+            if outcome.timed_out {
+                capped += 1;
+            }
+            if outcome.winner.is_some() {
+                lengths.push(outcome.length);
+                left.push(outcome.left);
+            }
+            a_dealt.merge(outcome.dealt.get(&a_side).copied().unwrap_or_default());
+            b_dealt.merge(outcome.dealt.get(&b_side).copied().unwrap_or_default());
         }
+        lengths.sort();
+        left.sort_by(f32::total_cmp);
+        let median = lengths.get(lengths.len() / 2).map_or(0.0, |d| d.as_secs_f32());
+        let median_left = left.get(left.len() / 2).copied().unwrap_or(0.0);
+        let runs = runs as f32;
+        println!("{:<22} {:>5.0} {:>5.0} {:>5.0}  {:>5.0}s  {:>4.0}%   {:<30} {:<30}",
+            format!("{a:?} v {b:?}"),
+            100.0 * a_wins as f32 / runs,
+            100.0 * b_wins as f32 / runs,
+            100.0 * capped as f32 / runs,
+            median,
+            100.0 * median_left,
+            split(a_dealt, runs),
+            split(b_dealt, runs),
+        );
     }
 }
 
