@@ -54,11 +54,11 @@ pub struct ArchetypeTuning {
 impl Default for ArchetypeTuning {
     fn default() -> Self {
         Self {
-            berserker_delay: (3000, 5000),
+            berserker_delay: (4000, 6000),
             juggernaut_delay: (3000, 5000),
             kiter_delay: (2000, 4000),
             defender_delay: (1000, 3000),
-            skirmisher_delay: (4000, 6000),
+            skirmisher_delay: (3000, 5000),
             cutthroat_delay: (3000, 5000),
             lunge_pierce: 0.7,
             damage_spread: 0.2,
@@ -67,16 +67,16 @@ impl Default for ArchetypeTuning {
             lunge_dot: 0.15,
             rattle_force: 0.45,
             rattle_daze: 0.1,
-            rattle_stacks: 3,
-            disengage_leap: 4,
-            disengage_technique: 0.5,
+            rattle_stacks: 2,
+            disengage_leap: 5,
+            disengage_technique: 0.7,
             volley_force: 1.2,
             volley_slow: 0.1,
-            volley_slow_secs: 3.0,
+            volley_slow_secs: 4.2,
             flank_stun: 3.0,
             flank_intuition: 1.0,
             counter_technique: 0.3,
-            counter_reflect: 0.7,
+            counter_reflect: 0.98,
         }
     }
 }
