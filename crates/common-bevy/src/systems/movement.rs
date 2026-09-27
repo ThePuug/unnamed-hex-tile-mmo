@@ -47,6 +47,10 @@ pub const MOVEMENT_SPEED: f32 = 0.0075;
 /// its gait plays the walk, which the actors' walk stride sets.
 pub const BURDENED_PACE: f32 = 0.2;
 
+/// The share of its speed an entity keeps backing away: less than it runs,
+/// so fleeing what it faces costs the turn to run from it.
+pub const BACK_PACE: f32 = 0.5;
+
 /// The speed an entity moves at: its own, [`BURDENED_PACE`] of it
 /// overburdened, times the `pace` a Hamstring leaves it (see
 /// [`Hamstrung::pace_of`](crate::components::hamstrung::Hamstrung::pace_of)).
@@ -172,7 +176,7 @@ pub struct MovementInput {
     /// The facing, and the direction a forward move travels along.
     pub heading: Heading,
     pub moving: bool,
-    /// The move travels opposite the heading.
+    /// The move travels opposite the heading, at [`BACK_PACE`].
     pub back: bool,
     /// Bearings the heading steps per repeat: -1 counter-clockwise, 0, 1
     /// clockwise.
@@ -541,7 +545,8 @@ pub fn calculate_movement(
             dt = dt.min((TURN_REPEAT_MS - since_step_ms) as i16);
         }
         dt0 -= dt;
-        let dir = if input.back { heading.reversed() } else { heading }.to_world_dir();
+        let (dir, pace) = if input.back { (heading.reversed(), BACK_PACE) } else { (heading, 1.0) };
+        let dir = dir.to_world_dir();
 
         let here: Qrz = tile + map.convert(offset);
         let floor = map.get_by_qr(here.q, here.r).map(|(floor, _)| floor);
@@ -586,7 +591,7 @@ pub fn calculate_movement(
 
         if input.moving {
             let moved = walk(
-                tile, offset.xz(), dir, input.movement_speed * dt as f32,
+                tile, offset.xz(), dir, input.movement_speed * pace * dt as f32,
                 here, floor, offset.y, airtime, input.collides, map, nntree,
             );
             offset.x += moved.x;
@@ -847,14 +852,15 @@ mod tests {
     }
 
     #[test]
-    fn walking_back_travels_opposite_the_heading_and_keeps_it() {
+    fn walking_back_travels_opposite_the_heading_slower_and_keeps_it() {
         let map = create_test_map();
         flat_ground(&map, 3);
         let nntree = create_test_nntree();
         let east = Heading::from_degrees(90.0);
         let forward = calculate_movement(walking(east, true), 100, &map, &nntree);
         let back = calculate_movement(MovementInput { back: true, ..walking(east, true) }, 100, &map, &nntree);
-        assert!((forward.position.offset.xz() + back.position.offset.xz()).length() < 1e-4, "{:?} vs {:?}", forward.position.offset, back.position.offset);
+        assert!(forward.position.offset.xz().dot(back.position.offset.xz()) < 0.0, "{:?} vs {:?}", forward.position.offset, back.position.offset);
+        assert!(back.position.offset.xz().length() < forward.position.offset.xz().length(), "backing away is slower than running");
         assert_eq!(back.heading, east);
     }
 
