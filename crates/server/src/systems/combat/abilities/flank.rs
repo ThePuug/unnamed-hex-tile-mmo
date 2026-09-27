@@ -14,13 +14,12 @@ use common_bevy::{
 pub const FLANK_STAMINA_COST: f32 = 30.0;
 
 /// Handle Flank, the Cutthroat's signature: on a target within melee reach,
-/// a stun, a step to the tile at its back, and a strike for
-/// `ArchetypeTuning::flank_intuition` of the caster's Intuition. The stun
-/// covers the strike: it lasts the strike's wait in the target's queue
-/// (`queue::threat_window`) and `flank_stun` seconds past it, so the target
-/// cannot answer the blow. It holds the target completely: `Stunned` stops
-/// its movement and auto-attacks, and a lockout as long stops its abilities
-/// and reactions.
+/// a stun of `ArchetypeTuning::flank_stun` seconds, a step to the tile at
+/// its back, and a strike for `flank_intuition` of the caster's Intuition.
+/// The strike waits in the target's queue like any threat, so a stun
+/// shorter than that wait leaves the target time to answer it. The stun
+/// holds the target completely: `Stunned` stops its movement and
+/// auto-attacks, and a lockout as long stops its abilities and reactions.
 /// The back tile becomes the Cutthroat's assigned tile, so it holds the flank;
 /// an engagement member assigned there takes the tile the Cutthroat left.
 /// With its back tile taken or not standable, the Cutthroat strikes from
@@ -84,10 +83,7 @@ pub fn handle_flank(
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
         });
 
-        let attrs = attrs_query.get(*ent).expect("Flank caster must have ActorAttributes");
-        let strike_lands = attrs_query.get(target_ent)
-            .map_or(0.0, |target_attrs| common_bevy::systems::combat::queue::threat_window(target_attrs, attrs).as_secs_f32());
-        let stunned = Stunned { remaining: strike_lands + tuning.flank_stun };
+        let stunned = Stunned { remaining: tuning.flank_stun };
         let lockout = recovery_query.get(target_ent).map_or(0.0, |recovery| recovery.remaining).max(stunned.remaining);
         commands.entity(target_ent).insert((stunned, GlobalRecovery::new(lockout, AbilityType::Flank)));
         writer.write(Do {
@@ -124,6 +120,7 @@ pub fn handle_flank(
             commands.entity(*ent).insert(AssignedHex(landing));
         }
 
+        let attrs = attrs_query.get(*ent).expect("Flank caster must have ActorAttributes");
         commands.trigger(Try {
             event: GameEvent::DealDamage {
                 source: *ent,
