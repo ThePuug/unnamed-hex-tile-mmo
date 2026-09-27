@@ -797,8 +797,15 @@ impl ActorAttributes {
         linear * self.damage_level_multiplier()
     }
 
-    /// Gravitas: Auto-attack power from presence (absolute meta-attribute)
-    /// Fully scaled like Force, so pressure — cadence and weight — is bought with Presence alone.
+    /// The potency every actor has before any attribute, scaled by level: what
+    /// each absolute stat starts from, and all an auto-attack draws on.
+    pub fn base_potency(&self) -> f32 {
+        10.0 * self.damage_level_multiplier()
+    }
+
+    /// Gravitas: Presence's absolute meta-attribute, fully scaled like Force.
+    /// Nothing reads it: auto-attacks strike a flat share of
+    /// [`base_potency`](Self::base_potency), and Presence buys their pace alone.
     pub fn gravitas(&self) -> f32 {
         let presence = self.presence() as f32;
         let base = 10.0;

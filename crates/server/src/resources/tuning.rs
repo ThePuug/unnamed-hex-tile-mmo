@@ -23,8 +23,8 @@ pub struct ArchetypeTuning {
     pub base_health: f32,
     /// An NPC's health per point of Vitality, the game's `HEALTH_PER_VITALITY` unless tried otherwise
     pub health_per_vitality: f32,
-    /// Share of Gravitas an auto-attack strikes for
-    pub auto_gravitas: f32,
+    /// Share of base potency an auto-attack strikes for, the same for every actor
+    pub auto_damage: f32,
     /// Share of Force a Lunge's strike deals
     pub lunge_force: f32,
     /// Share of Force each tick of a Lunge's DoT deals
@@ -70,7 +70,7 @@ impl Default for ArchetypeTuning {
             damage_spread: 0.2,
             base_health: common_bevy::components::BASE_HEALTH,
             health_per_vitality: common_bevy::components::HEALTH_PER_VITALITY,
-            auto_gravitas: 0.25,
+            auto_damage: 0.75,
             lunge_force: 1.0,
             lunge_dot: 0.15,
             rattle_health: 0.05,
@@ -136,7 +136,7 @@ impl ArchetypeTuning {
             "damage_spread" => self.damage_spread = number()?,
             "base_health" => self.base_health = number()?,
             "health_per_vitality" => self.health_per_vitality = number()?,
-            "auto_gravitas" => self.auto_gravitas = number()?,
+            "auto_damage" => self.auto_damage = number()?,
             "lunge_force" => self.lunge_force = number()?,
             "rattle_health" => self.rattle_health = number()?,
             "rattle_growth" => self.rattle_growth = number()?,

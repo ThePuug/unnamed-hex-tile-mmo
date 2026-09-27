@@ -107,7 +107,8 @@ pub fn handle_auto_attack(
             continue;
         }
 
-        // Deal damage — a share of Gravitas: auto-attacks are pressure, bought with Presence
+        // Deal damage — a flat share of base potency: auto-attacks are pressure,
+        // the same weight for every actor, and Presence buys only their pace
         let attrs = attrs_query.get(*ent).expect("Auto-attack caster must have ActorAttributes");
         let poised = poised_query.get(*ent).map_or(0.0, |poised| poised.0);
         if poised > 0.0 {
@@ -125,7 +126,7 @@ pub fn handle_auto_attack(
                 },
             });
         }
-        let base_damage = attrs.gravitas() * tuning.auto_gravitas + poised;
+        let base_damage = attrs.base_potency() * tuning.auto_damage + poised;
 
         commands.trigger(
             Try {
