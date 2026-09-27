@@ -112,6 +112,18 @@ pub fn handle_auto_attack(
         let poised = poised_query.get(*ent).map_or(0.0, |poised| poised.0);
         if poised > 0.0 {
             commands.entity(*ent).remove::<super::disengage::Poised>();
+            // The charged blow comes behind a feint: a damage-free ability
+            // threat, which queues ahead of the blow and draws the reaction
+            commands.trigger(Try {
+                event: GameEvent::DealDamage {
+                    source: *ent,
+                    target: target_ent,
+                    base_damage: 0.0,
+                    damage_type: DamageType::Physical,
+                    ability: Some(AbilityType::Disengage),
+                    dot: 0.0,
+                },
+            });
         }
         let base_damage = attrs.gravitas() * tuning.auto_gravitas + poised;
 

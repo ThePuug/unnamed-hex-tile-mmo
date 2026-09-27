@@ -9,7 +9,9 @@ use common_bevy::{
 pub const DISENGAGE_STAMINA_COST: f32 = 20.0;
 
 /// Damage a Disengage adds to its caster's next auto-attack, spent by that
-/// blow. A second Disengage before it lands replaces the first's.
+/// blow, which comes behind a feint: a damage-free threat queued ahead of
+/// it, so a reaction that takes the front of the queue takes the feint. A
+/// second Disengage before the blow replaces the first's.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Poised(pub f32);
 
@@ -18,7 +20,7 @@ pub struct Poised(pub f32);
 /// leaps `ArchetypeTuning::disengage_leap` tiles, each the neighbour furthest
 /// from that source, and the blow misses: the front threat is cleared. Its
 /// next auto-attack strikes harder, by `disengage_technique` of its
-/// Technique (`Poised`).
+/// Technique, behind a feint (`Poised`).
 pub fn handle_disengage(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
