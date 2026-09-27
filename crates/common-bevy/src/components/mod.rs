@@ -803,9 +803,11 @@ impl ActorAttributes {
         10.0 * self.damage_level_multiplier()
     }
 
-    /// Gravitas: Presence's absolute meta-attribute, fully scaled like Force.
-    /// Nothing reads it: auto-attacks strike a flat share of
-    /// [`base_potency`](Self::base_potency), and Presence buys their pace alone.
+    /// Gravitas: Presence's absolute meta-attribute, fully scaled like Force:
+    /// the weight of what a Counter returns. Its ratio to
+    /// [`base_potency`](Self::base_potency) weights the share of each
+    /// countered blow sent back, so a Presence build returns far more than one
+    /// without. Auto-attacks do not read it: Presence buys only their pace.
     pub fn gravitas(&self) -> f32 {
         let presence = self.presence() as f32;
         let base = 10.0;

@@ -9,10 +9,11 @@ use crate::resources::RunTime;
 
 /// Reactive counter-attack. Costs 30 stamina and clears as many threats from
 /// the front of the queue as the window holds. Each cleared threat goes back
-/// to its living source wherever it stands, at `ArchetypeTuning::counter_reflect`
-/// of the threat's own damage and nothing more, so a Counter returns what
-/// comes in, and lands at once: a reflection never enters the source's queue,
-/// so it cannot be countered.
+/// to its living source wherever it stands, at a share of the threat's own
+/// damage and nothing more, so a Counter returns what comes in, and lands at
+/// once: a reflection never enters the source's queue, so it cannot be
+/// countered. The share is `ArchetypeTuning::counter_reflect` weighted by the
+/// counterer's Presence: its Gravitas over base potency.
 pub fn handle_counter(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -154,7 +155,8 @@ pub fn handle_counter(
                 continue;
             }
 
-            let reflected_damage = threat.damage * tuning.counter_reflect;
+            let weight = caster_attrs.gravitas() / caster_attrs.base_potency();
+            let reflected_damage = threat.damage * tuning.counter_reflect * weight;
 
             let Ok(target_attrs) = attrs_query.get(threat.source) else {
                 continue;

@@ -51,7 +51,7 @@ pub struct ArchetypeTuning {
     pub flank_stun: f32,
     /// Share of Intuition a Flank strikes for
     pub flank_intuition: f32,
-    /// Share of each countered threat's damage sent back
+    /// Share of each countered threat's damage sent back, times the counterer's Gravitas over base potency
     pub counter_reflect: f32,
 }
 
@@ -82,7 +82,7 @@ impl Default for ArchetypeTuning {
             volley_slow_secs: 2.058,
             flank_stun: 3.0,
             flank_intuition: 1.0,
-            counter_reflect: 1.921,
+            counter_reflect: 0.331,
         }
     }
 }
