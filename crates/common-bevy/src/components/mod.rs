@@ -829,9 +829,16 @@ impl ActorAttributes {
     /// Every actor has [`BASE_HEALTH`] before Vitality, which sets how many
     /// signature blows a fight takes.
     pub fn constitution(&self) -> f32 {
+        self.constitution_from(BASE_HEALTH, HEALTH_PER_VITALITY)
+    }
+
+    /// Constitution with its two shares given: `base` health before Vitality
+    /// and `per_vitality` for each point, scaled by level. The balance arena
+    /// tries values here; the game reads the constants through
+    /// [`constitution`](Self::constitution).
+    pub fn constitution_from(&self, base: f32, per_vitality: f32) -> f32 {
         let vitality = self.vitality() as f32;
-        let linear = BASE_HEALTH + (vitality * HEALTH_PER_VITALITY);
-        linear * self.hp_level_multiplier()
+        (base + vitality * per_vitality) * self.hp_level_multiplier()
     }
 
     // --- RELATIVE META-ATTRIBUTES (raw values for contests) ---

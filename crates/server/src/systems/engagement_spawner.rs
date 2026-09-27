@@ -137,7 +137,7 @@ pub fn spawn_engagement(
             identity: ActorIdentity::Npc(archetype.npc_type()),
         };
 
-        let max_health = attributes.max_health();
+        let max_health = attributes.constitution_from(tuning.base_health, tuning.health_per_vitality);
         let max_stamina = resource_calcs::calculate_max_stamina(&attributes);
         let max_mana = resource_calcs::calculate_max_mana(&attributes);
         let stamina_regen = resource_calcs::calculate_stamina_regen_rate(&attributes);

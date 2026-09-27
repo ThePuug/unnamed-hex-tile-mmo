@@ -22,12 +22,12 @@ pub fn handle_rattle(
     mut reader: MessageReader<Try>,
     loc_query: Query<&Loc>,
     mut stamina_query: Query<&mut Stamina>,
-    attrs_query: Query<&common_bevy::components::ActorAttributes>,
     dazed_query: Query<&Dazed>,
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
+    health_query: Query<&Health>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -83,12 +83,12 @@ pub fn handle_rattle(
         writer.write(Do {
             event: GameEvent::Incremental { ent: target_ent, component: common_bevy::message::Component::Dazed(dazed) },
         });
-        let attrs = attrs_query.get(*ent).expect("Rattle caster must have ActorAttributes");
+        let bulk = health_query.get(*ent).map_or(0.0, |health| health.max);
         commands.trigger(Try {
             event: GameEvent::DealDamage {
                 source: *ent,
                 target: target_ent,
-                base_damage: attrs.max_health() * tuning.rattle_health * (1.0 + tuning.rattle_growth * held as f32),
+                base_damage: bulk * tuning.rattle_health * (1.0 + tuning.rattle_growth * held as f32),
                 damage_type: DamageType::Physical,
                 ability: Some(AbilityType::Rattle),
                 dot: 0.0,

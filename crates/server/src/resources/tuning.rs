@@ -19,6 +19,10 @@ pub struct ArchetypeTuning {
     pub lunge_pierce: f32,
     /// Share of an attack's damage its roll lands either side of it
     pub damage_spread: f32,
+    /// An NPC's health before Vitality, the game's `BASE_HEALTH` unless tried otherwise
+    pub base_health: f32,
+    /// An NPC's health per point of Vitality, the game's `HEALTH_PER_VITALITY` unless tried otherwise
+    pub health_per_vitality: f32,
     /// Share of Gravitas an auto-attack strikes for
     pub auto_gravitas: f32,
     /// Share of Force a Lunge's strike deals
@@ -64,6 +68,8 @@ impl Default for ArchetypeTuning {
             cutthroat_delay: (3000, 5000),
             lunge_pierce: 0.7,
             damage_spread: 0.2,
+            base_health: common_bevy::components::BASE_HEALTH,
+            health_per_vitality: common_bevy::components::HEALTH_PER_VITALITY,
             auto_gravitas: 0.25,
             lunge_force: 1.0,
             lunge_dot: 0.15,
@@ -128,6 +134,8 @@ impl ArchetypeTuning {
             "lunge_pierce" => self.lunge_pierce = number()?,
             "lunge_dot" => self.lunge_dot = number()?,
             "damage_spread" => self.damage_spread = number()?,
+            "base_health" => self.base_health = number()?,
+            "health_per_vitality" => self.health_per_vitality = number()?,
             "auto_gravitas" => self.auto_gravitas = number()?,
             "lunge_force" => self.lunge_force = number()?,
             "rattle_health" => self.rattle_health = number()?,
