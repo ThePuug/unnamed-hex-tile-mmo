@@ -182,6 +182,7 @@ pub fn handle_overpower(
                     base_damage,
                     damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Overpower),
+                    dot: 0.0,
                 },
             },
         );

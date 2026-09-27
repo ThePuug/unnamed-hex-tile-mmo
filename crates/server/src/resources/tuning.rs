@@ -17,6 +17,8 @@ pub struct ArchetypeTuning {
     pub cutthroat_delay: (u64, u64),
     /// Share of the target's Toughness mitigation a Lunge strikes past
     pub lunge_pierce: f32,
+    /// Share of Force each tick of a Lunge's DoT deals
+    pub lunge_dot: f32,
     /// Share of Force a Hamstring strikes for
     pub hamstring_force: f32,
     /// Share of its speed each Hamstring stack takes from the target
@@ -53,6 +55,7 @@ impl Default for ArchetypeTuning {
             skirmisher_delay: (3000, 5000),
             cutthroat_delay: (3000, 5000),
             lunge_pierce: 0.7,
+            lunge_dot: 0.15,
             hamstring_force: 0.45,
             hamstring_daze: 0.1,
             hamstring_stacks: 3,
@@ -111,6 +114,7 @@ impl ArchetypeTuning {
             "s_delay" => self.skirmisher_delay = range()?,
             "c_delay" => self.cutthroat_delay = range()?,
             "lunge_pierce" => self.lunge_pierce = number()?,
+            "lunge_dot" => self.lunge_dot = number()?,
             "hamstring_force" => self.hamstring_force = number()?,
             "hamstring_daze" => self.hamstring_daze = number()?,
             "hamstring_stacks" => self.hamstring_stacks = number()? as u8,

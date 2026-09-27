@@ -43,11 +43,16 @@ pub enum Event {
         base_damage: f32,
         damage_type: DamageType,
         ability: Option<AbilityType>,
+        /// Damage each DoT tick deals while the threat stands: a wound's, zero for a blow
+        dot: f32,
     },
+    /// Server-internal: a wound's DoT tick lands outside the queue
+    DotTick { ent: Entity, source: Entity, damage: f32, ability: Option<AbilityType> },
     /// Server → Client: Insert threat into reaction queue
     InsertThreat { ent: Entity, threat: QueuedThreat },
-    /// Server → Client: Apply damage to entity (threat resolved)
-    ApplyDamage { ent: Entity, damage: f32, source: Entity },
+    /// Server → Client: Apply damage to entity (threat resolved). `dot` marks
+    /// a wound's damage, shown apart from a blow's.
+    ApplyDamage { ent: Entity, damage: f32, source: Entity, dot: bool },
     /// Server-internal: Resolve a threat (apply damage with modifiers)
     ResolveThreat { ent: Entity, threat: QueuedThreat },
     /// Client → Server (Try): Request to use an ability

@@ -75,7 +75,7 @@ pub fn on_damage_applied(
     let player_entity = input_queues.entities().next().copied();
 
     for event in event_reader.read() {
-        if let GameEvent::ApplyDamage { ent, damage, source } = event.event {
+        if let GameEvent::ApplyDamage { ent, damage, source, .. } = event.event {
             // Enforce max entries - despawn oldest if at capacity
             let current_entries: Vec<_> = entry_query.iter().collect();
             if current_entries.len() >= MAX_ENTRIES {

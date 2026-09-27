@@ -212,7 +212,7 @@ pub fn write_do(
                 // Forward to Do writer for systems to handle
                 do_writer.write(Do { event: Event::InsertThreat { ent, threat: mapped_threat } });
             }
-            Do { event: Event::ApplyDamage { ent, damage, source } } => {
+            Do { event: Event::ApplyDamage { ent, damage, source, dot } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
                     warn!("Client: ApplyDamage target {:?} not in l2r map, requesting spawn", ent);
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
@@ -220,7 +220,7 @@ pub fn write_do(
                 };
                 // Map source entity too
                 let source = l2r.get_by_right(&source).copied().unwrap_or(source);
-                do_writer.write(Do { event: Event::ApplyDamage { ent, damage, source } });
+                do_writer.write(Do { event: Event::ApplyDamage { ent, damage, source, dot } });
             }
             Do { event: Event::ClearQueue { ent, clear_type } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {

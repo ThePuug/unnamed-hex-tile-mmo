@@ -33,9 +33,46 @@ pub struct QueuedThreat {
     pub timer_duration: Duration,
     /// Optional ability that caused this threat (for visual effects/telegraphs)
     pub ability: Option<crate::message::AbilityType>,
+    /// Damage each tick of the damage over time (DoT) this threat applies
+    /// while it stands in the queue: a wound. Zero for a blow. A wound's DoT
+    /// ticks once every [`DOT_TICK`] outside the queue, short of its landing,
+    /// and the wound lands for the ticks it has not dealt, so clearing it
+    /// stops the DoT and taking it takes the rest.
+    pub dot: f32,
+    /// DoT ticks this wound has dealt. Only the server counts them.
+    pub ticked: u8,
 }
 
+/// How often a wound's DoT ticks
+pub const DOT_TICK: Duration = Duration::from_secs(1);
+
 impl QueuedThreat {
+    /// A wound: its DoT ticks while it stands, queued behind every blow and
+    /// ahead of every auto-attack, and shown in the window like a blow.
+    pub fn is_wound(&self) -> bool {
+        self.dot > 0.0
+    }
+
+    /// The ticks a wound's DoT deals in all: one per [`DOT_TICK`] short of
+    /// its landing. None for a blow.
+    pub fn tick_count(&self) -> u8 {
+        if !self.is_wound() {
+            return 0;
+        }
+        (self.timer_duration.as_nanos().saturating_sub(1) / DOT_TICK.as_nanos()).min(u8::MAX as u128) as u8
+    }
+
+    /// The ticks a wound has come due for by `now`.
+    pub fn ticks_due(&self, now: Duration) -> u8 {
+        let elapsed = now.saturating_sub(self.inserted_at).as_nanos() / DOT_TICK.as_nanos();
+        elapsed.min(self.tick_count() as u128) as u8
+    }
+
+    /// What a wound's DoT has yet to deal: all it lands for. Nothing for a blow.
+    pub fn dot_left(&self) -> f32 {
+        self.dot * self.tick_count().saturating_sub(self.ticked) as f32
+    }
+
     /// An auto-attack: steady pressure, queued behind every ability threat
     /// and never shown in the visibility window.
     pub fn is_pressure(&self) -> bool {
@@ -44,9 +81,9 @@ impl QueuedThreat {
 }
 
 /// Reaction queue component that holds incoming threats
-/// - threats: Unbounded queue of incoming damage. Every ability threat stands
-///   ahead of every auto-attack, and each kind is oldest first; only
-///   `queue::insert_threat` keeps that order.
+/// - threats: Unbounded queue of incoming damage. Every blow stands ahead of
+///   every wound, every wound ahead of every auto-attack, and each kind is
+///   oldest first; only `queue::insert_threat` keeps that order.
 /// - window_size: How many threats the player can see and interact with (derived from Focus)
 
 /// Queue is unbounded. Window determines visibility, not capacity: it shows
@@ -69,9 +106,14 @@ impl ReactionQueue {
         self.threats.is_empty()
     }
 
-    /// Number of ability threats, all at the front of the queue
+    /// Number of ability threats, blows then wounds, all at the front of the queue
     pub fn decision_count(&self) -> usize {
         self.threats.iter().take_while(|t| !t.is_pressure()).count()
+    }
+
+    /// Number of blows: the ability threats ahead of every wound
+    pub fn blow_count(&self) -> usize {
+        self.threats.iter().take_while(|t| !t.is_pressure() && !t.is_wound()).count()
     }
 
     /// Number of threats visible in the window: the front ability threats
@@ -111,6 +153,8 @@ mod tests {
             inserted_at: Duration::from_secs(secs),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
         };
 
         // 1 threat, window=2: all visible
@@ -146,6 +190,8 @@ mod tests {
             inserted_at: Duration::ZERO,
             timer_duration: Duration::from_secs(1),
             ability,
+            dot: 0.0,
+            ticked: 0,
         };
         let auto_attack = Some(crate::message::AbilityType::AutoAttack);
 

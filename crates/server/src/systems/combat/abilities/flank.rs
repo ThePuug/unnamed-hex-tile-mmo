@@ -128,6 +128,7 @@ pub fn handle_flank(
                 base_damage: attrs.intuition() * tuning.flank_intuition,
                 damage_type: DamageType::Physical,
                 ability: Some(AbilityType::Flank),
+                dot: 0.0,
             },
         });
 

@@ -80,6 +80,7 @@ pub fn handle_volley(
                     base_damage: attrs.force() * tuning.volley_force,
                     damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Volley),
+                    dot: 0.0,
                 },
             });
         }

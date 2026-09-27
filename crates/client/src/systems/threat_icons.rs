@@ -438,8 +438,12 @@ pub fn front_icon_x_offset(capacity: usize) -> f32 {
     start_x // index 0
 }
 
+/// The colour of damage over time, apart from every blow's
+pub const DOT_COLOR: Color = Color::srgb(0.65, 0.3, 0.95);
+
 /// Spawn pop animation when a threat resolves against the player.
-/// Listens for ApplyDamage events targeting the local player.
+/// Listens for ApplyDamage events targeting the local player. A DoT tick
+/// lands from no queued threat, so it pops nothing.
 pub fn spawn_pop_animation(
     mut commands: Commands,
     container_query: Query<Entity, With<ThreatIconContainer>>,
@@ -463,8 +467,8 @@ pub fn spawn_pop_animation(
     };
 
     for event in event_reader.read() {
-        if let GameEvent::ApplyDamage { ent, damage, .. } = event.event {
-            if ent != player_entity {
+        if let GameEvent::ApplyDamage { ent, damage, dot, .. } = event.event {
+            if ent != player_entity || dot {
                 continue;
             }
 

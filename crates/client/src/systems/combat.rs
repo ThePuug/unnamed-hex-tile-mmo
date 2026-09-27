@@ -61,7 +61,7 @@ pub fn handle_apply_damage(
     let player_entity = input_queues.entities().next().copied();
 
     for event in reader.read() {
-        if let GameEvent::ApplyDamage { ent, damage, source: _ } = event.event {
+        if let GameEvent::ApplyDamage { ent, damage, dot, .. } = event.event {
             // Don't remove from queue - ClearQueue event already did that!
             // This was causing double-removal and queue desync
             // (ApplyDamage is for damage display only, not queue management)
@@ -87,7 +87,7 @@ pub fn handle_apply_damage(
                     font_size: FontSize::Px(32.0),
                     ..default()
                 },
-                TextColor(Color::WHITE),
+                TextColor(if dot { crate::systems::threat_icons::DOT_COLOR } else { Color::WHITE }),
                 TextLayout::justify(Justify::Center),
                 crate::components::FloatingText {
                     spawn_time: time.elapsed(),

@@ -23,7 +23,7 @@ pub fn process_deal_damage(
 ) {
     let event = &trigger.event().event;
 
-    if let GameEvent::DealDamage { source, target, base_damage, damage_type, ability } = event {
+    if let GameEvent::DealDamage { source, target, base_damage, damage_type, ability, dot } = event {
         // Get attacker attributes for scaling
         let Ok(source_attrs) = all_attrs.get(*source) else {
             return;
@@ -72,6 +72,7 @@ pub fn process_deal_damage(
             *damage_type,  // Damage type
             *ability,      // Ability
             now,           // Current time
+            *dot,          // DoT per tick, a wound's
         );
 
         // Try to insert threat into queue
@@ -127,7 +128,7 @@ pub fn resolve_threat(
             // ability pierces
             let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_dominance, dominant_level);
             let pierce = threat.ability.map_or(0.0, |ability| tuning.pierce(ability));
-            let final_damage = mitigated + (threat.damage - mitigated) * pierce;
+            let final_damage = mitigated + (threat.damage - mitigated) * pierce + threat.dot_left();
 
             // Apply damage to health
             health.state = (health.state - final_damage).max(0.0);
@@ -139,6 +140,7 @@ pub fn resolve_threat(
                     ent: *ent,
                     damage: final_damage,
                     source: threat.source,
+                    dot: threat.is_wound(),
                 },
             });
 
@@ -153,6 +155,24 @@ pub fn resolve_threat(
             // Death check moved to dedicated check_death system (decoupled from combat)
         }
     }
+}
+
+/// A wound's DoT tick lands on its target, outside the queue and past its
+/// defences.
+pub fn resolve_dot_tick(
+    trigger: On<Try>,
+    mut query: Query<&mut Health>,
+    mut writer: MessageWriter<Do>,
+) {
+    let Try { event: GameEvent::DotTick { ent, source, damage, .. } } = trigger.event() else { return };
+    let Ok(mut health) = query.get_mut(*ent) else { return };
+    if health.state <= 0.0 {
+        return;
+    }
+    health.state = (health.state - damage).max(0.0);
+    health.step = health.state;
+    writer.write(Do { event: GameEvent::ApplyDamage { ent: *ent, damage: *damage, source: *source, dot: true } });
+    writer.write(Do { event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Health(*health) } });
 }
 
 /// System to validate ability prerequisites (GCD, death status)

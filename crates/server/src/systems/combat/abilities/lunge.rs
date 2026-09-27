@@ -11,6 +11,8 @@ use common_bevy::{
 /// - Base damage from Force meta-attribute (scales with might + level)
 /// - 4 hex range
 /// - Teleports caster adjacent to target
+/// - Queues a strike and a wound whose DoT, a bleed, deals `ArchetypeTuning::lunge_dot`
+///   of Force each tick until a reaction clears the wound or it lands
 pub fn handle_lunge(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -20,6 +22,7 @@ pub fn handle_lunge(
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
+    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -194,6 +197,19 @@ pub fn handle_lunge(
                     base_damage,
                     damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Lunge),
+                    dot: 0.0,
+                },
+            },
+        );
+        commands.trigger(
+            Try {
+                event: GameEvent::DealDamage {
+                    source: *ent,
+                    target: target_ent,
+                    base_damage: 0.0,
+                    damage_type: DamageType::Physical,
+                    ability: Some(AbilityType::Lunge),
+                    dot: attrs.force() * tuning.lunge_dot,
                 },
             },
         );

@@ -88,7 +88,8 @@ pub struct ThreatCapacityDot {
 pub struct ResolvedThreatEntry {
     pub spawn_time: std::time::Duration,
     pub lifetime: f32,  // 4.0 seconds
-    pub severity: f32,       // estimated_damage / max_health for color
+    /// Its colour: a blow's by severity, damage over time's its own
+    pub rgb: (f32, f32, f32),
     pub appear_delay: f32,   // seconds before entry becomes visible (synced with pop travel)
 }
 

@@ -48,6 +48,31 @@ pub fn process_expired_threats(
     }
 }
 
+/// Ticks the DoT of every wound standing in a queue: each tick that has
+/// come due is counted on the wound and lands as a `DotTick`, outside the
+/// queue. A wound cleared or landed ticks no more; what it had not dealt
+/// lands with it.
+pub fn tick_dots(
+    mut commands: Commands,
+    time: Res<Time>,
+    runtime: Res<crate::resources::RunTime>,
+    mut query: Query<(Entity, &mut ReactionQueue)>,
+) {
+    let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
+    let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
+    for (ent, mut queue) in &mut query {
+        for wound in queue.threats.iter_mut().filter(|t| t.is_wound()) {
+            let due = wound.ticks_due(now);
+            while wound.ticked < due {
+                wound.ticked += 1;
+                commands.trigger(Try {
+                    event: GameEvent::DotTick { ent, source: wound.source, damage: wound.dot, ability: wound.ability },
+                });
+            }
+        }
+    }
+}
+
 /// Server system to process Dismiss events
 /// Pops the front visible threat from the queue and applies full unmitigated damage
 /// No GCD, no lockout, no resource cost
@@ -72,9 +97,11 @@ pub fn process_dismiss(
         let Some(threat) = queue.threats.pop_front() else {
             continue;
         };
+        // A wound taken at once deals the DoT it had left
+        let damage = threat.damage + threat.dot_left();
 
         // Apply full unmitigated damage (no armor, no resistance)
-        health.state = (health.state - threat.damage).max(0.0);
+        health.state = (health.state - damage).max(0.0);
         health.step = health.state;
 
         // Broadcast queue clear to clients
@@ -89,8 +116,9 @@ pub fn process_dismiss(
         writer.write(Do {
             event: GameEvent::ApplyDamage {
                 ent,
-                damage: threat.damage,
+                damage,
                 source: threat.source,
+                dot: threat.is_wound(),
             },
         });
 
@@ -125,6 +153,8 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
                     });
 
         let attrs = ActorAttributes::default();

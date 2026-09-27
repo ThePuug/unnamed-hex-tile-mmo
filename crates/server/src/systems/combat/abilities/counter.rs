@@ -168,6 +168,7 @@ pub fn handle_counter(
                 threat.damage_type,           // Preserve damage type
                 Some(AbilityType::Counter),   // Ability
                 now,                          // Current time
+                0.0,                          // A reflection is a blow
             );
 
             // A reflection lands on impact, never queued, so a counter cannot be countered back

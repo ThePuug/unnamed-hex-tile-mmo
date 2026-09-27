@@ -89,6 +89,7 @@ pub fn handle_hamstring(
                 base_damage: attrs.force() * tuning.hamstring_force,
                 damage_type: DamageType::Physical,
                 ability: Some(AbilityType::Hamstring),
+                dot: 0.0,
             },
         });
 

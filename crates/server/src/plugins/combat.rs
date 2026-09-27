@@ -24,6 +24,7 @@ impl Plugin for CombatPlugin {
 
         app.add_observer(combat::process_deal_damage);
         app.add_observer(combat::resolve_threat);
+        app.add_observer(combat::resolve_dot_tick);
 
         app.add_systems(FixedUpdate, (
             common_bevy::systems::combat::resources::regenerate_resources, // Handles all resource regen including leash health regen (100 HP/sec for Returning NPCs)
@@ -31,6 +32,7 @@ impl Plugin for CombatPlugin {
             common_bevy::systems::combat::recovery::global_recovery_system, // Tick down recovery lockout
             common_bevy::systems::combat::synergies::synergy_cleanup_system, // Clean up expired synergies
             reaction_queue::process_expired_threats,
+            reaction_queue::tick_dots,
         ));
 
         app.add_systems(Update, (

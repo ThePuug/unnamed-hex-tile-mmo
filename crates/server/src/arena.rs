@@ -172,11 +172,16 @@ fn tally_used(mut reader: MessageReader<Try>, mut tally: ResMut<Tally>) {
     }
 }
 
-/// Counts each resolved threat against the side of the actor that sent it.
+/// Counts each resolved threat and DoT tick against the side of the actor
+/// that sent it.
 fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>) {
-    let Try { event: Event::ResolveThreat { threat, .. } } = trigger.event() else { return };
-    let Some(&side) = tally.sides.get(&threat.source) else { return };
-    tally.dealt.entry(side).or_default().add(threat.ability, threat.damage);
+    let (source, ability, damage) = match trigger.event() {
+        Try { event: Event::ResolveThreat { threat, .. } } => (threat.source, threat.ability, threat.damage + threat.dot_left()),
+        Try { event: Event::DotTick { source, ability, damage, .. } } => (*source, *ability, *damage),
+        _ => return,
+    };
+    let Some(&side) = tally.sides.get(&source) else { return };
+    tally.dealt.entry(side).or_default().add(ability, damage);
 }
 
 struct Outcome {

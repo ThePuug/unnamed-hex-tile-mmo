@@ -195,6 +195,7 @@ pub fn handle_kick(
                         DamageType::Physical,
                         Some(AbilityType::Kick),
                         now,
+                        0.0,
                     );
 
                     common_bevy::systems::combat::queue::insert_threat(&mut target_queue, kick_threat, now);

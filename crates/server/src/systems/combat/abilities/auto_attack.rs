@@ -122,6 +122,7 @@ pub fn handle_auto_attack(
                     base_damage,
                     damage_type: DamageType::Physical,
                     ability: Some(AbilityType::AutoAttack),
+                    dot: 0.0,
                 },
             },
         );

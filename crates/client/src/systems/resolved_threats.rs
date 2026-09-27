@@ -69,7 +69,7 @@ pub fn on_damage_resolved(
     let max_health = player_health.iter().next().map(|h| h.max).unwrap_or(100.0);
 
     for event in event_reader.read() {
-        if let GameEvent::ApplyDamage { ent, damage, .. } = event.event {
+        if let GameEvent::ApplyDamage { ent, damage, dot, .. } = event.event {
             // Only show threats resolved AGAINST the player (not outgoing damage)
             if ent != player_entity {
                 continue;
@@ -89,13 +89,20 @@ pub fn on_damage_resolved(
                 1.0
             };
 
-            // Spawn new resolved threat entry (flex column handles positioning)
+            // A blow pops from the queue into the stack; a DoT tick comes from
+            // no queued threat, so it shows at once, in the DoT colour
+            let (rgb, appear_delay) = if dot {
+                (threat_icons::DOT_COLOR.to_srgba(), 0.0)
+            } else {
+                let (r, g, b) = severity_rgb(severity);
+                (Color::srgb(r, g, b).to_srgba(), POP_APPEAR_DELAY)
+            };
             spawn_resolved_threat_entry(
                 &mut commands,
                 container,
                 damage,
-                severity,
-                POP_APPEAR_DELAY,
+                (rgb.red, rgb.green, rgb.blue),
+                appear_delay,
                 time.elapsed(),
             );
         }
@@ -118,7 +125,7 @@ pub fn update_entries(
             continue;
         }
 
-        let (r, g, b) = severity_rgb(entry.severity);
+        let (r, g, b) = entry.rgb;
 
         // Delayed appearance + fade-in + fade-out
         let alpha = if elapsed < entry.appear_delay {
@@ -173,11 +180,11 @@ fn spawn_resolved_threat_entry(
     commands: &mut Commands,
     container: Entity,
     damage: f32,
-    severity: f32,
+    rgb: (f32, f32, f32),
     appear_delay: f32,
     spawn_time: std::time::Duration,
 ) {
-    let (r, g, b) = severity_rgb(severity);
+    let (r, g, b) = rgb;
 
     commands.entity(container).with_children(|parent| {
         parent.spawn((
@@ -196,7 +203,7 @@ fn spawn_resolved_threat_entry(
             ResolvedThreatEntry {
                 spawn_time,
                 lifetime: ENTRY_LIFETIME,
-                severity,
+                rgb,
                 appear_delay,
             },
         ))

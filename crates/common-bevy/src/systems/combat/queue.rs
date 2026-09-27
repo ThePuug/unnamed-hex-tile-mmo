@@ -50,6 +50,7 @@ pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttribu
 /// * `damage_type` - Physical or Magic
 /// * `ability` - Which ability created this threat
 /// * `now` - Current game time
+/// * `dot` - Damage each DoT tick deals: a wound's, zero for a blow
 
 /// # Returns
 /// Fully-formed QueuedThreat with correct timer duration
@@ -61,6 +62,7 @@ pub fn create_threat(
     damage_type: crate::components::reaction_queue::DamageType,
     ability: Option<crate::message::AbilityType>,
     now: Duration,
+    dot: f32,
 ) -> crate::components::reaction_queue::QueuedThreat {
     crate::components::reaction_queue::QueuedThreat {
         source,
@@ -69,21 +71,29 @@ pub fn create_threat(
         inserted_at: now,
         timer_duration: threat_window(target_attrs, source_attrs),
         ability,
+        dot,
+        ticked: 0,
     }
 }
 
 /// Insert a threat into the queue (unbounded, no overflow eviction)
 /// Queue is unbounded — threats always insert. Window size controls visibility only.
-/// An auto-attack goes to the back; an ability threat goes after the last
-/// ability threat, ahead of every auto-attack, so reactions reach
-/// auto-attacks only as overflow. Server and client both insert through
+/// An auto-attack goes to the back; a wound after the last wound, ahead of
+/// every auto-attack; a blow after the last blow, ahead of every wound, so
+/// reactions reach wounds after blows and auto-attacks only as overflow. Server and client both insert through
 /// here, so their queues hold the same order.
 pub fn insert_threat(
     queue: &mut ReactionQueue,
     threat: crate::components::reaction_queue::QueuedThreat,
     _now: Duration,
 ) {
-    let at = if threat.is_pressure() { queue.threats.len() } else { queue.decision_count() };
+    let at = if threat.is_pressure() {
+        queue.threats.len()
+    } else if threat.is_wound() {
+        queue.decision_count()
+    } else {
+        queue.blow_count()
+    };
     queue.threats.insert(at, threat);
 }
 
@@ -171,6 +181,8 @@ mod tests {
             inserted_at: Duration::from_secs(secs),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
 
         };
 
@@ -207,6 +219,8 @@ mod tests {
             inserted_at: Duration::from_secs(secs),
             timer_duration: Duration::from_secs(1),
             ability: Some(ability),
+            dot: 0.0,
+            ticked: 0,
         };
 
         for (ability, secs) in [(AutoAttack, 0), (Lunge, 1), (AutoAttack, 2), (Overpower, 3)] {
@@ -231,6 +245,8 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
 
         };
 
@@ -254,6 +270,8 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
 
         };
 
@@ -279,6 +297,8 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
 
         };
 
@@ -290,6 +310,8 @@ mod tests {
             inserted_at: Duration::from_millis(500),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
 
         };
 
@@ -320,6 +342,8 @@ mod tests {
                 inserted_at: Duration::from_secs(i as u64),
                 timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
     
             });
         }
@@ -346,6 +370,8 @@ mod tests {
                 inserted_at: Duration::from_secs(i as u64),
                 timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
     
             });
         }
@@ -372,6 +398,8 @@ mod tests {
                 inserted_at: Duration::from_secs(secs),
                 timer_duration: Duration::from_secs(1),
                 ability: None,
+                dot: 0.0,
+                ticked: 0,
             });
         }
 
@@ -398,6 +426,8 @@ mod tests {
                 inserted_at: Duration::from_secs(secs),
                 timer_duration: Duration::from_secs(1),
                 ability: None,
+                dot: 0.0,
+                ticked: 0,
             });
         }
 
@@ -419,6 +449,8 @@ mod tests {
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
 
         });
         queue.threats.push_back(QueuedThreat {
@@ -428,6 +460,8 @@ mod tests {
             inserted_at: Duration::from_secs(1),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
 
         });
         queue.threats.push_back(QueuedThreat {
@@ -437,6 +471,8 @@ mod tests {
             inserted_at: Duration::from_secs(2),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
 
         });
         queue.threats.push_back(QueuedThreat {
@@ -446,6 +482,8 @@ mod tests {
             inserted_at: Duration::from_secs(3),
             timer_duration: Duration::from_secs(1),
             ability: None,
+            dot: 0.0,
+            ticked: 0,
 
         });
 
@@ -459,5 +497,51 @@ mod tests {
         assert_eq!(queue.threats.len(), 2);
         assert_eq!(queue.threats[0].damage, 10.0); // Physical remains
         assert_eq!(queue.threats[1].damage, 20.0); // Physical remains
+    }
+
+    #[test]
+    fn wounds_queue_behind_blows_and_ahead_of_auto_attacks() {
+        let mut queue = ReactionQueue::new(3);
+        let source = Entity::from_raw_u32(0).unwrap();
+        let make = |ability, dot: f32, secs| QueuedThreat {
+            source,
+            damage: 10.0,
+            damage_type: DamageType::Physical,
+            inserted_at: Duration::from_secs(secs),
+            timer_duration: Duration::from_secs(3),
+            ability,
+            dot,
+            ticked: 0,
+        };
+        use crate::message::AbilityType::{AutoAttack, Lunge};
+        insert_threat(&mut queue, make(Some(AutoAttack), 0.0, 0), Duration::ZERO);
+        insert_threat(&mut queue, make(Some(Lunge), 5.0, 1), Duration::ZERO);
+        insert_threat(&mut queue, make(Some(Lunge), 0.0, 2), Duration::ZERO);
+        insert_threat(&mut queue, make(Some(Lunge), 5.0, 3), Duration::ZERO);
+        insert_threat(&mut queue, make(Some(Lunge), 0.0, 4), Duration::ZERO);
+        let order: Vec<_> = queue.threats.iter().map(|t| t.inserted_at.as_secs()).collect();
+        assert_eq!(order, vec![2, 4, 1, 3, 0], "blows, then wounds, then auto-attacks, each oldest first");
+        assert_eq!(queue.decision_count(), 4, "wounds are reached like blows");
+    }
+
+    #[test]
+    fn a_wound_ticks_before_it_lands_and_lands_for_what_it_has_not_dealt() {
+        let wound = QueuedThreat {
+            source: Entity::from_raw_u32(0).unwrap(),
+            damage: 0.0,
+            damage_type: DamageType::Physical,
+            inserted_at: Duration::from_secs(10),
+            timer_duration: Duration::from_secs(3),
+            ability: None,
+            dot: 5.0,
+            ticked: 0,
+        };
+        assert_eq!(wound.tick_count(), 2, "ticks fall short of the landing");
+        assert_eq!(wound.ticks_due(Duration::from_millis(10_999)), 0);
+        assert_eq!(wound.ticks_due(Duration::from_secs(11)), 1);
+        assert_eq!(wound.ticks_due(Duration::from_secs(20)), 2);
+        assert_eq!(wound.dot_left(), 10.0, "taken at once, it deals every tick");
+        assert_eq!(QueuedThreat { ticked: 2, ..wound }.dot_left(), 0.0, "ticked out, it lands for nothing");
+        assert_eq!(QueuedThreat { dot: 0.0, ..wound }.tick_count(), 0, "a blow never ticks");
     }
 }

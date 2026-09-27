@@ -386,13 +386,14 @@ pub fn write_try(
                     bincode::config::legacy()).unwrap();
                 broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
-            Event::ApplyDamage { ent, damage, source } => {
+            Event::ApplyDamage { ent, damage, source, dot } => {
                 let ent = *ent;
                 let damage = *damage;
                 let source = *source;
+                let dot = *dot;
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
                 let bytes = bincode::serde::encode_to_vec(
-                    Do { event: Event::ApplyDamage { ent, damage, source }},
+                    Do { event: Event::ApplyDamage { ent, damage, source, dot }},
                     bincode::config::legacy()).unwrap();
                 broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
