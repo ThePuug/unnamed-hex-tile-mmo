@@ -208,11 +208,11 @@ pub fn validate_ability_prerequisites(
 
 /// System to automatically trigger auto-attacks when a hostile is in range.
 /// The cadence is fixed by `ActorAttributes::cadence_interval` alone: no
-/// random spread, and an ability's lockout does not pause it.
+/// random spread, and an ability's lockout does not pause it. An NPC swings
+/// wherever it stands; its assigned hex decides only where it walks.
 pub fn process_passive_auto_attack(
     mut query: Query<
         (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &common_bevy::components::target::Target,
-         Option<&common_bevy::components::hex_assignment::AssignedHex>,
          &ActorAttributes,
          Option<&common_bevy::components::AttackRange>,
          Option<&common_bevy::components::stunned::Stunned>),
@@ -228,7 +228,7 @@ pub fn process_passive_auto_attack(
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target, assigned_hex_opt, attrs, attack_range_opt, stunned) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, gcd_opt, target, attrs, attack_range_opt, stunned) in query.iter_mut() {
         if common_bevy::components::stunned::Stunned::holds(stunned) {
             continue;
         }
@@ -236,13 +236,6 @@ pub fn process_passive_auto_attack(
         if let Some(gcd) = gcd_opt {
             if gcd.is_active(time.elapsed()) {
                 continue; // Skip if on GCD
-            }
-        }
-
-        // Check NPC is on assigned hex (if it has one)
-        if let Some(assigned) = assigned_hex_opt {
-            if loc.flat_distance(&common_bevy::components::Loc::new(assigned.0)) != 0 {
-                continue; // Not on assigned hex yet
             }
         }
 
