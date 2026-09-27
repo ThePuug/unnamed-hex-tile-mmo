@@ -11,11 +11,12 @@ pub const RATTLE_STAMINA_COST: f32 = 40.0;
 const MIN_PACE: f32 = 0.1;
 
 /// Handle Rattle, the Juggernaut's signature: a strike on an adjacent
-/// target for `ArchetypeTuning::rattle_force` of Force that adds a stack
-/// to its daze (`Dazed`), up to `rattle_stacks`. Each stack takes
-/// `rattle_daze` of its pace, its movement, auto-attacks and recovery alike,
-/// so the longer a fight runs the less the target escapes a Juggernaut or
-/// presses one.
+/// target that adds a stack to its daze (`Dazed`), up to `rattle_stacks`.
+/// Each stack takes `rattle_daze` of its pace, its movement, auto-attacks
+/// and recovery alike. The strike is Vitality's: `rattle_health` of the
+/// Juggernaut's own health, and `rattle_growth` more for each stack already
+/// on the target, so the longer a fight runs the harder a Juggernaut hits
+/// and the less the target escapes or presses it.
 pub fn handle_rattle(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -72,7 +73,8 @@ pub fn handle_rattle(
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
         });
 
-        let stacks = dazed_query.get(target_ent).map_or(0, |h| h.stacks).saturating_add(1).min(tuning.rattle_stacks);
+        let held = dazed_query.get(target_ent).map_or(0, |h| h.stacks);
+        let stacks = held.saturating_add(1).min(tuning.rattle_stacks);
         let dazed = Dazed {
             stacks,
             pace: (1.0 - tuning.rattle_daze * stacks as f32).max(MIN_PACE),
@@ -86,7 +88,7 @@ pub fn handle_rattle(
             event: GameEvent::DealDamage {
                 source: *ent,
                 target: target_ent,
-                base_damage: attrs.force() * tuning.rattle_force,
+                base_damage: attrs.max_health() * tuning.rattle_health * (1.0 + tuning.rattle_growth * held as f32),
                 damage_type: DamageType::Physical,
                 ability: Some(AbilityType::Rattle),
                 dot: 0.0,

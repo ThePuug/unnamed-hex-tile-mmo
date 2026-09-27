@@ -25,8 +25,10 @@ pub struct ArchetypeTuning {
     pub lunge_force: f32,
     /// Share of Force each tick of a Lunge's DoT deals
     pub lunge_dot: f32,
-    /// Share of Force a Rattle strikes for
-    pub rattle_force: f32,
+    /// Share of the Juggernaut's own health a Rattle strikes for
+    pub rattle_health: f32,
+    /// Share more a Rattle strikes for with each daze stack already on its target
+    pub rattle_growth: f32,
     /// Share of its pace each Rattle stack takes from the target
     pub rattle_daze: f32,
     /// Most stacks a target carries
@@ -65,7 +67,8 @@ impl Default for ArchetypeTuning {
             auto_gravitas: 0.25,
             lunge_force: 1.0,
             lunge_dot: 0.15,
-            rattle_force: 0.45,
+            rattle_health: 0.05,
+            rattle_growth: 0.25,
             rattle_daze: 0.1,
             rattle_stacks: 2,
             disengage_leap: 5,
@@ -127,7 +130,8 @@ impl ArchetypeTuning {
             "damage_spread" => self.damage_spread = number()?,
             "auto_gravitas" => self.auto_gravitas = number()?,
             "lunge_force" => self.lunge_force = number()?,
-            "rattle_force" => self.rattle_force = number()?,
+            "rattle_health" => self.rattle_health = number()?,
+            "rattle_growth" => self.rattle_growth = number()?,
             "rattle_daze" => self.rattle_daze = number()?,
             "rattle_stacks" => self.rattle_stacks = number()? as u8,
             "disengage_leap" => self.disengage_leap = number()? as usize,
