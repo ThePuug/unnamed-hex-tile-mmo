@@ -51,8 +51,6 @@ pub struct ArchetypeTuning {
     pub flank_stun: f32,
     /// Share of Intuition a Flank strikes for
     pub flank_intuition: f32,
-    /// Share of Technique each countered threat strikes its source for
-    pub counter_technique: f32,
     /// Share of each countered threat's damage sent back
     pub counter_reflect: f32,
 }
@@ -84,7 +82,6 @@ impl Default for ArchetypeTuning {
             volley_slow_secs: 2.94,
             flank_stun: 3.0,
             flank_intuition: 1.0,
-            counter_technique: 0.3,
             counter_reflect: 1.372,
         }
     }
@@ -149,7 +146,6 @@ impl ArchetypeTuning {
             "volley_slow_secs" => self.volley_slow_secs = number()?,
             "flank_stun" => self.flank_stun = number()?,
             "flank_intuition" => self.flank_intuition = number()?,
-            "counter_technique" => self.counter_technique = number()?,
             "counter_reflect" => self.counter_reflect = number()?,
             _ => return Err(format!("no tuning knob {name}")),
         }
