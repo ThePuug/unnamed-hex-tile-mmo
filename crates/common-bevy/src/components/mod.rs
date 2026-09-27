@@ -215,8 +215,8 @@ impl Default for Turn {
 pub const BASE_HEALTH: f32 = 300.0;
 
 /// Health each point of Vitality adds before level: a Vitality build at level
-/// 10 has about two and a half times the health of one without.
-pub const HEALTH_PER_VITALITY: f32 = 2.8;
+/// 10 has about twice the health of one without.
+pub const HEALTH_PER_VITALITY: f32 = 1.96;
 
 #[derive(Clone, Component, Copy, Default)]
 pub struct Actor;

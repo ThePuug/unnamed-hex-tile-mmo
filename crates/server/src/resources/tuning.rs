@@ -61,7 +61,7 @@ impl Default for ArchetypeTuning {
     fn default() -> Self {
         Self {
             berserker_delay: (4000, 6000),
-            juggernaut_delay: (5000, 7000),
+            juggernaut_delay: (4000, 6000),
             kiter_delay: (2000, 4000),
             defender_delay: (1000, 3000),
             skirmisher_delay: (4000, 6000),
@@ -74,7 +74,7 @@ impl Default for ArchetypeTuning {
             lunge_force: 1.0,
             lunge_dot: 0.15,
             rattle_health: 0.05,
-            rattle_growth: 0.25,
+            rattle_growth: 0.175,
             rattle_daze: 0.07,
             rattle_stacks: 3,
             disengage_leap: 4,
@@ -85,7 +85,7 @@ impl Default for ArchetypeTuning {
             flank_stun: 3.0,
             flank_intuition: 1.0,
             counter_technique: 0.3,
-            counter_reflect: 0.98,
+            counter_reflect: 1.372,
         }
     }
 }
