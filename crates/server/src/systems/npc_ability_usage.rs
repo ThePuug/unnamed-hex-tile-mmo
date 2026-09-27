@@ -25,6 +25,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 /// - Kiter (Volley): Use when target is within 6 hexes (a burst from range)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
 /// - Skirmisher (Disengage): Reactive - dodges once an ability's blow is at the front of its queue
+/// - Cutthroat (Flank): Use when target is within melee reach (stuns it and strikes from its back)
 ///
 /// Every use waits out the NPC's `NpcRecovery` delay, armed once the ability
 /// is affordable and out of lockout, so NPCs that fire together drift apart.
@@ -69,6 +70,7 @@ pub fn npc_ability_usage(
             AbilityType::Hamstring => crate::systems::combat::abilities::hamstring::HAMSTRING_STAMINA_COST,
             AbilityType::Disengage => crate::systems::combat::abilities::disengage::DISENGAGE_STAMINA_COST,
             AbilityType::Volley => crate::systems::combat::abilities::volley::VOLLEY_STAMINA_COST,
+            AbilityType::Flank => crate::systems::combat::abilities::flank::FLANK_STAMINA_COST,
             AbilityType::Counter => 30.0,
             _ => continue,
         };
@@ -124,6 +126,7 @@ pub fn npc_ability_usage(
             EnemyArchetype::Berserker => (1..=4).contains(&distance),
             EnemyArchetype::Juggernaut => distance == 1,
             EnemyArchetype::Kiter => distance as u32 <= crate::systems::combat::abilities::volley::VOLLEY_RANGE,
+            EnemyArchetype::Cutthroat => (1..=common_bevy::components::AttackRange::default().0).contains(&distance),
             // Defender's Counter and Skirmisher's Disengage are handled above
             EnemyArchetype::Defender | EnemyArchetype::Skirmisher => false,
         };

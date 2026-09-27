@@ -91,9 +91,9 @@ pub enum MenuPath {
 
 /// The dens the console places, in menu order from numpad 1.
 #[cfg(feature = "admin")]
-pub const DENS: [(&str, common_bevy::spatial_difficulty::EnemyArchetype); 5] = {
+pub const DENS: [(&str, common_bevy::spatial_difficulty::EnemyArchetype); 6] = {
     use common_bevy::spatial_difficulty::EnemyArchetype::*;
-    [("Dog Pack", Berserker), ("Forest Sprites", Kiter), ("Juggernauts", Juggernaut), ("Defenders", Defender), ("Skirmishers", Skirmisher)]
+    [("Dog Pack", Berserker), ("Forest Sprites", Kiter), ("Juggernauts", Juggernaut), ("Defenders", Defender), ("Skirmishers", Skirmisher), ("Cutthroats", Cutthroat)]
 };
 
 impl MenuPath {

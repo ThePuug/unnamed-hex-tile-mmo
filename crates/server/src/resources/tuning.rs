@@ -14,6 +14,7 @@ pub struct ArchetypeTuning {
     pub kiter_delay: (u64, u64),
     pub defender_delay: (u64, u64),
     pub skirmisher_delay: (u64, u64),
+    pub cutthroat_delay: (u64, u64),
     /// Share of the target's Toughness mitigation a Lunge strikes past
     pub lunge_pierce: f32,
     /// Share of Force a Hamstring strikes for
@@ -34,6 +35,10 @@ pub struct ArchetypeTuning {
     pub volley_slow: f32,
     /// Seconds a Volley's slow lasts
     pub volley_slow_secs: f32,
+    /// Seconds a Flank stuns its target
+    pub flank_stun: f32,
+    /// Share of Intuition a Flank strikes for
+    pub flank_intuition: f32,
     /// Share of Technique each countered threat strikes its source for
     pub counter_technique: f32,
     /// Share of each countered threat's damage sent back
@@ -48,6 +53,7 @@ impl Default for ArchetypeTuning {
             kiter_delay: (1000, 3000),
             defender_delay: (2500, 4500),
             skirmisher_delay: (1000, 3000),
+            cutthroat_delay: (3000, 5000),
             lunge_pierce: 0.35,
             hamstring_force: 0.6,
             hamstring_slow: 0.1,
@@ -58,6 +64,8 @@ impl Default for ArchetypeTuning {
             volley_force: 1.4,
             volley_slow: 0.3,
             volley_slow_secs: 2.0,
+            flank_stun: 1.5,
+            flank_intuition: 1.0,
             counter_technique: 0.55,
             counter_reflect: 0.7,
         }
@@ -73,6 +81,7 @@ impl ArchetypeTuning {
             EnemyArchetype::Kiter => self.kiter_delay,
             EnemyArchetype::Defender => self.defender_delay,
             EnemyArchetype::Skirmisher => self.skirmisher_delay,
+            EnemyArchetype::Cutthroat => self.cutthroat_delay,
         }
     }
 
@@ -103,6 +112,7 @@ impl ArchetypeTuning {
             "k_delay" => self.kiter_delay = range()?,
             "d_delay" => self.defender_delay = range()?,
             "s_delay" => self.skirmisher_delay = range()?,
+            "c_delay" => self.cutthroat_delay = range()?,
             "lunge_pierce" => self.lunge_pierce = number()?,
             "hamstring_force" => self.hamstring_force = number()?,
             "hamstring_slow" => self.hamstring_slow = number()?,
@@ -113,6 +123,8 @@ impl ArchetypeTuning {
             "volley_force" => self.volley_force = number()?,
             "volley_slow" => self.volley_slow = number()?,
             "volley_slow_secs" => self.volley_slow_secs = number()?,
+            "flank_stun" => self.flank_stun = number()?,
+            "flank_intuition" => self.flank_intuition = number()?,
             "counter_technique" => self.counter_technique = number()?,
             "counter_reflect" => self.counter_reflect = number()?,
             _ => return Err(format!("no tuning knob {name}")),
@@ -128,7 +140,7 @@ mod tests {
     #[test]
     fn delays_run_forwards() {
         let tuning = ArchetypeTuning::default();
-        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher] {
+        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher, EnemyArchetype::Cutthroat] {
             let (min, max) = tuning.delay(archetype);
             assert!(min <= max, "{archetype:?} delay range runs backwards");
         }

@@ -160,6 +160,8 @@ pub enum AbilityType {
     Disengage,
     /// NPC: the Kiter's burst of shots within 6 tiles, one per threat it can see
     Volley,
+    /// NPC: the Cutthroat's stun on a target within reach, stepping to its back to strike for Intuition
+    Flank,
 }
 
 /// Reasons why an ability usage might fail

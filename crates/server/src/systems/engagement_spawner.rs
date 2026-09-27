@@ -62,7 +62,7 @@ fn attack_range(archetype: EnemyArchetype) -> i32 {
 fn acquisition_range(archetype: EnemyArchetype) -> u32 {
     match archetype {
         EnemyArchetype::Kiter => crate::systems::behaviour::kite::Kite::forest_sprite().acquisition_range,
-        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher => CHASE_ACQUISITION_RANGE,
+        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher | EnemyArchetype::Cutthroat => CHASE_ACQUISITION_RANGE,
     }
 }
 
@@ -175,7 +175,7 @@ pub fn spawn_engagement(
 
         let (delay_min, delay_max) = tuning.delay(archetype);
         match archetype {
-            EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher => {
+            EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher | EnemyArchetype::Cutthroat => {
                 let chase = crate::systems::behaviour::chase::Chase {
                     acquisition_range: CHASE_ACQUISITION_RANGE,
                     leash_distance: 30,

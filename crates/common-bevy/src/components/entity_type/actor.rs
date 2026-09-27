@@ -25,6 +25,7 @@ pub enum NpcType {
     Juggernaut,
     Defender,
     Skirmisher,
+    Cutthroat,
 }
 
 impl NpcType {
@@ -36,6 +37,7 @@ impl NpcType {
             NpcType::Juggernaut => "Juggernaut",
             NpcType::Defender => "Defender",
             NpcType::Skirmisher => "Skirmisher",
+            NpcType::Cutthroat => "Cutthroat",
         }
     }
 }

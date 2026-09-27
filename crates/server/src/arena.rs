@@ -58,12 +58,13 @@ const ARENA_RADIUS: i32 = 45;
 /// archetype's acquisition range of the other.
 const DEN_OFFSET: i32 = 6;
 
-const ARCHETYPES: [EnemyArchetype; 5] = [
+const ARCHETYPES: [EnemyArchetype; 6] = [
     EnemyArchetype::Berserker,
     EnemyArchetype::Juggernaut,
     EnemyArchetype::Kiter,
     EnemyArchetype::Defender,
     EnemyArchetype::Skirmisher,
+    EnemyArchetype::Cutthroat,
 ];
 
 /// One side of a fight: `size` NPCs of `archetype` at `level`.

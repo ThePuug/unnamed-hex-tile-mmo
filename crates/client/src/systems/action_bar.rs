@@ -108,6 +108,7 @@ pub fn setup(
             Some(AbilityType::Hamstring) => "🦵",   // NPC Juggernaut hamstring (not on bar)
             Some(AbilityType::Disengage) => "💨",   // NPC leap away (not on bar)
             Some(AbilityType::Volley) => "🏹",      // NPC Kiter volley (not on bar)
+            Some(AbilityType::Flank) => "🗡",       // NPC Cutthroat flank (not on bar)
             Some(AbilityType::Counter) => "↩",     // Counter / reflect
             Some(AbilityType::Kick) => "🦶",       // Kick / knockback
             None => "🔒",
@@ -139,7 +140,7 @@ pub fn setup(
                 AbilityType::Counter => "30".to_string(),     // 30 stamina
                 AbilityType::Kick => "40".to_string(),        // 40 stamina
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
-                AbilityType::Hamstring | AbilityType::Disengage | AbilityType::Volley => String::new(), // NPC-only
+                AbilityType::Hamstring | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => String::new(), // NPC-only
             };
 
             if !cost_text.is_empty() {
@@ -409,7 +410,7 @@ fn get_ability_state(
                 AbilityState::InsufficientResources
             }
         }
-        AbilityType::AutoAttack | AbilityType::Hamstring | AbilityType::Disengage | AbilityType::Volley => {
+        AbilityType::AutoAttack | AbilityType::Hamstring | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => {
             // Passive or NPC-only - not on the player's action bar
             AbilityState::Ready
         }

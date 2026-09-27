@@ -42,6 +42,7 @@ impl Plugin for CombatPlugin {
             combat::abilities::hamstring::handle_hamstring,
             combat::abilities::disengage::handle_disengage,
             combat::abilities::volley::handle_volley,
+            combat::abilities::flank::handle_flank,
             combat::abilities::overpower::handle_overpower,
             combat::abilities::lunge::handle_lunge,
             combat::abilities::counter::handle_counter,  // Counter ability

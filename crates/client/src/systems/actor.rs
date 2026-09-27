@@ -213,7 +213,7 @@ pub fn actor_name(typ: EntityType) -> &'static str {
                 NpcType::WildDog => "dog",
                 NpcType::ForestSprite => "sprite",
                 NpcType::Juggernaut => "juggernaut",
-                NpcType::Defender | NpcType::Skirmisher => "player",
+                NpcType::Defender | NpcType::Skirmisher | NpcType::Cutthroat => "player",
             }
         },
         _ => panic!("couldn't find asset for entity type {:?}", typ)

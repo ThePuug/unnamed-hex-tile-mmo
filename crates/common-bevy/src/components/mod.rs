@@ -807,6 +807,15 @@ impl ActorAttributes {
         linear * self.damage_level_multiplier()
     }
 
+    /// Intuition: Opening potency from instinct (absolute meta-attribute)
+    /// Fully scaled like Force: the weight of a blow struck at the moment it lands best, a Flank's.
+    pub fn intuition(&self) -> f32 {
+        let instinct = self.instinct() as f32;
+        let base = 10.0;
+        let linear = base + (instinct * 0.3);
+        linear * self.damage_level_multiplier()
+    }
+
     /// Constitution: Defensive capacity from vitality
     /// Scales with level for progression. Used to calculate max health.
     pub fn constitution(&self) -> f32 {

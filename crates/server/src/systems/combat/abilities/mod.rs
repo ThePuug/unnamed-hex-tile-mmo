@@ -2,6 +2,7 @@ pub mod auto_attack;
 pub mod counter;
 pub mod deflect;
 pub mod disengage;
+pub mod flank;
 pub mod hamstring;
 pub mod kick;
 pub mod lunge;
