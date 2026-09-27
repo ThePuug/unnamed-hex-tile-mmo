@@ -16,9 +16,9 @@ pub struct Poised(pub f32);
 /// Handle Disengage, the Skirmisher's signature: a reaction to the blow at
 /// the front of its queue, whose source is the event's target. The caster
 /// leaps `ArchetypeTuning::disengage_leap` tiles, each the neighbour furthest
-/// from that source, and the blow misses: the front threat is cleared. Its
-/// next auto-attack strikes harder, by `disengage_technique` of its
-/// Technique (`Poised`).
+/// from that source, and every blow that source has queued on it misses:
+/// they are all cleared. Its next auto-attack strikes harder, by
+/// `disengage_technique` of its Technique (`Poised`).
 pub fn handle_disengage(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -85,9 +85,9 @@ pub fn handle_disengage(
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Loc(Loc::new(landing)) },
         });
 
-        if let Ok(mut queue) = queue_query.get_mut(*ent) {
-            if !clear_threats(&mut queue, ClearType::First(1)).is_empty() {
-                writer.write(Do { event: GameEvent::ClearQueue { ent: *ent, clear_type: ClearType::First(1) } });
+        if let (Ok(mut queue), Some(source)) = (queue_query.get_mut(*ent), *target) {
+            if !clear_threats(&mut queue, ClearType::Source(source)).is_empty() {
+                writer.write(Do { event: GameEvent::ClearQueue { ent: *ent, clear_type: ClearType::Source(source) } });
             }
         }
         if let Ok(attrs) = attrs_query.get(*ent) {

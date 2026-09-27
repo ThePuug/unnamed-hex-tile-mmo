@@ -190,6 +190,9 @@ pub enum ClearType {
     /// stands: an expiry, since threats from different sources expire out of
     /// queue order.
     Threat { source: Entity, inserted_at: std::time::Duration },
+    /// Clear every threat `source` has queued (Disengage - a leap away from
+    /// the attacker takes its target from all its blows)
+    Source(Entity),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
