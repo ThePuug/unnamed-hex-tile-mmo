@@ -323,6 +323,18 @@ fn advance(
                 if !settled {
                     warn!("recorder: shot {} not settled after {SETTLE_LIMIT:?} ({have}/{want} chunks, building {building}); rolling", shot.name);
                 }
+                // The fight is staged as the shot rolls, so the film has it from its first blow
+                if let Some(stage) = shot.stage {
+                    writer.write(Try { event: Event::StageFight {
+                        ent,
+                        west: stage.west,
+                        east: stage.east,
+                        level: stage.level,
+                        b_level: stage.b_level.unwrap_or(stage.level),
+                        size: stage.size,
+                        b_size: stage.b_size.unwrap_or(stage.size),
+                    } });
+                }
                 let fps = recorder.script.fps;
                 let frames = ((shot.seconds * fps as f32).ceil() as u64).max(1);
                 let writer = (shot.seconds > 0.0).then(|| {

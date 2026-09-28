@@ -90,6 +90,42 @@ pub fn try_spawn_den(
     }
 }
 
+/// How far ahead of the player a staged fight's middle stands: beyond the
+/// range either team acquires a target from, so they pick each other.
+const STAGE_AHEAD: i32 = CHASE_ACQUISITION_RANGE as i32 + 3;
+
+/// How far either team of a staged fight stands from its middle, as the
+/// balance arena sets its teams apart.
+const STAGE_APART: i32 = 6;
+
+/// Stages a fight ahead of the player who asks: two teams on sides of their
+/// own, hostile to each other and to everyone else, set across the player's
+/// line of sight so a camera behind the player sees both.
+pub fn try_stage_fight(
+    mut reader: MessageReader<Try>,
+    mut commands: Commands,
+    query: Query<(&Loc, &Heading), With<PlayerControlled>>,
+    time: Res<Time>,
+    registry: Res<crate::resources::event_registry::EventRegistry>,
+    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
+) {
+    for message in reader.read() {
+        let Try { event: Event::StageFight { ent, west, east, level, b_level, size, b_size } } = message else { continue };
+        let Ok((loc, heading)) = query.get(*ent) else { continue };
+        let middle = **loc + heading.hex_dir() * STAGE_AHEAD;
+        // Across the line of sight: a quarter turn from the way the player faces
+        let across = heading.turned(common_bevy::components::heading::HEADING_SLOTS as i32 / 4).hex_dir() * STAGE_APART;
+        for (archetype, side, level, size, at) in [
+            (*west, Side(2), *level, *size, middle - across),
+            (*east, Side(3), *b_level, *b_size, middle + across),
+        ] {
+            let den = Qrz { q: at.q, r: at.r, z: registry.elevation_at(at.q, at.r) + 1 };
+            info!("stage: {size}x{archetype:?}@{level} at {den:?}, ahead of {ent} at {:?}", **loc);
+            spawn_engagement(den, archetype, side, level, size, |q, r| registry.elevation_at(q, r), &tuning, &mut commands, &time);
+        }
+    }
+}
+
 /// The tile a den of `archetype` goes on, ahead of a player at `tile`
 /// facing `heading`; its z is the player's.
 fn den_ahead(tile: Qrz, heading: Heading, archetype: EnemyArchetype) -> Qrz {

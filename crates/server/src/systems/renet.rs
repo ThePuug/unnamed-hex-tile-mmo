@@ -295,6 +295,10 @@ pub fn write_try(
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::SpawnDen { ent, archetype }});
                 }
+                Try { event: Event::StageFight { ent: _, west, east, level, b_level, size, b_size } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    writer.write(Try { event: Event::StageFight { ent, west, east, level, b_level, size, b_size }});
+                }
                 Try { event: Event::Play } => {
                     commands.trigger(Presence::Enter { client_id });
                 }

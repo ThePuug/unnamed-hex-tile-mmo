@@ -51,6 +51,34 @@ pub struct Shot {
     /// Keys the player presses: `[t, "hold" | "release" | "tap", key]`.
     #[serde(default)]
     pub input: Vec<(f32, Press, String)>,
+    /// A fight staged ahead of the player as the shot rolls.
+    #[serde(default)]
+    pub stage: Option<Stage>,
+}
+
+/// A fight the recorder stages as a shot rolls: `size` of `west` at `level`
+/// against `b_size` of `east` at `b_level`, the second team's as the
+/// first's unless given, as the balance arena sets them out.
+#[derive(Deserialize, Debug, Clone, Copy)]
+pub struct Stage {
+    pub west: common_bevy::spatial_difficulty::EnemyArchetype,
+    pub east: common_bevy::spatial_difficulty::EnemyArchetype,
+    #[serde(default = "default_level")]
+    pub level: u8,
+    #[serde(default)]
+    pub b_level: Option<u8>,
+    #[serde(default = "default_size")]
+    pub size: u8,
+    #[serde(default)]
+    pub b_size: Option<u8>,
+}
+
+fn default_level() -> u8 {
+    10
+}
+
+fn default_size() -> u8 {
+    1
 }
 
 fn default_settle() -> f32 {
@@ -294,13 +322,19 @@ mod tests {
                       { "t": 0, "from": [0, 40, 60], "look": [0, 10, -200], "fov": 35 },
                       { "t": 6, "from": [0, 80, 60], "look": [0, 10, -200], "fov": 35 } ] } },
                 { "name": "chop", "at": [1, 2], "face": 0, "seconds": 10,
-                  "clock": [[0, 14]], "input": [[1.0, "tap", "KeyG"]] }
+                  "clock": [[0, 14]], "input": [[1.0, "tap", "KeyG"]] },
+                { "name": "fight", "at": [0, 0], "face": 0, "seconds": 45,
+                  "clock": [[0, 12]], "stage": { "west": "Juggernaut", "east": "Kiter", "b_level": 6, "b_size": 2 } }
             ] }"#;
         let script: Script = serde_json::from_str(text).expect("parses");
-        assert_eq!(script.shots.len(), 2);
+        assert_eq!(script.shots.len(), 3);
         assert!(matches!(script.shots[0].camera, CameraPath::Path { ease: true, .. }));
         assert!(matches!(script.shots[1].camera, CameraPath::Follow));
         assert_eq!(script.shots[1].input[0].1, Press::Tap);
         assert!(key_code(&script.shots[1].input[0].2).is_some());
+        let stage = script.shots[2].stage.expect("a staged fight");
+        assert_eq!((stage.level, stage.size), (10, 1), "a level-10 one by default");
+        assert_eq!((stage.b_level, stage.b_size), (Some(6), Some(2)));
+        assert!(script.shots[0].stage.is_none());
     }
 }
