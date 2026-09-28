@@ -1,6 +1,7 @@
 pub mod canopy;
 pub mod console;
 pub mod diagnostics;
+pub mod ink;
 #[cfg(feature = "admin")]
 pub mod flyover;
 #[cfg(feature = "admin")]

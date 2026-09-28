@@ -8,7 +8,8 @@ use crate::systems::closeup::CloseupCamera;
 use qrz::{Convert, Qrz};
 use std::f32::consts::PI;
 
-use crate::plugins::{diagnostics::DiagnosticsState, vignette::VignetteSettings};
+use bevy::render::view::{ColorGrading, ColorGradingGlobal};
+use crate::plugins::{diagnostics::DiagnosticsState, ink::Ink, vignette::VignetteSettings};
 use crate::resources::{EdgeCenters, SummaryMeshes};
 use crate::systems::world::DrawnGround;
 use common_bevy::{
@@ -399,7 +400,23 @@ pub fn setup(
         // Depth first, so the terrain's fragment shader runs once per pixel
         // that shows and never for one another tile covers.
         DepthPrepass,
+        Ink,
+        grade(),
     ));
+}
+
+/// The look's grade: bright colour, cooled toward blue. Every draw is
+/// graded by the view's tone mapping, the forest's own draws included, so
+/// this is the one place the palette is turned.
+pub fn grade() -> ColorGrading {
+    ColorGrading {
+        global: ColorGradingGlobal {
+            temperature: -0.08,
+            post_saturation: 1.15,
+            ..default()
+        },
+        ..default()
+    }
 }
 
 /// How far a ray is marched against the loaded tiles, in world units, and

@@ -93,6 +93,10 @@ pub fn setup(
         Projection::from(PerspectiveProjection { fov: FOV, near: 0.1, far: 100.0 * r, ..default() }),
         Transform::from_translation(eye).looking_at(at, Vec3::Y),
         RenderLayers::layer(LAYER),
+        // The figure wears the world's look.
+        bevy::core_pipeline::prepass::DepthPrepass,
+        crate::plugins::ink::Ink,
+        crate::systems::camera::grade(),
     ));
     commands.spawn((
         crate::resources::OffWorld,
