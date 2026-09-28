@@ -25,6 +25,7 @@ pub fn handle_volley(
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
+    status_query: Query<&common_bevy::components::status::Status>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -85,10 +86,11 @@ pub fn handle_volley(
             });
         }
 
-        let slowed = common_bevy::components::slowed::Slowed { pace: 1.0 - tuning.volley_slow, remaining: tuning.volley_slow_secs };
-        commands.entity(target_ent).insert(slowed);
+        let mut status = status_query.get(target_ent).copied().unwrap_or_default();
+        status.slow = Some(common_bevy::components::status::Timed { pace: 1.0 - tuning.volley_slow, remaining: tuning.volley_slow_secs });
+        commands.entity(target_ent).insert(status);
         writer.write(Do {
-            event: GameEvent::Incremental { ent: target_ent, component: common_bevy::message::Component::Slowed(slowed) },
+            event: GameEvent::Incremental { ent: target_ent, component: common_bevy::message::Component::Status(status) },
         });
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Volley, target: Some(target_ent) } });

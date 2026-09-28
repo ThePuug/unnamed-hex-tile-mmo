@@ -243,7 +243,7 @@ pub fn process_passive_auto_attack(
          Option<&common_bevy::components::AttackRange>,
          Option<&common_bevy::components::stunned::Stunned>,
          Option<&common_bevy::components::heading::Heading>,
-         Option<&common_bevy::components::dazed::Dazed>),
+         Option<&common_bevy::components::status::Status>),
         Without<common_bevy::components::behaviour::PlayerControlled>
     >,
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
@@ -256,7 +256,7 @@ pub fn process_passive_auto_attack(
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target, attrs, attack_range_opt, stunned, heading, dazed) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, gcd_opt, target, attrs, attack_range_opt, stunned, heading, status) in query.iter_mut() {
         if common_bevy::components::stunned::Stunned::holds(stunned) {
             continue;
         }
@@ -268,7 +268,7 @@ pub fn process_passive_auto_attack(
         }
 
         // Check cooldown (tier-based cadence from Presence commitment)
-        let cooldown = common_bevy::components::dazed::Dazed::cadence(attrs.cadence_interval(), dazed);
+        let cooldown = common_bevy::components::status::Status::cadence(attrs.cadence_interval(), status);
         let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
         if time_since_last_attack < cooldown {
             continue; // Still on cooldown

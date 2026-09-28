@@ -14,11 +14,11 @@ use qrz::{Convert, Qrz};
 use crate::{
     components::{
         entity_type::{decorator::*, EntityType},
-        equipment::Burdened,
         heading::Heading,
         position::Position,
         Loc,
     },
+    components::status::Status,
     plugins::nntree::NNTree,
     resources::map::Map,
 };
@@ -43,41 +43,31 @@ pub const PHYSICS_TIMESTEP_MS: i16 = 125;
 /// Base movement speed in world units per millisecond
 pub const MOVEMENT_SPEED: f32 = 0.0075;
 
-/// The share of its speed an overburdened entity keeps: slow enough that
-/// its gait plays the walk, which the actors' walk stride sets.
-pub const BURDENED_PACE: f32 = 0.2;
-
 /// The share of its speed an entity keeps backing away: less than it runs,
 /// so fleeing what it faces costs the turn to run from it.
 pub const BACK_PACE: f32 = 0.5;
 
-/// The speed an entity moves at: its own, [`BURDENED_PACE`] of it
-/// overburdened, times the `pace` what slows it leaves it (see [`slowed_pace`]).
-/// Every caller of the physics takes its speed through here, so the
-/// server, the owner's prediction and every remote simulation agree.
-pub fn speed(own: f32, burdened: bool, pace: f32) -> f32 {
-    let own = own * pace;
-    if burdened { own * BURDENED_PACE } else { own }
+/// The speed an entity moves at: its own, times the pace its status
+/// effects leave it. Every caller of the physics takes its speed through
+/// here, so the server, the owner's prediction and every remote simulation
+/// agree.
+pub fn speed(own: f32, status: Option<&Status>) -> f32 {
+    own * Status::pace_of(status)
 }
 
-/// The share of its speed an entity keeps under what slows it: its daze
-/// and any timed slow, together.
-pub fn slowed_pace(dazed: Option<&crate::components::dazed::Dazed>, slowed: Option<&crate::components::slowed::Slowed>) -> f32 {
-    crate::components::dazed::Dazed::pace_of(dazed) * crate::components::slowed::Slowed::pace_of(slowed)
-}
-
-/// Keeps [`Burdened`] on every entity whose bag weighs past the limit: on
-/// the server for every player, on the client for its own, whose bag it
+/// Keeps the burden effect on every entity whose bag weighs past the limit:
+/// on the server for every player, on the client for its own, whose bag it
 /// holds. A remote entity's comes with its intent.
 pub fn update_burden(
     mut commands: Commands,
-    bags: Query<(Entity, &crate::components::equipment::Inventory, Has<Burdened>), Changed<crate::components::equipment::Inventory>>,
+    mut bags: Query<(Entity, &crate::components::equipment::Inventory, Option<&mut Status>), Changed<crate::components::equipment::Inventory>>,
 ) {
-    for (ent, bag, burdened) in &bags {
-        match (bag.is_burdened(), burdened) {
-            (true, false) => { commands.entity(ent).insert(Burdened); }
-            (false, true) => { commands.entity(ent).remove::<Burdened>(); }
-            _ => {}
+    for (ent, bag, status) in &mut bags {
+        let burden = bag.is_burdened();
+        match status {
+            Some(mut status) => { if status.burden != burden { status.burden = burden; } }
+            None if burden => { commands.entity(ent).insert(Status { burden, ..default() }); }
+            None => {}
         }
     }
 }
@@ -664,7 +654,7 @@ mod tests {
         flat_ground(&map, 3);
         let nntree = create_test_nntree();
         let free = calculate_movement(walking(Heading::NORTH, true), 200, &map, &nntree);
-        let slow = MovementInput { movement_speed: speed(MOVEMENT_SPEED, true, 1.0), ..walking(Heading::NORTH, true) };
+        let slow = MovementInput { movement_speed: speed(MOVEMENT_SPEED, Some(&Status { burden: true, ..default() })), ..walking(Heading::NORTH, true) };
         let slow = calculate_movement(slow, 200, &map, &nntree);
         let (free, slow) = (free.position.offset.xz(), slow.position.offset.xz());
         assert!(slow.length() > 0.0 && slow.length() < free.length());

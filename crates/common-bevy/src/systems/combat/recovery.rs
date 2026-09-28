@@ -30,11 +30,11 @@ pub fn global_recovery_system(
     time: Res<Time>,
     level_contest: Res<crate::systems::combat::damage::LevelContest>,
     mut commands: Commands,
-    mut query: Query<(Entity, &mut GlobalRecovery, &ActorAttributes, Option<&crate::components::dazed::Dazed>)>,
+    mut query: Query<(Entity, &mut GlobalRecovery, &ActorAttributes, Option<&crate::components::status::Status>)>,
 ) {
     let delta = time.delta_secs();
 
-    for (entity, mut recovery, attrs, dazed) in query.iter_mut() {
+    for (entity, mut recovery, attrs, status) in query.iter_mut() {
         if recovery.is_active() {
             let composure = attrs.composure();
             let reduction_pct = calculate_composure_reduction(
@@ -51,7 +51,7 @@ pub fn global_recovery_system(
                 1.0 / (1.0 - reduction_pct)
             };
 
-            let effective_delta = delta * speed_multiplier * crate::components::dazed::Dazed::pace_of(dazed);
+            let effective_delta = delta * speed_multiplier * status.map_or(1.0, crate::components::status::Status::daze_pace);
 
             recovery.tick(effective_delta);
 

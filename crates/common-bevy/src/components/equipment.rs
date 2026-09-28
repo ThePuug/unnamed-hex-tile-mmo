@@ -323,13 +323,6 @@ impl Inventory {
     }
 }
 
-/// Marks an actor carrying past [`BURDEN_LIMIT`]: it moves at
-/// `movement::BURDENED_PACE` of its speed. The server sets it from the bag
-/// and sends it with the intent; the owning client sets it from the bag it
-/// holds.
-#[derive(Clone, Component, Copy, Debug, Default)]
-pub struct Burdened;
-
 #[cfg(test)]
 mod tests {
     use super::*;

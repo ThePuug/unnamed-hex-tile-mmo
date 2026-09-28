@@ -14,7 +14,7 @@ use crate::{
 /// - No hostile entities within 20 hexes
 pub fn update_combat_state(
     mut writer: MessageWriter<Do>,
-    mut query: Query<(Entity, &Loc, &mut CombatState, Option<&Side>, Option<&mut crate::components::dazed::Dazed>)>,
+    mut query: Query<(Entity, &Loc, &mut CombatState, Option<&Side>, Option<&mut crate::components::status::Status>)>,
     entity_query: Query<(Entity, &Loc, Option<&Side>)>,
     nntree: Res<NNTree>,
     time: Res<Time>,
@@ -22,7 +22,7 @@ pub fn update_combat_state(
     let current_time = time.elapsed();
     let combat_exit_timeout = Duration::from_secs(5);
 
-    for (ent, loc, mut combat_state, side, dazed) in &mut query {
+    for (ent, loc, mut combat_state, side, status) in &mut query {
         if !combat_state.in_combat {
             continue; // Already out of combat
         }
@@ -60,10 +60,10 @@ pub fn update_combat_state(
         });
 
         // A fight's daze ends with the fight
-        if let Some(mut dazed) = dazed.filter(|h| h.stacks > 0) {
-            *dazed = default();
+        if let Some(mut status) = status.filter(|status| status.daze.is_some()) {
+            status.daze = None;
             writer.write(Do {
-                event: Event::Incremental { ent, component: MessageComponent::Dazed(*dazed) },
+                event: Event::Incremental { ent, component: MessageComponent::Status(*status) },
             });
         }
     }

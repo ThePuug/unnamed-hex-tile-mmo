@@ -13,9 +13,7 @@ use crate::resources::RenderOrigin;
 use common_bevy::{
     components::{
         displacing::Displacing,
-        equipment::Burdened,
-        dazed::Dazed,
-        slowed::Slowed,
+        status::Status,
         stunned::Stunned,
         heading::Heading,
         keybits::*,
@@ -25,7 +23,7 @@ use common_bevy::{
     message::{Component, Event, *},
     plugins::nntree::NNTree,
     resources::{map::Map, InputQueues},
-    systems::movement::{calculate_movement, slowed_pace, speed, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
+    systems::movement::{calculate_movement, speed, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
 };
 
 /// Interpolation span in fixed ticks. One tick completes inside a single
@@ -51,7 +49,7 @@ const LOC_SETTLE_SECS: f32 = 0.125;
 pub fn predict_local_player(
     fixed_time: Res<Time<Fixed>>,
     origin: Res<RenderOrigin>,
-    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>, Option<&Dazed>, Option<&Slowed>, Option<&Stunned>)>,
+    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Option<&Status>, Option<&Stunned>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
     buffers: Res<InputQueues>,
@@ -60,8 +58,8 @@ pub fn predict_local_player(
 
     for (ent, buffer) in buffers.iter() {
         assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
-        let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, burdened, dazed, slowed, stunned)) = query.get_mut(ent) else { continue; };
-        let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened, slowed_pace(dazed, slowed));
+        let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, status, stunned)) = query.get_mut(ent) else { continue; };
+        let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), status);
 
         let (mut offset, mut air) = (position.offset, airtime.state);
         let (mut facing, mut since_step_ms) = (turn.heading, turn.since_step_ms);
@@ -99,7 +97,7 @@ pub fn simulate_remote(
     time: Res<Time>,
     fixed_time: Res<Time<Fixed>>,
     origin: Res<RenderOrigin>,
-    mut query: Query<(Entity, &mut RemoteMotion, &Heading, &mut Position, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Has<Burdened>, Option<&common_bevy::components::entity_type::EntityType>, Option<&Dazed>, Option<&Slowed>), Without<Displacing>>,
+    mut query: Query<(Entity, &mut RemoteMotion, &Heading, &mut Position, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Option<&Status>, Option<&common_bevy::components::entity_type::EntityType>), Without<Displacing>>,
     buffers: Res<InputQueues>,
     map: Res<Map>,
     nntree: Res<NNTree>,
@@ -107,7 +105,7 @@ pub fn simulate_remote(
     let delta_us = time.delta().as_micros() as u32;
     let tick = fixed_time.timestep().as_secs_f32();
 
-    for (ent, mut motion, heading, mut position, mut airtime, mut visual, attrs, burdened, typ, dazed, slowed) in &mut query {
+    for (ent, mut motion, heading, mut position, mut airtime, mut visual, attrs, status, typ) in &mut query {
         if buffers.get(&ent).is_some() { continue; }
         // Only a player's pill goes round what stands in a tile.
         let player = matches!(
@@ -119,7 +117,7 @@ pub fn simulate_remote(
         let dt = (motion.residual_us / 1000) as u16;
         motion.residual_us %= 1000;
         if dt > 0 {
-            let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), burdened, slowed_pace(dazed, slowed));
+            let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), status);
             let out = calculate_movement(MovementInput {
                 position: *position,
                 heading: *heading,
@@ -157,18 +155,18 @@ pub fn advance_interpolation(
 pub fn apply_intent(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
-    mut query: Query<(&mut Position, &mut Heading, &mut AirTime, Option<&mut RemoteMotion>, Has<Burdened>)>,
+    mut query: Query<(&mut Position, &mut Heading, &mut AirTime, Option<&mut RemoteMotion>, Option<&mut Status>)>,
     buffers: Res<InputQueues>,
 ) {
     for message in reader.read() {
         let Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime, burdened } } = message else { continue };
         let ent = *ent;
         if buffers.get(&ent).is_some() { continue; }
-        let Ok((mut position0, mut heading0, mut airtime0, motion, was_burdened)) = query.get_mut(ent) else { continue; };
-        match (*burdened, was_burdened) {
-            (true, false) => { commands.entity(ent).insert(Burdened); }
-            (false, true) => { commands.entity(ent).remove::<Burdened>(); }
-            _ => {}
+        let Ok((mut position0, mut heading0, mut airtime0, motion, status)) = query.get_mut(ent) else { continue; };
+        match status {
+            Some(mut status) => { if status.burden != *burdened { status.burden = *burdened; } }
+            None if *burdened => { commands.entity(ent).insert(Status { burden: true, ..default() }); }
+            None => {}
         }
         *position0 = *position;
         if *heading0 != *heading { *heading0 = *heading; }

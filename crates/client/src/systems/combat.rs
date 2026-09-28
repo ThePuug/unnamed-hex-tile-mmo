@@ -163,14 +163,14 @@ pub fn apply_gcd(
 /// - 1.5s has elapsed since last auto-attack
 pub fn player_auto_attack(
     mut writer: MessageWriter<Try>,
-    mut player_query: Query<(Entity, &Loc, &Target, &mut common_bevy::components::LastAutoAttack, Option<&Gcd>, &common_bevy::components::ActorAttributes, Option<&common_bevy::components::AttackRange>, Option<&common_bevy::components::heading::Heading>, Option<&common_bevy::components::dazed::Dazed>)>,
+    mut player_query: Query<(Entity, &Loc, &Target, &mut common_bevy::components::LastAutoAttack, Option<&Gcd>, &common_bevy::components::ActorAttributes, Option<&common_bevy::components::AttackRange>, Option<&common_bevy::components::heading::Heading>, Option<&common_bevy::components::status::Status>)>,
     target_query: Query<&Loc>,
     input_queues: Res<common_bevy::resources::InputQueues>,
     time: Res<Time>,
 ) {
     let now = time.elapsed();
 
-    for (player_ent, player_loc, player_target, mut last_auto_attack, gcd_opt, attrs, attack_range_opt, heading, dazed) in &mut player_query {
+    for (player_ent, player_loc, player_target, mut last_auto_attack, gcd_opt, attrs, attack_range_opt, heading, status) in &mut player_query {
         // Only process local player (entity with InputQueue)
         if input_queues.get(&player_ent).is_none() {
             continue;
@@ -184,7 +184,7 @@ pub fn player_auto_attack(
         }
 
         // Check cooldown (tier-based cadence from Presence commitment)
-        let cooldown = common_bevy::components::dazed::Dazed::cadence(attrs.cadence_interval(), dazed);
+        let cooldown = common_bevy::components::status::Status::cadence(attrs.cadence_interval(), status);
         let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
         if time_since_last_attack < cooldown {
             continue; // Still on cooldown

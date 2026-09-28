@@ -221,8 +221,7 @@ pub enum Component {
     Mana(Mana),
     PlayerControlled(PlayerControlled),
     Returning(crate::components::returning::Returning),
-    Dazed(crate::components::dazed::Dazed),
-    Slowed(crate::components::slowed::Slowed),
+    Status(crate::components::status::Status),
     Stunned(crate::components::stunned::Stunned),
     Stamina(Stamina),
     TierLock(crate::components::tier_lock::TierLock),
@@ -240,8 +239,7 @@ impl Component {
             Component::Mana(v) => { entity.insert(v); }
             Component::PlayerControlled(v) => { entity.insert(v); }
             Component::Returning(v) => { entity.insert(v); }
-            Component::Dazed(v) => { entity.insert(v); }
-            Component::Slowed(v) => { entity.insert(v); }
+            Component::Status(v) => { entity.insert(v); }
             Component::Stunned(v) => { entity.insert(v); }
             Component::Stamina(v) => { entity.insert(v); }
             Component::TierLock(v) => { entity.insert(v); }

@@ -118,7 +118,7 @@ fn main() {
         input::do_confirm,
         movement::simulate_remote,
         common_bevy::components::stunned::tick_stunned,
-        common_bevy::components::slowed::tick_slowed,
+        common_bevy::components::status::tick_status,
         common_bevy::systems::combat::resources::regenerate_resources,
     ));
 

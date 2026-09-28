@@ -16,7 +16,7 @@ impl Plugin for BehaviourPlugin {
             (
                 crate::systems::stagger::tick_stagger,
                 common_bevy::components::stunned::tick_stunned,
-                common_bevy::components::slowed::tick_slowed,
+                common_bevy::components::status::tick_status,
                 crate::systems::behaviour::hex_assignment::assign_hexes,
                 crate::systems::behaviour::chase::chase,
                 crate::systems::behaviour::kite::kite,
