@@ -256,8 +256,14 @@ pub fn chase(
             .min_by_key(|(neighbor, _)| neighbor.distance(&target_qrz));
 
         if let Some((next_tile, _)) = best_neighbor {
-            // Move toward target
-            body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
+            // A step that gives ground it takes backing away, facing its
+            // target, so stepping out to its place never turns its back or
+            // costs it a swing
+            if next_tile.flat_distance(target_loc) > start.flat_distance(target_loc) {
+                body.back_toward(npc_loc, start, *next_tile, **target_loc, movement_speed, dt_ms, &map, &nntree);
+            } else {
+                body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
+            }
 
             // Update Target component for reactive systems
             commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
