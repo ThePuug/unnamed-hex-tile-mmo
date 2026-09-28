@@ -72,7 +72,7 @@ impl Default for ArchetypeTuning {
             lunge_force: 1.0,
             lunge_dot: 0.15,
             rattle_health: 0.035,
-            rattle_growth: 0.245,
+            rattle_growth: 0.343,
             rattle_daze: 0.049,
             rattle_stacks: 3,
             disengage_leap: 3,
