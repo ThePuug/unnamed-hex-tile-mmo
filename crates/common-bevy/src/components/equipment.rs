@@ -39,8 +39,8 @@ impl Piece {
         Piece::SwordBreaker,
     ];
 
-    /// The asset's name: the stem of `models/<name>-<actor>.glb`, and the
-    /// key another piece's `hides.over` names, so the two must agree.
+    /// The asset's name: the stem of `models/<name>-<actor>.glb`, so the
+    /// two must agree.
     pub fn name(self) -> &'static str {
         match self {
             Piece::LeatherHood => "leather-hood",
@@ -67,14 +67,22 @@ impl Piece {
     /// The slot a piece is worn in. The game assigns it: pants and boots
     /// both fit the legs.
     pub fn slot(self) -> Slot {
+        self.slots()[0]
+    }
+
+    /// Every slot a piece fills, its own first: the cuirass's slats hang
+    /// where a girdle would, so it fills the waist as well, and nothing
+    /// is worn under it there.
+    pub fn slots(self) -> &'static [Slot] {
         match self {
-            Piece::LeatherHood | Piece::PlateHelm => Slot::Head,
-            Piece::LeatherVest | Piece::PlateCuirass => Slot::Torso,
-            Piece::LeatherGloves | Piece::PlateGauntlets => Slot::Hands,
-            Piece::LeatherGirdle => Slot::Waist,
-            Piece::LeatherPants | Piece::PlateLeggings => Slot::Legs,
-            Piece::LeatherBoots | Piece::PlateSabatons => Slot::Feet,
-            Piece::SwordBreaker => Slot::OffHand,
+            Piece::LeatherHood | Piece::PlateHelm => &[Slot::Head],
+            Piece::LeatherVest => &[Slot::Torso],
+            Piece::PlateCuirass => &[Slot::Torso, Slot::Waist],
+            Piece::LeatherGloves | Piece::PlateGauntlets => &[Slot::Hands],
+            Piece::LeatherGirdle => &[Slot::Waist],
+            Piece::LeatherPants | Piece::PlateLeggings => &[Slot::Legs],
+            Piece::LeatherBoots | Piece::PlateSabatons => &[Slot::Feet],
+            Piece::SwordBreaker => &[Slot::OffHand],
         }
     }
 
@@ -154,7 +162,8 @@ pub struct Item {
     pub style: u8,
 }
 
-/// What an actor wears, one item to a slot. Server authority, sent to every
+/// What an actor wears, one item to a slot, a piece that fills several
+/// slots (`Piece::slots`) held in each. Server authority, sent to every
 /// client that sees the actor.
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Equipment {
@@ -170,22 +179,38 @@ impl Equipment {
         self.worn(item.piece.slot()) == Some(item)
     }
 
-    /// Wears `item` and returns what its slot held.
-    pub fn wear(&mut self, item: Item) -> Option<Item> {
-        self.worn[item.piece.slot().index()].replace(item)
+    /// Wears `item` and returns what it took off: whatever held any slot
+    /// it fills, each taken off whole.
+    pub fn wear(&mut self, item: Item) -> Vec<Item> {
+        let mut off = Vec::new();
+        for &slot in item.piece.slots() {
+            if let Some(held) = self.worn(slot) {
+                if held != item && self.take_off(held) {
+                    off.push(held);
+                }
+            }
+        }
+        for &slot in item.piece.slots() {
+            self.worn[slot.index()] = Some(item);
+        }
+        off
     }
 
-    /// Takes `item` off; false when it was not worn.
+    /// Takes `item` off, out of every slot it fills; false when it was not
+    /// worn.
     pub fn take_off(&mut self, item: Item) -> bool {
         let worn = self.is_worn(item);
         if worn {
-            self.worn[item.piece.slot().index()] = None;
+            for &slot in item.piece.slots() {
+                self.worn[slot.index()] = None;
+            }
         }
         worn
     }
 
+    /// Every item worn, once, however many slots it fills.
     pub fn items(&self) -> impl Iterator<Item = Item> + '_ {
-        self.worn.iter().flatten().copied()
+        Slot::ALL.into_iter().filter_map(|slot| self.worn(slot).filter(|item| item.piece.slot() == slot))
     }
 
     /// What a player starts wearing, and what the character screen shows:
@@ -320,8 +345,8 @@ mod tests {
     #[test]
     fn wearing_displaces_what_held_the_slot() {
         let mut worn = Equipment::default();
-        assert_eq!(worn.wear(item(Piece::LeatherPants, 0)), None);
-        assert_eq!(worn.wear(item(Piece::LeatherPants, 1)), Some(item(Piece::LeatherPants, 0)));
+        assert_eq!(worn.wear(item(Piece::LeatherPants, 0)), vec![]);
+        assert_eq!(worn.wear(item(Piece::LeatherPants, 1)), vec![item(Piece::LeatherPants, 0)]);
         assert!(worn.is_worn(item(Piece::LeatherPants, 1)));
         assert!(!worn.is_worn(item(Piece::LeatherPants, 0)));
         assert_eq!(worn.items().count(), 1);
@@ -335,6 +360,22 @@ mod tests {
         assert!(!worn.take_off(item(Piece::LeatherVest, 0)));
         assert!(worn.take_off(item(Piece::LeatherVest, 2)));
         assert_eq!(worn.worn(Slot::Torso), None);
+    }
+
+    /// The cuirass fills the waist too: it takes the girdle off, and a
+    /// girdle worn after takes the cuirass off, whole.
+    #[test]
+    fn the_cuirass_is_a_girdle_too() {
+        let mut worn = Equipment::default();
+        worn.wear(item(Piece::LeatherVest, 0));
+        worn.wear(item(Piece::LeatherGirdle, 0));
+        let off = worn.wear(item(Piece::PlateCuirass, 0));
+        assert_eq!(off, vec![item(Piece::LeatherVest, 0), item(Piece::LeatherGirdle, 0)]);
+        assert_eq!(worn.worn(Slot::Waist), Some(item(Piece::PlateCuirass, 0)));
+        assert_eq!(worn.items().count(), 1);
+        assert_eq!(worn.wear(item(Piece::LeatherGirdle, 1)), vec![item(Piece::PlateCuirass, 0)]);
+        assert_eq!(worn.worn(Slot::Torso), None);
+        assert_eq!(worn.items().collect::<Vec<_>>(), vec![item(Piece::LeatherGirdle, 1)]);
     }
 
     #[test]

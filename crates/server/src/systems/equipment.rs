@@ -7,7 +7,7 @@ use common_bevy::{
 
 /// Wears or takes off the item a client asked about, when the player owns
 /// it, and tells every client that sees the actor. Wearing moves the item
-/// out of the bag and what held its slot in; taking it off moves it into
+/// out of the bag and what held its slots in; taking it off moves it into
 /// the bag, and waits for a free stack.
 pub fn try_wear(
     mut reader: MessageReader<Try>,
@@ -22,7 +22,9 @@ pub fn try_wear(
             continue;
         }
         let changed = if on {
-            equipment.wear(item) != Some(item)
+            let was = equipment.is_worn(item);
+            equipment.wear(item);
+            !was
         } else {
             equipment.is_worn(item) && bag.stacks(&equipment) < BAG_STACKS && equipment.take_off(item)
         };
