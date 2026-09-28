@@ -36,6 +36,7 @@ pub fn handle_insert_threat(
                             source_attrs.total_level(),
                             defender_attrs.total_level(),
                             damage_calc::PUSHBACK_GAP,
+                            damage_calc::LEVEL_PUSHBACK,
                         );
                         recovery.apply_pushback(pushback_pct);
                     }

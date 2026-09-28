@@ -30,8 +30,13 @@ pub const GAP_THIRD: f32 = 10.0;
 /// The level gap at which an outleveled defender's reaction window falls to a third.
 pub const WINDOW_GAP: f32 = GAP_THIRD;
 
-/// The level gap at which an outleveled attacker's recovery pushback falls to a third.
+/// The level gap at which a hit's level pushback on an outleveled defender
+/// reaches two-thirds of [`LEVEL_PUSHBACK`].
 pub const PUSHBACK_GAP: f32 = GAP_THIRD;
+
+/// The most a hit from a higher-level attacker pushes back an outleveled
+/// defender's recovery, as a share of its lockout, before any Impact.
+pub const LEVEL_PUSHBACK: f32 = 0.0;
 
 /// [`gap_factor`] falling to a third at a gap of `third_at` levels: the same
 /// Gaussian, `e^(-gap² × ln(3) / third_at²)`.
@@ -93,29 +98,34 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
     damage * (1.0 + spread * draw.clamp(-1.0, 1.0))
 }
 
-/// Calculate recovery pushback percentage.
+/// Calculate recovery pushback percentage: a level part and an Impact part,
+/// added.
 
-/// Pattern 1 (Nullifying): base × gap × contest_factor
-/// Base: 50%, Cap: 50%
+/// - **Level:** a higher-level attacker pushes back an outleveled defender,
+///   by nothing between equals and toward `level_pushback` as the gap grows,
+///   two-thirds of it at a gap of `pushback_gap` levels ([`LEVEL_PUSHBACK`]
+///   and [`PUSHBACK_GAP`] in the game).
+/// - **Impact** (Pattern 1, Nullifying): 50% × gap × contest_factor(Impact,
+///   Composure), capped at 50%, falling when the attacker is the one
+///   outleveled.
 
 /// Applied to effective_recovery_base (after composure, before synergy).
-/// An outleveled attacker's pushback falls to a third at a gap of
-/// `pushback_gap` levels ([`PUSHBACK_GAP`] in the game).
 pub fn calculate_recovery_pushback(
     attacker_impact: u16,
     defender_composure: u16,
     attacker_level: u32,
     defender_level: u32,
     pushback_gap: f32,
+    level_pushback: f32,
 ) -> f32 {
     const BASE_PUSHBACK: f32 = 0.50;
     const MAX_PUSHBACK: f32 = 0.50;
 
-    let base = BASE_PUSHBACK;
-    let gap = gap_factor_at(attacker_level, defender_level, pushback_gap);
+    let level = level_pushback * (1.0 - gap_factor_at(defender_level, attacker_level, pushback_gap));
+    let gap = gap_factor(attacker_level, defender_level);
     let contest = contest_factor(attacker_impact, defender_composure);
 
-    (base * gap * contest).min(MAX_PUSHBACK)
+    level + (BASE_PUSHBACK * gap * contest).min(MAX_PUSHBACK)
 }
 
 /// Scan for the strongest Dominance aura within range of target, among
