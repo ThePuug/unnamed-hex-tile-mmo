@@ -222,10 +222,12 @@ squared distance: `locate_within_distance(loc, 100)` searches radius 10, not
 100.
 
 **Clips.** An actor's GLB names its animations — `_tee`, `idle`, `walk`,
-`run`, `jump`, `attack`, `counter`, `chop`, `mine`, `pickup` — and
-`client::systems::animator::Clips` finds each by name from
+`run`, `jump`, `attack`, `counter`, `chop`, `mine`, `pickup`, and each
+archetype's signature, `lunge`, `rattle`, `volley`, `disengage`, `flank` —
+and `client::systems::animator::Clips` finds each by name from
 `Gltf::named_animations` when the scene is ready, so a new clip is a new
-name and an actor lacking one has no node for it; the actor holds its
+name and an actor lacking one has no node for it: a signature strike it
+lacks plays its `attack` (`Clip::stand_in`); the actor holds its
 `Gltf` root (`animator::Rig`) from spawn or the names are gone by then. A
 jump clip never rises: the armature node's `animgen` extras declare
 `leave`, `freeze` and `land` in seconds, and `animator::Jumping` plays it

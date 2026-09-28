@@ -30,14 +30,26 @@ pub enum Clip {
     Jump,
     Attack,
     Counter,
+    Lunge,
+    Rattle,
+    Volley,
+    Disengage,
+    Flank,
     Chop,
     Mine,
     Pickup,
 }
 
 impl Clip {
-    pub const ALL: [Clip; 10] = [
-        Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Jump, Clip::Attack, Clip::Counter, Clip::Chop, Clip::Mine, Clip::Pickup,
+    pub const ALL: [Clip; 15] = [
+        Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Jump, Clip::Attack, Clip::Counter,
+        Clip::Lunge, Clip::Rattle, Clip::Volley, Clip::Disengage, Clip::Flank,
+        Clip::Chop, Clip::Mine, Clip::Pickup,
+    ];
+
+    /// The one-shots an ability plays, each held until it ends.
+    const ONE_SHOTS: [Clip; 7] = [
+        Clip::Attack, Clip::Counter, Clip::Lunge, Clip::Rattle, Clip::Volley, Clip::Disengage, Clip::Flank,
     ];
 
     /// The cycles that cover ground, slowest first.
@@ -53,6 +65,11 @@ impl Clip {
             Clip::Jump => "jump",
             Clip::Attack => "attack",
             Clip::Counter => "counter",
+            Clip::Lunge => "lunge",
+            Clip::Rattle => "rattle",
+            Clip::Volley => "volley",
+            Clip::Disengage => "disengage",
+            Clip::Flank => "flank",
             Clip::Chop => "chop",
             Clip::Mine => "mine",
             Clip::Pickup => "pickup",
@@ -69,14 +86,27 @@ impl Clip {
         }
     }
 
-    /// The one-shot an ability plays, if any: a strike for whatever hits,
-    /// the counter for whatever wards. A Disengage is a leap the displacement
-    /// draws; no clip is authored for it.
-    pub fn of(ability: AbilityType) -> Option<Clip> {
+    /// The one-shot an ability plays: an archetype's signature its own,
+    /// the attack for any other strike, the counter for whatever wards.
+    pub fn of(ability: AbilityType) -> Clip {
         match ability {
-            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Lunge | AbilityType::Kick | AbilityType::Rattle | AbilityType::Volley | AbilityType::Flank => Some(Clip::Attack),
-            AbilityType::Counter | AbilityType::Deflect => Some(Clip::Counter),
-            AbilityType::Disengage => None,
+            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Kick => Clip::Attack,
+            AbilityType::Lunge => Clip::Lunge,
+            AbilityType::Rattle => Clip::Rattle,
+            AbilityType::Volley => Clip::Volley,
+            AbilityType::Flank => Clip::Flank,
+            AbilityType::Disengage => Clip::Disengage,
+            AbilityType::Counter | AbilityType::Deflect => Clip::Counter,
+        }
+    }
+
+    /// What an actor whose asset lacks this one-shot plays instead: a
+    /// signature strike falls back to the attack. A Disengage has none, its
+    /// leap drawn by the displacement alone.
+    fn stand_in(self) -> Option<Clip> {
+        match self {
+            Clip::Lunge | Clip::Rattle | Clip::Volley | Clip::Flank => Some(Clip::Attack),
+            _ => None,
         }
     }
 }
@@ -301,7 +331,7 @@ const BLEND: Duration = Duration::from_millis(120);
 const SETTLE: Duration = Duration::from_millis(300);
 
 /// Plays the one-shot for each ability the server confirms, where the
-/// actor's graph has that clip.
+/// actor's graph has that clip or its stand-in.
 pub fn play_abilities(
     mut reader: MessageReader<Do>,
     actors: Query<&Animates>,
@@ -309,10 +339,10 @@ pub fn play_abilities(
 ) {
     for message in reader.read() {
         let Do { event: Event::UseAbility { ent, ability, .. } } = message else { continue };
-        let Some(clip) = Clip::of(*ability) else { continue };
+        let clip = Clip::of(*ability);
         let Ok(animates) = actors.get(*ent) else { continue };
         let Ok((mut player, mut transitions, clips)) = q_anim.get_mut(animates.0) else { continue };
-        let Some(node) = clips.node(clip) else { continue };
+        let Some(node) = clips.node(clip).or_else(|| clips.node(clip.stand_in()?)) else { continue };
         transitions.play(&mut player, node, BLEND).set_speed(1.);
     }
 }
@@ -382,7 +412,7 @@ pub fn update(
 
         // An ability's one-shot holds the actor until it ends.
         if let Some(node) = main {
-            let one_shot = clips.is(node, Clip::Attack) || clips.is(node, Clip::Counter);
+            let one_shot = Clip::ONE_SHOTS.iter().any(|&clip| clips.is(node, clip));
             if one_shot && player.animation(node).is_some_and(|a| !a.is_finished()) {
                 continue;
             }
