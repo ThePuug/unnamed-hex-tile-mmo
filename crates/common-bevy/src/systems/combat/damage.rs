@@ -20,9 +20,25 @@ use crate::components::ActorAttributes;
 /// The beneficiary's effect is reduced when the opponent outlevels them.
 /// When beneficiary is equal or higher level, returns 1.0.
 pub fn gap_factor(beneficiary_level: u32, opponent_level: u32) -> f32 {
+    gap_factor_at(beneficiary_level, opponent_level, GAP_THIRD)
+}
+
+/// The level gap at which an outleveled actor's effect falls to a third,
+/// for every gap mechanic without its own.
+pub const GAP_THIRD: f32 = 10.0;
+
+/// The level gap at which an outleveled defender's reaction window falls to a third.
+pub const WINDOW_GAP: f32 = GAP_THIRD;
+
+/// The level gap at which an outleveled attacker's recovery pushback falls to a third.
+pub const PUSHBACK_GAP: f32 = GAP_THIRD;
+
+/// [`gap_factor`] falling to a third at a gap of `third_at` levels: the same
+/// Gaussian, `e^(-gap² × ln(3) / third_at²)`.
+pub fn gap_factor_at(beneficiary_level: u32, opponent_level: u32, third_at: f32) -> f32 {
     let gap = opponent_level.saturating_sub(beneficiary_level) as f32;
-    const K: f32 = 1.0986123 / 100.0; // ln(3) / 100
-    (-K * gap * gap).exp()
+    let k = 1.0986123 / (third_at * third_at); // ln(3) / third_at²
+    (-k * gap * gap).exp()
 }
 
 /// Contest factor (Pattern 1: Nullifying).
@@ -83,17 +99,20 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
 /// Base: 50%, Cap: 50%
 
 /// Applied to effective_recovery_base (after composure, before synergy).
+/// An outleveled attacker's pushback falls to a third at a gap of
+/// `pushback_gap` levels ([`PUSHBACK_GAP`] in the game).
 pub fn calculate_recovery_pushback(
     attacker_impact: u16,
     defender_composure: u16,
     attacker_level: u32,
     defender_level: u32,
+    pushback_gap: f32,
 ) -> f32 {
     const BASE_PUSHBACK: f32 = 0.50;
     const MAX_PUSHBACK: f32 = 0.50;
 
     let base = BASE_PUSHBACK;
-    let gap = gap_factor(attacker_level, defender_level);
+    let gap = gap_factor_at(attacker_level, defender_level, pushback_gap);
     let contest = contest_factor(attacker_impact, defender_composure);
 
     (base * gap * contest).min(MAX_PUSHBACK)

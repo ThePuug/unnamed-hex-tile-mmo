@@ -171,6 +171,7 @@ pub fn handle_counter(
                 Some(AbilityType::Counter),   // Ability
                 now,                          // Current time
                 0.0,                          // A reflection is a blow
+                tuning.window_gap,
             );
 
             // A reflection lands on impact, never queued, so a counter cannot be countered back

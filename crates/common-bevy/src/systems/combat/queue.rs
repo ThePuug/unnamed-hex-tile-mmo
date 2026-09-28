@@ -10,10 +10,11 @@ use crate::components::reaction_queue::DamageType;
 /// Reaction window base from level gap.
 
 /// Pattern 2 (Baseline+Bonus): 3.0s × gap × (1.0 + 0.5 × contest_factor)
-/// This function computes the gap part only (3.0s × gap_factor).
-pub fn gap_window(defender_level: u32, attacker_level: u32) -> Duration {
-    use crate::systems::combat::damage::gap_factor;
-    Duration::from_secs_f32(3.0 * gap_factor(defender_level, attacker_level))
+/// This function computes the gap part only (3.0s × gap_factor), the
+/// window falling to a third at a gap of `window_gap` levels.
+pub fn gap_window(defender_level: u32, attacker_level: u32, window_gap: f32) -> Duration {
+    use crate::systems::combat::damage::gap_factor_at;
+    Duration::from_secs_f32(3.0 * gap_factor_at(defender_level, attacker_level, window_gap))
 }
 
 /// How long a threat from `source_attrs` waits in the queue of
@@ -21,13 +22,14 @@ pub fn gap_window(defender_level: u32, attacker_level: u32) -> Duration {
 /// two (INV-003), whatever made it.
 ///
 /// Two-step calculation:
-/// 1. **Gap window**: Level difference sets the base window (3s at equal, ~1s at 10 gap, ~0 at 20)
+/// 1. **Gap window**: Level difference sets the base window (3s at equal, a
+///    third of it at a gap of `window_gap` levels, `WINDOW_GAP` in the game)
 /// 2. **Reaction contest**: Cunning advantage extends window (up to +50% at max advantage)
-pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttributes) -> Duration {
+pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttributes, window_gap: f32) -> Duration {
     use crate::systems::combat::damage::reaction_contest_factor;
 
     // Step 1: Level gap sets the base window
-    let base_window = gap_window(target_attrs.total_level(), source_attrs.total_level());
+    let base_window = gap_window(target_attrs.total_level(), source_attrs.total_level(), window_gap);
 
     // Step 2: Cunning advantage (only improves, never reduces below base)
     let multiplier = reaction_contest_factor(target_attrs.cunning(), source_attrs.finesse());
@@ -51,6 +53,7 @@ pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttribu
 /// * `ability` - Which ability created this threat
 /// * `now` - Current game time
 /// * `dot` - Damage each DoT tick deals: a wound's, zero for a blow
+/// * `window_gap` - The level gap at which an outleveled target's window falls to a third
 
 /// # Returns
 /// Fully-formed QueuedThreat with correct timer duration
@@ -63,13 +66,14 @@ pub fn create_threat(
     ability: Option<crate::message::AbilityType>,
     now: Duration,
     dot: f32,
+    window_gap: f32,
 ) -> crate::components::reaction_queue::QueuedThreat {
     crate::components::reaction_queue::QueuedThreat {
         source,
         damage,
         damage_type,
         inserted_at: now,
-        timer_duration: threat_window(target_attrs, source_attrs),
+        timer_duration: threat_window(target_attrs, source_attrs, window_gap),
         ability,
         dot,
         ticked: 0,

@@ -58,6 +58,7 @@ pub fn handle_kick(
     time: Res<Time>,
     runtime: Res<RunTime>,
     map: Res<Map>,
+    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -196,6 +197,7 @@ pub fn handle_kick(
                         Some(AbilityType::Kick),
                         now,
                         0.0,
+                        tuning.window_gap,
                     );
 
                     common_bevy::systems::combat::queue::insert_threat(&mut target_queue, kick_threat, now);
