@@ -20,6 +20,8 @@ use qrz::Convert;
 const SEG_WIDTH: usize = 15;
 const SEG_GAP: usize = 1;
 const PANEL_CHARS: usize = 3 * SEG_WIDTH + 2 * SEG_GAP;
+/// Two full segments and the gap between them: a name that needs the room.
+const WIDE_WIDTH: usize = 2 * SEG_WIDTH + SEG_GAP;
 const SPARKLINE_CHARS: usize = 15;
 const MIN_BAR_WIDTH_PX: f32 = 2.0;
 
@@ -317,6 +319,7 @@ impl<'a> Seg<'a> {
 
     #[allow(dead_code)]
     fn full(&mut self, s: &str, color: egui::Color32) { self.emit(s, SEG_WIDTH, color); }
+    fn wide(&mut self, s: &str, color: egui::Color32) { self.emit(s, WIDE_WIDTH, color); }
     fn half(&mut self, s: &str, color: egui::Color32) { self.emit(s, 7, color); }
     #[allow(dead_code)]
     fn quarter(&mut self, s: &str, color: egui::Color32) { self.emit(s, 3, color); }
@@ -763,7 +766,7 @@ pub fn update_metrics_overlay(
                         let cpu_sum: f64 = passes.iter().map(|p| p.1.0).sum();
                         let gpu_sum: f64 = passes.iter().map(|p| p.1.1).sum();
                         seg_row(ui, cw, |s| {
-                            s.full(&format!("{:<15}", "all passes"), COLOR_DIM);
+                            s.wide(&format!("{:<WIDE_WIDTH$}", "all passes"), COLOR_DIM);
                             s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(cpu_sum), "c"), ALARM_FRAME.color(cpu_sum));
                             s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(gpu_sum), "g"), ALARM_FRAME.color(gpu_sum));
                         });
@@ -771,9 +774,9 @@ pub fn update_metrics_overlay(
                             // The last path component names the pass; the
                             // tail of it is the telling part.
                             let leaf = name.rsplit('/').next().unwrap_or(name);
-                            let shown: String = leaf.chars().rev().take(SEG_WIDTH).collect::<Vec<_>>().into_iter().rev().collect();
+                            let shown: String = leaf.chars().rev().take(WIDE_WIDTH).collect::<Vec<_>>().into_iter().rev().collect();
                             seg_row(ui, cw, |s| {
-                                s.full(&format!("{shown:<15}"), COLOR_DIM);
+                                s.wide(&format!("{shown:<WIDE_WIDTH$}"), COLOR_DIM);
                                 s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(*cpu), "c"), COLOR_DIM);
                                 s.half(&format!("{:>5}{:<2}", PASS_MS.fmt(*gpu), "g"), COLOR_DIM);
                             });
