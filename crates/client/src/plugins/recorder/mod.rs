@@ -29,6 +29,7 @@ use bevy::{
 };
 use common_bevy::{
     components::{
+        entity_type::{actor::ActorIdentity, EntityType},
         heading::{Heading, HEADING_SLOTS},
         position::{Position, VisualPosition},
         Loc,
@@ -130,6 +131,9 @@ enum Phase {
     Turn { since: Instant },
     /// Waiting for the world to settle, then for the shot's `settle` more.
     Settle { since: Instant, quiet: u32, epoch: u64, quiet_since: Option<Instant> },
+    /// The shot's fight is asked for; waiting for an NPC that was not in
+    /// view when it was, one of `before`.
+    Stage { since: Instant, before: HashSet<Entity> },
     Roll(Roll),
     /// The last frame is taken; waiting for the readbacks still out.
     Drain(Roll),
@@ -146,6 +150,8 @@ struct Roll {
     start: Instant,
     /// The player where the shot rolled, for a path anchored there.
     anchor: Position,
+    /// The staged NPC a path anchored on the fighter follows.
+    fighter: Option<Entity>,
     writer: Option<Writer>,
     received: u64,
     fps: u32,
@@ -171,13 +177,15 @@ struct Keys {
 #[derive(Resource, Default)]
 struct Captured(Vec<Frame>);
 
-/// How long the player may take to arrive or turn, and the world to
-/// settle, before the recorder gives up on the shot or rolls anyway; and
+/// How long the player may take to arrive or turn, the world to settle and
+/// a staged fight to appear, before the recorder gives up on the shot or
+/// rolls anyway; and
 /// how often a teleport not answered is asked for again.
 const ARRIVE_LIMIT: Duration = Duration::from_secs(20);
 const ASK_AGAIN: Duration = Duration::from_secs(5);
 const TURN_LIMIT: Duration = Duration::from_secs(10);
 const SETTLE_LIMIT: Duration = Duration::from_secs(120);
+const STAGE_LIMIT: Duration = Duration::from_secs(10);
 /// How long past a shot's length its last readbacks may take before the
 /// file is closed without them.
 const DRAIN_LIMIT: Duration = Duration::from_secs(10);
@@ -244,6 +252,7 @@ fn advance(
     mut writer: MessageWriter<Try>,
     buffers: Res<InputQueues>,
     mut player: Query<(&Loc, &Heading, &Position, &mut Visibility)>,
+    npcs: Query<(Entity, &EntityType, &Loc)>,
     loaded: Res<LoadedChunks>,
     meshes: Res<SummaryMeshes>,
     mut diagnostics: ResMut<DiagnosticsState>,
@@ -323,7 +332,7 @@ fn advance(
                 if !settled {
                     warn!("recorder: shot {} not settled after {SETTLE_LIMIT:?} ({have}/{want} chunks, building {building}); rolling", shot.name);
                 }
-                // The fight is staged as the shot rolls, so the film has it from its first blow
+                info!("recorder: shot {} settled in {:.1}s", shot.name, (now - *since).as_secs_f32());
                 if let Some(stage) = shot.stage {
                     writer.write(Try { event: Event::StageFight {
                         ent,
@@ -334,22 +343,47 @@ fn advance(
                         size: stage.size,
                         b_size: stage.b_size.unwrap_or(stage.size),
                     } });
+                    let before = npcs.iter().filter(|(_, kind, _)| is_npc(kind)).map(|(e, _, _)| e).collect();
+                    recorder.phase = Phase::Stage { since: now, before };
+                } else {
+                    recorder.phase = Phase::Roll(roll(&recorder.script, &shot, position, None));
                 }
-                let fps = recorder.script.fps;
-                let frames = ((shot.seconds * fps as f32).ceil() as u64).max(1);
-                let writer = (shot.seconds > 0.0).then(|| {
-                    Writer::start(recorder.script.out.join(format!("{}.mp4", shot.name)), fps, recorder.script.size)
-                });
-                info!("milestone: recorder shot {} rolling ({frames} frames, settled in {:.1}s)", shot.name, (now - *since).as_secs_f32());
-                recorder.phase = Phase::Roll(Roll {
-                    frame: 0, frames, armed: false, start: now, anchor: position.clone(), writer, received: 0, fps,
-                });
+            }
+        }
+        // The shot rolls as its fight arrives, so the film has it from its first step
+        Phase::Stage { since, before } => {
+            let fighter = npcs.iter()
+                .filter(|(e, kind, _)| is_npc(kind) && !before.contains(e))
+                .min_by_key(|(_, _, at)| at.distance(loc))
+                .map(|(e, _, _)| e);
+            let late = now - *since > STAGE_LIMIT;
+            if fighter.is_some() || late {
+                if late {
+                    warn!("recorder: shot {}: no fighter after {STAGE_LIMIT:?}; rolling", shot.name);
+                }
+                recorder.phase = Phase::Roll(roll(&recorder.script, &shot, position, fighter));
             }
         }
     }
     if skip {
         recorder.next_shot();
     }
+}
+
+/// The shot rolling from the player at `position`, a path anchored on the
+/// fighter following `fighter`.
+fn roll(script: &Script, shot: &Shot, position: &Position, fighter: Option<Entity>) -> Roll {
+    let fps = script.fps;
+    let frames = ((shot.seconds * fps as f32).ceil() as u64).max(1);
+    let writer = (shot.seconds > 0.0).then(|| {
+        Writer::start(script.out.join(format!("{}.mp4", shot.name)), fps, script.size)
+    });
+    info!("milestone: recorder shot {} rolling ({frames} frames)", shot.name);
+    Roll { frame: 0, frames, armed: false, start: Instant::now(), anchor: position.clone(), fighter, writer, received: 0, fps }
+}
+
+fn is_npc(kind: &EntityType) -> bool {
+    matches!(kind, EntityType::Actor(actor) if matches!(actor.identity, ActorIdentity::Npc(_)))
 }
 
 /// Presses and lets go of the keys the script holds, fires and taps.
@@ -394,6 +428,9 @@ fn drive_camera(
     player: Query<(&VisualPosition, &Position, &Heading)>,
     map: Res<Map>,
     origin: Res<RenderOrigin>,
+    // Rendered, as the fighter was last seen; the player stands through a
+    // staged shot, so no re-base moves the origin under it.
+    mut fell: Local<Option<Vec3>>,
 ) {
     let Some(CameraPath::Path { anchor, ease, keys, follow_at, blend }) = recorder.shot().map(|s| &s.camera) else { return };
     let taken = handover(*follow_at, *blend, recorder.t());
@@ -406,6 +443,14 @@ fn drive_camera(
         (Anchor::Player | Anchor::Heading, _) => visual.current(),
         (Anchor::Start, Phase::Roll(roll) | Phase::Drain(roll)) => origin.render(&map, &roll.anchor),
         (Anchor::Start, _) => origin.render(&map, position),
+        (Anchor::Fighter, Phase::Roll(roll) | Phase::Drain(roll)) => {
+            let seen = roll.fighter.and_then(|e| player.get(e).ok()).map(|(visual, ..)| visual.current());
+            if seen.is_some() || roll.frame == 0 {
+                *fell = seen;
+            }
+            fell.unwrap_or_else(|| origin.render(&map, &roll.anchor))
+        }
+        (Anchor::Fighter, _) => origin.render(&map, position),
     };
     // Bearings run clockwise seen from above, a turn about +y the other way.
     let turn = match anchor {

@@ -51,7 +51,8 @@ pub struct Shot {
     /// Keys the player presses: `[t, "hold" | "release" | "tap", key]`.
     #[serde(default)]
     pub input: Vec<(f32, Press, String)>,
-    /// A fight staged ahead of the player as the shot rolls.
+    /// A fight staged ahead of the player; the shot rolls once its first
+    /// fighter is in view.
     #[serde(default)]
     pub stage: Option<Stage>,
 }
@@ -145,6 +146,10 @@ pub enum Anchor {
     /// The player's feet as they move, turned with the heading: -z is the
     /// way the player faces and x its right hand.
     Heading,
+    /// The feet of the fighter the shot staged, as it moves, and where it
+    /// fell once it is gone. A shot without a stage has no fighter and
+    /// holds at the player's feet.
+    Fighter,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy)]
