@@ -49,6 +49,10 @@ pub struct ArchetypeTuning {
     pub volley_slow: f32,
     /// Seconds a Volley's slow lasts
     pub volley_slow_secs: f32,
+    /// Pace a Volley sets its Kiter running at, a share of its speed past whole
+    pub volley_run: f32,
+    /// Seconds a Volley's run lasts
+    pub volley_run_secs: f32,
     /// Seconds a Flank stuns its target
     pub flank_stun: f32,
     /// Share of Intuition a Flank strikes for
@@ -83,6 +87,8 @@ impl Default for ArchetypeTuning {
             volley_force: 1.2,
             volley_slow: 0.098,
             volley_slow_secs: 2.058,
+            volley_run: 2.0,
+            volley_run_secs: 2.0,
             flank_stun: 3.0,
             flank_intuition: 1.0,
             counter_reflect: 0.331,
@@ -148,6 +154,8 @@ impl ArchetypeTuning {
             "volley_force" => self.volley_force = number()?,
             "volley_slow" => self.volley_slow = number()?,
             "volley_slow_secs" => self.volley_slow_secs = number()?,
+            "volley_run" => self.volley_run = number()?,
+            "volley_run_secs" => self.volley_run_secs = number()?,
             "flank_stun" => self.flank_stun = number()?,
             "flank_intuition" => self.flank_intuition = number()?,
             "counter_reflect" => self.counter_reflect = number()?,
