@@ -114,7 +114,7 @@ pub fn gameplay_camera_height() -> f32 {
 /// the sky above the horizon, so the frontier at the reach never shows.
 /// `world::update` lights both by the sun and moon through the day, the
 /// sky in the sun's tint and the haze in a share of it.
-pub const HAZE_COLOR: Color = Color::linear_rgb(0.72, 0.78, 0.85);
+pub const HAZE_COLOR: Color = Color::linear_rgb(0.50, 0.66, 0.90);
 /// Where the haze completes, as a fraction of the reach: inside it, so the
 /// frontier stands behind full haze.
 const HAZE_END_FRAC: f32 = 0.92;
@@ -124,13 +124,15 @@ pub fn haze_limit_wu() -> f32 {
     common_bevy::summary::reach_wu() * HAZE_END_FRAC
 }
 
-/// Distance fog to the haze, for the camera: deepening as the square of
-/// the distance, so it is flat at the camera and has no onset to see,
-/// slight over the near ground and complete at the haze limit.
+/// Distance fog to the haze, for the camera: deepening steadily with the
+/// distance and complete at the haze limit, so each hill further off
+/// stands paler and bluer than the one before it. As the square of the
+/// distance it would lay under half a percent on a hill two thousand units
+/// off, and the whole view short of the reach would stand in clear air.
 fn haze() -> DistanceFog {
     DistanceFog {
         color: HAZE_COLOR,
-        falloff: FogFalloff::from_visibility_squared(haze_limit_wu()),
+        falloff: FogFalloff::from_visibility(haze_limit_wu()),
         ..default()
     }
 }
