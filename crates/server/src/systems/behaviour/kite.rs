@@ -45,7 +45,7 @@ fn score_neighbor(
 
 /// How far a Kiter reaches, in tiles: its auto-attack, its Volley, and
 /// the far edge of its band.
-pub const KITER_REACH: i32 = 6;
+pub const KITER_REACH: i32 = 20;
 
 /// Kite behavior - ranged hostile that maintains optimal distance
 
@@ -354,7 +354,7 @@ mod tests {
     fn test_kite_forest_sprite_stats() {
         let kite = Kite::forest_sprite();
         assert!(kite.acquisition_range as i32 > kite.optimal_distance_max, "it picks targets beyond its reach");
-        assert_eq!(kite.optimal_distance_max, 6);
+        assert_eq!(kite.optimal_distance_max, KITER_REACH);
     }
 
     #[test]
@@ -372,7 +372,7 @@ mod tests {
         let kite = Kite::forest_sprite();
         for running in [false, true] {
             assert_eq!(kite.determine_action(kite.optimal_distance_max + 1, running), KiteAction::Advance);
-            assert_eq!(kite.determine_action(15, running), KiteAction::Advance);
+            assert_eq!(kite.determine_action(kite.optimal_distance_max * 2, running), KiteAction::Advance);
         }
     }
 

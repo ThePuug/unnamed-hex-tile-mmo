@@ -13,11 +13,11 @@ use common_bevy::{
 };
 
 /// How far an NPC looks for a target, in tiles, whatever it chases with.
-pub const ACQUISITION_RANGE: u32 = 15;
+pub const ACQUISITION_RANGE: u32 = 25;
 
 /// How far an NPC follows a target from its den, in tiles, before it gives
 /// up and goes home.
-pub const LEASH_DISTANCE: i32 = 30;
+pub const LEASH_DISTANCE: i32 = 60;
 
 /// Airtime an NPC leaps with to climb onto a neighbouring tile.
 const CLIMB_MS: i16 = 125;

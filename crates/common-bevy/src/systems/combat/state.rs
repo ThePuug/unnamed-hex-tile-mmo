@@ -8,7 +8,7 @@ use crate::{
 };
 
 /// How near a hostile keeps an actor in combat, in tiles: past every reach.
-pub const COMBAT_EXIT_RADIUS: i16 = 20;
+pub const COMBAT_EXIT_RADIUS: i16 = 30;
 
 /// Update combat state for all entities
 /// Runs in FixedUpdate on server only

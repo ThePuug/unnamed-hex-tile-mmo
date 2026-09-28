@@ -93,7 +93,7 @@ const STAGE_AHEAD: i32 = crate::systems::behaviour::ACQUISITION_RANGE as i32 + 3
 
 /// How far either team of a staged fight stands from its middle, as the
 /// balance arena sets its teams apart.
-const STAGE_APART: i32 = 6;
+const STAGE_APART: i32 = 12;
 
 /// Stages a fight ahead of the player who asks: two teams on sides of their
 /// own, hostile to each other and to everyone else, set across the player's

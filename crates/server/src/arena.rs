@@ -58,11 +58,11 @@ const STEP: Duration = Duration::from_micros(62_500);
 
 /// Flat tiles laid out round the origin; wide enough that a fleeing Kiter
 /// reaches its leash before the edge.
-const ARENA_RADIUS: i32 = 45;
+const ARENA_RADIUS: i32 = 80;
 
 /// Each side's den stands this far either side of the origin: inside every
 /// archetype's acquisition range of the other.
-const DEN_OFFSET: i32 = 6;
+const DEN_OFFSET: i32 = 12;
 
 const ARCHETYPES: [EnemyArchetype; 6] = [
     EnemyArchetype::Berserker,

@@ -157,14 +157,14 @@ impl RangeTier {
     pub fn bounds(self) -> (u32, u32) {
         match self {
             RangeTier::Close => (1, 2),
-            RangeTier::Mid => (3, 6),
-            RangeTier::Far => (7, TARGET_RADIUS),
+            RangeTier::Mid => (3, 10),
+            RangeTier::Far => (11, TARGET_RADIUS),
         }
     }
 }
 
 /// How far a caster looks for a target, in tiles.
-pub const TARGET_RADIUS: u32 = 20;
+pub const TARGET_RADIUS: u32 = 30;
 
 /// Get the range tier for a given distance
 
@@ -708,34 +708,24 @@ mod tests {
     // ===== RANGE TIER TESTS =====
 
     #[test]
-    fn test_get_range_tier_close() {
-        assert_eq!(get_range_tier(1), RangeTier::Close);
-        assert_eq!(get_range_tier(2), RangeTier::Close);
+    fn the_tiers_run_on_from_melee_to_the_edge_of_the_search() {
+        let tiers = [RangeTier::Close, RangeTier::Mid, RangeTier::Far];
+        assert_eq!(tiers[0].bounds().0, 1);
+        for pair in tiers.windows(2) {
+            assert_eq!(pair[0].bounds().1 + 1, pair[1].bounds().0, "{:?} runs on into {:?}", pair[0], pair[1]);
+        }
+        assert_eq!(RangeTier::Far.bounds().1, TARGET_RADIUS);
     }
 
     #[test]
-    fn test_get_range_tier_mid() {
-        assert_eq!(get_range_tier(3), RangeTier::Mid);
-        assert_eq!(get_range_tier(4), RangeTier::Mid);
-        assert_eq!(get_range_tier(5), RangeTier::Mid);
-        assert_eq!(get_range_tier(6), RangeTier::Mid);
-    }
-
-    #[test]
-    fn test_get_range_tier_far() {
-        assert_eq!(get_range_tier(7), RangeTier::Far);
-        assert_eq!(get_range_tier(10), RangeTier::Far);
-        assert_eq!(get_range_tier(20), RangeTier::Far);
-        assert_eq!(get_range_tier(100), RangeTier::Far);
-    }
-
-    #[test]
-    fn test_get_range_tier_boundaries() {
-        // Test tier boundaries
-        assert_eq!(get_range_tier(2), RangeTier::Close);
-        assert_eq!(get_range_tier(3), RangeTier::Mid);
-        assert_eq!(get_range_tier(6), RangeTier::Mid);
-        assert_eq!(get_range_tier(7), RangeTier::Far);
+    fn every_distance_is_the_tier_that_holds_it() {
+        for tier in [RangeTier::Close, RangeTier::Mid, RangeTier::Far] {
+            let (min, max) = tier.bounds();
+            for distance in min..=max {
+                assert_eq!(get_range_tier(distance), tier, "at {distance}");
+            }
+        }
+        assert_eq!(get_range_tier(TARGET_RADIUS * 3), RangeTier::Far);
     }
 
     // ===== TARGET SELECTION TESTS =====
@@ -951,7 +941,7 @@ mod tests {
         // Spawn targets at different tiers - NPCs
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 })); // Distance 1 (Close)
         let mid_target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 4, r: 0, z: 0 })); // Distance 4 (Mid)
-        spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 8, r: 0, z: 0 })); // Distance 8 (Far)
+        spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: RangeTier::Far.bounds().0 as i32, r: 0, z: 0 })); // Where the far tier starts
 
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
@@ -1077,9 +1067,9 @@ mod tests {
     /// Test that tier lock filters targets by distance range
 
     /// Validation Criteria:
-    /// - Tier 1 (Close): 0-3 hexes
-    /// - Tier 2 (Mid): 4-8 hexes
-    /// - Tier 3 (Far): 9+ hexes
+    /// - Tier 1 (Close)
+    /// - Tier 2 (Mid)
+    /// - Tier 3 (Far)
     #[test]
     fn test_tier_lock_filters_by_distance() {
         let (mut world, mut nntree) = setup_test_world();
@@ -1099,11 +1089,11 @@ mod tests {
         let mid_target_loc = Loc::new(Qrz { q: 5, r: 0, z: 0 });
         let mid_target = spawn_actor(&mut world, &mut nntree, mid_target_loc);
 
-        // Far target (10 hexes east) - Tier 3
-        let far_target_loc = Loc::new(Qrz { q: 10, r: 0, z: 0 });
+        // Far target, where the far tier starts - Tier 3
+        let far_target_loc = Loc::new(Qrz { q: RangeTier::Far.bounds().0 as i32, r: 0, z: 0 });
         let far_target = spawn_actor(&mut world, &mut nntree, far_target_loc);
 
-        // Test Tier 1 lock (Close: 0-3 hexes) - should select close_target
+        // Test Tier 1 lock (Close) - should select close_target
         let tier1_result = select_target(
             caster,
             caster_loc,
@@ -1115,7 +1105,7 @@ mod tests {
         );
         assert_eq!(tier1_result, Some(close_target), "Tier 1 lock should select close target (2 hexes)");
 
-        // Test Tier 2 lock (Mid: 4-8 hexes) - should select mid_target
+        // Test Tier 2 lock (Mid) - should select mid_target
         let tier2_result = select_target(
             caster,
             caster_loc,
@@ -1127,7 +1117,7 @@ mod tests {
         );
         assert_eq!(tier2_result, Some(mid_target), "Tier 2 lock should select mid target (5 hexes)");
 
-        // Test Tier 3 lock (Far: 9+ hexes) - should select far_target
+        // Test Tier 3 lock (Far) - should select far_target
         let tier3_result = select_target(
             caster,
             caster_loc,
@@ -1137,7 +1127,7 @@ mod tests {
             |ent| world.get::<EntityType>(ent).copied(),
             |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
         );
-        assert_eq!(tier3_result, Some(far_target), "Tier 3 lock should select far target (10 hexes)");
+        assert_eq!(tier3_result, Some(far_target), "Tier 3 lock should select the far target");
 
         // Test no tier lock - should default to closest (close_target)
         let no_lock_result = select_target(
@@ -1194,12 +1184,12 @@ mod tests {
             "Default targeting should target Wild Dog (closer at 2 hexes)"
         );
 
-        // 2. Press "2" (Tier 2 lock, 4-8 hexes) → should target Forest Sprite
+        // 2. Press "2" (Tier 2 lock) → should target Forest Sprite
         let tier2_result = select_target(
             player,
             player_loc,
             heading,
-            Some(RangeTier::Mid), // Tier 2 (Mid: 4-8 hexes)
+            Some(RangeTier::Mid), // Tier 2 (Mid)
             &nntree,
             |ent| world.get::<EntityType>(ent).copied(),
             |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
@@ -1283,7 +1273,7 @@ mod tests {
         let mid_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 5, r: 0, z: 0 })); // Distance 5 (Mid)
         world.entity_mut(mid_ally).insert(PlayerControlled);
 
-        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 8, r: 0, z: 0 })); // Distance 8 (Far)
+        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: RangeTier::Far.bounds().0 as i32, r: 0, z: 0 })); // Where the far tier starts
         world.entity_mut(far_ally).insert(PlayerControlled);
 
         // Test Mid tier lock - should select mid_ally only
@@ -1319,7 +1309,7 @@ mod tests {
         let close_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 })); // Distance 2 (Close)
         world.entity_mut(close_ally).insert(PlayerControlled);
 
-        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 10, r: 0, z: 0 })); // Distance 10 (Far)
+        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: RangeTier::Far.bounds().0 as i32, r: 0, z: 0 })); // Where the far tier starts
         world.entity_mut(far_ally).insert(PlayerControlled);
 
         // Test Far tier lock - should select far_ally only
@@ -1334,7 +1324,7 @@ mod tests {
 
         assert_eq!(
             result, Some(far_ally),
-            "Far tier lock should select ally at 10 hexes (Far range)"
+            "Far tier lock should select the far ally"
         );
     }
 
@@ -1358,7 +1348,7 @@ mod tests {
         let mid_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 5, r: 0, z: 0 })); // Distance 5 (Mid)
         world.entity_mut(mid_ally).insert(PlayerControlled);
 
-        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 10, r: 0, z: 0 })); // Distance 10 (Far)
+        let far_ally = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: RangeTier::Far.bounds().0 as i32, r: 0, z: 0 })); // Where the far tier starts
         world.entity_mut(far_ally).insert(PlayerControlled);
 
         // Test no tier lock (automatic) - should select nearest (close_ally)
