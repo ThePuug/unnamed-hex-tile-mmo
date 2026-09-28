@@ -23,6 +23,10 @@ pub struct ArchetypeTuning {
     pub base_health: f32,
     /// An NPC's health per point of Vitality, the game's `HEALTH_PER_VITALITY` unless tried otherwise
     pub health_per_vitality: f32,
+    /// How much steeper the health and damage level curves grow about level 10,
+    /// the game's `LEVEL_STEEPNESS` unless tried otherwise; the arena applies them
+    pub hp_steepness: f32,
+    pub damage_steepness: f32,
     /// Share of base potency an auto-attack strikes for, the same for every actor
     pub auto_damage: f32,
     /// Share of Force a Lunge's strike deals
@@ -68,6 +72,8 @@ impl Default for ArchetypeTuning {
             damage_spread: 0.2,
             base_health: common_bevy::components::BASE_HEALTH,
             health_per_vitality: common_bevy::components::HEALTH_PER_VITALITY,
+            hp_steepness: common_bevy::components::LEVEL_STEEPNESS.0,
+            damage_steepness: common_bevy::components::LEVEL_STEEPNESS.1,
             auto_damage: 1.05,
             lunge_force: 1.0,
             lunge_dot: 0.15,
@@ -133,6 +139,8 @@ impl ArchetypeTuning {
             "damage_spread" => self.damage_spread = number()?,
             "base_health" => self.base_health = number()?,
             "health_per_vitality" => self.health_per_vitality = number()?,
+            "hp_steepness" => self.hp_steepness = number()?,
+            "damage_steepness" => self.damage_steepness = number()?,
             "auto_damage" => self.auto_damage = number()?,
             "lunge_force" => self.lunge_force = number()?,
             "rattle_health" => self.rattle_health = number()?,

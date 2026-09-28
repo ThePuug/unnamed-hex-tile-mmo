@@ -353,6 +353,7 @@ fn serve() {
 
 /// Runs every pairing and prints the report.
 fn report(settings: &Settings) {
+    common_bevy::components::set_level_steepness(settings.tuning.hp_steepness, settings.tuning.damage_steepness);
     let (a_team, b_team) = (settings.team_a(EnemyArchetype::Berserker), settings.team_b(EnemyArchetype::Berserker));
     println!(
         "arena: a is {} at level {}, b is {} at level {}; {} runs per pairing, decided on health after {}s",

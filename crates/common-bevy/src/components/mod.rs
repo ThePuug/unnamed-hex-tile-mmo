@@ -218,6 +218,30 @@ pub const BASE_HEALTH: f32 = 300.0;
 /// 10 has about twice the health of one without.
 pub const HEALTH_PER_VITALITY: f32 = 1.96;
 
+/// The level every level curve pivots on: a curve made steeper keeps its
+/// value here, so fights at this level play as tuned while the gap between
+/// levels grows.
+pub const CURVE_ANCHOR_LEVEL: u32 = 10;
+
+/// How much steeper than its formula each level curve grows about
+/// [`CURVE_ANCHOR_LEVEL`], (health, damage).
+pub const LEVEL_STEEPNESS: (f32, f32) = (1.0, 1.0);
+
+/// The level steepness in force: [`LEVEL_STEEPNESS`] in the game, which never
+/// sets it; the balance arena tries others per scenario through
+/// [`set_level_steepness`].
+static STEEPNESS: std::sync::RwLock<(f32, f32)> = std::sync::RwLock::new(LEVEL_STEEPNESS);
+
+/// Sets the (health, damage) level steepness for every actor in this
+/// process. The balance arena's alone: the game plays on [`LEVEL_STEEPNESS`].
+pub fn set_level_steepness(health: f32, damage: f32) {
+    *STEEPNESS.write().expect("level steepness poisoned") = (health, damage);
+}
+
+fn steepness() -> (f32, f32) {
+    *STEEPNESS.read().expect("level steepness poisoned")
+}
+
 #[derive(Clone, Component, Copy, Default)]
 pub struct Actor;
 
@@ -695,12 +719,20 @@ impl ActorAttributes {
         (1.0 + level as f32 * k).powf(p)
     }
 
+    /// [`level_multiplier`](Self::level_multiplier) made `steepness` times
+    /// steeper about [`CURVE_ANCHOR_LEVEL`]: the same there, and the same
+    /// everywhere at a steepness of 1.
+    pub fn anchored_multiplier(level: u32, k: f32, p: f32, steepness: f32) -> f32 {
+        let anchor = 1.0 + CURVE_ANCHOR_LEVEL as f32 * k;
+        anchor.powf(p) * ((1.0 + level as f32 * k) / anchor).powf(p * steepness)
+    }
+
     /// HP/survivability level multiplier
     /// Moderate scaling: preserves danger from equal-level foes
     pub fn hp_level_multiplier(&self) -> f32 {
         const K: f32 = 0.10;
         const P: f32 = 2.0;
-        Self::level_multiplier(self.total_level(), K, P)
+        Self::anchored_multiplier(self.total_level(), K, P, steepness().0)
     }
 
     /// Damage/offense level multiplier
@@ -708,7 +740,7 @@ impl ActorAttributes {
     pub fn damage_level_multiplier(&self) -> f32 {
         const K: f32 = 0.15;
         const P: f32 = 1.75;
-        Self::level_multiplier(self.total_level(), K, P)
+        Self::anchored_multiplier(self.total_level(), K, P, steepness().1)
     }
 
     /// Reaction stat level multiplier
@@ -1094,6 +1126,18 @@ mod tests {
             level_10.max_health() > level_5.max_health(),
             "Level 10 should have more HP than level 5"
         );
+    }
+
+    #[test]
+    fn a_steeper_curve_keeps_its_anchor_and_widens_the_gap() {
+        let (k, p) = (0.10, 2.0);
+        for level in [0, 5, 10, 15] {
+            assert!((ActorAttributes::anchored_multiplier(level, k, p, 1.0) - ActorAttributes::level_multiplier(level, k, p)).abs() < 1e-4, "steepness 1 is the formula at {level}");
+        }
+        let anchor = ActorAttributes::anchored_multiplier(CURVE_ANCHOR_LEVEL, k, p, 1.0);
+        assert!((ActorAttributes::anchored_multiplier(CURVE_ANCHOR_LEVEL, k, p, 2.0) - anchor).abs() < 1e-4, "the anchor holds");
+        let gap = |s| ActorAttributes::anchored_multiplier(10, k, p, s) / ActorAttributes::anchored_multiplier(6, k, p, s);
+        assert!(gap(2.0) > gap(1.0), "steeper, level 10 stands further above level 6");
     }
 
     #[test]
