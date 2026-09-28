@@ -21,8 +21,6 @@ pub struct ArchetypeTuning {
     pub damage_spread: f32,
     /// Share of its reaction window an outleveled defender loses per level of gap
     pub window_per_level: f32,
-    /// Share of its lockout each hit adds to an outleveled defender's per level of gap
-    pub pushback_per_level: f32,
     /// An NPC's health before Vitality, the game's `BASE_HEALTH` unless tried otherwise
     pub base_health: f32,
     /// An NPC's health per point of Vitality, the game's `HEALTH_PER_VITALITY` unless tried otherwise
@@ -71,7 +69,6 @@ impl Default for ArchetypeTuning {
             lunge_pierce: 0.7,
             damage_spread: 0.2,
             window_per_level: common_bevy::systems::combat::damage::WINDOW_PER_LEVEL,
-            pushback_per_level: common_bevy::systems::combat::damage::PUSHBACK_PER_LEVEL,
             base_health: common_bevy::components::BASE_HEALTH,
             health_per_vitality: common_bevy::components::HEALTH_PER_VITALITY,
             auto_damage: 1.05,
@@ -138,7 +135,6 @@ impl ArchetypeTuning {
             "lunge_dot" => self.lunge_dot = number()?,
             "damage_spread" => self.damage_spread = number()?,
             "window_per_level" => self.window_per_level = number()?,
-            "pushback_per_level" => self.pushback_per_level = number()?,
             "base_health" => self.base_health = number()?,
             "health_per_vitality" => self.health_per_vitality = number()?,
             "auto_damage" => self.auto_damage = number()?,

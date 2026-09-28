@@ -64,7 +64,6 @@ pub fn process_deal_damage(
                 attrs.composure(),
                 source_attrs.total_level(),
                 attrs.total_level(),
-                tuning.pushback_per_level,
             );
             recovery.apply_pushback(pushback_pct);
         }

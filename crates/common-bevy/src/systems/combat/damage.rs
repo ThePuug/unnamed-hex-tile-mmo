@@ -29,11 +29,6 @@ pub fn gap_factor(beneficiary_level: u32, opponent_level: u32) -> f32 {
 /// level the attacker stands above it, every level the same: halved at five.
 pub const WINDOW_PER_LEVEL: f32 = 0.1;
 
-/// The share of its lockout each hit from a higher-level attacker adds to an
-/// outleveled defender's, for each level of the gap, every level the same:
-/// half its lockout at five.
-pub const PUSHBACK_PER_LEVEL: f32 = 0.1;
-
 /// Contest factor (Pattern 1: Nullifying).
 
 /// Returns 0 to 1.0:
@@ -86,15 +81,10 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
     damage * (1.0 + spread * draw.clamp(-1.0, 1.0))
 }
 
-/// Calculate recovery pushback percentage: a level part and an Impact part,
-/// added.
+/// Calculate recovery pushback percentage: Impact's, alone.
 
-/// - **Level:** a higher-level attacker pushes back an outleveled defender
-///   by `pushback_per_level` for each level of the gap
-///   ([`PUSHBACK_PER_LEVEL`] in the game), nothing between equals.
-/// - **Impact** (Pattern 1, Nullifying): 50% × gap × contest_factor(Impact,
-///   Composure), capped at 50%, falling when the attacker is the one
-///   outleveled.
+/// Pattern 1 (Nullifying): 50% × gap × contest_factor(Impact, Composure),
+/// capped at 50%, falling when the attacker is the one outleveled.
 
 /// Applied to effective_recovery_base (after composure, before synergy).
 pub fn calculate_recovery_pushback(
@@ -102,16 +92,14 @@ pub fn calculate_recovery_pushback(
     defender_composure: u16,
     attacker_level: u32,
     defender_level: u32,
-    pushback_per_level: f32,
 ) -> f32 {
     const BASE_PUSHBACK: f32 = 0.50;
     const MAX_PUSHBACK: f32 = 0.50;
 
-    let level = pushback_per_level * attacker_level.saturating_sub(defender_level) as f32;
     let gap = gap_factor(attacker_level, defender_level);
     let contest = contest_factor(attacker_impact, defender_composure);
 
-    level + (BASE_PUSHBACK * gap * contest).min(MAX_PUSHBACK)
+    (BASE_PUSHBACK * gap * contest).min(MAX_PUSHBACK)
 }
 
 /// Scan for the strongest Dominance aura within range of target, among
