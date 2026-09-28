@@ -210,8 +210,9 @@ impl Default for Turn {
     }
 }
 
-/// Health every actor has before Vitality and level, sized so one signature
-/// blow takes about a quarter of a level-10 actor's health: a fight takes several.
+/// Health every actor has before Vitality, before the level multiplier scales
+/// it, sized so one signature blow takes about a quarter of a level-10 actor's
+/// health: a fight takes several.
 pub const BASE_HEALTH: f32 = 300.0;
 
 /// Health each point of Vitality adds before level: a Vitality build at level
@@ -224,8 +225,9 @@ pub const HEALTH_PER_VITALITY: f32 = 1.96;
 pub const CURVE_ANCHOR_LEVEL: u32 = 10;
 
 /// How much steeper than its formula each level curve grows about
-/// [`CURVE_ANCHOR_LEVEL`], (health, damage).
-pub const LEVEL_STEEPNESS: (f32, f32) = (1.0, 1.0);
+/// [`CURVE_ANCHOR_LEVEL`], (health, damage): health twice as steep, so one
+/// actor holds off two of three or four levels below it.
+pub const LEVEL_STEEPNESS: (f32, f32) = (2.0, 1.0);
 
 /// The level steepness in force: [`LEVEL_STEEPNESS`] in the game, which never
 /// sets it; the balance arena tries others per scenario through
@@ -1080,8 +1082,9 @@ mod tests {
 
     #[test]
     fn test_damage_multiplier_exceeds_hp_multiplier() {
-        // Damage scales more aggressively than HP at all positive levels
-        for level in 1..=20u32 {
+        // Up to the curves' anchor, damage outgrows health; health's steeper
+        // curve overtakes it above
+        for level in 1..=CURVE_ANCHOR_LEVEL {
             let attrs = ActorAttributes::new(
                 -(level as i8).min(127), 0, 0,  // some might investment
                 0, 0, 0,
@@ -1097,8 +1100,9 @@ mod tests {
 
     #[test]
     fn test_hp_multiplier_exceeds_reaction_multiplier() {
-        // HP scales more than reaction stats at all positive levels
-        for level in 1..=20u32 {
+        // From the curves' anchor up, health outgrows reaction stats; below it
+        // the steeper health curve falls under them
+        for level in CURVE_ANCHOR_LEVEL..=20u32 {
             let attrs = ActorAttributes::new(
                 -(level as i8).min(127), 0, 0,
                 0, 0, 0,
@@ -1142,10 +1146,12 @@ mod tests {
 
     #[test]
     fn test_default_attrs_max_health_is_base() {
-        // Level 0, no investment: max_health = base HP * multiplier(0) = base * 1.0
+        // Level 0, no investment: the base health, scaled by a level multiplier
+        // that falls short of 1 below the curves' anchor
         let attrs = ActorAttributes::default();
         assert_eq!(attrs.total_level(), 0);
-        assert_eq!(attrs.max_health(), BASE_HEALTH, "Level 0 with no vitality should have the base health");
+        assert_eq!(attrs.max_health(), BASE_HEALTH * attrs.hp_level_multiplier());
+        assert!(attrs.max_health() < BASE_HEALTH, "below the anchor, a level-0 actor holds less than the base");
     }
 
     // ===== COMMITMENT TIER TESTS (, Layer 2) =====
