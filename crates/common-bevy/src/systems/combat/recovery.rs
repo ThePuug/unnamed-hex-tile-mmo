@@ -13,26 +13,24 @@ use crate::components::ActorAttributes;
 pub fn calculate_composure_reduction(
     composure: u16,
     target_impact: u16,
-    defender_level: u32,
-    attacker_level: u32,
+    edge: f32,
 ) -> f32 {
-    use crate::systems::combat::damage::{gap_factor, contest_factor};
+    use crate::systems::combat::damage::contest_factor;
 
     const BASE_REDUCTION: f32 = 0.33;
     const MAX_REDUCTION: f32 = 0.33;
 
-    let base = BASE_REDUCTION;
-    let gap = gap_factor(defender_level, attacker_level);
-    let contest = contest_factor(composure, target_impact);
+    let contest = contest_factor(composure, target_impact, edge);
 
-    (base * gap * contest).min(MAX_REDUCTION)
+    (BASE_REDUCTION * contest).min(MAX_REDUCTION)
 }
 
 /// System to tick down the global recovery timer.
-/// Applies Composure-based time reduction with gap and contest modifiers,
-/// and a daze's pace, which draws a dazed actor's lockout out.
+/// Applies Composure-based time reduction, its contest weighed by the level
+/// gap, and a daze's pace, which draws a dazed actor's lockout out.
 pub fn global_recovery_system(
     time: Res<Time>,
+    level_contest: Res<crate::systems::combat::damage::LevelContest>,
     mut commands: Commands,
     mut query: Query<(Entity, &mut GlobalRecovery, &ActorAttributes, Option<&crate::components::dazed::Dazed>)>,
 ) {
@@ -44,8 +42,7 @@ pub fn global_recovery_system(
             let reduction_pct = calculate_composure_reduction(
                 composure,
                 recovery.target_impact,
-                attrs.total_level(),
-                recovery.target_level,
+                level_contest.edge(attrs.total_level(), recovery.target_level),
             );
 
             // Convert reduction percentage to speed multiplier
@@ -90,14 +87,14 @@ mod tests {
 
     #[test]
     fn test_composure_reduction_zero() {
-        let reduction = calculate_composure_reduction(0, 0, 10, 10);
+        let reduction = calculate_composure_reduction(0, 0, 0.0);
         assert!((reduction - 0.0).abs() < 0.001, "0 composure → 0% reduction, got {reduction}");
     }
 
     #[test]
     fn test_composure_reduction_nullifies_at_equal() {
         // Equal level, equal stats: contest = 0 → nullified
-        let reduction = calculate_composure_reduction(100, 100, 10, 10);
+        let reduction = calculate_composure_reduction(100, 100, 0.0);
         assert!((reduction - 0.0).abs() < 0.001, "Equal stats → 0% reduction, got {reduction}");
     }
 }

@@ -12,22 +12,33 @@ use crate::components::ActorAttributes;
 
 /// Level gap scaling factor.
 
-/// Gaussian decay: e^(-gap² × ln(3) / 100)
-/// - Equal levels → 1.0
-/// - 10 level gap → 0.333
-/// - 20 level gap → ~0.012 (near zero)
+/// Contest points each level of gap is worth, on the higher-level side of
+/// every relative contest.
+pub const CONTEST_PER_LEVEL: f32 = 20.0;
 
-/// The beneficiary's effect is reduced when the opponent outlevels them.
-/// When beneficiary is equal or higher level, returns 1.0.
-pub fn gap_factor(beneficiary_level: u32, opponent_level: u32) -> f32 {
-    let gap = opponent_level.saturating_sub(beneficiary_level) as f32;
-    const K: f32 = 1.0986123 / 100.0; // ln(3) / 100
-    (-K * gap * gap).exp()
+/// How a level gap weighs in the relative contests: a flat number of contest
+/// points per level, on the higher-level side of every one, so an actor wins
+/// each contest a little against those below it whatever it has invested.
+/// The game plays on [`CONTEST_PER_LEVEL`]; the balance arena tries others.
+#[derive(bevy::prelude::Resource, Clone, Copy, Debug)]
+pub struct LevelContest {
+    pub per_level: f32,
 }
 
-/// The share of its reaction window an outleveled defender loses for each
-/// level the attacker stands above it, every level the same: halved at five.
-pub const WINDOW_PER_LEVEL: f32 = 0.1;
+impl Default for LevelContest {
+    fn default() -> Self {
+        Self { per_level: CONTEST_PER_LEVEL }
+    }
+}
+
+impl LevelContest {
+    /// The contest points the level gap gives an actor of `level` against
+    /// one of `opposing_level`: positive for the higher, negative for the
+    /// lower, nothing between equals.
+    pub fn edge(&self, level: u32, opposing_level: u32) -> f32 {
+        (level as f32 - opposing_level as f32) * self.per_level
+    }
+}
 
 /// Contest factor (Pattern 1: Nullifying).
 
@@ -37,13 +48,14 @@ pub const WINDOW_PER_LEVEL: f32 = 0.1;
 /// - Half advantage (150 delta) → 0.707 (~71% benefit)
 
 /// Used by: mitigation, pushback, healing reduction, synergy, recovery speed.
-pub fn contest_factor(advantage_stat: u16, counter_stat: u16) -> f32 {
-    let delta = advantage_stat as i32 - counter_stat as i32;
-    if delta <= 0 {
+/// `edge` is the level gap's contest points on the advantage side ([`LevelContest::edge`]).
+pub fn contest_factor(advantage_stat: u16, counter_stat: u16, edge: f32) -> f32 {
+    let delta = advantage_stat as f32 - counter_stat as f32 + edge;
+    if delta <= 0.0 {
         return 0.0;
     }
 
-    let normalized = (delta as f32 / 300.0).min(1.0);
+    let normalized = (delta / 300.0).min(1.0);
     normalized.sqrt()
 }
 
@@ -54,13 +66,14 @@ pub fn contest_factor(advantage_stat: u16, counter_stat: u16) -> f32 {
 /// - Max advantage → 1.5 (50% improvement)
 
 /// Used ONLY by reaction window to ensure playable baseline.
-pub fn reaction_contest_factor(cunning: u16, finesse: u16) -> f32 {
-    let delta = cunning as i32 - finesse as i32;
-    if delta <= 0 {
+/// `edge` is the level gap's contest points on the defender's side ([`LevelContest::edge`]).
+pub fn reaction_contest_factor(cunning: u16, finesse: u16, edge: f32) -> f32 {
+    let delta = cunning as f32 - finesse as f32 + edge;
+    if delta <= 0.0 {
         return 1.0;
     }
 
-    let normalized = (delta as f32 / 300.0).min(1.0);
+    let normalized = (delta / 300.0).min(1.0);
     1.0 + normalized.sqrt() * 0.5
 }
 
@@ -83,23 +96,21 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
 
 /// Calculate recovery pushback percentage: Impact's, alone.
 
-/// Pattern 1 (Nullifying): 50% × gap × contest_factor(Impact, Composure),
-/// capped at 50%, falling when the attacker is the one outleveled.
+/// Pattern 1 (Nullifying): 50% × contest_factor(Impact, Composure), capped at
+/// 50%, with the level gap's `edge` on the attacker's side.
 
 /// Applied to effective_recovery_base (after composure, before synergy).
 pub fn calculate_recovery_pushback(
     attacker_impact: u16,
     defender_composure: u16,
-    attacker_level: u32,
-    defender_level: u32,
+    edge: f32,
 ) -> f32 {
     const BASE_PUSHBACK: f32 = 0.50;
     const MAX_PUSHBACK: f32 = 0.50;
 
-    let gap = gap_factor(attacker_level, defender_level);
-    let contest = contest_factor(attacker_impact, defender_composure);
+    let contest = contest_factor(attacker_impact, defender_composure, edge);
 
-    (BASE_PUSHBACK * gap * contest).min(MAX_PUSHBACK)
+    (BASE_PUSHBACK * contest).min(MAX_PUSHBACK)
 }
 
 /// Scan for the strongest Dominance aura within range of target, among
@@ -140,17 +151,15 @@ pub fn apply_passive_modifiers(
     outgoing_damage: f32,
     attrs: &ActorAttributes,
     max_dominance_in_range: u16,
-    attacker_level: u32,
+    edge: f32,
 ) -> f32 {
     const BASE_MITIGATION: f32 = 0.75;
     const MAX_MITIGATION: f32 = 0.75;
 
     let toughness = attrs.toughness();
-    let base = BASE_MITIGATION;
-    let gap = gap_factor(attrs.total_level(), attacker_level);
-    let contest = contest_factor(toughness, max_dominance_in_range);
+    let contest = contest_factor(toughness, max_dominance_in_range, edge);
 
-    let mitigation = (base * gap * contest).min(MAX_MITIGATION);
+    let mitigation = (BASE_MITIGATION * contest).min(MAX_MITIGATION);
     (outgoing_damage * (1.0 - mitigation)).max(0.0)
 }
 
@@ -168,23 +177,14 @@ mod tests {
     }
 
     #[test]
-    fn test_gap_factor_equal_levels_is_one() {
-        assert!((gap_factor(10, 10) - 1.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_gap_factor_10_level_gap() {
-        let f = gap_factor(10, 20);
-        assert!((f - 0.333).abs() < 0.01, "10 level gap should be ~0.333, got {f}");
-    }
-
-    #[test]
-    fn test_gap_factor_20_level_gap_near_zero() {
-        assert!(gap_factor(10, 30) < 0.05);
-    }
-
-    #[test]
-    fn test_gap_factor_beneficiary_higher_stays_one() {
-        assert!((gap_factor(20, 10) - 1.0).abs() < 0.001);
+    fn a_level_edge_favours_the_higher_level_in_a_contest() {
+        let contest = LevelContest { per_level: 20.0 };
+        assert_eq!(contest.edge(10, 10), 0.0, "equals, no edge");
+        assert!(contest.edge(10, 6) > 0.0 && contest.edge(6, 10) < 0.0, "the higher level's edge, the lower's deficit");
+        assert_eq!(contest_factor(100, 100, 0.0), 0.0, "equal stats nullify");
+        assert!(contest_factor(100, 100, contest.edge(10, 6)) > 0.0, "a level edge wins an even contest");
+        assert!(contest_factor(150, 100, contest.edge(6, 10)) < contest_factor(150, 100, 0.0), "outleveled, an advantage shrinks");
+        assert_eq!(reaction_contest_factor(0, 0, contest.edge(6, 10)), 1.0, "an outleveled window keeps its base");
+        assert!(reaction_contest_factor(0, 0, contest.edge(10, 6)) > 1.0, "a higher-level defender's window grows");
     }
 }

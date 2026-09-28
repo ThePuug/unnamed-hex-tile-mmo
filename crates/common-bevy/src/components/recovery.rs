@@ -12,7 +12,7 @@ pub struct GlobalRecovery {
     pub duration: f32,               // Total duration of current lockout
     pub triggered_by: AbilityType,   // Which ability triggered this lockout
     pub target_impact: u16,          // Impact of the target attacked (contests Composure)
-    pub target_level: u32,           // Level of the target attacked (for gap_factor)
+    pub target_level: u32,           // Level of the target attacked (its level edge in Composure's contest)
 }
 
 impl GlobalRecovery {

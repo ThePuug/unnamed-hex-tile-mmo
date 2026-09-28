@@ -228,6 +228,7 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     app.insert_resource(flat_map());
     app.insert_resource(SpawnPoint(Qrz { q: 0, r: 0, z: 1 }));
     app.insert_resource(settings.tuning.clone());
+    app.insert_resource(common_bevy::systems::combat::damage::LevelContest { per_level: settings.tuning.contest_per_level });
     app.init_resource::<Tally>();
     app.add_systems(Update, (actor::update, tally_used));
     app.add_systems(PostUpdate, renet::cleanup_despawned);

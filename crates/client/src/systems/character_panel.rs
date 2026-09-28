@@ -1318,21 +1318,21 @@ pub fn update_attributes(
                     MetaAttributeStat::Impact => {
                         // Recovery pushback: 0.50 × gap × contest_factor
                         let impact = display_attrs.impact();
-                        let contest = contest_factor(impact, 0);  // vs 0 composure
+                        let contest = contest_factor(impact, 0, 0.0);  // vs 0 composure
                         let pushback_pct = (0.50 * contest) * 100.0;
                         format!("+{:.0}%", pushback_pct)
                     },
                     MetaAttributeStat::Composure => {
                         // Recovery time reduction: 0.33 × gap × contest_factor
                         let composure = display_attrs.composure();
-                        let contest = contest_factor(composure, 0);  // vs 0 impact
+                        let contest = contest_factor(composure, 0, 0.0);  // vs 0 impact
                         let reduction_pct = (0.33 * contest) * 100.0;
                         format!("-{:.0}%", reduction_pct)
                     },
                     MetaAttributeStat::Finesse => {
                         // Synergy reduction: 0.66 × gap × contest_factor
                         let finesse = display_attrs.finesse();
-                        let contest = contest_factor(finesse, 0);  // vs 0 cunning
+                        let contest = contest_factor(finesse, 0, 0.0);  // vs 0 cunning
                         let reduction_pct = (0.66 * contest) * 100.0;
                         format!("-{:.0}%", reduction_pct)
                     },
@@ -1340,7 +1340,7 @@ pub fn update_attributes(
                         // Reaction window: 3.0s × (1.0 + 0.5 × contest_factor)
                         // Display raw time value (different pattern from other stats)
                         let cunning = display_attrs.cunning();
-                        let contest = contest_factor(cunning, 0);  // vs 0 finesse
+                        let contest = contest_factor(cunning, 0, 0.0);  // vs 0 finesse
                         let multiplier = 1.0 + 0.5 * contest;
                         let window_seconds = 3.0 * multiplier;
                         format!("{:.1}s", window_seconds)
@@ -1348,14 +1348,14 @@ pub fn update_attributes(
                     MetaAttributeStat::Dominance => {
                         // Healing reduction aura: 0.25 × gap × contest_factor
                         let dominance = display_attrs.dominance();
-                        let contest = contest_factor(dominance, 0);  // vs 0 toughness
+                        let contest = contest_factor(dominance, 0, 0.0);  // vs 0 toughness
                         let reduction_pct = (0.25 * contest) * 100.0;
                         format!("-{:.0}%", reduction_pct)
                     },
                     MetaAttributeStat::Toughness => {
                         // Damage mitigation: 0.75 × gap × contest_factor
                         let toughness = display_attrs.toughness();
-                        let contest = contest_factor(toughness, 0);  // vs 0 dominance
+                        let contest = contest_factor(toughness, 0, 0.0);  // vs 0 dominance
                         let mitigation_pct = (0.75 * contest) * 100.0;
                         format!("-{:.0}%", mitigation_pct)
                     },

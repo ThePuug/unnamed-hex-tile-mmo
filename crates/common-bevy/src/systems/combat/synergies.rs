@@ -61,7 +61,7 @@ pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
 
 /// Apply synergies when an ability is used.
 
-/// Pattern 1 (Nullifying): 66% × gap × contest_factor
+/// Pattern 1 (Nullifying): 66% × contest_factor, the level gap weighing in
 /// - Calculates percentage reduction of effective_recovery_base
 /// - Creates early unlock window for synergized abilities
 /// - Stacks multiplicatively with composure reduction
@@ -74,6 +74,7 @@ pub fn apply_synergies(
     recovery: &GlobalRecovery,
     attacker_attrs: &ActorAttributes,
     defender_attrs: &ActorAttributes,
+    level_contest: damage_calc::LevelContest,
     commands: &mut Commands,
 ) {
     // Get the trigger type for the used ability
@@ -81,12 +82,12 @@ pub fn apply_synergies(
         return; // No synergies for this ability
     };
 
-    // Pattern 1 (Nullifying): base × gap × contest_factor
+    // Pattern 1 (Nullifying): base × contest_factor, the level gap weighing in
     const BASE_REDUCTION: f32 = 0.66; // 66% max reduction
-    let gap = damage_calc::gap_factor(attacker_attrs.total_level(), defender_attrs.total_level());
-    let contest = damage_calc::contest_factor(attacker_attrs.finesse(), defender_attrs.cunning());
+    let edge = level_contest.edge(attacker_attrs.total_level(), defender_attrs.total_level());
+    let contest = damage_calc::contest_factor(attacker_attrs.finesse(), defender_attrs.cunning(), edge);
 
-    let synergy_reduction = (BASE_REDUCTION * gap * contest).min(0.66);
+    let synergy_reduction = (BASE_REDUCTION * contest).min(0.66);
 
     // No synergy unlock without meaningful finesse investment
     if synergy_reduction < f32::EPSILON {
@@ -265,7 +266,7 @@ mod tests {
         // apply_synergies should NOT insert a SynergyUnlock component
         let finesse = 0u16;
         let cunning = 0u16;
-        let contest = damage_calc::contest_factor(finesse, cunning);
+        let contest = damage_calc::contest_factor(finesse, cunning, 0.0);
         assert_eq!(contest, 0.0, "contest_factor(0, 0) should be 0");
 
         let synergy_reduction = (0.66_f32 * 1.0 * contest).min(0.66);

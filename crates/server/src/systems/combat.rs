@@ -21,6 +21,7 @@ pub fn process_deal_damage(
     time: Res<Time>,
     runtime: Res<crate::resources::RunTime>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
+    level_contest: Res<damage_calc::LevelContest>,
     mut writer: MessageWriter<Do>,
 ) {
     let event = &trigger.event().event;
@@ -62,8 +63,7 @@ pub fn process_deal_damage(
             let pushback_pct = damage_calc::calculate_recovery_pushback(
                 source_attrs.impact(),
                 attrs.composure(),
-                source_attrs.total_level(),
-                attrs.total_level(),
+                level_contest.edge(source_attrs.total_level(), attrs.total_level()),
             );
             recovery.apply_pushback(pushback_pct);
         }
@@ -78,7 +78,7 @@ pub fn process_deal_damage(
             *ability,      // Ability
             now,           // Current time
             dot,           // DoT per tick, a wound's
-            tuning.window_per_level,
+            *level_contest,
         );
 
         // Try to insert threat into queue
@@ -121,6 +121,7 @@ pub fn resolve_threat(
     mut query: Query<(&mut Health, &ActorAttributes)>,
     actors: Query<(&Loc, &ActorAttributes)>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
+    level_contest: Res<damage_calc::LevelContest>,
     mut writer: MessageWriter<Do>,
 ) {
     let event = &trigger.event().event;
@@ -132,7 +133,7 @@ pub fn resolve_threat(
 
             // Apply passive mitigation (unified for all damage types), less what the
             // ability pierces
-            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_dominance, dominant_level);
+            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_dominance, level_contest.edge(attrs.total_level(), dominant_level));
             let pierce = threat.ability.map_or(0.0, |ability| tuning.pierce(ability));
             let final_damage = mitigated + (threat.damage - mitigated) * pierce + threat.dot_left();
 

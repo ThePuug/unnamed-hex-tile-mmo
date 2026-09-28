@@ -13,6 +13,7 @@ pub fn handle_ability_used(
     mut do_reader: MessageReader<Do>,
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     target_query: Query<&Target>,
+    level_contest: Res<common_bevy::systems::combat::damage::LevelContest>,
 ) {
     for event in do_reader.read() {
         let Do { event: GameEvent::UseAbility { ent, ability, target: _ } } = event else {
@@ -39,7 +40,7 @@ pub fn handle_ability_used(
                 let defender_attrs_opt = target_entity.and_then(|te| attrs_query.get(te).ok());
 
                 let defender_attrs = defender_attrs_opt.unwrap_or(attacker_attrs);
-                apply_synergies(*ent, *ability, &recovery, attacker_attrs, defender_attrs, &mut commands);
+                apply_synergies(*ent, *ability, &recovery, attacker_attrs, defender_attrs, *level_contest, &mut commands);
             }
         }
     }

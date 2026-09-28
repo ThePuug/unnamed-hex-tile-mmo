@@ -27,6 +27,7 @@ pub fn handle_counter(
     time: Res<Time>,
     runtime: Res<RunTime>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
+    level_contest: Res<common_bevy::systems::combat::damage::LevelContest>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -171,7 +172,7 @@ pub fn handle_counter(
                 Some(AbilityType::Counter),   // Ability
                 now,                          // Current time
                 0.0,                          // A reflection is a blow
-                tuning.window_per_level,
+                *level_contest,
             );
 
             // A reflection lands on impact, never queued, so a counter cannot be countered back
@@ -215,6 +216,6 @@ pub fn handle_counter(
         let Ok(attrs) = attrs_query.get(*ent) else {
             continue;
         };
-        apply_synergies(*ent, AbilityType::Counter, &recovery, attrs, attrs, &mut commands);
+        apply_synergies(*ent, AbilityType::Counter, &recovery, attrs, attrs, *level_contest, &mut commands);
     }
 }

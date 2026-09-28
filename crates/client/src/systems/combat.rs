@@ -13,6 +13,7 @@ pub fn handle_insert_threat(
     mut reader: MessageReader<Do>,
     mut query: Query<(&mut ReactionQueue, &ActorAttributes, Option<&mut common_bevy::components::recovery::GlobalRecovery>)>,
     attrs_query: Query<&ActorAttributes>,
+    level_contest: Res<damage_calc::LevelContest>,
     time: Res<Time>,
     server: Res<crate::resources::Server>,
 ) {
@@ -33,8 +34,7 @@ pub fn handle_insert_threat(
                         let pushback_pct = damage_calc::calculate_recovery_pushback(
                             source_attrs.impact(),
                             defender_attrs.composure(),
-                            source_attrs.total_level(),
-                            defender_attrs.total_level(),
+                            level_contest.edge(source_attrs.total_level(), defender_attrs.total_level()),
                         );
                         recovery.apply_pushback(pushback_pct);
                     }
