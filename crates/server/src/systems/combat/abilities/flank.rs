@@ -104,14 +104,16 @@ pub fn handle_flank(
             if let Ok(mut assignment) = member_query.get(*ent).and_then(|member| assignment_query.get_mut(member.0)) {
                 let left = assignment.get(*ent);
                 let holder = assignment.assignments.iter().find(|&(npc, hex)| *hex == landing && *npc != *ent).map(|(npc, _)| *npc);
+                // The map keeps the fallen until the engagement next reassigns, so
+                // the holder may be gone by the time the command lands
                 match (holder, left) {
                     (Some(holder), Some(left)) => {
                         assignment.assignments.insert(holder, left);
-                        commands.entity(holder).insert(AssignedHex(left));
+                        commands.entity(holder).try_insert(AssignedHex(left));
                     }
                     (Some(holder), None) => {
                         assignment.remove(holder);
-                        commands.entity(holder).remove::<AssignedHex>();
+                        commands.entity(holder).try_remove::<AssignedHex>();
                     }
                     (None, _) => {}
                 }
