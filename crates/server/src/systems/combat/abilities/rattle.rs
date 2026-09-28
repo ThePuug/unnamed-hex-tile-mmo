@@ -10,8 +10,8 @@ pub const RATTLE_STAMINA_COST: f32 = 40.0;
 /// The least pace a daze leaves: a dazed actor still moves and swings.
 const MIN_PACE: f32 = 0.1;
 
-/// Handle Rattle, the Juggernaut's signature: a strike on an adjacent
-/// target that adds a stack to its daze (`Dazed`), up to `rattle_stacks`.
+/// Handle Rattle, the Juggernaut's signature: a strike on a target within
+/// melee reach that adds a stack to its daze (`Dazed`), up to `rattle_stacks`.
 /// Each stack takes `rattle_daze` of its pace, its movement, auto-attacks
 /// and recovery alike. The strike is Vitality's: `rattle_health` of the
 /// Juggernaut's own health, and `rattle_growth` more for each stack already
@@ -52,7 +52,8 @@ pub fn handle_rattle(
         let (Ok(caster_loc), Ok(target_loc)) = (loc_query.get(*ent), loc_query.get(target_ent)) else {
             continue;
         };
-        if caster_loc.flat_distance(target_loc) != 1 {
+        let distance = caster_loc.flat_distance(target_loc);
+        if distance < 1 || distance > common_bevy::components::AttackRange::default().0 {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
             continue;
         }

@@ -21,7 +21,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 
 /// Ability usage rules:
 /// - Berserker (Lunge): Use when target is within 4 hexes, adjacent included (burst and gap closer)
-/// - Juggernaut (Rattle): Use when adjacent to target (each one dazes it further)
+/// - Juggernaut (Rattle): Use when target is within melee reach (each one dazes it further)
 /// - Kiter (Volley): Use when target is within 6 hexes (a burst from range)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
 /// - Skirmisher (Disengage): Reactive - dodges the blow at the front of its queue, an auto-attack's as overflow
@@ -125,7 +125,7 @@ pub fn npc_ability_usage(
         let should_use_ability = match archetype {
             // Lunge: its burst, and its reach to anything within 4
             EnemyArchetype::Berserker => (1..=4).contains(&distance),
-            EnemyArchetype::Juggernaut => distance == 1,
+            EnemyArchetype::Juggernaut => (1..=common_bevy::components::AttackRange::default().0).contains(&distance),
             EnemyArchetype::Kiter => distance as u32 <= crate::systems::combat::abilities::volley::VOLLEY_RANGE,
             EnemyArchetype::Cutthroat => (1..=common_bevy::components::AttackRange::default().0).contains(&distance),
             // Defender's Counter and Skirmisher's Disengage are handled above
