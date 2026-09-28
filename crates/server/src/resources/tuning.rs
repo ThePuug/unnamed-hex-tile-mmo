@@ -64,7 +64,7 @@ pub struct ArchetypeTuning {
 impl Default for ArchetypeTuning {
     fn default() -> Self {
         Self {
-            berserker_delay: (5000, 7000),
+            berserker_delay: (4000, 6000),
             juggernaut_delay: (5000, 7000),
             kiter_delay: (2000, 4000),
             defender_delay: (1000, 3000),
@@ -76,8 +76,8 @@ impl Default for ArchetypeTuning {
             base_health: common_bevy::components::BASE_HEALTH,
             health_per_vitality: common_bevy::components::HEALTH_PER_VITALITY,
             auto_damage: 1.05,
-            lunge_force: 1.0,
-            lunge_dot: 0.15,
+            lunge_force: 0.7,
+            lunge_dot: 0.21,
             rattle_health: 0.035,
             rattle_growth: 0.343,
             rattle_daze: 0.049,
