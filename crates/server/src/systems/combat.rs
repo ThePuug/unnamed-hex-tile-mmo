@@ -64,8 +64,7 @@ pub fn process_deal_damage(
                 attrs.composure(),
                 source_attrs.total_level(),
                 attrs.total_level(),
-                tuning.pushback_gap,
-                tuning.level_pushback,
+                tuning.pushback_per_level,
             );
             recovery.apply_pushback(pushback_pct);
         }
@@ -80,7 +79,7 @@ pub fn process_deal_damage(
             *ability,      // Ability
             now,           // Current time
             dot,           // DoT per tick, a wound's
-            tuning.window_gap,
+            tuning.window_per_level,
         );
 
         // Try to insert threat into queue

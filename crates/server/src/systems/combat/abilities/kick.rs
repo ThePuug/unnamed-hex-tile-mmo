@@ -197,7 +197,7 @@ pub fn handle_kick(
                         Some(AbilityType::Kick),
                         now,
                         0.0,
-                        tuning.window_gap,
+                        tuning.window_per_level,
                     );
 
                     common_bevy::systems::combat::queue::insert_threat(&mut target_queue, kick_threat, now);

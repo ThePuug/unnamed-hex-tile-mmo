@@ -20,31 +20,18 @@ use crate::components::ActorAttributes;
 /// The beneficiary's effect is reduced when the opponent outlevels them.
 /// When beneficiary is equal or higher level, returns 1.0.
 pub fn gap_factor(beneficiary_level: u32, opponent_level: u32) -> f32 {
-    gap_factor_at(beneficiary_level, opponent_level, GAP_THIRD)
-}
-
-/// The level gap at which an outleveled actor's effect falls to a third,
-/// for every gap mechanic without its own.
-pub const GAP_THIRD: f32 = 10.0;
-
-/// The level gap at which an outleveled defender's reaction window falls to a third.
-pub const WINDOW_GAP: f32 = GAP_THIRD;
-
-/// The level gap at which a hit's level pushback on an outleveled defender
-/// reaches two-thirds of [`LEVEL_PUSHBACK`].
-pub const PUSHBACK_GAP: f32 = GAP_THIRD;
-
-/// The most a hit from a higher-level attacker pushes back an outleveled
-/// defender's recovery, as a share of its lockout, before any Impact.
-pub const LEVEL_PUSHBACK: f32 = 0.0;
-
-/// [`gap_factor`] falling to a third at a gap of `third_at` levels: the same
-/// Gaussian, `e^(-gap² × ln(3) / third_at²)`.
-pub fn gap_factor_at(beneficiary_level: u32, opponent_level: u32, third_at: f32) -> f32 {
     let gap = opponent_level.saturating_sub(beneficiary_level) as f32;
-    let k = 1.0986123 / (third_at * third_at); // ln(3) / third_at²
-    (-k * gap * gap).exp()
+    const K: f32 = 1.0986123 / 100.0; // ln(3) / 100
+    (-K * gap * gap).exp()
 }
+
+/// The share of its reaction window an outleveled defender loses for each
+/// level the attacker stands above it, every level the same.
+pub const WINDOW_PER_LEVEL: f32 = 0.05;
+
+/// The share of its lockout each hit from a higher-level attacker adds to an
+/// outleveled defender's, for each level of the gap, every level the same.
+pub const PUSHBACK_PER_LEVEL: f32 = 0.0;
 
 /// Contest factor (Pattern 1: Nullifying).
 
@@ -101,10 +88,9 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
 /// Calculate recovery pushback percentage: a level part and an Impact part,
 /// added.
 
-/// - **Level:** a higher-level attacker pushes back an outleveled defender,
-///   by nothing between equals and toward `level_pushback` as the gap grows,
-///   two-thirds of it at a gap of `pushback_gap` levels ([`LEVEL_PUSHBACK`]
-///   and [`PUSHBACK_GAP`] in the game).
+/// - **Level:** a higher-level attacker pushes back an outleveled defender
+///   by `pushback_per_level` for each level of the gap
+///   ([`PUSHBACK_PER_LEVEL`] in the game), nothing between equals.
 /// - **Impact** (Pattern 1, Nullifying): 50% × gap × contest_factor(Impact,
 ///   Composure), capped at 50%, falling when the attacker is the one
 ///   outleveled.
@@ -115,13 +101,12 @@ pub fn calculate_recovery_pushback(
     defender_composure: u16,
     attacker_level: u32,
     defender_level: u32,
-    pushback_gap: f32,
-    level_pushback: f32,
+    pushback_per_level: f32,
 ) -> f32 {
     const BASE_PUSHBACK: f32 = 0.50;
     const MAX_PUSHBACK: f32 = 0.50;
 
-    let level = level_pushback * (1.0 - gap_factor_at(defender_level, attacker_level, pushback_gap));
+    let level = pushback_per_level * attacker_level.saturating_sub(defender_level) as f32;
     let gap = gap_factor(attacker_level, defender_level);
     let contest = contest_factor(attacker_impact, defender_composure);
 

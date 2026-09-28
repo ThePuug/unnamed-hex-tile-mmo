@@ -19,12 +19,10 @@ pub struct ArchetypeTuning {
     pub lunge_pierce: f32,
     /// Share of an attack's damage its roll lands either side of it
     pub damage_spread: f32,
-    /// Levels of gap at which an outleveled defender's reaction window falls to a third
-    pub window_gap: f32,
-    /// Levels of gap at which a hit's level pushback on an outleveled defender reaches two-thirds of level_pushback
-    pub pushback_gap: f32,
-    /// Most a hit from a higher-level attacker pushes back an outleveled defender's recovery, a share of its lockout
-    pub level_pushback: f32,
+    /// Share of its reaction window an outleveled defender loses per level of gap
+    pub window_per_level: f32,
+    /// Share of its lockout each hit adds to an outleveled defender's per level of gap
+    pub pushback_per_level: f32,
     /// An NPC's health before Vitality, the game's `BASE_HEALTH` unless tried otherwise
     pub base_health: f32,
     /// An NPC's health per point of Vitality, the game's `HEALTH_PER_VITALITY` unless tried otherwise
@@ -72,9 +70,8 @@ impl Default for ArchetypeTuning {
             cutthroat_delay: (3000, 5000),
             lunge_pierce: 0.7,
             damage_spread: 0.2,
-            window_gap: common_bevy::systems::combat::damage::WINDOW_GAP,
-            pushback_gap: common_bevy::systems::combat::damage::PUSHBACK_GAP,
-            level_pushback: common_bevy::systems::combat::damage::LEVEL_PUSHBACK,
+            window_per_level: common_bevy::systems::combat::damage::WINDOW_PER_LEVEL,
+            pushback_per_level: common_bevy::systems::combat::damage::PUSHBACK_PER_LEVEL,
             base_health: common_bevy::components::BASE_HEALTH,
             health_per_vitality: common_bevy::components::HEALTH_PER_VITALITY,
             auto_damage: 1.05,
@@ -140,9 +137,8 @@ impl ArchetypeTuning {
             "lunge_pierce" => self.lunge_pierce = number()?,
             "lunge_dot" => self.lunge_dot = number()?,
             "damage_spread" => self.damage_spread = number()?,
-            "window_gap" => self.window_gap = number()?,
-            "pushback_gap" => self.pushback_gap = number()?,
-            "level_pushback" => self.level_pushback = number()?,
+            "window_per_level" => self.window_per_level = number()?,
+            "pushback_per_level" => self.pushback_per_level = number()?,
             "base_health" => self.base_health = number()?,
             "health_per_vitality" => self.health_per_vitality = number()?,
             "auto_damage" => self.auto_damage = number()?,
