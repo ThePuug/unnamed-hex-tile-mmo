@@ -83,11 +83,11 @@ pub fn apply_synergies(
     };
 
     // Pattern 1 (Nullifying): base × contest_factor, the level gap weighing in
-    const BASE_REDUCTION: f32 = 0.66; // 66% max reduction
+    const BASE_REDUCTION: f32 = 0.66; // at a 300-point advantage; no ceiling
     let edge = level_contest.edge(attacker_attrs.total_level(), defender_attrs.total_level());
     let contest = damage_calc::contest_factor(attacker_attrs.finesse(), defender_attrs.cunning(), edge);
 
-    let synergy_reduction = (BASE_REDUCTION * contest).min(0.66);
+    let synergy_reduction = BASE_REDUCTION * contest;
 
     // No synergy unlock without meaningful finesse investment
     if synergy_reduction < f32::EPSILON {
@@ -269,7 +269,7 @@ mod tests {
         let contest = damage_calc::contest_factor(finesse, cunning, 0.0);
         assert_eq!(contest, 0.0, "contest_factor(0, 0) should be 0");
 
-        let synergy_reduction = (0.66_f32 * 1.0 * contest).min(0.66);
+        let synergy_reduction = 0.66_f32 * contest;
         assert!(synergy_reduction < f32::EPSILON,
             "No synergy reduction without finesse investment");
     }

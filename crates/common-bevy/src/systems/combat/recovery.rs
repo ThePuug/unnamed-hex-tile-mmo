@@ -5,11 +5,12 @@ use crate::components::ActorAttributes;
 
 /// Calculate Composure-based recovery time reduction percentage.
 
-/// Pattern 1 (Nullifying): base × gap × contest_factor
-/// Base: 33%, Cap: 33%
+/// Pattern 1 (Nullifying): 33% × contest_factor(Composure, target's Impact),
+/// with no ceiling.
 
-/// Returns reduction percentage (0.0 to 0.33).
-/// Caller converts to speed multiplier: 1.0 / (1.0 - reduction)
+/// Returns reduction percentage, 0 and up.
+/// Caller converts to speed multiplier: 1.0 / (1.0 - reduction), a lockout
+/// all but gone at 100%.
 pub fn calculate_composure_reduction(
     composure: u16,
     target_impact: u16,
@@ -18,11 +19,8 @@ pub fn calculate_composure_reduction(
     use crate::systems::combat::damage::contest_factor;
 
     const BASE_REDUCTION: f32 = 0.33;
-    const MAX_REDUCTION: f32 = 0.33;
 
-    let contest = contest_factor(composure, target_impact, edge);
-
-    (BASE_REDUCTION * contest).min(MAX_REDUCTION)
+    BASE_REDUCTION * contest_factor(composure, target_impact, edge)
 }
 
 /// System to tick down the global recovery timer.

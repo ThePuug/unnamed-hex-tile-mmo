@@ -42,10 +42,10 @@ impl LevelContest {
 
 /// Contest factor (Pattern 1: Nullifying).
 
-/// Returns 0 to 1.0:
+/// Returns 0 and up, with no ceiling:
 /// - Equal/losing → 0 (effect nullified)
-/// - Max advantage (300 delta) → 1.0 (full effect)
-/// - Half advantage (150 delta) → 0.707 (~71% benefit)
+/// - 300 advantage → 1.0, the effect's base share
+/// - Past it, growing as the square root: 1200 → 2.0
 
 /// Used by: mitigation, pushback, healing reduction, synergy, recovery speed.
 /// `edge` is the level gap's contest points on the advantage side ([`LevelContest::edge`]).
@@ -55,8 +55,7 @@ pub fn contest_factor(advantage_stat: u16, counter_stat: u16, edge: f32) -> f32 
         return 0.0;
     }
 
-    let normalized = (delta / 300.0).min(1.0);
-    normalized.sqrt()
+    (delta / 300.0).sqrt()
 }
 
 /// Reaction window contest (Pattern 2: Baseline+Bonus).
@@ -73,8 +72,7 @@ pub fn reaction_contest_factor(cunning: u16, finesse: u16, edge: f32) -> f32 {
         return 1.0;
     }
 
-    let normalized = (delta / 300.0).min(1.0);
-    1.0 + normalized.sqrt() * 0.5
+    1.0 + (delta / 300.0).sqrt() * 0.5
 }
 
 /// Calculate outgoing damage (Phase 1 pass-through).
@@ -96,8 +94,9 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
 
 /// Calculate recovery pushback percentage: Impact's, alone.
 
-/// Pattern 1 (Nullifying): 50% × contest_factor(Impact, Composure), capped at
-/// 50%, with the level gap's `edge` on the attacker's side.
+/// Pattern 1 (Nullifying): 50% × contest_factor(Impact, Composure), with the
+/// level gap's `edge` on the attacker's side. No ceiling: the lockout itself
+/// never stretches past twice its length.
 
 /// Applied to effective_recovery_base (after composure, before synergy).
 pub fn calculate_recovery_pushback(
@@ -106,11 +105,8 @@ pub fn calculate_recovery_pushback(
     edge: f32,
 ) -> f32 {
     const BASE_PUSHBACK: f32 = 0.50;
-    const MAX_PUSHBACK: f32 = 0.50;
 
-    let contest = contest_factor(attacker_impact, defender_composure, edge);
-
-    (BASE_PUSHBACK * contest).min(MAX_PUSHBACK)
+    BASE_PUSHBACK * contest_factor(attacker_impact, defender_composure, edge)
 }
 
 /// Scan for the strongest Dominance aura within range of target, among
@@ -134,8 +130,8 @@ pub fn find_max_dominance_in_range(
 
 /// Apply passive mitigation to damage (unified for all damage types).
 
-/// Pattern 1 (Nullifying): base × gap × contest_factor
-/// Base: 75%, Cap: 75%
+/// Pattern 1 (Nullifying): 75% × contest_factor(Toughness, Dominance), with no
+/// ceiling: past 100% the blow does nothing.
 pub fn apply_passive_modifiers(
     outgoing_damage: f32,
     attrs: &ActorAttributes,
@@ -143,12 +139,8 @@ pub fn apply_passive_modifiers(
     edge: f32,
 ) -> f32 {
     const BASE_MITIGATION: f32 = 0.75;
-    const MAX_MITIGATION: f32 = 0.75;
 
-    let toughness = attrs.toughness();
-    let contest = contest_factor(toughness, max_dominance_in_range, edge);
-
-    let mitigation = (BASE_MITIGATION * contest).min(MAX_MITIGATION);
+    let mitigation = BASE_MITIGATION * contest_factor(attrs.toughness(), max_dominance_in_range, edge);
     (outgoing_damage * (1.0 - mitigation)).max(0.0)
 }
 
