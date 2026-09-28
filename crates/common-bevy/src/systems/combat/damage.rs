@@ -115,32 +115,21 @@ pub fn calculate_recovery_pushback(
 
 /// Scan for the strongest Dominance aura within range of target, among
 /// `actors`, each read with its own position.
-/// Returns (max_dominance, level_of_dominant_entity).
 pub fn find_max_dominance_in_range(
     target: Entity,
     actors: &bevy::prelude::Query<(&crate::components::Loc, &ActorAttributes)>,
-) -> (u16, u32) {
+) -> u16 {
     const RADIUS: i32 = 5;
 
     let Ok((target_loc, _)) = actors.get(target) else {
-        return (0, 0);
+        return 0;
     };
 
-    let mut max_dominance = 0u16;
-    let mut dominant_level = 0u32;
-
-    for (loc, attrs) in actors.iter() {
-        let distance = target_loc.flat_distance(loc) as i32;
-        if distance <= RADIUS {
-            let dominance = attrs.dominance();
-            if dominance > max_dominance {
-                max_dominance = dominance;
-                dominant_level = attrs.total_level();
-            }
-        }
-    }
-
-    (max_dominance, dominant_level)
+    actors.iter()
+        .filter(|(loc, _)| target_loc.flat_distance(loc) as i32 <= RADIUS)
+        .map(|(_, attrs)| attrs.dominance())
+        .max()
+        .unwrap_or(0)
 }
 
 /// Apply passive mitigation to damage (unified for all damage types).

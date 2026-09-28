@@ -128,12 +128,14 @@ pub fn resolve_threat(
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
         if let Ok((mut health, attrs)) = query.get_mut(*ent) {
-            // Scan for strongest Dominance aura affecting this entity
-            let (max_dominance, dominant_level) = damage_calc::find_max_dominance_in_range(*ent, &actors);
+            // The strongest Dominance aura nearby weighs against the defender's Toughness; the
+            // level edge is the defender's against the attacker, whose blow the armour meets
+            let max_dominance = damage_calc::find_max_dominance_in_range(*ent, &actors);
+            let attacker_level = actors.get(threat.source).map_or(attrs.total_level(), |(_, source)| source.total_level());
 
             // Apply passive mitigation (unified for all damage types), less what the
             // ability pierces
-            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_dominance, level_contest.edge(attrs.total_level(), dominant_level));
+            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_dominance, level_contest.edge(attrs.total_level(), attacker_level));
             let pierce = threat.ability.map_or(0.0, |ability| tuning.pierce(ability));
             let final_damage = mitigated + (threat.damage - mitigated) * pierce + threat.dot_left();
 
