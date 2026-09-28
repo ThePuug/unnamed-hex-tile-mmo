@@ -60,13 +60,13 @@ pub struct ArchetypeTuning {
 impl Default for ArchetypeTuning {
     fn default() -> Self {
         Self {
-            berserker_delay: (4000, 6000),
+            berserker_delay: (5000, 7000),
             juggernaut_delay: (5000, 7000),
-            kiter_delay: (2000, 4000),
+            kiter_delay: (3000, 5000),
             defender_delay: (1000, 3000),
             skirmisher_delay: (5000, 7000),
             cutthroat_delay: (3000, 5000),
-            lunge_pierce: 0.7,
+            lunge_pierce: 0.49,
             damage_spread: 0.2,
             contest_per_level: common_bevy::systems::combat::damage::CONTEST_PER_LEVEL,
             base_health: common_bevy::components::BASE_HEALTH,
