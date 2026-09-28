@@ -243,11 +243,11 @@ speed nearest its authored pace.
 style, as a child of the actor. `client::systems::equipment` points its
 skin's joints at the actor's by name, or hangs a socket piece from the rig's
 `socket.<name>` node, and drops the GLB's copy of the rig.
-`client::systems::hiding` reads the node extras: `hides` regions in the
-build's z-up frame, judged at `_CENTRE`; `covers`, triangles of the actor's
-mesh; `socket`. It swaps index buffers on cached copies shared by every
-actor in the same combination. `Piece::name` is both the asset stem and the
-key `hides.over` names, so the two must agree.
+`client::systems::hiding` reads the node extras: `covers`, triangles of the
+actor's mesh the piece's leather lies over; `socket`. It swaps the actor's
+index buffer on cached copies shared by every actor in the same
+combination; no piece hides any of another. `Piece::name` is the asset
+stem.
 
 **Water.** A tile's water is one surface, a z-level, published by dissection
 and rounded once, in `Composite::water_at`: surface and ground round to the
