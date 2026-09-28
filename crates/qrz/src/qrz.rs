@@ -133,6 +133,26 @@ impl Qrz {
         (1..=dist).map(|i| self.arc(dir, i)).flatten().collect::<Vec<Qrz>>()
     }
 
+    /// The `6 × radius` tiles at flat distance `radius`, at this tile's z,
+    /// in order round the ring so neighbouring entries are neighbouring
+    /// tiles, the last beside the first. Entry `radius × i` is the corner
+    /// out along `DIRECTIONS[i]`, so at radius 1 the order is `DIRECTIONS`'.
+    /// Radius 0 is this tile alone.
+    pub fn ring(&self, radius: u32) -> Vec<Qrz> {
+        if radius == 0 {
+            return vec![*self];
+        }
+        let mut at = *self + DIRECTIONS[0] * radius as i32;
+        let mut ring = Vec::with_capacity(6 * radius as usize);
+        for side in 0..6 {
+            for _ in 0..radius {
+                ring.push(at);
+                at = at + DIRECTIONS[(side + 2) % 6];
+            }
+        }
+        ring
+    }
+
     pub fn neighbors(&self) -> Vec<Qrz> {
         vec![
             *self + Qrz { q: -1, r: 0, z: 0 }, // west
@@ -193,6 +213,26 @@ pub fn round(q0: f64, r0: f64, z0: f64) -> Qrz {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ring_runs_round_every_tile_at_its_radius() {
+        let centre = Qrz { q: 3, r: -2, z: 4 };
+        assert_eq!(centre.ring(0), vec![centre]);
+        for radius in 1..=4u32 {
+            let ring = centre.ring(radius);
+            assert_eq!(ring.len(), 6 * radius as usize);
+            let unique: std::collections::HashSet<_> = ring.iter().collect();
+            assert_eq!(unique.len(), ring.len(), "radius {radius} repeats a tile");
+            for (i, tile) in ring.iter().enumerate() {
+                assert_eq!(tile.flat_distance(&centre), radius as i32);
+                assert_eq!(tile.z, centre.z);
+                assert_eq!(tile.flat_distance(&ring[(i + 1) % ring.len()]), 1, "radius {radius} breaks after entry {i}");
+            }
+            for (i, direction) in DIRECTIONS.iter().enumerate() {
+                assert_eq!(ring[radius as usize * i], centre + *direction * radius as i32);
+            }
+        }
+    }
 
     // ===== COORDINATE INVARIANT TESTS =====
 

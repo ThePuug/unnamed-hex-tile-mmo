@@ -1,7 +1,8 @@
 //! # Hex Assignment System ( & 3)
 
-//! Assigns unique approach hexes to melee NPCs in an engagement.
-//! Recalculates on player tile change or NPC death.
+//! Assigns melee NPCs in an engagement unique hexes to stand on, round
+//! their target at their `AttackRange`, so each swings from its reach and
+//! never closes past it. Recalculates on player tile change or NPC death.
 
 use bevy::prelude::*;
 use bevy::platform::collections::HashMap;
@@ -22,20 +23,11 @@ use common_bevy::{
 };
 use crate::systems::behaviour::chase::Chase;
 
-/// Angular distance between two neighbor indices on a hex ring (0-5).
-/// Wraps around: `min(|a - b|, 6 - |a - b|)`
-pub fn angular_distance(a: usize, b: usize) -> usize {
+/// Steps between two entries of a ring `slots` long, the shorter way
+/// round: `min(|a - b|, slots - |a - b|)`.
+pub fn angular_distance(a: usize, b: usize, slots: usize) -> usize {
     let diff = if a > b { a - b } else { b - a };
-    diff.min(6 - diff)
-}
-
-/// Find the DIRECTIONS index for a neighbor hex relative to center.
-/// Returns None if the hex is not an immediate neighbor.
-fn direction_index(center: Qrz, neighbor: Qrz) -> Option<usize> {
-    let delta = neighbor - center;
-    // Zero out z for direction comparison
-    let flat_delta = Qrz { q: delta.q, r: delta.r, z: 0 };
-    qrz::DIRECTIONS.iter().position(|d| *d == flat_delta)
+    diff.min(slots - diff)
 }
 
 /// Assign hexes to NPCs based on engagement archetype strategy.
@@ -47,14 +39,18 @@ fn direction_index(center: Qrz, neighbor: Qrz) -> Option<usize> {
 /// rates alike, it takes the nearest, so it closes from the side it
 /// approaches on. A fixed first pick sends a lone NPC round to one face of
 /// its target, and two actors chasing each other leapfrog across the map.
+/// `available_reach` holds the free hexes of the ring at reach, each with its
+/// index on that ring, `slots` long; `available_secondary` the ring beyond,
+/// where an NPC with no place at reach waits.
 pub fn calculate_assignments(
     player_tile: Qrz,
     npcs: &[(Entity, PositioningStrategy, Qrz)],
-    available_adjacent: &[(Qrz, usize)], // (hex, direction_index)
-    available_secondary: &[Qrz],         // hexes at distance 2 from player
+    available_reach: &[(Qrz, usize)],
+    slots: usize,
+    available_secondary: &[Qrz],
 ) -> HashMap<Entity, Qrz> {
     let mut assignments = HashMap::default();
-    let mut taken_adjacent: Vec<usize> = Vec::new(); // direction indices already assigned
+    let mut taken_reach: Vec<usize> = Vec::new(); // ring indices already assigned
 
     // Sort NPCs by strategy priority: Cluster first, then Surround, then Perimeter/Orbital
     let mut sorted_npcs: Vec<_> = npcs.to_vec();
@@ -68,9 +64,9 @@ pub fn calculate_assignments(
     for (npc, strategy, from) in &sorted_npcs {
         match strategy {
             PositioningStrategy::Cluster => {
-                if let Some(hex) = pick_cluster(available_adjacent, &taken_adjacent, *from) {
-                    if let Some(dir_idx) = available_adjacent.iter().find(|(h, _)| *h == hex).map(|(_, d)| *d) {
-                        taken_adjacent.push(dir_idx);
+                if let Some(hex) = pick_cluster(available_reach, &taken_reach, slots, *from) {
+                    if let Some(dir_idx) = available_reach.iter().find(|(h, _)| *h == hex).map(|(_, d)| *d) {
+                        taken_reach.push(dir_idx);
                     }
                     assignments.insert(*npc, hex);
                 } else if let Some(hex) = pick_secondary(player_tile, available_secondary, &assignments) {
@@ -78,9 +74,9 @@ pub fn calculate_assignments(
                 }
             }
             PositioningStrategy::Surround => {
-                if let Some(hex) = pick_surround(available_adjacent, &taken_adjacent, *from) {
-                    if let Some(dir_idx) = available_adjacent.iter().find(|(h, _)| *h == hex).map(|(_, d)| *d) {
-                        taken_adjacent.push(dir_idx);
+                if let Some(hex) = pick_surround(available_reach, &taken_reach, slots, *from) {
+                    if let Some(dir_idx) = available_reach.iter().find(|(h, _)| *h == hex).map(|(_, d)| *d) {
+                        taken_reach.push(dir_idx);
                     }
                     assignments.insert(*npc, hex);
                 } else if let Some(hex) = pick_secondary(player_tile, available_secondary, &assignments) {
@@ -88,13 +84,13 @@ pub fn calculate_assignments(
                 }
             }
             PositioningStrategy::Perimeter => {
-                // Perimeter NPCs don't compete for adjacent hexes
+                // Perimeter NPCs don't compete for hexes at reach
                 if let Some(hex) = pick_secondary(player_tile, available_secondary, &assignments) {
                     assignments.insert(*npc, hex);
                 }
             }
             PositioningStrategy::Orbital => {
-                // Orbital NPCs don't compete for adjacent hexes either
+                // Orbital NPCs don't compete for hexes at reach either
                 if let Some(hex) = pick_secondary(player_tile, available_secondary, &assignments) {
                     assignments.insert(*npc, hex);
                 }
@@ -105,41 +101,43 @@ pub fn calculate_assignments(
     assignments
 }
 
-/// Pick the best adjacent hex for Cluster strategy.
-/// Minimize angular distance to already-taken faces (pack together), then
+/// Pick the best hex at reach for Cluster strategy.
+/// Minimize angular distance to already-taken places (pack together), then
 /// distance from `from`, the NPC's tile.
 fn pick_cluster(
     available: &[(Qrz, usize)],
     taken: &[usize],
+    slots: usize,
     from: Qrz,
 ) -> Option<Qrz> {
     available.iter()
         .filter(|(_, dir)| !taken.contains(dir))
         .min_by_key(|(hex, dir)| {
-            let packing = taken.iter().map(|t| angular_distance(*dir, *t)).min().unwrap_or(0);
+            let packing = taken.iter().map(|t| angular_distance(*dir, *t, slots)).min().unwrap_or(0);
             (packing, hex.flat_distance(&from))
         })
         .map(|(hex, _)| *hex)
 }
 
-/// Pick the best adjacent hex for Surround strategy.
-/// Maximize minimum angular distance from already-taken faces (spread out),
+/// Pick the best hex at reach for Surround strategy.
+/// Maximize minimum angular distance from already-taken places (spread out),
 /// then minimize distance from `from`, the NPC's tile.
 fn pick_surround(
     available: &[(Qrz, usize)],
     taken: &[usize],
+    slots: usize,
     from: Qrz,
 ) -> Option<Qrz> {
     available.iter()
         .filter(|(_, dir)| !taken.contains(dir))
         .min_by_key(|(hex, dir)| {
-            let spread = taken.iter().map(|t| angular_distance(*dir, *t)).min().unwrap_or(0);
+            let spread = taken.iter().map(|t| angular_distance(*dir, *t, slots)).min().unwrap_or(0);
             (std::cmp::Reverse(spread), hex.flat_distance(&from))
         })
         .map(|(hex, _)| *hex)
 }
 
-/// Pick a secondary position (distance 2+ from player) for overflow NPCs.
+/// Pick a secondary position, past reach, for overflow NPCs.
 fn pick_secondary(
     _player_tile: Qrz,
     available_secondary: &[Qrz],
@@ -193,7 +191,9 @@ pub fn assign_hexes(
         hex_assign.target_player = Some(target_player);
         hex_assign.last_player_tile = Some(player_tile);
 
-        // Collect living melee NPCs with their strategies
+        // Collect living melee NPCs with their strategies, and the reach
+        // every one of them swings from
+        let mut reach = u32::MAX;
         let alive_npcs: Vec<(Entity, PositioningStrategy, Qrz)> = engagement.spawned_npcs.iter()
             .filter_map(|&npc_ent| {
                 // Check NPC is alive
@@ -202,45 +202,35 @@ pub fn assign_hexes(
 
                 // Only melee NPCs (those with Chase) get hex assignments
                 let (_, loc, chase, _) = npc_query.get(npc_ent).ok()?;
-                chase.map(|_| (npc_ent, engagement.archetype.positioning_strategy(), **loc))
+                let chase = chase?;
+                reach = reach.min(chase.attack_range.max(1) as u32);
+                Some((npc_ent, engagement.archetype.positioning_strategy(), **loc))
             })
             .collect();
+        // With none alive the rings go unused and the assignments empty
+        let reach = if alive_npcs.is_empty() { 1 } else { reach };
 
-        // Find available adjacent hexes (neighbors of player tile that exist in terrain)
-        let terrain_tile = map.get_by_qr(player_tile.q, player_tile.r);
-        let Some((terrain_qrz, _)) = terrain_tile else { continue; };
-
-        let neighbors = map.neighbors(terrain_qrz);
-        let available_adjacent: Vec<(Qrz, usize)> = neighbors.iter()
-            .filter_map(|(neighbor, _)| {
-                let entity_tile = *neighbor + qrz::Qrz::Z;
-                // Filter out hexes occupied by non-engagement entities (crowded)
-                let occupant_count = nntree.locate_all_at_point(&Loc::new(entity_tile)).count();
-                if occupant_count >= 7 { return None; }
-
-                // Find direction index for strategy calculations
-                let dir_idx = direction_index(terrain_qrz, *neighbor)?;
-                Some((entity_tile, dir_idx))
-            })
-            .collect();
-
-        // Find secondary positions (distance 2 from player)
-        let available_secondary: Vec<Qrz> = neighbors.iter()
-            .flat_map(|(neighbor, _)| {
-                map.neighbors(*neighbor).into_iter()
-                    .filter(|(n2, _)| {
-                        let d = n2.flat_distance(&terrain_qrz);
-                        d == 2 // Only hexes at distance 2 from player
-                    })
-                    .map(|(n2, _)| n2 + qrz::Qrz::Z)
-            })
-            .collect();
+        // The standing tile over each floor of a ring round the target
+        // that exists in terrain and is not crowded
+        let standing = |ring: Vec<Qrz>| -> Vec<(Qrz, usize)> {
+            ring.into_iter().enumerate()
+                .filter_map(|(i, hex)| {
+                    let (floor, _) = map.get_by_qr(hex.q, hex.r)?;
+                    let entity_tile = floor + qrz::Qrz::Z;
+                    let occupant_count = nntree.locate_all_at_point(&Loc::new(entity_tile)).count();
+                    (occupant_count < 7).then_some((entity_tile, i))
+                })
+                .collect()
+        };
+        let available_reach = standing(player_tile.ring(reach));
+        let available_secondary: Vec<Qrz> = standing(player_tile.ring(reach + 1)).into_iter().map(|(hex, _)| hex).collect();
 
         // Calculate assignments
         let new_assignments = calculate_assignments(
             player_tile,
             &alive_npcs,
-            &available_adjacent,
+            &available_reach,
+            6 * reach as usize,
             &available_secondary,
         );
 
@@ -284,6 +274,44 @@ fn has_dead_npcs(engagement: &Engagement, health_query: &Query<&Health>) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Most cases here set their places out on the ring of six, at reach 1
+    fn angular_distance(a: usize, b: usize) -> usize {
+        super::angular_distance(a, b, 6)
+    }
+
+    fn pick_cluster(available: &[(Qrz, usize)], taken: &[usize], from: Qrz) -> Option<Qrz> {
+        super::pick_cluster(available, taken, 6, from)
+    }
+
+    fn pick_surround(available: &[(Qrz, usize)], taken: &[usize], from: Qrz) -> Option<Qrz> {
+        super::pick_surround(available, taken, 6, from)
+    }
+
+    fn calculate_assignments(
+        player_tile: Qrz,
+        npcs: &[(Entity, PositioningStrategy, Qrz)],
+        available: &[(Qrz, usize)],
+        secondary: &[Qrz],
+    ) -> HashMap<Entity, Qrz> {
+        super::calculate_assignments(player_tile, npcs, available, 6, secondary)
+    }
+
+    #[test]
+    fn at_reach_two_a_pair_stands_across_the_ring_of_twelve() {
+        let target = Qrz { q: 0, r: 0, z: 0 };
+        let available: Vec<(Qrz, usize)> = target.ring(2).into_iter().map(|hex| hex + Qrz::Z).enumerate().map(|(i, hex)| (hex, i)).collect();
+        let npcs = [
+            (Entity::from_raw_u32(1).unwrap(), PositioningStrategy::Surround, Qrz { q: 5, r: 0, z: 1 }),
+            (Entity::from_raw_u32(2).unwrap(), PositioningStrategy::Surround, Qrz { q: 5, r: 0, z: 1 }),
+        ];
+        let assignments = super::calculate_assignments(target, &npcs, &available, 12, &[]);
+        let places: Vec<usize> = assignments.values().map(|hex| available.iter().find(|(h, _)| h == hex).unwrap().1).collect();
+        for hex in assignments.values() {
+            assert_eq!(hex.flat_distance(&target), 2, "every place is at reach");
+        }
+        assert_eq!(super::angular_distance(places[0], places[1], 12), 6, "the pair stands opposite");
+    }
 
     #[test]
     fn angular_distance_same() {

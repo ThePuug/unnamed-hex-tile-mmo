@@ -30,7 +30,7 @@ use super::Body;
 pub struct Chase {
     pub acquisition_range: u32,  // How far to search for targets
     pub leash_distance: i32,     // Max chase distance (0 = infinite)
-    pub attack_range: i32,       // Distance to engage (typically 1 for melee)
+    pub attack_range: i32,       // Distance to engage from, the ring its assigned hex is on
 }
 
 pub fn chase(
@@ -217,7 +217,7 @@ pub fn chase(
         // Determine movement destination — assigned hex if available, otherwise player tile
         let move_target = assigned_hex_opt.map(|ah| ah.0).unwrap_or(**target_loc);
 
-        // 3. CHECK RANGE — NPC must be on assigned hex AND adjacent to player to attack
+        // 3. CHECK RANGE — NPC must be on assigned hex AND within attack range to attack
         let distance_to_player = npc_loc.flat_distance(target_loc);
         let on_assigned_hex = assigned_hex_opt
             .map(|ah| npc_loc.flat_distance(&Loc::new(ah.0)) == 0)
