@@ -15,7 +15,7 @@ pub const FLANK_STAMINA_COST: f32 = 30.0;
 
 /// Handle Flank, the Cutthroat's signature: on a target within melee reach,
 /// a stun of `ArchetypeTuning::flank_stun` seconds, a step to the tile at
-/// its back, and a strike for `flank_intuition` of the caster's Intuition.
+/// its back at reach, and a strike for `flank_intuition` of the caster's Intuition.
 /// The strike waits in the target's queue like any threat, so a stun
 /// shorter than that wait leaves the target time to answer it. The stun
 /// holds the target completely: `Stunned` stops its movement and
@@ -90,9 +90,10 @@ pub fn handle_flank(
             event: GameEvent::Incremental { ent: target_ent, component: common_bevy::message::Component::Stunned(stunned) },
         });
 
-        // The tile at the target's back, one standing tile from its own,
-        // taken when its floor is there and no one stands on it
-        let back = target_heading.map(|heading| **target_loc + heading.reversed().hex_dir());
+        // The tile at the target's back at reach, a place on the ring the
+        // assignment stands melee on, taken when its floor is there and no
+        // one stands on it
+        let back = target_heading.map(|heading| **target_loc + heading.reversed().hex_dir() * AttackRange::default().0);
         let landing = back.and_then(|back| map.get_by_qr(back.q, back.r)).map(|(floor, _)| floor + qrz::Qrz::Z)
             .filter(|landing| *landing != **caster_loc && nntree.locate_all_at_point(&Loc::new(*landing)).next().is_none());
         if let Some(landing) = landing {
