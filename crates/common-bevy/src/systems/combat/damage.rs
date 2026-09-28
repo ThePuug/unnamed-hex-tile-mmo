@@ -26,12 +26,13 @@ pub fn gap_factor(beneficiary_level: u32, opponent_level: u32) -> f32 {
 }
 
 /// The share of its reaction window an outleveled defender loses for each
-/// level the attacker stands above it, every level the same.
-pub const WINDOW_PER_LEVEL: f32 = 0.05;
+/// level the attacker stands above it, every level the same: halved at five.
+pub const WINDOW_PER_LEVEL: f32 = 0.1;
 
 /// The share of its lockout each hit from a higher-level attacker adds to an
-/// outleveled defender's, for each level of the gap, every level the same.
-pub const PUSHBACK_PER_LEVEL: f32 = 0.0;
+/// outleveled defender's, for each level of the gap, every level the same:
+/// half its lockout at five.
+pub const PUSHBACK_PER_LEVEL: f32 = 0.1;
 
 /// Contest factor (Pattern 1: Nullifying).
 
