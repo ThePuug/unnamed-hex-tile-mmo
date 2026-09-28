@@ -42,7 +42,7 @@ pub fn global_recovery_system(
             let reduction_pct = calculate_composure_reduction(
                 composure,
                 recovery.target_impact,
-                level_contest.edge(attrs.total_level(), recovery.target_level),
+                recovery.target_level.map_or(0.0, |target| level_contest.edge(attrs.total_level(), target)),
             );
 
             // Convert reduction percentage to speed multiplier
