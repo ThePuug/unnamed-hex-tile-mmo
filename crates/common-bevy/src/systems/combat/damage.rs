@@ -14,7 +14,7 @@ use crate::components::ActorAttributes;
 
 /// Contest points each level of gap is worth, on the higher-level side of
 /// every relative contest.
-pub const CONTEST_PER_LEVEL: f32 = 20.0;
+pub const CONTEST_PER_LEVEL: f32 = 15.0;
 
 /// How a level gap weighs in the relative contests: a flat number of contest
 /// points per level, on the higher-level side of every one, so an actor wins
