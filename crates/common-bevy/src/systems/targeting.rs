@@ -139,16 +139,32 @@ fn angle_between_locs(from: Loc, to: Loc) -> f32 {
     angle_deg
 }
 
-/// Categorizes targets by distance for the tier lock system.
+/// Categorizes targets by distance for the tier lock system; each holds
+/// the distances [`RangeTier::bounds`] gives it.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum RangeTier {
-    /// Close range: 1-2 hexes
+    /// Close range: melee
     Close,
-    /// Mid range: 3-6 hexes
+    /// Mid range
     Mid,
-    /// Far range: 7+ hexes
+    /// Far range: past mid, to the edge of the target search
     Far,
 }
+
+impl RangeTier {
+    /// The distances the tier holds, in tiles, inclusive: the far tier runs
+    /// on to [`TARGET_RADIUS`].
+    pub fn bounds(self) -> (u32, u32) {
+        match self {
+            RangeTier::Close => (1, 2),
+            RangeTier::Mid => (3, 6),
+            RangeTier::Far => (7, TARGET_RADIUS),
+        }
+    }
+}
+
+/// How far a caster looks for a target, in tiles.
+pub const TARGET_RADIUS: u32 = 20;
 
 /// Get the range tier for a given distance
 
@@ -160,11 +176,10 @@ pub enum RangeTier {
 
 /// The range tier (Close, Mid, or Far)
 pub fn get_range_tier(distance: u32) -> RangeTier {
-    match distance {
-        1..=2 => RangeTier::Close,
-        3..=6 => RangeTier::Mid,
-        _ => RangeTier::Far,
-    }
+    [RangeTier::Close, RangeTier::Mid]
+        .into_iter()
+        .find(|tier| (tier.bounds().0..=tier.bounds().1).contains(&distance))
+        .unwrap_or(RangeTier::Far)
 }
 
 /// Select the best target based on heading, distance, and optional tier lock
@@ -220,9 +235,8 @@ where
 {
     let caster_side = side_of(caster_ent)?;
 
-    // Query entities within max range (20 hexes)
-    // Using locate_within_distance with squared distance
-    let max_range_sq: i64 = 20 * 20;
+    // Squared, as the tree measures
+    let max_range_sq: i64 = TARGET_RADIUS as i64 * TARGET_RADIUS as i64;
     let nearby = nntree.locate_within_distance(caster_loc, max_range_sq);
 
     // Build list of valid targets with their distances and angles
@@ -354,8 +368,8 @@ where
 {
     let caster_side = side_of(caster_ent)?;
 
-    // Query entities within max range (20 hexes)
-    let max_range_sq: i64 = 20 * 20;
+    // Squared, as the tree measures
+    let max_range_sq: i64 = TARGET_RADIUS as i64 * TARGET_RADIUS as i64;
     let nearby = nntree.locate_within_distance(caster_loc, max_range_sq);
 
     // Build list of valid ally targets with their distances and angles

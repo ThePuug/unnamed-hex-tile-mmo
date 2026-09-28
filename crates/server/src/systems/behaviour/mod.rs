@@ -12,6 +12,13 @@ use common_bevy::{
     systems::{physics::{self, Walk, WALK_ARC}, targeting::is_in_facing_cone},
 };
 
+/// How far an NPC looks for a target, in tiles, whatever it chases with.
+pub const ACQUISITION_RANGE: u32 = 15;
+
+/// How far an NPC follows a target from its den, in tiles, before it gives
+/// up and goes home.
+pub const LEASH_DISTANCE: i32 = 30;
+
 /// Airtime an NPC leaps with to climb onto a neighbouring tile.
 const CLIMB_MS: i16 = 125;
 

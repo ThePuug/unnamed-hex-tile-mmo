@@ -5,13 +5,10 @@ use common_bevy::{
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
 };
 
-/// How far a Volley reaches: the Kiter's own auto-attack range.
-pub const VOLLEY_RANGE: u32 = 6;
-
 pub const VOLLEY_STAMINA_COST: f32 = 20.0;
 
 /// Handle Volley, the Kiter's signature: a burst of shots at a target within
-/// `VOLLEY_RANGE`, one shot per threat the Kiter can see — its Concentration
+/// `KITER_REACH`, one shot per threat the Kiter can see — its Concentration
 /// window, so Focus decides how many land — each striking for
 /// `ArchetypeTuning::volley_force` of Force. Every shot is its own threat.
 /// The burst slows its target by `volley_slow` for `volley_slow_secs`, and
@@ -53,7 +50,7 @@ pub fn handle_volley(
         let (Ok(caster_loc), Ok(target_loc)) = (loc_query.get(*ent), loc_query.get(target_ent)) else {
             continue;
         };
-        if caster_loc.flat_distance(target_loc) as u32 > VOLLEY_RANGE {
+        if caster_loc.flat_distance(target_loc) > crate::systems::behaviour::kite::KITER_REACH {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
             continue;
         }

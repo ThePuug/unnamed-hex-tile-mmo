@@ -9,7 +9,7 @@ use common_bevy::{
 /// Handle Lunge ability (Q key)
 /// - 20 stamina cost
 /// - Strikes for `ArchetypeTuning::lunge_force` of Force (scales with might + level)
-/// - 4 hex range
+/// - `LUNGE_RANGE` hex range
 /// - Teleports caster adjacent to target
 /// - Queues a strike and a wound whose DoT, a bleed, deals `ArchetypeTuning::lunge_dot`
 ///   of Force each tick until a reaction clears the wound or it lands
@@ -114,10 +114,9 @@ pub fn handle_lunge(
             continue;
         };
 
-        // Check range (must be within 4 hexes for Lunge)
         let distance = caster_loc.flat_distance(&target_loc) as u32;
 
-        if distance > 4 || distance < 1 {
+        if distance > common_bevy::systems::combat::resources::LUNGE_RANGE || distance < 1 {
             // Target is out of range (or we're already on top of them)
             writer.write(Do {
                 event: GameEvent::AbilityFailed {

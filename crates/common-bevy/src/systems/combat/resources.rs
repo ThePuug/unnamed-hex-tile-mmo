@@ -8,6 +8,10 @@ use crate::{
 /// so a full pool covers three in a row and then one about every six seconds.
 pub const COUNTER_STAMINA_COST: f32 = 60.0;
 
+/// How far a Lunge reaches, in tiles: it lands beside anything from
+/// adjacent out to this.
+pub const LUNGE_RANGE: u32 = 4;
+
 /// Calculate maximum stamina from actor attributes
 /// Fixed at 100 until we determine which attributes should scale it
 pub fn calculate_max_stamina(_attrs: &ActorAttributes) -> f32 {

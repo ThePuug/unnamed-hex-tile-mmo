@@ -42,9 +42,6 @@ use common_bevy::{
 #[derive(Resource, Default)]
 pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
 
-/// How far a chasing NPC looks for a target, in tiles.
-const CHASE_ACQUISITION_RANGE: u32 = 15;
-
 /// Tiles between the edge of a den's acquisition range and the player who
 /// asked for it, so the fight starts when the player walks in.
 const DEN_CLEARANCE: i32 = 5;
@@ -53,7 +50,7 @@ const DEN_CLEARANCE: i32 = 5;
 /// or for a Kiter the edge of its band, where it fires from.
 fn attack_range(archetype: EnemyArchetype) -> i32 {
     match archetype {
-        EnemyArchetype::Kiter => 6,
+        EnemyArchetype::Kiter => crate::systems::behaviour::kite::KITER_REACH,
         _ => common_bevy::components::AttackRange::default().0,
     }
 }
@@ -62,7 +59,7 @@ fn attack_range(archetype: EnemyArchetype) -> i32 {
 fn acquisition_range(archetype: EnemyArchetype) -> u32 {
     match archetype {
         EnemyArchetype::Kiter => crate::systems::behaviour::kite::Kite::forest_sprite().acquisition_range,
-        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher | EnemyArchetype::Cutthroat => CHASE_ACQUISITION_RANGE,
+        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher | EnemyArchetype::Cutthroat => crate::systems::behaviour::ACQUISITION_RANGE,
     }
 }
 
@@ -92,7 +89,7 @@ pub fn try_spawn_den(
 
 /// How far ahead of the player a staged fight's middle stands: beyond the
 /// range either team acquires a target from, so they pick each other.
-const STAGE_AHEAD: i32 = CHASE_ACQUISITION_RANGE as i32 + 3;
+const STAGE_AHEAD: i32 = crate::systems::behaviour::ACQUISITION_RANGE as i32 + 3;
 
 /// How far either team of a staged fight stands from its middle, as the
 /// balance arena sets its teams apart.
@@ -213,8 +210,8 @@ pub fn spawn_engagement(
         match archetype {
             EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher | EnemyArchetype::Cutthroat => {
                 let chase = crate::systems::behaviour::chase::Chase {
-                    acquisition_range: CHASE_ACQUISITION_RANGE,
-                    leash_distance: 30,
+                    acquisition_range: crate::systems::behaviour::ACQUISITION_RANGE,
+                    leash_distance: crate::systems::behaviour::LEASH_DISTANCE,
                     attack_range: attack_range(archetype),
                 };
                 commands.entity(npc_entity).insert((

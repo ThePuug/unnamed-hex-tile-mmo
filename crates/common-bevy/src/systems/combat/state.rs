@@ -7,11 +7,14 @@ use crate::{
     plugins::nntree::*,
 };
 
+/// How near a hostile keeps an actor in combat, in tiles: past every reach.
+pub const COMBAT_EXIT_RADIUS: i16 = 20;
+
 /// Update combat state for all entities
 /// Runs in FixedUpdate on server only
 /// Checks for combat exit conditions:
 /// - 5 seconds since last_action AND
-/// - No hostile entities within 20 hexes
+/// - No hostile entities within `COMBAT_EXIT_RADIUS`
 pub fn update_combat_state(
     mut writer: MessageWriter<Do>,
     mut query: Query<(Entity, &Loc, &mut CombatState, Option<&Side>, Option<&mut crate::components::status::Status>)>,
@@ -33,14 +36,13 @@ pub fn update_combat_state(
             continue; // Still within 5 second window
         }
 
-        // Check for hostile entities within 20 hexes
         let has_nearby_hostile = has_hostile_within_radius(
             ent,
             loc,
             side,
             &entity_query,
             &nntree,
-            20,
+            COMBAT_EXIT_RADIUS,
         );
 
         if has_nearby_hostile {

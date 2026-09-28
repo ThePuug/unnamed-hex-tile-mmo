@@ -365,7 +365,7 @@ fn get_ability_state(
             if let Some(target_ent) = target_opt {
                 if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
                     let distance = player_loc.flat_distance(target_loc) as u32;
-                    if distance > 4 {
+                    if distance > common_bevy::systems::combat::resources::LUNGE_RANGE {
                         return AbilityState::OutOfRange;
                     }
                 }

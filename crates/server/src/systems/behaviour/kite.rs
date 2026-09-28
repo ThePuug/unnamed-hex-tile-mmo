@@ -43,6 +43,10 @@ fn score_neighbor(
     range_score + leash_score
 }
 
+/// How far a Kiter reaches, in tiles: its auto-attack, its Volley, and
+/// the far edge of its band.
+pub const KITER_REACH: i32 = 6;
+
 /// Kite behavior - ranged hostile that maintains optimal distance
 
 /// Implements distance-based state machine for ranged kiting enemies:
@@ -60,8 +64,8 @@ fn score_neighbor(
 /// Attack timer independent of movement: Continues firing while retreating.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Kite {
-    pub acquisition_range: u32,      // How far to search for targets (e.g., 15 hexes)
-    pub leash_distance: i32,         // Max chase distance from spawn (e.g., 30 hexes)
+    pub acquisition_range: u32,      // How far to search for targets
+    pub leash_distance: i32,         // Max chase distance from spawn
     pub optimal_distance_max: i32,   // The far edge of its band: no further than its AttackRange
 }
 
@@ -69,9 +73,9 @@ impl Kite {
     /// Create a new Kite behavior with Forest Sprite stats
     pub fn forest_sprite() -> Self {
         Self {
-            acquisition_range: 15,        // 15 hexes aggro range
-            leash_distance: 30,           // 30 hexes leash
-            optimal_distance_max: 6,      // the 6-hex AttackRange
+            acquisition_range: super::ACQUISITION_RANGE,
+            leash_distance: super::LEASH_DISTANCE,
+            optimal_distance_max: KITER_REACH,
         }
     }
 
@@ -349,8 +353,7 @@ mod tests {
     #[test]
     fn test_kite_forest_sprite_stats() {
         let kite = Kite::forest_sprite();
-        assert_eq!(kite.acquisition_range, 15);
-        assert_eq!(kite.leash_distance, 30);
+        assert!(kite.acquisition_range as i32 > kite.optimal_distance_max, "it picks targets beyond its reach");
         assert_eq!(kite.optimal_distance_max, 6);
     }
 

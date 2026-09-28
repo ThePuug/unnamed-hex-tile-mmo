@@ -8,10 +8,8 @@
 //! - Updates immediately when tier lock changes (zero lag)
 //! - Follows terrain elevation (terrain-following meshes)
 //! - Clears indicators when tier lock is removed or player is unavailable
-//! - Tier ranges (matching targeting.rs):
-//!   - Tier 1 (Close): 1-2 hexes (melee range)
-//!   - Tier 2 (Mid): 3-6 hexes (mid range)
-//!   - Tier 3 (Far): 7-10 hexes (far range)
+//! - Tier ranges are `RangeTier::bounds`; the far tier is drawn
+//!   `FAR_RINGS` deep from where it starts
 
 //! # Implementation
 
@@ -38,13 +36,16 @@ pub struct TierLockRangeIndicator {
     current_player_loc: Option<Loc>,
 }
 
-/// Get the distance range for a tier (inclusive)
-/// Must match the ranges defined in targeting.rs::get_range_tier()
-fn get_tier_range(tier: RangeTier) -> (u32, u32) {
+/// Rings of the far tier drawn, from where it starts: it runs on to the
+/// edge of the target search, and one mesh of all of it would be large.
+const FAR_RINGS: u32 = 4;
+
+/// The distances drawn for a tier, inclusive.
+fn drawn_range(tier: RangeTier) -> (u32, u32) {
+    let (min, max) = tier.bounds();
     match tier {
-        RangeTier::Close => (1, 2),  // Tier 1: 1-2 hexes (melee range)
-        RangeTier::Mid => (3, 6),    // Tier 2: 3-6 hexes (mid range)
-        RangeTier::Far => (7, 10),   // Tier 3: 7+ hexes (far range, capped at 10 for performance)
+        RangeTier::Far => (min, min + FAR_RINGS - 1),
+        _ => (min, max),
     }
 }
 
@@ -115,31 +116,8 @@ pub fn update(
     indicator.current_player_loc = Some(*player_loc);
     *visibility = Visibility::Visible;
 
-    let (min_dist, max_dist) = get_tier_range(tier);
-
-    // Find all tiles within tier range
-    let player_qrz = **player_loc;
-    let mut tiles_in_range = Vec::new();
-
-    // Search in a square bounding box (max_dist * 2 + 1) around player
-    let search_radius = max_dist as i32;
-    for dq in -search_radius..=search_radius {
-        for dr in -search_radius..=search_radius {
-            let tile_qrz = Qrz {
-                q: player_qrz.q + dq,
-                r: player_qrz.r + dr,
-                z: player_qrz.z,
-            };
-
-            // Calculate flat distance (ignoring Z)
-            let distance = player_loc.flat_distance(&Loc::new(tile_qrz)) as u32;
-
-            // Check if in tier range
-            if distance >= min_dist && distance <= max_dist {
-                tiles_in_range.push(tile_qrz);
-            }
-        }
-    }
+    let (min_dist, max_dist) = drawn_range(tier);
+    let tiles_in_range: Vec<Qrz> = (min_dist..=max_dist).flat_map(|radius| player_loc.ring(radius)).collect();
 
     // Build a single combined mesh for all tiles
     let mut positions = Vec::new();
@@ -224,85 +202,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_tier_range_close() {
-        let (min, max) = get_tier_range(RangeTier::Close);
-        assert_eq!(min, 1, "Tier 1 (Close) should start at 1 hex");
-        assert_eq!(max, 2, "Tier 1 (Close) should end at 2 hexes");
-    }
-
-    #[test]
-    fn test_get_tier_range_mid() {
-        let (min, max) = get_tier_range(RangeTier::Mid);
-        assert_eq!(min, 3, "Tier 2 (Mid) should start at 3 hexes");
-        assert_eq!(max, 6, "Tier 2 (Mid) should end at 6 hexes");
-    }
-
-    #[test]
-    fn test_get_tier_range_far() {
-        let (min, max) = get_tier_range(RangeTier::Far);
-        assert_eq!(min, 7, "Tier 3 (Far) should start at 7 hexes");
-        assert_eq!(max, 10, "Tier 3 (Far) should end at 10 hexes");
-    }
-
-    #[test]
-    fn test_tier_ranges_are_contiguous() {
-        let (_, close_max) = get_tier_range(RangeTier::Close);
-        let (mid_min, mid_max) = get_tier_range(RangeTier::Mid);
-        let (far_min, _) = get_tier_range(RangeTier::Far);
-
-        assert_eq!(close_max + 1, mid_min, "Tier 1 and Tier 2 should be contiguous");
-        assert_eq!(mid_max + 1, far_min, "Tier 2 and Tier 3 should be contiguous");
-    }
-
-    #[test]
-    fn test_tier_ranges_do_not_overlap() {
-        let (_, close_max) = get_tier_range(RangeTier::Close);
-        let (mid_min, mid_max) = get_tier_range(RangeTier::Mid);
-        let (far_min, _) = get_tier_range(RangeTier::Far);
-
-        // Close and Mid should not overlap
-        assert!(close_max < mid_min, "Tier 1 should not overlap with Tier 2");
-
-        // Mid and Far should not overlap
-        assert!(mid_max < far_min, "Tier 2 should not overlap with Tier 3");
-    }
-
-    #[test]
-    fn test_tier_1_starts_at_melee_range() {
-        let (min, _) = get_tier_range(RangeTier::Close);
-        assert_eq!(min, 1, "Tier 1 should start at distance 1 (melee range)");
-    }
-
-    #[test]
-    fn test_tier_ranges_cover_expected_distances() {
-        // Test specific distances fall into correct tiers (matching targeting.rs)
-        let distance_1_tier = get_tier_for_distance(1);
-        assert_eq!(distance_1_tier, RangeTier::Close, "Distance 1 should be Tier 1 (Close)");
-
-        let distance_2_tier = get_tier_for_distance(2);
-        assert_eq!(distance_2_tier, RangeTier::Close, "Distance 2 should be Tier 1 (Close)");
-
-        let distance_3_tier = get_tier_for_distance(3);
-        assert_eq!(distance_3_tier, RangeTier::Mid, "Distance 3 should be Tier 2 (Mid)");
-
-        let distance_6_tier = get_tier_for_distance(6);
-        assert_eq!(distance_6_tier, RangeTier::Mid, "Distance 6 should be Tier 2 (Mid)");
-
-        let distance_7_tier = get_tier_for_distance(7);
-        assert_eq!(distance_7_tier, RangeTier::Far, "Distance 7 should be Tier 3 (Far)");
-
-        let distance_10_tier = get_tier_for_distance(10);
-        assert_eq!(distance_10_tier, RangeTier::Far, "Distance 10 should be Tier 3 (Far)");
-    }
-
-    // Helper function for testing (matches targeting.rs::get_range_tier logic)
-    fn get_tier_for_distance(distance: u32) -> RangeTier {
-        if distance <= 2 {
-            RangeTier::Close
-        } else if distance <= 6 {
-            RangeTier::Mid
-        } else {
-            RangeTier::Far
+    fn every_tier_is_drawn_from_where_it_starts_and_the_far_one_capped() {
+        for tier in [RangeTier::Close, RangeTier::Mid, RangeTier::Far] {
+            let (drawn_min, drawn_max) = drawn_range(tier);
+            assert_eq!(drawn_min, tier.bounds().0);
+            assert!(drawn_max <= tier.bounds().1);
         }
+        assert_eq!(drawn_range(RangeTier::Far).1 - drawn_range(RangeTier::Far).0 + 1, FAR_RINGS);
     }
 }
