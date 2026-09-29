@@ -748,7 +748,7 @@ impl ActorAttributes {
     //   - ABSOLUTE (progression): max_health(), movement_speed() — scales with level
     //   - RELATIVE (build matchup): contest_factor() in damage.rs — nullifies at equal (0-1)
     //     or reaction_contest_factor() for reaction window — preserves baseline (1-1.5)
-    //   - COMMITMENT (build identity): window_size(), cadence_interval() —
+    //   - COMMITMENT (build identity): window_size() —
     //     discrete tiers based on % of total budget
 
     // See attributes.md (unnamed-indie-studio-internal/projects/unnamed-hex-tile-mmo/design/) for full design.
@@ -885,12 +885,6 @@ impl ActorAttributes {
         self.commitment_tier_for(self.resolve())
     }
 
-    /// Intensity: Attack tempo from discipline commitment
-    /// Returns commitment tier (T0-T3) based on discipline as % of total budget
-    pub fn intensity(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.discipline())
-    }
-
     // === GAME STATS (Layer 3) ===
     // These use meta-attributes from Layer 2
 
@@ -901,11 +895,10 @@ impl ActorAttributes {
         self.awareness().index() + 1
     }
 
-    /// Auto-attack interval from Intensity meta-attribute
-    /// Higher Intensity tier → faster attacks (shorter interval),
-    /// `Tuning::cadence` by tier
+    /// Seconds between auto-attacks: `Tuning::auto_interval`, the same for
+    /// every actor
     pub fn cadence_interval(&self) -> std::time::Duration {
-        std::time::Duration::from_secs_f32(crate::tuning::tuning().cadence[self.intensity().index()])
+        std::time::Duration::from_secs_f32(crate::tuning::tuning().auto_interval)
     }
 }
 

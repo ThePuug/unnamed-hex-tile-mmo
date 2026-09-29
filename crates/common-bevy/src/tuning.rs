@@ -33,12 +33,8 @@ pub struct Tuning {
 
     // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`,
     // and so is the window each Awareness tier sees, `ActorAttributes::window_size`) ---
-    /// Seconds between auto-attacks at each Intensity tier, T0 to T3
-    pub cadence: [f32; 4],
-    /// Shots in a Volley at each Intensity tier, T0 to T3: three at full
-    /// commitment, so a Disengage, which takes the front blow, takes a third.
-    /// None is a Volley without damage, one shot that only slows
-    pub volley_shots: [u8; 4],
+    /// Seconds between auto-attacks, the same for every actor
+    pub auto_interval: f32,
 
     // --- Contest: what a relative advantage wins ---
     /// Advantage in points that wins an effect's base share
@@ -107,6 +103,8 @@ pub struct Tuning {
     pub disengage_precision: f32,
     /// Stamina a Volley costs
     pub volley_cost: f32,
+    /// Shots in a Volley: three, so a Disengage, which takes the front blow, takes a third
+    pub volley_shots: u8,
     /// Share of Force each Volley shot strikes for
     pub volley_force: f32,
     /// Share of its speed a Volley takes from its target
@@ -136,8 +134,7 @@ impl Tuning {
         health_per_vitality: 1.96,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
-        cadence: [2.1, 1.89, 1.68, 1.47],
-        volley_shots: [0, 1, 2, 3],
+        auto_interval: 2.1,
         contest_scale: 420.0,
         contest_per_level: 15.0,
         mitigation_share: 0.525,
@@ -175,6 +172,7 @@ impl Tuning {
         disengage_leap: 2,
         disengage_precision: 0.49,
         volley_cost: 20.0,
+        volley_shots: 3,
         volley_force: 1.12,
         volley_slow: 0.5,
         volley_slow_secs: 2.45,
@@ -230,20 +228,11 @@ impl Tuning {
     }
 
     /// Sets the knob `name` from text, as the arena's command line gives it.
-    /// A tier's four values are `name_0` to `name_3` (`cadence_2=1.8`).
     /// Errs on an unknown knob or a value that does not parse.
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
         let number = value.parse::<f32>().map_err(|_| format!("{name} takes a number, not {value}"))?;
-        let tier = |base: &str| name.strip_prefix(base).and_then(|rest| rest.strip_prefix('_')).and_then(|i| i.parse::<usize>().ok()).filter(|i| *i < 4);
-        if let Some(i) = tier("volley_shots") {
-            self.volley_shots[i] = number.round().max(0.0) as u8;
-            return Ok(());
-        }
-        if let Some(i) = tier("cadence") {
-            self.cadence[i] = number;
-            return Ok(());
-        }
         let knob = match name {
+            "auto_interval" => &mut self.auto_interval,
             "potency_base" => &mut self.potency_base,
             "potency_per_point" => &mut self.potency_per_point,
             "damage_curve_k" => &mut self.damage_curve_k,
@@ -294,6 +283,10 @@ impl Tuning {
             "flank_stun" => &mut self.flank_stun,
             "flank_intuition" => &mut self.flank_intuition,
             "counter_reflect" => &mut self.counter_reflect,
+            "volley_shots" => {
+                self.volley_shots = number.round().max(1.0) as u8;
+                return Ok(());
+            }
             "rattle_stacks" => {
                 self.rattle_stacks = number.round().max(1.0) as u8;
                 return Ok(());
@@ -338,26 +331,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn set_reads_numbers_and_tiers_and_refuses_the_unknown() {
+    fn set_reads_numbers_and_refuses_the_unknown() {
         let mut tuning = Tuning::default();
         tuning.set("lunge_pierce", "0.25").unwrap();
-        tuning.set("cadence_2", "1.8").unwrap();
+        tuning.set("volley_shots", "2").unwrap();
         assert_eq!(tuning.lunge_pierce, 0.25);
-        assert_eq!(tuning.cadence[2], 1.8);
+        assert_eq!(tuning.volley_shots, 2);
         assert!(tuning.set("lunge_pierce", "much").is_err());
-        assert!(tuning.set("cadence_4", "1").is_err());
         assert!(tuning.set("no_such_knob", "1").is_err());
-    }
-
-    #[test]
-    fn the_tiers_and_their_effects_run_in_order() {
-        let tuning = Tuning::default();
-        // A higher tier never gives less, and the top gives more than none
-        for t in 0..3 {
-            assert!(tuning.cadence[t] >= tuning.cadence[t + 1]);
-            assert!(tuning.volley_shots[t] <= tuning.volley_shots[t + 1]);
-        }
-        assert!(tuning.cadence[3] < tuning.cadence[0]);
-        assert!(tuning.volley_shots[3] > tuning.volley_shots[0]);
     }
 }

@@ -182,7 +182,7 @@ pub fn player_auto_attack(
             }
         }
 
-        // Check cooldown (tier-based cadence from Presence commitment)
+        // Check cooldown: the fixed interval, stretched by a daze
         let cooldown = common_bevy::components::status::Status::cadence(attrs.cadence_interval(), status);
         let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
         if time_since_last_attack < cooldown {
