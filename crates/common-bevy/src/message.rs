@@ -64,6 +64,10 @@ pub enum Event {
     /// Server → Client (Do): Ability was used successfully (apply recovery/synergies)
     /// target: Optional target entity (player's intended target, server validates)
     UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity> },
+    /// Server → Client: `ent` prepared `ability`, a reaction it holds to
+    /// fire later (`components::prepared::Prepared`): its lockout starts now,
+    /// and nothing plays until the reaction is used
+    Prepare { ent: Entity, ability: AbilityType },
     /// Server → Client: Ability usage failed
     AbilityFailed { ent: Entity, reason: AbilityFailReason },
     /// Server → Client: Clear threats from queue

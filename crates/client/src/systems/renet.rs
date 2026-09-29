@@ -45,6 +45,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::ClearQueue { .. } => "ClearQueue",
         Event::AbilityFailed { .. } => "AbilityFailed",
         Event::UseAbility { .. } => "UseAbility",
+        Event::Prepare { .. } => "Prepare",
         Event::Pong { .. } => "Pong",
         Event::MovementIntent { .. } => "MovementIntent",
         Event::Displace { .. } => "Displace",
@@ -251,6 +252,13 @@ pub fn write_do(
                     continue
                 };
                 do_writer.write(Do { event: Event::UseAbility { ent, ability, target } });
+            }
+            Do { event: Event::Prepare { ent, ability } } => {
+                let Some(&ent) = l2r.get_by_right(&ent) else {
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
+                    continue
+                };
+                do_writer.write(Do { event: Event::Prepare { ent, ability } });
             }
             Do { event: Event::Pong { client_time } } => {
                 // Forward Pong to Do writer for handle_pong system

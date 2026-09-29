@@ -1,23 +1,34 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{recovery::{GlobalRecovery, SynergyUnlock}, target::Target},
+    components::{prepared::Prepared, recovery::{GlobalRecovery, SynergyUnlock}, target::Target},
     message::{Do, Event as GameEvent, AbilityType},
     systems::combat::synergies::{apply_synergies, lockout},
 };
 
-/// Client-side handler for Do UseAbility
-/// Server broadcasts when ability succeeds, client applies recovery/synergies locally
+/// Client-side handler for Do UseAbility and Do Prepare
+/// Server broadcasts when ability succeeds or a reaction is prepared, client
+/// applies recovery/synergies locally. A prepared reaction fired starts
+/// none: its owner still holds it as the use arrives, the server sending
+/// what it holds after.
 pub fn handle_ability_used(
     mut commands: Commands,
     mut do_reader: MessageReader<Do>,
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     target_query: Query<&Target>,
     recovery_query: Query<(Option<&GlobalRecovery>, Option<&SynergyUnlock>)>,
+    prepared_query: Query<&Prepared>,
 ) {
     for event in do_reader.read() {
-        let Do { event: GameEvent::UseAbility { ent, ability, target: _ } } = event else {
-            continue;
+        let (ent, ability) = match &event.event {
+            GameEvent::UseAbility { ent, ability, target: _ } => {
+                if prepared_query.get(*ent).is_ok_and(|prepared| prepared.holds(*ability)) {
+                    continue;
+                }
+                (ent, ability)
+            }
+            GameEvent::Prepare { ent, ability } => (ent, ability),
+            _ => continue,
         };
 
         // Skip AutoAttack - it has its own timer and doesn't use recovery system

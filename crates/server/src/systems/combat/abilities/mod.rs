@@ -58,7 +58,7 @@ pub fn prepare(
     prepared.hold(ability, room);
     writer.write(Do { event: GameEvent::Incremental { ent, component: Component::Stamina(*stamina) } });
     writer.write(Do { event: GameEvent::Incremental { ent, component: Component::Prepared(*prepared) } });
-    writer.write(Do { event: GameEvent::UseAbility { ent, ability, target: None } });
+    writer.write(Do { event: GameEvent::Prepare { ent, ability } });
 
     let early = synergies::is_early(ability, prior.as_ref(), offer.as_ref());
     let recovery = synergies::lockout(ability, prior.as_ref(), offer.as_ref());
@@ -68,14 +68,14 @@ pub fn prepare(
     Ok(())
 }
 
-/// Spends a prepared `ability` of `ent`'s, telling its client: true where
-/// one was held, and the reaction fires free, lockout or none.
-pub fn fire_prepared(ent: Entity, ability: AbilityType, prepared: &mut Prepared, writer: &mut MessageWriter<Do>) -> bool {
-    if !prepared.take(ability) {
-        return false;
+/// Spends a prepared `ability` of `ent`'s, used at `target`, after its
+/// effect: every client plays the use, and the owner's, still holding it
+/// as the use arrives, starts no lockout; then what it holds follows.
+pub fn fire_prepared(ent: Entity, ability: AbilityType, target: Option<Entity>, prepared: &mut Prepared, writer: &mut MessageWriter<Do>) {
+    if prepared.take(ability) {
+        writer.write(Do { event: GameEvent::UseAbility { ent, ability, target } });
+        writer.write(Do { event: GameEvent::Incremental { ent, component: Component::Prepared(*prepared) } });
     }
-    writer.write(Do { event: GameEvent::Incremental { ent, component: Component::Prepared(*prepared) } });
-    true
 }
 
 /// Breaks `ent`'s stride where the strike it just made from `from` at `to`

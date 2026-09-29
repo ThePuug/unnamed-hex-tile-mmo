@@ -110,11 +110,6 @@ pub fn handle_counter(
         };
 
         // A prepared Counter was paid for when it was prepared
-        if held {
-            if let Ok(mut prepared) = prepared_query.get_mut(*ent) {
-                super::fire_prepared(*ent, AbilityType::Counter, &mut prepared, &mut writer);
-            }
-        }
         let counter_stamina_cost = if held { 0.0 } else { common_bevy::tuning::tuning().counter_cost };
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
@@ -194,8 +189,11 @@ pub fn handle_counter(
             });
         }
 
-        // A prepared Counter starts no lockout and offers nothing
+        // A prepared Counter is spent, and starts no lockout and offers nothing
         if held {
+            if let Ok(mut prepared) = prepared_query.get_mut(*ent) {
+                super::fire_prepared(*ent, AbilityType::Counter, None, &mut prepared, &mut writer);
+            }
             continue;
         }
 

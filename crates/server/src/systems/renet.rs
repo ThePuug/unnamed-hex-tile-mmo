@@ -440,6 +440,11 @@ pub fn write_try(
                     bincode::config::legacy()).unwrap();
                 broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
+            Event::Prepare { ent, .. } => {
+                let Ok(loaded_by) = loaded_by_query.get(*ent) else { continue; };
+                let bytes = bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap();
+                broadcast_reliable(&mut conn, &lobby, loaded_by, *ent, bytes);
+            }
             Event::MovementIntent { ent, .. } | Event::Displace { ent, .. } => {
                 let ent = *ent;
                 // Unreliable: the latest wins, and Loc repairs a loss.

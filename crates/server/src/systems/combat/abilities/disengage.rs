@@ -87,11 +87,7 @@ pub fn handle_disengage(
         };
 
         // A prepared Disengage was paid for when it was prepared
-        if held {
-            if let Ok(mut prepared) = prepared_query.get_mut(*ent) {
-                super::fire_prepared(*ent, AbilityType::Disengage, &mut prepared, &mut writer);
-            }
-        } else {
+        if !held {
             stamina.state -= tuning.disengage_cost;
             stamina.step = stamina.state;
             writer.write(Do {
@@ -109,8 +105,11 @@ pub fn handle_disengage(
             commands.entity(*ent).insert(Poised(attrs.endurance() * tuning.disengage_endurance));
         }
 
-        // A prepared Disengage starts no lockout
+        // A prepared Disengage is spent, and starts no lockout
         if held {
+            if let Ok(mut prepared) = prepared_query.get_mut(*ent) {
+                super::fire_prepared(*ent, AbilityType::Disengage, *target, &mut prepared, &mut writer);
+            }
             continue;
         }
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Disengage, target: *target } });

@@ -61,9 +61,6 @@ pub fn handle_deflect(
         }
 
         // A prepared Deflect was paid for when it was prepared
-        if held {
-            super::fire_prepared(*ent, AbilityType::Deflect, &mut prepared, &mut writer);
-        }
         let deflect_cost = if held { 0.0 } else { common_bevy::tuning::tuning().deflect_cost };
 
         // Validate ability usage
@@ -108,8 +105,9 @@ pub fn handle_deflect(
             },
         });
 
-        // A prepared Deflect starts no lockout and offers nothing
+        // A prepared Deflect is spent, and starts no lockout and offers nothing
         if held {
+            super::fire_prepared(*ent, AbilityType::Deflect, None, &mut prepared, &mut writer);
             continue;
         }
 
