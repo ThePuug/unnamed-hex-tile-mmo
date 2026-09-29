@@ -224,8 +224,9 @@ mod tests {
 
         let order: Vec<_> = queue.threats.iter().map(|t| (t.ability.unwrap(), t.inserted_at.as_secs())).collect();
         assert_eq!(order, vec![(Lunge, 1), (Overpower, 3), (AutoAttack, 0), (AutoAttack, 2)]);
-        assert_eq!(queue.visible_count(), 1);
-        assert_eq!(queue.hidden_count(), 1);
+        // The first auto-attack stood alone in the window, so it stays seen
+        let seen: Vec<_> = queue.threats.iter().map(|t| t.seen).collect();
+        assert_eq!(seen, vec![true, false, true, false]);
     }
 
     #[test]
@@ -505,8 +506,8 @@ mod tests {
         insert_threat(&mut queue, make(Some(Lunge), 0.0, 4), Duration::ZERO);
         let order: Vec<_> = queue.threats.iter().map(|t| t.inserted_at.as_secs()).collect();
         assert_eq!(order, vec![2, 4, 1, 3, 0], "blows, then wounds, then auto-attacks, each oldest first");
-        assert!(queue.threats.iter().take(3).all(|t| t.seen), "the window is seen, auto-attacks alike");
-        assert!(!queue.threats.iter().skip(3).any(|t| t.seen));
+        assert!(queue.threats.iter().take(3).all(|t| t.seen), "the window is seen");
+        assert!(queue.threats[4].seen, "the auto-attack stood in the window first, and stays seen at the back");
     }
 
     #[test]
