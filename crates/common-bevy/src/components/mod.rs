@@ -857,9 +857,9 @@ impl ActorAttributes {
     /// Used in contest vs Reflex (affects synergy recovery reduction)
     pub fn flow(&self) -> u16 { self.agility() }
 
-    /// Toughness: Physical damage resistance, contested by Presence for mitigation.
-    /// No attribute carries it: Vitality's relative slot is open, so nothing is armoured.
-    pub fn toughness(&self) -> u16 { 0 }
+    /// Toughness: mitigation of the blows taken, from vitality
+    /// Used in contest vs the attacker's Presence
+    pub fn toughness(&self) -> u16 { self.vitality() }
 
     /// Impact: Recovery pushback from might
     /// Used in contest vs Composure (extends enemy recovery duration)
@@ -869,8 +869,8 @@ impl ActorAttributes {
     /// Used in contest vs Impact (reduces own recovery duration passively)
     pub fn composure(&self) -> u16 { self.discipline() }
 
-    /// Presence: Healing reduction from resolve
-    /// Used in contest vs Toughness (reduces healing effectiveness via aura)
+    /// Presence: from resolve
+    /// Used in contest vs the defender's Toughness
     pub fn presence(&self) -> u16 { self.resolve() }
 
     /// Reflex: Reaction window extension from instinct

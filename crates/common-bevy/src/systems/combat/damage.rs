@@ -87,36 +87,18 @@ pub fn calculate_recovery_pushback(
     crate::tuning::tuning().pushback_share * contest_factor(attacker_impact, defender_composure, edge)
 }
 
-/// Scan for the strongest Presence aura within range of target, among
-/// `actors`, each read with its own position.
-pub fn find_max_presence_in_range(
-    target: Entity,
-    actors: &bevy::prelude::Query<(&crate::components::Loc, &ActorAttributes)>,
-) -> u16 {
-    const RADIUS: i32 = 5;
-
-    let Ok((target_loc, _)) = actors.get(target) else {
-        return 0;
-    };
-
-    actors.iter()
-        .filter(|(loc, _)| target_loc.flat_distance(loc) as i32 <= RADIUS)
-        .map(|(_, attrs)| attrs.presence())
-        .max()
-        .unwrap_or(0)
-}
-
 /// Apply passive mitigation to damage (unified for all damage types).
 
-/// Pattern 1 (Nullifying): `Tuning::mitigation_share` × contest_factor(Toughness,
-/// Presence), with no ceiling: past 100% the blow does nothing.
+/// Pattern 1 (Nullifying): `Tuning::mitigation_share` × contest_factor(the
+/// defender's Toughness, the attacker's Presence), with the level gap's
+/// `edge` on the defender's side and no ceiling: past 100% the blow does nothing.
 pub fn apply_passive_modifiers(
     outgoing_damage: f32,
     attrs: &ActorAttributes,
-    max_dominance_in_range: u16,
+    attacker_presence: u16,
     edge: f32,
 ) -> f32 {
-    let mitigation = crate::tuning::tuning().mitigation_share * contest_factor(attrs.toughness(), max_dominance_in_range, edge);
+    let mitigation = crate::tuning::tuning().mitigation_share * contest_factor(attrs.toughness(), attacker_presence, edge);
     (outgoing_damage * (1.0 - mitigation)).max(0.0)
 }
 
@@ -131,6 +113,17 @@ mod tests {
         assert!((spread(100.0, 0.2, 1.0) - 120.0).abs() < 1e-3, "the high end");
         assert!(spread(100.0, 0.2, 0.5) > spread(100.0, 0.2, -0.5), "a higher draw hits harder");
         assert_eq!(spread(100.0, 0.0, 1.0), 100.0, "no spread, no range");
+    }
+
+    #[test]
+    fn toughness_mitigates_and_the_attackers_presence_meets_it() {
+        let vital = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
+        let plain = ActorAttributes::default();
+        let taken = |attrs: &ActorAttributes, presence: u16| apply_passive_modifiers(100.0, attrs, presence, 0.0);
+        assert_eq!(taken(&plain, 0), 100.0, "no Vitality, no Toughness");
+        assert!(taken(&vital, 0) < 100.0, "Vitality's Toughness mitigates");
+        assert!(taken(&vital, 50) > taken(&vital, 0), "Presence meets it");
+        assert_eq!(taken(&vital, vital.toughness()), 100.0, "matched, it nullifies");
     }
 
     #[test]

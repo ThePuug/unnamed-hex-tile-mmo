@@ -113,7 +113,7 @@ pub fn resolve_threat(
     trigger: On<Try>,
     mut commands: Commands,
     mut query: Query<(&mut Health, &ActorAttributes)>,
-    actors: Query<(&Loc, &ActorAttributes)>,
+    actors: Query<&ActorAttributes>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
     locs: Query<&Loc>,
@@ -126,14 +126,14 @@ pub fn resolve_threat(
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
         if let Ok((mut health, attrs)) = query.get_mut(*ent) {
-            // The strongest Presence aura nearby weighs against the defender's Toughness; the
-            // level edge is the defender's against the attacker, whose blow the armour meets
-            let max_presence = damage_calc::find_max_presence_in_range(*ent, &actors);
-            let attacker_level = actors.get(threat.source).map_or(attrs.total_level(), |(_, source)| source.total_level());
+            // The defender's Toughness meets the attacker's Presence, the level
+            // edge the defender's against the attacker
+            let (attacker_level, attacker_presence) = actors.get(threat.source)
+                .map_or((attrs.total_level(), 0), |source| (source.total_level(), source.presence()));
 
             // Apply passive mitigation (unified for all damage types), less what the
             // ability pierces
-            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_presence, damage_calc::level_edge(attrs.total_level(), attacker_level));
+            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, attacker_presence, damage_calc::level_edge(attrs.total_level(), attacker_level));
             let pierce = threat.ability.map_or(0.0, |ability| tuning.pierce(ability));
             let final_damage = mitigated + (threat.damage - mitigated) * pierce + threat.dot_left();
 

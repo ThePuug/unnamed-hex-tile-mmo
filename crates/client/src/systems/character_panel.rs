@@ -1354,10 +1354,10 @@ pub fn update_attributes(
                         format!("-{:.0}%", reduction_pct)
                     },
                     MetaAttributeStat::Toughness => {
-                        // Damage mitigation: 0.75 × gap × contest_factor
+                        // Damage mitigation against an attacker with no Presence
                         let toughness = display_attrs.toughness();
-                        let contest = contest_factor(toughness, 0, 0.0);  // vs 0 presence
-                        let mitigation_pct = (0.75 * contest) * 100.0;
+                        let contest = contest_factor(toughness, 0, 0.0);
+                        let mitigation_pct = (common_bevy::tuning::tuning().mitigation_share * contest) * 100.0;
                         format!("-{:.0}%", mitigation_pct)
                     },
                 };
