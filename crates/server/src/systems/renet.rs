@@ -115,7 +115,7 @@ pub fn do_presence(
                     in_combat: false,
                     last_action: time.elapsed(),
                 };
-                // Initialize reaction queue with capacity based on Focus attribute
+                // Initialize reaction queue with the window its Awareness sees
                 let queue_capacity = attrs.window_size();
                 let reaction_queue = ReactionQueue::new(queue_capacity);
                 let equipment = Equipment::starting_outfit();
@@ -279,9 +279,9 @@ pub fn write_try(
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::SetTierLock { ent, tier }});
                 }
-                Try { event: Event::RespecAttributes { ent: _, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } } => {
+                Try { event: Event::RespecAttributes { ent: _, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
-                    writer.write(Try { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift }});
+                    writer.write(Try { event: Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift }});
                 }
                 Try { event: Event::Wear { ent: _, item, on } } => {
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
@@ -456,21 +456,21 @@ pub fn write_try(
                     conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, bytes);
                 }
             }
-            Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } => {
+            Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } => {
                 let ent = *ent;
-                let might_grace_axis = *might_grace_axis;
-                let might_grace_spectrum = *might_grace_spectrum;
-                let might_grace_shift = *might_grace_shift;
-                let vitality_focus_axis = *vitality_focus_axis;
-                let vitality_focus_spectrum = *vitality_focus_spectrum;
-                let vitality_focus_shift = *vitality_focus_shift;
-                let instinct_presence_axis = *instinct_presence_axis;
-                let instinct_presence_spectrum = *instinct_presence_spectrum;
-                let instinct_presence_shift = *instinct_presence_shift;
+                let might_agility_axis = *might_agility_axis;
+                let might_agility_spectrum = *might_agility_spectrum;
+                let might_agility_shift = *might_agility_shift;
+                let vitality_discipline_axis = *vitality_discipline_axis;
+                let vitality_discipline_spectrum = *vitality_discipline_spectrum;
+                let vitality_discipline_shift = *vitality_discipline_shift;
+                let instinct_resolve_axis = *instinct_resolve_axis;
+                let instinct_resolve_spectrum = *instinct_resolve_spectrum;
+                let instinct_resolve_shift = *instinct_resolve_shift;
                 // Send respec confirmation only to the owning client
                 if let Some(client_id) = lobby.get_by_right(&ent) {
                     let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift }},
+                        Do { event: Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift }},
                         bincode::config::legacy()).unwrap();
                     conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
                 }

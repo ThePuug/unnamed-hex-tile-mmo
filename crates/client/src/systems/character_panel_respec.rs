@@ -28,62 +28,62 @@ pub fn handle_attribute_buttons(
 
             match button {
                 // LEFT SIDE: Increase = more negative, Decrease = less negative
-                AxisAdjustButton::MightGraceIncrease => {
-                    let new_axis = draft.might_grace_axis - 1; // Increase commitment = more negative
+                AxisAdjustButton::MightAgilityIncrease => {
+                    let new_axis = draft.might_agility_axis - 1; // Increase commitment = more negative
                     if new_axis < -127 { continue; }
-                    if new_axis.abs() > draft.might_grace_axis.abs()
+                    if new_axis.abs() > draft.might_agility_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.might_grace_axis = new_axis;
+                    draft.might_agility_axis = new_axis;
                 }
-                AxisAdjustButton::MightGraceDecrease => {
-                    let new_axis = draft.might_grace_axis + 1; // Decrease commitment = less negative
-                    if new_axis.abs() > draft.might_grace_axis.abs()
+                AxisAdjustButton::MightAgilityDecrease => {
+                    let new_axis = draft.might_agility_axis + 1; // Decrease commitment = less negative
+                    if new_axis.abs() > draft.might_agility_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.might_grace_axis = new_axis;
+                    draft.might_agility_axis = new_axis;
                 }
-                AxisAdjustButton::VitalityFocusIncrease => {
-                    let new_axis = draft.vitality_focus_axis - 1;
+                AxisAdjustButton::VitalityDisciplineIncrease => {
+                    let new_axis = draft.vitality_discipline_axis - 1;
                     if new_axis < -127 { continue; }
-                    if new_axis.abs() > draft.vitality_focus_axis.abs()
+                    if new_axis.abs() > draft.vitality_discipline_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.vitality_focus_axis = new_axis;
+                    draft.vitality_discipline_axis = new_axis;
                 }
-                AxisAdjustButton::VitalityFocusDecrease => {
-                    let new_axis = draft.vitality_focus_axis + 1;
-                    if new_axis.abs() > draft.vitality_focus_axis.abs()
+                AxisAdjustButton::VitalityDisciplineDecrease => {
+                    let new_axis = draft.vitality_discipline_axis + 1;
+                    if new_axis.abs() > draft.vitality_discipline_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.vitality_focus_axis = new_axis;
+                    draft.vitality_discipline_axis = new_axis;
                 }
-                AxisAdjustButton::InstinctPresenceIncrease => {
-                    let new_axis = draft.instinct_presence_axis - 1;
+                AxisAdjustButton::InstinctResolveIncrease => {
+                    let new_axis = draft.instinct_resolve_axis - 1;
                     if new_axis < -127 { continue; }
-                    if new_axis.abs() > draft.instinct_presence_axis.abs()
+                    if new_axis.abs() > draft.instinct_resolve_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.instinct_presence_axis = new_axis;
+                    draft.instinct_resolve_axis = new_axis;
                 }
-                AxisAdjustButton::InstinctPresenceDecrease => {
-                    let new_axis = draft.instinct_presence_axis + 1;
-                    if new_axis.abs() > draft.instinct_presence_axis.abs()
+                AxisAdjustButton::InstinctResolveDecrease => {
+                    let new_axis = draft.instinct_resolve_axis + 1;
+                    if new_axis.abs() > draft.instinct_resolve_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.instinct_presence_axis = new_axis;
+                    draft.instinct_resolve_axis = new_axis;
                 }
             }
         }
@@ -96,62 +96,62 @@ pub fn handle_attribute_buttons(
             let draft = state.pending_respec.as_mut().unwrap();
 
             match button {
-                AxisAdjustButtonRight::MightGraceDecrease => {
-                    let new_axis = draft.might_grace_axis - 1;
+                AxisAdjustButtonRight::MightAgilityDecrease => {
+                    let new_axis = draft.might_agility_axis - 1;
                     if new_axis < -127 { continue; }
-                    if new_axis.abs() > draft.might_grace_axis.abs()
+                    if new_axis.abs() > draft.might_agility_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.might_grace_axis = new_axis;
+                    draft.might_agility_axis = new_axis;
                 }
-                AxisAdjustButtonRight::MightGraceIncrease => {
-                    let new_axis = draft.might_grace_axis + 1;
-                    if new_axis.abs() > draft.might_grace_axis.abs()
+                AxisAdjustButtonRight::MightAgilityIncrease => {
+                    let new_axis = draft.might_agility_axis + 1;
+                    if new_axis.abs() > draft.might_agility_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.might_grace_axis = new_axis;
+                    draft.might_agility_axis = new_axis;
                 }
-                AxisAdjustButtonRight::VitalityFocusDecrease => {
-                    let new_axis = draft.vitality_focus_axis - 1;
+                AxisAdjustButtonRight::VitalityDisciplineDecrease => {
+                    let new_axis = draft.vitality_discipline_axis - 1;
                     if new_axis < -127 { continue; }
-                    if new_axis.abs() > draft.vitality_focus_axis.abs()
+                    if new_axis.abs() > draft.vitality_discipline_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.vitality_focus_axis = new_axis;
+                    draft.vitality_discipline_axis = new_axis;
                 }
-                AxisAdjustButtonRight::VitalityFocusIncrease => {
-                    let new_axis = draft.vitality_focus_axis + 1;
-                    if new_axis.abs() > draft.vitality_focus_axis.abs()
+                AxisAdjustButtonRight::VitalityDisciplineIncrease => {
+                    let new_axis = draft.vitality_discipline_axis + 1;
+                    if new_axis.abs() > draft.vitality_discipline_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.vitality_focus_axis = new_axis;
+                    draft.vitality_discipline_axis = new_axis;
                 }
-                AxisAdjustButtonRight::InstinctPresenceDecrease => {
-                    let new_axis = draft.instinct_presence_axis - 1;
+                AxisAdjustButtonRight::InstinctResolveDecrease => {
+                    let new_axis = draft.instinct_resolve_axis - 1;
                     if new_axis < -127 { continue; }
-                    if new_axis.abs() > draft.instinct_presence_axis.abs()
+                    if new_axis.abs() > draft.instinct_resolve_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.instinct_presence_axis = new_axis;
+                    draft.instinct_resolve_axis = new_axis;
                 }
-                AxisAdjustButtonRight::InstinctPresenceIncrease => {
-                    let new_axis = draft.instinct_presence_axis + 1;
-                    if new_axis.abs() > draft.instinct_presence_axis.abs()
+                AxisAdjustButtonRight::InstinctResolveIncrease => {
+                    let new_axis = draft.instinct_resolve_axis + 1;
+                    if new_axis.abs() > draft.instinct_resolve_axis.abs()
                         && draft.total_investment() >= max_level
                     {
                         continue;
                     }
-                    draft.instinct_presence_axis = new_axis;
+                    draft.instinct_resolve_axis = new_axis;
                 }
             }
         }
@@ -164,41 +164,41 @@ pub fn handle_attribute_buttons(
             let draft = state.pending_respec.as_mut().unwrap();
 
             match button {
-                SpectrumAdjustButton::MightGraceDecrease => {
-                    draft.might_grace_spectrum = (draft.might_grace_spectrum - 1).max(0);
+                SpectrumAdjustButton::MightAgilityDecrease => {
+                    draft.might_agility_spectrum = (draft.might_agility_spectrum - 1).max(0);
                 }
-                SpectrumAdjustButton::MightGraceIncrease => {
+                SpectrumAdjustButton::MightAgilityIncrease => {
                     if draft.total_investment() >= max_level {
                         continue; // No budget
                     }
-                    if draft.might_grace_spectrum == i8::MAX {
+                    if draft.might_agility_spectrum == i8::MAX {
                         continue; // Prevent i8 overflow
                     }
-                    draft.might_grace_spectrum = draft.might_grace_spectrum + 1;
+                    draft.might_agility_spectrum = draft.might_agility_spectrum + 1;
                 }
-                SpectrumAdjustButton::VitalityFocusDecrease => {
-                    draft.vitality_focus_spectrum = (draft.vitality_focus_spectrum - 1).max(0);
+                SpectrumAdjustButton::VitalityDisciplineDecrease => {
+                    draft.vitality_discipline_spectrum = (draft.vitality_discipline_spectrum - 1).max(0);
                 }
-                SpectrumAdjustButton::VitalityFocusIncrease => {
+                SpectrumAdjustButton::VitalityDisciplineIncrease => {
                     if draft.total_investment() >= max_level {
                         continue;
                     }
-                    if draft.vitality_focus_spectrum == i8::MAX {
+                    if draft.vitality_discipline_spectrum == i8::MAX {
                         continue;
                     }
-                    draft.vitality_focus_spectrum = draft.vitality_focus_spectrum + 1;
+                    draft.vitality_discipline_spectrum = draft.vitality_discipline_spectrum + 1;
                 }
-                SpectrumAdjustButton::InstinctPresenceDecrease => {
-                    draft.instinct_presence_spectrum = (draft.instinct_presence_spectrum - 1).max(0);
+                SpectrumAdjustButton::InstinctResolveDecrease => {
+                    draft.instinct_resolve_spectrum = (draft.instinct_resolve_spectrum - 1).max(0);
                 }
-                SpectrumAdjustButton::InstinctPresenceIncrease => {
+                SpectrumAdjustButton::InstinctResolveIncrease => {
                     if draft.total_investment() >= max_level {
                         continue;
                     }
-                    if draft.instinct_presence_spectrum == i8::MAX {
+                    if draft.instinct_resolve_spectrum == i8::MAX {
                         continue;
                     }
-                    draft.instinct_presence_spectrum = draft.instinct_presence_spectrum + 1;
+                    draft.instinct_resolve_spectrum = draft.instinct_resolve_spectrum + 1;
                 }
             }
         }
@@ -206,9 +206,9 @@ pub fn handle_attribute_buttons(
 
     // Auto-clamp shifts after any axis/spectrum change
     if let Some(draft) = state.pending_respec.as_mut() {
-        draft.might_grace_shift = clamp_shift(draft.might_grace_shift, draft.might_grace_axis, draft.might_grace_spectrum);
-        draft.vitality_focus_shift = clamp_shift(draft.vitality_focus_shift, draft.vitality_focus_axis, draft.vitality_focus_spectrum);
-        draft.instinct_presence_shift = clamp_shift(draft.instinct_presence_shift, draft.instinct_presence_axis, draft.instinct_presence_spectrum);
+        draft.might_agility_shift = clamp_shift(draft.might_agility_shift, draft.might_agility_axis, draft.might_agility_spectrum);
+        draft.vitality_discipline_shift = clamp_shift(draft.vitality_discipline_shift, draft.vitality_discipline_axis, draft.vitality_discipline_spectrum);
+        draft.instinct_resolve_shift = clamp_shift(draft.instinct_resolve_shift, draft.instinct_resolve_axis, draft.instinct_resolve_spectrum);
     }
 }
 
@@ -242,15 +242,15 @@ pub fn handle_apply_button(
             writer.write(Try {
                 event: GameEvent::RespecAttributes {
                     ent,
-                    might_grace_axis: draft.might_grace_axis,
-                    might_grace_spectrum: draft.might_grace_spectrum,
-                    might_grace_shift: draft.might_grace_shift,
-                    vitality_focus_axis: draft.vitality_focus_axis,
-                    vitality_focus_spectrum: draft.vitality_focus_spectrum,
-                    vitality_focus_shift: draft.vitality_focus_shift,
-                    instinct_presence_axis: draft.instinct_presence_axis,
-                    instinct_presence_spectrum: draft.instinct_presence_spectrum,
-                    instinct_presence_shift: draft.instinct_presence_shift,
+                    might_agility_axis: draft.might_agility_axis,
+                    might_agility_spectrum: draft.might_agility_spectrum,
+                    might_agility_shift: draft.might_agility_shift,
+                    vitality_discipline_axis: draft.vitality_discipline_axis,
+                    vitality_discipline_spectrum: draft.vitality_discipline_spectrum,
+                    vitality_discipline_shift: draft.vitality_discipline_shift,
+                    instinct_resolve_axis: draft.instinct_resolve_axis,
+                    instinct_resolve_spectrum: draft.instinct_resolve_spectrum,
+                    instinct_resolve_shift: draft.instinct_resolve_shift,
                 },
             });
         }
@@ -266,29 +266,29 @@ pub fn handle_respec_confirmed(
     for message in reader.read() {
         if let GameEvent::RespecAttributes {
             ent,
-            might_grace_axis,
-            might_grace_spectrum,
-            might_grace_shift,
-            vitality_focus_axis,
-            vitality_focus_spectrum,
-            vitality_focus_shift,
-            instinct_presence_axis,
-            instinct_presence_spectrum,
-            instinct_presence_shift,
+            might_agility_axis,
+            might_agility_spectrum,
+            might_agility_shift,
+            vitality_discipline_axis,
+            vitality_discipline_spectrum,
+            vitality_discipline_shift,
+            instinct_resolve_axis,
+            instinct_resolve_spectrum,
+            instinct_resolve_shift,
         } = &message.event
         {
             // Apply to player's ActorAttributes
             if let Ok(mut attrs) = player_query.get_mut(*ent) {
                 attrs.apply_respec(
-                    *might_grace_axis,
-                    *might_grace_spectrum,
-                    *might_grace_shift,
-                    *vitality_focus_axis,
-                    *vitality_focus_spectrum,
-                    *vitality_focus_shift,
-                    *instinct_presence_axis,
-                    *instinct_presence_spectrum,
-                    *instinct_presence_shift,
+                    *might_agility_axis,
+                    *might_agility_spectrum,
+                    *might_agility_shift,
+                    *vitality_discipline_axis,
+                    *vitality_discipline_spectrum,
+                    *vitality_discipline_shift,
+                    *instinct_resolve_axis,
+                    *instinct_resolve_spectrum,
+                    *instinct_resolve_shift,
                 );
 
                 // Clear pending state now that server confirmed

@@ -32,7 +32,7 @@ pub fn handle_ability_used(
             entity_cmd.insert(recovery);
 
             // Apply synergies (optimistic client-side,)
-            // Contest: player's finesse vs target's cunning
+            // Contest: player's flow vs target's reflex
             if let Ok(attacker_attrs) = attrs_query.get(*ent) {
                 let target_result = target_query.get(*ent);
                 let target_entity = target_result.ok().and_then(|t| t.entity);

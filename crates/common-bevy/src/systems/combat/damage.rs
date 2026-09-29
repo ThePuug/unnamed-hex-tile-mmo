@@ -45,8 +45,8 @@ pub fn contest_factor(advantage_stat: u16, counter_stat: u16, edge: f32) -> f32 
 
 /// Used ONLY by reaction window to ensure playable baseline.
 /// `edge` is the level gap's contest points on the defender's side ([`level_edge`]).
-pub fn reaction_contest_factor(cunning: u16, finesse: u16, edge: f32) -> f32 {
-    let delta = cunning as f32 - finesse as f32 + edge;
+pub fn reaction_contest_factor(reflex: u16, flow: u16, edge: f32) -> f32 {
+    let delta = reflex as f32 - flow as f32 + edge;
     if delta <= 0.0 {
         return 1.0;
     }
@@ -87,9 +87,9 @@ pub fn calculate_recovery_pushback(
     crate::tuning::tuning().pushback_share * contest_factor(attacker_impact, defender_composure, edge)
 }
 
-/// Scan for the strongest Dominance aura within range of target, among
+/// Scan for the strongest Presence aura within range of target, among
 /// `actors`, each read with its own position.
-pub fn find_max_dominance_in_range(
+pub fn find_max_presence_in_range(
     target: Entity,
     actors: &bevy::prelude::Query<(&crate::components::Loc, &ActorAttributes)>,
 ) -> u16 {
@@ -101,7 +101,7 @@ pub fn find_max_dominance_in_range(
 
     actors.iter()
         .filter(|(loc, _)| target_loc.flat_distance(loc) as i32 <= RADIUS)
-        .map(|(_, attrs)| attrs.dominance())
+        .map(|(_, attrs)| attrs.presence())
         .max()
         .unwrap_or(0)
 }
@@ -109,7 +109,7 @@ pub fn find_max_dominance_in_range(
 /// Apply passive mitigation to damage (unified for all damage types).
 
 /// Pattern 1 (Nullifying): `Tuning::mitigation_share` × contest_factor(Toughness,
-/// Dominance), with no ceiling: past 100% the blow does nothing.
+/// Presence), with no ceiling: past 100% the blow does nothing.
 pub fn apply_passive_modifiers(
     outgoing_damage: f32,
     attrs: &ActorAttributes,

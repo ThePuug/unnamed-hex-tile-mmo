@@ -255,13 +255,13 @@ pub fn write_do(
                 // Forward Pong to Do writer for handle_pong system
                 do_writer.write(Do { event: Event::Pong { client_time } });
             }
-            Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } } => {
+            Do { event: Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } } => {
                 // Map entity ID and forward to handle_respec_confirmed system
                 let Some(&ent) = l2r.get_by_right(&ent) else {
                     warn!("Client: RespecAttributes for unknown entity {:?}", ent);
                     continue
                 };
-                do_writer.write(Do { event: Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } });
+                do_writer.write(Do { event: Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } });
             }
             _ => {}
         }
@@ -454,18 +454,18 @@ pub fn send_try(
                     b_size: *b_size,
                 }}, bincode::config::legacy()).unwrap());
             }
-            Event::RespecAttributes { ent, might_grace_axis, might_grace_spectrum, might_grace_shift, vitality_focus_axis, vitality_focus_spectrum, vitality_focus_shift, instinct_presence_axis, instinct_presence_spectrum, instinct_presence_shift } => {
+            Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } => {
                 conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::RespecAttributes {
                     ent: *l2r.get_by_left(ent).unwrap(),
-                    might_grace_axis: *might_grace_axis,
-                    might_grace_spectrum: *might_grace_spectrum,
-                    might_grace_shift: *might_grace_shift,
-                    vitality_focus_axis: *vitality_focus_axis,
-                    vitality_focus_spectrum: *vitality_focus_spectrum,
-                    vitality_focus_shift: *vitality_focus_shift,
-                    instinct_presence_axis: *instinct_presence_axis,
-                    instinct_presence_spectrum: *instinct_presence_spectrum,
-                    instinct_presence_shift: *instinct_presence_shift,
+                    might_agility_axis: *might_agility_axis,
+                    might_agility_spectrum: *might_agility_spectrum,
+                    might_agility_shift: *might_agility_shift,
+                    vitality_discipline_axis: *vitality_discipline_axis,
+                    vitality_discipline_spectrum: *vitality_discipline_spectrum,
+                    vitality_discipline_shift: *vitality_discipline_shift,
+                    instinct_resolve_axis: *instinct_resolve_axis,
+                    instinct_resolve_spectrum: *instinct_resolve_spectrum,
+                    instinct_resolve_shift: *instinct_resolve_shift,
                 }}, bincode::config::legacy()).unwrap());
             }
             _ => {}

@@ -233,7 +233,7 @@ pub fn handle_lunge(
         commands.entity(*ent).insert(recovery);
 
         // Apply synergies (server-side state,)
-        // Contest: player's finesse vs target's cunning
+        // Contest: player's flow vs target's reflex
         let Ok(attacker_attrs) = attrs_query.get(*ent) else {
             continue;
         };

@@ -59,41 +59,41 @@ pub struct CharacterPanel;
 /// Marker component for attribute title row (contains reach values)
 #[derive(Component)]
 pub enum AttributeTitle {
-    MightGrace,
-    VitalityFocus,
-    InstinctPresence,
+    MightAgility,
+    VitalityDiscipline,
+    InstinctResolve,
 }
 
 /// Marker component for attribute current value row (container for values + buttons)
 #[derive(Component)]
 pub enum AttributeCurrent {
-    MightGrace,
-    VitalityFocus,
-    InstinctPresence,
+    MightAgility,
+    VitalityDiscipline,
+    InstinctResolve,
 }
 
 /// Marker for left current value text
 #[derive(Component)]
 pub enum LeftCurrentValue {
-    MightGrace,
-    VitalityFocus,
-    InstinctPresence,
+    MightAgility,
+    VitalityDiscipline,
+    InstinctResolve,
 }
 
 /// Marker for right current value text
 #[derive(Component)]
 pub enum RightCurrentValue {
-    MightGrace,
-    VitalityFocus,
-    InstinctPresence,
+    MightAgility,
+    VitalityDiscipline,
+    InstinctResolve,
 }
 
 /// Marker component for the visual attribute bar
 #[derive(Component, Debug)]
 pub enum AttributeBar {
-    MightGrace,
-    VitalityFocus,
-    InstinctPresence,
+    MightAgility,
+    VitalityDiscipline,
+    InstinctResolve,
 }
 
 /// Marker for the spectrum range indicator within the bar
@@ -103,20 +103,20 @@ pub struct SpectrumRange;
 /// Marker for the axis position indicator (yellow bar - draggable)
 #[derive(Component)]
 pub enum AxisMarker {
-    MightGrace,
-    VitalityFocus,
-    InstinctPresence,
+    MightAgility,
+    VitalityDiscipline,
+    InstinctResolve,
 }
 
 /// Marker component for absolute meta-attribute stat display
 #[derive(Component, Clone)]
 pub enum AbsoluteMetaAttributeStat {
     Force,
-    Technique,
+    Precision,
     Constitution,
-    Discipline,
+    Endurance,
     Intuition,
-    Gravitas,
+    Concentration,
 }
 
 /// Marker component for relative meta-attribute stat display
@@ -124,9 +124,9 @@ pub enum AbsoluteMetaAttributeStat {
 pub enum MetaAttributeStat {
     Impact,
     Composure,
-    Finesse,
-    Cunning,
-    Dominance,
+    Flow,
+    Reflex,
+    Presence,
     Toughness,
 }
 
@@ -137,34 +137,34 @@ pub struct RawStatValue;
 /// Marker for axis adjustment buttons (left-side positioned)
 #[derive(Component, Clone, Copy)]
 pub enum AxisAdjustButton {
-    MightGraceDecrease,
-    MightGraceIncrease,
-    VitalityFocusDecrease,
-    VitalityFocusIncrease,
-    InstinctPresenceDecrease,
-    InstinctPresenceIncrease,
+    MightAgilityDecrease,
+    MightAgilityIncrease,
+    VitalityDisciplineDecrease,
+    VitalityDisciplineIncrease,
+    InstinctResolveDecrease,
+    InstinctResolveIncrease,
 }
 
 /// Marker for axis adjustment buttons (right-side positioned)
 #[derive(Component, Clone, Copy)]
 pub enum AxisAdjustButtonRight {
-    MightGraceDecrease,
-    MightGraceIncrease,
-    VitalityFocusDecrease,
-    VitalityFocusIncrease,
-    InstinctPresenceDecrease,
-    InstinctPresenceIncrease,
+    MightAgilityDecrease,
+    MightAgilityIncrease,
+    VitalityDisciplineDecrease,
+    VitalityDisciplineIncrease,
+    InstinctResolveDecrease,
+    InstinctResolveIncrease,
 }
 
 /// Marker for spectrum adjustment buttons
 #[derive(Component, Clone, Copy)]
 pub enum SpectrumAdjustButton {
-    MightGraceDecrease,
-    MightGraceIncrease,
-    VitalityFocusDecrease,
-    VitalityFocusIncrease,
-    InstinctPresenceDecrease,
-    InstinctPresenceIncrease,
+    MightAgilityDecrease,
+    MightAgilityIncrease,
+    VitalityDisciplineDecrease,
+    VitalityDisciplineIncrease,
+    InstinctResolveDecrease,
+    InstinctResolveIncrease,
 }
 
 /// Marker for Apply Respec button
@@ -178,56 +178,56 @@ pub struct ApplyButtonText;
 /// Draft attributes for respec (axis/spectrum/shift)
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DraftAttributes {
-    pub might_grace_axis: i8,
-    pub might_grace_spectrum: i8,
-    pub might_grace_shift: i8,
-    pub vitality_focus_axis: i8,
-    pub vitality_focus_spectrum: i8,
-    pub vitality_focus_shift: i8,
-    pub instinct_presence_axis: i8,
-    pub instinct_presence_spectrum: i8,
-    pub instinct_presence_shift: i8,
+    pub might_agility_axis: i8,
+    pub might_agility_spectrum: i8,
+    pub might_agility_shift: i8,
+    pub vitality_discipline_axis: i8,
+    pub vitality_discipline_spectrum: i8,
+    pub vitality_discipline_shift: i8,
+    pub instinct_resolve_axis: i8,
+    pub instinct_resolve_spectrum: i8,
+    pub instinct_resolve_shift: i8,
 }
 
 impl DraftAttributes {
     /// Create draft from current ActorAttributes
     pub fn from_current(attrs: &ActorAttributes) -> Self {
         Self {
-            might_grace_axis: attrs.might_grace_axis(),
-            might_grace_spectrum: attrs.might_grace_spectrum(),
-            might_grace_shift: attrs.might_grace_shift(),
-            vitality_focus_axis: attrs.vitality_focus_axis(),
-            vitality_focus_spectrum: attrs.vitality_focus_spectrum(),
-            vitality_focus_shift: attrs.vitality_focus_shift(),
-            instinct_presence_axis: attrs.instinct_presence_axis(),
-            instinct_presence_spectrum: attrs.instinct_presence_spectrum(),
-            instinct_presence_shift: attrs.instinct_presence_shift(),
+            might_agility_axis: attrs.might_agility_axis(),
+            might_agility_spectrum: attrs.might_agility_spectrum(),
+            might_agility_shift: attrs.might_agility_shift(),
+            vitality_discipline_axis: attrs.vitality_discipline_axis(),
+            vitality_discipline_spectrum: attrs.vitality_discipline_spectrum(),
+            vitality_discipline_shift: attrs.vitality_discipline_shift(),
+            instinct_resolve_axis: attrs.instinct_resolve_axis(),
+            instinct_resolve_spectrum: attrs.instinct_resolve_spectrum(),
+            instinct_resolve_shift: attrs.instinct_resolve_shift(),
         }
     }
 
     /// Calculate total investment (for budget validation)
     pub fn total_investment(&self) -> u32 {
-        self.might_grace_axis.unsigned_abs() as u32
-            + self.might_grace_spectrum.max(0) as u32
-            + self.vitality_focus_axis.unsigned_abs() as u32
-            + self.vitality_focus_spectrum.max(0) as u32
-            + self.instinct_presence_axis.unsigned_abs() as u32
-            + self.instinct_presence_spectrum.max(0) as u32
+        self.might_agility_axis.unsigned_abs() as u32
+            + self.might_agility_spectrum.max(0) as u32
+            + self.vitality_discipline_axis.unsigned_abs() as u32
+            + self.vitality_discipline_spectrum.max(0) as u32
+            + self.instinct_resolve_axis.unsigned_abs() as u32
+            + self.instinct_resolve_spectrum.max(0) as u32
     }
 
     /// Validate draft against level budget
     pub fn is_valid(&self, level: u32) -> bool {
         let max_investment = level as i8;
         self.total_investment() <= level
-            && self.might_grace_axis.abs() <= max_investment
-            && self.might_grace_spectrum >= 0
-            && self.might_grace_spectrum <= max_investment
-            && self.vitality_focus_axis.abs() <= max_investment
-            && self.vitality_focus_spectrum >= 0
-            && self.vitality_focus_spectrum <= max_investment
-            && self.instinct_presence_axis.abs() <= max_investment
-            && self.instinct_presence_spectrum >= 0
-            && self.instinct_presence_spectrum <= max_investment
+            && self.might_agility_axis.abs() <= max_investment
+            && self.might_agility_spectrum >= 0
+            && self.might_agility_spectrum <= max_investment
+            && self.vitality_discipline_axis.abs() <= max_investment
+            && self.vitality_discipline_spectrum >= 0
+            && self.vitality_discipline_spectrum <= max_investment
+            && self.instinct_resolve_axis.abs() <= max_investment
+            && self.instinct_resolve_spectrum >= 0
+            && self.instinct_resolve_spectrum <= max_investment
     }
 }
 
@@ -265,9 +265,9 @@ pub struct DragState {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AttributeType {
-    MightGrace,
-    VitalityFocus,
-    InstinctPresence,
+    MightAgility,
+    VitalityDiscipline,
+    InstinctResolve,
 }
 
 pub const KEYCODE_CHARACTER_PANEL: KeyCode = KeyCode::KeyC;
@@ -277,11 +277,11 @@ macro_rules! create_absolute_stat_display {
         {
             let (name, color) = match $stat {
                 AbsoluteMetaAttributeStat::Force => ("Force", Color::srgb(0.9, 0.5, 0.5)),
-                AbsoluteMetaAttributeStat::Technique => ("Technique", Color::srgb(0.9, 0.9, 0.5)),
+                AbsoluteMetaAttributeStat::Precision => ("Precision", Color::srgb(0.9, 0.9, 0.5)),
                 AbsoluteMetaAttributeStat::Constitution => ("Constitution", Color::srgb(0.5, 0.8, 0.5)),
-                AbsoluteMetaAttributeStat::Discipline => ("Discipline", Color::srgb(0.5, 0.7, 0.9)),
+                AbsoluteMetaAttributeStat::Endurance => ("Endurance", Color::srgb(0.5, 0.7, 0.9)),
                 AbsoluteMetaAttributeStat::Intuition => ("Intuition", Color::srgb(0.7, 0.5, 0.9)),
-                AbsoluteMetaAttributeStat::Gravitas => ("Gravitas", Color::srgb(0.9, 0.6, 0.3)),
+                AbsoluteMetaAttributeStat::Concentration => ("Concentration", Color::srgb(0.9, 0.6, 0.3)),
             };
 
             $parent.spawn((
@@ -363,9 +363,9 @@ macro_rules! create_stat_display {
             let (name, color, effect_label) = match $stat {
                 MetaAttributeStat::Impact => ("Impact", Color::srgb(0.9, 0.5, 0.5), "Recovery Pushback:"),
                 MetaAttributeStat::Composure => ("Composure", Color::srgb(0.5, 0.7, 0.9), "Recovery Reduction:"),
-                MetaAttributeStat::Finesse => ("Finesse", Color::srgb(0.9, 0.9, 0.5), "Synergy Reduction:"),
-                MetaAttributeStat::Cunning => ("Cunning", Color::srgb(0.7, 0.5, 0.9), "Reaction Window:"),
-                MetaAttributeStat::Dominance => ("Dominance", Color::srgb(0.9, 0.6, 0.3), "Healing Reduction:"),
+                MetaAttributeStat::Flow => ("Flow", Color::srgb(0.9, 0.9, 0.5), "Synergy Reduction:"),
+                MetaAttributeStat::Reflex => ("Reflex", Color::srgb(0.7, 0.5, 0.9), "Reaction Window:"),
+                MetaAttributeStat::Presence => ("Presence", Color::srgb(0.9, 0.6, 0.3), "Healing Reduction:"),
                 MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Damage Mitigation:"),
             };
 
@@ -833,32 +833,32 @@ pub fn setup(
                     },
                 ))
                 .with_children(|left| {
-                    // MIGHT ↔ GRACE section (Impact = red, Finesse = yellow)
-                    create_attribute_section!(left, "MIGHT", "GRACE",
+                    // MIGHT ↔ AGILITY section (Impact = red, Flow = yellow)
+                    create_attribute_section!(left, "MIGHT", "AGILITY",
                         Color::srgb(0.9, 0.5, 0.5), Color::srgb(0.9, 0.9, 0.5),
-                        AttributeTitle::MightGrace, AttributeCurrent::MightGrace, AttributeBar::MightGrace, AxisMarker::MightGrace,
-                        LeftCurrentValue::MightGrace, RightCurrentValue::MightGrace,
-                        AxisAdjustButton::MightGraceDecrease, AxisAdjustButton::MightGraceIncrease,
-                        AxisAdjustButtonRight::MightGraceDecrease, AxisAdjustButtonRight::MightGraceIncrease,
-                        SpectrumAdjustButton::MightGraceDecrease, SpectrumAdjustButton::MightGraceIncrease);
+                        AttributeTitle::MightAgility, AttributeCurrent::MightAgility, AttributeBar::MightAgility, AxisMarker::MightAgility,
+                        LeftCurrentValue::MightAgility, RightCurrentValue::MightAgility,
+                        AxisAdjustButton::MightAgilityDecrease, AxisAdjustButton::MightAgilityIncrease,
+                        AxisAdjustButtonRight::MightAgilityDecrease, AxisAdjustButtonRight::MightAgilityIncrease,
+                        SpectrumAdjustButton::MightAgilityDecrease, SpectrumAdjustButton::MightAgilityIncrease);
 
-                    // VITALITY ↔ FOCUS section (Toughness = green, Composure = blue)
-                    create_attribute_section!(left, "VITALITY", "FOCUS",
+                    // VITALITY ↔ DISCIPLINE section (Toughness = green, Composure = blue)
+                    create_attribute_section!(left, "VITALITY", "DISCIPLINE",
                         Color::srgb(0.5, 0.8, 0.5), Color::srgb(0.5, 0.7, 0.9),
-                        AttributeTitle::VitalityFocus, AttributeCurrent::VitalityFocus, AttributeBar::VitalityFocus, AxisMarker::VitalityFocus,
-                        LeftCurrentValue::VitalityFocus, RightCurrentValue::VitalityFocus,
-                        AxisAdjustButton::VitalityFocusDecrease, AxisAdjustButton::VitalityFocusIncrease,
-                        AxisAdjustButtonRight::VitalityFocusDecrease, AxisAdjustButtonRight::VitalityFocusIncrease,
-                        SpectrumAdjustButton::VitalityFocusDecrease, SpectrumAdjustButton::VitalityFocusIncrease);
+                        AttributeTitle::VitalityDiscipline, AttributeCurrent::VitalityDiscipline, AttributeBar::VitalityDiscipline, AxisMarker::VitalityDiscipline,
+                        LeftCurrentValue::VitalityDiscipline, RightCurrentValue::VitalityDiscipline,
+                        AxisAdjustButton::VitalityDisciplineDecrease, AxisAdjustButton::VitalityDisciplineIncrease,
+                        AxisAdjustButtonRight::VitalityDisciplineDecrease, AxisAdjustButtonRight::VitalityDisciplineIncrease,
+                        SpectrumAdjustButton::VitalityDisciplineDecrease, SpectrumAdjustButton::VitalityDisciplineIncrease);
 
-                    // INSTINCT ↔ PRESENCE section (Cunning = purple, Dominance = orange)
-                    create_attribute_section!(left, "INSTINCT", "PRESENCE",
+                    // INSTINCT ↔ RESOLVE section (Reflex = purple, Presence = orange)
+                    create_attribute_section!(left, "INSTINCT", "RESOLVE",
                         Color::srgb(0.7, 0.5, 0.9), Color::srgb(0.9, 0.6, 0.3),
-                        AttributeTitle::InstinctPresence, AttributeCurrent::InstinctPresence, AttributeBar::InstinctPresence, AxisMarker::InstinctPresence,
-                        LeftCurrentValue::InstinctPresence, RightCurrentValue::InstinctPresence,
-                        AxisAdjustButton::InstinctPresenceDecrease, AxisAdjustButton::InstinctPresenceIncrease,
-                        AxisAdjustButtonRight::InstinctPresenceDecrease, AxisAdjustButtonRight::InstinctPresenceIncrease,
-                        SpectrumAdjustButton::InstinctPresenceDecrease, SpectrumAdjustButton::InstinctPresenceIncrease);
+                        AttributeTitle::InstinctResolve, AttributeCurrent::InstinctResolve, AttributeBar::InstinctResolve, AxisMarker::InstinctResolve,
+                        LeftCurrentValue::InstinctResolve, RightCurrentValue::InstinctResolve,
+                        AxisAdjustButton::InstinctResolveDecrease, AxisAdjustButton::InstinctResolveIncrease,
+                        AxisAdjustButtonRight::InstinctResolveDecrease, AxisAdjustButtonRight::InstinctResolveIncrease,
+                        SpectrumAdjustButton::InstinctResolveDecrease, SpectrumAdjustButton::InstinctResolveIncrease);
                 });
 
                 // Right column: meta-attribute stats
@@ -871,20 +871,20 @@ pub fn setup(
                     },
                 ))
                 .with_children(|right| {
-                    // MIGHT ↔ GRACE section (grouped container)
+                    // MIGHT ↔ AGILITY section (grouped container)
                     create_stat_section!(right,
-                        AbsoluteMetaAttributeStat::Force, AbsoluteMetaAttributeStat::Technique,
-                        MetaAttributeStat::Impact, MetaAttributeStat::Finesse);
+                        AbsoluteMetaAttributeStat::Force, AbsoluteMetaAttributeStat::Precision,
+                        MetaAttributeStat::Impact, MetaAttributeStat::Flow);
 
-                    // VITALITY ↔ FOCUS section (grouped container)
+                    // VITALITY ↔ DISCIPLINE section (grouped container)
                     create_stat_section!(right,
-                        AbsoluteMetaAttributeStat::Constitution, AbsoluteMetaAttributeStat::Discipline,
+                        AbsoluteMetaAttributeStat::Constitution, AbsoluteMetaAttributeStat::Endurance,
                         MetaAttributeStat::Toughness, MetaAttributeStat::Composure);
 
-                    // INSTINCT ↔ PRESENCE section (grouped container)
+                    // INSTINCT ↔ RESOLVE section (grouped container)
                     create_stat_section!(right,
-                        AbsoluteMetaAttributeStat::Intuition, AbsoluteMetaAttributeStat::Gravitas,
-                        MetaAttributeStat::Cunning, MetaAttributeStat::Dominance);
+                        AbsoluteMetaAttributeStat::Intuition, AbsoluteMetaAttributeStat::Concentration,
+                        MetaAttributeStat::Reflex, MetaAttributeStat::Presence);
                 });
             });
 
@@ -1063,9 +1063,9 @@ pub fn handle_shift_drag(
         for (bar_entity, bar_type, interaction, _node) in &bar_query {
             if *interaction == Interaction::Hovered || *interaction == Interaction::Pressed {
                 let attr_type = match bar_type {
-                    AttributeBar::MightGrace => AttributeType::MightGrace,
-                    AttributeBar::VitalityFocus => AttributeType::VitalityFocus,
-                    AttributeBar::InstinctPresence => AttributeType::InstinctPresence,
+                    AttributeBar::MightAgility => AttributeType::MightAgility,
+                    AttributeBar::VitalityDiscipline => AttributeType::VitalityDiscipline,
+                    AttributeBar::InstinctResolve => AttributeType::InstinctResolve,
                 };
 
                 // Initialize draft if needed
@@ -1074,9 +1074,9 @@ pub fn handle_shift_drag(
 
                 // Get the current shift value from draft
                 let current_shift = match attr_type {
-                    AttributeType::MightGrace => draft.might_grace_shift,
-                    AttributeType::VitalityFocus => draft.vitality_focus_shift,
-                    AttributeType::InstinctPresence => draft.instinct_presence_shift,
+                    AttributeType::MightAgility => draft.might_agility_shift,
+                    AttributeType::VitalityDiscipline => draft.vitality_discipline_shift,
+                    AttributeType::InstinctResolve => draft.instinct_resolve_shift,
                 };
 
                 state.dragging = Some(DragState {
@@ -1116,14 +1116,14 @@ pub fn handle_shift_drag(
                 // Update draft shift (clamped to valid range)
                 if let Some(draft) = state.pending_respec.as_mut() {
                     match drag_state.attribute {
-                        AttributeType::MightGrace => {
-                            draft.might_grace_shift = clamp_shift(new_shift, draft.might_grace_axis, draft.might_grace_spectrum);
+                        AttributeType::MightAgility => {
+                            draft.might_agility_shift = clamp_shift(new_shift, draft.might_agility_axis, draft.might_agility_spectrum);
                         }
-                        AttributeType::VitalityFocus => {
-                            draft.vitality_focus_shift = clamp_shift(new_shift, draft.vitality_focus_axis, draft.vitality_focus_spectrum);
+                        AttributeType::VitalityDiscipline => {
+                            draft.vitality_discipline_shift = clamp_shift(new_shift, draft.vitality_discipline_axis, draft.vitality_discipline_spectrum);
                         }
-                        AttributeType::InstinctPresence => {
-                            draft.instinct_presence_shift = clamp_shift(new_shift, draft.instinct_presence_axis, draft.instinct_presence_spectrum);
+                        AttributeType::InstinctResolve => {
+                            draft.instinct_resolve_shift = clamp_shift(new_shift, draft.instinct_resolve_axis, draft.instinct_resolve_spectrum);
                         }
                     }
                 }
@@ -1165,15 +1165,15 @@ pub fn update_attributes(
         // Create a temporary ActorAttributes with draft values for display
         let mut temp_attrs = attrs.clone();
         temp_attrs.apply_respec(
-            draft.might_grace_axis,
-            draft.might_grace_spectrum,
-            draft.might_grace_shift,
-            draft.vitality_focus_axis,
-            draft.vitality_focus_spectrum,
-            draft.vitality_focus_shift,
-            draft.instinct_presence_axis,
-            draft.instinct_presence_spectrum,
-            draft.instinct_presence_shift,
+            draft.might_agility_axis,
+            draft.might_agility_spectrum,
+            draft.might_agility_shift,
+            draft.vitality_discipline_axis,
+            draft.vitality_discipline_spectrum,
+            draft.vitality_discipline_shift,
+            draft.instinct_resolve_axis,
+            draft.instinct_resolve_spectrum,
+            draft.instinct_resolve_shift,
         );
         Some(temp_attrs)
     } else {
@@ -1191,9 +1191,9 @@ pub fn update_attributes(
     // Update title rows (reach values)
     for (title_entity, attr_type) in &title_query {
         let (left_reach, right_reach) = match attr_type {
-            AttributeTitle::MightGrace => (display_attrs.might_reach(), display_attrs.grace_reach()),
-            AttributeTitle::VitalityFocus => (display_attrs.vitality_reach(), display_attrs.focus_reach()),
-            AttributeTitle::InstinctPresence => (display_attrs.instinct_reach(), display_attrs.presence_reach()),
+            AttributeTitle::MightAgility => (display_attrs.might_reach(), display_attrs.agility_reach()),
+            AttributeTitle::VitalityDiscipline => (display_attrs.vitality_reach(), display_attrs.discipline_reach()),
+            AttributeTitle::InstinctResolve => (display_attrs.instinct_reach(), display_attrs.resolve_reach()),
         };
 
         // Update the reach text values (first and last child)
@@ -1214,9 +1214,9 @@ pub fn update_attributes(
     // Update left current values
     for (left_entity, attr_type) in &left_value_query {
         let left_current = match attr_type {
-            LeftCurrentValue::MightGrace => display_attrs.might(),
-            LeftCurrentValue::VitalityFocus => display_attrs.vitality(),
-            LeftCurrentValue::InstinctPresence => display_attrs.instinct(),
+            LeftCurrentValue::MightAgility => display_attrs.might(),
+            LeftCurrentValue::VitalityDiscipline => display_attrs.vitality(),
+            LeftCurrentValue::InstinctResolve => display_attrs.instinct(),
         };
 
         if let Ok(mut text) = text_query.get_mut(left_entity) {
@@ -1227,9 +1227,9 @@ pub fn update_attributes(
     // Update right current values
     for (right_entity, attr_type) in &right_value_query {
         let right_current = match attr_type {
-            RightCurrentValue::MightGrace => display_attrs.grace(),
-            RightCurrentValue::VitalityFocus => display_attrs.focus(),
-            RightCurrentValue::InstinctPresence => display_attrs.presence(),
+            RightCurrentValue::MightAgility => display_attrs.agility(),
+            RightCurrentValue::VitalityDiscipline => display_attrs.discipline(),
+            RightCurrentValue::InstinctResolve => display_attrs.resolve(),
         };
 
         if let Ok(mut text) = text_query.get_mut(right_entity) {
@@ -1240,23 +1240,23 @@ pub fn update_attributes(
     // Update bar visuals
     for (bar_entity, bar_type) in &bar_query {
         let (left_reach, right_reach, left_current, right_current) = match bar_type {
-            AttributeBar::MightGrace => (
+            AttributeBar::MightAgility => (
                 display_attrs.might_reach(),
-                display_attrs.grace_reach(),
+                display_attrs.agility_reach(),
                 display_attrs.might(),
-                display_attrs.grace(),
+                display_attrs.agility(),
             ),
-            AttributeBar::VitalityFocus => (
+            AttributeBar::VitalityDiscipline => (
                 display_attrs.vitality_reach(),
-                display_attrs.focus_reach(),
+                display_attrs.discipline_reach(),
                 display_attrs.vitality(),
-                display_attrs.focus(),
+                display_attrs.discipline(),
             ),
-            AttributeBar::InstinctPresence => (
+            AttributeBar::InstinctResolve => (
                 display_attrs.instinct_reach(),
-                display_attrs.presence_reach(),
+                display_attrs.resolve_reach(),
                 display_attrs.instinct(),
-                display_attrs.presence(),
+                display_attrs.resolve(),
             ),
         };
 
@@ -1283,11 +1283,11 @@ pub fn update_attributes(
         if let Ok(mut text) = text_query.get_mut(entity) {
             let raw_attr = match abs_stat {
                 AbsoluteMetaAttributeStat::Force => Some(display_attrs.might() as f32),
-                AbsoluteMetaAttributeStat::Technique => Some(display_attrs.grace() as f32),
+                AbsoluteMetaAttributeStat::Precision => Some(display_attrs.agility() as f32),
                 AbsoluteMetaAttributeStat::Constitution => Some(display_attrs.vitality() as f32),
-                AbsoluteMetaAttributeStat::Discipline => Some(display_attrs.focus() as f32),
+                AbsoluteMetaAttributeStat::Endurance => Some(display_attrs.discipline() as f32),
                 AbsoluteMetaAttributeStat::Intuition => Some(display_attrs.instinct() as f32),
-                AbsoluteMetaAttributeStat::Gravitas => Some(display_attrs.presence() as f32),
+                AbsoluteMetaAttributeStat::Concentration => Some(display_attrs.resolve() as f32),
             };
             if let Some(attr) = raw_attr {
                 let value = (tuning.potency_base + attr * tuning.potency_per_point) * level_mult;
@@ -1307,9 +1307,9 @@ pub fn update_attributes(
                 let raw_value = match meta_stat {
                     MetaAttributeStat::Impact => display_attrs.impact(),
                     MetaAttributeStat::Composure => display_attrs.composure(),
-                    MetaAttributeStat::Finesse => display_attrs.finesse(),
-                    MetaAttributeStat::Cunning => display_attrs.cunning(),
-                    MetaAttributeStat::Dominance => display_attrs.dominance(),
+                    MetaAttributeStat::Flow => display_attrs.flow(),
+                    MetaAttributeStat::Reflex => display_attrs.reflex(),
+                    MetaAttributeStat::Presence => display_attrs.presence(),
                     MetaAttributeStat::Toughness => display_attrs.toughness(),
                 };
                 **text = format!("({})", raw_value);
@@ -1330,33 +1330,33 @@ pub fn update_attributes(
                         let reduction_pct = (0.33 * contest) * 100.0;
                         format!("-{:.0}%", reduction_pct)
                     },
-                    MetaAttributeStat::Finesse => {
+                    MetaAttributeStat::Flow => {
                         // Synergy reduction: 0.66 × gap × contest_factor
-                        let finesse = display_attrs.finesse();
-                        let contest = contest_factor(finesse, 0, 0.0);  // vs 0 cunning
+                        let flow = display_attrs.flow();
+                        let contest = contest_factor(flow, 0, 0.0);  // vs 0 reflex
                         let reduction_pct = (0.66 * contest) * 100.0;
                         format!("-{:.0}%", reduction_pct)
                     },
-                    MetaAttributeStat::Cunning => {
+                    MetaAttributeStat::Reflex => {
                         // Reaction window: 3.0s × (1.0 + 0.5 × contest_factor)
                         // Display raw time value (different pattern from other stats)
-                        let cunning = display_attrs.cunning();
-                        let contest = contest_factor(cunning, 0, 0.0);  // vs 0 finesse
+                        let reflex = display_attrs.reflex();
+                        let contest = contest_factor(reflex, 0, 0.0);  // vs 0 flow
                         let multiplier = 1.0 + 0.5 * contest;
                         let window_seconds = 3.0 * multiplier;
                         format!("{:.1}s", window_seconds)
                     },
-                    MetaAttributeStat::Dominance => {
+                    MetaAttributeStat::Presence => {
                         // Healing reduction aura: 0.25 × gap × contest_factor
-                        let dominance = display_attrs.dominance();
-                        let contest = contest_factor(dominance, 0, 0.0);  // vs 0 toughness
+                        let presence = display_attrs.presence();
+                        let contest = contest_factor(presence, 0, 0.0);  // vs 0 toughness
                         let reduction_pct = (0.25 * contest) * 100.0;
                         format!("-{:.0}%", reduction_pct)
                     },
                     MetaAttributeStat::Toughness => {
                         // Damage mitigation: 0.75 × gap × contest_factor
                         let toughness = display_attrs.toughness();
-                        let contest = contest_factor(toughness, 0, 0.0);  // vs 0 dominance
+                        let contest = contest_factor(toughness, 0, 0.0);  // vs 0 presence
                         let mitigation_pct = (0.75 * contest) * 100.0;
                         format!("-{:.0}%", mitigation_pct)
                     },
@@ -1396,13 +1396,13 @@ pub fn update_axis_button_visibility(
     for (button, mut visibility) in &mut left_buttons {
         let should_show = match button {
             // Show decrease when axis < 0 (can decrease further on left side)
-            AxisAdjustButton::MightGraceDecrease => draft.might_grace_axis < 0,
-            AxisAdjustButton::VitalityFocusDecrease => draft.vitality_focus_axis < 0,
-            AxisAdjustButton::InstinctPresenceDecrease => draft.instinct_presence_axis < 0,
+            AxisAdjustButton::MightAgilityDecrease => draft.might_agility_axis < 0,
+            AxisAdjustButton::VitalityDisciplineDecrease => draft.vitality_discipline_axis < 0,
+            AxisAdjustButton::InstinctResolveDecrease => draft.instinct_resolve_axis < 0,
             // Show increase when axis <= 0 (can commit to left, or increase left commitment)
-            AxisAdjustButton::MightGraceIncrease => draft.might_grace_axis <= 0,
-            AxisAdjustButton::VitalityFocusIncrease => draft.vitality_focus_axis <= 0,
-            AxisAdjustButton::InstinctPresenceIncrease => draft.instinct_presence_axis <= 0,
+            AxisAdjustButton::MightAgilityIncrease => draft.might_agility_axis <= 0,
+            AxisAdjustButton::VitalityDisciplineIncrease => draft.vitality_discipline_axis <= 0,
+            AxisAdjustButton::InstinctResolveIncrease => draft.instinct_resolve_axis <= 0,
         };
 
         *visibility = if should_show {
@@ -1416,13 +1416,13 @@ pub fn update_axis_button_visibility(
     for (button, mut visibility) in &mut right_buttons {
         let should_show = match button {
             // Show decrease when axis > 0 (can reduce right commitment)
-            AxisAdjustButtonRight::MightGraceDecrease => draft.might_grace_axis > 0,
-            AxisAdjustButtonRight::VitalityFocusDecrease => draft.vitality_focus_axis > 0,
-            AxisAdjustButtonRight::InstinctPresenceDecrease => draft.instinct_presence_axis > 0,
+            AxisAdjustButtonRight::MightAgilityDecrease => draft.might_agility_axis > 0,
+            AxisAdjustButtonRight::VitalityDisciplineDecrease => draft.vitality_discipline_axis > 0,
+            AxisAdjustButtonRight::InstinctResolveDecrease => draft.instinct_resolve_axis > 0,
             // Show increase when axis >= 0 (can commit to right, or increase right commitment)
-            AxisAdjustButtonRight::MightGraceIncrease => draft.might_grace_axis >= 0,
-            AxisAdjustButtonRight::VitalityFocusIncrease => draft.vitality_focus_axis >= 0,
-            AxisAdjustButtonRight::InstinctPresenceIncrease => draft.instinct_presence_axis >= 0,
+            AxisAdjustButtonRight::MightAgilityIncrease => draft.might_agility_axis >= 0,
+            AxisAdjustButtonRight::VitalityDisciplineIncrease => draft.vitality_discipline_axis >= 0,
+            AxisAdjustButtonRight::InstinctResolveIncrease => draft.instinct_resolve_axis >= 0,
         };
 
         *visibility = if should_show {
@@ -1446,19 +1446,19 @@ fn update_reach_display(node: &mut Node, left_reach: u16, right_reach: u16, max_
     // The reach values represent the maximum value achievable in each direction
     // They are scaled attribute values (axis×10 + spectrum×7)
 
-    // For might_grace with axis=-2, spectrum=3:
+    // For might_agility with axis=-2, spectrum=3:
     //   might_reach=41 (20+21) at position -41 on the scale
-    //   grace_reach=21 at position +21 on the scale
+    //   agility_reach=21 at position +21 on the scale
 
-    // For instinct_presence with axis=0, spectrum=3:
+    // For instinct_resolve with axis=0, spectrum=3:
     //   instinct_reach=21 at position -21
-    //   presence_reach=21 at position +21
+    //   resolve_reach=21 at position +21
 
     // The bar should show from the leftmost reach to the rightmost reach
 
     // Left reach is on the negative side (might, vitality, instinct)
     let left_bound = -(left_reach as i16);
-    // Right reach is on the positive side (grace, focus, presence)
+    // Right reach is on the positive side (agility, discipline, resolve)
     let right_bound = right_reach as i16;
 
     let left_percent = attr_to_percent(left_bound, max_attr_scaled);
@@ -1471,9 +1471,9 @@ fn update_reach_display(node: &mut Node, left_reach: u16, right_reach: u16, max_
 
 fn update_axis_bar(node: &mut Node, left_current: u16, right_current: u16, max_attr_scaled: i16) {
     // The yellow bar shows the current available values on each side
-    // For might_grace: might=250, grace=50 (scaled values)
+    // For might_agility: might=250, agility=50 (scaled values)
     //   Left bound at -250 (might value, scaled)
-    //   Right bound at +50 (grace value, scaled)
+    //   Right bound at +50 (agility value, scaled)
 
     let left_bound = -(left_current as i16);
     let right_bound = right_current as i16;

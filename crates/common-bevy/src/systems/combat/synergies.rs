@@ -88,11 +88,11 @@ pub fn apply_synergies(
         return; // No synergies for this ability
     };
 
-    // A floor every actor has, and a share more its Finesse wins over the
-    // defender's Cunning, the level gap weighing in
+    // A floor every actor has, and a share more its Flow wins over the
+    // defender's Reflex, the level gap weighing in
     let tuning = crate::tuning::tuning();
     let edge = damage_calc::level_edge(attacker_attrs.total_level(), defender_attrs.total_level());
-    let contest = damage_calc::contest_factor(attacker_attrs.finesse(), defender_attrs.cunning(), edge);
+    let contest = damage_calc::contest_factor(attacker_attrs.flow(), defender_attrs.reflex(), edge);
 
     let synergy_reduction = tuning.synergy_floor + tuning.synergy_share * contest;
 
@@ -288,16 +288,16 @@ mod tests {
 
     #[test]
     fn test_zero_finesse_produces_no_synergy_reduction() {
-        // With 0 finesse, contest_factor returns 0, so synergy_reduction = 0
+        // With 0 flow, contest_factor returns 0, so synergy_reduction = 0
         // apply_synergies should NOT insert a SynergyUnlock component
-        let finesse = 0u16;
-        let cunning = 0u16;
-        let contest = damage_calc::contest_factor(finesse, cunning, 0.0);
+        let flow = 0u16;
+        let reflex = 0u16;
+        let contest = damage_calc::contest_factor(flow, reflex, 0.0);
         assert_eq!(contest, 0.0, "contest_factor(0, 0) should be 0");
 
         let synergy_reduction = 0.66_f32 * contest;
         assert!(synergy_reduction < f32::EPSILON,
-            "No synergy reduction without finesse investment");
+            "No synergy reduction without flow investment");
     }
 
 }

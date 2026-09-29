@@ -282,23 +282,23 @@ impl CommitmentTier {
 /// - Spectrum: 1 level → 7 reach (each direction)
 #[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
 pub struct ActorAttributes {
-    // MIGHT ↔ GRACE (Physical Expression)
-    // Negative axis = Might specialist, Positive axis = Grace specialist
-    might_grace_axis: i8,
-    might_grace_spectrum: i8,  // Raw investment count (max 127 levels)
-    might_grace_shift: i8,     // Player's chosen shift from axis (within ±spectrum)
+    // MIGHT ↔ AGILITY (Physique)
+    // Negative axis = Might specialist, Positive axis = Agility specialist
+    might_agility_axis: i8,
+    might_agility_spectrum: i8,  // Raw investment count (max 127 levels)
+    might_agility_shift: i8,     // Player's chosen shift from axis (within ±spectrum)
 
-    // VITALITY ↔ FOCUS (Endurance Type)
-    // Negative axis = Vitality specialist, Positive axis = Focus specialist
-    vitality_focus_axis: i8,
-    vitality_focus_spectrum: i8,
-    vitality_focus_shift: i8,
+    // VITALITY ↔ DISCIPLINE (Conditioning)
+    // Negative axis = Vitality specialist, Positive axis = Discipline specialist
+    vitality_discipline_axis: i8,
+    vitality_discipline_spectrum: i8,
+    vitality_discipline_shift: i8,
 
-    // INSTINCT ↔ PRESENCE (Engagement Style)
-    // Negative axis = Instinct specialist, Positive axis = Presence specialist
-    instinct_presence_axis: i8,
-    instinct_presence_spectrum: i8,
-    instinct_presence_shift: i8,
+    // INSTINCT ↔ RESOLVE (Temperament)
+    // Negative axis = Instinct specialist, Positive axis = Resolve specialist
+    instinct_resolve_axis: i8,
+    instinct_resolve_spectrum: i8,
+    instinct_resolve_shift: i8,
 }
 
 impl ActorAttributes {
@@ -309,98 +309,98 @@ impl ActorAttributes {
     /// * spectrum: flexibility investment (0 to 127)
     /// * shift: tactical adjustment within spectrum range (-spectrum to +spectrum)
     pub fn new(
-        might_grace_axis: i8,
-        might_grace_spectrum: i8,
-        might_grace_shift: i8,
-        vitality_focus_axis: i8,
-        vitality_focus_spectrum: i8,
-        vitality_focus_shift: i8,
-        instinct_presence_axis: i8,
-        instinct_presence_spectrum: i8,
-        instinct_presence_shift: i8,
+        might_agility_axis: i8,
+        might_agility_spectrum: i8,
+        might_agility_shift: i8,
+        vitality_discipline_axis: i8,
+        vitality_discipline_spectrum: i8,
+        vitality_discipline_shift: i8,
+        instinct_resolve_axis: i8,
+        instinct_resolve_spectrum: i8,
+        instinct_resolve_shift: i8,
     ) -> Self {
         Self {
-            might_grace_axis,
-            might_grace_spectrum: might_grace_spectrum.max(0),  // Clamp spectrum to non-negative
-            might_grace_shift,
-            vitality_focus_axis,
-            vitality_focus_spectrum: vitality_focus_spectrum.max(0),
-            vitality_focus_shift,
-            instinct_presence_axis,
-            instinct_presence_spectrum: instinct_presence_spectrum.max(0),
-            instinct_presence_shift,
+            might_agility_axis,
+            might_agility_spectrum: might_agility_spectrum.max(0),  // Clamp spectrum to non-negative
+            might_agility_shift,
+            vitality_discipline_axis,
+            vitality_discipline_spectrum: vitality_discipline_spectrum.max(0),
+            vitality_discipline_shift,
+            instinct_resolve_axis,
+            instinct_resolve_spectrum: instinct_resolve_spectrum.max(0),
+            instinct_resolve_shift,
         }
     }
 
     // === Raw field accessors ===
 
-    pub fn might_grace_axis(&self) -> i8 { self.might_grace_axis }
-    pub fn might_grace_spectrum(&self) -> i8 { self.might_grace_spectrum }
-    pub fn might_grace_shift(&self) -> i8 { self.might_grace_shift }
+    pub fn might_agility_axis(&self) -> i8 { self.might_agility_axis }
+    pub fn might_agility_spectrum(&self) -> i8 { self.might_agility_spectrum }
+    pub fn might_agility_shift(&self) -> i8 { self.might_agility_shift }
 
-    pub fn vitality_focus_axis(&self) -> i8 { self.vitality_focus_axis }
-    pub fn vitality_focus_spectrum(&self) -> i8 { self.vitality_focus_spectrum }
-    pub fn vitality_focus_shift(&self) -> i8 { self.vitality_focus_shift }
+    pub fn vitality_discipline_axis(&self) -> i8 { self.vitality_discipline_axis }
+    pub fn vitality_discipline_spectrum(&self) -> i8 { self.vitality_discipline_spectrum }
+    pub fn vitality_discipline_shift(&self) -> i8 { self.vitality_discipline_shift }
 
-    pub fn instinct_presence_axis(&self) -> i8 { self.instinct_presence_axis }
-    pub fn instinct_presence_spectrum(&self) -> i8 { self.instinct_presence_spectrum }
-    pub fn instinct_presence_shift(&self) -> i8 { self.instinct_presence_shift }
+    pub fn instinct_resolve_axis(&self) -> i8 { self.instinct_resolve_axis }
+    pub fn instinct_resolve_spectrum(&self) -> i8 { self.instinct_resolve_spectrum }
+    pub fn instinct_resolve_shift(&self) -> i8 { self.instinct_resolve_shift }
 
     // === Mutators for shift values (tactical adjustments) ===
 
-    pub fn set_might_grace_shift(&mut self, shift: i8) {
+    pub fn set_might_agility_shift(&mut self, shift: i8) {
         // Pure spectrum (axis=0) cannot shift - requires axis commitment
-        if self.might_grace_axis == 0 {
-            self.might_grace_shift = 0;
+        if self.might_agility_axis == 0 {
+            self.might_agility_shift = 0;
             return;
         }
 
-        let max_shift = self.might_grace_spectrum.max(0);
+        let max_shift = self.might_agility_spectrum.max(0);
         // Shift constrained by axis direction:
-        // axis > 0 (grace/right) → shift can only go negative (toward might/left)
-        // axis < 0 (might/left) → shift can only go positive (toward grace/right)
-        let clamped = if self.might_grace_axis > 0 {
+        // axis > 0 (agility/right) → shift can only go negative (toward might/left)
+        // axis < 0 (might/left) → shift can only go positive (toward agility/right)
+        let clamped = if self.might_agility_axis > 0 {
             shift.clamp(-max_shift, 0)
         } else {
             shift.clamp(0, max_shift)
         };
-        self.might_grace_shift = clamped;
+        self.might_agility_shift = clamped;
     }
 
-    pub fn set_vitality_focus_shift(&mut self, shift: i8) {
+    pub fn set_vitality_discipline_shift(&mut self, shift: i8) {
         // Pure spectrum (axis=0) cannot shift - requires axis commitment
-        if self.vitality_focus_axis == 0 {
-            self.vitality_focus_shift = 0;
+        if self.vitality_discipline_axis == 0 {
+            self.vitality_discipline_shift = 0;
             return;
         }
 
-        let max_shift = self.vitality_focus_spectrum.max(0);
-        // axis > 0 (focus/right) → shift can only go negative (toward vitality/left)
-        // axis < 0 (vitality/left) → shift can only go positive (toward focus/right)
-        let clamped = if self.vitality_focus_axis > 0 {
+        let max_shift = self.vitality_discipline_spectrum.max(0);
+        // axis > 0 (discipline/right) → shift can only go negative (toward vitality/left)
+        // axis < 0 (vitality/left) → shift can only go positive (toward discipline/right)
+        let clamped = if self.vitality_discipline_axis > 0 {
             shift.clamp(-max_shift, 0)
         } else {
             shift.clamp(0, max_shift)
         };
-        self.vitality_focus_shift = clamped;
+        self.vitality_discipline_shift = clamped;
     }
 
-    pub fn set_instinct_presence_shift(&mut self, shift: i8) {
+    pub fn set_instinct_resolve_shift(&mut self, shift: i8) {
         // Pure spectrum (axis=0) cannot shift - requires axis commitment
-        if self.instinct_presence_axis == 0 {
-            self.instinct_presence_shift = 0;
+        if self.instinct_resolve_axis == 0 {
+            self.instinct_resolve_shift = 0;
             return;
         }
 
-        let max_shift = self.instinct_presence_spectrum.max(0);
-        // axis > 0 (presence/right) → shift can only go negative (toward instinct/left)
-        // axis < 0 (instinct/left) → shift can only go positive (toward presence/right)
-        let clamped = if self.instinct_presence_axis > 0 {
+        let max_shift = self.instinct_resolve_spectrum.max(0);
+        // axis > 0 (resolve/right) → shift can only go negative (toward instinct/left)
+        // axis < 0 (instinct/left) → shift can only go positive (toward resolve/right)
+        let clamped = if self.instinct_resolve_axis > 0 {
             shift.clamp(-max_shift, 0)
         } else {
             shift.clamp(0, max_shift)
         };
-        self.instinct_presence_shift = clamped;
+        self.instinct_resolve_shift = clamped;
     }
 
     // === Mutators for axis and spectrum values (respec system) ===
@@ -419,262 +419,262 @@ impl ActorAttributes {
         ip_shift: i8,
     ) {
         // Apply axis/spectrum (validation happens before this)
-        self.might_grace_axis = mg_axis;
-        self.might_grace_spectrum = mg_spectrum.max(0); // Spectrum can't be negative
-        self.vitality_focus_axis = vf_axis;
-        self.vitality_focus_spectrum = vf_spectrum.max(0);
-        self.instinct_presence_axis = ip_axis;
-        self.instinct_presence_spectrum = ip_spectrum.max(0);
+        self.might_agility_axis = mg_axis;
+        self.might_agility_spectrum = mg_spectrum.max(0); // Spectrum can't be negative
+        self.vitality_discipline_axis = vf_axis;
+        self.vitality_discipline_spectrum = vf_spectrum.max(0);
+        self.instinct_resolve_axis = ip_axis;
+        self.instinct_resolve_spectrum = ip_spectrum.max(0);
 
         // Apply shifts (clamped to valid ranges by setters)
-        self.set_might_grace_shift(mg_shift);
-        self.set_vitality_focus_shift(vf_shift);
-        self.set_instinct_presence_shift(ip_shift);
+        self.set_might_agility_shift(mg_shift);
+        self.set_vitality_discipline_shift(vf_shift);
+        self.set_instinct_resolve_shift(ip_shift);
     }
 
-    // === MIGHT ↔ GRACE ===
+    // === MIGHT ↔ AGILITY ===
 
     /// Maximum Might reach (including maximum shift)
     /// When axis on might side: axis×16 + spectrum×12 (at shift=0)
-    /// When axis on grace side: spectrum×12 (max shift gives -shift×12)
+    /// When axis on agility side: spectrum×12 (max shift gives -shift×12)
     /// When axis = 0: spectrum×6 (balanced, shift blocked)
     pub fn might_reach(&self) -> u16 {
-        if self.might_grace_axis == 0 {
+        if self.might_agility_axis == 0 {
             // Balanced: no shift allowed, reach equals current
-            (self.might_grace_spectrum.max(0) as u16) * 6
-        } else if self.might_grace_axis < 0 {
+            (self.might_agility_spectrum.max(0) as u16) * 6
+        } else if self.might_agility_axis < 0 {
             // Axis on might side: already at max with shift=0
-            let axis_reach = (self.might_grace_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.might_grace_spectrum.max(0) as u16) * 12;
+            let axis_reach = (self.might_agility_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.might_agility_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
-            // Axis on grace side: can shift spectrum to might
-            (self.might_grace_spectrum.max(0) as u16) * 12
+            // Axis on agility side: can shift spectrum to might
+            (self.might_agility_spectrum.max(0) as u16) * 12
         }
     }
 
-    /// Maximum Grace reach (including maximum shift)
-    /// When axis on grace side: axis×16 + spectrum×12 (at shift=0)
+    /// Maximum Agility reach (including maximum shift)
+    /// When axis on agility side: axis×16 + spectrum×12 (at shift=0)
     /// When axis on might side: spectrum×12 (max shift gives shift×12)
     /// When axis = 0: spectrum×6 (balanced, shift blocked)
-    pub fn grace_reach(&self) -> u16 {
-        if self.might_grace_axis == 0 {
+    pub fn agility_reach(&self) -> u16 {
+        if self.might_agility_axis == 0 {
             // Balanced: no shift allowed, reach equals current
-            (self.might_grace_spectrum.max(0) as u16) * 6
-        } else if self.might_grace_axis > 0 {
-            // Axis on grace side: already at max with shift=0
-            let axis_reach = (self.might_grace_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.might_grace_spectrum.max(0) as u16) * 12;
+            (self.might_agility_spectrum.max(0) as u16) * 6
+        } else if self.might_agility_axis > 0 {
+            // Axis on agility side: already at max with shift=0
+            let axis_reach = (self.might_agility_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.might_agility_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
-            // Axis on might side: can shift spectrum to grace
-            (self.might_grace_spectrum.max(0) as u16) * 12
+            // Axis on might side: can shift spectrum to agility
+            (self.might_agility_spectrum.max(0) as u16) * 12
         }
     }
 
     /// Current available Might (scaled)
     /// When axis < 0 (might): axis×10 + spectrum×6 - shift×6
-    /// When axis > 0 (grace): -shift×6 only
+    /// When axis > 0 (agility): -shift×6 only
     /// When axis = 0: spectrum×6
     pub fn might(&self) -> u16 {
-        let spectrum_base = (self.might_grace_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.might_grace_shift as i16) * 12;
+        let spectrum_base = (self.might_agility_spectrum.max(0) as i16) * 12;
+        let shift_scaled = (self.might_agility_shift as i16) * 12;
 
-        if self.might_grace_axis < 0 {
+        if self.might_agility_axis < 0 {
             // Axis on might side: axis + spectrum - shift
-            let axis_reach = (self.might_grace_axis.unsigned_abs() as i16) * 16;
+            let axis_reach = (self.might_agility_axis.unsigned_abs() as i16) * 16;
             (axis_reach + spectrum_base - shift_scaled).max(0) as u16
-        } else if self.might_grace_axis > 0 {
-            // Axis on grace side: opposite side gets -shift only
+        } else if self.might_agility_axis > 0 {
+            // Axis on agility side: opposite side gets -shift only
             (-shift_scaled).max(0) as u16
         } else {
             // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.might_grace_spectrum.max(0) as i16) * 6).max(0) as u16
+            ((self.might_agility_spectrum.max(0) as i16) * 6).max(0) as u16
         }
     }
 
-    /// Current available Grace (scaled)
-    /// When axis > 0 (grace): axis×15 + spectrum×10 + shift×10
+    /// Current available Agility (scaled)
+    /// When axis > 0 (agility): axis×15 + spectrum×10 + shift×10
     /// When axis < 0 (might): shift×10 only
     /// When axis = 0: spectrum×7 (balanced, reduced multiplier)
-    pub fn grace(&self) -> u16 {
-        let spectrum_base = (self.might_grace_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.might_grace_shift as i16) * 12;
+    pub fn agility(&self) -> u16 {
+        let spectrum_base = (self.might_agility_spectrum.max(0) as i16) * 12;
+        let shift_scaled = (self.might_agility_shift as i16) * 12;
 
-        if self.might_grace_axis > 0 {
-            // Axis on grace side: axis + spectrum + shift
-            let axis_reach = (self.might_grace_axis as i16) * 16;
+        if self.might_agility_axis > 0 {
+            // Axis on agility side: axis + spectrum + shift
+            let axis_reach = (self.might_agility_axis as i16) * 16;
             (axis_reach + spectrum_base + shift_scaled).max(0) as u16
-        } else if self.might_grace_axis < 0 {
+        } else if self.might_agility_axis < 0 {
             // Axis on might side: opposite side gets shift only
             shift_scaled.max(0) as u16
         } else {
             // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.might_grace_spectrum.max(0) as i16) * 6).max(0) as u16
+            ((self.might_agility_spectrum.max(0) as i16) * 6).max(0) as u16
         }
     }
 
-    // === VITALITY ↔ FOCUS ===
+    // === VITALITY ↔ DISCIPLINE ===
 
     /// Maximum Vitality reach (including maximum shift)
     /// When axis on vitality side: axis×16 + spectrum×12 (at shift=0)
-    /// When axis on focus side: spectrum×12 (shift all spectrum to vitality)
+    /// When axis on discipline side: spectrum×12 (shift all spectrum to vitality)
     /// When axis = 0: spectrum×6 (balanced, shift blocked)
     pub fn vitality_reach(&self) -> u16 {
-        if self.vitality_focus_axis == 0 {
+        if self.vitality_discipline_axis == 0 {
             // Balanced: no shift allowed, reach equals current
-            (self.vitality_focus_spectrum.max(0) as u16) * 6
-        } else if self.vitality_focus_axis < 0 {
+            (self.vitality_discipline_spectrum.max(0) as u16) * 6
+        } else if self.vitality_discipline_axis < 0 {
             // Axis on vitality side: already at max with shift=0
-            let axis_reach = (self.vitality_focus_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.vitality_focus_spectrum.max(0) as u16) * 12;
+            let axis_reach = (self.vitality_discipline_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.vitality_discipline_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
-            // Axis on focus side: can shift spectrum to vitality
-            (self.vitality_focus_spectrum.max(0) as u16) * 12
+            // Axis on discipline side: can shift spectrum to vitality
+            (self.vitality_discipline_spectrum.max(0) as u16) * 12
         }
     }
 
-    /// Maximum Focus reach (including maximum shift)
-    /// When axis on focus side: axis×16 + spectrum×12 (at shift=0)
-    /// When axis on vitality side: spectrum×12 (max shift toward focus)
+    /// Maximum Discipline reach (including maximum shift)
+    /// When axis on discipline side: axis×16 + spectrum×12 (at shift=0)
+    /// When axis on vitality side: spectrum×12 (max shift toward discipline)
     /// When axis = 0: spectrum×6 (balanced, shift blocked)
-    pub fn focus_reach(&self) -> u16 {
-        if self.vitality_focus_axis == 0 {
+    pub fn discipline_reach(&self) -> u16 {
+        if self.vitality_discipline_axis == 0 {
             // Balanced: no shift allowed, reach equals current
-            (self.vitality_focus_spectrum.max(0) as u16) * 6
-        } else if self.vitality_focus_axis > 0 {
-            // Axis on focus side: already at max with shift=0
-            let axis_reach = (self.vitality_focus_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.vitality_focus_spectrum.max(0) as u16) * 12;
+            (self.vitality_discipline_spectrum.max(0) as u16) * 6
+        } else if self.vitality_discipline_axis > 0 {
+            // Axis on discipline side: already at max with shift=0
+            let axis_reach = (self.vitality_discipline_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.vitality_discipline_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
-            // Axis on vitality side: can shift spectrum to focus
-            (self.vitality_focus_spectrum.max(0) as u16) * 12
+            // Axis on vitality side: can shift spectrum to discipline
+            (self.vitality_discipline_spectrum.max(0) as u16) * 12
         }
     }
 
     /// Current available Vitality (scaled)
     /// When axis < 0 (vitality): axis×10 + spectrum×6 - shift×6
-    /// When axis > 0 (focus): -shift×6 only
+    /// When axis > 0 (discipline): -shift×6 only
     /// When axis = 0: spectrum×6
     pub fn vitality(&self) -> u16 {
-        let spectrum_base = (self.vitality_focus_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.vitality_focus_shift as i16) * 12;
+        let spectrum_base = (self.vitality_discipline_spectrum.max(0) as i16) * 12;
+        let shift_scaled = (self.vitality_discipline_shift as i16) * 12;
 
-        if self.vitality_focus_axis < 0 {
+        if self.vitality_discipline_axis < 0 {
             // Axis on vitality side: axis + spectrum - shift
-            let axis_reach = (self.vitality_focus_axis.unsigned_abs() as i16) * 16;
+            let axis_reach = (self.vitality_discipline_axis.unsigned_abs() as i16) * 16;
             (axis_reach + spectrum_base - shift_scaled).max(0) as u16
-        } else if self.vitality_focus_axis > 0 {
-            // Axis on focus side: opposite side gets -shift only
+        } else if self.vitality_discipline_axis > 0 {
+            // Axis on discipline side: opposite side gets -shift only
             (-shift_scaled).max(0) as u16
         } else {
             // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.vitality_focus_spectrum.max(0) as i16) * 6).max(0) as u16
+            ((self.vitality_discipline_spectrum.max(0) as i16) * 6).max(0) as u16
         }
     }
 
-    /// Current available Focus (scaled)
-    /// When axis > 0 (focus): axis×15 + spectrum×10 + shift×10
+    /// Current available Discipline (scaled)
+    /// When axis > 0 (discipline): axis×15 + spectrum×10 + shift×10
     /// When axis < 0 (vitality): shift×10 only
     /// When axis = 0: spectrum×7 (balanced, reduced multiplier)
-    pub fn focus(&self) -> u16 {
-        let spectrum_base = (self.vitality_focus_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.vitality_focus_shift as i16) * 12;
+    pub fn discipline(&self) -> u16 {
+        let spectrum_base = (self.vitality_discipline_spectrum.max(0) as i16) * 12;
+        let shift_scaled = (self.vitality_discipline_shift as i16) * 12;
 
-        if self.vitality_focus_axis > 0 {
-            // Axis on focus side: axis + spectrum + shift
-            let axis_reach = (self.vitality_focus_axis as i16) * 16;
+        if self.vitality_discipline_axis > 0 {
+            // Axis on discipline side: axis + spectrum + shift
+            let axis_reach = (self.vitality_discipline_axis as i16) * 16;
             (axis_reach + spectrum_base + shift_scaled).max(0) as u16
-        } else if self.vitality_focus_axis < 0 {
+        } else if self.vitality_discipline_axis < 0 {
             // Axis on vitality side: opposite side gets shift only
             shift_scaled.max(0) as u16
         } else {
             // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.vitality_focus_spectrum.max(0) as i16) * 6).max(0) as u16
+            ((self.vitality_discipline_spectrum.max(0) as i16) * 6).max(0) as u16
         }
     }
 
-    // === INSTINCT ↔ PRESENCE ===
+    // === INSTINCT ↔ RESOLVE ===
 
     /// Maximum Instinct reach (including maximum shift)
     /// When axis on instinct side: axis×16 + spectrum×12 (at shift=0)
-    /// When axis on presence side: spectrum×12 (shift all spectrum to instinct)
+    /// When axis on resolve side: spectrum×12 (shift all spectrum to instinct)
     /// When axis = 0: spectrum×6 (balanced, shift blocked)
     pub fn instinct_reach(&self) -> u16 {
-        if self.instinct_presence_axis == 0 {
+        if self.instinct_resolve_axis == 0 {
             // Balanced: no shift allowed, reach equals current
-            (self.instinct_presence_spectrum.max(0) as u16) * 6
-        } else if self.instinct_presence_axis < 0 {
+            (self.instinct_resolve_spectrum.max(0) as u16) * 6
+        } else if self.instinct_resolve_axis < 0 {
             // Axis on instinct side: already at max with shift=0
-            let axis_reach = (self.instinct_presence_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.instinct_presence_spectrum.max(0) as u16) * 12;
+            let axis_reach = (self.instinct_resolve_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.instinct_resolve_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
-            // Axis on presence side: can shift spectrum to instinct
-            (self.instinct_presence_spectrum.max(0) as u16) * 12
+            // Axis on resolve side: can shift spectrum to instinct
+            (self.instinct_resolve_spectrum.max(0) as u16) * 12
         }
     }
 
-    /// Maximum Presence reach (including maximum shift)
-    /// When axis on presence side: axis×16 + spectrum×12 (at shift=0)
-    /// When axis on instinct side: spectrum×12 (max shift toward presence)
+    /// Maximum Resolve reach (including maximum shift)
+    /// When axis on resolve side: axis×16 + spectrum×12 (at shift=0)
+    /// When axis on instinct side: spectrum×12 (max shift toward resolve)
     /// When axis = 0: spectrum×6 (balanced, shift blocked)
-    pub fn presence_reach(&self) -> u16 {
-        if self.instinct_presence_axis == 0 {
+    pub fn resolve_reach(&self) -> u16 {
+        if self.instinct_resolve_axis == 0 {
             // Balanced: no shift allowed, reach equals current
-            (self.instinct_presence_spectrum.max(0) as u16) * 6
-        } else if self.instinct_presence_axis > 0 {
-            // Axis on presence side: already at max with shift=0
-            let axis_reach = (self.instinct_presence_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.instinct_presence_spectrum.max(0) as u16) * 12;
+            (self.instinct_resolve_spectrum.max(0) as u16) * 6
+        } else if self.instinct_resolve_axis > 0 {
+            // Axis on resolve side: already at max with shift=0
+            let axis_reach = (self.instinct_resolve_axis.unsigned_abs() as u16) * 16;
+            let spectrum_reach = (self.instinct_resolve_spectrum.max(0) as u16) * 12;
             axis_reach + spectrum_reach
         } else {
-            // Axis on instinct side: can shift spectrum to presence
-            (self.instinct_presence_spectrum.max(0) as u16) * 12
+            // Axis on instinct side: can shift spectrum to resolve
+            (self.instinct_resolve_spectrum.max(0) as u16) * 12
         }
     }
 
     /// Current available Instinct (scaled)
     /// When axis < 0 (instinct): axis×10 + spectrum×6 - shift×6
-    /// When axis > 0 (presence): -shift×6 only
+    /// When axis > 0 (resolve): -shift×6 only
     /// When axis = 0: spectrum×6
     pub fn instinct(&self) -> u16 {
-        let spectrum_base = (self.instinct_presence_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.instinct_presence_shift as i16) * 12;
+        let spectrum_base = (self.instinct_resolve_spectrum.max(0) as i16) * 12;
+        let shift_scaled = (self.instinct_resolve_shift as i16) * 12;
 
-        if self.instinct_presence_axis < 0 {
+        if self.instinct_resolve_axis < 0 {
             // Axis on instinct side: axis + spectrum - shift
-            let axis_reach = (self.instinct_presence_axis.unsigned_abs() as i16) * 16;
+            let axis_reach = (self.instinct_resolve_axis.unsigned_abs() as i16) * 16;
             (axis_reach + spectrum_base - shift_scaled).max(0) as u16
-        } else if self.instinct_presence_axis > 0 {
-            // Axis on presence side: opposite side gets -shift only
+        } else if self.instinct_resolve_axis > 0 {
+            // Axis on resolve side: opposite side gets -shift only
             (-shift_scaled).max(0) as u16
         } else {
             // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.instinct_presence_spectrum.max(0) as i16) * 6).max(0) as u16
+            ((self.instinct_resolve_spectrum.max(0) as i16) * 6).max(0) as u16
         }
     }
 
-    /// Current available Presence (scaled)
-    /// When axis > 0 (presence): axis×15 + spectrum×10 + shift×10
+    /// Current available Resolve (scaled)
+    /// When axis > 0 (resolve): axis×15 + spectrum×10 + shift×10
     /// When axis < 0 (instinct): shift×10 only
     /// When axis = 0: spectrum×7 (balanced, reduced multiplier)
-    pub fn presence(&self) -> u16 {
-        let spectrum_base = (self.instinct_presence_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.instinct_presence_shift as i16) * 12;
+    pub fn resolve(&self) -> u16 {
+        let spectrum_base = (self.instinct_resolve_spectrum.max(0) as i16) * 12;
+        let shift_scaled = (self.instinct_resolve_shift as i16) * 12;
 
-        if self.instinct_presence_axis > 0 {
-            // Axis on presence side: axis + spectrum + shift
-            let axis_reach = (self.instinct_presence_axis as i16) * 16;
+        if self.instinct_resolve_axis > 0 {
+            // Axis on resolve side: axis + spectrum + shift
+            let axis_reach = (self.instinct_resolve_axis as i16) * 16;
             (axis_reach + spectrum_base + shift_scaled).max(0) as u16
-        } else if self.instinct_presence_axis < 0 {
+        } else if self.instinct_resolve_axis < 0 {
             // Axis on instinct side: opposite side gets shift only
             shift_scaled.max(0) as u16
         } else {
             // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.instinct_presence_spectrum.max(0) as i16) * 6).max(0) as u16
+            ((self.instinct_resolve_spectrum.max(0) as i16) * 6).max(0) as u16
         }
     }
 
@@ -682,9 +682,9 @@ impl ActorAttributes {
     /// Each level grants 1 point to invest in any axis or spectrum
     /// Fields store raw investment counts, so sum directly
     pub fn total_level(&self) -> u32 {
-        let mg_points = self.might_grace_axis.unsigned_abs() as u32 + self.might_grace_spectrum.max(0) as u32;
-        let vf_points = self.vitality_focus_axis.unsigned_abs() as u32 + self.vitality_focus_spectrum.max(0) as u32;
-        let ip_points = self.instinct_presence_axis.unsigned_abs() as u32 + self.instinct_presence_spectrum.max(0) as u32;
+        let mg_points = self.might_agility_axis.unsigned_abs() as u32 + self.might_agility_spectrum.max(0) as u32;
+        let vf_points = self.vitality_discipline_axis.unsigned_abs() as u32 + self.vitality_discipline_spectrum.max(0) as u32;
+        let ip_points = self.instinct_resolve_axis.unsigned_abs() as u32 + self.instinct_resolve_spectrum.max(0) as u32;
         mg_points + vf_points + ip_points
     }
 
@@ -741,16 +741,15 @@ impl ActorAttributes {
     //   9 i8 fields storing raw investment counts per pair
 
     // **Layer 2 — Derived Attribute Values:**
-    //   Six pure values from A/S/S scaling: might(), grace(), vitality(),
-    //   focus(), instinct(), presence()
+    //   Six pure values from A/S/S scaling: might(), agility(), vitality(),
+    //   discipline(), instinct(), resolve()
 
     // **Layer 3 — Three Scaling Modes:**
     //   - ABSOLUTE (progression): max_health(), movement_speed() — scales with level
     //   - RELATIVE (build matchup): contest_factor() in damage.rs — nullifies at equal (0-1)
     //     or reaction_contest_factor() for reaction window — preserves baseline (1-1.5)
     //   - COMMITMENT (build identity): window_size(), cadence_interval() —
-    //     discrete tiers based on % of total budget. Poise, Grace's, gives
-    //     nothing until the commitments are reviewed together
+    //     discrete tiers based on % of total budget
 
     // See attributes.md (unnamed-indie-studio-internal/projects/unnamed-hex-tile-mmo/design/) for full design.
 
@@ -761,11 +760,11 @@ impl ActorAttributes {
     /// this sums the actual derived values after A/S/S scaling.
     pub fn total_budget(&self) -> u32 {
         self.might() as u32
-            + self.grace() as u32
+            + self.agility() as u32
             + self.vitality() as u32
-            + self.focus() as u32
+            + self.discipline() as u32
             + self.instinct() as u32
-            + self.presence() as u32
+            + self.resolve() as u32
     }
 
     /// Calculate the commitment tier for a specific derived attribute value.
@@ -774,7 +773,7 @@ impl ActorAttributes {
     /// given total investment (total_level × 10). This ensures spectrum builds aren't
     /// penalized compared to axis builds with the same point investment.
 
-    /// Example: `attrs.commitment_tier_for(attrs.focus())` → Focus commitment tier
+    /// Example: `attrs.commitment_tier_for(attrs.discipline())` → Discipline commitment tier
     pub fn commitment_tier_for(&self, derived_value: u16) -> CommitmentTier {
         let max_possible = self.total_level() as u32 * 10;
         CommitmentTier::calculate(derived_value, max_possible)
@@ -804,24 +803,24 @@ impl ActorAttributes {
         crate::tuning::tuning().potency_base * self.damage_level_multiplier()
     }
 
-    /// Gravitas: Presence's absolute meta-attribute, fully scaled like Force:
+    /// Concentration: Resolve's absolute meta-attribute, fully scaled like Force:
     /// the weight of what a Counter returns. Its ratio to
     /// [`base_potency`](Self::base_potency) weights the share of each
-    /// countered blow sent back, so a Presence build returns far more than one
-    /// without. Auto-attacks do not read it: Presence buys only their pace.
-    pub fn gravitas(&self) -> f32 {
-        let presence = self.presence() as f32;
+    /// countered blow sent back, so a Resolve build returns far more than one
+    /// without. Auto-attacks do not read it: Resolve buys only their pace.
+    pub fn concentration(&self) -> f32 {
+        let resolve = self.resolve() as f32;
         let tuning = crate::tuning::tuning();
-        let linear = tuning.potency_base + (presence * tuning.potency_per_point);
+        let linear = tuning.potency_base + (resolve * tuning.potency_per_point);
         linear * self.damage_level_multiplier()
     }
 
-    /// Technique: Defensive power from grace (absolute meta-attribute)
+    /// Precision: Defensive power from agility (absolute meta-attribute)
     /// Fully scaled damage output including level progression. Used as base damage for defensive/reactive abilities.
-    pub fn technique(&self) -> f32 {
-        let grace = self.grace() as f32;
+    pub fn precision(&self) -> f32 {
+        let agility = self.agility() as f32;
         let tuning = crate::tuning::tuning();
-        let linear = tuning.potency_base + (grace * tuning.potency_per_point);
+        let linear = tuning.potency_base + (agility * tuning.potency_per_point);
         linear * self.damage_level_multiplier()
     }
 
@@ -854,11 +853,11 @@ impl ActorAttributes {
 
     // --- RELATIVE META-ATTRIBUTES (raw values for contests) ---
 
-    /// Finesse: Synergy chain compression from grace
-    /// Used in contest vs Cunning (affects synergy recovery reduction)
-    pub fn finesse(&self) -> u16 { self.grace() }
+    /// Flow: Synergy chain compression from agility
+    /// Used in contest vs Reflex (affects synergy recovery reduction)
+    pub fn flow(&self) -> u16 { self.agility() }
 
-    /// Toughness: Physical damage resistance, contested by Dominance for mitigation.
+    /// Toughness: Physical damage resistance, contested by Presence for mitigation.
     /// No attribute carries it: Vitality's relative slot is open, so nothing is armoured.
     pub fn toughness(&self) -> u16 { 0 }
 
@@ -866,40 +865,40 @@ impl ActorAttributes {
     /// Used in contest vs Composure (extends enemy recovery duration)
     pub fn impact(&self) -> u16 { self.might() }
 
-    /// Composure: Recovery reduction from focus
+    /// Composure: Recovery reduction from discipline
     /// Used in contest vs Impact (reduces own recovery duration passively)
-    pub fn composure(&self) -> u16 { self.focus() }
+    pub fn composure(&self) -> u16 { self.discipline() }
 
-    /// Dominance: Healing reduction from presence
+    /// Presence: Healing reduction from resolve
     /// Used in contest vs Toughness (reduces healing effectiveness via aura)
-    pub fn dominance(&self) -> u16 { self.presence() }
+    pub fn presence(&self) -> u16 { self.resolve() }
 
-    /// Cunning: Reaction window extension from instinct
-    /// Used in contest vs Finesse (extends time to react to threats)
-    pub fn cunning(&self) -> u16 { self.instinct() }
+    /// Reflex: Reaction window extension from instinct
+    /// Used in contest vs Flow (extends time to react to threats)
+    pub fn reflex(&self) -> u16 { self.instinct() }
 
     // --- COMMITMENT META-ATTRIBUTES (tier-based) ---
 
-    /// Concentration: how much of the queue it sees, from presence commitment
-    /// Returns commitment tier (T0-T3) based on presence as % of total budget
-    pub fn concentration(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.presence())
+    /// Awareness: how much of the queue it sees, from resolve commitment
+    /// Returns commitment tier (T0-T3) based on resolve as % of total budget
+    pub fn awareness(&self) -> CommitmentTier {
+        self.commitment_tier_for(self.resolve())
     }
 
-    /// Intensity: Attack tempo from focus commitment
-    /// Returns commitment tier (T0-T3) based on focus as % of total budget
+    /// Intensity: Attack tempo from discipline commitment
+    /// Returns commitment tier (T0-T3) based on discipline as % of total budget
     pub fn intensity(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.focus())
+        self.commitment_tier_for(self.discipline())
     }
 
     // === GAME STATS (Layer 3) ===
     // These use meta-attributes from Layer 2
 
-    /// Reaction queue window size from Concentration meta-attribute: one
+    /// Reaction queue window size from Awareness meta-attribute: one
     /// threat seen at T0 and one more each tier, to four at T3. Fixed, not
-    /// tuned; a Counter answers the whole window, so it grows with Concentration.
+    /// tuned; a Counter answers the whole window, so it grows with Awareness.
     pub fn window_size(&self) -> usize {
-        self.concentration().index() + 1
+        self.awareness().index() + 1
     }
 
     /// Auto-attack interval from Intensity meta-attribute
@@ -913,15 +912,15 @@ impl ActorAttributes {
 impl Default for ActorAttributes {
     fn default() -> Self {
         Self {
-            might_grace_axis: 0,
-            might_grace_spectrum: 0,
-            might_grace_shift: 0,
-            vitality_focus_axis: 0,
-            vitality_focus_spectrum: 0,
-            vitality_focus_shift: 0,
-            instinct_presence_axis: 0,
-            instinct_presence_spectrum: 0,
-            instinct_presence_shift: 0,
+            might_agility_axis: 0,
+            might_agility_spectrum: 0,
+            might_agility_shift: 0,
+            vitality_discipline_axis: 0,
+            vitality_discipline_spectrum: 0,
+            vitality_discipline_shift: 0,
+            instinct_resolve_axis: 0,
+            instinct_resolve_spectrum: 0,
+            instinct_resolve_shift: 0,
         }
     }
 }
@@ -974,12 +973,12 @@ mod tests {
     // Property tests only — no specific formula values, survives balance tuning
 
     #[test]
-    fn test_gravitas_follows_presence_not_might() {
-        let presence = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
+    fn test_concentration_follows_resolve_not_might() {
+        let resolve = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
         let might = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
-        assert!(presence.gravitas() > might.gravitas());
-        assert!(might.force() > presence.force());
-        assert_eq!(might.gravitas(), presence.force());
+        assert!(resolve.concentration() > might.concentration());
+        assert!(might.force() > resolve.force());
+        assert_eq!(might.concentration(), resolve.force());
     }
 
     #[test]
@@ -1139,12 +1138,12 @@ mod tests {
     fn test_total_budget_sums_all_derived_values() {
         // axis=-3, spectrum=2 on M/G pair: might side
         // might = |axis|*10 + spectrum*7 - shift*7 = 30 + 14 - 0 = 44
-        // grace = spectrum*7 + shift*7 = 14 + 0 = 14
+        // agility = spectrum*7 + shift*7 = 14 + 0 = 14
         // (Other pairs at default = 0)
         let attrs = ActorAttributes::new(-3, 2, 0, 0, 0, 0, 0, 0, 0);
-        let expected = attrs.might() as u32 + attrs.grace() as u32
-            + attrs.vitality() as u32 + attrs.focus() as u32
-            + attrs.instinct() as u32 + attrs.presence() as u32;
+        let expected = attrs.might() as u32 + attrs.agility() as u32
+            + attrs.vitality() as u32 + attrs.discipline() as u32
+            + attrs.instinct() as u32 + attrs.resolve() as u32;
         assert_eq!(attrs.total_budget(), expected);
         assert!(attrs.total_budget() > 0, "Should have non-zero budget with investment");
     }
@@ -1156,7 +1155,7 @@ mod tests {
         // total_level = |axis| + spectrum = 3 + 2 = 5
         assert_eq!(attrs.total_level(), 5);
         // With axis=-3 (might), spectrum=2, shift=0:
-        // might = 3×16 + 2×12 = 72, grace = 0 (opposite side, no shift)
+        // might = 3×16 + 2×12 = 72, agility = 0 (opposite side, no shift)
         // total_budget = 72 + 0 + 0+0+0+0 = 72
         assert_eq!(attrs.total_budget(), 72);
         assert_ne!(attrs.total_level(), attrs.total_budget() as u32);
@@ -1167,26 +1166,26 @@ mod tests {
     #[test]
     fn test_commitment_tier_for_convenience() {
         // Specialist build: heavy investment in one attribute
-        // axis=-5, spectrum=0 → might=50, grace=0, total_budget=50
+        // axis=-5, spectrum=0 → might=50, agility=0, total_budget=50
         // might commitment: 50/50 = 100% → T3
         let attrs = ActorAttributes::new(-5, 0, 0, 0, 0, 0, 0, 0, 0);
         assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T3);
-        assert_eq!(attrs.commitment_tier_for(attrs.grace()), CommitmentTier::T0);
+        assert_eq!(attrs.commitment_tier_for(attrs.agility()), CommitmentTier::T0);
     }
 
     #[test]
     fn test_commitment_tier_for_balanced_build() {
         // Spread across pairs: each pair gets some investment
-        // M/G: axis=0, spectrum=3 → might=18, grace=18 (3×6 balanced multiplier)
-        // V/F: axis=0, spectrum=3 → vitality=18, focus=18
-        // I/P: axis=0, spectrum=3 → instinct=18, presence=18
+        // M/G: axis=0, spectrum=3 → might=18, agility=18 (3×6 balanced multiplier)
+        // V/F: axis=0, spectrum=3 → vitality=18, discipline=18
+        // I/P: axis=0, spectrum=3 → instinct=18, resolve=18
         // total_level = 9, max_possible = 90
         // each attr = 18/90 = 20% → T1 (exactly at threshold)
         let attrs = ActorAttributes::new(0, 3, 0, 0, 3, 0, 0, 3, 0);
         assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T1);
-        assert_eq!(attrs.commitment_tier_for(attrs.grace()), CommitmentTier::T1);
+        assert_eq!(attrs.commitment_tier_for(attrs.agility()), CommitmentTier::T1);
         assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T1);
-        assert_eq!(attrs.commitment_tier_for(attrs.focus()), CommitmentTier::T1);
+        assert_eq!(attrs.commitment_tier_for(attrs.discipline()), CommitmentTier::T1);
     }
 
     #[test]
@@ -1221,67 +1220,67 @@ mod tests {
     // Shift is constrained by axis direction: can only shift toward the side WITHOUT axis
 
     #[test]
-    fn test_shift_constrained_when_axis_on_right_might_grace() {
-        // axis=5 (grace/right side), spectrum=5
+    fn test_shift_constrained_when_axis_on_right_might_agility() {
+        // axis=5 (agility/right side), spectrum=5
         // shift can only go negative (toward might/left): [-5, 0]
         let mut attrs = ActorAttributes::new(5, 5, 0, 0, 0, 0, 0, 0, 0);
 
         // Try to set positive shift (should clamp to 0)
-        attrs.set_might_grace_shift(3);
-        assert_eq!(attrs.might_grace_shift(), 0, "Positive shift should clamp to 0 when axis on right");
+        attrs.set_might_agility_shift(3);
+        assert_eq!(attrs.might_agility_shift(), 0, "Positive shift should clamp to 0 when axis on right");
 
         // Set negative shift (should work)
-        attrs.set_might_grace_shift(-3);
-        assert_eq!(attrs.might_grace_shift(), -3, "Negative shift should work when axis on right");
+        attrs.set_might_agility_shift(-3);
+        assert_eq!(attrs.might_agility_shift(), -3, "Negative shift should work when axis on right");
 
         // Try to exceed max negative shift (should clamp to -spectrum)
-        attrs.set_might_grace_shift(-10);
-        assert_eq!(attrs.might_grace_shift(), -5, "Shift should clamp to -spectrum");
+        attrs.set_might_agility_shift(-10);
+        assert_eq!(attrs.might_agility_shift(), -5, "Shift should clamp to -spectrum");
     }
 
     #[test]
-    fn test_shift_constrained_when_axis_on_left_might_grace() {
+    fn test_shift_constrained_when_axis_on_left_might_agility() {
         // axis=-5 (might/left side), spectrum=5
-        // shift can only go positive (toward grace/right): [0, +5]
+        // shift can only go positive (toward agility/right): [0, +5]
         let mut attrs = ActorAttributes::new(-5, 5, 0, 0, 0, 0, 0, 0, 0);
 
         // Try to set negative shift (should clamp to 0)
-        attrs.set_might_grace_shift(-3);
-        assert_eq!(attrs.might_grace_shift(), 0, "Negative shift should clamp to 0 when axis on left");
+        attrs.set_might_agility_shift(-3);
+        assert_eq!(attrs.might_agility_shift(), 0, "Negative shift should clamp to 0 when axis on left");
 
         // Set positive shift (should work)
-        attrs.set_might_grace_shift(3);
-        assert_eq!(attrs.might_grace_shift(), 3, "Positive shift should work when axis on left");
+        attrs.set_might_agility_shift(3);
+        assert_eq!(attrs.might_agility_shift(), 3, "Positive shift should work when axis on left");
 
         // Try to exceed max positive shift (should clamp to +spectrum)
-        attrs.set_might_grace_shift(10);
-        assert_eq!(attrs.might_grace_shift(), 5, "Shift should clamp to +spectrum");
+        attrs.set_might_agility_shift(10);
+        assert_eq!(attrs.might_agility_shift(), 5, "Shift should clamp to +spectrum");
     }
 
     #[test]
-    fn test_shift_constrained_vitality_focus() {
-        // Test same constraints for vitality/focus pair
+    fn test_shift_constrained_vitality_discipline() {
+        // Test same constraints for vitality/discipline pair
         let mut attrs = ActorAttributes::new(0, 0, 0, 3, 4, 0, 0, 0, 0);
 
-        // axis=3 (focus/right), shift can only go negative
-        attrs.set_vitality_focus_shift(2);
-        assert_eq!(attrs.vitality_focus_shift(), 0, "Positive shift should clamp when axis on right");
+        // axis=3 (discipline/right), shift can only go negative
+        attrs.set_vitality_discipline_shift(2);
+        assert_eq!(attrs.vitality_discipline_shift(), 0, "Positive shift should clamp when axis on right");
 
-        attrs.set_vitality_focus_shift(-2);
-        assert_eq!(attrs.vitality_focus_shift(), -2, "Negative shift should work when axis on right");
+        attrs.set_vitality_discipline_shift(-2);
+        assert_eq!(attrs.vitality_discipline_shift(), -2, "Negative shift should work when axis on right");
     }
 
     #[test]
-    fn test_shift_constrained_instinct_presence() {
-        // Test same constraints for instinct/presence pair
+    fn test_shift_constrained_instinct_resolve() {
+        // Test same constraints for instinct/resolve pair
         let mut attrs = ActorAttributes::new(0, 0, 0, 0, 0, 0, -4, 3, 0);
 
         // axis=-4 (instinct/left), shift can only go positive
-        attrs.set_instinct_presence_shift(-2);
-        assert_eq!(attrs.instinct_presence_shift(), 0, "Negative shift should clamp when axis on left");
+        attrs.set_instinct_resolve_shift(-2);
+        assert_eq!(attrs.instinct_resolve_shift(), 0, "Negative shift should clamp when axis on left");
 
-        attrs.set_instinct_presence_shift(2);
-        assert_eq!(attrs.instinct_presence_shift(), 2, "Positive shift should work when axis on left");
+        attrs.set_instinct_resolve_shift(2);
+        assert_eq!(attrs.instinct_resolve_shift(), 2, "Positive shift should work when axis on left");
     }
 
     #[test]
@@ -1289,14 +1288,14 @@ mod tests {
         // Shift=0 should always be valid regardless of axis direction
         let mut attrs = ActorAttributes::new(5, 5, 0, -3, 4, 0, 0, 6, 0);
 
-        attrs.set_might_grace_shift(0);
-        assert_eq!(attrs.might_grace_shift(), 0);
+        attrs.set_might_agility_shift(0);
+        assert_eq!(attrs.might_agility_shift(), 0);
 
-        attrs.set_vitality_focus_shift(0);
-        assert_eq!(attrs.vitality_focus_shift(), 0);
+        attrs.set_vitality_discipline_shift(0);
+        assert_eq!(attrs.vitality_discipline_shift(), 0);
 
-        attrs.set_instinct_presence_shift(0);
-        assert_eq!(attrs.instinct_presence_shift(), 0);
+        attrs.set_instinct_resolve_shift(0);
+        assert_eq!(attrs.instinct_resolve_shift(), 0);
     }
 
 }

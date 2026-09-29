@@ -13,7 +13,7 @@ use crate::resources::RunTime;
 /// damage and nothing more, so a Counter returns what comes in, and lands at
 /// once: a reflection never enters the source's queue, so it cannot be
 /// countered. The share is `Tuning::counter_reflect` weighted by the
-/// counterer's Presence: its Gravitas over base potency.
+/// counterer's Resolve: its Concentration over base potency.
 pub fn handle_counter(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -154,7 +154,7 @@ pub fn handle_counter(
                 continue;
             }
 
-            let weight = caster_attrs.gravitas() / caster_attrs.base_potency();
+            let weight = caster_attrs.concentration() / caster_attrs.base_potency();
             let reflected_damage = threat.damage * tuning.counter_reflect * weight;
 
             let Ok(target_attrs) = attrs_query.get(threat.source) else {

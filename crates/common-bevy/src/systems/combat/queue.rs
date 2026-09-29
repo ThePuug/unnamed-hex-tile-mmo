@@ -15,14 +15,14 @@ use crate::components::reaction_queue::DamageType;
 /// two (INV-003), whatever made it.
 ///
 /// `Tuning::reaction_window`, the same for every threat between any two
-/// actors, extended by the reaction contest: the defender's Cunning against
-/// the attacker's Finesse, with the level gap's edge on the defender's side,
+/// actors, extended by the reaction contest: the defender's Reflex against
+/// the attacker's Flow, with the level gap's edge on the defender's side,
 /// never below the base.
 pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttributes) -> Duration {
     use crate::systems::combat::damage::{level_edge, reaction_contest_factor};
 
     let edge = level_edge(target_attrs.total_level(), source_attrs.total_level());
-    let multiplier = reaction_contest_factor(target_attrs.cunning(), source_attrs.finesse(), edge);
+    let multiplier = reaction_contest_factor(target_attrs.reflex(), source_attrs.flow(), edge);
     Duration::from_secs_f32(crate::tuning::tuning().reaction_window * multiplier)
 }
 

@@ -108,7 +108,7 @@ pub fn handle_auto_attack(
         }
 
         // Deal damage — a flat share of base potency: auto-attacks are pressure,
-        // the same weight for every actor, and Presence buys only their pace
+        // the same weight for every actor, and Resolve buys only their pace
         let attrs = attrs_query.get(*ent).expect("Auto-attack caster must have ActorAttributes");
         let poised = poised_query.get(*ent).map_or(0.0, |poised| poised.0);
         if poised > 0.0 {

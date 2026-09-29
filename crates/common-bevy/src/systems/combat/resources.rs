@@ -198,15 +198,15 @@ mod tests {
     use super::*;
 
     // Helper to create test attributes with simple values
-    // Axes: might/grace (negative/positive), vitality/focus (negative/positive)
+    // Axes: might/agility (negative/positive), vitality/discipline (negative/positive)
     fn test_attrs_simple(
-        might_grace_axis: i8,     // Negative for might, positive for grace
-        vitality_focus_axis: i8,  // Negative for vitality, positive for focus
+        might_agility_axis: i8,     // Negative for might, positive for agility
+        vitality_discipline_axis: i8,  // Negative for vitality, positive for discipline
     ) -> ActorAttributes {
         ActorAttributes::new(
-            might_grace_axis, 0, 0,      // might_grace: axis, spectrum, shift
-            vitality_focus_axis, 0, 0,   // vitality_focus: axis, spectrum, shift
-            0, 0, 0,                      // instinct_presence: axis, spectrum, shift
+            might_agility_axis, 0, 0,      // might_agility: axis, spectrum, shift
+            vitality_discipline_axis, 0, 0,   // vitality_discipline: axis, spectrum, shift
+            0, 0, 0,                      // instinct_resolve: axis, spectrum, shift
         )
     }
 

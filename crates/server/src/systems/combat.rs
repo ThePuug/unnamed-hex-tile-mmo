@@ -126,14 +126,14 @@ pub fn resolve_threat(
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
         if let Ok((mut health, attrs)) = query.get_mut(*ent) {
-            // The strongest Dominance aura nearby weighs against the defender's Toughness; the
+            // The strongest Presence aura nearby weighs against the defender's Toughness; the
             // level edge is the defender's against the attacker, whose blow the armour meets
-            let max_dominance = damage_calc::find_max_dominance_in_range(*ent, &actors);
+            let max_presence = damage_calc::find_max_presence_in_range(*ent, &actors);
             let attacker_level = actors.get(threat.source).map_or(attrs.total_level(), |(_, source)| source.total_level());
 
             // Apply passive mitigation (unified for all damage types), less what the
             // ability pierces
-            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_dominance, damage_calc::level_edge(attrs.total_level(), attacker_level));
+            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_presence, damage_calc::level_edge(attrs.total_level(), attacker_level));
             let pierce = threat.ability.map_or(0.0, |ability| tuning.pierce(ability));
             let final_damage = mitigated + (threat.damage - mitigated) * pierce + threat.dot_left();
 
@@ -267,7 +267,7 @@ pub fn process_passive_auto_attack(
             }
         }
 
-        // Check cooldown (tier-based cadence from Presence commitment)
+        // Check cooldown (tier-based cadence from Resolve commitment)
         let cooldown = common_bevy::components::status::Status::cadence(attrs.cadence_interval(), status);
         let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
         if time_since_last_attack < cooldown {

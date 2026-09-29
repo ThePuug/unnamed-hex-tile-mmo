@@ -18,8 +18,8 @@ pub struct Poised(pub f32);
 /// the front of its queue, whose source is the event's target. The caster
 /// leaps `Tuning::disengage_leap` tiles, each the neighbour furthest
 /// from that source, and the blow misses: the front threat is cleared. Its
-/// next auto-attack strikes harder, by `disengage_technique` of its
-/// Technique, behind a feint (`Poised`).
+/// next auto-attack strikes harder, by `disengage_precision` of its
+/// Precision, behind a feint (`Poised`).
 pub fn handle_disengage(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -75,7 +75,7 @@ pub fn handle_disengage(
             }
         }
         if let Ok(attrs) = attrs_query.get(*ent) {
-            commands.entity(*ent).insert(Poised(attrs.technique() * tuning.disengage_technique));
+            commands.entity(*ent).insert(Poised(attrs.precision() * tuning.disengage_precision));
         }
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Disengage, target: *target } });

@@ -42,7 +42,7 @@ fn calculate_knockback_destination(
 /// Handle Kick ability — REACTIVE KICK
 /// - `Tuning::kick_cost` stamina
 /// - Clears all visible window threats
-/// - Deals 75% Technique damage to adjacent threat sources
+/// - Deals 75% Precision damage to adjacent threat sources
 /// - Knockback adjacent sources 4 tiles directly away
 /// - Synergy: Kick → Lunge
 pub fn handle_kick(
@@ -181,8 +181,8 @@ pub fn handle_kick(
                 continue;
             }
 
-            // Deal 75% Technique damage via threat insertion
-            let kick_damage = caster_attrs.technique() * 0.75;
+            // Deal 75% Precision damage via threat insertion
+            let kick_damage = caster_attrs.precision() * 0.75;
 
             if let Ok((_, mut target_queue)) = queue_query.get_mut(threat.source) {
                 if let Ok(target_attrs) = attrs_query.get(threat.source) {

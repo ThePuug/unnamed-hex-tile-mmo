@@ -354,41 +354,41 @@ pub fn try_respec_attributes(
         let Try { event } = message;
         let Event::RespecAttributes {
             ent,
-            might_grace_axis,
-            might_grace_spectrum,
-            might_grace_shift,
-            vitality_focus_axis,
-            vitality_focus_spectrum,
-            vitality_focus_shift,
-            instinct_presence_axis,
-            instinct_presence_spectrum,
-            instinct_presence_shift,
+            might_agility_axis,
+            might_agility_spectrum,
+            might_agility_shift,
+            vitality_discipline_axis,
+            vitality_discipline_spectrum,
+            vitality_discipline_shift,
+            instinct_resolve_axis,
+            instinct_resolve_spectrum,
+            instinct_resolve_shift,
         } = event
         else {
             continue;
         };
         let ent = *ent;
-        let might_grace_axis = *might_grace_axis;
-        let might_grace_spectrum = *might_grace_spectrum;
-        let might_grace_shift = *might_grace_shift;
-        let vitality_focus_axis = *vitality_focus_axis;
-        let vitality_focus_spectrum = *vitality_focus_spectrum;
-        let vitality_focus_shift = *vitality_focus_shift;
-        let instinct_presence_axis = *instinct_presence_axis;
-        let instinct_presence_spectrum = *instinct_presence_spectrum;
-        let instinct_presence_shift = *instinct_presence_shift;
+        let might_agility_axis = *might_agility_axis;
+        let might_agility_spectrum = *might_agility_spectrum;
+        let might_agility_shift = *might_agility_shift;
+        let vitality_discipline_axis = *vitality_discipline_axis;
+        let vitality_discipline_spectrum = *vitality_discipline_spectrum;
+        let vitality_discipline_shift = *vitality_discipline_shift;
+        let instinct_resolve_axis = *instinct_resolve_axis;
+        let instinct_resolve_spectrum = *instinct_resolve_spectrum;
+        let instinct_resolve_shift = *instinct_resolve_shift;
 
         let Ok(mut attrs) = attrs_query.get_mut(ent) else {
             continue;
         };
 
         // Calculate draft investment
-        let draft_investment = might_grace_axis.unsigned_abs() as u32
-            + might_grace_spectrum.max(0) as u32
-            + vitality_focus_axis.unsigned_abs() as u32
-            + vitality_focus_spectrum.max(0) as u32
-            + instinct_presence_axis.unsigned_abs() as u32
-            + instinct_presence_spectrum.max(0) as u32;
+        let draft_investment = might_agility_axis.unsigned_abs() as u32
+            + might_agility_spectrum.max(0) as u32
+            + vitality_discipline_axis.unsigned_abs() as u32
+            + vitality_discipline_spectrum.max(0) as u32
+            + instinct_resolve_axis.unsigned_abs() as u32
+            + instinct_resolve_spectrum.max(0) as u32;
 
         // Validate budget
         if draft_investment > attrs.total_level() {
@@ -397,30 +397,30 @@ pub fn try_respec_attributes(
 
         // Validate ranges (i8 max is 127, but level is practical limit)
         let max_investment = attrs.total_level() as i8;
-        if might_grace_axis.abs() > max_investment
-            || might_grace_spectrum < 0
-            || might_grace_spectrum > max_investment
-            || vitality_focus_axis.abs() > max_investment
-            || vitality_focus_spectrum < 0
-            || vitality_focus_spectrum > max_investment
-            || instinct_presence_axis.abs() > max_investment
-            || instinct_presence_spectrum < 0
-            || instinct_presence_spectrum > max_investment
+        if might_agility_axis.abs() > max_investment
+            || might_agility_spectrum < 0
+            || might_agility_spectrum > max_investment
+            || vitality_discipline_axis.abs() > max_investment
+            || vitality_discipline_spectrum < 0
+            || vitality_discipline_spectrum > max_investment
+            || instinct_resolve_axis.abs() > max_investment
+            || instinct_resolve_spectrum < 0
+            || instinct_resolve_spectrum > max_investment
         {
             continue; // Invalid ranges
         }
 
         // Apply respec
         attrs.apply_respec(
-            might_grace_axis,
-            might_grace_spectrum,
-            might_grace_shift,
-            vitality_focus_axis,
-            vitality_focus_spectrum,
-            vitality_focus_shift,
-            instinct_presence_axis,
-            instinct_presence_spectrum,
-            instinct_presence_shift,
+            might_agility_axis,
+            might_agility_spectrum,
+            might_agility_shift,
+            vitality_discipline_axis,
+            vitality_discipline_spectrum,
+            vitality_discipline_shift,
+            instinct_resolve_axis,
+            instinct_resolve_spectrum,
+            instinct_resolve_shift,
         );
 
         // Broadcast confirmation

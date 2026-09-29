@@ -8,7 +8,7 @@ use common_bevy::{
 
 /// Handle Volley, the Kiter's signature: a burst of shots at a target within
 /// `KITER_REACH`, `Tuning::volley_shots` of them by the Kiter's Intensity,
-/// so Focus, which gives its pace, decides how many fly — each striking for
+/// so Discipline, which gives its pace, decides how many fly — each striking for
 /// `Tuning::volley_force` of Force. Every shot is its own threat. With none,
 /// the Volley is one shot that deals nothing and only slows.
 /// Each shot, as it lands (`landing::land`), slows its target by

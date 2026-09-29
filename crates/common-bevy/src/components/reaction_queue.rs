@@ -84,7 +84,7 @@ impl QueuedThreat {
 /// - threats: Unbounded queue of incoming damage. Every blow stands ahead of
 ///   every wound, every wound ahead of every auto-attack, and each kind is
 ///   oldest first; only `queue::insert_threat` keeps that order.
-/// - window_size: How many threats the player can see and interact with (derived from Focus)
+/// - window_size: How many threats the player can see and interact with (derived from Discipline)
 
 /// Queue is unbounded. Window determines visibility, not capacity: it shows
 /// ability threats only. Threats behind the window still tick and resolve normally.

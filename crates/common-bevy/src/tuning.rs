@@ -18,7 +18,7 @@ pub struct Tuning {
     // --- Absolute: potency, level curves, health ---
     /// Potency every actor has before any attribute
     pub potency_base: f32,
-    /// Potency each point of the attribute adds, for Force, Gravitas, Technique and Intuition alike
+    /// Potency each point of the attribute adds, for Force, Concentration, Precision and Intuition alike
     pub potency_per_point: f32,
     /// The damage level curve, `(1 + level × k)^p`, every potency scales by
     pub damage_curve_k: f32,
@@ -32,7 +32,7 @@ pub struct Tuning {
     pub health_curve_p: f32,
 
     // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`,
-    // and so is the window each Concentration tier sees, `ActorAttributes::window_size`) ---
+    // and so is the window each Awareness tier sees, `ActorAttributes::window_size`) ---
     /// Seconds between auto-attacks at each Intensity tier, T0 to T3
     pub cadence: [f32; 4],
     /// Shots in a Volley at each Intensity tier, T0 to T3: three at full
@@ -53,11 +53,11 @@ pub struct Tuning {
     pub composure_share: f32,
     /// Share of a recovery a synergy unlocks its follow-up through, at parity
     pub synergy_floor: f32,
-    /// Share more a Finesse advantage unlocks it through, at the base advantage
+    /// Share more a Flow advantage unlocks it through, at the base advantage
     pub synergy_share: f32,
     /// Seconds every threat's window starts from
     pub reaction_window: f32,
-    /// Share more a Cunning advantage widens it by, at the base advantage
+    /// Share more a Reflex advantage widens it by, at the base advantage
     pub window_bonus: f32,
 
     // --- Abilities: what each costs, how long it locks its user out ---
@@ -103,8 +103,8 @@ pub struct Tuning {
     pub disengage_cost: f32,
     /// Tiles a Disengage leaps
     pub disengage_leap: usize,
-    /// Share of Technique a Disengage adds to its caster's next auto-attack
-    pub disengage_technique: f32,
+    /// Share of Precision a Disengage adds to its caster's next auto-attack
+    pub disengage_precision: f32,
     /// Stamina a Volley costs
     pub volley_cost: f32,
     /// Share of Force each Volley shot strikes for
@@ -121,7 +121,7 @@ pub struct Tuning {
     pub flank_stun: f32,
     /// Share of Intuition a Flank strikes for
     pub flank_intuition: f32,
-    /// Share of each countered threat's damage sent back, times the counterer's Gravitas over base potency
+    /// Share of each countered threat's damage sent back, times the counterer's Concentration over base potency
     pub counter_reflect: f32,
 }
 
@@ -173,7 +173,7 @@ impl Tuning {
         rattle_stacks: 3,
         disengage_cost: 28.0,
         disengage_leap: 2,
-        disengage_technique: 0.49,
+        disengage_precision: 0.49,
         volley_cost: 20.0,
         volley_force: 1.12,
         volley_slow: 0.5,
@@ -285,7 +285,7 @@ impl Tuning {
             "rattle_growth" => &mut self.rattle_growth,
             "rattle_daze" => &mut self.rattle_daze,
             "disengage_cost" => &mut self.disengage_cost,
-            "disengage_technique" => &mut self.disengage_technique,
+            "disengage_precision" => &mut self.disengage_precision,
             "volley_cost" => &mut self.volley_cost,
             "volley_force" => &mut self.volley_force,
             "volley_slow" => &mut self.volley_slow,
