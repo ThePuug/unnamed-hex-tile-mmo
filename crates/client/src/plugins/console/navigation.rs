@@ -296,7 +296,12 @@ fn handle_spawn_den_menu(
     keyboard: &mut ButtonInput<KeyCode>,
     action_writer: &mut MessageWriter<DevConsoleAction>,
 ) {
-    const KEYS: [KeyCode; 4] = [KeyCode::Numpad1, KeyCode::Numpad2, KeyCode::Numpad3, KeyCode::Numpad4];
+    const KEYS: [KeyCode; 9] = [
+        KeyCode::Numpad1, KeyCode::Numpad2, KeyCode::Numpad3, KeyCode::Numpad4, KeyCode::Numpad5,
+        KeyCode::Numpad6, KeyCode::Numpad7, KeyCode::Numpad8, KeyCode::Numpad9,
+    ];
+    // Every den listed has a key, or the zip drops the rows past the last
+    const _: () = assert!(super::state::DENS.len() <= KEYS.len());
     for (key, (_, archetype)) in KEYS.into_iter().zip(super::state::DENS) {
         if keyboard.just_pressed(key) {
             action_writer.write(DevConsoleAction::SpawnDen(archetype));
