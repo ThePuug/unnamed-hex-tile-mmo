@@ -83,9 +83,9 @@ pub fn process_dismiss(
     mut query: Query<(&mut ReactionQueue, &mut Health)>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     for event in reader.read() {
         let GameEvent::Dismiss { ent } = event.event else {
             continue;

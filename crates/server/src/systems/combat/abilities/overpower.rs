@@ -21,7 +21,6 @@ pub fn handle_overpower(
     synergy_query: Query<&common_bevy::components::recovery::SynergyUnlock>,
     respawn_query: Query<&RespawnTimer>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
-    level_contest: Res<common_bevy::systems::combat::damage::LevelContest>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -214,6 +213,6 @@ pub fn handle_overpower(
             continue;
         };
         let defender_attrs = attrs_query.get(target_ent).unwrap_or(attacker_attrs);
-        apply_synergies(*ent, AbilityType::Overpower, &recovery, attacker_attrs, defender_attrs, *level_contest, &mut commands);
+        apply_synergies(*ent, AbilityType::Overpower, &recovery, attacker_attrs, defender_attrs, &mut commands);
     }
 }

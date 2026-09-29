@@ -81,7 +81,6 @@ pub fn apply_synergies(
     recovery: &GlobalRecovery,
     attacker_attrs: &ActorAttributes,
     defender_attrs: &ActorAttributes,
-    level_contest: damage_calc::LevelContest,
     commands: &mut Commands,
 ) {
     // Get the trigger type for the used ability
@@ -89,14 +88,15 @@ pub fn apply_synergies(
         return; // No synergies for this ability
     };
 
-    // Pattern 1 (Nullifying): base × contest_factor, the level gap weighing in
-    const BASE_REDUCTION: f32 = 0.66; // at a 300-point advantage; no ceiling
-    let edge = level_contest.edge(attacker_attrs.total_level(), defender_attrs.total_level());
+    // A floor every actor has, and a share more its Finesse wins over the
+    // defender's Cunning, the level gap weighing in
+    let tuning = crate::tuning::tuning();
+    let edge = damage_calc::level_edge(attacker_attrs.total_level(), defender_attrs.total_level());
     let contest = damage_calc::contest_factor(attacker_attrs.finesse(), defender_attrs.cunning(), edge);
 
-    let synergy_reduction = BASE_REDUCTION * contest;
+    let synergy_reduction = tuning.synergy_floor + tuning.synergy_share * contest;
 
-    // No synergy unlock without meaningful finesse investment
+    // No early unlock at all when the floor is none and the contest is lost
     if synergy_reduction < f32::EPSILON {
         return;
     }

@@ -88,8 +88,8 @@ pub fn try_spawn_den(
     query: Query<(&Loc, &Heading, &ActorAttributes), With<PlayerControlled>>,
     time: Res<Time>,
     registry: Res<crate::resources::event_registry::EventRegistry>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     for message in reader.read() {
         let Try { event: Event::SpawnDen { ent, archetype } } = message else { continue };
         let Ok((loc, heading, attrs)) = query.get(*ent) else { continue };
@@ -120,8 +120,8 @@ pub fn try_stage_fight(
     query: Query<(&Loc, &Heading), With<PlayerControlled>>,
     time: Res<Time>,
     registry: Res<crate::resources::event_registry::EventRegistry>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     for message in reader.read() {
         let Try { event: Event::StageFight { ent, west, east, level, b_level, size, b_size } } = message else { continue };
         let Ok((loc, heading)) = query.get(*ent) else { continue };
@@ -155,7 +155,7 @@ pub fn spawn_engagement(
     level: u8,
     npc_count: u8,
     elevation: impl Fn(i32, i32) -> i32,
-    tuning: &crate::resources::tuning::ArchetypeTuning,
+    tuning: &common_bevy::tuning::Tuning,
     commands: &mut Commands,
     time: &Time,
 ) {

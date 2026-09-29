@@ -20,10 +20,8 @@ impl Plugin for CombatPlugin {
         app.add_message::<Do>();
         app.add_message::<Try>();
         app.init_resource::<crate::resources::RunTime>();
-        app.init_resource::<crate::resources::tuning::ArchetypeTuning>();
 
         app.add_observer(combat::process_deal_damage);
-        app.init_resource::<common_bevy::systems::combat::damage::LevelContest>();
         app.add_observer(combat::resolve_threat);
         app.add_observer(combat::resolve_dot_tick);
 

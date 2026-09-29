@@ -14,7 +14,7 @@
 //! archetype against itself instead of the others, `ordered=1` to fight every
 //! ordered pair, mirrors included, `trace` to print every
 //! fight (1), with a timeline every 5s (2), or every half second for its
-//! first 12s (3). Any `ArchetypeTuning` knob may be set by name too
+//! first 12s (3). Any `Tuning` knob may be set by name too
 //! (`lunge_pierce=0.5`), so a value is tried without a rebuild.
 //!
 //! `arena serve` runs one scenario per line of stdin, each line the keys
@@ -44,11 +44,11 @@ use common_bevy::{
     plugins::nntree::NNTreePlugin,
     resources::map::Map,
     spatial_difficulty::EnemyArchetype,
+    tuning::{set_tuning, Tuning},
 };
 
 use crate::{
     plugins::{behaviour::BehaviourPlugin, combat::CombatPlugin},
-    resources::tuning::ArchetypeTuning,
     systems::{actor, engagement_spawner::spawn_engagement, renet},
 };
 
@@ -91,12 +91,12 @@ struct Settings {
     cap: Duration,
     only: Vec<EnemyArchetype>,
     trace: u8,
-    tuning: ArchetypeTuning,
+    tuning: Tuning,
 }
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: ARCHETYPES.to_vec(), trace: 0, tuning: ArchetypeTuning::default() };
+        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: ARCHETYPES.to_vec(), trace: 0, tuning: Tuning::default() };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {
@@ -226,8 +226,6 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     app.insert_resource(Time::<Fixed>::from_seconds(0.125));
     app.insert_resource(flat_map());
     app.insert_resource(SpawnPoint(Qrz { q: 0, r: 0, z: 1 }));
-    app.insert_resource(settings.tuning.clone());
-    app.insert_resource(common_bevy::systems::combat::damage::LevelContest { per_level: settings.tuning.contest_per_level });
     app.init_resource::<Tally>();
     app.add_systems(Update, (actor::update, tally_used));
     app.add_systems(PostUpdate, renet::cleanup_despawned);
@@ -351,8 +349,9 @@ fn serve() {
     }
 }
 
-/// Runs every pairing and prints the report.
+/// Runs every pairing under the scenario's tuning and prints the report.
 fn report(settings: &Settings) {
+    set_tuning(settings.tuning);
     let (a_team, b_team) = (settings.team_a(EnemyArchetype::Berserker), settings.team_b(EnemyArchetype::Berserker));
     println!(
         "arena: a is {} at level {}, b is {} at level {}; {} runs per pairing, decided on health after {}s",

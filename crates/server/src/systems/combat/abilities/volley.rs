@@ -5,12 +5,11 @@ use common_bevy::{
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
 };
 
-pub const VOLLEY_STAMINA_COST: f32 = 20.0;
 
 /// Handle Volley, the Kiter's signature: a burst of shots at a target within
 /// `KITER_REACH`, one shot per threat the Kiter can see — its Concentration
 /// window, so Focus decides how many land — each striking for
-/// `ArchetypeTuning::volley_force` of Force. Every shot is its own threat.
+/// `Tuning::volley_force` of Force. Every shot is its own threat.
 /// Each shot, as it lands (`landing::land`), slows its target by
 /// `volley_slow` for `volley_slow_secs` and sets the Kiter running at
 /// `volley_run` of its pace for `volley_run_secs`, in which it backs away
@@ -25,9 +24,9 @@ pub fn handle_volley(
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability: AbilityType::Volley, target } } = event else {
             continue;
@@ -61,11 +60,11 @@ pub fn handle_volley(
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
         };
-        if stamina.state < VOLLEY_STAMINA_COST {
+        if stamina.state < tuning.volley_cost {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::InsufficientStamina } });
             continue;
         }
-        stamina.state -= VOLLEY_STAMINA_COST;
+        stamina.state -= tuning.volley_cost;
         stamina.step = stamina.state;
         writer.write(Do {
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },

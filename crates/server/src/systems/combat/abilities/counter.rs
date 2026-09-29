@@ -12,7 +12,7 @@ use crate::resources::RunTime;
 /// to its living source wherever it stands, at a share of the threat's own
 /// damage and nothing more, so a Counter returns what comes in, and lands at
 /// once: a reflection never enters the source's queue, so it cannot be
-/// countered. The share is `ArchetypeTuning::counter_reflect` weighted by the
+/// countered. The share is `Tuning::counter_reflect` weighted by the
 /// counterer's Presence: its Gravitas over base potency.
 pub fn handle_counter(
     mut commands: Commands,
@@ -26,10 +26,9 @@ pub fn handle_counter(
     respawn_query: Query<&RespawnTimer>,
     time: Res<Time>,
     runtime: Res<RunTime>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
-    level_contest: Res<common_bevy::systems::combat::damage::LevelContest>,
     mut writer: MessageWriter<Do>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target: _ } } = event else {
             continue;
@@ -172,7 +171,6 @@ pub fn handle_counter(
                 Some(AbilityType::Counter),   // Ability
                 now,                          // Current time
                 0.0,                          // A reflection is a blow
-                *level_contest,
             );
 
             // A reflection lands on impact, never queued, so a counter cannot be countered back
@@ -216,6 +214,6 @@ pub fn handle_counter(
         let Ok(attrs) = attrs_query.get(*ent) else {
             continue;
         };
-        apply_synergies(*ent, AbilityType::Counter, &recovery, attrs, attrs, *level_contest, &mut commands);
+        apply_synergies(*ent, AbilityType::Counter, &recovery, attrs, attrs, &mut commands);
     }
 }

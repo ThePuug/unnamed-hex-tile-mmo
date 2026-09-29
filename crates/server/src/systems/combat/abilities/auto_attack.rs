@@ -24,9 +24,9 @@ pub fn handle_auto_attack(
     stunned_query: Query<&common_bevy::components::stunned::Stunned>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
     poised_query: Query<&super::disengage::Poised>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target: event_target } } = event else {
             continue;

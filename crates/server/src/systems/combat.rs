@@ -11,7 +11,7 @@ use common_bevy::{
 };
 
 /// System to process DealDamage events (Phase 1: Outgoing damage calculation)
-/// Rolls the attack's damage within its range (`ArchetypeTuning::damage_spread`,
+/// Rolls the attack's damage within its range (`Tuning::damage_spread`,
 /// one roll for its blow and its DoT), and inserts it into the reaction queue
 pub fn process_deal_damage(
     trigger: On<Try>,
@@ -21,10 +21,9 @@ pub fn process_deal_damage(
     all_attrs: Query<&ActorAttributes>,
     time: Res<Time>,
     runtime: Res<crate::resources::RunTime>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
-    level_contest: Res<damage_calc::LevelContest>,
     mut writer: MessageWriter<Do>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     let event = &trigger.event().event;
 
     if let GameEvent::DealDamage { source, target, base_damage, damage_type, ability, dot } = event {
@@ -64,7 +63,7 @@ pub fn process_deal_damage(
             let pushback_pct = damage_calc::calculate_recovery_pushback(
                 source_attrs.impact(),
                 attrs.composure(),
-                level_contest.edge(source_attrs.total_level(), attrs.total_level()),
+                damage_calc::level_edge(source_attrs.total_level(), attrs.total_level()),
             );
             recovery.apply_pushback(pushback_pct);
         }
@@ -79,7 +78,6 @@ pub fn process_deal_damage(
             *ability,      // Ability
             now,           // Current time
             dot,           // DoT per tick, a wound's
-            *level_contest,
         );
 
         // Try to insert threat into queue
@@ -123,10 +121,9 @@ pub fn resolve_threat(
     actors: Query<(&Loc, &ActorAttributes)>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
-    level_contest: Res<damage_calc::LevelContest>,
     mut writer: MessageWriter<Do>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     let event = &trigger.event().event;
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
@@ -138,7 +135,7 @@ pub fn resolve_threat(
 
             // Apply passive mitigation (unified for all damage types), less what the
             // ability pierces
-            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_dominance, level_contest.edge(attrs.total_level(), attacker_level));
+            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, max_dominance, damage_calc::level_edge(attrs.total_level(), attacker_level));
             let pierce = threat.ability.map_or(0.0, |ability| tuning.pierce(ability));
             let final_damage = mitigated + (threat.damage - mitigated) * pierce + threat.dot_left();
 

@@ -15,7 +15,6 @@ pub fn handle_deflect(
     mut queue_query: Query<(&mut ReactionQueue, &mut Stamina)>,
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
-    level_contest: Res<common_bevy::systems::combat::damage::LevelContest>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -121,6 +120,6 @@ pub fn handle_deflect(
         let Ok(attrs) = attrs_query.get(*ent) else {
             continue;
         };
-        apply_synergies(*ent, AbilityType::Deflect, &recovery, attrs, attrs, *level_contest, &mut commands);
+        apply_synergies(*ent, AbilityType::Deflect, &recovery, attrs, attrs, &mut commands);
     }
 }

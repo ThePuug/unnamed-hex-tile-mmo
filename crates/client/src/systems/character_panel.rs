@@ -1276,8 +1276,9 @@ pub fn update_attributes(
     }
 
     // Update absolute meta-attribute values
-    // All use the same formula pattern: (10 + attr * 0.3) * damage_level_multiplier
+    // All use the one potency rule: (base + attr × per point) × damage level curve
     let level_mult = display_attrs.damage_level_multiplier();
+    let tuning = common_bevy::tuning::tuning();
     for (abs_stat, entity) in &abs_meta_query {
         if let Ok(mut text) = text_query.get_mut(entity) {
             let raw_attr = match abs_stat {
@@ -1289,7 +1290,7 @@ pub fn update_attributes(
                 AbsoluteMetaAttributeStat::Gravitas => Some(display_attrs.presence() as f32),
             };
             if let Some(attr) = raw_attr {
-                let value = (10.0 + attr * 0.3) * level_mult;
+                let value = (tuning.potency_base + attr * tuning.potency_per_point) * level_mult;
                 **text = format!("({:.0})", value);
             }
         }

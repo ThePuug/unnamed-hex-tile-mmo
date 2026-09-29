@@ -10,23 +10,20 @@ use crate::components::reaction_queue::DamageType;
 /// Reaction window base from level gap.
 
 /// Pattern 2 (Baseline+Bonus): 3.0s × gap × (1.0 + 0.5 × contest_factor)
-/// The reaction window before its contest: the same for every threat between
-/// any two actors.
-pub const BASE_WINDOW: Duration = Duration::from_secs(3);
-
 /// How long a threat from `source_attrs` waits in the queue of
 /// `target_attrs` before it lands: the same for every threat between the
 /// two (INV-003), whatever made it.
 ///
-/// [`BASE_WINDOW`] extended by the reaction contest: the defender's Cunning
-/// against the attacker's Finesse, with the level gap's edge on the
-/// defender's side, up to +50% at full advantage and never below the base.
-pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttributes, level_contest: crate::systems::combat::damage::LevelContest) -> Duration {
-    use crate::systems::combat::damage::reaction_contest_factor;
+/// `Tuning::reaction_window`, the same for every threat between any two
+/// actors, extended by the reaction contest: the defender's Cunning against
+/// the attacker's Finesse, with the level gap's edge on the defender's side,
+/// never below the base.
+pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttributes) -> Duration {
+    use crate::systems::combat::damage::{level_edge, reaction_contest_factor};
 
-    let edge = level_contest.edge(target_attrs.total_level(), source_attrs.total_level());
+    let edge = level_edge(target_attrs.total_level(), source_attrs.total_level());
     let multiplier = reaction_contest_factor(target_attrs.cunning(), source_attrs.finesse(), edge);
-    Duration::from_millis((BASE_WINDOW.as_secs_f32() * multiplier * 1000.0) as u64)
+    Duration::from_secs_f32(crate::tuning::tuning().reaction_window * multiplier)
 }
 
 /// Create a threat with proper timer calculation (INVARIANT: INV-003)
@@ -46,7 +43,6 @@ pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttribu
 /// * `ability` - Which ability created this threat
 /// * `now` - Current game time
 /// * `dot` - Damage each DoT tick deals: a wound's, zero for a blow
-/// * `level_contest` - How a level gap weighs in the reaction contest
 
 /// # Returns
 /// Fully-formed QueuedThreat with correct timer duration
@@ -59,14 +55,13 @@ pub fn create_threat(
     ability: Option<crate::message::AbilityType>,
     now: Duration,
     dot: f32,
-    level_contest: crate::systems::combat::damage::LevelContest,
 ) -> crate::components::reaction_queue::QueuedThreat {
     crate::components::reaction_queue::QueuedThreat {
         source,
         damage,
         damage_type,
         inserted_at: now,
-        timer_duration: threat_window(target_attrs, source_attrs, level_contest),
+        timer_duration: threat_window(target_attrs, source_attrs),
         ability,
         dot,
         ticked: 0,

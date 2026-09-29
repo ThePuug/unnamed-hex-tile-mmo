@@ -8,10 +8,10 @@ use common_bevy::{
 
 /// Handle Lunge ability (Q key)
 /// - 20 stamina cost
-/// - Strikes for `ArchetypeTuning::lunge_force` of Force (scales with might + level)
+/// - Strikes for `Tuning::lunge_force` of Force (scales with might + level)
 /// - `LUNGE_RANGE` hex range
 /// - Teleports caster adjacent to target
-/// - Queues a strike and a wound whose DoT, a bleed, deals `ArchetypeTuning::lunge_dot`
+/// - Queues a strike and a wound whose DoT, a bleed, deals `Tuning::lunge_dot`
 ///   of Force each tick until a reaction clears the wound or it lands
 pub fn handle_lunge(
     mut commands: Commands,
@@ -22,11 +22,10 @@ pub fn handle_lunge(
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
-    level_contest: Res<common_bevy::systems::combat::damage::LevelContest>,
     mut writer: MessageWriter<Do>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target: event_target } } = event else {
             continue;
@@ -240,6 +239,6 @@ pub fn handle_lunge(
             continue;
         };
         let defender_attrs = attrs_query.get(target_ent).unwrap_or(attacker_attrs);
-        apply_synergies(*ent, AbilityType::Lunge, &recovery, attacker_attrs, defender_attrs, *level_contest, &mut commands);
+        apply_synergies(*ent, AbilityType::Lunge, &recovery, attacker_attrs, defender_attrs, &mut commands);
     }
 }

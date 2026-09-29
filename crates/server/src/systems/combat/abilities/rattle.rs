@@ -5,7 +5,6 @@ use common_bevy::{
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
 };
 
-pub const RATTLE_STAMINA_COST: f32 = 40.0;
 
 /// Handle Rattle, the Juggernaut's signature: a strike on a target within
 /// melee reach that, as it lands (`landing::land`), adds a stack to its
@@ -24,10 +23,10 @@ pub fn handle_rattle(
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     health_query: Query<&Health>,
     mut writer: MessageWriter<Do>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability: AbilityType::Rattle, target } } = event else {
             continue;
@@ -62,11 +61,11 @@ pub fn handle_rattle(
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
         };
-        if stamina.state < RATTLE_STAMINA_COST {
+        if stamina.state < tuning.rattle_cost {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::InsufficientStamina } });
             continue;
         }
-        stamina.state -= RATTLE_STAMINA_COST;
+        stamina.state -= tuning.rattle_cost;
         stamina.step = stamina.state;
         writer.write(Do {
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },

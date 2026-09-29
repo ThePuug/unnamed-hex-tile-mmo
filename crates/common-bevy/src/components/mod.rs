@@ -209,14 +209,6 @@ impl Default for Turn {
     }
 }
 
-/// Health every actor has before Vitality and level, sized so one signature
-/// blow takes about a quarter of a level-10 actor's health: a fight takes several.
-pub const BASE_HEALTH: f32 = 300.0;
-
-/// Health each point of Vitality adds before level: a Vitality build at level
-/// 10 has about twice the health of one without.
-pub const HEALTH_PER_VITALITY: f32 = 1.96;
-
 #[derive(Clone, Component, Copy, Default)]
 pub struct Actor;
 
@@ -254,15 +246,26 @@ impl CommitmentTier {
         if total_budget == 0 {
             return Self::T0;
         }
-        let pct = (derived_value as f64 / total_budget as f64) * 100.0;
-        if pct >= 60.0 {
+        let share = derived_value as f32 / total_budget as f32;
+        let tuning = crate::tuning::tuning();
+        if share >= tuning.tier_3 {
             Self::T3
-        } else if pct >= 40.0 {
+        } else if share >= tuning.tier_2 {
             Self::T2
-        } else if pct >= 20.0 {
+        } else if share >= tuning.tier_1 {
             Self::T1
         } else {
             Self::T0
+        }
+    }
+
+    /// The tier's place, 0 to 3, as `Tuning`'s tier arrays list their effects
+    pub fn index(self) -> usize {
+        match self {
+            Self::T0 => 0,
+            Self::T1 => 1,
+            Self::T2 => 2,
+            Self::T3 => 3,
         }
     }
 }
@@ -697,17 +700,15 @@ impl ActorAttributes {
     /// HP/survivability level multiplier
     /// Moderate scaling: preserves danger from equal-level foes
     pub fn hp_level_multiplier(&self) -> f32 {
-        const K: f32 = 0.10;
-        const P: f32 = 2.0;
-        Self::level_multiplier(self.total_level(), K, P)
+        let tuning = crate::tuning::tuning();
+        Self::level_multiplier(self.total_level(), tuning.health_curve_k, tuning.health_curve_p)
     }
 
     /// Damage/offense level multiplier
     /// Moderate scaling: balanced with HP growth to preserve level advantage without exponential runaway
     pub fn damage_level_multiplier(&self) -> f32 {
-        const K: f32 = 0.15;
-        const P: f32 = 1.75;
-        Self::level_multiplier(self.total_level(), K, P)
+        let tuning = crate::tuning::tuning();
+        Self::level_multiplier(self.total_level(), tuning.damage_curve_k, tuning.damage_curve_p)
     }
 
     /// Reaction stat level multiplier
@@ -791,15 +792,15 @@ impl ActorAttributes {
     /// Fully scaled damage output including level progression. Used as base damage for offensive abilities.
     pub fn force(&self) -> f32 {
         let might = self.might() as f32;
-        let base = 10.0;
-        let linear = base + (might * 0.3);
+        let tuning = crate::tuning::tuning();
+        let linear = tuning.potency_base + (might * tuning.potency_per_point);
         linear * self.damage_level_multiplier()
     }
 
     /// The potency every actor has before any attribute, scaled by level: what
     /// each absolute stat starts from, and all an auto-attack draws on.
     pub fn base_potency(&self) -> f32 {
-        10.0 * self.damage_level_multiplier()
+        crate::tuning::tuning().potency_base * self.damage_level_multiplier()
     }
 
     /// Gravitas: Presence's absolute meta-attribute, fully scaled like Force:
@@ -809,8 +810,8 @@ impl ActorAttributes {
     /// without. Auto-attacks do not read it: Presence buys only their pace.
     pub fn gravitas(&self) -> f32 {
         let presence = self.presence() as f32;
-        let base = 10.0;
-        let linear = base + (presence * 0.3);
+        let tuning = crate::tuning::tuning();
+        let linear = tuning.potency_base + (presence * tuning.potency_per_point);
         linear * self.damage_level_multiplier()
     }
 
@@ -818,8 +819,8 @@ impl ActorAttributes {
     /// Fully scaled damage output including level progression. Used as base damage for defensive/reactive abilities.
     pub fn technique(&self) -> f32 {
         let grace = self.grace() as f32;
-        let base = 10.0;
-        let linear = base + (grace * 0.3);
+        let tuning = crate::tuning::tuning();
+        let linear = tuning.potency_base + (grace * tuning.potency_per_point);
         linear * self.damage_level_multiplier()
     }
 
@@ -827,8 +828,8 @@ impl ActorAttributes {
     /// Fully scaled like Force: the weight of a blow struck at the moment it lands best, a Flank's.
     pub fn intuition(&self) -> f32 {
         let instinct = self.instinct() as f32;
-        let base = 10.0;
-        let linear = base + (instinct * 0.3);
+        let tuning = crate::tuning::tuning();
+        let linear = tuning.potency_base + (instinct * tuning.potency_per_point);
         linear * self.damage_level_multiplier()
     }
 
@@ -837,7 +838,8 @@ impl ActorAttributes {
     /// Every actor has [`BASE_HEALTH`] before Vitality, which sets how many
     /// signature blows a fight takes.
     pub fn constitution(&self) -> f32 {
-        self.constitution_from(BASE_HEALTH, HEALTH_PER_VITALITY)
+        let tuning = crate::tuning::tuning();
+        self.constitution_from(tuning.base_health, tuning.health_per_vitality)
     }
 
     /// Constitution with its two shares given: `base` health before Vitality
@@ -902,36 +904,21 @@ impl ActorAttributes {
     /// Higher Concentration tier → larger visibility window for reactive play
     /// T0 → 1 slot, T1 → 2 slots, T2 → 3 slots, T3 → 4 slots
     pub fn window_size(&self) -> usize {
-        match self.concentration() {
-            CommitmentTier::T0 => 1,
-            CommitmentTier::T1 => 2,
-            CommitmentTier::T2 => 3,
-            CommitmentTier::T3 => 4,
-        }
+        crate::tuning::tuning().concentration[self.concentration().index()] as usize
     }
 
     /// Auto-attack interval from Intensity meta-attribute
     /// Higher Intensity tier → faster attacks (shorter interval)
     /// T0 → 3000ms, T1 → 2500ms, T2 → 2000ms, T3 → 1500ms
     pub fn cadence_interval(&self) -> std::time::Duration {
-        match self.intensity() {
-            CommitmentTier::T0 => std::time::Duration::from_millis(3000),
-            CommitmentTier::T1 => std::time::Duration::from_millis(2500),
-            CommitmentTier::T2 => std::time::Duration::from_millis(2000),
-            CommitmentTier::T3 => std::time::Duration::from_millis(1500),
-        }
+        std::time::Duration::from_secs_f32(crate::tuning::tuning().cadence[self.intensity().index()])
     }
 
     /// Evasion (dodge) chance from Poise meta-attribute
     /// Higher Poise tier → higher chance to completely evade incoming threats
     /// T0 → 0%, T1 → 10%, T2 → 20%, T3 → 30%
     pub fn evasion_chance(&self) -> f32 {
-        match self.poise() {
-            CommitmentTier::T0 => 0.0,
-            CommitmentTier::T1 => 0.10,
-            CommitmentTier::T2 => 0.20,
-            CommitmentTier::T3 => 0.30,
-        }
+        crate::tuning::tuning().evasion[self.poise().index()]
     }
 }
 
@@ -1100,7 +1087,7 @@ mod tests {
         // Level 0, no investment: max_health = base HP * multiplier(0) = base * 1.0
         let attrs = ActorAttributes::default();
         assert_eq!(attrs.total_level(), 0);
-        assert_eq!(attrs.max_health(), BASE_HEALTH, "Level 0 with no vitality should have the base health");
+        assert_eq!(attrs.max_health(), crate::tuning::tuning().base_health, "Level 0 with no vitality should have the base health");
     }
 
     // ===== COMMITMENT TIER TESTS (, Layer 2) =====

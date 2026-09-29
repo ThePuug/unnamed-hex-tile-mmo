@@ -11,7 +11,6 @@ use common_bevy::{
     resources::map::Map,
 };
 
-pub const FLANK_STAMINA_COST: f32 = 30.0;
 /// How long the circle to the target's back takes a tile of its ring.
 pub const FLANK_MS_PER_TILE: u16 = 80;
 
@@ -19,7 +18,7 @@ pub const FLANK_MS_PER_TILE: u16 = 80;
 /// a circle round it on its ring to the tile at its back at reach, turned
 /// to face it so its auto-attacks carry on from there, and a strike for
 /// `flank_intuition` of the caster's Intuition that stuns for
-/// `ArchetypeTuning::flank_stun` seconds as it lands (`landing::land`).
+/// `Tuning::flank_stun` seconds as it lands (`landing::land`).
 /// The strike waits in the target's queue like any threat, so the target
 /// has its window to answer it before the stun holds it: `Stunned` stops
 /// its movement and auto-attacks, and a lockout as long its abilities and
@@ -40,9 +39,9 @@ pub fn handle_flank(
     nntree: Res<NNTree>,
     member_query: Query<&EngagementMember>,
     mut assignment_query: Query<&mut HexAssignment>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability: AbilityType::Flank, target } } = event else {
             continue;
@@ -77,11 +76,11 @@ pub fn handle_flank(
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
         };
-        if stamina.state < FLANK_STAMINA_COST {
+        if stamina.state < tuning.flank_cost {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::InsufficientStamina } });
             continue;
         }
-        stamina.state -= FLANK_STAMINA_COST;
+        stamina.state -= tuning.flank_cost;
         stamina.step = stamina.state;
         writer.write(Do {
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },

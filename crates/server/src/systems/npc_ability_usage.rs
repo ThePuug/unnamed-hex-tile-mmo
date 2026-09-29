@@ -67,10 +67,10 @@ pub fn npc_ability_usage(
 
         let stamina_cost = match ability {
             AbilityType::Lunge => 20.0,
-            AbilityType::Rattle => crate::systems::combat::abilities::rattle::RATTLE_STAMINA_COST,
-            AbilityType::Disengage => crate::systems::combat::abilities::disengage::DISENGAGE_STAMINA_COST,
-            AbilityType::Volley => crate::systems::combat::abilities::volley::VOLLEY_STAMINA_COST,
-            AbilityType::Flank => crate::systems::combat::abilities::flank::FLANK_STAMINA_COST,
+            AbilityType::Rattle => common_bevy::tuning::tuning().rattle_cost,
+            AbilityType::Disengage => common_bevy::tuning::tuning().disengage_cost,
+            AbilityType::Volley => common_bevy::tuning::tuning().volley_cost,
+            AbilityType::Flank => common_bevy::tuning::tuning().flank_cost,
             AbilityType::Counter => common_bevy::systems::combat::resources::COUNTER_STAMINA_COST,
             _ => continue,
         };

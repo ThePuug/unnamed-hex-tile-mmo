@@ -6,7 +6,6 @@ use common_bevy::{
     resources::map::Map,
 };
 
-pub const DISENGAGE_STAMINA_COST: f32 = 20.0;
 
 /// Damage a Disengage adds to its caster's next auto-attack, spent by that
 /// blow, which comes behind a feint: a damage-free threat queued ahead of
@@ -17,7 +16,7 @@ pub struct Poised(pub f32);
 
 /// Handle Disengage, the Skirmisher's signature: a reaction to the blow at
 /// the front of its queue, whose source is the event's target. The caster
-/// leaps `ArchetypeTuning::disengage_leap` tiles, each the neighbour furthest
+/// leaps `Tuning::disengage_leap` tiles, each the neighbour furthest
 /// from that source, and the blow misses: the front threat is cleared. Its
 /// next auto-attack strikes harder, by `disengage_technique` of its
 /// Technique, behind a feint (`Poised`).
@@ -30,10 +29,10 @@ pub fn handle_disengage(
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     map: Res<Map>,
-    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     mut writer: MessageWriter<Do>,
 ) {
+    let tuning = common_bevy::tuning::tuning();
     for event in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability: AbilityType::Disengage, target } } = event else {
             continue;
@@ -52,7 +51,7 @@ pub fn handle_disengage(
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
         };
-        if stamina.state < DISENGAGE_STAMINA_COST {
+        if stamina.state < tuning.disengage_cost {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::InsufficientStamina } });
             continue;
         }
@@ -76,7 +75,7 @@ pub fn handle_disengage(
             continue;
         }
 
-        stamina.state -= DISENGAGE_STAMINA_COST;
+        stamina.state -= tuning.disengage_cost;
         stamina.step = stamina.state;
         writer.write(Do {
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },

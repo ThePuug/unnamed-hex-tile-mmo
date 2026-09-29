@@ -18,9 +18,7 @@ pub fn calculate_composure_reduction(
 ) -> f32 {
     use crate::systems::combat::damage::contest_factor;
 
-    const BASE_REDUCTION: f32 = 0.33;
-
-    BASE_REDUCTION * contest_factor(composure, target_impact, edge)
+    crate::tuning::tuning().composure_share * contest_factor(composure, target_impact, edge)
 }
 
 /// System to tick down the global recovery timer.
@@ -28,7 +26,6 @@ pub fn calculate_composure_reduction(
 /// gap, and a daze's pace, which draws a dazed actor's lockout out.
 pub fn global_recovery_system(
     time: Res<Time>,
-    level_contest: Res<crate::systems::combat::damage::LevelContest>,
     mut commands: Commands,
     mut query: Query<(Entity, &mut GlobalRecovery, &ActorAttributes, Option<&crate::components::status::Status>)>,
 ) {
@@ -40,7 +37,7 @@ pub fn global_recovery_system(
             let reduction_pct = calculate_composure_reduction(
                 composure,
                 recovery.target_impact,
-                recovery.target_level.map_or(0.0, |target| level_contest.edge(attrs.total_level(), target)),
+                recovery.target_level.map_or(0.0, |target| crate::systems::combat::damage::level_edge(attrs.total_level(), target)),
             );
 
             // Convert reduction percentage to speed multiplier

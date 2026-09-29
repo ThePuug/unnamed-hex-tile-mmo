@@ -14,7 +14,7 @@ use common_bevy::{
     message::{AbilityType, Component, Do, Event as GameEvent},
 };
 
-use crate::resources::tuning::ArchetypeTuning;
+use common_bevy::tuning::Tuning;
 
 /// The least pace a daze leaves: a dazed actor still moves and swings.
 const MIN_PACE: f32 = 0.1;
@@ -26,7 +26,7 @@ pub fn land(
     ability: Option<AbilityType>,
     target: Entity,
     source: Entity,
-    tuning: &ArchetypeTuning,
+    tuning: &Tuning,
     statuses: &mut Query<&mut Status>,
     recoveries: &Query<&GlobalRecovery>,
     commands: &mut Commands,
