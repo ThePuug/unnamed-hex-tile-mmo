@@ -7,7 +7,7 @@ use common_bevy::{
 };
 
 /// Handle Lunge ability (Q key)
-/// - 20 stamina cost
+/// - `Tuning::lunge_cost` stamina
 /// - Strikes for `Tuning::lunge_force` of Force (scales with might + level)
 /// - `LUNGE_RANGE` hex range
 /// - Teleports caster adjacent to target
@@ -131,8 +131,7 @@ pub fn handle_lunge(
             continue;
         }
 
-        // Check stamina (20 cost)
-        let lunge_stamina_cost = 20.0;
+        let lunge_stamina_cost = common_bevy::tuning::tuning().lunge_cost;
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
         };

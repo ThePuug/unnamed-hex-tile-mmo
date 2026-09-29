@@ -65,15 +65,7 @@ pub fn npc_ability_usage(
             continue;
         };
 
-        let stamina_cost = match ability {
-            AbilityType::Lunge => 20.0,
-            AbilityType::Rattle => common_bevy::tuning::tuning().rattle_cost,
-            AbilityType::Disengage => common_bevy::tuning::tuning().disengage_cost,
-            AbilityType::Volley => common_bevy::tuning::tuning().volley_cost,
-            AbilityType::Flank => common_bevy::tuning::tuning().flank_cost,
-            AbilityType::Counter => common_bevy::systems::combat::resources::COUNTER_STAMINA_COST,
-            _ => continue,
-        };
+        let stamina_cost = common_bevy::tuning::tuning().cost(ability);
         if stamina.state < stamina_cost {
             continue;
         }

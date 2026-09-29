@@ -6,7 +6,7 @@ use common_bevy::{
 };
 
 /// Handle Deflect ability (R key) - defensive ability that clears all queued threats
-/// - 50 stamina cost
+/// - `Tuning::deflect_cost` stamina
 /// - Clears ALL queued threats
 /// - Requires at least one threat in queue
 pub fn handle_deflect(
@@ -45,8 +45,7 @@ pub fn handle_deflect(
             continue;
         };
 
-        // Fixed deflect cost
-        let deflect_cost = 50.0;
+        let deflect_cost = common_bevy::tuning::tuning().deflect_cost;
 
         // Validate ability usage
         if stamina.state < deflect_cost {

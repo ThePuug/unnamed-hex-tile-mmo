@@ -6,8 +6,6 @@ use crate::{
 
 /// The stamina a Counter costs: more than stamina refills over its lockout,
 /// so a full pool covers three in a row and then one about every six seconds.
-pub const COUNTER_STAMINA_COST: f32 = 60.0;
-
 /// How far a Lunge reaches, in tiles: it lands beside anything from
 /// adjacent out to this.
 pub const LUNGE_RANGE: u32 = 8;

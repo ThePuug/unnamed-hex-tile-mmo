@@ -40,7 +40,7 @@ fn calculate_knockback_destination(
 }
 
 /// Handle Kick ability — REACTIVE KICK
-/// - 40 stamina cost
+/// - `Tuning::kick_cost` stamina
 /// - Clears all visible window threats
 /// - Deals 75% Technique damage to adjacent threat sources
 /// - Knockback adjacent sources 4 tiles directly away
@@ -137,8 +137,7 @@ pub fn handle_kick(
             continue;
         }
 
-        // Check stamina (40 cost)
-        let kick_stamina_cost = 40.0;
+        let kick_stamina_cost = common_bevy::tuning::tuning().kick_cost;
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
         };

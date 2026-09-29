@@ -63,6 +63,24 @@ pub struct Tuning {
     /// Share more a Cunning advantage widens it by, at the base advantage
     pub window_bonus: f32,
 
+    // --- Abilities: what each costs, how long it locks its user out ---
+    /// Stamina each player ability costs
+    pub lunge_cost: f32,
+    pub overpower_cost: f32,
+    pub counter_cost: f32,
+    pub kick_cost: f32,
+    pub deflect_cost: f32,
+    /// Seconds each ability locks its user out of every other
+    pub lunge_recovery: f32,
+    pub overpower_recovery: f32,
+    pub counter_recovery: f32,
+    pub kick_recovery: f32,
+    pub deflect_recovery: f32,
+    pub rattle_recovery: f32,
+    pub disengage_recovery: f32,
+    pub volley_recovery: f32,
+    pub flank_recovery: f32,
+
     // --- Signatures and their blows ---
     /// Share of base potency an auto-attack strikes for, the same for every actor
     pub auto_damage: f32,
@@ -138,6 +156,20 @@ impl Tuning {
         synergy_share: 0.66,
         reaction_window: 3.0,
         window_bonus: 0.5,
+        lunge_cost: 20.0,
+        overpower_cost: 40.0,
+        counter_cost: 60.0,
+        kick_cost: 40.0,
+        deflect_cost: 50.0,
+        lunge_recovery: 2.0,
+        overpower_recovery: 3.0,
+        counter_recovery: 4.0,
+        kick_recovery: 4.0,
+        deflect_recovery: 1.0,
+        rattle_recovery: 2.0,
+        disengage_recovery: 2.0,
+        volley_recovery: 2.0,
+        flank_recovery: 2.0,
         auto_damage: 1.05,
         damage_spread: 0.2,
         lunge_force: 0.7,
@@ -162,6 +194,39 @@ impl Tuning {
         flank_intuition: 1.0,
         counter_reflect: 0.331,
     };
+
+    /// Stamina `ability` costs; an auto-attack is free.
+    pub fn cost(&self, ability: AbilityType) -> f32 {
+        match ability {
+            AbilityType::AutoAttack => 0.0,
+            AbilityType::Lunge => self.lunge_cost,
+            AbilityType::Overpower => self.overpower_cost,
+            AbilityType::Counter => self.counter_cost,
+            AbilityType::Kick => self.kick_cost,
+            AbilityType::Deflect => self.deflect_cost,
+            AbilityType::Rattle => self.rattle_cost,
+            AbilityType::Disengage => self.disengage_cost,
+            AbilityType::Volley => self.volley_cost,
+            AbilityType::Flank => self.flank_cost,
+        }
+    }
+
+    /// Seconds `ability` locks its user out of every other; an auto-attack
+    /// runs on its own timer instead.
+    pub fn recovery(&self, ability: AbilityType) -> f32 {
+        match ability {
+            AbilityType::AutoAttack => 0.0,
+            AbilityType::Lunge => self.lunge_recovery,
+            AbilityType::Overpower => self.overpower_recovery,
+            AbilityType::Counter => self.counter_recovery,
+            AbilityType::Kick => self.kick_recovery,
+            AbilityType::Deflect => self.deflect_recovery,
+            AbilityType::Rattle => self.rattle_recovery,
+            AbilityType::Disengage => self.disengage_recovery,
+            AbilityType::Volley => self.volley_recovery,
+            AbilityType::Flank => self.flank_recovery,
+        }
+    }
 
     /// Share of the target's Toughness mitigation `ability`'s damage strikes
     /// past: a Lunge carries the whole body behind it, and a Counter returns
@@ -213,6 +278,20 @@ impl Tuning {
             "synergy_share" => &mut self.synergy_share,
             "reaction_window" => &mut self.reaction_window,
             "window_bonus" => &mut self.window_bonus,
+            "lunge_cost" => &mut self.lunge_cost,
+            "overpower_cost" => &mut self.overpower_cost,
+            "counter_cost" => &mut self.counter_cost,
+            "kick_cost" => &mut self.kick_cost,
+            "deflect_cost" => &mut self.deflect_cost,
+            "lunge_recovery" => &mut self.lunge_recovery,
+            "overpower_recovery" => &mut self.overpower_recovery,
+            "counter_recovery" => &mut self.counter_recovery,
+            "kick_recovery" => &mut self.kick_recovery,
+            "deflect_recovery" => &mut self.deflect_recovery,
+            "rattle_recovery" => &mut self.rattle_recovery,
+            "disengage_recovery" => &mut self.disengage_recovery,
+            "volley_recovery" => &mut self.volley_recovery,
+            "flank_recovery" => &mut self.flank_recovery,
             "auto_damage" => &mut self.auto_damage,
             "damage_spread" => &mut self.damage_spread,
             "lunge_force" => &mut self.lunge_force,

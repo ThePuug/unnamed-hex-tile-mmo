@@ -7,7 +7,7 @@ use common_bevy::{
 };
 
 /// Handle Overpower ability (W key)
-/// - 40 stamina cost
+/// - `Tuning::overpower_cost` stamina
 /// - Base damage from Force meta-attribute × 1.5 (scales with might + level)
 /// - Melee range (adjacent hex)
 pub fn handle_overpower(
@@ -141,8 +141,7 @@ pub fn handle_overpower(
             continue;
         }
 
-        // Check stamina cost (40)
-        let stamina_cost = 40.0;
+        let stamina_cost = common_bevy::tuning::tuning().overpower_cost;
 
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;

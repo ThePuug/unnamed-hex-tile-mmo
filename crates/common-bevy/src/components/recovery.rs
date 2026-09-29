@@ -77,21 +77,9 @@ impl SynergyUnlock {
     }
 }
 
-/// Get the recovery duration for an ability (universal lockout time)
-/// These are MVP values
+/// Seconds `ability` locks its user out of every other (`Tuning::recovery`)
 pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
-    match ability {
-        AbilityType::Lunge => 2.0,      // Gap closer: 2s lockout
-        AbilityType::Overpower => 3.0,  // Heavy strike: 3s lockout
-        AbilityType::Deflect => 1.0,    // Defensive: 1s lockout
-        AbilityType::AutoAttack => 0.0, // AutoAttack uses its own timer, not GlobalRecovery
-        AbilityType::Counter => 4.0,    // Counter-attack: 4s lockout (long window for attacks to land)
-        AbilityType::Kick => 4.0,       // Kick: 4s lockout, Lunge unlocking early through it
-        AbilityType::Rattle => 2.0,  // NPC Juggernaut: 2s lockout
-        AbilityType::Disengage => 2.0,  // NPC: 2s lockout
-        AbilityType::Volley => 2.0,     // NPC Kiter: 2s lockout
-        AbilityType::Flank => 2.0,      // NPC Ambusher: 2s lockout
-    }
+    crate::tuning::tuning().recovery(ability)
 }
 
 #[cfg(test)]

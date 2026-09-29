@@ -134,13 +134,9 @@ pub fn setup(
         // Cost badge (bottom-right corner)
         if let Some(ability_type) = ability {
             let cost_text = match ability_type {
-                AbilityType::Lunge => "20".to_string(),       // 20 stamina
-                AbilityType::Overpower => "40".to_string(),   // 40 stamina
-                AbilityType::Deflect => "50".to_string(),     // 50 stamina
-                AbilityType::Counter => format!("{:.0}", common_bevy::systems::combat::resources::COUNTER_STAMINA_COST),
-                AbilityType::Kick => "40".to_string(),        // 40 stamina
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
                 AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => String::new(), // NPC-only
+                _ => format!("{:.0}", common_bevy::tuning::tuning().cost(ability_type)),
             };
 
             if !cost_text.is_empty() {
@@ -347,8 +343,7 @@ fn get_ability_state(
     // Check resource costs and range requirements
     match ability {
         AbilityType::Lunge => {
-            // Gap closer: 4 hex range, 20 stamina, requires target
-            if stamina.step < 20.0 {
+            if stamina.step < common_bevy::tuning::tuning().cost(AbilityType::Lunge) {
                 return AbilityState::InsufficientResources;
             }
 
@@ -375,8 +370,7 @@ fn get_ability_state(
             }
         }
         AbilityType::Overpower => {
-            // Heavy strike: 1 hex range, 40 stamina, requires adjacent target
-            if stamina.step < 40.0 {
+            if stamina.step < common_bevy::tuning::tuning().cost(AbilityType::Overpower) {
                 return AbilityState::InsufficientResources;
             }
 
@@ -404,7 +398,7 @@ fn get_ability_state(
         }
         AbilityType::Deflect => {
             // Clear all threats: 50 stamina, no target required
-            if stamina.step >= 50.0 {
+            if stamina.step >= common_bevy::tuning::tuning().cost(AbilityType::Deflect) {
                 AbilityState::Ready
             } else {
                 AbilityState::InsufficientResources
@@ -416,15 +410,15 @@ fn get_ability_state(
         }
         AbilityType::Counter => {
             // Counter: self-target, no range check
-            if stamina.step >= common_bevy::systems::combat::resources::COUNTER_STAMINA_COST {
+            if stamina.step >= common_bevy::tuning::tuning().cost(AbilityType::Counter) {
                 AbilityState::Ready
             } else {
                 AbilityState::InsufficientResources
             }
         }
         AbilityType::Kick => {
-            // Kick: self-target, no range check, 40 stamina
-            if stamina.step >= 40.0 {
+            // Kick: self-target, no range check
+            if stamina.step >= common_bevy::tuning::tuning().cost(AbilityType::Kick) {
                 AbilityState::Ready
             } else {
                 AbilityState::InsufficientResources
