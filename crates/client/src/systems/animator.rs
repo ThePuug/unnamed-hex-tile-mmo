@@ -121,10 +121,11 @@ pub struct Rig(pub Handle<Gltf>);
 /// armature node, keyed by the clip's name: its length in seconds, the
 /// ground one cycle covers in the model's units — zero for a clip that
 /// covers none — and a jump's three moments.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct Declaration {
     stride: Option<f32>,
     seconds: Option<f32>,
+    flights: Option<Vec<[f32; 3]>>,
     leave: Option<f32>,
     freeze: Option<f32>,
     land: Option<f32>,
@@ -147,19 +148,75 @@ pub struct Moments {
 }
 
 /// A cycle that covers ground: `length` in the model's units per cycle,
-/// over `seconds` as authored.
-#[derive(Clone, Copy, Debug)]
+/// over `seconds` as authored, and each moment of it no foot is down,
+/// seconds (start, top, end) — an end may run past the cycle's.
+#[derive(Clone, Debug)]
 pub struct Stride {
     pub length: f32,
     pub seconds: f32,
+    pub flights: Vec<[f32; 3]>,
 }
 
 impl Stride {
     /// The playback rate that keeps the feet planted on ground passing at
     /// `speed` world units a second, under an actor drawn at `scale`.
-    fn rate(self, speed: f32, scale: f32) -> f32 {
+    fn rate(&self, speed: f32, scale: f32) -> f32 {
         speed * self.seconds / (self.length * scale)
     }
+
+    /// How long each flight's top is held when the ground asks `rate` of
+    /// the gait: the time a contact played at `rate` saves on one played
+    /// as authored, shared among the flights, so a cycle lasts as long as
+    /// authored however fast the ground passes.
+    fn hold(&self, rate: f32) -> f32 {
+        let air: f32 = self.flights.iter().map(|[start, _, end]| end - start).sum();
+        (self.seconds - air).max(0.0) * (1.0 - 1.0 / rate) / self.flights.len() as f32
+    }
+
+    /// The speed to play the gait at, `t` seconds into its cycle, when the
+    /// ground asks `rate` of it, `dt` seconds on from the last. Faster
+    /// than authored, a lofted gait keeps its footfall: a contact plays
+    /// at `rate`, so the planted foot stays put, a flight as authored,
+    /// and the top of each flight is held (`hold`) while the physics
+    /// carries the actor on. A gait with no flight, or ground slower than
+    /// its pace, plays at `rate` throughout.
+    fn lope(&self, rate: f32, t: f32, dt: f32, lope: &mut Lope) -> f32 {
+        if rate <= 1.0 || self.flights.is_empty() {
+            *lope = Lope::default();
+            return rate;
+        }
+        if lope.left > 0.0 {
+            lope.left -= dt;
+            return 0.0;
+        }
+        let within = |a: f32, b: f32| {
+            let t = if t < a { t + self.seconds } else { t };
+            a <= t && t < b
+        };
+        match self.flights.iter().position(|&[start, _, end]| within(start, end)) {
+            None => {
+                lope.held = None;
+                rate
+            }
+            Some(i) => {
+                let [_, top, end] = self.flights[i];
+                if lope.held != Some(i) && within(top, end) {
+                    lope.held = Some(i);
+                    lope.left = self.hold(rate);
+                    return 0.0;
+                }
+                1.0
+            }
+        }
+    }
+}
+
+/// Where a lofted gait's holds stand for one actor: the flight last held,
+/// so each top is held once a pass, and how long the hold has left.
+#[derive(Component, Default, Debug)]
+pub struct Lope {
+    held: Option<usize>,
+    left: f32,
 }
 
 /// How much nearer its authored pace the other gait must play before an
@@ -206,7 +263,7 @@ impl Clips {
             let Some(d) = declared.animgen.get(clip.name()) else { continue };
             if let (Some(length), Some(seconds)) = (d.stride, d.seconds) {
                 if length > 0.0 && seconds > 0.0 {
-                    clips.strides.insert(clip, Stride { length, seconds });
+                    clips.strides.insert(clip, Stride { length, seconds, flights: d.flights.clone().unwrap_or_default() });
                 }
             }
         }
@@ -238,8 +295,8 @@ impl Clips {
     }
 
     /// The stride of the gait `node` plays, where the asset declares one.
-    fn stride_of(&self, node: AnimationNodeIndex) -> Option<Stride> {
-        Clip::GAITS.iter().find(|&&clip| self.is(node, clip)).and_then(|clip| self.strides.get(clip).copied())
+    fn stride_of(&self, node: AnimationNodeIndex) -> Option<&Stride> {
+        Clip::GAITS.iter().find(|&&clip| self.is(node, clip)).and_then(|clip| self.strides.get(clip))
     }
 
     /// The gait an actor covering ground at `speed` plays under `scale`,
@@ -357,12 +414,13 @@ fn time_to_land(world: Vec3, fallen_ms: f32, map: &Map) -> Option<f32> {
 
 pub fn update(
     mut commands: Commands,
-    mut query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading, &Transform, Option<&mut Jumping>, Option<&crate::systems::gathering::Gathering>)>,
+    mut query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading, &Transform, Option<&mut Jumping>, Option<&crate::systems::gathering::Gathering>, Option<&mut Lope>)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions, &Clips)>,
     map: Res<Map>,
     origin: Res<crate::resources::RenderOrigin>,
+    time: Res<Time>,
 ) {
-    for (entity, &airtime, &animates, vis_pos, &heading, transform, jumping, gathering) in &mut query {
+    for (entity, &airtime, &animates, vis_pos, &heading, transform, jumping, gathering, mut lope) in &mut query {
         // Entity is moving if VisualPosition is actively interpolating
         let travel = vis_pos.to - vis_pos.from;
         let is_moving = !vis_pos.is_complete() && travel.length_squared() > 0.001;
@@ -449,10 +507,65 @@ pub fn update(
                     anim.set_seek_time(phase * stride.seconds);
                 }
             } else if let Some(anim) = player.animation_mut(gait) {
-                anim.set_speed(rate * direction);
+                // Forward, a lofted gait keeps its footfall and holds its
+                // flights' tops to cover the rest (`Stride::lope`).
+                let speed = match (clips.stride_of(gait), lope.as_deref_mut()) {
+                    (Some(stride), Some(lope)) if direction > 0.0 =>
+                        stride.lope(rate, anim.seek_time().rem_euclid(stride.seconds), time.delta_secs(), lope),
+                    _ => rate * direction,
+                };
+                anim.set_speed(speed);
+            }
+            if lope.is_none() {
+                commands.entity(entity).insert(Lope::default());
             }
         } else if main != Some(idle) {
             transitions.play(&mut player, idle, SETTLE).set_speed(1.).repeat();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lofted() -> Stride {
+        Stride { length: 2.0, seconds: 1.0, flights: vec![[0.1, 0.25, 0.45], [0.6, 0.75, 0.95]] }
+    }
+
+    /// One cycle of `stride` played as the ground asks `rate` of it, in
+    /// steps of `dt`: the real seconds it took, and the clip seconds it
+    /// was held at inside a flight and outside one.
+    fn cycle(stride: &Stride, rate: f32, dt: f32) -> (f32, f32, f32) {
+        let (mut t, mut real, mut held_in, mut held_out) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let mut lope = Lope::default();
+        while t < stride.seconds {
+            let speed = stride.lope(rate, t, dt, &mut lope);
+            if speed == 0.0 {
+                let flying = stride.flights.iter().any(|&[a, _, b]| a <= t && t < b);
+                if flying { held_in += dt } else { held_out += dt }
+            }
+            t += speed * dt;
+            real += dt;
+        }
+        (real, held_in, held_out)
+    }
+
+    #[test]
+    fn a_lofted_gait_keeps_its_footfall_however_fast_the_ground() {
+        for rate in [1.5, 2.0, 4.0] {
+            let (real, held_in, held_out) = cycle(&lofted(), rate, 0.0005);
+            assert!((real - 1.0).abs() < 0.01, "at x{rate} a cycle took {real}s, not the authored second");
+            assert!(held_in > 0.0, "at x{rate} no flight's top was held");
+            assert_eq!(held_out, 0.0, "at x{rate} it held with a foot down");
+        }
+    }
+
+    #[test]
+    fn slower_than_authored_or_without_flight_it_plays_at_the_rate() {
+        let mut lope = Lope::default();
+        assert_eq!(lofted().lope(0.6, 0.3, 0.01, &mut lope), 0.6);
+        let flat = Stride { flights: Vec::new(), ..lofted() };
+        assert_eq!(flat.lope(3.0, 0.3, 0.01, &mut lope), 3.0);
     }
 }

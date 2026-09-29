@@ -239,7 +239,12 @@ it is held at: the jump adds `leave` and `land` to its own, and the pickup
 plays to its freeze and holds there while the loot window is open. A gait,
 the walk or the run, declares its `stride` and `seconds` there too;
 `Clips::gait` plays the one whose rate keeps the feet planted at the drawn
-speed nearest its authored pace.
+speed nearest its authored pace. A lofted gait also declares its
+`flights`, each moment no foot is down; faster than its pace it keeps its
+footfall (`Stride::lope`): a contact plays at the rate, a flight as
+authored, and each flight's top is held while the physics carries the
+actor on, so a cycle lasts as authored. A gait with no flight spins its
+feet to match the ground.
 
 **Worn pieces.** A piece loads from `models/<piece>-<actor>.glb`, scene =
 style, as a child of the actor. `client::systems::equipment` points its
