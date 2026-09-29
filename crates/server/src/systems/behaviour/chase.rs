@@ -216,8 +216,9 @@ pub fn chase(
         // Determine movement destination — assigned hex if available, otherwise player tile
         let move_target = assigned_hex_opt.map(|ah| ah.0).unwrap_or(**target_loc);
 
-        // 3. CHECK RANGE — NPC must be on assigned hex AND within attack range to attack
-        let distance_to_player = npc_loc.flat_distance(target_loc);
+        // 3. CHECK RANGE — NPC must be on assigned hex AND within attack range
+        // to attack, measured as its swing measures it
+        let distance_to_player = npc_loc.distance(target_loc);
         let on_assigned_hex = assigned_hex_opt
             .map(|ah| npc_loc.flat_distance(&Loc::new(ah.0)) == 0)
             .unwrap_or(true); // No assignment = no hex constraint

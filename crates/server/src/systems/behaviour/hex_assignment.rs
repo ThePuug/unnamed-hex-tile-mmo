@@ -30,6 +30,13 @@ pub fn angular_distance(a: usize, b: usize, slots: usize) -> usize {
     diff.min(slots - diff)
 }
 
+/// Whether an NPC standing on `place` reaches a target on `target`, by the
+/// measure its swing checks, `Loc::distance`: on a slope a hex at flat reach
+/// may stand too far above or below to swing from.
+fn swings_from(place: Qrz, target: Qrz, reach: u32) -> bool {
+    Loc::new(place).distance(&Loc::new(target)) <= reach as i32
+}
+
 /// Assign hexes to NPCs based on engagement archetype strategy.
 
 /// Returns a map of NPC entity → assigned hex.
@@ -222,7 +229,9 @@ pub fn assign_hexes(
                 })
                 .collect()
         };
-        let available_reach = standing(player_tile.ring(reach));
+        let available_reach: Vec<(Qrz, usize)> = standing(player_tile.ring(reach)).into_iter()
+            .filter(|(hex, _)| swings_from(*hex, player_tile, reach))
+            .collect();
         let available_secondary: Vec<Qrz> = standing(player_tile.ring(reach + 1)).into_iter().map(|(hex, _)| hex).collect();
 
         // Calculate assignments
@@ -338,6 +347,19 @@ mod tests {
                 assert_eq!(angular_distance(a, b), angular_distance(b, a));
             }
         }
+    }
+
+    #[test]
+    fn a_place_too_far_up_or_down_the_slope_is_out_of_reach() {
+        let target = Qrz { q: 0, r: 0, z: 0 };
+        let level = Qrz { q: 2, r: 0, z: 0 };
+        let one_step = Qrz { q: 2, r: 0, z: 1 };
+        let above = Qrz { q: 1, r: 0, z: 3 };
+        let below = Qrz { q: 1, r: 0, z: -3 };
+        assert!(swings_from(level, target, 2));
+        assert!(swings_from(one_step, target, 2));
+        assert!(!swings_from(above, target, 2));
+        assert!(!swings_from(below, target, 2));
     }
 
     #[test]
