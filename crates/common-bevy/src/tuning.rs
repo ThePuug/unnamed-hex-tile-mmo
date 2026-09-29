@@ -121,7 +121,8 @@ pub struct Tuning {
     pub rattle_stacks: u8,
     /// Stamina a Disengage costs
     pub disengage_cost: f32,
-    /// Tiles a Disengage leaps
+    /// Tiles a Disengage leaps at least; it leaps further where that falls
+    /// short of clearing its attacker's reach
     pub disengage_leap: usize,
     /// Share of Endurance a Disengage adds to its caster's next auto-attack
     pub disengage_endurance: f32,

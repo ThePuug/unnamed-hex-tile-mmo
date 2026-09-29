@@ -14,9 +14,17 @@ use common_bevy::{
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Poised(pub f32);
 
+/// The tiles a Disengage leaps from an attacker of `reach` standing
+/// `distance` away: `tuned`, or as many as land it beyond that reach where
+/// that is more, one tile of distance for each.
+pub fn leap_tiles(tuned: usize, reach: i32, distance: i32) -> usize {
+    tuned.max((reach + 1 - distance).max(0) as usize)
+}
+
 /// Handle Disengage, the Skirmisher's signature: a reaction to the blow at
 /// the front of its queue, whose source is the event's target. The caster
-/// leaps `Tuning::disengage_leap` tiles, each the neighbour furthest
+/// leaps `Tuning::disengage_leap` tiles, or as many as clear that source's
+/// reach where that is more (`leap_tiles`), each the neighbour furthest
 /// from that source, and the blow misses: the front threat is cleared. Its
 /// next auto-attack strikes harder, by `disengage_endurance` of its
 /// Endurance, behind a feint (`Poised`).
@@ -31,6 +39,7 @@ pub fn handle_disengage(
     mut stamina_query: Query<&mut Stamina>,
     mut queue_query: Query<&mut ReactionQueue>,
     recovery_query: Query<&GlobalRecovery>,
+    range_query: Query<&common_bevy::components::AttackRange>,
     mut prepared_query: Query<&mut Prepared>,
     respawn_query: Query<&RespawnTimer>,
     map: Res<Map>,
@@ -81,7 +90,9 @@ pub fn handle_disengage(
         }
 
         // Its leap stands on its own, so it goes with the cast
-        let Some(landing) = crate::systems::combat::leap::away(&map, **caster_loc, **target_loc, tuning.disengage_leap) else {
+        let reach = target.and_then(|source| range_query.get(source).ok()).copied().unwrap_or_default().0;
+        let tiles = leap_tiles(tuning.disengage_leap, reach, caster_loc.distance(target_loc));
+        let Some(landing) = crate::systems::combat::leap::away(&map, **caster_loc, **target_loc, tiles) else {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
             continue;
         };
@@ -114,5 +125,18 @@ pub fn handle_disengage(
         }
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Disengage, target: *target } });
         commands.entity(*ent).insert(GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Disengage), AbilityType::Disengage));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_leap_always_clears_the_attackers_reach() {
+        assert_eq!(leap_tiles(1, 2, 1), 2, "from beside a reach of two, two tiles to stand at three");
+        assert_eq!(leap_tiles(1, 2, 2), 1, "from the edge of reach, one");
+        assert_eq!(leap_tiles(4, 2, 1), 4, "a longer tuned leap goes further");
+        assert_eq!(leap_tiles(1, 2, 5), 1, "already clear, the tuned leap");
     }
 }
