@@ -80,7 +80,8 @@ pub fn tick_dots(
 pub fn process_dismiss(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
-    mut query: Query<(&mut ReactionQueue, &mut Health)>,
+    mut query: Query<(&mut ReactionQueue, &mut Health, Option<&mut common_bevy::components::grit::Grit>)>,
+    time: Res<Time>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
     locs: Query<&common_bevy::components::Loc>,
@@ -96,7 +97,7 @@ pub fn process_dismiss(
             continue;
         };
 
-        let Ok((mut queue, mut health)) = query.get_mut(ent) else {
+        let Ok((mut queue, mut health, grit)) = query.get_mut(ent) else {
             continue;
         };
 
@@ -107,8 +108,11 @@ pub fn process_dismiss(
         let Some(threat) = queue.threats.pop_front() else {
             continue;
         };
-        // A wound taken at once deals the DoT it had left
-        let damage = threat.damage + threat.dot_left();
+        // A wound taken at once deals the DoT it had left, and what would
+        // pass Grit waits for the seconds after
+        let cap = attrs.get(ent).map_or(f32::INFINITY, ActorAttributes::grit_cap) * health.max;
+        let blow = grit.map_or(threat.damage, |mut grit| grit.take(time.elapsed(), threat.damage, cap, threat.source));
+        let damage = blow + threat.dot_left();
 
         // Apply full unmitigated damage (no armor, no resistance)
         health.state = (health.state - damage).max(0.0);

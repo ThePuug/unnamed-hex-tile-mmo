@@ -39,6 +39,9 @@ pub struct Tuning {
     // and so is the window each Awareness tier sees, `ActorAttributes::window_size`) ---
     /// Seconds between auto-attacks, the same for every actor
     pub auto_interval: f32,
+    /// Share of its health an actor loses at most in any second, at each Grit
+    /// tier, T0 to T3; everything at T0
+    pub grit_cap: [f32; 4],
 
     // --- Contest: what a relative advantage wins ---
     /// Advantage in points that wins an effect's base share
@@ -158,6 +161,7 @@ impl Tuning {
         health_curve_k: 0.10,
         health_curve_p: 2.0,
         auto_interval: 2.1,
+        grit_cap: [f32::INFINITY, 0.4, 0.3, 0.2],
         contest_scale: 420.0,
         contest_per_level: 15.0,
         concentration_hold: 1.0,
@@ -258,9 +262,15 @@ impl Tuning {
     }
 
     /// Sets the knob `name` from text, as the arena's command line gives it.
+    /// A tier's four values are `name_0` to `name_3` (`grit_cap_2=0.25`).
     /// Errs on an unknown knob or a value that does not parse.
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
         let number = value.parse::<f32>().map_err(|_| format!("{name} takes a number, not {value}"))?;
+        let tier = |base: &str| name.strip_prefix(base).and_then(|rest| rest.strip_prefix('_')).and_then(|i| i.parse::<usize>().ok()).filter(|i| *i < 4);
+        if let Some(i) = tier("grit_cap") {
+            self.grit_cap[i] = number;
+            return Ok(());
+        }
         let knob = match name {
             "auto_interval" => &mut self.auto_interval,
             "potency_base" => &mut self.potency_base,
@@ -374,9 +384,20 @@ mod tests {
         let mut tuning = Tuning::default();
         tuning.set("lunge_pierce", "0.25").unwrap();
         tuning.set("volley_shots", "2").unwrap();
+        tuning.set("grit_cap_2", "0.25").unwrap();
         assert_eq!(tuning.lunge_pierce, 0.25);
         assert_eq!(tuning.volley_shots, 2);
+        assert_eq!(tuning.grit_cap[2], 0.25);
         assert!(tuning.set("lunge_pierce", "much").is_err());
+        assert!(tuning.set("grit_cap_4", "1").is_err());
         assert!(tuning.set("no_such_knob", "1").is_err());
+    }
+
+    #[test]
+    fn grit_holds_more_back_with_each_tier() {
+        let tuning = Tuning::default();
+        for t in 0..3 {
+            assert!(tuning.grit_cap[t] > tuning.grit_cap[t + 1]);
+        }
     }
 }

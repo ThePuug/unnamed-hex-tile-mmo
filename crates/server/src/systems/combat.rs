@@ -114,8 +114,9 @@ pub fn process_deal_damage(
 pub fn resolve_threat(
     trigger: On<Try>,
     mut commands: Commands,
-    mut query: Query<(&mut Health, &ActorAttributes)>,
+    mut query: Query<(&mut Health, &ActorAttributes, Option<&mut common_bevy::components::grit::Grit>)>,
     actors: Query<&ActorAttributes>,
+    time: Res<Time>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
     locs: Query<&Loc>,
@@ -128,7 +129,7 @@ pub fn resolve_threat(
     let event = &trigger.event().event;
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
-        if let Ok((mut health, attrs)) = query.get_mut(*ent) {
+        if let Ok((mut health, attrs, grit)) = query.get_mut(*ent) {
             // The defender's Toughness meets the attacker's Presence, the level
             // edge the defender's against the attacker
             let (attacker_level, attacker_presence) = actors.get(threat.source)
@@ -138,7 +139,12 @@ pub fn resolve_threat(
             // ability pierces
             let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, attacker_presence, damage_calc::level_edge(attrs.total_level(), attacker_level));
             let pierce = threat.ability.map_or(0.0, |ability| tuning.pierce(ability));
-            let final_damage = mitigated + (threat.damage - mitigated) * pierce + threat.dot_left();
+            // What would pass the defender's Grit waits for the seconds after;
+            // a wound's DoT is never held back
+            let blow = mitigated + (threat.damage - mitigated) * pierce;
+            let cap = attrs.grit_cap() * health.max;
+            let blow = grit.map_or(blow, |mut grit| grit.take(time.elapsed(), blow, cap, threat.source));
+            let final_damage = blow + threat.dot_left();
 
             // Apply damage to health
             health.state = (health.state - final_damage).max(0.0);
@@ -193,18 +199,45 @@ pub fn resolve_dot_tick(
 /// queue: its share was already weighed against that hostile's Toughness.
 pub fn resolve_spill(
     trigger: On<Try>,
-    mut query: Query<&mut Health>,
+    mut query: Query<(&mut Health, &ActorAttributes, Option<&mut common_bevy::components::grit::Grit>)>,
+    time: Res<Time>,
     mut writer: MessageWriter<Do>,
 ) {
     let Try { event: GameEvent::Spill { ent, source, damage } } = trigger.event() else { return };
-    let Ok(mut health) = query.get_mut(*ent) else { return };
+    let Ok((mut health, attrs, grit)) = query.get_mut(*ent) else { return };
     if health.state <= 0.0 {
         return;
     }
+    let cap = attrs.grit_cap() * health.max;
+    let damage = grit.map_or(*damage, |mut grit| grit.take(time.elapsed(), *damage, cap, *source));
+    land_damage(*ent, *source, damage, &mut health, &mut writer);
+}
+
+/// Lands damage Grit held back as its windows clear: the whole of it in
+/// time, only no faster than its cap allows.
+pub fn release_grit(
+    mut query: Query<(Entity, &mut common_bevy::components::grit::Grit, &mut Health, &ActorAttributes)>,
+    time: Res<Time>,
+    mut writer: MessageWriter<Do>,
+) {
+    for (ent, mut grit, mut health, attrs) in &mut query {
+        if grit.deferred <= 0.0 || health.state <= 0.0 {
+            continue;
+        }
+        let damage = grit.release(time.elapsed(), attrs.grit_cap() * health.max);
+        if damage > 0.0 {
+            let source = grit.source.unwrap_or(ent);
+            land_damage(ent, source, damage, &mut health, &mut writer);
+        }
+    }
+}
+
+/// Takes `damage` from `health` and tells every client
+fn land_damage(ent: Entity, source: Entity, damage: f32, health: &mut Health, writer: &mut MessageWriter<Do>) {
     health.state = (health.state - damage).max(0.0);
     health.step = health.state;
-    writer.write(Do { event: GameEvent::ApplyDamage { ent: *ent, damage: *damage, source: *source, dot: false } });
-    writer.write(Do { event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Health(*health) } });
+    writer.write(Do { event: GameEvent::ApplyDamage { ent, damage, source, dot: false } });
+    writer.write(Do { event: GameEvent::Incremental { ent, component: common_bevy::message::Component::Health(*health) } });
 }
 
 /// System to validate ability prerequisites (GCD, death status)

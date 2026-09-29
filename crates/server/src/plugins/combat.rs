@@ -34,6 +34,7 @@ impl Plugin for CombatPlugin {
             common_bevy::systems::combat::synergies::synergy_cleanup_system, // Clean up expired synergies
             reaction_queue::process_expired_threats,
             reaction_queue::tick_dots,
+            combat::release_grit,
         ));
 
         app.add_systems(Update, (

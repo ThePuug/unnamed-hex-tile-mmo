@@ -4,6 +4,7 @@ pub mod engagement;
 pub mod entity_type;
 pub mod equipment;
 pub mod gcd;
+pub mod grit;
 pub mod heading;
 pub mod hex_assignment;
 pub mod keybits;
@@ -281,6 +282,7 @@ impl CommitmentTier {
 /// - Axis: 1 level → 10 reach
 /// - Spectrum: 1 level → 7 reach (each direction)
 #[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
+#[require(grit::Grit)]
 pub struct ActorAttributes {
     // MIGHT ↔ AGILITY (Physique)
     // Negative axis = Might specialist, Positive axis = Agility specialist
@@ -937,6 +939,19 @@ impl ActorAttributes {
     /// Returns commitment tier (T0-T3) based on agility as % of total budget
     pub fn grace(&self) -> CommitmentTier {
         self.commitment_tier_for(self.agility())
+    }
+
+    /// Grit: standing in the pressure, from vitality commitment
+    /// Returns commitment tier (T0-T3) based on vitality as % of total budget
+    pub fn grit(&self) -> CommitmentTier {
+        self.commitment_tier_for(self.vitality())
+    }
+
+    /// The most of its health this actor loses in any second
+    /// (`components::grit::Grit`): `Tuning::grit_cap` by its Grit tier, all of
+    /// it at T0. What would pass it lands in the seconds after.
+    pub fn grit_cap(&self) -> f32 {
+        crate::tuning::tuning().grit_cap[self.grit().index()]
     }
 
     /// Awareness: how much of the queue it sees, from resolve commitment
