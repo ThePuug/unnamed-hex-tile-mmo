@@ -123,14 +123,14 @@ pub struct Tuning {
     pub disengage_cost: f32,
     /// Tiles a Disengage leaps
     pub disengage_leap: usize,
-    /// Share of Precision a Disengage adds to its caster's next auto-attack
-    pub disengage_precision: f32,
+    /// Share of Endurance a Disengage adds to its caster's next auto-attack
+    pub disengage_endurance: f32,
     /// Stamina a Volley costs
     pub volley_cost: f32,
     /// Shots in a Volley: three, so a Disengage, which takes the front blow, takes a third
     pub volley_shots: u8,
-    /// Share of Force each Volley shot strikes for
-    pub volley_force: f32,
+    /// Share of Precision each Volley shot strikes for
+    pub volley_precision: f32,
     /// Share of its speed a Volley takes from its target
     pub volley_slow: f32,
     /// Seconds a Volley's slow lasts
@@ -204,10 +204,10 @@ impl Tuning {
         rattle_stacks: 3,
         disengage_cost: 28.0,
         disengage_leap: 1,
-        disengage_precision: 0.686,
+        disengage_endurance: 0.686,
         volley_cost: 20.0,
         volley_shots: 3,
-        volley_force: 1.12,
+        volley_precision: 1.12,
         volley_slow: 0.5,
         volley_slow_secs: 3.43,
         volley_leap: 10,
@@ -323,9 +323,9 @@ impl Tuning {
             "rattle_growth" => &mut self.rattle_growth,
             "rattle_daze" => &mut self.rattle_daze,
             "disengage_cost" => &mut self.disengage_cost,
-            "disengage_precision" => &mut self.disengage_precision,
+            "disengage_endurance" => &mut self.disengage_endurance,
             "volley_cost" => &mut self.volley_cost,
-            "volley_force" => &mut self.volley_force,
+            "volley_precision" => &mut self.volley_precision,
             "volley_slow" => &mut self.volley_slow,
             "volley_slow_secs" => &mut self.volley_slow_secs,
             "flank_cost" => &mut self.flank_cost,

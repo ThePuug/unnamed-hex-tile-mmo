@@ -85,9 +85,9 @@ pub enum EnemyArchetype {
     #[default]
     Berserker,   // Highland - Aggressive melee burst (pure Might)
     Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
-    Kiter,       // Inland (flat) - Ranged harassment (pure Discipline)
+    Kiter,       // Inland (flat) - Ranged harassment (pure Agility)
     Defender,    // Coast - Reactive counter-attacks (pure Resolve)
-    Skirmisher,  // Evasive - dodges the blows aimed at it (pure Agility)
+    Skirmisher,  // Evasive - dodges the blows aimed at it (pure Discipline)
     Ambusher,   // Ambushing - stuns and strikes from behind (pure Instinct)
 }
 
@@ -219,13 +219,13 @@ static JUGGERNAUT_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::VitalityDisciplineAxis, weight: 1, direction: -1 },
 ];
 static KITER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::VitalityDisciplineAxis, weight: 1, direction: 1 },
+    Allocation { field: AttributeField::MightAgilityAxis, weight: 1, direction: 1 },
 ];
 static DEFENDER_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::InstinctResolveAxis, weight: 1, direction: 1 },
 ];
 static SKIRMISHER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::MightAgilityAxis, weight: 1, direction: 1 },
+    Allocation { field: AttributeField::VitalityDisciplineAxis, weight: 1, direction: 1 },
 ];
 static AMBUSHER_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::InstinctResolveAxis, weight: 1, direction: -1 },
@@ -499,9 +499,9 @@ mod tests {
         for (archetype, lead) in [
             (EnemyArchetype::Berserker, 0),
             (EnemyArchetype::Juggernaut, 2),
-            (EnemyArchetype::Kiter, 3),
+            (EnemyArchetype::Kiter, 1),
             (EnemyArchetype::Defender, 5),
-            (EnemyArchetype::Skirmisher, 1),
+            (EnemyArchetype::Skirmisher, 3),
             (EnemyArchetype::Ambusher, 4),
         ] {
             let attrs = calculate_enemy_attributes(10, archetype);

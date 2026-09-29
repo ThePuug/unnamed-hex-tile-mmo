@@ -7,7 +7,7 @@ use common_bevy::{
 
 /// Handle Volley, the Kiter's signature: a burst of `Tuning::volley_shots`
 /// shots at a target within `KITER_REACH`, each striking for
-/// `Tuning::volley_force` of Force. Every shot is its own threat.
+/// `Tuning::volley_precision` of Precision. Every shot is its own threat.
 /// Each shot, as it lands (`landing::land`), slows its target by
 /// `volley_slow` for `volley_slow_secs`, and the first of the burst to land
 /// leaps the Kiter `volley_leap` tiles straight away from it: the gap opens
@@ -75,7 +75,7 @@ pub fn handle_volley(
         commands.entity(*ent).insert(crate::systems::combat::landing::VolleyBurst { at, leapt: false });
 
         let attrs = attrs_query.get(*ent).expect("Volley caster must have ActorAttributes");
-        let damage = attrs.force() * tuning.volley_force;
+        let damage = attrs.precision() * tuning.volley_precision;
         for _ in 0..tuning.volley_shots {
             commands.trigger(Try {
                 event: GameEvent::DealDamage {
