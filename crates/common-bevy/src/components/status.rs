@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 pub struct Status {
     /// A Volley's slow on its target
     pub slow: Option<Timed>,
+    /// A strike across the striker's own line, its stride broken
+    pub stride: Option<Timed>,
     /// A Juggernaut's Rattles this fight
     pub daze: Option<Daze>,
     /// Carrying past the bag's burden limit
@@ -51,7 +53,7 @@ impl Status {
     /// The share of its speed the actor moves at under every effect on it
     pub fn pace(&self) -> f32 {
         let burden = if self.burden { BURDENED_PACE } else { 1.0 };
-        Timed::pace(self.slow) * self.daze_pace() * burden
+        Timed::pace(self.slow) * Timed::pace(self.stride) * self.daze_pace() * burden
     }
 
     /// The pace of an actor with `status`, whole with none
@@ -78,7 +80,7 @@ impl Status {
 
     /// Counts the timed effects down by `dt` seconds, dropping spent ones
     pub fn tick(&mut self, dt: f32) {
-        for slot in [&mut self.slow] {
+        for slot in [&mut self.slow, &mut self.stride] {
             if let Some(timed) = slot {
                 timed.remaining -= dt;
                 if timed.remaining <= 0.0 {
@@ -94,7 +96,7 @@ impl Status {
 pub fn tick_status(mut query: Query<&mut Status>, time: Res<Time>) {
     let dt = time.delta_secs();
     for mut status in &mut query {
-        if status.slow.is_some() {
+        if status.slow.is_some() || status.stride.is_some() {
             status.tick(dt);
         }
     }
@@ -115,6 +117,16 @@ mod tests {
         let burdened = Status { burden: true, ..both };
         assert!(burdened.pace() < both.pace());
         assert_eq!(Status::pace_of(None), 1.0);
+    }
+
+    #[test]
+    fn a_broken_stride_slows_with_the_rest() {
+        let slowed = Status { slow: Some(Timed { pace: 0.5, remaining: 1.0 }), ..default() };
+        let stumbling = Status { stride: Some(Timed { pace: 0.7, remaining: 1.0 }), ..slowed };
+        assert!(stumbling.pace() < slowed.pace());
+        let mut spent = stumbling;
+        spent.tick(1.5);
+        assert_eq!(spent.stride, None);
     }
 
     #[test]

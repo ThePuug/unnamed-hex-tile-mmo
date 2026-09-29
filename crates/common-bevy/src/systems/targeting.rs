@@ -58,6 +58,22 @@ pub fn is_in_facing_cone(
     caster_loc: Loc,
     target_loc: Loc,
 ) -> bool {
+    within_arc(caster_heading, STRIDE_ARC, caster_loc, target_loc)
+}
+
+/// The half-angle either side of its heading an actor strikes within
+/// without turning from its line: the three forward hex faces.
+pub const STRIDE_ARC: f32 = 60.0;
+
+/// Whether `target_loc` lies within `arc` degrees either side of
+/// `caster_heading` from `caster_loc`. A target on the caster's own tile
+/// always does.
+pub fn within_arc(
+    caster_heading: Heading,
+    arc: f32,
+    caster_loc: Loc,
+    target_loc: Loc,
+) -> bool {
     // Targets on the same tile are always in the facing cone
     // (e.g., multiple enemies standing on the same hex)
     if *caster_loc == *target_loc {
@@ -75,16 +91,21 @@ pub fn is_in_facing_cone(
         delta = 360.0 - delta;
     }
 
-    // Check if within ±60° (120° cone)
-    // This covers the three forward hex faces
-    delta <= 60.0
+    delta <= arc
 }
 
-/// Whether an attacker at `from` facing `heading` may strike `to`: every
-/// attack, auto-attack or ability, lands only on a target in its facing
-/// cone. An entity with no heading faces every way.
-pub fn faces(heading: Option<&Heading>, from: &Loc, to: &Loc) -> bool {
-    heading.is_none_or(|heading| is_in_facing_cone(*heading, *from, *to))
+/// Whether an attacker at `from` facing `heading`, striking within `arc`
+/// degrees either side of it, may strike `to`: every attack, auto-attack
+/// or ability, lands only on a target in its arc. An entity with no heading
+/// faces every way.
+pub fn faces(heading: Option<&Heading>, arc: f32, from: &Loc, to: &Loc) -> bool {
+    heading.is_none_or(|heading| within_arc(*heading, arc, *from, *to))
+}
+
+/// Whether a strike from `from` facing `heading` at `to` crosses the
+/// striker's line: past [`STRIDE_ARC`], where only a Grace arc reaches.
+pub fn across(heading: Option<&Heading>, from: &Loc, to: &Loc) -> bool {
+    heading.is_some_and(|heading| !within_arc(*heading, STRIDE_ARC, *from, *to))
 }
 
 /// Calculate the angle in degrees from one location to another

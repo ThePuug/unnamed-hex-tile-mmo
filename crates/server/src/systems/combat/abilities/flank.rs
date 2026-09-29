@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use common_bevy::systems::targeting::faces;
 use common_bevy::{
     components::{
         engagement::EngagementMember, heading::Heading, hex_assignment::{AssignedHex, HexAssignment},
@@ -70,7 +69,7 @@ pub fn handle_flank(
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
             continue;
         }
-        if !faces(caster_heading, caster_loc, target_loc) {
+        if !super::in_arc(caster_heading, attrs_query.get(*ent).ok(), caster_loc, target_loc) {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NotFacing } });
             continue;
         }
@@ -139,6 +138,7 @@ pub fn handle_flank(
         });
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Flank, target: Some(target_ent) } });
+        super::stride(*ent, caster_heading, caster_loc, target_loc, &mut commands);
         commands.entity(*ent).insert(GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Flank), AbilityType::Flank));
     }
 }

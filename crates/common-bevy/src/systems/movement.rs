@@ -45,7 +45,7 @@ pub const MOVEMENT_SPEED: f32 = 0.0075;
 
 /// The share of its speed an entity keeps backing away: less than it runs,
 /// so fleeing what it faces costs the turn to run from it.
-pub const BACK_PACE: f32 = 0.5;
+pub const BACK_PACE: f32 = 0.35;
 
 /// The speed an entity moves at: its own, times the pace its status
 /// effects leave it. Every caller of the physics takes its speed through

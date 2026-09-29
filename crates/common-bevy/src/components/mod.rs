@@ -933,6 +933,12 @@ impl ActorAttributes {
 
     // --- COMMITMENT META-ATTRIBUTES (tier-based) ---
 
+    /// Grace: striking on the move, from agility commitment
+    /// Returns commitment tier (T0-T3) based on agility as % of total budget
+    pub fn grace(&self) -> CommitmentTier {
+        self.commitment_tier_for(self.agility())
+    }
+
     /// Awareness: how much of the queue it sees, from resolve commitment
     /// Returns commitment tier (T0-T3) based on resolve as % of total budget
     pub fn awareness(&self) -> CommitmentTier {
@@ -947,6 +953,14 @@ impl ActorAttributes {
     /// tuned; a Counter answers the whole window, so it grows with Awareness.
     pub fn window_size(&self) -> usize {
         self.awareness().index() + 1
+    }
+
+    /// The half-angle either side of its heading this actor strikes within:
+    /// the three forward faces at T0, and each Grace tier wider, 90°, 120°,
+    /// then every way at T3. Fixed, not tuned; a strike past the forward
+    /// faces breaks its stride (`targeting::across`).
+    pub fn arc(&self) -> f32 {
+        [60.0, 90.0, 120.0, 180.0][self.grace().index()]
     }
 
     /// Seconds between auto-attacks: `Tuning::auto_interval`, the same for
@@ -1065,6 +1079,14 @@ mod tests {
         let plain = ActorAttributes::default();
         assert_eq!(plain.hold(), 1.0, "no Concentration, effects as they come");
         assert!(resolute.hold() > 1.0);
+    }
+
+    #[test]
+    fn grace_widens_the_arc_to_every_way() {
+        let graceful = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
+        let plain = ActorAttributes::default();
+        assert_eq!(plain.arc(), crate::systems::targeting::STRIDE_ARC, "no Grace, the forward faces");
+        assert_eq!(graceful.arc(), 180.0, "full commitment strikes every way");
     }
 
     #[test]

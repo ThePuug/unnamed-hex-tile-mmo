@@ -133,6 +133,21 @@ impl SpillReach<'_, '_> {
     }
 }
 
+/// A strike across its striker's line breaks its stride: `Tuning::stride_pace`
+/// of its speed for one auto-attack interval.
+pub fn stumble(
+    trigger: On<Try>,
+    mut statuses: Query<&mut Status>,
+    mut commands: Commands,
+    mut writer: MessageWriter<Do>,
+) {
+    let Try { event: GameEvent::Stumble { ent } } = trigger.event() else { return };
+    let tuning = common_bevy::tuning::tuning();
+    update(*ent, &mut statuses, &mut commands, &mut writer, |status| {
+        status.stride = Some(Timed { pace: tuning.stride_pace, remaining: tuning.auto_interval });
+    });
+}
+
 /// Changes `ent`'s status by `change`, giving it one if it has none, and
 /// sends the whole of it.
 fn update(

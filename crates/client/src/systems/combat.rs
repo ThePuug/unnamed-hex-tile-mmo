@@ -204,7 +204,7 @@ pub fn player_auto_attack(
         if player_loc.distance(target_loc) > max_range {
             continue; // Target out of range
         }
-        if !common_bevy::systems::targeting::faces(heading, player_loc, target_loc) {
+        if !common_bevy::systems::targeting::faces(heading, attrs.arc(), player_loc, target_loc) {
             continue; // Target behind
         }
 

@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use common_bevy::systems::targeting::faces;
 use common_bevy::{
     components::{resources::*, tier_lock::TierLock, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
@@ -126,7 +125,7 @@ pub fn handle_lunge(
             continue;
         }
 
-        if !faces(heading_query.get(*ent).ok(), caster_loc, target_loc) {
+        if !super::in_arc(heading_query.get(*ent).ok(), attrs_query.get(*ent).ok(), caster_loc, target_loc) {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NotFacing } });
             continue;
         }
@@ -220,6 +219,7 @@ pub fn handle_lunge(
                 target: Some(target_ent),
             },
         });
+        super::stride(*ent, heading_query.get(*ent).ok(), caster_loc, target_loc, &mut commands);
 
         // Trigger recovery lockout (server-side state)
         let recovery_duration = get_ability_recovery_duration(AbilityType::Lunge);

@@ -89,6 +89,9 @@ pub struct Tuning {
     pub auto_damage: f32,
     /// Share more an auto-attack strikes for at the ceiling of Force's share
     pub force_auto: f32,
+    /// Share of its speed an actor keeps for an auto-attack interval after
+    /// a strike across its line breaks its stride
+    pub stride_pace: f32,
     /// Share of an attack's damage its roll lands either side of it
     pub damage_spread: f32,
     /// Chance a blow crits at the ceiling of Intuition's share
@@ -182,6 +185,7 @@ impl Tuning {
         flank_recovery: 2.0,
         auto_damage: 1.05,
         force_auto: 1.0,
+        stride_pace: 0.7,
         damage_spread: 0.2,
         crit_chance: 0.5,
         crit_power: 1.5,
@@ -296,6 +300,7 @@ impl Tuning {
             "flank_recovery" => &mut self.flank_recovery,
             "auto_damage" => &mut self.auto_damage,
             "force_auto" => &mut self.force_auto,
+            "stride_pace" => &mut self.stride_pace,
             "damage_spread" => &mut self.damage_spread,
             "crit_chance" => &mut self.crit_chance,
             "crit_power" => &mut self.crit_power,

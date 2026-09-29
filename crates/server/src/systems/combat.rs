@@ -316,7 +316,7 @@ pub fn process_passive_auto_attack(
         // Check if target is within auto-attack range (manhattan: flat hex distance + z difference)
         let distance = loc.distance(target_loc);
         let max_range = attack_range_opt.copied().unwrap_or_default().0;
-        if distance <= max_range && common_bevy::systems::targeting::faces(heading, loc, target_loc) {
+        if distance <= max_range && common_bevy::systems::targeting::faces(heading, common_bevy::systems::targeting::STRIDE_ARC, loc, target_loc) {
             // Target is in range and in front - trigger auto-attack
             writer.write(Try {
                 event: GameEvent::UseAbility {

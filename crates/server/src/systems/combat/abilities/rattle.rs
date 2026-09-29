@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use common_bevy::systems::targeting::faces;
 use common_bevy::{
     components::{status::Status, resources::*, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
@@ -24,6 +23,7 @@ pub fn handle_rattle(
     respawn_query: Query<&RespawnTimer>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
     health_query: Query<&Health>,
+    attrs_query: Query<&common_bevy::components::ActorAttributes>,
     mut writer: MessageWriter<Do>,
 ) {
     let tuning = common_bevy::tuning::tuning();
@@ -54,7 +54,7 @@ pub fn handle_rattle(
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
             continue;
         }
-        if !faces(heading_query.get(*ent).ok(), caster_loc, target_loc) {
+        if !super::in_arc(heading_query.get(*ent).ok(), attrs_query.get(*ent).ok(), caster_loc, target_loc) {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NotFacing } });
             continue;
         }
@@ -85,6 +85,7 @@ pub fn handle_rattle(
         });
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Rattle, target: Some(target_ent) } });
+        super::stride(*ent, heading_query.get(*ent).ok(), caster_loc, target_loc, &mut commands);
         commands.entity(*ent).insert(GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Rattle), AbilityType::Rattle));
     }
 }

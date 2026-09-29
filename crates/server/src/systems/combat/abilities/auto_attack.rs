@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use common_bevy::systems::targeting::faces;
 use common_bevy::{
     components::{
         entity_type::*, Loc, reaction_queue::DamageType,
@@ -101,7 +100,7 @@ pub fn handle_auto_attack(
             continue;
         }
 
-        if !faces(heading_query.get(*ent).ok(), caster_loc, target_loc) {
+        if !super::in_arc(heading_query.get(*ent).ok(), attrs_query.get(*ent).ok(), caster_loc, target_loc) {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NotFacing } });
             continue;
         }
@@ -139,5 +138,6 @@ pub fn handle_auto_attack(
         );
         // Every client near draws the swing, as it does a signature's.
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::AutoAttack, target: Some(target_ent) } });
+        super::stride(*ent, heading_query.get(*ent).ok(), caster_loc, target_loc, &mut commands);
     }
 }

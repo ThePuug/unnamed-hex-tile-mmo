@@ -51,6 +51,8 @@ pub enum Event {
     /// Server-internal: the share of a landed blow that spills from its
     /// target onto `ent`, another hostile within the striker's reach
     Spill { ent: Entity, source: Entity, damage: f32 },
+    /// Server-internal: `ent` struck across its own line and broke its stride
+    Stumble { ent: Entity },
     /// Server → Client: Insert threat into reaction queue
     InsertThreat { ent: Entity, threat: QueuedThreat },
     /// Server → Client: Apply damage to entity (threat resolved). `dot` marks
