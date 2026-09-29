@@ -885,31 +885,31 @@ impl ActorAttributes {
         self.commitment_tier_for(self.grace())
     }
 
-    /// Concentration: Mental focus capacity from focus commitment
-    /// Returns commitment tier (T0-T3) based on focus as % of total budget
+    /// Concentration: how much of the queue it sees, from presence commitment
+    /// Returns commitment tier (T0-T3) based on presence as % of total budget
     pub fn concentration(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.focus())
+        self.commitment_tier_for(self.presence())
     }
 
-    /// Intensity: Attack tempo from presence commitment
-    /// Returns commitment tier (T0-T3) based on presence as % of total budget
+    /// Intensity: Attack tempo from focus commitment
+    /// Returns commitment tier (T0-T3) based on focus as % of total budget
     pub fn intensity(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.presence())
+        self.commitment_tier_for(self.focus())
     }
 
     // === GAME STATS (Layer 3) ===
     // These use meta-attributes from Layer 2
 
     /// Reaction queue window size from Concentration meta-attribute
-    /// Higher Concentration tier → larger visibility window for reactive play
-    /// T0 → 1 slot, T1 → 2 slots, T2 → 3 slots, T3 → 4 slots
+    /// Higher Concentration tier → larger visibility window for reactive play,
+    /// `Tuning::concentration` by tier
     pub fn window_size(&self) -> usize {
         crate::tuning::tuning().concentration[self.concentration().index()] as usize
     }
 
     /// Auto-attack interval from Intensity meta-attribute
-    /// Higher Intensity tier → faster attacks (shorter interval)
-    /// T0 → 3000ms, T1 → 2500ms, T2 → 2000ms, T3 → 1500ms
+    /// Higher Intensity tier → faster attacks (shorter interval),
+    /// `Tuning::cadence` by tier
     pub fn cadence_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs_f32(crate::tuning::tuning().cadence[self.intensity().index()])
     }

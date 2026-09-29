@@ -40,6 +40,8 @@ pub struct Tuning {
     pub concentration: [u8; 4],
     /// Seconds between auto-attacks at each Intensity tier, T0 to T3
     pub cadence: [f32; 4],
+    /// Shots in a Volley at each Intensity tier, T0 to T3
+    pub volley_shots: [u8; 4],
     /// Chance to evade a threat at each Poise tier, T0 to T3
     pub evasion: [f32; 4],
 
@@ -144,6 +146,7 @@ impl Tuning {
         tier_3: 0.6,
         concentration: [1, 2, 3, 4],
         cadence: [3.0, 2.5, 2.0, 1.5],
+        volley_shots: [1, 2, 3, 4],
         evasion: [0.0, 0.10, 0.20, 0.30],
         contest_scale: 300.0,
         contest_per_level: 15.0,
@@ -244,6 +247,10 @@ impl Tuning {
         let tier = |base: &str| name.strip_prefix(base).and_then(|rest| rest.strip_prefix('_')).and_then(|i| i.parse::<usize>().ok()).filter(|i| *i < 4);
         if let Some(i) = tier("concentration") {
             self.concentration[i] = number.round().max(1.0) as u8;
+            return Ok(());
+        }
+        if let Some(i) = tier("volley_shots") {
+            self.volley_shots[i] = number.round().max(1.0) as u8;
             return Ok(());
         }
         if let Some(i) = tier("cadence") {
@@ -372,6 +379,7 @@ mod tests {
         for t in 0..3 {
             assert!(tuning.concentration[t] < tuning.concentration[t + 1]);
             assert!(tuning.cadence[t] > tuning.cadence[t + 1]);
+            assert!(tuning.volley_shots[t] < tuning.volley_shots[t + 1]);
             assert!(tuning.evasion[t] < tuning.evasion[t + 1]);
         }
     }

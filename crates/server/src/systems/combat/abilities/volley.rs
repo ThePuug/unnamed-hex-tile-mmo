@@ -7,8 +7,8 @@ use common_bevy::{
 
 
 /// Handle Volley, the Kiter's signature: a burst of shots at a target within
-/// `KITER_REACH`, one shot per threat the Kiter can see — its Concentration
-/// window, so Focus decides how many land — each striking for
+/// `KITER_REACH`, `Tuning::volley_shots` of them by the Kiter's Intensity,
+/// so Focus, which gives its pace, decides how many fly — each striking for
 /// `Tuning::volley_force` of Force. Every shot is its own threat.
 /// Each shot, as it lands (`landing::land`), slows its target by
 /// `volley_slow` for `volley_slow_secs`, and the shot that finds the target
@@ -77,7 +77,7 @@ pub fn handle_volley(
         commands.entity(*ent).insert(crate::systems::combat::landing::VolleyBurst { at, leapt: false });
 
         let attrs = attrs_query.get(*ent).expect("Volley caster must have ActorAttributes");
-        for _ in 0..attrs.window_size() {
+        for _ in 0..tuning.volley_shots[attrs.intensity().index()] {
             commands.trigger(Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
