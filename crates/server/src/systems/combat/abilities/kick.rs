@@ -44,7 +44,7 @@ fn calculate_knockback_destination(
 /// - Clears all visible window threats
 /// - Deals 75% Technique damage to adjacent threat sources
 /// - Knockback adjacent sources 4 tiles directly away
-/// - Self-synergy: Kick → Kick
+/// - Synergy: Kick → Lunge
 pub fn handle_kick(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -269,7 +269,7 @@ pub fn handle_kick(
         let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Kick);
         commands.entity(*ent).insert(recovery);
 
-        // Apply synergies (self-synergy: Kick → Kick)
+        // Apply synergies (Kick → Lunge)
         let Ok(attrs) = attrs_query.get(*ent) else {
             continue;
         };

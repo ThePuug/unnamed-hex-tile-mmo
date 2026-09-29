@@ -14,7 +14,7 @@ pub enum SynergyTrigger {
     Push,        // Knockback
     Mitigate,    // Counter
     Defensive,   // Deflect
-    Kick,        // Kick (self-synergy)
+    Kick,        // Kick
 }
 
 /// Synergy rule definition (what ability unlocks what)
@@ -39,11 +39,18 @@ pub const MVP_SYNERGIES: &[SynergyRule] = &[
         target: AbilityType::Counter,
         unlock_reduction: 1.0, // Counter available at 1.0s instead of 2.2s (0.2s window)
     },
-    // Kick → Kick: Self-synergy rewards chaining kicks (contest-driven reduction)
+    // Kick → Lunge: what a kick knocks back, a Lunge closes on again
     SynergyRule {
         trigger: SynergyTrigger::Kick,
+        target: AbilityType::Lunge,
+        unlock_reduction: 1.0,
+    },
+    // Counter → Kick: what a counter answered, a kick drives off, closing
+    // the ring Lunge → Overpower → Counter → Kick → Lunge
+    SynergyRule {
+        trigger: SynergyTrigger::Mitigate,
         target: AbilityType::Kick,
-        unlock_reduction: 1.0, // Kick available early during own recovery
+        unlock_reduction: 1.0,
     },
 ];
 
@@ -54,7 +61,7 @@ pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
         AbilityType::Overpower => Some(SynergyTrigger::HeavyStrike),
         AbilityType::Counter => Some(SynergyTrigger::Mitigate),  // Mitigate type
         AbilityType::Deflect => Some(SynergyTrigger::Defensive),
-        AbilityType::Kick => Some(SynergyTrigger::Kick),        // Kick: self-synergy
+        AbilityType::Kick => Some(SynergyTrigger::Kick),
         AbilityType::AutoAttack | AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => None, // No synergies
     }
 }
@@ -160,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_mvp_synergies_rules() {
-        assert_eq!(MVP_SYNERGIES.len(), 3, "MVP should have 3 synergy rules");
+        assert_eq!(MVP_SYNERGIES.len(), 4, "one rule for each step of the ring");
 
         // Lunge → Overpower
         let lunge_synergy = &MVP_SYNERGIES[0];
@@ -174,11 +181,30 @@ mod tests {
         assert_eq!(overpower_synergy.target, AbilityType::Counter);
         assert_eq!(overpower_synergy.unlock_reduction, 1.0);
 
-        // Kick → Kick (self-synergy)
+        // Kick → Lunge
         let kick_synergy = &MVP_SYNERGIES[2];
         assert_eq!(kick_synergy.trigger, SynergyTrigger::Kick);
-        assert_eq!(kick_synergy.target, AbilityType::Kick);
-        assert_eq!(kick_synergy.unlock_reduction, 1.0);
+        assert_eq!(kick_synergy.target, AbilityType::Lunge);
+
+        // Counter → Kick
+        let counter_synergy = &MVP_SYNERGIES[3];
+        assert_eq!(counter_synergy.trigger, SynergyTrigger::Mitigate);
+        assert_eq!(counter_synergy.target, AbilityType::Kick);
+    }
+
+    #[test]
+    fn the_player_synergies_run_round_one_ring() {
+        // Following each synergy from Lunge reaches every player ability once and comes back
+        let mut at = AbilityType::Lunge;
+        let mut seen = vec![at];
+        loop {
+            let trigger = get_synergy_trigger(at).expect("every ring ability triggers one");
+            at = MVP_SYNERGIES.iter().find(|rule| rule.trigger == trigger).expect("and it leads on").target;
+            if at == AbilityType::Lunge { break; }
+            assert!(!seen.contains(&at), "{at:?} comes round twice");
+            seen.push(at);
+        }
+        assert_eq!(seen.len(), 4, "the ring is Lunge, Overpower, Counter and Kick: {seen:?}");
     }
 
     // Note: Following DEVELOPER role guidance to write durable unit tests.
