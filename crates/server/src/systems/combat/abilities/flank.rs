@@ -11,8 +11,9 @@ use common_bevy::{
     resources::map::Map,
 };
 
-/// How long the circle to the target's back takes a tile of its ring.
-pub const FLANK_MS_PER_TILE: u16 = 80;
+/// How long the circle to the target's back takes, however far round it
+/// goes: the Ambusher's clip scuttles for this long before it strikes.
+pub const FLANK_CIRCLE_MS: u16 = 1500;
 
 /// Handle Flank, the Ambusher's signature: on a target within melee reach,
 /// a circle round it on its ring to the tile at its back at reach, turned
@@ -93,12 +94,10 @@ pub fn handle_flank(
         let landing = back.and_then(|back| map.get_by_qr(back.q, back.r)).map(|(floor, _)| floor + qrz::Qrz::Z)
             .filter(|landing| *landing != **caster_loc && nntree.locate_all_at_point(&Loc::new(*landing)).next().is_none());
         if let Some(landing) = landing {
-            // Round the target on its ring, slower than a Lunge's dash so
-            // the circle reads, arriving turned to it so its auto-attacks
-            // carry on from its back
-            let steps = (**target_loc).circling(**caster_loc, landing).len() as u16;
-            let duration_ms = (steps * FLANK_MS_PER_TILE).max(200);
-            writer.write(Do { event: GameEvent::Displace { ent: *ent, destination: landing + qrz::Qrz::Z, duration_ms, around: Some(**target_loc) } });
+            // Round the target on its ring while the strike waits in its
+            // queue, arriving turned to it so its auto-attacks carry on from
+            // its back
+            writer.write(Do { event: GameEvent::Displace { ent: *ent, destination: landing + qrz::Qrz::Z, duration_ms: FLANK_CIRCLE_MS, around: Some(**target_loc) } });
             commands.entity(*ent).insert((Loc::new(landing), Position::at_tile(landing)));
             if let Some(facing) = Heading::between(&map, landing, **target_loc) {
                 commands.entity(*ent).insert((facing, Turn { heading: facing, ..Turn::default() }));
