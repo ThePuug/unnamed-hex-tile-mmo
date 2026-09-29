@@ -153,6 +153,28 @@ impl Qrz {
         ring
     }
 
+    /// The tiles a walk round this tile passes from `from` to `to`: along
+    /// its ring at `to`'s flat distance, the shorter way round, from the
+    /// ring tile nearest `from` — `from` itself when it stands on the ring —
+    /// through `to`, the start left out. Neighbouring entries are
+    /// neighbouring tiles, all at this tile's z. Empty when the walk starts
+    /// on `to`, or `to` is this tile.
+    pub fn circling(&self, from: Qrz, to: Qrz) -> Vec<Qrz> {
+        let radius = self.flat_distance(&to) as u32;
+        if radius == 0 {
+            return Vec::new();
+        }
+        let ring = self.ring(radius);
+        let flat = |tile: &Qrz| Qrz { z: self.z, ..*tile };
+        let (from, to) = (flat(&from), flat(&to));
+        let n = ring.len();
+        let start = (0..n).min_by_key(|&i| ring[i].flat_distance(&from)).expect("a ring has tiles");
+        let end = ring.iter().position(|tile| *tile == to).expect("`to` stands on its own ring");
+        let ahead = (end + n - start) % n;
+        let (steps, step) = if ahead <= n - ahead { (ahead, 1) } else { (n - ahead, n - 1) };
+        (1..=steps).map(|k| ring[(start + k * step) % n]).collect()
+    }
+
     pub fn neighbors(&self) -> Vec<Qrz> {
         vec![
             *self + Qrz { q: -1, r: 0, z: 0 }, // west
@@ -232,6 +254,33 @@ mod tests {
                 assert_eq!(ring[radius as usize * i], centre + *direction * radius as i32);
             }
         }
+    }
+
+    #[test]
+    fn circling_walks_the_shorter_way_round_to_the_far_side() {
+        let centre = Qrz { q: 3, r: -2, z: 4 };
+        for radius in 1..=3i32 {
+            for (i, direction) in DIRECTIONS.iter().enumerate() {
+                let front = centre + *direction * radius;
+                let back = centre + DIRECTIONS[(i + 3) % 6] * radius;
+                let walk = centre.circling(front, back);
+                assert_eq!(walk.len(), 3 * radius as usize, "half the ring at radius {radius}");
+                assert_eq!(*walk.last().unwrap(), back);
+                let mut at = front;
+                for tile in &walk {
+                    assert_eq!(tile.flat_distance(&centre), radius);
+                    assert_eq!(tile.flat_distance(&at), 1, "a step to a neighbour");
+                    at = *tile;
+                }
+            }
+        }
+        // From nearer in, the walk starts at the ring tile out beyond it.
+        let walk = centre.circling(centre + DIRECTIONS[0], centre + DIRECTIONS[3] * 2);
+        assert_eq!(walk.first().unwrap().flat_distance(&(centre + DIRECTIONS[0] * 2)), 1);
+        // A quarter of the way round goes the short way.
+        let walk = centre.circling(centre + DIRECTIONS[0] * 2, centre + DIRECTIONS[1] * 2);
+        assert_eq!(walk, vec![centre + DIRECTIONS[0] * 2 + DIRECTIONS[2], centre + DIRECTIONS[1] * 2]);
+        assert!(centre.circling(centre + DIRECTIONS[0] * 2, centre + DIRECTIONS[0] * 2).is_empty());
     }
 
     // ===== COORDINATE INVARIANT TESTS =====
