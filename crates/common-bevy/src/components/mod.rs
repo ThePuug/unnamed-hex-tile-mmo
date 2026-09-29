@@ -748,8 +748,9 @@ impl ActorAttributes {
     //   - ABSOLUTE (progression): max_health(), movement_speed() — scales with level
     //   - RELATIVE (build matchup): contest_factor() in damage.rs — nullifies at equal (0-1)
     //     or reaction_contest_factor() for reaction window — preserves baseline (1-1.5)
-    //   - COMMITMENT (build identity): window_size(), cadence_interval(),
-    //     evasion_chance() — discrete tiers based on % of total budget
+    //   - COMMITMENT (build identity): window_size(), cadence_interval() —
+    //     discrete tiers based on % of total budget. Poise, Grace's, gives
+    //     nothing until the commitments are reviewed together
 
     // See attributes.md (unnamed-indie-studio-internal/projects/unnamed-hex-tile-mmo/design/) for full design.
 
@@ -879,12 +880,6 @@ impl ActorAttributes {
 
     // --- COMMITMENT META-ATTRIBUTES (tier-based) ---
 
-    /// Poise: Evasion capability from grace commitment
-    /// Returns commitment tier (T0-T3) based on grace as % of total budget
-    pub fn poise(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.grace())
-    }
-
     /// Concentration: how much of the queue it sees, from presence commitment
     /// Returns commitment tier (T0-T3) based on presence as % of total budget
     pub fn concentration(&self) -> CommitmentTier {
@@ -912,13 +907,6 @@ impl ActorAttributes {
     /// `Tuning::cadence` by tier
     pub fn cadence_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs_f32(crate::tuning::tuning().cadence[self.intensity().index()])
-    }
-
-    /// Evasion (dodge) chance from Poise meta-attribute
-    /// Higher Poise tier → higher chance to completely evade incoming threats
-    /// T0 → 0%, T1 → 10%, T2 → 20%, T3 → 30%
-    pub fn evasion_chance(&self) -> f32 {
-        crate::tuning::tuning().evasion[self.poise().index()]
     }
 }
 

@@ -39,8 +39,6 @@ pub struct Tuning {
     /// commitment, so a Disengage, which takes the front blow, takes a third.
     /// None is a Volley without damage, one shot that only slows
     pub volley_shots: [u8; 4],
-    /// Chance to evade a threat at each Poise tier, T0 to T3
-    pub evasion: [f32; 4],
 
     // --- Contest: what a relative advantage wins ---
     /// Advantage in points that wins an effect's base share
@@ -140,7 +138,6 @@ impl Tuning {
         health_curve_p: 2.0,
         cadence: [2.1, 1.89, 1.68, 1.47],
         volley_shots: [0, 1, 2, 3],
-        evasion: [0.0, 0.1, 0.2, 0.3],
         contest_scale: 420.0,
         contest_per_level: 15.0,
         mitigation_share: 0.525,
@@ -244,10 +241,6 @@ impl Tuning {
         }
         if let Some(i) = tier("cadence") {
             self.cadence[i] = number;
-            return Ok(());
-        }
-        if let Some(i) = tier("evasion") {
-            self.evasion[i] = number;
             return Ok(());
         }
         let knob = match name {
@@ -363,9 +356,8 @@ mod tests {
         for t in 0..3 {
             assert!(tuning.cadence[t] >= tuning.cadence[t + 1]);
             assert!(tuning.volley_shots[t] <= tuning.volley_shots[t + 1]);
-            assert!(tuning.evasion[t] <= tuning.evasion[t + 1]);
         }
         assert!(tuning.cadence[3] < tuning.cadence[0]);
-        assert!(tuning.volley_shots[3] > tuning.volley_shots[0] && tuning.evasion[3] > tuning.evasion[0]);
+        assert!(tuning.volley_shots[3] > tuning.volley_shots[0]);
     }
 }

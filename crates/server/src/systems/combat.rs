@@ -43,12 +43,6 @@ pub fn process_deal_damage(
             return;
         }
 
-        // Evasion check (Grace commitment tier)
-        let dodge = attrs.evasion_chance();
-        if dodge > 0.0 && rand::Rng::random_range(&mut rand::rng(), 0.0..1.0) < dodge {
-            return; // Threat evaded — no queue insertion, no combat entry
-        }
-
         // Calculate outgoing damage (Phase 1)
         let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
         let draw = rand::Rng::random_range(&mut rand::rng(), -1.0..=1.0);
