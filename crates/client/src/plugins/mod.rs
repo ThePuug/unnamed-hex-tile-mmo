@@ -1,4 +1,5 @@
 pub mod canopy;
+pub mod cel;
 pub mod console;
 pub mod diagnostics;
 pub mod ink;
