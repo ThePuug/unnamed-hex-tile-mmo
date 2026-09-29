@@ -23,6 +23,8 @@ pub fn handle_volley(
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
+    time: Res<Time>,
+    runtime: Res<crate::resources::RunTime>,
     mut writer: MessageWriter<Do>,
 ) {
     let tuning = common_bevy::tuning::tuning();
@@ -68,6 +70,11 @@ pub fn handle_volley(
         writer.write(Do {
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
         });
+
+        // Its shots are queued now, the time a landing knows the burst by
+        let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
+        let at = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
+        commands.entity(*ent).insert(crate::systems::combat::landing::VolleyBurst { at, leapt: false });
 
         let attrs = attrs_query.get(*ent).expect("Volley caster must have ActorAttributes");
         for _ in 0..attrs.window_size() {

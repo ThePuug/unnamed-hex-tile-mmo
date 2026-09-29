@@ -84,6 +84,7 @@ pub fn process_dismiss(
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
     locs: Query<&common_bevy::components::Loc>,
+    mut bursts: Query<&mut crate::systems::combat::landing::VolleyBurst>,
     map: Res<common_bevy::resources::map::Map>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -137,7 +138,7 @@ pub fn process_dismiss(
             },
         });
 
-        crate::systems::combat::landing::land(threat.ability, ent, threat.source, &tuning, &mut statuses, &recoveries, &locs, &map, &mut commands, &mut writer);
+        crate::systems::combat::landing::land(threat.ability, ent, threat.source, threat.inserted_at, &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
     }
 }
 

@@ -27,17 +27,29 @@ use common_bevy::tuning::Tuning;
 /// The least pace a daze leaves: a dazed actor still moves and swings.
 const MIN_PACE: f32 = 0.1;
 
+/// A Kiter's last Volley, cast `at` the time its shots were queued: the
+/// first of them to land leaps the Kiter clear and marks it `leapt`, so the
+/// rest of the burst, landing in the same tick, leap no further. The Volley
+/// sets it as it is cast, long before a shot lands, so a landing finds it.
+#[derive(Clone, Component, Copy, Debug)]
+pub struct VolleyBurst {
+    pub at: std::time::Duration,
+    pub leapt: bool,
+}
+
 /// Lands the effect of a blow from `ability`, struck by `source` on
-/// `target`, as its threat resolves or is dismissed.
+/// `target` in a threat queued `at`, as it resolves or is dismissed.
 #[allow(clippy::too_many_arguments)]
 pub fn land(
     ability: Option<AbilityType>,
     target: Entity,
     source: Entity,
+    at: std::time::Duration,
     tuning: &Tuning,
     statuses: &mut Query<&mut Status>,
     recoveries: &Query<&GlobalRecovery>,
     locs: &Query<&Loc>,
+    bursts: &mut Query<&mut VolleyBurst>,
     map: &Map,
     commands: &mut Commands,
     writer: &mut MessageWriter<Do>,
@@ -56,15 +68,19 @@ pub fn land(
             let stacks = Status::stacks_of(Some(status)).saturating_add(1).min(tuning.rattle_stacks);
             status.daze = Some(Daze { stacks, pace: (1.0 - tuning.rattle_daze * stacks as f32).max(MIN_PACE) });
         }),
-        // Each shot that lands slows its target afresh; the one that finds it
-        // unslowed carries the Kiter clear, so a burst leaps once, as the
+        // Each shot that lands slows its target afresh; the first of a burst
+        // to land carries the Kiter clear, so a burst leaps once, as the
         // target can no longer follow
         Some(AbilityType::Volley) => {
-            let slowed = statuses.get(target).is_ok_and(|status| status.slow.is_some());
             update(target, statuses, commands, writer, |status| {
                 status.slow = Some(Timed { pace: 1.0 - tuning.volley_slow, remaining: tuning.volley_slow_secs });
             });
-            if !slowed {
+            let first_of_burst = bursts.get_mut(source).is_ok_and(|mut burst| {
+                let first = burst.at == at && !burst.leapt;
+                burst.leapt |= first;
+                first
+            });
+            if first_of_burst {
                 if let (Ok(at), Ok(from)) = (locs.get(source), locs.get(target)) {
                     if let Some(landing) = super::leap::away(map, **at, **from, tuning.volley_leap) {
                         super::leap::leap(source, landing, commands, writer);

@@ -123,6 +123,7 @@ pub fn resolve_threat(
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
     locs: Query<&Loc>,
+    mut bursts: Query<&mut crate::systems::combat::landing::VolleyBurst>,
     map: Res<common_bevy::resources::map::Map>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -164,7 +165,7 @@ pub fn resolve_threat(
                 },
             });
 
-            landing::land(threat.ability, *ent, threat.source, &tuning, &mut statuses, &recoveries, &locs, &map, &mut commands, &mut writer);
+            landing::land(threat.ability, *ent, threat.source, threat.inserted_at, &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
 
             // Death check moved to dedicated check_death system (decoupled from combat)
         }
