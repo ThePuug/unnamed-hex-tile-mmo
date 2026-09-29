@@ -1,7 +1,7 @@
 //! # Engagement Activation System
 //!
-//! Builds an engagement — a group of NPCs at a location, sized and levelled
-//! from that location — and tracks which sites already have one.
+//! Builds an engagement — a group of NPCs at a location — and tracks which
+//! sites already have one.
 //!
 //! Nothing selects sites: the only den is one an admin asks for with
 //! `Event::SpawnDen`, and `ActiveSpawners` is only ever cleared.
@@ -26,14 +26,11 @@ use common_bevy::{
         position::Position,
         reaction_queue::ReactionQueue,
         resources::{CombatState, Health, Mana, Stamina},
-        AirTime, LastAutoAttack, Physics, Loc,
+        ActorAttributes, AirTime, LastAutoAttack, Physics, Loc,
     },
     message::{Event, Try},
     plugins::nntree::NearestNeighbor,
-    spatial_difficulty::{
-        calculate_enemy_attributes, calculate_enemy_level,
-        EnemyArchetype, HAVEN_LOCATION,
-    },
+    spatial_difficulty::{calculate_enemy_attributes, EnemyArchetype},
     systems::combat::resources as resource_calcs,
 };
 
@@ -63,26 +60,39 @@ fn acquisition_range(archetype: EnemyArchetype) -> u32 {
     }
 }
 
+/// Levels below the player each of a den's pair stands: the level rule puts
+/// a pair this far below about even with one of the player's level.
+const PAIR_DEFICIT: u8 = 3;
+
+/// A den one player can beat alone, `(npc_count, level)` for a player at
+/// `player_level`: one NPC at its level, or with `pair` two `PAIR_DEFICIT`
+/// levels below it.
+fn den_for(player_level: u8, pair: bool) -> (u8, u8) {
+    if pair { (2, player_level.saturating_sub(PAIR_DEFICIT)) } else { (1, player_level) }
+}
+
 /// Places the den a player asks for straight ahead of it, far enough that
 /// none of the pack, standing a tile out from the den, has the player in
 /// acquisition range. Acquisition measures `|Δz|` on top of the flat
 /// distance, so a flat distance past the range is past it on any slope.
+/// The den is one the player can beat alone (`den_for`), either kind alike.
 pub fn try_spawn_den(
     mut reader: MessageReader<Try>,
     mut commands: Commands,
-    query: Query<(&Loc, &Heading), With<PlayerControlled>>,
+    query: Query<(&Loc, &Heading, &ActorAttributes), With<PlayerControlled>>,
     time: Res<Time>,
     registry: Res<crate::resources::event_registry::EventRegistry>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
 ) {
     for message in reader.read() {
         let Try { event: Event::SpawnDen { ent, archetype } } = message else { continue };
-        let Ok((loc, heading)) = query.get(*ent) else { continue };
+        let Ok((loc, heading, attrs)) = query.get(*ent) else { continue };
         let ahead = den_ahead(**loc, *heading, *archetype);
         let den = Qrz { q: ahead.q, r: ahead.r, z: registry.elevation_at(ahead.q, ahead.r) + 1 };
         info!("den: {archetype:?} at {den:?}, ahead of {ent} at {:?}", **loc);
-        let level = calculate_enemy_level(den, HAVEN_LOCATION);
-        let npc_count = rand::rng().random_range(1..=3u8);
+        let player_level = attrs.total_level().min(u8::MAX as u32) as u8;
+        let (npc_count, level) = den_for(player_level, rand::rng().random_bool(0.5));
+        info!("den: {npc_count}x{archetype:?}@{level} for a level-{player_level} player");
         spawn_engagement(den, *archetype, Side::WILD, level, npc_count, |q, r| registry.elevation_at(q, r), &tuning, &mut commands, &time);
     }
 }
@@ -278,6 +288,16 @@ fn kit(archetype: EnemyArchetype) -> Equipment {
 mod tests {
     use super::*;
     use common_bevy::components::heading::HEADING_SLOTS;
+
+    #[test]
+    fn a_den_is_one_at_the_players_level_or_a_pair_below_it() {
+        for player in [1, 3, 10, 20] {
+            assert_eq!(den_for(player, false), (1, player));
+            let (count, level) = den_for(player, true);
+            assert_eq!(count, 2);
+            assert!(level < player || player == 0, "a pair stands below a level-{player} player");
+        }
+    }
 
     #[test]
     fn no_member_of_a_placed_den_starts_in_acquisition_range() {
