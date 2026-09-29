@@ -90,19 +90,9 @@ pub struct ResolvedThreatEntry {
     pub lifetime: f32,  // 4.0 seconds
     /// Its colour: a blow's by severity, damage over time's its own
     pub rgb: (f32, f32, f32),
-    pub appear_delay: f32,   // seconds before entry becomes visible (synced with pop travel)
 }
 
-/// Pop animation icon that travels from queue front to resolved stack
-#[derive(Component)]
-pub struct PoppingThreatIcon {
-    pub spawn_time: std::time::Duration,
-    pub severity: f32,
-    pub start_margin_left: f32,  // queue front x position
-    pub target_margin_top: f32,  // resolved stack y position
-}
-
-/// Marker for resolved threats container
+/// Marker for the resolved threats stack, beside the highway's hit line
 #[derive(Component)]
 pub struct ResolvedThreatsContainer;
 

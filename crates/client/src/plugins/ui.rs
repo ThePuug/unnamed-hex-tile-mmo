@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, combat_log, combat_ui, drop_panel, equipment_panel, resolved_threats, resource_bars, target_frame, target_indicator, threat_icons, tier_lock_range_indicator, ui};
+use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, combat_log, combat_ui, drop_panel, equipment_panel, highway, resolved_threats, resource_bars, target_frame, target_indicator, tier_lock_range_indicator, ui};
 
 /// Plugin that handles game UI elements
 
@@ -7,7 +7,7 @@ use crate::systems::{action_bar, bag_panel, character_panel, character_panel_res
 /// - Character panel (C key) for viewing and adjusting attributes
 /// - HUD elements (time display, etc.)
 /// - Target indicator (red hex showing which entity will be targeted)
-/// - Threat icons (circular display around player showing queued threats)
+/// - The highway (the player's reaction queue as rhythm-game lanes)
 /// - Combat feedback (floating damage numbers, health bars)
 /// - Other game UI elements as they are added
 pub struct UiPlugin;
@@ -29,12 +29,11 @@ impl Plugin for UiPlugin {
                 character_panel::setup,
                 resource_bars::setup.after(crate::systems::camera::setup),
                 action_bar::setup.after(crate::systems::camera::setup),
-                threat_icons::setup.after(crate::systems::camera::setup),
+                highway::setup.after(crate::systems::camera::setup),
                 target_frame::setup.after(crate::systems::camera::setup),
                 target_indicator::setup,
                 tier_lock_range_indicator::setup,
                 combat_ui::setup_health_bars.after(crate::systems::camera::setup),
-                resolved_threats::setup.after(crate::systems::camera::setup),
                 combat_log::setup.after(crate::systems::camera::setup),
             ),
         );
@@ -81,15 +80,8 @@ impl Plugin for UiPlugin {
         // Dropping from the bag
         app.add_systems(Update, (bag_panel::handle_numpad, (drop_panel::handle_keys, drop_panel::update).chain()));
 
-        // Threat icon systems can run in parallel - no ordering needed
-        app.add_systems(
-            Update,
-            (
-                threat_icons::update,
-                threat_icons::spawn_pop_animation,
-                threat_icons::update_popping_icons,
-            ),
-        );
+        app.add_plugins(UiMaterialPlugin::<highway::HighwayMaterial>::default());
+        app.add_systems(Update, (highway::update, highway::update_shards));
 
         // Combat UI feedback systems (floating damage numbers, health bars, recovery bars, threat dots)
         app.add_systems(
@@ -108,7 +100,6 @@ impl Plugin for UiPlugin {
             (
                 resolved_threats::on_damage_resolved,
                 resolved_threats::update_entries,
-                resolved_threats::sync_container_position,
                 combat_log::on_damage_applied,
                 combat_log::on_queue_cleared,
                 combat_log::maintain_log,

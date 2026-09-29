@@ -27,14 +27,13 @@ use common_bevy::{
 };
 
 use crate::{
-    components::{CombatLogEntry, FloatingText, PoppingThreatIcon, ResolvedThreatEntry},
+    components::{CombatLogEntry, FloatingText, ResolvedThreatEntry},
     network::Link,
     resources::{EntityMap, LoadedChunks, RenderOrigin, Server, SummaryCache, SummaryMesh, SummaryMeshes},
     systems::{
         attack_telegraph::{AttackBall, HitLine},
         character_panel::{self, CharacterPanel, CharacterPanelState},
         closeup::Figure,
-        threat_icons::{OverflowCounter, ThreatIcon},
     },
 };
 
@@ -224,9 +223,6 @@ fn leave_world(
             With<FloatingText>,
             With<ResolvedThreatEntry>,
             With<CombatLogEntry>,
-            With<ThreatIcon>,
-            With<PoppingThreatIcon>,
-            With<OverflowCounter>,
         )>,
     >,
     l2r: Res<EntityMap>,
