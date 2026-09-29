@@ -31,9 +31,8 @@ pub struct Tuning {
     pub health_curve_k: f32,
     pub health_curve_p: f32,
 
-    // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`) ---
-    /// Threats a Concentration tier sees, T0 to T3
-    pub concentration: [u8; 4],
+    // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`,
+    // and so is the window each Concentration tier sees, `ActorAttributes::window_size`) ---
     /// Seconds between auto-attacks at each Intensity tier, T0 to T3
     pub cadence: [f32; 4],
     /// Shots in a Volley at each Intensity tier, T0 to T3: three at full
@@ -139,7 +138,6 @@ impl Tuning {
         health_per_vitality: 1.96,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
-        concentration: [1, 2, 2, 3],
         cadence: [2.1, 1.75, 1.4, 1.05],
         volley_shots: [0, 1, 2, 3],
         evasion: [0.0, 0.1, 0.2, 0.3],
@@ -240,10 +238,6 @@ impl Tuning {
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
         let number = value.parse::<f32>().map_err(|_| format!("{name} takes a number, not {value}"))?;
         let tier = |base: &str| name.strip_prefix(base).and_then(|rest| rest.strip_prefix('_')).and_then(|i| i.parse::<usize>().ok()).filter(|i| *i < 4);
-        if let Some(i) = tier("concentration") {
-            self.concentration[i] = number.round().max(1.0) as u8;
-            return Ok(());
-        }
         if let Some(i) = tier("volley_shots") {
             self.volley_shots[i] = number.round().max(0.0) as u8;
             return Ok(());
@@ -355,10 +349,8 @@ mod tests {
         let mut tuning = Tuning::default();
         tuning.set("lunge_pierce", "0.25").unwrap();
         tuning.set("cadence_2", "1.8").unwrap();
-        tuning.set("concentration_3", "5").unwrap();
         assert_eq!(tuning.lunge_pierce, 0.25);
         assert_eq!(tuning.cadence[2], 1.8);
-        assert_eq!(tuning.concentration[3], 5);
         assert!(tuning.set("lunge_pierce", "much").is_err());
         assert!(tuning.set("cadence_4", "1").is_err());
         assert!(tuning.set("no_such_knob", "1").is_err());
@@ -369,12 +361,11 @@ mod tests {
         let tuning = Tuning::default();
         // A higher tier never gives less, and the top gives more than none
         for t in 0..3 {
-            assert!(tuning.concentration[t] <= tuning.concentration[t + 1]);
             assert!(tuning.cadence[t] >= tuning.cadence[t + 1]);
             assert!(tuning.volley_shots[t] <= tuning.volley_shots[t + 1]);
             assert!(tuning.evasion[t] <= tuning.evasion[t + 1]);
         }
-        assert!(tuning.concentration[3] > tuning.concentration[0] && tuning.cadence[3] < tuning.cadence[0]);
+        assert!(tuning.cadence[3] < tuning.cadence[0]);
         assert!(tuning.volley_shots[3] > tuning.volley_shots[0] && tuning.evasion[3] > tuning.evasion[0]);
     }
 }

@@ -900,11 +900,11 @@ impl ActorAttributes {
     // === GAME STATS (Layer 3) ===
     // These use meta-attributes from Layer 2
 
-    /// Reaction queue window size from Concentration meta-attribute
-    /// Higher Concentration tier → larger visibility window for reactive play,
-    /// `Tuning::concentration` by tier
+    /// Reaction queue window size from Concentration meta-attribute: one
+    /// threat seen at T0 and one more each tier, to four at T3. Fixed, not
+    /// tuned; a Counter answers the whole window, so it grows with Concentration.
     pub fn window_size(&self) -> usize {
-        crate::tuning::tuning().concentration[self.concentration().index()] as usize
+        self.concentration().index() + 1
     }
 
     /// Auto-attack interval from Intensity meta-attribute
