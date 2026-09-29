@@ -3,7 +3,7 @@ use std::time::Duration;
 use common_bevy::{
     components::{entity_type::*, resources::*, Loc, reaction_queue::{ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
-    systems::combat::synergies::apply_synergies,
+    systems::combat::synergies::{apply_synergies, may_use},
 };
 use crate::resources::RunTime;
 
@@ -45,29 +45,10 @@ pub fn handle_counter(
             continue;
         }
 
-        // Check recovery lockout (unless synergy-unlocked)
-        if let Ok(recovery) = recovery_query.get(*ent) {
-            if recovery.is_active() {
-                // Check if Counter is synergy-unlocked (Overpower → Counter synergy)
-                let is_synergy_unlocked = synergy_query
-                    .get(*ent)
-                    .ok()
-                    .map(|synergy| {
-                        synergy.ability == AbilityType::Counter
-                            && synergy.is_unlocked(recovery.remaining)
-                    })
-                    .unwrap_or(false);
-
-                if !is_synergy_unlocked {
-                    writer.write(Do {
-                        event: GameEvent::AbilityFailed {
-                            ent: *ent,
-                            reason: AbilityFailReason::OnCooldown,
-                        },
-                    });
-                    continue;
-                }
-            }
+        // Out of lockout, or taking the follow-up the last ability offered
+        if !may_use(AbilityType::Counter, recovery_query.get(*ent).ok(), synergy_query.get(*ent).ok()) {
+            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OnCooldown } });
+            continue;
         }
 
         // Get caster's attributes

@@ -66,6 +66,19 @@ pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
     }
 }
 
+/// Whether `ability` may be used under `recovery`, the lockout, and
+/// `synergy`, the follow-up the last ability offered: anything out of
+/// lockout, and in it only the offered follow-up once it unlocks. Every
+/// ability that can be offered asks here.
+pub fn may_use(ability: AbilityType, recovery: Option<&GlobalRecovery>, synergy: Option<&SynergyUnlock>) -> bool {
+    match recovery {
+        Some(recovery) if recovery.is_active() => {
+            synergy.is_some_and(|synergy| synergy.ability == ability && synergy.is_unlocked(recovery.remaining))
+        }
+        _ => true,
+    }
+}
+
 /// Apply synergies when an ability is used.
 
 /// Pattern 1 (Nullifying): 66% × contest_factor, the level gap weighing in
@@ -139,6 +152,18 @@ pub fn synergy_cleanup_system(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_offered_follow_up_passes_the_lockout_once_it_unlocks() {
+        let recovery = GlobalRecovery::new(2.0, AbilityType::Kick);
+        let offer = SynergyUnlock::new(AbilityType::Lunge, 1.5, AbilityType::Kick);
+        let mut later = recovery;
+        later.tick(1.0);
+        assert!(may_use(AbilityType::Overpower, None, None), "out of lockout, anything");
+        assert!(!may_use(AbilityType::Lunge, Some(&recovery), Some(&offer)), "not before it unlocks");
+        assert!(may_use(AbilityType::Lunge, Some(&later), Some(&offer)), "the offer, once unlocked");
+        assert!(!may_use(AbilityType::Overpower, Some(&later), Some(&offer)), "nothing else");
+    }
 
     #[test]
     fn test_get_synergy_trigger() {

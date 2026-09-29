@@ -4,7 +4,7 @@ use common_bevy::{
     components::{entity_type::*, resources::*, stagger::Stagger, Loc, reaction_queue::{DamageType, ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     resources::map::Map,
-    systems::combat::synergies::apply_synergies,
+    systems::combat::synergies::{apply_synergies, may_use},
 };
 use crate::{resources::RunTime, systems::stagger::Knockback};
 
@@ -75,28 +75,10 @@ pub fn handle_kick(
             continue;
         }
 
-        // Check recovery lockout (unless synergy-unlocked for Kick)
-        if let Ok(recovery) = recovery_query.get(*ent) {
-            if recovery.is_active() {
-                let is_synergy_unlocked = synergy_query
-                    .get(*ent)
-                    .ok()
-                    .map(|synergy| {
-                        synergy.ability == AbilityType::Kick
-                            && synergy.is_unlocked(recovery.remaining)
-                    })
-                    .unwrap_or(false);
-
-                if !is_synergy_unlocked {
-                    writer.write(Do {
-                        event: GameEvent::AbilityFailed {
-                            ent: *ent,
-                            reason: AbilityFailReason::OnCooldown,
-                        },
-                    });
-                    continue;
-                }
-            }
+        // Out of lockout, or taking the follow-up the last ability offered
+        if !may_use(AbilityType::Kick, recovery_query.get(*ent).ok(), synergy_query.get(*ent).ok()) {
+            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OnCooldown } });
+            continue;
         }
 
         // Get caster's attributes and location

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{resources::*, tier_lock::TierLock, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
-    systems::{targeting::get_range_tier, combat::synergies::apply_synergies},
+    systems::{targeting::get_range_tier, combat::synergies::{apply_synergies, may_use}},
 };
 
 /// Handle Lunge ability (Q key)
@@ -20,6 +20,7 @@ pub fn handle_lunge(
     mut stamina_query: Query<&mut Stamina>,
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
+    synergy_query: Query<&common_bevy::components::recovery::SynergyUnlock>,
     respawn_query: Query<&RespawnTimer>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
     mut writer: MessageWriter<Do>,
@@ -41,17 +42,10 @@ pub fn handle_lunge(
             continue;
         }
 
-        // Check recovery lockout (universal lockout for all abilities)
-        if let Ok(recovery) = recovery_query.get(*ent) {
-            if recovery.is_active() {
-                writer.write(Do {
-                    event: GameEvent::AbilityFailed {
-                        ent: *ent,
-                        reason: AbilityFailReason::OnCooldown,
-                    },
-                });
-                continue;
-            }
+        // Out of lockout, or taking the follow-up the last ability offered
+        if !may_use(AbilityType::Lunge, recovery_query.get(*ent).ok(), synergy_query.get(*ent).ok()) {
+            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OnCooldown } });
+            continue;
         }
 
         // Read target from the event (player's intended target)

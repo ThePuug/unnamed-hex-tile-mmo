@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{resources::*, tier_lock::TierLock, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
-    systems::{targeting::get_range_tier, combat::synergies::apply_synergies},
+    systems::{targeting::get_range_tier, combat::synergies::{apply_synergies, may_use}},
 };
 
 /// Handle Overpower ability (W key)
@@ -38,29 +38,10 @@ pub fn handle_overpower(
             continue;
         }
 
-        // Check recovery lockout (unless synergy-unlocked)
-        if let Ok(recovery) = recovery_query.get(*ent) {
-            if recovery.is_active() {
-                // Check if Overpower is synergy-unlocked
-                let is_synergy_unlocked = synergy_query
-                    .get(*ent)
-                    .ok()
-                    .map(|synergy| {
-                        synergy.ability == AbilityType::Overpower
-                            && synergy.is_unlocked(recovery.remaining)
-                    })
-                    .unwrap_or(false);
-
-                if !is_synergy_unlocked {
-                    writer.write(Do {
-                        event: GameEvent::AbilityFailed {
-                            ent: *ent,
-                            reason: AbilityFailReason::OnCooldown,
-                        },
-                    });
-                    continue;
-                }
-            }
+        // Out of lockout, or taking the follow-up the last ability offered
+        if !may_use(AbilityType::Overpower, recovery_query.get(*ent).ok(), synergy_query.get(*ent).ok()) {
+            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OnCooldown } });
+            continue;
         }
 
         // Read target from the event (player's intended target)
