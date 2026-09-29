@@ -36,7 +36,9 @@ pub struct Tuning {
     pub concentration: [u8; 4],
     /// Seconds between auto-attacks at each Intensity tier, T0 to T3
     pub cadence: [f32; 4],
-    /// Shots in a Volley at each Intensity tier, T0 to T3
+    /// Shots in a Volley at each Intensity tier, T0 to T3: three at full
+    /// commitment, so a Disengage, which takes the front blow, takes a third.
+    /// None is a Volley without damage, one shot that only slows
     pub volley_shots: [u8; 4],
     /// Chance to evade a threat at each Poise tier, T0 to T3
     pub evasion: [f32; 4],
@@ -139,7 +141,7 @@ impl Tuning {
         health_curve_p: 2.0,
         concentration: [1, 2, 2, 3],
         cadence: [2.1, 1.75, 1.4, 1.05],
-        volley_shots: [1, 2, 3, 4],
+        volley_shots: [0, 1, 2, 3],
         evasion: [0.0, 0.1, 0.2, 0.3],
         contest_scale: 300.0,
         contest_per_level: 15.0,
@@ -178,7 +180,7 @@ impl Tuning {
         disengage_leap: 2,
         disengage_technique: 0.49,
         volley_cost: 20.0,
-        volley_force: 0.84,
+        volley_force: 1.12,
         volley_slow: 0.5,
         volley_slow_secs: 2.45,
         volley_leap: 10,
@@ -243,7 +245,7 @@ impl Tuning {
             return Ok(());
         }
         if let Some(i) = tier("volley_shots") {
-            self.volley_shots[i] = number.round().max(1.0) as u8;
+            self.volley_shots[i] = number.round().max(0.0) as u8;
             return Ok(());
         }
         if let Some(i) = tier("cadence") {

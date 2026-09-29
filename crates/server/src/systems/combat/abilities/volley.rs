@@ -9,7 +9,8 @@ use common_bevy::{
 /// Handle Volley, the Kiter's signature: a burst of shots at a target within
 /// `KITER_REACH`, `Tuning::volley_shots` of them by the Kiter's Intensity,
 /// so Focus, which gives its pace, decides how many fly — each striking for
-/// `Tuning::volley_force` of Force. Every shot is its own threat.
+/// `Tuning::volley_force` of Force. Every shot is its own threat. With none,
+/// the Volley is one shot that deals nothing and only slows.
 /// Each shot, as it lands (`landing::land`), slows its target by
 /// `volley_slow` for `volley_slow_secs`, and the shot that finds the target
 /// unslowed leaps the Kiter `volley_leap` tiles straight away from it: the
@@ -76,13 +77,17 @@ pub fn handle_volley(
         let at = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
         commands.entity(*ent).insert(crate::systems::combat::landing::VolleyBurst { at, leapt: false });
 
+        // Without the Intensity for a shot, the Volley is one that only
+        // slows: the slow and the leap ride a threat, so one still flies
         let attrs = attrs_query.get(*ent).expect("Volley caster must have ActorAttributes");
-        for _ in 0..tuning.volley_shots[attrs.intensity().index()] {
+        let shots = tuning.volley_shots[attrs.intensity().index()];
+        let damage = if shots == 0 { 0.0 } else { attrs.force() * tuning.volley_force };
+        for _ in 0..shots.max(1) {
             commands.trigger(Try {
                 event: GameEvent::DealDamage {
                     source: *ent,
                     target: target_ent,
-                    base_damage: attrs.force() * tuning.volley_force,
+                    base_damage: damage,
                     damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Volley),
                     dot: 0.0,
