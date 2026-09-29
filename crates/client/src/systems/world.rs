@@ -334,12 +334,7 @@ pub fn do_init(
         let Do { event: Event::Init { dt, .. } } = message else { continue };
         let dt = *dt;
         let client_now = time.elapsed().as_millis();
-
-        // CRITICAL: The server captured dt when it SENT Init, but we're receiving it now
-        // During the client startup time (client_now ms), the server's clock also advanced
-        // We need to add that startup time to server_time_at_init to compensate
-        server.server_time_at_init = dt.saturating_add(server.smoothed_latency).saturating_add(client_now);
-        server.client_time_at_init = client_now;
+        server.sync(dt, client_now);
         server.last_ping_time = client_now; // Track when we sent initial ping
 
         // Send initial Ping to measure actual network latency

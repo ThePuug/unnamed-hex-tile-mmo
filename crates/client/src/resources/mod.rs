@@ -273,6 +273,14 @@ impl Default for Server {
 }
 
 impl Server {
+    /// Set the clock from `dt`, the server's game world time as it sent
+    /// Init, received at `client_now`: the server has run on by the trip
+    /// here since, and by nothing else, however long the client ran before.
+    pub fn sync(&mut self, dt: u128, client_now: u128) {
+        self.server_time_at_init = dt.saturating_add(self.smoothed_latency);
+        self.client_time_at_init = client_now;
+    }
+
     /// Calculate the current game world time (used for both threats and day/night)
     /// Game world time = server_time_at_init + (client_now - client_at_init)
     pub fn current_time(&self, client_now: u128) -> u128 {
@@ -691,4 +699,26 @@ pub struct ClientTimers(pub Arc<common::timers::SystemTimers>);
 
 impl Default for ClientTimers {
     fn default() -> Self { Self(Arc::new(common::timers::SystemTimers::new())) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_clock_does_not_run_ahead_by_the_clients_uptime() {
+        let at = |uptime: u128| {
+            let mut server = Server::default();
+            server.sync(10_000, uptime);
+            server.current_time(uptime + 1_500)
+        };
+        assert_eq!(at(0), at(90_000), "time on the character screen shifts nothing");
+    }
+
+    #[test]
+    fn the_clock_starts_a_trip_past_what_the_server_sent() {
+        let mut server = Server::default();
+        server.sync(10_000, 4_000);
+        assert_eq!(server.current_time(4_000), 10_000 + server.smoothed_latency);
+    }
 }
