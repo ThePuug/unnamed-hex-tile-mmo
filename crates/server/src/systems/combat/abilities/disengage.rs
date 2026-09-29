@@ -29,8 +29,7 @@ pub fn leap_tiles(tuned: usize, reach: i32, distance: i32) -> usize {
 /// next auto-attack strikes harder, by `disengage_endurance` of its
 /// Endurance, behind a feint (`Poised`).
 ///
-/// With nothing queued, a Disengage is prepared where the Skirmisher's
-/// Preparation has room (`super::prepare`); one prepared fires free, even
+/// One prepared ahead (`super::handle_prepare`) fires free, even
 /// mid-lockout, and starts none.
 pub fn handle_disengage(
     mut commands: Commands,
@@ -63,22 +62,6 @@ pub fn handle_disengage(
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
         };
-
-        // Nothing queued to leap from: prepare it, where Preparation has room
-        if queue_query.get(*ent).is_ok_and(|queue| queue.threats.is_empty()) {
-            let (Ok(attrs), Ok(mut prepared)) = (attrs_query.get(*ent), prepared_query.get_mut(*ent)) else {
-                continue;
-            };
-            let outcome = if held {
-                Err(AbilityFailReason::NoTargets)
-            } else {
-                super::prepare(*ent, AbilityType::Disengage, attrs, &mut stamina, &mut prepared, recovery_query.get(*ent).ok().copied(), None, None, &mut commands, &mut writer)
-            };
-            if let Err(reason) = outcome {
-                writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason } });
-            }
-            continue;
-        }
 
         let (Ok(caster_loc), Some(Ok(target_loc))) = (loc_query.get(*ent), target.map(|t| loc_query.get(t))) else {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NoTargets } });

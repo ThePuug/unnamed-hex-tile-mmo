@@ -28,9 +28,38 @@ pub fn in_arc(heading: Option<&Heading>, attrs: Option<&ActorAttributes>, from: 
     targeting::faces(heading, attrs.map_or(targeting::STRIDE_ARC, ActorAttributes::arc), from, to)
 }
 
-/// Prepares `ability`, a reaction `ent` used with nothing to answer: it pays
-/// its stamina and lockout now, as any use of it does, and is held in
-/// `prepared` to fire free later. Errs where Preparation holds no more, or
+/// Handles a request to prepare a reaction: in combat, and out of lockout
+/// or taking an offered follow-up, as any use of it must be (`prepare`).
+#[allow(clippy::too_many_arguments)]
+pub fn handle_prepare(
+    mut commands: Commands,
+    mut reader: MessageReader<Try>,
+    mut actors: Query<(&ActorAttributes, &mut Stamina, &mut Prepared, &common_bevy::components::resources::CombatState)>,
+    recovery_query: Query<&GlobalRecovery>,
+    synergy_query: Query<&SynergyUnlock>,
+    combo_query: Query<&Combo>,
+    mut writer: MessageWriter<Do>,
+) {
+    for event in reader.read() {
+        let Try { event: GameEvent::Prepare { ent, ability } } = event else { continue };
+        let Ok((attrs, mut stamina, mut prepared, combat)) = actors.get_mut(*ent) else { continue };
+        let (prior, offer, combo) = (recovery_query.get(*ent).ok().copied(), synergy_query.get(*ent).ok().copied(), combo_query.get(*ent).ok());
+        let outcome = if !combat.in_combat {
+            Err(AbilityFailReason::NotInCombat)
+        } else if !synergies::may_use(*ability, prior.as_ref(), offer.as_ref(), combo) {
+            Err(AbilityFailReason::OnCooldown)
+        } else {
+            prepare(*ent, *ability, attrs, &mut stamina, &mut prepared, prior, offer, combo, &mut commands, &mut writer)
+        };
+        if let Err(reason) = outcome {
+            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason } });
+        }
+    }
+}
+
+/// Prepares `ability`, a reaction, for `ent`: it pays its stamina and
+/// lockout now, as any use of it does, and is held in `prepared` to fire
+/// free later. Errs where it is no reaction, Preparation holds no more, or
 /// the stamina falls short.
 #[allow(clippy::too_many_arguments)]
 pub fn prepare(

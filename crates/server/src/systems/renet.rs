@@ -264,6 +264,10 @@ pub fn write_try(
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::UseAbility { ent, ability, target }});
                 }
+                Try { event: Event::Prepare { ent: _, ability } } => {
+                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    writer.write(Try { event: Event::Prepare { ent, ability }});
+                }
                 Try { event: Event::Ping { client_time } } => {
                     // Immediately respond with Pong (echo client timestamp)
                     let message = bincode::serde::encode_to_vec(

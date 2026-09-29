@@ -25,7 +25,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 /// - Kiter (Volley): Use when target is within 6 hexes (a burst from range)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
 /// - Skirmisher (Disengage): Reactive - dodges the blow at the front of its queue, an auto-attack's as overflow;
-///   with nothing queued, prepares one where its Preparation has room, and fires one prepared even in lockout
+///   in combat, out of lockout, it prepares one whenever its Preparation has room, and fires one prepared even in lockout
 /// - Ambusher (Flank): Use when target is within melee reach (stuns it and strikes from its back)
 ///
 /// Every use waits out the NPC's `NpcRecovery` delay, armed once the ability
@@ -73,14 +73,18 @@ pub fn npc_ability_usage(
         // Skirmisher Disengages from the blow at the front of its queue: an ability's
         // while one is queued, an auto-attack as overflow
         if ability == AbilityType::Disengage {
-            if let Some(blow) = queue_opt.and_then(|queue| queue.threats.front().copied()) {
+            // A held one fires at the blow; with room, it prepares another;
+            // full, it spends its own at the blow
+            let blow = queue_opt.and_then(|queue| queue.threats.front().copied());
+            let room = prepared.map_or(0, |prepared| prepared.count()) < attrs.preparation().index();
+            if let (Some(blow), true) = (blow, held || (!locked && !room)) {
                 writer.write(Try {
                     event: Event::UseAbility { ent: npc_entity, ability: AbilityType::Disengage, target: Some(blow.source) },
                 });
                 delay.spend();
-            } else if !held && prepared.map_or(0, |prepared| prepared.count()) < attrs.preparation().index() {
+            } else if !locked && room {
                 writer.write(Try {
-                    event: Event::UseAbility { ent: npc_entity, ability: AbilityType::Disengage, target: None },
+                    event: Event::Prepare { ent: npc_entity, ability: AbilityType::Disengage },
                 });
                 delay.spend();
             }

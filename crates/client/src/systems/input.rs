@@ -70,9 +70,15 @@ pub fn update_keybits(
         writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower, target: target.entity }});
     }
 
-    // Counter ability (E key) - Reactive counter-attack
+    // Counter ability (E key) - Reactive counter-attack; with Shift, prepared
+    // to fire later, where Discipline's Preparation has room
     if keyboard.just_pressed(KeyCode::KeyE) && !gcd_active {
-        writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Counter, target: None }});
+        let event = if keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+            Event::Prepare { ent, ability: AbilityType::Counter }
+        } else {
+            Event::UseAbility { ent, ability: AbilityType::Counter, target: None }
+        };
+        writer.write(Try { event });
     }
 
     // Kick ability (R key) - Reactive knockback

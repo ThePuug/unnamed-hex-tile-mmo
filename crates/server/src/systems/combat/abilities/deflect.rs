@@ -8,9 +8,8 @@ use common_bevy::{
 /// Handle Deflect ability (R key) - defensive ability that clears all queued threats
 /// - `Tuning::deflect_cost` stamina
 /// - Clears ALL queued threats
-/// - With none queued, it is prepared where the deflector's Preparation has
-///   room (`super::prepare`); one prepared fires free, even mid-lockout, and
-///   starts none
+/// - One prepared ahead (`super::handle_prepare`) fires free, even
+///   mid-lockout, and starts none
 pub fn handle_deflect(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -47,16 +46,9 @@ pub fn handle_deflect(
             continue;
         }
 
-        // Nothing to deflect: prepare it, where Preparation has room
         if queue.is_empty() {
-            let outcome = if held {
-                Err(AbilityFailReason::NoTargets)
-            } else {
-                super::prepare(*ent, AbilityType::Deflect, attrs, &mut stamina, &mut prepared, prior, offer, combo, &mut commands, &mut writer)
-            };
-            if let Err(reason) = outcome {
-                writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason } });
-            }
+            // Nothing to deflect (no queued threats)
+            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NoTargets } });
             continue;
         }
 

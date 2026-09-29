@@ -15,8 +15,7 @@ use crate::resources::RunTime;
 /// countered. The share is `Tuning::counter_reflect` weighted by the
 /// counterer's Resolve: its Concentration over base potency.
 ///
-/// With nothing to answer, a Counter is prepared where the counterer's
-/// Preparation has room (`super::prepare`); one prepared fires free, even
+/// One prepared ahead (`super::handle_prepare`) fires free, even
 /// mid-lockout, and starts none.
 pub fn handle_counter(
     mut commands: Commands,
@@ -89,18 +88,8 @@ pub fn handle_counter(
         };
 
         if visible_threats.is_empty() {
-            // Nothing to counter: prepare it, where Preparation has room
-            let (Ok(mut stamina), Ok(mut prepared)) = (stamina_query.get_mut(*ent), prepared_query.get_mut(*ent)) else {
-                continue;
-            };
-            let outcome = if held {
-                Err(AbilityFailReason::NoTargets)
-            } else {
-                super::prepare(*ent, AbilityType::Counter, caster_attrs, &mut stamina, &mut prepared, recovery_query.get(*ent).ok().copied(), synergy_query.get(*ent).ok().copied(), combo_query.get(*ent).ok(), &mut commands, &mut writer)
-            };
-            if let Err(reason) = outcome {
-                writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason } });
-            }
+            // No threats in queue - nothing to counter
+            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NoTargets } });
             continue;
         };
 

@@ -389,6 +389,12 @@ pub fn send_try(
                     target: remote_target
                 }}, bincode::config::legacy()).unwrap());
             }
+            Event::Prepare { ent, ability } => {
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Prepare {
+                    ent: *l2r.get_by_left(ent).unwrap(),
+                    ability: *ability,
+                }}, bincode::config::legacy()).unwrap());
+            }
             Event::Play | Event::Leave => {
                 conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap());
             }
