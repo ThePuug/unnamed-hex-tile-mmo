@@ -16,7 +16,7 @@ pub struct Prepared {
 impl Prepared {
     /// Whether `ability` answers a threat, so can be prepared
     pub fn is_reaction(ability: AbilityType) -> bool {
-        matches!(ability, AbilityType::Counter | AbilityType::Deflect)
+        matches!(ability, AbilityType::Counter | AbilityType::Deflect | AbilityType::Disengage)
     }
 
     /// Whether one of `ability` is held

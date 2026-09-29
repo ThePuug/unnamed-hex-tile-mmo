@@ -24,7 +24,8 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 /// - Juggernaut (Rattle): Use when target is within melee reach (each one dazes it further)
 /// - Kiter (Volley): Use when target is within 6 hexes (a burst from range)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
-/// - Skirmisher (Disengage): Reactive - dodges the blow at the front of its queue, an auto-attack's as overflow
+/// - Skirmisher (Disengage): Reactive - dodges the blow at the front of its queue, an auto-attack's as overflow;
+///   with nothing queued, prepares one where its Preparation has room, and fires one prepared even in lockout
 /// - Ambusher (Flank): Use when target is within melee reach (stuns it and strikes from its back)
 ///
 /// Every use waits out the NPC's `NpcRecovery` delay, armed once the ability
@@ -34,7 +35,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 pub fn npc_ability_usage(
     // Query NPCs with Chase or Kite behavior
     mut npc_query: Query<
-        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>, &mut NpcRecovery, Option<&common_bevy::components::heading::Heading>),
+        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>, &mut NpcRecovery, Option<&common_bevy::components::heading::Heading>, &common_bevy::components::ActorAttributes, Option<&common_bevy::components::prepared::Prepared>),
         Or<(With<Chase>, With<Kite>)>
     >,
     target_query: Query<&Loc, With<common_bevy::components::behaviour::Side>>,
@@ -42,14 +43,7 @@ pub fn npc_ability_usage(
     mut writer: MessageWriter<Try>,
 ) {
     let now = time.elapsed();
-    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt, mut delay, heading) in npc_query.iter_mut() {
-        // Skip if in recovery (ability lockout)
-        if let Some(recovery) = recovery_opt {
-            if recovery.is_active() {
-                continue;
-            }
-        }
-
+    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt, mut delay, heading, attrs, prepared) in npc_query.iter_mut() {
         // Get archetype from NPC type
         let EntityType::Actor(actor_impl) = entity_type else {
             continue;
@@ -65,8 +59,10 @@ pub fn npc_ability_usage(
             continue;
         };
 
-        let stamina_cost = common_bevy::tuning::tuning().cost(ability);
-        if stamina.state < stamina_cost {
+        // In lockout, or short of stamina, only a prepared signature fires
+        let held = prepared.is_some_and(|prepared| prepared.holds(ability));
+        let locked = recovery_opt.is_some_and(|recovery| recovery.is_active());
+        if !held && (locked || stamina.state < common_bevy::tuning::tuning().cost(ability)) {
             continue;
         }
         delay.arm(now);
@@ -80,6 +76,11 @@ pub fn npc_ability_usage(
             if let Some(blow) = queue_opt.and_then(|queue| queue.threats.front().copied()) {
                 writer.write(Try {
                     event: Event::UseAbility { ent: npc_entity, ability: AbilityType::Disengage, target: Some(blow.source) },
+                });
+                delay.spend();
+            } else if !held && prepared.map_or(0, |prepared| prepared.count()) < attrs.preparation().index() {
+                writer.write(Try {
+                    event: Event::UseAbility { ent: npc_entity, ability: AbilityType::Disengage, target: None },
                 });
                 delay.spend();
             }

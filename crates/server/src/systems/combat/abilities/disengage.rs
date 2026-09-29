@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{reaction_queue::ReactionQueue, resources::*, Loc, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+    components::{prepared::Prepared, reaction_queue::ReactionQueue, resources::*, Loc, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     systems::combat::queue::clear_threats,
     resources::map::Map,
@@ -20,6 +20,10 @@ pub struct Poised(pub f32);
 /// from that source, and the blow misses: the front threat is cleared. Its
 /// next auto-attack strikes harder, by `disengage_endurance` of its
 /// Endurance, behind a feint (`Poised`).
+///
+/// With nothing queued, a Disengage is prepared where the Skirmisher's
+/// Preparation has room (`super::prepare`); one prepared fires free, even
+/// mid-lockout, and starts none.
 pub fn handle_disengage(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -27,6 +31,7 @@ pub fn handle_disengage(
     mut stamina_query: Query<&mut Stamina>,
     mut queue_query: Query<&mut ReactionQueue>,
     recovery_query: Query<&GlobalRecovery>,
+    mut prepared_query: Query<&mut Prepared>,
     respawn_query: Query<&RespawnTimer>,
     map: Res<Map>,
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
@@ -40,18 +45,37 @@ pub fn handle_disengage(
         if respawn_query.get(*ent).is_ok() {
             continue;
         }
-        if recovery_query.get(*ent).is_ok_and(|recovery| recovery.is_active()) {
+        // A prepared Disengage fires whatever the lockout; any other needs to be out of it
+        let held = prepared_query.get(*ent).is_ok_and(|prepared| prepared.holds(AbilityType::Disengage));
+        if !held && recovery_query.get(*ent).is_ok_and(|recovery| recovery.is_active()) {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OnCooldown } });
             continue;
         }
+        let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
+            continue;
+        };
+
+        // Nothing queued to leap from: prepare it, where Preparation has room
+        if queue_query.get(*ent).is_ok_and(|queue| queue.threats.is_empty()) {
+            let (Ok(attrs), Ok(mut prepared)) = (attrs_query.get(*ent), prepared_query.get_mut(*ent)) else {
+                continue;
+            };
+            let outcome = if held {
+                Err(AbilityFailReason::NoTargets)
+            } else {
+                super::prepare(*ent, AbilityType::Disengage, attrs, &mut stamina, &mut prepared, recovery_query.get(*ent).ok().copied(), None, None, &mut commands, &mut writer)
+            };
+            if let Err(reason) = outcome {
+                writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason } });
+            }
+            continue;
+        }
+
         let (Ok(caster_loc), Some(Ok(target_loc))) = (loc_query.get(*ent), target.map(|t| loc_query.get(t))) else {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NoTargets } });
             continue;
         };
-        let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
-            continue;
-        };
-        if stamina.state < tuning.disengage_cost {
+        if !held && stamina.state < tuning.disengage_cost {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::InsufficientStamina } });
             continue;
         }
@@ -62,11 +86,18 @@ pub fn handle_disengage(
             continue;
         };
 
-        stamina.state -= tuning.disengage_cost;
-        stamina.step = stamina.state;
-        writer.write(Do {
-            event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
-        });
+        // A prepared Disengage was paid for when it was prepared
+        if held {
+            if let Ok(mut prepared) = prepared_query.get_mut(*ent) {
+                super::fire_prepared(*ent, AbilityType::Disengage, &mut prepared, &mut writer);
+            }
+        } else {
+            stamina.state -= tuning.disengage_cost;
+            stamina.step = stamina.state;
+            writer.write(Do {
+                event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
+            });
+        }
         crate::systems::combat::leap::leap(*ent, landing, &mut commands, &mut writer);
 
         if let Ok(mut queue) = queue_query.get_mut(*ent) {
@@ -78,6 +109,10 @@ pub fn handle_disengage(
             commands.entity(*ent).insert(Poised(attrs.endurance() * tuning.disengage_endurance));
         }
 
+        // A prepared Disengage starts no lockout
+        if held {
+            continue;
+        }
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Disengage, target: *target } });
         commands.entity(*ent).insert(GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Disengage), AbilityType::Disengage));
     }
