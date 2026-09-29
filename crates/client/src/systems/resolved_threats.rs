@@ -16,6 +16,7 @@ pub fn on_damage_resolved(
     mut commands: Commands,
     container_query: Query<Entity, With<ResolvedThreatsContainer>>,
     entry_query: Query<Entity, With<ResolvedThreatEntry>>,
+    children_query: Query<&Children>,
     input_queues: Res<common_bevy::resources::InputQueues>,
     player_health: Query<&Health, With<common_bevy::components::Actor>>,
     mut event_reader: MessageReader<common_bevy::message::Do>,
@@ -34,6 +35,13 @@ pub fn on_damage_resolved(
 
     let max_health = player_health.iter().next().map(|h| h.max).unwrap_or(100.0);
 
+    // Oldest first, as the stack holds them, with each spawned below added
+    // behind, so several landing in one frame each take a different one out
+    let mut standing: std::collections::VecDeque<Entity> = children_query
+        .get(container)
+        .map(|children| children.iter().filter(|e| entry_query.contains(*e)).collect())
+        .unwrap_or_default();
+
     for event in event_reader.read() {
         if let GameEvent::ApplyDamage { ent, damage, dot, .. } = event.event {
             // Only show threats resolved AGAINST the player (not outgoing damage)
@@ -41,11 +49,10 @@ pub fn on_damage_resolved(
                 continue;
             }
 
-            // Enforce max entries - despawn oldest if we're at capacity
-            let current_entries: Vec<_> = entry_query.iter().collect();
-            if current_entries.len() >= MAX_ENTRIES {
-                if let Some(&oldest) = current_entries.first() {
-                    commands.entity(oldest).despawn();
+            // Enforce max entries: the oldest goes, unless it expired this frame
+            while standing.len() >= MAX_ENTRIES {
+                if let Some(oldest) = standing.pop_front() {
+                    commands.entity(oldest).try_despawn();
                 }
             }
 
@@ -62,13 +69,13 @@ pub fn on_damage_resolved(
                 let (r, g, b) = severity_rgb(severity);
                 Color::srgb(r, g, b).to_srgba()
             };
-            spawn_resolved_threat_entry(
+            standing.push_back(spawn_resolved_threat_entry(
                 &mut commands,
                 container,
                 damage,
                 (rgb.red, rgb.green, rgb.blue),
                 time.elapsed(),
-            );
+            ));
         }
     }
 }
@@ -83,9 +90,9 @@ pub fn update_entries(
     for (entity, entry, mut border_color, mut bg_color, children) in &mut query {
         let elapsed = (time.elapsed() - entry.spawn_time).as_secs_f32();
 
-        // Check if lifetime expired
+        // Check if lifetime expired; the cap may have taken it this frame
         if elapsed >= entry.lifetime {
-            commands.entity(entity).despawn();
+            commands.entity(entity).try_despawn();
             continue;
         }
 
@@ -118,11 +125,11 @@ fn spawn_resolved_threat_entry(
     damage: f32,
     rgb: (f32, f32, f32),
     spawn_time: std::time::Duration,
-) {
+) -> Entity {
     let (r, g, b) = rgb;
 
-    commands.entity(container).with_children(|parent| {
-        parent.spawn((
+    let entry = commands
+        .spawn((
             Node {
                 width: Val::Px(ENTRY_SIZE),
                 height: Val::Px(ENTRY_SIZE),
@@ -150,6 +157,8 @@ fn spawn_resolved_threat_entry(
                 },
                 TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),
             ));
-        });
-    });
+        })
+        .id();
+    commands.entity(container).add_child(entry);
+    entry
 }
