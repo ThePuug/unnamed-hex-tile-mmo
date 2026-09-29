@@ -84,6 +84,12 @@ pub struct Tuning {
     pub force_auto: f32,
     /// Share of an attack's damage its roll lands either side of it
     pub damage_spread: f32,
+    /// Chance a blow crits at the ceiling of Intuition's share
+    pub crit_chance: f32,
+    /// What a crit multiplies its blow by without Precision
+    pub crit_power: f32,
+    /// How much more at the ceiling of Precision's share
+    pub crit_severity: f32,
     /// Share of Force a Lunge's strike deals
     pub lunge_force: f32,
     /// Share of Force each tick of a Lunge's DoT deals
@@ -167,6 +173,9 @@ impl Tuning {
         auto_damage: 1.05,
         force_auto: 1.0,
         damage_spread: 0.2,
+        crit_chance: 0.5,
+        crit_power: 1.5,
+        crit_severity: 1.0,
         lunge_force: 0.7,
         lunge_dot: 0.21,
         lunge_pierce: 0.49,
@@ -275,6 +284,9 @@ impl Tuning {
             "auto_damage" => &mut self.auto_damage,
             "force_auto" => &mut self.force_auto,
             "damage_spread" => &mut self.damage_spread,
+            "crit_chance" => &mut self.crit_chance,
+            "crit_power" => &mut self.crit_power,
+            "crit_severity" => &mut self.crit_severity,
             "lunge_force" => &mut self.lunge_force,
             "lunge_dot" => &mut self.lunge_dot,
             "lunge_pierce" => &mut self.lunge_pierce,

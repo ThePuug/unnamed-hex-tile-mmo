@@ -811,6 +811,20 @@ impl ActorAttributes {
         (1.0 - self.base_potency() / potency).max(0.0)
     }
 
+    /// The chance a blow this actor strikes crits: `Tuning::crit_chance` at
+    /// the ceiling of Intuition's share
+    pub fn crit_chance(&self) -> f32 {
+        crate::tuning::tuning().crit_chance * self.share(self.intuition())
+    }
+
+    /// What a crit this actor strikes multiplies its blow by:
+    /// `Tuning::crit_power`, `Tuning::crit_severity` more at the ceiling of
+    /// Precision's share
+    pub fn crit_multiplier(&self) -> f32 {
+        let tuning = crate::tuning::tuning();
+        tuning.crit_power + tuning.crit_severity * self.share(self.precision())
+    }
+
     /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
     /// `Tuning::force_auto` at the ceiling of Force's share
     pub fn auto_damage(&self) -> f32 {
@@ -830,8 +844,9 @@ impl ActorAttributes {
         linear * self.damage_level_multiplier()
     }
 
-    /// Precision: Defensive power from agility (absolute meta-attribute)
-    /// Fully scaled damage output including level progression. Used as base damage for defensive/reactive abilities.
+    /// Precision: Agility's absolute meta-attribute, fully scaled like Force.
+    /// Its share sets how hard a crit lands (`crit_multiplier`), and skills
+    /// that strike where they aim draw on it.
     pub fn precision(&self) -> f32 {
         let agility = self.agility() as f32;
         let tuning = crate::tuning::tuning();
@@ -839,8 +854,9 @@ impl ActorAttributes {
         linear * self.damage_level_multiplier()
     }
 
-    /// Intuition: Opening potency from instinct (absolute meta-attribute)
-    /// Fully scaled like Force: the weight of a blow struck at the moment it lands best, a Flank's.
+    /// Intuition: Instinct's absolute meta-attribute, fully scaled like Force.
+    /// Its share sets how often a blow crits (`crit_chance`), and a Flank's
+    /// strike at the opening draws on it.
     pub fn intuition(&self) -> f32 {
         let instinct = self.instinct() as f32;
         let tuning = crate::tuning::tuning();
@@ -999,6 +1015,17 @@ mod tests {
         assert!(share(5) > 0.0 && share(10) > share(5), "more invested, more of it");
         assert!(share(10) - share(5) < share(5) - share(0), "each point gives less");
         assert!(share(100) < 1.0, "never the whole ceiling");
+    }
+
+    #[test]
+    fn intuition_crits_more_often_and_precision_harder() {
+        let instinct = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
+        let agility = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
+        let plain = ActorAttributes::default();
+        assert_eq!(plain.crit_chance(), 0.0, "no Intuition, no crits");
+        assert!(instinct.crit_chance() > 0.0 && instinct.crit_chance() < 1.0);
+        assert!(agility.crit_multiplier() > plain.crit_multiplier(), "Precision lands a crit harder");
+        assert!(plain.crit_multiplier() > 1.0, "a crit always lands harder");
     }
 
     #[test]

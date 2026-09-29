@@ -71,6 +71,18 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
     damage * (1.0 + spread * draw.clamp(-1.0, 1.0))
 }
 
+/// A blow's damage after its crit roll: `damage` times `attacker`'s crit
+/// multiplier where `draw`, from 0 to 1, falls under its crit chance, else
+/// as it was. Rolled as the blow enters the queue, so a crit stands there
+/// at its full weight for the defender to see.
+pub fn crit(damage: f32, attacker: &ActorAttributes, draw: f32) -> f32 {
+    if draw < attacker.crit_chance() {
+        damage * attacker.crit_multiplier()
+    } else {
+        damage
+    }
+}
+
 /// Calculate recovery pushback percentage: Impact's, alone.
 
 /// Pattern 1 (Nullifying): `Tuning::pushback_share` × contest_factor(Impact,
@@ -122,6 +134,15 @@ mod tests {
         assert!((spread(100.0, 0.2, 1.0) - 120.0).abs() < 1e-3, "the high end");
         assert!(spread(100.0, 0.2, 0.5) > spread(100.0, 0.2, -0.5), "a higher draw hits harder");
         assert_eq!(spread(100.0, 0.0, 1.0), 100.0, "no spread, no range");
+    }
+
+    #[test]
+    fn a_crit_lands_only_under_the_chance() {
+        let instinct = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
+        let plain = ActorAttributes::default();
+        assert!(crit(100.0, &instinct, 0.0) > 100.0, "a draw under the chance crits");
+        assert_eq!(crit(100.0, &instinct, 0.999), 100.0, "a draw over it does not");
+        assert_eq!(crit(100.0, &plain, 0.0), 100.0, "without Intuition nothing crits");
     }
 
     #[test]

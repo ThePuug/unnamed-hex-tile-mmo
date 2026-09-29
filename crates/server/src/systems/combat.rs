@@ -13,7 +13,8 @@ use common_bevy::{
 
 /// System to process DealDamage events (Phase 1: Outgoing damage calculation)
 /// Rolls the attack's damage within its range (`Tuning::damage_spread`,
-/// one roll for its blow and its DoT), and inserts it into the reaction queue
+/// one roll for its blow and its DoT), rolls its blow's crit, and inserts
+/// it into the reaction queue
 pub fn process_deal_damage(
     trigger: On<Try>,
     _commands: Commands,
@@ -47,6 +48,7 @@ pub fn process_deal_damage(
         let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
         let draw = rand::Rng::random_range(&mut rand::rng(), -1.0..=1.0);
         let outgoing = damage_calc::spread(outgoing, tuning.damage_spread, draw);
+        let outgoing = damage_calc::crit(outgoing, source_attrs, rand::Rng::random_range(&mut rand::rng(), 0.0..1.0));
         let dot = damage_calc::spread(*dot, tuning.damage_spread, draw);
 
         // Use game world time (server uptime + offset) for consistent time base
