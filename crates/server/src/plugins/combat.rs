@@ -35,6 +35,7 @@ impl Plugin for CombatPlugin {
             reaction_queue::process_expired_threats,
             reaction_queue::tick_dots,
             combat::release_grit,
+            combat::forget_swings,
         ));
 
         app.add_systems(Update, (

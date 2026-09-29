@@ -195,6 +195,16 @@ pub fn resolve_dot_tick(
     writer.write(Do { event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Health(*health) } });
 }
 
+/// Forgets the swing of every actor out of combat, so its next fight's
+/// first swing banks nothing.
+pub fn forget_swings(mut query: Query<(&CombatState, &mut common_bevy::components::Swing)>) {
+    for (state, mut swing) in &mut query {
+        if !state.in_combat && swing.at.is_some() {
+            swing.at = None;
+        }
+    }
+}
+
 /// A blow's spill lands on another hostile near its striker, outside the
 /// queue: its share was already weighed against that hostile's Toughness.
 pub fn resolve_spill(

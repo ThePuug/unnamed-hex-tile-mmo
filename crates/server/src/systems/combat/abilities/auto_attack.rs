@@ -23,6 +23,8 @@ pub fn handle_auto_attack(
     stunned_query: Query<&common_bevy::components::stunned::Stunned>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
     poised_query: Query<&super::disengage::Poised>,
+    mut swing_query: Query<(&mut common_bevy::components::Swing, Option<&common_bevy::components::status::Status>)>,
+    time: Res<Time>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -122,7 +124,14 @@ pub fn handle_auto_attack(
                 },
             });
         }
-        let base_damage = attrs.auto_damage() + poised;
+        // The swings missed since the last, up to its Patience, land with this one
+        let banked = swing_query.get_mut(*ent).map_or(0, |(mut swing, status)| {
+            let interval = common_bevy::components::status::Status::cadence(attrs.cadence_interval(), status);
+            let banked = swing.at.map_or(0, |at| attrs.banked(time.elapsed().saturating_sub(at), interval));
+            swing.at = Some(time.elapsed());
+            banked
+        });
+        let base_damage = attrs.auto_damage() * (1 + banked) as f32 + poised;
 
         commands.trigger(
             Try {

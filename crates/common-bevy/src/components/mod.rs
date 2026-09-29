@@ -282,7 +282,7 @@ impl CommitmentTier {
 /// - Axis: 1 level → 10 reach
 /// - Spectrum: 1 level → 7 reach (each direction)
 #[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
-#[require(grit::Grit)]
+#[require(grit::Grit, Swing)]
 pub struct ActorAttributes {
     // MIGHT ↔ AGILITY (Physique)
     // Negative axis = Might specialist, Positive axis = Agility specialist
@@ -954,6 +954,20 @@ impl ActorAttributes {
         crate::tuning::tuning().grit_cap[self.grit().index()]
     }
 
+    /// Patience: stepping out without losing a swing, from instinct commitment
+    /// Returns commitment tier (T0-T3) based on instinct as % of total budget
+    pub fn patience(&self) -> CommitmentTier {
+        self.commitment_tier_for(self.instinct())
+    }
+
+    /// The swings this actor missed in `since` its last one at an auto-attack
+    /// `interval`, banked up to its Patience tier, 0 to 3, to land with its
+    /// next: the swings that came due while it could not strike.
+    pub fn banked(&self, since: std::time::Duration, interval: std::time::Duration) -> u32 {
+        let due = (since.as_secs_f32() / interval.as_secs_f32()).floor() as u32;
+        due.saturating_sub(1).min(self.patience().index() as u32)
+    }
+
     /// Awareness: how much of the queue it sees, from resolve commitment
     /// Returns commitment tier (T0-T3) based on resolve as % of total budget
     pub fn awareness(&self) -> CommitmentTier {
@@ -1016,6 +1030,15 @@ pub struct Moon();
 pub struct LastAutoAttack {
     /// Game time when last auto-attack was performed (server time + offset)
     pub last_attack_time: std::time::Duration,
+}
+
+/// When an actor last struck with an auto-attack in this fight, as the
+/// server counts it: the swings it missed since, up to its Patience, land
+/// with its next (`ActorAttributes::banked`). None out of combat, so a
+/// fight's first swing banks nothing.
+#[derive(Clone, Component, Copy, Debug, Default)]
+pub struct Swing {
+    pub at: Option<std::time::Duration>,
 }
 
 /// Auto-attack range in hex tiles. Default is 2, melee reach, so a blow
@@ -1102,6 +1125,18 @@ mod tests {
         let plain = ActorAttributes::default();
         assert_eq!(plain.arc(), crate::systems::targeting::STRIDE_ARC, "no Grace, the forward faces");
         assert_eq!(graceful.arc(), 180.0, "full commitment strikes every way");
+    }
+
+    #[test]
+    fn patience_banks_only_what_it_missed_up_to_its_tier() {
+        let patient = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
+        let plain = ActorAttributes::default();
+        let interval = std::time::Duration::from_secs(2);
+        let secs = std::time::Duration::from_secs;
+        assert_eq!(patient.banked(secs(2), interval), 0, "on time, nothing missed");
+        assert_eq!(patient.banked(secs(5), interval), 1, "one swing came due and passed");
+        assert_eq!(patient.banked(secs(60), interval), 3, "no more than full commitment banks");
+        assert_eq!(plain.banked(secs(60), interval), 0, "without Patience, missed swings are lost");
     }
 
     #[test]
