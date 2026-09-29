@@ -18,6 +18,14 @@ Check the relevant spec before changing a system, and update it there when
 behavior changes. Per-crate guidance sits alongside the crate it governs —
 `crates/qrz/AGENTS.md` for the hex coordinate system.
 
+## Making a change
+
+Remove first, change second, add last. Before writing code toward an outcome,
+take out what stands between the code and it: a special case, a second path
+doing one job, a knob nothing needs. Then bend an existing system to the
+outcome in its own vocabulary. Add a mechanism only when neither reaches, and
+say in the proposal why neither did.
+
 ## Commands
 
 ```bash
