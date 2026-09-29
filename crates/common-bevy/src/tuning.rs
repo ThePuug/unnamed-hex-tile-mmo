@@ -31,11 +31,7 @@ pub struct Tuning {
     pub health_curve_k: f32,
     pub health_curve_p: f32,
 
-    // --- Commitment: tiers and what each gives ---
-    /// Share of the most one attribute could hold that reaches tier 1, 2 and 3
-    pub tier_1: f32,
-    pub tier_2: f32,
-    pub tier_3: f32,
+    // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`) ---
     /// Threats a Concentration tier sees, T0 to T3
     pub concentration: [u8; 4],
     /// Seconds between auto-attacks at each Intensity tier, T0 to T3
@@ -141,9 +137,6 @@ impl Tuning {
         health_per_vitality: 1.96,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
-        tier_1: 0.2,
-        tier_2: 0.4,
-        tier_3: 0.6,
         concentration: [1, 2, 2, 3],
         cadence: [2.1, 1.75, 1.4, 1.05],
         volley_shots: [1, 2, 3, 4],
@@ -270,9 +263,6 @@ impl Tuning {
             "health_per_vitality" => &mut self.health_per_vitality,
             "health_curve_k" => &mut self.health_curve_k,
             "health_curve_p" => &mut self.health_curve_p,
-            "tier_1" => &mut self.tier_1,
-            "tier_2" => &mut self.tier_2,
-            "tier_3" => &mut self.tier_3,
             "contest_scale" => &mut self.contest_scale,
             "contest_per_level" => &mut self.contest_per_level,
             "mitigation_share" => &mut self.mitigation_share,
@@ -375,7 +365,6 @@ mod tests {
     #[test]
     fn the_tiers_and_their_effects_run_in_order() {
         let tuning = Tuning::default();
-        assert!(tuning.tier_1 < tuning.tier_2 && tuning.tier_2 < tuning.tier_3);
         // A higher tier never gives less, and the top gives more than none
         for t in 0..3 {
             assert!(tuning.concentration[t] <= tuning.concentration[t + 1]);

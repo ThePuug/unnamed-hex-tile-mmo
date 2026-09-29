@@ -246,13 +246,13 @@ impl CommitmentTier {
         if total_budget == 0 {
             return Self::T0;
         }
+        // Where the tiers fall is fixed; only what each gives is tuned
         let share = derived_value as f32 / total_budget as f32;
-        let tuning = crate::tuning::tuning();
-        if share >= tuning.tier_3 {
+        if share >= 0.6 {
             Self::T3
-        } else if share >= tuning.tier_2 {
+        } else if share >= 0.4 {
             Self::T2
-        } else if share >= tuning.tier_1 {
+        } else if share >= 0.2 {
             Self::T1
         } else {
             Self::T0
