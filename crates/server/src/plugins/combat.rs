@@ -37,6 +37,7 @@ impl Plugin for CombatPlugin {
             reaction_queue::tick_dots,
             combat::release_grit,
             combat::forget_swings,
+            combat::forget_preparations,
         ));
 
         app.add_systems(Update, (

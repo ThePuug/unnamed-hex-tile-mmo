@@ -14,6 +14,10 @@ use crate::resources::RunTime;
 /// once: a reflection never enters the source's queue, so it cannot be
 /// countered. The share is `Tuning::counter_reflect` weighted by the
 /// counterer's Resolve: its Concentration over base potency.
+///
+/// With nothing to answer, a Counter is prepared where the counterer's
+/// Preparation has room (`super::prepare`); one prepared fires free, even
+/// mid-lockout, and starts none.
 pub fn handle_counter(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -24,6 +28,7 @@ pub fn handle_counter(
     recovery_query: Query<&GlobalRecovery>,
     synergy_query: Query<&common_bevy::components::recovery::SynergyUnlock>,
     combo_query: Query<&common_bevy::components::recovery::Combo>,
+    mut prepared_query: Query<&mut common_bevy::components::prepared::Prepared>,
     respawn_query: Query<&RespawnTimer>,
     time: Res<Time>,
     runtime: Res<RunTime>,
@@ -46,8 +51,10 @@ pub fn handle_counter(
             continue;
         }
 
-        // Out of lockout, or taking the follow-up the last ability offered
-        if !may_use(AbilityType::Counter, recovery_query.get(*ent).ok(), synergy_query.get(*ent).ok(), combo_query.get(*ent).ok()) {
+        // A prepared Counter fires whatever the lockout; any other needs to
+        // be out of it, or be the follow-up the last ability offered
+        let held = prepared_query.get(*ent).is_ok_and(|prepared| prepared.holds(AbilityType::Counter));
+        if !held && !may_use(AbilityType::Counter, recovery_query.get(*ent).ok(), synergy_query.get(*ent).ok(), combo_query.get(*ent).ok()) {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OnCooldown } });
             continue;
         }
@@ -82,13 +89,18 @@ pub fn handle_counter(
         };
 
         if visible_threats.is_empty() {
-            // No threats in queue - nothing to counter
-            writer.write(Do {
-                event: GameEvent::AbilityFailed {
-                    ent: *ent,
-                    reason: AbilityFailReason::NoTargets,
-                },
-            });
+            // Nothing to counter: prepare it, where Preparation has room
+            let (Ok(mut stamina), Ok(mut prepared)) = (stamina_query.get_mut(*ent), prepared_query.get_mut(*ent)) else {
+                continue;
+            };
+            let outcome = if held {
+                Err(AbilityFailReason::NoTargets)
+            } else {
+                super::prepare(*ent, AbilityType::Counter, caster_attrs, &mut stamina, &mut prepared, recovery_query.get(*ent).ok().copied(), synergy_query.get(*ent).ok().copied(), combo_query.get(*ent).ok(), &mut commands, &mut writer)
+            };
+            if let Err(reason) = outcome {
+                writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason } });
+            }
             continue;
         };
 
@@ -97,7 +109,13 @@ pub fn handle_counter(
             respawn_query.get(target).is_err() && entity_query.get(target).is_ok()
         };
 
-        let counter_stamina_cost = common_bevy::tuning::tuning().counter_cost;
+        // A prepared Counter was paid for when it was prepared
+        if held {
+            if let Ok(mut prepared) = prepared_query.get_mut(*ent) {
+                super::fire_prepared(*ent, AbilityType::Counter, &mut prepared, &mut writer);
+            }
+        }
+        let counter_stamina_cost = if held { 0.0 } else { common_bevy::tuning::tuning().counter_cost };
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
         };
@@ -174,6 +192,11 @@ pub fn handle_counter(
                     clear_type: ClearType::First(count),  // Clear all countered threats
                 },
             });
+        }
+
+        // A prepared Counter starts no lockout and offers nothing
+        if held {
+            continue;
         }
 
         // Broadcast ability success to clients (client will apply recovery/synergies)

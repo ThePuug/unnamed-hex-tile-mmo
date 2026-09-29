@@ -13,6 +13,7 @@ pub mod movement_intent_state;
 pub mod displacing;
 pub mod npc_recovery;
 pub mod position;
+pub mod prepared;
 pub mod reaction_queue;
 pub mod recovery;
 pub mod resources;
@@ -282,7 +283,7 @@ impl CommitmentTier {
 /// - Axis: 1 level → 10 reach
 /// - Spectrum: 1 level → 7 reach (each direction)
 #[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
-#[require(grit::Grit, Swing)]
+#[require(grit::Grit, Swing, prepared::Prepared)]
 pub struct ActorAttributes {
     // MIGHT ↔ AGILITY (Physique)
     // Negative axis = Might specialist, Positive axis = Agility specialist
@@ -945,6 +946,13 @@ impl ActorAttributes {
     /// Returns commitment tier (T0-T3) based on might as % of total budget
     pub fn ferocity(&self) -> CommitmentTier {
         self.commitment_tier_for(self.might())
+    }
+
+    /// Preparation: reactions readied ahead, from discipline commitment
+    /// Returns commitment tier (T0-T3) based on discipline as % of total budget.
+    /// Its index is how many reactions the actor holds prepared at once.
+    pub fn preparation(&self) -> CommitmentTier {
+        self.commitment_tier_for(self.discipline())
     }
 
     /// Grit: standing in the pressure, from vitality commitment

@@ -195,6 +195,19 @@ pub fn resolve_dot_tick(
     writer.write(Do { event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Health(*health) } });
 }
 
+/// Lets go of every reaction an actor out of combat held prepared
+pub fn forget_preparations(
+    mut query: Query<(Entity, &CombatState, &mut common_bevy::components::prepared::Prepared)>,
+    mut writer: MessageWriter<Do>,
+) {
+    for (ent, state, mut prepared) in &mut query {
+        if !state.in_combat && prepared.count() > 0 {
+            prepared.clear();
+            writer.write(Do { event: GameEvent::Incremental { ent, component: common_bevy::message::Component::Prepared(*prepared) } });
+        }
+    }
+}
+
 /// Forgets the swing of every actor out of combat, so its next fight's
 /// first swing banks nothing.
 pub fn forget_swings(mut query: Query<(&CombatState, &mut common_bevy::components::Swing)>) {
