@@ -848,6 +848,13 @@ impl ActorAttributes {
         self.base_potency() * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(self.force()))
     }
 
+    /// How much longer and harder the stuns, dazes, slows and knockbacks this
+    /// actor inflicts hold: 1 with no Concentration, `Tuning::concentration_hold`
+    /// more at the ceiling of its share
+    pub fn hold(&self) -> f32 {
+        1.0 + crate::tuning::tuning().concentration_hold * self.share(self.concentration())
+    }
+
     /// Concentration: Resolve's absolute meta-attribute, fully scaled like Force:
     /// the weight of what a Counter returns. Its ratio to
     /// [`base_potency`](Self::base_potency) weights the share of each
@@ -1050,6 +1057,14 @@ mod tests {
         let plain = ActorAttributes::default();
         assert_eq!(plain.max_stamina(), crate::tuning::tuning().stamina_base);
         assert!(disciplined.max_stamina() > plain.max_stamina());
+    }
+
+    #[test]
+    fn concentration_holds_what_its_blows_impose() {
+        let resolute = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
+        let plain = ActorAttributes::default();
+        assert_eq!(plain.hold(), 1.0, "no Concentration, effects as they come");
+        assert!(resolute.hold() > 1.0);
     }
 
     #[test]

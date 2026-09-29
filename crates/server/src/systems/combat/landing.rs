@@ -46,13 +46,15 @@ pub struct VolleyBurst {
 }
 
 /// Lands the effect of a blow from `ability`, struck by `source` on
-/// `target` in a threat queued `at`, as it resolves or is dismissed.
+/// `target` in a threat queued `at`, as it resolves or is dismissed. The
+/// source's `hold` (`ActorAttributes::hold`) lengthens and deepens it.
 #[allow(clippy::too_many_arguments)]
 pub fn land(
     ability: Option<AbilityType>,
     target: Entity,
     source: Entity,
     at: std::time::Duration,
+    hold: f32,
     tuning: &Tuning,
     statuses: &mut Query<&mut Status>,
     recoveries: &Query<&GlobalRecovery>,
@@ -65,7 +67,7 @@ pub fn land(
     match ability {
         // A stun holds its target completely, a lockout as long with it
         Some(AbilityType::Flank) => {
-            let stunned = Stunned { remaining: tuning.flank_stun };
+            let stunned = Stunned { remaining: tuning.flank_stun * hold };
             let lockout = recoveries.get(target).map_or(0.0, |recovery| recovery.remaining).max(stunned.remaining);
             if let Ok(mut entity) = commands.get_entity(target) {
                 entity.try_insert((stunned, GlobalRecovery::new(lockout, AbilityType::Flank)));
@@ -74,14 +76,14 @@ pub fn land(
         }
         Some(AbilityType::Rattle) => update(target, statuses, commands, writer, |status| {
             let stacks = Status::stacks_of(Some(status)).saturating_add(1).min(tuning.rattle_stacks);
-            status.daze = Some(Daze { stacks, pace: (1.0 - tuning.rattle_daze * stacks as f32).max(MIN_PACE) });
+            status.daze = Some(Daze { stacks, pace: (1.0 - tuning.rattle_daze * hold * stacks as f32).max(MIN_PACE) });
         }),
         // Each shot that lands slows its target afresh; the first of a burst
         // to land carries the Kiter clear, so a burst leaps once, as the
         // target can no longer follow
         Some(AbilityType::Volley) => {
             update(target, statuses, commands, writer, |status| {
-                status.slow = Some(Timed { pace: 1.0 - tuning.volley_slow, remaining: tuning.volley_slow_secs });
+                status.slow = Some(Timed { pace: (1.0 - tuning.volley_slow * hold).max(MIN_PACE), remaining: tuning.volley_slow_secs * hold });
             });
             let first_of_burst = bursts.get_mut(source).is_ok_and(|mut burst| {
                 let first = burst.at == at && !burst.leapt;

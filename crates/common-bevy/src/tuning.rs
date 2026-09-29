@@ -45,6 +45,9 @@ pub struct Tuning {
     pub contest_scale: f32,
     /// Contest points each level of gap is worth to the higher level
     pub contest_per_level: f32,
+    /// Share longer and harder the effects an actor inflicts hold at the
+    /// ceiling of Concentration's share
+    pub concentration_hold: f32,
     /// Share of a blow Toughness mitigates at the base advantage
     pub mitigation_share: f32,
     /// Share of a landed blow a Presence advantage spills onto each other
@@ -154,6 +157,7 @@ impl Tuning {
         auto_interval: 2.1,
         contest_scale: 420.0,
         contest_per_level: 15.0,
+        concentration_hold: 1.0,
         mitigation_share: 0.525,
         spill_share: 0.5,
         pushback_share: 0.5,
@@ -267,6 +271,7 @@ impl Tuning {
             "health_curve_p" => &mut self.health_curve_p,
             "contest_scale" => &mut self.contest_scale,
             "contest_per_level" => &mut self.contest_per_level,
+            "concentration_hold" => &mut self.concentration_hold,
             "mitigation_share" => &mut self.mitigation_share,
             "spill_share" => &mut self.spill_share,
             "pushback_share" => &mut self.pushback_share,

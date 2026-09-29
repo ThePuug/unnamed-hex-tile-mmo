@@ -87,6 +87,7 @@ pub fn process_dismiss(
     mut bursts: Query<&mut crate::systems::combat::landing::VolleyBurst>,
     map: Res<common_bevy::resources::map::Map>,
     reach: crate::systems::combat::landing::SpillReach,
+    attrs: Query<&ActorAttributes>,
     mut writer: MessageWriter<Do>,
 ) {
     let tuning = common_bevy::tuning::tuning();
@@ -139,7 +140,8 @@ pub fn process_dismiss(
             },
         });
 
-        crate::systems::combat::landing::land(threat.ability, ent, threat.source, threat.inserted_at, &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
+        let hold = attrs.get(threat.source).map_or(1.0, ActorAttributes::hold);
+        crate::systems::combat::landing::land(threat.ability, ent, threat.source, threat.inserted_at, hold, &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
         reach.spill(threat.source, ent, threat.damage, &mut commands);
     }
 }

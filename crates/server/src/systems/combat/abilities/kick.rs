@@ -43,7 +43,8 @@ fn calculate_knockback_destination(
 /// - `Tuning::kick_cost` stamina
 /// - Clears all visible window threats
 /// - Deals 75% Precision damage to adjacent threat sources
-/// - Knockback adjacent sources 4 tiles directly away
+/// - Knockback adjacent sources 4 tiles directly away, further by the
+///   kicker's hold (`ActorAttributes::hold`)
 /// - Synergy: Kick → Lunge
 pub fn handle_kick(
     mut commands: Commands,
@@ -216,7 +217,8 @@ pub fn handle_kick(
             };
 
             // Calculate full knockback destination via greedy terrain-following path
-            let (kb_destination, tiles_pushed) = calculate_knockback_destination(**source_loc, direction, 4, &map);
+            let distance = (4.0 * caster_attrs.hold()).round() as i32;
+            let (kb_destination, tiles_pushed) = calculate_knockback_destination(**source_loc, direction, distance, &map);
 
             if tiles_pushed > 0 {
                 // Send MovementIntent so client starts visual slide immediately.
