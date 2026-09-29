@@ -78,8 +78,9 @@ pub enum Event {
     /// when any of it changes and at every tile crossing while moving.
     MovementIntent { ent: Entity, position: Position, heading: Heading, moving: bool, back: bool, airtime: Option<i16>, burdened: bool },
     /// Server → Client: the entity slides to a standing-height tile under an
-    /// ability (lunge, knockback), arriving after `duration_ms`.
-    Displace { ent: Entity, destination: Qrz, duration_ms: u16 },
+    /// ability (lunge, knockback), arriving after `duration_ms`; round the
+    /// tile `around` on its ring when given (a flank), else the straight way.
+    Displace { ent: Entity, destination: Qrz, duration_ms: u16, around: Option<Qrz> },
     /// Client → Server: put the entity on the ground at this tile. An admin
     /// request; the server decides the height and answers with the tile
     /// update every client already treats as a teleport.

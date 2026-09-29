@@ -332,9 +332,9 @@ pub fn write_do(
                 let Some(&ent) = l2r.get_by_right(&ent) else { continue };
                 do_writer.write(Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime, burdened } });
             }
-            Do { event: Event::Displace { ent, destination, duration_ms } } => {
+            Do { event: Event::Displace { ent, destination, duration_ms, around } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else { continue };
-                do_writer.write(Do { event: Event::Displace { ent, destination, duration_ms } });
+                do_writer.write(Do { event: Event::Displace { ent, destination, duration_ms, around } });
             }
             _ => {
                 panic!("Unexpected message on Unreliable channel: {:?}", message);

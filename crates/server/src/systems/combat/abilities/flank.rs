@@ -3,7 +3,7 @@ use common_bevy::systems::targeting::faces;
 use common_bevy::{
     components::{
         engagement::EngagementMember, heading::Heading, hex_assignment::{AssignedHex, HexAssignment},
-        position::Position, resources::*, stunned::Stunned, AttackRange, Loc,
+        position::Position, resources::*, stunned::Stunned, AttackRange, Loc, Turn,
         reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration},
     },
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
@@ -14,8 +14,10 @@ use common_bevy::{
 pub const FLANK_STAMINA_COST: f32 = 30.0;
 
 /// Handle Flank, the Cutthroat's signature: on a target within melee reach,
-/// a stun of `ArchetypeTuning::flank_stun` seconds, a step to the tile at
-/// its back at reach, and a strike for `flank_intuition` of the caster's Intuition.
+/// a stun of `ArchetypeTuning::flank_stun` seconds, a circle round it on
+/// its ring to the tile at its back at reach, turned to face it so its
+/// auto-attacks carry on from there, and a strike for `flank_intuition` of
+/// the caster's Intuition.
 /// The strike waits in the target's queue like any threat, so a stun
 /// shorter than that wait leaves the target time to answer it. The stun
 /// holds the target completely: `Stunned` stops its movement and
@@ -97,8 +99,15 @@ pub fn handle_flank(
         let landing = back.and_then(|back| map.get_by_qr(back.q, back.r)).map(|(floor, _)| floor + qrz::Qrz::Z)
             .filter(|landing| *landing != **caster_loc && nntree.locate_all_at_point(&Loc::new(*landing)).next().is_none());
         if let Some(landing) = landing {
-            writer.write(Do { event: GameEvent::Displace { ent: *ent, destination: landing + qrz::Qrz::Z, duration_ms: 200 } });
+            // Round the target on its ring at the Lunge's pace, arriving
+            // turned to it so its auto-attacks carry on from its back
+            let steps = (**target_loc).circling(**caster_loc, landing).len() as u16;
+            let duration_ms = (steps * 50).max(200);
+            writer.write(Do { event: GameEvent::Displace { ent: *ent, destination: landing + qrz::Qrz::Z, duration_ms, around: Some(**target_loc) } });
             commands.entity(*ent).insert((Loc::new(landing), Position::at_tile(landing)));
+            if let Some(facing) = Heading::between(&map, landing, **target_loc) {
+                commands.entity(*ent).insert((facing, Turn { heading: facing, ..Turn::default() }));
+            }
             writer.write(Do {
                 event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Loc(Loc::new(landing)) },
             });

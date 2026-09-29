@@ -189,15 +189,23 @@ pub fn apply_displace(
     map: Res<Map>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::Displace { ent, destination, duration_ms } } = message else { continue };
+        let Do { event: Event::Displace { ent, destination, duration_ms, around } } = message else { continue };
         let (ent, destination, duration_ms) = (*ent, *destination, *duration_ms);
         let Ok((loc, mut visual)) = query.get_mut(ent) else { continue; };
 
         let duration_secs = duration_ms as f32 / 1000.0;
         let flat_dist = loc.flat_distance(&destination);
         let dest_world: Vec3 = origin.render_tile(&map, destination);
+        // Round `around` on its ring, standing on each tile's floor; a tile
+        // with no floor loaded leaves the straight way.
+        let circle = around.and_then(|centre| centre.circling(**loc, destination).into_iter()
+            .map(|tile| map.get_by_qr(tile.q, tile.r).map(|(floor, _)| origin.render_tile(&map, floor + qrz::Qrz::Z)))
+            .collect::<Option<Vec<Vec3>>>())
+            .filter(|waypoints| waypoints.len() > 1);
 
-        if flat_dist > 1 {
+        if let Some(waypoints) = circle {
+            visual.interpolate_along_path(&waypoints, duration_secs);
+        } else if flat_dist > 1 {
             // Path on floor tiles: Loc and the destination stand one level up.
             let current_floor = map.get_by_qr(loc.q, loc.r).map(|(f, _)| f).unwrap_or(**loc);
             let dest_floor = qrz::Qrz { q: destination.q, r: destination.r, z: destination.z - 1 };

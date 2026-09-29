@@ -171,7 +171,7 @@ pub fn handle_lunge(
         // Send MovementIntent for visual charge (fast dash)
         let charge_duration_ms = (distance as u16 * 50).max(100);
         writer.write(Do {
-            event: GameEvent::Displace { ent: *ent, destination: landing_loc + qrz::Qrz::Z, duration_ms: charge_duration_ms },
+            event: GameEvent::Displace { ent: *ent, destination: landing_loc + qrz::Qrz::Z, duration_ms: charge_duration_ms, around: None },
         });
 
         // Update caster's location
