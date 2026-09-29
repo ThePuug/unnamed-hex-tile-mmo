@@ -10,10 +10,9 @@ use crate::{
 /// adjacent out to this.
 pub const LUNGE_RANGE: u32 = 8;
 
-/// Calculate maximum stamina from actor attributes
-/// Fixed at 100 until we determine which attributes should scale it
-pub fn calculate_max_stamina(_attrs: &ActorAttributes) -> f32 {
-    100.0
+/// Calculate maximum stamina from actor attributes: its Endurance's pool
+pub fn calculate_max_stamina(attrs: &ActorAttributes) -> f32 {
+    attrs.max_stamina()
 }
 
 /// Calculate maximum mana from actor attributes

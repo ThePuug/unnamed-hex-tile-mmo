@@ -811,6 +811,22 @@ impl ActorAttributes {
         (1.0 - self.base_potency() / potency).max(0.0)
     }
 
+    /// Endurance: Discipline's absolute meta-attribute, fully scaled like
+    /// Force. Its share deepens the stamina pool (`max_stamina`).
+    pub fn endurance(&self) -> f32 {
+        let discipline = self.discipline() as f32;
+        let tuning = crate::tuning::tuning();
+        let linear = tuning.potency_base + (discipline * tuning.potency_per_point);
+        linear * self.damage_level_multiplier()
+    }
+
+    /// The stamina pool: `Tuning::stamina_base`, `Tuning::endurance_pool`
+    /// more of it at the ceiling of Endurance's share
+    pub fn max_stamina(&self) -> f32 {
+        let tuning = crate::tuning::tuning();
+        tuning.stamina_base * (1.0 + tuning.endurance_pool * self.share(self.endurance()))
+    }
+
     /// The chance a blow this actor strikes crits: `Tuning::crit_chance` at
     /// the ceiling of Intuition's share
     pub fn crit_chance(&self) -> f32 {
@@ -1026,6 +1042,14 @@ mod tests {
         assert!(instinct.crit_chance() > 0.0 && instinct.crit_chance() < 1.0);
         assert!(agility.crit_multiplier() > plain.crit_multiplier(), "Precision lands a crit harder");
         assert!(plain.crit_multiplier() > 1.0, "a crit always lands harder");
+    }
+
+    #[test]
+    fn endurance_deepens_the_stamina_pool() {
+        let disciplined = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
+        let plain = ActorAttributes::default();
+        assert_eq!(plain.max_stamina(), crate::tuning::tuning().stamina_base);
+        assert!(disciplined.max_stamina() > plain.max_stamina());
     }
 
     #[test]

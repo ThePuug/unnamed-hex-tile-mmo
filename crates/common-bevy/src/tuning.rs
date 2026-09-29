@@ -25,6 +25,10 @@ pub struct Tuning {
     pub damage_curve_p: f32,
     /// Health every actor has before Vitality and level
     pub base_health: f32,
+    /// Stamina every actor has before Endurance
+    pub stamina_base: f32,
+    /// Share more stamina at the ceiling of Endurance's share
+    pub endurance_pool: f32,
     /// Health each point of Vitality adds before level
     pub health_per_vitality: f32,
     /// The health level curve, `(1 + level × k)^p`
@@ -142,6 +146,8 @@ impl Tuning {
         damage_curve_k: 0.15,
         damage_curve_p: 1.75,
         base_health: 420.0,
+        stamina_base: 100.0,
+        endurance_pool: 1.0,
         health_per_vitality: 1.96,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
@@ -254,6 +260,8 @@ impl Tuning {
             "damage_curve_k" => &mut self.damage_curve_k,
             "damage_curve_p" => &mut self.damage_curve_p,
             "base_health" => &mut self.base_health,
+            "stamina_base" => &mut self.stamina_base,
+            "endurance_pool" => &mut self.endurance_pool,
             "health_per_vitality" => &mut self.health_per_vitality,
             "health_curve_k" => &mut self.health_curve_k,
             "health_curve_p" => &mut self.health_curve_p,
