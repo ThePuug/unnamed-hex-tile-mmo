@@ -14,9 +14,8 @@
 //! archetype against itself instead of the others, `ordered=1` to fight every
 //! ordered pair, mirrors included, `trace` to print every
 //! fight (1), with a timeline every 5s (2), or every half second for its
-//! first 12s (3). Any `ArchetypeTuning` knob may be set by name too, a delay
-//! as `min-max` milliseconds (`b_delay=1500-3500`, `lunge_pierce=0.5`), so a
-//! value is tried without a rebuild.
+//! first 12s (3). Any `ArchetypeTuning` knob may be set by name too
+//! (`lunge_pierce=0.5`), so a value is tried without a rebuild.
 //!
 //! `arena serve` runs one scenario per line of stdin, each line the keys
 //! above, and ends each report with a line `end`, so a tuning search tries

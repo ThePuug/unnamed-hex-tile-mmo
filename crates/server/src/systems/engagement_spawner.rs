@@ -39,6 +39,12 @@ use common_bevy::{
 #[derive(Resource, Default)]
 pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
 
+/// The most an NPC waits, in milliseconds, once it can afford its signature
+/// before it uses it, drawn afresh each use: enough to spread a pack's
+/// abilities apart. The skill's own cost and recovery set how often it
+/// comes, so this stays behaviour and the balance stays with the skill.
+pub const SIGNATURE_WAIT_MS: u64 = 2000;
+
 /// Tiles between the edge of a den's acquisition range and the player who
 /// asked for it, so the fight starts when the player walks in.
 const DEN_CLEARANCE: i32 = 5;
@@ -216,7 +222,6 @@ pub fn spawn_engagement(
             commands.entity(npc_entity).insert(worn);
         }
 
-        let (delay_min, delay_max) = tuning.delay(archetype);
         match archetype {
             EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher | EnemyArchetype::Ambusher => {
                 let chase = crate::systems::behaviour::chase::Chase {
@@ -227,7 +232,7 @@ pub fn spawn_engagement(
                 commands.entity(npc_entity).insert((
                     NearestNeighbor::new(npc_entity, npc_loc),
                     chase,
-                    NpcRecovery::new(delay_min, delay_max),
+                    NpcRecovery::new(0, SIGNATURE_WAIT_MS),
                     common_bevy::components::AttackRange(attack_range(archetype)),
                     common_bevy::components::target::Target::default(),
                     Heading::default(),
@@ -249,7 +254,7 @@ pub fn spawn_engagement(
                     AirTime::default(),
                     common_bevy::components::AttackRange(attack_range(archetype)),
                     LastAutoAttack::default(),
-                    NpcRecovery::new(delay_min, delay_max),
+                    NpcRecovery::new(0, SIGNATURE_WAIT_MS),
                     common_bevy::components::movement_intent_state::MovementIntentState::default(),
                 ));
             }
