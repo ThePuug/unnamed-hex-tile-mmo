@@ -3,7 +3,7 @@ use common_bevy::systems::targeting::faces;
 use common_bevy::{
     components::{
         engagement::EngagementMember, heading::Heading, hex_assignment::{AssignedHex, HexAssignment},
-        position::Position, resources::*, stunned::Stunned, AttackRange, Loc, Turn,
+        position::Position, resources::*, AttackRange, Loc, Turn,
         reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration},
     },
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
@@ -16,14 +16,14 @@ pub const FLANK_STAMINA_COST: f32 = 30.0;
 pub const FLANK_MS_PER_TILE: u16 = 80;
 
 /// Handle Flank, the Ambusher's signature: on a target within melee reach,
-/// a stun of `ArchetypeTuning::flank_stun` seconds, a circle round it on
-/// its ring to the tile at its back at reach, turned to face it so its
-/// auto-attacks carry on from there, and a strike for `flank_intuition` of
-/// the caster's Intuition.
-/// The strike waits in the target's queue like any threat, so a stun
-/// shorter than that wait leaves the target time to answer it. The stun
-/// holds the target completely: `Stunned` stops its movement and
-/// auto-attacks, and a lockout as long stops its abilities and reactions.
+/// a circle round it on its ring to the tile at its back at reach, turned
+/// to face it so its auto-attacks carry on from there, and a strike for
+/// `flank_intuition` of the caster's Intuition that stuns for
+/// `ArchetypeTuning::flank_stun` seconds as it lands (`landing::land`).
+/// The strike waits in the target's queue like any threat, so the target
+/// has its window to answer it before the stun holds it: `Stunned` stops
+/// its movement and auto-attacks, and a lockout as long its abilities and
+/// reactions.
 /// The back tile becomes the Ambusher's assigned tile, so it holds the flank;
 /// an engagement member assigned there takes the tile the Ambusher left.
 /// With its back tile taken or not standable, the Ambusher strikes from
@@ -85,13 +85,6 @@ pub fn handle_flank(
         stamina.step = stamina.state;
         writer.write(Do {
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
-        });
-
-        let stunned = Stunned { remaining: tuning.flank_stun };
-        let lockout = recovery_query.get(target_ent).map_or(0.0, |recovery| recovery.remaining).max(stunned.remaining);
-        commands.entity(target_ent).insert((stunned, GlobalRecovery::new(lockout, AbilityType::Flank)));
-        writer.write(Do {
-            event: GameEvent::Incremental { ent: target_ent, component: common_bevy::message::Component::Stunned(stunned) },
         });
 
         // The tile at the target's back at reach, a place on the ring the

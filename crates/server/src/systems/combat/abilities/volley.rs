@@ -11,10 +11,11 @@ pub const VOLLEY_STAMINA_COST: f32 = 20.0;
 /// `KITER_REACH`, one shot per threat the Kiter can see — its Concentration
 /// window, so Focus decides how many land — each striking for
 /// `ArchetypeTuning::volley_force` of Force. Every shot is its own threat.
-/// The burst slows its target by `volley_slow` for `volley_slow_secs`, and
-/// sets the Kiter running at `volley_run` of its pace for `volley_run_secs`,
-/// in which it backs away to the far edge of its band, facing and shooting:
-/// at a run of 2 its back-up is as fast as a walk.
+/// Each shot, as it lands (`landing::land`), slows its target by
+/// `volley_slow` for `volley_slow_secs` and sets the Kiter running at
+/// `volley_run` of its pace for `volley_run_secs`, in which it backs away
+/// to the far edge of its band, facing and shooting: at a run of 2 its
+/// back-up is as fast as a walk.
 pub fn handle_volley(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -24,7 +25,6 @@ pub fn handle_volley(
     recovery_query: Query<&GlobalRecovery>,
     respawn_query: Query<&RespawnTimer>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
-    status_query: Query<&common_bevy::components::status::Status>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -82,19 +82,6 @@ pub fn handle_volley(
                     ability: Some(AbilityType::Volley),
                     dot: 0.0,
                 },
-            });
-        }
-
-        use common_bevy::components::status::Timed;
-        for (who, slot) in [
-            (target_ent, Timed { pace: 1.0 - tuning.volley_slow, remaining: tuning.volley_slow_secs }),
-            (*ent, Timed { pace: tuning.volley_run, remaining: tuning.volley_run_secs }),
-        ] {
-            let mut status = status_query.get(who).copied().unwrap_or_default();
-            if who == target_ent { status.slow = Some(slot) } else { status.run = Some(slot) }
-            commands.entity(who).insert(status);
-            writer.write(Do {
-                event: GameEvent::Incremental { ent: who, component: common_bevy::message::Component::Status(status) },
             });
         }
 

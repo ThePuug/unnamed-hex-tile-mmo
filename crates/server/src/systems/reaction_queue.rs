@@ -74,11 +74,16 @@ pub fn tick_dots(
 }
 
 /// Server system to process Dismiss events
-/// Pops the front visible threat from the queue and applies full unmitigated damage
+/// Pops the front visible threat from the queue and applies full unmitigated damage,
+/// and whatever else the blow does lands with it
 /// No GCD, no lockout, no resource cost
 pub fn process_dismiss(
+    mut commands: Commands,
     mut reader: MessageReader<Try>,
     mut query: Query<(&mut ReactionQueue, &mut Health)>,
+    mut statuses: Query<&mut common_bevy::components::status::Status>,
+    recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
+    tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -129,6 +134,8 @@ pub fn process_dismiss(
                 component: common_bevy::message::Component::Health(*health),
             },
         });
+
+        crate::systems::combat::landing::land(threat.ability, ent, threat.source, &tuning, &mut statuses, &recoveries, &mut commands, &mut writer);
     }
 }
 

@@ -1,17 +1,15 @@
 use bevy::prelude::*;
 use common_bevy::systems::targeting::faces;
 use common_bevy::{
-    components::{status::{Daze, Status}, resources::*, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+    components::{status::Status, resources::*, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
 };
 
 pub const RATTLE_STAMINA_COST: f32 = 40.0;
 
-/// The least pace a daze leaves: a dazed actor still moves and swings.
-const MIN_PACE: f32 = 0.1;
-
 /// Handle Rattle, the Juggernaut's signature: a strike on a target within
-/// melee reach that adds a stack to its daze (`Status::daze`), up to `rattle_stacks`.
+/// melee reach that, as it lands (`landing::land`), adds a stack to its
+/// daze (`Status::daze`), up to `rattle_stacks`.
 /// Each stack takes `rattle_daze` of its pace, its movement, auto-attacks
 /// and recovery alike. The strike is Vitality's: `rattle_health` of the
 /// Juggernaut's own health, and `rattle_growth` more for each stack already
@@ -74,17 +72,7 @@ pub fn handle_rattle(
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
         });
 
-        let mut status = status_query.get(target_ent).copied().unwrap_or_default();
-        let held = Status::stacks_of(Some(&status));
-        let stacks = held.saturating_add(1).min(tuning.rattle_stacks);
-        status.daze = Some(Daze {
-            stacks,
-            pace: (1.0 - tuning.rattle_daze * stacks as f32).max(MIN_PACE),
-        });
-        commands.entity(target_ent).insert(status);
-        writer.write(Do {
-            event: GameEvent::Incremental { ent: target_ent, component: common_bevy::message::Component::Status(status) },
-        });
+        let held = Status::stacks_of(status_query.get(target_ent).ok());
         let bulk = health_query.get(*ent).map_or(0.0, |health| health.max);
         commands.trigger(Try {
             event: GameEvent::DealDamage {

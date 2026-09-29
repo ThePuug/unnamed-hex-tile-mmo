@@ -1,4 +1,5 @@
 pub mod abilities;
+pub mod landing;
 
 use bevy::prelude::*;
 use common_bevy::{
@@ -117,9 +118,11 @@ pub fn process_deal_damage(
 /// Processes ResolveThreat events emitted by expiry system or overflow
 pub fn resolve_threat(
     trigger: On<Try>,
-    _commands: Commands,
+    mut commands: Commands,
     mut query: Query<(&mut Health, &ActorAttributes)>,
     actors: Query<(&Loc, &ActorAttributes)>,
+    mut statuses: Query<&mut common_bevy::components::status::Status>,
+    recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
     tuning: Res<crate::resources::tuning::ArchetypeTuning>,
     level_contest: Res<damage_calc::LevelContest>,
     mut writer: MessageWriter<Do>,
@@ -160,6 +163,8 @@ pub fn resolve_threat(
                     component: common_bevy::message::Component::Health(*health),
                 },
             });
+
+            landing::land(threat.ability, *ent, threat.source, &tuning, &mut statuses, &recoveries, &mut commands, &mut writer);
 
             // Death check moved to dedicated check_death system (decoupled from combat)
         }
