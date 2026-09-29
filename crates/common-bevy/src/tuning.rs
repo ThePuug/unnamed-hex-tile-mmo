@@ -133,42 +133,42 @@ pub struct Tuning {
 impl Tuning {
     /// The numbers the game plays by.
     pub const DEFAULT: Tuning = Tuning {
-        potency_base: 10.0,
-        potency_per_point: 0.3,
+        potency_base: 9.8,
+        potency_per_point: 0.2058,
         damage_curve_k: 0.15,
         damage_curve_p: 1.75,
-        base_health: 300.0,
+        base_health: 420.0,
         health_per_vitality: 1.96,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
         tier_1: 0.2,
         tier_2: 0.4,
         tier_3: 0.6,
-        concentration: [1, 2, 3, 4],
-        cadence: [3.0, 2.5, 2.0, 1.5],
+        concentration: [1, 2, 2, 3],
+        cadence: [2.1, 1.75, 1.4, 1.05],
         volley_shots: [1, 2, 3, 4],
-        evasion: [0.0, 0.10, 0.20, 0.30],
+        evasion: [0.0, 0.1, 0.2, 0.3],
         contest_scale: 300.0,
         contest_per_level: 15.0,
-        mitigation_share: 0.75,
-        pushback_share: 0.50,
+        mitigation_share: 0.525,
+        pushback_share: 0.5,
         composure_share: 0.33,
-        synergy_floor: 0.0,
+        synergy_floor: 0.1,
         synergy_share: 0.66,
         reaction_window: 3.0,
         window_bonus: 0.5,
-        lunge_cost: 20.0,
+        lunge_cost: 10.0,
         overpower_cost: 40.0,
         counter_cost: 60.0,
         kick_cost: 40.0,
         deflect_cost: 50.0,
         lunge_recovery: 2.0,
         overpower_recovery: 3.0,
-        counter_recovery: 4.0,
+        counter_recovery: 2.0,
         kick_recovery: 4.0,
         deflect_recovery: 1.0,
         rattle_recovery: 2.0,
-        disengage_recovery: 2.0,
+        disengage_recovery: 2.8,
         volley_recovery: 2.0,
         flank_recovery: 2.0,
         auto_damage: 1.05,
@@ -179,20 +179,20 @@ impl Tuning {
         rattle_cost: 40.0,
         rattle_health: 0.035,
         rattle_growth: 0.343,
-        rattle_daze: 0.049,
+        rattle_daze: 0.0686,
         rattle_stacks: 3,
         disengage_cost: 20.0,
-        disengage_leap: 3,
+        disengage_leap: 2,
         disengage_technique: 0.49,
         volley_cost: 20.0,
         volley_force: 0.84,
-        volley_slow: 0.069,
-        volley_slow_secs: 2.058,
-        volley_leap: 4,
+        volley_slow: 0.5,
+        volley_slow_secs: 2.45,
+        volley_leap: 10,
         flank_cost: 30.0,
         flank_stun: 3.0,
         flank_intuition: 1.0,
-        counter_reflect: 0.331,
+        counter_reflect: 0.2271,
     };
 
     /// Stamina `ability` costs; an auto-attack is free.
@@ -376,11 +376,14 @@ mod tests {
     fn the_tiers_and_their_effects_run_in_order() {
         let tuning = Tuning::default();
         assert!(tuning.tier_1 < tuning.tier_2 && tuning.tier_2 < tuning.tier_3);
+        // A higher tier never gives less, and the top gives more than none
         for t in 0..3 {
-            assert!(tuning.concentration[t] < tuning.concentration[t + 1]);
-            assert!(tuning.cadence[t] > tuning.cadence[t + 1]);
-            assert!(tuning.volley_shots[t] < tuning.volley_shots[t + 1]);
-            assert!(tuning.evasion[t] < tuning.evasion[t + 1]);
+            assert!(tuning.concentration[t] <= tuning.concentration[t + 1]);
+            assert!(tuning.cadence[t] >= tuning.cadence[t + 1]);
+            assert!(tuning.volley_shots[t] <= tuning.volley_shots[t + 1]);
+            assert!(tuning.evasion[t] <= tuning.evasion[t + 1]);
         }
+        assert!(tuning.concentration[3] > tuning.concentration[0] && tuning.cadence[3] < tuning.cadence[0]);
+        assert!(tuning.volley_shots[3] > tuning.volley_shots[0] && tuning.evasion[3] > tuning.evasion[0]);
     }
 }

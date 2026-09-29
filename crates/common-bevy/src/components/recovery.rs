@@ -222,14 +222,13 @@ mod tests {
     // ===== Ability Recovery Duration Tests =====
 
     #[test]
-    fn test_ability_recovery_durations() {
-        // Updated values for slower combat pace
-        assert_eq!(get_ability_recovery_duration(AbilityType::Lunge), 2.0);
-        assert_eq!(get_ability_recovery_duration(AbilityType::Overpower), 3.0);
-        assert_eq!(get_ability_recovery_duration(AbilityType::Deflect), 1.0);
-        assert_eq!(get_ability_recovery_duration(AbilityType::AutoAttack), 0.0); // Uses own timer
-        assert_eq!(get_ability_recovery_duration(AbilityType::Counter), 4.0);
-        assert_eq!(get_ability_recovery_duration(AbilityType::Kick), 4.0);
+    fn every_ability_but_the_auto_attack_locks_its_user_out() {
+        use AbilityType::*;
+        assert_eq!(get_ability_recovery_duration(AutoAttack), 0.0, "an auto-attack runs on its own timer");
+        for ability in [Lunge, Overpower, Deflect, Counter, Kick, Rattle, Disengage, Volley, Flank] {
+            assert!(get_ability_recovery_duration(ability) > 0.0, "{ability:?} locks its user out");
+            assert_eq!(get_ability_recovery_duration(ability), crate::tuning::tuning().recovery(ability));
+        }
     }
 
     // ===== Integration Tests =====
