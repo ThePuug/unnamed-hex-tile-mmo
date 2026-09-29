@@ -70,7 +70,7 @@ const ARCHETYPES: [EnemyArchetype; 6] = [
     EnemyArchetype::Kiter,
     EnemyArchetype::Defender,
     EnemyArchetype::Skirmisher,
-    EnemyArchetype::Cutthroat,
+    EnemyArchetype::Ambusher,
 ];
 
 /// One side of a fight: `size` NPCs of `archetype` at `level`.

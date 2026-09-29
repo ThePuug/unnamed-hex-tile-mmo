@@ -214,7 +214,7 @@ pub fn actor_name(typ: EntityType) -> &'static str {
                 NpcType::ForestSprite => "sprite",
                 NpcType::Juggernaut => "juggernaut",
                 NpcType::Skirmisher => "grasshopper",
-                NpcType::Cutthroat => "crocodile",
+                NpcType::Ambusher => "crocodile",
                 NpcType::Defender => "player",
             }
         },

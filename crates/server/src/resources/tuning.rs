@@ -14,7 +14,7 @@ pub struct ArchetypeTuning {
     pub kiter_delay: (u64, u64),
     pub defender_delay: (u64, u64),
     pub skirmisher_delay: (u64, u64),
-    pub cutthroat_delay: (u64, u64),
+    pub ambusher_delay: (u64, u64),
     /// Share of the target's Toughness mitigation a Lunge strikes past
     pub lunge_pierce: f32,
     /// Share of an attack's damage its roll lands either side of it
@@ -69,7 +69,7 @@ impl Default for ArchetypeTuning {
             kiter_delay: (2000, 4000),
             defender_delay: (1000, 3000),
             skirmisher_delay: (5000, 7000),
-            cutthroat_delay: (3000, 5000),
+            ambusher_delay: (3000, 5000),
             lunge_pierce: 0.49,
             damage_spread: 0.2,
             contest_per_level: common_bevy::systems::combat::damage::CONTEST_PER_LEVEL,
@@ -105,7 +105,7 @@ impl ArchetypeTuning {
             EnemyArchetype::Kiter => self.kiter_delay,
             EnemyArchetype::Defender => self.defender_delay,
             EnemyArchetype::Skirmisher => self.skirmisher_delay,
-            EnemyArchetype::Cutthroat => self.cutthroat_delay,
+            EnemyArchetype::Ambusher => self.ambusher_delay,
         }
     }
 
@@ -136,7 +136,7 @@ impl ArchetypeTuning {
             "k_delay" => self.kiter_delay = range()?,
             "d_delay" => self.defender_delay = range()?,
             "s_delay" => self.skirmisher_delay = range()?,
-            "c_delay" => self.cutthroat_delay = range()?,
+            "a_delay" => self.ambusher_delay = range()?,
             "lunge_pierce" => self.lunge_pierce = number()?,
             "lunge_dot" => self.lunge_dot = number()?,
             "damage_spread" => self.damage_spread = number()?,
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn delays_run_forwards() {
         let tuning = ArchetypeTuning::default();
-        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher, EnemyArchetype::Cutthroat] {
+        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher, EnemyArchetype::Ambusher] {
             let (min, max) = tuning.delay(archetype);
             assert!(min <= max, "{archetype:?} delay range runs backwards");
         }

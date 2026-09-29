@@ -93,7 +93,7 @@ pub enum MenuPath {
 #[cfg(feature = "admin")]
 pub const DENS: [(&str, common_bevy::spatial_difficulty::EnemyArchetype); 6] = {
     use common_bevy::spatial_difficulty::EnemyArchetype::*;
-    [("Dog Pack", Berserker), ("Forest Sprites", Kiter), ("Juggernauts", Juggernaut), ("Defenders", Defender), ("Skirmishers", Skirmisher), ("Cutthroats", Cutthroat)]
+    [("Dog Pack", Berserker), ("Forest Sprites", Kiter), ("Juggernauts", Juggernaut), ("Defenders", Defender), ("Skirmishers", Skirmisher), ("Ambushers", Ambusher)]
 };
 
 impl MenuPath {

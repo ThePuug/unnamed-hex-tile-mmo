@@ -15,7 +15,7 @@ pub const FLANK_STAMINA_COST: f32 = 30.0;
 /// How long the circle to the target's back takes a tile of its ring.
 pub const FLANK_MS_PER_TILE: u16 = 80;
 
-/// Handle Flank, the Cutthroat's signature: on a target within melee reach,
+/// Handle Flank, the Ambusher's signature: on a target within melee reach,
 /// a stun of `ArchetypeTuning::flank_stun` seconds, a circle round it on
 /// its ring to the tile at its back at reach, turned to face it so its
 /// auto-attacks carry on from there, and a strike for `flank_intuition` of
@@ -24,9 +24,9 @@ pub const FLANK_MS_PER_TILE: u16 = 80;
 /// shorter than that wait leaves the target time to answer it. The stun
 /// holds the target completely: `Stunned` stops its movement and
 /// auto-attacks, and a lockout as long stops its abilities and reactions.
-/// The back tile becomes the Cutthroat's assigned tile, so it holds the flank;
-/// an engagement member assigned there takes the tile the Cutthroat left.
-/// With its back tile taken or not standable, the Cutthroat strikes from
+/// The back tile becomes the Ambusher's assigned tile, so it holds the flank;
+/// an engagement member assigned there takes the tile the Ambusher left.
+/// With its back tile taken or not standable, the Ambusher strikes from
 /// where it stands.
 pub fn handle_flank(
     mut commands: Commands,

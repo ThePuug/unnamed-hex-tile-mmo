@@ -88,7 +88,7 @@ pub enum EnemyArchetype {
     Kiter,       // Inland (flat) - Ranged harassment (pure Focus)
     Defender,    // Coast - Reactive counter-attacks (pure Presence)
     Skirmisher,  // Evasive - dodges the blows aimed at it (pure Grace)
-    Cutthroat,   // Ambushing - stuns and strikes from behind (pure Instinct)
+    Ambusher,   // Ambushing - stuns and strikes from behind (pure Instinct)
 }
 
 impl EnemyArchetype {
@@ -112,7 +112,7 @@ impl EnemyArchetype {
             EnemyArchetype::Juggernaut => PositioningStrategy::Surround,
             EnemyArchetype::Defender => PositioningStrategy::Surround,
             EnemyArchetype::Skirmisher => PositioningStrategy::Surround,
-            EnemyArchetype::Cutthroat => PositioningStrategy::Surround,
+            EnemyArchetype::Ambusher => PositioningStrategy::Surround,
             EnemyArchetype::Kiter => PositioningStrategy::Orbital,
         }
     }
@@ -125,7 +125,7 @@ impl EnemyArchetype {
             EnemyArchetype::Kiter => Some(AbilityType::Volley),
             EnemyArchetype::Defender => Some(AbilityType::Counter),
             EnemyArchetype::Skirmisher => Some(AbilityType::Disengage),
-            EnemyArchetype::Cutthroat => Some(AbilityType::Flank),
+            EnemyArchetype::Ambusher => Some(AbilityType::Flank),
         }
     }
 
@@ -138,7 +138,7 @@ impl EnemyArchetype {
             EnemyArchetype::Kiter => NpcType::ForestSprite,
             EnemyArchetype::Defender => NpcType::Defender,
             EnemyArchetype::Skirmisher => NpcType::Skirmisher,
-            EnemyArchetype::Cutthroat => NpcType::Cutthroat,
+            EnemyArchetype::Ambusher => NpcType::Ambusher,
         }
     }
 
@@ -151,7 +151,7 @@ impl EnemyArchetype {
             NpcType::ForestSprite => EnemyArchetype::Kiter,
             NpcType::Defender => EnemyArchetype::Defender,
             NpcType::Skirmisher => EnemyArchetype::Skirmisher,
-            NpcType::Cutthroat => EnemyArchetype::Cutthroat,
+            NpcType::Ambusher => EnemyArchetype::Ambusher,
         }
     }
 
@@ -164,7 +164,7 @@ impl EnemyArchetype {
             EnemyArchetype::Kiter => Approach::Distant,
             EnemyArchetype::Defender => Approach::Patient,
             EnemyArchetype::Skirmisher => Approach::Evasive,
-            EnemyArchetype::Cutthroat => Approach::Ambushing,
+            EnemyArchetype::Ambusher => Approach::Ambushing,
         }
     }
 
@@ -177,7 +177,7 @@ impl EnemyArchetype {
             EnemyArchetype::Kiter => Resilience::Mental,
             EnemyArchetype::Defender => Resilience::Hardened,
             EnemyArchetype::Skirmisher => Resilience::Shielded,
-            EnemyArchetype::Cutthroat => Resilience::Blessed,
+            EnemyArchetype::Ambusher => Resilience::Blessed,
         }
     }
 }
@@ -227,7 +227,7 @@ static DEFENDER_BUILD: &[Allocation] = &[
 static SKIRMISHER_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::MightGraceAxis, weight: 1, direction: 1 },
 ];
-static CUTTHROAT_BUILD: &[Allocation] = &[
+static AMBUSHER_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::InstinctPresenceAxis, weight: 1, direction: -1 },
 ];
 
@@ -265,8 +265,8 @@ impl EnemyArchetype {
                 vitality_focus_shift: 0,
                 instinct_presence_shift: 0,
             },
-            EnemyArchetype::Cutthroat => NpcBuild {
-                allocations: CUTTHROAT_BUILD,
+            EnemyArchetype::Ambusher => NpcBuild {
+                allocations: AMBUSHER_BUILD,
                 might_grace_shift: 0,
                 vitality_focus_shift: 0,
                 instinct_presence_shift: 0,
@@ -422,7 +422,7 @@ mod tests {
         assert_eq!(EnemyArchetype::Kiter.ability(), Some(AbilityType::Volley));
         assert_eq!(EnemyArchetype::Defender.ability(), Some(AbilityType::Counter));
         assert_eq!(EnemyArchetype::Skirmisher.ability(), Some(AbilityType::Disengage));
-        assert_eq!(EnemyArchetype::Cutthroat.ability(), Some(AbilityType::Flank));
+        assert_eq!(EnemyArchetype::Ambusher.ability(), Some(AbilityType::Flank));
     }
 
     // ===== DISTRIBUTE POINTS TESTS =====
@@ -502,7 +502,7 @@ mod tests {
             (EnemyArchetype::Kiter, 3),
             (EnemyArchetype::Defender, 5),
             (EnemyArchetype::Skirmisher, 1),
-            (EnemyArchetype::Cutthroat, 4),
+            (EnemyArchetype::Ambusher, 4),
         ] {
             let attrs = calculate_enemy_attributes(10, archetype);
             let values = [attrs.might(), attrs.grace(), attrs.vitality(), attrs.focus(), attrs.instinct(), attrs.presence()];
@@ -528,19 +528,19 @@ mod tests {
     }
 
     #[test]
-    fn test_only_the_cutthroat_invests_in_instinct() {
-        // Instinct is the Cutthroat's alone, so only it has Cunning
+    fn test_only_the_ambusher_invests_in_instinct() {
+        // Instinct is the Ambusher's alone, so only it has Cunning
         for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher] {
             assert_eq!(calculate_enemy_attributes(10, archetype).cunning(), 0, "{archetype:?}");
         }
-        assert!(calculate_enemy_attributes(10, EnemyArchetype::Cutthroat).cunning() > 0);
+        assert!(calculate_enemy_attributes(10, EnemyArchetype::Ambusher).cunning() > 0);
     }
 
     #[test]
     fn test_all_points_allocated() {
         // Total absolute axis + spectrum values should equal level for every build
         for (level, archetype) in [1, 5, 10, 15, 20].into_iter().flat_map(|l| [
-            EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher, EnemyArchetype::Cutthroat,
+            EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher, EnemyArchetype::Ambusher,
         ].map(|a| (l, a))) {
             let attrs = calculate_enemy_attributes(level, archetype);
             let total = attrs.might_grace_axis().unsigned_abs()

@@ -90,7 +90,7 @@ pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
         AbilityType::Rattle => 2.0,  // NPC Juggernaut: 2s lockout
         AbilityType::Disengage => 2.0,  // NPC: 2s lockout
         AbilityType::Volley => 2.0,     // NPC Kiter: 2s lockout
-        AbilityType::Flank => 2.0,      // NPC Cutthroat: 2s lockout
+        AbilityType::Flank => 2.0,      // NPC Ambusher: 2s lockout
     }
 }
 

@@ -108,7 +108,7 @@ pub fn setup(
             Some(AbilityType::Rattle) => "💫",      // NPC Juggernaut rattle (not on bar)
             Some(AbilityType::Disengage) => "💨",   // NPC leap away (not on bar)
             Some(AbilityType::Volley) => "🏹",      // NPC Kiter volley (not on bar)
-            Some(AbilityType::Flank) => "🗡",       // NPC Cutthroat flank (not on bar)
+            Some(AbilityType::Flank) => "🗡",       // NPC Ambusher flank (not on bar)
             Some(AbilityType::Counter) => "↩",     // Counter / reflect
             Some(AbilityType::Kick) => "🦶",       // Kick / knockback
             None => "🔒",
