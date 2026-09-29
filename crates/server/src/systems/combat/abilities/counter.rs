@@ -164,7 +164,7 @@ pub fn handle_counter(
         if let Ok((_, mut caster_queue)) = queue_query.get_mut(*ent) {
             // Remove all visible window threats (drain first N)
             let count = visible_threats.len();
-            caster_queue.threats.drain(..count);
+            common_bevy::systems::combat::queue::clear_threats(&mut caster_queue, ClearType::First(count));
 
             // Broadcast threat removal to clients
             writer.write(Do {

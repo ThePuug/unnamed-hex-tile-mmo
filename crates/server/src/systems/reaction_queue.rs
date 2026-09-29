@@ -74,7 +74,7 @@ pub fn tick_dots(
 }
 
 /// Server system to process Dismiss events
-/// Pops the front visible threat from the queue and applies full unmitigated damage,
+/// Pops the front threat from the queue and applies full unmitigated damage,
 /// and whatever else the blow does lands with it
 /// No GCD, no lockout, no resource cost
 pub fn process_dismiss(
@@ -101,11 +101,8 @@ pub fn process_dismiss(
             continue;
         };
 
-        // Dismiss takes the front visible threat; auto-attacks are never visible
-        if queue.visible_count() == 0 {
-            continue;
-        }
-        let Some(threat) = queue.threats.pop_front() else {
+        // Dismiss takes the front threat, always in the window
+        let Some(threat) = queue_utils::clear_threats(&mut queue, ClearType::First(1)).pop() else {
             continue;
         };
         // A wound taken at once deals the DoT it had left, and what would
@@ -173,6 +170,7 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
+            seen: false,
                     });
 
         let attrs = ActorAttributes::default();

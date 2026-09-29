@@ -225,7 +225,7 @@ pub fn handle_kick(
         // Drain visible threats from caster's queue
         if let Ok((_, mut caster_queue)) = queue_query.get_mut(*ent) {
             let count = visible_threats.len();
-            caster_queue.threats.drain(..count);
+            common_bevy::systems::combat::queue::clear_threats(&mut caster_queue, ClearType::First(count));
 
             writer.write(Do {
                 event: GameEvent::ClearQueue {
