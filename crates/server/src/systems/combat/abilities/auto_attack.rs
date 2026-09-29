@@ -140,5 +140,7 @@ pub fn handle_auto_attack(
                 },
             },
         );
+        // Every client near draws the swing, as it does a signature's.
+        writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::AutoAttack, target: Some(target_ent) } });
     }
 }
