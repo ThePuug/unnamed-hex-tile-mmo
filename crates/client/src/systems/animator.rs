@@ -27,6 +27,7 @@ pub enum Clip {
     Idle,
     Walk,
     Run,
+    Back,
     Jump,
     Attack,
     Counter,
@@ -41,8 +42,8 @@ pub enum Clip {
 }
 
 impl Clip {
-    pub const ALL: [Clip; 15] = [
-        Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Jump, Clip::Attack, Clip::Counter,
+    pub const ALL: [Clip; 16] = [
+        Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Back, Clip::Jump, Clip::Attack, Clip::Counter,
         Clip::Lunge, Clip::Rattle, Clip::Volley, Clip::Disengage, Clip::Flank,
         Clip::Chop, Clip::Mine, Clip::Pickup,
     ];
@@ -52,8 +53,12 @@ impl Clip {
         Clip::Attack, Clip::Counter, Clip::Lunge, Clip::Rattle, Clip::Volley, Clip::Disengage, Clip::Flank,
     ];
 
-    /// The cycles that cover ground, slowest first.
+    /// The cycles that cover ground ahead, slowest first.
     const GAITS: [Clip; 2] = [Clip::Walk, Clip::Run];
+
+    /// Every cycle that declares the ground it covers: the gaits ahead and
+    /// the one moving back against the facing.
+    const STRIDED: [Clip; 3] = [Clip::Walk, Clip::Run, Clip::Back];
 
     /// The animation's name in the asset.
     pub fn name(self) -> &'static str {
@@ -62,6 +67,7 @@ impl Clip {
             Clip::Idle => "idle",
             Clip::Walk => "walk",
             Clip::Run => "run",
+            Clip::Back => "back",
             Clip::Jump => "jump",
             Clip::Attack => "attack",
             Clip::Counter => "counter",
@@ -259,7 +265,7 @@ impl Clips {
                 clips.freezes.insert(clip, freeze);
             }
         }
-        for clip in Clip::GAITS {
+        for clip in Clip::STRIDED {
             let Some(d) = declared.animgen.get(clip.name()) else { continue };
             if let (Some(length), Some(seconds)) = (d.stride, d.seconds) {
                 if length > 0.0 && seconds > 0.0 {
@@ -289,14 +295,21 @@ impl Clips {
         Some((self.node(Clip::Jump)?, self.jump?))
     }
 
-    /// Whether `node` plays a gait.
+    /// Whether `node` plays a gait, ahead or back.
     fn is_gait(&self, node: AnimationNodeIndex) -> bool {
-        Clip::GAITS.iter().any(|&clip| self.is(node, clip))
+        Clip::STRIDED.iter().any(|&clip| self.is(node, clip))
     }
 
     /// The stride of the gait `node` plays, where the asset declares one.
     fn stride_of(&self, node: AnimationNodeIndex) -> Option<&Stride> {
-        Clip::GAITS.iter().find(|&&clip| self.is(node, clip)).and_then(|clip| self.strides.get(clip))
+        Clip::STRIDED.iter().find(|&&clip| self.is(node, clip)).and_then(|clip| self.strides.get(clip))
+    }
+
+    /// The gait an actor moving back against its facing at `speed` plays
+    /// under `scale`, and its rate, where its asset has one that declares
+    /// its stride; played forward, as authored.
+    fn back(&self, speed: f32, scale: f32) -> Option<(AnimationNodeIndex, f32)> {
+        Some((self.node(Clip::Back)?, self.strides.get(&Clip::Back)?.rate(speed, scale)))
     }
 
     /// The gait an actor covering ground at `speed` plays under `scale`,
@@ -495,7 +508,16 @@ pub fn update(
         // An actor with no jump keeps its gait in the air.
         if is_moving || (airborne && jump.is_none()) {
             let current = main.filter(|&node| clips.is_gait(node));
-            let (gait, rate) = clips.gait(ground_speed, transform.scale.y, current).unwrap_or((walk, 1.0));
+            // Moving back, an actor with a gait for it plays that forward;
+            // one without plays its gait ahead in reverse.
+            let back = if direction < 0.0 { clips.back(ground_speed, transform.scale.y) } else { None };
+            let (gait, rate, direction) = match back {
+                Some((node, rate)) => (node, rate, 1.0),
+                None => {
+                    let (gait, rate) = clips.gait(ground_speed, transform.scale.y, current).unwrap_or((walk, 1.0));
+                    (gait, rate, direction)
+                }
+            };
             if main != Some(gait) {
                 // The gaits all land the same foot at the start of their
                 // cycle, so a change carries the cycle's phase across.

@@ -222,7 +222,7 @@ squared distance: `locate_within_distance(loc, 100)` searches radius 10, not
 100.
 
 **Clips.** An actor's GLB names its animations — `_tee`, `idle`, `walk`,
-`run`, `jump`, `attack`, `counter`, `chop`, `mine`, `pickup`, and each
+`run`, `back`, `jump`, `attack`, `counter`, `chop`, `mine`, `pickup`, and each
 archetype's signature, `lunge`, `rattle`, `volley`, `disengage`, `flank` —
 and `client::systems::animator::Clips` finds each by name from
 `Gltf::named_animations` when the scene is ready, so a new clip is a new
@@ -244,7 +244,8 @@ speed nearest its authored pace. A lofted gait also declares its
 footfall (`Stride::lope`): a contact plays at the rate, a flight as
 authored, and each flight's top is held while the physics carries the
 actor on, so a cycle lasts as authored. A gait with no flight spins its
-feet to match the ground.
+feet to match the ground. Moving back against its facing, an actor plays
+its `back` gait forward where it has one, else its gait ahead reversed.
 
 **Worn pieces.** A piece loads from `models/<piece>-<actor>.glb`, scene =
 style, as a child of the actor. `client::systems::equipment` points its
