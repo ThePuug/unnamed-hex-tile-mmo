@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    components::{recovery::{GlobalRecovery, SynergyUnlock}, ActorAttributes},
+    components::{recovery::{Combo, GlobalRecovery, SynergyUnlock, get_ability_recovery_duration}, ActorAttributes},
     message::AbilityType,
     systems::combat::damage as damage_calc,
 };
@@ -66,16 +66,75 @@ pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
     }
 }
 
-/// Whether `ability` may be used under `recovery`, the lockout, and
-/// `synergy`, the follow-up the last ability offered: anything out of
-/// lockout, and in it only the offered follow-up once it unlocks. Every
-/// ability that can be offered asks here.
-pub fn may_use(ability: AbilityType, recovery: Option<&GlobalRecovery>, synergy: Option<&SynergyUnlock>) -> bool {
+/// Whether `ability` may be used under `recovery`, the lockout, `synergy`,
+/// the follow-up the last ability offered, and `combo`, a Ferocity combo
+/// under way: anything out of lockout; in it, the offered follow-up once it
+/// unlocks, or before then while the combo has a step left inside its
+/// opener's lockout. Every ability that can be offered asks here.
+pub fn may_use(ability: AbilityType, recovery: Option<&GlobalRecovery>, synergy: Option<&SynergyUnlock>, combo: Option<&Combo>) -> bool {
     match recovery {
-        Some(recovery) if recovery.is_active() => {
-            synergy.is_some_and(|synergy| synergy.ability == ability && synergy.is_unlocked(recovery.remaining))
-        }
+        Some(recovery) if recovery.is_active() => synergy.is_some_and(|synergy| {
+            synergy.ability == ability
+                && (synergy.is_unlocked(recovery.remaining) || combo.is_some_and(|combo| combo.steps > 0 && combo.window > 0.0))
+        }),
         _ => true,
+    }
+}
+
+/// The lockout `ability` starts, used under `prior`, the lockout it was
+/// used in, and `synergy`, the offer it took. A follow-up taken before its
+/// offer unlocked carries what it skipped of `prior`, so a combo burst early
+/// costs what it would have played out: Ferocity moves the lockout, never
+/// shortens it. Taken once unlocked, it carries nothing. Server and client
+/// both start lockouts here, so they agree.
+pub fn lockout(ability: AbilityType, prior: Option<&GlobalRecovery>, synergy: Option<&SynergyUnlock>) -> GlobalRecovery {
+    let mut recovery = GlobalRecovery::new(get_ability_recovery_duration(ability), ability);
+    let carried = match (prior, synergy) {
+        (Some(prior), Some(synergy)) if prior.is_active() && synergy.ability == ability => (prior.remaining - synergy.unlock_at).max(0.0),
+        _ => 0.0,
+    };
+    recovery.remaining += carried;
+    recovery.duration += carried;
+    recovery.carried = carried;
+    recovery
+}
+
+/// Settles `ability`'s place in a Ferocity combo after `ent` uses it with
+/// `attrs`: a follow-up fired early spends a step; any other use of an
+/// ability that offers a follow-up opens a combo of the Ferocity tier's
+/// steps, 0 to 3, inside its own lockout of `opener` seconds.
+pub fn settle_combo(ent: Entity, ability: AbilityType, early: bool, opener: f32, attrs: &ActorAttributes, combo: Option<&Combo>, commands: &mut Commands) {
+    let Ok(mut entity) = commands.get_entity(ent) else { return };
+    if early {
+        if let Some(combo) = combo {
+            entity.insert(Combo { steps: combo.steps.saturating_sub(1), ..*combo });
+        }
+        return;
+    }
+    let steps = attrs.ferocity().index() as u8;
+    if steps > 0 && get_synergy_trigger(ability).is_some() {
+        entity.insert(Combo { window: opener, steps });
+    } else {
+        entity.remove::<Combo>();
+    }
+}
+
+/// Whether using `ability` now fires it early: in lockout, before the offer
+/// it takes unlocks
+pub fn is_early(ability: AbilityType, recovery: Option<&GlobalRecovery>, synergy: Option<&SynergyUnlock>) -> bool {
+    recovery.is_some_and(|recovery| {
+        recovery.is_active() && synergy.is_some_and(|synergy| synergy.ability == ability && !synergy.is_unlocked(recovery.remaining))
+    })
+}
+
+/// Counts every combo's opener window down, ending the combo when it runs out
+pub fn tick_combo(mut commands: Commands, mut query: Query<(Entity, &mut Combo)>, time: Res<Time>) {
+    let dt = time.delta_secs();
+    for (ent, mut combo) in &mut query {
+        combo.window -= dt;
+        if combo.window <= 0.0 {
+            commands.entity(ent).remove::<Combo>();
+        }
     }
 }
 
@@ -119,7 +178,8 @@ pub fn apply_synergies(
         if _rule.trigger == trigger_type {
             // Apply percentage reduction to effective_recovery_base
             // recovery.remaining is already adjusted by composure, so this stacks multiplicatively
-            let unlock_at = (recovery.remaining * (1.0 - synergy_reduction)).max(0.0);
+            // What the lockout carried from before never unlocks early
+            let unlock_at = ((recovery.remaining - recovery.carried) * (1.0 - synergy_reduction)).max(0.0);
 
             // Insert synergy unlock component (both server and client do this locally)
             // Only insert if entity exists (may have been evicted client-side)
@@ -159,10 +219,34 @@ mod tests {
         let offer = SynergyUnlock::new(AbilityType::Lunge, 1.5, AbilityType::Kick);
         let mut later = recovery;
         later.tick(1.0);
-        assert!(may_use(AbilityType::Overpower, None, None), "out of lockout, anything");
-        assert!(!may_use(AbilityType::Lunge, Some(&recovery), Some(&offer)), "not before it unlocks");
-        assert!(may_use(AbilityType::Lunge, Some(&later), Some(&offer)), "the offer, once unlocked");
-        assert!(!may_use(AbilityType::Overpower, Some(&later), Some(&offer)), "nothing else");
+        assert!(may_use(AbilityType::Overpower, None, None, None), "out of lockout, anything");
+        assert!(!may_use(AbilityType::Lunge, Some(&recovery), Some(&offer), None), "not before it unlocks");
+        assert!(may_use(AbilityType::Lunge, Some(&later), Some(&offer), None), "the offer, once unlocked");
+        assert!(!may_use(AbilityType::Overpower, Some(&later), Some(&offer), None), "nothing else");
+    }
+
+    #[test]
+    fn a_combo_fires_the_offer_early_while_it_has_steps() {
+        let recovery = GlobalRecovery::new(2.0, AbilityType::Kick);
+        let offer = SynergyUnlock::new(AbilityType::Lunge, 1.5, AbilityType::Kick);
+        let combo = Combo { window: 1.0, steps: 1 };
+        assert!(may_use(AbilityType::Lunge, Some(&recovery), Some(&offer), Some(&combo)), "at once, with a step");
+        assert!(!may_use(AbilityType::Lunge, Some(&recovery), Some(&offer), Some(&Combo { steps: 0, ..combo })), "none left");
+        assert!(!may_use(AbilityType::Lunge, Some(&recovery), Some(&offer), Some(&Combo { window: 0.0, ..combo })), "past the opener's lockout");
+        assert!(!may_use(AbilityType::Overpower, Some(&recovery), Some(&offer), Some(&combo)), "only the offer");
+    }
+
+    #[test]
+    fn an_early_follow_up_carries_what_it_skipped_and_an_unlocked_one_nothing() {
+        let prior = GlobalRecovery::new(2.0, AbilityType::Kick);
+        let offer = SynergyUnlock::new(AbilityType::Lunge, 1.5, AbilityType::Kick);
+        let own = get_ability_recovery_duration(AbilityType::Lunge);
+        let early = lockout(AbilityType::Lunge, Some(&prior), Some(&offer));
+        assert!((early.remaining - (own + 0.5)).abs() < 1e-5, "the half second it skipped comes after");
+        let mut waited = prior;
+        waited.tick(0.6);
+        assert_eq!(lockout(AbilityType::Lunge, Some(&waited), Some(&offer)).remaining, own, "on time, its own");
+        assert_eq!(lockout(AbilityType::Lunge, None, None).remaining, own, "fresh, its own");
     }
 
     #[test]

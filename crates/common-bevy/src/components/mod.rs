@@ -941,6 +941,12 @@ impl ActorAttributes {
         self.commitment_tier_for(self.agility())
     }
 
+    /// Ferocity: the burst combo, from might commitment
+    /// Returns commitment tier (T0-T3) based on might as % of total budget
+    pub fn ferocity(&self) -> CommitmentTier {
+        self.commitment_tier_for(self.might())
+    }
+
     /// Grit: standing in the pressure, from vitality commitment
     /// Returns commitment tier (T0-T3) based on vitality as % of total budget
     pub fn grit(&self) -> CommitmentTier {

@@ -15,6 +15,10 @@ pub struct GlobalRecovery {
     /// Level of the target attacked, for the level edge in Composure's
     /// contest; None for an ability with no target recorded, which gives no edge
     pub target_level: Option<u32>,
+    /// Seconds of the lockout carried from the one before, which a follow-up
+    /// taken before its offer unlocked left unpaid (`synergies::lockout`).
+    /// No follow-up this lockout offers unlocks through it.
+    pub carried: f32,
 }
 
 impl GlobalRecovery {
@@ -25,6 +29,7 @@ impl GlobalRecovery {
             triggered_by,
             target_impact: 0,
             target_level: None,
+            carried: 0.0,
         }
     }
 
@@ -77,6 +82,16 @@ impl SynergyUnlock {
     }
 }
 
+/// A Ferocity combo under way: `window` seconds left of its opener's
+/// lockout, inside which `steps` more follow-ups may fire before their
+/// offers unlock. Only the server holds one; it gates, and the lockout each
+/// early follow-up carries reaches the client through the lockout itself.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Combo {
+    pub window: f32,
+    pub steps: u8,
+}
+
 /// Seconds `ability` locks its user out of every other (`Tuning::recovery`)
 pub fn get_ability_recovery_duration(ability: AbilityType) -> f32 {
     crate::tuning::tuning().recovery(ability)
@@ -108,6 +123,7 @@ mod tests {
             triggered_by: AbilityType::Overpower,
             target_impact: 0,
             target_level: None,
+            carried: 0.0,
         };
         assert!(!recovery.is_active(), "Should be inactive when remaining == 0");
     }

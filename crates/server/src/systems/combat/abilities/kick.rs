@@ -4,7 +4,7 @@ use common_bevy::{
     components::{entity_type::*, resources::*, stagger::Stagger, Loc, reaction_queue::{DamageType, ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     resources::map::Map,
-    systems::combat::synergies::{apply_synergies, may_use},
+    systems::combat::synergies::{apply_synergies, is_early, lockout, may_use, settle_combo},
 };
 use crate::{resources::RunTime, systems::stagger::Knockback};
 
@@ -55,6 +55,7 @@ pub fn handle_kick(
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     synergy_query: Query<&common_bevy::components::recovery::SynergyUnlock>,
+    combo_query: Query<&common_bevy::components::recovery::Combo>,
     respawn_query: Query<&RespawnTimer>,
     time: Res<Time>,
     runtime: Res<RunTime>,
@@ -76,7 +77,7 @@ pub fn handle_kick(
         }
 
         // Out of lockout, or taking the follow-up the last ability offered
-        if !may_use(AbilityType::Kick, recovery_query.get(*ent).ok(), synergy_query.get(*ent).ok()) {
+        if !may_use(AbilityType::Kick, recovery_query.get(*ent).ok(), synergy_query.get(*ent).ok(), combo_query.get(*ent).ok()) {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OnCooldown } });
             continue;
         }
@@ -245,8 +246,9 @@ pub fn handle_kick(
         });
 
         // Trigger recovery lockout
-        let recovery_duration = get_ability_recovery_duration(AbilityType::Kick);
-        let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Kick);
+        let (prior, offer) = (recovery_query.get(*ent).ok().copied(), synergy_query.get(*ent).ok().copied());
+        let early = is_early(AbilityType::Kick, prior.as_ref(), offer.as_ref());
+        let recovery = lockout(AbilityType::Kick, prior.as_ref(), offer.as_ref());
         commands.entity(*ent).insert(recovery);
 
         // Apply synergies (Kick → Lunge)
@@ -254,6 +256,7 @@ pub fn handle_kick(
             continue;
         };
         apply_synergies(*ent, AbilityType::Kick, &recovery, attrs, attrs, &mut commands);
+        settle_combo(*ent, AbilityType::Kick, early, get_ability_recovery_duration(AbilityType::Kick), attrs, combo_query.get(*ent).ok(), &mut commands);
     }
 }
 

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{resources::*, tier_lock::TierLock, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
-    systems::{targeting::get_range_tier, combat::synergies::{apply_synergies, may_use}},
+    systems::{targeting::get_range_tier, combat::synergies::{apply_synergies, is_early, lockout, may_use, settle_combo}},
 };
 
 /// Handle Overpower ability (W key)
@@ -18,6 +18,7 @@ pub fn handle_overpower(
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     synergy_query: Query<&common_bevy::components::recovery::SynergyUnlock>,
+    combo_query: Query<&common_bevy::components::recovery::Combo>,
     respawn_query: Query<&RespawnTimer>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
     mut writer: MessageWriter<Do>,
@@ -39,7 +40,7 @@ pub fn handle_overpower(
         }
 
         // Out of lockout, or taking the follow-up the last ability offered
-        if !may_use(AbilityType::Overpower, recovery_query.get(*ent).ok(), synergy_query.get(*ent).ok()) {
+        if !may_use(AbilityType::Overpower, recovery_query.get(*ent).ok(), synergy_query.get(*ent).ok(), combo_query.get(*ent).ok()) {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OnCooldown } });
             continue;
         }
@@ -177,13 +178,14 @@ pub fn handle_overpower(
         super::stride(*ent, heading_query.get(*ent).ok(), caster_loc, target_loc, &mut commands);
 
         // Trigger recovery lockout (server-side state)
-        let recovery_duration = get_ability_recovery_duration(AbilityType::Overpower);
+        let (prior, offer) = (recovery_query.get(*ent).ok().copied(), synergy_query.get(*ent).ok().copied());
+        let early = is_early(AbilityType::Overpower, prior.as_ref(), offer.as_ref());
 
         let (target_impact, target_level) = attrs_query.get(target_ent)
             .map(|a| (a.impact(), a.total_level()))
             .unwrap_or((0, 0));
 
-        let recovery = GlobalRecovery::new(recovery_duration, AbilityType::Overpower)
+        let recovery = lockout(AbilityType::Overpower, prior.as_ref(), offer.as_ref())
             .with_target(target_impact, target_level);
         commands.entity(*ent).insert(recovery);
 
@@ -194,5 +196,6 @@ pub fn handle_overpower(
         };
         let defender_attrs = attrs_query.get(target_ent).unwrap_or(attacker_attrs);
         apply_synergies(*ent, AbilityType::Overpower, &recovery, attacker_attrs, defender_attrs, &mut commands);
+        settle_combo(*ent, AbilityType::Overpower, early, get_ability_recovery_duration(AbilityType::Overpower), attacker_attrs, combo_query.get(*ent).ok(), &mut commands);
     }
 }

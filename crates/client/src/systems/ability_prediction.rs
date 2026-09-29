@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{recovery::{GlobalRecovery, get_ability_recovery_duration}, target::Target},
+    components::{recovery::{GlobalRecovery, SynergyUnlock}, target::Target},
     message::{Do, Event as GameEvent, AbilityType},
-    systems::combat::synergies::apply_synergies,
+    systems::combat::synergies::{apply_synergies, lockout},
 };
 
 /// Client-side handler for Do UseAbility
@@ -13,6 +13,7 @@ pub fn handle_ability_used(
     mut do_reader: MessageReader<Do>,
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     target_query: Query<&Target>,
+    recovery_query: Query<(Option<&GlobalRecovery>, Option<&SynergyUnlock>)>,
 ) {
     for event in do_reader.read() {
         let Do { event: GameEvent::UseAbility { ent, ability, target: _ } } = event else {
@@ -24,10 +25,10 @@ pub fn handle_ability_used(
             continue;
         }
 
-        // Insert GlobalRecovery component (same as server)
-        // Only insert if entity exists (may have been evicted)
-        let recovery_duration = get_ability_recovery_duration(*ability);
-        let recovery = GlobalRecovery::new(recovery_duration, *ability);
+        // Insert GlobalRecovery component (same as server, carrying what an
+        // early follow-up skipped). Only insert if entity exists (may have been evicted)
+        let (prior, offer) = recovery_query.get(*ent).map_or((None, None), |(recovery, offer)| (recovery.copied(), offer.copied()));
+        let recovery = lockout(*ability, prior.as_ref(), offer.as_ref());
         if let Ok(mut entity_cmd) = commands.get_entity(*ent) {
             entity_cmd.insert(recovery);
 
