@@ -48,6 +48,9 @@ pub enum Event {
     },
     /// Server-internal: a wound's DoT tick lands outside the queue
     DotTick { ent: Entity, source: Entity, damage: f32, ability: Option<AbilityType> },
+    /// Server-internal: the share of a landed blow that spills from its
+    /// target onto `ent`, another hostile within the striker's reach
+    Spill { ent: Entity, source: Entity, damage: f32 },
     /// Server → Client: Insert threat into reaction queue
     InsertThreat { ent: Entity, threat: QueuedThreat },
     /// Server → Client: Apply damage to entity (threat resolved). `dot` marks

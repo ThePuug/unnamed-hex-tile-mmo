@@ -365,7 +365,7 @@ macro_rules! create_stat_display {
                 MetaAttributeStat::Composure => ("Composure", Color::srgb(0.5, 0.7, 0.9), "Recovery Reduction:"),
                 MetaAttributeStat::Flow => ("Flow", Color::srgb(0.9, 0.9, 0.5), "Synergy Reduction:"),
                 MetaAttributeStat::Reflex => ("Reflex", Color::srgb(0.7, 0.5, 0.9), "Reaction Window:"),
-                MetaAttributeStat::Presence => ("Presence", Color::srgb(0.9, 0.6, 0.3), "Healing Reduction:"),
+                MetaAttributeStat::Presence => ("Presence", Color::srgb(0.9, 0.6, 0.3), "Spill:"),
                 MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Damage Mitigation:"),
             };
 
@@ -1347,11 +1347,10 @@ pub fn update_attributes(
                         format!("{:.1}s", window_seconds)
                     },
                     MetaAttributeStat::Presence => {
-                        // Healing reduction aura: 0.25 × gap × contest_factor
+                        // Spill onto a hostile with no Toughness
                         let presence = display_attrs.presence();
-                        let contest = contest_factor(presence, 0, 0.0);  // vs 0 toughness
-                        let reduction_pct = (0.25 * contest) * 100.0;
-                        format!("-{:.0}%", reduction_pct)
+                        let spill_pct = common_bevy::systems::combat::damage::spill_share(presence, 0, 0.0) * 100.0;
+                        format!("{:.0}%", spill_pct)
                     },
                     MetaAttributeStat::Toughness => {
                         // Damage mitigation against an attacker with no Presence

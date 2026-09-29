@@ -43,6 +43,9 @@ pub struct Tuning {
     pub contest_per_level: f32,
     /// Share of a blow Toughness mitigates at the base advantage
     pub mitigation_share: f32,
+    /// Share of a landed blow a Presence advantage spills onto each other
+    /// hostile within the striker's reach, at the base advantage
+    pub spill_share: f32,
     /// Share of a recovery an Impact advantage pushes it back by
     pub pushback_share: f32,
     /// Share of a recovery a Composure advantage takes off it
@@ -138,6 +141,7 @@ impl Tuning {
         contest_scale: 420.0,
         contest_per_level: 15.0,
         mitigation_share: 0.525,
+        spill_share: 0.5,
         pushback_share: 0.5,
         composure_share: 0.33,
         synergy_floor: 0.1,
@@ -244,6 +248,7 @@ impl Tuning {
             "contest_scale" => &mut self.contest_scale,
             "contest_per_level" => &mut self.contest_per_level,
             "mitigation_share" => &mut self.mitigation_share,
+            "spill_share" => &mut self.spill_share,
             "pushback_share" => &mut self.pushback_share,
             "composure_share" => &mut self.composure_share,
             "synergy_floor" => &mut self.synergy_floor,

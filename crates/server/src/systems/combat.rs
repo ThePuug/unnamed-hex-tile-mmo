@@ -119,6 +119,7 @@ pub fn resolve_threat(
     locs: Query<&Loc>,
     mut bursts: Query<&mut crate::systems::combat::landing::VolleyBurst>,
     map: Res<common_bevy::resources::map::Map>,
+    reach: landing::SpillReach,
     mut writer: MessageWriter<Do>,
 ) {
     let tuning = common_bevy::tuning::tuning();
@@ -160,6 +161,7 @@ pub fn resolve_threat(
             });
 
             landing::land(threat.ability, *ent, threat.source, threat.inserted_at, &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
+            reach.spill(threat.source, *ent, threat.damage, &mut commands);
 
             // Death check moved to dedicated check_death system (decoupled from combat)
         }
@@ -181,6 +183,24 @@ pub fn resolve_dot_tick(
     health.state = (health.state - damage).max(0.0);
     health.step = health.state;
     writer.write(Do { event: GameEvent::ApplyDamage { ent: *ent, damage: *damage, source: *source, dot: true } });
+    writer.write(Do { event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Health(*health) } });
+}
+
+/// A blow's spill lands on another hostile near its striker, outside the
+/// queue: its share was already weighed against that hostile's Toughness.
+pub fn resolve_spill(
+    trigger: On<Try>,
+    mut query: Query<&mut Health>,
+    mut writer: MessageWriter<Do>,
+) {
+    let Try { event: GameEvent::Spill { ent, source, damage } } = trigger.event() else { return };
+    let Ok(mut health) = query.get_mut(*ent) else { return };
+    if health.state <= 0.0 {
+        return;
+    }
+    health.state = (health.state - damage).max(0.0);
+    health.step = health.state;
+    writer.write(Do { event: GameEvent::ApplyDamage { ent: *ent, damage: *damage, source: *source, dot: false } });
     writer.write(Do { event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Health(*health) } });
 }
 
