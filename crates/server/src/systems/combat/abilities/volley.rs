@@ -11,10 +11,9 @@ use common_bevy::{
 /// window, so Focus decides how many land — each striking for
 /// `Tuning::volley_force` of Force. Every shot is its own threat.
 /// Each shot, as it lands (`landing::land`), slows its target by
-/// `volley_slow` for `volley_slow_secs` and sets the Kiter running at
-/// `volley_run` of its pace for `volley_run_secs`, in which it backs away
-/// to the far edge of its band, facing and shooting: at a run of 2 its
-/// back-up is as fast as a walk.
+/// `volley_slow` for `volley_slow_secs`, and the shot that finds the target
+/// unslowed leaps the Kiter `volley_leap` tiles straight away from it: the
+/// gap opens only when the target can no longer close it.
 pub fn handle_volley(
     mut commands: Commands,
     mut reader: MessageReader<Try>,

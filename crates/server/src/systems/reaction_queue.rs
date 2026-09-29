@@ -83,6 +83,8 @@ pub fn process_dismiss(
     mut query: Query<(&mut ReactionQueue, &mut Health)>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
+    locs: Query<&common_bevy::components::Loc>,
+    map: Res<common_bevy::resources::map::Map>,
     mut writer: MessageWriter<Do>,
 ) {
     let tuning = common_bevy::tuning::tuning();
@@ -135,7 +137,7 @@ pub fn process_dismiss(
             },
         });
 
-        crate::systems::combat::landing::land(threat.ability, ent, threat.source, &tuning, &mut statuses, &recoveries, &mut commands, &mut writer);
+        crate::systems::combat::landing::land(threat.ability, ent, threat.source, &tuning, &mut statuses, &recoveries, &locs, &map, &mut commands, &mut writer);
     }
 }
 

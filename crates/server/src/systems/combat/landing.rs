@@ -1,8 +1,14 @@
 //! What a blow does beyond its damage, applied as it lands: a stun, a daze,
-//! a slow, a Kiter's run. Every such effect waits in its target's queue with
-//! the threat that carries it, so it lands no sooner than the damage, and a
-//! reaction that clears the threat clears the effect with it. Only a wound's
-//! DoT lands ahead of its blow, ticking while the wound stands.
+//! a slow, and the Kiter's leap that rides the slow. Every such effect waits
+//! in its target's queue with the threat that carries it, so it lands no
+//! sooner than the damage, and a reaction that clears the threat clears the
+//! effect with it. Only a wound's DoT lands ahead of its blow, ticking while
+//! the wound stands.
+//!
+//! An ability's effects take one of two timings: here, with the threat, when
+//! they are worth something only if the blow lands; or with the cast, in the
+//! ability's own handler, when they stand on their own, as Disengage's leap
+//! clear of a blow does. The caster's movement goes through `leap` either way.
 
 use bevy::prelude::*;
 use common_bevy::{
@@ -10,8 +16,10 @@ use common_bevy::{
         recovery::GlobalRecovery,
         status::{Daze, Status, Timed},
         stunned::Stunned,
+        Loc,
     },
     message::{AbilityType, Component, Do, Event as GameEvent},
+    resources::map::Map,
 };
 
 use common_bevy::tuning::Tuning;
@@ -29,6 +37,8 @@ pub fn land(
     tuning: &Tuning,
     statuses: &mut Query<&mut Status>,
     recoveries: &Query<&GlobalRecovery>,
+    locs: &Query<&Loc>,
+    map: &Map,
     commands: &mut Commands,
     writer: &mut MessageWriter<Do>,
 ) {
@@ -46,14 +56,21 @@ pub fn land(
             let stacks = Status::stacks_of(Some(status)).saturating_add(1).min(tuning.rattle_stacks);
             status.daze = Some(Daze { stacks, pace: (1.0 - tuning.rattle_daze * stacks as f32).max(MIN_PACE) });
         }),
-        // Each shot that lands slows its target and sets its Kiter running afresh
+        // Each shot that lands slows its target afresh; the one that finds it
+        // unslowed carries the Kiter clear, so a burst leaps once, as the
+        // target can no longer follow
         Some(AbilityType::Volley) => {
+            let slowed = statuses.get(target).is_ok_and(|status| status.slow.is_some());
             update(target, statuses, commands, writer, |status| {
                 status.slow = Some(Timed { pace: 1.0 - tuning.volley_slow, remaining: tuning.volley_slow_secs });
             });
-            update(source, statuses, commands, writer, |status| {
-                status.run = Some(Timed { pace: tuning.volley_run, remaining: tuning.volley_run_secs });
-            });
+            if !slowed {
+                if let (Ok(at), Ok(from)) = (locs.get(source), locs.get(target)) {
+                    if let Some(landing) = super::leap::away(map, **at, **from, tuning.volley_leap) {
+                        super::leap::leap(source, landing, commands, writer);
+                    }
+                }
+            }
         }
         _ => {}
     }

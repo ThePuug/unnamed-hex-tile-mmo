@@ -1,5 +1,6 @@
 pub mod abilities;
 pub mod landing;
+pub mod leap;
 
 use bevy::prelude::*;
 use common_bevy::{
@@ -121,6 +122,8 @@ pub fn resolve_threat(
     actors: Query<(&Loc, &ActorAttributes)>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
+    locs: Query<&Loc>,
+    map: Res<common_bevy::resources::map::Map>,
     mut writer: MessageWriter<Do>,
 ) {
     let tuning = common_bevy::tuning::tuning();
@@ -161,7 +164,7 @@ pub fn resolve_threat(
                 },
             });
 
-            landing::land(threat.ability, *ent, threat.source, &tuning, &mut statuses, &recoveries, &mut commands, &mut writer);
+            landing::land(threat.ability, *ent, threat.source, &tuning, &mut statuses, &recoveries, &locs, &map, &mut commands, &mut writer);
 
             // Death check moved to dedicated check_death system (decoupled from combat)
         }

@@ -52,16 +52,15 @@ pub const KITER_REACH: i32 = 20;
 /// Implements distance-based state machine for ranged kiting enemies:
 /// - Acquires hostile targets within aggro range
 /// - Maintains sticky targeting via TargetLock
-/// - **Retreats** while its Volley's run lasts, from a target nearer than
-///   the far edge of its band: it backs away there, facing the target and
-///   shooting, at a run of 2 as fast as a walk
-/// - **Holds** otherwise, where its auto-attack reaches, turning to face the target
+/// - **Holds** within its band, where its auto-attack reaches, turning to
+///   face the target: the only distance it opens is its Volley's leap, a
+///   mechanic of the skill that lands with the Volley's slow
 /// - **Advances** when target is beyond its band (> 6 hexes) - moves closer
 /// - **Leashes** when too far from spawner (returns to spawn)
 
 /// # Design Pattern
 /// Inverse pathfinding: Kiter moves AWAY from player to maintain distance.
-/// Attack timer independent of movement: Continues firing while retreating.
+/// Attack timer independent of movement: Continues firing while advancing.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Kite {
     pub acquisition_range: u32,      // How far to search for targets
@@ -80,15 +79,11 @@ impl Kite {
     }
 
     /// Determine what action the kiter should take based on distance to
-    /// target, and whether it is `running`, as its Volley leaves it: running,
-    /// it backs away to the far edge of its band, facing its target and
-    /// shooting; otherwise it stands and shoots, since backing away at its
-    /// walking pace a target closes on it anyway.
-    pub fn determine_action(&self, distance_to_target: i32, running: bool) -> KiteAction {
+    /// target: within its band it stands and shoots, since walking away a
+    /// target as fast as it closes on it anyway, and past it it closes in.
+    pub fn determine_action(&self, distance_to_target: i32) -> KiteAction {
         if distance_to_target > self.optimal_distance_max {
             KiteAction::Advance
-        } else if running && distance_to_target < self.optimal_distance_max {
-            KiteAction::Retreat
         } else {
             KiteAction::Attack
         }
@@ -98,7 +93,6 @@ impl Kite {
 /// State machine for kiting behavior
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KiteAction {
-    Retreat,     // Back away to the band's far edge, facing and shooting, while its run lasts (distance < 6 hexes)
     Attack,      // Hold and let the auto-attack fire
     Advance,     // Move closer to target (distance > 6 hexes)
 }
@@ -283,7 +277,7 @@ pub fn kite(
 
         // 3. CHECK DISTANCE AND DETERMINE ACTION
         let distance = npc_loc.flat_distance(target_loc);
-        let action = kite_config.determine_action(distance, status.is_some_and(|status| status.run.is_some()));
+        let action = kite_config.determine_action(distance);
 
         // Fetch spawn location for score-based neighbor selection
         let Ok(&spawner_loc) = q_spawner.get(engagement_member.0) else {
@@ -295,27 +289,6 @@ pub fn kite(
 
         // 4. EXECUTE ACTION
         match action {
-            KiteAction::Retreat => {
-                // Score-based neighbor selection: balances optimal range + leash safety
-                let target_qrz = **target_loc;
-                let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
-                    continue;
-                };
-
-                let neighbors = map.neighbors(start);
-                let best_neighbor = neighbors
-                    .iter()
-                    .filter(|(neighbor, _)| {
-                        nntree.locate_all_at_point(&Loc::new(*neighbor + qrz::Qrz::Z)).count() < 7
-                    })
-                    .max_by_key(|(neighbor, _)| score_neighbor(neighbor, &target_qrz, &spawn_qrz, aim, kite_config.leash_distance));
-
-                if let Some((next_tile, _)) = best_neighbor {
-                    body.back_toward(npc_loc, start, *next_tile, target_qrz, movement_speed, dt_ms, &map, &nntree);
-                }
-
-                commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
-            }
             KiteAction::Attack => {
                 // Stay in place, turning to face the target — process_passive_auto_attack handles damage via AttackRange(6)
                 body.face(npc_loc, **target_loc, dt_ms, &map, &nntree);
@@ -358,22 +331,13 @@ mod tests {
     }
 
     #[test]
-    fn running_it_retreats_to_the_band_edge_and_otherwise_stands() {
+    fn it_stands_within_its_band_and_advances_past_it() {
         let kite = Kite::forest_sprite();
-        for distance in 0..kite.optimal_distance_max {
-            assert_eq!(kite.determine_action(distance, true), KiteAction::Retreat, "running at {distance}");
-            assert_eq!(kite.determine_action(distance, false), KiteAction::Attack, "standing at {distance}");
+        for distance in 0..=kite.optimal_distance_max {
+            assert_eq!(kite.determine_action(distance), KiteAction::Attack, "at {distance}");
         }
-        assert_eq!(kite.determine_action(kite.optimal_distance_max, true), KiteAction::Attack);
-    }
-
-    #[test]
-    fn it_advances_past_the_band_edge() {
-        let kite = Kite::forest_sprite();
-        for running in [false, true] {
-            assert_eq!(kite.determine_action(kite.optimal_distance_max + 1, running), KiteAction::Advance);
-            assert_eq!(kite.determine_action(kite.optimal_distance_max * 2, running), KiteAction::Advance);
-        }
+        assert_eq!(kite.determine_action(kite.optimal_distance_max + 1), KiteAction::Advance);
+        assert_eq!(kite.determine_action(kite.optimal_distance_max * 2), KiteAction::Advance);
     }
 
     #[test]

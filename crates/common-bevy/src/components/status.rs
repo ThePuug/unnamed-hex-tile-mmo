@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// The status effects that slow or hasten an actor, one of each kind, a
+/// The status effects that slow an actor, one of each kind, a
 /// fresh one replacing the one it lands on. Each is a share of its speed,
 /// and its pace is all of them together: every caller of the physics takes
 /// its speed through [`Status::pace_of`], so the server, the owner's
@@ -14,8 +14,6 @@ use serde::{Deserialize, Serialize};
 pub struct Status {
     /// A Volley's slow on its target
     pub slow: Option<Timed>,
-    /// A Volley's run on its Kiter, a pace past whole
-    pub run: Option<Timed>,
     /// A Juggernaut's Rattles this fight
     pub daze: Option<Daze>,
     /// Carrying past the bag's burden limit
@@ -53,7 +51,7 @@ impl Status {
     /// The share of its speed the actor moves at under every effect on it
     pub fn pace(&self) -> f32 {
         let burden = if self.burden { BURDENED_PACE } else { 1.0 };
-        Timed::pace(self.slow) * Timed::pace(self.run) * self.daze_pace() * burden
+        Timed::pace(self.slow) * self.daze_pace() * burden
     }
 
     /// The pace of an actor with `status`, whole with none
@@ -80,7 +78,7 @@ impl Status {
 
     /// Counts the timed effects down by `dt` seconds, dropping spent ones
     pub fn tick(&mut self, dt: f32) {
-        for slot in [&mut self.slow, &mut self.run] {
+        for slot in [&mut self.slow] {
             if let Some(timed) = slot {
                 timed.remaining -= dt;
                 if timed.remaining <= 0.0 {
@@ -96,7 +94,7 @@ impl Status {
 pub fn tick_status(mut query: Query<&mut Status>, time: Res<Time>) {
     let dt = time.delta_secs();
     for mut status in &mut query {
-        if status.slow.is_some() || status.run.is_some() {
+        if status.slow.is_some() {
             status.tick(dt);
         }
     }
@@ -110,10 +108,10 @@ mod tests {
     #[test]
     fn every_effect_adjusts_the_one_pace() {
         let slowed = Status { slow: Some(Timed { pace: 0.8, remaining: 1.0 }), ..default() };
-        let running = Status { run: Some(Timed { pace: 1.5, remaining: 1.0 }), ..default() };
-        let both = Status { slow: slowed.slow, run: running.run, ..default() };
-        assert!(slowed.pace() < 1.0 && running.pace() > 1.0);
-        assert!((both.pace() - slowed.pace() * running.pace()).abs() < 1e-6, "effects multiply");
+        let dazed = Status { daze: Some(Daze { stacks: 1, pace: 0.9 }), ..default() };
+        let both = Status { slow: slowed.slow, daze: dazed.daze, ..default() };
+        assert!(slowed.pace() < 1.0 && dazed.pace() < 1.0);
+        assert!((both.pace() - slowed.pace() * dazed.pace()).abs() < 1e-6, "effects multiply");
         let burdened = Status { burden: true, ..both };
         assert!(burdened.pace() < both.pace());
         assert_eq!(Status::pace_of(None), 1.0);
@@ -121,11 +119,11 @@ mod tests {
 
     #[test]
     fn a_timed_effect_runs_out() {
-        let mut status = Status { run: Some(Timed { pace: 1.5, remaining: 0.5 }), ..default() };
+        let mut status = Status { slow: Some(Timed { pace: 0.8, remaining: 0.5 }), ..default() };
         status.tick(0.3);
-        assert!(status.pace() > 1.0);
+        assert!(status.pace() < 1.0);
         status.tick(0.3);
-        assert_eq!(status.run, None);
+        assert_eq!(status.slow, None);
         assert_eq!(status.pace(), 1.0);
     }
 

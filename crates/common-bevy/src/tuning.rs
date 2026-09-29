@@ -116,10 +116,8 @@ pub struct Tuning {
     pub volley_slow: f32,
     /// Seconds a Volley's slow lasts
     pub volley_slow_secs: f32,
-    /// Pace a Volley sets its Kiter running at, a share of its speed past whole
-    pub volley_run: f32,
-    /// Seconds a Volley's run lasts
-    pub volley_run_secs: f32,
+    /// Tiles a Kiter leaps clear as its Volley's slow lands
+    pub volley_leap: usize,
     /// Stamina a Flank costs
     pub flank_cost: f32,
     /// Seconds a Flank stuns its target
@@ -187,8 +185,7 @@ impl Tuning {
         volley_force: 0.84,
         volley_slow: 0.069,
         volley_slow_secs: 2.058,
-        volley_run: 3.0,
-        volley_run_secs: 2.5,
+        volley_leap: 4,
         flank_cost: 30.0,
         flank_stun: 3.0,
         flank_intuition: 1.0,
@@ -307,8 +304,6 @@ impl Tuning {
             "volley_force" => &mut self.volley_force,
             "volley_slow" => &mut self.volley_slow,
             "volley_slow_secs" => &mut self.volley_slow_secs,
-            "volley_run" => &mut self.volley_run,
-            "volley_run_secs" => &mut self.volley_run_secs,
             "flank_cost" => &mut self.flank_cost,
             "flank_stun" => &mut self.flank_stun,
             "flank_intuition" => &mut self.flank_intuition,
@@ -319,6 +314,10 @@ impl Tuning {
             }
             "disengage_leap" => {
                 self.disengage_leap = number.round().max(1.0) as usize;
+                return Ok(());
+            }
+            "volley_leap" => {
+                self.volley_leap = number.round().max(1.0) as usize;
                 return Ok(());
             }
             _ => return Err(format!("no tuning knob {name}")),

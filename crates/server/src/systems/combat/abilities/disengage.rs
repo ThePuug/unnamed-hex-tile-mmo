@@ -56,35 +56,18 @@ pub fn handle_disengage(
             continue;
         }
 
-        // Walk the ground away from the target, one neighbour at a time
-        let Some((mut ground, _)) = map.get_by_qr(caster_loc.q, caster_loc.r) else {
-            continue;
-        };
-        for _ in 0..tuning.disengage_leap {
-            let Some((next, _)) = map.neighbors(ground).into_iter()
-                .max_by_key(|(neighbor, _)| neighbor.flat_distance(target_loc))
-                .filter(|(neighbor, _)| neighbor.flat_distance(target_loc) > ground.flat_distance(target_loc))
-            else {
-                break;
-            };
-            ground = next;
-        }
-        let landing = ground + qrz::Qrz::Z;
-        if landing == **caster_loc {
+        // Its leap stands on its own, so it goes with the cast
+        let Some(landing) = crate::systems::combat::leap::away(&map, **caster_loc, **target_loc, tuning.disengage_leap) else {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
             continue;
-        }
+        };
 
         stamina.state -= tuning.disengage_cost;
         stamina.step = stamina.state;
         writer.write(Do {
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
         });
-        writer.write(Do { event: GameEvent::Displace { ent: *ent, destination: landing + qrz::Qrz::Z, duration_ms: 250, around: None } });
-        commands.entity(*ent).insert((Loc::new(landing), common_bevy::components::position::Position::at_tile(landing)));
-        writer.write(Do {
-            event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Loc(Loc::new(landing)) },
-        });
+        crate::systems::combat::leap::leap(*ent, landing, &mut commands, &mut writer);
 
         if let Ok(mut queue) = queue_query.get_mut(*ent) {
             if !clear_threats(&mut queue, ClearType::First(1)).is_empty() {
