@@ -78,8 +78,10 @@ pub struct Tuning {
     pub flank_recovery: f32,
 
     // --- Signatures and their blows ---
-    /// Share of base potency an auto-attack strikes for, the same for every actor
+    /// Share of base potency an auto-attack strikes for without Force
     pub auto_damage: f32,
+    /// Share more an auto-attack strikes for at the ceiling of Force's share
+    pub force_auto: f32,
     /// Share of an attack's damage its roll lands either side of it
     pub damage_spread: f32,
     /// Share of Force a Lunge's strike deals
@@ -163,6 +165,7 @@ impl Tuning {
         volley_recovery: 2.0,
         flank_recovery: 2.0,
         auto_damage: 1.05,
+        force_auto: 1.0,
         damage_spread: 0.2,
         lunge_force: 0.7,
         lunge_dot: 0.21,
@@ -270,6 +273,7 @@ impl Tuning {
             "volley_recovery" => &mut self.volley_recovery,
             "flank_recovery" => &mut self.flank_recovery,
             "auto_damage" => &mut self.auto_damage,
+            "force_auto" => &mut self.force_auto,
             "damage_spread" => &mut self.damage_spread,
             "lunge_force" => &mut self.lunge_force,
             "lunge_dot" => &mut self.lunge_dot,

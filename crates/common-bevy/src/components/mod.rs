@@ -798,9 +798,24 @@ impl ActorAttributes {
     }
 
     /// The potency every actor has before any attribute, scaled by level: what
-    /// each absolute stat starts from, and all an auto-attack draws on.
+    /// each absolute stat starts from.
     pub fn base_potency(&self) -> f32 {
         crate::tuning::tuning().potency_base * self.damage_level_multiplier()
+    }
+
+    /// How far investment has carried an absolute stat of `potency` toward
+    /// its ceiling: 0 with none, rising toward 1 with diminishing returns,
+    /// the same at every level. Each absolute's passive effect is its
+    /// ceiling times this share.
+    pub fn share(&self, potency: f32) -> f32 {
+        (1.0 - self.base_potency() / potency).max(0.0)
+    }
+
+    /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
+    /// `Tuning::force_auto` at the ceiling of Force's share
+    pub fn auto_damage(&self) -> f32 {
+        let tuning = crate::tuning::tuning();
+        self.base_potency() * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(self.force()))
     }
 
     /// Concentration: Resolve's absolute meta-attribute, fully scaled like Force:
@@ -972,6 +987,26 @@ mod tests {
         assert!(resolve.concentration() > might.concentration());
         assert!(might.force() > resolve.force());
         assert_eq!(might.concentration(), resolve.force());
+    }
+
+    #[test]
+    fn a_share_rises_with_investment_and_diminishes() {
+        let share = |points: i8| {
+            let attrs = ActorAttributes::new(-points, 0, 0, 0, 0, 0, 0, 0, 0);
+            attrs.share(attrs.force())
+        };
+        assert_eq!(share(0), 0.0, "none invested, none of the ceiling");
+        assert!(share(5) > 0.0 && share(10) > share(5), "more invested, more of it");
+        assert!(share(10) - share(5) < share(5) - share(0), "each point gives less");
+        assert!(share(100) < 1.0, "never the whole ceiling");
+    }
+
+    #[test]
+    fn force_strengthens_auto_attacks() {
+        let might = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
+        let vital = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
+        assert!(might.auto_damage() > vital.auto_damage());
+        assert_eq!(vital.auto_damage(), vital.base_potency() * crate::tuning::tuning().auto_damage);
     }
 
     #[test]
