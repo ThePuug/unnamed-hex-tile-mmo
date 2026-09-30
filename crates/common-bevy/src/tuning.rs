@@ -38,6 +38,9 @@ pub struct Tuning {
     pub endurance_cost: f32,
     /// Share of its endurance an actor regains each second its stamina is full
     pub endurance_regen: f32,
+    /// Endurance an auto-attack struck past the forward faces costs for each
+    /// point of the Force it strikes with; one struck within them is free
+    pub off_arc_cost: f32,
     /// Share longer an actor's recoveries run with its endurance spent
     pub fatigue_recovery: f32,
     /// Share shorter the windows of threats against an actor run with its
@@ -164,6 +167,7 @@ impl Tuning {
         endurance_pool: 10.0,
         endurance_cost: 1.0,
         endurance_regen: 0.05,
+        off_arc_cost: 0.25,
         fatigue_recovery: 0.5,
         fatigue_window: 0.3,
         health_per_vitality: 0.9604,
@@ -282,6 +286,7 @@ impl Tuning {
             "endurance_pool" => &mut self.endurance_pool,
             "endurance_cost" => &mut self.endurance_cost,
             "endurance_regen" => &mut self.endurance_regen,
+            "off_arc_cost" => &mut self.off_arc_cost,
             "fatigue_recovery" => &mut self.fatigue_recovery,
             "fatigue_window" => &mut self.fatigue_window,
             "health_per_vitality" => &mut self.health_per_vitality,

@@ -6,7 +6,9 @@
 //! can it pay. Then the ability's own effect runs, the
 //! stamina and endurance are paid, the clients are told, a strike across
 //! the caster's line breaks its stride, and the recovery starts, longer
-//! for an actor whose endurance is spent.
+//! for an actor whose endurance is spent. A skill costs endurance, and so
+//! does a swing struck across the caster's line; a swing within its
+//! forward faces is free.
 //!
 //! What each ability costs, how long its recovery runs, how far it
 //! reaches, what it offers next and whether it is a reaction are the
@@ -224,13 +226,21 @@ impl Abilities<'_, '_> {
                 self.writer.write(Do { event: GameEvent::Incremental { ent, component: MessageComponent::Stamina(*stamina) } });
             }
         }
-        // Endurance is spent beside the stamina and refuses nothing: the
-        // recovery runs by how spent the actor was as it used the ability
+        // Endurance is spent beside the stamina and refuses nothing: a
+        // skill's, or for a swing struck across the caster's line a share
+        // of the Force it strikes with. The recovery runs by how spent the
+        // actor was as it used the ability
+        let across = cast.target_loc.is_some_and(|target_loc| targeting::across(heading.as_ref(), &loc, &target_loc));
+        let spent = match ability {
+            AbilityType::AutoAttack if across => tuning.off_arc_cost * attrs.force(),
+            AbilityType::AutoAttack => 0.0,
+            _ => attrs.skill_endurance(),
+        };
         let mut fatigue = 0.0;
-        if ability != AbilityType::AutoAttack {
+        if spent > 0.0 {
             if let Ok(mut endurance) = self.endurance.get_mut(ent) {
                 fatigue = endurance.fatigue();
-                endurance.state = (endurance.state - attrs.skill_endurance()).max(0.0);
+                endurance.state = (endurance.state - spent).max(0.0);
                 self.writer.write(Do { event: GameEvent::Incremental { ent, component: MessageComponent::Endurance(*endurance) } });
             }
         }
@@ -238,8 +248,8 @@ impl Abilities<'_, '_> {
         self.writer.write(Do { event: GameEvent::UseAbility { ent, ability, target: opponent } });
         // A strike across the caster's line breaks its stride, but in a
         // Perfect Stride
-        if let Some(target_loc) = cast.target_loc.filter(|_| !self.strides(ent)) {
-            stride(ent, heading.as_ref(), &loc, &target_loc, &mut self.commands);
+        if across && !self.strides(ent) {
+            self.commands.trigger(Try { event: GameEvent::Stumble { ent } });
         }
         if ability != AbilityType::AutoAttack {
             let against = opponent.and_then(|opponent| self.actors.get(opponent).ok()).map(|(_, attrs, ..)| *attrs);
@@ -310,14 +320,6 @@ impl Abilities<'_, '_> {
 /// at `to`: within the arc its Grace opens (`ActorAttributes::arc`).
 pub fn in_arc(heading: Option<&Heading>, attrs: Option<&ActorAttributes>, from: &Loc, to: &Loc) -> bool {
     targeting::faces(heading, targeting::arc_of(attrs), from, to)
-}
-
-/// Breaks `ent`'s stride where the strike it just made from `from` at `to`
-/// crossed its line (`targeting::across`).
-pub fn stride(ent: Entity, heading: Option<&Heading>, from: &Loc, to: &Loc, commands: &mut Commands) {
-    if targeting::across(heading, from, to) {
-        commands.trigger(Try { event: GameEvent::Stumble { ent } });
-    }
 }
 
 #[cfg(test)]
@@ -607,6 +609,36 @@ mod tests {
         app.update();
         assert!(broken(&app, plain), "which breaks a stride");
         assert!(!broken(&app, striding), "but a Perfect Stride");
+    }
+
+    #[test]
+    fn a_swing_across_its_line_costs_endurance_and_one_ahead_is_free() {
+        let graceful = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
+        let mut app = arena();
+        let [ahead, across, striding] = [0, 0, 0].map(|q| actor(&mut app, Side::PLAYERS, q));
+        let (front, side) = (actor(&mut app, Side::WILD, 1), actor(&mut app, Side::WILD, 0));
+        let pool = graceful.max_endurance();
+        for ent in [ahead, across, striding] {
+            app.world_mut().entity_mut(ent).insert((graceful, Endurance::full(pool)));
+        }
+        let from = Loc::new(Qrz { q: 0, r: 0, z: 1 });
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
+        let off = (-2..=2).flat_map(|q| (-2..=2).map(move |r| Loc::new(Qrz { q, r, z: 1 })))
+            .find(|to| *to != from && from.distance(to) <= 2 && targeting::across(Some(&heading), &from, to) && in_arc(Some(&heading), Some(&graceful), &from, to))
+            .expect("a tile across the line that Grace reaches");
+        app.world_mut().entity_mut(side).insert(off);
+        app.update();
+        let spent = |app: &App, ent: Entity| pool - app.world().get::<Endurance>(ent).unwrap().state;
+
+        assert!(used(&ask(&mut app, ahead, AbilityType::AutoAttack, Some(front)), AbilityType::AutoAttack));
+        assert_eq!(spent(&app, ahead), 0.0, "a swing within the forward faces is free");
+        assert!(used(&ask(&mut app, across, AbilityType::AutoAttack, Some(side)), AbilityType::AutoAttack));
+        assert!(spent(&app, across) > 0.0, "one struck across its line costs endurance");
+
+        assert!(used(&ask(&mut app, striding, AbilityType::PerfectStride, None), AbilityType::PerfectStride));
+        let stride = spent(&app, striding);
+        assert!(used(&ask(&mut app, striding, AbilityType::AutoAttack, Some(side)), AbilityType::AutoAttack));
+        assert!((spent(&app, striding) - stride - spent(&app, across)).abs() < 1e-2, "a Perfect Stride waives none of it");
     }
 
     #[test]
