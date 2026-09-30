@@ -107,7 +107,7 @@ pub fn process_deal_damage(
 }
 
 /// System to resolve threats (Phase 2: Apply passive modifiers and apply to health)
-/// Processes ResolveThreat events emitted by expiry system or overflow
+/// Processes ResolveThreat events: a threat whose time ran out, one dismissed, a Counter's reflection
 pub fn resolve_threat(
     trigger: On<Try>,
     mut commands: Commands,

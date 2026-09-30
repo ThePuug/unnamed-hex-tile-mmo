@@ -68,7 +68,7 @@ pub enum Event {
     Ping { client_time: u128 },
     /// Server → Client: Response to ping (echoes client timestamp)
     Pong { client_time: u128 },
-    /// Client → Server: Dismiss front queue threat at full unmitigated damage
+    /// Client → Server: take the front queue threat now, as it would land
     /// No lockout, no resource cost — queue management, not an ability
     Dismiss { ent: Entity },
     /// Client → Server: Set tier lock for targeting

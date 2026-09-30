@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{reaction_queue::*, resources::*, ActorAttributes},
+    components::{reaction_queue::*, ActorAttributes},
     message::{Try, Do, ClearType, Event as GameEvent},
     systems::combat::queue as queue_utils,
 };
@@ -73,76 +73,28 @@ pub fn tick_dots(
     }
 }
 
-/// Server system to process Dismiss events
-/// Pops the front threat from the queue and applies full unmitigated damage,
-/// and whatever else the blow does lands with it
-/// No lockout, no resource cost
+/// Server system to process Dismiss events: the front threat, always in the
+/// window, lands at once exactly as it would when its time ran out
+/// (`combat::resolve_threat`), mitigated the same. No lockout, no resource
+/// cost.
 pub fn process_dismiss(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
-    mut query: Query<(&mut ReactionQueue, &mut Health, Option<&mut common_bevy::components::grit::Grit>)>,
-    time: Res<Time>,
-    mut statuses: Query<&mut common_bevy::components::status::Status>,
-    recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
-    locs: Query<&common_bevy::components::Loc>,
-    mut bursts: Query<&mut crate::systems::combat::landing::VolleyBurst>,
-    map: Res<common_bevy::resources::map::Map>,
-    reach: crate::systems::combat::landing::SpillReach,
-    attrs: Query<&ActorAttributes>,
+    mut query: Query<&mut ReactionQueue>,
     mut writer: MessageWriter<Do>,
 ) {
-    let tuning = common_bevy::tuning::tuning();
     for event in reader.read() {
         let GameEvent::Dismiss { ent } = event.event else {
             continue;
         };
-
-        let Ok((mut queue, mut health, grit)) = query.get_mut(ent) else {
+        let Ok(mut queue) = query.get_mut(ent) else {
             continue;
         };
-
-        // Dismiss takes the front threat, always in the window
         let Some(threat) = queue_utils::clear_threats(&mut queue, ClearType::First(1)).pop() else {
             continue;
         };
-        // A wound taken at once deals the DoT it had left, and what would
-        // pass Grit waits for the seconds after
-        let cap = attrs.get(ent).map_or(f32::INFINITY, ActorAttributes::grit_cap) * health.max;
-        let blow = grit.map_or(threat.damage, |mut grit| grit.take(time.elapsed(), threat.damage, cap, threat.source));
-        let damage = blow + threat.dot_left();
-
-        // Apply full unmitigated damage (no armor, no resistance)
-        health.state = (health.state - damage).max(0.0);
-        health.step = health.state;
-
-        // Broadcast queue clear to clients
-        writer.write(Do {
-            event: GameEvent::ClearQueue {
-                ent,
-                clear_type: ClearType::First(1),
-            },
-        });
-
-        // Broadcast damage event to clients
-        writer.write(Do {
-            event: GameEvent::ApplyDamage {
-                ent,
-                damage,
-                source: threat.source,
-                dot: threat.is_wound(),
-            },
-        });
-
-        // Send authoritative health
-        writer.write(Do {
-            event: GameEvent::Incremental {
-                ent,
-                component: common_bevy::message::Component::Health(*health),
-            },
-        });
-
-        crate::systems::combat::landing::land(threat.ability, ent, threat.source, threat.inserted_at, attrs.get(threat.source).ok(), &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
-        reach.spill(threat.source, ent, threat.damage, &mut commands);
+        writer.write(Do { event: GameEvent::ClearQueue { ent, clear_type: ClearType::First(1) } });
+        commands.trigger(Try { event: GameEvent::ResolveThreat { ent, threat } });
     }
 }
 
