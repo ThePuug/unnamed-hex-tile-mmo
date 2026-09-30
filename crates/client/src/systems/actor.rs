@@ -168,7 +168,6 @@ pub fn do_spawn(
                         Turn::default(),
                         KeyBits::default(),
                         Visibility::default(),
-                        Physics::default(),
                         // New position and visual interpolation components
                         Position::at_tile(qrz),
                         VisualPosition::at(spawn_world),

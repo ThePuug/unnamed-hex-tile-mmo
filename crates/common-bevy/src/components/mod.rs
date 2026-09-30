@@ -665,9 +665,6 @@ impl ActorAttributes {
     }
 }
 
-#[derive(Clone, Component, Copy, Default)]
-pub struct Physics;
-
 #[derive(Debug, Default, Component)]
 pub struct Sun();
 
