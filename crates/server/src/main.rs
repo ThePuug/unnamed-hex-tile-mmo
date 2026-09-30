@@ -8,10 +8,9 @@ mod systems;
 use std::time::*;
 use bevy::{ log::LogPlugin, prelude::*, time::common_conditions::* };
 use bevy_easings::*;
-use serde::{Deserialize, Serialize};
 
 use common_bevy::{
-    components::{behaviour::*, entity_type::*},
+    components::entity_type::*,
     plugins::nntree,
     resources::{map::*, *},
 };
@@ -19,12 +18,6 @@ use crate::{
     resources::*,
     systems::{actor, aoi, engagement_cleanup, engagement_spawner, input, renet, world},
 };
-
-#[derive(Clone, Copy, Debug, Deserialize, Event, Message, Serialize)]
-pub struct Tick {
-    pub ent: Entity,
-    pub behaviour: Behaviour,
-}
 
 
 fn main() {
@@ -58,7 +51,6 @@ fn main() {
         crate::plugins::world_streaming::WorldStreamingPlugin,
     ));
 
-    app.add_message::<Tick>();
 
     // Add observers for triggered events
     app.add_observer(renet::do_manage_connections);

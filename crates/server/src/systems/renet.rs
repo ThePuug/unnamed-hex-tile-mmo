@@ -129,7 +129,6 @@ pub fn do_presence(
                 let ent = commands.spawn((
                     typ,
                     loc,
-                    Behaviour::Controlled,
                     (PlayerControlled, common_bevy::components::behaviour::Side::PLAYERS),
                     attrs,
                     health,

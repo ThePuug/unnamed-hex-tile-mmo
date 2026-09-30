@@ -4,7 +4,7 @@ use crate::{
     plugins::diagnostics::{DateField, DiagnosticsState, grid::HexGridOverlay},
     components::PlayerOriginDebug,
 };
-use common_bevy::components::behaviour::Behaviour;
+use common_bevy::components::Actor;
 
 /// Events that can be triggered from the developer console
 #[derive(Event, Message, Debug)]
@@ -68,7 +68,7 @@ pub fn execute_console_actions(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay)>,
-    actor_query: Query<Entity, With<Behaviour>>,
+    actor_query: Query<Entity, With<Actor>>,
     debug_sphere_query: Query<Entity, With<PlayerOriginDebug>>,
     mut terrain: Query<&mut Visibility, (With<crate::resources::SummaryMesh>, Without<HexGridOverlay>)>,
     mut cover: Query<

@@ -282,7 +282,6 @@ pub enum ClearType {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub enum Component {
-    Behaviour(Behaviour),
     CombatState(CombatState),
     Equipment(Equipment),
     Health(Health),
@@ -303,7 +302,6 @@ impl Component {
     /// Panics on Loc/Heading — those require special handling in do_incremental.
     pub fn insert_into(self, entity: &mut EntityCommands) {
         match self {
-            Component::Behaviour(v) => { entity.insert(v); }
             Component::CombatState(v) => { entity.insert(v); }
             Component::Equipment(v) => { entity.insert(v); }
             Component::Health(v) => { entity.insert(v); }

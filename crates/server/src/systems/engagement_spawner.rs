@@ -10,7 +10,7 @@ use qrz::Qrz;
 
 use common_bevy::{
     components::{
-        behaviour::{Behaviour, Side},
+        behaviour::Side,
         engagement::{Engagement, EngagementMember, LastPlayerProximity},
         equipment::{Equipment, Item, Piece},
         entity_type::{
@@ -184,7 +184,7 @@ pub fn spawn_engagement(
                 health, stamina, mana,
                 combat_state,
                 reaction_queue,
-                (Behaviour::default(), side),
+                side,
                 EngagementMember(engagement_entity),
                 common_bevy::components::loaded_by::LoadedBy::default(),
             ))

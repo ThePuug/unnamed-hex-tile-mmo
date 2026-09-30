@@ -88,19 +88,14 @@ pub fn check_death(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
-    mut query: Query<(Entity, Option<&crate::components::behaviour::Behaviour>, &mut Health, &mut Stamina, &mut Mana), Without<RespawnTimer>>,
+    mut query: Query<(Entity, Has<crate::components::behaviour::PlayerControlled>, &mut Health, &mut Stamina, &mut Mana), Without<RespawnTimer>>,
 ) {
-    for (ent, behaviour, mut health, mut stamina, mut mana) in &mut query {
+    for (ent, is_player, mut health, mut stamina, mut mana) in &mut query {
         if health.state <= 0.0 {
             // Set resources to 0 to prevent "zombie" state
             health.state = 0.0;
             stamina.state = 0.0;
             mana.state = 0.0;
-
-            // Check if this is a player (Behaviour::Controlled)
-            let is_player = behaviour
-                .map(|b| matches!(b, crate::components::behaviour::Behaviour::Controlled))
-                .unwrap_or(false);
 
             if is_player {
                 // Player death: add respawn timer (5 seconds) and despawn from client view

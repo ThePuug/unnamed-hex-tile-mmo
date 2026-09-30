@@ -30,7 +30,6 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::Stamina(_) => "Inc:Stamina",
             Component::TierLock(_) => "Inc:TierLock",
             Component::CombatState(_) => "Inc:Combat",
-            Component::Behaviour(_) => "Inc:Behaviour",
             Component::PlayerControlled(_) => "Inc:PlayerControlled",
             Component::Recovery(_) => "Inc:Recovery",
             Component::Returning(_) => "Inc:Returning",
@@ -99,7 +98,6 @@ pub fn write_do(
                 let ent = commands.spawn((
                     Actor,
                     crate::components::Viewed,
-                    Behaviour::Controlled,
                     PlayerControlled,
                     common_bevy::components::target::Target::default(), // For unified targeting system
                     common_bevy::components::ally_target::AllyTarget::default(), // For ally targeting

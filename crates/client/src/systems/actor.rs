@@ -6,7 +6,6 @@ use qrz::Convert;
 use crate::{components::*, systems::animator::{Clip, Clips, Rig}};
 use common_bevy::{
     components::{
-        behaviour::Behaviour,
         displacing::Displacing,
         entity_type::{ actor::*, * },
         heading::*, keybits::*,
@@ -150,9 +149,6 @@ pub fn do_spawn(
                     .insert((
                         loc,
                         typ,
-                        // All actors need Behaviour::Controlled on client for movement interpolation
-                        // (separate from PlayerControlled which marks player-controlled entities for ally/enemy logic)
-                        Behaviour::Controlled,
                         (
                             WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
                             Rig(asset_server.load(get_asset(EntityType::Actor(desc)))),
