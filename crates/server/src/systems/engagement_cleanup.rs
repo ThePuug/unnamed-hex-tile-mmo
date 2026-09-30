@@ -35,7 +35,6 @@ const PROXIMITY_RANGE: i32 = 150;
 /// - Despawn engagement entity
 pub fn cleanup_engagements(
     mut commands: Commands,
-    mut active_spawners: ResMut<crate::systems::engagement_spawner::ActiveSpawners>,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
     engagement_query: Query<(Entity, &Engagement, &Loc, &LastPlayerProximity)>,
@@ -63,9 +62,6 @@ pub fn cleanup_engagements(
         }
 
         if should_cleanup {
-            // Deactivate spawner tile so it can re-activate later
-            active_spawners.0.remove(&(engagement_loc.q, engagement_loc.r));
-
             // Emit Despawn events for all NPCs — send_do routes via LoadedBy,
             // cleanup_despawned handles actual entity removal
             for &npc_entity in &engagement.spawned_npcs {

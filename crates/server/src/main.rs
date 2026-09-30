@@ -152,7 +152,6 @@ fn main() {
         qrz::Qrz { q: haven.q, r: haven.r, z: spawn_z }));
     app.insert_resource(registry);
     app.init_resource::<crate::resources::summary_cache::SummaryCache>();
-    app.init_resource::<engagement_spawner::ActiveSpawners>();
     app.init_resource::<engagement_spawner::Parties>();
 
     app.run();

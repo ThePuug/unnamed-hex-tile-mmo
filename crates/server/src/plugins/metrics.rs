@@ -297,7 +297,7 @@ impl Plugin for MetricsPlugin {
 
 fn drain_event_metrics(
     registry: Res<crate::resources::event_registry::EventRegistry>,
-    active: Res<crate::systems::engagement_spawner::ActiveSpawners>,
+    engagements: Query<(), With<common_bevy::components::engagement::Engagement>>,
     snapshot: Res<MetricSnapshot>,
 ) {
     let m = registry.drain_metrics();
@@ -305,7 +305,7 @@ fn drain_event_metrics(
         ("evt.visible", m.visible as f32),
         ("evt.tile_hits", m.tile_hits as f32),
         ("evt.tile_misses", m.tile_misses as f32),
-        ("spawners.active", active.0.len() as f32),
+        ("spawners.active", engagements.iter().count() as f32),
     ]);
     // The stack names its own layers, in the order it evaluates them, and
     // the flush keeps that order — a fixed list here would go stale the

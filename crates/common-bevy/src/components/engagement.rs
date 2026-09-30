@@ -1,52 +1,24 @@
-//! # Engagement System Components
-
-//! Dynamic enemy encounters that spawn when players explore new chunks.
-//! Replaces static spawners with exploration-driven content discovery.
+//! The engagement, a group of NPCs spawned together, and what tracks it.
 
 use bevy::prelude::*;
 use qrz::Qrz;
-use serde::{Deserialize, Serialize};
 
 use crate::spatial_difficulty::EnemyArchetype;
 
-/// Zone ID for budget tracking (240-tile zones)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ZoneId(pub i32, pub i32);
-
-impl ZoneId {
-    /// Zone radius in tiles
-    pub const ZONE_RADIUS: i32 = 240;
-
-    /// Calculate zone ID from position (240-tile zones)
-    pub fn from_position(pos: Qrz) -> Self {
-        ZoneId(
-            pos.q / Self::ZONE_RADIUS,
-            pos.r / Self::ZONE_RADIUS,
-        )
-    }
-}
-
-/// Engagement parent entity - manages a group of NPCs spawned together
-
-/// Lifecycle:
-/// 1. Spawn engagement entity when chunk received (if validation passes)
-/// 2. Spawn 1-3 NPC entities as children
-/// 3. Monitor NPCs (track deaths, player proximity)
-/// 4. Cleanup when all NPCs killed or abandoned (no players within 100 tiles for 60s)
+/// A group of NPCs spawned together. It is cleaned up once every one is
+/// dead, or no client has watched it for a while (`engagement_cleanup`).
 #[derive(Component, Debug, Clone)]
 pub struct Engagement {
     /// Location where engagement spawned
     pub spawn_location: Qrz,
-    /// Enemy level (0-10) based on distance from haven
+    /// Level of its NPCs
     pub level: u8,
     /// Enemy archetype (determines abilities and attributes)
     pub archetype: EnemyArchetype,
-    /// Number of NPCs in this engagement (1-3)
+    /// Number of NPCs in this engagement
     pub npc_count: u8,
     /// Child NPC entities (tracked for cleanup)
     pub spawned_npcs: Vec<Entity>,
-    /// Zone ID for budget tracking
-    pub zone_id: ZoneId,
 }
 
 impl Engagement {
@@ -57,14 +29,12 @@ impl Engagement {
         archetype: EnemyArchetype,
         npc_count: u8,
     ) -> Self {
-        let zone_id = ZoneId::from_position(spawn_location);
         Self {
             spawn_location,
             level,
             archetype,
             npc_count,
             spawned_npcs: Vec::new(),
-            zone_id,
         }
     }
 
@@ -109,29 +79,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_zone_id_from_position() {
-        // Origin should be zone (0, 0)
-        let pos = Qrz { q: 0, r: 0, z: 0 };
-        assert_eq!(ZoneId::from_position(pos), ZoneId(0, 0));
-
-        // 150 tiles away should still be zone (0, 0)
-        let pos = Qrz { q: 150, r: 0, z: 0 };
-        assert_eq!(ZoneId::from_position(pos), ZoneId(0, 0));
-
-        // 240 tiles away should be zone (1, 0)
-        let pos = Qrz { q: 240, r: 0, z: 0 };
-        assert_eq!(ZoneId::from_position(pos), ZoneId(1, 0));
-
-        // Negative coordinates
-        let pos = Qrz { q: -240, r: 0, z: 0 };
-        assert_eq!(ZoneId::from_position(pos), ZoneId(-1, 0));
-
-        // Both axes
-        let pos = Qrz { q: 480, r: -720, z: 0 };
-        assert_eq!(ZoneId::from_position(pos), ZoneId(2, -3));
-    }
-
-    #[test]
     fn test_engagement_creation() {
         use crate::spatial_difficulty::EnemyArchetype;
 
@@ -148,7 +95,6 @@ mod tests {
         assert_eq!(engagement.archetype, EnemyArchetype::Berserker);
         assert_eq!(engagement.npc_count, 2);
         assert_eq!(engagement.spawned_npcs.len(), 0); // Empty initially
-        assert_eq!(engagement.zone_id, ZoneId(0, 0)); // 30 tiles is within zone (0, 0)
     }
 
     #[test]

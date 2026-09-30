@@ -1,10 +1,8 @@
 //! # Engagement Activation System
 //!
-//! Builds an engagement — a group of NPCs at a location — and tracks which
-//! sites already have one.
-//!
-//! Nothing selects sites: the only den is one an admin asks for with
-//! `Event::SpawnDen`, and `ActiveSpawners` is only ever cleared.
+//! Builds an engagement — a group of NPCs at a location. Nothing selects
+//! sites: a den or a party is one an admin asks for (`Event::SpawnDen`,
+//! `Event::SpawnParty`).
 
 use std::ops::RangeInclusive;
 
@@ -34,11 +32,6 @@ use common_bevy::{
     spatial_difficulty::{calculate_enemy_attributes, EnemyArchetype},
     systems::combat::resources as resource_calcs,
 };
-
-/// Tracks which sites have active engagements.
-/// Cleared when engagement is cleaned up (allows re-activation).
-#[derive(Resource, Default)]
-pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
 
 /// How long a live NPC waits, in milliseconds, once it can afford its
 /// signature and is out of recovery, before it uses it, drawn afresh each
