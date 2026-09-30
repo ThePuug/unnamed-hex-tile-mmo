@@ -75,9 +75,9 @@ pub fn calculate_assignments(
     assignments
 }
 
-/// Assigns the living melee NPCs of each engagement their hexes, when the
-/// engagement first has a target, when that target changes tile, and while
-/// any of its NPCs is dead.
+/// Assigns the living melee NPCs of each engagement their hexes: when the
+/// engagement first has a target, when that target changes tile, and when
+/// one of its NPCs falls.
 pub fn assign_hexes(
     mut commands: Commands,
     mut engagement_query: Query<(&Engagement, &mut HexAssignment)>,
@@ -100,18 +100,15 @@ pub fn assign_hexes(
 
         let player_tile = **player_loc;
 
-        // Check if reassignment is needed
-        let needs_reassign = hex_assign.target_player != Some(target_player)
-            || hex_assign.last_player_tile != Some(player_tile)
-            || has_dead_npcs(engagement, &health_query);
-
-        if !needs_reassign {
+        // Assigned already for this target, on this tile, with these alive
+        let living = engagement.spawned_npcs.iter()
+            .filter(|&&npc| health_query.get(npc).is_ok_and(|health| health.current() > 0.0))
+            .count();
+        let assigning_for = HexAssignment { target_player: Some(target_player), last_player_tile: Some(player_tile), living };
+        if *hex_assign == assigning_for {
             continue;
         }
-
-        // Update tracking state
-        hex_assign.target_player = Some(target_player);
-        hex_assign.last_player_tile = Some(player_tile);
+        *hex_assign = assigning_for;
 
         // Collect living melee NPCs, and the reach every one of them
         // swings from
@@ -169,13 +166,6 @@ fn find_engagement_target(
         }
     }
     None
-}
-
-/// Check if any NPC in the engagement has died (for reassignment trigger).
-fn has_dead_npcs(engagement: &Engagement, health_query: &Query<&Health>) -> bool {
-    engagement.spawned_npcs.iter().any(|&npc_ent| {
-        health_query.get(npc_ent).map(|h| h.current() <= 0.0).unwrap_or(true)
-    })
 }
 
 #[cfg(test)]
@@ -270,5 +260,77 @@ mod tests {
 
         let alone = calculate_assignments(&pack(1), &[], 6, &secondary);
         assert_eq!(alone.values().next(), Some(&secondary[0]));
+    }
+
+    /// An engagement of two melee NPCs either side of a target at the
+    /// origin, on flat ground: the world, the target and the two NPCs.
+    fn engaged() -> (App, Entity, [Entity; 2]) {
+        use common_bevy::{components::entity_type::EntityType, spatial_difficulty::EnemyArchetype};
+
+        let mut app = App::new();
+        app.add_plugins(common_bevy::plugins::nntree::NNTreePlugin);
+        let world = app.world_mut();
+        let mut tiles = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+        for q in -8..=8 {
+            for r in -8..=8 {
+                tiles.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
+            }
+        }
+        world.insert_resource(Map::new(tiles));
+
+        let target = world.spawn((Loc::new(TARGET + Qrz::Z), Side::PLAYERS)).id();
+        let engagement = world.spawn_empty().id();
+        let reach = common_bevy::components::AttackRange::default().0;
+        let npcs = [5, -5].map(|q| {
+            world.spawn((
+                Loc::new(Qrz { q, r: 0, z: 1 }),
+                Chase { acquisition_range: 20, leash_distance: 0, attack_range: reach },
+                Target { entity: Some(target), last_target: None },
+                EngagementMember(engagement),
+                Health { state: 100.0, step: 100.0, max: 100.0 },
+            )).id()
+        });
+        let mut members = Engagement::new(TARGET, 10, EnemyArchetype::Juggernaut, 2);
+        members.spawned_npcs = npcs.to_vec();
+        world.entity_mut(engagement).insert((members, HexAssignment::default()));
+        (app, target, npcs)
+    }
+
+    fn assign(world: &mut World) {
+        use bevy::ecs::system::RunSystemOnce;
+        world.run_system_once(assign_hexes).unwrap();
+    }
+
+    fn place(world: &World, npc: Entity) -> Option<Qrz> {
+        world.get::<AssignedHex>(npc).map(|assigned| assigned.0)
+    }
+
+    #[test]
+    fn a_place_taken_by_hand_stands_until_the_target_moves_or_an_npc_falls() {
+        let (mut app, target, [near, other]) = engaged();
+        let world = app.world_mut();
+        assign(world);
+        let first = place(world, near).expect("the first assignment places every NPC");
+        assert_ne!(Some(first), place(world, other));
+
+        // As a Flank does: a place on the ring the rule puts neither of them on
+        let taken = Qrz { q: 0, r: 2, z: 1 };
+        assert_ne!(taken, first);
+        world.entity_mut(near).insert(AssignedHex(taken));
+        assign(world);
+        assert_eq!(place(world, near), Some(taken), "nothing changed, so nothing is assigned afresh");
+
+        world.get_mut::<Health>(other).unwrap().state = 0.0;
+        assign(world);
+        assert_ne!(place(world, near), Some(taken), "an NPC fell: assigned afresh");
+
+        world.entity_mut(near).insert(AssignedHex(taken));
+        assign(world);
+        assign(world);
+        assert_eq!(place(world, near), Some(taken), "once for the fall, and not again while it lies dead");
+
+        world.entity_mut(target).insert(Loc::new(Qrz { q: 1, r: 0, z: 1 }));
+        assign(world);
+        assert_ne!(place(world, near), Some(taken), "the target moved: assigned afresh");
     }
 }
