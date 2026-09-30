@@ -174,6 +174,7 @@ pub fn do_presence(
                     qrz,
                     Some(attrs),
                     Some(&PlayerControlled),
+                    Some(&common_bevy::components::behaviour::Side::PLAYERS),
                     None,
                     Some(&health),
                     Some(&stamina),

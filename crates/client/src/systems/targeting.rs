@@ -33,7 +33,7 @@ use common_bevy::{
 pub fn update_targets(
     mut query: Query<(Entity, &Loc, &Heading, &mut Target, Option<&TierLock>)>,
     entity_types: Query<&EntityType>,
-    player_controlled: Query<&common_bevy::components::behaviour::PlayerControlled>,
+    sides: Query<&Side>,
     nntree: Res<NNTree>,
 ) {
     for (ent, loc, heading, mut target, tier_lock) in &mut query {
@@ -45,7 +45,7 @@ pub fn update_targets(
             tier_lock,
             &nntree,
             &entity_types,
-            |e| Some(Side::of_player(player_controlled.contains(e))),
+            |e| sides.get(e).ok().copied(),
         );
     }
 }
@@ -69,7 +69,7 @@ pub fn update_targets(
 /// run on a timer (e.g., every 100ms).
 pub fn update_ally_targets(
     mut query: Query<(Entity, &Loc, &Heading, &mut AllyTarget, Option<&TierLock>)>,
-    player_controlled: Query<&common_bevy::components::behaviour::PlayerControlled>,
+    sides: Query<&Side>,
     nntree: Res<NNTree>,
 ) {
     for (ent, loc, heading, mut ally_target, tier_lock) in &mut query {
@@ -83,7 +83,7 @@ pub fn update_ally_targets(
             *heading,
             tier_constraint,
             &nntree,
-            |e| Some(Side::of_player(player_controlled.contains(e))),
+            |e| sides.get(e).ok().copied(),
         );
 
         // Update AllyTarget fields directly

@@ -34,9 +34,9 @@ pub struct PlayerControlled;
 /// actors on the same side are allies. This is the one hostility rule:
 /// targeting, pursuit, auto-attacks and combat state all ask it.
 ///
-/// The server holds it as a component. The client does not receive it and
-/// derives it from `PlayerControlled` with [`Side::of_player`], since every
-/// actor it sees is either a player or wild.
+/// The server holds it as a component and sends it with every actor's
+/// spawn, so a client targets by the same rule: two NPC parties staged on
+/// sides of their own are hostile there too.
 #[derive(Clone, Component, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Side(pub u8);
 

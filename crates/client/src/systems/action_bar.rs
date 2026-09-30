@@ -205,7 +205,7 @@ pub fn update(
     mut glow_query: Query<&mut Visibility, With<SynergyGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
     player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, &TierLock, Option<&Gcd>, Option<&GlobalRecovery>, Option<&SynergyUnlock>), With<Actor>>,
-    entity_query: Query<(&EntityType, &Loc, Option<&common_bevy::components::behaviour::PlayerControlled>)>,
+    entity_query: Query<(&EntityType, &Loc, Option<&Side>)>,
     nntree: Res<NNTree>,
     time: Res<Time>,
 ) {
@@ -321,7 +321,7 @@ fn get_ability_state(
     player_heading: Heading,
     targeting_state: &TierLock,
     nntree: &NNTree,
-    entity_query: &Query<(&EntityType, &Loc, Option<&common_bevy::components::behaviour::PlayerControlled>)>,
+    entity_query: &Query<(&EntityType, &Loc, Option<&Side>)>,
 ) -> AbilityState {
     // Check recovery lockout (Universal lockout, can be synergy-unlocked)
     if recovery_active {
@@ -354,7 +354,7 @@ fn get_ability_state(
                 targeting_state.get(), // Respect tier lock
                 nntree,
                 |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
-                |ent| Some(Side::of_player(entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some())),
+                |ent| entity_query.get(ent).ok().and_then(|(_, _, side)| side.copied()),
             );
 
             if let Some(target_ent) = target_opt {
@@ -381,7 +381,7 @@ fn get_ability_state(
                 targeting_state.get(), // Respect tier lock
                 nntree,
                 |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
-                |ent| Some(Side::of_player(entity_query.get(ent).ok().and_then(|(_, _, pc_opt)| pc_opt).is_some())),
+                |ent| entity_query.get(ent).ok().and_then(|(_, _, side)| side.copied()),
             );
 
             if let Some(target_ent) = target_opt {

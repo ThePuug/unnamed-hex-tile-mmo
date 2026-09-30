@@ -241,6 +241,7 @@ pub enum Component {
     Mana(Mana),
     PlayerControlled(PlayerControlled),
     Returning(crate::components::returning::Returning),
+    Side(crate::components::behaviour::Side),
     Status(crate::components::status::Status),
     Stunned(crate::components::stunned::Stunned),
     Stamina(Stamina),
@@ -259,6 +260,7 @@ impl Component {
             Component::Mana(v) => { entity.insert(v); }
             Component::PlayerControlled(v) => { entity.insert(v); }
             Component::Returning(v) => { entity.insert(v); }
+            Component::Side(v) => { entity.insert(v); }
             Component::Status(v) => { entity.insert(v); }
             Component::Stunned(v) => { entity.insert(v); }
             Component::Stamina(v) => { entity.insert(v); }
