@@ -422,9 +422,9 @@ impl ActorAttributes {
     /// Force, Might's: what a Lunge and an Overpower strike for, and what
     /// its share adds to an auto-attack
     pub fn force(&self) -> f32 { self.potency(Attribute::Might) }
-    /// Precision, Agility's: what a Volley's shot and a Kick strike for, and
-    /// how hard a crit lands (`crit_multiplier`)
-    pub fn precision(&self) -> f32 { self.potency(Attribute::Agility) }
+    /// Tempo, Agility's: what a Volley's shot and a Kick strike for, and how
+    /// fast its auto-attacks come (`cadence_interval`)
+    pub fn tempo(&self) -> f32 { self.potency(Attribute::Agility) }
     /// Endurance, Discipline's: what a Flank strikes for, and how deep the
     /// endurance pool is (`max_endurance`)
     pub fn endurance(&self) -> f32 { self.potency(Attribute::Discipline) }
@@ -548,7 +548,7 @@ impl ActorAttributes {
 
     /// What a crit this actor strikes multiplies its blow by:
     /// `Tuning::crit_power`, `Tuning::crit_severity` more at the ceiling of
-    /// Precision's share
+    /// Agility's share
     pub fn crit_multiplier(&self) -> f32 {
         let tuning = crate::tuning::tuning();
         tuning.crit_power + tuning.crit_severity * self.share(Attribute::Agility)
@@ -598,10 +598,12 @@ impl ActorAttributes {
         [60.0, 90.0, 120.0, 180.0][self.grace().index()]
     }
 
-    /// Seconds between auto-attacks: `Tuning::auto_interval`, the same for
-    /// every actor
+    /// Seconds between auto-attacks: `Tuning::base_interval`, the one pace
+    /// every actor starts from, quickened by `Tuning::tempo_ceiling` at the
+    /// ceiling of Tempo's share. No actor swings slower than the base.
     pub fn cadence_interval(&self) -> std::time::Duration {
-        std::time::Duration::from_secs_f32(crate::tuning::tuning().auto_interval)
+        let tuning = crate::tuning::tuning();
+        std::time::Duration::from_secs_f32(tuning.base_interval / (1.0 + tuning.tempo_ceiling * self.share(Attribute::Agility)))
     }
 }
 
@@ -677,13 +679,13 @@ mod tests {
     }
 
     #[test]
-    fn intuition_crits_more_often_and_precision_harder() {
+    fn intuition_crits_more_often_and_agility_harder() {
         let instinct = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
         let agility = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
         assert_eq!(plain.crit_chance(), 0.0, "no Intuition, no crits");
         assert!(instinct.crit_chance() > 0.0 && instinct.crit_chance() < 1.0);
-        assert!(agility.crit_multiplier() > plain.crit_multiplier(), "Precision lands a crit harder");
+        assert!(agility.crit_multiplier() > plain.crit_multiplier(), "Agility lands a crit harder");
         assert!(plain.crit_multiplier() > 1.0, "a crit always lands harder");
     }
 
@@ -698,6 +700,15 @@ mod tests {
         assert_eq!(disciplined.skill_endurance(), mighty.skill_endurance(), "a skill costs the same at a level, whatever the build");
         let skills = |attrs: &ActorAttributes| attrs.max_endurance() / attrs.skill_endurance();
         assert!((skills(&mighty) - skills(&plain)).abs() < 1e-3, "with no Discipline a pool holds as many skills at any level");
+    }
+
+    #[test]
+    fn tempo_quickens_the_swing_and_no_one_is_slower_than_the_base() {
+        let base = std::time::Duration::from_secs_f32(crate::tuning::tuning().base_interval);
+        let quick = |points: i8| ActorAttributes::new(points, 0, 0, 0, 0, 0, 0, 0, 0).cadence_interval();
+        assert_eq!(ActorAttributes::default().cadence_interval(), base);
+        assert_eq!(ActorAttributes::new(-10, 0, 0, -10, 0, 0, 0, 0, 0).cadence_interval(), base, "no other attribute changes the pace");
+        assert!(quick(5) < base && quick(10) < quick(5), "more Agility, a faster swing");
     }
 
     #[test]

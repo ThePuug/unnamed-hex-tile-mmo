@@ -18,7 +18,7 @@ pub struct Tuning {
     // --- Absolute: potency, level curves, health ---
     /// Potency every actor has before any attribute
     pub potency_base: f32,
-    /// Potency each point of the attribute adds, for Force, Concentration, Precision and Intuition alike
+    /// Potency each point of the attribute adds, the same for every attribute
     pub potency_per_point: f32,
     /// The damage level curve, `(1 + level × k)^p`, every potency scales by
     pub damage_curve_k: f32,
@@ -51,8 +51,10 @@ pub struct Tuning {
 
     // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`,
     // and so is the window each Awareness tier sees, `ActorAttributes::window_size`) ---
-    /// Seconds between auto-attacks, the same for every actor
-    pub auto_interval: f32,
+    /// Seconds between auto-attacks at the one pace every actor starts from
+    pub base_interval: f32,
+    /// Share faster auto-attacks come at the ceiling of Tempo's share
+    pub tempo_ceiling: f32,
     /// Share of its health an actor loses at most in any second, at each Grit
     /// tier, T0 to T3; everything at T0
     pub grit_cap: [f32; 4],
@@ -106,16 +108,16 @@ pub struct Tuning {
     pub auto_damage: f32,
     /// Share more an auto-attack strikes for at the ceiling of Force's share
     pub force_auto: f32,
-    /// Share of its speed an actor keeps for an auto-attack interval after
+    /// Share of its speed an actor keeps for a base interval after
     /// a strike across its line breaks its stride
     pub stride_pace: f32,
     /// Share of an attack's damage its roll lands either side of it
     pub damage_spread: f32,
     /// Chance a blow crits at the ceiling of Intuition's share
     pub crit_chance: f32,
-    /// What a crit multiplies its blow by without Precision
+    /// What a crit multiplies its blow by without Agility
     pub crit_power: f32,
-    /// How much more at the ceiling of Precision's share
+    /// How much more at the ceiling of Agility's share
     pub crit_severity: f32,
     /// Share of Force a Lunge's strike deals
     pub lunge_force: f32,
@@ -146,7 +148,7 @@ pub struct Tuning {
     pub volley_cost: f32,
     /// Shots in a Volley: three, so a Disengage, which takes the front blow, takes a third
     pub volley_shots: u8,
-    /// Share of Precision each Volley shot strikes for
+    /// Share of Tempo each Volley shot strikes for
     pub volley_precision: f32,
     /// Share of its speed a Volley takes from its target
     pub volley_slow: f32,
@@ -182,7 +184,8 @@ impl Tuning {
         health_per_vitality: 0.9604,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
-        auto_interval: 2.1,
+        base_interval: 2.1,
+        tempo_ceiling: 0.5,
         grit_cap: [f32::INFINITY, 0.4, 0.3, 0.28],
         contest_scale: 800.0,
         contest_per_level: 15.0,
@@ -291,7 +294,8 @@ impl Tuning {
             return Ok(());
         }
         let knob = match name {
-            "auto_interval" => &mut self.auto_interval,
+            "base_interval" => &mut self.base_interval,
+            "tempo_ceiling" => &mut self.tempo_ceiling,
             "potency_base" => &mut self.potency_base,
             "potency_per_point" => &mut self.potency_per_point,
             "damage_curve_k" => &mut self.damage_curve_k,

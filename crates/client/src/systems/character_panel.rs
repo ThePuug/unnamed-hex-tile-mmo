@@ -112,7 +112,7 @@ pub enum AxisMarker {
 #[derive(Component, Clone)]
 pub enum AbsoluteMetaAttributeStat {
     Force,
-    Precision,
+    Tempo,
     Constitution,
     Endurance,
     Intuition,
@@ -266,7 +266,7 @@ macro_rules! create_absolute_stat_display {
         {
             let (name, color) = match $stat {
                 AbsoluteMetaAttributeStat::Force => ("Force", Color::srgb(0.9, 0.5, 0.5)),
-                AbsoluteMetaAttributeStat::Precision => ("Precision", Color::srgb(0.9, 0.9, 0.5)),
+                AbsoluteMetaAttributeStat::Tempo => ("Tempo", Color::srgb(0.9, 0.9, 0.5)),
                 AbsoluteMetaAttributeStat::Constitution => ("Constitution", Color::srgb(0.5, 0.8, 0.5)),
                 AbsoluteMetaAttributeStat::Endurance => ("Endurance", Color::srgb(0.5, 0.7, 0.9)),
                 AbsoluteMetaAttributeStat::Intuition => ("Intuition", Color::srgb(0.7, 0.5, 0.9)),
@@ -862,7 +862,7 @@ pub fn setup(
                 .with_children(|right| {
                     // MIGHT ↔ AGILITY section (grouped container)
                     create_stat_section!(right,
-                        AbsoluteMetaAttributeStat::Force, AbsoluteMetaAttributeStat::Precision,
+                        AbsoluteMetaAttributeStat::Force, AbsoluteMetaAttributeStat::Tempo,
                         MetaAttributeStat::Impact, MetaAttributeStat::Flow);
 
                     // VITALITY ↔ DISCIPLINE section (grouped container)
@@ -1262,7 +1262,7 @@ pub fn update_attributes(
         if let Ok(mut text) = text_query.get_mut(entity) {
             let raw_attr = match abs_stat {
                 AbsoluteMetaAttributeStat::Force => Some(display_attrs.might() as f32),
-                AbsoluteMetaAttributeStat::Precision => Some(display_attrs.agility() as f32),
+                AbsoluteMetaAttributeStat::Tempo => Some(display_attrs.agility() as f32),
                 AbsoluteMetaAttributeStat::Constitution => Some(display_attrs.vitality() as f32),
                 AbsoluteMetaAttributeStat::Endurance => Some(display_attrs.discipline() as f32),
                 AbsoluteMetaAttributeStat::Intuition => Some(display_attrs.instinct() as f32),
