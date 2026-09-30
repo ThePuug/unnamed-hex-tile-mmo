@@ -139,6 +139,12 @@ pub fn handle_flank(
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Flank, target: Some(target_ent) } });
         super::stride(*ent, caster_heading, caster_loc, target_loc, &mut commands);
-        commands.entity(*ent).insert(GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Flank), AbilityType::Flank));
+        let (target_impact, target_level) = attrs_query.get(target_ent)
+            .map(|a| (a.impact(), a.total_level()))
+            .unwrap_or((0, 0));
+        commands.entity(*ent).insert(
+            GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Flank), AbilityType::Flank)
+                .with_target(target_impact, target_level),
+        );
     }
 }
