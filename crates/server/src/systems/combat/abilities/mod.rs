@@ -36,6 +36,7 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use common_bevy::{
     components::{
         behaviour::Side,
+        engagement::{Engagement, EngagementMember},
         grit::Grit,
         heading::Heading,
         npc_recovery::NpcRecovery,
@@ -120,6 +121,8 @@ pub struct Abilities<'w, 's> {
     pub striding: Query<'w, 's, &'static stride::PerfectStride>,
     pub targets: Query<'w, 's, (Entity, &'static Target)>,
     pub npcs: Query<'w, 's, (Entity, &'static EntityType, &'static mut NpcRecovery, Has<leap::Traded>), With<Chase>>,
+    pub leashed: Query<'w, 's, (&'static Chase, &'static EngagementMember)>,
+    pub dens: Query<'w, 's, &'static Loc, With<Engagement>>,
     pub map: Res<'w, Map>,
     pub time: Res<'w, Time>,
     pub runtime: Res<'w, crate::resources::RunTime>,
@@ -269,6 +272,14 @@ impl Abilities<'_, '_> {
             return Err(AbilityFailReason::NoTargets);
         }
         Ok((target, loc))
+    }
+
+    /// The leash `ent`'s moves keep inside: an NPC's, round its
+    /// engagement's place. A player has none.
+    pub fn leash(&self, ent: Entity) -> Option<crate::systems::combat::leap::Leash> {
+        let (chase, member) = self.leashed.get(ent).ok()?;
+        let den = self.dens.get(member.0).ok()?;
+        Some(crate::systems::combat::leap::Leash { den: **den, reach: chase.leash_distance })
     }
 
     /// Whether `ent` is in a Perfect Stride now

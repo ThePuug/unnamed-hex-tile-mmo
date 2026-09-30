@@ -23,15 +23,17 @@ pub struct Traded;
 /// the frame its target is in reach). A dive that falls short leaps and
 /// strikes nothing.
 ///
-/// With nowhere to leap it is out of range.
+/// An NPC's leap stops at its leash (`Abilities::leash`). With nowhere to
+/// leap it is out of range.
 pub fn leap(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let distance = common_bevy::tuning::tuning().leap_distance;
     let (target, target_loc) = abilities.foe(cast)?;
     let clear = cast.loc.distance(&target_loc) <= cast.reach;
+    let leash = abilities.leash(cast.ent);
     let landing = if clear {
-        away(&abilities.map, *cast.loc, *target_loc, distance)
+        away(&abilities.map, *cast.loc, *target_loc, distance, leash)
     } else {
-        toward(&abilities.map, *cast.loc, *target_loc, distance)
+        toward(&abilities.map, *cast.loc, *target_loc, distance, leash)
     };
     let landing = landing.ok_or(AbilityFailReason::OutOfRange)?;
     slide(cast.ent, landing, LEAP_MS, None, &mut abilities.commands, &mut abilities.writer);
