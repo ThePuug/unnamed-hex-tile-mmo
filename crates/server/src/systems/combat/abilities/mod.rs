@@ -35,9 +35,9 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use common_bevy::{
     components::{
         behaviour::Side,
-        engagement::EngagementMember,
+        engagement::{Engagement, EngagementMember},
         heading::Heading,
-        hex_assignment::HexAssignment,
+        hex_assignment::AssignedHex,
         npc_recovery::NpcRecovery,
         reaction_queue::{QueuedThreat, ReactionQueue},
         recovery::GlobalRecovery,
@@ -109,7 +109,8 @@ pub struct Abilities<'w, 's> {
     pub targets: Query<'w, 's, (Entity, &'static Target)>,
     pub npcs: Query<'w, 's, (Entity, &'static EntityType, &'static mut NpcRecovery), With<Chase>>,
     pub members: Query<'w, 's, &'static EngagementMember>,
-    pub assignments: Query<'w, 's, &'static mut HexAssignment>,
+    pub engagements: Query<'w, 's, &'static Engagement>,
+    pub assigned: Query<'w, 's, &'static AssignedHex>,
     pub map: Res<'w, Map>,
     pub nntree: Res<'w, NNTree>,
     pub time: Res<'w, Time>,

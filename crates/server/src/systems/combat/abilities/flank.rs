@@ -43,23 +43,18 @@ pub fn strike(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
         if let Some(facing) = Heading::between(&abilities.map, landing, *target_loc) {
             abilities.commands.entity(ent).insert((facing, Turn { heading: facing, ..Turn::default() }));
         }
-        if let Ok(mut assignment) = abilities.members.get(ent).and_then(|member| abilities.assignments.get_mut(member.0)) {
-            let left = assignment.get(ent);
-            let holder = assignment.assignments.iter().find(|&(npc, hex)| *hex == landing && *npc != ent).map(|(npc, _)| *npc);
-            // The map keeps the fallen until the engagement next reassigns, so
-            // the holder may be gone by the time the command lands
-            match (holder, left) {
-                (Some(holder), Some(left)) => {
-                    assignment.assignments.insert(holder, left);
-                    abilities.commands.entity(holder).try_insert(AssignedHex(left));
-                }
-                (Some(holder), None) => {
-                    assignment.remove(holder);
-                    abilities.commands.entity(holder).try_remove::<AssignedHex>();
-                }
-                (None, _) => {}
-            }
-            assignment.assignments.insert(ent, landing);
+        let left = abilities.assigned.get(ent).ok().map(|assigned| assigned.0);
+        let holder = abilities.members.get(ent).ok()
+            .and_then(|member| abilities.engagements.get(member.0).ok())
+            .and_then(|engagement| engagement.spawned_npcs.iter().copied()
+                .find(|&npc| npc != ent && abilities.assigned.get(npc).is_ok_and(|assigned| assigned.0 == landing)));
+        // The fallen keep their place until they are despawned, so the
+        // holder may be gone by the time the command lands
+        if let Some(holder) = holder {
+            match left {
+                Some(left) => abilities.commands.entity(holder).try_insert(AssignedHex(left)),
+                None => abilities.commands.entity(holder).try_remove::<AssignedHex>(),
+            };
         }
         abilities.commands.entity(ent).insert(AssignedHex(landing));
     }

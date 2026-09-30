@@ -150,13 +150,9 @@ pub fn assign_hexes(
             .collect();
         let available_secondary: Vec<Qrz> = standing(player_tile.ring(reach + 1)).into_iter().map(|(hex, _)| hex).collect();
 
-        let new_assignments = calculate_assignments(&alive_npcs, &available_reach, 6 * reach as usize, &available_secondary);
-
-        // Apply assignments to NPC entities
-        for (npc_ent, hex) in &new_assignments {
-            commands.entity(*npc_ent).insert(AssignedHex(*hex));
+        for (npc_ent, hex) in calculate_assignments(&alive_npcs, &available_reach, 6 * reach as usize, &available_secondary) {
+            commands.entity(npc_ent).insert(AssignedHex(hex));
         }
-        hex_assign.assignments = new_assignments;
     }
 }
 
