@@ -32,8 +32,6 @@ pub enum Event {
     Confirm { ent: Entity, seq: u8, position: Position, airtime: Option<i16>, turn: Turn },
     Incremental { ent: Entity, component: Component },
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz, attrs: Option<ActorAttributes> },
-    /// Entity died (Try event - server-internal only)
-    Death { ent: Entity },
     /// Server-internal: Deal damage (Try event)
     /// Triggers damage calculation and queue insertion
     DealDamage {
@@ -67,8 +65,6 @@ pub enum Event {
     AbilityFailed { ent: Entity, reason: AbilityFailReason },
     /// Server → Client: Clear threats from queue
     ClearQueue { ent: Entity, clear_type: ClearType },
-    /// Server → Client: Healing was applied to entity
-    Heal { target: Entity, amount: f32 },
     /// Client → Server: Measure network latency (client timestamp)
     Ping { client_time: u128 },
     /// Server → Client: Response to ping (echoes client timestamp)
@@ -205,10 +201,8 @@ impl AbilityType {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum AbilityFailReason {
     InsufficientStamina,
-    InsufficientMana,
     NoTargets,
     OnCooldown,
-    InvalidTarget,
     OutOfRange,
     /// The target stands outside the attacker's facing cone
     NotFacing,
