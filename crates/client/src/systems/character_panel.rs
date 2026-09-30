@@ -111,22 +111,17 @@ pub enum AxisMarker {
     InstinctResolve,
 }
 
-/// Marker component for absolute meta-attribute stat display
+/// Marker component for meta-attribute stat display, a header with what the
+/// stat is worth and a line for what that gives: the six absolutes, the six
+/// contest stats and the six commitments.
 #[derive(Component, Clone)]
-pub enum AbsoluteMetaAttributeStat {
+pub enum MetaAttributeStat {
     Force,
     Tempo,
     Constitution,
     Endurance,
     Intuition,
     Concentration,
-}
-
-/// Marker component for meta-attribute stat display, a header with what the
-/// stat is worth and a line for what that gives: the six contest stats and
-/// the six commitments.
-#[derive(Component, Clone)]
-pub enum MetaAttributeStat {
     Impact,
     Composure,
     Flow,
@@ -179,46 +174,6 @@ impl CharacterPanelState {
 
 pub const KEYCODE_CHARACTER_PANEL: KeyCode = KeyCode::KeyC;
 
-macro_rules! create_absolute_stat_display {
-    ($parent:expr, $stat:expr) => {
-        {
-            let (name, color) = match $stat {
-                AbsoluteMetaAttributeStat::Force => ("Force", Color::srgb(0.9, 0.5, 0.5)),
-                AbsoluteMetaAttributeStat::Tempo => ("Tempo", Color::srgb(0.9, 0.9, 0.5)),
-                AbsoluteMetaAttributeStat::Constitution => ("Constitution", Color::srgb(0.5, 0.8, 0.5)),
-                AbsoluteMetaAttributeStat::Endurance => ("Endurance", Color::srgb(0.5, 0.7, 0.9)),
-                AbsoluteMetaAttributeStat::Intuition => ("Intuition", Color::srgb(0.7, 0.5, 0.9)),
-                AbsoluteMetaAttributeStat::Concentration => ("Concentration", Color::srgb(0.9, 0.6, 0.3)),
-            };
-
-            $parent.spawn((
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(4.),
-                    flex_grow: 1.0,
-                    flex_basis: Val::Px(0.),
-                    ..default()
-                },
-            ))
-            .with_children(|stat_col| {
-                // Stat name (colored)
-                stat_col.spawn((
-                    Text::new(name),
-                    TextFont { font_size: FontSize::Px(11.0), ..default() },
-                    TextColor(color),
-                ));
-                // Stat value
-                stat_col.spawn((
-                    $stat,
-                    Text::new("(0)"),
-                    TextFont { font_size: FontSize::Px(11.0), ..default() },
-                    TextColor(Color::srgb(0.7, 0.7, 0.7)),
-                ));
-            });
-        }
-    };
-}
-
 /// Groups a pair's absolute, relative and commitment stat rows into one container
 macro_rules! create_stat_section {
     ($parent:expr, $left_abs:expr, $right_abs:expr, $left_rel:expr, $right_rel:expr, $left_com:expr, $right_com:expr) => {
@@ -234,7 +189,7 @@ macro_rules! create_stat_section {
             BackgroundColor(Color::srgba(0.15, 0.15, 0.15, 0.8)),
         ))
         .with_children(|section| {
-            // Absolute row (label + value only)
+            // Absolute row (label + value + effect)
             section.spawn((
                 Node {
                     flex_direction: FlexDirection::Row,
@@ -244,8 +199,8 @@ macro_rules! create_stat_section {
                 },
             ))
             .with_children(|row| {
-                create_absolute_stat_display!(row, $left_abs);
-                create_absolute_stat_display!(row, $right_abs);
+                create_stat_display!(row, $left_abs);
+                create_stat_display!(row, $right_abs);
             });
 
             // Relative row (label + value + effect)
@@ -283,6 +238,12 @@ macro_rules! create_stat_display {
     ($parent:expr, $stat:expr) => {
         {
             let (name, color, effect_label) = match $stat {
+                MetaAttributeStat::Force => ("Force", Color::srgb(0.9, 0.5, 0.5), "Auto-Attack Damage:"),
+                MetaAttributeStat::Tempo => ("Tempo", Color::srgb(0.9, 0.9, 0.5), "Auto-Attack Speed:"),
+                MetaAttributeStat::Constitution => ("Constitution", Color::srgb(0.5, 0.8, 0.5), "Health:"),
+                MetaAttributeStat::Endurance => ("Endurance", Color::srgb(0.5, 0.7, 0.9), "Endurance Pool:"),
+                MetaAttributeStat::Intuition => ("Intuition", Color::srgb(0.7, 0.5, 0.9), "Action Potency:"),
+                MetaAttributeStat::Concentration => ("Concentration", Color::srgb(0.9, 0.6, 0.3), "Reaction Potency:"),
                 MetaAttributeStat::Impact => ("Impact", Color::srgb(0.9, 0.5, 0.5), "Recovery Pushback:"),
                 MetaAttributeStat::Composure => ("Composure", Color::srgb(0.5, 0.7, 0.9), "Recovery Reduction:"),
                 MetaAttributeStat::Flow => ("Flow", Color::srgb(0.9, 0.9, 0.5), "Combo Unlock:"),
@@ -628,7 +589,7 @@ pub fn setup(
                         AttributeTitle::MightAgility, AttributeCurrent::MightAgility, AttributeBar::MightAgility, AxisMarker::MightAgility,
                         LeftCurrentValue::MightAgility, RightCurrentValue::MightAgility);
                     create_stat_section!(pair,
-                        AbsoluteMetaAttributeStat::Force, AbsoluteMetaAttributeStat::Tempo,
+                        MetaAttributeStat::Force, MetaAttributeStat::Tempo,
                         MetaAttributeStat::Impact, MetaAttributeStat::Flow,
                         MetaAttributeStat::Ferocity, MetaAttributeStat::Grace);
                 });
@@ -640,7 +601,7 @@ pub fn setup(
                         AttributeTitle::VitalityDiscipline, AttributeCurrent::VitalityDiscipline, AttributeBar::VitalityDiscipline, AxisMarker::VitalityDiscipline,
                         LeftCurrentValue::VitalityDiscipline, RightCurrentValue::VitalityDiscipline);
                     create_stat_section!(pair,
-                        AbsoluteMetaAttributeStat::Constitution, AbsoluteMetaAttributeStat::Endurance,
+                        MetaAttributeStat::Constitution, MetaAttributeStat::Endurance,
                         MetaAttributeStat::Toughness, MetaAttributeStat::Composure,
                         MetaAttributeStat::Grit, MetaAttributeStat::Preparation);
                 });
@@ -652,7 +613,7 @@ pub fn setup(
                         AttributeTitle::InstinctResolve, AttributeCurrent::InstinctResolve, AttributeBar::InstinctResolve, AxisMarker::InstinctResolve,
                         LeftCurrentValue::InstinctResolve, RightCurrentValue::InstinctResolve);
                     create_stat_section!(pair,
-                        AbsoluteMetaAttributeStat::Intuition, AbsoluteMetaAttributeStat::Concentration,
+                        MetaAttributeStat::Intuition, MetaAttributeStat::Concentration,
                         MetaAttributeStat::Reflex, MetaAttributeStat::Focus,
                         MetaAttributeStat::Patience, MetaAttributeStat::Awareness);
                 });
@@ -814,7 +775,6 @@ pub fn update_attributes(
     right_value_query: Query<(Entity, &RightCurrentValue)>,
     bar_query: Query<(Entity, &AttributeBar)>,
     meta_query: Query<(&MetaAttributeStat, Entity)>,
-    abs_meta_query: Query<(&AbsoluteMetaAttributeStat, Entity)>,
     mut spectrum_query: Query<&mut Node, (With<SpectrumRange>, Without<AxisMarker>)>,
     mut axis_query: Query<(&AxisMarker, &mut Node), Without<SpectrumRange>>,
     mut text_query: Query<&mut Text>,
@@ -933,28 +893,8 @@ pub fn update_attributes(
         }
     }
 
-    // Update absolute meta-attribute values
-    // All use the one potency rule: (base + attr × per point) × damage level curve
-    let level_mult = display_attrs.damage_level_multiplier();
-    let tuning = common_bevy::tuning::tuning();
-    for (abs_stat, entity) in &abs_meta_query {
-        if let Ok(mut text) = text_query.get_mut(entity) {
-            let raw_attr = match abs_stat {
-                AbsoluteMetaAttributeStat::Force => Some(display_attrs.might() as f32),
-                AbsoluteMetaAttributeStat::Tempo => Some(display_attrs.agility() as f32),
-                AbsoluteMetaAttributeStat::Constitution => Some(display_attrs.vitality() as f32),
-                AbsoluteMetaAttributeStat::Endurance => Some(display_attrs.discipline() as f32),
-                AbsoluteMetaAttributeStat::Intuition => Some(display_attrs.instinct() as f32),
-                AbsoluteMetaAttributeStat::Concentration => Some(display_attrs.resolve() as f32),
-            };
-            if let Some(attr) = raw_attr {
-                let value = (tuning.potency_base + attr * tuning.potency_per_point) * level_mult;
-                **text = format!("({:.0})", value);
-            }
-        }
-    }
-
     // Update meta-attribute raw values and calculated effects
+    let tuning = common_bevy::tuning::tuning();
     for (meta_stat, entity) in &meta_query {
         if let Ok(mut text) = text_query.get_mut(entity) {
             // Check if this is a raw value display (starts with '(')
@@ -963,6 +903,12 @@ pub fn update_attributes(
             if is_raw {
                 // Update raw stat value in parentheses
                 let raw_value = match meta_stat {
+                    MetaAttributeStat::Force => display_attrs.might().to_string(),
+                    MetaAttributeStat::Tempo => display_attrs.agility().to_string(),
+                    MetaAttributeStat::Constitution => display_attrs.vitality().to_string(),
+                    MetaAttributeStat::Endurance => display_attrs.discipline().to_string(),
+                    MetaAttributeStat::Intuition => display_attrs.instinct().to_string(),
+                    MetaAttributeStat::Concentration => display_attrs.resolve().to_string(),
                     MetaAttributeStat::Impact => display_attrs.impact().to_string(),
                     MetaAttributeStat::Composure => display_attrs.composure().to_string(),
                     MetaAttributeStat::Flow => display_attrs.flow().to_string(),
@@ -980,6 +926,15 @@ pub fn update_attributes(
             } else {
                 // Update calculated effect value (uncontested display)
                 **text = match meta_stat {
+                    // An absolute's effect is how much more its points make
+                    // what the fight reads it as than an actor of its level
+                    // with none
+                    MetaAttributeStat::Force => increase(display_attrs.auto_damage(), display_attrs.base_potency() * tuning.auto_damage),
+                    MetaAttributeStat::Tempo => increase(tuning.base_interval, display_attrs.cadence_interval().as_secs_f32()),
+                    MetaAttributeStat::Constitution => increase(display_attrs.constitution(), tuning.base_health * display_attrs.hp_level_multiplier()),
+                    MetaAttributeStat::Endurance => increase(display_attrs.endurance(), display_attrs.base_potency()),
+                    MetaAttributeStat::Intuition => increase(display_attrs.intuition(), display_attrs.base_potency()),
+                    MetaAttributeStat::Concentration => increase(display_attrs.concentration(), display_attrs.base_potency()),
                     MetaAttributeStat::Impact => {
                         // Recovery pushback: 0.50 × gap × contest_factor
                         let impact = display_attrs.impact();
@@ -1038,6 +993,11 @@ pub fn update_attributes(
             }
         }
     }
+}
+
+/// How much more `value` is than `base`, as a percentage
+fn increase(value: f32, base: f32) -> String {
+    format!("+{:.0}%", (value / base - 1.0) * 100.0)
 }
 
 /// Convert attribute value to percentage position on bar
