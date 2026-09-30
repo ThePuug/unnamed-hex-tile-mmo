@@ -797,22 +797,12 @@ impl ActorAttributes {
         linear * self.damage_level_multiplier()
     }
 
-    /// Constitution: Defensive capacity from vitality
-    /// Scales with level for progression. Used to calculate max health.
-    /// Every actor has [`BASE_HEALTH`] before Vitality, which sets how many
-    /// signature blows a fight takes.
+    /// Constitution: defensive capacity from vitality, scaled by level: the
+    /// health every actor has (`Tuning::base_health`) and what each point of
+    /// Vitality adds (`Tuning::health_per_vitality`). It is max health.
     pub fn constitution(&self) -> f32 {
         let tuning = crate::tuning::tuning();
-        self.constitution_from(tuning.base_health, tuning.health_per_vitality)
-    }
-
-    /// Constitution with its two shares given: `base` health before Vitality
-    /// and `per_vitality` for each point, scaled by level. The balance arena
-    /// tries values here; the game reads the constants through
-    /// [`constitution`](Self::constitution).
-    pub fn constitution_from(&self, base: f32, per_vitality: f32) -> f32 {
-        let vitality = self.vitality() as f32;
-        (base + vitality * per_vitality) * self.hp_level_multiplier()
+        (tuning.base_health + self.vitality() as f32 * tuning.health_per_vitality) * self.hp_level_multiplier()
     }
 
     // --- RELATIVE META-ATTRIBUTES (raw values for contests) ---

@@ -83,7 +83,6 @@ pub fn try_spawn_den(
     time: Res<Time>,
     registry: Res<crate::resources::event_registry::EventRegistry>,
 ) {
-    let tuning = common_bevy::tuning::tuning();
     for message in reader.read() {
         let Try { event: Event::SpawnDen { ent, archetype } } = message else { continue };
         let Ok((loc, heading, attrs)) = query.get(*ent) else { continue };
@@ -93,7 +92,7 @@ pub fn try_spawn_den(
         let player_level = attrs.total_level().min(u8::MAX as u32) as u8;
         let (npc_count, level) = den_for(player_level, rand::rng().random_bool(0.5));
         info!("den: {npc_count}x{archetype:?}@{level} for a level-{player_level} player");
-        spawn_engagement(den, *archetype, Side::WILD, level, npc_count, |q, r| registry.elevation_at(q, r), &tuning, SIGNATURE_WAIT_MS, &mut commands, &time);
+        spawn_engagement(den, *archetype, Side::WILD, level, npc_count, |q, r| registry.elevation_at(q, r), SIGNATURE_WAIT_MS, &mut commands, &time);
     }
 }
 
@@ -144,7 +143,6 @@ pub fn try_spawn_party(
     registry: Res<crate::resources::event_registry::EventRegistry>,
     mut parties: ResMut<Parties>,
 ) {
-    let tuning = common_bevy::tuning::tuning();
     for message in reader.read() {
         let Try { event: Event::SpawnParty { ent, archetype, level, size, engage } } = message else { continue };
         let Ok((loc, heading)) = query.get(*ent) else { continue };
@@ -156,7 +154,7 @@ pub fn try_spawn_party(
         };
         let side = parties.next();
         info!("party: {size}x{archetype:?}@{level} on {side:?} at {at:?}, {} {ent} at {:?}", if *engage { "engaging" } else { "ahead of" }, **loc);
-        spawn_engagement(at, *archetype, side, *level, *size, |q, r| registry.elevation_at(q, r), &tuning, SIGNATURE_WAIT_MS, &mut commands, &time);
+        spawn_engagement(at, *archetype, side, *level, *size, |q, r| registry.elevation_at(q, r), SIGNATURE_WAIT_MS, &mut commands, &time);
     }
 }
 
@@ -176,7 +174,6 @@ pub fn spawn_engagement(
     level: u8,
     npc_count: u8,
     elevation: impl Fn(i32, i32) -> i32,
-    tuning: &common_bevy::tuning::Tuning,
     wait: RangeInclusive<u64>,
     commands: &mut Commands,
     time: &Time,
@@ -208,7 +205,7 @@ pub fn spawn_engagement(
             identity: ActorIdentity::Npc(archetype.npc_type()),
         };
 
-        let max_health = attributes.constitution_from(tuning.base_health, tuning.health_per_vitality);
+        let max_health = attributes.max_health();
         let max_stamina = resource_calcs::calculate_max_stamina(&attributes);
         let max_mana = resource_calcs::calculate_max_mana(&attributes);
         let stamina_regen = resource_calcs::calculate_stamina_regen_rate(&attributes);
