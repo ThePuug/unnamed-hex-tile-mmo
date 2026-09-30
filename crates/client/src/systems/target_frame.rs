@@ -543,7 +543,7 @@ mod tests {
     fn a_timer_ring_grows_and_reddens_as_its_time_runs_out() {
         let attrs = ActorAttributes::default();
         let queued = Duration::from_secs(10);
-        let threat = common_bevy::systems::combat::queue::create_threat(Entity::PLACEHOLDER, &attrs, &attrs, 1.0, None, queued, 0.0);
+        let threat = common_bevy::systems::combat::queue::create_threat(Entity::PLACEHOLDER, &attrs, &attrs, 1.0, None, queued, 0.0, 0.0);
         let after = |share: f32| timer_ring(&threat, queued + threat.timer_duration.mul_f32(share));
         let (mut size, mut green) = (0.0, f32::INFINITY);
         for step in 0..=8 {

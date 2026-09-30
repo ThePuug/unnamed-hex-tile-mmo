@@ -4,8 +4,9 @@
 //! reacting through the recovery (an auto-attack asks its cadence instead);
 //! does it strike a living hostile within the ability's reach and its arc;
 //! can it pay. Then the ability's own effect runs, the
-//! stamina is paid, the clients are told, a strike across the caster's line
-//! breaks its stride, and the recovery starts.
+//! stamina and endurance are paid, the clients are told, a strike across
+//! the caster's line breaks its stride, and the recovery starts, longer
+//! for an actor whose endurance is spent.
 //!
 //! What each ability costs, how long its recovery runs, how far it
 //! reaches, what it offers next and whether it is a reaction are the
@@ -41,7 +42,7 @@ use common_bevy::{
         npc_recovery::NpcRecovery,
         reaction_queue::{QueuedThreat, ReactionQueue},
         recovery::GlobalRecovery,
-        resources::{Health, RespawnTimer, Stamina},
+        resources::{Endurance, Health, RespawnTimer, Stamina},
         status::Status,
         target::Target,
         ActorAttributes, AttackRange, Loc, Swing,
@@ -110,6 +111,7 @@ pub struct Abilities<'w, 's> {
         Has<RespawnTimer>,
     )>,
     pub stamina: Query<'w, 's, &'static mut Stamina>,
+    pub endurance: Query<'w, 's, &'static mut Endurance>,
     pub recoveries: Query<'w, 's, &'static GlobalRecovery>,
     pub queues: Query<'w, 's, &'static mut ReactionQueue>,
     pub statuses: Query<'w, 's, &'static mut Status>,
@@ -237,6 +239,16 @@ impl Abilities<'_, '_> {
                 self.writer.write(Do { event: GameEvent::Incremental { ent, component: MessageComponent::Stamina(*stamina) } });
             }
         }
+        // Endurance is spent beside the stamina and refuses nothing: the
+        // recovery runs by how spent the actor was as it used the ability
+        let mut fatigue = 0.0;
+        if ability != AbilityType::AutoAttack {
+            if let Ok(mut endurance) = self.endurance.get_mut(ent) {
+                fatigue = endurance.fatigue();
+                endurance.state = (endurance.state - attrs.skill_endurance()).max(0.0);
+                self.writer.write(Do { event: GameEvent::Incremental { ent, component: MessageComponent::Endurance(*endurance) } });
+            }
+        }
         // Every client near draws it
         self.writer.write(Do { event: GameEvent::UseAbility { ent, ability, target: opponent } });
         if let Some(target_loc) = cast.target_loc.filter(|_| !ability.is_reaction()) {
@@ -244,7 +256,7 @@ impl Abilities<'_, '_> {
         }
         if ability != AbilityType::AutoAttack {
             let against = opponent.and_then(|opponent| self.actors.get(opponent).ok()).map(|(_, attrs, ..)| *attrs);
-            landing::recover(ent, recovery_after(ability, prior.as_ref(), &attrs, against.as_ref()), &mut self.commands, &mut self.writer);
+            landing::recover(ent, recovery_after(ability, prior.as_ref(), &attrs, against.as_ref(), fatigue), &mut self.commands, &mut self.writer);
         }
         Ok(())
     }
@@ -335,6 +347,7 @@ mod tests {
             side,
             Health { state: 1000.0, max: 1000.0 },
             Stamina { state: 100.0, max: 100.0, regen_rate: 0.0, last_update: Duration::ZERO },
+            Endurance::full(100.0),
             ReactionQueue::new(1),
             Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }),
             CombatState::default(),
@@ -385,6 +398,7 @@ mod tests {
         assert!(used(&said, AbilityType::Overpower));
         let world = app.world();
         assert!(world.get::<Stamina>(caster).unwrap().state < 100.0, "it is paid for");
+        assert!(world.get::<Endurance>(caster).unwrap().state < 100.0, "in endurance too");
         assert!(world.get::<GlobalRecovery>(caster).is_some(), "and leaves its user recovering");
         let told = |event: &GameEvent| matches!(event, GameEvent::Incremental { ent, component: MessageComponent::Recovery(_) } if *ent == caster);
         assert!(said.iter().any(told), "a recovery its clients are sent whole");
@@ -404,9 +418,11 @@ mod tests {
 
         let said = ask(&mut app, caster, AbilityType::AutoAttack, Some(near));
         assert!(used(&said, AbilityType::AutoAttack), "an auto-attack is outside the recovery");
+        let spent = app.world().get::<Endurance>(caster).unwrap().state;
         let again = ask(&mut app, caster, AbilityType::AutoAttack, Some(near));
         assert!(!used(&again, AbilityType::AutoAttack), "the next is not due yet");
         assert_eq!(refused(&mut app, caster, AbilityType::AutoAttack, Some(near)), None, "and a swing not due is refused without a reason");
+        assert_eq!(app.world().get::<Endurance>(caster).unwrap().state, spent, "a swing costs no endurance");
     }
 
     #[test]

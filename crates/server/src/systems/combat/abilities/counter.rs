@@ -30,8 +30,7 @@ pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
         if dead {
             continue;
         }
-        // The same window every threat between the two takes (INV-003),
-        // though a reflection lands on impact and never waits it out
+        // A reflection lands on impact and never waits its window out
         let reflected = create_threat(
             cast.ent,
             source_attrs,
@@ -39,6 +38,7 @@ pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
             threat.damage * tuning.counter_reflect * weight,
             Some(AbilityType::Counter),
             now,
+            0.0,
             0.0,
         );
         abilities.commands.trigger(Try { event: GameEvent::ResolveThreat { ent: threat.source, threat: reflected } });

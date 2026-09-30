@@ -123,9 +123,10 @@ pathfinding read the `Map`, never a summary cache.
 **INV-002 — InputQueue non-empty.** Every input queue holds ≥1 entry.
 Violations panic.
 
-**INV-003 — Threat timer consistency.** All threats from source X to target Y
-carry identical timer durations. Use `queue_utils::create_threat()`; never
-construct `QueuedThreat` directly.
+**INV-003 — Threat timer consistency.** A threat's timer is set by who struck
+whom and how fatigued the target is as it is struck, never by which ability
+made it. Use `queue_utils::create_threat()`; never construct `QueuedThreat`
+directly.
 
 **INV-004 — Chunk spatial authority.** The chunk system is the spatial
 authority. Never filter or classify cells by raw `wx/wy` as a substitute for

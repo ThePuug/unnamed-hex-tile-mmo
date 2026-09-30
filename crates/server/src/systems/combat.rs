@@ -18,7 +18,7 @@ use common_bevy::{
 pub fn process_deal_damage(
     trigger: On<Try>,
     _commands: Commands,
-    mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health, Option<&mut common_bevy::components::recovery::GlobalRecovery>)>,
+    mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health, Option<&Endurance>, Option<&mut common_bevy::components::recovery::GlobalRecovery>)>,
     mut combat_query: Query<&mut CombatState>,
     all_attrs: Query<&ActorAttributes>,
     time: Res<Time>,
@@ -35,7 +35,7 @@ pub fn process_deal_damage(
         };
 
         // Get target's queue, attributes, health, and recovery
-        let Ok((mut queue, attrs, health, recovery_opt)) = target_query.get_mut(*target) else {
+        let Ok((mut queue, attrs, health, endurance, recovery_opt)) = target_query.get_mut(*target) else {
             return;
         };
 
@@ -74,6 +74,7 @@ pub fn process_deal_damage(
             *ability,      // Ability
             now,           // Current time
             dot,           // DoT per tick, a wound's
+            Endurance::fatigue_of(endurance),
         );
 
         // Try to insert threat into queue

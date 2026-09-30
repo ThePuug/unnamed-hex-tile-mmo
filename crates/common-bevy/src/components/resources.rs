@@ -67,6 +67,34 @@ impl Default for Stamina {
     }
 }
 
+/// Endurance, as the server holds it and sends it: what an actor spends on
+/// every skill and reaction beside its stamina. It refuses nothing; spent,
+/// it tires the actor ([`Endurance::fatigue`]). It refills only while
+/// stamina is full (`resources::regenerate_resources`).
+#[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
+pub struct Endurance {
+    pub state: f32,
+    pub max: f32,
+}
+
+impl Endurance {
+    /// A pool of `max`, full
+    pub fn full(max: f32) -> Self {
+        Self { state: max, max }
+    }
+
+    /// How spent the pool is: 0 full, 1 empty. Fatigue lengthens the
+    /// actor's recoveries and shortens the windows of threats against it.
+    pub fn fatigue(&self) -> f32 {
+        if self.max > 0.0 { (1.0 - self.state / self.max).clamp(0.0, 1.0) } else { 0.0 }
+    }
+
+    /// The fatigue of an actor with `endurance`; none where it has no pool
+    pub fn fatigue_of(endurance: Option<&Endurance>) -> f32 {
+        endurance.map_or(0.0, Endurance::fatigue)
+    }
+}
+
 /// Mana, as the server holds it and sends it
 /// - state: what the actor has now
 /// - max: Maximum mana calculated from ActorAttributes

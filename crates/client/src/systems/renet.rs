@@ -26,6 +26,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::Loc(_) => "Inc:Loc",
             Component::Heading(_) => "Inc:Heading",
             Component::Health(_) => "Inc:Health",
+            Component::Endurance(_) => "Inc:Endurance",
             Component::Mana(_) => "Inc:Mana",
             Component::Stamina(_) => "Inc:Stamina",
             Component::CombatState(_) => "Inc:Combat",

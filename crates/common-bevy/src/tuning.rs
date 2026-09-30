@@ -29,10 +29,20 @@ pub struct Tuning {
     pub share_bend: f32,
     /// Health every actor has before Vitality and level
     pub base_health: f32,
-    /// Stamina every actor has before Endurance
+    /// Stamina every actor has
     pub stamina_base: f32,
-    /// Share more stamina at the ceiling of Endurance's share
+    /// Endurance an actor holds for each point of its Endurance potency
     pub endurance_pool: f32,
+    /// Endurance a skill or reaction costs for each point of the potency
+    /// it strikes with
+    pub endurance_cost: f32,
+    /// Share of its endurance an actor regains each second its stamina is full
+    pub endurance_regen: f32,
+    /// Share longer an actor's recoveries run with its endurance spent
+    pub fatigue_recovery: f32,
+    /// Share shorter the windows of threats against an actor run with its
+    /// endurance spent
+    pub fatigue_window: f32,
     /// Health each point of Vitality adds before level
     pub health_per_vitality: f32,
     /// The health level curve, `(1 + level × k)^p`
@@ -164,7 +174,11 @@ impl Tuning {
         share_bend: 800.0,
         base_health: 588.0,
         stamina_base: 100.0,
-        endurance_pool: 0.7,
+        endurance_pool: 10.0,
+        endurance_cost: 1.0,
+        endurance_regen: 0.05,
+        fatigue_recovery: 0.5,
+        fatigue_window: 0.3,
         health_per_vitality: 0.9604,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
@@ -286,6 +300,10 @@ impl Tuning {
             "base_health" => &mut self.base_health,
             "stamina_base" => &mut self.stamina_base,
             "endurance_pool" => &mut self.endurance_pool,
+            "endurance_cost" => &mut self.endurance_cost,
+            "endurance_regen" => &mut self.endurance_regen,
+            "fatigue_recovery" => &mut self.fatigue_recovery,
+            "fatigue_window" => &mut self.fatigue_window,
             "health_per_vitality" => &mut self.health_per_vitality,
             "health_curve_k" => &mut self.health_curve_k,
             "health_curve_p" => &mut self.health_curve_p,

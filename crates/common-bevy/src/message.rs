@@ -265,6 +265,7 @@ pub enum ClearType {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub enum Component {
     CombatState(CombatState),
+    Endurance(Endurance),
     Equipment(Equipment),
     Health(Health),
     Heading(Heading),
@@ -284,6 +285,7 @@ impl Component {
     pub fn insert_into(self, entity: &mut EntityCommands) {
         match self {
             Component::CombatState(v) => { entity.insert(v); }
+            Component::Endurance(v) => { entity.insert(v); }
             Component::Equipment(v) => { entity.insert(v); }
             Component::Health(v) => { entity.insert(v); }
             Component::Mana(v) => { entity.insert(v); }

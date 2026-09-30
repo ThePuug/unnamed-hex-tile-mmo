@@ -123,7 +123,7 @@ mod tests {
         let mut queue = ReactionQueue::new(1);
         queue.threats.push_back(common_bevy::systems::combat::queue::create_threat(
             Entity::PLACEHOLDER, &Default::default(), &Default::default(), 10.0,
-            None, std::time::Duration::ZERO, 0.0,
+            None, std::time::Duration::ZERO, 0.0, 0.0,
         ));
         let body = world.spawn((
             DeathMarker { death_time: std::time::Duration::ZERO },

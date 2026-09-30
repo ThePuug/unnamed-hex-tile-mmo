@@ -426,7 +426,7 @@ impl ActorAttributes {
     /// how hard a crit lands (`crit_multiplier`)
     pub fn precision(&self) -> f32 { self.potency(Attribute::Agility) }
     /// Endurance, Discipline's: what a Flank strikes for, and how deep the
-    /// stamina pool is (`max_stamina`)
+    /// endurance pool is (`max_endurance`)
     pub fn endurance(&self) -> f32 { self.potency(Attribute::Discipline) }
     /// Intuition, Instinct's: what a Disengage adds to the next swing, and
     /// how often a blow crits (`crit_chance`)
@@ -521,11 +521,23 @@ impl ActorAttributes {
         points / (points + crate::tuning::tuning().share_bend)
     }
 
-    /// The stamina pool: `Tuning::stamina_base`, `Tuning::endurance_pool`
-    /// more of it at the ceiling of Endurance's share
+    /// The stamina pool: `Tuning::stamina_base`, the same for every actor
     pub fn max_stamina(&self) -> f32 {
-        let tuning = crate::tuning::tuning();
-        tuning.stamina_base * (1.0 + tuning.endurance_pool * self.share(Attribute::Discipline))
+        crate::tuning::tuning().stamina_base
+    }
+
+    /// The endurance pool: `Tuning::endurance_pool` for each point of
+    /// Endurance, so it deepens with level and with Discipline
+    pub fn max_endurance(&self) -> f32 {
+        crate::tuning::tuning().endurance_pool * self.endurance()
+    }
+
+    /// The endurance a skill or a reaction costs this actor:
+    /// `Tuning::endurance_cost` for each point of base potency, which every
+    /// skill strikes with. It grows with level as the pool does, so a pool
+    /// with no Discipline in it holds the same count of skills at any level.
+    pub fn skill_endurance(&self) -> f32 {
+        crate::tuning::tuning().endurance_cost * self.base_potency()
     }
 
     /// The chance a blow this actor strikes crits: `Tuning::crit_chance` at
@@ -676,11 +688,16 @@ mod tests {
     }
 
     #[test]
-    fn endurance_deepens_the_stamina_pool() {
+    fn endurance_deepens_its_own_pool_and_every_actor_has_the_one_stamina() {
         let disciplined = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
+        let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
-        assert_eq!(plain.max_stamina(), crate::tuning::tuning().stamina_base);
-        assert!(disciplined.max_stamina() > plain.max_stamina());
+        assert_eq!(disciplined.max_stamina(), plain.max_stamina());
+        assert!(disciplined.max_endurance() > mighty.max_endurance(), "Discipline deepens it");
+        assert!(mighty.max_endurance() > plain.max_endurance(), "and so does level");
+        assert_eq!(disciplined.skill_endurance(), mighty.skill_endurance(), "a skill costs the same at a level, whatever the build");
+        let skills = |attrs: &ActorAttributes| attrs.max_endurance() / attrs.skill_endurance();
+        assert!((skills(&mighty) - skills(&plain)).abs() < 1e-3, "with no Discipline a pool holds as many skills at any level");
     }
 
     #[test]

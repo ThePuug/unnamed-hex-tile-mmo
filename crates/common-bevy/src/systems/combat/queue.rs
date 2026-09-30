@@ -8,25 +8,26 @@ use std::time::Duration;
 
 /// Pattern 2 (Baseline+Bonus): 3.0s × gap × (1.0 + 0.5 × contest_factor)
 /// How long a threat from `source_attrs` waits in the queue of
-/// `target_attrs` before it lands: the same for every threat between the
-/// two (INV-003), whatever made it.
+/// `target_attrs` before it lands: the same whatever made it (INV-003).
 ///
 /// `Tuning::reaction_window`, the same for every threat between any two
 /// actors, extended by the reaction contest: the defender's Reflex against
-/// the attacker's Flow, with the level gap's edge on the defender's side,
-/// never below the base.
-pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttributes) -> Duration {
+/// the attacker's Flow, with the level gap's edge on the defender's side.
+/// The defender's `fatigue`, 0 to 1 (`Endurance::fatigue`), shortens it by
+/// `Tuning::fatigue_window` of it.
+pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttributes, fatigue: f32) -> Duration {
     use crate::systems::combat::damage::{level_edge, reaction_contest_factor};
 
+    let tuning = crate::tuning::tuning();
     let edge = level_edge(target_attrs.total_level(), source_attrs.total_level());
     let multiplier = reaction_contest_factor(target_attrs.reflex(), source_attrs.flow(), edge);
-    Duration::from_secs_f32(crate::tuning::tuning().reaction_window * multiplier)
+    Duration::from_secs_f32(tuning.reaction_window * multiplier * (1.0 - tuning.fatigue_window * fatigue))
 }
 
 /// Create a threat with proper timer calculation (INVARIANT: INV-003)
 
-/// **CRITICAL INVARIANT (INV-003):** All threats from the same source to the same target
-/// MUST have identical timer durations, regardless of which ability created them.
+/// **CRITICAL INVARIANT (INV-003):** A threat's timer is set by who struck whom and
+/// how fatigued the target is, never by which ability created it.
 /// This ensures consistent reaction windows and prevents ability-specific timing quirks.
 
 /// The timer is [`threat_window`].
@@ -39,6 +40,7 @@ pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttribu
 /// * `ability` - Which ability created this threat
 /// * `now` - Current game time
 /// * `dot` - Damage each DoT tick deals: a wound's, zero for a blow
+/// * `fatigue` - The defender's fatigue, 0 to 1
 
 /// # Returns
 /// Fully-formed QueuedThreat with correct timer duration
@@ -50,12 +52,13 @@ pub fn create_threat(
     ability: Option<crate::message::AbilityType>,
     now: Duration,
     dot: f32,
+    fatigue: f32,
 ) -> crate::components::reaction_queue::QueuedThreat {
     crate::components::reaction_queue::QueuedThreat {
         source,
         damage,
         inserted_at: now,
-        timer_duration: threat_window(target_attrs, source_attrs),
+        timer_duration: threat_window(target_attrs, source_attrs, fatigue),
         ability,
         dot,
         ticked: 0,
@@ -127,6 +130,15 @@ pub fn sync_queue_window_size(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fatigued_target_has_less_time_to_answer() {
+        let plain = ActorAttributes::default();
+        let fresh = threat_window(&plain, &plain, 0.0);
+        assert!(threat_window(&plain, &plain, 0.5) < fresh);
+        assert!(threat_window(&plain, &plain, 1.0) < threat_window(&plain, &plain, 0.5));
+        assert!(threat_window(&plain, &plain, 1.0) > Duration::ZERO, "spent, it still has a window");
+    }
 
     #[test]
     fn test_insert_threat_unbounded() {

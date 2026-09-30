@@ -30,7 +30,9 @@ pub fn reacts_through(ability: AbilityType, recovery: Option<&GlobalRecovery>, a
 /// The recovery `ability` leaves an actor with `attrs` in, used under
 /// `prior`, the recovery it was used in, and contested by `against`, the
 /// one it was used against: a strike's target, or the source of the threat
-/// a reaction answers (`GlobalRecovery::against`).
+/// a reaction answers (`GlobalRecovery::against`). The ability's own
+/// seconds run longer by `Tuning::fatigue_recovery` of the actor's
+/// `fatigue`, 0 to 1 (`Endurance::fatigue`).
 ///
 /// A combo taken before it unlocked carries what it skipped of `prior`, so
 /// a burst fired early costs what it would have played out: Ferocity moves
@@ -47,9 +49,9 @@ pub fn reacts_through(ability: AbilityType, recovery: Option<&GlobalRecovery>, a
 /// A combo fired early spends a step of the burst `prior` was part of; any
 /// other use of an ability that leads on opens one of the Ferocity tier's
 /// steps, 0 to 3, inside its own seconds.
-pub fn recovery_after(ability: AbilityType, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, against: Option<&ActorAttributes>) -> GlobalRecovery {
+pub fn recovery_after(ability: AbilityType, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, against: Option<&ActorAttributes>, fatigue: f32) -> GlobalRecovery {
     let tuning = crate::tuning::tuning();
-    let own = tuning.recovery(ability);
+    let own = tuning.recovery(ability) * (1.0 + tuning.fatigue_recovery * fatigue);
     let mut recovery = GlobalRecovery::new(own).against(against);
 
     let prior = prior.filter(|prior| prior.is_active());
@@ -111,7 +113,7 @@ mod tests {
         assert!(reacts_through(AbilityType::Counter, Some(&recovering), Some(&disciplined)));
         assert!(!reacts_through(AbilityType::Counter, Some(&recovering), Some(&plain)), "no Preparation, no reaction in recovery");
         assert!(!reacts_through(AbilityType::Lunge, Some(&recovering), Some(&disciplined)), "reactions only");
-        let through = recovery_after(AbilityType::Counter, Some(&recovering), &disciplined, None);
+        let through = recovery_after(AbilityType::Counter, Some(&recovering), &disciplined, None, 0.0);
         let own = crate::tuning::tuning().recovery(AbilityType::Counter);
         assert!((through.remaining - (own + 2.0)).abs() < 1e-5, "its own recovery added onto the rest");
         assert_eq!(through.reactions, 1);
@@ -134,19 +136,19 @@ mod tests {
         let plain = ActorAttributes::default();
         let prior = offering(2.0, AbilityType::Lunge, 1.5);
         let own = crate::tuning::tuning().recovery(AbilityType::Lunge);
-        let early = recovery_after(AbilityType::Lunge, Some(&prior), &plain, None);
+        let early = recovery_after(AbilityType::Lunge, Some(&prior), &plain, None, 0.0);
         assert!((early.remaining - (own + 0.5)).abs() < 1e-5, "the half second it skipped comes after");
         let mut waited = prior;
         waited.tick(0.6);
-        assert_eq!(recovery_after(AbilityType::Lunge, Some(&waited), &plain, None).remaining, own, "on time, its own");
-        assert_eq!(recovery_after(AbilityType::Lunge, None, &plain, None).remaining, own, "fresh, its own");
+        assert_eq!(recovery_after(AbilityType::Lunge, Some(&waited), &plain, None, 0.0).remaining, own, "on time, its own");
+        assert_eq!(recovery_after(AbilityType::Lunge, None, &plain, None, 0.0).remaining, own, "fresh, its own");
     }
 
     #[test]
     fn a_recovery_offers_its_combo_inside_its_own_seconds() {
         let plain = ActorAttributes::default();
         let own = crate::tuning::tuning().recovery(AbilityType::Lunge);
-        let fresh = recovery_after(AbilityType::Lunge, None, &plain, None);
+        let fresh = recovery_after(AbilityType::Lunge, None, &plain, None, 0.0);
         if let Some(combo) = fresh.combo {
             assert_eq!(Some(combo.ability), AbilityType::Lunge.combo());
             assert!((0.0..=own).contains(&combo.unlock_at));
@@ -154,10 +156,19 @@ mod tests {
 
         // What an early combo carried is never unlocked through
         let prior = offering(2.0, AbilityType::Lunge, 0.5);
-        let early = recovery_after(AbilityType::Lunge, Some(&prior), &plain, None);
+        let early = recovery_after(AbilityType::Lunge, Some(&prior), &plain, None, 0.0);
         assert!(early.carried > 0.0);
         assert_eq!(early.combo.map(|combo| combo.unlock_at), fresh.combo.map(|combo| combo.unlock_at));
-        assert!(recovery_after(AbilityType::Rattle, None, &plain, None).combo.is_none(), "a signature leads on to nothing");
+        assert!(recovery_after(AbilityType::Rattle, None, &plain, None, 0.0).combo.is_none(), "a signature leads on to nothing");
+    }
+
+    #[test]
+    fn fatigue_lengthens_a_recovery() {
+        let plain = ActorAttributes::default();
+        let fresh = recovery_after(AbilityType::Lunge, None, &plain, None, 0.0);
+        let tired = recovery_after(AbilityType::Lunge, None, &plain, None, 0.5);
+        let spent = recovery_after(AbilityType::Lunge, None, &plain, None, 1.0);
+        assert!(tired.remaining > fresh.remaining && spent.remaining > tired.remaining, "the more spent, the longer");
     }
 
     #[test]
@@ -165,15 +176,15 @@ mod tests {
         let fierce = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let steps = fierce.ferocity().index() as u8;
         assert!(steps > 0, "all of it in Might reaches a Ferocity tier");
-        let opener = recovery_after(AbilityType::Lunge, None, &fierce, None);
+        let opener = recovery_after(AbilityType::Lunge, None, &fierce, None, 0.0);
         assert_eq!(opener.burst.map(|burst| burst.steps), Some(steps));
         let combo = AbilityType::Lunge.combo().unwrap();
         assert!(may_use(combo, Some(&opener)), "the combo fires at once");
 
-        let second = recovery_after(combo, Some(&opener), &fierce, None);
+        let second = recovery_after(combo, Some(&opener), &fierce, None, 0.0);
         assert_eq!(second.burst.map(|burst| burst.steps), Some(steps - 1), "and spends a step");
         assert!(second.carried > 0.0, "carrying what it skipped");
-        assert!(recovery_after(AbilityType::Lunge, None, &ActorAttributes::default(), None).burst.is_none(), "no Ferocity, no burst");
+        assert!(recovery_after(AbilityType::Lunge, None, &ActorAttributes::default(), None, 0.0).burst.is_none(), "no Ferocity, no burst");
     }
 
     #[test]
