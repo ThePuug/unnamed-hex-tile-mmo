@@ -7,14 +7,11 @@ mod plugins;
 mod resources;
 mod systems;
 
-use std::time::Duration;
-
 use bevy::{
     log::LogPlugin,
     pbr::ExtendedMaterial,
     prelude::*,
     render::error_handler::{ErrorType, RenderErrorHandler, RenderErrorPolicy},
-    time::common_conditions::on_timer,
 };
 use bevy_easings::*;
 use common_bevy::{
@@ -148,7 +145,6 @@ fn main() {
         animator::update,
         targeting::update_targets, // Update hostile targets every frame (detects when targets move)
         targeting::update_ally_targets, // Update ally targets every frame (detects when allies move)
-        combat::player_auto_attack.run_if(on_timer(Duration::from_millis(500))), // Check for auto-attack opportunities every 0.5s
     ));
 
     // Camera: conditional on flyover state in admin builds, and on the

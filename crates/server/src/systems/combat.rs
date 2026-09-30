@@ -227,7 +227,8 @@ fn land_damage(ent: Entity, source: Entity, damage: f32, dot: bool, health: &mut
 
 /// System to automatically trigger auto-attacks when a hostile is in range.
 /// The cadence is fixed by `ActorAttributes::cadence_interval`, stretched
-/// by a daze: no random spread, and an ability's lockout does not pause it. An NPC swings
+/// by a daze: no random spread, and an ability's lockout does not pause it. Every actor's
+/// swings are timed here, a player's as an NPC's, so none is timed by a client. An NPC swings
 /// wherever it stands; its assigned hex decides only where it walks.
 pub fn process_passive_auto_attack(
     mut query: Query<
@@ -236,7 +237,6 @@ pub fn process_passive_auto_attack(
          Option<&common_bevy::components::AttackRange>,
          Option<&common_bevy::components::heading::Heading>,
          Option<&common_bevy::components::status::Status>),
-        Without<common_bevy::components::behaviour::PlayerControlled>
     >,
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
     time: Res<Time>,
@@ -247,7 +247,6 @@ pub fn process_passive_auto_attack(
     let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
-    // Only iterate over NPCs (entities Without PlayerControlled)
     for (ent, loc, mut last_auto_attack, target, attrs, attack_range_opt, heading, status) in query.iter_mut() {
         if common_bevy::components::status::Status::holds(status) {
             continue;
@@ -259,8 +258,7 @@ pub fn process_passive_auto_attack(
             continue; // Still on cooldown
         }
 
-        // Check if NPC's target (from unified Target component) is adjacent
-        // Unwrap Target Option<Entity>
+        // The hostile it targets: an NPC's from its chase, a player's from its facing
         let Some(target_ent) = target.entity else {
             continue; // No target set
         };

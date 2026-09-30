@@ -315,6 +315,8 @@ pub fn write_try(
                 }
                 Try { event: Event::UseAbility { ent: _, ability, target } } => {
                     let Some(ent) = character else { continue };
+                    // An auto-attack is the server's to time, never a client's to ask for
+                    if ability == AbilityType::AutoAttack { continue }
                     writer.write(Try { event: Event::UseAbility { ent, ability, target }});
                 }
                 Try { event: Event::Ping { client_time } } => {

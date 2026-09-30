@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{reaction_queue::*, resources::*, target::Target, Loc, ActorAttributes},
-    message::{AbilityType, Do, Event as GameEvent, Try},
+    components::{reaction_queue::*, resources::*, ActorAttributes},
+    message::{Do, Event as GameEvent},
     systems::combat::{damage as damage_calc, queue as queue_utils},
 };
 
@@ -118,73 +118,10 @@ pub fn handle_clear_queue(
     }
 }
 
-/// Client passive auto-attack system for players
-/// Automatically sends AutoAttack Try events when player has an adjacent target
-/// Runs periodically (every 500ms) to check for auto-attack opportunities
-
-/// Auto-attack will only fire if:
-/// - Player has a Target set (via reactive targeting system)
-/// - Target is within its `AttackRange` and its facing cone
-/// - 1.5s has elapsed since last auto-attack
-pub fn player_auto_attack(
-    mut writer: MessageWriter<Try>,
-    mut player_query: Query<(Entity, &Loc, &Target, &mut common_bevy::components::LastAutoAttack, &common_bevy::components::ActorAttributes, Option<&common_bevy::components::AttackRange>, Option<&common_bevy::components::heading::Heading>, Option<&common_bevy::components::status::Status>)>,
-    target_query: Query<&Loc>,
-    input_queues: Res<common_bevy::resources::InputQueues>,
-    time: Res<Time>,
-) {
-    let now = time.elapsed();
-
-    for (player_ent, player_loc, player_target, mut last_auto_attack, attrs, attack_range_opt, heading, status) in &mut player_query {
-        // Only process local player (entity with InputQueue)
-        if input_queues.get(&player_ent).is_none() {
-            continue;
-        }
-
-        // Check cooldown: the fixed interval, stretched by a daze
-        let cooldown = common_bevy::components::status::Status::cadence(attrs.cadence_interval(), status);
-        let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
-        if time_since_last_attack < cooldown {
-            continue; // Still on cooldown
-        }
-
-        // Get target entity
-        let Some(target_ent) = player_target.entity else {
-            continue; // No target
-        };
-
-        // Get target location
-        let Ok(target_loc) = target_query.get(target_ent) else {
-            continue; // Target not found (may have despawned)
-        };
-
-        // Check if target is within auto-attack range (manhattan: flat hex distance + z difference)
-        let max_range = attack_range_opt.copied().unwrap_or_default().0;
-        if player_loc.distance(target_loc) > max_range {
-            continue; // Target out of range
-        }
-        if !common_bevy::systems::targeting::faces(heading, attrs.arc(), player_loc, target_loc) {
-            continue; // Target behind
-        }
-
-        // Send AutoAttack Try event with target entity
-        writer.write(Try {
-            event: GameEvent::UseAbility {
-                ent: player_ent,
-                ability: AbilityType::AutoAttack,
-                target: Some(target_ent),
-            },
-        });
-
-        // Update last attack time
-        last_auto_attack.last_attack_time = now;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common_bevy::message::ClearType;
+    use common_bevy::message::{AbilityType, ClearType};
     use std::time::Duration;
 
     #[test]
