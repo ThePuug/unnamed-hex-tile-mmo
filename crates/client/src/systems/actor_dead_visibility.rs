@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common_bevy::components::{Actor, reaction_queue::ReactionQueue, resources::Health};
+use common_bevy::components::{Actor, reaction_queue::ReactionQueue, resources::{CombatState, Health}};
 use crate::components::{DeathMarker, Viewed};
 
 /// Restore visibility for actors that were hidden (e.g. after respawn)
@@ -15,16 +15,17 @@ pub fn update_dead_visibility(
 }
 
 /// Apply death pose to newly dead entities and despawn after 3 seconds, but
-/// the one the client sees as: its body stays until the view ends, and the
-/// threats it held go as it falls, the dead taking no more.
+/// the one the client sees as: its body stays until the view ends. As it
+/// falls it leaves the fight: the threats it held go and it is out of
+/// combat, the dead taking no more part.
 pub fn cleanup_dead_entities(
     mut commands: Commands,
-    mut query: Query<(Entity, &DeathMarker, &mut Transform, Option<&mut ReactionQueue>, Has<Viewed>)>,
+    mut query: Query<(Entity, &DeathMarker, &mut Transform, Option<&mut ReactionQueue>, Option<&mut CombatState>, Has<Viewed>)>,
     time: Res<Time>,
 ) {
     const DEATH_LINGER_SECS: f32 = 3.0;
 
-    for (entity, marker, mut transform, queue, viewed) in &mut query {
+    for (entity, marker, mut transform, queue, combat, viewed) in &mut query {
         let elapsed = (time.elapsed() - marker.death_time).as_secs_f32();
 
         if elapsed <= 0.01 {
@@ -32,6 +33,9 @@ pub fn cleanup_dead_entities(
             transform.rotation *= Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
             if let Some(mut queue) = queue {
                 queue.threats.clear();
+            }
+            if let Some(mut combat) = combat {
+                combat.in_combat = false;
             }
         }
 
@@ -110,5 +114,28 @@ mod tests {
 
         assert!(world.get_entity(viewed).is_ok(), "the viewed body is kept");
         assert!(world.get_entity(other).is_err(), "the rest linger and go");
+    }
+
+    #[test]
+    fn a_body_leaves_the_fight_as_it_falls() {
+        let mut world = World::new();
+        world.insert_resource(Time::<()>::default());
+        let mut queue = ReactionQueue::new(1);
+        queue.threats.push_back(common_bevy::systems::combat::queue::create_threat(
+            Entity::PLACEHOLDER, &Default::default(), &Default::default(), 10.0,
+            common_bevy::components::reaction_queue::DamageType::Physical, None, std::time::Duration::ZERO, 0.0,
+        ));
+        let body = world.spawn((
+            DeathMarker { death_time: std::time::Duration::ZERO },
+            Transform::default(),
+            queue,
+            CombatState { in_combat: true, last_action: std::time::Duration::ZERO },
+            Viewed,
+        )).id();
+
+        world.run_system_once(cleanup_dead_entities).unwrap();
+
+        assert!(!world.get::<CombatState>(body).unwrap().in_combat, "out of combat");
+        assert!(world.get::<ReactionQueue>(body).unwrap().threats.is_empty(), "holding no threats");
     }
 }
