@@ -32,6 +32,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::CombatState(_) => "Inc:Combat",
             Component::Behaviour(_) => "Inc:Behaviour",
             Component::PlayerControlled(_) => "Inc:PlayerControlled",
+            Component::Recovery(_) => "Inc:Recovery",
             Component::Returning(_) => "Inc:Returning",
             Component::Side(_) => "Inc:Side",
             Component::Status(_) => "Inc:Status",
@@ -242,12 +243,11 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::AbilityFailed { ent, reason } });
             }
             Do { event: Event::UseAbility { ent, ability, target } } => {
-                // Map entity ID and forward to ability_prediction system
                 let Some(&ent) = l2r.get_by_right(&ent) else {
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                 };
-                // The one it was used against, whose attributes contest its lockout here
+                // The one it was used against
                 let target = target.and_then(|target| l2r.get_by_right(&target).copied());
                 do_writer.write(Do { event: Event::UseAbility { ent, ability, target } });
             }

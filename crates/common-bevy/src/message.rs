@@ -210,7 +210,7 @@ impl AbilityType {
     }
 
     /// The ability this one offers as its follow-up, the one that unlocks
-    /// through its lockout ahead of the rest (`synergies::apply_synergies`):
+    /// through its lockout ahead of the rest (`synergies::lockout`):
     /// the player's four run round one ring, Lunge to Overpower to Counter
     /// to Kick and back to Lunge. None for an ability that offers nothing.
     pub fn follow_up(self) -> Option<AbilityType> {
@@ -256,6 +256,7 @@ pub enum Component {
     Loc(Loc),
     Mana(Mana),
     PlayerControlled(PlayerControlled),
+    Recovery(crate::components::recovery::GlobalRecovery),
     Returning(crate::components::returning::Returning),
     Side(crate::components::behaviour::Side),
     Status(crate::components::status::Status),
@@ -274,6 +275,7 @@ impl Component {
             Component::Health(v) => { entity.insert(v); }
             Component::Mana(v) => { entity.insert(v); }
             Component::PlayerControlled(v) => { entity.insert(v); }
+            Component::Recovery(v) => { entity.insert(v); }
             Component::Returning(v) => { entity.insert(v); }
             Component::Side(v) => { entity.insert(v); }
             Component::Status(v) => { entity.insert(v); }

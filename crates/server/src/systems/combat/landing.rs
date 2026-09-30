@@ -70,9 +70,7 @@ pub fn land(
         Some(AbilityType::Flank) => {
             let seconds = tuning.flank_stun * hold;
             let lockout = recoveries.get(target).map_or(0.0, |recovery| recovery.remaining).max(seconds);
-            if let Ok(mut entity) = commands.get_entity(target) {
-                entity.try_insert(GlobalRecovery::new(lockout, AbilityType::Flank).against(source_attrs));
-            }
+            lock(target, GlobalRecovery::new(lockout).against(source_attrs), commands, writer);
             update(target, statuses, commands, writer, |status| status.hold(seconds));
         }
         Some(AbilityType::Rattle) => update(target, statuses, commands, writer, |status| {
@@ -147,6 +145,15 @@ pub fn stumble(
     update(*ent, &mut statuses, &mut commands, &mut writer, |status| {
         status.stride = Some(Timed { pace: tuning.stride_pace, remaining: tuning.auto_interval });
     });
+}
+
+/// Starts `recovery` as `ent`'s lockout, in place of any it was in, and
+/// sends the whole of it.
+pub fn lock(ent: Entity, recovery: GlobalRecovery, commands: &mut Commands, writer: &mut MessageWriter<Do>) {
+    if let Ok(mut entity) = commands.get_entity(ent) {
+        entity.try_insert(recovery);
+    }
+    writer.write(Do { event: GameEvent::Incremental { ent, component: Component::Recovery(recovery) } });
 }
 
 /// Changes `ent`'s status by `change`, giving it one if it has none, and

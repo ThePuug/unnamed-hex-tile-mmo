@@ -29,8 +29,6 @@ impl Plugin for CombatPlugin {
             common_bevy::systems::combat::resources::regenerate_resources, // Handles all resource regen including leash health regen (100 HP/sec for Returning NPCs)
             common_bevy::systems::combat::state::update_combat_state,
             common_bevy::systems::combat::recovery::global_recovery_system, // Tick down recovery lockout
-            common_bevy::systems::combat::synergies::synergy_cleanup_system, // Clean up expired synergies
-            common_bevy::systems::combat::synergies::tick_combo,
             reaction_queue::process_expired_threats,
             reaction_queue::tick_dots,
             combat::release_grit,

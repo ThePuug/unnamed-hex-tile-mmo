@@ -40,7 +40,7 @@ use common_bevy::{
         hex_assignment::HexAssignment,
         npc_recovery::NpcRecovery,
         reaction_queue::{QueuedThreat, ReactionQueue},
-        recovery::{get_ability_recovery_duration, Combo, GlobalRecovery, SynergyUnlock},
+        recovery::GlobalRecovery,
         resources::{Health, RespawnTimer, Stamina},
         status::Status,
         target::Target,
@@ -52,12 +52,12 @@ use common_bevy::{
     plugins::nntree::NNTree,
     resources::map::Map,
     systems::{
-        combat::{queue::clear_threats, synergies::{apply_synergies, is_early, lockout, may_use, reacts_through, settle_combo}},
+        combat::{queue::clear_threats, synergies::{lockout, may_use, reacts_through}},
         targeting::{self, get_range_tier},
     },
 };
 
-use crate::systems::behaviour::chase::Chase;
+use crate::systems::{behaviour::chase::Chase, combat::landing};
 
 /// How often auto-attacks and NPC signatures are looked at.
 const CHECK: Duration = Duration::from_millis(500);
@@ -101,7 +101,7 @@ pub struct Abilities<'w, 's> {
         Has<RespawnTimer>,
     )>,
     pub stamina: Query<'w, 's, &'static mut Stamina>,
-    pub lockouts: Query<'w, 's, (Option<&'static GlobalRecovery>, Option<&'static SynergyUnlock>, Option<&'static Combo>)>,
+    pub lockouts: Query<'w, 's, &'static GlobalRecovery>,
     pub queues: Query<'w, 's, &'static mut ReactionQueue>,
     pub statuses: Query<'w, 's, &'static mut Status>,
     pub swings: Query<'w, 's, &'static mut Swing>,
@@ -174,8 +174,7 @@ impl Abilities<'_, '_> {
         let reach = range.copied().unwrap_or_default().0;
         let health_max = health.max;
         let status = self.statuses.get(ent).ok().copied();
-        let (prior, offer, combo) = self.lockouts.get(ent)
-            .map_or((None, None, None), |(prior, offer, combo)| (prior.copied(), offer.copied(), combo.copied()));
+        let prior = self.lockouts.get(ent).ok().copied();
 
         // An auto-attack comes due on its own cadence, stretched by a daze,
         // whatever the lockout, and a held actor swings at nothing. Every
@@ -187,7 +186,7 @@ impl Abilities<'_, '_> {
             if !due || Status::holds(status.as_ref()) {
                 return Err(None);
             }
-        } else if !may_use(ability, prior.as_ref(), offer.as_ref(), combo.as_ref()) && !reacts_through(ability, prior.as_ref(), Some(&attrs)) {
+        } else if !may_use(ability, prior.as_ref()) && !reacts_through(ability, prior.as_ref(), Some(&attrs)) {
             return Err(Some(AbilityFailReason::OnCooldown));
         }
 
@@ -242,20 +241,14 @@ impl Abilities<'_, '_> {
                 self.writer.write(Do { event: GameEvent::Incremental { ent, component: MessageComponent::Stamina(*stamina) } });
             }
         }
-        // Every client near draws it, and starts the same lockout
+        // Every client near draws it
         self.writer.write(Do { event: GameEvent::UseAbility { ent, ability, target: opponent } });
         if let Some(target_loc) = cast.target_loc.filter(|_| !ability.is_reaction()) {
             stride(ent, heading.as_ref(), &loc, &target_loc, &mut self.commands);
         }
         if ability != AbilityType::AutoAttack {
             let against = opponent.and_then(|opponent| self.actors.get(opponent).ok()).map(|(_, attrs, ..)| *attrs);
-            let recovery = lockout(ability, prior.as_ref(), offer.as_ref(), against.as_ref());
-            self.commands.entity(ent).insert(recovery);
-            // A strike's follow-up is contested by its target, a reaction's by no one
-            let defender = against.filter(|_| !ability.is_reaction()).unwrap_or(attrs);
-            apply_synergies(ent, ability, &recovery, &attrs, &defender, &mut self.commands);
-            let early = is_early(ability, prior.as_ref(), offer.as_ref());
-            settle_combo(ent, ability, early, get_ability_recovery_duration(ability), &attrs, combo.as_ref(), &mut self.commands);
+            landing::lock(ent, lockout(ability, prior.as_ref(), &attrs, against.as_ref()), &mut self.commands, &mut self.writer);
         }
         Ok(())
     }
@@ -393,6 +386,8 @@ mod tests {
         let world = app.world();
         assert!(world.get::<Stamina>(caster).unwrap().state < 100.0, "it is paid for");
         assert!(world.get::<GlobalRecovery>(caster).is_some(), "and locks its user out");
+        let told = |event: &GameEvent| matches!(event, GameEvent::Incremental { ent, component: MessageComponent::Recovery(_) } if *ent == caster);
+        assert!(said.iter().any(told), "a lockout its clients are sent whole");
         assert_eq!(world.get::<ReactionQueue>(near).unwrap().threats.len(), 1, "its blow waits in the target's queue");
         assert!(world.get::<ReactionQueue>(far).unwrap().threats.is_empty(), "a refused one queued nothing");
     }

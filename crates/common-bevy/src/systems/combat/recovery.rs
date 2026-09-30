@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::recovery::GlobalRecovery;
+use crate::components::recovery::{Combo, GlobalRecovery};
 use crate::components::ActorAttributes;
 
 /// Calculate Composure-based recovery time reduction percentage.
@@ -21,9 +21,10 @@ pub fn calculate_composure_reduction(
     crate::tuning::tuning().composure_share * contest_factor(composure, target_impact, edge)
 }
 
-/// System to tick down the global recovery timer.
-/// Applies Composure-based time reduction, its contest weighed by the level
-/// gap, and a daze's pace, which draws a dazed actor's lockout out.
+/// Counts every lockout down and ends it when it runs out, its offer and
+/// its combo with it: faster by its actor's Composure, contested by the
+/// opponent's Impact with the level gap weighing in, and slower by a daze's
+/// pace. A combo's window counts down in plain seconds beside it.
 pub fn global_recovery_system(
     time: Res<Time>,
     mut commands: Commands,
@@ -51,6 +52,9 @@ pub fn global_recovery_system(
             let effective_delta = delta * speed_multiplier * status.map_or(1.0, crate::components::status::Status::daze_pace);
 
             recovery.tick(effective_delta);
+            recovery.combo = recovery.combo
+                .map(|combo| Combo { window: combo.window - delta, ..combo })
+                .filter(|combo| combo.window > 0.0);
 
             if !recovery.is_active() {
                 commands.entity(entity).remove::<GlobalRecovery>();
@@ -62,23 +66,6 @@ pub fn global_recovery_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::AbilityType;
-
-    #[test]
-    fn test_system_logic_ticks_down_recovery() {
-        let mut recovery = GlobalRecovery::new(1.0, AbilityType::Lunge);
-        recovery.tick(0.3);
-        assert!((recovery.remaining - 0.7).abs() < 0.001);
-        assert!(recovery.is_active());
-    }
-
-    #[test]
-    fn test_system_logic_marks_inactive_when_expired() {
-        let mut recovery = GlobalRecovery::new(0.5, AbilityType::Lunge);
-        recovery.tick(0.6);
-        assert_eq!(recovery.remaining, 0.0);
-        assert!(!recovery.is_active());
-    }
 
     #[test]
     fn test_composure_reduction_zero() {

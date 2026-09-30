@@ -1,25 +1,22 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{reaction_queue::*, resources::*, ActorAttributes},
+    components::{reaction_queue::*, resources::*},
     message::{Do, Event as GameEvent},
-    systems::combat::{damage as damage_calc, queue as queue_utils},
+    systems::combat::queue as queue_utils,
 };
 
 /// Client system to handle InsertThreat events
 /// Inserts threats into the visual reaction queue for display
-/// Also applies recovery pushback (Impact vs Composure) to match server behavior
 /// No deduplication needed - we don't predict threat insertions
 pub fn handle_insert_threat(
     mut reader: MessageReader<Do>,
-    mut query: Query<(&mut ReactionQueue, &ActorAttributes, Option<&mut common_bevy::components::recovery::GlobalRecovery>)>,
-    attrs_query: Query<&ActorAttributes>,
-    l2r: Res<crate::resources::EntityMap>,
+    mut query: Query<&mut ReactionQueue>,
     time: Res<Time>,
     server: Res<crate::resources::Server>,
 ) {
     for event in reader.read() {
         if let GameEvent::InsertThreat { ent, threat } = event.event {
-            if let Ok((mut queue, defender_attrs, recovery_opt)) = query.get_mut(ent) {
+            if let Ok(mut queue) = query.get_mut(ent) {
                 // Calculate current server time
                 let client_now = time.elapsed().as_millis();
                 let server_now_ms = server.current_time(client_now);
@@ -27,20 +24,6 @@ pub fn handle_insert_threat(
 
                 // Insert always succeeds (unbounded queue)
                 queue_utils::insert_threat(&mut queue, threat, server_now);
-
-                // Recovery pushback: mirror server's Impact vs Composure contest
-                if let Some(mut recovery) = recovery_opt {
-                    // The threat carries the server's source; its attributes are ours
-                    let source = l2r.get_by_right(&threat.source).copied();
-                    if let Some(Ok(source_attrs)) = source.map(|source| attrs_query.get(source)) {
-                        let pushback_pct = damage_calc::calculate_recovery_pushback(
-                            source_attrs.impact(),
-                            defender_attrs.composure(),
-                            common_bevy::systems::combat::damage::level_edge(source_attrs.total_level(), defender_attrs.total_level()),
-                        );
-                        recovery.apply_pushback(pushback_pct);
-                    }
-                }
             }
         }
     }
@@ -121,7 +104,7 @@ pub fn handle_clear_queue(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common_bevy::message::{AbilityType, ClearType};
+    use common_bevy::{components::ActorAttributes, message::{AbilityType, ClearType}};
     use std::time::Duration;
 
     #[test]

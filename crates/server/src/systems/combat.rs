@@ -53,7 +53,8 @@ pub fn process_deal_damage(
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
         let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
-        // Recovery pushback: Impact vs Composure with gap factor
+        // A blow pushes its target's lockout back, by the attacker's Impact
+        // over the target's Composure with the level gap weighing in
         if let Some(mut recovery) = recovery_opt {
             let pushback_pct = damage_calc::calculate_recovery_pushback(
                 source_attrs.impact(),
@@ -61,6 +62,7 @@ pub fn process_deal_damage(
                 damage_calc::level_edge(source_attrs.total_level(), attrs.total_level()),
             );
             recovery.apply_pushback(pushback_pct);
+            writer.write(Do { event: GameEvent::Incremental { ent: *target, component: common_bevy::message::Component::Recovery(*recovery) } });
         }
 
         // Create threat using canonical helper (INV-003: ensures consistent timers)

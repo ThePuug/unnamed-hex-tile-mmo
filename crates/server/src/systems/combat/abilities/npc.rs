@@ -32,7 +32,7 @@ impl Abilities<'_, '_> {
             let Ok((&loc, attrs, _, heading, _, range, _, _)) = self.actors.get(ent) else { continue };
 
             // Out of lockout, or a reaction its Preparation lets through it, and affordable
-            let recovery = self.lockouts.get(ent).ok().and_then(|(recovery, ..)| recovery);
+            let recovery = self.lockouts.get(ent).ok();
             let locked = recovery.is_some_and(|recovery| recovery.is_active());
             let affordable = self.stamina.get(ent).is_ok_and(|stamina| stamina.state >= common_bevy::tuning::tuning().cost(ability));
             if (locked && !reacts_through(ability, recovery, Some(attrs))) || !affordable {

@@ -32,7 +32,7 @@ use crate::{
         water::WaterPlugin,
     },
     resources::*,
-    systems::{ability_prediction, actor, actor_dead_visibility, animator, camera, combat, equipment, gathering, hiding, input, movement, renet, targeting, world}
+    systems::{actor, actor_dead_visibility, animator, camera, combat, equipment, gathering, hiding, input, movement, renet, targeting, world}
 };
 #[cfg(feature = "admin")]
 use crate::plugins::{flyover, recorder};
@@ -156,11 +156,9 @@ fn main() {
     #[cfg(not(feature = "admin"))]
     app.add_systems(Update, camera::update);
 
-    // Client-side recovery (authoritative server, no prediction)
+    // The server starts every lockout; the client only counts it down
     app.add_systems(Update, (
-        ability_prediction::handle_ability_used, // Apply recovery/synergies when server confirms ability use
-        common_bevy::systems::combat::recovery::global_recovery_system, // Tick down recovery timer
-        common_bevy::systems::combat::synergies::synergy_cleanup_system, // Clean up expired synergies
+        common_bevy::systems::combat::recovery::global_recovery_system,
         common_bevy::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
     ));
 

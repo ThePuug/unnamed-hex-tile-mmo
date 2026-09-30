@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{Actor, behaviour::Side, recovery::{GlobalRecovery, SynergyUnlock}, resources::*, tier_lock::TierLock, Loc, heading::Heading, entity_type::EntityType},
+    components::{Actor, behaviour::Side, recovery::GlobalRecovery, resources::*, tier_lock::TierLock, Loc, heading::Heading, entity_type::EntityType},
     message::AbilityType,
     plugins::nntree::NNTree,
     systems::targeting::select_target,
@@ -256,18 +256,19 @@ pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
     mut glow_query: Query<&mut Visibility, With<SynergyGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
-    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&TierLock>, Option<&GlobalRecovery>, Option<&SynergyUnlock>, Option<&common_bevy::components::ActorAttributes>, Option<&common_bevy::components::AttackRange>, Has<Actor>), With<crate::components::Viewed>>,
+    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&TierLock>, Option<&GlobalRecovery>, Option<&common_bevy::components::ActorAttributes>, Option<&common_bevy::components::AttackRange>, Has<Actor>), With<crate::components::Viewed>>,
     entity_query: Query<(&EntityType, &Loc, Option<&Side>)>,
     nntree: Res<NNTree>,
 ) {
     // The resources and position of the actor the client sees as
-    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, recovery_opt, synergy_opt, attrs, own_reach, controlled)) = player_query.single() else {
+    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, recovery_opt, attrs, own_reach, controlled)) = player_query.single() else {
         return;
     };
     let targeting_state = targeting_state.copied().unwrap_or_default();
 
-    // Check recovery lockout and synergy state
+    // The lockout, and the follow-up it offers
     let recovery_active = recovery_opt.map_or(false, |r| r.is_active());
+    let offered = recovery_opt.and_then(|r| r.offer);
     let recovery_remaining = recovery_opt.map(|r| r.remaining).unwrap_or(0.0);
     let recovery_duration = recovery_opt.map(|r| r.duration).unwrap_or(1.0);
 
@@ -293,8 +294,7 @@ pub fn update(
                 stamina,
                 mana,
                 recovery_active,
-                recovery_remaining,
-                synergy_opt,
+                offered.is_some_and(|offer| offer.ability == ability),
                 player_ent,
                 *player_loc,
                 *player_heading,
@@ -305,7 +305,7 @@ pub fn update(
                 &entity_query,
             )
         } else if recovery_active {
-            if synergy_opt.is_some_and(|s| s.ability == ability) { AbilityState::SynergyUnlocked } else { AbilityState::OnCooldown }
+            if offered.is_some_and(|offer| offer.ability == ability) { AbilityState::SynergyUnlocked } else { AbilityState::OnCooldown }
         } else if stamina.step < common_bevy::tuning::tuning().cost(ability) {
             AbilityState::InsufficientResources
         } else {
@@ -328,9 +328,9 @@ pub fn update(
         let overlay_pct = if !recovery_active || recovery_duration <= 0.0 {
             0.0
         } else {
-            let synergy_unlock_at = synergy_opt
-                .filter(|s| s.ability == ability)
-                .map(|s| s.unlock_at);
+            let synergy_unlock_at = offered
+                .filter(|offer| offer.ability == ability)
+                .map(|offer| offer.unlock_at);
             let ratio = match synergy_unlock_at {
                 Some(unlock_at) if recovery_duration > unlock_at => {
                     (recovery_remaining - unlock_at) / (recovery_duration - unlock_at)
@@ -372,8 +372,7 @@ fn get_ability_state(
     stamina: &Stamina,
     _mana: &Mana,
     recovery_active: bool,
-    _recovery_remaining: f32,
-    synergy_opt: Option<&SynergyUnlock>,
+    offered: bool,
     player_ent: Entity,
     player_loc: Loc,
     player_heading: Heading,
@@ -383,17 +382,9 @@ fn get_ability_state(
     nntree: &NNTree,
     entity_query: &Query<(&EntityType, &Loc, Option<&Side>)>,
 ) -> AbilityState {
-    // Check recovery lockout (Universal lockout, can be synergy-unlocked)
+    // In lockout the offered follow-up glows from the start, and all else waits
     if recovery_active {
-        // Check if this ability has a synergy active (show glow immediately)
-        if let Some(synergy) = synergy_opt {
-            if synergy.ability == ability {
-                // Synergy active for this ability! Show gold glow immediately
-                return AbilityState::SynergyUnlocked;
-            }
-        }
-        // Still locked (no synergy)
-        return AbilityState::OnCooldown;
+        return if offered { AbilityState::SynergyUnlocked } else { AbilityState::OnCooldown };
     }
 
     // The actors the player may target: those on a side hostile to its own

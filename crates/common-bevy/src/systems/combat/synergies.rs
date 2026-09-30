@@ -1,21 +1,18 @@
-use bevy::prelude::*;
-
 use crate::{
-    components::{recovery::{Combo, GlobalRecovery, SynergyUnlock, get_ability_recovery_duration}, ActorAttributes},
+    components::{recovery::{Combo, GlobalRecovery, Offer}, ActorAttributes},
     message::AbilityType,
     systems::combat::damage as damage_calc,
 };
 
-/// Whether `ability` may be used under `recovery`, the lockout, `synergy`,
-/// the follow-up the last ability offered, and `combo`, a Ferocity combo
-/// under way: anything out of lockout; in it, the offered follow-up once it
-/// unlocks, or before then while the combo has a step left inside its
-/// opener's lockout. Every ability that can be offered asks here.
-pub fn may_use(ability: AbilityType, recovery: Option<&GlobalRecovery>, synergy: Option<&SynergyUnlock>, combo: Option<&Combo>) -> bool {
+/// Whether `ability` may be used under `recovery`, the lockout: anything
+/// out of lockout; in it, the follow-up it offers once that unlocks, or
+/// before then while its combo has a step left inside its opener's lockout.
+/// Every ability that can be offered asks here.
+pub fn may_use(ability: AbilityType, recovery: Option<&GlobalRecovery>) -> bool {
     match recovery {
-        Some(recovery) if recovery.is_active() => synergy.is_some_and(|synergy| {
-            synergy.ability == ability
-                && (synergy.is_unlocked(recovery.remaining) || combo.is_some_and(|combo| combo.steps > 0 && combo.window > 0.0))
+        Some(recovery) if recovery.is_active() => recovery.offer.is_some_and(|offer| {
+            offer.ability == ability
+                && (offer.is_unlocked(recovery.remaining) || recovery.combo.is_some_and(|combo| combo.steps > 0 && combo.window > 0.0))
         }),
         _ => true,
     }
@@ -29,20 +26,35 @@ pub fn reacts_through(ability: AbilityType, recovery: Option<&GlobalRecovery>, a
     ability.is_reaction() && recovery.is_active() && (recovery.reactions as usize) < attrs.preparation().index()
 }
 
-/// The lockout `ability` starts, used under `prior`, the lockout it was
-/// used in, and `synergy`, the offer it took. A follow-up taken before its
-/// offer unlocked carries what it skipped of `prior`, so a combo burst early
-/// costs what it would have played out: Ferocity moves the lockout, never
-/// shortens it. Taken once unlocked, it carries nothing. A reaction used
-/// through a lockout (`reacts_through`) carries all of it, its own added
-/// on. It runs contested against `against`, the one it was used against:
-/// a strike's target, or the source of the threat a reaction answers
-/// (`GlobalRecovery::against`). Server and client both start lockouts
-/// here, so they agree.
-pub fn lockout(ability: AbilityType, prior: Option<&GlobalRecovery>, synergy: Option<&SynergyUnlock>, against: Option<&ActorAttributes>) -> GlobalRecovery {
-    let mut recovery = GlobalRecovery::new(get_ability_recovery_duration(ability), ability).against(against);
-    let carried = match (prior.filter(|prior| prior.is_active()), synergy.filter(|synergy| synergy.ability == ability)) {
-        (Some(prior), Some(synergy)) => (prior.remaining - synergy.unlock_at).max(0.0),
+/// The lockout `ability` starts on an actor with `attrs`, used under
+/// `prior`, the lockout it was used in, and contested by `against`, the one
+/// it was used against: a strike's target, or the source of the threat a
+/// reaction answers (`GlobalRecovery::against`).
+///
+/// A follow-up taken before its offer unlocked carries what it skipped of
+/// `prior`, so a combo burst early costs what it would have played out:
+/// Ferocity moves the lockout, never shortens it. Taken once unlocked, it
+/// carries nothing. A reaction used through a lockout (`reacts_through`)
+/// carries all of it, its own added on.
+///
+/// It offers the ability's follow-up (`AbilityType::follow_up`), unlocking
+/// through the ability's own seconds and never through what was carried:
+/// earlier by a floor every actor has (`Tuning::synergy_floor`), and more by
+/// the user's Flow over the Reflex of a strike's target, the level gap
+/// weighing in; a reaction's is contested by no one.
+///
+/// A follow-up fired early spends a step of the combo `prior` was part of;
+/// any other use of an ability that leads on opens one of the Ferocity
+/// tier's steps, 0 to 3, inside its own seconds.
+pub fn lockout(ability: AbilityType, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, against: Option<&ActorAttributes>) -> GlobalRecovery {
+    let tuning = crate::tuning::tuning();
+    let own = tuning.recovery(ability);
+    let mut recovery = GlobalRecovery::new(own).against(against);
+
+    let prior = prior.filter(|prior| prior.is_active());
+    let taken = prior.and_then(|prior| prior.offer).filter(|offer| offer.ability == ability);
+    let carried = match (prior, taken) {
+        (Some(prior), Some(offer)) => (prior.remaining - offer.unlock_at).max(0.0),
         (Some(prior), None) => {
             recovery.reactions = prior.reactions.saturating_add(1);
             prior.remaining
@@ -52,127 +64,54 @@ pub fn lockout(ability: AbilityType, prior: Option<&GlobalRecovery>, synergy: Op
     recovery.remaining += carried;
     recovery.duration += carried;
     recovery.carried = carried;
-    recovery
-}
 
-/// Settles `ability`'s place in a Ferocity combo after `ent` uses it with
-/// `attrs`: a follow-up fired early spends a step; any other use of an
-/// ability that offers a follow-up opens a combo of the Ferocity tier's
-/// steps, 0 to 3, inside its own lockout of `opener` seconds.
-pub fn settle_combo(ent: Entity, ability: AbilityType, early: bool, opener: f32, attrs: &ActorAttributes, combo: Option<&Combo>, commands: &mut Commands) {
-    let Ok(mut entity) = commands.get_entity(ent) else { return };
-    if early {
-        if let Some(combo) = combo {
-            entity.insert(Combo { steps: combo.steps.saturating_sub(1), ..*combo });
-        }
-        return;
-    }
-    let steps = attrs.ferocity().index() as u8;
-    if steps > 0 && ability.follow_up().is_some() {
-        entity.insert(Combo { window: opener, steps });
+    recovery.offer = ability.follow_up().and_then(|follow_up| {
+        let defender = against.filter(|_| !ability.is_reaction()).unwrap_or(attrs);
+        let edge = damage_calc::level_edge(attrs.total_level(), defender.total_level());
+        let contest = damage_calc::contest_factor(attrs.flow(), defender.reflex(), edge);
+        let reduction = tuning.synergy_floor + tuning.synergy_share * contest;
+        (reduction >= f32::EPSILON).then(|| Offer { ability: follow_up, unlock_at: (own * (1.0 - reduction)).max(0.0) })
+    });
+
+    let early = prior.zip(taken).is_some_and(|(prior, offer)| !offer.is_unlocked(prior.remaining));
+    recovery.combo = if early {
+        prior.and_then(|prior| prior.combo).map(|combo| Combo { steps: combo.steps.saturating_sub(1), ..combo })
     } else {
-        entity.remove::<Combo>();
-    }
-}
-
-/// Whether using `ability` now fires it early: in lockout, before the offer
-/// it takes unlocks
-pub fn is_early(ability: AbilityType, recovery: Option<&GlobalRecovery>, synergy: Option<&SynergyUnlock>) -> bool {
-    recovery.is_some_and(|recovery| {
-        recovery.is_active() && synergy.is_some_and(|synergy| synergy.ability == ability && !synergy.is_unlocked(recovery.remaining))
-    })
-}
-
-/// Counts every combo's opener window down, ending the combo when it runs out
-pub fn tick_combo(mut commands: Commands, mut query: Query<(Entity, &mut Combo)>, time: Res<Time>) {
-    let dt = time.delta_secs();
-    for (ent, mut combo) in &mut query {
-        combo.window -= dt;
-        if combo.window <= 0.0 {
-            commands.entity(ent).remove::<Combo>();
-        }
-    }
-}
-
-/// Offers `used_ability`'s follow-up (`AbilityType::follow_up`) to `entity`,
-/// unlocking through `recovery`, the lockout the ability started: earlier by
-/// a floor every actor has (`Tuning::synergy_floor`), and more by the
-/// attacker's Flow over the defender's Reflex, the level gap weighing in.
-/// What the lockout carried from before never unlocks early. Server and
-/// client both call it as the lockout starts, so they offer alike.
-pub fn apply_synergies(
-    entity: Entity,
-    used_ability: AbilityType,
-    recovery: &GlobalRecovery,
-    attacker_attrs: &ActorAttributes,
-    defender_attrs: &ActorAttributes,
-    commands: &mut Commands,
-) {
-    let Some(follow_up) = used_ability.follow_up() else {
-        return;
+        let steps = attrs.ferocity().index() as u8;
+        (steps > 0 && ability.follow_up().is_some()).then_some(Combo { window: own, steps })
     };
-
-    let tuning = crate::tuning::tuning();
-    let edge = damage_calc::level_edge(attacker_attrs.total_level(), defender_attrs.total_level());
-    let contest = damage_calc::contest_factor(attacker_attrs.flow(), defender_attrs.reflex(), edge);
-    let synergy_reduction = tuning.synergy_floor + tuning.synergy_share * contest;
-
-    // No early unlock at all when the floor is none and the contest is lost
-    if synergy_reduction < f32::EPSILON {
-        return;
-    }
-
-    let unlock_at = ((recovery.remaining - recovery.carried) * (1.0 - synergy_reduction)).max(0.0);
-    // The entity may have been evicted client-side
-    if let Ok(mut entity_cmd) = commands.get_entity(entity) {
-        entity_cmd.insert(SynergyUnlock::new(follow_up, unlock_at, used_ability));
-    }
-}
-
-/// System to clean up expired synergies when recovery expires
-pub fn synergy_cleanup_system(
-    mut commands: Commands,
-    recovery_query: Query<Entity, With<GlobalRecovery>>,
-    synergy_query: Query<(Entity, &SynergyUnlock)>,
-) {
-    // Collect entities with synergies but no recovery
-    let entities_with_recovery: std::collections::HashSet<Entity> =
-        recovery_query.iter().collect();
-
-    for (entity, _synergy) in synergy_query.iter() {
-        if !entities_with_recovery.contains(&entity) {
-            // Recovery expired, remove synergy
-            commands.entity(entity).remove::<SynergyUnlock>();
-        }
-    }
+    recovery
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn offering(seconds: f32, ability: AbilityType, unlock_at: f32) -> GlobalRecovery {
+        GlobalRecovery { offer: Some(Offer { ability, unlock_at }), ..GlobalRecovery::new(seconds) }
+    }
+
     #[test]
     fn only_the_offered_follow_up_passes_the_lockout_once_it_unlocks() {
-        let recovery = GlobalRecovery::new(2.0, AbilityType::Kick);
-        let offer = SynergyUnlock::new(AbilityType::Lunge, 1.5, AbilityType::Kick);
+        let recovery = offering(2.0, AbilityType::Lunge, 1.5);
         let mut later = recovery;
         later.tick(1.0);
-        assert!(may_use(AbilityType::Overpower, None, None, None), "out of lockout, anything");
-        assert!(!may_use(AbilityType::Lunge, Some(&recovery), Some(&offer), None), "not before it unlocks");
-        assert!(may_use(AbilityType::Lunge, Some(&later), Some(&offer), None), "the offer, once unlocked");
-        assert!(!may_use(AbilityType::Overpower, Some(&later), Some(&offer), None), "nothing else");
+        assert!(may_use(AbilityType::Overpower, None), "out of lockout, anything");
+        assert!(!may_use(AbilityType::Lunge, Some(&recovery)), "not before it unlocks");
+        assert!(may_use(AbilityType::Lunge, Some(&later)), "the offer, once unlocked");
+        assert!(!may_use(AbilityType::Overpower, Some(&later)), "nothing else");
     }
 
     #[test]
     fn preparation_reacts_through_a_lockout_up_to_its_tier_and_pays_after() {
         let disciplined = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
-        let lockout_now = GlobalRecovery::new(2.0, AbilityType::Overpower);
+        let lockout_now = GlobalRecovery::new(2.0);
         assert!(reacts_through(AbilityType::Counter, Some(&lockout_now), Some(&disciplined)));
         assert!(!reacts_through(AbilityType::Counter, Some(&lockout_now), Some(&plain)), "no Preparation, no reaction in lockout");
         assert!(!reacts_through(AbilityType::Lunge, Some(&lockout_now), Some(&disciplined)), "reactions only");
-        let through = lockout(AbilityType::Counter, Some(&lockout_now), None, None);
-        let own = get_ability_recovery_duration(AbilityType::Counter);
+        let through = lockout(AbilityType::Counter, Some(&lockout_now), &disciplined, None);
+        let own = crate::tuning::tuning().recovery(AbilityType::Counter);
         assert!((through.remaining - (own + 2.0)).abs() < 1e-5, "its own lockout added onto the rest");
         assert_eq!(through.reactions, 1);
         let full = GlobalRecovery { reactions: 3, ..through };
@@ -181,26 +120,59 @@ mod tests {
 
     #[test]
     fn a_combo_fires_the_offer_early_while_it_has_steps() {
-        let recovery = GlobalRecovery::new(2.0, AbilityType::Kick);
-        let offer = SynergyUnlock::new(AbilityType::Lunge, 1.5, AbilityType::Kick);
         let combo = Combo { window: 1.0, steps: 1 };
-        assert!(may_use(AbilityType::Lunge, Some(&recovery), Some(&offer), Some(&combo)), "at once, with a step");
-        assert!(!may_use(AbilityType::Lunge, Some(&recovery), Some(&offer), Some(&Combo { steps: 0, ..combo })), "none left");
-        assert!(!may_use(AbilityType::Lunge, Some(&recovery), Some(&offer), Some(&Combo { window: 0.0, ..combo })), "past the opener's lockout");
-        assert!(!may_use(AbilityType::Overpower, Some(&recovery), Some(&offer), Some(&combo)), "only the offer");
+        let with = |combo| GlobalRecovery { combo: Some(combo), ..offering(2.0, AbilityType::Lunge, 1.5) };
+        assert!(may_use(AbilityType::Lunge, Some(&with(combo))), "at once, with a step");
+        assert!(!may_use(AbilityType::Lunge, Some(&with(Combo { steps: 0, ..combo }))), "none left");
+        assert!(!may_use(AbilityType::Lunge, Some(&with(Combo { window: 0.0, ..combo }))), "past the opener's lockout");
+        assert!(!may_use(AbilityType::Overpower, Some(&with(combo))), "only the offer");
     }
 
     #[test]
     fn an_early_follow_up_carries_what_it_skipped_and_an_unlocked_one_nothing() {
-        let prior = GlobalRecovery::new(2.0, AbilityType::Kick);
-        let offer = SynergyUnlock::new(AbilityType::Lunge, 1.5, AbilityType::Kick);
-        let own = get_ability_recovery_duration(AbilityType::Lunge);
-        let early = lockout(AbilityType::Lunge, Some(&prior), Some(&offer), None);
+        let plain = ActorAttributes::default();
+        let prior = offering(2.0, AbilityType::Lunge, 1.5);
+        let own = crate::tuning::tuning().recovery(AbilityType::Lunge);
+        let early = lockout(AbilityType::Lunge, Some(&prior), &plain, None);
         assert!((early.remaining - (own + 0.5)).abs() < 1e-5, "the half second it skipped comes after");
         let mut waited = prior;
         waited.tick(0.6);
-        assert_eq!(lockout(AbilityType::Lunge, Some(&waited), Some(&offer), None).remaining, own, "on time, its own");
-        assert_eq!(lockout(AbilityType::Lunge, None, None, None).remaining, own, "fresh, its own");
+        assert_eq!(lockout(AbilityType::Lunge, Some(&waited), &plain, None).remaining, own, "on time, its own");
+        assert_eq!(lockout(AbilityType::Lunge, None, &plain, None).remaining, own, "fresh, its own");
+    }
+
+    #[test]
+    fn a_lockout_offers_its_follow_up_inside_its_own_seconds() {
+        let plain = ActorAttributes::default();
+        let own = crate::tuning::tuning().recovery(AbilityType::Lunge);
+        let fresh = lockout(AbilityType::Lunge, None, &plain, None);
+        if let Some(offer) = fresh.offer {
+            assert_eq!(Some(offer.ability), AbilityType::Lunge.follow_up());
+            assert!((0.0..=own).contains(&offer.unlock_at));
+        }
+
+        // What an early follow-up carried is never unlocked through
+        let prior = offering(2.0, AbilityType::Lunge, 0.5);
+        let early = lockout(AbilityType::Lunge, Some(&prior), &plain, None);
+        assert!(early.carried > 0.0);
+        assert_eq!(early.offer.map(|offer| offer.unlock_at), fresh.offer.map(|offer| offer.unlock_at));
+        assert!(lockout(AbilityType::Rattle, None, &plain, None).offer.is_none(), "a signature leads on to nothing");
+    }
+
+    #[test]
+    fn ferocity_opens_a_combo_and_each_early_follow_up_spends_a_step() {
+        let fierce = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
+        let steps = fierce.ferocity().index() as u8;
+        assert!(steps > 0, "all of it in Might reaches a Ferocity tier");
+        let opener = lockout(AbilityType::Lunge, None, &fierce, None);
+        assert_eq!(opener.combo.map(|combo| combo.steps), Some(steps));
+        let follow_up = AbilityType::Lunge.follow_up().unwrap();
+        assert!(may_use(follow_up, Some(&opener)), "the offer fires at once");
+
+        let second = lockout(follow_up, Some(&opener), &fierce, None);
+        assert_eq!(second.combo.map(|combo| combo.steps), Some(steps - 1), "and spends a step");
+        assert!(second.carried > 0.0, "carrying what it skipped");
+        assert!(lockout(AbilityType::Lunge, None, &ActorAttributes::default(), None).combo.is_none(), "no Ferocity, no combo");
     }
 
     #[test]
@@ -216,98 +188,4 @@ mod tests {
         }
         assert_eq!(seen.len(), 4, "the ring is Lunge, Overpower, Counter and Kick: {seen:?}");
     }
-
-    // Note: Following DEVELOPER role guidance to write durable unit tests.
-    // The can_use_ability function is designed to be called from systems with ECS queries,
-    // so we test the logic components (GlobalRecovery, SynergyUnlock) directly instead.
-
-    #[test]
-    fn test_ability_locked_by_recovery() {
-        // Test that recovery locks abilities
-        let recovery = GlobalRecovery::new(1.0, AbilityType::Lunge);
-        assert!(recovery.is_active(), "Recovery should be active");
-    }
-
-    #[test]
-    fn test_synergy_unlock_logic() {
-        // Test synergy unlock logic directly
-        let synergy = SynergyUnlock::new(AbilityType::Overpower, 0.5, AbilityType::Lunge);
-
-        // At 1.0s remaining (not unlocked yet)
-        assert!(
-            !synergy.is_unlocked(1.0),
-            "Should not be unlocked at 1.0s remaining"
-        );
-
-        // At 0.5s remaining (unlocked)
-        assert!(
-            synergy.is_unlocked(0.5),
-            "Should be unlocked at 0.5s remaining"
-        );
-
-        // At 0.3s remaining (unlocked)
-        assert!(
-            synergy.is_unlocked(0.3),
-            "Should be unlocked at 0.3s remaining"
-        );
-    }
-
-    #[test]
-    fn test_lunge_synergy_timing() {
-        // Test Lunge → Overpower synergy timing
-        let recovery = GlobalRecovery::new(1.0, AbilityType::Lunge);
-        let synergy = SynergyUnlock::new(AbilityType::Overpower, 0.5, AbilityType::Lunge);
-
-        // At start (1.0s remaining): locked
-        assert!(recovery.is_active());
-        assert!(!synergy.is_unlocked(recovery.remaining));
-
-        // After 0.5s (0.5s remaining): synergy unlocks
-        let mut recovery_mid = recovery.clone();
-        recovery_mid.tick(0.5);
-        assert!(recovery_mid.is_active());
-        assert!(
-            synergy.is_unlocked(recovery_mid.remaining),
-            "Overpower should unlock at 0.5s remaining"
-        );
-    }
-
-    #[test]
-    fn test_overpower_synergy_timing() {
-        // Test Overpower → Counter synergy timing (replaces Knockback)
-        let recovery = GlobalRecovery::new(2.0, AbilityType::Overpower);
-        let synergy = SynergyUnlock::new(AbilityType::Counter, 1.0, AbilityType::Overpower);
-
-        // At start (2.0s remaining): locked
-        assert!(recovery.is_active());
-        assert!(!synergy.is_unlocked(recovery.remaining));
-
-        // After 0.5s (1.5s remaining): still locked
-        let mut recovery_early = recovery.clone();
-        recovery_early.tick(0.5);
-        assert!(!synergy.is_unlocked(recovery_early.remaining));
-
-        // After 1.0s (1.0s remaining): synergy unlocks
-        let mut recovery_mid = recovery.clone();
-        recovery_mid.tick(1.0);
-        assert!(
-            synergy.is_unlocked(recovery_mid.remaining),
-            "Counter should unlock at 1.0s remaining"
-        );
-    }
-
-    #[test]
-    fn test_zero_finesse_produces_no_synergy_reduction() {
-        // With 0 flow, contest_factor returns 0, so synergy_reduction = 0
-        // apply_synergies should NOT insert a SynergyUnlock component
-        let flow = 0u16;
-        let reflex = 0u16;
-        let contest = damage_calc::contest_factor(flow, reflex, 0.0);
-        assert_eq!(contest, 0.0, "contest_factor(0, 0) should be 0");
-
-        let synergy_reduction = 0.66_f32 * contest;
-        assert!(synergy_reduction < f32::EPSILON,
-            "No synergy reduction without flow investment");
-    }
-
 }
