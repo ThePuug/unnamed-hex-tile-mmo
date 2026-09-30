@@ -229,7 +229,6 @@ pub enum Component {
     Returning(crate::components::returning::Returning),
     Side(crate::components::behaviour::Side),
     Status(crate::components::status::Status),
-    Stunned(crate::components::stunned::Stunned),
     Stamina(Stamina),
     TierLock(crate::components::tier_lock::TierLock),
 }
@@ -248,7 +247,6 @@ impl Component {
             Component::Returning(v) => { entity.insert(v); }
             Component::Side(v) => { entity.insert(v); }
             Component::Status(v) => { entity.insert(v); }
-            Component::Stunned(v) => { entity.insert(v); }
             Component::Stamina(v) => { entity.insert(v); }
             Component::TierLock(v) => { entity.insert(v); }
             _ => unreachable!("Loc/Heading require special handling"),

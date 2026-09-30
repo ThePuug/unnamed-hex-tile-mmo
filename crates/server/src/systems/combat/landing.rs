@@ -21,7 +21,6 @@ use common_bevy::{
         recovery::GlobalRecovery,
         resources::RespawnTimer,
         status::{Daze, Status, Timed},
-        stunned::Stunned,
         ActorAttributes, AttackRange, Loc,
     },
     message::{AbilityType, Component, Do, Try, Event as GameEvent},
@@ -69,12 +68,12 @@ pub fn land(
     match ability {
         // A stun holds its target completely, a lockout as long with it
         Some(AbilityType::Flank) => {
-            let stunned = Stunned { remaining: tuning.flank_stun * hold };
-            let lockout = recoveries.get(target).map_or(0.0, |recovery| recovery.remaining).max(stunned.remaining);
+            let seconds = tuning.flank_stun * hold;
+            let lockout = recoveries.get(target).map_or(0.0, |recovery| recovery.remaining).max(seconds);
             if let Ok(mut entity) = commands.get_entity(target) {
-                entity.try_insert((stunned, GlobalRecovery::new(lockout, AbilityType::Flank).against(source_attrs)));
+                entity.try_insert(GlobalRecovery::new(lockout, AbilityType::Flank).against(source_attrs));
             }
-            writer.write(Do { event: GameEvent::Incremental { ent: target, component: Component::Stunned(stunned) } });
+            update(target, statuses, commands, writer, |status| status.hold(seconds));
         }
         Some(AbilityType::Rattle) => update(target, statuses, commands, writer, |status| {
             let stacks = Status::stacks_of(Some(status)).saturating_add(1).min(tuning.rattle_stacks);
@@ -152,7 +151,7 @@ pub fn stumble(
 
 /// Changes `ent`'s status by `change`, giving it one if it has none, and
 /// sends the whole of it.
-fn update(
+pub fn update(
     ent: Entity,
     statuses: &mut Query<&mut Status>,
     commands: &mut Commands,

@@ -20,7 +20,6 @@ pub fn handle_auto_attack(
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     range_query: Query<&common_bevy::components::AttackRange>,
     respawn_query: Query<&common_bevy::components::resources::RespawnTimer>,
-    stunned_query: Query<&common_bevy::components::stunned::Stunned>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
     poised_query: Query<&super::disengage::Poised>,
     mut swing_query: Query<(&mut common_bevy::components::Swing, Option<&common_bevy::components::status::Status>)>,
@@ -36,8 +35,8 @@ pub fn handle_auto_attack(
             continue;
         }
 
-        // Dead or stunned casters can't attack
-        if respawn_query.get(*ent).is_ok() || stunned_query.get(*ent).is_ok_and(|s| s.is_active()) {
+        // Dead or held casters can't attack
+        if respawn_query.get(*ent).is_ok() || swing_query.get(*ent).is_ok_and(|(_, status)| common_bevy::components::status::Status::holds(status)) {
             continue;
         }
 

@@ -1,12 +1,16 @@
 use bevy::prelude::*;
 use std::time::Duration;
 use common_bevy::{
-    components::{entity_type::*, resources::*, stagger::Stagger, Loc, reaction_queue::{ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+    components::{entity_type::*, resources::*, status::Status, Loc, reaction_queue::{ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     resources::map::Map,
     systems::combat::synergies::{apply_synergies, is_early, lockout, may_use, reacts_through, settle_combo},
 };
 use crate::resources::RunTime;
+
+/// Seconds a Kick holds what it drives back: long enough that it does not
+/// walk straight in again.
+const STAGGER_SECS: f32 = 0.5;
 
 /// Handle Kick ability — REACTIVE KICK
 /// - `Tuning::kick_cost` stamina
@@ -29,6 +33,7 @@ pub fn handle_kick(
     time: Res<Time>,
     runtime: Res<RunTime>,
     map: Res<Map>,
+    mut statuses: Query<&mut Status>,
     mut writer: MessageWriter<Do>,
 ) {
     for event in reader.read() {
@@ -172,7 +177,7 @@ pub fn handle_kick(
                 let pushed = landing.flat_distance(&**source_loc) as u16;
                 crate::systems::combat::leap::slide(threat.source, landing, pushed * 125, None, &mut commands, &mut writer);
             }
-            commands.entity(threat.source).insert(Stagger::new(0.5));
+            crate::systems::combat::landing::update(threat.source, &mut statuses, &mut commands, &mut writer, |status| status.hold(STAGGER_SECS));
         }
 
         // Drain visible threats from caster's queue

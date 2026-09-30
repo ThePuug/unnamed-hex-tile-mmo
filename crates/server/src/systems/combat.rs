@@ -234,7 +234,6 @@ pub fn process_passive_auto_attack(
         (Entity, &Loc, &mut LastAutoAttack, &common_bevy::components::target::Target,
          &ActorAttributes,
          Option<&common_bevy::components::AttackRange>,
-         Option<&common_bevy::components::stunned::Stunned>,
          Option<&common_bevy::components::heading::Heading>,
          Option<&common_bevy::components::status::Status>),
         Without<common_bevy::components::behaviour::PlayerControlled>
@@ -249,8 +248,8 @@ pub fn process_passive_auto_attack(
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, target, attrs, attack_range_opt, stunned, heading, status) in query.iter_mut() {
-        if common_bevy::components::stunned::Stunned::holds(stunned) {
+    for (ent, loc, mut last_auto_attack, target, attrs, attack_range_opt, heading, status) in query.iter_mut() {
+        if common_bevy::components::status::Status::holds(status) {
             continue;
         }
         // Check cooldown: the fixed interval, stretched by a daze

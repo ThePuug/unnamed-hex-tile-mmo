@@ -307,14 +307,14 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
 
 /// Prints where every actor stands and what it is doing.
 fn timeline(world: &mut World, elapsed: Duration) {
-    use common_bevy::components::{Loc, hex_assignment::AssignedHex, resources::CombatState, returning::Returning, stagger::Stagger, target::Target};
-    let mut actors = world.query::<(Entity, &Side, &Loc, &Health, &CombatState, Option<&Target>, Option<&Returning>, Option<&AssignedHex>, Option<&Stagger>, &common_bevy::components::position::Position)>();
-    let lines: Vec<_> = actors.iter(world).map(|(e, side, loc, hp, combat, target, returning, assigned, stagger, pos)| {
+    use common_bevy::components::{Loc, hex_assignment::AssignedHex, resources::CombatState, returning::Returning, status::Status, target::Target};
+    let mut actors = world.query::<(Entity, &Side, &Loc, &Health, &CombatState, Option<&Target>, Option<&Returning>, Option<&AssignedHex>, Option<&Status>, &common_bevy::components::position::Position)>();
+    let lines: Vec<_> = actors.iter(world).map(|(e, side, loc, hp, combat, target, returning, assigned, status, pos)| {
         format!("{}#{} {:?} pos {:?}+({:.2},{:.2}) hp {:.0}{}{}{}{} ->{:?}", side.0, e.index(), (loc.q, loc.r, loc.z), (pos.tile.q, pos.tile.r), pos.offset.x, pos.offset.z, hp.state,
             if combat.in_combat { " fighting" } else { "" },
             if returning.is_some() { " RETURNING" } else { "" },
             assigned.map_or(String::new(), |a| format!(" hex {:?}", (a.0.q, a.0.r, a.0.z))),
-            if stagger.is_some() { " STAGGERED" } else { "" },
+            if Status::holds(status) { " HELD" } else { "" },
             target.and_then(|t| t.entity).map(|t| t.index()))
     }).collect();
     let mut engagements = world.query::<&common_bevy::components::hex_assignment::HexAssignment>();

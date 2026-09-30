@@ -13,13 +13,9 @@ impl Plugin for BehaviourPlugin {
         app.add_systems(
             FixedUpdate,
             (
-                crate::systems::stagger::tick_stagger,
-                common_bevy::components::stunned::tick_stunned,
                 common_bevy::components::status::tick_status,
                 crate::systems::behaviour::hex_assignment::assign_hexes,
                 crate::systems::behaviour::chase::chase,
-                crate::systems::stagger::enforce_stagger
-                    .after(crate::systems::behaviour::chase::chase),
             )
         );
     }

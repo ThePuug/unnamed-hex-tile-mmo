@@ -1,11 +1,13 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// The status effects that slow an actor, one of each kind, a
+/// The status effects that slow or hold an actor, one of each kind, a
 /// fresh one replacing the one it lands on. Each is a share of its speed,
 /// and its pace is all of them together: every caller of the physics takes
 /// its speed through [`Status::pace_of`], so the server, the owner's
-/// prediction and every remote simulation agree.
+/// prediction and every remote simulation agree. A hold is an effect at no
+/// pace at all, and stops more than the walk: a held actor does not turn,
+/// jump or swing either ([`Status::holds`]).
 ///
 /// The server sends the whole of it whenever an ability changes it, and
 /// both sides count its timed effects down, so a client moves an actor at
@@ -16,6 +18,8 @@ pub struct Status {
     pub slow: Option<Timed>,
     /// A strike across the striker's own line, its stride broken
     pub stride: Option<Timed>,
+    /// Held in place, by a stun or by the stagger of a Kick ([`Status::hold`])
+    pub held: Option<Timed>,
     /// A Juggernaut's Rattles this fight
     pub daze: Option<Daze>,
     /// Carrying past the bag's burden limit
@@ -53,12 +57,31 @@ impl Status {
     /// The share of its speed the actor moves at under every effect on it
     pub fn pace(&self) -> f32 {
         let burden = if self.burden { BURDENED_PACE } else { 1.0 };
-        Timed::pace(self.slow) * Timed::pace(self.stride) * self.daze_pace() * burden
+        Timed::pace(self.slow) * Timed::pace(self.stride) * Timed::pace(self.held) * self.daze_pace() * burden
     }
 
     /// The pace of an actor with `status`, whole with none
     pub fn pace_of(status: Option<&Status>) -> f32 {
         status.map_or(1.0, Status::pace)
+    }
+
+    /// Whether the actor is held in place now
+    pub fn is_held(&self) -> bool {
+        self.held.is_some_and(|held| held.remaining > 0.0)
+    }
+
+    /// Whether an actor with `status` is held in place now: it neither
+    /// moves, turns, jumps nor swings. Its abilities and reactions are for
+    /// the lockout whatever held it lays on alongside.
+    pub fn holds(status: Option<&Status>) -> bool {
+        status.is_some_and(Status::is_held)
+    }
+
+    /// Holds the actor for `seconds`, or for what a hold already on it has
+    /// left where that is longer: a short hold never cuts a long one.
+    pub fn hold(&mut self, seconds: f32) {
+        let left = self.held.map_or(0.0, |held| held.remaining);
+        self.held = Some(Timed { pace: 0.0, remaining: seconds.max(left) });
     }
 
     /// The share of its pace a daze leaves the actor's swings and recovery
@@ -80,7 +103,7 @@ impl Status {
 
     /// Counts the timed effects down by `dt` seconds, dropping spent ones
     pub fn tick(&mut self, dt: f32) {
-        for slot in [&mut self.slow, &mut self.stride] {
+        for slot in [&mut self.slow, &mut self.stride, &mut self.held] {
             if let Some(timed) = slot {
                 timed.remaining -= dt;
                 if timed.remaining <= 0.0 {
@@ -96,7 +119,7 @@ impl Status {
 pub fn tick_status(mut query: Query<&mut Status>, time: Res<Time>) {
     let dt = time.delta_secs();
     for mut status in &mut query {
-        if status.slow.is_some() || status.stride.is_some() {
+        if status.slow.is_some() || status.stride.is_some() || status.held.is_some() {
             status.tick(dt);
         }
     }
@@ -127,6 +150,21 @@ mod tests {
         let mut spent = stumbling;
         spent.tick(1.5);
         assert_eq!(spent.stride, None);
+    }
+
+    #[test]
+    fn a_hold_stops_the_actor_until_it_runs_out_and_a_shorter_one_never_cuts_it() {
+        let mut status = Status::default();
+        assert!(!status.is_held() && !Status::holds(None));
+        status.hold(1.0);
+        assert!(status.is_held());
+        assert_eq!(status.pace(), 0.0, "held, it moves at no pace");
+        status.hold(0.25);
+        status.tick(0.5);
+        assert!(status.is_held(), "the longer hold stands");
+        status.tick(0.6);
+        assert!(!status.is_held());
+        assert_eq!(status.pace(), 1.0);
     }
 
     #[test]

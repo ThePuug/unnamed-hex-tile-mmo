@@ -35,7 +35,6 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::Returning(_) => "Inc:Returning",
             Component::Side(_) => "Inc:Side",
             Component::Status(_) => "Inc:Status",
-            Component::Stunned(_) => "Inc:Stunned",
             Component::Equipment(_) => "Inc:Equipment",
         },
         Event::ChunkData { .. } => "ChunkData",
