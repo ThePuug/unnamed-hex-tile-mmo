@@ -552,9 +552,17 @@ impl ActorAttributes {
     /// `Tuning::endurance_cost` for each point of the potency it reads
     /// (`skill_potency`). It grows with level as the pool does, so a pool
     /// with no Discipline in it holds the same count of a build's skills at
-    /// any level.
+    /// any level. A Parry pays by what it turns aside instead
+    /// (`parry_effort`).
     pub fn skill_endurance(&self, ability: crate::message::AbilityType) -> f32 {
         crate::tuning::tuning().endurance_cost * self.skill_potency(ability)
+    }
+
+    /// The endurance it costs this actor to parry a threat of `damage`:
+    /// `Tuning::parry_effort` for each point of it with no Resolve, less by
+    /// its Concentration over base potency.
+    pub fn parry_effort(&self, damage: f32) -> f32 {
+        damage * crate::tuning::tuning().parry_effort * self.base_potency() / self.concentration()
     }
 
     /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
@@ -740,6 +748,9 @@ mod tests {
             assert!(resolute.hold(reaction) > 1.0 && instinctive.hold(reaction) == 1.0, "its effects hold by Concentration's share");
         }
         assert_eq!(mighty.skill_potency(Frenzy), mighty.base_potency(), "with none of either, base potency");
+        assert_eq!(mighty.parry_effort(10.0), instinctive.parry_effort(10.0), "a parry costs the same with no Resolve");
+        assert!(resolute.parry_effort(10.0) < mighty.parry_effort(10.0), "and less by Concentration");
+        assert_eq!(mighty.parry_effort(20.0), 2.0 * mighty.parry_effort(10.0), "by the damage it turns aside");
         assert!(instinctive.hold(Frenzy) < 1.0 + crate::tuning::tuning().effect_hold, "a share keeps an effect under its ceiling");
     }
 

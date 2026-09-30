@@ -200,7 +200,7 @@ pub enum AbilityType {
     /// split its damage and its Grit's bank between them
     Feint,
     /// The Ambusher's reaction, clearing the threats in its span that its
-    /// Concentration covers; Preparation chains it through a recovery
+    /// endurance pays for; Preparation chains it through a recovery
     Parry,
     /// The Defender's reaction, clearing every threat in its span and
     /// sending a share of each back; Awareness lengthens the span

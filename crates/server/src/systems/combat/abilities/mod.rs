@@ -211,6 +211,9 @@ impl Abilities<'_, '_> {
             return Err(Some(AbilityFailReason::InsufficientStamina));
         }
 
+        // The recovery runs by how spent the actor is as it uses the ability
+        let fatigue = self.endurance.get(ent).map_or(0.0, |endurance| endurance.fatigue());
+
         // The ability's own effect, which may still refuse before it
         // changes anything; it names whom its recovery is contested by
         let opponent = match ability {
@@ -231,22 +234,14 @@ impl Abilities<'_, '_> {
         }
         // Endurance is spent beside the stamina and refuses nothing: a
         // skill's, or for a swing struck across the caster's line a share
-        // of the Force it strikes with. The recovery runs by how spent the
-        // actor was as it used the ability
+        // of the Force it strikes with. A Parry has paid its own, by what
+        // it turned aside
         let across = cast.target_loc.is_some_and(|target_loc| targeting::across(heading.as_ref(), &loc, &target_loc));
-        let spent = match ability {
+        self.tire(ent, match ability {
             AbilityType::AutoAttack if across => tuning.off_arc_cost * attrs.force(),
-            AbilityType::AutoAttack => 0.0,
+            AbilityType::AutoAttack | AbilityType::Parry => 0.0,
             _ => attrs.skill_endurance(ability),
-        };
-        let mut fatigue = 0.0;
-        if spent > 0.0 {
-            if let Ok(mut endurance) = self.endurance.get_mut(ent) {
-                fatigue = endurance.fatigue();
-                endurance.state = (endurance.state - spent).max(0.0);
-                self.writer.write(Do { event: GameEvent::Incremental { ent, component: MessageComponent::Endurance(*endurance) } });
-            }
-        }
+        });
         // Every client near draws it
         self.writer.write(Do { event: GameEvent::UseAbility { ent, ability, target: opponent } });
         // A strike across the caster's line breaks its stride, but in a
@@ -280,6 +275,17 @@ impl Abilities<'_, '_> {
         let (chase, member) = self.leashed.get(ent).ok()?;
         let den = self.dens.get(member.0).ok()?;
         Some(crate::systems::combat::leap::Leash { den: **den, reach: chase.leash_distance })
+    }
+
+    /// Spends `spent` of `ent`'s endurance, as far as it has any, and tells
+    /// its clients
+    pub fn tire(&mut self, ent: Entity, spent: f32) {
+        if spent <= 0.0 {
+            return;
+        }
+        let Ok(mut endurance) = self.endurance.get_mut(ent) else { return };
+        endurance.state = (endurance.state - spent).max(0.0);
+        self.writer.write(Do { event: GameEvent::Incremental { ent, component: MessageComponent::Endurance(*endurance) } });
     }
 
     /// Whether `ent` is in a Perfect Stride now
@@ -532,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn a_parry_clears_what_its_budget_covers_front_first_and_the_rest_stand() {
+    fn a_parry_pays_endurance_for_what_it_turns_aside_and_stops_at_what_it_cannot() {
         use common_bevy::systems::combat::queue::{create_threat, insert_threat};
         let mut app = arena();
         let defender = actor(&mut app, Side::PLAYERS, 0);
@@ -540,24 +546,38 @@ mod tests {
         app.update();
 
         let plain = ActorAttributes::default();
-        let budget = plain.skill_potency(AbilityType::Parry) * common_bevy::tuning::tuning().parry_capacity;
+        let endurance = |app: &App| app.world().get::<Endurance>(defender).unwrap().state;
+        // The damage the defender's whole pool pays for
+        let pool = endurance(&app);
+        let worth = pool / plain.parry_effort(1.0);
         let queued = |app: &mut App, damage: f32, millis: u64| {
             let at = Duration::from_millis(millis);
             let threat = create_threat(attacker, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
             insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat, at);
         };
-        // Three within one span: the first two fit the budget, the third does not
-        for (damage, millis) in [(budget * 0.5, 0), (budget * 0.4, 50), (budget * 0.3, 100)] {
+        // Three within one span: the pool pays for the first two, not the third
+        for (damage, millis) in [(worth * 0.5, 0), (worth * 0.4, 50), (worth * 0.3, 100)] {
             queued(&mut app, damage, millis);
         }
         assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry));
         let left: Vec<u128> = queue(&app, defender).iter().map(|threat| threat.inserted_at.as_millis()).collect();
-        assert_eq!(left, vec![100], "the front two are covered and cleared whole; the third stands");
+        assert_eq!(left, vec![100], "the front two are paid for and cleared whole; the third stands");
+        let after = endurance(&app);
+        assert!((after - pool * 0.1).abs() < pool * 1e-3, "it paid for the two it cleared and nothing beside: {after} of {pool}");
 
         app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
         app.world_mut().get_mut::<ReactionQueue>(defender).unwrap().threats.clear();
-        queued(&mut app, budget * 1.5, 0);
-        assert_eq!(refused(&mut app, defender, AbilityType::Parry, None), Some(AbilityFailReason::NoTargets), "a front threat past the whole budget cannot be parried");
+        queued(&mut app, worth * 0.05, 0);
+        queued(&mut app, worth * 0.5, 50);
+        let stamina = app.world().get::<Stamina>(defender).unwrap().state;
+        assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry), "a large threat behind one it can pay for refuses nothing");
+        assert_eq!(queue(&app, defender).len(), 1, "it lands, with what stands behind it");
+
+        app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
+        let (before, stamina) = (endurance(&app), stamina - common_bevy::tuning::tuning().parry_cost);
+        assert_eq!(refused(&mut app, defender, AbilityType::Parry, None), Some(AbilityFailReason::NoTargets), "without the endurance for the front threat there is nothing to parry");
+        assert_eq!(endurance(&app), before, "and a refusal costs nothing");
+        assert_eq!(app.world().get::<Stamina>(defender).unwrap().state, stamina);
     }
 
     #[test]
