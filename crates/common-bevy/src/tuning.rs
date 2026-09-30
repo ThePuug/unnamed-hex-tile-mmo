@@ -143,6 +143,9 @@ pub struct Tuning {
     /// Endurance a Parry pays for each point of damage it turns aside,
     /// with no Resolve; less by its user's Concentration over base potency
     pub parry_effort: f32,
+    /// Endurance a Parry pays for each threat it turns aside, as a share of
+    /// base potency, whatever the damage; less by Concentration as above
+    pub parry_per_threat: f32,
     pub counter_cost: f32,
     pub counter_recovery: f32,
     /// Share of each countered threat's damage sent back by a counterer
@@ -217,7 +220,8 @@ impl Tuning {
         feint_gap: 0.4,
         parry_cost: 25.0,
         parry_recovery: 1.5,
-        parry_effort: 1.0,
+        parry_effort: 0.5,
+        parry_per_threat: 0.25,
         counter_cost: 60.0,
         counter_recovery: 0.5,
         counter_reflect: 0.6,
@@ -327,6 +331,7 @@ impl Tuning {
             "parry_cost" => &mut self.parry_cost,
             "parry_recovery" => &mut self.parry_recovery,
             "parry_effort" => &mut self.parry_effort,
+            "parry_per_threat" => &mut self.parry_per_threat,
             "counter_cost" => &mut self.counter_cost,
             "counter_recovery" => &mut self.counter_recovery,
             "counter_reflect" => &mut self.counter_reflect,

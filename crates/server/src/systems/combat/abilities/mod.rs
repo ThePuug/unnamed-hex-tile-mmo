@@ -547,16 +547,17 @@ mod tests {
 
         let plain = ActorAttributes::default();
         let endurance = |app: &App| app.world().get::<Endurance>(defender).unwrap().state;
-        // The damage the defender's whole pool pays for
+        // The damage a parry pays `share` of the defender's whole pool for
         let pool = endurance(&app);
-        let worth = pool / plain.parry_effort(1.0);
+        let (fixed, per_point) = (plain.parry_effort(0.0), plain.parry_effort(1.0) - plain.parry_effort(0.0));
+        let costing = |share: f32| (share * pool - fixed) / per_point;
         let queued = |app: &mut App, damage: f32, millis: u64| {
             let at = Duration::from_millis(millis);
             let threat = create_threat(attacker, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
             insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat, at);
         };
         // Three within one span: the pool pays for the first two, not the third
-        for (damage, millis) in [(worth * 0.5, 0), (worth * 0.4, 50), (worth * 0.3, 100)] {
+        for (damage, millis) in [(costing(0.5), 0), (costing(0.4), 50), (costing(0.3), 100)] {
             queued(&mut app, damage, millis);
         }
         assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry));
@@ -567,8 +568,8 @@ mod tests {
 
         app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
         app.world_mut().get_mut::<ReactionQueue>(defender).unwrap().threats.clear();
-        queued(&mut app, worth * 0.05, 0);
-        queued(&mut app, worth * 0.5, 50);
+        queued(&mut app, costing(0.05), 0);
+        queued(&mut app, costing(0.5), 50);
         let stamina = app.world().get::<Stamina>(defender).unwrap().state;
         assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry), "a large threat behind one it can pay for refuses nothing");
         assert_eq!(queue(&app, defender).len(), 1, "it lands, with what stands behind it");

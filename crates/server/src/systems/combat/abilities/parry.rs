@@ -5,7 +5,7 @@ use super::{Abilities, AbilityFailReason, Cast};
 
 /// Parry, the Ambusher's skill: a reaction that clears the threats in its
 /// user's span, the front one and those landing within the span behind it,
-/// and pays endurance for the damage it turns aside
+/// and pays endurance for each threat and the damage it turns aside
 /// (`ActorAttributes::parry_effort`), where any other skill pays its own
 /// flat cost. It takes them in the order a reaction does, the front first,
 /// each whole while the endurance its user has left pays for it; the first

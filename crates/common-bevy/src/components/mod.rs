@@ -559,10 +559,14 @@ impl ActorAttributes {
     }
 
     /// The endurance it costs this actor to parry a threat of `damage`:
-    /// `Tuning::parry_effort` for each point of it with no Resolve, less by
-    /// its Concentration over base potency.
+    /// `Tuning::parry_per_threat` of base potency for the threat itself and
+    /// `Tuning::parry_effort` for each point of its damage, with no Resolve,
+    /// all of it less by its Concentration over base potency. A threat costs
+    /// something however light, so a stream of small ones is not parried free.
     pub fn parry_effort(&self, damage: f32) -> f32 {
-        damage * crate::tuning::tuning().parry_effort * self.base_potency() / self.concentration()
+        let tuning = crate::tuning::tuning();
+        let base = self.base_potency();
+        (tuning.parry_per_threat * base + damage * tuning.parry_effort) * base / self.concentration()
     }
 
     /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
@@ -750,7 +754,8 @@ mod tests {
         assert_eq!(mighty.skill_potency(Frenzy), mighty.base_potency(), "with none of either, base potency");
         assert_eq!(mighty.parry_effort(10.0), instinctive.parry_effort(10.0), "a parry costs the same with no Resolve");
         assert!(resolute.parry_effort(10.0) < mighty.parry_effort(10.0), "and less by Concentration");
-        assert_eq!(mighty.parry_effort(20.0), 2.0 * mighty.parry_effort(10.0), "by the damage it turns aside");
+        assert!(mighty.parry_effort(20.0) > mighty.parry_effort(10.0), "more by the damage it turns aside");
+        assert!(mighty.parry_effort(0.0) > 0.0, "and something for a threat however light");
         assert!(instinctive.hold(Frenzy) < 1.0 + crate::tuning::tuning().effect_hold, "a share keeps an effect under its ceiling");
     }
 
