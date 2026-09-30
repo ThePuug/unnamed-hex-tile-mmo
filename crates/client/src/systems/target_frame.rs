@@ -17,7 +17,7 @@ pub enum Lane {
     Ally,
 }
 
-const LANES: [Lane; 2] = [Lane::Hostile, Lane::Ally];
+pub const LANES: [Lane; 2] = [Lane::Hostile, Lane::Ally];
 
 /// A fixed part of a frame, by what it shows.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +97,15 @@ impl Lane {
         match self {
             Lane::Hostile => target.last_target,
             Lane::Ally => ally.and_then(|ally| ally.last_target),
+        }
+    }
+
+    /// The target the viewed actor holds in this lane now, which the bars
+    /// over it in the world follow
+    pub fn held(self, target: &Target, ally: Option<&AllyTarget>) -> Option<Entity> {
+        match self {
+            Lane::Hostile => target.entity,
+            Lane::Ally => ally.and_then(|ally| ally.entity),
         }
     }
 

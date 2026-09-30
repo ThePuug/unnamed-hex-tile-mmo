@@ -61,32 +61,31 @@ pub struct FloatingText {
     pub velocity: f32,
 }
 
-/// World-space health bar component with interpolation state
+/// A bar drawn over a target in the world, its lane's
+/// (`systems::target_frame::Lane`): what it measures, and the fill it
+/// shows now, which eases toward the measure.
 #[derive(Component)]
-pub struct WorldHealthBar {
-    /// Current displayed fill ratio (0.0 to 1.0) for smooth interpolation
+pub struct WorldBar {
+    pub measure: Measure,
+    /// Fill shown, 0.0 to 1.0
     pub current_fill: f32,
 }
 
-/// Marker for hostile target health bar
-#[derive(Component)]
-pub struct HostileHealthBar;
+/// What a [`WorldBar`] measures of its target
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Measure {
+    Health,
+    /// How far through its lockout the target is, drawn flush under its health
+    Recovery,
+}
 
-/// Marker for ally target health bar
+/// The part of a [`WorldBar`] whose width is its fill
 #[derive(Component)]
-pub struct AllyHealthBar;
+pub struct WorldBarFill;
 
-/// Threat queue dots container - shows capacity dots above health bars
+/// Holds the capacity dots drawn over a target's bars, its lane's
 #[derive(Component)]
 pub struct ThreatQueueDots;
-
-/// Marker for hostile target threat queue dots
-#[derive(Component)]
-pub struct HostileQueueDots;
-
-/// Marker for ally target threat queue dots
-#[derive(Component)]
-pub struct AllyQueueDots;
 
 /// Marker component for individual capacity dots in world-space threat display
 #[derive(Component)]
@@ -114,21 +113,6 @@ pub struct CombatLogPanel;
 /// Marker for combat log content (scrollable)
 #[derive(Component)]
 pub struct CombatLogContent;
-
-/// World-space recovery bar component with interpolation state
-#[derive(Component)]
-pub struct WorldRecoveryBar {
-    /// Current displayed fill ratio (0.0 to 1.0) for smooth interpolation
-    pub current_fill: f32,
-}
-
-/// Marker for hostile target recovery bar
-#[derive(Component)]
-pub struct HostileRecoveryBar;
-
-/// Marker for ally target recovery bar
-#[derive(Component)]
-pub struct AllyRecoveryBar;
 
 /// Combat log entry with metadata for color coding
 #[derive(Component)]
