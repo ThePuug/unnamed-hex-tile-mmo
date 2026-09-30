@@ -157,7 +157,7 @@ pub fn update_world_bars(
         *visibility = Visibility::Visible;
 
         let (measured, below) = match bar.measure {
-            Measure::Health => ((health.step / health.max).clamp(0.0, 1.0), 0.0),
+            Measure::Health => ((health.state / health.max).clamp(0.0, 1.0), 0.0),
             Measure::Recovery => (
                 recovery.filter(|recovery| recovery.is_active() && recovery.duration > 0.0)
                     .map_or(1.0, |recovery| 1.0 - recovery.remaining / recovery.duration),

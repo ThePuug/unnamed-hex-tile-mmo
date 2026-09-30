@@ -168,9 +168,9 @@ pub fn spawn_engagement(
         let stamina_regen = resource_calcs::calculate_stamina_regen_rate(&attributes);
         let mana_regen = resource_calcs::calculate_mana_regen_rate(&attributes);
 
-        let health = Health { state: max_health, step: max_health, max: max_health };
-        let stamina = Stamina { state: max_stamina, step: max_stamina, max: max_stamina, regen_rate: stamina_regen, last_update: time.elapsed() };
-        let mana = Mana { state: max_mana, step: max_mana, max: max_mana, regen_rate: mana_regen, last_update: time.elapsed() };
+        let health = Health { state: max_health, max: max_health };
+        let stamina = Stamina { state: max_stamina, max: max_stamina, regen_rate: stamina_regen, last_update: time.elapsed() };
+        let mana = Mana { state: max_mana, max: max_mana, regen_rate: mana_regen, last_update: time.elapsed() };
         let combat_state = CombatState { in_combat: false, last_action: time.elapsed() };
         let queue_capacity = attributes.window_size();
         let reaction_queue = ReactionQueue::new(queue_capacity);

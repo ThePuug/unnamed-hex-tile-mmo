@@ -57,7 +57,7 @@ mod tests {
         // Dead actors stay visible (death pose handled by DeathMarker/cleanup_dead_entities)
         let entity = world.spawn((
             Actor,
-            Health { max: 100.0, state: 0.0, step: 0.0 },
+            Health { max: 100.0, state: 0.0 },
             Visibility::Visible,
         )).id();
 
@@ -73,7 +73,7 @@ mod tests {
 
         let entity = world.spawn((
             Actor,
-            Health { max: 100.0, state: 50.0, step: 50.0 },
+            Health { max: 100.0, state: 50.0 },
             Visibility::Visible,
         )).id();
 
@@ -90,7 +90,7 @@ mod tests {
         // Actor that was hidden for some reason gets restored when health > 0
         let entity = world.spawn((
             Actor,
-            Health { max: 100.0, state: 100.0, step: 100.0 },
+            Health { max: 100.0, state: 100.0 },
             Visibility::Hidden,
         )).id();
 

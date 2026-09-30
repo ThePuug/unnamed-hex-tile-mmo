@@ -305,7 +305,7 @@ pub fn update(
             )
         } else if recovery_active {
             if offered.is_some_and(|offer| offer.ability == ability) { AbilityState::SynergyUnlocked } else { AbilityState::OnCooldown }
-        } else if stamina.step < common_bevy::tuning::tuning().cost(ability) {
+        } else if stamina.state < common_bevy::tuning::tuning().cost(ability) {
             AbilityState::InsufficientResources
         } else {
             AbilityState::Ready
@@ -391,7 +391,7 @@ fn get_ability_state(
     let own_side = side_of(player_ent);
     let hostile = |ent: Entity| side_of(ent).zip(own_side).is_some_and(|(side, own)| side.is_hostile_to(own));
 
-    if stamina.step < common_bevy::tuning::tuning().cost(ability) {
+    if stamina.state < common_bevy::tuning::tuning().cost(ability) {
         return AbilityState::InsufficientResources;
     }
 

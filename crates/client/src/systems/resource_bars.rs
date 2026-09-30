@@ -202,7 +202,6 @@ pub fn setup(
 }
 
 /// Update resource bar widths and text labels based on player's current resources
-/// Uses `step` for local player (client prediction)
 /// Smoothly interpolates bar width changes over ~0.2s for visual polish
 pub fn update(
     mut health_query: Query<(&mut HealthBar, &mut Node), (Without<StaminaBar>, Without<ManaBar>)>,
@@ -219,10 +218,10 @@ pub fn update(
     if let Ok((health, stamina, mana)) = player_query.single() {
         let delta = time.delta_secs();
 
-        // Update health bar width (use step for client prediction)
+        // Update health bar width
         for (mut health_bar, mut node) in &mut health_query {
             let target_percent = if health.max > 0.0 {
-                (health.step / health.max * 100.0).clamp(0.0, 100.0)
+                (health.state / health.max * 100.0).clamp(0.0, 100.0)
             } else {
                 0.0
             };
@@ -234,7 +233,7 @@ pub fn update(
 
         // Update health text (only when displayed integer changes)
         for (mut text, mut cache) in &mut health_text_query {
-            let cur = health.step as i32;
+            let cur = health.state as i32;
             let max = health.max as i32;
             if cache.0 != cur || cache.1 != max {
                 cache.0 = cur;
@@ -246,7 +245,7 @@ pub fn update(
         // Update stamina bar width
         for (mut stamina_bar, mut node) in &mut stamina_query {
             let target_percent = if stamina.max > 0.0 {
-                (stamina.step / stamina.max * 100.0).clamp(0.0, 100.0)
+                (stamina.state / stamina.max * 100.0).clamp(0.0, 100.0)
             } else {
                 0.0
             };
@@ -258,7 +257,7 @@ pub fn update(
 
         // Update stamina text (only when displayed integer changes)
         for (mut text, mut cache) in &mut stamina_text_query {
-            let cur = stamina.step as i32;
+            let cur = stamina.state as i32;
             let max = stamina.max as i32;
             if cache.0 != cur || cache.1 != max {
                 cache.0 = cur;
@@ -270,7 +269,7 @@ pub fn update(
         // Update mana bar width
         for (mut mana_bar, mut node) in &mut mana_query {
             let target_percent = if mana.max > 0.0 {
-                (mana.step / mana.max * 100.0).clamp(0.0, 100.0)
+                (mana.state / mana.max * 100.0).clamp(0.0, 100.0)
             } else {
                 0.0
             };
@@ -282,7 +281,7 @@ pub fn update(
 
         // Update mana text (only when displayed integer changes)
         for (mut text, mut cache) in &mut mana_text_query {
-            let cur = mana.step as i32;
+            let cur = mana.state as i32;
             let max = mana.max as i32;
             if cache.0 != cur || cache.1 != max {
                 cache.0 = cur;

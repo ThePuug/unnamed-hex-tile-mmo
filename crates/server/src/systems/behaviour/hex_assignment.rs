@@ -287,7 +287,7 @@ mod tests {
                 Chase { acquisition_range: 20, leash_distance: 0, attack_range: reach },
                 Target { entity: Some(target), last_target: None },
                 EngagementMember(engagement),
-                Health { state: 100.0, step: 100.0, max: 100.0 },
+                Health { state: 100.0, max: 100.0 },
             )).id()
         });
         let mut members = Engagement::new(TARGET, 10, EnemyArchetype::Juggernaut, 2);

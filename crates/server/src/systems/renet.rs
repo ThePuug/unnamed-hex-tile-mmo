@@ -102,19 +102,16 @@ pub fn do_presence(
 
                 let health = Health {
                     state: max_health,
-                    step: max_health,
                     max: max_health,
                 };
                 let stamina = Stamina {
                     state: max_stamina,
-                    step: max_stamina,
                     max: max_stamina,
                     regen_rate: stamina_regen,
                     last_update: time.elapsed(),
                 };
                 let mana = Mana {
                     state: max_mana,
-                    step: max_mana,
                     max: max_mana,
                     regen_rate: mana_regen,
                     last_update: time.elapsed(),

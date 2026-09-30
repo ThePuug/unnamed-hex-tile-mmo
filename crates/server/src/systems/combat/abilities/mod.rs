@@ -238,7 +238,6 @@ impl Abilities<'_, '_> {
         if cost > 0.0 {
             if let Ok(mut stamina) = self.stamina.get_mut(ent) {
                 stamina.state -= cost;
-                stamina.step = stamina.state;
                 self.writer.write(Do { event: GameEvent::Incremental { ent, component: MessageComponent::Stamina(*stamina) } });
             }
         }
@@ -338,8 +337,8 @@ mod tests {
             loc,
             ActorAttributes::default(),
             side,
-            Health { state: 1000.0, step: 1000.0, max: 1000.0 },
-            Stamina { state: 100.0, step: 100.0, max: 100.0, regen_rate: 0.0, last_update: Duration::ZERO },
+            Health { state: 1000.0, max: 1000.0 },
+            Stamina { state: 100.0, max: 100.0, regen_rate: 0.0, last_update: Duration::ZERO },
             ReactionQueue::new(1),
             Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }),
             CombatState::default(),

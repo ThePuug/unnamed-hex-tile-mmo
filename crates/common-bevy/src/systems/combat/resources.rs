@@ -58,12 +58,10 @@ pub fn regenerate_resources(
 
         // Regenerate stamina
         stamina.state = (stamina.state + stamina.regen_rate * dt_stamina).min(stamina.max);
-        stamina.step = stamina.state; // Sync step with state for remote entities
         stamina.last_update = current_time;
 
         // Regenerate mana
         mana.state = (mana.state + mana.regen_rate * dt_mana).min(mana.max);
-        mana.step = mana.state;
         mana.last_update = current_time;
 
         // Regenerate health
@@ -78,7 +76,6 @@ pub fn regenerate_resources(
 
         if health_regen_rate > 0.0 {
             health.state = (health.state + health_regen_rate * dt_stamina).min(health.max);
-            health.step = health.state;
         }
     }
 }
@@ -97,11 +94,8 @@ pub fn check_death(
         if health.state <= 0.0 {
             // Set resources to 0 to prevent "zombie" state
             health.state = 0.0;
-            health.step = 0.0;
             stamina.state = 0.0;
-            stamina.step = 0.0;
             mana.state = 0.0;
-            mana.step = 0.0;
 
             // Check if this is a player (Behaviour::Controlled)
             let is_player = behaviour
@@ -142,11 +136,8 @@ pub fn process_respawn(
 
             // Restore resources to full
             health.state = health.max;
-            health.step = health.max;
             stamina.state = stamina.max;
-            stamina.step = stamina.max;
             mana.state = mana.max;
-            mana.step = mana.max;
 
             // Remove respawn timer
             commands.entity(ent).remove::<RespawnTimer>();
@@ -225,9 +216,9 @@ mod tests {
         time.advance_by(std::time::Duration::from_secs(1));
         world.insert_resource(time);
         let body = world.spawn((
-            Health { state: 0.0, step: 0.0, max: 100.0 },
-            Stamina { state: 0.0, step: 0.0, max: 100.0, regen_rate: 10.0, last_update: std::time::Duration::ZERO },
-            Mana { state: 0.0, step: 0.0, max: 100.0, regen_rate: 10.0, last_update: std::time::Duration::ZERO },
+            Health { state: 0.0, max: 100.0 },
+            Stamina { state: 0.0, max: 100.0, regen_rate: 10.0, last_update: std::time::Duration::ZERO },
+            Mana { state: 0.0, max: 100.0, regen_rate: 10.0, last_update: std::time::Duration::ZERO },
             CombatState { in_combat: false, last_action: std::time::Duration::ZERO },
         )).id();
 
@@ -276,19 +267,16 @@ mod tests {
             Health {
                 max: 100.0,
                 state: 0.0,
-                step: 0.0,
             },
             Stamina {
                 max: 100.0,
                 state: 0.0,
-                step: 0.0,
                 regen_rate: 10.0,
                 last_update: std::time::Duration::ZERO,
             },
             Mana {
                 max: 100.0,
                 state: 0.0,
-                step: 0.0,
                 regen_rate: 8.0,
                 last_update: std::time::Duration::ZERO,
             },
@@ -330,19 +318,16 @@ mod tests {
             Health {
                 max: 100.0,
                 state: 0.0,
-                step: 0.0,
             },
             Stamina {
                 max: 100.0,
                 state: 0.0,
-                step: 0.0,
                 regen_rate: 10.0,
                 last_update: Duration::ZERO,
             },
             Mana {
                 max: 100.0,
                 state: 0.0,
-                step: 0.0,
                 regen_rate: 8.0,
                 last_update: Duration::ZERO,
             },
@@ -384,19 +369,16 @@ mod tests {
             Health {
                 max: 100.0,
                 state: 50.0,
-                step: 50.0,
             },
             Stamina {
                 max: 100.0,
                 state: 50.0,
-                step: 50.0,
                 regen_rate: 10.0,
                 last_update: Duration::ZERO,
             },
             Mana {
                 max: 100.0,
                 state: 50.0,
-                step: 50.0,
                 regen_rate: 8.0,
                 last_update: Duration::ZERO,
             },

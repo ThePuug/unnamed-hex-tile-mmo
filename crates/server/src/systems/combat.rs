@@ -221,7 +221,6 @@ pub fn release_grit(
 /// damage lands, whatever dealt it. `dot` marks a wound's, shown apart.
 fn land_damage(ent: Entity, source: Entity, damage: f32, dot: bool, health: &mut Health, writer: &mut MessageWriter<Do>) {
     health.state = (health.state - damage).max(0.0);
-    health.step = health.state;
     writer.write(Do { event: GameEvent::ApplyDamage { ent, damage, source, dot } });
     writer.write(Do { event: GameEvent::Incremental { ent, component: common_bevy::message::Component::Health(*health) } });
 }
