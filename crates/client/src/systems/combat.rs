@@ -116,7 +116,7 @@ mod tests {
         app.init_resource::<crate::resources::EntityMap>();
         app.add_systems(Update, (handle_insert_threat, handle_clear_queue).chain());
 
-        let player = app.world_mut().spawn((ReactionQueue::new(1), ActorAttributes::default())).id();
+        let player = app.world_mut().spawn((ReactionQueue::default(), ActorAttributes::default())).id();
         let attacker = app.world_mut().spawn(ActorAttributes::default()).id();
         let on_server = Entity::from_raw_u32(9_000).unwrap();
         app.world_mut().resource_mut::<crate::resources::EntityMap>().insert(attacker, on_server);

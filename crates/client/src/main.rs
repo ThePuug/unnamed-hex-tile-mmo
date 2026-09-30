@@ -159,7 +159,6 @@ fn main() {
     // The server starts every recovery; the client only counts it down
     app.add_systems(Update, (
         common_bevy::systems::combat::recovery::global_recovery_system,
-        common_bevy::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
     ));
 
     app.add_systems(Update, (

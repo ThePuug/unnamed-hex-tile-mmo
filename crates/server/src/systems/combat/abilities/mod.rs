@@ -269,19 +269,16 @@ impl Abilities<'_, '_> {
         });
     }
 
-    /// The threats a reaction answers: as many from the front of `ent`'s
-    /// queue as its window holds.
-    pub fn window(&self, ent: Entity) -> Vec<QueuedThreat> {
-        self.queues.get(ent).map_or(Vec::new(), |queue| queue.threats.iter().take(queue.window_size).copied().collect())
-    }
-
-    /// Clears `count` threats from the front of `ent`'s queue and tells its
-    /// clients, where any stood there.
-    pub fn clear_front(&mut self, ent: Entity, count: usize) {
-        let Ok(mut queue) = self.queues.get_mut(ent) else { return };
-        if !clear_threats(&mut queue, ClearType::First(count)).is_empty() {
-            self.writer.write(Do { event: GameEvent::ClearQueue { ent, clear_type: ClearType::First(count) } });
+    /// Takes the threats `clear_type` names out of `ent`'s queue, tells its
+    /// clients where any stood there, and returns them: a reaction's are
+    /// `ClearType::Span` of its user's span (`ActorAttributes::span`).
+    pub fn clear(&mut self, ent: Entity, clear_type: ClearType) -> Vec<QueuedThreat> {
+        let Ok(mut queue) = self.queues.get_mut(ent) else { return Vec::new() };
+        let cleared = clear_threats(&mut queue, clear_type);
+        if !cleared.is_empty() {
+            self.writer.write(Do { event: GameEvent::ClearQueue { ent, clear_type } });
         }
+        cleared
     }
 
     /// The game's clock, the one a threat's times are on
@@ -348,7 +345,7 @@ mod tests {
             Health { state: 1000.0, max: 1000.0 },
             Stamina { state: 100.0, max: 100.0, regen_rate: 0.0, last_update: Duration::ZERO },
             Endurance::full(100.0),
-            ReactionQueue::new(1),
+            ReactionQueue::default(),
             Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }),
             CombatState::default(),
         )).id();
@@ -441,6 +438,26 @@ mod tests {
         assert!(used(&said, AbilityType::Counter));
         assert!(app.world().get::<ReactionQueue>(defender).unwrap().threats.is_empty(), "the blow is cleared");
         assert!(said.iter().any(|event| matches!(event, GameEvent::UseAbility { target, .. } if *target == Some(attacker))), "and answered to its source");
+    }
+
+    #[test]
+    fn a_reaction_takes_the_front_threat_and_its_span_and_leaves_what_lands_later() {
+        use common_bevy::systems::combat::queue::{create_threat, insert_threat};
+        let mut app = arena();
+        let defender = actor(&mut app, Side::PLAYERS, 0);
+        let attacker = actor(&mut app, Side::WILD, 1);
+        app.update();
+
+        let plain = ActorAttributes::default();
+        let span = plain.span();
+        for at in [Duration::ZERO, span / 2, span * 4] {
+            let threat = create_threat(attacker, &plain, &plain, 10.0, Some(AbilityType::Overpower), at, 0.0, 0.0);
+            insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat, at);
+        }
+
+        assert!(used(&ask(&mut app, defender, AbilityType::Counter, None), AbilityType::Counter));
+        let left: Vec<Duration> = app.world().get::<ReactionQueue>(defender).unwrap().threats.iter().map(|threat| threat.inserted_at).collect();
+        assert_eq!(left, vec![span * 4], "the front and the one landing within its span are taken; the later one stands");
     }
 
     #[test]

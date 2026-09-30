@@ -45,7 +45,7 @@ pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
     };
     leap::slide(cast.ent, landing, leap::LEAP_MS, None, &mut abilities.commands, &mut abilities.writer);
 
-    abilities.clear_front(cast.ent, 1);
+    abilities.clear(cast.ent, common_bevy::message::ClearType::First(1));
     abilities.commands.entity(cast.ent).insert(Poised(cast.attrs.intuition() * tuning.disengage_intuition));
     Ok(Some(attacker))
 }

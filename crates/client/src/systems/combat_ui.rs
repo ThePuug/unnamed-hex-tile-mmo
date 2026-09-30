@@ -62,8 +62,8 @@ const BAR_HEIGHT: f32 = 6.0;
 /// How fast a bar's fill eases toward what it measures
 const FILL_SPEED: f32 = 5.0;
 
-/// The most capacity dots drawn over a target
-const MAX_QUEUE_CAPACITY: usize = 10;
+/// The dots drawn over a target and in its frame, one lit for each threat in its queue
+pub const QUEUE_DOTS: usize = 4;
 
 /// Where a node sits while what it follows is off screen
 const OFF_SCREEN: f32 = -10000.0;
@@ -111,7 +111,7 @@ pub fn setup_health_bars(mut commands: Commands) {
             lane,
         ))
         .with_children(|parent| {
-            for index in 0..MAX_QUEUE_CAPACITY {
+            for index in 0..QUEUE_DOTS {
                 parent.spawn((
                     Node {
                         width: Val::Px(8.0),
@@ -182,9 +182,9 @@ pub fn update_world_bars(
     }
 }
 
-/// Moves each lane's capacity dots over its target's bars: a dot to each
-/// slot of the target's window, lit where a threat stands in it and red
-/// once more wait behind the window. Hidden for a target with no queue.
+/// Moves each lane's queue dots over its target's bars: a dot lit for each
+/// threat standing in the target's queue, and red once more stand there
+/// than there are dots. Hidden for a target with no queue.
 pub fn update_threat_queue_dots(
     mut holders: Query<(&Lane, &Children, &mut Node, &mut Visibility), With<ThreatQueueDots>>,
     mut dots: Query<(&ThreatCapacityDot, &mut Visibility, &mut BackgroundColor, &mut BorderColor), Without<ThreatQueueDots>>,
@@ -201,9 +201,7 @@ pub fn update_threat_queue_dots(
     };
 
     for (lane, children, mut node, mut visibility) in &mut holders {
-        let shown = lane.held(target, ally)
-            .and_then(|ent| queues.get(ent).ok())
-            .filter(|(queue, _)| queue.window_size > 0);
+        let shown = lane.held(target, ally).and_then(|ent| queues.get(ent).ok());
         let Some((queue, transform)) = shown else {
             *visibility = Visibility::Hidden;
             continue;
@@ -219,15 +217,11 @@ pub fn update_threat_queue_dots(
         node.left = Val::Px(at.x - BAR_WIDTH / 2.0);
         node.top = Val::Px(at.y);
 
-        let filled = queue.visible_count();
-        let full = queue.hidden_count() > 0;
+        let filled = queue.threats.len();
+        let full = filled > QUEUE_DOTS;
         for child in children.iter() {
             let Ok((dot, mut dot_visibility, mut background, mut border)) = dots.get_mut(child) else { continue };
             // A dot shows with its holder, so hiding the holder hides them all
-            if dot.index >= queue.window_size {
-                *dot_visibility = Visibility::Hidden;
-                continue;
-            }
             *dot_visibility = Visibility::Inherited;
             let (fill, edge) = if dot.index >= filled {
                 (Color::srgb(0.3, 0.3, 0.3), Color::srgb(0.5, 0.5, 0.5))

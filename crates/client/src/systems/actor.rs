@@ -130,10 +130,8 @@ pub fn do_spawn(
             EntityType::Actor(desc) => {
                 let loc = Loc::new(qrz);
 
-                // Initialize reaction queue with the window its Awareness sees
                 let attrs_val = attrs.unwrap_or_default();
-                let queue_capacity = attrs_val.window_size();
-                let reaction_queue = ReactionQueue::new(queue_capacity);
+                let reaction_queue = ReactionQueue::default();
 
                 // Handle entities that may have been evicted - spawn if needed
                 let mut entity_cmd = if let Ok(e) = commands.get_entity(ent) {

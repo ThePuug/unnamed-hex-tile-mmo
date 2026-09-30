@@ -120,7 +120,7 @@ mod tests {
     fn a_body_leaves_the_fight_as_it_falls() {
         let mut world = World::new();
         world.insert_resource(Time::<()>::default());
-        let mut queue = ReactionQueue::new(1);
+        let mut queue = ReactionQueue::default();
         queue.threats.push_back(common_bevy::systems::combat::queue::create_threat(
             Entity::PLACEHOLDER, &Default::default(), &Default::default(), 10.0,
             None, std::time::Duration::ZERO, 0.0, 0.0,

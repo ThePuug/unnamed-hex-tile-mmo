@@ -31,13 +31,13 @@ pub enum Part {
     LevelText,
     /// The threat queue section, shown for a target that has a queue
     Queue,
-    /// Holds a [`CapacityDot`] for each slot of the target's window
+    /// Holds the [`CapacityDot`]s, lit for the threats in the target's queue
     Dots,
     /// Holds a [`ThreatIcon`] for each of the first threats in its queue
     Icons,
 }
 
-/// A slot of the target's queue window, lit while a threat stands in it
+/// One of the dots lit for the threats standing in the target's queue
 #[derive(Component)]
 pub struct CapacityDot {
     pub index: usize,
@@ -55,6 +55,8 @@ pub struct ThreatTimerRing {
 
 /// How many of the queue's threats a frame draws
 const ICONS: usize = 3;
+
+use crate::systems::combat_ui::QUEUE_DOTS;
 
 /// The colours and place that tell one lane's frame from the other's.
 struct Theme {
@@ -117,8 +119,8 @@ impl Lane {
         }
     }
 
-    /// A capacity dot's fill and border: brightest in a full window, hollow
-    /// where no threat stands
+    /// A queue dot's fill and border: brightest with more threats than dots,
+    /// hollow where no threat stands
     fn dot(self, filled: bool, full: bool) -> (Color, Color) {
         if !filled {
             return (Color::NONE, Color::srgb(0.5, 0.5, 0.5));
@@ -132,7 +134,7 @@ impl Lane {
         (lit, lit)
     }
 
-    /// A threat icon's border, brighter in a full window, and its background
+    /// A threat icon's border, brighter with more threats than dots, and its background
     fn icon(self, full: bool) -> (Color, Color) {
         let strength = if full { 1.0 } else { 0.8 };
         match self {
@@ -398,9 +400,9 @@ pub fn update(
     }
 }
 
-/// Draws each frame's queue section: a dot to each slot of the target's
-/// window, and an icon to each of the first threats in it that are not
-/// pressure and have time left. Dots and icons are rebuilt when their count
+/// Draws each frame's queue section: a dot lit for each threat in the
+/// target's queue, and an icon to each of the first threats in it that are
+/// not pressure and have time left. Dots and icons are rebuilt when their count
 /// changes and recoloured in place otherwise.
 pub fn update_queue(
     mut commands: Commands,
@@ -422,10 +424,10 @@ pub fn update_queue(
     for lane in LANES {
         let Some(queue) = lane.target(target, ally).and_then(|ent| queues.get(ent).ok()) else { continue };
         let container = |wanted: Part| containers.iter().find(|(_, of, part)| **of == lane && **part == wanted).map(|(ent, ..)| ent);
-        let filled = queue.visible_count();
-        let full = filled >= queue.window_size;
+        let filled = queue.threats.len();
+        let full = filled > QUEUE_DOTS;
 
-        if dots.iter().filter(|(_, of, ..)| **of == lane).count() != queue.window_size {
+        if dots.iter().filter(|(_, of, ..)| **of == lane).count() != QUEUE_DOTS {
             for (ent, of, ..) in &dots {
                 if *of == lane {
                     commands.entity(ent).despawn();
@@ -433,7 +435,7 @@ pub fn update_queue(
             }
             if let Some(holder) = container(Part::Dots) {
                 commands.entity(holder).with_children(|parent| {
-                    for index in 0..queue.window_size {
+                    for index in 0..QUEUE_DOTS {
                         let (fill, border) = lane.dot(index < filled, full);
                         parent.spawn((
                             Node {

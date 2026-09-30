@@ -9,8 +9,8 @@ use crate::{
 pub const LUNGE_RANGE: u32 = 8;
 
 /// What every actor is spawned fighting with, all of it from its
-/// attributes: its pools full, out of combat, a reaction queue with the
-/// window its Awareness sees, no target, and loaded by no one. A player and
+/// attributes: its pools full, out of combat, an empty reaction queue,
+/// no target, and loaded by no one. A player and
 /// an NPC are both spawned with it, so what one starts with the other does.
 #[derive(Bundle)]
 pub struct Fighter {
@@ -35,7 +35,7 @@ impl Fighter {
             endurance: Endurance::full(attrs.max_endurance()),
             mana: Mana::full(now),
             combat_state: CombatState { in_combat: false, last_action: now },
-            queue: crate::components::reaction_queue::ReactionQueue::new(attrs.window_size()),
+            queue: default(),
             target: default(),
             loaded_by: default(),
         }
@@ -269,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn an_actor_is_spawned_with_its_pools_full_and_its_window_open() {
+    fn an_actor_is_spawned_with_its_pools_full() {
         let now = std::time::Duration::from_secs(3);
         let attrs = test_attrs_simple(0, -5);
         let fighter = Fighter::new(attrs, now);
@@ -280,7 +280,7 @@ mod tests {
         assert!(fighter.stamina.regen_rate > 0.0 && fighter.mana.regen_rate > 0.0, "both regenerate, in combat or out");
         assert_eq!(fighter.stamina.last_update, now);
         assert!(!fighter.combat_state.in_combat);
-        assert_eq!(fighter.queue.window_size, attrs.window_size());
+        assert!(fighter.queue.is_empty());
     }
 
     // ===== SYSTEM TESTS =====

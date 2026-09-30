@@ -254,8 +254,11 @@ impl AbilityType {
 /// Types of queue clears for reaction abilities
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ClearType {
-    /// Clear first N threats (Counter - blanket reaction over visible window)
+    /// Clear the first N threats: a dismissal takes the front one
     First(usize),
+    /// Clear the front threat and every threat landing within this long
+    /// after it (`ReactionQueue::swept`): what a reaction takes
+    Span(std::time::Duration),
     /// Clear the one threat `source` inserted at `inserted_at`, wherever it
     /// stands: an expiry, since threats from different sources expire out of
     /// queue order.

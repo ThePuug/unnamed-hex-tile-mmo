@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common_bevy::message::AbilityType;
+use common_bevy::message::{AbilityType, ClearType};
 
 use super::{Abilities, AbilityFailReason, Cast};
 use crate::systems::combat::{landing, leap};
@@ -8,15 +8,15 @@ use crate::systems::combat::{landing, leap};
 /// walk straight in again.
 const STAGGER_SECS: f32 = 0.5;
 
-/// Kick (R key): a reaction that clears as many threats from the front of
-/// the queue as the window holds. Each living source of one that stands
+/// Kick (R key): a reaction that clears the front threat and every threat
+/// landing within its user's span behind it. Each living source of one that stands
 /// beside the kicker takes a blow of three quarters of the kicker's
 /// Tempo, is driven four tiles away over the ground (`leap::away`),
 /// further by the kicker's hold (`ActorAttributes::hold`), and is held
 /// there a moment. With nothing queued there is nothing to kick. Its
 /// recovery is contested by the source of the first threat it answers.
 pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
-    let answered = abilities.window(cast.ent);
+    let answered = abilities.clear(cast.ent, ClearType::Span(cast.attrs.span()));
     if answered.is_empty() {
         return Err(AbilityFailReason::NoTargets);
     }
@@ -37,6 +37,5 @@ pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
         landing::update(threat.source, &mut abilities.statuses, &mut abilities.commands, &mut abilities.writer, |status| status.hold(STAGGER_SECS));
     }
 
-    abilities.clear_front(cast.ent, answered.len());
     Ok(answered.first().map(|threat| threat.source))
 }

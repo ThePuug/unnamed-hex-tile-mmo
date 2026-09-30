@@ -73,8 +73,8 @@ pub fn tick_dots(
     }
 }
 
-/// Server system to process Dismiss events: the front threat, always in the
-/// window, lands at once exactly as it would when its time ran out
+/// Server system to process Dismiss events: the front threat lands at
+/// once exactly as it would when its time ran out
 /// (`combat::resolve_threat`), mitigated the same. No recovery, no resource
 /// cost.
 pub fn process_dismiss(
@@ -95,49 +95,5 @@ pub fn process_dismiss(
         };
         writer.write(Do { event: GameEvent::ClearQueue { ent, clear_type: ClearType::First(1) } });
         commands.trigger(Try { event: GameEvent::ResolveThreat { ent, threat } });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn test_process_expired_threats_removes_expired() {
-        // Create test world
-        let mut world = World::new();
-        world.init_resource::<Time>();
-
-        let threat_entity = Entity::from_raw_u32(1).unwrap();
-
-        let mut queue = ReactionQueue::new(3);
-        queue.threats.push_back(QueuedThreat {
-            source: threat_entity,
-            damage: 10.0,
-            inserted_at: Duration::from_secs(0),
-            timer_duration: Duration::from_secs(1),
-            ability: None,
-            dot: 0.0,
-            ticked: 0,
-                    });
-
-        let attrs = ActorAttributes::default();
-
-        let ent_id = world.spawn((queue, attrs)).id();
-
-        // Note: In real game, Time::elapsed() is updated by Bevy
-        // For testing, we need to manually advance time or use a mock
-
-        // Run the system
-        // Note: This test is simplified - in practice we'd use proper Bevy test infrastructure
-        // For now, this demonstrates the test structure
-
-        // Query to verify threat was removed
-        let queue_after = world.get::<ReactionQueue>(ent_id).unwrap();
-
-        // In Phase 2, we're just setting up the structure
-        // Actual expiry processing will be tested when we integrate with time system
-        assert!(queue_after.threats.len() <= 1); // Threat either still there or removed
     }
 }

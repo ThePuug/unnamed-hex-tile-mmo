@@ -41,7 +41,6 @@ impl Plugin for CombatPlugin {
             reaction_queue::process_dismiss, // Dismiss front queue threat (no recovery)
             common_bevy::systems::combat::resources::check_death, // Check for death from ANY source
             common_bevy::systems::combat::resources::process_respawn,
-            common_bevy::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change
         ));
     }
 }

@@ -4,10 +4,11 @@
 //! Three lanes, left to right in the order reactions reach them: blows,
 //! wounds, auto-attacks ([`Lane`]). A note stands at its time left, at one
 //! speed, so it reaches the hit line as it lands, and grows as it nears it.
-//! A threat standing in the window shows its damage; the rest are faceless
-//! pips. Each lane's front note, what a reaction takes first, carries a
-//! rim. A cleared note shatters where it stands; a landed one shatters on
-//! the line with a flash down its lane.
+//! Every note shows its damage. A band across the lanes marks the span a
+//! reaction reaches, from the front threat back, and every note in it,
+//! what a reaction takes, carries a white rim. A cleared note shatters
+//! where it stands; a landed one shatters on the line with a flash down
+//! its lane.
 //!
 //! [`scale`] and [`rise`] are the one projection: the notes here and the
 //! lanes the shader draws (`shaders/highway.wgsl`) are placed by it.
@@ -59,6 +60,9 @@ pub struct HighwayUniform {
     pub span: f32,
     pub base: f32,
     pub unused: f32,
+    /// The span a reaction reaches, as seconds from landing: from x, the
+    /// front threat's, to y. No band where y is not past x.
+    pub band: Vec4,
     /// Each lane's landing flash, left to right in x, y and z, fading from 1
     pub flash: Vec4,
     /// Each lane's colour, linear, left to right: [`lane_color`]
@@ -256,8 +260,20 @@ pub fn update(
     let key = |t: &QueuedThreat| (t.source, t.inserted_at, t.lane());
     let mut drawn = Vec::with_capacity(queue.threats.len());
 
+    // The span a reaction reaches, anchored on the front threat
+    let span = attrs.span();
+    let band = queue.threats.front().map_or(Vec4::ZERO, |front| {
+        let near = front.lands_at().saturating_sub(now).as_secs_f32();
+        Vec4::new(near, near + span.as_secs_f32(), 0.0, 0.0)
+    });
+    if materials.get(&material.0).is_some_and(|lit| lit.highway.band != band) {
+        if let Some(mut lit) = materials.get_mut(&material.0) {
+            lit.highway.band = band;
+        }
+    }
+
     for (entity, mut note, mut node, mut background, mut border, children) in &mut note_query {
-        let Some((place, threat)) = queue.threats.iter().enumerate().find(|(_, t)| key(t) == note.key) else {
+        let Some(threat) = queue.threats.iter().find(|t| key(t) == note.key) else {
             let landed = now + LANDED_WITHIN >= note.lands_at;
             if landed {
                 let lane = note.key.2;
@@ -280,8 +296,8 @@ pub fn update(
         drawn.push(note.key);
 
         let d = depth(threat.lands_at().saturating_sub(now));
-        let front = queue.threats.iter().find(|t| t.lane() == threat.lane()).is_some_and(|t| key(t) == note.key);
-        let (fill, rim, label) = look(threat, queue.shows(place), attrs, health, front);
+        let taken = queue.sweeps(threat, span);
+        let (fill, rim, label) = look(threat, attrs, health, taken);
         let alpha = fade(d);
         let size = NOTE * scale(d);
         let at = centre(threat.lane(), d);
@@ -290,7 +306,7 @@ pub fn update(
         node.height = Val::Px(size);
         node.left = Val::Px(at.x - size / 2.0);
         node.bottom = Val::Px(at.y - size / 2.0);
-        node.border = UiRect::all(Val::Px(if front { 3.0 } else { 2.0 }));
+        node.border = UiRect::all(Val::Px(if taken { 3.0 } else { 2.0 }));
         background.0 = with_alpha(fill, alpha);
         *border = BorderColor::all(with_alpha(rim, alpha));
         note.centre = at;
@@ -308,11 +324,11 @@ pub fn update(
         }
     }
 
-    for (place, threat) in queue.threats.iter().enumerate().filter(|(_, t)| !drawn.contains(&key(t))) {
+    for threat in queue.threats.iter().filter(|t| !drawn.contains(&key(t))) {
         let d = depth(threat.lands_at().saturating_sub(now));
         let size = NOTE * scale(d);
         let at = centre(threat.lane(), d);
-        let (fill, rim, label) = look(threat, queue.shows(place), attrs, health, false);
+        let (fill, rim, label) = look(threat, attrs, health, false);
         commands.entity(highway).with_children(|parent| {
             parent
                 .spawn((
@@ -344,14 +360,11 @@ pub fn update(
     }
 }
 
-/// A note's fill, rim and label: a threat `shown` in the window says how
-/// hard it hits, its lane saying what kind it is, and its damage; the rest
-/// a faceless pip. The front of its lane is rimmed.
-fn look(threat: &QueuedThreat, shown: bool, attrs: &ActorAttributes, health: &Health, front: bool) -> (Color, Color, String) {
-    let rim = if front { Color::WHITE } else { Color::srgba(0.1, 0.08, 0.06, 0.9) };
-    if !shown {
-        return (Color::srgba(0.55, 0.5, 0.45, 0.6), rim, String::new());
-    }
+/// A note's fill, rim and label: its colour says how hard it hits, its lane
+/// what kind it is, and its label its damage. One a reaction would take is
+/// `taken`, and rimmed white.
+fn look(threat: &QueuedThreat, attrs: &ActorAttributes, health: &Health, taken: bool) -> (Color, Color, String) {
+    let rim = if taken { Color::WHITE } else { Color::srgba(0.1, 0.08, 0.06, 0.9) };
     let (r, g, b) = severity_rgb(severity(threat, attrs, health));
     (Color::srgb(r, g, b), rim, format!("{:.0}", estimate(threat, attrs)))
 }

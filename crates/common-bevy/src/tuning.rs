@@ -49,14 +49,17 @@ pub struct Tuning {
     pub health_curve_k: f32,
     pub health_curve_p: f32,
 
-    // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`,
-    // and so is the window each Awareness tier sees, `ActorAttributes::window_size`). A tuned value
-    // is two knobs, `_min` at T0 and `_max` at T3, the tiers between evenly spaced
+    // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`).
+    // A tuned value is two knobs, `_min` at T0 and `_max` at T3, the tiers between evenly spaced
     // (`CommitmentTier::between`) ---
     /// Seconds between auto-attacks at the one pace every actor starts from
     pub base_interval: f32,
     /// Share faster auto-attacks come at the ceiling of Tempo's share
     pub tempo_ceiling: f32,
+    /// Seconds behind the front threat a reaction reaches, by its user's
+    /// Awareness; every actor has the least
+    pub awareness_span_min: f32,
+    pub awareness_span_max: f32,
     /// The half-angle either side of its heading an actor strikes within,
     /// in degrees, by its Grace
     pub grace_arc_min: f32,
@@ -152,7 +155,7 @@ pub struct Tuning {
     pub disengage_intuition: f32,
     /// Stamina a Volley costs
     pub volley_cost: f32,
-    /// Shots in a Volley: three, so a Disengage, which takes the front blow, takes a third
+    /// Shots in a Volley
     pub volley_shots: u8,
     /// Share of Tempo each Volley shot strikes for
     pub volley_precision: f32,
@@ -192,6 +195,8 @@ impl Tuning {
         health_curve_p: 2.0,
         base_interval: 2.1,
         tempo_ceiling: 0.5,
+        awareness_span_min: 0.25,
+        awareness_span_max: 1.0,
         grace_arc_min: 60.0,
         grace_arc_max: 150.0,
         grit_cap: [f32::INFINITY, 0.4, 0.3, 0.28],
@@ -303,6 +308,8 @@ impl Tuning {
         }
         let knob = match name {
             "base_interval" => &mut self.base_interval,
+            "awareness_span_min" => &mut self.awareness_span_min,
+            "awareness_span_max" => &mut self.awareness_span_max,
             "grace_arc_min" => &mut self.grace_arc_min,
             "grace_arc_max" => &mut self.grace_arc_max,
             "tempo_ceiling" => &mut self.tempo_ceiling,

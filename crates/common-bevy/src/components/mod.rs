@@ -483,7 +483,7 @@ impl ActorAttributes {
     pub fn preparation(&self) -> CommitmentTier { self.tier(Attribute::Discipline) }
     /// Patience, Instinct: the swings banked while it could not strike (`banked`)
     pub fn patience(&self) -> CommitmentTier { self.tier(Attribute::Instinct) }
-    /// Awareness, Resolve: how much of the queue it sees (`window_size`)
+    /// Awareness, Resolve: how far behind the front threat its reactions reach (`span`)
     pub fn awareness(&self) -> CommitmentTier { self.tier(Attribute::Resolve) }
 
     /// The actor's level: every level it has put into an axis or a spectrum
@@ -590,11 +590,13 @@ impl ActorAttributes {
         came_due.min(self.patience().index() as u32)
     }
 
-    /// The reaction queue's window, from Awareness: one threat seen at T0
-    /// and one more each tier, to four at T3. Fixed, not tuned; a Counter
-    /// answers the whole window, so it grows with Awareness.
-    pub fn window_size(&self) -> usize {
-        self.awareness().index() + 1
+    /// How far behind the front threat this actor's reactions reach, from
+    /// Awareness: `Tuning::awareness_span_min`, which every actor has, to
+    /// `awareness_span_max`. A reaction takes the front threat and every
+    /// threat landing within this long after it (`ReactionQueue::swept`).
+    pub fn span(&self) -> std::time::Duration {
+        let tuning = crate::tuning::tuning();
+        std::time::Duration::from_secs_f32(self.awareness().between(tuning.awareness_span_min, tuning.awareness_span_max))
     }
 
     /// The half-angle either side of its heading this actor strikes within:
@@ -734,6 +736,14 @@ mod tests {
         let plain = ActorAttributes::default();
         assert_eq!(plain.arc(), crate::systems::targeting::STRIDE_ARC, "no Grace, the forward faces");
         assert!(graceful.arc() > plain.arc() && graceful.arc() < 180.0, "full commitment still cannot strike straight behind");
+    }
+
+    #[test]
+    fn awareness_lengthens_the_span_and_every_actor_has_the_least() {
+        let aware = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
+        let plain = ActorAttributes::default();
+        assert!(plain.span() > std::time::Duration::ZERO, "no Awareness, still a span");
+        assert!(aware.span() > plain.span());
     }
 
     #[test]

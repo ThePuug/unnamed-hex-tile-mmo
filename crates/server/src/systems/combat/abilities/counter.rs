@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 use common_bevy::{
-    message::{AbilityType, Event as GameEvent, Try},
+    message::{AbilityType, ClearType, Event as GameEvent, Try},
     systems::combat::queue::create_threat,
 };
 
 use super::{Abilities, AbilityFailReason, Cast};
 
-/// Counter: a reaction that clears as many threats from the front of the
-/// queue as the window holds. Each cleared threat goes back to its living
+/// Counter: a reaction that clears the front threat and every threat
+/// landing within its user's span behind it. Each cleared threat goes back to its living
 /// source wherever it stands, at a share of the threat's own damage and
 /// nothing more, so a Counter returns what comes in, and lands at once: a
 /// reflection never enters the source's queue, so it cannot be countered.
@@ -17,7 +17,7 @@ use super::{Abilities, AbilityFailReason, Cast};
 /// first threat it answers.
 pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let tuning = common_bevy::tuning::tuning();
-    let answered = abilities.window(cast.ent);
+    let answered = abilities.clear(cast.ent, ClearType::Span(cast.attrs.span()));
     if answered.is_empty() {
         return Err(AbilityFailReason::NoTargets);
     }
@@ -44,6 +44,5 @@ pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
         abilities.commands.trigger(Try { event: GameEvent::ResolveThreat { ent: threat.source, threat: reflected } });
     }
 
-    abilities.clear_front(cast.ent, answered.len());
     Ok(answered.first().map(|threat| threat.source))
 }

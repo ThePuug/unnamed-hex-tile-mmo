@@ -66,7 +66,6 @@ pub fn create_threat(
 }
 
 /// Insert a threat into the queue (unbounded, no overflow eviction)
-/// Queue is unbounded — threats always insert. Window size controls visibility only.
 /// A threat goes in its [`Lane`](crate::components::reaction_queue::Lane),
 /// every blow ahead of every wound and every wound ahead of every
 /// auto-attack, and within its lane ahead of every threat landing later, so
@@ -102,6 +101,11 @@ pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<Qu
             let count = n.min(queue.threats.len());
             queue.threats.drain(..count).collect()
         }
+        ClearType::Span(span) => {
+            let (taken, kept): (Vec<_>, Vec<_>) = queue.threats.iter().copied().partition(|threat| queue.sweeps(threat, span));
+            queue.threats = kept.into();
+            taken
+        }
         ClearType::Threat { source, inserted_at } => queue
             .threats
             .iter()
@@ -109,21 +113,6 @@ pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<Qu
             .and_then(|pos| queue.threats.remove(pos))
             .into_iter()
             .collect(),
-    }
-}
-
-/// Sync reaction queue window size when attributes change
-
-/// This system ensures that ReactionQueue.window_size stays in sync with
-/// ActorAttributes.window_size() after attribute changes (respecs, level ups, etc).
-pub fn sync_queue_window_size(
-    mut queue_query: Query<(&ActorAttributes, &mut ReactionQueue), Changed<ActorAttributes>>,
-) {
-    for (attrs, mut queue) in &mut queue_query {
-        let new_window_size = attrs.window_size();
-        if queue.window_size != new_window_size {
-            queue.window_size = new_window_size;
-        }
     }
 }
 
@@ -142,7 +131,7 @@ mod tests {
 
     #[test]
     fn test_insert_threat_unbounded() {
-        let mut queue = ReactionQueue::new(2);
+        let mut queue = ReactionQueue::default();
         let entity = Entity::from_raw_u32(0).unwrap();
 
         let make_threat = |damage: f32, secs: u64| QueuedThreat {
@@ -163,24 +152,19 @@ mod tests {
         insert_threat(&mut queue, make_threat(15.0, 1), Duration::from_secs(1));
         assert_eq!(queue.threats.len(), 2);
 
-        // Beyond window_size: still inserts, just hidden
         insert_threat(&mut queue, make_threat(20.0, 2), Duration::from_secs(2));
         assert_eq!(queue.threats.len(), 3);
-        assert_eq!(queue.visible_count(), 2);
-        assert_eq!(queue.hidden_count(), 1);
 
         // Insert more — all succeed
         insert_threat(&mut queue, make_threat(25.0, 3), Duration::from_secs(3));
         insert_threat(&mut queue, make_threat(30.0, 4), Duration::from_secs(4));
         assert_eq!(queue.threats.len(), 5);
-        assert_eq!(queue.visible_count(), 2);
-        assert_eq!(queue.hidden_count(), 3);
     }
 
     #[test]
     fn test_insert_threat_puts_abilities_ahead_of_auto_attacks() {
         use crate::message::AbilityType::{AutoAttack, Lunge, Overpower};
-        let mut queue = ReactionQueue::new(1);
+        let mut queue = ReactionQueue::default();
         let entity = Entity::from_raw_u32(0).unwrap();
         let make_threat = |ability, secs: u64| QueuedThreat {
             source: entity,
@@ -202,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_check_expired_threats_none_expired() {
-        let mut queue = ReactionQueue::new(3);
+        let mut queue = ReactionQueue::default();
         let entity = Entity::from_raw_u32(0).unwrap();
 
         let threat = QueuedThreat {
@@ -226,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_check_expired_threats_one_expired() {
-        let mut queue = ReactionQueue::new(3);
+        let mut queue = ReactionQueue::default();
         let entity = Entity::from_raw_u32(0).unwrap();
 
         let threat = QueuedThreat {
@@ -251,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_check_expired_threats_multiple() {
-        let mut queue = ReactionQueue::new(3);
+        let mut queue = ReactionQueue::default();
         let entity = Entity::from_raw_u32(0).unwrap();
 
         // Threat 1: inserted at 0s, expires at 1s
@@ -293,7 +277,7 @@ mod tests {
 
     #[test]
     fn test_clear_threats_first_n() {
-        let mut queue = ReactionQueue::new(3);
+        let mut queue = ReactionQueue::default();
         let entity = Entity::from_raw_u32(0).unwrap();
 
         // Add 3 threats
@@ -321,7 +305,7 @@ mod tests {
 
     #[test]
     fn test_clear_threats_names_one_threat_wherever_it_stands() {
-        let mut queue = ReactionQueue::new(3);
+        let mut queue = ReactionQueue::default();
         let a = Entity::from_raw_u32(0).unwrap();
         let b = Entity::from_raw_u32(1).unwrap();
         for (source, secs) in [(a, 0), (b, 0), (a, 1)] {
@@ -347,8 +331,29 @@ mod tests {
     }
 
     #[test]
+    fn clearing_a_span_takes_what_a_reaction_sweeps_and_leaves_the_rest_in_order() {
+        let mut queue = ReactionQueue::default();
+        let make = |secs: u64, window: u64| QueuedThreat {
+            source: Entity::from_raw_u32(0).unwrap(),
+            damage: secs as f32,
+            inserted_at: Duration::from_secs(secs),
+            timer_duration: Duration::from_secs(window),
+            ability: Some(crate::message::AbilityType::Lunge),
+            dot: 0.0,
+            ticked: 0,
+        };
+        for threat in [make(0, 3), make(1, 3), make(4, 3)] {
+            insert_threat(&mut queue, threat, Duration::ZERO);
+        }
+        let cleared = clear_threats(&mut queue, ClearType::Span(Duration::from_secs(1)));
+        assert_eq!(cleared.iter().map(|t| t.damage).collect::<Vec<_>>(), vec![0.0, 1.0], "the front and the one landing a second behind it");
+        assert_eq!(queue.threats.iter().map(|t| t.damage).collect::<Vec<_>>(), vec![4.0]);
+        assert!(clear_threats(&mut ReactionQueue::default(), ClearType::Span(Duration::from_secs(1))).is_empty());
+    }
+
+    #[test]
     fn wounds_queue_behind_blows_and_ahead_of_auto_attacks() {
-        let mut queue = ReactionQueue::new(3);
+        let mut queue = ReactionQueue::default();
         let source = Entity::from_raw_u32(0).unwrap();
         let make = |ability, dot: f32, secs| QueuedThreat {
             source,
@@ -371,7 +376,7 @@ mod tests {
 
     #[test]
     fn within_a_lane_what_lands_soonest_stands_first() {
-        let mut queue = ReactionQueue::new(1);
+        let mut queue = ReactionQueue::default();
         let make = |secs, window| QueuedThreat {
             source: Entity::from_raw_u32(0).unwrap(),
             damage: 10.0,

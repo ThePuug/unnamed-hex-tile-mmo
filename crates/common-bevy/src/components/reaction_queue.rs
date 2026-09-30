@@ -96,59 +96,39 @@ impl QueuedThreat {
 
 /// The threats on their way to an actor, none yet landed: in the order of
 /// their [`Lane`], and within a lane the soonest to land first. Only
-/// `queue::insert_threat` keeps that order. It holds any number.
-///
-/// `window_size` is how much of it the actor sees, from its Awareness: the
-/// threats standing in its front `window_size` places show what they are
-/// ([`ReactionQueue::shows`]), and a reaction answers those. The rest are
-/// known only to be there, and land all the same.
+/// `queue::insert_threat` keeps that order. It holds any number, and the
+/// actor sees every one.
 #[derive(Clone, Component, Debug, Default, Deserialize, Serialize)]
 pub struct ReactionQueue {
     pub threats: VecDeque<QueuedThreat>,
-    pub window_size: usize,
 }
 
 impl ReactionQueue {
-    pub fn new(window_size: usize) -> Self {
-        Self {
-            threats: VecDeque::new(),
-            window_size,
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
         self.threats.is_empty()
     }
 
-    /// Whether the threat standing at `place` from the front is in the window
-    pub fn shows(&self, place: usize) -> bool {
-        place < self.window_size
+    /// Whether a reaction reaching `span` behind the front threat takes
+    /// `threat`: the front one, and every threat in any lane that lands
+    /// within `span` after it does. One landing sooner than the front, an
+    /// auto-attack ahead of a blow, is left, so a reaction reaches
+    /// auto-attacks only as overflow.
+    pub fn sweeps(&self, threat: &QueuedThreat, span: Duration) -> bool {
+        self.threats.front().is_some_and(|front| {
+            let (first, at) = (front.lands_at(), threat.lands_at());
+            at >= first && at <= first + span
+        })
     }
 
-    /// Number of threats in the window
-    pub fn visible_count(&self) -> usize {
-        self.threats.len().min(self.window_size)
-    }
-
-    /// Number of threats behind the window
-    pub fn hidden_count(&self) -> usize {
-        self.threats.len() - self.visible_count()
+    /// The threats a reaction reaching `span` takes ([`ReactionQueue::sweeps`])
+    pub fn swept(&self, span: Duration) -> impl Iterator<Item = &QueuedThreat> {
+        self.threats.iter().filter(move |threat| self.sweeps(threat, span))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_reaction_queue_new() {
-        let queue = ReactionQueue::new(3);
-        assert_eq!(queue.window_size, 3);
-        assert_eq!(queue.threats.len(), 0);
-        assert!(queue.is_empty());
-        assert_eq!(queue.visible_count(), 0);
-        assert_eq!(queue.hidden_count(), 0);
-    }
 
     fn threat(ability: Option<crate::message::AbilityType>, dot: f32) -> QueuedThreat {
         QueuedThreat {
@@ -163,15 +143,21 @@ mod tests {
     }
 
     #[test]
-    fn the_window_shows_the_front_of_the_queue() {
-        let mut queue = ReactionQueue::new(2);
-        queue.threats.push_back(threat(Some(crate::message::AbilityType::AutoAttack), 0.0));
-        assert_eq!((queue.visible_count(), queue.hidden_count()), (1, 0), "an auto-attack shows like any threat");
-        for _ in 0..4 {
-            queue.threats.push_back(threat(None, 0.0));
-        }
-        assert_eq!((queue.visible_count(), queue.hidden_count()), (2, 3));
-        assert!(queue.shows(0) && queue.shows(1) && !queue.shows(2));
+    fn a_reaction_takes_the_front_and_what_lands_within_its_span_behind_it() {
+        use crate::message::AbilityType::{AutoAttack, Lunge};
+        let landing = |ability, secs: u64, millis: u64| QueuedThreat {
+            timer_duration: Duration::from_secs(secs) + Duration::from_millis(millis),
+            ..threat(Some(ability), 0.0)
+        };
+        // In queue order: the blows, then the auto-attacks
+        let queue = ReactionQueue {
+            threats: [landing(Lunge, 3, 0), landing(Lunge, 5, 0), landing(AutoAttack, 2, 0), landing(AutoAttack, 3, 200)].into(),
+        };
+        let taken = |span: u64| queue.swept(Duration::from_millis(span)).map(|t| t.timer_duration.as_millis()).collect::<Vec<_>>();
+        assert_eq!(taken(0), vec![3000], "the front alone");
+        assert_eq!(taken(250), vec![3000, 3200], "and an auto-attack landing just behind it, whatever its lane");
+        assert_eq!(taken(2000), vec![3000, 5000, 3200], "a longer span reaches the next blow; the auto-attack landing sooner is left");
+        assert_eq!(ReactionQueue::default().swept(Duration::from_secs(9)).count(), 0, "nothing queued, nothing taken");
     }
 
     #[test]
