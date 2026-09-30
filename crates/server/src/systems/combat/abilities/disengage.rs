@@ -29,9 +29,10 @@ pub fn leap_tiles(tuned: usize, reach: i32, distance: i32) -> usize {
 /// come due unanswered;
 /// already out of contact, it leaps `Tuning::disengage_close` tiles toward
 /// the source, stopping beside it, since distance escapes no ranged blow. Its
-/// next auto-attack strikes harder, by `disengage_endurance` of its
-/// Endurance, behind a feint (`Poised`). Discipline's Preparation lets it
-/// through a lockout (`synergies::reacts_through`).
+/// next auto-attack strikes harder, by `disengage_intuition` of its
+/// Intuition, behind a feint (`Poised`), and with the swings Patience banked
+/// while it stood out of reach. Preparation lets it through a lockout
+/// (`synergies::reacts_through`).
 pub fn handle_disengage(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -101,7 +102,7 @@ pub fn handle_disengage(
             }
         }
         if let Ok(attrs) = attrs_query.get(*ent) {
-            commands.entity(*ent).insert(Poised(attrs.endurance() * tuning.disengage_endurance));
+            commands.entity(*ent).insert(Poised(attrs.intuition() * tuning.disengage_intuition));
         }
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Disengage, target: *target } });

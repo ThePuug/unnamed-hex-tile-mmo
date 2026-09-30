@@ -87,8 +87,8 @@ pub enum EnemyArchetype {
     Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
     Kiter,       // Inland (flat) - Ranged harassment (pure Agility)
     Defender,    // Coast - Reactive counter-attacks (pure Resolve)
-    Skirmisher,  // Evasive - dodges the blows aimed at it (pure Discipline)
-    Ambusher,   // Ambushing - stuns and strikes from behind (pure Instinct)
+    Skirmisher,  // Evasive - dodges the blows aimed at it (pure Instinct)
+    Ambusher,   // Ambushing - stuns and strikes from behind (pure Discipline)
 }
 
 impl EnemyArchetype {
@@ -225,10 +225,10 @@ static DEFENDER_BUILD: &[Allocation] = &[
     Allocation { field: AttributeField::InstinctResolveAxis, weight: 1, direction: 1 },
 ];
 static SKIRMISHER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::VitalityDisciplineAxis, weight: 1, direction: 1 },
+    Allocation { field: AttributeField::InstinctResolveAxis, weight: 1, direction: -1 },
 ];
 static AMBUSHER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::InstinctResolveAxis, weight: 1, direction: -1 },
+    Allocation { field: AttributeField::VitalityDisciplineAxis, weight: 1, direction: 1 },
 ];
 
 impl EnemyArchetype {
@@ -501,8 +501,8 @@ mod tests {
             (EnemyArchetype::Juggernaut, 2),
             (EnemyArchetype::Kiter, 1),
             (EnemyArchetype::Defender, 5),
-            (EnemyArchetype::Skirmisher, 3),
-            (EnemyArchetype::Ambusher, 4),
+            (EnemyArchetype::Skirmisher, 4),
+            (EnemyArchetype::Ambusher, 3),
         ] {
             let attrs = calculate_enemy_attributes(10, archetype);
             let values = [attrs.might(), attrs.agility(), attrs.vitality(), attrs.discipline(), attrs.instinct(), attrs.resolve()];
@@ -528,12 +528,12 @@ mod tests {
     }
 
     #[test]
-    fn test_only_the_ambusher_invests_in_instinct() {
-        // Instinct is the Ambusher's alone, so only it has Reflex
-        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher] {
+    fn test_only_the_skirmisher_invests_in_instinct() {
+        // Instinct is the Skirmisher's alone, so only it has Reflex
+        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Ambusher] {
             assert_eq!(calculate_enemy_attributes(10, archetype).reflex(), 0, "{archetype:?}");
         }
-        assert!(calculate_enemy_attributes(10, EnemyArchetype::Ambusher).reflex() > 0);
+        assert!(calculate_enemy_attributes(10, EnemyArchetype::Skirmisher).reflex() > 0);
     }
 
     #[test]

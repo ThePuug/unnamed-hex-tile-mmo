@@ -126,8 +126,8 @@ pub struct Tuning {
     pub disengage_leap: usize,
     /// Tiles a Disengage leaps toward an attacker already out of contact
     pub disengage_close: usize,
-    /// Share of Endurance a Disengage adds to its caster's next auto-attack
-    pub disengage_endurance: f32,
+    /// Share of Intuition a Disengage adds to its caster's next auto-attack
+    pub disengage_intuition: f32,
     /// Stamina a Volley costs
     pub volley_cost: f32,
     /// Shots in a Volley: three, so a Disengage, which takes the front blow, takes a third
@@ -144,8 +144,8 @@ pub struct Tuning {
     pub flank_cost: f32,
     /// Seconds a Flank stuns its target
     pub flank_stun: f32,
-    /// Share of Intuition a Flank strikes for
-    pub flank_intuition: f32,
+    /// Share of Endurance a Flank strikes for
+    pub flank_endurance: f32,
     /// Share of each countered threat's damage sent back, times the counterer's Concentration over base potency
     pub counter_reflect: f32,
 }
@@ -208,7 +208,7 @@ impl Tuning {
         disengage_cost: 39.2,
         disengage_leap: 1,
         disengage_close: 8,
-        disengage_endurance: 0.686,
+        disengage_intuition: 0.686,
         volley_cost: 20.0,
         volley_shots: 3,
         volley_precision: 0.33,
@@ -217,7 +217,7 @@ impl Tuning {
         volley_leap: 10,
         flank_cost: 30.0,
         flank_stun: 3.0,
-        flank_intuition: 1.0,
+        flank_endurance: 1.0,
         counter_reflect: 0.2271,
     };
 
@@ -327,14 +327,14 @@ impl Tuning {
             "rattle_growth" => &mut self.rattle_growth,
             "rattle_daze" => &mut self.rattle_daze,
             "disengage_cost" => &mut self.disengage_cost,
-            "disengage_endurance" => &mut self.disengage_endurance,
+            "disengage_intuition" => &mut self.disengage_intuition,
             "volley_cost" => &mut self.volley_cost,
             "volley_precision" => &mut self.volley_precision,
             "volley_slow" => &mut self.volley_slow,
             "volley_slow_secs" => &mut self.volley_slow_secs,
             "flank_cost" => &mut self.flank_cost,
             "flank_stun" => &mut self.flank_stun,
-            "flank_intuition" => &mut self.flank_intuition,
+            "flank_endurance" => &mut self.flank_endurance,
             "counter_reflect" => &mut self.counter_reflect,
             "volley_shots" => {
                 self.volley_shots = number.round().max(1.0) as u8;

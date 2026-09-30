@@ -17,7 +17,7 @@ pub const FLANK_CIRCLE_MS: u16 = 1500;
 /// Handle Flank, the Ambusher's signature: on a target within melee reach,
 /// a circle round it on its ring to the tile at its back at reach, turned
 /// to face it so its auto-attacks carry on from there, and a strike for
-/// `flank_intuition` of the caster's Intuition that stuns for
+/// `flank_endurance` of the caster's Endurance that stuns for
 /// `Tuning::flank_stun` seconds as it lands (`landing::land`).
 /// The strike waits in the target's queue like any threat, so the target
 /// has its window to answer it before the stun holds it: `Stunned` stops
@@ -130,7 +130,7 @@ pub fn handle_flank(
             event: GameEvent::DealDamage {
                 source: *ent,
                 target: target_ent,
-                base_damage: attrs.intuition() * tuning.flank_intuition,
+                base_damage: attrs.endurance() * tuning.flank_endurance,
                 damage_type: DamageType::Physical,
                 ability: Some(AbilityType::Flank),
                 dot: 0.0,
