@@ -107,7 +107,7 @@ pub fn handle_deflect(
 
         // Trigger recovery lockout (server-side state)
         let early = is_early(AbilityType::Deflect, prior.as_ref(), offer.as_ref());
-        let recovery = lockout(AbilityType::Deflect, prior.as_ref(), offer.as_ref());
+        let recovery = lockout(AbilityType::Deflect, prior.as_ref(), offer.as_ref(), None);
         commands.entity(*ent).insert(recovery);
 
         // Apply synergies (server-side state,)

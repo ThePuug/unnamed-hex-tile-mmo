@@ -220,12 +220,7 @@ pub fn handle_lunge(
         let (prior, offer) = (recovery_query.get(*ent).ok().copied(), synergy_query.get(*ent).ok().copied());
         let early = is_early(AbilityType::Lunge, prior.as_ref(), offer.as_ref());
 
-        let (target_impact, target_level) = attrs_query.get(target_ent)
-            .map(|a| (a.impact(), a.total_level()))
-            .unwrap_or((0, 0));
-
-        let recovery = lockout(AbilityType::Lunge, prior.as_ref(), offer.as_ref())
-            .with_target(target_impact, target_level);
+        let recovery = lockout(AbilityType::Lunge, prior.as_ref(), offer.as_ref(), attrs_query.get(target_ent).ok());
         commands.entity(*ent).insert(recovery);
 
         // Apply synergies (server-side state,)

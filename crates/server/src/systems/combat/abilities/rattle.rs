@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{status::Status, resources::*, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+    components::{status::Status, resources::*, Loc, reaction_queue::DamageType, recovery::GlobalRecovery},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
 };
 
@@ -86,6 +86,6 @@ pub fn handle_rattle(
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Rattle, target: Some(target_ent) } });
         super::stride(*ent, heading_query.get(*ent).ok(), caster_loc, target_loc, &mut commands);
-        commands.entity(*ent).insert(GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Rattle), AbilityType::Rattle));
+        commands.entity(*ent).insert(common_bevy::systems::combat::synergies::lockout(AbilityType::Rattle, recovery_query.get(*ent).ok(), None, attrs_query.get(target_ent).ok()));
     }
 }

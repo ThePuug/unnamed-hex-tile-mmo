@@ -256,6 +256,8 @@ pub fn write_do(
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                 };
+                // The one it was used against, whose attributes contest its lockout here
+                let target = target.and_then(|target| l2r.get_by_right(&target).copied());
                 do_writer.write(Do { event: Event::UseAbility { ent, ability, target } });
             }
             Do { event: Event::Pong { client_time } } => {

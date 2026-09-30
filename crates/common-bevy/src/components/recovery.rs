@@ -37,9 +37,14 @@ impl GlobalRecovery {
         }
     }
 
-    pub fn with_target(mut self, target_impact: u16, target_level: u32) -> Self {
-        self.target_impact = target_impact;
-        self.target_level = Some(target_level);
+    /// Contests this lockout's Composure against `opponent`'s Impact and
+    /// level: whoever it was used against, or whoever imposed it. With no
+    /// opponent it runs uncontested, the whole Composure against none.
+    pub fn against(mut self, opponent: Option<&crate::components::ActorAttributes>) -> Self {
+        if let Some(opponent) = opponent {
+            self.target_impact = opponent.impact();
+            self.target_level = Some(opponent.total_level());
+        }
         self
     }
 

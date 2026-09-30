@@ -3,7 +3,7 @@ use common_bevy::{
     components::{
         engagement::EngagementMember, heading::Heading, hex_assignment::{AssignedHex, HexAssignment},
         position::Position, resources::*, AttackRange, Loc, Turn,
-        reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration},
+        reaction_queue::DamageType, recovery::GlobalRecovery,
     },
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
     plugins::nntree::NNTree,
@@ -139,12 +139,6 @@ pub fn handle_flank(
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Flank, target: Some(target_ent) } });
         super::stride(*ent, caster_heading, caster_loc, target_loc, &mut commands);
-        let (target_impact, target_level) = attrs_query.get(target_ent)
-            .map(|a| (a.impact(), a.total_level()))
-            .unwrap_or((0, 0));
-        commands.entity(*ent).insert(
-            GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Flank), AbilityType::Flank)
-                .with_target(target_impact, target_level),
-        );
+        commands.entity(*ent).insert(common_bevy::systems::combat::synergies::lockout(AbilityType::Flank, recovery_query.get(*ent).ok(), None, attrs_query.get(target_ent).ok()));
     }
 }

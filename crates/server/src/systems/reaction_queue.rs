@@ -141,8 +141,7 @@ pub fn process_dismiss(
             },
         });
 
-        let hold = attrs.get(threat.source).map_or(1.0, ActorAttributes::hold);
-        crate::systems::combat::landing::land(threat.ability, ent, threat.source, threat.inserted_at, hold, &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
+        crate::systems::combat::landing::land(threat.ability, ent, threat.source, threat.inserted_at, attrs.get(threat.source).ok(), &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
         reach.spill(threat.source, ent, threat.damage, &mut commands);
     }
 }

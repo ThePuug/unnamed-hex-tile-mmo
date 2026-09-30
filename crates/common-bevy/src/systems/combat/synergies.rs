@@ -95,9 +95,12 @@ pub fn reacts_through(ability: AbilityType, recovery: Option<&GlobalRecovery>, a
 /// costs what it would have played out: Ferocity moves the lockout, never
 /// shortens it. Taken once unlocked, it carries nothing. A reaction used
 /// through a lockout (`reacts_through`) carries all of it, its own added
-/// on. Server and client both start lockouts here, so they agree.
-pub fn lockout(ability: AbilityType, prior: Option<&GlobalRecovery>, synergy: Option<&SynergyUnlock>) -> GlobalRecovery {
-    let mut recovery = GlobalRecovery::new(get_ability_recovery_duration(ability), ability);
+/// on. It runs contested against `against`, the one it was used against:
+/// a strike's target, or the source of the threat a reaction answers
+/// (`GlobalRecovery::against`). Server and client both start lockouts
+/// here, so they agree.
+pub fn lockout(ability: AbilityType, prior: Option<&GlobalRecovery>, synergy: Option<&SynergyUnlock>, against: Option<&ActorAttributes>) -> GlobalRecovery {
+    let mut recovery = GlobalRecovery::new(get_ability_recovery_duration(ability), ability).against(against);
     let carried = match (prior.filter(|prior| prior.is_active()), synergy.filter(|synergy| synergy.ability == ability)) {
         (Some(prior), Some(synergy)) => (prior.remaining - synergy.unlock_at).max(0.0),
         (Some(prior), None) => {
@@ -246,7 +249,7 @@ mod tests {
         assert!(reacts_through(AbilityType::Counter, Some(&lockout_now), Some(&disciplined)));
         assert!(!reacts_through(AbilityType::Counter, Some(&lockout_now), Some(&plain)), "no Preparation, no reaction in lockout");
         assert!(!reacts_through(AbilityType::Lunge, Some(&lockout_now), Some(&disciplined)), "reactions only");
-        let through = lockout(AbilityType::Counter, Some(&lockout_now), None);
+        let through = lockout(AbilityType::Counter, Some(&lockout_now), None, None);
         let own = get_ability_recovery_duration(AbilityType::Counter);
         assert!((through.remaining - (own + 2.0)).abs() < 1e-5, "its own lockout added onto the rest");
         assert_eq!(through.reactions, 1);
@@ -270,12 +273,12 @@ mod tests {
         let prior = GlobalRecovery::new(2.0, AbilityType::Kick);
         let offer = SynergyUnlock::new(AbilityType::Lunge, 1.5, AbilityType::Kick);
         let own = get_ability_recovery_duration(AbilityType::Lunge);
-        let early = lockout(AbilityType::Lunge, Some(&prior), Some(&offer));
+        let early = lockout(AbilityType::Lunge, Some(&prior), Some(&offer), None);
         assert!((early.remaining - (own + 0.5)).abs() < 1e-5, "the half second it skipped comes after");
         let mut waited = prior;
         waited.tick(0.6);
-        assert_eq!(lockout(AbilityType::Lunge, Some(&waited), Some(&offer)).remaining, own, "on time, its own");
-        assert_eq!(lockout(AbilityType::Lunge, None, None).remaining, own, "fresh, its own");
+        assert_eq!(lockout(AbilityType::Lunge, Some(&waited), Some(&offer), None).remaining, own, "on time, its own");
+        assert_eq!(lockout(AbilityType::Lunge, None, None, None).remaining, own, "fresh, its own");
     }
 
     #[test]

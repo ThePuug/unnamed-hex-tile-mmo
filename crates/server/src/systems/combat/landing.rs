@@ -47,14 +47,15 @@ pub struct VolleyBurst {
 
 /// Lands the effect of a blow from `ability`, struck by `source` on
 /// `target` in a threat queued `at`, as it resolves or is dismissed. The
-/// source's `hold` (`ActorAttributes::hold`) lengthens and deepens it.
+/// source's `hold` (`ActorAttributes::hold`), from `source_attrs`,
+/// lengthens and deepens it.
 #[allow(clippy::too_many_arguments)]
 pub fn land(
     ability: Option<AbilityType>,
     target: Entity,
     source: Entity,
     at: std::time::Duration,
-    hold: f32,
+    source_attrs: Option<&ActorAttributes>,
     tuning: &Tuning,
     statuses: &mut Query<&mut Status>,
     recoveries: &Query<&GlobalRecovery>,
@@ -64,13 +65,14 @@ pub fn land(
     commands: &mut Commands,
     writer: &mut MessageWriter<Do>,
 ) {
+    let hold = source_attrs.map_or(1.0, ActorAttributes::hold);
     match ability {
         // A stun holds its target completely, a lockout as long with it
         Some(AbilityType::Flank) => {
             let stunned = Stunned { remaining: tuning.flank_stun * hold };
             let lockout = recoveries.get(target).map_or(0.0, |recovery| recovery.remaining).max(stunned.remaining);
             if let Ok(mut entity) = commands.get_entity(target) {
-                entity.try_insert((stunned, GlobalRecovery::new(lockout, AbilityType::Flank)));
+                entity.try_insert((stunned, GlobalRecovery::new(lockout, AbilityType::Flank).against(source_attrs)));
             }
             writer.write(Do { event: GameEvent::Incremental { ent: target, component: Component::Stunned(stunned) } });
         }

@@ -168,8 +168,7 @@ pub fn resolve_threat(
                 },
             });
 
-            let hold = actors.get(threat.source).map_or(1.0, |source| source.hold());
-            landing::land(threat.ability, *ent, threat.source, threat.inserted_at, hold, &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
+            landing::land(threat.ability, *ent, threat.source, threat.inserted_at, actors.get(threat.source).ok(), &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
             reach.spill(threat.source, *ent, threat.damage, &mut commands);
 
             // Death check moved to dedicated check_death system (decoupled from combat)

@@ -106,7 +106,7 @@ pub fn handle_disengage(
         }
 
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Disengage, target: *target } });
-        commands.entity(*ent).insert(lockout(AbilityType::Disengage, recovery_query.get(*ent).ok(), None));
+        commands.entity(*ent).insert(lockout(AbilityType::Disengage, recovery_query.get(*ent).ok(), None, target.and_then(|t| attrs_query.get(t).ok())));
     }
 }
 

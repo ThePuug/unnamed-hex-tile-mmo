@@ -181,14 +181,14 @@ pub fn handle_counter(
             event: GameEvent::UseAbility {
                 ent: *ent,
                 ability: AbilityType::Counter,
-                target: None,  // Counter is self-targeted
+                target: visible_threats.first().map(|threat| threat.source),
             },
         });
 
         // Trigger recovery lockout (server-side state)
         let (prior, offer) = (recovery_query.get(*ent).ok().copied(), synergy_query.get(*ent).ok().copied());
         let early = is_early(AbilityType::Counter, prior.as_ref(), offer.as_ref());
-        let recovery = lockout(AbilityType::Counter, prior.as_ref(), offer.as_ref());
+        let recovery = lockout(AbilityType::Counter, prior.as_ref(), offer.as_ref(), visible_threats.first().and_then(|threat| attrs_query.get(threat.source).ok()));
         commands.entity(*ent).insert(recovery);
 
         // Apply synergies (server-side state,)

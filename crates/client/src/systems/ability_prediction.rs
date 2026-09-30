@@ -16,7 +16,7 @@ pub fn handle_ability_used(
     recovery_query: Query<(Option<&GlobalRecovery>, Option<&SynergyUnlock>)>,
 ) {
     for event in do_reader.read() {
-        let Do { event: GameEvent::UseAbility { ent, ability, target: _ } } = event else {
+        let Do { event: GameEvent::UseAbility { ent, ability, target } } = event else {
             continue;
         };
 
@@ -28,7 +28,7 @@ pub fn handle_ability_used(
         // Insert GlobalRecovery component (same as server, carrying what an
         // early follow-up skipped). Only insert if entity exists (may have been evicted)
         let (prior, offer) = recovery_query.get(*ent).map_or((None, None), |(recovery, offer)| (recovery.copied(), offer.copied()));
-        let recovery = lockout(*ability, prior.as_ref(), offer.as_ref());
+        let recovery = lockout(*ability, prior.as_ref(), offer.as_ref(), target.and_then(|target| attrs_query.get(target).ok()));
         if let Ok(mut entity_cmd) = commands.get_entity(*ent) {
             entity_cmd.insert(recovery);
 
