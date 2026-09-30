@@ -3,7 +3,8 @@ use rand::seq::IteratorRandom;
 
 use common_bevy::{
     components::{
-        Loc, resources::Health,
+        heading::{Heading, SLOT_DEGREES},
+        AttackRange, Loc, resources::Health,
         behaviour::Side, status::Status, ActorAttributes, target::Target,
         returning::Returning,
         hex_assignment::AssignedHex,
@@ -12,6 +13,7 @@ use common_bevy::{
     message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
     resources::map::Map,
+    systems::{physics::Walk, targeting::arc_of},
 };
 use qrz::Qrz;
 
@@ -27,9 +29,13 @@ const HOME: i32 = 2;
 /// (`targeting::update_targets` leaves every `Chase` be).
 ///
 /// It fights from its assigned hex where it has one (`AssignedHex`), else
-/// from wherever its target is within `attack_range`: so one that fights
-/// from range closes only until its target is in reach, and stands and
-/// shoots from there.
+/// from wherever its target is within `attack_range`. One that reaches no
+/// further than a melee swing stands there and faces its target. One that
+/// fights from range ([`Chase::ranged`]) closes only until its target is
+/// in reach, and inside it gives ground: it runs forward with its target
+/// at the edge of the arc it strikes within ([`kiting`]), so it shoots as
+/// it goes, and how directly away its Grace lets it run is how well it
+/// kites.
 ///
 /// Further than `leash_distance` from its engagement's place it lets its
 /// target go and walks home (`Returning`), taking no target until it is
@@ -39,6 +45,24 @@ pub struct Chase {
     pub acquisition_range: u32,
     pub leash_distance: i32,
     pub attack_range: i32,
+}
+
+impl Chase {
+    /// Whether it fights from range: its reach is past a melee swing's
+    pub fn ranged(&self) -> bool {
+        self.attack_range > AttackRange::default().0
+    }
+}
+
+/// The heading an actor at `loc`, facing `facing`, runs on to keep `target`
+/// at the edge of the `arc` it strikes within: the bearing to the target
+/// turned one step short of the arc, to the side it already leans, so it
+/// holds one course.
+fn kiting(loc: Loc, target: Loc, arc: f32, facing: Heading) -> Heading {
+    let toward = Heading::from_hex(Qrz { z: 0, ..*target - *loc });
+    let steps = ((arc / SLOT_DEGREES) as i32 - 1).max(0);
+    let (side, _) = toward.turn_toward(facing);
+    toward.turned(if side < 0 { -steps } else { steps })
 }
 
 /// The neighbour of the floor tile `from` an NPC steps to on its way to
@@ -120,13 +144,19 @@ pub fn chase(
             continue;
         };
 
-        // Where it fights from, it stands and faces its target
+        // Where it fights from, it stands and faces its target, or, fighting
+        // from range, runs with it at the edge of its arc
         let placed = match assigned {
             Some(hex) => loc.flat_distance(&Loc::new(hex.0)) == 0,
             None => loc.distance(target_loc) <= chase.attack_range,
         };
         if placed {
-            body.face(loc, **target_loc, dt_ms, &map, &nntree);
+            if chase.ranged() && **loc != **target_loc {
+                let goal = kiting(*loc, *target_loc, arc_of(attrs), body.turn.heading);
+                body.steer(goal, Walk::Forward, speed, dt_ms, &map, &nntree);
+            } else {
+                body.face(loc, **target_loc, dt_ms, &map, &nntree);
+            }
             continue;
         }
 
@@ -198,6 +228,25 @@ mod tests {
 
     fn target_of(app: &App, npc: Entity) -> Option<Entity> {
         app.world().get::<Target>(npc).unwrap().entity
+    }
+
+    #[test]
+    fn a_kiter_runs_with_its_target_at_the_edge_of_its_arc() {
+        use common_bevy::systems::targeting::within_arc;
+        let here = Loc::new(Qrz { q: 0, r: 0, z: 1 });
+        let target = Loc::new(Qrz { q: 5, r: 0, z: 1 });
+        let toward = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
+        for arc in [60.0, 90.0, 120.0, 150.0] {
+            let goal = kiting(here, target, arc, toward);
+            assert!(within_arc(goal, arc, here, target), "at {arc} it still strikes its target");
+            assert!(!within_arc(goal, arc - 2.0 * SLOT_DEGREES, here, target), "from the edge of the arc");
+        }
+        let away = |arc| toward.reversed().turn_toward(kiting(here, target, arc, toward)).1;
+        assert!(away(150.0) < away(90.0), "more Grace runs more directly away");
+
+        let (left, right) = (toward.turned(-2), toward.turned(2));
+        assert_ne!(kiting(here, target, 150.0, left), kiting(here, target, 150.0, right), "it runs to the side it already leans");
+        assert_eq!(kiting(here, target, 150.0, kiting(here, target, 150.0, left)), kiting(here, target, 150.0, left), "and holds that course");
     }
 
     #[test]
