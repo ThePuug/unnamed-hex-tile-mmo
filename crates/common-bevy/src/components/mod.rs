@@ -933,18 +933,11 @@ pub struct Sun();
 #[derive(Debug, Default, Component)]
 pub struct Moon();
 
-/// Tracks the last time an auto-attack was performed
-/// Used to enforce 1.5s cooldown between passive auto-attacks
-#[derive(Clone, Component, Copy, Debug)]
-pub struct LastAutoAttack {
-    /// Game time when last auto-attack was performed (server time + offset)
-    pub last_attack_time: std::time::Duration,
-}
-
 /// When an actor last struck with an auto-attack in this fight, as the
-/// server counts it: the swings it missed since, up to its Patience, land
-/// with its next (`ActorAttributes::banked`). None out of combat, so a
-/// fight's first swing banks nothing.
+/// server counts it: its next comes due an interval after, and the swings
+/// it missed since, up to its Patience, land with it
+/// (`ActorAttributes::banked`). None out of combat, so a fight's first
+/// swing comes at once and banks nothing.
 #[derive(Clone, Component, Copy, Debug, Default)]
 pub struct Swing {
     pub at: Option<std::time::Duration>,
@@ -955,14 +948,6 @@ pub struct Swing {
 /// Eventually sourced from equipped weapon; for now set per-archetype at spawn.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct AttackRange(pub i32);
-
-impl Default for LastAutoAttack {
-    fn default() -> Self {
-        Self {
-            last_attack_time: std::time::Duration::ZERO,
-        }
-    }
-}
 
 impl Default for AttackRange {
     fn default() -> Self {

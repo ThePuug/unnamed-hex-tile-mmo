@@ -4,7 +4,7 @@ pub mod leap;
 
 use bevy::prelude::*;
 use common_bevy::{
-    components::{entity_type::*, reaction_queue::*, resources::*, LastAutoAttack, *},
+    components::{entity_type::*, reaction_queue::*, resources::*, *},
     message::{AbilityType, Do, Try, Event as GameEvent},
     systems::{
         combat::{damage as damage_calc, queue as queue_utils},
@@ -231,8 +231,8 @@ fn land_damage(ent: Entity, source: Entity, damage: f32, dot: bool, health: &mut
 /// swings are timed here, a player's as an NPC's, so none is timed by a client. An NPC swings
 /// wherever it stands; its assigned hex decides only where it walks.
 pub fn process_passive_auto_attack(
-    mut query: Query<
-        (Entity, &Loc, &mut LastAutoAttack, &common_bevy::components::target::Target,
+    query: Query<
+        (Entity, &Loc, &Swing, &common_bevy::components::target::Target,
          &ActorAttributes,
          Option<&common_bevy::components::AttackRange>,
          Option<&common_bevy::components::heading::Heading>,
@@ -240,21 +240,16 @@ pub fn process_passive_auto_attack(
     >,
     entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
     time: Res<Time>,
-    runtime: Res<crate::resources::RunTime>,
     mut writer: MessageWriter<Try>,
 ) {
-    // Use game world time (server uptime + offset) for consistent time base
-    let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
-    let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
-
-    for (ent, loc, mut last_auto_attack, target, attrs, attack_range_opt, heading, status) in query.iter_mut() {
+    for (ent, loc, swing, target, attrs, attack_range_opt, heading, status) in &query {
         if common_bevy::components::status::Status::holds(status) {
             continue;
         }
-        // Check cooldown: the fixed interval, stretched by a daze
+        // Due an interval after its last swing, stretched by a daze; the
+        // swing itself records when it struck (`handle_auto_attack`)
         let cooldown = common_bevy::components::status::Status::cadence(attrs.cadence_interval(), status);
-        let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);
-        if time_since_last_attack < cooldown {
+        if swing.at.is_some_and(|at| time.elapsed().saturating_sub(at) < cooldown) {
             continue; // Still on cooldown
         }
 
@@ -285,9 +280,6 @@ pub fn process_passive_auto_attack(
                     target: Some(target_ent),
                 },
             });
-
-            // Update last attack time
-            last_auto_attack.last_attack_time = now;
         }
     }
 }

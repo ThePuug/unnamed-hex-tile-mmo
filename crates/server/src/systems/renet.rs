@@ -140,7 +140,6 @@ pub fn do_presence(
                     mana,
                     combat_state,
                     reaction_queue,
-                    LastAutoAttack::default(),
                     PlayerDiscoveryState::default(),
                     TierLock::new(),
                     common_bevy::components::target::Target::default(),

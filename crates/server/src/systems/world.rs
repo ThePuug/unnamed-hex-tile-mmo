@@ -171,7 +171,6 @@ pub fn do_spawn(
                             Heading::default(),
                             Turn::default(),
                             Position::at_tile(qrz),
-                            LastAutoAttack::default(), // Track auto-attack cooldown
                             Transform {
                                 translation: map.convert(qrz),
                                 ..default()},
