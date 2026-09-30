@@ -49,7 +49,7 @@ use common_bevy::{
 
 use crate::{
     plugins::{behaviour::BehaviourPlugin, combat::CombatPlugin},
-    systems::{actor, engagement_spawner::spawn_engagement, renet},
+    systems::{actor, engagement_spawner::{engaging_at, spawn_engagement, STAGE_GAP}, renet},
 };
 
 /// One simulated frame. FixedUpdate's 125ms tick runs every second frame.
@@ -58,10 +58,6 @@ const STEP: Duration = Duration::from_micros(62_500);
 /// Flat tiles laid out round the origin; wide enough that a fleeing Kiter
 /// reaches its leash before the edge.
 const ARENA_RADIUS: i32 = 80;
-
-/// Each side's den stands this far either side of the origin: inside every
-/// archetype's acquisition range of the other.
-const DEN_OFFSET: i32 = 12;
 
 const ARCHETYPES: [EnemyArchetype; 6] = [
     EnemyArchetype::Berserker,
@@ -244,8 +240,12 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     let time = world.resource::<Time>().clone();
     {
         let mut commands = world.commands();
-        for (team, side, q) in [(west, WEST, -DEN_OFFSET), (east, EAST, DEN_OFFSET)] {
-            spawn_engagement(Qrz { q, r: 0, z: 1 }, team.archetype, side, team.level, team.size, |_, _| 0, &settings.tuning, &mut commands, &time);
+        // The east team engages the west as a staged party engages the
+        // fighter it is spawned on, the stage's gap apart about the origin
+        let west_at = Qrz { q: -STAGE_GAP / 2, r: 0, z: 1 };
+        let east_at = engaging_at(west_at, Qrz { q: 1, r: 0, z: 0 }, |_, _| 0);
+        for (team, side, at) in [(west, WEST, west_at), (east, EAST, east_at)] {
+            spawn_engagement(at, team.archetype, side, team.level, team.size, |_, _| 0, &settings.tuning, &mut commands, &time);
         }
     }
     world.flush();

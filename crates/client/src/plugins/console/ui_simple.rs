@@ -158,6 +158,15 @@ pub fn update_console_menu(
                         TextColor(Color::WHITE),
                     ));
 
+                    #[cfg(feature = "admin")]
+                    for line in ["7. Stage Party", "8. Stage Opposition"] {
+                        parent.spawn((
+                            Text::new(line),
+                            TextFont { font_size: FontSize::Px(16.0), ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    }
+
                     parent.spawn((
                         Text::new(""),
                         TextFont { font_size: FontSize::Px(8.0), ..default() },
@@ -342,7 +351,7 @@ pub fn update_console_menu(
                     ));
                 }
                 #[cfg(feature = "admin")]
-                MenuPath::SpawnDen => {
+                MenuPath::SpawnDen | MenuPath::Stage { .. } => {
                     for (i, (label, _)) in super::state::DENS.iter().enumerate() {
                         parent.spawn((
                             Text::new(format!("{}. {label}", i + 1)),

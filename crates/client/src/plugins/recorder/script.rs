@@ -88,11 +88,24 @@ pub enum Team {
 }
 
 impl Stage {
-    /// The archetype of `team`.
-    pub fn of(&self, team: Team) -> common_bevy::spatial_difficulty::EnemyArchetype {
+    /// The team the shot stages first, and views when it views one: the
+    /// viewed, or the west. Its archetype, level and size.
+    pub fn party(&self) -> (common_bevy::spatial_difficulty::EnemyArchetype, u8, u8) {
+        self.team(self.view.unwrap_or(Team::West))
+    }
+
+    /// The other team, staged to engage the party's fighter.
+    pub fn opposition(&self) -> (common_bevy::spatial_difficulty::EnemyArchetype, u8, u8) {
+        self.team(match self.view.unwrap_or(Team::West) {
+            Team::West => Team::East,
+            Team::East => Team::West,
+        })
+    }
+
+    fn team(&self, team: Team) -> (common_bevy::spatial_difficulty::EnemyArchetype, u8, u8) {
         match team {
-            Team::West => self.west,
-            Team::East => self.east,
+            Team::West => (self.west, self.level, self.size),
+            Team::East => (self.east, self.b_level.unwrap_or(self.level), self.b_size.unwrap_or(self.size)),
         }
     }
 }
@@ -363,7 +376,8 @@ mod tests {
         let stage = script.shots[2].stage.expect("a staged fight");
         assert_eq!((stage.level, stage.size), (10, 1), "a level-10 one by default");
         assert_eq!((stage.b_level, stage.b_size), (Some(6), Some(2)));
-        assert_eq!(stage.view.map(|team| stage.of(team)), Some(common_bevy::spatial_difficulty::EnemyArchetype::Kiter));
+        assert_eq!(stage.party(), (common_bevy::spatial_difficulty::EnemyArchetype::Kiter, 6, 2), "the viewed team comes first");
+        assert_eq!(stage.opposition(), (common_bevy::spatial_difficulty::EnemyArchetype::Juggernaut, 10, 1));
         assert!(script.shots[0].stage.is_none());
     }
 }

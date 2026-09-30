@@ -96,6 +96,8 @@ pub fn handle_console_input(
         MenuPath::SpawnDen => handle_spawn_den_menu(&mut keyboard, &mut action_writer),
         #[cfg(feature = "admin")]
         MenuPath::View => handle_view_menu(&mut keyboard, &mut action_writer),
+        #[cfg(feature = "admin")]
+        MenuPath::Stage { engage } => handle_stage_menu(&mut keyboard, &mut action_writer, engage),
     }
 }
 
@@ -145,6 +147,15 @@ fn handle_root_menu(
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::View;
         consumed = Some(KeyCode::Numpad6);
+    }
+
+    #[cfg(feature = "admin")]
+    for (key, engage) in [(KeyCode::Numpad7, false), (KeyCode::Numpad8, true)] {
+        if consumed.is_none() && keyboard.just_pressed(key) {
+            console.history.push(console.current_menu.clone());
+            console.current_menu = MenuPath::Stage { engage };
+            consumed = Some(key);
+        }
     }
 
     if let Some(key) = consumed {
@@ -314,6 +325,24 @@ fn handle_spawn_den_menu(
     for (key, (_, archetype)) in KEYS.into_iter().zip(super::state::DENS) {
         if keyboard.just_pressed(key) {
             action_writer.write(DevConsoleAction::SpawnDen(archetype));
+            keyboard.clear_just_pressed(key);
+        }
+    }
+}
+
+#[cfg(feature = "admin")]
+fn handle_stage_menu(
+    keyboard: &mut ButtonInput<KeyCode>,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
+    engage: bool,
+) {
+    const KEYS: [KeyCode; 9] = [
+        KeyCode::Numpad1, KeyCode::Numpad2, KeyCode::Numpad3, KeyCode::Numpad4, KeyCode::Numpad5,
+        KeyCode::Numpad6, KeyCode::Numpad7, KeyCode::Numpad8, KeyCode::Numpad9,
+    ];
+    for (key, (_, archetype)) in KEYS.into_iter().zip(super::state::DENS) {
+        if keyboard.just_pressed(key) {
+            action_writer.write(DevConsoleAction::SpawnParty { archetype, engage });
             keyboard.clear_just_pressed(key);
         }
     }

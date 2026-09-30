@@ -48,6 +48,10 @@ pub enum DevConsoleAction {
     /// Stop viewing: back as a fresh character.
     #[cfg(feature = "admin")]
     StopViewing,
+    /// Stage a party of this archetype ahead of the actor the client sees
+    /// as: out of its reach, or engaging it.
+    #[cfg(feature = "admin")]
+    SpawnParty { archetype: common_bevy::spatial_difficulty::EnemyArchetype, engage: bool },
 }
 
 /// System that executes console actions
@@ -184,6 +188,8 @@ pub fn execute_console_actions(
             DevConsoleAction::SpawnDen(_) => {}
             #[cfg(feature = "admin")]
             DevConsoleAction::ViewTarget | DevConsoleAction::StopViewing => {}
+            #[cfg(feature = "admin")]
+            DevConsoleAction::SpawnParty { .. } => {}
         }
     }
 }
@@ -232,5 +238,27 @@ pub fn send_view(
             }
             _ => {}
         }
+    }
+}
+
+/// The level and size of a party the console stages: one fighter at the
+/// balance arena's level.
+#[cfg(feature = "admin")]
+const PARTY: (u8, u8) = (10, 1);
+
+/// Asks the server for the party the console picked, ahead of the actor
+/// the client sees as.
+#[cfg(feature = "admin")]
+pub fn send_spawn_party(
+    mut reader: MessageReader<DevConsoleAction>,
+    mut writer: MessageWriter<common_bevy::message::Try>,
+    seer: Query<Entity, With<crate::components::Viewed>>,
+) {
+    for action in reader.read() {
+        let DevConsoleAction::SpawnParty { archetype, engage } = *action else { continue };
+        let Ok(ent) = seer.single() else { continue };
+        let (level, size) = PARTY;
+        writer.write(common_bevy::message::Try { event: common_bevy::message::Event::SpawnParty { ent, archetype, level, size, engage } });
+        info!("Stage: {size}x{archetype:?}@{level}{}", if engage { ", engaging" } else { "" });
     }
 }

@@ -90,7 +90,7 @@ fn main() {
         input::try_input,
         actor::try_teleport,
         engagement_spawner::try_spawn_den,
-        engagement_spawner::try_stage_fight,
+        engagement_spawner::try_spawn_party,
         input::try_set_tier_lock, // Tier lock targeting
         input::try_respec_attributes, // Attribute respec system
         crate::systems::equipment::try_wear,
@@ -153,6 +153,7 @@ fn main() {
     app.insert_resource(registry);
     app.init_resource::<crate::resources::summary_cache::SummaryCache>();
     app.init_resource::<engagement_spawner::ActiveSpawners>();
+    app.init_resource::<engagement_spawner::Parties>();
 
     app.run();
 }

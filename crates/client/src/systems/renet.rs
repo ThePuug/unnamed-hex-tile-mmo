@@ -467,15 +467,15 @@ pub fn send_try(
                     archetype: *archetype,
                 }}, bincode::config::legacy()).unwrap());
             }
-            Event::StageFight { ent, west, east, level, b_level, size, b_size } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::StageFight {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    west: *west,
-                    east: *east,
+            Event::SpawnParty { ent, archetype, level, size, engage } => {
+                // The anchor must be one the server knows
+                let Some(&ent) = l2r.get_by_left(ent) else { continue };
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SpawnParty {
+                    ent,
+                    archetype: *archetype,
                     level: *level,
-                    b_level: *b_level,
                     size: *size,
-                    b_size: *b_size,
+                    engage: *engage,
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } => {

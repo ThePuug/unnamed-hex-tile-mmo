@@ -103,39 +103,65 @@ pub fn try_spawn_den(
     }
 }
 
-/// How far ahead of the player a staged fight's middle stands: beyond the
-/// range either team acquires a target from, so they pick each other.
-const STAGE_AHEAD: i32 = crate::systems::behaviour::ACQUISITION_RANGE as i32 + 3;
+/// How far apart two parties staged to fight stand, as the balance arena
+/// sets its teams apart: inside the range either acquires a target from.
+pub const STAGE_GAP: i32 = 24;
 
-/// How far either team of a staged fight stands from its middle, as the
-/// balance arena sets its teams apart.
-const STAGE_APART: i32 = 12;
+/// Sides of their own for staged parties, handed out in turn past the
+/// players' and the wild's: every party hostile to every other and to
+/// everyone else.
+#[derive(Resource)]
+pub struct Parties(u8);
 
-/// Stages a fight ahead of the player who asks: two teams on sides of their
-/// own, hostile to each other and to everyone else, set across the player's
-/// line of sight so a camera behind the player sees both.
-pub fn try_stage_fight(
+impl Default for Parties {
+    fn default() -> Self {
+        Self(2)
+    }
+}
+
+impl Parties {
+    fn next(&mut self) -> Side {
+        let side = Side(self.0);
+        self.0 = self.0.checked_add(1).unwrap_or(2);
+        side
+    }
+}
+
+/// The tile a party stands on to engage one at `from`, ahead along `dir`:
+/// `STAGE_GAP` out, drawn in until acquisition, which counts every level of
+/// height between, reaches it. On flat ground it is the arena's gap.
+pub fn engaging_at(from: Qrz, dir: Qrz, elevation: impl Fn(i32, i32) -> i32) -> Qrz {
+    let range = crate::systems::behaviour::ACQUISITION_RANGE as i32;
+    (1..=STAGE_GAP).rev()
+        .map(|d| from + dir * d)
+        .map(|at| Qrz { z: elevation(at.q, at.r) + 1, ..at })
+        .find(|at| at.distance(&from) <= range)
+        .unwrap_or(from + dir)
+}
+
+/// Places the party an admin asks for ahead of the actor it names: out of
+/// its reach, as a den stands, or engaging it.
+pub fn try_spawn_party(
     mut reader: MessageReader<Try>,
     mut commands: Commands,
-    query: Query<(&Loc, &Heading), With<PlayerControlled>>,
+    query: Query<(&Loc, &Heading)>,
     time: Res<Time>,
     registry: Res<crate::resources::event_registry::EventRegistry>,
+    mut parties: ResMut<Parties>,
 ) {
     let tuning = common_bevy::tuning::tuning();
     for message in reader.read() {
-        let Try { event: Event::StageFight { ent, west, east, level, b_level, size, b_size } } = message else { continue };
+        let Try { event: Event::SpawnParty { ent, archetype, level, size, engage } } = message else { continue };
         let Ok((loc, heading)) = query.get(*ent) else { continue };
-        let middle = **loc + heading.hex_dir() * STAGE_AHEAD;
-        // Across the line of sight: a quarter turn from the way the player faces
-        let across = heading.turned(common_bevy::components::heading::HEADING_SLOTS as i32 / 4).hex_dir() * STAGE_APART;
-        for (archetype, side, level, size, at) in [
-            (*west, Side(2), *level, *size, middle - across),
-            (*east, Side(3), *b_level, *b_size, middle + across),
-        ] {
-            let den = Qrz { q: at.q, r: at.r, z: registry.elevation_at(at.q, at.r) + 1 };
-            info!("stage: {size}x{archetype:?}@{level} at {den:?}, ahead of {ent} at {:?}", **loc);
-            spawn_engagement(den, archetype, side, level, size, |q, r| registry.elevation_at(q, r), &tuning, &mut commands, &time);
-        }
+        let at = if *engage {
+            engaging_at(**loc, heading.hex_dir(), |q, r| registry.elevation_at(q, r))
+        } else {
+            let ahead = den_ahead(**loc, *heading, *archetype);
+            Qrz { z: registry.elevation_at(ahead.q, ahead.r) + 1, ..ahead }
+        };
+        let side = parties.next();
+        info!("party: {size}x{archetype:?}@{level} on {side:?} at {at:?}, {} {ent} at {:?}", if *engage { "engaging" } else { "ahead of" }, **loc);
+        spawn_engagement(at, *archetype, side, *level, *size, |q, r| registry.elevation_at(q, r), &tuning, &mut commands, &time);
     }
 }
 
@@ -292,6 +318,28 @@ fn kit(archetype: EnemyArchetype) -> Equipment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn on_the_flat_a_party_engages_at_the_stage_gap() {
+        let from = Qrz { q: 0, r: 0, z: 1 };
+        assert_eq!(engaging_at(from, Qrz { q: 1, r: 0, z: 0 }, |_, _| 0), Qrz { q: STAGE_GAP, r: 0, z: 1 });
+    }
+
+    #[test]
+    fn up_a_slope_a_party_draws_in_until_acquisition_reaches() {
+        let from = Qrz { q: 0, r: 0, z: 1 };
+        let at = engaging_at(from, Qrz { q: 1, r: 0, z: 0 }, |q, _| q);
+        assert!(at.distance(&from) <= crate::systems::behaviour::ACQUISITION_RANGE as i32, "{at:?}");
+        assert!(at.q < STAGE_GAP, "drawn in from the gap: {at:?}");
+    }
+
+    #[test]
+    fn every_party_is_on_a_side_of_its_own() {
+        let mut parties = Parties::default();
+        let (a, b) = (parties.next(), parties.next());
+        assert!(a.is_hostile_to(b));
+        assert!(a.is_hostile_to(Side::PLAYERS) && a.is_hostile_to(Side::WILD));
+    }
     use common_bevy::components::heading::HEADING_SLOTS;
 
     #[test]

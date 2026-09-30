@@ -89,6 +89,9 @@ pub enum MenuPath {
     SpawnDen,
     #[cfg(feature = "admin")]
     View,
+    /// Pick a party's archetype: to stand ahead, or to engage
+    #[cfg(feature = "admin")]
+    Stage { engage: bool },
 }
 
 /// The dens the console places, in menu order from numpad 1.
@@ -116,6 +119,10 @@ impl MenuPath {
             MenuPath::SpawnDen => "Spawn Den",
             #[cfg(feature = "admin")]
             MenuPath::View => "View",
+            #[cfg(feature = "admin")]
+            MenuPath::Stage { engage: false } => "Stage Party",
+            #[cfg(feature = "admin")]
+            MenuPath::Stage { engage: true } => "Stage Opposition",
         }
     }
 }

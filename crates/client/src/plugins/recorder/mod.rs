@@ -9,8 +9,11 @@
 //! on screen. Frames are read back from the window and piped to ffmpeg,
 //! which must be on the PATH. No HUD, console or gizmo is drawn from the
 //! moment the recorder starts until the client quits, but for a shot that
-//! views a fighter it staged: the view is the fighter's (`Viewed`), its
-//! reaction queue and resource bars on screen as a player's are.
+//! views a fighter it staged: the client sees as the fighter, as an admin
+//! view does (`shell::view`), with its HUD on screen as a player's is.
+//! A staged shot spawns its party, views a member, then spawns the
+//! opposition engaged on it; once it is written the client comes back as
+//! a fresh character for the next.
 
 mod script;
 mod writer;
@@ -77,7 +80,6 @@ impl Plugin for RecorderPlugin {
             enter,
             hide_hud,
             advance,
-            view,
             drive_camera.after(advance).after(crate::systems::camera::update),
             capture.after(drive_camera),
         ));
@@ -127,12 +129,14 @@ impl Recorder {
         }
     }
 
-    /// Moves on to the next shot, letting go of every key.
+    /// Moves on to the next shot, letting go of every key; after one that
+    /// viewed a fighter, by way of a fresh character.
     fn next_shot(&mut self) {
         let held: Vec<KeyCode> = self.keys.held.drain().collect();
         self.keys.released.extend(held);
+        let viewed = self.shot().and_then(|s| s.stage).is_some_and(|s| s.view.is_some());
         self.index += 1;
-        self.phase = Phase::Arrive { since: Instant::now(), asked: None };
+        self.phase = if viewed { Phase::Rejoin } else { Phase::Arrive { since: Instant::now(), asked: None } };
     }
 }
 
@@ -145,9 +149,14 @@ enum Phase {
     Turn { since: Instant },
     /// Waiting for the world to settle, then for the shot's `settle` more.
     Settle { since: Instant, quiet: u32, epoch: u64, quiet_since: Option<Instant> },
-    /// The shot's fight is asked for; waiting for an NPC that was not in
-    /// view when it was, one of `before`.
+    /// The shot's party is asked for; waiting for an NPC of it that was not
+    /// in view when it was, one of `before`.
     Stage { since: Instant, before: HashSet<Entity> },
+    /// Viewing `fighter` is asked for; waiting for the view before its
+    /// opposition is.
+    Oppose { since: Instant, fighter: Entity },
+    /// The shot viewed a fighter; out of the world and back before the next.
+    Rejoin,
     Roll(Roll),
     /// The last frame is taken; waiting for the readbacks still out.
     Drain(Roll),
@@ -207,7 +216,10 @@ const DRAIN_LIMIT: Duration = Duration::from_secs(10);
 /// counts as settled, as the loading screen counts them.
 const QUIET_FRAMES: u32 = 10;
 
-/// Enters the world from the character screen and sizes the window.
+/// Enters the world from the character screen and sizes the window; after
+/// a shot that viewed a fighter, stops the view and waits to be out of the
+/// world first.
+#[allow(clippy::too_many_arguments)]
 fn enter(
     mut recorder: ResMut<Recorder>,
     stage: Res<State<Stage>>,
@@ -215,7 +227,17 @@ fn enter(
     mut writer: MessageWriter<Try>,
     mut next: ResMut<NextState<Stage>>,
     mut window: Query<&mut Window, With<PrimaryWindow>>,
+    mut viewing: ResMut<shell::view::Viewing>,
+    mut rejoin: ResMut<shell::view::Rejoin>,
 ) {
+    if matches!(recorder.phase, Phase::Rejoin) {
+        match stage.get() {
+            Stage::Playing if viewing.0.is_some() => shell::view::stop(&mut writer, &mut next, &mut entered, &mut rejoin, &mut viewing),
+            Stage::Playing => {}
+            _ => recorder.phase = Phase::Enter,
+        }
+        return;
+    }
     if !matches!(recorder.phase, Phase::Enter) {
         return;
     }
@@ -276,13 +298,11 @@ fn advance(
     meshes: Res<SummaryMeshes>,
     mut diagnostics: ResMut<DiagnosticsState>,
     mut exit: MessageWriter<AppExit>,
+    viewing: Res<shell::view::Viewing>,
 ) {
-    if matches!(recorder.phase, Phase::Enter | Phase::Done) {
+    if matches!(recorder.phase, Phase::Enter | Phase::Rejoin | Phase::Done) {
         return;
     }
-    // The local player is the one entity with an input queue.
-    let Some(&ent) = buffers.entities().next() else { return };
-    let Ok((loc, heading, position, mut visibility)) = player.get_mut(ent) else { return };
     let Some(shot) = recorder.shot().cloned() else {
         recorder.phase = Phase::Done;
         info!("milestone: recorder done");
@@ -292,17 +312,50 @@ fn advance(
         return;
     };
 
-    // The light and the player's visibility are the shot's through all of
-    // it, so the world settles under the light it is recorded in.
+    // The light is the shot's through all of it, so the world settles
+    // under the light it is recorded in, and holds it while a view has no
+    // player
     let hours = clock_at(&shot.clock, recorder.t());
     diagnostics.lighting.hold_at((hours * HOUR_MS as f64) as u128);
+    let now = Instant::now();
+
+    // A shot that views its fighter ends with the view: the fighter fell
+    // and is gone, and the client leaves the world after it
+    let fps = recorder.script.fps;
+    if let Phase::Roll(roll) = &mut recorder.phase {
+        if shot.stage.is_some_and(|stage| stage.view.is_some()) && viewing.0.is_none() && roll.frame < roll.frames {
+            info!("recorder: shot {}: the view ended at {:.1}s", shot.name, roll.frame as f32 / fps as f32);
+            roll.frames = roll.frame.max(1);
+        }
+    }
+
+    // The viewed fighter's opposition comes once the client sees as it
+    if let Phase::Oppose { since, fighter } = recorder.phase {
+        let late = now - since > STAGE_LIMIT;
+        if viewing.0 == Some(fighter) || late {
+            if late {
+                warn!("recorder: shot {}: no view of {fighter} after {STAGE_LIMIT:?}; rolling", shot.name);
+            }
+            if let Some(stage) = shot.stage {
+                let (archetype, level, size) = stage.opposition();
+                writer.write(Try { event: Event::SpawnParty { ent: fighter, archetype, level, size, engage: true } });
+            }
+            let at = player.get(fighter).map(|(_, _, position, _)| position.clone()).unwrap_or_default();
+            recorder.phase = Phase::Roll(roll(&recorder.script, &shot, &at, Some(fighter)));
+        }
+        return;
+    }
+
+    // The local player is the one entity with an input queue; a shot that
+    // views a fighter has none while it rolls
+    let Some(&ent) = buffers.entities().next() else { return };
+    let Ok((loc, heading, position, mut visibility)) = player.get_mut(ent) else { return };
     visibility.set_if_neq(if shot.hide_player { Visibility::Hidden } else { Visibility::Inherited });
 
-    let now = Instant::now();
     let recorder = &mut *recorder;
     let mut skip = false;
     match &mut recorder.phase {
-        Phase::Enter | Phase::Roll(_) | Phase::Drain(_) | Phase::Done => {}
+        Phase::Enter | Phase::Oppose { .. } | Phase::Rejoin | Phase::Roll(_) | Phase::Drain(_) | Phase::Done => {}
         Phase::Arrive { since, asked } => {
             if (loc.q, loc.r) == (shot.at[0], shot.at[1]) {
                 info!("recorder: shot {} at ({}, {})", shot.name, shot.at[0], shot.at[1]);
@@ -353,15 +406,8 @@ fn advance(
                 }
                 info!("recorder: shot {} settled in {:.1}s", shot.name, (now - *since).as_secs_f32());
                 if let Some(stage) = shot.stage {
-                    writer.write(Try { event: Event::StageFight {
-                        ent,
-                        west: stage.west,
-                        east: stage.east,
-                        level: stage.level,
-                        b_level: stage.b_level.unwrap_or(stage.level),
-                        size: stage.size,
-                        b_size: stage.b_size.unwrap_or(stage.size),
-                    } });
+                    let (archetype, level, size) = stage.party();
+                    writer.write(Try { event: Event::SpawnParty { ent, archetype, level, size, engage: false } });
                     let before = npcs.iter().filter(|(_, kind, _)| is_npc(kind)).map(|(e, _, _)| e).collect();
                     recorder.phase = Phase::Stage { since: now, before };
                 } else {
@@ -369,21 +415,31 @@ fn advance(
                 }
             }
         }
-        // The shot rolls as its fight arrives, so the film has it from its
-        // first step; a shot that views a team waits for that team's
+        // The party's fighter found, the shot views it and then brings its
+        // opposition, or brings the opposition straight on it; the fight
+        // starts as the film does
         Phase::Stage { since, before } => {
-            let viewed = shot.stage.and_then(|stage| stage.view.map(|team| stage.of(team).npc_type()));
+            let party = shot.stage.map(|stage| stage.party().0.npc_type());
             let fighter = npcs.iter()
                 .filter(|(e, kind, _)| is_npc(kind) && !before.contains(e))
-                .filter(|(_, kind, _)| viewed.is_none_or(|npc| matches!(kind, EntityType::Actor(actor) if actor.identity == ActorIdentity::Npc(npc))))
+                .filter(|(_, kind, _)| party.is_none_or(|npc| matches!(kind, EntityType::Actor(actor) if actor.identity == ActorIdentity::Npc(npc))))
                 .min_by_key(|(_, _, at)| at.distance(loc))
                 .map(|(e, _, _)| e);
-            let late = now - *since > STAGE_LIMIT;
-            if fighter.is_some() || late {
-                if late {
-                    warn!("recorder: shot {}: no fighter after {STAGE_LIMIT:?}; rolling", shot.name);
+            match (fighter, shot.stage) {
+                (Some(fighter), Some(stage)) if stage.view.is_some() => {
+                    writer.write(Try { event: Event::View { ent: fighter } });
+                    recorder.phase = Phase::Oppose { since: now, fighter };
                 }
-                recorder.phase = Phase::Roll(roll(&recorder.script, &shot, position, fighter));
+                (Some(fighter), Some(stage)) => {
+                    let (archetype, level, size) = stage.opposition();
+                    writer.write(Try { event: Event::SpawnParty { ent: fighter, archetype, level, size, engage: true } });
+                    recorder.phase = Phase::Roll(roll(&recorder.script, &shot, position, Some(fighter)));
+                }
+                _ if now - *since > STAGE_LIMIT => {
+                    warn!("recorder: shot {}: no fighter after {STAGE_LIMIT:?}; rolling", shot.name);
+                    recorder.phase = Phase::Roll(roll(&recorder.script, &shot, position, None));
+                }
+                _ => {}
             }
         }
     }
@@ -402,27 +458,6 @@ fn roll(script: &Script, shot: &Shot, position: &Position, fighter: Option<Entit
     });
     info!("milestone: recorder shot {} rolling ({frames} frames)", shot.name);
     Roll { frame: 0, frames, armed: false, start: Instant::now(), anchor: position.clone(), fighter, writer, received: 0, fps }
-}
-
-/// Puts the view on the fighter the rolling shot views, and back on the
-/// player otherwise or once the fighter is gone.
-fn view(
-    recorder: Res<Recorder>,
-    buffers: Res<InputQueues>,
-    viewed: Query<Entity, With<Viewed>>,
-    actors: Query<(), With<Loc>>,
-    mut commands: Commands,
-) {
-    let Some(&player) = buffers.entities().next() else { return };
-    let wanted = recorder.viewing().filter(|&e| actors.contains(e)).unwrap_or(player);
-    for e in &viewed {
-        if e != wanted {
-            commands.entity(e).try_remove::<Viewed>();
-        }
-    }
-    if !viewed.contains(wanted) {
-        commands.entity(wanted).try_insert(Viewed);
-    }
 }
 
 fn is_npc(kind: &EntityType) -> bool {
@@ -467,12 +502,11 @@ fn press_keys(mut recorder: ResMut<Recorder>, mut keyboard: ResMut<ButtonInput<K
 fn drive_camera(
     recorder: Res<Recorder>,
     mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
-    buffers: Res<InputQueues>,
+    seer: Query<Entity, With<Viewed>>,
     player: Query<(&VisualPosition, &Position, &Heading)>,
     map: Res<Map>,
     origin: Res<RenderOrigin>,
-    // Rendered, as the fighter was last seen; the player stands through a
-    // staged shot, so no re-base moves the origin under it.
+    // Rendered, as the fighter was last seen.
     mut fell: Local<Option<Vec3>>,
 ) {
     let Some(CameraPath::Path { anchor, ease, keys, follow_at, blend }) = recorder.shot().map(|s| &s.camera) else { return };
@@ -480,7 +514,8 @@ fn drive_camera(
     if taken >= 1.0 {
         return;
     }
-    let Some((visual, position, heading)) = buffers.entities().next().and_then(|&e| player.get(e).ok()) else { return };
+    // The actor the client sees as: the player, or the fighter a shot views
+    let Some((visual, position, heading)) = seer.single().ok().and_then(|e| player.get(e).ok()) else { return };
     let Ok((mut projection, mut transform)) = camera.single_mut() else { return };
     let base = match (anchor, &recorder.phase) {
         (Anchor::Player | Anchor::Heading, _) => visual.current(),

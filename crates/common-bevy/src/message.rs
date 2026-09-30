@@ -94,18 +94,18 @@ pub enum Event {
     /// beyond the range its pack acquires a target from. An admin request,
     /// as ungated on the wire as `Teleport`.
     SpawnDen { ent: Entity, archetype: crate::spatial_difficulty::EnemyArchetype },
-    /// Client → Server: stage a fight ahead of the entity, `size` NPCs of
-    /// `west` at `level` against `b_size` of `east` at `b_level`, on sides of
-    /// their own, as the balance arena sets them out. An admin request, as
-    /// ungated on the wire as `SpawnDen`; the recorder sends it as a shot rolls.
-    StageFight {
+    /// Client → Server: place a party of `size` `archetype`s at `level`, on
+    /// a side of its own, ahead of the actor `ent`: out of its reach, or
+    /// with `engage`, where it acquires them, as the balance arena sets its
+    /// teams apart. Staging a fight is a party, a view of it, then its
+    /// opposition engaged on the viewed fighter. An admin request, as
+    /// ungated on the wire as `SpawnDen`.
+    SpawnParty {
         ent: Entity,
-        west: crate::spatial_difficulty::EnemyArchetype,
-        east: crate::spatial_difficulty::EnemyArchetype,
+        archetype: crate::spatial_difficulty::EnemyArchetype,
         level: u8,
-        b_level: u8,
         size: u8,
-        b_size: u8,
+        engage: bool,
     },
     /// Client → Server (Try): Request to respec attribute allocation
     /// Server → Client (Do): Attribute respec confirmed and applied
