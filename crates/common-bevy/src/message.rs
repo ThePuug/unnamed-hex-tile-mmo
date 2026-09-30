@@ -192,6 +192,20 @@ impl AbilityType {
     pub fn is_reaction(self) -> bool {
         matches!(self, AbilityType::Counter | AbilityType::Kick | AbilityType::Disengage)
     }
+
+    /// The ability this one offers as its follow-up, the one that unlocks
+    /// through its lockout ahead of the rest (`synergies::apply_synergies`):
+    /// the player's four run round one ring, Lunge to Overpower to Counter
+    /// to Kick and back to Lunge. None for an ability that offers nothing.
+    pub fn follow_up(self) -> Option<AbilityType> {
+        match self {
+            AbilityType::Lunge => Some(AbilityType::Overpower),
+            AbilityType::Overpower => Some(AbilityType::Counter),
+            AbilityType::Counter => Some(AbilityType::Kick),
+            AbilityType::Kick => Some(AbilityType::Lunge),
+            AbilityType::AutoAttack | AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => None,
+        }
+    }
 }
 
 /// Reasons why an ability usage might fail

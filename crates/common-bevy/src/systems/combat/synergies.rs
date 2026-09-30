@@ -6,64 +6,6 @@ use crate::{
     systems::combat::damage as damage_calc,
 };
 
-/// Synergy trigger types for ability categorization
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SynergyTrigger {
-    GapCloser,   // Lunge
-    HeavyStrike, // Overpower
-    Push,        // Knockback
-    Mitigate,    // Counter
-    Kick,        // Kick
-}
-
-/// Synergy rule definition (what ability unlocks what)
-#[derive(Debug, Clone)]
-pub struct SynergyRule {
-    pub trigger: SynergyTrigger,
-    pub target: AbilityType,
-    pub unlock_reduction: f32, // How much earlier to unlock (in seconds)
-}
-
-/// MVP Synergy Rules (hardcoded for Phase 2, data-driven later in Phase 4)
-pub const MVP_SYNERGIES: &[SynergyRule] = &[
-    // Gap Closer → Heavy Strike: Overpower unlocks 0.5s early during Lunge recovery
-    SynergyRule {
-        trigger: SynergyTrigger::GapCloser,
-        target: AbilityType::Overpower,
-        unlock_reduction: 0.5, // Overpower available at 0.5s instead of 1.0s
-    },
-    // Heavy Strike → Mitigate: Counter unlocks 1.0s early during Overpower recovery
-    SynergyRule {
-        trigger: SynergyTrigger::HeavyStrike,
-        target: AbilityType::Counter,
-        unlock_reduction: 1.0, // Counter available at 1.0s instead of 2.2s (0.2s window)
-    },
-    // Kick → Lunge: what a kick knocks back, a Lunge closes on again
-    SynergyRule {
-        trigger: SynergyTrigger::Kick,
-        target: AbilityType::Lunge,
-        unlock_reduction: 1.0,
-    },
-    // Counter → Kick: what a counter answered, a kick drives off, closing
-    // the ring Lunge → Overpower → Counter → Kick → Lunge
-    SynergyRule {
-        trigger: SynergyTrigger::Mitigate,
-        target: AbilityType::Kick,
-        unlock_reduction: 1.0,
-    },
-];
-
-/// Get the synergy trigger type for an ability
-pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
-    match ability {
-        AbilityType::Lunge => Some(SynergyTrigger::GapCloser),
-        AbilityType::Overpower => Some(SynergyTrigger::HeavyStrike),
-        AbilityType::Counter => Some(SynergyTrigger::Mitigate),  // Mitigate type
-        AbilityType::Kick => Some(SynergyTrigger::Kick),
-        AbilityType::AutoAttack | AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => None, // No synergies
-    }
-}
-
 /// Whether `ability` may be used under `recovery`, the lockout, `synergy`,
 /// the follow-up the last ability offered, and `combo`, a Ferocity combo
 /// under way: anything out of lockout; in it, the offered follow-up once it
@@ -126,7 +68,7 @@ pub fn settle_combo(ent: Entity, ability: AbilityType, early: bool, opener: f32,
         return;
     }
     let steps = attrs.ferocity().index() as u8;
-    if steps > 0 && get_synergy_trigger(ability).is_some() {
+    if steps > 0 && ability.follow_up().is_some() {
         entity.insert(Combo { window: opener, steps });
     } else {
         entity.remove::<Combo>();
@@ -152,15 +94,12 @@ pub fn tick_combo(mut commands: Commands, mut query: Query<(Entity, &mut Combo)>
     }
 }
 
-/// Apply synergies when an ability is used.
-
-/// Pattern 1 (Nullifying): 66% × contest_factor, the level gap weighing in
-/// - Calculates percentage reduction of effective_recovery_base
-/// - Creates early unlock window for synergized abilities
-/// - Stacks multiplicatively with composure reduction
-
-/// This should be called immediately after creating GlobalRecovery.
-/// Both server and client run this function locally (no network broadcast needed).
+/// Offers `used_ability`'s follow-up (`AbilityType::follow_up`) to `entity`,
+/// unlocking through `recovery`, the lockout the ability started: earlier by
+/// a floor every actor has (`Tuning::synergy_floor`), and more by the
+/// attacker's Flow over the defender's Reflex, the level gap weighing in.
+/// What the lockout carried from before never unlocks early. Server and
+/// client both call it as the lockout starts, so they offer alike.
 pub fn apply_synergies(
     entity: Entity,
     used_ability: AbilityType,
@@ -169,17 +108,13 @@ pub fn apply_synergies(
     defender_attrs: &ActorAttributes,
     commands: &mut Commands,
 ) {
-    // Get the trigger type for the used ability
-    let Some(trigger_type) = get_synergy_trigger(used_ability) else {
-        return; // No synergies for this ability
+    let Some(follow_up) = used_ability.follow_up() else {
+        return;
     };
 
-    // A floor every actor has, and a share more its Flow wins over the
-    // defender's Reflex, the level gap weighing in
     let tuning = crate::tuning::tuning();
     let edge = damage_calc::level_edge(attacker_attrs.total_level(), defender_attrs.total_level());
     let contest = damage_calc::contest_factor(attacker_attrs.flow(), defender_attrs.reflex(), edge);
-
     let synergy_reduction = tuning.synergy_floor + tuning.synergy_share * contest;
 
     // No early unlock at all when the floor is none and the contest is lost
@@ -187,21 +122,10 @@ pub fn apply_synergies(
         return;
     }
 
-    // Find and apply matching synergy rules
-    for _rule in MVP_SYNERGIES {
-        if _rule.trigger == trigger_type {
-            // Apply percentage reduction to effective_recovery_base
-            // recovery.remaining is already adjusted by composure, so this stacks multiplicatively
-            // What the lockout carried from before never unlocks early
-            let unlock_at = ((recovery.remaining - recovery.carried) * (1.0 - synergy_reduction)).max(0.0);
-
-            // Insert synergy unlock component (both server and client do this locally)
-            // Only insert if entity exists (may have been evicted client-side)
-            let synergy = SynergyUnlock::new(_rule.target, unlock_at, used_ability);
-            if let Ok(mut entity_cmd) = commands.get_entity(entity) {
-                entity_cmd.insert(synergy);
-            }
-        }
+    let unlock_at = ((recovery.remaining - recovery.carried) * (1.0 - synergy_reduction)).max(0.0);
+    // The entity may have been evicted client-side
+    if let Ok(mut entity_cmd) = commands.get_entity(entity) {
+        entity_cmd.insert(SynergyUnlock::new(follow_up, unlock_at, used_ability));
     }
 }
 
@@ -280,61 +204,12 @@ mod tests {
     }
 
     #[test]
-    fn test_get_synergy_trigger() {
-        assert_eq!(
-            get_synergy_trigger(AbilityType::Lunge),
-            Some(SynergyTrigger::GapCloser)
-        );
-        assert_eq!(
-            get_synergy_trigger(AbilityType::Overpower),
-            Some(SynergyTrigger::HeavyStrike)
-        );
-        assert_eq!(
-            get_synergy_trigger(AbilityType::Counter),
-            Some(SynergyTrigger::Mitigate)
-        );
-        assert_eq!(
-            get_synergy_trigger(AbilityType::Kick),
-            Some(SynergyTrigger::Kick)
-        );
-        assert_eq!(get_synergy_trigger(AbilityType::AutoAttack), None);
-    }
-
-    #[test]
-    fn test_mvp_synergies_rules() {
-        assert_eq!(MVP_SYNERGIES.len(), 4, "one rule for each step of the ring");
-
-        // Lunge → Overpower
-        let lunge_synergy = &MVP_SYNERGIES[0];
-        assert_eq!(lunge_synergy.trigger, SynergyTrigger::GapCloser);
-        assert_eq!(lunge_synergy.target, AbilityType::Overpower);
-        assert_eq!(lunge_synergy.unlock_reduction, 0.5);
-
-        // Overpower → Counter (replaces Knockback)
-        let overpower_synergy = &MVP_SYNERGIES[1];
-        assert_eq!(overpower_synergy.trigger, SynergyTrigger::HeavyStrike);
-        assert_eq!(overpower_synergy.target, AbilityType::Counter);
-        assert_eq!(overpower_synergy.unlock_reduction, 1.0);
-
-        // Kick → Lunge
-        let kick_synergy = &MVP_SYNERGIES[2];
-        assert_eq!(kick_synergy.trigger, SynergyTrigger::Kick);
-        assert_eq!(kick_synergy.target, AbilityType::Lunge);
-
-        // Counter → Kick
-        let counter_synergy = &MVP_SYNERGIES[3];
-        assert_eq!(counter_synergy.trigger, SynergyTrigger::Mitigate);
-        assert_eq!(counter_synergy.target, AbilityType::Kick);
-    }
-
-    #[test]
     fn the_player_synergies_run_round_one_ring() {
-        // Following each synergy from Lunge reaches every player ability once and comes back
+        // Following each follow-up from Lunge reaches every player ability once and comes back
         let mut at = AbilityType::Lunge;
         let mut seen = vec![at];
         loop {
-            let trigger = get_synergy_trigger(at).expect("every ring ability triggers one");
-            at = MVP_SYNERGIES.iter().find(|rule| rule.trigger == trigger).expect("and it leads on").target;
+            at = at.follow_up().expect("every ring ability leads on");
             if at == AbilityType::Lunge { break; }
             assert!(!seen.contains(&at), "{at:?} comes round twice");
             seen.push(at);
