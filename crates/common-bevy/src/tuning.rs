@@ -230,7 +230,7 @@ impl Tuning {
         counter_reflect: 0.6,
         leap_cost: 30.0,
         leap_recovery: 1.0,
-        leap_distance: 6,
+        leap_distance: 9,
         leap_strike: 1.0,
         stride_cost: 30.0,
         stride_recovery: 1.0,
