@@ -94,7 +94,7 @@ pub fn handle_disengage(
         writer.write(Do {
             event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
         });
-        crate::systems::combat::leap::leap(*ent, landing, &mut commands, &mut writer);
+        crate::systems::combat::leap::slide(*ent, landing, crate::systems::combat::leap::LEAP_MS, None, &mut commands, &mut writer);
 
         if let Ok(mut queue) = queue_query.get_mut(*ent) {
             if !clear_threats(&mut queue, ClearType::First(1)).is_empty() {

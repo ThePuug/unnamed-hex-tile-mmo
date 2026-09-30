@@ -95,7 +95,7 @@ pub fn land(
             if first_of_burst {
                 if let (Ok(at), Ok(from)) = (locs.get(source), locs.get(target)) {
                     if let Some(landing) = super::leap::away(map, **at, **from, tuning.volley_leap) {
-                        super::leap::leap(source, landing, commands, writer);
+                        super::leap::slide(source, landing, super::leap::LEAP_MS, None, commands, writer);
                     }
                 }
             }

@@ -6,45 +6,14 @@ use common_bevy::{
     resources::map::Map,
     systems::combat::synergies::{apply_synergies, is_early, lockout, may_use, reacts_through, settle_combo},
 };
-use crate::{resources::RunTime, systems::stagger::Knockback};
-
-use qrz::Qrz;
-
-/// Calculate knockback destination using greedy terrain-following pathfinding.
-/// Projects a far target in the knockback direction, then uses `greedy_path`
-/// to find the actual terrain-following path. Returns (destination, tiles_pushed).
-fn calculate_knockback_destination(
-    source_loc: Qrz,
-    direction: Qrz,
-    distance: i32,
-    map: &Map,
-) -> (Qrz, i32) {
-    // Find floor tile under source (source_loc may be standing height = floor + Z)
-    let Some((floor, _)) = map.get_by_qr(source_loc.q, source_loc.r) else {
-        return (source_loc, 0);
-    };
-
-    // Project far target well beyond knockback range
-    let far_target = Qrz {
-        q: floor.q + direction.q * 20,
-        r: floor.r + direction.r * 20,
-        z: 0,
-    };
-
-    let path = map.greedy_path(floor, far_target, distance as usize);
-    if path.is_empty() {
-        (floor, 0)
-    } else {
-        (*path.last().unwrap(), path.len() as i32)
-    }
-}
+use crate::resources::RunTime;
 
 /// Handle Kick ability — REACTIVE KICK
 /// - `Tuning::kick_cost` stamina
 /// - Clears all visible window threats
 /// - Deals 75% Precision damage to adjacent threat sources
-/// - Knockback adjacent sources 4 tiles directly away, further by the
-///   kicker's hold (`ActorAttributes::hold`)
+/// - Drives adjacent sources 4 tiles away over the ground (`leap::away`),
+///   further by the kicker's hold (`ActorAttributes::hold`), and staggers them
 /// - Synergy: Kick → Lunge
 pub fn handle_kick(
     mut commands: Commands,
@@ -196,35 +165,14 @@ pub fn handle_kick(
                 }
             }
 
-            // Knockback: push direction is source - caster (away from kicker)
-            let direction = Qrz {
-                q: source_loc.q - caster_loc.q,
-                r: source_loc.r - caster_loc.r,
-                z: 0,
-            };
-
-            // Calculate full knockback destination via greedy terrain-following path
-            let distance = (4.0 * caster_attrs.hold()).round() as i32;
-            let (kb_destination, tiles_pushed) = calculate_knockback_destination(**source_loc, direction, distance, &map);
-
-            if tiles_pushed > 0 {
-                // Send MovementIntent so client starts visual slide immediately.
-                // +Z: entities stand ON terrain (matches MovementIntent convention).
-                let knockback_duration_ms = tiles_pushed as u16 * 125;
-                writer.write(Do {
-                    event: GameEvent::Displace { ent: threat.source, destination: kb_destination + Qrz::Z, duration_ms: knockback_duration_ms, around: None },
-                });
-
-                // Tile-by-tile knockback: process_knockback moves 1 tile per server tick (125ms).
-                // Stagger freezes AI movement; Knockback handles the physical push.
-                commands.entity(threat.source).insert((
-                    Knockback { destination: kb_destination, remaining_tiles: tiles_pushed },
-                    Stagger::new(0.5),
-                ));
-            } else {
-                // Can't push (immediately blocked), just stagger
-                commands.entity(threat.source).insert(Stagger::new(0.5));
+            // Driven back over the ground, away from the kicker, and held
+            // there a moment; with nowhere to go it is only held
+            let tiles = (4.0 * caster_attrs.hold()).round() as usize;
+            if let Some(landing) = crate::systems::combat::leap::away(&map, **source_loc, *caster_loc, tiles) {
+                let pushed = landing.flat_distance(&**source_loc) as u16;
+                crate::systems::combat::leap::slide(threat.source, landing, pushed * 125, None, &mut commands, &mut writer);
             }
+            commands.entity(threat.source).insert(Stagger::new(0.5));
         }
 
         // Drain visible threats from caster's queue
@@ -261,111 +209,5 @@ pub fn handle_kick(
         };
         apply_synergies(*ent, AbilityType::Kick, &recovery, attrs, attrs, &mut commands);
         settle_combo(*ent, AbilityType::Kick, early, get_ability_recovery_duration(AbilityType::Kick), attrs, combo_query.get(*ent).ok(), &mut commands);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use common_bevy::components::entity_type::EntityType;
-
-    fn make_test_map() -> Map {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
-        // Flat terrain: 10x10 grid at z=0
-        for q in -5..=5 {
-            for r in -5..=5 {
-                qrz_map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
-            }
-        }
-        Map::new(qrz_map)
-    }
-
-    #[test]
-    fn knockback_flat_terrain_pushes_full_distance() {
-        let map = make_test_map();
-        let source = Qrz { q: 0, r: 0, z: 0 };
-        let direction = Qrz { q: 1, r: 0, z: 0 }; // East
-
-        let (dest, tiles) = calculate_knockback_destination(source, direction, 4, &map);
-        assert_eq!(dest.q, 4);
-        assert_eq!(dest.r, 0);
-        assert_eq!(tiles, 4);
-    }
-
-    #[test]
-    fn knockback_stops_at_map_edge() {
-        let map = make_test_map();
-        // Start near edge, push east
-        let source = Qrz { q: 4, r: 0, z: 0 };
-        let direction = Qrz { q: 1, r: 0, z: 0 };
-
-        let (dest, _) = calculate_knockback_destination(source, direction, 4, &map);
-        // Should stop at q=5 (last tile with floor)
-        assert_eq!(dest.q, 5);
-        assert_eq!(dest.r, 0);
-    }
-
-    #[test]
-    fn knockback_stops_at_cliff() {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
-        // Flat tiles z=0 from q=0..2, then cliff at q=3 (z=5)
-        for q in 0..=2 {
-            qrz_map.insert(Qrz { q, r: 0, z: 0 }, EntityType::Decorator(default()));
-        }
-        qrz_map.insert(Qrz { q: 3, r: 0, z: 5 }, EntityType::Decorator(default()));
-        qrz_map.insert(Qrz { q: 4, r: 0, z: 5 }, EntityType::Decorator(default()));
-        let map = Map::new(qrz_map);
-
-        let source = Qrz { q: 0, r: 0, z: 0 };
-        let direction = Qrz { q: 1, r: 0, z: 0 };
-
-        let (dest, tiles) = calculate_knockback_destination(source, direction, 4, &map);
-        // Should stop at q=2 (before cliff at q=3)
-        assert_eq!(dest.q, 2);
-        assert_eq!(dest.r, 0);
-        assert_eq!(dest.z, 0);
-        assert_eq!(tiles, 2);
-    }
-
-    #[test]
-    fn knockback_zero_distance_returns_source() {
-        let map = make_test_map();
-        let source = Qrz { q: 0, r: 0, z: 0 };
-        let direction = Qrz { q: 1, r: 0, z: 0 };
-
-        let (dest, tiles) = calculate_knockback_destination(source, direction, 0, &map);
-        assert_eq!(dest, source);
-        assert_eq!(tiles, 0);
-    }
-
-    #[test]
-    fn knockback_all_six_directions() {
-        let map = make_test_map();
-        let source = Qrz { q: 0, r: 0, z: 0 };
-
-        for dir in qrz::DIRECTIONS.iter() {
-            let (dest, tiles) = calculate_knockback_destination(source, *dir, 2, &map);
-            let flat = Qrz { q: 0, r: 0, z: 0 };
-            assert_eq!(dest.flat_distance(&flat), 2,
-                "Direction ({},{}) should push 2 tiles", dir.q, dir.r);
-            assert_eq!(tiles, 2);
-        }
-    }
-
-    #[test]
-    fn knockback_allows_gentle_slopes() {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
-        // Gradual slope: z increases by 1 each tile (passable)
-        for q in 0..=4 {
-            qrz_map.insert(Qrz { q, r: 0, z: q }, EntityType::Decorator(default()));
-        }
-        let map = Map::new(qrz_map);
-
-        let source = Qrz { q: 0, r: 0, z: 0 };
-        let direction = Qrz { q: 1, r: 0, z: 0 };
-
-        let (dest, _) = calculate_knockback_destination(source, direction, 4, &map);
-        assert_eq!(dest.q, 4);
-        assert_eq!(dest.z, 4);
     }
 }

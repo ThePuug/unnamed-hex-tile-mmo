@@ -9,7 +9,7 @@ use common_bevy::{
 /// - `Tuning::lunge_cost` stamina
 /// - Strikes for `Tuning::lunge_force` of Force (scales with might + level)
 /// - `LUNGE_RANGE` hex range
-/// - Teleports caster adjacent to target
+/// - Carries the caster over the ground to beside its target (`leap::toward`)
 /// - Queues a strike and a wound whose DoT, a bleed, deals `Tuning::lunge_dot`
 ///   of Force each tick until a reaction clears the wound or it lands
 pub fn handle_lunge(
@@ -24,6 +24,7 @@ pub fn handle_lunge(
     combo_query: Query<&common_bevy::components::recovery::Combo>,
     respawn_query: Query<&RespawnTimer>,
     heading_query: Query<&common_bevy::components::heading::Heading>,
+    map: Res<common_bevy::resources::map::Map>,
     mut writer: MessageWriter<Do>,
 ) {
     let tuning = common_bevy::tuning::tuning();
@@ -125,6 +126,15 @@ pub fn handle_lunge(
             continue;
         }
 
+        // Where it lands: over the ground toward the target, as far as
+        // beside it. With no way beside it the target is out of reach;
+        // already beside it, the Lunge strikes from where it stands.
+        let landing = crate::systems::combat::leap::toward(&map, **caster_loc, **target_loc, common_bevy::systems::combat::resources::LUNGE_RANGE as usize);
+        if landing.unwrap_or(**caster_loc).flat_distance(&**target_loc) > 1 {
+            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
+            continue;
+        }
+
         let lunge_stamina_cost = common_bevy::tuning::tuning().lunge_cost;
         let Ok(mut stamina) = stamina_query.get_mut(*ent) else {
             continue;
@@ -152,30 +162,11 @@ pub fn handle_lunge(
             },
         });
 
-        // Find landing position: adjacent to target, closest to caster
-        let target_neighbors = (**target_loc).neighbors();
-        let landing_loc = target_neighbors
-            .iter()
-            .min_by_key(|neighbor_loc| caster_loc.flat_distance(neighbor_loc))
-            .copied()
-            .unwrap_or(**target_loc); // Fallback to target loc if no neighbors
-
-        // Send MovementIntent for visual charge (fast dash)
-        let charge_duration_ms = (distance as u16 * 50).max(100);
-        writer.write(Do {
-            event: GameEvent::Displace { ent: *ent, destination: landing_loc + qrz::Qrz::Z, duration_ms: charge_duration_ms, around: None },
-        });
-
-        // Update caster's location
-        commands.entity(*ent).insert((Loc::new(landing_loc), common_bevy::components::position::Position::at_tile(landing_loc)));
-
-        // Broadcast Loc update to clients
-        writer.write(Do {
-            event: GameEvent::Incremental {
-                ent: *ent,
-                component: common_bevy::message::Component::Loc(Loc::new(landing_loc)),
-            },
-        });
+        // The charge: a fast dash along that way
+        if let Some(landing) = landing {
+            let charge_duration_ms = (distance as u16 * 50).max(100);
+            crate::systems::combat::leap::slide(*ent, landing, charge_duration_ms, None, &mut commands, &mut writer);
+        }
 
         // Deal damage (a share of the Force meta-attribute)
         let attrs = attrs_query.get(*ent).expect("Lunge caster must have ActorAttributes");

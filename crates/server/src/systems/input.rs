@@ -15,7 +15,7 @@ use common_bevy::{
     resources::{map::Map, InputQueues},
     systems::movement::{calculate_movement, speed, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED},
 };
-use crate::{network::ServerNet, systems::stagger::Knockback, *};
+use crate::{network::ServerNet, *};
 
 /// Longest slice of time one input message may carry. Legitimate messages
 /// carry a few ticks; this also keeps the i16 cast in physics unreachable.
@@ -254,12 +254,11 @@ pub fn apply(
 /// sent when its heading, motion or airborne state changes and at every tile
 /// crossing while it moves, so a lost intent is repaired within a tile.
 /// Motion is what physics produced this tick, so an input that moved nothing
-/// reports a stopped entity. A knocked-back entity is driven by its
-/// displacement instead.
+/// reports a stopped entity.
 pub fn broadcast_movement_intent(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
-    mut query: Query<(Entity, &Loc, &Position, &Heading, &AirTime, Option<&common_bevy::components::status::Status>, Option<&mut MovementIntentState>), Without<Knockback>>,
+    mut query: Query<(Entity, &Loc, &Position, &Heading, &AirTime, Option<&common_bevy::components::status::Status>, Option<&mut MovementIntentState>)>,
     map: Res<Map>,
 ) {
     for (ent, loc, position, heading, airtime, status, state) in &mut query {

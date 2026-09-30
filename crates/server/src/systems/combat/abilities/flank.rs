@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{
         engagement::EngagementMember, heading::Heading, hex_assignment::{AssignedHex, HexAssignment},
-        position::Position, resources::*, AttackRange, Loc, Turn,
+        resources::*, AttackRange, Loc, Turn,
         recovery::GlobalRecovery,
     },
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
@@ -96,14 +96,10 @@ pub fn handle_flank(
             // Round the target on its ring while the strike waits in its
             // queue, arriving turned to it so its auto-attacks carry on from
             // its back
-            writer.write(Do { event: GameEvent::Displace { ent: *ent, destination: landing + qrz::Qrz::Z, duration_ms: FLANK_CIRCLE_MS, around: Some(**target_loc) } });
-            commands.entity(*ent).insert((Loc::new(landing), Position::at_tile(landing)));
+            crate::systems::combat::leap::slide(*ent, landing, FLANK_CIRCLE_MS, Some(**target_loc), &mut commands, &mut writer);
             if let Some(facing) = Heading::between(&map, landing, **target_loc) {
                 commands.entity(*ent).insert((facing, Turn { heading: facing, ..Turn::default() }));
             }
-            writer.write(Do {
-                event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Loc(Loc::new(landing)) },
-            });
             if let Ok(mut assignment) = member_query.get(*ent).and_then(|member| assignment_query.get_mut(member.0)) {
                 let left = assignment.get(*ent);
                 let holder = assignment.assignments.iter().find(|&(npc, hex)| *hex == landing && *npc != *ent).map(|(npc, _)| *npc);

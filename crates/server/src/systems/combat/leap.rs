@@ -1,10 +1,14 @@
-//! The caster's own movement as an ability makes it. Like any of an ability's
-//! effects (`landing`), it takes one of two timings: with the cast, when the
-//! move stands on its own — Disengage's leap clear of the blow it answers, or
-//! onto the attacker it has already broken from —
-//! or with the threat, when it is worth something only if the blow lands —
-//! the Kiter's leap, which rides its Volley's slow, so a Kiter never leaps
-//! from a target that can still follow it. Either timing moves through here.
+//! The movement an ability makes: its caster's, or for a Kick the one it
+//! drives back. Every such move is a walk over the ground to a standing tile
+//! ([`away`], [`toward`]) and one [`slide`] there: the actor stands on the
+//! tile at once on the server and is drawn sliding to it on every client.
+//!
+//! Like any of an ability's effects (`landing`), a move takes one of two
+//! timings: with the cast, when it stands on its own, as a Lunge's charge or
+//! a Disengage's leap clear of the blow it answers; or with the threat, when
+//! it is worth something only if the blow lands, as the Kiter's leap, which
+//! rides its Volley's slow so a Kiter never leaps from a target that can
+//! still follow it.
 
 use bevy::prelude::*;
 use common_bevy::{
@@ -15,7 +19,7 @@ use common_bevy::{
 use qrz::Qrz;
 
 /// How long a leap's slide takes on screen.
-const LEAP_MS: u16 = 250;
+pub const LEAP_MS: u16 = 250;
 
 /// The standing tile `tiles` steps straight away from `from`, walking the
 /// ground from `at`, each step the neighbour furthest from `from`; `None`
@@ -55,11 +59,12 @@ pub fn toward(map: &Map, at: Qrz, to: Qrz, tiles: usize) -> Option<Qrz> {
 }
 
 /// Moves `ent` to the standing tile `landing` at once, sliding there on
-/// every client.
-pub fn leap(ent: Entity, landing: Qrz, commands: &mut Commands, writer: &mut MessageWriter<Do>) {
+/// every client over `duration_ms`: round the tile `around` on its ring
+/// when given, else the straight way.
+pub fn slide(ent: Entity, landing: Qrz, duration_ms: u16, around: Option<Qrz>, commands: &mut Commands, writer: &mut MessageWriter<Do>) {
     let Ok(mut entity) = commands.get_entity(ent) else { return };
     entity.try_insert((Loc::new(landing), Position::at_tile(landing)));
-    writer.write(Do { event: GameEvent::Displace { ent, destination: landing + Qrz::Z, duration_ms: LEAP_MS, around: None } });
+    writer.write(Do { event: GameEvent::Displace { ent, destination: landing, duration_ms, around } });
     writer.write(Do { event: GameEvent::Incremental { ent, component: MessageComponent::Loc(Loc::new(landing)) } });
 }
 
@@ -76,6 +81,19 @@ mod tests {
             }
         }
         Map::new(qrz_map)
+    }
+
+    #[test]
+    fn a_leap_away_opens_the_distance_and_stops_where_the_ground_does() {
+        let map = flat();
+        let from = Qrz { q: 0, r: 0, z: 1 };
+        let at = Qrz { q: 1, r: 0, z: 1 };
+        let landing = away(&map, at, from, 4).unwrap();
+        assert_eq!(landing.flat_distance(&from), 5, "four tiles further off");
+        assert_eq!(landing.z, 1, "standing on the ground");
+        let edge = away(&map, at, from, 40).unwrap();
+        assert!(edge.flat_distance(&from) <= 24, "no further than the ground runs");
+        assert_eq!(away(&map, edge, from, 3), None, "at the edge, nowhere further to go");
     }
 
     #[test]
