@@ -256,12 +256,12 @@ pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
     mut glow_query: Query<&mut Visibility, With<SynergyGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
-    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&TierLock>, Option<&GlobalRecovery>, Option<&SynergyUnlock>, Has<Actor>), With<crate::components::Viewed>>,
+    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&TierLock>, Option<&GlobalRecovery>, Option<&SynergyUnlock>, Option<&common_bevy::components::ActorAttributes>, Has<Actor>), With<crate::components::Viewed>>,
     entity_query: Query<(&EntityType, &Loc, Option<&Side>)>,
     nntree: Res<NNTree>,
 ) {
     // The resources and position of the actor the client sees as
-    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, recovery_opt, synergy_opt, controlled)) = player_query.single() else {
+    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, recovery_opt, synergy_opt, attrs, controlled)) = player_query.single() else {
         return;
     };
     let targeting_state = targeting_state.copied().unwrap_or_default();
@@ -298,6 +298,7 @@ pub fn update(
                 player_ent,
                 *player_loc,
                 *player_heading,
+                common_bevy::systems::targeting::arc_of(attrs),
                 &targeting_state,
                 &nntree,
                 &entity_query,
@@ -375,6 +376,7 @@ fn get_ability_state(
     player_ent: Entity,
     player_loc: Loc,
     player_heading: Heading,
+    arc: f32,
     targeting_state: &TierLock,
     nntree: &NNTree,
     entity_query: &Query<(&EntityType, &Loc, Option<&Side>)>,
@@ -408,6 +410,7 @@ fn get_ability_state(
                 player_ent,
                 player_loc,
                 player_heading,
+                arc,
                 targeting_state.get(), // Respect tier lock
                 nntree,
                 hostile,
@@ -434,6 +437,7 @@ fn get_ability_state(
                 player_ent,
                 player_loc,
                 player_heading,
+                arc,
                 targeting_state.get(), // Respect tier lock
                 nntree,
                 hostile,

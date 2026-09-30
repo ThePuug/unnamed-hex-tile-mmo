@@ -18,7 +18,7 @@ use common_bevy::{
 /// Whether a striker facing `heading` with `attrs` may strike from `from`
 /// at `to`: within the arc its Grace opens (`ActorAttributes::arc`).
 pub fn in_arc(heading: Option<&Heading>, attrs: Option<&ActorAttributes>, from: &Loc, to: &Loc) -> bool {
-    targeting::faces(heading, attrs.map_or(targeting::STRIDE_ARC, ActorAttributes::arc), from, to)
+    targeting::faces(heading, targeting::arc_of(attrs), from, to)
 }
 
 /// Breaks `ent`'s stride where the strike it just made from `from` at `to`

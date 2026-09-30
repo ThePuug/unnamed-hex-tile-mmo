@@ -121,7 +121,7 @@ pub fn npc_ability_usage(
             EnemyArchetype::Defender | EnemyArchetype::Skirmisher => false,
         };
 
-        if should_use_ability && common_bevy::systems::targeting::faces(heading, common_bevy::systems::targeting::STRIDE_ARC, npc_loc, target_loc) {
+        if should_use_ability && common_bevy::systems::targeting::faces(heading, attrs.arc(), npc_loc, target_loc) {
             // Send target entity from NPC's Target component
             writer.write(Try {
                 event: Event::UseAbility {

@@ -200,17 +200,22 @@ pub fn get_range_tier(distance: u32) -> RangeTier {
 }
 
 /// The entity a caster at `caster_loc` facing `caster_heading` targets: of
-/// those `wanted` within [`TARGET_RADIUS`] and its facing cone, in the tier
-/// `tier_lock` holds it to if any, the nearest, and among the equally near
-/// the one nearest dead ahead. Never the caster itself.
+/// those `wanted` within [`TARGET_RADIUS`] and `arc` degrees either side of
+/// its heading, in the tier `tier_lock` holds it to if any, one inside the
+/// forward faces before any across its line, then the nearest, and among
+/// the equally near the one nearest dead ahead. Never the caster itself.
 ///
-/// `wanted` says who may be targeted at all: an actor on a hostile side for
-/// an attack, one on the caster's own side for an ally. Hostile and ally
-/// targets are picked by this one rule, so both move with the heading alike.
+/// `arc` is the arc the caster strikes within ([`arc_of`]), so whatever it
+/// may strike it may target, and a wider arc still takes what stands in
+/// front first. `wanted` says who may be targeted at all: an actor on a
+/// hostile side for an attack, one on the caster's own side for an ally.
+/// Hostile and ally targets are picked by this one rule, so both move with
+/// the heading alike.
 pub fn select_target(
     caster_ent: Entity,
     caster_loc: Loc,
     caster_heading: Heading,
+    arc: f32,
     tier_lock: Option<RangeTier>,
     nntree: &NNTree,
     wanted: impl Fn(Entity) -> bool,
@@ -220,28 +225,40 @@ pub fn select_target(
     nntree.locate_within_distance(caster_loc, max_range_sq)
         // By entity, not location: several may stand on one tile
         .filter(|nn| nn.ent != caster_ent && wanted(nn.ent))
-        .filter(|nn| is_in_facing_cone(caster_heading, caster_loc, nn.loc))
-        .map(|nn| (nn.ent, caster_loc.flat_distance(&nn.loc) as u32, off_heading(caster_heading, caster_loc, nn.loc)))
-        .filter(|(_, distance, _)| tier_lock.is_none_or(|tier| get_range_tier(*distance) == tier))
-        .min_by(|a, b| a.1.cmp(&b.1).then(a.2.total_cmp(&b.2)))
+        .filter(|nn| within_arc(caster_heading, arc, caster_loc, nn.loc))
+        .map(|nn| (
+            nn.ent,
+            !is_in_facing_cone(caster_heading, caster_loc, nn.loc),
+            caster_loc.flat_distance(&nn.loc) as u32,
+            off_heading(caster_heading, caster_loc, nn.loc),
+        ))
+        .filter(|(_, _, distance, _)| tier_lock.is_none_or(|tier| get_range_tier(*distance) == tier))
+        .min_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.3.total_cmp(&b.3)))
         .map(|(ent, ..)| ent)
 }
 
+/// The half-angle an actor with `attrs` strikes and targets within: the
+/// arc its Grace opens, the forward faces for one with no attributes.
+pub fn arc_of(attrs: Option<&ActorAttributes>) -> f32 {
+    attrs.map_or(STRIDE_ARC, ActorAttributes::arc)
+}
+
 /// Points `target` at the hostile actor `ent` faces from `loc` along
-/// `heading`, within `tier_lock`'s tier if it holds one. With none in its
-/// cone the current target clears and the last one stays, for a frame that
-/// keeps showing it. An entity with no side targets nothing.
+/// `heading` within its `arc`, within `tier_lock`'s tier if it holds one.
+/// With none in its arc the current target clears and the last one stays,
+/// for a frame that keeps showing it. An entity with no side targets nothing.
 pub fn update_targets_impl(
     ent: Entity,
     loc: Loc,
     heading: Heading,
+    arc: f32,
     target: &mut crate::components::target::Target,
     tier_lock: Option<&TierLock>,
     nntree: &NNTree,
     side_of: impl Fn(Entity) -> Option<crate::components::behaviour::Side>,
 ) {
     let new_target = side_of(ent).and_then(|own| {
-        select_target(ent, loc, heading, tier_lock.and_then(|tl| tl.get()), nntree, |other| {
+        select_target(ent, loc, heading, arc, tier_lock.and_then(|tl| tl.get()), nntree, |other| {
             side_of(other).is_some_and(|side| side.is_hostile_to(own))
         })
     });
@@ -544,7 +561,7 @@ mod tests {
         // Spawn target directly ahead (east) - NPC
         let target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 }));
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, None, &nntree, hostile(&world, caster));
 
         assert_eq!(result, Some(target), "Should select the target directly ahead");
     }
@@ -561,7 +578,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, None, &nntree, hostile(&world, caster));
 
         assert_eq!(result, None, "Should return None when no targets exist");
     }
@@ -581,7 +598,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, None, &nntree, hostile(&world, caster));
 
         assert_eq!(result, None, "Should not select target behind caster");
     }
@@ -603,7 +620,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, None, &nntree, hostile(&world, caster));
 
         assert_eq!(result, Some(nearest), "Should select the nearest target");
     }
@@ -625,7 +642,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, None, &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(directly_ahead),
@@ -649,7 +666,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, None, &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(actor),
@@ -673,7 +690,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Close), &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, Some(RangeTier::Close), &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(close_target),
@@ -698,7 +715,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Mid), &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, Some(RangeTier::Mid), &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(mid_target),
@@ -721,7 +738,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Far), &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, Some(RangeTier::Far), &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, None,
@@ -746,7 +763,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, None, &nntree, hostile(&world, caster));
 
         // Should select one of the targets within the cone (ne_target or se_target)
         assert!(
@@ -775,7 +792,7 @@ mod tests {
         // Spawn NPC (hostile) - should be targetable
         let npc = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 }));
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, None, &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(npc),
@@ -802,12 +819,40 @@ mod tests {
         let player = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 }));
         world.entity_mut(player).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, None, &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(player),
             "NPC should select player and skip other NPC"
         );
+    }
+
+    #[test]
+    fn a_wider_arc_targets_what_stands_across_the_line() {
+        let (mut world, mut nntree) = setup_test_world();
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+        let behind = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: -1, r: 0, z: 0 }));
+
+        let pick = |arc| select_target(caster, caster_loc, heading, arc, None, &nntree, hostile(&world, caster));
+        assert_eq!(pick(STRIDE_ARC), None, "the forward faces do not reach behind");
+        assert_eq!(pick(180.0), Some(behind), "an arc every way does");
+    }
+
+    #[test]
+    fn a_target_in_front_is_taken_before_a_nearer_one_across_the_line() {
+        let (mut world, mut nntree) = setup_test_world();
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+        spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: -1, r: 0, z: 0 }));
+        let ahead = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 3, r: 0, z: 0 }));
+
+        let result = select_target(caster, caster_loc, heading, 180.0, None, &nntree, hostile(&world, caster));
+        assert_eq!(result, Some(ahead));
     }
 
     // ===== TIER LOCK INTEGRATION TESTS =====
@@ -846,6 +891,7 @@ mod tests {
             caster,
             caster_loc,
             heading,
+            STRIDE_ARC,
             Some(RangeTier::Close), // Tier 1
             &nntree,
             hostile(&world, caster),
@@ -857,6 +903,7 @@ mod tests {
             caster,
             caster_loc,
             heading,
+            STRIDE_ARC,
             Some(RangeTier::Mid), // Tier 2
             &nntree,
             hostile(&world, caster),
@@ -868,6 +915,7 @@ mod tests {
             caster,
             caster_loc,
             heading,
+            STRIDE_ARC,
             Some(RangeTier::Far), // Tier 3
             &nntree,
             hostile(&world, caster),
@@ -879,6 +927,7 @@ mod tests {
             caster,
             caster_loc,
             heading,
+            STRIDE_ARC,
             None, // No tier lock
             &nntree,
             hostile(&world, caster),
@@ -918,6 +967,7 @@ mod tests {
             player,
             player_loc,
             heading,
+            STRIDE_ARC,
             None, // No tier lock
             &nntree,
             hostile(&world, player),
@@ -932,6 +982,7 @@ mod tests {
             player,
             player_loc,
             heading,
+            STRIDE_ARC,
             Some(RangeTier::Mid), // Tier 2 (Mid)
             &nntree,
             hostile(&world, player),
@@ -946,6 +997,7 @@ mod tests {
             player,
             player_loc,
             heading,
+            STRIDE_ARC,
             None, // Tier lock dropped after ability
             &nntree,
             hostile(&world, player),
@@ -983,6 +1035,7 @@ mod tests {
             caster,
             caster_loc,
             heading,
+            STRIDE_ARC,
             Some(RangeTier::Close),
             &nntree,
             ally(&world, caster),
@@ -1022,6 +1075,7 @@ mod tests {
             caster,
             caster_loc,
             heading,
+            STRIDE_ARC,
             Some(RangeTier::Mid),
             &nntree,
             ally(&world, caster),
@@ -1058,6 +1112,7 @@ mod tests {
             caster,
             caster_loc,
             heading,
+            STRIDE_ARC,
             Some(RangeTier::Far),
             &nntree,
             ally(&world, caster),
@@ -1097,6 +1152,7 @@ mod tests {
             caster,
             caster_loc,
             heading,
+            STRIDE_ARC,
             None,
             &nntree,
             ally(&world, caster),
