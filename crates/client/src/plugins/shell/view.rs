@@ -1,9 +1,10 @@
 //! Viewing: the client sees the world as an actor it does not control, an
 //! admin's view of any fighter, with a player's camera and HUD. The server
 //! makes the actor the connection's (`Presence::View`) and takes the
-//! character out of the world; here `Viewed` moves onto the actor. Once it
-//! is gone, or the view is stopped, the client leaves and comes back as a
-//! fresh character, as if it had just logged in.
+//! character out of the world; here `Viewed` moves onto the actor. A viewed
+//! actor that dies stays, its body kept, until the view is stopped; then,
+//! or if the actor leaves the world some other way, the client leaves and
+//! comes back as a fresh character, as if it had just logged in.
 
 use bevy::prelude::*;
 

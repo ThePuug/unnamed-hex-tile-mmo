@@ -1,6 +1,6 @@
 use bevy::prelude::*;
-use common_bevy::components::{Actor, resources::Health};
-use crate::components::DeathMarker;
+use common_bevy::components::{Actor, reaction_queue::ReactionQueue, resources::Health};
+use crate::components::{DeathMarker, Viewed};
 
 /// Restore visibility for actors that were hidden (e.g. after respawn)
 /// Dead actors now get a death pose via DeathMarker instead of being hidden
@@ -14,23 +14,28 @@ pub fn update_dead_visibility(
     }
 }
 
-/// Apply death pose to newly dead entities and despawn after 3 seconds
+/// Apply death pose to newly dead entities and despawn after 3 seconds, but
+/// the one the client sees as: its body stays until the view ends, and the
+/// threats it held go as it falls, the dead taking no more.
 pub fn cleanup_dead_entities(
     mut commands: Commands,
-    mut query: Query<(Entity, &DeathMarker, &mut Transform)>,
+    mut query: Query<(Entity, &DeathMarker, &mut Transform, Option<&mut ReactionQueue>, Has<Viewed>)>,
     time: Res<Time>,
 ) {
     const DEATH_LINGER_SECS: f32 = 3.0;
 
-    for (entity, marker, mut transform) in &mut query {
+    for (entity, marker, mut transform, queue, viewed) in &mut query {
         let elapsed = (time.elapsed() - marker.death_time).as_secs_f32();
 
         if elapsed <= 0.01 {
             // First frame: tip over 90 degrees to lay on side
             transform.rotation *= Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+            if let Some(mut queue) = queue {
+                queue.threats.clear();
+            }
         }
 
-        if elapsed >= DEATH_LINGER_SECS {
+        if elapsed >= DEATH_LINGER_SECS && !viewed {
             commands.entity(entity).despawn();
         }
     }
@@ -89,5 +94,21 @@ mod tests {
 
         let visibility = world.get::<Visibility>(entity).unwrap();
         assert_eq!(*visibility, Visibility::Visible);
+    }
+
+    #[test]
+    fn a_viewed_body_stays_until_the_view_ends() {
+        let mut world = World::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(10));
+        world.insert_resource(time);
+        let fell = || DeathMarker { death_time: std::time::Duration::from_secs(1) };
+        let viewed = world.spawn((fell(), Transform::default(), Viewed)).id();
+        let other = world.spawn((fell(), Transform::default())).id();
+
+        world.run_system_once(cleanup_dead_entities).unwrap();
+
+        assert!(world.get_entity(viewed).is_ok(), "the viewed body is kept");
+        assert!(world.get_entity(other).is_err(), "the rest linger and go");
     }
 }
