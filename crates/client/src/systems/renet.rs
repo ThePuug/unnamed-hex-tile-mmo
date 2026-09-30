@@ -147,13 +147,6 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs }});
             }
 
-            Do { event: Event::Confirm { ent, seq, position, airtime, turn } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
-                    continue
-                };
-                do_writer.write(Do { event: Event::Confirm { ent, seq, position, airtime, turn } });
-            }
             Do { event: Event::Despawn { ent } } => {
                 // Check if this is the local player (has InputQueue)
                 let is_local_player = l2r.get_by_right(&ent)
@@ -182,86 +175,44 @@ pub fn write_do(
                     }
                 }
             }
-            Do { event: Event::Incremental { ent, component } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
-                    continue
-                };
-                do_writer.write(Do { event: Event::Incremental { ent, component } });
-            }
-            Do { event: Event::Inventory { ent, bag } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    warn!("Client: Inventory for {:?} before its entity", ent);
-                    continue
-                };
-                do_writer.write(Do { event: Event::Inventory { ent, bag } });
-            }
+            // A tile's cover is about no entity here
             Do { event: Event::CoverChanged { ent: _, q, r, cover } } => {
                 do_writer.write(Do { event: Event::CoverChanged { ent: Entity::PLACEHOLDER, q, r, cover } });
             }
-            Do { event: Event::Loot { ent, entries } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else { continue };
-                do_writer.write(Do { event: Event::Loot { ent, entries } });
+            Do { event: event @ Event::Pong { .. } } => {
+                do_writer.write(Do { event });
             }
-            Do { event: Event::Activity { ent, activity } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else { continue };
-                do_writer.write(Do { event: Event::Activity { ent, activity } });
-            }
-            // ChunkData now arrives on ReliableUnordered — handled below
-            Do { event: Event::InsertThreat { ent, threat } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    warn!("Client: InsertThreat target {:?} not in l2r map, requesting spawn", ent);
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
+            // Every other is about an entity, known here by an id of its
+            // own; one the client has not spawned is asked for. ChunkData
+            // arrives on ReliableUnordered, handled below.
+            Do { event: mut event @ (
+                Event::Confirm { .. }
+                | Event::Incremental { .. }
+                | Event::Inventory { .. }
+                | Event::Loot { .. }
+                | Event::Activity { .. }
+                | Event::InsertThreat { .. }
+                | Event::ApplyDamage { .. }
+                | Event::ClearQueue { .. }
+                | Event::AbilityFailed { .. }
+                | Event::UseAbility { .. }
+                | Event::RespecAttributes { .. }
+            ) } => {
+                let Some(ent) = event.ent_mut() else { continue };
+                let Some(&local) = l2r.get_by_right(ent) else {
+                    try_writer.write(Try { event: Event::Spawn { ent: *ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                 };
-                // The threat keeps the server's source: it names the threat in the
-                // ClearQueue that ends it, even after the source is gone here
-                do_writer.write(Do { event: Event::InsertThreat { ent, threat } });
-            }
-            Do { event: Event::ApplyDamage { ent, damage, source, dot } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    warn!("Client: ApplyDamage target {:?} not in l2r map, requesting spawn", ent);
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
-                    continue
-                };
-                // Map source entity too
-                let source = l2r.get_by_right(&source).copied().unwrap_or(source);
-                do_writer.write(Do { event: Event::ApplyDamage { ent, damage, source, dot } });
-            }
-            Do { event: Event::ClearQueue { ent, clear_type } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
-                    continue
-                };
-                do_writer.write(Do { event: Event::ClearQueue { ent, clear_type } });
-            }
-            Do { event: Event::AbilityFailed { ent, reason } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
-                    continue
-                };
-                do_writer.write(Do { event: Event::AbilityFailed { ent, reason } });
-            }
-            Do { event: Event::UseAbility { ent, ability, target } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
-                    continue
-                };
-                // The one it was used against
-                let target = target.and_then(|target| l2r.get_by_right(&target).copied());
-                do_writer.write(Do { event: Event::UseAbility { ent, ability, target } });
-            }
-            Do { event: Event::Pong { client_time } } => {
-                // Forward Pong to Do writer for handle_pong system
-                do_writer.write(Do { event: Event::Pong { client_time } });
-            }
-            Do { event: Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } } => {
-                // Map entity ID and forward to handle_respec_confirmed system
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    warn!("Client: RespecAttributes for unknown entity {:?}", ent);
-                    continue
-                };
-                do_writer.write(Do { event: Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } });
+                *ent = local;
+                // The others an event names: a blow's source keeps the server's
+                // id where it is gone here, and a threat's always, since it
+                // names the threat in the ClearQueue that ends it
+                match &mut event {
+                    Event::ApplyDamage { source, .. } => *source = l2r.get_by_right(source).copied().unwrap_or(*source),
+                    Event::UseAbility { target, .. } => *target = target.and_then(|target| l2r.get_by_right(&target).copied()),
+                    _ => {}
+                }
+                do_writer.write(Do { event });
             }
             _ => {}
         }
@@ -327,14 +278,12 @@ pub fn write_do(
         }
 
         match message {
-            Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime, burdened } } => {
-                // An intent for an entity not yet spawned is dropped: the next one repairs it.
-                let Some(&ent) = l2r.get_by_right(&ent) else { continue };
-                do_writer.write(Do { event: Event::MovementIntent { ent, position, heading, moving, back, airtime, burdened } });
-            }
-            Do { event: Event::Displace { ent, destination, duration_ms, around } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else { continue };
-                do_writer.write(Do { event: Event::Displace { ent, destination, duration_ms, around } });
+            // An intent for an entity not yet spawned is dropped: the next one repairs it.
+            Do { event: mut event @ (Event::MovementIntent { .. } | Event::Displace { .. }) } => {
+                let Some(ent) = event.ent_mut() else { continue };
+                let Some(&local) = l2r.get_by_right(ent) else { continue };
+                *ent = local;
+                do_writer.write(Do { event });
             }
             _ => {
                 panic!("Unexpected message on Unreliable channel: {:?}", message);
@@ -343,6 +292,8 @@ pub fn write_do(
     }
 }
 
+/// Sends what the client asks of the server, each entity named by the
+/// server's id for it. Only the events listed here cross the wire.
 pub fn send_try(
     conn: Option<ResMut<ClientNet>>,
     mut reader: MessageReader<Try>,
@@ -353,115 +304,35 @@ pub fn send_try(
         return;
     };
     for message in reader.read() {
-        match &message.event {
-            Event::Input { ent, key_bits, dt, seq } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Input {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    key_bits: *key_bits, dt: *dt, seq: *seq,
-                }}, bincode::config::legacy()).unwrap());
+        let mut event = message.event.clone();
+        match event {
+            // A spawn is asked for by the server's own id, and these are about no entity
+            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping { .. } => {}
+            Event::Input { .. }
+            | Event::UseAbility { .. }
+            | Event::View { .. }
+            | Event::SetTierLock { .. }
+            | Event::Gather { .. }
+            | Event::Take { .. }
+            | Event::CloseLoot { .. }
+            | Event::Drop { .. }
+            | Event::Wear { .. }
+            | Event::Dismiss { .. }
+            | Event::Teleport { .. }
+            | Event::SpawnParty { .. }
+            | Event::RespecAttributes { .. } => {
+                // One the server never told the client of has nothing to ask
+                let Some(ent) = event.ent_mut() else { continue };
+                let Some(&remote) = l2r.get_by_left(ent) else { continue };
+                *ent = remote;
+                // An ability's target goes by the server's id too, or as none
+                if let Event::UseAbility { target, .. } = &mut event {
+                    *target = target.and_then(|target| l2r.get_by_left(&target).copied());
+                }
             }
-            Event::Spawn { ent, typ, qrz, attrs } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Spawn {
-                    ent: *ent, typ: *typ, qrz: *qrz, attrs: *attrs
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::UseAbility { ent, ability, target } => {
-                // Map target entity local→remote; if not in bimap, send None
-                let remote_target = target.and_then(|t| l2r.get_by_left(&t).copied());
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::UseAbility {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    ability: *ability,
-                    target: remote_target
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::Play | Event::Leave => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap());
-            }
-            Event::View { ent } => {
-                let Some(&ent) = l2r.get_by_left(ent) else { continue };
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::View { ent } }, bincode::config::legacy()).unwrap());
-            }
-            Event::Ping { client_time } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Ping {
-                    client_time: *client_time
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::SetTierLock { ent, tier } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SetTierLock {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    tier: *tier
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::Gather { ent, q, r, slot } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gather {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    q: *q, r: *r, slot: *slot,
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::Take { ent, entry } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Take {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    entry: *entry,
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::CloseLoot { ent } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::CloseLoot {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::Drop { ent, kind, count } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Drop {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    kind: *kind,
-                    count: *count,
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::Wear { ent, item, on } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Wear {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    item: *item,
-                    on: *on,
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::Dismiss { ent } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Dismiss {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::Teleport { ent, q, r } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Teleport {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    q: *q,
-                    r: *r,
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::SpawnParty { ent, archetype, level, size, engage } => {
-                // The anchor must be one the server knows
-                let Some(&ent) = l2r.get_by_left(ent) else { continue };
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SpawnParty {
-                    ent,
-                    archetype: *archetype,
-                    level: *level,
-                    size: *size,
-                    engage: *engage,
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::RespecAttributes {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    might_agility_axis: *might_agility_axis,
-                    might_agility_spectrum: *might_agility_spectrum,
-                    might_agility_shift: *might_agility_shift,
-                    vitality_discipline_axis: *vitality_discipline_axis,
-                    vitality_discipline_spectrum: *vitality_discipline_spectrum,
-                    vitality_discipline_shift: *vitality_discipline_shift,
-                    instinct_resolve_axis: *instinct_resolve_axis,
-                    instinct_resolve_spectrum: *instinct_resolve_spectrum,
-                    instinct_resolve_shift: *instinct_resolve_shift,
-                }}, bincode::config::legacy()).unwrap());
-            }
-            _ => {}
+            _ => continue,
         }
+        conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event }, bincode::config::legacy()).unwrap());
     }
 }
 

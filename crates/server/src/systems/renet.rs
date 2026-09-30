@@ -276,6 +276,12 @@ fn leave(
     commands.entity(ent).despawn();
 }
 
+/// Reads what each client asks for onto the message bus.
+///
+/// What a client asks of its character is asked for the character the
+/// lobby holds for it, whatever entity the client named, and for nothing
+/// while it views an actor instead. Only the events listed here are taken
+/// from a client; every other is the server's own.
 pub fn write_try(
     mut commands: Commands,
     mut writer: MessageWriter<Try>,
@@ -287,83 +293,93 @@ pub fn write_try(
         // What the client controls: its character, never an actor it views
         let character = lobby.get_by_left(&client_id).copied().filter(|&ent| characters.contains(ent));
         while let Some(serialized) = conn.receive_message(client_id, DefaultChannel::ReliableOrdered) {
-            let (message, _): (Try, _) = bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
-            match message {
-                Try { event: Event::Input { ent: _, key_bits, dt, seq } } => {
-                    let Some(ent) = character else { continue };
-                    writer.write(Try { event: Event::Input { ent, key_bits, dt, seq }});
-                }
-                Try { event: Event::Spawn { ent, .. } } => {
-                    writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
-                }
-                Try { event: Event::Gather { ent: _, q, r, slot } } => {
-                    let Some(ent) = character else { continue };
-                    writer.write(Try { event: Event::Gather { ent, q, r, slot }});
-                }
-                Try { event: Event::Take { ent: _, entry } } => {
-                    let Some(ent) = character else { continue };
-                    writer.write(Try { event: Event::Take { ent, entry }});
-                }
-                Try { event: Event::CloseLoot { ent: _ } } => {
-                    let Some(ent) = character else { continue };
-                    writer.write(Try { event: Event::CloseLoot { ent }});
-                }
-                Try { event: Event::Drop { ent: _, kind, count } } => {
-                    let Some(ent) = character else { continue };
-                    writer.write(Try { event: Event::Drop { ent, kind, count }});
-                }
-                Try { event: Event::UseAbility { ent: _, ability, target } } => {
-                    let Some(ent) = character else { continue };
-                    // An auto-attack is the server's to time, never a client's to ask for
-                    if ability == AbilityType::AutoAttack { continue }
-                    writer.write(Try { event: Event::UseAbility { ent, ability, target }});
-                }
-                Try { event: Event::Ping { client_time } } => {
+            let (Try { mut event }, _): (Try, _) = bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
+            match event {
+                Event::Ping { client_time } => {
                     // Immediately respond with Pong (echo client timestamp)
                     let message = bincode::serde::encode_to_vec(
                         Do { event: Event::Pong { client_time }},
                         bincode::config::legacy()).unwrap();
                     conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
                 }
-                Try { event: Event::Dismiss { ent: _ } } => {
-                    let Some(ent) = character else { continue };
-                    writer.write(Try { event: Event::Dismiss { ent }});
+                Event::Play => commands.trigger(Presence::Enter { client_id }),
+                Event::Leave => commands.trigger(Presence::Leave { client_id }),
+                Event::View { ent } => commands.trigger(Presence::View { client_id, ent }),
+                // An entity the client was told of and has not spawned, named by the server's id
+                Event::Spawn { ent, .. } => {
+                    writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                 }
-                Try { event: Event::SetTierLock { ent: _, tier } } => {
-                    let Some(ent) = character else { continue };
-                    writer.write(Try { event: Event::SetTierLock { ent, tier }});
+                // An admin's party stands ahead of whichever actor it names
+                Event::SpawnParty { .. } => {
+                    writer.write(Try { event });
                 }
-                Try { event: Event::RespecAttributes { ent: _, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } } => {
-                    let Some(ent) = character else { continue };
-                    writer.write(Try { event: Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift }});
-                }
-                Try { event: Event::Wear { ent: _, item, on } } => {
-                    let Some(ent) = character else { continue };
-                    writer.write(Try { event: Event::Wear { ent, item, on }});
-                }
-                Try { event: Event::Teleport { ent: _, q, r } } => {
-                    let Some(ent) = character else { continue };
-                    writer.write(Try { event: Event::Teleport { ent, q, r }});
-                }
-                Try { event: Event::SpawnParty { ent, archetype, level, size, engage } } => {
-                    writer.write(Try { event: Event::SpawnParty { ent, archetype, level, size, engage }});
-                }
-                Try { event: Event::Play } => {
-                    commands.trigger(Presence::Enter { client_id });
-                }
-                Try { event: Event::Leave } => {
-                    commands.trigger(Presence::Leave { client_id });
-                }
-                Try { event: Event::View { ent } } => {
-                    commands.trigger(Presence::View { client_id, ent });
+                // An auto-attack is the server's to time, never a client's to ask for
+                Event::UseAbility { ability: AbilityType::AutoAttack, .. } => {}
+                Event::Input { .. }
+                | Event::Gather { .. }
+                | Event::Take { .. }
+                | Event::CloseLoot { .. }
+                | Event::Drop { .. }
+                | Event::UseAbility { .. }
+                | Event::Dismiss { .. }
+                | Event::SetTierLock { .. }
+                | Event::RespecAttributes { .. }
+                | Event::Wear { .. }
+                | Event::Teleport { .. } => {
+                    let (Some(character), Some(ent)) = (character, event.ent_mut()) else { continue };
+                    *ent = character;
+                    writer.write(Try { event });
                 }
                 _ => {}
             }
         }
     }
- }
+}
 
- pub fn send_do(
+/// Who a `Do` about an entity is sent to, and how.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Route {
+    /// Every client that has the entity loaded and the one whose lobby
+    /// entry it is, in order
+    Seen,
+    /// The client whose lobby entry the entity is, in order
+    Owner,
+    /// That client, in no order: chunks and summaries are independent, and
+    /// one held back would hold back the rest
+    OwnerUnordered,
+    /// Every client that simulates the entity, unreliably: the latest
+    /// wins, and `Loc` repairs a loss
+    Moving,
+}
+
+/// The entity a `Do` is about and the route it takes, or none for an event
+/// that stays on the server. A `Spawn` is sent where it is made, to the
+/// clients it is for.
+fn route(event: &Event) -> Option<(Entity, Route)> {
+    match event {
+        Event::Incremental { ent, .. }
+        | Event::Despawn { ent }
+        | Event::Activity { ent, .. }
+        | Event::InsertThreat { ent, .. }
+        | Event::ApplyDamage { ent, .. }
+        | Event::ClearQueue { ent, .. }
+        | Event::UseAbility { ent, .. } => Some((*ent, Route::Seen)),
+        Event::AbilityFailed { ent, .. }
+        | Event::Confirm { ent, .. }
+        | Event::RespecAttributes { ent, .. }
+        | Event::Inventory { ent, .. }
+        | Event::CoverChanged { ent, .. }
+        | Event::Loot { ent, .. } => Some((*ent, Route::Owner)),
+        Event::ChunkData { ent, .. }
+        | Event::EvictChunks { ent, .. }
+        | Event::SummaryBatch { ent, .. } => Some((*ent, Route::OwnerUnordered)),
+        Event::MovementIntent { ent, .. } | Event::Displace { ent, .. } => Some((*ent, Route::Moving)),
+        _ => None,
+    }
+}
+
+/// Sends every `Do` on the bus to the clients its route names, encoded once.
+pub fn send_do(
     mut conn: ResMut<ServerNet>,
     mut reader: MessageReader<Do>,
     loaded_by_query: Query<&common_bevy::components::loaded_by::LoadedBy>,
@@ -373,181 +389,46 @@ pub fn write_try(
 ) {
     let mut _t = None;
     for message in reader.read() {
-        if matches!(&message.event, Event::Spawn { .. }) { continue; }
+        let Some((ent, route)) = route(&message.event) else { continue };
         _t.get_or_insert_with(|| timings.scope("send_do"));
-        match &message.event {
-            Event::Spawn { .. } => unreachable!(),
-            Event::Incremental { ent, component } => {
-                let ent = *ent;
-                let component = *component;                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                let bytes = bincode::serde::encode_to_vec(
-                    Do { event: Event::Incremental { ent, component }},
-                    bincode::config::legacy()).unwrap();
-                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
+        let owner = lobby.get_by_right(&ent);
+        let encode = || bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap();
+        match route {
+            Route::Owner => {
+                if let Some(client_id) = owner {
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, encode());
+                }
             }
-            Event::Despawn { ent } => {
-                let ent = *ent;
+            Route::OwnerUnordered => {
+                if let Some(client_id) = owner {
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableUnordered, encode());
+                }
+            }
+            Route::Seen => {
                 let Ok(loaded_by) = loaded_by_query.get(ent) else {
-                    warn!("SERVER: Cannot send Despawn for entity {:?} - no LoadedBy component", ent);
+                    if matches!(message.event, Event::Despawn { .. }) {
+                        warn!("SERVER: Cannot send Despawn for entity {:?} - no LoadedBy component", ent);
+                    }
                     continue;
                 };
-                let bytes = bincode::serde::encode_to_vec(
-                    Do { event: Event::Despawn { ent }},
-                    bincode::config::legacy()).unwrap();
-                // Its owner too: a client viewing the actor sees it fall
-                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
-            }
-            Event::ChunkData { ent, .. } => {
-                let ent = *ent;
-                // Chunks are independent — ReliableUnordered avoids head-of-line blocking
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let serialized = bincode::serde::encode_to_vec(
-                        message,
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableUnordered, serialized);
+                // Its owner too: a client viewing the actor sees what befalls it
+                let bytes = encode();
+                let seeing = loaded_by.players.iter().filter(|&&player| player != ent).filter_map(|player| lobby.get_by_right(player));
+                for client_id in owner.into_iter().chain(seeing) {
+                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, bytes.clone());
                 }
             }
-            Event::EvictChunks { ent, .. } => {
-                let ent = *ent;
-                // Same channel as ChunkData — ReliableUnordered guarantees delivery
-                // but not order. Reordering handled by sequence numbers (see below).
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let serialized = bincode::serde::encode_to_vec(
-                        message,
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableUnordered, serialized);
-                }
-            }
-            Event::SummaryBatch { ent, .. } => {
-                let ent = *ent;
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let serialized = bincode::serde::encode_to_vec(
-                        message,
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableUnordered, serialized);
-                }
-            }
-            Event::Activity { ent, .. } => {
-                let Ok(loaded_by) = loaded_by_query.get(*ent) else { continue; };
-                let bytes = bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap();
-                broadcast_reliable(&mut conn, &lobby, loaded_by, *ent, bytes);
-            }
-            Event::InsertThreat { ent, threat } => {
-                let ent = *ent;
-                let threat = *threat;
-                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                let bytes = bincode::serde::encode_to_vec(
-                    Do { event: Event::InsertThreat { ent, threat }},
-                    bincode::config::legacy()).unwrap();
-                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
-            }
-            Event::ApplyDamage { ent, damage, source, dot } => {
-                let ent = *ent;
-                let damage = *damage;
-                let source = *source;
-                let dot = *dot;
-                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                let bytes = bincode::serde::encode_to_vec(
-                    Do { event: Event::ApplyDamage { ent, damage, source, dot }},
-                    bincode::config::legacy()).unwrap();
-                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
-            }
-            Event::ClearQueue { ent, clear_type } => {
-                let ent = *ent;
-                let clear_type = *clear_type;
-                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                let bytes = bincode::serde::encode_to_vec(
-                    Do { event: Event::ClearQueue { ent, clear_type }},
-                    bincode::config::legacy()).unwrap();
-                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
-            }
-            Event::AbilityFailed { ent, reason } => {
-                let ent = *ent;
-                let reason = *reason;
-                // Send ability failure only to the caster
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::AbilityFailed { ent, reason }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
-            }
-            Event::UseAbility { ent, ability, target } => {
-                let ent = *ent;
-                let ability = *ability;
-                let target = *target;
-                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                let bytes = bincode::serde::encode_to_vec(
-                    Do { event: Event::UseAbility { ent, ability, target }},
-                    bincode::config::legacy()).unwrap();
-                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
-            }
-            Event::MovementIntent { ent, .. } | Event::Displace { ent, .. } => {
-                let ent = *ent;
-                // Unreliable: the latest wins, and Loc repairs a loss.
-                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                let bytes = bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap();
+            Route::Moving => {
+                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue };
                 // A client viewing the actor simulates it as any other it sees;
                 // a character's own client predicts it and wants none
-                let viewer = lobby.get_by_right(&ent).filter(|_| !characters.contains(ent));
-                for client_id in loaded_by.players.iter().filter_map(|p| lobby.get_by_right(p)).chain(viewer) {
+                let bytes = encode();
+                let viewer = owner.filter(|_| !characters.contains(ent));
+                for client_id in loaded_by.players.iter().filter_map(|player| lobby.get_by_right(player)).chain(viewer) {
                     conn.send_unreliable(*client_id, bytes.clone());
                 }
             }
-            Event::Confirm { ent, .. } => {
-                if let Some(client_id) = lobby.get_by_right(ent) {
-                    let bytes = bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, bytes);
-                }
-            }
-            Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } => {
-                let ent = *ent;
-                let might_agility_axis = *might_agility_axis;
-                let might_agility_spectrum = *might_agility_spectrum;
-                let might_agility_shift = *might_agility_shift;
-                let vitality_discipline_axis = *vitality_discipline_axis;
-                let vitality_discipline_spectrum = *vitality_discipline_spectrum;
-                let vitality_discipline_shift = *vitality_discipline_shift;
-                let instinct_resolve_axis = *instinct_resolve_axis;
-                let instinct_resolve_spectrum = *instinct_resolve_spectrum;
-                let instinct_resolve_shift = *instinct_resolve_shift;
-                // Send respec confirmation only to the owning client
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                }
-            }
-            Event::Inventory { ent, .. } | Event::CoverChanged { ent, .. } | Event::Loot { ent, .. } => {
-                let ent = *ent;
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    let serialized = bincode::serde::encode_to_vec(
-                        message,
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, serialized);
-                }
-            }
-            _ => {}
         }
-    }
-}
-
-/// Encode once, send cloned bytes to owner + all LoadedBy observers.
-fn broadcast_reliable(
-    conn: &mut ServerNet,
-    lobby: &Lobby,
-    loaded_by: &common_bevy::components::loaded_by::LoadedBy,
-    owner_ent: Entity,
-    bytes: Vec<u8>,
-) {
-    if let Some(client_id) = lobby.get_by_right(&owner_ent) {
-        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, bytes.clone());
-    }
-    for &player_ent in &loaded_by.players {
-        if player_ent == owner_ent { continue; }
-        let Some(client_id) = lobby.get_by_right(&player_ent) else { continue; };
-        conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, bytes.clone());
     }
 }
 
@@ -567,5 +448,29 @@ pub fn cleanup_despawned(
             }
             commands.entity(ent).despawn();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_only_its_owner_should_know_goes_to_its_owner_alone() {
+        let ent = Entity::from_raw_u32(7).unwrap();
+        let reason = AbilityFailReason::OnCooldown;
+        assert_eq!(route(&Event::AbilityFailed { ent, reason }), Some((ent, Route::Owner)));
+        assert_eq!(route(&Event::Loot { ent, entries: None }), Some((ent, Route::Owner)));
+        assert_eq!(route(&Event::UseAbility { ent, ability: AbilityType::Lunge, target: None }), Some((ent, Route::Seen)));
+        assert_eq!(route(&Event::Despawn { ent }), Some((ent, Route::Seen)));
+        assert_eq!(route(&Event::Displace { ent, destination: Qrz::default(), duration_ms: 0, around: None }), Some((ent, Route::Moving)));
+    }
+
+    #[test]
+    fn what_the_server_keeps_to_itself_is_sent_to_no_one() {
+        let ent = Entity::from_raw_u32(7).unwrap();
+        assert_eq!(route(&Event::Stumble { ent }), None);
+        assert_eq!(route(&Event::DealDamage { source: ent, target: ent, base_damage: 1.0, ability: None, dot: 0.0 }), None);
+        assert_eq!(route(&Event::Play), None);
     }
 }

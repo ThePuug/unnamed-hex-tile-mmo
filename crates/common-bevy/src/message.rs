@@ -160,6 +160,54 @@ pub enum Event {
     View { ent: Entity },
 }
 
+impl Event {
+    /// The entity this event is about, where it is about one: the id the
+    /// wire exchanges, a client's for the server's and back. Other entities
+    /// an event names (a blow's source, an ability's target) are its
+    /// handler's to exchange.
+    pub fn ent_mut(&mut self) -> Option<&mut Entity> {
+        match self {
+            Event::Despawn { ent }
+            | Event::DiscoverChunk { ent, .. }
+            | Event::ChunkData { ent, .. }
+            | Event::Init { ent, .. }
+            | Event::Input { ent, .. }
+            | Event::Confirm { ent, .. }
+            | Event::Incremental { ent, .. }
+            | Event::Spawn { ent, .. }
+            | Event::DotTick { ent, .. }
+            | Event::Spill { ent, .. }
+            | Event::Stumble { ent }
+            | Event::InsertThreat { ent, .. }
+            | Event::ApplyDamage { ent, .. }
+            | Event::ResolveThreat { ent, .. }
+            | Event::UseAbility { ent, .. }
+            | Event::AbilityFailed { ent, .. }
+            | Event::ClearQueue { ent, .. }
+            | Event::Dismiss { ent }
+            | Event::SetTierLock { ent, .. }
+            | Event::MovementIntent { ent, .. }
+            | Event::Displace { ent, .. }
+            | Event::Teleport { ent, .. }
+            | Event::SpawnParty { ent, .. }
+            | Event::EvictChunks { ent, .. }
+            | Event::SummaryBatch { ent, .. }
+            | Event::Wear { ent, .. }
+            | Event::Inventory { ent, .. }
+            | Event::Gather { ent, .. }
+            | Event::CoverChanged { ent, .. }
+            | Event::Loot { ent, .. }
+            | Event::Take { ent, .. }
+            | Event::CloseLoot { ent }
+            | Event::Drop { ent, .. }
+            | Event::Activity { ent, .. }
+            | Event::RespecAttributes { ent, .. }
+            | Event::View { ent } => Some(ent),
+            Event::DealDamage { .. } | Event::Ping { .. } | Event::Pong { .. } | Event::Play | Event::Leave => None,
+        }
+    }
+}
+
 /// Types of abilities that can be used ( MVP ability set + Counter)
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum AbilityType {

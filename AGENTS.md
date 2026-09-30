@@ -355,10 +355,16 @@ next to the trait they constrain. Read it before adding a layer.
 
 Adding an Event or Component that needs network sync:
 
-1. Define `Event` in `common-bevy/message.rs`
-2. `server/systems/renet.rs`: match arm in `write_try` for inbound, serialize
-   arm in `send_do` for outbound
-3. `client/systems/renet.rs`: match arm in `write_do`, plus the label in
-   `get_message_type_name`
-4. Component sync also needs the `Component` enum plus both
-   `Event::Incremental` handlers
+1. Define `Event` in `common-bevy/message.rs`, and name it in
+   `Event::ent_mut`, which the compiler asks for: the wire exchanges that
+   entity's id, client's for server's, in one place
+2. `server/systems/renet.rs`: name it in `write_try`'s list to take it from
+   a client, in `route` to say who a `Do` is sent to
+3. `client/systems/renet.rs`: name it in `write_do`'s list to take it from
+   the server, in `send_try`'s to send it, plus the label in
+   `get_message_type_name`. An event naming a second entity exchanges that
+   one beside the list, as `UseAbility` does its target
+4. Component sync needs the `Component` enum, its arm in
+   `Component::insert_into` and its label in `get_message_type_name`; and
+   `server::systems::world::generate_actor_spawn_events` where a client that
+   meets the actor late must have it
