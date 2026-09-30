@@ -14,8 +14,12 @@ pub struct ActionBarDisplay;
 /// Marker component for individual ability slot UI
 #[derive(Component)]
 pub struct AbilitySlot {
-    pub ability: Option<AbilityType>,
+    pub ability: AbilityType,
 }
+
+/// The row the viewed actor's ability slots stand in
+#[derive(Component)]
+pub struct AbilitySlots;
 
 /// Marker for ability slot icon
 #[derive(Component)]
@@ -75,17 +79,67 @@ pub fn setup(
             },
         ))
         .with_children(|parent| {
-            // Define ability slots: Q, W, E, R (Counter replaces Knockback)
-            let slots = vec![
-                (0, KeyCode::KeyQ, Some(AbilityType::Lunge)),      // Q = Lunge (gap closer)
-                (1, KeyCode::KeyW, Some(AbilityType::Overpower)),  // W = Overpower (heavy strike)
-                (2, KeyCode::KeyE, Some(AbilityType::Counter)),    // E = Counter (reactive counter-attack)
-                (3, KeyCode::KeyR, Some(AbilityType::Kick)),       // R = Kick (reactive knockback)
-            ];
+            // The viewed actor's loadout, filled in by `sync_loadout`
+            parent.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(10.),
+                    ..default()
+                },
+                AbilitySlots,
+            ));
 
-            for (_slot_index, keybind, ability) in slots {
-                // Spawn ability slot
-                parent.spawn((
+            crate::systems::ui::spawn_compass(parent, SLOT_PX, SLOT_BORDER_PX);
+        });  // Close .with_children from line 73 (action bar children)
+    });  // Close outer .with_children
+}
+
+/// The abilities on the bar of an actor of `typ`, each with the key that
+/// fires it: a player's four, an NPC's signature.
+pub fn loadout(typ: &EntityType) -> Vec<(Option<KeyCode>, AbilityType)> {
+    use common_bevy::components::entity_type::actor::ActorIdentity;
+    match typ {
+        EntityType::Actor(actor) => match actor.identity {
+            ActorIdentity::Player => vec![
+                (Some(KeyCode::KeyQ), AbilityType::Lunge),
+                (Some(KeyCode::KeyW), AbilityType::Overpower),
+                (Some(KeyCode::KeyE), AbilityType::Counter),
+                (Some(KeyCode::KeyR), AbilityType::Kick),
+            ],
+            ActorIdentity::Npc(npc) => common_bevy::spatial_difficulty::EnemyArchetype::of_npc(npc).ability()
+                .map(|ability| (None, ability))
+                .into_iter()
+                .collect(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// Fills the bar with the loadout of the actor the client sees as, anew
+/// whenever that actor changes.
+pub fn sync_loadout(
+    mut commands: Commands,
+    seer: Query<(Entity, &EntityType), With<crate::components::Viewed>>,
+    slots: Query<Entity, With<AbilitySlots>>,
+    mut shown: Local<Option<Entity>>,
+) {
+    let Ok(container) = slots.single() else { return };
+    let seer = seer.single().ok();
+    if seer.map(|(ent, _)| ent) == *shown {
+        return;
+    }
+    *shown = seer.map(|(ent, _)| ent);
+    commands.entity(container).despawn_related::<Children>();
+    let Some((_, typ)) = seer else { return };
+    commands.entity(container).with_children(|parent| {
+        for (keybind, ability) in loadout(typ) {
+            spawn_slot(parent, keybind, ability);
+        }
+    });
+}
+
+fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: Option<KeyCode>, ability: AbilityType) {
+    parent.spawn((
         Node {
             width: Val::Px(SLOT_PX),
             height: Val::Px(SLOT_PX),
@@ -101,17 +155,16 @@ pub fn setup(
     .with_children(|parent| {
         // Ability icon (center)
         let icon_text = match ability {
-            Some(AbilityType::Lunge) => "⚡",       // Gap closer / dash
-            Some(AbilityType::Overpower) => "💥",  // Heavy strike
-            Some(AbilityType::Deflect) => "🛡",    // Shield / defense
-            Some(AbilityType::AutoAttack) => "⚔",  // Auto-attack (not on bar)
-            Some(AbilityType::Rattle) => "💫",      // NPC Juggernaut rattle (not on bar)
-            Some(AbilityType::Disengage) => "💨",   // NPC leap away (not on bar)
-            Some(AbilityType::Volley) => "🏹",      // NPC Kiter volley (not on bar)
-            Some(AbilityType::Flank) => "🗡",       // NPC Ambusher flank (not on bar)
-            Some(AbilityType::Counter) => "↩",     // Counter / reflect
-            Some(AbilityType::Kick) => "🦶",       // Kick / knockback
-            None => "🔒",
+            AbilityType::Lunge => "⚡",       // Gap closer / dash
+            AbilityType::Overpower => "💥",  // Heavy strike
+            AbilityType::Deflect => "🛡",    // Shield / defense
+            AbilityType::AutoAttack => "⚔",  // Auto-attack
+            AbilityType::Rattle => "💫",      // Juggernaut rattle
+            AbilityType::Disengage => "💨",   // Skirmisher leap away
+            AbilityType::Volley => "🏹",      // Kiter volley
+            AbilityType::Flank => "🗡",       // Ambusher flank
+            AbilityType::Counter => "↩",     // Counter / reflect
+            AbilityType::Kick => "🦶",       // Kick / knockback
         };
 
         parent.spawn((
@@ -128,15 +181,17 @@ pub fn setup(
             SlotIcon,
         ));
 
-        // Keybind label (top-left corner)
-        crate::systems::keycap::corner_keycap(parent, &format!("{:?}", keybind).replace("Key", "")).insert(SlotKeybind);
+        // Keybind label (top-left corner); an NPC's signature has no key
+        if let Some(keybind) = keybind {
+            crate::systems::keycap::corner_keycap(parent, &format!("{:?}", keybind).replace("Key", "")).insert(SlotKeybind);
+        }
 
         // Cost badge (bottom-right corner)
-        if let Some(ability_type) = ability {
-            let cost_text = match ability_type {
+        {
+            let cost_text = match ability {
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
                 AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => String::new(), // NPC-only
-                _ => format!("{:.0}", common_bevy::tuning::tuning().cost(ability_type)),
+                _ => format!("{:.0}", common_bevy::tuning::tuning().cost(ability)),
             };
 
             if !cost_text.is_empty() {
@@ -190,12 +245,7 @@ pub fn setup(
             Visibility::Hidden,  // Hidden by default
             SynergyGlow,
         ));
-    });  // Close .with_children from line 97 (slot children)
-            }  // Close for loop from line 82
-
-            crate::systems::ui::spawn_compass(parent, SLOT_PX, SLOT_BORDER_PX);
-        });  // Close .with_children from line 73 (action bar children)
-    });  // Close outer .with_children
+    });
 }
 
 /// Update action bar states based on player's resources, recovery, and synergies
@@ -204,15 +254,16 @@ pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
     mut glow_query: Query<&mut Visibility, With<SynergyGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
-    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, &TierLock, Option<&Gcd>, Option<&GlobalRecovery>, Option<&SynergyUnlock>), With<Actor>>,
+    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&TierLock>, Option<&Gcd>, Option<&GlobalRecovery>, Option<&SynergyUnlock>, Has<Actor>), With<crate::components::Viewed>>,
     entity_query: Query<(&EntityType, &Loc, Option<&Side>)>,
     nntree: Res<NNTree>,
     time: Res<Time>,
 ) {
-    // Get player resources and position
-    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, gcd_opt, recovery_opt, synergy_opt)) = player_query.single() else {
-        return;  // No player yet
+    // The resources and position of the actor the client sees as
+    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, gcd_opt, recovery_opt, synergy_opt, controlled)) = player_query.single() else {
+        return;
     };
+    let targeting_state = targeting_state.copied().unwrap_or_default();
 
     let now = time.elapsed();
     let gcd_active = gcd_opt.map_or(false, |gcd| gcd.is_active(now));
@@ -223,9 +274,11 @@ pub fn update(
     let recovery_duration = recovery_opt.map(|r| r.duration).unwrap_or(1.0);
 
     for (slot, mut border_color, children) in &mut slot_query {
-        if let Some(ability) = slot.ability {
-            // Determine ability state
-            let state = get_ability_state(
+        let ability = slot.ability;
+        // Range is judged for the client's own character, who picks its
+        // targets here; a viewed actor's targets are the server's
+        let state = if controlled {
+            get_ability_state(
                 ability,
                 stamina,
                 mana,
@@ -236,62 +289,57 @@ pub fn update(
                 player_ent,
                 *player_loc,
                 *player_heading,
-                targeting_state,
+                &targeting_state,
                 &nntree,
                 &entity_query,
-            );
-
-            // Update border color based on state (keep meaningful colors)
-            let (border, show_synergy_glow) = match state {
-                AbilityState::Ready => (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), false),           // Green
-                AbilityState::OnCooldown => (BorderColor::all(Color::srgb(0.5, 0.5, 0.5)), false),      // Gray
-                AbilityState::SynergyUnlocked => {
-                    (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), true)  // Green + BRIGHT YELLOW GLOW!
-                },
-                AbilityState::InsufficientResources => (BorderColor::all(Color::srgb(0.9, 0.1, 0.1)), false), // Red
-                AbilityState::OutOfRange => (BorderColor::all(Color::srgb(0.8, 0.5, 0.1)), false),      // Orange
-            };
-            *border_color = border;
-
-            // Cooldown overlay: height = proportion of lockout remaining
-            let overlay_pct = if !recovery_active || recovery_duration <= 0.0 {
-                0.0
-            } else {
-                let synergy_unlock_at = synergy_opt
-                    .filter(|s| s.ability == ability)
-                    .map(|s| s.unlock_at);
-                let ratio = match synergy_unlock_at {
-                    Some(unlock_at) if recovery_duration > unlock_at => {
-                        (recovery_remaining - unlock_at) / (recovery_duration - unlock_at)
-                    }
-                    _ => recovery_remaining / recovery_duration,
-                };
-                ratio.clamp(0.0, 1.0) * 100.0
-            };
-
-            // Update synergy glow and cooldown overlay
-            for child in children.iter() {
-                if let Ok(mut visibility) = glow_query.get_mut(child) {
-                    *visibility = if show_synergy_glow {
-                        Visibility::Visible
-                    } else {
-                        Visibility::Hidden
-                    };
-                }
-                if let Ok(mut node) = overlay_query.get_mut(child) {
-                    node.height = Val::Percent(overlay_pct);
-                }
-            }
+            )
+        } else if recovery_active {
+            if synergy_opt.is_some_and(|s| s.ability == ability) { AbilityState::SynergyUnlocked } else { AbilityState::OnCooldown }
+        } else if stamina.step < common_bevy::tuning::tuning().cost(ability) {
+            AbilityState::InsufficientResources
         } else {
-            // Empty slot: dark gray, no glow, no overlay
-            *border_color = BorderColor::all(Color::srgb(0.2, 0.2, 0.2));
-            for child in children.iter() {
-                if let Ok(mut visibility) = glow_query.get_mut(child) {
-                    *visibility = Visibility::Hidden;
+            AbilityState::Ready
+        };
+
+        // Update border color based on state (keep meaningful colors)
+        let (border, show_synergy_glow) = match state {
+            AbilityState::Ready => (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), false),           // Green
+            AbilityState::OnCooldown => (BorderColor::all(Color::srgb(0.5, 0.5, 0.5)), false),      // Gray
+            AbilityState::SynergyUnlocked => {
+                (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), true)  // Green + BRIGHT YELLOW GLOW!
+            },
+            AbilityState::InsufficientResources => (BorderColor::all(Color::srgb(0.9, 0.1, 0.1)), false), // Red
+            AbilityState::OutOfRange => (BorderColor::all(Color::srgb(0.8, 0.5, 0.1)), false),      // Orange
+        };
+        *border_color = border;
+
+        // Cooldown overlay: height = proportion of lockout remaining
+        let overlay_pct = if !recovery_active || recovery_duration <= 0.0 {
+            0.0
+        } else {
+            let synergy_unlock_at = synergy_opt
+                .filter(|s| s.ability == ability)
+                .map(|s| s.unlock_at);
+            let ratio = match synergy_unlock_at {
+                Some(unlock_at) if recovery_duration > unlock_at => {
+                    (recovery_remaining - unlock_at) / (recovery_duration - unlock_at)
                 }
-                if let Ok(mut node) = overlay_query.get_mut(child) {
-                    node.height = Val::Percent(0.0);
-                }
+                _ => recovery_remaining / recovery_duration,
+            };
+            ratio.clamp(0.0, 1.0) * 100.0
+        };
+
+        // Update synergy glow and cooldown overlay
+        for child in children.iter() {
+            if let Ok(mut visibility) = glow_query.get_mut(child) {
+                *visibility = if show_synergy_glow {
+                    Visibility::Visible
+                } else {
+                    Visibility::Hidden
+                };
+            }
+            if let Ok(mut node) = overlay_query.get_mut(child) {
+                node.height = Val::Percent(overlay_pct);
             }
         }
     }

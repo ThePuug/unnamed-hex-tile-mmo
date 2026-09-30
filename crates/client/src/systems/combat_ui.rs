@@ -309,7 +309,7 @@ pub fn update_health_bars(
     mut child_node_query: Query<&mut Node, (Without<crate::components::WorldHealthBar>, Without<crate::components::HostileHealthBar>, Without<crate::components::AllyHealthBar>)>,
     entity_query: Query<(&common_bevy::components::resources::Health, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
-    player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget), With<common_bevy::components::Actor>>,
+    player_query: Query<(&common_bevy::components::target::Target, Option<&common_bevy::components::ally_target::AllyTarget>), With<crate::components::Viewed>>,
     time: Res<Time>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
@@ -327,7 +327,7 @@ pub fn update_health_bars(
 
     // Read ally target from AllyTarget component (reactively maintained by update_ally_targets_on_change)
     // Use entity (current) not last_target (sticky) for combat UI bars
-    let ally_target = player_ally_target.entity;
+    let ally_target = player_ally_target.and_then(|ally| ally.entity);
 
     const INTERPOLATION_SPEED: f32 = 5.0;
     const BAR_WIDTH: f32 = 50.0;
@@ -436,7 +436,7 @@ pub fn update_threat_queue_dots(
     >,
     queue_query: Query<(Option<&common_bevy::components::reaction_queue::ReactionQueue>, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
-    player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget), With<common_bevy::components::Actor>>,
+    player_query: Query<(&common_bevy::components::target::Target, Option<&common_bevy::components::ally_target::AllyTarget>), With<crate::components::Viewed>>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
         return;
@@ -453,7 +453,7 @@ pub fn update_threat_queue_dots(
 
     // Read ally target from AllyTarget component (reactively maintained by update_ally_targets_on_change)
     // Use entity (current) not last_target (sticky) for combat UI dots
-    let ally_target = player_ally_target.entity;
+    let ally_target = player_ally_target.and_then(|ally| ally.entity);
 
     const BAR_WIDTH: f32 = 50.0;
 
@@ -659,7 +659,7 @@ pub fn update_recovery_bars(
     )>,
     entity_query: Query<(Option<&common_bevy::components::recovery::GlobalRecovery>, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
-    player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget), With<common_bevy::components::Actor>>,
+    player_query: Query<(&common_bevy::components::target::Target, Option<&common_bevy::components::ally_target::AllyTarget>), With<crate::components::Viewed>>,
     time: Res<Time>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
@@ -671,7 +671,7 @@ pub fn update_recovery_bars(
     };
 
     let hostile_target = player_target.entity;
-    let ally_target = player_ally_target.entity;
+    let ally_target = player_ally_target.and_then(|ally| ally.entity);
 
     const INTERPOLATION_SPEED: f32 = 5.0;
     const BAR_WIDTH: f32 = 50.0;

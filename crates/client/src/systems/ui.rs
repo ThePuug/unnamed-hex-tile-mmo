@@ -7,7 +7,7 @@ use crate::{
     systems::camera::CameraOrbit,
 };
 use common_bevy::{
-    components::{Actor, Loc},
+    components::Loc,
     spatial_difficulty::*,
     systems::*,
 };
@@ -129,7 +129,7 @@ pub fn update_compass(
 
 pub fn update(
     mut query: Query<(&mut Text, &Info)>,
-    player_query: Query<&Loc, With<Actor>>,
+    player_query: Query<&Loc, With<crate::components::Viewed>>,
     server: Res<Server>,
     time: Res<Time>,
     _camera_angle: Res<CameraOrbit>,

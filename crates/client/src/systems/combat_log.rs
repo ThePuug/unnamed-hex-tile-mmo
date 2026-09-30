@@ -62,7 +62,7 @@ pub fn on_damage_applied(
     content_query: Query<Entity, With<CombatLogContent>>,
     entry_query: Query<Entity, With<CombatLogEntry>>,
     entity_type_query: Query<&EntityType>,
-    input_queues: Res<common_bevy::resources::InputQueues>,
+    viewed: Query<Entity, With<crate::components::Viewed>>,
     mut event_reader: MessageReader<common_bevy::message::Do>,
 ) {
     use common_bevy::message::Event as GameEvent;
@@ -71,8 +71,8 @@ pub fn on_damage_applied(
         return;
     };
 
-    // Local player is the entity with an InputQueue (only one on client)
-    let player_entity = input_queues.entities().next().copied();
+    // Entries read from the side of the actor the client sees as
+    let player_entity = viewed.single().ok();
 
     for event in event_reader.read() {
         if let GameEvent::ApplyDamage { ent, damage, source, .. } = event.event {

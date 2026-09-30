@@ -52,12 +52,12 @@ pub fn handle_apply_damage(
     mut reader: MessageReader<Do>,
     _health_query: Query<&mut Health>,
     _queue_query: Query<&ReactionQueue>,
-    input_queues: Res<common_bevy::resources::InputQueues>,
+    viewed: Query<Entity, With<crate::components::Viewed>>,
     transform_query: Query<&Transform>,
     time: Res<Time>,
 ) {
-    // Local player is the entity with an InputQueue (only one on client)
-    let player_entity = input_queues.entities().next().copied();
+    // What lands on the actor the client sees as shows in its resolved stack
+    let player_entity = viewed.single().ok();
 
     for event in reader.read() {
         if let GameEvent::ApplyDamage { ent, damage, dot, .. } = event.event {

@@ -40,7 +40,7 @@ pub fn setup(
 
 pub fn update(
     mut cursor_query: Query<(&mut Mesh3d, &mut Transform, &mut Aabb), With<TargetCursor>>,
-    player_query: Query<(&Loc, &Heading), With<Actor>>,
+    player_query: Query<(&Loc, &Heading), With<crate::components::Viewed>>,
     map: Res<Map>,
     mut meshes: ResMut<Assets<Mesh>>,
     origin: Res<crate::resources::RenderOrigin>,

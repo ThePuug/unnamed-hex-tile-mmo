@@ -96,7 +96,7 @@ pub fn setup(
 /// This runs in Update schedule for instant feedback (60fps)
 pub fn update(
     mut indicator_query: Query<(&mut Mesh3d, &mut Transform, &mut Visibility, &mut Aabb, &TargetIndicator)>,
-    local_player_query: Query<(&common_bevy::components::target::Target, &common_bevy::components::ally_target::AllyTarget, &common_bevy::components::resources::Health), With<Actor>>,
+    local_player_query: Query<(&common_bevy::components::target::Target, Option<&common_bevy::components::ally_target::AllyTarget>, &common_bevy::components::resources::Health), With<crate::components::Viewed>>,
     entity_query: Query<(&EntityType, &Loc)>,
     map: Res<Map>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -121,7 +121,7 @@ pub fn update(
 
     // Read ally target from AllyTarget component (updated every frame by update_ally_targets)
     // Use entity (current) not last_target (sticky) for target indicators
-    let ally_target = player_ally_target.entity;
+    let ally_target = player_ally_target.and_then(|ally| ally.entity);
 
     // Update both hostile and ally indicators
     for (mut mesh_handle, mut transform, mut visibility, mut aabb, indicator) in &mut indicator_query {
