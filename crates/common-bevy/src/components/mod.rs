@@ -180,6 +180,13 @@ impl CommitmentTier {
         }
     }
 
+    /// What a commitment gives at this tier, where it gives `min` at T0 and
+    /// `max` at T3: the tiers between are evenly spaced, so every tuned
+    /// value a commitment gives is those two numbers.
+    pub fn between(self, min: f32, max: f32) -> f32 {
+        min + (max - min) * self.index() as f32 / 3.0
+    }
+
     /// The tier's place, 0 to 3, as `Tuning`'s tier arrays list their effects
     pub fn index(self) -> usize {
         match self {
@@ -591,11 +598,13 @@ impl ActorAttributes {
     }
 
     /// The half-angle either side of its heading this actor strikes within:
-    /// the three forward faces at T0, and each Grace tier wider, 90°, 120°,
-    /// then every way at T3. Fixed, not tuned; a strike past the forward
-    /// faces breaks its stride (`targeting::across`).
+    /// `Tuning::grace_arc_min`, the three forward faces, with no Grace, and
+    /// each tier wider to `grace_arc_max`, which leaves only what stands
+    /// straight behind it out of reach. A strike past the forward faces
+    /// breaks its stride (`targeting::across`).
     pub fn arc(&self) -> f32 {
-        [60.0, 90.0, 120.0, 180.0][self.grace().index()]
+        let tuning = crate::tuning::tuning();
+        self.grace().between(tuning.grace_arc_min, tuning.grace_arc_max)
     }
 
     /// Seconds between auto-attacks: `Tuning::base_interval`, the one pace
@@ -720,11 +729,18 @@ mod tests {
     }
 
     #[test]
-    fn grace_widens_the_arc_to_every_way() {
+    fn grace_widens_the_arc_to_all_but_straight_behind() {
         let graceful = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
         assert_eq!(plain.arc(), crate::systems::targeting::STRIDE_ARC, "no Grace, the forward faces");
-        assert_eq!(graceful.arc(), 180.0, "full commitment strikes every way");
+        assert!(graceful.arc() > plain.arc() && graceful.arc() < 180.0, "full commitment still cannot strike straight behind");
+    }
+
+    #[test]
+    fn a_tier_gives_its_value_evenly_between_the_two_ends() {
+        use CommitmentTier::*;
+        assert_eq!([T0, T1, T2, T3].map(|tier| tier.between(60.0, 150.0)), [60.0, 90.0, 120.0, 150.0]);
+        assert_eq!(T2.between(1.0, 1.0), 1.0, "a value the same at both ends is the same at every tier");
     }
 
     #[test]

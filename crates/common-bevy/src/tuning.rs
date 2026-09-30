@@ -50,11 +50,17 @@ pub struct Tuning {
     pub health_curve_p: f32,
 
     // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`,
-    // and so is the window each Awareness tier sees, `ActorAttributes::window_size`) ---
+    // and so is the window each Awareness tier sees, `ActorAttributes::window_size`). A tuned value
+    // is two knobs, `_min` at T0 and `_max` at T3, the tiers between evenly spaced
+    // (`CommitmentTier::between`) ---
     /// Seconds between auto-attacks at the one pace every actor starts from
     pub base_interval: f32,
     /// Share faster auto-attacks come at the ceiling of Tempo's share
     pub tempo_ceiling: f32,
+    /// The half-angle either side of its heading an actor strikes within,
+    /// in degrees, by its Grace
+    pub grace_arc_min: f32,
+    pub grace_arc_max: f32,
     /// Share of its health an actor loses at most in any second, at each Grit
     /// tier, T0 to T3; everything at T0
     pub grit_cap: [f32; 4],
@@ -186,6 +192,8 @@ impl Tuning {
         health_curve_p: 2.0,
         base_interval: 2.1,
         tempo_ceiling: 0.5,
+        grace_arc_min: 60.0,
+        grace_arc_max: 150.0,
         grit_cap: [f32::INFINITY, 0.4, 0.3, 0.28],
         contest_scale: 800.0,
         contest_per_level: 15.0,
@@ -295,6 +303,8 @@ impl Tuning {
         }
         let knob = match name {
             "base_interval" => &mut self.base_interval,
+            "grace_arc_min" => &mut self.grace_arc_min,
+            "grace_arc_max" => &mut self.grace_arc_max,
             "tempo_ceiling" => &mut self.tempo_ceiling,
             "potency_base" => &mut self.potency_base,
             "potency_per_point" => &mut self.potency_per_point,
