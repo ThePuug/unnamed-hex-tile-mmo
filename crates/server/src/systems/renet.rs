@@ -377,6 +377,7 @@ pub fn write_try(
     loaded_by_query: Query<&common_bevy::components::loaded_by::LoadedBy>,
     lobby: Res<Lobby>,
     timings: Res<crate::plugins::metrics::SystemTimings>,
+    characters: Query<(), With<PlayerControlled>>,
 ) {
     let mut _t = None;
     for message in reader.read() {
@@ -503,8 +504,10 @@ pub fn write_try(
                 // Unreliable: the latest wins, and Loc repairs a loss.
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
                 let bytes = bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap();
-                for &player_ent in &loaded_by.players {
-                    let Some(client_id) = lobby.get_by_right(&player_ent) else { continue; };
+                // A client viewing the actor simulates it as any other it sees;
+                // a character's own client predicts it and wants none
+                let viewer = lobby.get_by_right(&ent).filter(|_| !characters.contains(ent));
+                for client_id in loaded_by.players.iter().filter_map(|p| lobby.get_by_right(p)).chain(viewer) {
                     conn.send_unreliable(*client_id, bytes.clone());
                 }
             }
