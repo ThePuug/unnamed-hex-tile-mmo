@@ -117,7 +117,7 @@ pub struct Abilities<'w, 's> {
     pub grits: Query<'w, 's, &'static mut Grit>,
     pub striding: Query<'w, 's, &'static stride::PerfectStride>,
     pub targets: Query<'w, 's, (Entity, &'static Target)>,
-    pub npcs: Query<'w, 's, (Entity, &'static EntityType, &'static mut NpcRecovery), With<Chase>>,
+    pub npcs: Query<'w, 's, (Entity, &'static EntityType, &'static mut NpcRecovery, Has<leap::Traded>), With<Chase>>,
     pub map: Res<'w, Map>,
     pub time: Res<'w, Time>,
     pub runtime: Res<'w, crate::resources::RunTime>,
@@ -552,12 +552,20 @@ mod tests {
 
         assert_eq!(refused(&mut app, leaper, AbilityType::Leap, None), Some(AbilityFailReason::NoTargets), "a leap needs someone to leap from or onto");
 
+        // It swings at what it faces as soon as it targets it; let that blow land
+        app.update();
+        assert_eq!(queue(&app, near).len(), 1, "its first swing waits in its target's queue");
+        app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: near } });
+        app.update();
+        assert!(app.world().get::<leap::Traded>(leaper).is_some(), "a blow of its own landed: it has traded");
+
         // In reach, with a blow queued on it: clear of both
         assert!(used(&ask(&mut app, near, AbilityType::Frenzy, Some(leaper)), AbilityType::Frenzy));
         assert!(used(&ask(&mut app, leaper, AbilityType::Leap, Some(near)), AbilityType::Leap));
         app.update();
         assert!(distance(&app) > reach, "it leaps out of reach");
         assert!(queue(&app, leaper).is_empty(), "and the blow misses");
+        assert!(app.world().get::<leap::Traded>(leaper).is_none(), "what it had traded is behind it");
         let now = app.world().resource::<Time>().elapsed();
         assert_eq!(app.world().get::<Swing>(leaper).unwrap().waited(now).map(|_| ()), Some(()), "a swing is due and held");
 

@@ -14,8 +14,9 @@ impl Abilities<'_, '_> {
     /// - a strike (Frenzy, Feint) when its target stands within its reach
     ///   and arc;
     /// - a Parry or a Counter when threats stand in its queue;
-    /// - a Leap clear of a target in its reach when threats stand in its
-    ///   queue, and onto one out of its reach;
+    /// - a Leap clear of a target in its reach once it has traded, a blow
+    ///   of its own landed since its last leap (`leap::Traded`), and threats
+    ///   stand in its queue; and a Leap onto a target out of its reach;
     /// - a Perfect Stride when its target stands within its reach and it
     ///   is in none.
     ///
@@ -28,7 +29,7 @@ impl Abilities<'_, '_> {
     pub(super) fn skills(&mut self) {
         let now = self.time.elapsed();
         let mut asks: Vec<(Entity, AbilityType, Option<Entity>)> = Vec::new();
-        for (ent, entity_type, mut delay) in &mut self.npcs {
+        for (ent, entity_type, mut delay, traded) in &mut self.npcs {
             let EntityType::Actor(actor) = entity_type else { continue };
             let ActorIdentity::Npc(archetype) = actor.identity else { continue };
             let ability = archetype.profile().ability;
@@ -54,7 +55,7 @@ impl Abilities<'_, '_> {
             let in_reach = target_loc.is_some_and(|target_loc| loc.distance(&target_loc) <= own);
             let ask = match ability {
                 AbilityType::Parry | AbilityType::Counter => threatened.then_some(None),
-                AbilityType::Leap => target.filter(|_| threatened || !in_reach).map(Some),
+                AbilityType::Leap => target.filter(|_| !in_reach || (traded && threatened)).map(Some),
                 AbilityType::PerfectStride => (in_reach && !self.striding.get(ent).is_ok_and(|stride| stride.until > now)).then_some(None),
                 _ => target.zip(target_loc).filter(|(_, target_loc)| {
                     ability.reach(own).is_some_and(|reach| reach.contains(&loc.distance(target_loc)))

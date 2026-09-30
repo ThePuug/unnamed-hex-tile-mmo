@@ -114,6 +114,7 @@ pub fn process_deal_damage(
 /// Processes ResolveThreat events: a threat whose time ran out, one dismissed, a Counter's reflection
 pub fn resolve_threat(
     trigger: On<Try>,
+    mut commands: Commands,
     mut query: Query<(&mut Health, &ActorAttributes, Option<&mut common_bevy::components::grit::Grit>)>,
     actors: Query<&ActorAttributes>,
     mut writer: MessageWriter<Do>,
@@ -141,6 +142,10 @@ pub fn resolve_threat(
             let final_damage = blow + threat.dot_left();
 
             land_damage(*ent, threat.source, final_damage, threat.is_wound(), &mut health, &mut writer);
+            // Its source has traded
+            if let Ok(mut source) = commands.get_entity(threat.source) {
+                source.try_insert(abilities::leap::Traded);
+            }
 
             // Death check moved to dedicated check_death system (decoupled from combat)
         }
