@@ -77,7 +77,7 @@ pub fn recovery_after(ability: AbilityType, prior: Option<&GlobalRecovery>, attr
         let edge = damage_calc::level_edge(attrs.total_level(), defender.total_level());
         let contest = damage_calc::contest_factor(attrs.flow(), defender.reflex(), edge);
         let reduction = tuning.combo_floor + tuning.combo_share * contest;
-        (reduction >= f32::EPSILON).then(|| Combo { ability: next, unlock_at: (own * (1.0 - reduction)).max(0.0) })
+        (reduction >= f32::EPSILON).then(|| Combo { ability: next, unlock_at: (own * reduction).min(own) })
     });
 
     let early = prior.zip(taken).is_some_and(|(prior, combo)| !combo.is_unlocked(prior.remaining));
@@ -166,6 +166,17 @@ mod tests {
         assert!(early.carried > 0.0);
         assert_eq!(early.combo.map(|combo| combo.unlock_at), fresh.combo.map(|combo| combo.unlock_at));
         assert!(recovery_after(AbilityType::Feint, None, &plain, None, 0.0).combo.is_none(), "a Feint leads on to nothing");
+    }
+
+    #[test]
+    fn a_combo_unlocks_late_in_its_recovery_and_flow_brings_it_sooner() {
+        let defender = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
+        let plain = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
+        let flowing = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
+        let own = crate::tuning::tuning().recovery(AbilityType::Frenzy);
+        let left = |attrs| recovery_after(AbilityType::Frenzy, None, attrs, Some(&defender), 0.0).combo.unwrap().unlock_at;
+        assert!(left(&plain) < own / 2.0, "at parity, most of the recovery runs before the combo unlocks");
+        assert!(left(&flowing) > left(&plain), "a Flow advantage unlocks it with more of the recovery left");
     }
 
     #[test]
