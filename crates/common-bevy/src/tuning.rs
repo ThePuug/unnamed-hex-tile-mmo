@@ -33,8 +33,7 @@ pub struct Tuning {
     pub stamina_base: f32,
     /// Endurance an actor holds for each point of its Endurance potency
     pub endurance_pool: f32,
-    /// Endurance a skill or reaction costs for each point of the potency
-    /// it strikes with
+    /// Endurance a skill costs for each point of the potency its kind reads
     pub endurance_cost: f32,
     /// Share of its endurance an actor regains each second its stamina is full
     pub endurance_regen: f32,
@@ -86,9 +85,9 @@ pub struct Tuning {
     pub contest_scale: f32,
     /// Contest points each level of gap is worth to the higher level
     pub contest_per_level: f32,
-    /// Share longer and harder the effects an actor inflicts hold at the
-    /// ceiling of Concentration's share
-    pub concentration_hold: f32,
+    /// Share longer and harder the effects an actor's skill inflicts hold at
+    /// the ceiling of the share of the stat the skill reads
+    pub effect_hold: f32,
     /// Most of a blow Toughness mitigates, approached and never reached
     pub mitigation_share: f32,
     /// Most of a recovery an Impact advantage pushes it back by
@@ -122,15 +121,16 @@ pub struct Tuning {
     pub crit_power: f32,
 
     // --- The early kit: each skill's stamina, its seconds of recovery, and
-    // what it does, every value flat. A skill strikes with base potency; what
-    // scales it is the commitment it shows ---
+    // what it does, every value flat. What sizes a skill is the potency its
+    // kind reads, an action's Intuition and a reaction's Concentration; what
+    // shapes it is the commitment it shows ---
     pub frenzy_cost: f32,
     pub frenzy_recovery: f32,
-    /// Share of base potency a bite strikes for
+    /// Share of Intuition a bite strikes for
     pub frenzy_damage: f32,
     pub feint_cost: f32,
     pub feint_recovery: f32,
-    /// Share of base potency a Feint's two strikes deal together
+    /// Share of Intuition a Feint's two strikes deal together
     pub feint_damage: f32,
     /// Share of that the feint deals; the real strike deals the rest
     pub feint_share: f32,
@@ -140,14 +140,19 @@ pub struct Tuning {
     pub feint_gap: f32,
     pub parry_cost: f32,
     pub parry_recovery: f32,
+    /// Damage a Parry clears for each point of its user's Concentration
+    pub parry_capacity: f32,
     pub counter_cost: f32,
     pub counter_recovery: f32,
-    /// Share of each countered threat's damage sent back
+    /// Share of each countered threat's damage sent back by a counterer
+    /// with no Resolve; more by its Concentration over base potency
     pub counter_reflect: f32,
     pub leap_cost: f32,
     pub leap_recovery: f32,
     /// Tiles a Leap carries its user, clear of its target or toward it
     pub leap_distance: usize,
+    /// Share of Intuition a dive strikes for as it lands in reach
+    pub leap_strike: f32,
     pub stride_cost: f32,
     pub stride_recovery: f32,
     /// Seconds a Perfect Stride lasts
@@ -187,7 +192,7 @@ impl Tuning {
         grit_bank_max: 0.3,
         contest_scale: 800.0,
         contest_per_level: 15.0,
-        concentration_hold: 1.0,
+        effect_hold: 1.0,
         mitigation_share: 0.525,
         pushback_share: 0.5,
         composure_share: 0.231,
@@ -211,12 +216,14 @@ impl Tuning {
         feint_gap: 0.4,
         parry_cost: 25.0,
         parry_recovery: 1.5,
+        parry_capacity: 3.0,
         counter_cost: 60.0,
         counter_recovery: 0.5,
         counter_reflect: 0.6,
         leap_cost: 30.0,
         leap_recovery: 1.0,
         leap_distance: 6,
+        leap_strike: 1.0,
         stride_cost: 30.0,
         stride_recovery: 1.0,
         stride_secs: 4.0,
@@ -294,7 +301,7 @@ impl Tuning {
             "health_curve_p" => &mut self.health_curve_p,
             "contest_scale" => &mut self.contest_scale,
             "contest_per_level" => &mut self.contest_per_level,
-            "concentration_hold" => &mut self.concentration_hold,
+            "effect_hold" => &mut self.effect_hold,
             "mitigation_share" => &mut self.mitigation_share,
             "pushback_share" => &mut self.pushback_share,
             "composure_share" => &mut self.composure_share,
@@ -318,11 +325,13 @@ impl Tuning {
             "feint_gap" => &mut self.feint_gap,
             "parry_cost" => &mut self.parry_cost,
             "parry_recovery" => &mut self.parry_recovery,
+            "parry_capacity" => &mut self.parry_capacity,
             "counter_cost" => &mut self.counter_cost,
             "counter_recovery" => &mut self.counter_recovery,
             "counter_reflect" => &mut self.counter_reflect,
             "leap_cost" => &mut self.leap_cost,
             "leap_recovery" => &mut self.leap_recovery,
+            "leap_strike" => &mut self.leap_strike,
             "stride_cost" => &mut self.stride_cost,
             "stride_recovery" => &mut self.stride_recovery,
             "stride_secs" => &mut self.stride_secs,

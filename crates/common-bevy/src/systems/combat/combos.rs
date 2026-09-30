@@ -117,6 +117,7 @@ mod tests {
         assert!(reacts_through(AbilityType::Counter, Some(&recovering), Some(&disciplined)));
         assert!(!reacts_through(AbilityType::Counter, Some(&recovering), Some(&plain)), "no Preparation, no reaction in recovery");
         assert!(!reacts_through(AbilityType::Frenzy, Some(&recovering), Some(&disciplined)), "reactions only");
+        assert!(!reacts_through(AbilityType::Leap, Some(&recovering), Some(&disciplined)), "a Leap is an action");
         let through = recovery_after(AbilityType::Counter, Some(&recovering), &disciplined, None, 0.0);
         let own = crate::tuning::tuning().recovery(AbilityType::Counter);
         assert!(through.remaining > 2.0 && through.remaining < own + 2.0, "its own recovery added onto the rest, less what Preparation lets it off");

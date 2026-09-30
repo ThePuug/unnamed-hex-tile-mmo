@@ -199,14 +199,15 @@ pub enum AbilityType {
     /// The Juggernaut's feint and the real strike a moment behind it, which
     /// split its damage and its Grit's bank between them
     Feint,
-    /// The Ambusher's reaction, clearing every threat in its span;
-    /// Preparation chains it through a recovery
+    /// The Ambusher's reaction, clearing the threats in its span that its
+    /// Concentration covers; Preparation chains it through a recovery
     Parry,
     /// The Defender's reaction, clearing every threat in its span and
     /// sending a share of each back; Awareness lengthens the span
     Counter,
     /// The Skirmisher's leap: clear of a target in its reach, dodging its
-    /// span, or onto one out of it, where the swings Patience banked land
+    /// span, or onto one out of it, where it strikes and the swings
+    /// Patience banked land
     Leap,
     /// The Kiter's stride: for a while its strikes past the forward faces
     /// break no stride, so Grace strikes on the run
@@ -214,15 +215,19 @@ pub enum AbilityType {
 }
 
 impl AbilityType {
-    /// Whether it is a reaction: the abilities Discipline's Preparation
-    /// lets an actor use through its recovery (`combos::reacts_through`)
+    /// Whether it is a reaction, an answer to what is queued, where every
+    /// other skill is an action. A reaction reads Concentration and an
+    /// action Intuition (`ActorAttributes::skill_potency`), and Discipline's
+    /// Preparation lets a reaction through a recovery
+    /// (`combos::reacts_through`).
     pub fn is_reaction(self) -> bool {
-        matches!(self, AbilityType::Parry | AbilityType::Counter | AbilityType::Leap)
+        matches!(self, AbilityType::Parry | AbilityType::Counter)
     }
 
     /// How near and how far, in tiles, `ability` strikes a target from an
     /// actor whose own reach is `own`: as far as the actor reaches. None
-    /// for one the gate checks no target for: a reaction, or the stride.
+    /// for one the gate checks no target for: a reaction, a Leap, which
+    /// checks its own, or the stride.
     pub fn reach(self, own: i32) -> Option<std::ops::RangeInclusive<i32>> {
         match self {
             AbilityType::AutoAttack | AbilityType::Frenzy | AbilityType::Feint => Some(0..=own),

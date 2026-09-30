@@ -432,9 +432,9 @@ impl ActorAttributes {
     pub fn tempo(&self) -> f32 { self.potency(Attribute::Agility) }
     /// Endurance, Discipline's: how deep the endurance pool is (`max_endurance`)
     pub fn endurance(&self) -> f32 { self.potency(Attribute::Discipline) }
-    /// Intuition, Instinct's. Nothing reads it
+    /// Intuition, Instinct's: what an action is sized by (`skill_potency`)
     pub fn intuition(&self) -> f32 { self.potency(Attribute::Instinct) }
-    /// Concentration, Resolve's: how long the effects an actor inflicts hold (`hold`)
+    /// Concentration, Resolve's: what a reaction is sized by (`skill_potency`)
     pub fn concentration(&self) -> f32 { self.potency(Attribute::Resolve) }
 
     /// Constitution, Vitality's, which is max health: the health every actor
@@ -535,12 +535,26 @@ impl ActorAttributes {
         crate::tuning::tuning().endurance_pool * self.endurance()
     }
 
-    /// The endurance a skill or a reaction costs this actor:
-    /// `Tuning::endurance_cost` for each point of base potency, which every
-    /// skill strikes with. It grows with level as the pool does, so a pool
-    /// with no Discipline in it holds the same count of skills at any level.
-    pub fn skill_endurance(&self) -> f32 {
-        crate::tuning::tuning().endurance_cost * self.base_potency()
+    /// The attribute `ability` reads: Resolve for a reaction, Instinct for
+    /// any other skill, an action.
+    fn read_by(ability: crate::message::AbilityType) -> Attribute {
+        if ability.is_reaction() { Attribute::Resolve } else { Attribute::Instinct }
+    }
+
+    /// The potency `ability`, a skill, is sized by: Concentration for a
+    /// reaction, Intuition for an action. With none of that attribute it is
+    /// base potency. An auto-attack is sized by `auto_damage` instead.
+    pub fn skill_potency(&self, ability: crate::message::AbilityType) -> f32 {
+        self.potency(Self::read_by(ability))
+    }
+
+    /// The endurance `ability`, a skill, costs this actor:
+    /// `Tuning::endurance_cost` for each point of the potency it reads
+    /// (`skill_potency`). It grows with level as the pool does, so a pool
+    /// with no Discipline in it holds the same count of a build's skills at
+    /// any level.
+    pub fn skill_endurance(&self, ability: crate::message::AbilityType) -> f32 {
+        crate::tuning::tuning().endurance_cost * self.skill_potency(ability)
     }
 
     /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
@@ -551,10 +565,12 @@ impl ActorAttributes {
     }
 
     /// How much longer and harder the stuns, dazes, slows and knockbacks this
-    /// actor inflicts hold: 1 with no Concentration, `Tuning::concentration_hold`
-    /// more at the ceiling of its share
-    pub fn hold(&self) -> f32 {
-        1.0 + crate::tuning::tuning().concentration_hold * self.share(Attribute::Resolve)
+    /// actor inflicts with `ability` hold: 1 with none of the attribute the
+    /// ability reads, `Tuning::effect_hold` more at the ceiling of that
+    /// attribute's share. A share, never the potency, so an effect keeps
+    /// under its ceiling at any level.
+    pub fn hold(&self, ability: crate::message::AbilityType) -> f32 {
+        1.0 + crate::tuning::tuning().effect_hold * self.share(Self::read_by(ability))
     }
 
     /// The share of the recovery a combo fired early skipped that this actor
@@ -696,9 +712,35 @@ mod tests {
         assert_eq!(disciplined.max_stamina(), plain.max_stamina());
         assert!(disciplined.max_endurance() > mighty.max_endurance(), "Discipline deepens it");
         assert!(mighty.max_endurance() > plain.max_endurance(), "and so does level");
-        assert_eq!(disciplined.skill_endurance(), mighty.skill_endurance(), "a skill costs the same at a level, whatever the build");
-        let skills = |attrs: &ActorAttributes| attrs.max_endurance() / attrs.skill_endurance();
+        use crate::message::AbilityType::{Counter, Frenzy};
+        assert_eq!(disciplined.skill_endurance(Frenzy), mighty.skill_endurance(Frenzy), "a skill costs the same at a level where neither reads its stat");
+        let skills = |attrs: &ActorAttributes| attrs.max_endurance() / attrs.skill_endurance(Frenzy);
         assert!((skills(&mighty) - skills(&plain)).abs() < 1e-3, "with no Discipline a pool holds as many skills at any level");
+
+        let (instinctive, resolute) = (ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0), ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0));
+        assert!(instinctive.skill_endurance(Frenzy) > mighty.skill_endurance(Frenzy), "a skill costs by the potency it reads");
+        assert_eq!(instinctive.skill_endurance(Counter), mighty.skill_endurance(Counter));
+        assert!(resolute.skill_endurance(Counter) > mighty.skill_endurance(Counter));
+    }
+
+    #[test]
+    fn an_action_reads_intuition_and_a_reaction_concentration() {
+        use crate::message::AbilityType::*;
+        let instinctive = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
+        let resolute = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
+        let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
+        for action in [Frenzy, Feint, Leap, PerfectStride] {
+            assert_eq!(instinctive.skill_potency(action), instinctive.intuition(), "{action:?}");
+            assert_eq!(resolute.skill_potency(action), resolute.base_potency(), "{action:?} reads no Resolve");
+            assert!(instinctive.hold(action) > 1.0 && resolute.hold(action) == 1.0, "its effects hold by Intuition's share");
+        }
+        for reaction in [Parry, Counter] {
+            assert_eq!(resolute.skill_potency(reaction), resolute.concentration(), "{reaction:?}");
+            assert_eq!(instinctive.skill_potency(reaction), instinctive.base_potency(), "{reaction:?} reads no Instinct");
+            assert!(resolute.hold(reaction) > 1.0 && instinctive.hold(reaction) == 1.0, "its effects hold by Concentration's share");
+        }
+        assert_eq!(mighty.skill_potency(Frenzy), mighty.base_potency(), "with none of either, base potency");
+        assert!(instinctive.hold(Frenzy) < 1.0 + crate::tuning::tuning().effect_hold, "a share keeps an effect under its ceiling");
     }
 
     #[test]
@@ -708,14 +750,6 @@ mod tests {
         assert_eq!(ActorAttributes::default().cadence_interval(), base);
         assert_eq!(ActorAttributes::new(-10, 0, 0, -10, 0, 0, 0, 0, 0).cadence_interval(), base, "no other attribute changes the pace");
         assert!(quick(5) < base && quick(10) < quick(5), "more Agility, a faster swing");
-    }
-
-    #[test]
-    fn concentration_holds_what_its_blows_impose() {
-        let resolute = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
-        let plain = ActorAttributes::default();
-        assert_eq!(plain.hold(), 1.0, "no Concentration, effects as they come");
-        assert!(resolute.hold() > 1.0);
     }
 
     #[test]

@@ -237,7 +237,7 @@ impl Abilities<'_, '_> {
         let spent = match ability {
             AbilityType::AutoAttack if across => tuning.off_arc_cost * attrs.force(),
             AbilityType::AutoAttack => 0.0,
-            _ => attrs.skill_endurance(),
+            _ => attrs.skill_endurance(ability),
         };
         let mut fatigue = 0.0;
         if spent > 0.0 {
@@ -532,6 +532,35 @@ mod tests {
     }
 
     #[test]
+    fn a_parry_clears_what_its_budget_covers_front_first_and_the_rest_stand() {
+        use common_bevy::systems::combat::queue::{create_threat, insert_threat};
+        let mut app = arena();
+        let defender = actor(&mut app, Side::PLAYERS, 0);
+        let attacker = actor(&mut app, Side::WILD, 1);
+        app.update();
+
+        let plain = ActorAttributes::default();
+        let budget = plain.skill_potency(AbilityType::Parry) * common_bevy::tuning::tuning().parry_capacity;
+        let queued = |app: &mut App, damage: f32, millis: u64| {
+            let at = Duration::from_millis(millis);
+            let threat = create_threat(attacker, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
+            insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat, at);
+        };
+        // Three within one span: the first two fit the budget, the third does not
+        for (damage, millis) in [(budget * 0.5, 0), (budget * 0.4, 50), (budget * 0.3, 100)] {
+            queued(&mut app, damage, millis);
+        }
+        assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry));
+        let left: Vec<u128> = queue(&app, defender).iter().map(|threat| threat.inserted_at.as_millis()).collect();
+        assert_eq!(left, vec![100], "the front two are covered and cleared whole; the third stands");
+
+        app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
+        app.world_mut().get_mut::<ReactionQueue>(defender).unwrap().threats.clear();
+        queued(&mut app, budget * 1.5, 0);
+        assert_eq!(refused(&mut app, defender, AbilityType::Parry, None), Some(AbilityFailReason::NoTargets), "a front threat past the whole budget cannot be parried");
+    }
+
+    #[test]
     fn a_reaction_takes_the_front_threat_and_its_span_and_leaves_what_lands_later() {
         use common_bevy::systems::combat::queue::{create_threat, insert_threat};
         let mut app = arena();
@@ -578,6 +607,7 @@ mod tests {
         app.update();
         assert!(distance(&app) > reach, "it leaps out of reach");
         assert!(queue(&app, leaper).is_empty(), "and the blow misses");
+        assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "a leap clear strikes nothing");
         assert!(app.world().get::<leap::Traded>(leaper).is_none(), "what it had traded is behind it");
         let now = app.world().resource::<Time>().elapsed();
         assert_eq!(app.world().get::<Swing>(leaper).unwrap().waited(now).map(|_| ()), Some(()), "a swing is due and held");
@@ -589,6 +619,7 @@ mod tests {
         app.update();
         app.update();
         assert_eq!(distance(&app), 1, "it dives to beside its target");
+        assert_eq!(queue(&app, near).iter().filter(|threat| threat.ability == Some(AbilityType::Leap)).count(), 1, "striking it as it lands");
         assert!(used(&app.world().resource::<Said>().0, AbilityType::AutoAttack), "and strikes as it lands");
     }
 
