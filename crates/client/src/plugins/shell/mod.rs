@@ -32,7 +32,6 @@ use crate::{
     network::Link,
     resources::{EntityMap, LoadedChunks, RenderOrigin, Server, SummaryCache, SummaryMesh, SummaryMeshes},
     systems::{
-        attack_telegraph::{AttackBall, HitLine},
         character_panel::{self, CharacterPanel, CharacterPanelState},
         closeup::Figure,
     },
@@ -223,8 +222,6 @@ fn leave_world(
         Entity,
         Or<(
             With<SummaryMesh>,
-            With<AttackBall>,
-            With<HitLine>,
             With<FloatingText>,
             With<ResolvedThreatEntry>,
             With<CombatLogEntry>,

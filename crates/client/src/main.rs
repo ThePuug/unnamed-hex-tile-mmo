@@ -35,7 +35,7 @@ use crate::{
         water::WaterPlugin,
     },
     resources::*,
-    systems::{ability_prediction, actor, actor_dead_visibility, animator, attack_telegraph, camera, combat, equipment, gathering, hiding, input, movement, renet, targeting, world}
+    systems::{ability_prediction, actor, actor_dead_visibility, animator, camera, combat, equipment, gathering, hiding, input, movement, renet, targeting, world}
 };
 #[cfg(feature = "admin")]
 use crate::plugins::{flyover, recorder};
@@ -180,17 +180,6 @@ fn main() {
         // A Loc that ends a slide must see the Displacing marker the slide
         // inserted, so the slide handler runs (and its commands apply) first.
         movement::do_loc.after(movement::apply_displace),
-    ));
-
-    // Attack telegraph systems
-    app.add_systems(Update, (
-        attack_telegraph::on_insert_threat,
-        // CRITICAL: on_apply_damage MUST run before on_clear_queue
-        // When damage is applied, server sends both ApplyDamage and ClearQueue events
-        // We need to spawn the line before clearing the ball
-        attack_telegraph::on_apply_damage.before(attack_telegraph::on_clear_queue),
-        attack_telegraph::on_clear_queue,
-        attack_telegraph::update_telegraphs,
     ));
 
     app.add_systems(Update, (

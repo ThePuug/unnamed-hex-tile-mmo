@@ -3,7 +3,6 @@ pub mod action_bar;
 pub mod actor;
 pub mod actor_dead_visibility;
 pub mod animator;
-pub mod attack_telegraph;
 pub mod bag_panel;
 pub mod camera;
 pub mod character_panel;

@@ -31,7 +31,7 @@ pub struct QueuedThreat {
     pub inserted_at: Duration,
     /// How long this threat has before it resolves
     pub timer_duration: Duration,
-    /// Optional ability that caused this threat (for visual effects/telegraphs)
+    /// The ability that caused this threat, if any: how it shows and lands
     pub ability: Option<crate::message::AbilityType>,
     /// Damage each tick of the damage over time (DoT) this threat applies
     /// while it stands in the queue: a wound. Zero for a blow. A wound's DoT
