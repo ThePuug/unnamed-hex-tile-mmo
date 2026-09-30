@@ -23,6 +23,10 @@ pub struct Tuning {
     /// The damage level curve, `(1 + level × k)^p`, every potency scales by
     pub damage_curve_k: f32,
     pub damage_curve_p: f32,
+    /// Points of an attribute that carry its absolute's passive effect half
+    /// way to its ceiling; every share rises toward the ceiling and never
+    /// reaches it
+    pub share_bend: f32,
     /// Health every actor has before Vitality and level
     pub base_health: f32,
     /// Stamina every actor has before Endurance
@@ -157,6 +161,7 @@ impl Tuning {
         potency_per_point: 0.2058,
         damage_curve_k: 0.15,
         damage_curve_p: 1.75,
+        share_bend: 800.0,
         base_health: 588.0,
         stamina_base: 100.0,
         endurance_pool: 0.7,
@@ -165,7 +170,7 @@ impl Tuning {
         health_curve_p: 2.0,
         auto_interval: 2.1,
         grit_cap: [f32::INFINITY, 0.4, 0.3, 0.28],
-        contest_scale: 97.0,
+        contest_scale: 800.0,
         contest_per_level: 15.0,
         concentration_hold: 1.0,
         mitigation_share: 0.525,
@@ -277,6 +282,7 @@ impl Tuning {
             "potency_per_point" => &mut self.potency_per_point,
             "damage_curve_k" => &mut self.damage_curve_k,
             "damage_curve_p" => &mut self.damage_curve_p,
+            "share_bend" => &mut self.share_bend,
             "base_health" => &mut self.base_health,
             "stamina_base" => &mut self.stamina_base,
             "endurance_pool" => &mut self.endurance_pool,

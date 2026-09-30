@@ -512,25 +512,26 @@ impl ActorAttributes {
         crate::tuning::tuning().potency_base * self.damage_level_multiplier()
     }
 
-    /// How far investment has carried an absolute stat of `potency` toward
-    /// its ceiling: 0 with none, rising toward 1 with diminishing returns,
-    /// the same at every level. Each absolute's passive effect is its
-    /// ceiling times this share.
-    pub fn share(&self, potency: f32) -> f32 {
-        (1.0 - self.base_potency() / potency).max(0.0)
+    /// How far its points have carried `attribute`'s absolute stat toward
+    /// its ceiling: 0 with none, half at `Tuning::share_bend` points, rising
+    /// toward 1 with diminishing returns, the same at every level. Each
+    /// absolute's passive effect is its ceiling times this share.
+    pub fn share(&self, attribute: Attribute) -> f32 {
+        let points = self.value(attribute) as f32;
+        points / (points + crate::tuning::tuning().share_bend)
     }
 
     /// The stamina pool: `Tuning::stamina_base`, `Tuning::endurance_pool`
     /// more of it at the ceiling of Endurance's share
     pub fn max_stamina(&self) -> f32 {
         let tuning = crate::tuning::tuning();
-        tuning.stamina_base * (1.0 + tuning.endurance_pool * self.share(self.endurance()))
+        tuning.stamina_base * (1.0 + tuning.endurance_pool * self.share(Attribute::Discipline))
     }
 
     /// The chance a blow this actor strikes crits: `Tuning::crit_chance` at
     /// the ceiling of Intuition's share
     pub fn crit_chance(&self) -> f32 {
-        crate::tuning::tuning().crit_chance * self.share(self.intuition())
+        crate::tuning::tuning().crit_chance * self.share(Attribute::Instinct)
     }
 
     /// What a crit this actor strikes multiplies its blow by:
@@ -538,21 +539,21 @@ impl ActorAttributes {
     /// Precision's share
     pub fn crit_multiplier(&self) -> f32 {
         let tuning = crate::tuning::tuning();
-        tuning.crit_power + tuning.crit_severity * self.share(self.precision())
+        tuning.crit_power + tuning.crit_severity * self.share(Attribute::Agility)
     }
 
     /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
     /// `Tuning::force_auto` at the ceiling of Force's share
     pub fn auto_damage(&self) -> f32 {
         let tuning = crate::tuning::tuning();
-        self.base_potency() * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(self.force()))
+        self.base_potency() * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(Attribute::Might))
     }
 
     /// How much longer and harder the stuns, dazes, slows and knockbacks this
     /// actor inflicts hold: 1 with no Concentration, `Tuning::concentration_hold`
     /// more at the ceiling of its share
     pub fn hold(&self) -> f32 {
-        1.0 + crate::tuning::tuning().concentration_hold * self.share(self.concentration())
+        1.0 + crate::tuning::tuning().concentration_hold * self.share(Attribute::Resolve)
     }
 
     /// The most of its health this actor loses in any second
@@ -643,7 +644,7 @@ mod tests {
     fn a_share_rises_with_investment_and_diminishes() {
         let share = |points: i8| {
             let attrs = ActorAttributes::new(-points, 0, 0, 0, 0, 0, 0, 0, 0);
-            attrs.share(attrs.force())
+            attrs.share(Attribute::Might)
         };
         assert_eq!(share(0), 0.0, "none invested, none of the ceiling");
         assert!(share(5) > 0.0 && share(10) > share(5), "more invested, more of it");
