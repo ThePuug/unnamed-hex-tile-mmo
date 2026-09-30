@@ -157,8 +157,8 @@ pub fn spawn_engagement(
 
         let actor_impl = ActorImpl {
             origin: Origin::Evolved,
-            approach: archetype.approach(),
-            resilience: archetype.resilience(),
+            approach: archetype.profile().approach,
+            resilience: archetype.profile().resilience,
             identity: ActorIdentity::Npc(archetype),
         };
 

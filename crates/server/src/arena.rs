@@ -59,15 +59,6 @@ const STEP: Duration = Duration::from_micros(62_500);
 /// reaches its leash before the edge.
 const ARENA_RADIUS: i32 = 80;
 
-const ARCHETYPES: [EnemyArchetype; 6] = [
-    EnemyArchetype::Berserker,
-    EnemyArchetype::Juggernaut,
-    EnemyArchetype::Kiter,
-    EnemyArchetype::Defender,
-    EnemyArchetype::Skirmisher,
-    EnemyArchetype::Ambusher,
-];
-
 /// One side of a fight: `size` NPCs of `archetype` at `level`.
 #[derive(Clone, Copy)]
 struct Team {
@@ -92,7 +83,7 @@ struct Settings {
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: ARCHETYPES.to_vec(), trace: 0, tuning: Tuning::default() };
+        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: EnemyArchetype::ALL.to_vec(), trace: 0, tuning: Tuning::default() };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {
@@ -122,7 +113,7 @@ impl Settings {
 }
 
 fn archetype_named(name: &str) -> EnemyArchetype {
-    ARCHETYPES.into_iter()
+    EnemyArchetype::ALL.into_iter()
         .find(|a| format!("{a:?}").eq_ignore_ascii_case(name))
         .unwrap_or_else(|| panic!("no archetype {name}"))
 }

@@ -15,7 +15,7 @@ impl ActorIdentity {
     pub fn display_name(&self) -> &'static str {
         match self {
             ActorIdentity::Player => "Player",
-            ActorIdentity::Npc(archetype) => archetype.display_name(),
+            ActorIdentity::Npc(archetype) => archetype.profile().name,
         }
     }
 }

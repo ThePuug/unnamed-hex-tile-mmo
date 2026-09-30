@@ -3,7 +3,10 @@
 //! level gives it.
 
 use qrz::Qrz;
-use crate::{components::ActorAttributes, message::AbilityType};
+use crate::{
+    components::{entity_type::actor::{Approach, Resilience}, ActorAttributes},
+    message::AbilityType,
+};
 
 /// Haven location, in hex coordinates.
 ///
@@ -16,66 +19,47 @@ use crate::{components::ActorAttributes, message::AbilityType};
 /// authored.
 pub const HAVEN_LOCATION: Qrz = Qrz { q: 104289, r: -4677, z: 0 };
 
-/// Enemy archetypes with distinct combat profiles
+/// The enemy archetypes, each built on one attribute.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnemyArchetype {
     #[default]
-    Berserker,   // Highland - Aggressive melee burst (pure Might)
-    Juggernaut,  // Foothills - Tanky melee pressure (pure Vitality)
-    Kiter,       // Inland (flat) - Ranged harassment (pure Agility)
-    Defender,    // Coast - Reactive counter-attacks (pure Resolve)
-    Skirmisher,  // Evasive - dodges the blows aimed at it (pure Instinct)
-    Ambusher,   // Ambushing - stuns and strikes from behind (pure Discipline)
+    Berserker,
+    Juggernaut,
+    Kiter,
+    Defender,
+    Skirmisher,
+    Ambusher,
+}
+
+/// What an archetype is ([`EnemyArchetype::profile`]).
+pub struct Profile {
+    /// What an NPC of it is called
+    pub name: &'static str,
+    /// Its signature ability
+    pub ability: AbilityType,
+    pub approach: Approach,
+    pub resilience: Resilience,
+    /// The attribute it is built on, as the sign each pair's axis takes
+    /// (Might-Agility, Vitality-Discipline, Instinct-Resolve): negative the
+    /// pair's left attribute, positive its right
+    pub build: [i8; 3],
 }
 
 impl EnemyArchetype {
-    /// Get signature ability for this archetype (None = auto-attack only)
-    pub fn ability(&self) -> Option<AbilityType> {
-        match self {
-            EnemyArchetype::Berserker => Some(AbilityType::Lunge),
-            EnemyArchetype::Juggernaut => Some(AbilityType::Rattle),
-            EnemyArchetype::Kiter => Some(AbilityType::Volley),
-            EnemyArchetype::Defender => Some(AbilityType::Counter),
-            EnemyArchetype::Skirmisher => Some(AbilityType::Disengage),
-            EnemyArchetype::Ambusher => Some(AbilityType::Flank),
-        }
-    }
+    pub const ALL: [Self; 6] = [Self::Berserker, Self::Juggernaut, Self::Kiter, Self::Defender, Self::Skirmisher, Self::Ambusher];
 
-    /// What an NPC of this archetype is called
-    pub fn display_name(&self) -> &'static str {
+    /// Everything that sets this archetype apart, one row each
+    pub const fn profile(self) -> Profile {
+        use AbilityType::*;
+        use Approach::*;
+        use Resilience::*;
         match self {
-            EnemyArchetype::Berserker => "Wild Dog",
-            EnemyArchetype::Juggernaut => "Juggernaut",
-            EnemyArchetype::Kiter => "Forest Sprite",
-            EnemyArchetype::Defender => "Defender",
-            EnemyArchetype::Skirmisher => "Skirmisher",
-            EnemyArchetype::Ambusher => "Ambusher",
-        }
-    }
-
-    /// Get Approach for this archetype
-    pub fn approach(&self) -> crate::components::entity_type::actor::Approach {
-        use crate::components::entity_type::actor::Approach;
-        match self {
-            EnemyArchetype::Berserker => Approach::Direct,
-            EnemyArchetype::Juggernaut => Approach::Binding,
-            EnemyArchetype::Kiter => Approach::Distant,
-            EnemyArchetype::Defender => Approach::Patient,
-            EnemyArchetype::Skirmisher => Approach::Evasive,
-            EnemyArchetype::Ambusher => Approach::Ambushing,
-        }
-    }
-
-    /// Get Resilience for this archetype
-    pub fn resilience(&self) -> crate::components::entity_type::actor::Resilience {
-        use crate::components::entity_type::actor::Resilience;
-        match self {
-            EnemyArchetype::Berserker => Resilience::Primal,
-            EnemyArchetype::Juggernaut => Resilience::Vital,
-            EnemyArchetype::Kiter => Resilience::Mental,
-            EnemyArchetype::Defender => Resilience::Hardened,
-            EnemyArchetype::Skirmisher => Resilience::Shielded,
-            EnemyArchetype::Ambusher => Resilience::Blessed,
+            Self::Berserker  => Profile { name: "Wild Dog",      ability: Lunge,     approach: Direct,    resilience: Primal,   build: [-1, 0, 0] },
+            Self::Juggernaut => Profile { name: "Juggernaut",    ability: Rattle,    approach: Binding,   resilience: Vital,    build: [0, -1, 0] },
+            Self::Kiter      => Profile { name: "Forest Sprite", ability: Volley,    approach: Distant,   resilience: Mental,   build: [1, 0, 0] },
+            Self::Defender   => Profile { name: "Defender",      ability: Counter,   approach: Patient,   resilience: Hardened, build: [0, 0, 1] },
+            Self::Skirmisher => Profile { name: "Skirmisher",    ability: Disengage, approach: Evasive,   resilience: Shielded, build: [0, 0, -1] },
+            Self::Ambusher   => Profile { name: "Ambusher",      ability: Flank,     approach: Ambushing, resilience: Blessed,  build: [0, 1, 0] },
         }
     }
 }
@@ -97,15 +81,7 @@ pub fn calculate_enemy_attributes(
     archetype: EnemyArchetype,
 ) -> ActorAttributes {
     let points = level.min(i8::MAX as u8) as i8;
-    // Each pair's axis: negative its left attribute, positive its right
-    let (physique, conditioning, temperament) = match archetype {
-        EnemyArchetype::Berserker => (-points, 0, 0),  // Might
-        EnemyArchetype::Kiter => (points, 0, 0),       // Agility
-        EnemyArchetype::Juggernaut => (0, -points, 0), // Vitality
-        EnemyArchetype::Ambusher => (0, points, 0),    // Discipline
-        EnemyArchetype::Skirmisher => (0, 0, -points), // Instinct
-        EnemyArchetype::Defender => (0, 0, points),    // Resolve
-    };
+    let [physique, conditioning, temperament] = archetype.profile().build.map(|sign| sign * points);
     ActorAttributes::new(physique, 0, 0, conditioning, 0, 0, temperament, 0, 0)
 }
 
@@ -114,13 +90,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_archetype_abilities() {
-        assert_eq!(EnemyArchetype::Berserker.ability(), Some(AbilityType::Lunge));
-        assert_eq!(EnemyArchetype::Juggernaut.ability(), Some(AbilityType::Rattle));
-        assert_eq!(EnemyArchetype::Kiter.ability(), Some(AbilityType::Volley));
-        assert_eq!(EnemyArchetype::Defender.ability(), Some(AbilityType::Counter));
-        assert_eq!(EnemyArchetype::Skirmisher.ability(), Some(AbilityType::Disengage));
-        assert_eq!(EnemyArchetype::Ambusher.ability(), Some(AbilityType::Flank));
+    fn no_two_archetypes_share_a_name_a_signature_or_a_build() {
+        for (i, a) in EnemyArchetype::ALL.into_iter().enumerate() {
+            for b in &EnemyArchetype::ALL[i + 1..] {
+                let (a, b) = (a.profile(), b.profile());
+                assert_ne!(a.name, b.name);
+                assert_ne!(a.ability, b.ability);
+                assert_ne!(a.build, b.build);
+            }
+        }
     }
 
     // ===== ATTRIBUTE CALCULATION TESTS =====

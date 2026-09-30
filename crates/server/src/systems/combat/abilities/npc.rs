@@ -27,7 +27,7 @@ impl Abilities<'_, '_> {
         for (ent, entity_type, mut delay) in &mut self.npcs {
             let EntityType::Actor(actor) = entity_type else { continue };
             let ActorIdentity::Npc(archetype) = actor.identity else { continue };
-            let Some(ability) = archetype.ability() else { continue };
+            let ability = archetype.profile().ability;
             let Ok((&loc, attrs, _, heading, _, range, _, _)) = self.actors.get(ent) else { continue };
 
             // Out of lockout, or a reaction its Preparation lets through it, and affordable

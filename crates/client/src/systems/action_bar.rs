@@ -109,9 +109,8 @@ pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 4] {
         EntityType::Actor(actor) => match actor.identity {
             ActorIdentity::Player => bar = PLAYER.map(Some),
             ActorIdentity::Npc(npc) => {
-                if let Some(signature) = npc.ability() {
-                    bar[PLAYER.iter().position(|&a| a == signature).unwrap_or(0)] = Some(signature);
-                }
+                let signature = npc.profile().ability;
+                bar[PLAYER.iter().position(|&a| a == signature).unwrap_or(0)] = Some(signature);
             }
         },
         _ => {}
