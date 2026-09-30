@@ -268,10 +268,11 @@ macro_rules! create_stat_display {
                 },
             ))
             .with_children(|stat_col| {
-                // Header row: stat name + raw value
+                // Header row: stat name left, raw value right
                 stat_col.spawn((
                     Node {
                         flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::SpaceBetween,
                         column_gap: Val::Px(4.),
                         ..default()
                     },
