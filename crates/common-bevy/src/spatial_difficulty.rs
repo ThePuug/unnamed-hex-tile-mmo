@@ -122,156 +122,14 @@ impl EnemyArchetype {
     }
 }
 
-/// Which ActorAttributes field to invest in (6 investable fields, shift excluded)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AttributeField {
-    MightAgilityAxis,
-    MightAgilitySpectrum,
-    VitalityDisciplineAxis,
-    VitalityDisciplineSpectrum,
-    InstinctResolveAxis,
-    InstinctResolveSpectrum,
-}
-
-/// A single allocation target: field + relative weight + axis direction
-#[derive(Debug, Clone, Copy)]
-pub struct Allocation {
-    pub field: AttributeField,
-    pub weight: u8,
-    /// -1/+1 for axis fields; ignored for spectrum
-    pub direction: i8,
-}
-
-/// Complete NPC attribute build definition
-#[derive(Debug, Clone)]
-pub struct NpcBuild {
-    pub allocations: &'static [Allocation],
-    pub might_agility_shift: i8,
-    pub vitality_discipline_shift: i8,
-    pub instinct_resolve_shift: i8,
-}
-
-// Archetype builds, balanced against one another in the server's arena
-static BERSERKER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::MightAgilityAxis, weight: 1, direction: -1 },
-];
-static JUGGERNAUT_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::VitalityDisciplineAxis, weight: 1, direction: -1 },
-];
-static KITER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::MightAgilityAxis, weight: 1, direction: 1 },
-];
-static DEFENDER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::InstinctResolveAxis, weight: 1, direction: 1 },
-];
-static SKIRMISHER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::InstinctResolveAxis, weight: 1, direction: -1 },
-];
-static AMBUSHER_BUILD: &[Allocation] = &[
-    Allocation { field: AttributeField::VitalityDisciplineAxis, weight: 1, direction: 1 },
-];
-
-impl EnemyArchetype {
-    /// Get the attribute build for this archetype
-    pub fn build(&self) -> NpcBuild {
-        match self {
-            EnemyArchetype::Berserker => NpcBuild {
-                allocations: BERSERKER_BUILD,
-                might_agility_shift: 0,
-                vitality_discipline_shift: 0,
-                instinct_resolve_shift: 0,
-            },
-            EnemyArchetype::Juggernaut => NpcBuild {
-                allocations: JUGGERNAUT_BUILD,
-                might_agility_shift: 0,
-                vitality_discipline_shift: 0,
-                instinct_resolve_shift: 0,
-            },
-            EnemyArchetype::Kiter => NpcBuild {
-                allocations: KITER_BUILD,
-                might_agility_shift: 0,
-                vitality_discipline_shift: 0,
-                instinct_resolve_shift: 0,
-            },
-            EnemyArchetype::Defender => NpcBuild {
-                allocations: DEFENDER_BUILD,
-                might_agility_shift: 0,
-                vitality_discipline_shift: 0,
-                instinct_resolve_shift: 0,
-            },
-            EnemyArchetype::Skirmisher => NpcBuild {
-                allocations: SKIRMISHER_BUILD,
-                might_agility_shift: 0,
-                vitality_discipline_shift: 0,
-                instinct_resolve_shift: 0,
-            },
-            EnemyArchetype::Ambusher => NpcBuild {
-                allocations: AMBUSHER_BUILD,
-                might_agility_shift: 0,
-                vitality_discipline_shift: 0,
-                instinct_resolve_shift: 0,
-            },
-        }
-    }
-}
-
-/// Distribute `level` points across allocations using largest-remainder method.
-
-/// Stack-only: uses fixed-size arrays (max 6 investable fields).
-fn distribute_points(level: u8, allocations: &[Allocation]) -> [u8; 6] {
-    let mut result = [0u8; 6];
-    let n = allocations.len().min(6);
-    if n == 0 || level == 0 {
-        return result;
-    }
-
-    let total_weight: u16 = allocations[..n].iter().map(|a| a.weight as u16).sum();
-    if total_weight == 0 {
-        return result;
-    }
-
-    // Integer quotients
-    let mut sum = 0u8;
-    let mut remainders = [0u32; 6]; // scaled fractional remainders
-    for i in 0..n {
-        let w = allocations[i].weight as u32;
-        let base = (level as u32 * w / total_weight as u32) as u8;
-        result[i] = base;
-        sum += base;
-        // Fractional remainder scaled by total_weight to avoid floats
-        remainders[i] = (level as u32 * w) % total_weight as u32;
-    }
-
-    // Distribute remainder by largest fractional remainder (ties: earlier slot wins)
-    let mut leftover = level - sum;
-    while leftover > 0 {
-        let mut best_idx = 0;
-        let mut best_rem = 0;
-        for i in 0..n {
-            if remainders[i] > best_rem {
-                best_rem = remainders[i];
-                best_idx = i;
-            }
-        }
-        result[best_idx] += 1;
-        remainders[best_idx] = 0; // consumed
-        leftover -= 1;
-    }
-
-    result
-}
-
-/// Calculate ActorAttributes for an enemy based on level and archetype
-
-/// Points are distributed proportionally across the archetype's build allocations
-/// using largest-remainder allocation. Direction is applied to axis fields;
-/// spectrum fields are always positive. Fixed shift values come from the build.
-
+/// The attributes of an NPC of `archetype` at `level`: every point of its
+/// level in the one attribute the archetype is built on, none in a spectrum
+/// and none shifted.
+///
 /// # Examples
 /// ```
 /// # use common_bevy::spatial_difficulty::*;
 /// let attrs = calculate_enemy_attributes(10, EnemyArchetype::Juggernaut);
-/// // Level 10 Juggernaut: all 10 points to VitalityDisciplineAxis, direction -1
 /// assert_eq!(attrs.might_agility_axis(), 0);
 /// assert_eq!(attrs.vitality_discipline_axis(), -10);
 /// assert_eq!(attrs.instinct_resolve_axis(), 0);
@@ -280,39 +138,17 @@ pub fn calculate_enemy_attributes(
     level: u8,
     archetype: EnemyArchetype,
 ) -> ActorAttributes {
-    let build = archetype.build();
-    let points = distribute_points(level, build.allocations);
-
-    let mut mg_axis: i8 = 0;
-    let mut mg_spectrum: i8 = 0;
-    let mut vf_axis: i8 = 0;
-    let mut vf_spectrum: i8 = 0;
-    let mut ip_axis: i8 = 0;
-    let mut ip_spectrum: i8 = 0;
-
-    for (i, alloc) in build.allocations.iter().enumerate().take(6) {
-        let p = points[i] as i8;
-        match alloc.field {
-            AttributeField::MightAgilityAxis => mg_axis += p * alloc.direction,
-            AttributeField::MightAgilitySpectrum => mg_spectrum += p,
-            AttributeField::VitalityDisciplineAxis => vf_axis += p * alloc.direction,
-            AttributeField::VitalityDisciplineSpectrum => vf_spectrum += p,
-            AttributeField::InstinctResolveAxis => ip_axis += p * alloc.direction,
-            AttributeField::InstinctResolveSpectrum => ip_spectrum += p,
-        }
-    }
-
-    ActorAttributes::new(
-        mg_axis,
-        mg_spectrum,
-        build.might_agility_shift,
-        vf_axis,
-        vf_spectrum,
-        build.vitality_discipline_shift,
-        ip_axis,
-        ip_spectrum,
-        build.instinct_resolve_shift,
-    )
+    let points = level.min(i8::MAX as u8) as i8;
+    // Each pair's axis: negative its left attribute, positive its right
+    let (physique, conditioning, temperament) = match archetype {
+        EnemyArchetype::Berserker => (-points, 0, 0),  // Might
+        EnemyArchetype::Kiter => (points, 0, 0),       // Agility
+        EnemyArchetype::Juggernaut => (0, -points, 0), // Vitality
+        EnemyArchetype::Ambusher => (0, points, 0),    // Discipline
+        EnemyArchetype::Skirmisher => (0, 0, -points), // Instinct
+        EnemyArchetype::Defender => (0, 0, points),    // Resolve
+    };
+    ActorAttributes::new(physique, 0, 0, conditioning, 0, 0, temperament, 0, 0)
 }
 
 #[cfg(test)]
@@ -327,65 +163,6 @@ mod tests {
         assert_eq!(EnemyArchetype::Defender.ability(), Some(AbilityType::Counter));
         assert_eq!(EnemyArchetype::Skirmisher.ability(), Some(AbilityType::Disengage));
         assert_eq!(EnemyArchetype::Ambusher.ability(), Some(AbilityType::Flank));
-    }
-
-    // ===== DISTRIBUTE POINTS TESTS =====
-
-    #[test]
-    fn test_distribute_single_slot() {
-        let allocs = [Allocation { field: AttributeField::MightAgilityAxis, weight: 1, direction: -1 }];
-        let result = distribute_points(10, &allocs);
-        assert_eq!(result[0], 10);
-    }
-
-    #[test]
-    fn test_distribute_equal_weights() {
-        let allocs = [
-            Allocation { field: AttributeField::MightAgilityAxis, weight: 1, direction: -1 },
-            Allocation { field: AttributeField::VitalityDisciplineAxis, weight: 1, direction: -1 },
-        ];
-        let result = distribute_points(10, &allocs);
-        assert_eq!(result[0], 5);
-        assert_eq!(result[1], 5);
-    }
-
-    #[test]
-    fn test_distribute_odd_level_equal_weights() {
-        // 7 points / 2 slots → 3 + 4, remainder goes to first slot
-        let allocs = [
-            Allocation { field: AttributeField::MightAgilityAxis, weight: 1, direction: -1 },
-            Allocation { field: AttributeField::VitalityDisciplineAxis, weight: 1, direction: -1 },
-        ];
-        let result = distribute_points(7, &allocs);
-        assert_eq!(result[0] + result[1], 7);
-        // Both have equal remainder, earlier slot wins
-        assert_eq!(result[0], 4);
-        assert_eq!(result[1], 3);
-    }
-
-    #[test]
-    fn test_distribute_75_25_split() {
-        let allocs = [
-            Allocation { field: AttributeField::MightAgilityAxis, weight: 3, direction: -1 },
-            Allocation { field: AttributeField::VitalityDisciplineAxis, weight: 1, direction: -1 },
-        ];
-        let result = distribute_points(10, &allocs);
-        // 10 * 3/4 = 7.5 → 7, 10 * 1/4 = 2.5 → 2, remainder 1 → slot 0 (larger remainder)
-        assert_eq!(result[0], 8);
-        assert_eq!(result[1], 2);
-    }
-
-    #[test]
-    fn test_distribute_zero_level() {
-        let allocs = [Allocation { field: AttributeField::MightAgilityAxis, weight: 1, direction: -1 }];
-        let result = distribute_points(0, &allocs);
-        assert_eq!(result[0], 0);
-    }
-
-    #[test]
-    fn test_distribute_empty_allocations() {
-        let result = distribute_points(10, &[]);
-        assert_eq!(result, [0u8; 6]);
     }
 
     // ===== ATTRIBUTE CALCULATION TESTS =====
