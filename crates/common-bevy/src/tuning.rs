@@ -64,6 +64,10 @@ pub struct Tuning {
     /// Awareness; every actor has the least
     pub awareness_span_min: f32,
     pub awareness_span_max: f32,
+    /// Share of its own recovery a reaction used through a recovery is let
+    /// off, by its user's Preparation
+    pub preparation_relief_min: f32,
+    pub preparation_relief_max: f32,
     /// The half-angle either side of its heading an actor strikes within,
     /// in degrees, by its Grace
     pub grace_arc_min: f32,
@@ -204,6 +208,8 @@ impl Tuning {
         ferocity_relief_max: 0.5,
         awareness_span_min: 0.25,
         awareness_span_max: 1.0,
+        preparation_relief_min: 0.0,
+        preparation_relief_max: 0.5,
         grace_arc_min: 60.0,
         grace_arc_max: 150.0,
         grit_bank_min: 0.0,
@@ -314,6 +320,8 @@ impl Tuning {
             "ferocity_relief_max" => &mut self.ferocity_relief_max,
             "awareness_span_min" => &mut self.awareness_span_min,
             "awareness_span_max" => &mut self.awareness_span_max,
+            "preparation_relief_min" => &mut self.preparation_relief_min,
+            "preparation_relief_max" => &mut self.preparation_relief_max,
             "grace_arc_min" => &mut self.grace_arc_min,
             "grace_arc_max" => &mut self.grace_arc_max,
             "grit_bank_min" => &mut self.grit_bank_min,

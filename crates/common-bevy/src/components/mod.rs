@@ -479,7 +479,8 @@ impl ActorAttributes {
     /// Grit, Vitality: the share of each blow it lets land that it banks (`grit_bank`)
     pub fn grit(&self) -> CommitmentTier { self.tier(Attribute::Vitality) }
     /// Preparation, Discipline: its index is how many reactions the actor
-    /// may use in any one recovery
+    /// may use in any one recovery, each paying less of its own after
+    /// (`preparation_relief`)
     pub fn preparation(&self) -> CommitmentTier { self.tier(Attribute::Discipline) }
     /// Patience, Instinct: the swings banked while it could not strike (`banked`)
     pub fn patience(&self) -> CommitmentTier { self.tier(Attribute::Instinct) }
@@ -581,6 +582,14 @@ impl ActorAttributes {
     pub fn ferocity_relief(&self) -> f32 {
         let tuning = crate::tuning::tuning();
         self.ferocity().between(tuning.ferocity_relief_min, tuning.ferocity_relief_max)
+    }
+
+    /// The share of its own recovery a reaction this actor uses through a
+    /// recovery is let off, by its Preparation:
+    /// `Tuning::preparation_relief_min` to `preparation_relief_max`.
+    pub fn preparation_relief(&self) -> f32 {
+        let tuning = crate::tuning::tuning();
+        self.preparation().between(tuning.preparation_relief_min, tuning.preparation_relief_max)
     }
 
     /// The share of each blow this actor lets land that it banks for its

@@ -20,8 +20,8 @@ pub fn may_use(ability: AbilityType, recovery: Option<&GlobalRecovery>) -> bool 
 
 /// Whether `ability`, a reaction, may be used through `recovery`:
 /// Discipline's Preparation lets an actor with `attrs` use up to its tier of
-/// reactions in any one recovery, each adding its own onto the rest
-/// (`recovery_after`).
+/// reactions in any one recovery, each adding its own onto the rest, less
+/// what its Preparation lets it off (`recovery_after`).
 pub fn reacts_through(ability: AbilityType, recovery: Option<&GlobalRecovery>, attrs: Option<&ActorAttributes>) -> bool {
     let (Some(recovery), Some(attrs)) = (recovery, attrs) else { return false };
     ability.is_reaction() && recovery.is_active() && (recovery.reactions as usize) < attrs.preparation().index()
@@ -38,7 +38,9 @@ pub fn reacts_through(ability: AbilityType, recovery: Option<&GlobalRecovery>, a
 /// less the share its Ferocity lets it off (`ActorAttributes::ferocity_relief`),
 /// so a burst fired early costs less than it would have played out. Taken
 /// once unlocked, it carries nothing. A reaction used through a recovery
-/// (`reacts_through`) carries all of it, its own added on.
+/// (`reacts_through`) carries all of it and adds its own, less the share
+/// its Preparation lets it off (`ActorAttributes::preparation_relief`):
+/// it pays after, and pays less.
 ///
 /// It offers the ability's combo (`AbilityType::combo`), unlocking through
 /// the ability's own seconds and never through what was carried: earlier by
@@ -51,11 +53,13 @@ pub fn reacts_through(ability: AbilityType, recovery: Option<&GlobalRecovery>, a
 /// steps, 0 to 3, inside its own seconds.
 pub fn recovery_after(ability: AbilityType, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, against: Option<&ActorAttributes>, fatigue: f32) -> GlobalRecovery {
     let tuning = crate::tuning::tuning();
-    let own = tuning.recovery(ability) * (1.0 + tuning.fatigue_recovery * fatigue);
-    let mut recovery = GlobalRecovery::new(own).against(against);
-
     let prior = prior.filter(|prior| prior.is_active());
     let taken = prior.and_then(|prior| prior.combo).filter(|combo| combo.ability == ability);
+    let through = prior.is_some() && taken.is_none();
+    let relief = if through { attrs.preparation_relief() } else { 0.0 };
+    let own = tuning.recovery(ability) * (1.0 + tuning.fatigue_recovery * fatigue) * (1.0 - relief);
+    let mut recovery = GlobalRecovery::new(own).against(against);
+
     let carried = match (prior, taken) {
         (Some(prior), Some(combo)) => (prior.remaining - combo.unlock_at).max(0.0) * (1.0 - attrs.ferocity_relief()),
         (Some(prior), None) => {
@@ -115,7 +119,8 @@ mod tests {
         assert!(!reacts_through(AbilityType::Lunge, Some(&recovering), Some(&disciplined)), "reactions only");
         let through = recovery_after(AbilityType::Counter, Some(&recovering), &disciplined, None, 0.0);
         let own = crate::tuning::tuning().recovery(AbilityType::Counter);
-        assert!((through.remaining - (own + 2.0)).abs() < 1e-5, "its own recovery added onto the rest");
+        assert!(through.remaining > 2.0 && through.remaining < own + 2.0, "its own recovery added onto the rest, less what Preparation lets it off");
+        assert_eq!(recovery_after(AbilityType::Counter, None, &disciplined, None, 0.0).remaining, own, "out of recovery, the whole of its own");
         assert_eq!(through.reactions, 1);
         let full = GlobalRecovery { reactions: 3, ..through };
         assert!(!reacts_through(AbilityType::Counter, Some(&full), Some(&disciplined)), "no more than the tier");
