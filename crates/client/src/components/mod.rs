@@ -14,7 +14,7 @@ pub struct AnimatedBy(Entity);
 #[derive(Component)]
 pub enum Info {
     Time,
-    DistanceIndicator,  // Shows distance from haven, zone, and expected enemy level
+    DistanceIndicator,  // Shows distance from haven
 }
 
 /// Links a mesh entity to its chunk. Read by diagnostics only.

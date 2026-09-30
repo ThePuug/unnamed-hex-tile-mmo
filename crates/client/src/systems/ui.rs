@@ -8,7 +8,7 @@ use crate::{
 };
 use common_bevy::{
     components::Loc,
-    spatial_difficulty::*,
+    spatial_difficulty::HAVEN_LOCATION,
     systems::*,
 };
 
@@ -134,7 +134,7 @@ pub fn update(
     time: Res<Time>,
     _camera_angle: Res<CameraOrbit>,
     mut time_cache: Local<Option<u128>>,
-    mut dist_cache: Local<Option<(i32, DirectionalZone, u8)>>,
+    mut dist_cache: Local<Option<i32>>,
 ) {
     for (mut span, info) in &mut query {
         match info {
@@ -150,21 +150,12 @@ pub fn update(
             Info::DistanceIndicator => {
                 if let Ok(player_loc) = player_query.single() {
                     let distance = HAVEN_LOCATION.flat_distance(&**player_loc);
-                    let zone = get_directional_zone(**player_loc, HAVEN_LOCATION);
-                    let level = calculate_enemy_level(**player_loc, HAVEN_LOCATION);
-                    let val = (distance, zone, level);
-                    if *dist_cache == Some(val) { continue; }
-                    *dist_cache = Some(val);
-                    let zone_name = match zone {
-                        DirectionalZone::North => "North",
-                        DirectionalZone::East => "East",
-                        DirectionalZone::South => "South",
-                        DirectionalZone::West => "West",
-                    };
-                    **span = format!("Haven: {} tiles | Zone: {} | Enemy Lv. {}", distance, zone_name, level);
+                    if *dist_cache == Some(distance) { continue; }
+                    *dist_cache = Some(distance);
+                    **span = format!("Haven: {} tiles", distance);
                 } else {
                     *dist_cache = None;
-                    **span = String::from("Haven: -- tiles | Zone: -- | Enemy Lv. --");
+                    **span = String::from("Haven: -- tiles");
                 }
             }
         }

@@ -1,10 +1,6 @@
-//! # Spatial Difficulty System
-
-//! Level-based enemy system with:
-//! - Distance-based difficulty scaling (base 10, +1 per 100 tiles, max 20)
-//! - Directional enemy archetypes (Berserker/Juggernaut/Kiter/Defender)
-//! - Attribute distribution per archetype
-//! - Dynamic engagement spawning
+//! Where the haven stands, and the enemy archetypes: what each is drawn
+//! as, how it takes its place round a target, its signature ability, and
+//! how an NPC of one spends the points its level gives it.
 
 use qrz::Qrz;
 use crate::{components::ActorAttributes, message::AbilityType};
@@ -19,52 +15,6 @@ use crate::{components::ActorAttributes, message::AbilityType};
 /// from the terrain at startup, because elevation is generated, not
 /// authored.
 pub const HAVEN_LOCATION: Qrz = Qrz { q: 104289, r: -4677, z: 0 };
-
-/// Calculate enemy level based on distance from haven
-
-/// Base level 10 near haven, +1 per 100 tiles, capped at 20.
-
-pub fn calculate_enemy_level(spawn_location: Qrz, haven_location: Qrz) -> u8 {
-    let distance = haven_location.flat_distance(&spawn_location) as f32;
-
-    // Base 10, +1 per 100 tiles, clamped to 10-20
-    (10.0 + (distance / 100.0)).min(20.0) as u8
-}
-
-/// Directional zones based on angle from haven
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DirectionalZone {
-    North,  // 45° - 135° (top) - Berserkers
-    East,   // 315° - 45° (right) - Juggernauts
-    South,  // 225° - 315° (bottom) - Kiters
-    West,   // 135° - 225° (left) - Defenders
-}
-
-/// Get directional zone based on angle from haven to spawn point
-
-pub fn get_directional_zone(spawn_location: Qrz, haven_location: Qrz) -> DirectionalZone {
-    let delta = spawn_location - haven_location;
-
-    // Convert to angle (using r as y-axis for visual "up", q as x-axis for "right")
-    // Hex coordinate system: q increases east, r increases southeast
-    // For visual top-down: treat -r as "north" (up), q as "east" (right)
-    let angle = f32::atan2(-delta.r as f32, delta.q as f32).to_degrees();
-
-    // Normalize to 0-360
-    let angle = if angle < 0.0 { angle + 360.0 } else { angle };
-
-    // Angle ranges (rotated to match hex coordinate system):
-    // East (q+, r=0): 0° ± 45° = 315°-45°
-    // North (q=0, r-): 90° ± 45° = 45°-135°
-    // West (q-, r=0): 180° ± 45° = 135°-225°
-    // South (q=0, r+): 270° ± 45° = 225°-315°
-    match angle {
-        a if a >= 315.0 || a < 45.0 => DirectionalZone::East,
-        a if a >= 45.0 && a < 135.0 => DirectionalZone::North,
-        a if a >= 135.0 && a < 225.0 => DirectionalZone::West,
-        _ => DirectionalZone::South,
-    }
-}
 
 /// Positioning strategy determines hex preference ordering for each archetype.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,16 +42,6 @@ pub enum EnemyArchetype {
 }
 
 impl EnemyArchetype {
-    /// Get archetype from directional zone
-    pub fn from_zone(zone: DirectionalZone) -> Self {
-        match zone {
-            DirectionalZone::North => EnemyArchetype::Berserker,
-            DirectionalZone::East => EnemyArchetype::Juggernaut,
-            DirectionalZone::South => EnemyArchetype::Kiter,
-            DirectionalZone::West => EnemyArchetype::Defender,
-        }
-    }
-
     /// Get the positioning strategy for this archetype.
 
     /// All melee archetypes (Chase behavior) use adjacent strategies.
@@ -378,42 +318,6 @@ pub fn calculate_enemy_attributes(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ===== LEVEL CALCULATION TESTS =====
-
-    #[test]
-    fn test_level_calculation_origin() {
-        let spawn = HAVEN_LOCATION;
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 10);
-    }
-
-    #[test]
-    fn test_level_calculation_clamped_at_20() {
-        let spawn = Qrz { q: 1000, r: 0, z: 0 };  // 1000 tiles away
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 20);
-
-        let spawn = Qrz { q: 2000, r: 0, z: 0 };  // 2000 tiles away (way beyond)
-        assert_eq!(calculate_enemy_level(spawn, HAVEN_LOCATION), 20);  // Still clamped
-    }
-
-    // ===== DIRECTIONAL ZONE TESTS =====
-
-    #[test]
-    fn test_directional_zone_west() {
-        // West: -q direction (visual "left"), measured from the haven.
-        let spawn = Qrz { q: HAVEN_LOCATION.q - 10, r: HAVEN_LOCATION.r, z: 0 };
-        assert_eq!(get_directional_zone(spawn, HAVEN_LOCATION), DirectionalZone::West);
-    }
-
-    // ===== ARCHETYPE MAPPING TESTS =====
-
-    #[test]
-    fn test_archetype_from_zone() {
-        assert_eq!(EnemyArchetype::from_zone(DirectionalZone::North), EnemyArchetype::Berserker);
-        assert_eq!(EnemyArchetype::from_zone(DirectionalZone::East), EnemyArchetype::Juggernaut);
-        assert_eq!(EnemyArchetype::from_zone(DirectionalZone::South), EnemyArchetype::Kiter);
-        assert_eq!(EnemyArchetype::from_zone(DirectionalZone::West), EnemyArchetype::Defender);
-    }
 
     #[test]
     fn test_archetype_abilities() {
