@@ -78,10 +78,9 @@ pub struct Tuning {
     /// in degrees, by its Grace
     pub grace_arc_min: f32,
     pub grace_arc_max: f32,
-    /// Share of each blow an actor lets land that it banks for its next
-    /// skill, by its Grit
-    pub grit_bank_min: f32,
-    pub grit_bank_max: f32,
+    /// Share of each blow an actor lets land that its Grit banks for its
+    /// next skill; its tier sets how many blows it banks, 0 to 3
+    pub grit_share: f32,
 
     // --- Contest: what a relative advantage wins ---
     /// Advantage in points that wins half of an effect's ceiling; every
@@ -197,8 +196,7 @@ impl Tuning {
         preparation_relief_max: 0.5,
         grace_arc_min: 60.0,
         grace_arc_max: 150.0,
-        grit_bank_min: 0.0,
-        grit_bank_max: 0.3,
+        grit_share: 0.3,
         contest_scale: 800.0,
         contest_per_level: 15.0,
         effect_hold: 1.0,
@@ -290,8 +288,7 @@ impl Tuning {
             "preparation_relief_max" => &mut self.preparation_relief_max,
             "grace_arc_min" => &mut self.grace_arc_min,
             "grace_arc_max" => &mut self.grace_arc_max,
-            "grit_bank_min" => &mut self.grit_bank_min,
-            "grit_bank_max" => &mut self.grit_bank_max,
+            "grit_share" => &mut self.grit_share,
             "tempo_ceiling" => &mut self.tempo_ceiling,
             "potency_base" => &mut self.potency_base,
             "potency_per_point" => &mut self.potency_per_point,
@@ -387,10 +384,10 @@ mod tests {
         let mut tuning = Tuning::default();
         tuning.set("frenzy_damage", "0.25").unwrap();
         tuning.set("leap_distance", "2").unwrap();
-        tuning.set("grit_bank_max", "0.25").unwrap();
+        tuning.set("grit_share", "0.25").unwrap();
         assert_eq!(tuning.frenzy_damage, 0.25);
         assert_eq!(tuning.leap_distance, 2);
-        assert_eq!(tuning.grit_bank_max, 0.25);
+        assert_eq!(tuning.grit_share, 0.25);
         assert!(tuning.set("frenzy_damage", "much").is_err());
         assert!(tuning.set("no_such_knob", "1").is_err());
     }

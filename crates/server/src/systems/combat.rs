@@ -137,7 +137,7 @@ pub fn resolve_threat(
             // for its next skill; a wound's DoT banks nothing
             let blow = mitigated + (threat.damage - mitigated) * pierce;
             if let Some(mut grit) = grit {
-                grit.bank += blow * attrs.grit_bank();
+                grit.take(blow * common_bevy::tuning::tuning().grit_share, attrs.grit_holds());
             }
             let final_damage = blow + threat.dot_left();
 
@@ -179,8 +179,8 @@ pub fn bank_in_combat(mut query: Query<(&CombatState, &mut common_bevy::componen
             (true, None) => swing.due = Some(time.elapsed()),
             _ => {}
         }
-        if !state.in_combat && grit.bank > 0.0 {
-            grit.bank = 0.0;
+        if !state.in_combat && grit.held > 0 {
+            grit.spend();
         }
     }
 }
@@ -208,7 +208,7 @@ mod tests {
         let mut time = Time::<()>::default();
         time.advance_by(secs(10));
         world.insert_resource(time);
-        let fighter = world.spawn((CombatState { in_combat: true, last_action: Duration::ZERO }, Swing::default(), Grit { bank: 50.0 })).id();
+        let fighter = world.spawn((CombatState { in_combat: true, last_action: Duration::ZERO }, Swing::default(), Grit { bank: 50.0, held: 1 })).id();
 
         world.run_system_once(bank_in_combat).unwrap();
         assert_eq!(world.get::<Grit>(fighter).unwrap().bank, 50.0, "in the fight, Grit keeps what it banked");
