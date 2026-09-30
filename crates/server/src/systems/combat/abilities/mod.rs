@@ -16,7 +16,7 @@
 //! One system, [`use_abilities`], runs all of it in a stated order: what
 //! players asked for, then the auto-attacks come due, then each NPC's
 //! signature. An ability is handled the frame it is asked for, whoever
-//! asks.
+//! asks, and a due swing the frame its target comes within its reach.
 
 pub mod auto_attack;
 pub mod counter;
@@ -58,7 +58,7 @@ use common_bevy::{
 
 use crate::systems::{behaviour::chase::Chase, combat::landing};
 
-/// How often auto-attacks and NPC signatures are looked at.
+/// How often NPC signatures are looked at.
 const CHECK: Duration = Duration::from_millis(500);
 
 /// Why the gate refused an ability.
@@ -127,19 +127,19 @@ pub struct Abilities<'w, 's> {
 }
 
 /// Uses every ability asked for this frame: what players asked, in the
-/// order asked, then each [`CHECK`] the auto-attacks that have come due and
-/// each NPC's signature.
+/// order asked, then the auto-attacks that have come due, then each
+/// [`CHECK`] each NPC's signature.
 pub fn use_abilities(mut reader: MessageReader<Try>, mut abilities: Abilities, mut since_check: Local<Duration>) {
     for message in reader.read() {
         let Try { event: GameEvent::UseAbility { ent, ability, target } } = message else { continue };
         abilities.ask(*ent, *ability, *target);
     }
+    abilities.swing();
     *since_check += abilities.time.delta();
     if *since_check < CHECK {
         return;
     }
     *since_check -= CHECK;
-    abilities.swing();
     abilities.signatures();
 }
 
@@ -176,13 +176,11 @@ impl Abilities<'_, '_> {
         let status = self.statuses.get(ent).ok().copied();
         let prior = self.recoveries.get(ent).ok().copied();
 
-        // An auto-attack comes due on its own cadence, stretched by a daze,
-        // whatever the recovery, and a held actor swings at nothing. Every
-        // other ability waits on the recovery.
+        // An auto-attack comes due on its own clock, whatever the recovery,
+        // and a held actor swings at nothing. Every other ability waits on
+        // the recovery.
         if ability == AbilityType::AutoAttack {
-            let interval = Status::cadence(attrs.cadence_interval(), status.as_ref());
-            let now = self.time.elapsed();
-            let due = self.swings.get(ent).is_ok_and(|swing| swing.at.is_none_or(|at| now.saturating_sub(at) >= interval));
+            let due = self.swings.get(ent).is_ok_and(|swing| swing.waited(self.time.elapsed()).is_some());
             if !due || Status::holds(status.as_ref()) {
                 return Err(None);
             }

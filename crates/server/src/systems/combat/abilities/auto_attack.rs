@@ -7,9 +7,9 @@ use common_bevy::{
 use super::{disengage::Poised, Abilities, AbilityFailReason, Cast};
 
 /// An auto-attack: a blow of the caster's auto damage on its target, free
-/// and outside the recovery, due on its own cadence (the gate's to check).
-/// The swings that came due since the last while it could not strike, up to
-/// its Patience, land with this one. A caster poised by a Disengage strikes
+/// and outside the recovery, due on its own clock (the gate's to check).
+/// The swings that came due behind it while it waited, up to its Patience,
+/// land with this one, and the next comes due an interval from now. A caster poised by a Disengage strikes
 /// harder by what it was poised with, behind a feint: a damage-free ability
 /// threat, which queues ahead of the blow and draws the reaction.
 pub fn swing(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
@@ -23,8 +23,8 @@ pub fn swing(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, A
     let status = abilities.statuses.get(cast.ent).ok().copied();
     let interval = Status::cadence(cast.attrs.cadence_interval(), status.as_ref());
     let banked = abilities.swings.get_mut(cast.ent).map_or(0, |mut swing| {
-        let banked = swing.at.map_or(0, |at| cast.attrs.banked(now.saturating_sub(at), interval));
-        swing.at = Some(now);
+        let banked = swing.waited(now).map_or(0, |waited| cast.attrs.banked(waited, interval));
+        swing.due = Some(now + interval);
         banked
     });
     abilities.deal(cast.ent, target, cast.attrs.auto_damage() * (1 + banked) as f32 + poised, AbilityType::AutoAttack, 0.0);

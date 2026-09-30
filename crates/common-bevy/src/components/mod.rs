@@ -563,12 +563,12 @@ impl ActorAttributes {
         crate::tuning::tuning().grit_cap[self.grit().index()]
     }
 
-    /// The swings this actor missed in `since` its last one at an auto-attack
-    /// `interval`, banked up to its Patience tier, 0 to 3, to land with its
-    /// next: the swings that came due while it could not strike.
-    pub fn banked(&self, since: std::time::Duration, interval: std::time::Duration) -> u32 {
-        let due = (since.as_secs_f32() / interval.as_secs_f32()).floor() as u32;
-        due.saturating_sub(1).min(self.patience().index() as u32)
+    /// The swings banked behind one that has `waited` since it came due,
+    /// at an auto-attack `interval`: one for each interval waited, up to the
+    /// Patience tier, 0 to 3, to land with it.
+    pub fn banked(&self, waited: std::time::Duration, interval: std::time::Duration) -> u32 {
+        let came_due = (waited.as_secs_f32() / interval.as_secs_f32()).floor() as u32;
+        came_due.min(self.patience().index() as u32)
     }
 
     /// The reaction queue's window, from Awareness: one threat seen at T0
@@ -599,14 +599,26 @@ pub struct Sun();
 #[derive(Debug, Default, Component)]
 pub struct Moon();
 
-/// When an actor last struck with an auto-attack in this fight, as the
-/// server counts it: its next comes due an interval after, and the swings
-/// it missed since, up to its Patience, land with it
-/// (`ActorAttributes::banked`). None out of combat, so a fight's first
-/// swing comes at once and banks nothing.
+/// When an actor's next auto-attack comes due, as the server counts it:
+/// an interval after its last, or the moment its fight found it not yet
+/// swinging. A due swing waits for a target it can strike, and the swings
+/// that come due behind it while it waits, up to its Patience, land with
+/// it (`ActorAttributes::banked`). None out of combat: a swing is due, and
+/// nothing banks until a fight starts the clock.
 #[derive(Clone, Component, Copy, Debug, Default)]
 pub struct Swing {
-    pub at: Option<std::time::Duration>,
+    pub due: Option<std::time::Duration>,
+}
+
+impl Swing {
+    /// How long the due swing has waited at `now`; None while the next is
+    /// still to come due. Out of combat it is due and has waited no time.
+    pub fn waited(&self, now: std::time::Duration) -> Option<std::time::Duration> {
+        match self.due {
+            Some(due) => now.checked_sub(due),
+            None => Some(std::time::Duration::ZERO),
+        }
+    }
 }
 
 /// Auto-attack range in hex tiles. Default is 2, melee reach, so a blow
@@ -688,13 +700,13 @@ mod tests {
     }
 
     #[test]
-    fn patience_banks_only_what_it_missed_up_to_its_tier() {
+    fn patience_banks_what_came_due_behind_a_waiting_swing_up_to_its_tier() {
         let patient = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
         let plain = ActorAttributes::default();
         let interval = std::time::Duration::from_secs(2);
         let secs = std::time::Duration::from_secs;
-        assert_eq!(patient.banked(secs(2), interval), 0, "on time, nothing missed");
-        assert_eq!(patient.banked(secs(5), interval), 1, "one swing came due and passed");
+        assert_eq!(patient.banked(secs(1), interval), 0, "the due swing alone");
+        assert_eq!(patient.banked(secs(3), interval), 1, "one more came due behind it");
         assert_eq!(patient.banked(secs(60), interval), 3, "no more than full commitment banks");
         assert_eq!(plain.banked(secs(60), interval), 0, "without Patience, missed swings are lost");
     }

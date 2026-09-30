@@ -170,12 +170,16 @@ pub fn resolve_dot_tick(
     land_damage(*ent, *source, *damage, true, &mut health, &mut writer);
 }
 
-/// Forgets the swing of every actor out of combat, so its next fight's
-/// first swing banks nothing.
-pub fn forget_swings(mut query: Query<(&CombatState, &mut common_bevy::components::Swing)>) {
+/// Keeps every swing clock to its fight. Out of combat a swing is due and
+/// nothing banks; as combat finds an actor not yet swinging its clock
+/// starts, that swing due at once, so Patience banks only what comes due
+/// in the fight, and a fight's end empties the bank.
+pub fn time_swings(mut query: Query<(&CombatState, &mut common_bevy::components::Swing)>, time: Res<Time>) {
     for (state, mut swing) in &mut query {
-        if !state.in_combat && swing.at.is_some() {
-            swing.at = None;
+        match (state.in_combat, swing.due) {
+            (false, Some(_)) => swing.due = None,
+            (true, None) => swing.due = Some(time.elapsed()),
+            _ => {}
         }
     }
 }
@@ -225,3 +229,31 @@ fn land_damage(ent: Entity, source: Entity, damage: f32, dot: bool, health: &mut
     writer.write(Do { event: GameEvent::Incremental { ent, component: common_bevy::message::Component::Health(*health) } });
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    use common_bevy::components::Swing;
+    use std::time::Duration;
+
+    #[test]
+    fn a_fight_starts_the_swing_clock_and_its_end_empties_the_bank() {
+        let secs = Duration::from_secs;
+        let mut world = World::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(secs(10));
+        world.insert_resource(time);
+        let fighter = world.spawn((CombatState { in_combat: true, last_action: Duration::ZERO }, Swing::default())).id();
+
+        world.run_system_once(time_swings).unwrap();
+        let swing = *world.get::<Swing>(fighter).unwrap();
+        assert_eq!(swing.waited(secs(10)), Some(Duration::ZERO), "due as the fight finds it");
+        assert_eq!(swing.waited(secs(15)), Some(secs(5)), "and waiting from then");
+        assert_eq!(Swing { due: Some(secs(20)) }.waited(secs(15)), None, "one still to come due waits for nothing");
+
+        world.get_mut::<CombatState>(fighter).unwrap().in_combat = false;
+        world.run_system_once(time_swings).unwrap();
+        assert_eq!(world.get::<Swing>(fighter).unwrap().waited(secs(60)), Some(Duration::ZERO), "out of combat it is due and has banked nothing");
+    }
+}
