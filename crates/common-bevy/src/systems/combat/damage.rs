@@ -62,13 +62,26 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
     damage * (1.0 + spread * draw.clamp(-1.0, 1.0))
 }
 
-/// A blow's damage after its crit roll: `damage` times `attacker`'s crit
-/// multiplier where `draw`, from 0 to 1, falls under its crit chance, else
-/// as it was. Rolled as the blow enters the queue, so a crit stands there
-/// at its full weight for the defender to see.
-pub fn crit(damage: f32, attacker: &ActorAttributes, draw: f32) -> f32 {
-    if draw < attacker.crit_chance() {
-        damage * attacker.crit_multiplier()
+/// The chance a blow `attacker` strikes on `defender` crits.
+
+/// Pattern 1 (Nullifying): `Tuning::crit_chance` × contest_factor(the
+/// attacker's Focus, the defender's Toughness), with the level gap's edge
+/// on the attacker's side: none at or below parity, and never the whole
+/// of the ceiling. The same two stats the other way round mitigate
+/// ([`apply_passive_modifiers`]).
+pub fn crit_chance(attacker: &ActorAttributes, defender: &ActorAttributes) -> f32 {
+    let edge = level_edge(attacker.total_level(), defender.total_level());
+    crate::tuning::tuning().crit_chance * contest_factor(attacker.focus(), defender.toughness(), edge)
+}
+
+/// A blow's damage after its crit roll: `Tuning::crit_power` times
+/// `damage` where `draw`, from 0 to 1, falls under the chance `attacker`
+/// crits on `defender` ([`crit_chance`]), else as it was. The contest
+/// decides whether, never how hard. Rolled as the blow enters the queue,
+/// so a crit stands there at its full weight for the defender to see.
+pub fn crit(damage: f32, attacker: &ActorAttributes, defender: &ActorAttributes, draw: f32) -> f32 {
+    if draw < crit_chance(attacker, defender) {
+        damage * crate::tuning::tuning().crit_power
     } else {
         damage
     }
@@ -93,24 +106,24 @@ pub fn calculate_recovery_pushback(
 /// striker's reach.
 
 /// Pattern 1 (Nullifying): `Tuning::spill_share` × contest_factor(the
-/// striker's Presence, that hostile's Toughness), with the level gap's
+/// striker's Focus, that hostile's Toughness), with the level gap's
 /// `edge` on the striker's side.
-pub fn spill_share(presence: u16, toughness: u16, edge: f32) -> f32 {
-    crate::tuning::tuning().spill_share * contest_factor(presence, toughness, edge)
+pub fn spill_share(focus: u16, toughness: u16, edge: f32) -> f32 {
+    crate::tuning::tuning().spill_share * contest_factor(focus, toughness, edge)
 }
 
 /// Apply passive mitigation to damage (unified for all damage types).
 
 /// Pattern 1 (Nullifying): `Tuning::mitigation_share` × contest_factor(the
-/// defender's Toughness, the attacker's Presence), with the level gap's
+/// defender's Toughness, the attacker's Focus), with the level gap's
 /// `edge` on the defender's side: never all of the blow while the share is below 1.
 pub fn apply_passive_modifiers(
     outgoing_damage: f32,
     attrs: &ActorAttributes,
-    attacker_presence: u16,
+    attacker_focus: u16,
     edge: f32,
 ) -> f32 {
-    let mitigation = crate::tuning::tuning().mitigation_share * contest_factor(attrs.toughness(), attacker_presence, edge);
+    let mitigation = crate::tuning::tuning().mitigation_share * contest_factor(attrs.toughness(), attacker_focus, edge);
     (outgoing_damage * (1.0 - mitigation)).max(0.0)
 }
 
@@ -139,29 +152,34 @@ mod tests {
     }
 
     #[test]
-    fn a_crit_lands_only_under_the_chance() {
-        let instinct = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
+    fn focus_over_toughness_decides_whether_a_blow_crits_and_never_how_hard() {
+        let focused = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
+        let keen = ActorAttributes::new(0, 0, 0, 0, 0, 0, 5, 0, 0);
+        let tough = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
-        assert!(crit(100.0, &instinct, 0.0) > 100.0, "a draw under the chance crits");
-        assert_eq!(crit(100.0, &instinct, 0.999), 100.0, "a draw over it does not");
-        assert_eq!(crit(100.0, &plain, 0.0), 100.0, "without Intuition nothing crits");
+        assert!(crit(100.0, &focused, &plain, 0.0) > 100.0, "a draw under the chance crits");
+        assert_eq!(crit(100.0, &focused, &plain, 0.999), 100.0, "a draw over it does not");
+        assert_eq!(crit(100.0, &plain, &plain, 0.0), 100.0, "without a Focus lead nothing crits");
+        assert_eq!(crit_chance(&focused, &tough), 0.0, "Toughness that matches it nullifies it");
+        assert!(crit_chance(&focused, &plain) > crit_chance(&keen, &plain), "a wider lead crits more often");
+        assert_eq!(crit(100.0, &focused, &plain, 0.0), crit(100.0, &keen, &plain, 0.0), "and no harder");
     }
 
     #[test]
-    fn toughness_mitigates_and_the_attackers_presence_meets_it() {
+    fn toughness_mitigates_and_the_attackers_focus_meets_it() {
         let vital = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
-        let taken = |attrs: &ActorAttributes, presence: u16| apply_passive_modifiers(100.0, attrs, presence, 0.0);
+        let taken = |attrs: &ActorAttributes, focus: u16| apply_passive_modifiers(100.0, attrs, focus, 0.0);
         assert_eq!(taken(&plain, 0), 100.0, "no Vitality, no Toughness");
         assert!(taken(&vital, 0) < 100.0, "Vitality's Toughness mitigates");
-        assert!(taken(&vital, 50) > taken(&vital, 0), "Presence meets it");
+        assert!(taken(&vital, 50) > taken(&vital, 0), "Focus meets it");
         assert_eq!(taken(&vital, vital.toughness()), 100.0, "matched, it nullifies");
     }
 
     #[test]
-    fn presence_spills_what_toughness_does_not_hold() {
-        assert_eq!(spill_share(0, 0, 0.0), 0.0, "no Presence, no spill");
-        assert!(spill_share(100, 0, 0.0) > 0.0, "Presence spills onto the unarmoured");
+    fn focus_spills_what_toughness_does_not_hold() {
+        assert_eq!(spill_share(0, 0, 0.0), 0.0, "no Focus, no spill");
+        assert!(spill_share(100, 0, 0.0) > 0.0, "Focus spills onto the unarmoured");
         assert!(spill_share(100, 50, 0.0) < spill_share(100, 0, 0.0), "Toughness holds some back");
         assert_eq!(spill_share(100, 100, 0.0), 0.0, "matched, it nullifies");
     }

@@ -46,7 +46,7 @@ pub fn process_deal_damage(
 
         let draw = rand::Rng::random_range(&mut rand::rng(), -1.0..=1.0);
         let outgoing = damage_calc::spread(*base_damage, tuning.damage_spread, draw);
-        let outgoing = damage_calc::crit(outgoing, source_attrs, rand::Rng::random_range(&mut rand::rng(), 0.0..1.0));
+        let outgoing = damage_calc::crit(outgoing, source_attrs, attrs, rand::Rng::random_range(&mut rand::rng(), 0.0..1.0));
         let dot = damage_calc::spread(*dot, tuning.damage_spread, draw);
 
         // Use game world time (server uptime + offset) for consistent time base
@@ -129,14 +129,14 @@ pub fn resolve_threat(
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
         if let Ok((mut health, attrs, grit)) = query.get_mut(*ent) {
-            // The defender's Toughness meets the attacker's Presence, the level
+            // The defender's Toughness meets the attacker's Focus, the level
             // edge the defender's against the attacker
-            let (attacker_level, attacker_presence) = actors.get(threat.source)
-                .map_or((attrs.total_level(), 0), |source| (source.total_level(), source.presence()));
+            let (attacker_level, attacker_focus) = actors.get(threat.source)
+                .map_or((attrs.total_level(), 0), |source| (source.total_level(), source.focus()));
 
             // Apply passive mitigation (unified for all damage types), less what the
             // ability pierces
-            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, attacker_presence, damage_calc::level_edge(attrs.total_level(), attacker_level));
+            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, attacker_focus, damage_calc::level_edge(attrs.total_level(), attacker_level));
             let pierce = threat.ability.map_or(0.0, |ability| tuning.pierce(ability));
             // The defender let this blow land: its Grit banks a share of it
             // for its next skill; a wound's DoT banks nothing

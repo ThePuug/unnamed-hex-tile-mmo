@@ -126,7 +126,7 @@ pub enum MetaAttributeStat {
     Composure,
     Flow,
     Reflex,
-    Presence,
+    Focus,
     Toughness,
 }
 
@@ -354,7 +354,7 @@ macro_rules! create_stat_display {
                 MetaAttributeStat::Composure => ("Composure", Color::srgb(0.5, 0.7, 0.9), "Recovery Reduction:"),
                 MetaAttributeStat::Flow => ("Flow", Color::srgb(0.9, 0.9, 0.5), "Combo Unlock:"),
                 MetaAttributeStat::Reflex => ("Reflex", Color::srgb(0.7, 0.5, 0.9), "Reaction Window:"),
-                MetaAttributeStat::Presence => ("Presence", Color::srgb(0.9, 0.6, 0.3), "Spill:"),
+                MetaAttributeStat::Focus => ("Focus", Color::srgb(0.9, 0.6, 0.3), "Crit Chance:"),
                 MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Damage Mitigation:"),
             };
 
@@ -840,7 +840,7 @@ pub fn setup(
                         AxisAdjustButtonRight::VitalityDisciplineDecrease, AxisAdjustButtonRight::VitalityDisciplineIncrease,
                         SpectrumAdjustButton::VitalityDisciplineDecrease, SpectrumAdjustButton::VitalityDisciplineIncrease);
 
-                    // INSTINCT ↔ RESOLVE section (Reflex = purple, Presence = orange)
+                    // INSTINCT ↔ RESOLVE section (Reflex = purple, Focus = orange)
                     create_attribute_section!(left, "INSTINCT", "RESOLVE",
                         Color::srgb(0.7, 0.5, 0.9), Color::srgb(0.9, 0.6, 0.3),
                         AttributeTitle::InstinctResolve, AttributeCurrent::InstinctResolve, AttributeBar::InstinctResolve, AxisMarker::InstinctResolve,
@@ -873,7 +873,7 @@ pub fn setup(
                     // INSTINCT ↔ RESOLVE section (grouped container)
                     create_stat_section!(right,
                         AbsoluteMetaAttributeStat::Intuition, AbsoluteMetaAttributeStat::Concentration,
-                        MetaAttributeStat::Reflex, MetaAttributeStat::Presence);
+                        MetaAttributeStat::Reflex, MetaAttributeStat::Focus);
                 });
             });
 
@@ -1288,7 +1288,7 @@ pub fn update_attributes(
                     MetaAttributeStat::Composure => display_attrs.composure(),
                     MetaAttributeStat::Flow => display_attrs.flow(),
                     MetaAttributeStat::Reflex => display_attrs.reflex(),
-                    MetaAttributeStat::Presence => display_attrs.presence(),
+                    MetaAttributeStat::Focus => display_attrs.focus(),
                     MetaAttributeStat::Toughness => display_attrs.toughness(),
                 };
                 **text = format!("({})", raw_value);
@@ -1325,14 +1325,13 @@ pub fn update_attributes(
                         let window_seconds = 3.0 * multiplier;
                         format!("{:.1}s", window_seconds)
                     },
-                    MetaAttributeStat::Presence => {
-                        // Spill onto a hostile with no Toughness
-                        let presence = display_attrs.presence();
-                        let spill_pct = common_bevy::systems::combat::damage::spill_share(presence, 0, 0.0) * 100.0;
-                        format!("{:.0}%", spill_pct)
+                    MetaAttributeStat::Focus => {
+                        // Crit chance on a target of its level with no Toughness
+                        let contest = contest_factor(display_attrs.focus(), 0, 0.0);
+                        format!("{:.0}%", common_bevy::tuning::tuning().crit_chance * contest * 100.0)
                     },
                     MetaAttributeStat::Toughness => {
-                        // Damage mitigation against an attacker with no Presence
+                        // Damage mitigation against an attacker with no Focus
                         let toughness = display_attrs.toughness();
                         let contest = contest_factor(toughness, 0, 0.0);
                         let mitigation_pct = (common_bevy::tuning::tuning().mitigation_share * contest) * 100.0;

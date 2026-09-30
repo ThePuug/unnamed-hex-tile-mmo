@@ -88,7 +88,7 @@ pub struct Tuning {
     pub concentration_hold: f32,
     /// Most of a blow Toughness mitigates, approached and never reached
     pub mitigation_share: f32,
-    /// Most of a landed blow a Presence advantage spills onto each other
+    /// Most of a landed blow a Focus advantage spills onto each other
     /// hostile within the striker's reach
     pub spill_share: f32,
     /// Most of a recovery an Impact advantage pushes it back by
@@ -131,12 +131,11 @@ pub struct Tuning {
     pub stride_pace: f32,
     /// Share of an attack's damage its roll lands either side of it
     pub damage_spread: f32,
-    /// Chance a blow crits at the ceiling of Intuition's share
+    /// Most often a blow crits, by its striker's Focus over its target's
+    /// Toughness, approached and never reached
     pub crit_chance: f32,
-    /// What a crit multiplies its blow by without Agility
+    /// What a crit multiplies its blow by
     pub crit_power: f32,
-    /// How much more at the ceiling of Agility's share
-    pub crit_severity: f32,
     /// Share of Force a Lunge's strike deals
     pub lunge_force: f32,
     /// Share of Force each tick of a Lunge's DoT deals
@@ -243,7 +242,6 @@ impl Tuning {
         damage_spread: 0.2,
         crit_chance: 0.35,
         crit_power: 1.5,
-        crit_severity: 1.0,
         lunge_force: 0.7,
         lunge_dot: 0.147,
         lunge_pierce: 0.49,
@@ -371,7 +369,6 @@ impl Tuning {
             "damage_spread" => &mut self.damage_spread,
             "crit_chance" => &mut self.crit_chance,
             "crit_power" => &mut self.crit_power,
-            "crit_severity" => &mut self.crit_severity,
             "lunge_force" => &mut self.lunge_force,
             "lunge_dot" => &mut self.lunge_dot,
             "lunge_pierce" => &mut self.lunge_pierce,

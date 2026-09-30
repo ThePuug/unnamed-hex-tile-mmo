@@ -11,7 +11,7 @@
 //! clear of a blow does. The caster's movement goes through `leap` either way.
 //!
 //! Every blow that lands, whatever struck it, also spills onto the striker's
-//! other hostiles within its reach, by its Presence against their Toughness
+//! other hostiles within its reach, by its Focus against their Toughness
 //! ([`SpillReach`]).
 
 use bevy::{ecs::system::SystemParam, prelude::*};
@@ -124,7 +124,7 @@ impl SpillReach<'_, '_> {
             if !side.is_hostile_to(*other_side) {
                 continue;
             }
-            let share = damage::spill_share(attrs.presence(), other.toughness(), damage::level_edge(attrs.total_level(), other.total_level()));
+            let share = damage::spill_share(attrs.focus(), other.toughness(), damage::level_edge(attrs.total_level(), other.total_level()));
             if share > 0.0 {
                 commands.trigger(Try { event: GameEvent::Spill { ent: near.ent, source, damage: damage * share } });
             }

@@ -435,8 +435,7 @@ impl ActorAttributes {
     /// Endurance, Discipline's: what a Flank strikes for, and how deep the
     /// endurance pool is (`max_endurance`)
     pub fn endurance(&self) -> f32 { self.potency(Attribute::Discipline) }
-    /// Intuition, Instinct's: what a Disengage adds to the next swing, and
-    /// how often a blow crits (`crit_chance`)
+    /// Intuition, Instinct's: what a Disengage adds to the next swing
     pub fn intuition(&self) -> f32 { self.potency(Attribute::Instinct) }
     /// Concentration, Resolve's: the weight of what a Counter returns, and
     /// how long the effects an actor inflicts hold (`hold`)
@@ -460,15 +459,15 @@ impl ActorAttributes {
     pub fn impact(&self) -> u16 { self.value(Attribute::Might) }
     /// Flow, Agility: unlocks a combo sooner, against the target's Reflex
     pub fn flow(&self) -> u16 { self.value(Attribute::Agility) }
-    /// Toughness, Vitality: mitigates a blow, against the attacker's Presence
+    /// Toughness, Vitality: mitigates a blow, against the attacker's Focus
     pub fn toughness(&self) -> u16 { self.value(Attribute::Vitality) }
     /// Composure, Discipline: shortens its own recovery, against the opponent's Impact
     pub fn composure(&self) -> u16 { self.value(Attribute::Discipline) }
     /// Reflex, Instinct: widens a threat's window, against the attacker's Flow
     pub fn reflex(&self) -> u16 { self.value(Attribute::Instinct) }
-    /// Presence, Resolve: spills a blow onto other hostiles and meets a
-    /// defender's mitigation, against their Toughness
-    pub fn presence(&self) -> u16 { self.value(Attribute::Resolve) }
+    /// Focus, Resolve: decides whether a blow crits and meets a defender's
+    /// mitigation, against their Toughness (`damage::crit_chance`)
+    pub fn focus(&self) -> u16 { self.value(Attribute::Resolve) }
 
     // Commitment: an attribute's tier, by the name it goes by
 
@@ -546,20 +545,6 @@ impl ActorAttributes {
     /// with no Discipline in it holds the same count of skills at any level.
     pub fn skill_endurance(&self) -> f32 {
         crate::tuning::tuning().endurance_cost * self.base_potency()
-    }
-
-    /// The chance a blow this actor strikes crits: `Tuning::crit_chance` at
-    /// the ceiling of Intuition's share
-    pub fn crit_chance(&self) -> f32 {
-        crate::tuning::tuning().crit_chance * self.share(Attribute::Instinct)
-    }
-
-    /// What a crit this actor strikes multiplies its blow by:
-    /// `Tuning::crit_power`, `Tuning::crit_severity` more at the ceiling of
-    /// Agility's share
-    pub fn crit_multiplier(&self) -> f32 {
-        let tuning = crate::tuning::tuning();
-        tuning.crit_power + tuning.crit_severity * self.share(Attribute::Agility)
     }
 
     /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
@@ -705,17 +690,6 @@ mod tests {
         assert!(share(5) > 0.0 && share(10) > share(5), "more invested, more of it");
         assert!(share(10) - share(5) < share(5) - share(0), "each point gives less");
         assert!(share(100) < 1.0, "never the whole ceiling");
-    }
-
-    #[test]
-    fn intuition_crits_more_often_and_agility_harder() {
-        let instinct = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
-        let agility = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
-        let plain = ActorAttributes::default();
-        assert_eq!(plain.crit_chance(), 0.0, "no Intuition, no crits");
-        assert!(instinct.crit_chance() > 0.0 && instinct.crit_chance() < 1.0);
-        assert!(agility.crit_multiplier() > plain.crit_multiplier(), "Agility lands a crit harder");
-        assert!(plain.crit_multiplier() > 1.0, "a crit always lands harder");
     }
 
     #[test]
