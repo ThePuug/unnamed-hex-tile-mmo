@@ -3,7 +3,7 @@ use rand::seq::IteratorRandom;
 
 use common_bevy::{
     components::{
-        heading::{Heading, SLOT_DEGREES},
+        heading::{Heading, HEADING_SLOTS, SLOT_DEGREES},
         AttackRange, Loc, resources::Health,
         behaviour::Side, status::Status, ActorAttributes, target::Target,
         returning::Returning,
@@ -32,10 +32,12 @@ const HOME: i32 = 2;
 /// from wherever its target is within `attack_range`. One that reaches no
 /// further than a melee swing stands there and faces its target. One that
 /// fights from range ([`Chase::ranged`]) closes only until its target is
-/// in reach, and inside it gives ground: it runs forward with its target
-/// at the edge of the arc it strikes within ([`kiting`]), so it shoots as
-/// it goes, and how directly away its Grace lets it run is how well it
-/// kites.
+/// in reach, and inside it gives ground: it runs forward on the heading
+/// most directly away that still keeps its target in the arc it strikes
+/// within ([`kiting`]), so it shoots as it goes, and how directly away
+/// its Grace lets it run is how well it kites. Near its leash it takes no
+/// heading that carries it further from its den, so it turns along the
+/// leash and circles its den.
 ///
 /// Further than `leash_distance` from its engagement's place it lets its
 /// target go and walks home (`Returning`), taking no target until it is
@@ -54,15 +56,31 @@ impl Chase {
     }
 }
 
-/// The heading an actor at `loc`, facing `facing`, runs on to keep `target`
-/// at the edge of the `arc` it strikes within: the bearing to the target
-/// turned one step short of the arc, to the side it already leans, so it
-/// holds one course.
-fn kiting(loc: Loc, target: Loc, arc: f32, facing: Heading) -> Heading {
+/// How near its leash, in tiles, an NPC giving ground stops running out.
+const LEASH_MARGIN: i32 = 12;
+
+/// The heading an actor at `loc`, facing `facing`, runs on from `target`
+/// while it keeps it within the `arc` it strikes within. Of the headings
+/// no further than a step short of the arc from the bearing to the target,
+/// it takes the one most directly away from it, and of two alike the one
+/// nearer the way it faces, so it holds a course.
+///
+/// `outward`, given while it nears its leash, is the bearing from its den:
+/// it then takes none of those headings that leads further out where one
+/// leads along the leash or in, and the least outward of them where none
+/// does.
+fn kiting(loc: Loc, target: Loc, arc: f32, facing: Heading, outward: Option<Heading>) -> Heading {
+    let quarter = HEADING_SLOTS / 4;
     let toward = Heading::from_hex(Qrz { z: 0, ..*target - *loc });
     let steps = ((arc / SLOT_DEGREES) as i32 - 1).max(0);
-    let (side, _) = toward.turn_toward(facing);
-    toward.turned(if side < 0 { -steps } else { steps })
+    (-steps..=steps)
+        .map(|off| (off, toward.turned(off)))
+        .max_by_key(|&(off, heading)| (
+            outward.map(|outward| outward.turn_toward(heading).1.min(quarter)),
+            off.abs(),
+            std::cmp::Reverse(facing.turn_toward(heading).1),
+        ))
+        .map_or(toward, |(_, heading)| heading)
 }
 
 /// The neighbour of the floor tile `from` an NPC steps to on its way to
@@ -152,7 +170,8 @@ pub fn chase(
         };
         if placed {
             if chase.ranged() && **loc != **target_loc {
-                let goal = kiting(*loc, *target_loc, arc_of(attrs), body.turn.heading);
+                let outward = (from_home >= chase.leash_distance - LEASH_MARGIN).then(|| Heading::from_hex(Qrz { z: 0, ..**loc - *home }));
+                let goal = kiting(*loc, *target_loc, arc_of(attrs), body.turn.heading, outward);
                 body.steer(goal, Walk::Forward, speed, dt_ms, &map, &nntree);
             } else {
                 body.face(loc, **target_loc, dt_ms, &map, &nntree);
@@ -231,22 +250,49 @@ mod tests {
     }
 
     #[test]
-    fn a_kiter_runs_with_its_target_at_the_edge_of_its_arc() {
+    fn a_kiter_runs_the_way_most_directly_from_its_target_that_still_strikes_it() {
         use common_bevy::systems::targeting::within_arc;
         let here = Loc::new(Qrz { q: 0, r: 0, z: 1 });
         let target = Loc::new(Qrz { q: 5, r: 0, z: 1 });
         let toward = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
         for arc in [60.0, 90.0, 120.0, 150.0] {
-            let goal = kiting(here, target, arc, toward);
+            let goal = kiting(here, target, arc, toward, None);
             assert!(within_arc(goal, arc, here, target), "at {arc} it still strikes its target");
             assert!(!within_arc(goal, arc - 2.0 * SLOT_DEGREES, here, target), "from the edge of the arc");
         }
-        let away = |arc| toward.reversed().turn_toward(kiting(here, target, arc, toward)).1;
+        let away = |arc| toward.reversed().turn_toward(kiting(here, target, arc, toward, None)).1;
         assert!(away(150.0) < away(90.0), "more Grace runs more directly away");
 
         let (left, right) = (toward.turned(-2), toward.turned(2));
-        assert_ne!(kiting(here, target, 150.0, left), kiting(here, target, 150.0, right), "it runs to the side it already leans");
-        assert_eq!(kiting(here, target, 150.0, kiting(here, target, 150.0, left)), kiting(here, target, 150.0, left), "and holds that course");
+        let run = |facing| kiting(here, target, 150.0, facing, None);
+        assert_ne!(run(left), run(right), "it runs to the side it already leans");
+        assert_eq!(run(run(left)), run(left), "and holds that course");
+    }
+
+    #[test]
+    fn near_its_leash_a_kiter_turns_along_it_and_never_further_out() {
+        use common_bevy::systems::targeting::within_arc;
+        let here = Loc::new(Qrz { q: 0, r: 0, z: 1 });
+        let east = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
+        let outward = east;
+        let quarter = HEADING_SLOTS / 4;
+
+        // Its target comes from its den's side: straight away from it is straight out
+        let chaser = Loc::new(Qrz { q: -5, r: 0, z: 1 });
+        assert!(outward.turn_toward(kiting(here, chaser, 150.0, east, None)).1 < quarter, "clear of its leash it runs out");
+        let along = kiting(here, chaser, 150.0, east, Some(outward));
+        assert_eq!(outward.turn_toward(along).1, quarter, "near it, along the leash: as far from its target as that allows");
+        assert!(within_arc(along, 150.0, here, chaser), "still striking it");
+        assert_eq!(kiting(here, chaser, 150.0, along, Some(outward)), along, "and it keeps circling the way it goes");
+
+        // Its target stands further out than it: away from it is already inward
+        let beyond = Loc::new(Qrz { q: 5, r: 0, z: 1 });
+        assert_eq!(kiting(here, beyond, 150.0, east, Some(outward)), kiting(here, beyond, 150.0, east, None), "a heading that leads in is taken as it is");
+
+        // With no Grace no heading that strikes a target further out leads in: the least outward
+        let narrow = kiting(here, beyond, 60.0, east, Some(outward));
+        assert!(within_arc(narrow, 60.0, here, beyond));
+        assert_eq!(outward.turn_toward(narrow).1, 3, "the edge of its arc, as far from out as it reaches");
     }
 
     #[test]
