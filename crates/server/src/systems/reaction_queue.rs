@@ -120,7 +120,6 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            seen: false,
                     });
 
         let attrs = ActorAttributes::default();

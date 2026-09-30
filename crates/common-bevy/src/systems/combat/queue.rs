@@ -59,7 +59,6 @@ pub fn create_threat(
         ability,
         dot,
         ticked: 0,
-        seen: false,
     }
 }
 
@@ -78,7 +77,6 @@ pub fn insert_threat(
     let key = (threat.lane(), threat.lands_at());
     let at = queue.threats.partition_point(|t| (t.lane(), t.lands_at()) <= key);
     queue.threats.insert(at, threat);
-    queue.reveal();
 }
 
 /// Check for expired threats in the queue
@@ -93,16 +91,8 @@ pub fn check_expired_threats(queue: &ReactionQueue, now: Duration) -> Vec<Queued
         .collect()
 }
 
-/// Clear threats from the queue based on clear type
-/// Returns the cleared threats for logging/effects. What moves up into the
-/// window is seen.
+/// Takes the threats `clear_type` names out of the queue and returns them.
 pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<QueuedThreat> {
-    let cleared = take_threats(queue, clear_type);
-    queue.reveal();
-    cleared
-}
-
-fn take_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<QueuedThreat> {
     match clear_type {
         ClearType::First(n) => {
             // Drain first N threats (oldest)
@@ -130,7 +120,6 @@ pub fn sync_queue_window_size(
         let new_window_size = attrs.window_size();
         if queue.window_size != new_window_size {
             queue.window_size = new_window_size;
-            queue.reveal();
         }
     }
 }
@@ -152,7 +141,6 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            seen: false,
 
         };
 
@@ -190,7 +178,6 @@ mod tests {
             ability: Some(ability),
             dot: 0.0,
             ticked: 0,
-            seen: false,
         };
 
         for (ability, secs) in [(AutoAttack, 0), (Lunge, 1), (AutoAttack, 2), (Overpower, 3)] {
@@ -199,9 +186,6 @@ mod tests {
 
         let order: Vec<_> = queue.threats.iter().map(|t| (t.ability.unwrap(), t.inserted_at.as_secs())).collect();
         assert_eq!(order, vec![(Lunge, 1), (Overpower, 3), (AutoAttack, 0), (AutoAttack, 2)]);
-        // The first auto-attack stood alone in the window, so it stays seen
-        let seen: Vec<_> = queue.threats.iter().map(|t| t.seen).collect();
-        assert_eq!(seen, vec![true, false, true, false]);
     }
 
     #[test]
@@ -217,7 +201,6 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            seen: false,
 
         };
 
@@ -242,7 +225,6 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            seen: false,
 
         };
 
@@ -269,7 +251,6 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            seen: false,
 
         };
 
@@ -282,7 +263,6 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            seen: false,
 
         };
 
@@ -314,7 +294,6 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            seen: false,
     
             });
         }
@@ -342,7 +321,6 @@ mod tests {
                 ability: None,
                 dot: 0.0,
                 ticked: 0,
-                seen: false,
             });
         }
 
@@ -368,7 +346,6 @@ mod tests {
             ability,
             dot,
             ticked: 0,
-            seen: false,
         };
         use crate::message::AbilityType::{AutoAttack, Lunge};
         insert_threat(&mut queue, make(Some(AutoAttack), 0.0, 0), Duration::ZERO);
@@ -378,8 +355,6 @@ mod tests {
         insert_threat(&mut queue, make(Some(Lunge), 0.0, 4), Duration::ZERO);
         let order: Vec<_> = queue.threats.iter().map(|t| t.inserted_at.as_secs()).collect();
         assert_eq!(order, vec![2, 4, 1, 3, 0], "blows, then wounds, then auto-attacks, each oldest first");
-        assert!(queue.threats.iter().take(3).all(|t| t.seen), "the window is seen");
-        assert!(queue.threats[4].seen, "the auto-attack stood in the window first, and stays seen at the back");
     }
 
     #[test]
@@ -393,13 +368,11 @@ mod tests {
             ability: Some(crate::message::AbilityType::Lunge),
             dot: 0.0,
             ticked: 0,
-            seen: false,
         };
         insert_threat(&mut queue, make(0, 5), Duration::ZERO);
         insert_threat(&mut queue, make(1, 3), Duration::ZERO);
         let order: Vec<_> = queue.threats.iter().map(|t| t.inserted_at.as_secs()).collect();
         assert_eq!(order, vec![1, 0], "the later blow lands first, so it stands first");
-        assert!(queue.threats[1].seen, "pushed out of the window, the first stays seen");
     }
 
     #[test]
@@ -412,7 +385,6 @@ mod tests {
             ability: None,
             dot: 5.0,
             ticked: 0,
-            seen: false,
         };
         assert_eq!(wound.tick_count(), 2, "ticks fall short of the landing");
         assert_eq!(wound.ticks_due(Duration::from_millis(10_999)), 0);

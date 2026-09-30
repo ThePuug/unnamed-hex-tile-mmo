@@ -32,10 +32,6 @@ pub struct QueuedThreat {
     pub dot: f32,
     /// DoT ticks this wound has dealt. Only the server counts them.
     pub ticked: u8,
-    /// Whether the threat has stood in its target's window. Once seen it
-    /// stays visible, however far back what comes after pushes it; only
-    /// [`ReactionQueue::reveal`] sets it.
-    pub seen: bool,
 }
 
 /// The lane a threat runs in, in the order the queue keeps them: every
@@ -98,16 +94,14 @@ impl QueuedThreat {
     }
 }
 
-/// Reaction queue component that holds incoming threats
-/// - threats: Unbounded queue of incoming damage, ordered by [`Lane`], then
-///   soonest to land first within a lane; only `queue::insert_threat` keeps
-///   that order.
-/// - window_size: How many threats from the front the player sees (derived
-///   from Focus)
-
-/// Queue is unbounded. Window determines visibility, not capacity: the front
-/// `window_size` threats are seen, and stay seen. Threats never seen still
-/// tick and resolve normally.
+/// The threats on their way to an actor, none yet landed: in the order of
+/// their [`Lane`], and within a lane the soonest to land first. Only
+/// `queue::insert_threat` keeps that order. It holds any number.
+///
+/// `window_size` is how much of it the actor sees, from its Awareness: the
+/// threats standing in its front `window_size` places show what they are
+/// ([`ReactionQueue::shows`]), and a reaction answers those. The rest are
+/// known only to be there, and land all the same.
 #[derive(Clone, Component, Debug, Default, Deserialize, Serialize)]
 pub struct ReactionQueue {
     pub threats: VecDeque<QueuedThreat>,
@@ -126,21 +120,17 @@ impl ReactionQueue {
         self.threats.is_empty()
     }
 
-    /// Mark the front `window_size` threats seen. Every change to the queue
-    /// or its window calls it, so whatever reaches the window is seen.
-    pub fn reveal(&mut self) {
-        let window = self.window_size;
-        for threat in self.threats.iter_mut().take(window) {
-            threat.seen = true;
-        }
+    /// Whether the threat standing at `place` from the front is in the window
+    pub fn shows(&self, place: usize) -> bool {
+        place < self.window_size
     }
 
-    /// Number of threats seen
+    /// Number of threats in the window
     pub fn visible_count(&self) -> usize {
-        self.threats.iter().filter(|t| t.seen).count()
+        self.threats.len().min(self.window_size)
     }
 
-    /// Number of threats never seen
+    /// Number of threats behind the window
     pub fn hidden_count(&self) -> usize {
         self.threats.len() - self.visible_count()
     }
@@ -169,39 +159,19 @@ mod tests {
             ability,
             dot,
             ticked: 0,
-            seen: false,
         }
     }
 
     #[test]
-    fn the_window_reveals_the_front() {
-        let mut queue = ReactionQueue::new(2);
-        for _ in 0..5 {
-            queue.threats.push_back(threat(None, 0.0));
-        }
-        queue.reveal();
-        assert_eq!(queue.visible_count(), 2);
-        assert_eq!(queue.hidden_count(), 3);
-        assert!(queue.threats[0].seen && queue.threats[1].seen && !queue.threats[2].seen);
-    }
-
-    #[test]
-    fn auto_attacks_are_seen_like_any_threat() {
+    fn the_window_shows_the_front_of_the_queue() {
         let mut queue = ReactionQueue::new(2);
         queue.threats.push_back(threat(Some(crate::message::AbilityType::AutoAttack), 0.0));
-        queue.reveal();
-        assert_eq!(queue.visible_count(), 1);
-    }
-
-    #[test]
-    fn a_seen_threat_stays_seen_when_pushed_back() {
-        let mut queue = ReactionQueue::new(1);
-        queue.threats.push_back(threat(None, 0.0));
-        queue.reveal();
-        queue.threats.push_front(threat(None, 0.0));
-        queue.reveal();
-        assert!(queue.threats[1].seen, "pushed out of the window, still seen");
-        assert_eq!(queue.visible_count(), 2);
+        assert_eq!((queue.visible_count(), queue.hidden_count()), (1, 0), "an auto-attack shows like any threat");
+        for _ in 0..4 {
+            queue.threats.push_back(threat(None, 0.0));
+        }
+        assert_eq!((queue.visible_count(), queue.hidden_count()), (2, 3));
+        assert!(queue.shows(0) && queue.shows(1) && !queue.shows(2));
     }
 
     #[test]

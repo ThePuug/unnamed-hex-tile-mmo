@@ -4,7 +4,7 @@
 //! Three lanes, left to right in the order reactions reach them: blows,
 //! wounds, auto-attacks ([`Lane`]). A note stands at its time left, at one
 //! speed, so it reaches the hit line as it lands, and grows as it nears it.
-//! A threat the window has seen shows its damage; the rest are faceless
+//! A threat standing in the window shows its damage; the rest are faceless
 //! pips. Each lane's front note, what a reaction takes first, carries a
 //! rim. A cleared note shatters where it stands; a landed one shatters on
 //! the line with a flash down its lane.
@@ -257,7 +257,7 @@ pub fn update(
     let mut drawn = Vec::with_capacity(queue.threats.len());
 
     for (entity, mut note, mut node, mut background, mut border, children) in &mut note_query {
-        let Some(threat) = queue.threats.iter().find(|t| key(t) == note.key) else {
+        let Some((place, threat)) = queue.threats.iter().enumerate().find(|(_, t)| key(t) == note.key) else {
             let landed = now + LANDED_WITHIN >= note.lands_at;
             if landed {
                 let lane = note.key.2;
@@ -281,7 +281,7 @@ pub fn update(
 
         let d = depth(threat.lands_at().saturating_sub(now));
         let front = queue.threats.iter().find(|t| t.lane() == threat.lane()).is_some_and(|t| key(t) == note.key);
-        let (fill, rim, label) = look(threat, attrs, health, front);
+        let (fill, rim, label) = look(threat, queue.shows(place), attrs, health, front);
         let alpha = fade(d);
         let size = NOTE * scale(d);
         let at = centre(threat.lane(), d);
@@ -308,11 +308,11 @@ pub fn update(
         }
     }
 
-    for threat in queue.threats.iter().filter(|t| !drawn.contains(&key(t))) {
+    for (place, threat) in queue.threats.iter().enumerate().filter(|(_, t)| !drawn.contains(&key(t))) {
         let d = depth(threat.lands_at().saturating_sub(now));
         let size = NOTE * scale(d);
         let at = centre(threat.lane(), d);
-        let (fill, rim, label) = look(threat, attrs, health, false);
+        let (fill, rim, label) = look(threat, queue.shows(place), attrs, health, false);
         commands.entity(highway).with_children(|parent| {
             parent
                 .spawn((
@@ -344,12 +344,12 @@ pub fn update(
     }
 }
 
-/// A note's fill, rim and label: a seen threat shows how hard it hits, its
-/// lane saying what kind it is, and its damage; the rest a faceless pip.
-/// The front of its lane is rimmed.
-fn look(threat: &QueuedThreat, attrs: &ActorAttributes, health: &Health, front: bool) -> (Color, Color, String) {
+/// A note's fill, rim and label: a threat `shown` in the window says how
+/// hard it hits, its lane saying what kind it is, and its damage; the rest
+/// a faceless pip. The front of its lane is rimmed.
+fn look(threat: &QueuedThreat, shown: bool, attrs: &ActorAttributes, health: &Health, front: bool) -> (Color, Color, String) {
     let rim = if front { Color::WHITE } else { Color::srgba(0.1, 0.08, 0.06, 0.9) };
-    if !threat.seen {
+    if !shown {
         return (Color::srgba(0.55, 0.5, 0.45, 0.6), rim, String::new());
     }
     let (r, g, b) = severity_rgb(severity(threat, attrs, health));
