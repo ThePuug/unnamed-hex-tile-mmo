@@ -20,7 +20,6 @@ renet_netcode = "2"
 bimap = "0"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }
 chrono = "0"
-pathfinding = "4"
 rand = "0.9"
 renet = "2"
 serde = { version = "1", features = ["derive"] }
