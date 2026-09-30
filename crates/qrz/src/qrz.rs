@@ -175,6 +175,22 @@ impl Qrz {
         (1..=steps).map(|k| ring[(start + k * step) % n]).collect()
     }
 
+    /// The tiles straight on from this one along the line from `from`
+    /// through it: `steps` of them at this tile's z, each a neighbour of the
+    /// one before and a step further from `from`. Empty where `from` is in
+    /// this tile's own column, which no line leads on from.
+    pub fn beyond(&self, from: Qrz, steps: usize) -> Vec<Qrz> {
+        let span = self.flat_distance(&from);
+        if span == 0 {
+            return Vec::new();
+        }
+        let (dq, dr) = ((self.q - from.q) as f64 / span as f64, (self.r - from.r) as f64 / span as f64);
+        (1..=steps).map(|k| {
+            let on = round(dq * k as f64, dr * k as f64, 0.0);
+            Qrz { q: self.q + on.q, r: self.r + on.r, z: self.z }
+        }).collect()
+    }
+
     pub fn neighbors(&self) -> Vec<Qrz> {
         vec![
             *self + Qrz { q: -1, r: 0, z: 0 }, // west
@@ -235,6 +251,25 @@ pub fn round(q0: f64, r0: f64, z0: f64) -> Qrz {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn beyond_runs_straight_on_a_neighbour_at_a_time() {
+        let here = Qrz { q: 2, r: -1, z: 3 };
+        assert_eq!(here.beyond(here - Qrz::Q, 3), vec![here + Qrz::Q, here + Qrz::Q * 2, here + Qrz::Q * 3], "along an axis, its tiles");
+        assert!(here.beyond(Qrz { z: 9, ..here }, 3).is_empty(), "no line leads on from its own column");
+        for from in here.ring(1).into_iter().chain(here.ring(2)).chain(here.ring(5)) {
+            let mut last = here;
+            for tile in here.beyond(from, 6) {
+                assert_eq!(tile.z, here.z);
+                assert_eq!(tile.flat_distance(&last), 1, "from {from:?}: {tile:?} is no neighbour of {last:?}");
+                assert_eq!(tile.flat_distance(&from), last.flat_distance(&from) + 1, "from {from:?}: each step is one further off");
+                last = tile;
+            }
+        }
+        // Opposite ways from opposite sides: it follows the line, whatever the compass
+        let (east, west) = (here.beyond(here - Qrz::Q, 1)[0], here.beyond(here + Qrz::Q, 1)[0]);
+        assert_eq!(east - here, here - west);
+    }
 
     #[test]
     fn ring_runs_round_every_tile_at_its_radius() {

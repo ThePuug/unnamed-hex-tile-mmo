@@ -14,19 +14,24 @@ use qrz::Qrz;
 /// How long a leap's slide takes on screen.
 pub const LEAP_MS: u16 = 250;
 
-/// The standing tile `tiles` steps straight away from `from`, walking the
-/// ground from `at`, each step the neighbour furthest from `from`; `None`
-/// when not even the first step leads further away.
+/// The standing tile up to `tiles` steps away from `from`, walking the
+/// ground from `at` along the line from `from` through it (`Qrz::beyond`),
+/// and stopping where the ground does; `None` when not even the first
+/// step can be taken. From `from`'s own tile, which no line leads on from,
+/// the first step is any the ground allows and the line runs on from it.
 pub fn away(map: &Map, at: Qrz, from: Qrz, tiles: usize) -> Option<Qrz> {
     let (mut ground, _) = map.get_by_qr(at.q, at.r)?;
-    for _ in 0..tiles {
-        let Some((next, _)) = map.neighbors(ground).into_iter()
-            .max_by_key(|(neighbor, _)| neighbor.flat_distance(&from))
-            .filter(|(neighbor, _)| neighbor.flat_distance(&from) > ground.flat_distance(&from))
-        else {
+    let line = match at.flat_distance(&from) {
+        0 => map.neighbors(ground).first().map_or(Vec::new(), |(off, _)| {
+            std::iter::once(*off).chain(off.beyond(at, tiles.saturating_sub(1))).collect()
+        }),
+        _ => at.beyond(from, tiles),
+    };
+    for next in line {
+        let Some((floor, _)) = map.neighbors(ground).into_iter().find(|(neighbor, _)| (neighbor.q, neighbor.r) == (next.q, next.r)) else {
             break;
         };
-        ground = next;
+        ground = floor;
     }
     let landing = ground + Qrz::Z;
     (landing != at).then_some(landing)
@@ -87,6 +92,13 @@ mod tests {
         let edge = away(&map, at, from, 40).unwrap();
         assert!(edge.flat_distance(&from) <= 24, "no further than the ground runs");
         assert_eq!(away(&map, edge, from, 3), None, "at the edge, nowhere further to go");
+
+        // It follows the line from its target, whichever side that stands on
+        for side in from.ring(1) {
+            let landing = away(&map, from, side, 4).unwrap();
+            assert_eq!(landing - from, (from - side) * 4, "straight on from {side:?}");
+        }
+        assert!(away(&map, from, Qrz { z: 5, ..from }, 4).is_some(), "off its target's own tile, some way");
     }
 
     #[test]
