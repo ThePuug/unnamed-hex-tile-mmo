@@ -141,13 +141,6 @@ impl Default for Turn {
 #[derive(Clone, Component, Copy, Default)]
 pub struct Actor;
 
-// === SCALING MODE INFRASTRUCTURE (,) ===
-// Layer 2: Three scaling modes layered on top of existing A/S/S model.
-// These are pure abstractions that take derived attribute values as input.
-// - Absolute: derived_value × level_multiplier (methods already on ActorAttributes)
-// - Relative: attacker_derived - defender_derived (Phase 4, not yet implemented)
-// - Commitment: tier_from_percentage(derived_value / total_budget) (below)
-
 /// Discrete commitment tier: T0 (<20%), T1 (≥20%), T2 (≥40%), T3 (≥60%).
 ///
 /// The percentage is against `total_level × 10` — the most a single attribute
@@ -197,6 +190,21 @@ impl CommitmentTier {
             Self::T3 => 3,
         }
     }
+}
+
+/// The six attributes, two to a pair. Each is read three ways, by one rule
+/// apiece: its value, which contests weigh ([`ActorAttributes::value`]);
+/// its potency, which grows with level ([`ActorAttributes::potency`]); and
+/// its commitment tier ([`ActorAttributes::tier`]). The stat each reading
+/// goes by has a method of its name there.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Attribute {
+    Might,
+    Agility,
+    Vitality,
+    Discipline,
+    Instinct,
+    Resolve,
 }
 
 /// One pair of opposed attributes, as the levels put into it. `axis`
@@ -354,112 +362,149 @@ impl ActorAttributes {
         }
     }
 
-    // Each attribute as it stands now, and the most any shift could make it
+    fn pair(&self, attribute: Attribute) -> (Pair, End) {
+        match attribute {
+            Attribute::Might => (self.physique, End::Left),
+            Attribute::Agility => (self.physique, End::Right),
+            Attribute::Vitality => (self.conditioning, End::Left),
+            Attribute::Discipline => (self.conditioning, End::Right),
+            Attribute::Instinct => (self.temperament, End::Left),
+            Attribute::Resolve => (self.temperament, End::Right),
+        }
+    }
 
-    pub fn might(&self) -> u16 { self.physique.value(End::Left) }
-    pub fn agility(&self) -> u16 { self.physique.value(End::Right) }
-    pub fn vitality(&self) -> u16 { self.conditioning.value(End::Left) }
-    pub fn discipline(&self) -> u16 { self.conditioning.value(End::Right) }
-    pub fn instinct(&self) -> u16 { self.temperament.value(End::Left) }
-    pub fn resolve(&self) -> u16 { self.temperament.value(End::Right) }
+    /// What `attribute` is worth now. Every relative contest weighs one
+    /// actor's value against another's (`damage::contest_factor`).
+    pub fn value(&self, attribute: Attribute) -> u16 {
+        let (pair, end) = self.pair(attribute);
+        pair.value(end)
+    }
 
-    pub fn might_reach(&self) -> u16 { self.physique.reach(End::Left) }
-    pub fn agility_reach(&self) -> u16 { self.physique.reach(End::Right) }
-    pub fn vitality_reach(&self) -> u16 { self.conditioning.reach(End::Left) }
-    pub fn discipline_reach(&self) -> u16 { self.conditioning.reach(End::Right) }
-    pub fn instinct_reach(&self) -> u16 { self.temperament.reach(End::Left) }
-    pub fn resolve_reach(&self) -> u16 { self.temperament.reach(End::Right) }
+    /// The most `attribute` can be worth under any shift
+    pub fn reach(&self, attribute: Attribute) -> u16 {
+        let (pair, end) = self.pair(attribute);
+        pair.reach(end)
+    }
+
+    /// `attribute`'s absolute stat, a potency that grows with level:
+    /// `Tuning::potency_base` and `potency_per_point` more for each point of
+    /// the attribute, scaled by the damage level curve.
+    pub fn potency(&self, attribute: Attribute) -> f32 {
+        let tuning = crate::tuning::tuning();
+        (tuning.potency_base + self.value(attribute) as f32 * tuning.potency_per_point) * self.damage_level_multiplier()
+    }
+
+    /// `attribute`'s commitment tier: its value as a share of the most any
+    /// one attribute could reach at the actor's level, `total_level × 10`.
+    /// The summed budget would tier a spectrum build below an axis build
+    /// holding the same points.
+    pub fn tier(&self, attribute: Attribute) -> CommitmentTier {
+        CommitmentTier::calculate(self.value(attribute), self.total_level() * 10)
+    }
+
+    // Each attribute by name, and the most any shift could make it
+
+    pub fn might(&self) -> u16 { self.value(Attribute::Might) }
+    pub fn agility(&self) -> u16 { self.value(Attribute::Agility) }
+    pub fn vitality(&self) -> u16 { self.value(Attribute::Vitality) }
+    pub fn discipline(&self) -> u16 { self.value(Attribute::Discipline) }
+    pub fn instinct(&self) -> u16 { self.value(Attribute::Instinct) }
+    pub fn resolve(&self) -> u16 { self.value(Attribute::Resolve) }
+
+    pub fn might_reach(&self) -> u16 { self.reach(Attribute::Might) }
+    pub fn agility_reach(&self) -> u16 { self.reach(Attribute::Agility) }
+    pub fn vitality_reach(&self) -> u16 { self.reach(Attribute::Vitality) }
+    pub fn discipline_reach(&self) -> u16 { self.reach(Attribute::Discipline) }
+    pub fn instinct_reach(&self) -> u16 { self.reach(Attribute::Instinct) }
+    pub fn resolve_reach(&self) -> u16 { self.reach(Attribute::Resolve) }
+
+    // Absolute: an attribute's potency, by the name its stat goes by
+
+    /// Force, Might's: what a Lunge and an Overpower strike for, and what
+    /// its share adds to an auto-attack
+    pub fn force(&self) -> f32 { self.potency(Attribute::Might) }
+    /// Precision, Agility's: what a Volley's shot and a Kick strike for, and
+    /// how hard a crit lands (`crit_multiplier`)
+    pub fn precision(&self) -> f32 { self.potency(Attribute::Agility) }
+    /// Endurance, Discipline's: what a Flank strikes for, and how deep the
+    /// stamina pool is (`max_stamina`)
+    pub fn endurance(&self) -> f32 { self.potency(Attribute::Discipline) }
+    /// Intuition, Instinct's: what a Disengage adds to the next swing, and
+    /// how often a blow crits (`crit_chance`)
+    pub fn intuition(&self) -> f32 { self.potency(Attribute::Instinct) }
+    /// Concentration, Resolve's: the weight of what a Counter returns, and
+    /// how long the effects an actor inflicts hold (`hold`)
+    pub fn concentration(&self) -> f32 { self.potency(Attribute::Resolve) }
+
+    /// Constitution, Vitality's, which is max health: the health every actor
+    /// has (`Tuning::base_health`) and what each point of Vitality adds
+    /// (`Tuning::health_per_vitality`), scaled by the health level curve.
+    pub fn constitution(&self) -> f32 {
+        let tuning = crate::tuning::tuning();
+        (tuning.base_health + self.vitality() as f32 * tuning.health_per_vitality) * self.hp_level_multiplier()
+    }
+
+    pub fn max_health(&self) -> f32 {
+        self.constitution()
+    }
+
+    // Relative: the value a contest weighs, by the name it goes by there
+
+    /// Impact, Might: pushes a target's lockout back, against its Composure
+    pub fn impact(&self) -> u16 { self.value(Attribute::Might) }
+    /// Flow, Agility: unlocks a follow-up sooner, against the target's Reflex
+    pub fn flow(&self) -> u16 { self.value(Attribute::Agility) }
+    /// Toughness, Vitality: mitigates a blow, against the attacker's Presence
+    pub fn toughness(&self) -> u16 { self.value(Attribute::Vitality) }
+    /// Composure, Discipline: shortens its own lockout, against the opponent's Impact
+    pub fn composure(&self) -> u16 { self.value(Attribute::Discipline) }
+    /// Reflex, Instinct: widens a threat's window, against the attacker's Flow
+    pub fn reflex(&self) -> u16 { self.value(Attribute::Instinct) }
+    /// Presence, Resolve: spills a blow onto other hostiles and meets a
+    /// defender's mitigation, against their Toughness
+    pub fn presence(&self) -> u16 { self.value(Attribute::Resolve) }
+
+    // Commitment: an attribute's tier, by the name it goes by
+
+    /// Ferocity, Might: a combo's follow-ups fire before they unlock
+    pub fn ferocity(&self) -> CommitmentTier { self.tier(Attribute::Might) }
+    /// Grace, Agility: the arc it strikes within (`arc`)
+    pub fn grace(&self) -> CommitmentTier { self.tier(Attribute::Agility) }
+    /// Grit, Vitality: the most of its health lost in any second (`grit_cap`)
+    pub fn grit(&self) -> CommitmentTier { self.tier(Attribute::Vitality) }
+    /// Preparation, Discipline: its index is how many reactions the actor
+    /// may use in any one lockout
+    pub fn preparation(&self) -> CommitmentTier { self.tier(Attribute::Discipline) }
+    /// Patience, Instinct: the swings banked while it could not strike (`banked`)
+    pub fn patience(&self) -> CommitmentTier { self.tier(Attribute::Instinct) }
+    /// Awareness, Resolve: how much of the queue it sees (`window_size`)
+    pub fn awareness(&self) -> CommitmentTier { self.tier(Attribute::Resolve) }
 
     /// The actor's level: every level it has put into an axis or a spectrum
     pub fn total_level(&self) -> u32 {
         self.physique.levels() + self.conditioning.levels() + self.temperament.levels()
     }
 
-    // === LEVEL MULTIPLIER ===
-
-    /// Pure level multiplier for super-linear stat scaling
-    /// Formula: (1 + level * k)^p
-    /// Level 0 always returns 1.0 (backward compatible)
+    /// A level curve, `(1 + level × k)^p`: 1 at level 0
     pub fn level_multiplier(level: u32, k: f32, p: f32) -> f32 {
         (1.0 + level as f32 * k).powf(p)
     }
 
-    /// HP/survivability level multiplier
-    /// Moderate scaling: preserves danger from equal-level foes
+    /// The health level curve at the actor's level
     pub fn hp_level_multiplier(&self) -> f32 {
         let tuning = crate::tuning::tuning();
         Self::level_multiplier(self.total_level(), tuning.health_curve_k, tuning.health_curve_p)
     }
 
-    /// Damage/offense level multiplier
-    /// Moderate scaling: balanced with HP growth to preserve level advantage without exponential runaway
+    /// The damage level curve at the actor's level, which every potency scales by
     pub fn damage_level_multiplier(&self) -> f32 {
         let tuning = crate::tuning::tuning();
         Self::level_multiplier(self.total_level(), tuning.damage_curve_k, tuning.damage_curve_p)
     }
 
-    // === GAME STATS (Layer 3 - continued) ===
-
-    /// Movement speed - currently flat until allocated to a meta-attribute
-    /// TODO: Determine which meta-attribute should govern movement speed
+    /// Movement speed: the same for every actor, no attribute governing it
     pub fn movement_speed(&self) -> f32 {
         crate::systems::movement::MOVEMENT_SPEED
-    }
-
-    /// Maximum health from Constitution meta-attribute
-    /// Constitution scales vitality with level multiplier for progression
-    pub fn max_health(&self) -> f32 {
-        self.constitution()
-    }
-
-    // === LAYER 2: SCALING MODE HELPERS ===
-
-    // The attribute system has three layers:
-
-    // **Layer 1 — Bipolar Input (Axis/Spectrum/Shift):**
-    //   9 i8 fields storing raw investment counts per pair
-
-    // **Layer 2 — Derived Attribute Values:**
-    //   Six pure values from A/S/S scaling: might(), agility(), vitality(),
-    //   discipline(), instinct(), resolve()
-
-    // **Layer 3 — Three Scaling Modes:**
-    //   - ABSOLUTE (progression): max_health(), movement_speed() — scales with level
-    //   - RELATIVE (build matchup): contest_factor() in damage.rs — nullifies at equal (0-1)
-    //     or reaction_contest_factor() for reaction window — preserves baseline (1-1.5)
-    //   - COMMITMENT (build identity): window_size() —
-    //     discrete tiers based on % of total budget
-
-    // See attributes.md (unnamed-indie-studio-internal/projects/unnamed-hex-tile-mmo/design/) for full design.
-
-    /// Calculate the commitment tier for a specific derived attribute value.
-
-    /// Compares derived_value against the maximum possible for any single attribute
-    /// given total investment (total_level × 10). This ensures spectrum builds aren't
-    /// penalized compared to axis builds with the same point investment.
-
-    /// Example: `attrs.commitment_tier_for(attrs.discipline())` → Discipline commitment tier
-    pub fn commitment_tier_for(&self, derived_value: u16) -> CommitmentTier {
-        let max_possible = self.total_level() as u32 * 10;
-        CommitmentTier::calculate(derived_value, max_possible)
-    }
-
-    // === META-ATTRIBUTES (Layer 2) ===
-
-    // Meta-attributes are derived from Layer 1 attributes and serve as inputs to Layer 3 game stats.
-    // Three types: Absolute (scaled by level), Relative (used in contests), Commitment (tier-based).
-
-    // Gear/weapons/buffs will eventually modify these meta-attributes directly.
-
-    // --- ABSOLUTE META-ATTRIBUTES (scaled by level multiplier) ---
-
-    /// Force: Offensive power from might (absolute meta-attribute)
-    /// Fully scaled damage output including level progression. Used as base damage for offensive abilities.
-    pub fn force(&self) -> f32 {
-        let might = self.might() as f32;
-        let tuning = crate::tuning::tuning();
-        let linear = tuning.potency_base + (might * tuning.potency_per_point);
-        linear * self.damage_level_multiplier()
     }
 
     /// The potency every actor has before any attribute, scaled by level: what
@@ -474,15 +519,6 @@ impl ActorAttributes {
     /// ceiling times this share.
     pub fn share(&self, potency: f32) -> f32 {
         (1.0 - self.base_potency() / potency).max(0.0)
-    }
-
-    /// Endurance: Discipline's absolute meta-attribute, fully scaled like
-    /// Force. Its share deepens the stamina pool (`max_stamina`).
-    pub fn endurance(&self) -> f32 {
-        let discipline = self.discipline() as f32;
-        let tuning = crate::tuning::tuning();
-        let linear = tuning.potency_base + (discipline * tuning.potency_per_point);
-        linear * self.damage_level_multiplier()
     }
 
     /// The stamina pool: `Tuning::stamina_base`, `Tuning::endurance_pool`
@@ -520,110 +556,11 @@ impl ActorAttributes {
         1.0 + crate::tuning::tuning().concentration_hold * self.share(self.concentration())
     }
 
-    /// Concentration: Resolve's absolute meta-attribute, fully scaled like Force:
-    /// the weight of what a Counter returns. Its ratio to
-    /// [`base_potency`](Self::base_potency) weights the share of each
-    /// countered blow sent back, so a Resolve build returns far more than one
-    /// without. Auto-attacks do not read it: Resolve buys only their pace.
-    pub fn concentration(&self) -> f32 {
-        let resolve = self.resolve() as f32;
-        let tuning = crate::tuning::tuning();
-        let linear = tuning.potency_base + (resolve * tuning.potency_per_point);
-        linear * self.damage_level_multiplier()
-    }
-
-    /// Precision: Agility's absolute meta-attribute, fully scaled like Force.
-    /// Its share sets how hard a crit lands (`crit_multiplier`), and skills
-    /// that strike where they aim draw on it.
-    pub fn precision(&self) -> f32 {
-        let agility = self.agility() as f32;
-        let tuning = crate::tuning::tuning();
-        let linear = tuning.potency_base + (agility * tuning.potency_per_point);
-        linear * self.damage_level_multiplier()
-    }
-
-    /// Intuition: Instinct's absolute meta-attribute, fully scaled like Force.
-    /// Its share sets how often a blow crits (`crit_chance`), and a Flank's
-    /// strike at the opening draws on it.
-    pub fn intuition(&self) -> f32 {
-        let instinct = self.instinct() as f32;
-        let tuning = crate::tuning::tuning();
-        let linear = tuning.potency_base + (instinct * tuning.potency_per_point);
-        linear * self.damage_level_multiplier()
-    }
-
-    /// Constitution: defensive capacity from vitality, scaled by level: the
-    /// health every actor has (`Tuning::base_health`) and what each point of
-    /// Vitality adds (`Tuning::health_per_vitality`). It is max health.
-    pub fn constitution(&self) -> f32 {
-        let tuning = crate::tuning::tuning();
-        (tuning.base_health + self.vitality() as f32 * tuning.health_per_vitality) * self.hp_level_multiplier()
-    }
-
-    // --- RELATIVE META-ATTRIBUTES (raw values for contests) ---
-
-    /// Flow: Synergy chain compression from agility
-    /// Used in contest vs Reflex (affects synergy recovery reduction)
-    pub fn flow(&self) -> u16 { self.agility() }
-
-    /// Toughness: mitigation of the blows taken, from vitality
-    /// Used in contest vs the attacker's Presence
-    pub fn toughness(&self) -> u16 { self.vitality() }
-
-    /// Impact: Recovery pushback from might
-    /// Used in contest vs Composure (extends enemy recovery duration)
-    pub fn impact(&self) -> u16 { self.might() }
-
-    /// Composure: Recovery reduction from discipline
-    /// Used in contest vs Impact (reduces own recovery duration passively)
-    pub fn composure(&self) -> u16 { self.discipline() }
-
-    /// Presence: from resolve
-    /// Used in contest vs the defender's Toughness
-    pub fn presence(&self) -> u16 { self.resolve() }
-
-    /// Reflex: Reaction window extension from instinct
-    /// Used in contest vs Flow (extends time to react to threats)
-    pub fn reflex(&self) -> u16 { self.instinct() }
-
-    // --- COMMITMENT META-ATTRIBUTES (tier-based) ---
-
-    /// Grace: striking on the move, from agility commitment
-    /// Returns commitment tier (T0-T3) based on agility as % of total budget
-    pub fn grace(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.agility())
-    }
-
-    /// Ferocity: the burst combo, from might commitment
-    /// Returns commitment tier (T0-T3) based on might as % of total budget
-    pub fn ferocity(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.might())
-    }
-
-    /// Preparation: reacting through a lockout, from discipline commitment
-    /// Returns commitment tier (T0-T3) based on discipline as % of total budget.
-    /// Its index is how many reactions the actor may use in any one lockout.
-    pub fn preparation(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.discipline())
-    }
-
-    /// Grit: standing in the pressure, from vitality commitment
-    /// Returns commitment tier (T0-T3) based on vitality as % of total budget
-    pub fn grit(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.vitality())
-    }
-
     /// The most of its health this actor loses in any second
     /// (`components::grit::Grit`): `Tuning::grit_cap` by its Grit tier, all of
     /// it at T0. What would pass it lands in the seconds after.
     pub fn grit_cap(&self) -> f32 {
         crate::tuning::tuning().grit_cap[self.grit().index()]
-    }
-
-    /// Patience: stepping out without losing a swing, from instinct commitment
-    /// Returns commitment tier (T0-T3) based on instinct as % of total budget
-    pub fn patience(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.instinct())
     }
 
     /// The swings this actor missed in `since` its last one at an auto-attack
@@ -634,18 +571,9 @@ impl ActorAttributes {
         due.saturating_sub(1).min(self.patience().index() as u32)
     }
 
-    /// Awareness: how much of the queue it sees, from resolve commitment
-    /// Returns commitment tier (T0-T3) based on resolve as % of total budget
-    pub fn awareness(&self) -> CommitmentTier {
-        self.commitment_tier_for(self.resolve())
-    }
-
-    // === GAME STATS (Layer 3) ===
-    // These use meta-attributes from Layer 2
-
-    /// Reaction queue window size from Awareness meta-attribute: one
-    /// threat seen at T0 and one more each tier, to four at T3. Fixed, not
-    /// tuned; a Counter answers the whole window, so it grows with Awareness.
+    /// The reaction queue's window, from Awareness: one threat seen at T0
+    /// and one more each tier, to four at T3. Fixed, not tuned; a Counter
+    /// answers the whole window, so it grows with Awareness.
     pub fn window_size(&self) -> usize {
         self.awareness().index() + 1
     }
@@ -910,17 +838,17 @@ mod tests {
     // ===== COMMITMENT_TIER_FOR TESTS (Layer 2) =====
 
     #[test]
-    fn test_commitment_tier_for_convenience() {
+    fn test_tier_of_convenience() {
         // Specialist build: heavy investment in one attribute
         // axis=-5, spectrum=0 → might=50, agility=0, total_budget=50
         // might commitment: 50/50 = 100% → T3
         let attrs = ActorAttributes::new(-5, 0, 0, 0, 0, 0, 0, 0, 0);
-        assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T3);
-        assert_eq!(attrs.commitment_tier_for(attrs.agility()), CommitmentTier::T0);
+        assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T3);
+        assert_eq!(attrs.tier(Attribute::Agility), CommitmentTier::T0);
     }
 
     #[test]
-    fn test_commitment_tier_for_balanced_build() {
+    fn test_tier_of_balanced_build() {
         // Spread across pairs: each pair gets some investment
         // M/G: axis=0, spectrum=3 → might=18, agility=18 (3×6 balanced multiplier)
         // V/F: axis=0, spectrum=3 → vitality=18, discipline=18
@@ -928,10 +856,10 @@ mod tests {
         // total_level = 9, max_possible = 90
         // each attr = 18/90 = 20% → T1 (exactly at threshold)
         let attrs = ActorAttributes::new(0, 3, 0, 0, 3, 0, 0, 3, 0);
-        assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T1);
-        assert_eq!(attrs.commitment_tier_for(attrs.agility()), CommitmentTier::T1);
-        assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T1);
-        assert_eq!(attrs.commitment_tier_for(attrs.discipline()), CommitmentTier::T1);
+        assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T1);
+        assert_eq!(attrs.tier(Attribute::Agility), CommitmentTier::T1);
+        assert_eq!(attrs.tier(Attribute::Vitality), CommitmentTier::T1);
+        assert_eq!(attrs.tier(Attribute::Discipline), CommitmentTier::T1);
     }
 
     #[test]
@@ -942,8 +870,8 @@ mod tests {
         // might: 96/90 = 106.7% → T3 ✓
         // vitality: 48/90 = 53.3% → T2 ✓
         let attrs = ActorAttributes::new(-6, 0, 0, -3, 0, 0, 0, 0, 0);
-        assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T3);
-        assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T2);
+        assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T3);
+        assert_eq!(attrs.tier(Attribute::Vitality), CommitmentTier::T2);
     }
 
     #[test]
@@ -957,9 +885,9 @@ mod tests {
         // might = 48 → 48/90 = 53.3% → T2 ✓
         // vitality = 48 → 53.3% → T2 ✓
         let attrs = ActorAttributes::new(-3, 0, 0, -3, 0, 0, -3, 0, 0);
-        assert_eq!(attrs.commitment_tier_for(attrs.might()), CommitmentTier::T2);
-        assert_eq!(attrs.commitment_tier_for(attrs.vitality()), CommitmentTier::T2);
-        assert_eq!(attrs.commitment_tier_for(attrs.instinct()), CommitmentTier::T2);
+        assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T2);
+        assert_eq!(attrs.tier(Attribute::Vitality), CommitmentTier::T2);
+        assert_eq!(attrs.tier(Attribute::Instinct), CommitmentTier::T2);
     }
 
     // ===== SHIFT CONSTRAINT TESTS =====
