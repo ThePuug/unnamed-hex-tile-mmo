@@ -17,6 +17,7 @@ use common_bevy::{
     message::{ Event, * },
     plugins::nntree::NearestNeighbor,
     resources::map::Map,
+    spatial_difficulty::EnemyArchetype,
 };
 
 pub fn setup() {}
@@ -202,13 +203,13 @@ pub fn actor_name(typ: EntityType) -> &'static str {
     match typ {
         EntityType::Actor(desc) => match desc.identity {
             ActorIdentity::Player => "player",
-            ActorIdentity::Npc(npc_type) => match npc_type {
-                NpcType::WildDog => "dog",
-                NpcType::ForestSprite => "sprite",
-                NpcType::Juggernaut => "juggernaut",
-                NpcType::Skirmisher => "grasshopper",
-                NpcType::Ambusher => "crocodile",
-                NpcType::Defender => "player",
+            ActorIdentity::Npc(archetype) => match archetype {
+                EnemyArchetype::Berserker => "dog",
+                EnemyArchetype::Kiter => "sprite",
+                EnemyArchetype::Juggernaut => "juggernaut",
+                EnemyArchetype::Skirmisher => "grasshopper",
+                EnemyArchetype::Ambusher => "crocodile",
+                EnemyArchetype::Defender => "player",
             }
         },
         _ => panic!("couldn't find asset for entity type {:?}", typ)

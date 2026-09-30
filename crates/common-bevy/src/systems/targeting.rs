@@ -523,7 +523,7 @@ mod tests {
                 origin: Origin::Evolved,
                 approach: Approach::Direct,
                 resilience: Resilience::Vital,
-                identity: ActorIdentity::Npc(NpcType::WildDog), // Test helper - generic NPC
+                identity: ActorIdentity::Npc(crate::spatial_difficulty::EnemyArchetype::Berserker), // Test helper - generic NPC
             }),
             loc,
         )).id();

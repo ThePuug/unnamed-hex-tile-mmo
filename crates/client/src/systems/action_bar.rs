@@ -109,7 +109,7 @@ pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 4] {
         EntityType::Actor(actor) => match actor.identity {
             ActorIdentity::Player => bar = PLAYER.map(Some),
             ActorIdentity::Npc(npc) => {
-                if let Some(signature) = common_bevy::spatial_difficulty::EnemyArchetype::of_npc(npc).ability() {
+                if let Some(signature) = npc.ability() {
                     bar[PLAYER.iter().position(|&a| a == signature).unwrap_or(0)] = Some(signature);
                 }
             }
@@ -411,9 +411,9 @@ fn get_ability_state(
 #[cfg(test)]
 mod loadout_tests {
     use super::*;
-    use common_bevy::components::entity_type::actor::*;
+    use common_bevy::{components::entity_type::actor::*, spatial_difficulty::EnemyArchetype};
 
-    fn npc(npc: NpcType) -> EntityType {
+    fn npc(npc: EnemyArchetype) -> EntityType {
         EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Npc(npc)))
     }
 
@@ -425,8 +425,8 @@ mod loadout_tests {
 
     #[test]
     fn an_npc_signature_stands_on_a_players_key_for_it() {
-        assert_eq!(loadout(&npc(NpcType::Defender)), [None, None, Some(AbilityType::Counter), None]);
-        assert_eq!(loadout(&npc(NpcType::WildDog)), [Some(AbilityType::Lunge), None, None, None]);
-        assert_eq!(loadout(&npc(NpcType::Juggernaut)), [Some(AbilityType::Rattle), None, None, None], "one a player lacks goes first");
+        assert_eq!(loadout(&npc(EnemyArchetype::Defender)), [None, None, Some(AbilityType::Counter), None]);
+        assert_eq!(loadout(&npc(EnemyArchetype::Berserker)), [Some(AbilityType::Lunge), None, None, None]);
+        assert_eq!(loadout(&npc(EnemyArchetype::Juggernaut)), [Some(AbilityType::Rattle), None, None, None], "one a player lacks goes first");
     }
 }

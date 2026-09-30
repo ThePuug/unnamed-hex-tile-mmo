@@ -4,7 +4,6 @@ use bevy::prelude::*;
 use common_bevy::{
     components::entity_type::{actor::ActorIdentity, EntityType},
     message::AbilityType,
-    spatial_difficulty::EnemyArchetype,
     systems::combat::synergies::reacts_through,
 };
 
@@ -27,8 +26,8 @@ impl Abilities<'_, '_> {
         let mut asks: Vec<(Entity, AbilityType, Option<Entity>)> = Vec::new();
         for (ent, entity_type, mut delay) in &mut self.npcs {
             let EntityType::Actor(actor) = entity_type else { continue };
-            let ActorIdentity::Npc(npc_type) = actor.identity else { continue };
-            let Some(ability) = EnemyArchetype::of_npc(npc_type).ability() else { continue };
+            let ActorIdentity::Npc(archetype) = actor.identity else { continue };
+            let Some(ability) = archetype.ability() else { continue };
             let Ok((&loc, attrs, _, heading, _, range, _, _)) = self.actors.get(ent) else { continue };
 
             // Out of lockout, or a reaction its Preparation lets through it, and affordable

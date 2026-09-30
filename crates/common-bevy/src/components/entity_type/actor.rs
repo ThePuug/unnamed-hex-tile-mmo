@@ -1,10 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-/// Actor identity - separates combat behavior (triumvirate) from visual/display identity
+use crate::spatial_difficulty::EnemyArchetype;
+
+/// Who an actor is, which names it and picks the body it is drawn with: a
+/// player, or an NPC of an archetype.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ActorIdentity {
     Player,
-    Npc(NpcType),
+    Npc(EnemyArchetype),
 }
 
 impl ActorIdentity {
@@ -12,32 +15,7 @@ impl ActorIdentity {
     pub fn display_name(&self) -> &'static str {
         match self {
             ActorIdentity::Player => "Player",
-            ActorIdentity::Npc(npc_type) => npc_type.display_name(),
-        }
-    }
-}
-
-/// NPC type variants - each represents a distinct enemy or NPC identity
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum NpcType {
-    WildDog,
-    ForestSprite,
-    Juggernaut,
-    Defender,
-    Skirmisher,
-    Ambusher,
-}
-
-impl NpcType {
-    /// Get human-readable display name for this NPC type
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            NpcType::WildDog => "Wild Dog",
-            NpcType::ForestSprite => "Forest Sprite",
-            NpcType::Juggernaut => "Juggernaut",
-            NpcType::Defender => "Defender",
-            NpcType::Skirmisher => "Skirmisher",
-            NpcType::Ambusher => "Ambusher",
+            ActorIdentity::Npc(archetype) => archetype.display_name(),
         }
     }
 }
@@ -47,14 +25,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_forest_sprite_display_name() {
-        assert_eq!(NpcType::ForestSprite.display_name(), "Forest Sprite");
-    }
-
-    #[test]
-    fn test_forest_sprite_actor_identity() {
-        let identity = ActorIdentity::Npc(NpcType::ForestSprite);
-        assert_eq!(identity.display_name(), "Forest Sprite");
+    fn an_npc_is_named_for_its_archetype() {
+        assert_eq!(ActorIdentity::Npc(EnemyArchetype::Kiter).display_name(), "Forest Sprite");
+        assert_eq!(ActorIdentity::Player.display_name(), "Player");
     }
 }
 

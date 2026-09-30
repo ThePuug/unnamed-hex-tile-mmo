@@ -159,7 +159,7 @@ pub fn spawn_engagement(
             origin: Origin::Evolved,
             approach: archetype.approach(),
             resilience: archetype.resilience(),
-            identity: ActorIdentity::Npc(archetype.npc_type()),
+            identity: ActorIdentity::Npc(archetype),
         };
 
         let max_health = attributes.max_health();

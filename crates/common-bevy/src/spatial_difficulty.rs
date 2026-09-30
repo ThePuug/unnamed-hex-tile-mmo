@@ -41,29 +41,15 @@ impl EnemyArchetype {
         }
     }
 
-    /// Get NPC model type for this archetype
-    pub fn npc_type(&self) -> crate::components::entity_type::actor::NpcType {
-        use crate::components::entity_type::actor::NpcType;
+    /// What an NPC of this archetype is called
+    pub fn display_name(&self) -> &'static str {
         match self {
-            EnemyArchetype::Berserker => NpcType::WildDog,
-            EnemyArchetype::Juggernaut => NpcType::Juggernaut,
-            EnemyArchetype::Kiter => NpcType::ForestSprite,
-            EnemyArchetype::Defender => NpcType::Defender,
-            EnemyArchetype::Skirmisher => NpcType::Skirmisher,
-            EnemyArchetype::Ambusher => NpcType::Ambusher,
-        }
-    }
-
-    /// The archetype an NPC of `npc_type` is: the inverse of [`npc_type`](Self::npc_type)
-    pub fn of_npc(npc_type: crate::components::entity_type::actor::NpcType) -> Self {
-        use crate::components::entity_type::actor::NpcType;
-        match npc_type {
-            NpcType::WildDog => EnemyArchetype::Berserker,
-            NpcType::Juggernaut => EnemyArchetype::Juggernaut,
-            NpcType::ForestSprite => EnemyArchetype::Kiter,
-            NpcType::Defender => EnemyArchetype::Defender,
-            NpcType::Skirmisher => EnemyArchetype::Skirmisher,
-            NpcType::Ambusher => EnemyArchetype::Ambusher,
+            EnemyArchetype::Berserker => "Wild Dog",
+            EnemyArchetype::Juggernaut => "Juggernaut",
+            EnemyArchetype::Kiter => "Forest Sprite",
+            EnemyArchetype::Defender => "Defender",
+            EnemyArchetype::Skirmisher => "Skirmisher",
+            EnemyArchetype::Ambusher => "Ambusher",
         }
     }
 

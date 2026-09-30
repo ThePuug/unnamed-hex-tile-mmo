@@ -419,7 +419,7 @@ fn advance(
         // opposition, or brings the opposition straight on it; the fight
         // starts as the film does
         Phase::Stage { since, before } => {
-            let party = shot.stage.map(|stage| stage.party().0.npc_type());
+            let party = shot.stage.map(|stage| stage.party().0);
             let fighter = npcs.iter()
                 .filter(|(e, kind, _)| is_npc(kind) && !before.contains(e))
                 .filter(|(_, kind, _)| party.is_none_or(|npc| matches!(kind, EntityType::Actor(actor) if actor.identity == ActorIdentity::Npc(npc))))
