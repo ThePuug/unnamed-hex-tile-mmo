@@ -13,7 +13,7 @@ use common_bevy::{
         target::Target,
         AirTime, Turn,
     },
-    message::{AbilityType, Event, *},
+    message::{Event, *},
     resources::*,
 };
 
@@ -54,26 +54,11 @@ pub fn update_keybits(
     let delta_ns = dt.delta().as_nanos();
     keybits0.accumulator += delta_ns;
 
-    // MVP Ability Set
-
-    // Lunge ability (Q key) - Gap closer
-    if keyboard.just_pressed(KeyCode::KeyQ) {
-        writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Lunge, target: target.entity }});
-    }
-
-    // Overpower ability (W key) - Heavy strike
-    if keyboard.just_pressed(KeyCode::KeyW) {
-        writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower, target: target.entity }});
-    }
-
-    // Counter ability (E key) - Reactive counter-attack
-    if keyboard.just_pressed(KeyCode::KeyE) {
-        writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Counter, target: None }});
-    }
-
-    // Kick ability (R key) - Reactive knockback
-    if keyboard.just_pressed(KeyCode::KeyR) {
-        writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Kick, target: None }});
+    // The player's kit: each key's ability, used on the hostile it faces
+    for (key, ability) in crate::systems::action_bar::KEYS.into_iter().zip(crate::systems::action_bar::PLAYER) {
+        if keyboard.just_pressed(key) {
+            writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity }});
+        }
     }
 
     // Dismiss front queue threat (independent of the ability system)

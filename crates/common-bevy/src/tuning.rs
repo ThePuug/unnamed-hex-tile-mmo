@@ -1,5 +1,5 @@
-//! Every number combat is balanced by, in one set: the archetypes'
-//! signatures, and how each attribute's stats scale in its three modes —
+//! Every number combat is balanced by, in one set: the early kit's
+//! skills, and how each attribute's stats scale in its three modes —
 //! absolute (a potency that grows with level), commitment (a tier's effect)
 //! and contest (a share won by a relative advantage).
 //!
@@ -102,23 +102,7 @@ pub struct Tuning {
     /// Most more a Reflex advantage widens it by
     pub window_bonus: f32,
 
-    // --- Abilities: what each costs, how long its recovery runs ---
-    /// Stamina each player ability costs
-    pub lunge_cost: f32,
-    pub overpower_cost: f32,
-    pub counter_cost: f32,
-    pub kick_cost: f32,
-    /// Seconds of recovery each ability leaves its user in
-    pub lunge_recovery: f32,
-    pub overpower_recovery: f32,
-    pub counter_recovery: f32,
-    pub kick_recovery: f32,
-    pub rattle_recovery: f32,
-    pub disengage_recovery: f32,
-    pub volley_recovery: f32,
-    pub flank_recovery: f32,
-
-    // --- Signatures and their blows ---
+    // --- Every swing and blow ---
     /// Share of base potency an auto-attack strikes for without Force
     pub auto_damage: f32,
     /// Share more an auto-attack strikes for at the ceiling of Force's share
@@ -133,51 +117,38 @@ pub struct Tuning {
     pub crit_chance: f32,
     /// What a crit multiplies its blow by
     pub crit_power: f32,
-    /// Share of Force a Lunge's strike deals
-    pub lunge_force: f32,
-    /// Share of Force each tick of a Lunge's DoT deals
-    pub lunge_dot: f32,
-    /// Share of the target's Toughness mitigation a Lunge strikes past
-    pub lunge_pierce: f32,
-    /// Stamina a Rattle costs
-    pub rattle_cost: f32,
-    /// Share of the Juggernaut's own health a Rattle strikes for
-    pub rattle_health: f32,
-    /// Share more a Rattle strikes for with each daze stack already on its target
-    pub rattle_growth: f32,
-    /// Share of its pace each Rattle stack takes from the target
-    pub rattle_daze: f32,
-    /// Most stacks a target carries
-    pub rattle_stacks: u8,
-    /// Stamina a Disengage costs
-    pub disengage_cost: f32,
-    /// Tiles a Disengage leaps away from an attacker in contact at least; it
-    /// leaps further where that falls short of breaking its own reach
-    pub disengage_leap: usize,
-    /// Tiles a Disengage leaps toward an attacker already out of contact
-    pub disengage_close: usize,
-    /// Share of Intuition a Disengage adds to its caster's next auto-attack
-    pub disengage_intuition: f32,
-    /// Stamina a Volley costs
-    pub volley_cost: f32,
-    /// Shots in a Volley
-    pub volley_shots: u8,
-    /// Share of Tempo each Volley shot strikes for
-    pub volley_precision: f32,
-    /// Share of its speed a Volley takes from its target
-    pub volley_slow: f32,
-    /// Seconds a Volley's slow lasts
-    pub volley_slow_secs: f32,
-    /// Tiles a Kiter leaps clear as its Volley's slow lands
-    pub volley_leap: usize,
-    /// Stamina a Flank costs
-    pub flank_cost: f32,
-    /// Seconds a Flank stuns its target
-    pub flank_stun: f32,
-    /// Share of Endurance a Flank strikes for
-    pub flank_endurance: f32,
-    /// Share of each countered threat's damage sent back, times the counterer's Concentration over base potency
+
+    // --- The early kit: each skill's stamina, its seconds of recovery, and
+    // what it does, every value flat. A skill strikes with base potency; what
+    // scales it is the commitment it shows ---
+    pub frenzy_cost: f32,
+    pub frenzy_recovery: f32,
+    /// Share of base potency a bite strikes for
+    pub frenzy_damage: f32,
+    pub feint_cost: f32,
+    pub feint_recovery: f32,
+    /// Share of base potency a Feint's two strikes deal together
+    pub feint_damage: f32,
+    /// Share of that the feint deals; the real strike deals the rest
+    pub feint_share: f32,
+    /// Seconds the real strike follows the feint by: longer than the span
+    /// every actor has (`awareness_span_min`), so a reaction with no
+    /// Awareness takes one and not the other
+    pub feint_gap: f32,
+    pub parry_cost: f32,
+    pub parry_recovery: f32,
+    pub counter_cost: f32,
+    pub counter_recovery: f32,
+    /// Share of each countered threat's damage sent back
     pub counter_reflect: f32,
+    pub leap_cost: f32,
+    pub leap_recovery: f32,
+    /// Tiles a Leap carries its user, clear of its target or toward it
+    pub leap_distance: usize,
+    pub stride_cost: f32,
+    pub stride_recovery: f32,
+    /// Seconds a Perfect Stride lasts
+    pub stride_secs: f32,
 }
 
 impl Tuning {
@@ -220,60 +191,43 @@ impl Tuning {
         combo_share: 0.66,
         reaction_window: 3.0,
         window_bonus: 0.35,
-        lunge_cost: 5.0,
-        overpower_cost: 40.0,
-        counter_cost: 60.0,
-        kick_cost: 40.0,
-        lunge_recovery: 2.0,
-        overpower_recovery: 3.0,
-        counter_recovery: 0.5,
-        kick_recovery: 4.0,
-        rattle_recovery: 2.0,
-        disengage_recovery: 0.98,
-        volley_recovery: 1.4,
-        flank_recovery: 2.0,
         auto_damage: 1.029,
         force_auto: 1.0,
         stride_pace: 0.7,
         damage_spread: 0.2,
         crit_chance: 0.35,
         crit_power: 1.5,
-        lunge_force: 0.7,
-        lunge_dot: 0.147,
-        lunge_pierce: 0.49,
-        rattle_cost: 19.6,
-        rattle_health: 0.035,
-        rattle_growth: 0.6723,
-        rattle_daze: 0.0686,
-        rattle_stacks: 3,
-        disengage_cost: 39.2,
-        disengage_leap: 1,
-        disengage_close: 8,
-        disengage_intuition: 0.686,
-        volley_cost: 20.0,
-        volley_shots: 3,
-        volley_precision: 0.33,
-        volley_slow: 0.5,
-        volley_slow_secs: 3.43,
-        volley_leap: 10,
-        flank_cost: 30.0,
-        flank_stun: 1.0,
-        flank_endurance: 1.0,
-        counter_reflect: 0.2271,
+        frenzy_cost: 20.0,
+        frenzy_recovery: 1.5,
+        frenzy_damage: 1.5,
+        feint_cost: 30.0,
+        feint_recovery: 2.5,
+        feint_damage: 2.5,
+        feint_share: 0.25,
+        feint_gap: 0.4,
+        parry_cost: 25.0,
+        parry_recovery: 1.5,
+        counter_cost: 60.0,
+        counter_recovery: 0.5,
+        counter_reflect: 0.6,
+        leap_cost: 30.0,
+        leap_recovery: 1.0,
+        leap_distance: 6,
+        stride_cost: 30.0,
+        stride_recovery: 1.0,
+        stride_secs: 4.0,
     };
 
     /// Stamina `ability` costs; an auto-attack is free.
     pub fn cost(&self, ability: AbilityType) -> f32 {
         match ability {
             AbilityType::AutoAttack => 0.0,
-            AbilityType::Lunge => self.lunge_cost,
-            AbilityType::Overpower => self.overpower_cost,
+            AbilityType::Frenzy => self.frenzy_cost,
+            AbilityType::Feint => self.feint_cost,
+            AbilityType::Parry => self.parry_cost,
             AbilityType::Counter => self.counter_cost,
-            AbilityType::Kick => self.kick_cost,
-            AbilityType::Rattle => self.rattle_cost,
-            AbilityType::Disengage => self.disengage_cost,
-            AbilityType::Volley => self.volley_cost,
-            AbilityType::Flank => self.flank_cost,
+            AbilityType::Leap => self.leap_cost,
+            AbilityType::PerfectStride => self.stride_cost,
         }
     }
 
@@ -282,23 +236,20 @@ impl Tuning {
     pub fn recovery(&self, ability: AbilityType) -> f32 {
         match ability {
             AbilityType::AutoAttack => 0.0,
-            AbilityType::Lunge => self.lunge_recovery,
-            AbilityType::Overpower => self.overpower_recovery,
+            AbilityType::Frenzy => self.frenzy_recovery,
+            AbilityType::Feint => self.feint_recovery,
+            AbilityType::Parry => self.parry_recovery,
             AbilityType::Counter => self.counter_recovery,
-            AbilityType::Kick => self.kick_recovery,
-            AbilityType::Rattle => self.rattle_recovery,
-            AbilityType::Disengage => self.disengage_recovery,
-            AbilityType::Volley => self.volley_recovery,
-            AbilityType::Flank => self.flank_recovery,
+            AbilityType::Leap => self.leap_recovery,
+            AbilityType::PerfectStride => self.stride_recovery,
         }
     }
 
     /// Share of the target's Toughness mitigation `ability`'s damage strikes
-    /// past: a Lunge carries the whole body behind it, and a Counter returns
-    /// the attacker's own blow whole. Every other threat meets mitigation in full.
+    /// past: a Counter returns the attacker's own blow whole. Every other
+    /// threat meets mitigation in full.
     pub fn pierce(&self, ability: AbilityType) -> f32 {
         match ability {
-            AbilityType::Lunge => self.lunge_pierce,
             AbilityType::Counter => 1.0,
             _ => 0.0,
         }
@@ -346,59 +297,32 @@ impl Tuning {
             "combo_share" => &mut self.combo_share,
             "reaction_window" => &mut self.reaction_window,
             "window_bonus" => &mut self.window_bonus,
-            "lunge_cost" => &mut self.lunge_cost,
-            "overpower_cost" => &mut self.overpower_cost,
-            "counter_cost" => &mut self.counter_cost,
-            "kick_cost" => &mut self.kick_cost,
-            "lunge_recovery" => &mut self.lunge_recovery,
-            "overpower_recovery" => &mut self.overpower_recovery,
-            "counter_recovery" => &mut self.counter_recovery,
-            "kick_recovery" => &mut self.kick_recovery,
-            "rattle_recovery" => &mut self.rattle_recovery,
-            "disengage_recovery" => &mut self.disengage_recovery,
-            "volley_recovery" => &mut self.volley_recovery,
-            "flank_recovery" => &mut self.flank_recovery,
             "auto_damage" => &mut self.auto_damage,
             "force_auto" => &mut self.force_auto,
             "stride_pace" => &mut self.stride_pace,
             "damage_spread" => &mut self.damage_spread,
             "crit_chance" => &mut self.crit_chance,
             "crit_power" => &mut self.crit_power,
-            "lunge_force" => &mut self.lunge_force,
-            "lunge_dot" => &mut self.lunge_dot,
-            "lunge_pierce" => &mut self.lunge_pierce,
-            "rattle_cost" => &mut self.rattle_cost,
-            "rattle_health" => &mut self.rattle_health,
-            "rattle_growth" => &mut self.rattle_growth,
-            "rattle_daze" => &mut self.rattle_daze,
-            "disengage_cost" => &mut self.disengage_cost,
-            "disengage_intuition" => &mut self.disengage_intuition,
-            "volley_cost" => &mut self.volley_cost,
-            "volley_precision" => &mut self.volley_precision,
-            "volley_slow" => &mut self.volley_slow,
-            "volley_slow_secs" => &mut self.volley_slow_secs,
-            "flank_cost" => &mut self.flank_cost,
-            "flank_stun" => &mut self.flank_stun,
-            "flank_endurance" => &mut self.flank_endurance,
+            "frenzy_cost" => &mut self.frenzy_cost,
+            "frenzy_recovery" => &mut self.frenzy_recovery,
+            "frenzy_damage" => &mut self.frenzy_damage,
+            "feint_cost" => &mut self.feint_cost,
+            "feint_recovery" => &mut self.feint_recovery,
+            "feint_damage" => &mut self.feint_damage,
+            "feint_share" => &mut self.feint_share,
+            "feint_gap" => &mut self.feint_gap,
+            "parry_cost" => &mut self.parry_cost,
+            "parry_recovery" => &mut self.parry_recovery,
+            "counter_cost" => &mut self.counter_cost,
+            "counter_recovery" => &mut self.counter_recovery,
             "counter_reflect" => &mut self.counter_reflect,
-            "volley_shots" => {
-                self.volley_shots = number.round().max(1.0) as u8;
-                return Ok(());
-            }
-            "rattle_stacks" => {
-                self.rattle_stacks = number.round().max(1.0) as u8;
-                return Ok(());
-            }
-            "disengage_leap" => {
-                self.disengage_leap = number.round().max(1.0) as usize;
-                return Ok(());
-            }
-            "disengage_close" => {
-                self.disengage_close = number.round().max(1.0) as usize;
-                return Ok(());
-            }
-            "volley_leap" => {
-                self.volley_leap = number.round().max(1.0) as usize;
+            "leap_cost" => &mut self.leap_cost,
+            "leap_recovery" => &mut self.leap_recovery,
+            "stride_cost" => &mut self.stride_cost,
+            "stride_recovery" => &mut self.stride_recovery,
+            "stride_secs" => &mut self.stride_secs,
+            "leap_distance" => {
+                self.leap_distance = number.round().max(1.0) as usize;
                 return Ok(());
             }
             _ => return Err(format!("no tuning knob {name}")),
@@ -435,13 +359,13 @@ mod tests {
     #[test]
     fn set_reads_numbers_and_refuses_the_unknown() {
         let mut tuning = Tuning::default();
-        tuning.set("lunge_pierce", "0.25").unwrap();
-        tuning.set("volley_shots", "2").unwrap();
+        tuning.set("frenzy_damage", "0.25").unwrap();
+        tuning.set("leap_distance", "2").unwrap();
         tuning.set("grit_bank_max", "0.25").unwrap();
-        assert_eq!(tuning.lunge_pierce, 0.25);
-        assert_eq!(tuning.volley_shots, 2);
+        assert_eq!(tuning.frenzy_damage, 0.25);
+        assert_eq!(tuning.leap_distance, 2);
         assert_eq!(tuning.grit_bank_max, 0.25);
-        assert!(tuning.set("lunge_pierce", "much").is_err());
+        assert!(tuning.set("frenzy_damage", "much").is_err());
         assert!(tuning.set("no_such_knob", "1").is_err());
     }
 }

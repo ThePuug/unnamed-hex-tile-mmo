@@ -414,7 +414,7 @@ mod tests {
     fn what_only_its_owner_should_know_goes_to_its_owner_alone() {
         let ent = Entity::from_raw_u32(7).unwrap();
         assert_eq!(route(&Event::Loot { ent, entries: None }), Some((ent, Route::Owner)));
-        assert_eq!(route(&Event::UseAbility { ent, ability: AbilityType::Lunge, target: None }), Some((ent, Route::Seen)));
+        assert_eq!(route(&Event::UseAbility { ent, ability: AbilityType::Frenzy, target: None }), Some((ent, Route::Seen)));
         assert_eq!(route(&Event::Despawn { ent }), Some((ent, Route::Seen)));
         assert_eq!(route(&Event::Displace { ent, destination: Qrz::default(), duration_ms: 0, around: None }), Some((ent, Route::Moving)));
     }
@@ -423,7 +423,7 @@ mod tests {
     fn what_the_server_keeps_to_itself_is_sent_to_no_one() {
         let ent = Entity::from_raw_u32(7).unwrap();
         assert_eq!(route(&Event::Stumble { ent }), None);
-        assert_eq!(route(&Event::DealDamage { source: ent, target: ent, base_damage: 1.0, ability: None, dot: 0.0 }), None);
+        assert_eq!(route(&Event::DealDamage { source: ent, target: ent, base_damage: 1.0, ability: None, dot: 0.0, delay: std::time::Duration::ZERO }), None);
         assert_eq!(route(&Event::Play), None);
     }
 }

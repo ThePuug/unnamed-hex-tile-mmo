@@ -426,19 +426,15 @@ impl ActorAttributes {
 
     // Absolute: an attribute's potency, by the name its stat goes by
 
-    /// Force, Might's: what a Lunge and an Overpower strike for, and what
-    /// its share adds to an auto-attack
+    /// Force, Might's: what its share adds to an auto-attack (`auto_damage`)
     pub fn force(&self) -> f32 { self.potency(Attribute::Might) }
-    /// Tempo, Agility's: what a Volley's shot and a Kick strike for, and how
-    /// fast its auto-attacks come (`cadence_interval`)
+    /// Tempo, Agility's: how fast its auto-attacks come (`cadence_interval`)
     pub fn tempo(&self) -> f32 { self.potency(Attribute::Agility) }
-    /// Endurance, Discipline's: what a Flank strikes for, and how deep the
-    /// endurance pool is (`max_endurance`)
+    /// Endurance, Discipline's: how deep the endurance pool is (`max_endurance`)
     pub fn endurance(&self) -> f32 { self.potency(Attribute::Discipline) }
-    /// Intuition, Instinct's: what a Disengage adds to the next swing
+    /// Intuition, Instinct's. Nothing reads it
     pub fn intuition(&self) -> f32 { self.potency(Attribute::Instinct) }
-    /// Concentration, Resolve's: the weight of what a Counter returns, and
-    /// how long the effects an actor inflicts hold (`hold`)
+    /// Concentration, Resolve's: how long the effects an actor inflicts hold (`hold`)
     pub fn concentration(&self) -> f32 { self.potency(Attribute::Resolve) }
 
     /// Constitution, Vitality's, which is max health: the health every actor

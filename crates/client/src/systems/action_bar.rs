@@ -95,13 +95,14 @@ pub fn setup(
     });  // Close outer .with_children
 }
 
-/// The bar's keys, left to right, and the ability a player holds on each.
-const KEYS: [KeyCode; 4] = [KeyCode::KeyQ, KeyCode::KeyW, KeyCode::KeyE, KeyCode::KeyR];
-const PLAYER: [AbilityType; 4] = [AbilityType::Lunge, AbilityType::Overpower, AbilityType::Counter, AbilityType::Kick];
+/// The bar's keys, left to right, and the ability a player holds on each:
+/// two attacks, then two reactions.
+pub const KEYS: [KeyCode; 4] = [KeyCode::KeyQ, KeyCode::KeyW, KeyCode::KeyE, KeyCode::KeyR];
+pub const PLAYER: [AbilityType; 4] = [AbilityType::Frenzy, AbilityType::Feint, AbilityType::Counter, AbilityType::Leap];
 
 /// What stands on each of the bar's keys for an actor of `typ`: a player's
-/// four; an NPC's signature on the key a player holds it on, else the
-/// first, the rest empty, so a view's bar looks as a player's does.
+/// four; an NPC's skill on the key a player holds it on, else the first,
+/// the rest empty, so a view's bar looks as a player's does.
 pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 4] {
     use common_bevy::components::entity_type::actor::ActorIdentity;
     let mut bar = [None; 4];
@@ -109,8 +110,8 @@ pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 4] {
         EntityType::Actor(actor) => match actor.identity {
             ActorIdentity::Player => bar = PLAYER.map(Some),
             ActorIdentity::Npc(npc) => {
-                let signature = npc.profile().ability;
-                bar[PLAYER.iter().position(|&a| a == signature).unwrap_or(0)] = Some(signature);
+                let skill = npc.profile().ability;
+                bar[PLAYER.iter().position(|&a| a == skill).unwrap_or(0)] = Some(skill);
             }
         },
         _ => {}
@@ -159,15 +160,13 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Opti
         // Ability icon (center)
         let icon_text = match ability {
             None => "",
-            Some(AbilityType::Lunge) => "⚡",       // Gap closer / dash
-            Some(AbilityType::Overpower) => "💥",  // Heavy strike
-            Some(AbilityType::AutoAttack) => "⚔",  // Auto-attack
-            Some(AbilityType::Rattle) => "💫",      // Juggernaut rattle
-            Some(AbilityType::Disengage) => "💨",   // Skirmisher leap away
-            Some(AbilityType::Volley) => "🏹",      // Kiter volley
-            Some(AbilityType::Flank) => "🗡",       // Ambusher flank
-            Some(AbilityType::Counter) => "↩",     // Counter / reflect
-            Some(AbilityType::Kick) => "🦶",       // Kick / knockback
+            Some(AbilityType::AutoAttack) => "⚔",
+            Some(AbilityType::Frenzy) => "💥",
+            Some(AbilityType::Feint) => "💫",
+            Some(AbilityType::Parry) => "🗡",
+            Some(AbilityType::Counter) => "↩",
+            Some(AbilityType::Leap) => "💨",
+            Some(AbilityType::PerfectStride) => "🏹",
         };
 
         parent.spawn((
@@ -191,7 +190,6 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Opti
         if let Some(ability) = ability {
             let cost_text = match ability {
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
-                AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => String::new(), // NPC-only
                 _ => format!("{:.0}", common_bevy::tuning::tuning().cost(ability)),
             };
 
@@ -392,8 +390,8 @@ fn get_ability_state(
         return AbilityState::InsufficientResources;
     }
 
-    // A reaction takes no target; a strike needs the one the player faces
-    // within the ability's own reach
+    // Only a strike is held to a reach: it needs the hostile the player
+    // faces within it
     let Some(reach) = ability.reach(own_reach) else {
         return AbilityState::Ready;
     };
@@ -420,9 +418,9 @@ mod loadout_tests {
     }
 
     #[test]
-    fn an_npc_signature_stands_on_a_players_key_for_it() {
+    fn an_npc_skill_stands_on_a_players_key_for_it() {
         assert_eq!(loadout(&npc(EnemyArchetype::Defender)), [None, None, Some(AbilityType::Counter), None]);
-        assert_eq!(loadout(&npc(EnemyArchetype::Berserker)), [Some(AbilityType::Lunge), None, None, None]);
-        assert_eq!(loadout(&npc(EnemyArchetype::Juggernaut)), [Some(AbilityType::Rattle), None, None, None], "one a player lacks goes first");
+        assert_eq!(loadout(&npc(EnemyArchetype::Juggernaut)), [None, Some(AbilityType::Feint), None, None]);
+        assert_eq!(loadout(&npc(EnemyArchetype::Ambusher)), [Some(AbilityType::Parry), None, None, None], "one a player lacks goes first");
     }
 }

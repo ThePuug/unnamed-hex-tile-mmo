@@ -144,14 +144,14 @@ mod tests {
 
     #[test]
     fn a_reaction_takes_the_front_and_what_lands_within_its_span_behind_it() {
-        use crate::message::AbilityType::{AutoAttack, Lunge};
+        use crate::message::AbilityType::{AutoAttack, Frenzy};
         let landing = |ability, secs: u64, millis: u64| QueuedThreat {
             timer_duration: Duration::from_secs(secs) + Duration::from_millis(millis),
             ..threat(Some(ability), 0.0)
         };
         // In queue order: the blows, then the auto-attacks
         let queue = ReactionQueue {
-            threats: [landing(Lunge, 3, 0), landing(Lunge, 5, 0), landing(AutoAttack, 2, 0), landing(AutoAttack, 3, 200)].into(),
+            threats: [landing(Frenzy, 3, 0), landing(Frenzy, 5, 0), landing(AutoAttack, 2, 0), landing(AutoAttack, 3, 200)].into(),
         };
         let taken = |span: u64| queue.swept(Duration::from_millis(span)).map(|t| t.timer_duration.as_millis()).collect::<Vec<_>>();
         assert_eq!(taken(0), vec![3000], "the front alone");
@@ -162,8 +162,8 @@ mod tests {
 
     #[test]
     fn lanes_order_blows_then_wounds_then_auto_attacks() {
-        let blow = threat(Some(crate::message::AbilityType::Lunge), 0.0);
-        let wound = threat(Some(crate::message::AbilityType::Lunge), 5.0);
+        let blow = threat(Some(crate::message::AbilityType::Frenzy), 0.0);
+        let wound = threat(Some(crate::message::AbilityType::Frenzy), 5.0);
         let auto = threat(Some(crate::message::AbilityType::AutoAttack), 0.0);
         assert!(blow.lane() < wound.lane() && wound.lane() < auto.lane());
     }

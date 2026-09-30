@@ -100,13 +100,13 @@ mod tests {
 
     #[test]
     fn only_the_offered_combo_passes_the_recovery_once_it_unlocks() {
-        let recovery = offering(2.0, AbilityType::Lunge, 1.5);
+        let recovery = offering(2.0, AbilityType::Frenzy, 1.5);
         let mut later = recovery;
         later.tick(1.0);
-        assert!(may_use(AbilityType::Overpower, None), "out of recovery, anything");
-        assert!(!may_use(AbilityType::Lunge, Some(&recovery)), "not before it unlocks");
-        assert!(may_use(AbilityType::Lunge, Some(&later)), "the combo, once unlocked");
-        assert!(!may_use(AbilityType::Overpower, Some(&later)), "nothing else");
+        assert!(may_use(AbilityType::Feint, None), "out of recovery, anything");
+        assert!(!may_use(AbilityType::Frenzy, Some(&recovery)), "not before it unlocks");
+        assert!(may_use(AbilityType::Frenzy, Some(&later)), "the combo, once unlocked");
+        assert!(!may_use(AbilityType::Feint, Some(&later)), "nothing else");
     }
 
     #[test]
@@ -116,7 +116,7 @@ mod tests {
         let recovering = GlobalRecovery::new(2.0);
         assert!(reacts_through(AbilityType::Counter, Some(&recovering), Some(&disciplined)));
         assert!(!reacts_through(AbilityType::Counter, Some(&recovering), Some(&plain)), "no Preparation, no reaction in recovery");
-        assert!(!reacts_through(AbilityType::Lunge, Some(&recovering), Some(&disciplined)), "reactions only");
+        assert!(!reacts_through(AbilityType::Frenzy, Some(&recovering), Some(&disciplined)), "reactions only");
         let through = recovery_after(AbilityType::Counter, Some(&recovering), &disciplined, None, 0.0);
         let own = crate::tuning::tuning().recovery(AbilityType::Counter);
         assert!(through.remaining > 2.0 && through.remaining < own + 2.0, "its own recovery added onto the rest, less what Preparation lets it off");
@@ -129,50 +129,50 @@ mod tests {
     #[test]
     fn a_burst_fires_the_combo_early_while_it_has_steps() {
         let burst = Burst { window: 1.0, steps: 1 };
-        let with = |burst| GlobalRecovery { burst: Some(burst), ..offering(2.0, AbilityType::Lunge, 1.5) };
-        assert!(may_use(AbilityType::Lunge, Some(&with(burst))), "at once, with a step");
-        assert!(!may_use(AbilityType::Lunge, Some(&with(Burst { steps: 0, ..burst }))), "none left");
-        assert!(!may_use(AbilityType::Lunge, Some(&with(Burst { window: 0.0, ..burst }))), "past the opener's recovery");
-        assert!(!may_use(AbilityType::Overpower, Some(&with(burst))), "only the combo");
+        let with = |burst| GlobalRecovery { burst: Some(burst), ..offering(2.0, AbilityType::Frenzy, 1.5) };
+        assert!(may_use(AbilityType::Frenzy, Some(&with(burst))), "at once, with a step");
+        assert!(!may_use(AbilityType::Frenzy, Some(&with(Burst { steps: 0, ..burst }))), "none left");
+        assert!(!may_use(AbilityType::Frenzy, Some(&with(Burst { window: 0.0, ..burst }))), "past the opener's recovery");
+        assert!(!may_use(AbilityType::Feint, Some(&with(burst))), "only the combo");
     }
 
     #[test]
     fn an_early_combo_carries_what_it_skipped_and_an_unlocked_one_nothing() {
         let plain = ActorAttributes::default();
-        let prior = offering(2.0, AbilityType::Lunge, 1.5);
-        let own = crate::tuning::tuning().recovery(AbilityType::Lunge);
-        let early = recovery_after(AbilityType::Lunge, Some(&prior), &plain, None, 0.0);
+        let prior = offering(2.0, AbilityType::Frenzy, 1.5);
+        let own = crate::tuning::tuning().recovery(AbilityType::Frenzy);
+        let early = recovery_after(AbilityType::Frenzy, Some(&prior), &plain, None, 0.0);
         assert!((early.remaining - (own + 0.5)).abs() < 1e-5, "the half second it skipped comes after");
         let mut waited = prior;
         waited.tick(0.6);
-        assert_eq!(recovery_after(AbilityType::Lunge, Some(&waited), &plain, None, 0.0).remaining, own, "on time, its own");
-        assert_eq!(recovery_after(AbilityType::Lunge, None, &plain, None, 0.0).remaining, own, "fresh, its own");
+        assert_eq!(recovery_after(AbilityType::Frenzy, Some(&waited), &plain, None, 0.0).remaining, own, "on time, its own");
+        assert_eq!(recovery_after(AbilityType::Frenzy, None, &plain, None, 0.0).remaining, own, "fresh, its own");
     }
 
     #[test]
     fn a_recovery_offers_its_combo_inside_its_own_seconds() {
         let plain = ActorAttributes::default();
-        let own = crate::tuning::tuning().recovery(AbilityType::Lunge);
-        let fresh = recovery_after(AbilityType::Lunge, None, &plain, None, 0.0);
+        let own = crate::tuning::tuning().recovery(AbilityType::Frenzy);
+        let fresh = recovery_after(AbilityType::Frenzy, None, &plain, None, 0.0);
         if let Some(combo) = fresh.combo {
-            assert_eq!(Some(combo.ability), AbilityType::Lunge.combo());
+            assert_eq!(Some(combo.ability), AbilityType::Frenzy.combo());
             assert!((0.0..=own).contains(&combo.unlock_at));
         }
 
         // What an early combo carried is never unlocked through
-        let prior = offering(2.0, AbilityType::Lunge, 0.5);
-        let early = recovery_after(AbilityType::Lunge, Some(&prior), &plain, None, 0.0);
+        let prior = offering(2.0, AbilityType::Frenzy, 0.5);
+        let early = recovery_after(AbilityType::Frenzy, Some(&prior), &plain, None, 0.0);
         assert!(early.carried > 0.0);
         assert_eq!(early.combo.map(|combo| combo.unlock_at), fresh.combo.map(|combo| combo.unlock_at));
-        assert!(recovery_after(AbilityType::Rattle, None, &plain, None, 0.0).combo.is_none(), "a signature leads on to nothing");
+        assert!(recovery_after(AbilityType::Feint, None, &plain, None, 0.0).combo.is_none(), "a Feint leads on to nothing");
     }
 
     #[test]
     fn fatigue_lengthens_a_recovery() {
         let plain = ActorAttributes::default();
-        let fresh = recovery_after(AbilityType::Lunge, None, &plain, None, 0.0);
-        let tired = recovery_after(AbilityType::Lunge, None, &plain, None, 0.5);
-        let spent = recovery_after(AbilityType::Lunge, None, &plain, None, 1.0);
+        let fresh = recovery_after(AbilityType::Frenzy, None, &plain, None, 0.0);
+        let tired = recovery_after(AbilityType::Frenzy, None, &plain, None, 0.5);
+        let spent = recovery_after(AbilityType::Frenzy, None, &plain, None, 1.0);
         assert!(tired.remaining > fresh.remaining && spent.remaining > tired.remaining, "the more spent, the longer");
     }
 
@@ -181,29 +181,23 @@ mod tests {
         let fierce = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let steps = fierce.ferocity().index() as u8;
         assert!(steps > 0, "all of it in Might reaches a Ferocity tier");
-        let opener = recovery_after(AbilityType::Lunge, None, &fierce, None, 0.0);
+        let opener = recovery_after(AbilityType::Frenzy, None, &fierce, None, 0.0);
         assert_eq!(opener.burst.map(|burst| burst.steps), Some(steps));
-        let combo = AbilityType::Lunge.combo().unwrap();
-        assert!(may_use(combo, Some(&opener)), "the combo fires at once");
+        assert!(may_use(AbilityType::Frenzy, Some(&opener)), "the next bite fires at once");
 
-        let second = recovery_after(combo, Some(&opener), &fierce, None, 0.0);
+        let second = recovery_after(AbilityType::Frenzy, Some(&opener), &fierce, None, 0.0);
         assert_eq!(second.burst.map(|burst| burst.steps), Some(steps - 1), "and spends a step");
         let skipped = opener.remaining - opener.combo.unwrap().unlock_at;
         assert!(second.carried > 0.0 && second.carried < skipped, "carrying what it skipped, less what its Ferocity lets it off");
-        assert!(recovery_after(AbilityType::Lunge, None, &ActorAttributes::default(), None, 0.0).burst.is_none(), "no Ferocity, no burst");
+        assert!(recovery_after(AbilityType::Frenzy, None, &ActorAttributes::default(), None, 0.0).burst.is_none(), "no Ferocity, no burst");
     }
 
     #[test]
-    fn the_player_combos_run_round_one_ring() {
-        // Following each combo from Lunge reaches every player ability once and comes back
-        let mut at = AbilityType::Lunge;
-        let mut seen = vec![at];
-        loop {
-            at = at.combo().expect("every ring ability leads on");
-            if at == AbilityType::Lunge { break; }
-            assert!(!seen.contains(&at), "{at:?} comes round twice");
-            seen.push(at);
+    fn a_bites_combo_is_another_bite_and_no_other_skill_leads_on() {
+        use AbilityType::*;
+        assert_eq!(Frenzy.combo(), Some(Frenzy));
+        for ability in [AutoAttack, Feint, Parry, Counter, Leap, PerfectStride] {
+            assert_eq!(ability.combo(), None, "{ability:?}");
         }
-        assert_eq!(seen.len(), 4, "the ring is Lunge, Overpower, Counter and Kick: {seen:?}");
     }
 }

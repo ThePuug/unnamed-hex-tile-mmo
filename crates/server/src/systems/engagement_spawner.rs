@@ -30,7 +30,7 @@ use common_bevy::{
 };
 
 /// How long a live NPC waits, in milliseconds, once it can afford its
-/// signature and is out of recovery, before it uses it, drawn afresh each
+/// skill and is out of recovery, before it uses it, drawn afresh each
 /// use: play's pace, spreading a pack apart. It sits outside the balance,
 /// which the arena measures with no wait at all.
 pub const SIGNATURE_WAIT_MS: RangeInclusive<u64> = 3000..=6000;

@@ -1,27 +1,31 @@
-//! When an NPC uses its archetype's signature.
+//! When an NPC uses its archetype's skill.
 
 use bevy::prelude::*;
 use common_bevy::{
     components::entity_type::{actor::ActorIdentity, EntityType},
     message::AbilityType,
-    systems::combat::combos::reacts_through,
+    systems::combat::combos::{may_use, reacts_through},
 };
 
 use super::{in_arc, Abilities};
 
 impl Abilities<'_, '_> {
-    /// Uses each NPC's signature where it would: a strike (Lunge, Rattle,
-    /// Volley, Flank) when its target stands within the ability's reach and
-    /// the NPC's arc; a Counter when threats stand in its queue; a Disengage
-    /// from the blow at the front of its queue, an auto-attack's as
-    /// overflow.
+    /// Uses each NPC's skill where it would:
+    /// - a strike (Frenzy, Feint) when its target stands within its reach
+    ///   and arc;
+    /// - a Parry or a Counter when threats stand in its queue;
+    /// - a Leap clear of a target in its reach when threats stand in its
+    ///   queue, and onto one out of its reach;
+    /// - a Perfect Stride when its target stands within its reach and it
+    ///   is in none.
     ///
-    /// Every use waits out the NPC's `NpcRecovery` delay, armed once the
-    /// ability is affordable and out of recovery, or a reaction its
-    /// Preparation lets through the recovery, so NPCs that fire together
-    /// drift apart. The delay is spent as it asks, whether or not the gate
-    /// then lets the ability through.
-    pub(super) fn signatures(&mut self) {
+    /// Every use out of recovery waits out the NPC's `NpcRecovery` delay,
+    /// armed once the skill is affordable, so NPCs that fire together drift
+    /// apart. What it takes inside a recovery, the combo it was offered or
+    /// a reaction its Preparation lets through, follows without the wait.
+    /// The delay is spent as it asks, whether or not the gate then lets the
+    /// skill through.
+    pub(super) fn skills(&mut self) {
         let now = self.time.elapsed();
         let mut asks: Vec<(Entity, AbilityType, Option<Entity>)> = Vec::new();
         for (ent, entity_type, mut delay) in &mut self.npcs {
@@ -29,30 +33,33 @@ impl Abilities<'_, '_> {
             let ActorIdentity::Npc(archetype) = actor.identity else { continue };
             let ability = archetype.profile().ability;
             let Ok((&loc, attrs, _, heading, _, range, _)) = self.actors.get(ent) else { continue };
+            let own = range.copied().unwrap_or_default().0;
 
-            // Out of recovery, or a reaction its Preparation lets through it, and affordable
             let recovery = self.recoveries.get(ent).ok();
-            let recovering = recovery.is_some_and(|recovery| recovery.is_active());
+            let open = may_use(ability, recovery) || reacts_through(ability, recovery, Some(attrs));
             let affordable = self.stamina.get(ent).is_ok_and(|stamina| stamina.state >= common_bevy::tuning::tuning().cost(ability));
-            if (recovering && !reacts_through(ability, recovery, Some(attrs))) || !affordable {
+            if !open || !affordable {
                 continue;
             }
-            delay.arm(now);
-            if !delay.is_ready(now) {
-                continue;
+            if !recovery.is_some_and(|recovery| recovery.is_active()) {
+                delay.arm(now);
+                if !delay.is_ready(now) {
+                    continue;
+                }
             }
 
-            let queue = self.queues.get(ent).ok();
+            let threatened = self.queues.get(ent).is_ok_and(|queue| !queue.is_empty());
+            let target = self.targets.get(ent).ok().and_then(|(_, target)| target.entity);
+            let target_loc = target.and_then(|target| self.actors.get(target).ok()).map(|(&target_loc, ..)| target_loc);
+            let in_reach = target_loc.is_some_and(|target_loc| loc.distance(&target_loc) <= own);
             let ask = match ability {
-                AbilityType::Disengage => queue.and_then(|queue| queue.threats.front().map(|blow| Some(blow.source))),
-                AbilityType::Counter => queue.filter(|queue| !queue.threats.is_empty()).map(|_| None),
-                _ => self.targets.get(ent).ok().and_then(|(_, target)| target.entity).filter(|&target| {
-                    let reach = ability.reach(range.copied().unwrap_or_default().0);
-                    self.actors.get(target).is_ok_and(|(target_loc, ..)| {
-                        reach.is_some_and(|reach| reach.contains(&loc.distance(target_loc)))
-                            && in_arc(heading, Some(attrs), &loc, target_loc)
-                    })
-                }).map(Some),
+                AbilityType::Parry | AbilityType::Counter => threatened.then_some(None),
+                AbilityType::Leap => target.filter(|_| threatened || !in_reach).map(Some),
+                AbilityType::PerfectStride => (in_reach && !self.striding.get(ent).is_ok_and(|stride| stride.until > now)).then_some(None),
+                _ => target.zip(target_loc).filter(|(_, target_loc)| {
+                    ability.reach(own).is_some_and(|reach| reach.contains(&loc.distance(target_loc)))
+                        && in_arc(heading, Some(attrs), &loc, target_loc)
+                }).map(|(target, _)| Some(target)),
             };
             if let Some(asked) = ask {
                 delay.spend();

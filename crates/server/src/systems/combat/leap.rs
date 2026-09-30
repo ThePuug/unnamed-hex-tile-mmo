@@ -1,14 +1,7 @@
-//! The movement an ability makes: its caster's, or for a Kick the one it
-//! drives back. Every such move is a walk over the ground to a standing tile
-//! ([`away`], [`toward`]) and one [`slide`] there: the actor stands on the
-//! tile at once on the server and is drawn sliding to it on every client.
-//!
-//! Like any of an ability's effects (`landing`), a move takes one of two
-//! timings: with the cast, when it stands on its own, as a Lunge's charge or
-//! a Disengage's leap clear of the blow it answers; or with the threat, when
-//! it is worth something only if the blow lands, as the Kiter's leap, which
-//! rides its Volley's slow so a Kiter never leaps from a target that can
-//! still follow it.
+//! The movement an ability makes. Every such move is a walk over the ground
+//! to a standing tile ([`away`], [`toward`]) and one [`slide`] there: the
+//! actor stands on the tile at once on the server and is drawn sliding to
+//! it on every client. A Leap's is made with the cast.
 
 use bevy::prelude::*;
 use common_bevy::{

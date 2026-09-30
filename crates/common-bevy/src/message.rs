@@ -40,6 +40,8 @@ pub enum Event {
         ability: Option<AbilityType>,
         /// Damage each DoT tick deals while the threat stands: a wound's, zero for a blow
         dot: f32,
+        /// How long after now the strike is made: its threat's window starts then
+        delay: std::time::Duration,
     },
     /// Server-internal: a wound's DoT tick lands outside the queue
     DotTick { ent: Entity, source: Entity, damage: f32, ability: Option<AbilityType> },
@@ -53,8 +55,8 @@ pub enum Event {
     /// Server-internal: Resolve a threat (apply damage with modifiers)
     ResolveThreat { ent: Entity, threat: QueuedThreat },
     /// Client → Server (Try): Request to use an ability
-    /// Server → Client (Do): Ability was used successfully (apply recovery and combo)
-    /// target: Optional target entity (player's intended target, server validates)
+    /// Server → Client (Do): Ability was used successfully
+    /// target: the actor it is used on, a player's choice the server checks
     UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity> },
     /// Server → Client: Clear threats from queue
     ClearQueue { ent: Entity, clear_type: ClearType },
@@ -186,63 +188,55 @@ impl Event {
     }
 }
 
-/// Types of abilities that can be used ( MVP ability set + Counter)
+/// What an actor uses in a fight: the auto-attack, and the early kit, one
+/// skill to an archetype, each showing what its attribute's commitment buys.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum AbilityType {
-    /// Q: Gap closer - teleport adjacent to target (4 hex range, 20 stam, 40 dmg)
-    Lunge,
-    /// W: Heavy strike - high damage melee attack (1 hex, 40 stam, 80 dmg, 2s CD)
-    Overpower,
-    /// Passive: Auto-attack when adjacent to hostile (20 dmg every 1.5s, free)
+    /// The swing every actor makes on its own clock, free
     AutoAttack,
-    /// Counter - Clear the front of the queue, reflecting each threat onto its source at any range
+    /// The Berserker's bite. Its combo is itself, so Ferocity fires bites in a burst
+    Frenzy,
+    /// The Juggernaut's feint and the real strike a moment behind it, which
+    /// split its damage and its Grit's bank between them
+    Feint,
+    /// The Ambusher's reaction, clearing every threat in its span;
+    /// Preparation chains it through a recovery
+    Parry,
+    /// The Defender's reaction, clearing every threat in its span and
+    /// sending a share of each back; Awareness lengthens the span
     Counter,
-    /// Kick - Clear visible threats, deal 75% Technique damage, knockback adjacent sources 4 tiles (40 stam, 4s recovery)
-    Kick,
-    /// NPC: the Juggernaut's strike on an adjacent target, stacking a daze that slows its movement, auto-attacks and recovery
-    Rattle,
-    /// NPC: the Skirmisher's leap clear of the blow at the front of its queue, which strengthens its next auto-attack and sends a feint ahead of it
-    Disengage,
-    /// NPC: the Kiter's burst of shots within 6 tiles, one per threat it can see
-    Volley,
-    /// NPC: the Ambusher's stun on a target within reach, stepping to its back to strike for Intuition
-    Flank,
+    /// The Skirmisher's leap: clear of a target in its reach, dodging its
+    /// span, or onto one out of it, where the swings Patience banked land
+    Leap,
+    /// The Kiter's stride: for a while its strikes past the forward faces
+    /// break no stride, so Grace strikes on the run
+    PerfectStride,
 }
 
 impl AbilityType {
-    /// Whether it answers the queue: the abilities Discipline's Preparation
+    /// Whether it is a reaction: the abilities Discipline's Preparation
     /// lets an actor use through its recovery (`combos::reacts_through`)
     pub fn is_reaction(self) -> bool {
-        matches!(self, AbilityType::Counter | AbilityType::Kick | AbilityType::Disengage)
+        matches!(self, AbilityType::Parry | AbilityType::Counter | AbilityType::Leap)
     }
 
     /// How near and how far, in tiles, `ability` strikes a target from an
-    /// actor whose own reach is `own`. None for one that takes no target: a
-    /// reaction, which answers the queue. An auto-attack and a Volley reach
-    /// as far as the actor does, a Rattle and a Flank the same but never the
-    /// actor's own tile, an Overpower only beside it, and a Lunge from
-    /// beside out to [`LUNGE_RANGE`](crate::systems::combat::resources::LUNGE_RANGE).
+    /// actor whose own reach is `own`: as far as the actor reaches. None
+    /// for one the gate checks no target for: a reaction, or the stride.
     pub fn reach(self, own: i32) -> Option<std::ops::RangeInclusive<i32>> {
         match self {
-            AbilityType::AutoAttack | AbilityType::Volley => Some(0..=own),
-            AbilityType::Rattle | AbilityType::Flank => Some(1..=own),
-            AbilityType::Overpower => Some(0..=1),
-            AbilityType::Lunge => Some(1..=crate::systems::combat::resources::LUNGE_RANGE as i32),
-            AbilityType::Counter | AbilityType::Kick | AbilityType::Disengage => None,
+            AbilityType::AutoAttack | AbilityType::Frenzy | AbilityType::Feint => Some(0..=own),
+            AbilityType::Parry | AbilityType::Counter | AbilityType::Leap | AbilityType::PerfectStride => None,
         }
     }
 
     /// The ability this one offers as its combo, the one that unlocks
-    /// through its recovery ahead of the rest (`combos::recovery_after`):
-    /// the player's four run round one ring, Lunge to Overpower to Counter
-    /// to Kick and back to Lunge. None for an ability that offers nothing.
+    /// through its recovery ahead of the rest (`combos::recovery_after`): a
+    /// bite's is another bite. None for an ability that offers nothing.
     pub fn combo(self) -> Option<AbilityType> {
         match self {
-            AbilityType::Lunge => Some(AbilityType::Overpower),
-            AbilityType::Overpower => Some(AbilityType::Counter),
-            AbilityType::Counter => Some(AbilityType::Kick),
-            AbilityType::Kick => Some(AbilityType::Lunge),
-            AbilityType::AutoAttack | AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => None,
+            AbilityType::Frenzy => Some(AbilityType::Frenzy),
+            _ => None,
         }
     }
 }

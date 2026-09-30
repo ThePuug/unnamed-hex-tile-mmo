@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn a_combo_unlocks_once_the_recovery_has_run_down_to_it() {
-        let combo = Combo { ability: AbilityType::Overpower, unlock_at: 0.5 };
+        let combo = Combo { ability: AbilityType::Frenzy, unlock_at: 0.5 };
         assert!(!combo.is_unlocked(1.0));
         assert!(combo.is_unlocked(0.5));
         assert!(combo.is_unlocked(0.0));
@@ -130,7 +130,7 @@ mod tests {
         use AbilityType::*;
         let tuning = crate::tuning::tuning();
         assert_eq!(tuning.recovery(AutoAttack), 0.0, "an auto-attack runs on its own timer");
-        for ability in [Lunge, Overpower, Counter, Kick, Rattle, Disengage, Volley, Flank] {
+        for ability in [Frenzy, Feint, Parry, Counter, Leap, PerfectStride] {
             assert!(tuning.recovery(ability) > 0.0, "{ability:?} leaves its user recovering");
         }
     }

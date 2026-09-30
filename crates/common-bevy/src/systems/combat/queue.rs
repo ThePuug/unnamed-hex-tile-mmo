@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn test_insert_threat_puts_abilities_ahead_of_auto_attacks() {
-        use crate::message::AbilityType::{AutoAttack, Lunge, Overpower};
+        use crate::message::AbilityType::{AutoAttack, Frenzy, Feint};
         let mut queue = ReactionQueue::default();
         let entity = Entity::from_raw_u32(0).unwrap();
         let make_threat = |ability, secs: u64| QueuedThreat {
@@ -176,12 +176,12 @@ mod tests {
             ticked: 0,
         };
 
-        for (ability, secs) in [(AutoAttack, 0), (Lunge, 1), (AutoAttack, 2), (Overpower, 3)] {
+        for (ability, secs) in [(AutoAttack, 0), (Frenzy, 1), (AutoAttack, 2), (Feint, 3)] {
             insert_threat(&mut queue, make_threat(ability, secs), Duration::from_secs(secs));
         }
 
         let order: Vec<_> = queue.threats.iter().map(|t| (t.ability.unwrap(), t.inserted_at.as_secs())).collect();
-        assert_eq!(order, vec![(Lunge, 1), (Overpower, 3), (AutoAttack, 0), (AutoAttack, 2)]);
+        assert_eq!(order, vec![(Frenzy, 1), (Feint, 3), (AutoAttack, 0), (AutoAttack, 2)]);
     }
 
     #[test]
@@ -338,7 +338,7 @@ mod tests {
             damage: secs as f32,
             inserted_at: Duration::from_secs(secs),
             timer_duration: Duration::from_secs(window),
-            ability: Some(crate::message::AbilityType::Lunge),
+            ability: Some(crate::message::AbilityType::Frenzy),
             dot: 0.0,
             ticked: 0,
         };
@@ -364,12 +364,12 @@ mod tests {
             dot,
             ticked: 0,
         };
-        use crate::message::AbilityType::{AutoAttack, Lunge};
+        use crate::message::AbilityType::{AutoAttack, Frenzy};
         insert_threat(&mut queue, make(Some(AutoAttack), 0.0, 0), Duration::ZERO);
-        insert_threat(&mut queue, make(Some(Lunge), 5.0, 1), Duration::ZERO);
-        insert_threat(&mut queue, make(Some(Lunge), 0.0, 2), Duration::ZERO);
-        insert_threat(&mut queue, make(Some(Lunge), 5.0, 3), Duration::ZERO);
-        insert_threat(&mut queue, make(Some(Lunge), 0.0, 4), Duration::ZERO);
+        insert_threat(&mut queue, make(Some(Frenzy), 5.0, 1), Duration::ZERO);
+        insert_threat(&mut queue, make(Some(Frenzy), 0.0, 2), Duration::ZERO);
+        insert_threat(&mut queue, make(Some(Frenzy), 5.0, 3), Duration::ZERO);
+        insert_threat(&mut queue, make(Some(Frenzy), 0.0, 4), Duration::ZERO);
         let order: Vec<_> = queue.threats.iter().map(|t| t.inserted_at.as_secs()).collect();
         assert_eq!(order, vec![2, 4, 1, 3, 0], "blows, then wounds, then auto-attacks, each oldest first");
     }
@@ -382,7 +382,7 @@ mod tests {
             damage: 10.0,
             inserted_at: Duration::from_secs(secs),
             timer_duration: Duration::from_secs(window),
-            ability: Some(crate::message::AbilityType::Lunge),
+            ability: Some(crate::message::AbilityType::Frenzy),
             dot: 0.0,
             ticked: 0,
         };

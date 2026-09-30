@@ -35,7 +35,7 @@ pub enum EnemyArchetype {
 pub struct Profile {
     /// What an NPC of it is called
     pub name: &'static str,
-    /// Its signature ability
+    /// Its skill, the one of the early kit its attribute's commitment shows in
     pub ability: AbilityType,
     pub approach: Approach,
     pub resilience: Resilience,
@@ -54,12 +54,12 @@ impl EnemyArchetype {
         use Approach::*;
         use Resilience::*;
         match self {
-            Self::Berserker  => Profile { name: "Wild Dog",      ability: Lunge,     approach: Direct,    resilience: Primal,   build: [-1, 0, 0] },
-            Self::Juggernaut => Profile { name: "Juggernaut",    ability: Rattle,    approach: Binding,   resilience: Vital,    build: [0, -1, 0] },
-            Self::Kiter      => Profile { name: "Forest Sprite", ability: Volley,    approach: Distant,   resilience: Mental,   build: [1, 0, 0] },
-            Self::Defender   => Profile { name: "Defender",      ability: Counter,   approach: Patient,   resilience: Hardened, build: [0, 0, 1] },
-            Self::Skirmisher => Profile { name: "Skirmisher",    ability: Disengage, approach: Evasive,   resilience: Shielded, build: [0, 0, -1] },
-            Self::Ambusher   => Profile { name: "Ambusher",      ability: Flank,     approach: Ambushing, resilience: Blessed,  build: [0, 1, 0] },
+            Self::Berserker  => Profile { name: "Wild Dog",      ability: Frenzy,        approach: Direct,    resilience: Primal,   build: [-1, 0, 0] },
+            Self::Juggernaut => Profile { name: "Juggernaut",    ability: Feint,         approach: Binding,   resilience: Vital,    build: [0, -1, 0] },
+            Self::Kiter      => Profile { name: "Forest Sprite", ability: PerfectStride, approach: Distant,   resilience: Mental,   build: [1, 0, 0] },
+            Self::Defender   => Profile { name: "Defender",      ability: Counter,       approach: Patient,   resilience: Hardened, build: [0, 0, 1] },
+            Self::Skirmisher => Profile { name: "Skirmisher",    ability: Leap,          approach: Evasive,   resilience: Shielded, build: [0, 0, -1] },
+            Self::Ambusher   => Profile { name: "Ambusher",      ability: Parry,         approach: Ambushing, resilience: Blessed,  build: [0, 1, 0] },
         }
     }
 }
@@ -90,7 +90,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn no_two_archetypes_share_a_name_a_signature_or_a_build() {
+    fn no_two_archetypes_share_a_name_a_skill_or_a_build() {
         for (i, a) in EnemyArchetype::ALL.into_iter().enumerate() {
             for b in &EnemyArchetype::ALL[i + 1..] {
                 let (a, b) = (a.profile(), b.profile());

@@ -15,7 +15,7 @@
 //! ordered pair, mirrors included, `trace` to print every
 //! fight (1), with a timeline every 5s (2), or every half second for its
 //! first 12s (3). Any `Tuning` knob may be set by name too
-//! (`lunge_pierce=0.5`), so a value is tried without a rebuild.
+//! (`frenzy_damage=2`), so a value is tried without a rebuild.
 //!
 //! `arena serve` runs one scenario per line of stdin, each line the keys
 //! above, and ends each report with a line `end`, so a tuning search tries
@@ -26,8 +26,8 @@
 //! pool of workers, so no pairing waits on another's slowest fight, and
 //! each fight runs single-threaded on its worker. The report
 //! gives each pairing's win split, median fight length, the winners' health
-//! left, and where each side's damage came from: auto-attacks, signature
-//! abilities, or reflections.
+//! left, and where each side's damage came from: auto-attacks, skills, or
+//! reflections.
 
 use std::{collections::HashMap, time::Duration};
 
@@ -130,7 +130,7 @@ impl Sources {
     fn add(&mut self, ability: Option<AbilityType>, damage: f32) {
         match ability {
             Some(AbilityType::AutoAttack) => self.auto += damage,
-            Some(AbilityType::Counter) | Some(AbilityType::Kick) => self.reflect += damage,
+            Some(AbilityType::Counter) => self.reflect += damage,
             _ => self.ability += damage,
         }
     }

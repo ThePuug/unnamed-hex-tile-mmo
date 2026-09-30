@@ -123,7 +123,7 @@ mod tests {
 
         let threat = queue_utils::create_threat(
             on_server, &ActorAttributes::default(), &ActorAttributes::default(),
-            50.0, Some(AbilityType::Lunge), Duration::from_secs(10), 0.0, 0.0,
+            50.0, Some(AbilityType::Frenzy), Duration::from_secs(10), 0.0, 0.0,
         );
         app.world_mut().write_message(Do { event: GameEvent::InsertThreat { ent: player, threat } });
         app.update();

@@ -31,27 +31,22 @@ pub enum Clip {
     Jump,
     Attack,
     Counter,
-    Lunge,
     Rattle,
-    Volley,
     Disengage,
-    Flank,
     Chop,
     Mine,
     Pickup,
 }
 
 impl Clip {
-    pub const ALL: [Clip; 16] = [
+    pub const ALL: [Clip; 13] = [
         Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Back, Clip::Jump, Clip::Attack, Clip::Counter,
-        Clip::Lunge, Clip::Rattle, Clip::Volley, Clip::Disengage, Clip::Flank,
+        Clip::Rattle, Clip::Disengage,
         Clip::Chop, Clip::Mine, Clip::Pickup,
     ];
 
     /// The one-shots an ability plays, each held until it ends.
-    const ONE_SHOTS: [Clip; 7] = [
-        Clip::Attack, Clip::Counter, Clip::Lunge, Clip::Rattle, Clip::Volley, Clip::Disengage, Clip::Flank,
-    ];
+    const ONE_SHOTS: [Clip; 4] = [Clip::Attack, Clip::Counter, Clip::Rattle, Clip::Disengage];
 
     /// The cycles that cover ground ahead, slowest first.
     const GAITS: [Clip; 2] = [Clip::Walk, Clip::Run];
@@ -71,11 +66,8 @@ impl Clip {
             Clip::Jump => "jump",
             Clip::Attack => "attack",
             Clip::Counter => "counter",
-            Clip::Lunge => "lunge",
             Clip::Rattle => "rattle",
-            Clip::Volley => "volley",
             Clip::Disengage => "disengage",
-            Clip::Flank => "flank",
             Clip::Chop => "chop",
             Clip::Mine => "mine",
             Clip::Pickup => "pickup",
@@ -92,26 +84,25 @@ impl Clip {
         }
     }
 
-    /// The one-shot an ability plays: an archetype's signature and a Counter
-    /// their own, the attack for any other strike.
-    pub fn of(ability: AbilityType) -> Clip {
+    /// The one-shot an ability plays: a swing and a bite the attack, a
+    /// Feint the rattle, a Parry and a Counter the counter, a Leap the
+    /// disengage. A Perfect Stride plays none: the gait it keeps shows it.
+    pub fn of(ability: AbilityType) -> Option<Clip> {
         match ability {
-            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Kick => Clip::Attack,
-            AbilityType::Lunge => Clip::Lunge,
-            AbilityType::Rattle => Clip::Rattle,
-            AbilityType::Volley => Clip::Volley,
-            AbilityType::Flank => Clip::Flank,
-            AbilityType::Disengage => Clip::Disengage,
-            AbilityType::Counter => Clip::Counter,
+            AbilityType::AutoAttack | AbilityType::Frenzy => Some(Clip::Attack),
+            AbilityType::Feint => Some(Clip::Rattle),
+            AbilityType::Parry | AbilityType::Counter => Some(Clip::Counter),
+            AbilityType::Leap => Some(Clip::Disengage),
+            AbilityType::PerfectStride => None,
         }
     }
 
     /// What an actor whose asset lacks this one-shot plays instead: a
-    /// signature strike falls back to the attack. A Disengage has none, its
-    /// leap drawn by the displacement alone.
+    /// Feint falls back to the attack. A Leap has none, drawn by its
+    /// displacement alone.
     fn stand_in(self) -> Option<Clip> {
         match self {
-            Clip::Lunge | Clip::Rattle | Clip::Volley | Clip::Flank => Some(Clip::Attack),
+            Clip::Rattle => Some(Clip::Attack),
             _ => None,
         }
     }
@@ -409,7 +400,7 @@ pub fn play_abilities(
 ) {
     for message in reader.read() {
         let Do { event: Event::UseAbility { ent, ability, .. } } = message else { continue };
-        let clip = Clip::of(*ability);
+        let Some(clip) = Clip::of(*ability) else { continue };
         let Ok(animates) = actors.get(*ent) else { continue };
         let Ok((mut player, mut transitions, clips)) = q_anim.get_mut(animates.0) else { continue };
         let Some(node) = clips.node(clip).or_else(|| clips.node(clip.stand_in()?)) else { continue };

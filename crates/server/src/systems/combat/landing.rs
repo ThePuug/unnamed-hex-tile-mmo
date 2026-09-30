@@ -1,97 +1,15 @@
-//! What a blow does beyond its damage, applied as it lands: a stun, a daze,
-//! a slow, and the Kiter's leap that rides the slow. Every such effect waits
-//! in its target's queue with the threat that carries it, so it lands no
-//! sooner than the damage, and a reaction that clears the threat clears the
-//! effect with it. Only a wound's DoT lands ahead of its blow, ticking while
-//! the wound stands.
-//!
-//! An ability's effects take one of two timings: here, with the threat, when
-//! they are worth something only if the blow lands; or with the cast, in the
-//! ability's own handler, when they stand on their own, as Disengage's leap
-//! clear of a blow does. The caster's movement goes through `leap` either way.
+//! What using an ability lays on an actor beside damage: its recovery, and
+//! the stride it breaks by striking across its own line. Each is sent whole
+//! to the clients as it changes.
 
 use bevy::prelude::*;
 use common_bevy::{
     components::{
         recovery::GlobalRecovery,
-        status::{Daze, Status, Timed},
-        ActorAttributes, Loc,
+        status::{Status, Timed},
     },
-    message::{AbilityType, Component, Do, Try, Event as GameEvent},
-    resources::map::Map,
+    message::{Component, Do, Try, Event as GameEvent},
 };
-
-use common_bevy::tuning::Tuning;
-
-/// The least pace a daze leaves: a dazed actor still moves and swings.
-const MIN_PACE: f32 = 0.1;
-
-/// A Kiter's last Volley, cast `at` the time its shots were queued: the
-/// first of them to land leaps the Kiter clear and marks it `leapt`, so the
-/// rest of the burst, landing in the same tick, leap no further. The Volley
-/// sets it as it is cast, long before a shot lands, so a landing finds it.
-#[derive(Clone, Component, Copy, Debug)]
-pub struct VolleyBurst {
-    pub at: std::time::Duration,
-    pub leapt: bool,
-}
-
-/// Lands the effect of a blow from `ability`, struck by `source` on
-/// `target` in a threat queued `at`, as it resolves or is dismissed. The
-/// source's `hold` (`ActorAttributes::hold`), from `source_attrs`,
-/// lengthens and deepens it.
-#[allow(clippy::too_many_arguments)]
-pub fn land(
-    ability: Option<AbilityType>,
-    target: Entity,
-    source: Entity,
-    at: std::time::Duration,
-    source_attrs: Option<&ActorAttributes>,
-    tuning: &Tuning,
-    statuses: &mut Query<&mut Status>,
-    recoveries: &Query<&GlobalRecovery>,
-    locs: &Query<&Loc>,
-    bursts: &mut Query<&mut VolleyBurst>,
-    map: &Map,
-    commands: &mut Commands,
-    writer: &mut MessageWriter<Do>,
-) {
-    let hold = source_attrs.map_or(1.0, ActorAttributes::hold);
-    match ability {
-        // A stun holds its target completely, a recovery as long with it
-        Some(AbilityType::Flank) => {
-            let seconds = tuning.flank_stun * hold;
-            let held = recoveries.get(target).map_or(0.0, |recovery| recovery.remaining).max(seconds);
-            recover(target, GlobalRecovery::new(held).against(source_attrs), commands, writer);
-            update(target, statuses, commands, writer, |status| status.hold(seconds));
-        }
-        Some(AbilityType::Rattle) => update(target, statuses, commands, writer, |status| {
-            let stacks = Status::stacks_of(Some(status)).saturating_add(1).min(tuning.rattle_stacks);
-            status.daze = Some(Daze { stacks, pace: (1.0 - tuning.rattle_daze * hold * stacks as f32).max(MIN_PACE) });
-        }),
-        // Each shot that lands slows its target afresh; the first of a burst
-        // to land carries the Kiter clear, so a burst leaps once, as the
-        // target can no longer follow
-        Some(AbilityType::Volley) => {
-            update(target, statuses, commands, writer, |status| {
-                status.slow = Some(Timed { pace: (1.0 - tuning.volley_slow * hold).max(MIN_PACE), remaining: tuning.volley_slow_secs * hold });
-            });
-            let first_of_burst = bursts.get_mut(source).is_ok_and(|mut burst| {
-                let first = burst.at == at && !burst.leapt;
-                burst.leapt |= first;
-                first
-            });
-            if first_of_burst {
-                if let (Ok(at), Ok(from)) = (locs.get(source), locs.get(target)) {
-                    if let Some(landing) = super::leap::away(map, **at, **from, tuning.volley_leap) {
-                        super::leap::slide(source, landing, super::leap::LEAP_MS, None, commands, writer);
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-}
 
 /// A strike across its striker's line breaks its stride: `Tuning::stride_pace`
 /// of its speed for one base interval.

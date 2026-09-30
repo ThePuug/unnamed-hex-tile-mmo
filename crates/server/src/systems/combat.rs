@@ -14,7 +14,8 @@ use common_bevy::{
 /// System to process DealDamage events (Phase 1: Outgoing damage calculation)
 /// Rolls the attack's damage within its range (`Tuning::damage_spread`,
 /// one roll for its blow and its DoT), rolls its blow's crit, and inserts
-/// it into the reaction queue
+/// it into the reaction queue, its window starting as the strike is made:
+/// now, or its `delay` after
 pub fn process_deal_damage(
     trigger: On<Try>,
     _commands: Commands,
@@ -28,7 +29,7 @@ pub fn process_deal_damage(
     let tuning = common_bevy::tuning::tuning();
     let event = &trigger.event().event;
 
-    if let GameEvent::DealDamage { source, target, base_damage, ability, dot } = event {
+    if let GameEvent::DealDamage { source, target, base_damage, ability, dot, delay } = event {
         // Get attacker attributes for scaling
         let Ok(source_attrs) = all_attrs.get(*source) else {
             return;
@@ -51,7 +52,7 @@ pub fn process_deal_damage(
 
         // Use game world time (server uptime + offset) for consistent time base
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
-        let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
+        let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64) + *delay;
 
         // A blow pushes its target's recovery back, by the attacker's Impact
         // over the target's Composure with the level gap weighing in
@@ -72,7 +73,7 @@ pub fn process_deal_damage(
             source_attrs,  // Source attributes
             outgoing,      // Damage
             *ability,      // Ability
-            now,           // Current time
+            now,           // When the strike is made
             dot,           // DoT per tick, a wound's
             Endurance::fatigue_of(endurance),
         );
@@ -113,14 +114,8 @@ pub fn process_deal_damage(
 /// Processes ResolveThreat events: a threat whose time ran out, one dismissed, a Counter's reflection
 pub fn resolve_threat(
     trigger: On<Try>,
-    mut commands: Commands,
     mut query: Query<(&mut Health, &ActorAttributes, Option<&mut common_bevy::components::grit::Grit>)>,
     actors: Query<&ActorAttributes>,
-    mut statuses: Query<&mut common_bevy::components::status::Status>,
-    recoveries: Query<&common_bevy::components::recovery::GlobalRecovery>,
-    locs: Query<&Loc>,
-    mut bursts: Query<&mut crate::systems::combat::landing::VolleyBurst>,
-    map: Res<common_bevy::resources::map::Map>,
     mut writer: MessageWriter<Do>,
 ) {
     let tuning = common_bevy::tuning::tuning();
@@ -146,8 +141,6 @@ pub fn resolve_threat(
             let final_damage = blow + threat.dot_left();
 
             land_damage(*ent, threat.source, final_damage, threat.is_wound(), &mut health, &mut writer);
-
-            landing::land(threat.ability, *ent, threat.source, threat.inserted_at, actors.get(threat.source).ok(), &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
 
             // Death check moved to dedicated check_death system (decoupled from combat)
         }

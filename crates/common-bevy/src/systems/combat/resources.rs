@@ -4,10 +4,6 @@ use crate::{
     message::{Component as MessageComponent, Event, *},
 };
 
-/// How far a Lunge reaches, in tiles: it lands beside anything from
-/// adjacent out to this.
-pub const LUNGE_RANGE: u32 = 8;
-
 /// What every actor is spawned fighting with, all of it from its
 /// attributes: its pools full, out of combat, an empty reaction queue,
 /// no target, and loaded by no one. A player and
