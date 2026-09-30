@@ -83,16 +83,6 @@ pub enum Measure {
 #[derive(Component)]
 pub struct WorldBarFill;
 
-/// Holds the queue dots drawn over a target's bars, its lane's
-#[derive(Component)]
-pub struct ThreatQueueDots;
-
-/// One of the dots over a target's bars, lit for a threat standing in its queue
-#[derive(Component)]
-pub struct ThreatCapacityDot {
-    pub index: usize,
-}
-
 /// Resolved threat entry - fades out after showing damage resolution
 #[derive(Component)]
 pub struct ResolvedThreatEntry {

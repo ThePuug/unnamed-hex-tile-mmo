@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use common_bevy::components::{ally_target::AllyTarget, target::Target};
 
 use crate::{
-    components::{Measure, ThreatCapacityDot, ThreatQueueDots, WorldBar, WorldBarFill},
+    components::{Measure, WorldBar, WorldBarFill},
     systems::{closeup::CloseupCamera, target_frame::{Lane, LANES}},
 };
 
@@ -62,14 +62,11 @@ const BAR_HEIGHT: f32 = 6.0;
 /// How fast a bar's fill eases toward what it measures
 const FILL_SPEED: f32 = 5.0;
 
-/// The dots drawn over a target and in its frame, one lit for each threat in its queue
-pub const QUEUE_DOTS: usize = 4;
-
 /// Where a node sits while what it follows is off screen
 const OFF_SCREEN: f32 = -10000.0;
 
-/// Builds, for each lane, the bars and capacity dots drawn over its target
-/// in the world: health, recovery flush under it, and the dots above.
+/// Builds, for each lane, the bars drawn over its target in the world:
+/// health, and recovery flush under it.
 /// Hidden until the lane has a target, and moved onto it each frame.
 pub fn setup_health_bars(mut commands: Commands) {
     for lane in LANES {
@@ -98,35 +95,6 @@ pub fn setup_health_bars(mut commands: Commands) {
             });
         }
 
-        commands.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(3.0),
-                left: Val::Px(OFF_SCREEN),
-                ..default()
-            },
-            Visibility::Hidden,
-            ThreatQueueDots,
-            lane,
-        ))
-        .with_children(|parent| {
-            for index in 0..QUEUE_DOTS {
-                parent.spawn((
-                    Node {
-                        width: Val::Px(8.0),
-                        height: Val::Px(8.0),
-                        border: UiRect::all(Val::Px(1.0)),
-                        border_radius: BorderRadius::all(Val::Percent(50.0)),
-                        ..default()
-                    },
-                    BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
-                    BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
-                    Visibility::Hidden,
-                    ThreatCapacityDot { index },
-                ));
-            }
-        });
     }
 }
 
@@ -178,60 +146,6 @@ pub fn update_world_bars(
             if let Ok(mut fill) = fills.get_mut(child) {
                 fill.width = Val::Px(BAR_WIDTH * bar.current_fill);
             }
-        }
-    }
-}
-
-/// Moves each lane's queue dots over its target's bars: a dot lit for each
-/// threat standing in the target's queue, and red once more stand there
-/// than there are dots. Hidden for a target with no queue.
-pub fn update_threat_queue_dots(
-    mut holders: Query<(&Lane, &Children, &mut Node, &mut Visibility), With<ThreatQueueDots>>,
-    mut dots: Query<(&ThreatCapacityDot, &mut Visibility, &mut BackgroundColor, &mut BorderColor), Without<ThreatQueueDots>>,
-    queues: Query<(&common_bevy::components::reaction_queue::ReactionQueue, &Transform)>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
-    viewed: Query<(&Target, Option<&AllyTarget>), With<crate::components::Viewed>>,
-    scale: Res<UiScale>,
-) {
-    let Ok((camera, camera_transform)) = camera_query.single() else {
-        return;
-    };
-    let Ok((target, ally)) = viewed.single() else {
-        return;
-    };
-
-    for (lane, children, mut node, mut visibility) in &mut holders {
-        let shown = lane.held(target, ally).and_then(|ent| queues.get(ent).ok());
-        let Some((queue, transform)) = shown else {
-            *visibility = Visibility::Hidden;
-            continue;
-        };
-        *visibility = Visibility::Visible;
-
-        // Above the health bar, its left edge on the bar's
-        let world_pos = transform.translation + Vec3::new(0.0, 2.1, 0.0);
-        let Some(at) = node_at(camera, camera_transform, &scale, world_pos) else {
-            node.left = Val::Px(OFF_SCREEN);
-            continue;
-        };
-        node.left = Val::Px(at.x - BAR_WIDTH / 2.0);
-        node.top = Val::Px(at.y);
-
-        let filled = queue.threats.len();
-        let full = filled > QUEUE_DOTS;
-        for child in children.iter() {
-            let Ok((dot, mut dot_visibility, mut background, mut border)) = dots.get_mut(child) else { continue };
-            // A dot shows with its holder, so hiding the holder hides them all
-            *dot_visibility = Visibility::Inherited;
-            let (fill, edge) = if dot.index >= filled {
-                (Color::srgb(0.3, 0.3, 0.3), Color::srgb(0.5, 0.5, 0.5))
-            } else if full {
-                (Color::srgb(1.0, 0.2, 0.2), Color::srgb(1.0, 0.2, 0.2))
-            } else {
-                (Color::srgb(1.0, 0.7, 0.2), Color::srgb(1.0, 0.7, 0.2))
-            };
-            *background = BackgroundColor(fill);
-            *border = BorderColor::all(edge);
         }
     }
 }

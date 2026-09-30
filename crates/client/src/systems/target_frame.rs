@@ -56,7 +56,8 @@ pub struct ThreatTimerRing {
 /// How many of the queue's threats a frame draws
 const ICONS: usize = 3;
 
-use crate::systems::combat_ui::QUEUE_DOTS;
+/// The dots a frame draws, one lit for each threat in the target's queue
+const QUEUE_DOTS: usize = 4;
 
 /// The colours and place that tell one lane's frame from the other's.
 struct Theme {

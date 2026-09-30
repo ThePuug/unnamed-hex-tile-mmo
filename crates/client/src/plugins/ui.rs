@@ -86,7 +86,6 @@ impl Plugin for UiPlugin {
             (
                 combat_ui::update_floating_text,
                 combat_ui::update_world_bars,
-                combat_ui::update_threat_queue_dots,
             ),
         );
 
