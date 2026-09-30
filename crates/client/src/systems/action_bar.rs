@@ -69,6 +69,7 @@ pub fn setup(
         },
         Pickable::IGNORE,
         ActionBarDisplay,
+        crate::components::ViewHud,
     ))
     .with_children(|parent| {
         parent.spawn((
