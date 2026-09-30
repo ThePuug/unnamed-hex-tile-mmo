@@ -19,10 +19,11 @@ pub fn level_edge(level: u32, opposing_level: u32) -> f32 {
 
 /// Contest factor (Pattern 1: Nullifying).
 
-/// Returns 0 and up, with no ceiling:
+/// Returns 0 up to 1, never reaching it, as a share does:
 /// - Equal/losing → 0 (effect nullified)
-/// - `Tuning::contest_scale` advantage → 1.0, the effect's base share
-/// - Past it, growing as the square root: four times it → 2.0
+/// - `Tuning::contest_scale` advantage → 0.5, half the effect's ceiling
+/// - Past it, `lead / (lead + contest_scale)`, so no lead at any level
+///   wins the whole of an effect
 
 /// Used by: mitigation, pushback, healing reduction, synergy, recovery speed.
 /// `edge` is the level gap's contest points on the advantage side ([`level_edge`]).
@@ -32,14 +33,14 @@ pub fn contest_factor(advantage_stat: u16, counter_stat: u16, edge: f32) -> f32 
         return 0.0;
     }
 
-    (delta / crate::tuning::tuning().contest_scale).sqrt()
+    delta / (delta + crate::tuning::tuning().contest_scale)
 }
 
 /// Reaction window contest (Pattern 2: Baseline+Bonus).
 
-/// Returns 1.0 and up:
+/// Returns 1.0 up to 1.0 + `Tuning::window_bonus`, never reaching it:
 /// - Equal/losing → 1.0 (baseline window preserved)
-/// - The base advantage → 1.0 + `Tuning::window_bonus`
+/// - Past it, the window bonus times [`contest_factor`]'s curve
 
 /// Used ONLY by reaction window to ensure playable baseline.
 /// `edge` is the level gap's contest points on the defender's side ([`level_edge`]).
@@ -50,7 +51,7 @@ pub fn reaction_contest_factor(reflex: u16, flow: u16, edge: f32) -> f32 {
     }
 
     let tuning = crate::tuning::tuning();
-    1.0 + (delta / tuning.contest_scale).sqrt() * tuning.window_bonus
+    1.0 + delta / (delta + tuning.contest_scale) * tuning.window_bonus
 }
 
 /// An attack's damage within its range: `spread` of `damage` either side of
@@ -102,7 +103,7 @@ pub fn spill_share(presence: u16, toughness: u16, edge: f32) -> f32 {
 
 /// Pattern 1 (Nullifying): `Tuning::mitigation_share` × contest_factor(the
 /// defender's Toughness, the attacker's Presence), with the level gap's
-/// `edge` on the defender's side and no ceiling: past 100% the blow does nothing.
+/// `edge` on the defender's side: never all of the blow while the share is below 1.
 pub fn apply_passive_modifiers(
     outgoing_damage: f32,
     attrs: &ActorAttributes,
@@ -116,6 +117,17 @@ pub fn apply_passive_modifiers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_lead_wins_a_whole_effect() {
+        let mut last = 0.0;
+        for lead in [1, 50, 500, 5_000, 60_000] {
+            let contest = contest_factor(lead, 0, level_edge(100, 1));
+            assert!(contest > last, "a wider lead wins more");
+            assert!(contest < 1.0, "a lead of {lead} reached the ceiling");
+            last = contest;
+        }
+    }
 
     #[test]
     fn a_spread_is_a_range_about_the_damage() {

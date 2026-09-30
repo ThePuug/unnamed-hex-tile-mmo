@@ -8,9 +8,8 @@ use crate::components::ActorAttributes;
 /// Pattern 1 (Nullifying): 33% × contest_factor(Composure, target's Impact),
 /// with no ceiling.
 
-/// Returns reduction percentage, 0 and up.
-/// Caller converts to speed multiplier: 1.0 / (1.0 - reduction), a lockout
-/// all but gone at 100%.
+/// Returns the reduction, 0 up to `Tuning::composure_share`, never reaching it.
+/// Caller converts to speed multiplier: 1.0 / (1.0 - reduction).
 pub fn calculate_composure_reduction(
     composure: u16,
     target_impact: u16,
@@ -41,13 +40,7 @@ pub fn global_recovery_system(
                 recovery.target_level.map_or(0.0, |target| crate::systems::combat::damage::level_edge(attrs.total_level(), target)),
             );
 
-            // Convert reduction percentage to speed multiplier
-            // 33% reduction → 1.0 / 0.67 = 1.49× speed
-            let speed_multiplier = if reduction_pct >= 0.999 {
-                100.0 // Cap to prevent division by zero
-            } else {
-                1.0 / (1.0 - reduction_pct)
-            };
+            let speed_multiplier = 1.0 / (1.0 - reduction_pct);
 
             let effective_delta = delta * speed_multiplier * status.map_or(1.0, crate::components::status::Status::daze_pace);
 

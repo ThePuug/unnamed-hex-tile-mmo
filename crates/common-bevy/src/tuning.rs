@@ -44,29 +44,31 @@ pub struct Tuning {
     pub grit_cap: [f32; 4],
 
     // --- Contest: what a relative advantage wins ---
-    /// Advantage in points that wins an effect's base share
+    /// Advantage in points that wins half of an effect's ceiling; every
+    /// contest rises toward its ceiling and never reaches it
     pub contest_scale: f32,
     /// Contest points each level of gap is worth to the higher level
     pub contest_per_level: f32,
     /// Share longer and harder the effects an actor inflicts hold at the
     /// ceiling of Concentration's share
     pub concentration_hold: f32,
-    /// Share of a blow Toughness mitigates at the base advantage
+    /// Most of a blow Toughness mitigates, approached and never reached
     pub mitigation_share: f32,
-    /// Share of a landed blow a Presence advantage spills onto each other
-    /// hostile within the striker's reach, at the base advantage
+    /// Most of a landed blow a Presence advantage spills onto each other
+    /// hostile within the striker's reach
     pub spill_share: f32,
-    /// Share of a recovery an Impact advantage pushes it back by
+    /// Most of a recovery an Impact advantage pushes it back by
     pub pushback_share: f32,
-    /// Share of a recovery a Composure advantage takes off it
+    /// Most of a recovery a Composure advantage takes off it; below 1, so
+    /// no lockout ever runs out at once
     pub composure_share: f32,
     /// Share of a recovery a synergy unlocks its follow-up through, at parity
     pub synergy_floor: f32,
-    /// Share more a Flow advantage unlocks it through, at the base advantage
+    /// Most more a Flow advantage unlocks it through
     pub synergy_share: f32,
     /// Seconds every threat's window starts from
     pub reaction_window: f32,
-    /// Share more a Reflex advantage widens it by, at the base advantage
+    /// Most more a Reflex advantage widens it by
     pub window_bonus: f32,
 
     // --- Abilities: what each costs, how long it locks its user out ---
@@ -163,7 +165,7 @@ impl Tuning {
         health_curve_p: 2.0,
         auto_interval: 2.1,
         grit_cap: [f32::INFINITY, 0.4, 0.3, 0.28],
-        contest_scale: 411.6,
+        contest_scale: 97.0,
         contest_per_level: 15.0,
         concentration_hold: 1.0,
         mitigation_share: 0.525,
