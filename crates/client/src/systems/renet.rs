@@ -28,7 +28,6 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::Health(_) => "Inc:Health",
             Component::Mana(_) => "Inc:Mana",
             Component::Stamina(_) => "Inc:Stamina",
-            Component::TierLock(_) => "Inc:TierLock",
             Component::CombatState(_) => "Inc:Combat",
             Component::PlayerControlled(_) => "Inc:PlayerControlled",
             Component::Recovery(_) => "Inc:Recovery",
@@ -100,7 +99,6 @@ pub fn write_do(
                     PlayerControlled,
                     common_bevy::components::target::Target::default(), // For unified targeting system
                     common_bevy::components::ally_target::AllyTarget::default(), // For ally targeting
-                    common_bevy::components::tier_lock::TierLock::default(), // For tier lock
                 )).id();
                 info!("INIT: Spawned local player entity {:?} with Actor and PlayerControlled markers", ent);
                 l2r.insert(ent, ent0);
@@ -307,7 +305,6 @@ pub fn send_try(
             Event::Input { .. }
             | Event::UseAbility { .. }
             | Event::View { .. }
-            | Event::SetTierLock { .. }
             | Event::Gather { .. }
             | Event::Take { .. }
             | Event::CloseLoot { .. }

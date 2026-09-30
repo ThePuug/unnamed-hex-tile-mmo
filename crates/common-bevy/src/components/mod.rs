@@ -18,7 +18,6 @@ pub mod resources;
 pub mod returning;
 pub mod status;
 pub mod target;
-pub mod tier_lock;
 
 use bevy::prelude::*;
 use qrz::Qrz;

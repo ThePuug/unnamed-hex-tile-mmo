@@ -2,8 +2,8 @@
 //! The gate asks, in order and the same of every ability: is the caster
 //! alive; is it out of lockout, or taking the follow-up it was offered, or
 //! reacting through the lockout (an auto-attack asks its cadence instead);
-//! does it strike a living hostile within the ability's reach, its locked
-//! tier and its arc; can it pay. Then the ability's own effect runs, the
+//! does it strike a living hostile within the ability's reach and its arc;
+//! can it pay. Then the ability's own effect runs, the
 //! stamina is paid, the clients are told, a strike across the caster's line
 //! breaks its stride, and the lockout starts.
 //!
@@ -44,7 +44,6 @@ use common_bevy::{
         resources::{Health, RespawnTimer, Stamina},
         status::Status,
         target::Target,
-        tier_lock::TierLock,
         ActorAttributes, AttackRange, Loc, Swing,
     },
     components::entity_type::EntityType,
@@ -53,7 +52,7 @@ use common_bevy::{
     resources::map::Map,
     systems::{
         combat::{queue::clear_threats, synergies::{lockout, may_use, reacts_through}},
-        targeting::{self, get_range_tier},
+        targeting,
     },
 };
 
@@ -108,7 +107,6 @@ pub struct Abilities<'w, 's> {
         Option<&'static Heading>,
         Option<&'static Side>,
         Option<&'static AttackRange>,
-        Option<&'static TierLock>,
         Has<RespawnTimer>,
     )>,
     pub stamina: Query<'w, 's, &'static mut Stamina>,
@@ -168,12 +166,11 @@ impl Abilities<'_, '_> {
     /// where there is nothing to tell: a dead caster, a swing not yet due.
     fn cast(&mut self, ent: Entity, ability: AbilityType, asked: Option<Entity>) -> Result<(), Option<AbilityFailReason>> {
         let tuning = common_bevy::tuning::tuning();
-        let Ok((&loc, &attrs, health, heading, side, range, tier_lock, dead)) = self.actors.get(ent) else { return Err(None) };
+        let Ok((&loc, &attrs, health, heading, side, range, dead)) = self.actors.get(ent) else { return Err(None) };
         if dead {
             return Err(None);
         }
         let (heading, side) = (heading.copied(), side.copied());
-        let tier = tier_lock.and_then(|lock| lock.get());
         let reach = range.copied().unwrap_or_default().0;
         let health_max = health.max;
         let status = self.statuses.get(ent).ok().copied();
@@ -193,18 +190,17 @@ impl Abilities<'_, '_> {
             return Err(Some(AbilityFailReason::OnCooldown));
         }
 
-        // A strike needs a living hostile within its reach, the tier the
-        // caster is locked to and its arc; reach is measured as a swing
-        // measures it, the first level of height between free
+        // A strike needs a living hostile within its reach and its arc;
+        // reach is measured as a swing measures it, the first level of
+        // height between free
         let mut cast = Cast { ent, loc, attrs, reach, health_max, target: asked, target_loc: None };
         if let Some(within) = ability.reach(reach) {
             let target = asked.ok_or(Some(AbilityFailReason::NoTargets))?;
-            let Ok((&target_loc, _, _, _, target_side, _, _, target_dead)) = self.actors.get(target) else {
+            let Ok((&target_loc, _, _, _, target_side, _, target_dead)) = self.actors.get(target) else {
                 return Err(Some(AbilityFailReason::NoTargets));
             };
             let hostile = side.zip(target_side.copied()).is_some_and(|(own, theirs)| own.is_hostile_to(theirs));
-            let in_tier = tier.is_none_or(|tier| get_range_tier(loc.flat_distance(&target_loc) as u32) == tier);
-            if target_dead || !hostile || !in_tier {
+            if target_dead || !hostile {
                 return Err(Some(AbilityFailReason::NoTargets));
             }
             if !within.contains(&loc.distance(&target_loc)) {

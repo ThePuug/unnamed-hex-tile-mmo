@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{
         heading::Heading, keybits::*, movement_intent_state::MovementIntentState,
-        position::Position, resources::RespawnTimer, tier_lock::TierLock, *,
+        position::Position, resources::RespawnTimer, *,
     },
     message::{Event, *},
     plugins::nntree::NNTree,
@@ -308,35 +308,6 @@ pub fn broadcast_movement_intent(
             airtime: airtime.state,
             burdened,
         }});
-    }
-}
-
-/// Handle tier lock requests from clients
-
-/// Clients send SetTierLock events when pressing 1/2/3 keys.
-/// Server updates the TierLock component to reflect the chosen tier.
-/// Abilities will validate the existing Target component is in the correct tier.
-pub fn try_set_tier_lock(
-    mut reader: MessageReader<Try>,
-    mut writer: MessageWriter<Do>,
-    mut tier_locks: Query<&mut TierLock>,
-) {
-    for message in reader.read() {
-        let Try { event } = message;
-        let Event::SetTierLock { ent, tier } = event else { continue };
-        let ent = *ent;
-        let tier = *tier;
-
-        if let Ok(mut tier_lock) = tier_locks.get_mut(ent) {
-            tier_lock.set(tier);
-
-            writer.write(Do {
-                event: Event::Incremental {
-                    ent,
-                    component: common_bevy::message::Component::TierLock(*tier_lock),
-                },
-            });
-        }
     }
 }
 

@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, combat_log, combat_ui, drop_panel, equipment_panel, highway, resolved_threats, resource_bars, target_frame, target_indicator, tier_lock_range_indicator, ui};
+use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, combat_log, combat_ui, drop_panel, equipment_panel, highway, resolved_threats, resource_bars, target_frame, target_indicator, ui};
 
 /// Plugin that handles game UI elements
 
@@ -32,7 +32,6 @@ impl Plugin for UiPlugin {
                 highway::setup.after(crate::systems::camera::setup),
                 target_frame::setup.after(crate::systems::camera::setup),
                 target_indicator::setup,
-                tier_lock_range_indicator::setup,
                 combat_ui::setup_health_bars.after(crate::systems::camera::setup),
                 combat_log::setup.after(crate::systems::camera::setup),
             ),
@@ -47,7 +46,6 @@ impl Plugin for UiPlugin {
         app.add_systems(Update, target_frame::update);
         app.add_systems(Update, target_frame::update_queue);
         app.add_systems(Update, target_indicator::update);
-        app.add_systems(Update, tier_lock_range_indicator::update);
 
         // Character panel systems
         app.add_systems(

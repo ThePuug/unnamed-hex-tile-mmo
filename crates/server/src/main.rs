@@ -82,7 +82,6 @@ fn main() {
         input::try_input,
         actor::try_teleport,
         engagement_spawner::try_spawn_party,
-        input::try_set_tier_lock, // Tier lock targeting
         input::try_respec_attributes, // Attribute respec system
         crate::systems::equipment::try_wear,
         crate::systems::gathering::try_gather,

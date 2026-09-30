@@ -12,7 +12,6 @@ use common_bevy::{
         equipment::{Equipment, Inventory},
         keybits::*,
         resources::*,
-        tier_lock::TierLock,
     },
     message::{ Event, * },
     plugins::nntree::*,
@@ -101,7 +100,6 @@ pub fn do_presence(
                     fighter,
                     (PlayerControlled, common_bevy::components::behaviour::Side::PLAYERS),
                     PlayerDiscoveryState::default(),
-                    TierLock::new(),
                 )).id();
                 commands.entity(ent).insert((
                     NearestNeighbor::new(ent, loc),
@@ -280,7 +278,6 @@ pub fn write_try(
                 | Event::Drop { .. }
                 | Event::UseAbility { .. }
                 | Event::Dismiss { .. }
-                | Event::SetTierLock { .. }
                 | Event::RespecAttributes { .. }
                 | Event::Wear { .. }
                 | Event::Teleport { .. } => {

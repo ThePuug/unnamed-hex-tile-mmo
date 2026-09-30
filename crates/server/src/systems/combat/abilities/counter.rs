@@ -26,7 +26,7 @@ pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
     let weight = cast.attrs.concentration() / cast.attrs.base_potency();
     for threat in &answered {
         // A reflection needs a living source to go back to
-        let Ok((_, source_attrs, _, _, _, _, _, dead)) = abilities.actors.get(threat.source) else { continue };
+        let Ok((_, source_attrs, _, _, _, _, dead)) = abilities.actors.get(threat.source) else { continue };
         if dead {
             continue;
         }

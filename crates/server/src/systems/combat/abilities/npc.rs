@@ -28,7 +28,7 @@ impl Abilities<'_, '_> {
             let EntityType::Actor(actor) = entity_type else { continue };
             let ActorIdentity::Npc(archetype) = actor.identity else { continue };
             let ability = archetype.profile().ability;
-            let Ok((&loc, attrs, _, heading, _, range, _, _)) = self.actors.get(ent) else { continue };
+            let Ok((&loc, attrs, _, heading, _, range, _)) = self.actors.get(ent) else { continue };
 
             // Out of lockout, or a reaction its Preparation lets through it, and affordable
             let recovery = self.lockouts.get(ent).ok();

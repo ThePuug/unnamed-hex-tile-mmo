@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{Actor, behaviour::Side, recovery::GlobalRecovery, resources::*, tier_lock::TierLock, Loc, heading::Heading, entity_type::EntityType},
+    components::{Actor, behaviour::Side, recovery::GlobalRecovery, resources::*, Loc, heading::Heading, entity_type::EntityType},
     message::AbilityType,
     plugins::nntree::NNTree,
     systems::targeting::select_target,
@@ -255,15 +255,14 @@ pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
     mut glow_query: Query<&mut Visibility, With<SynergyGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
-    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&TierLock>, Option<&GlobalRecovery>, Option<&common_bevy::components::ActorAttributes>, Option<&common_bevy::components::AttackRange>, Has<Actor>), With<crate::components::Viewed>>,
+    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&GlobalRecovery>, Option<&common_bevy::components::ActorAttributes>, Option<&common_bevy::components::AttackRange>, Has<Actor>), With<crate::components::Viewed>>,
     entity_query: Query<(&EntityType, &Loc, Option<&Side>)>,
     nntree: Res<NNTree>,
 ) {
     // The resources and position of the actor the client sees as
-    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, recovery_opt, attrs, own_reach, controlled)) = player_query.single() else {
+    let Ok((player_ent, stamina, mana, player_loc, player_heading, recovery_opt, attrs, own_reach, controlled)) = player_query.single() else {
         return;
     };
-    let targeting_state = targeting_state.copied().unwrap_or_default();
 
     // The lockout, and the follow-up it offers
     let recovery_active = recovery_opt.map_or(false, |r| r.is_active());
@@ -299,7 +298,6 @@ pub fn update(
                 *player_heading,
                 common_bevy::systems::targeting::arc_of(attrs),
                 own_reach.copied().unwrap_or_default().0,
-                &targeting_state,
                 &nntree,
                 &entity_query,
             )
@@ -377,7 +375,6 @@ fn get_ability_state(
     player_heading: Heading,
     arc: f32,
     own_reach: i32,
-    targeting_state: &TierLock,
     nntree: &NNTree,
     entity_query: &Query<(&EntityType, &Loc, Option<&Side>)>,
 ) -> AbilityState {
@@ -400,7 +397,7 @@ fn get_ability_state(
     let Some(reach) = ability.reach(own_reach) else {
         return AbilityState::Ready;
     };
-    let target = select_target(player_ent, player_loc, player_heading, arc, targeting_state.get(), nntree, hostile);
+    let target = select_target(player_ent, player_loc, player_heading, arc, nntree, hostile);
     match target.and_then(|target| entity_query.get(target).ok()) {
         Some((_, target_loc, _)) if reach.contains(&player_loc.flat_distance(target_loc)) => AbilityState::Ready,
         _ => AbilityState::OutOfRange,

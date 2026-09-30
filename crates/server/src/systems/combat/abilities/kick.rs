@@ -23,7 +23,7 @@ pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
 
     let tiles = (4.0 * cast.attrs.hold()).round() as usize;
     for threat in &answered {
-        let Ok((&source_loc, _, _, _, _, _, _, dead)) = abilities.actors.get(threat.source) else { continue };
+        let Ok((&source_loc, _, _, _, _, _, dead)) = abilities.actors.get(threat.source) else { continue };
         if dead || cast.loc.flat_distance(&source_loc) != 1 {
             continue;
         }

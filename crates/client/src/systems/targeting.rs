@@ -1,7 +1,6 @@
 //! Client-specific targeting systems
 
 //! This module contains targeting system implementations that are specific to the client.
-//! TierLock is replicated from server, so both client and server have it.
 
 use bevy::prelude::*;
 
@@ -12,7 +11,6 @@ use common_bevy::{
         heading::Heading,
         Loc,
         target::Target,
-        tier_lock::TierLock,
         ActorAttributes,
     },
     plugins::nntree::NNTree,
@@ -31,18 +29,17 @@ use common_bevy::{
 /// alongside target indicator. If performance becomes an issue, can be changed to
 /// run on a timer (e.g., every 100ms).
 pub fn update_targets(
-    mut query: Query<(Entity, &Loc, &Heading, &mut Target, Option<&TierLock>, Option<&ActorAttributes>)>,
+    mut query: Query<(Entity, &Loc, &Heading, &mut Target, Option<&ActorAttributes>)>,
     sides: Query<&Side>,
     nntree: Res<NNTree>,
 ) {
-    for (ent, loc, heading, mut target, tier_lock, attrs) in &mut query {
+    for (ent, loc, heading, mut target, attrs) in &mut query {
         update_targets_impl(
             ent,
             *loc,
             *heading,
             arc_of(attrs),
             &mut target,
-            tier_lock,
             &nntree,
             |e| sides.get(e).ok().copied(),
         );
@@ -67,14 +64,14 @@ pub fn update_targets(
 /// alongside target indicator. If performance becomes an issue, can be changed to
 /// run on a timer (e.g., every 100ms).
 pub fn update_ally_targets(
-    mut query: Query<(Entity, &Loc, &Heading, &mut AllyTarget, Option<&TierLock>, Option<&ActorAttributes>)>,
+    mut query: Query<(Entity, &Loc, &Heading, &mut AllyTarget, Option<&ActorAttributes>)>,
     sides: Query<&Side>,
     nntree: Res<NNTree>,
 ) {
-    for (ent, loc, heading, mut ally_target, tier_lock, attrs) in &mut query {
-        // The ally this entity faces, within its tier lock if it holds one
+    for (ent, loc, heading, mut ally_target, attrs) in &mut query {
+        // The ally this entity faces
         let new_ally_target = sides.get(ent).ok().and_then(|own| {
-            select_target(ent, *loc, *heading, arc_of(attrs), tier_lock.and_then(|tl| tl.get()), &nntree, |other| {
+            select_target(ent, *loc, *heading, arc_of(attrs), &nntree, |other| {
                 sides.get(other).is_ok_and(|side| side == own)
             })
         });

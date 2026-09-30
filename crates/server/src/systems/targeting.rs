@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{behaviour::Side, heading::Heading, ActorAttributes, Loc, target::Target, tier_lock::TierLock},
+    components::{behaviour::Side, heading::Heading, ActorAttributes, Loc, target::Target},
     plugins::nntree::NNTree,
     systems::targeting::{arc_of, update_targets_impl},
 };
@@ -23,28 +23,25 @@ use crate::components::target_lock::TargetLock as NpcTargetLock;
 /// This is critical for AI behavior - NPCs with NpcTargetLock use behavior tree targeting
 /// (FindOrKeepTarget) as their source of truth.
 
-/// Players have TierLock (for tier lock targeting), which is different from NpcTargetLock.
-
 /// # Performance
 
 /// Uses spatial index (NNTree) for fast proximity queries. Designed to run at 60fps.
 /// If performance becomes an issue, can be changed to run on a timer (e.g., every 100ms).
 pub fn update_targets(
     mut query: Query<
-        (Entity, &Loc, &Heading, &mut Target, Option<&TierLock>, Option<&ActorAttributes>),
+        (Entity, &Loc, &Heading, &mut Target, Option<&ActorAttributes>),
         Without<NpcTargetLock>
     >,
     sides: Query<&Side>,
     nntree: Res<NNTree>,
 ) {
-    for (ent, loc, heading, mut target, tier_lock, attrs) in &mut query {
+    for (ent, loc, heading, mut target, attrs) in &mut query {
         update_targets_impl(
             ent,
             *loc,
             *heading,
             arc_of(attrs),
             &mut target,
-            tier_lock,
             &nntree,
             |e| sides.get(e).ok().copied(),
         );

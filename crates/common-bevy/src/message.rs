@@ -6,7 +6,6 @@ use tinyvec::ArrayVec;
 use crate::{
     chunk::ChunkId,
     components::{ behaviour::*, entity_type::*, equipment::{Equipment, Inventory, Item}, heading::*, keybits::*, position::Position, reaction_queue::*, resources::*, * },
-    systems::targeting::RangeTier,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -69,8 +68,6 @@ pub enum Event {
     /// Client → Server: take the front queue threat now, as it would land
     /// No lockout, no resource cost — queue management, not an ability
     Dismiss { ent: Entity },
-    /// Client → Server: Set tier lock for targeting
-    SetTierLock { ent: Entity, tier: RangeTier },
     /// Server → Client: the state a remote entity is simulated from. Sent
     /// when any of it changes and at every tile crossing while moving.
     MovementIntent { ent: Entity, position: Position, heading: Heading, moving: bool, back: bool, airtime: Option<i16>, burdened: bool },
@@ -171,7 +168,6 @@ impl Event {
             | Event::UseAbility { ent, .. }
             | Event::ClearQueue { ent, .. }
             | Event::Dismiss { ent }
-            | Event::SetTierLock { ent, .. }
             | Event::MovementIntent { ent, .. }
             | Event::Displace { ent, .. }
             | Event::Teleport { ent, .. }
@@ -280,7 +276,6 @@ pub enum Component {
     Side(crate::components::behaviour::Side),
     Status(crate::components::status::Status),
     Stamina(Stamina),
-    TierLock(crate::components::tier_lock::TierLock),
 }
 
 impl Component {
@@ -298,7 +293,6 @@ impl Component {
             Component::Side(v) => { entity.insert(v); }
             Component::Status(v) => { entity.insert(v); }
             Component::Stamina(v) => { entity.insert(v); }
-            Component::TierLock(v) => { entity.insert(v); }
             _ => unreachable!("Loc/Heading require special handling"),
         }
     }

@@ -173,7 +173,6 @@ pub fn do_spawn(
                         reaction_queue,
                         common_bevy::components::target::Target::default(), // For targeting system
                         common_bevy::components::AttackRange::default(), // Auto-attack range (melee default)
-                        common_bevy::components::tier_lock::TierLock::new(), // Tier lock targeting
                     ))
                     .observe(ready);
 

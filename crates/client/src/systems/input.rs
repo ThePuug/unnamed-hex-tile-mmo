@@ -15,7 +15,6 @@ use common_bevy::{
     },
     message::{AbilityType, Event, *},
     resources::*,
-    systems::targeting::RangeTier,
 };
 
 pub const KEYCODE_JUMP: KeyCode = KeyCode::Numpad0;
@@ -80,23 +79,6 @@ pub fn update_keybits(
     // Dismiss front queue threat (independent of the ability system)
     if keyboard.just_pressed(KeyCode::KeyD) {
         writer.write(Try { event: Event::Dismiss { ent }});
-    }
-
-    // Tier Lock Targeting
-
-    // 1 key: Lock to Close tier (1-2 hexes)
-    if keyboard.just_pressed(KeyCode::Digit1) {
-        writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Close }});
-    }
-
-    // 2 key: Lock to Mid tier (3-6 hexes)
-    if keyboard.just_pressed(KeyCode::Digit2) {
-        writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Mid }});
-    }
-
-    // 3 key: Lock to Far tier (7+ hexes)
-    if keyboard.just_pressed(KeyCode::Digit3) {
-        writer.write(Try { event: Event::SetTierLock { ent, tier: RangeTier::Far }});
     }
 
     let mut keybits = KeyBits::default();
