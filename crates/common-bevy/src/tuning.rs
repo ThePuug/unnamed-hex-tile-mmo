@@ -121,9 +121,11 @@ pub struct Tuning {
     pub rattle_stacks: u8,
     /// Stamina a Disengage costs
     pub disengage_cost: f32,
-    /// Tiles a Disengage leaps at least; it leaps further where that falls
-    /// short of clearing its attacker's reach
+    /// Tiles a Disengage leaps away from an attacker in contact at least; it
+    /// leaps further where that falls short of breaking its own reach
     pub disengage_leap: usize,
+    /// Tiles a Disengage leaps toward an attacker already out of contact
+    pub disengage_close: usize,
     /// Share of Endurance a Disengage adds to its caster's next auto-attack
     pub disengage_endurance: f32,
     /// Stamina a Volley costs
@@ -205,6 +207,7 @@ impl Tuning {
         rattle_stacks: 3,
         disengage_cost: 39.2,
         disengage_leap: 1,
+        disengage_close: 8,
         disengage_endurance: 0.686,
         volley_cost: 20.0,
         volley_shots: 3,
@@ -343,6 +346,10 @@ impl Tuning {
             }
             "disengage_leap" => {
                 self.disengage_leap = number.round().max(1.0) as usize;
+                return Ok(());
+            }
+            "disengage_close" => {
+                self.disengage_close = number.round().max(1.0) as usize;
                 return Ok(());
             }
             "volley_leap" => {

@@ -14,18 +14,21 @@ use common_bevy::{
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Poised(pub f32);
 
-/// The tiles a Disengage leaps from an attacker of `reach` standing
-/// `distance` away: `tuned`, or as many as land it beyond that reach where
-/// that is more, one tile of distance for each.
+/// The tiles a Disengage leaps from an attacker `distance` away with its own
+/// `reach`: `tuned`, or as many as land it beyond that reach where that is
+/// more, one tile of distance for each.
 pub fn leap_tiles(tuned: usize, reach: i32, distance: i32) -> usize {
     tuned.max((reach + 1 - distance).max(0) as usize)
 }
 
 /// Handle Disengage, the Skirmisher's signature: a reaction to the blow at
-/// the front of its queue, whose source is the event's target. The caster
-/// leaps `Tuning::disengage_leap` tiles, or as many as clear that source's
-/// reach where that is more (`leap_tiles`), each the neighbour furthest
-/// from that source, and the blow misses: the front threat is cleared. Its
+/// the front of its queue, whose source is the event's target, and the blow
+/// misses: the front threat is cleared. In contact, within the caster's own
+/// reach of that source, it leaps away `Tuning::disengage_leap` tiles, or as
+/// many as break that reach where that is more (`leap_tiles`), so its swings
+/// come due unanswered;
+/// already out of contact, it leaps `Tuning::disengage_close` tiles toward
+/// the source, stopping beside it, since distance escapes no ranged blow. Its
 /// next auto-attack strikes harder, by `disengage_endurance` of its
 /// Endurance, behind a feint (`Poised`). Discipline's Preparation lets it
 /// through a lockout (`synergies::reacts_through`).
@@ -71,10 +74,16 @@ pub fn handle_disengage(
             continue;
         }
 
-        // Its leap stands on its own, so it goes with the cast
-        let reach = target.and_then(|source| range_query.get(source).ok()).copied().unwrap_or_default().0;
-        let tiles = leap_tiles(tuning.disengage_leap, reach, caster_loc.distance(target_loc));
-        let Some(landing) = crate::systems::combat::leap::away(&map, **caster_loc, **target_loc, tiles) else {
+        // Its leap stands on its own, so it goes with the cast: away from an
+        // attacker in contact, onto one already out of it
+        let distance = caster_loc.distance(target_loc);
+        let own_reach = range_query.get(*ent).copied().unwrap_or_default().0;
+        let landing = if distance <= own_reach {
+            crate::systems::combat::leap::away(&map, **caster_loc, **target_loc, leap_tiles(tuning.disengage_leap, own_reach, distance))
+        } else {
+            crate::systems::combat::leap::toward(&map, **caster_loc, **target_loc, tuning.disengage_close)
+        };
+        let Some(landing) = landing else {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
             continue;
         };
@@ -105,7 +114,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_leap_always_clears_the_attackers_reach() {
+    fn a_leap_always_breaks_its_own_reach() {
         assert_eq!(leap_tiles(1, 2, 1), 2, "from beside a reach of two, two tiles to stand at three");
         assert_eq!(leap_tiles(1, 2, 2), 1, "from the edge of reach, one");
         assert_eq!(leap_tiles(4, 2, 1), 4, "a longer tuned leap goes further");
