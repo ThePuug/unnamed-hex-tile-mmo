@@ -10,7 +10,7 @@ use crate::{
 };
 use crate::*;
 use common_bevy::{
-    components::{behaviour::*, entity_type::*, reaction_queue::QueuedThreat},
+    components::{behaviour::*, entity_type::*},
     message::{Component, Event, *},
     resources::*,
 };
@@ -222,14 +222,9 @@ pub fn write_do(
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
                 };
-                // Map threat source entity too
-                let mapped_source = l2r.get_by_right(&threat.source).copied().unwrap_or(threat.source);
-                let mapped_threat = QueuedThreat {
-                    source: mapped_source,
-                    ..threat
-                };
-                // Forward to Do writer for systems to handle
-                do_writer.write(Do { event: Event::InsertThreat { ent, threat: mapped_threat } });
+                // The threat keeps the server's source: it names the threat in the
+                // ClearQueue that ends it, even after the source is gone here
+                do_writer.write(Do { event: Event::InsertThreat { ent, threat } });
             }
             Do { event: Event::ApplyDamage { ent, damage, source, dot } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
@@ -245,14 +240,6 @@ pub fn write_do(
                 let Some(&ent) = l2r.get_by_right(&ent) else {
                     try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                     continue
-                };
-                // Map the named threat's source the way InsertThreat mapped it
-                let clear_type = match clear_type {
-                    ClearType::Threat { source, inserted_at } => ClearType::Threat {
-                        source: l2r.get_by_right(&source).copied().unwrap_or(source),
-                        inserted_at,
-                    },
-                    other => other,
                 };
                 do_writer.write(Do { event: Event::ClearQueue { ent, clear_type } });
             }

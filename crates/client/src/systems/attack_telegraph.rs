@@ -30,6 +30,7 @@ pub fn on_insert_threat(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     locs: Query<&Loc>,
+    l2r: Res<crate::resources::EntityMap>,
 ) {
     for message in reader.read() {
         let Do { event: GameEvent::InsertThreat { ent: target, threat } } = message else { continue };
@@ -37,7 +38,9 @@ pub fn on_insert_threat(
         if !matches!(threat.ability, Some(AbilityType::AutoAttack | AbilityType::Volley)) {
             continue;
         }
-        let (Ok(source_loc), Ok(target_loc)) = (locs.get(threat.source), locs.get(*target)) else { continue };
+        // A threat carries the server's source; the ball hangs from ours
+        let Some(&source) = l2r.get_by_right(&threat.source) else { continue };
+        let (Ok(source_loc), Ok(target_loc)) = (locs.get(source), locs.get(*target)) else { continue };
         if source_loc.flat_distance(target_loc) <= common_bevy::components::AttackRange::default().0 {
             continue;
         }
@@ -47,7 +50,7 @@ pub fn on_insert_threat(
         // Bevy's transform hierarchy will automatically track parent position
         let ball_id = commands.spawn((
             AttackBall {
-                source: threat.source,
+                source,
                 target: *target,
             },
             Mesh3d(meshes.add(Sphere::new(0.2))),
@@ -62,7 +65,7 @@ pub fn on_insert_threat(
 
         // Parent ball to source entity for automatic position tracking
         // Silently skip if source entity despawned
-        if let Ok(mut entity_commands) = commands.get_entity(threat.source) {
+        if let Ok(mut entity_commands) = commands.get_entity(source) {
             entity_commands.add_child(ball_id);
         }
     }
@@ -128,13 +131,18 @@ pub fn on_clear_queue(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
     balls: Query<(Entity, &AttackBall)>,
+    l2r: Res<crate::resources::EntityMap>,
 ) {
     for message in reader.read() {
         let Do { event: GameEvent::ClearQueue { ent: target, clear_type } } = message else { continue };
 
-        // An expiry names one source's threat; every other clear takes all
+        // An expiry names one source's threat, by the server's entity; a
+        // source gone here took its balls with it. Every other clear takes all
         let source = match clear_type {
-            ClearType::Threat { source, .. } => Some(*source),
+            ClearType::Threat { source, .. } => match l2r.get_by_right(source) {
+                Some(&source) => Some(source),
+                None => continue,
+            },
             _ => None,
         };
         for (ball_entity, ball) in balls.iter() {

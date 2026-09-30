@@ -13,6 +13,7 @@ pub fn handle_insert_threat(
     mut reader: MessageReader<Do>,
     mut query: Query<(&mut ReactionQueue, &ActorAttributes, Option<&mut common_bevy::components::recovery::GlobalRecovery>)>,
     attrs_query: Query<&ActorAttributes>,
+    l2r: Res<crate::resources::EntityMap>,
     time: Res<Time>,
     server: Res<crate::resources::Server>,
 ) {
@@ -29,7 +30,9 @@ pub fn handle_insert_threat(
 
                 // Recovery pushback: mirror server's Impact vs Composure contest
                 if let Some(mut recovery) = recovery_opt {
-                    if let Ok(source_attrs) = attrs_query.get(threat.source) {
+                    // The threat carries the server's source; its attributes are ours
+                    let source = l2r.get_by_right(&threat.source).copied();
+                    if let Some(Ok(source_attrs)) = source.map(|source| attrs_query.get(source)) {
                         let pushback_pct = damage_calc::calculate_recovery_pushback(
                             source_attrs.impact(),
                             defender_attrs.composure(),
@@ -219,5 +222,43 @@ pub fn player_auto_attack(
 
         // Update last attack time
         last_auto_attack.last_attack_time = now;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common_bevy::message::ClearType;
+    use std::time::Duration;
+
+    #[test]
+    fn a_threat_clears_after_its_source_is_gone_here() {
+        let mut app = App::new();
+        app.add_message::<Do>();
+        app.init_resource::<Time>();
+        app.insert_resource(crate::resources::Server::default());
+        app.init_resource::<crate::resources::EntityMap>();
+        app.add_systems(Update, (handle_insert_threat, handle_clear_queue).chain());
+
+        let player = app.world_mut().spawn((ReactionQueue::new(1), ActorAttributes::default())).id();
+        let attacker = app.world_mut().spawn(ActorAttributes::default()).id();
+        let on_server = Entity::from_raw_u32(9_000).unwrap();
+        app.world_mut().resource_mut::<crate::resources::EntityMap>().insert(attacker, on_server);
+
+        let threat = queue_utils::create_threat(
+            on_server, &ActorAttributes::default(), &ActorAttributes::default(),
+            50.0, DamageType::Physical, Some(AbilityType::Lunge), Duration::from_secs(10), 0.0,
+        );
+        app.world_mut().write_message(Do { event: GameEvent::InsertThreat { ent: player, threat } });
+        app.update();
+        assert_eq!(app.world().get::<ReactionQueue>(player).unwrap().threats.len(), 1);
+
+        // The attacker dies and is despawned here before its threat lands
+        app.world_mut().resource_mut::<crate::resources::EntityMap>().remove_by_left(&attacker);
+        app.world_mut().despawn(attacker);
+        let clear_type = ClearType::Threat { source: on_server, inserted_at: threat.inserted_at };
+        app.world_mut().write_message(Do { event: GameEvent::ClearQueue { ent: player, clear_type } });
+        app.update();
+        assert!(app.world().get::<ReactionQueue>(player).unwrap().threats.is_empty(), "the landing clears it all the same");
     }
 }
