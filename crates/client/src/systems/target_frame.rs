@@ -495,8 +495,9 @@ pub fn update(
     // This persists even when you turn away (entity field clears but last_target remains)
     let last_target = target.last_target;
 
-    // Show/hide frame and update content based on target
-    if let Some(target_ent) = last_target {
+    // Show/hide frame and update content based on target; one gone from
+    // the world hides it, not leaves it showing what it last read
+    if let Some(target_ent) = last_target.filter(|&target| target_query.contains(target)) {
         // Target exists - show frame and update content
         for mut visibility in &mut frame_query {
             *visibility = Visibility::Visible;
