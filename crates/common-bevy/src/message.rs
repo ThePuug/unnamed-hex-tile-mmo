@@ -193,6 +193,22 @@ impl AbilityType {
         matches!(self, AbilityType::Counter | AbilityType::Kick | AbilityType::Disengage)
     }
 
+    /// How near and how far, in tiles, `ability` strikes a target from an
+    /// actor whose own reach is `own`. None for one that takes no target: a
+    /// reaction, which answers the queue. An auto-attack and a Volley reach
+    /// as far as the actor does, a Rattle and a Flank the same but never the
+    /// actor's own tile, an Overpower only beside it, and a Lunge from
+    /// beside out to [`LUNGE_RANGE`](crate::systems::combat::resources::LUNGE_RANGE).
+    pub fn reach(self, own: i32) -> Option<std::ops::RangeInclusive<i32>> {
+        match self {
+            AbilityType::AutoAttack | AbilityType::Volley => Some(0..=own),
+            AbilityType::Rattle | AbilityType::Flank => Some(1..=own),
+            AbilityType::Overpower => Some(0..=1),
+            AbilityType::Lunge => Some(1..=crate::systems::combat::resources::LUNGE_RANGE as i32),
+            AbilityType::Counter | AbilityType::Kick | AbilityType::Disengage => None,
+        }
+    }
+
     /// The ability this one offers as its follow-up, the one that unlocks
     /// through its lockout ahead of the rest (`synergies::apply_synergies`):
     /// the player's four run round one ring, Lunge to Overpower to Counter

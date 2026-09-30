@@ -256,12 +256,12 @@ pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
     mut glow_query: Query<&mut Visibility, With<SynergyGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
-    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&TierLock>, Option<&GlobalRecovery>, Option<&SynergyUnlock>, Option<&common_bevy::components::ActorAttributes>, Has<Actor>), With<crate::components::Viewed>>,
+    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&TierLock>, Option<&GlobalRecovery>, Option<&SynergyUnlock>, Option<&common_bevy::components::ActorAttributes>, Option<&common_bevy::components::AttackRange>, Has<Actor>), With<crate::components::Viewed>>,
     entity_query: Query<(&EntityType, &Loc, Option<&Side>)>,
     nntree: Res<NNTree>,
 ) {
     // The resources and position of the actor the client sees as
-    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, recovery_opt, synergy_opt, attrs, controlled)) = player_query.single() else {
+    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, recovery_opt, synergy_opt, attrs, own_reach, controlled)) = player_query.single() else {
         return;
     };
     let targeting_state = targeting_state.copied().unwrap_or_default();
@@ -299,6 +299,7 @@ pub fn update(
                 *player_loc,
                 *player_heading,
                 common_bevy::systems::targeting::arc_of(attrs),
+                own_reach.copied().unwrap_or_default().0,
                 &targeting_state,
                 &nntree,
                 &entity_query,
@@ -377,6 +378,7 @@ fn get_ability_state(
     player_loc: Loc,
     player_heading: Heading,
     arc: f32,
+    own_reach: i32,
     targeting_state: &TierLock,
     nntree: &NNTree,
     entity_query: &Query<(&EntityType, &Loc, Option<&Side>)>,
@@ -399,82 +401,19 @@ fn get_ability_state(
     let own_side = side_of(player_ent);
     let hostile = |ent: Entity| side_of(ent).zip(own_side).is_some_and(|(side, own)| side.is_hostile_to(own));
 
-    // Check resource costs and range requirements
-    match ability {
-        AbilityType::Lunge => {
-            if stamina.step < common_bevy::tuning::tuning().cost(AbilityType::Lunge) {
-                return AbilityState::InsufficientResources;
-            }
+    if stamina.step < common_bevy::tuning::tuning().cost(ability) {
+        return AbilityState::InsufficientResources;
+    }
 
-            let target_opt = select_target(
-                player_ent,
-                player_loc,
-                player_heading,
-                arc,
-                targeting_state.get(), // Respect tier lock
-                nntree,
-                hostile,
-            );
-
-            if let Some(target_ent) = target_opt {
-                if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
-                    let distance = player_loc.flat_distance(target_loc) as u32;
-                    if distance > common_bevy::systems::combat::resources::LUNGE_RANGE {
-                        return AbilityState::OutOfRange;
-                    }
-                }
-                AbilityState::Ready
-            } else {
-                AbilityState::OutOfRange
-            }
-        }
-        AbilityType::Overpower => {
-            if stamina.step < common_bevy::tuning::tuning().cost(AbilityType::Overpower) {
-                return AbilityState::InsufficientResources;
-            }
-
-            let target_opt = select_target(
-                player_ent,
-                player_loc,
-                player_heading,
-                arc,
-                targeting_state.get(), // Respect tier lock
-                nntree,
-                hostile,
-            );
-
-            if let Some(target_ent) = target_opt {
-                if let Ok((_, target_loc, _)) = entity_query.get(target_ent) {
-                    let distance = player_loc.flat_distance(target_loc) as u32;
-                    if distance > 1 {
-                        return AbilityState::OutOfRange;
-                    }
-                }
-                AbilityState::Ready
-            } else {
-                AbilityState::OutOfRange
-            }
-        }
-        AbilityType::AutoAttack | AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => {
-            // Passive or NPC-only - not on the player's action bar
-            AbilityState::Ready
-        }
-        AbilityType::Counter => {
-            // Counter: self-target, no range check
-            if stamina.step >= common_bevy::tuning::tuning().cost(AbilityType::Counter) {
-                AbilityState::Ready
-            } else {
-                AbilityState::InsufficientResources
-            }
-        }
-        AbilityType::Kick => {
-            // Kick: self-target, no range check
-            if stamina.step >= common_bevy::tuning::tuning().cost(AbilityType::Kick) {
-                AbilityState::Ready
-            } else {
-                AbilityState::InsufficientResources
-            }
-        }
+    // A reaction takes no target; a strike needs the one the player faces
+    // within the ability's own reach
+    let Some(reach) = ability.reach(own_reach) else {
+        return AbilityState::Ready;
+    };
+    let target = select_target(player_ent, player_loc, player_heading, arc, targeting_state.get(), nntree, hostile);
+    match target.and_then(|target| entity_query.get(target).ok()) {
+        Some((_, target_loc, _)) if reach.contains(&player_loc.flat_distance(target_loc)) => AbilityState::Ready,
+        _ => AbilityState::OutOfRange,
     }
 }
 

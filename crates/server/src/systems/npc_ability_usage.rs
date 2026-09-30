@@ -20,12 +20,10 @@ use crate::systems::behaviour::chase::Chase;
 /// Runs periodically to check if NPCs should use their archetype abilities
 
 /// Ability usage rules:
-/// - Berserker (Lunge): Use when target is within its range, adjacent included (burst and gap closer)
-/// - Juggernaut (Rattle): Use when target is within melee reach (each one dazes it further)
-/// - Kiter (Volley): Use when target is within its reach (a burst from range)
-/// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
-/// - Skirmisher (Disengage): Reactive - dodges the blow at the front of its queue, an auto-attack's as overflow
-/// - Ambusher (Flank): Use when target is within melee reach (stuns it and strikes from its back)
+/// - A strike (Lunge, Rattle, Volley, Flank): when its target stands within
+///   the ability's own reach (`AbilityType::reach`) and its arc
+/// - Defender (Counter): reactive - when threats stand in its reaction queue
+/// - Skirmisher (Disengage): reactive - dodges the blow at the front of its queue, an auto-attack's as overflow
 ///
 /// Every use waits out the NPC's `NpcRecovery` delay, armed once the ability
 /// is affordable and out of lockout, or a reaction its Preparation lets
@@ -34,7 +32,7 @@ use crate::systems::behaviour::chase::Chase;
 /// Update frequency: 0.5s (fast enough for Defenders to respond to incoming threats)
 pub fn npc_ability_usage(
     mut npc_query: Query<
-        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>, &mut NpcRecovery, Option<&common_bevy::components::heading::Heading>, &common_bevy::components::ActorAttributes),
+        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>, &mut NpcRecovery, Option<&common_bevy::components::heading::Heading>, &common_bevy::components::ActorAttributes, Option<&common_bevy::components::AttackRange>),
         With<Chase>
     >,
     target_query: Query<&Loc, With<common_bevy::components::behaviour::Side>>,
@@ -42,7 +40,7 @@ pub fn npc_ability_usage(
     mut writer: MessageWriter<Try>,
 ) {
     let now = time.elapsed();
-    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt, mut delay, heading, attrs) in npc_query.iter_mut() {
+    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt, mut delay, heading, attrs, own_reach) in npc_query.iter_mut() {
         // Get archetype from NPC type
         let EntityType::Actor(actor_impl) = entity_type else {
             continue;
@@ -106,19 +104,10 @@ pub fn npc_ability_usage(
             continue;
         };
 
-        // Calculate distance to target
+        // Within the ability's own reach of its target
         let distance = npc_loc.flat_distance(target_loc);
-
-        // Decide whether to use ability based on archetype and distance
-        let should_use_ability = match archetype {
-            // Lunge: its burst, and its reach to anything within its range
-            EnemyArchetype::Berserker => (1..=common_bevy::systems::combat::resources::LUNGE_RANGE as i32).contains(&distance),
-            EnemyArchetype::Juggernaut => (1..=common_bevy::components::AttackRange::default().0).contains(&distance),
-            EnemyArchetype::Kiter => distance <= crate::systems::behaviour::KITER_REACH,
-            EnemyArchetype::Ambusher => (1..=common_bevy::components::AttackRange::default().0).contains(&distance),
-            // Defender's Counter and Skirmisher's Disengage are handled above
-            EnemyArchetype::Defender | EnemyArchetype::Skirmisher => false,
-        };
+        let should_use_ability = ability.reach(own_reach.copied().unwrap_or_default().0)
+            .is_some_and(|reach| reach.contains(&distance));
 
         if should_use_ability && common_bevy::systems::targeting::faces(heading, attrs.arc(), npc_loc, target_loc) {
             // Send target entity from NPC's Target component

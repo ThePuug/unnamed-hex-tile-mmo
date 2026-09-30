@@ -4,8 +4,6 @@ use crate::{
     message::{Component as MessageComponent, Event, *},
 };
 
-/// The stamina a Counter costs: more than stamina refills over its lockout,
-/// so a full pool covers three in a row and then one about every six seconds.
 /// How far a Lunge reaches, in tiles: it lands beside anything from
 /// adjacent out to this.
 pub const LUNGE_RANGE: u32 = 8;
