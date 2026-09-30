@@ -5,7 +5,6 @@ use crate::systems::threat_icons::{self, severity_rgb};
 use common_bevy::components::resources::Health;
 
 const ENTRY_SIZE: f32 = 30.0;
-const ENTRY_SPACING: f32 = 3.0;
 const MAX_ENTRIES: usize = 5;
 const ENTRY_LIFETIME: f32 = 4.0; // Seconds
 
