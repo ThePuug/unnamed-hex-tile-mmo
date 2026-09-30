@@ -81,7 +81,7 @@ pub fn handle_numpad(
         }
     }
     if keyboard.clear_just_pressed(KEYCODE_APPLY) {
-        if let Some(draft) = state.pending_respec.filter(|draft| ActorAttributes::invested(draft) == level) {
+        if let Some(draft) = state.pending_respec.filter(|draft| ActorAttributes::is_complete(draft, level)) {
             // The draft stays until the server confirms it.
             writer.write(Try { event: GameEvent::RespecAttributes { ent, pairs: draft } });
         }

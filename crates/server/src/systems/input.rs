@@ -311,8 +311,8 @@ pub fn broadcast_movement_intent(
     }
 }
 
-/// Takes the respec a client asks for where it fits the actor's level
-/// (`ActorAttributes::fits`), and says so to its client. The pools the
+/// Takes the respec a client asks for where it places every level the actor
+/// has (`ActorAttributes::is_complete`), and says so to its client. The pools the
 /// attributes set, health and endurance, are resized with it at once, each
 /// as full as it was, so a respec neither heals nor wounds.
 pub fn try_respec_attributes(
@@ -323,7 +323,7 @@ pub fn try_respec_attributes(
     for message in reader.read() {
         let Try { event: Event::RespecAttributes { ent, pairs } } = message else { continue };
         let Ok((mut attrs, mut health, endurance)) = attrs_query.get_mut(*ent) else { continue };
-        if !ActorAttributes::fits(pairs, attrs.total_level()) {
+        if !ActorAttributes::is_complete(pairs, attrs.total_level()) {
             continue;
         }
         attrs.apply_respec(*pairs);

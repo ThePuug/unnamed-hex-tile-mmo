@@ -308,12 +308,17 @@ pub struct ActorAttributes {
     conditioning: Pair,
     /// Instinct ↔ Resolve
     temperament: Pair,
+    /// The levels the actor has, which a respec spends again and never
+    /// changes: a draft that has not placed them all is still an actor of
+    /// this level
+    level: u32,
 }
 
 impl ActorAttributes {
     /// An actor's attributes from the levels in each pair: axis, spectrum
     /// and shift of Might ↔ Agility, of Vitality ↔ Discipline, then of
-    /// Instinct ↔ Resolve. A shift is taken as given, unclamped.
+    /// Instinct ↔ Resolve. A shift is taken as given, unclamped. Its level
+    /// is the levels these put in.
     pub fn new(
         might_agility_axis: i8,
         might_agility_spectrum: i8,
@@ -325,11 +330,13 @@ impl ActorAttributes {
         instinct_resolve_spectrum: i8,
         instinct_resolve_shift: i8,
     ) -> Self {
-        Self {
-            physique: Pair::new(might_agility_axis, might_agility_spectrum, might_agility_shift),
-            conditioning: Pair::new(vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift),
-            temperament: Pair::new(instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift),
-        }
+        let pairs = [
+            Pair::new(might_agility_axis, might_agility_spectrum, might_agility_shift),
+            Pair::new(vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift),
+            Pair::new(instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift),
+        ];
+        let [physique, conditioning, temperament] = pairs;
+        Self { physique, conditioning, temperament, level: Self::invested(&pairs) }
     }
 
     pub fn might_agility_axis(&self) -> i8 { self.physique.axis }
@@ -358,14 +365,22 @@ impl ActorAttributes {
         pairs.iter().map(|pair| pair.levels()).sum()
     }
 
-    /// Whether `pairs` is a respec an actor of `level` may take: no more
-    /// levels than it has, and no spectrum below nothing.
+    /// Whether `pairs` is a draft an actor of `level` may hold: no more
+    /// levels than it has, and no spectrum below nothing. A respec it takes
+    /// has placed every one (`is_complete`).
     pub fn fits(pairs: &[Pair; 3], level: u32) -> bool {
         pairs.iter().all(|pair| pair.spectrum >= 0) && Self::invested(pairs) <= level
     }
 
-    /// Takes a whole respec, already checked (`fits`): each pair's axis and
-    /// spectrum as given, its shift as far as the pair allows.
+    /// Whether `pairs` is a respec an actor of `level` may take: a draft
+    /// that `fits` and places every level.
+    pub fn is_complete(pairs: &[Pair; 3], level: u32) -> bool {
+        Self::fits(pairs, level) && Self::invested(pairs) == level
+    }
+
+    /// Takes a whole respec, or lays a draft over a copy to show it: each
+    /// pair's axis and spectrum as given, its shift as far as the pair
+    /// allows, and the level as it was.
     pub fn apply_respec(&mut self, pairs: [Pair; 3]) {
         for (own, respec) in [&mut self.physique, &mut self.conditioning, &mut self.temperament].into_iter().zip(pairs) {
             *own = Pair::new(respec.axis, respec.spectrum, 0);
@@ -487,9 +502,10 @@ impl ActorAttributes {
     /// Awareness, Resolve: how far behind the front threat its reactions reach (`span`)
     pub fn awareness(&self) -> CommitmentTier { self.tier(Attribute::Resolve) }
 
-    /// The actor's level: every level it has put into an axis or a spectrum
+    /// The actor's level: the levels it has, whether or not a draft laid
+    /// over it has placed them all
     pub fn total_level(&self) -> u32 {
-        self.physique.levels() + self.conditioning.levels() + self.temperament.levels()
+        self.level
     }
 
     /// A level curve, `(1 + level × k)^p`: 1 at level 0
@@ -1088,9 +1104,22 @@ mod tests {
         assert!(!ActorAttributes::fits(&[Pair::new(-6, 2, 0), Pair::new(0, 2, 0), Pair::new(1, 0, 0)], level), "a level too many");
         assert!(!ActorAttributes::fits(&[Pair { axis: 0, spectrum: -1, shift: 0 }, Pair::default(), Pair::default()], level), "a spectrum below nothing");
 
-        let mut attrs = ActorAttributes::default();
+        assert!(ActorAttributes::is_complete(&spent, level));
+        assert!(!ActorAttributes::is_complete(&[Pair::new(-6, 1, 0), Pair::new(0, 1, 0), Pair::new(1, 0, 0)], level), "a level left unplaced");
+
+        let mut attrs = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         attrs.apply_respec([Pair::new(-6, 2, 5), Pair::new(0, 1, 1), Pair::new(1, 0, -3)]);
         assert_eq!(attrs.pairs(), [Pair::new(-6, 2, 2), Pair::new(0, 1, 0), Pair::new(1, 0, 0)], "each shift as far as its pair allows");
         assert_eq!(attrs.total_level(), level);
+    }
+
+    #[test]
+    fn a_draft_keeps_the_level_so_its_tiers_answer_only_to_their_own_pair() {
+        let attrs = ActorAttributes::new(-3, 0, 0, 7, 0, 0, 0, 0, 0);
+        let mut draft = attrs;
+        draft.apply_respec([Pair::new(-3, 0, 0), Pair::new(2, 0, 0), Pair::default()]);
+        assert_eq!(draft.total_level(), attrs.total_level(), "levels taken out of one pair are still the actor's");
+        assert_eq!(draft.ferocity(), attrs.ferocity(), "Might untouched, its tier holds");
+        assert_eq!(draft.damage_level_multiplier(), attrs.damage_level_multiplier());
     }
 }
