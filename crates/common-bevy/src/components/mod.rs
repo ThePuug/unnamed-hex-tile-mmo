@@ -45,80 +45,11 @@ impl Loc {
         let z_diff = (self.z - other.z).abs();
         self.flat_distance(other) + (z_diff - 1).max(0)
     }
-
-    /// Check if two locations are adjacent for melee combat with sloping terrain
-
-    /// Two locations are considered adjacent if:
-    /// - They are on the same tile (flat_distance == 0) - for multiple entities on same hex
-    /// - OR they are 1 hex apart horizontally (flat_distance == 1) AND the vertical
-    ///   difference is at most 1 tile (|z_diff| <= 1)
-
-    /// This allows melee attacks up/down slopes but prevents attacks
-    /// against targets that are too high/low (e.g., 2+ tiles above/below)
-    pub fn is_adjacent(&self, other: &Loc) -> bool {
-        let flat_dist = self.flat_distance(other);
-        let z_diff = (self.z - other.z).abs();
-
-        // must be at most 1 hex away with at most 1 z-level difference
-        flat_dist <= 1 && z_diff <= 1
-    }
-
 }
 
 #[cfg(test)]
 mod loc_tests {
     use super::*;
-
-    #[test]
-    fn test_is_adjacent_same_level() {
-        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let loc2 = Loc::new(Qrz { q: 1, r: 0, z: 0 });
-        assert!(loc1.is_adjacent(&loc2), "Same level, 1 hex apart should be adjacent");
-    }
-
-    #[test]
-    fn test_is_adjacent_one_level_up() {
-        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let loc2 = Loc::new(Qrz { q: 1, r: 0, z: 1 });
-        assert!(loc1.is_adjacent(&loc2), "1 level up, 1 hex apart should be adjacent (slope)");
-    }
-
-    #[test]
-    fn test_is_adjacent_one_level_down() {
-        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 1 });
-        let loc2 = Loc::new(Qrz { q: 1, r: 0, z: 0 });
-        assert!(loc1.is_adjacent(&loc2), "1 level down, 1 hex apart should be adjacent (slope)");
-    }
-
-    #[test]
-    fn test_not_adjacent_two_levels_up() {
-        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let loc2 = Loc::new(Qrz { q: 1, r: 0, z: 2 });
-        assert!(!loc1.is_adjacent(&loc2), "2 levels up should not be adjacent (too steep)");
-    }
-
-    #[test]
-    fn test_not_adjacent_two_hexes_away() {
-        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let loc2 = Loc::new(Qrz { q: 2, r: 0, z: 0 });
-        assert!(!loc1.is_adjacent(&loc2), "2 hexes apart should not be adjacent");
-    }
-
-    #[test]
-    fn test_adjacent_same_tile() {
-        // Same tile is adjacent (for multiple entities on same hex)
-        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let loc2 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        assert!(loc1.is_adjacent(&loc2), "Same tile should be adjacent (multiple entities on same hex)");
-    }
-
-    #[test]
-    fn test_adjacent_same_tile_different_z() {
-        // Same horizontal position but different z should be adjacent
-        let loc1 = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let loc2 = Loc::new(Qrz { q: 0, r: 0, z: 1 });
-        assert!(loc1.is_adjacent(&loc2), "Same tile, different z should be adjacent");
-    }
 
     #[test]
     fn test_distance_flat() {
@@ -712,14 +643,6 @@ impl ActorAttributes {
         Self::level_multiplier(self.total_level(), tuning.damage_curve_k, tuning.damage_curve_p)
     }
 
-    /// Reaction stat level multiplier
-    /// Gentle scaling: bounded by human reaction limits
-    pub fn reaction_level_multiplier(&self) -> f32 {
-        const K: f32 = 0.10;
-        const P: f32 = 1.2;
-        Self::level_multiplier(self.total_level(), K, P)
-    }
-
     // === GAME STATS (Layer 3 - continued) ===
 
     /// Movement speed - currently flat until allocated to a meta-attribute
@@ -753,20 +676,6 @@ impl ActorAttributes {
     //     discrete tiers based on % of total budget
 
     // See attributes.md (unnamed-indie-studio-internal/projects/unnamed-hex-tile-mmo/design/) for full design.
-
-    /// Total attribute budget: sum of all six derived attribute values.
-
-    /// This is the denominator for commitment tier percentage calculations.
-    /// Unlike total_level() which counts invested points (axis + spectrum),
-    /// this sums the actual derived values after A/S/S scaling.
-    pub fn total_budget(&self) -> u32 {
-        self.might() as u32
-            + self.agility() as u32
-            + self.vitality() as u32
-            + self.discipline() as u32
-            + self.instinct() as u32
-            + self.resolve() as u32
-    }
 
     /// Calculate the commitment tier for a specific derived attribute value.
 
@@ -1215,23 +1124,6 @@ mod tests {
     }
 
     #[test]
-    fn test_hp_multiplier_exceeds_reaction_multiplier() {
-        // HP scales more than reaction stats at all positive levels
-        for level in 1..=20u32 {
-            let attrs = ActorAttributes::new(
-                -(level as i8).min(127), 0, 0,
-                0, 0, 0,
-                0, 0, 0,
-            );
-            assert!(
-                attrs.hp_level_multiplier() >= attrs.reaction_level_multiplier(),
-                "HP multiplier should >= reaction multiplier at level {}",
-                level
-            );
-        }
-    }
-
-    #[test]
     fn test_max_health_increases_with_level() {
         let level_0 = ActorAttributes::default();
         let level_5 = ActorAttributes::new(-3, -2, 0, 0, 0, 0, 0, 0, 0); // 5 points invested
@@ -1302,41 +1194,6 @@ mod tests {
         assert_eq!(CommitmentTier::calculate(15, 73), CommitmentTier::T1);
         // 44 out of 73 = 60.3% → T3 (≥60%)
         assert_eq!(CommitmentTier::calculate(44, 73), CommitmentTier::T3);
-    }
-
-    // ===== TOTAL BUDGET TESTS (Layer 2) =====
-
-    #[test]
-    fn test_total_budget_default() {
-        let attrs = ActorAttributes::default();
-        assert_eq!(attrs.total_budget(), 0, "Default attrs should have zero budget");
-    }
-
-    #[test]
-    fn test_total_budget_sums_all_derived_values() {
-        // axis=-3, spectrum=2 on M/G pair: might side
-        // might = |axis|*10 + spectrum*7 - shift*7 = 30 + 14 - 0 = 44
-        // agility = spectrum*7 + shift*7 = 14 + 0 = 14
-        // (Other pairs at default = 0)
-        let attrs = ActorAttributes::new(-3, 2, 0, 0, 0, 0, 0, 0, 0);
-        let expected = attrs.might() as u32 + attrs.agility() as u32
-            + attrs.vitality() as u32 + attrs.discipline() as u32
-            + attrs.instinct() as u32 + attrs.resolve() as u32;
-        assert_eq!(attrs.total_budget(), expected);
-        assert!(attrs.total_budget() > 0, "Should have non-zero budget with investment");
-    }
-
-    #[test]
-    fn test_total_budget_differs_from_total_level() {
-        // total_level counts invested points; total_budget sums derived values
-        let attrs = ActorAttributes::new(-3, 2, 0, 0, 0, 0, 0, 0, 0);
-        // total_level = |axis| + spectrum = 3 + 2 = 5
-        assert_eq!(attrs.total_level(), 5);
-        // With axis=-3 (might), spectrum=2, shift=0:
-        // might = 3×16 + 2×12 = 72, agility = 0 (opposite side, no shift)
-        // total_budget = 72 + 0 + 0+0+0+0 = 72
-        assert_eq!(attrs.total_budget(), 72);
-        assert_ne!(attrs.total_level(), attrs.total_budget() as u32);
     }
 
     // ===== COMMITMENT_TIER_FOR TESTS (Layer 2) =====
