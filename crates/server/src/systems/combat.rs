@@ -143,27 +143,7 @@ pub fn resolve_threat(
             let blow = grit.map_or(blow, |mut grit| grit.take(time.elapsed(), blow, cap, threat.source));
             let final_damage = blow + threat.dot_left();
 
-            // Apply damage to health
-            health.state = (health.state - final_damage).max(0.0);
-            health.step = health.state; // Snap step to state for immediate feedback
-
-            // Broadcast damage event to clients
-            writer.write(Do {
-                event: GameEvent::ApplyDamage {
-                    ent: *ent,
-                    damage: final_damage,
-                    source: threat.source,
-                    dot: threat.is_wound(),
-                },
-            });
-
-            // Send authoritative health value to sync clients
-            writer.write(Do {
-                event: GameEvent::Incremental {
-                    ent: *ent,
-                    component: common_bevy::message::Component::Health(*health),
-                },
-            });
+            land_damage(*ent, threat.source, final_damage, threat.is_wound(), &mut health, &mut writer);
 
             landing::land(threat.ability, *ent, threat.source, threat.inserted_at, actors.get(threat.source).ok(), &tuning, &mut statuses, &recoveries, &locs, &mut bursts, &map, &mut commands, &mut writer);
             reach.spill(threat.source, *ent, threat.damage, &mut commands);
@@ -185,10 +165,7 @@ pub fn resolve_dot_tick(
     if health.state <= 0.0 {
         return;
     }
-    health.state = (health.state - damage).max(0.0);
-    health.step = health.state;
-    writer.write(Do { event: GameEvent::ApplyDamage { ent: *ent, damage: *damage, source: *source, dot: true } });
-    writer.write(Do { event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Health(*health) } });
+    land_damage(*ent, *source, *damage, true, &mut health, &mut writer);
 }
 
 /// Forgets the swing of every actor out of combat, so its next fight's
@@ -216,7 +193,7 @@ pub fn resolve_spill(
     }
     let cap = attrs.grit_cap() * health.max;
     let damage = grit.map_or(*damage, |mut grit| grit.take(time.elapsed(), *damage, cap, *source));
-    land_damage(*ent, *source, damage, &mut health, &mut writer);
+    land_damage(*ent, *source, damage, false, &mut health, &mut writer);
 }
 
 /// Lands damage Grit held back as its windows clear: the whole of it in
@@ -233,16 +210,17 @@ pub fn release_grit(
         let damage = grit.release(time.elapsed(), attrs.grit_cap() * health.max);
         if damage > 0.0 {
             let source = grit.source.unwrap_or(ent);
-            land_damage(ent, source, damage, &mut health, &mut writer);
+            land_damage(ent, source, damage, false, &mut health, &mut writer);
         }
     }
 }
 
-/// Takes `damage` from `health` and tells every client
-fn land_damage(ent: Entity, source: Entity, damage: f32, health: &mut Health, writer: &mut MessageWriter<Do>) {
+/// Takes `damage` from `health` and tells every client: the one place
+/// damage lands, whatever dealt it. `dot` marks a wound's, shown apart.
+fn land_damage(ent: Entity, source: Entity, damage: f32, dot: bool, health: &mut Health, writer: &mut MessageWriter<Do>) {
     health.state = (health.state - damage).max(0.0);
     health.step = health.state;
-    writer.write(Do { event: GameEvent::ApplyDamage { ent, damage, source, dot: false } });
+    writer.write(Do { event: GameEvent::ApplyDamage { ent, damage, source, dot } });
     writer.write(Do { event: GameEvent::Incremental { ent, component: common_bevy::message::Component::Health(*health) } });
 }
 
