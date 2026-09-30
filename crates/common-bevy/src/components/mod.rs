@@ -199,45 +199,107 @@ impl CommitmentTier {
     }
 }
 
-/// Attributes for actor entities that affect gameplay mechanics
+/// One pair of opposed attributes, as the levels put into it. `axis`
+/// commits to one of the two: negative the left, positive the right.
+/// `spectrum` reaches both. `shift` leans the spectrum from the side the
+/// axis committed to toward the other, as far as the spectrum goes; a pair
+/// with no axis has no side to lean from, so it never shifts.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Pair {
+    pub axis: i8,
+    pub spectrum: i8,
+    pub shift: i8,
+}
 
-/// Fields store RAW INVESTMENT COUNTS (levels invested):
-/// - Axis: negative = left side, positive = right side (max ±127 levels)
-/// - Spectrum: flexibility range (max 255 levels)
-/// - Shift: tactical position within spectrum range (±spectrum)
+/// Which attribute of a [`Pair`]: the one a negative axis commits to, or
+/// the one a positive axis does
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum End {
+    Left = -1,
+    Right = 1,
+}
 
-/// Access scaled values via methods:
-/// - Axis: 1 level → 10 reach
-/// - Spectrum: 1 level → 7 reach (each direction)
-#[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
+impl Pair {
+    /// What a level of axis gives the attribute it commits to
+    const AXIS: i16 = 16;
+    /// What a level of spectrum gives the committed attribute, and what a
+    /// level of shift moves from it to the other
+    const SPECTRUM: i16 = 12;
+    /// What a level of spectrum gives each attribute of a pair with no axis
+    const BALANCED: i16 = 6;
+
+    pub fn new(axis: i8, spectrum: i8, shift: i8) -> Self {
+        Self { axis, spectrum: spectrum.max(0), shift }
+    }
+
+    /// The levels put into the pair
+    fn levels(self) -> u32 {
+        self.axis.unsigned_abs() as u32 + self.spectrum.max(0) as u32
+    }
+
+    fn committed_to(self, side: End) -> bool {
+        self.axis.signum() == side as i8
+    }
+
+    /// What the attribute on `side` is worth now: on the committed side the
+    /// axis and the spectrum, less what is shifted away; on the other, what
+    /// is shifted to it; with no axis, the spectrum at its balanced rate.
+    fn value(self, side: End) -> u16 {
+        let spectrum = self.spectrum.max(0) as i16;
+        let shifted = self.shift as i16 * side as i16 * Self::SPECTRUM;
+        if self.axis == 0 {
+            (spectrum * Self::BALANCED) as u16
+        } else if self.committed_to(side) {
+            (self.axis.unsigned_abs() as i16 * Self::AXIS + spectrum * Self::SPECTRUM + shifted).max(0) as u16
+        } else {
+            shifted.max(0) as u16
+        }
+    }
+
+    /// The most the attribute on `side` can be worth under any shift
+    fn reach(self, side: End) -> u16 {
+        let spectrum = self.spectrum.max(0) as u16;
+        if self.axis == 0 {
+            spectrum * Self::BALANCED as u16
+        } else if self.committed_to(side) {
+            self.axis.unsigned_abs() as u16 * Self::AXIS as u16 + spectrum * Self::SPECTRUM as u16
+        } else {
+            spectrum * Self::SPECTRUM as u16
+        }
+    }
+
+    /// Shifts as far toward `shift` as the pair allows: away from the
+    /// committed side only, no further than the spectrum, and not at all
+    /// with no axis.
+    fn set_shift(&mut self, shift: i8) {
+        let most = self.spectrum.max(0);
+        self.shift = match self.axis.signum() {
+            0 => 0,
+            1 => shift.clamp(-most, 0),
+            _ => shift.clamp(0, most),
+        };
+    }
+}
+
+/// What an actor has put its levels into: three pairs of opposed
+/// attributes, Might and Agility, Vitality and Discipline, Instinct and
+/// Resolve. Every value an actor fights with is read from these through
+/// the methods here.
+#[derive(Clone, Component, Copy, Debug, Default, Deserialize, Serialize)]
 #[require(grit::Grit, Swing)]
 pub struct ActorAttributes {
-    // MIGHT ↔ AGILITY (Physique)
-    // Negative axis = Might specialist, Positive axis = Agility specialist
-    might_agility_axis: i8,
-    might_agility_spectrum: i8,  // Raw investment count (max 127 levels)
-    might_agility_shift: i8,     // Player's chosen shift from axis (within ±spectrum)
-
-    // VITALITY ↔ DISCIPLINE (Conditioning)
-    // Negative axis = Vitality specialist, Positive axis = Discipline specialist
-    vitality_discipline_axis: i8,
-    vitality_discipline_spectrum: i8,
-    vitality_discipline_shift: i8,
-
-    // INSTINCT ↔ RESOLVE (Temperament)
-    // Negative axis = Instinct specialist, Positive axis = Resolve specialist
-    instinct_resolve_axis: i8,
-    instinct_resolve_spectrum: i8,
-    instinct_resolve_shift: i8,
+    /// Might ↔ Agility
+    physique: Pair,
+    /// Vitality ↔ Discipline
+    conditioning: Pair,
+    /// Instinct ↔ Resolve
+    temperament: Pair,
 }
 
 impl ActorAttributes {
-    /// Create new ActorAttributes with raw investment counts
-
-    /// # Arguments
-    /// * axis: negative = left attribute, positive = right attribute (-127 to 127)
-    /// * spectrum: flexibility investment (0 to 127)
-    /// * shift: tactical adjustment within spectrum range (-spectrum to +spectrum)
+    /// An actor's attributes from the levels in each pair: axis, spectrum
+    /// and shift of Might ↔ Agility, of Vitality ↔ Discipline, then of
+    /// Instinct ↔ Resolve. A shift is taken as given, unclamped.
     pub fn new(
         might_agility_axis: i8,
         might_agility_spectrum: i8,
@@ -250,92 +312,30 @@ impl ActorAttributes {
         instinct_resolve_shift: i8,
     ) -> Self {
         Self {
-            might_agility_axis,
-            might_agility_spectrum: might_agility_spectrum.max(0),  // Clamp spectrum to non-negative
-            might_agility_shift,
-            vitality_discipline_axis,
-            vitality_discipline_spectrum: vitality_discipline_spectrum.max(0),
-            vitality_discipline_shift,
-            instinct_resolve_axis,
-            instinct_resolve_spectrum: instinct_resolve_spectrum.max(0),
-            instinct_resolve_shift,
+            physique: Pair::new(might_agility_axis, might_agility_spectrum, might_agility_shift),
+            conditioning: Pair::new(vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift),
+            temperament: Pair::new(instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift),
         }
     }
 
-    // === Raw field accessors ===
+    pub fn might_agility_axis(&self) -> i8 { self.physique.axis }
+    pub fn might_agility_spectrum(&self) -> i8 { self.physique.spectrum }
+    pub fn might_agility_shift(&self) -> i8 { self.physique.shift }
 
-    pub fn might_agility_axis(&self) -> i8 { self.might_agility_axis }
-    pub fn might_agility_spectrum(&self) -> i8 { self.might_agility_spectrum }
-    pub fn might_agility_shift(&self) -> i8 { self.might_agility_shift }
+    pub fn vitality_discipline_axis(&self) -> i8 { self.conditioning.axis }
+    pub fn vitality_discipline_spectrum(&self) -> i8 { self.conditioning.spectrum }
+    pub fn vitality_discipline_shift(&self) -> i8 { self.conditioning.shift }
 
-    pub fn vitality_discipline_axis(&self) -> i8 { self.vitality_discipline_axis }
-    pub fn vitality_discipline_spectrum(&self) -> i8 { self.vitality_discipline_spectrum }
-    pub fn vitality_discipline_shift(&self) -> i8 { self.vitality_discipline_shift }
+    pub fn instinct_resolve_axis(&self) -> i8 { self.temperament.axis }
+    pub fn instinct_resolve_spectrum(&self) -> i8 { self.temperament.spectrum }
+    pub fn instinct_resolve_shift(&self) -> i8 { self.temperament.shift }
 
-    pub fn instinct_resolve_axis(&self) -> i8 { self.instinct_resolve_axis }
-    pub fn instinct_resolve_spectrum(&self) -> i8 { self.instinct_resolve_spectrum }
-    pub fn instinct_resolve_shift(&self) -> i8 { self.instinct_resolve_shift }
+    pub fn set_might_agility_shift(&mut self, shift: i8) { self.physique.set_shift(shift) }
+    pub fn set_vitality_discipline_shift(&mut self, shift: i8) { self.conditioning.set_shift(shift) }
+    pub fn set_instinct_resolve_shift(&mut self, shift: i8) { self.temperament.set_shift(shift) }
 
-    // === Mutators for shift values (tactical adjustments) ===
-
-    pub fn set_might_agility_shift(&mut self, shift: i8) {
-        // Pure spectrum (axis=0) cannot shift - requires axis commitment
-        if self.might_agility_axis == 0 {
-            self.might_agility_shift = 0;
-            return;
-        }
-
-        let max_shift = self.might_agility_spectrum.max(0);
-        // Shift constrained by axis direction:
-        // axis > 0 (agility/right) → shift can only go negative (toward might/left)
-        // axis < 0 (might/left) → shift can only go positive (toward agility/right)
-        let clamped = if self.might_agility_axis > 0 {
-            shift.clamp(-max_shift, 0)
-        } else {
-            shift.clamp(0, max_shift)
-        };
-        self.might_agility_shift = clamped;
-    }
-
-    pub fn set_vitality_discipline_shift(&mut self, shift: i8) {
-        // Pure spectrum (axis=0) cannot shift - requires axis commitment
-        if self.vitality_discipline_axis == 0 {
-            self.vitality_discipline_shift = 0;
-            return;
-        }
-
-        let max_shift = self.vitality_discipline_spectrum.max(0);
-        // axis > 0 (discipline/right) → shift can only go negative (toward vitality/left)
-        // axis < 0 (vitality/left) → shift can only go positive (toward discipline/right)
-        let clamped = if self.vitality_discipline_axis > 0 {
-            shift.clamp(-max_shift, 0)
-        } else {
-            shift.clamp(0, max_shift)
-        };
-        self.vitality_discipline_shift = clamped;
-    }
-
-    pub fn set_instinct_resolve_shift(&mut self, shift: i8) {
-        // Pure spectrum (axis=0) cannot shift - requires axis commitment
-        if self.instinct_resolve_axis == 0 {
-            self.instinct_resolve_shift = 0;
-            return;
-        }
-
-        let max_shift = self.instinct_resolve_spectrum.max(0);
-        // axis > 0 (resolve/right) → shift can only go negative (toward instinct/left)
-        // axis < 0 (instinct/left) → shift can only go positive (toward resolve/right)
-        let clamped = if self.instinct_resolve_axis > 0 {
-            shift.clamp(-max_shift, 0)
-        } else {
-            shift.clamp(0, max_shift)
-        };
-        self.instinct_resolve_shift = clamped;
-    }
-
-    // === Mutators for axis and spectrum values (respec system) ===
-
-    /// Apply a full attribute respec (used when server confirms change)
+    /// Takes a whole respec, already validated: each pair's axis and
+    /// spectrum as given, its shift as far as the pair allows.
     pub fn apply_respec(
         &mut self,
         mg_axis: i8,
@@ -348,274 +348,32 @@ impl ActorAttributes {
         ip_spectrum: i8,
         ip_shift: i8,
     ) {
-        // Apply axis/spectrum (validation happens before this)
-        self.might_agility_axis = mg_axis;
-        self.might_agility_spectrum = mg_spectrum.max(0); // Spectrum can't be negative
-        self.vitality_discipline_axis = vf_axis;
-        self.vitality_discipline_spectrum = vf_spectrum.max(0);
-        self.instinct_resolve_axis = ip_axis;
-        self.instinct_resolve_spectrum = ip_spectrum.max(0);
-
-        // Apply shifts (clamped to valid ranges by setters)
-        self.set_might_agility_shift(mg_shift);
-        self.set_vitality_discipline_shift(vf_shift);
-        self.set_instinct_resolve_shift(ip_shift);
-    }
-
-    // === MIGHT ↔ AGILITY ===
-
-    /// Maximum Might reach (including maximum shift)
-    /// When axis on might side: axis×16 + spectrum×12 (at shift=0)
-    /// When axis on agility side: spectrum×12 (max shift gives -shift×12)
-    /// When axis = 0: spectrum×6 (balanced, shift blocked)
-    pub fn might_reach(&self) -> u16 {
-        if self.might_agility_axis == 0 {
-            // Balanced: no shift allowed, reach equals current
-            (self.might_agility_spectrum.max(0) as u16) * 6
-        } else if self.might_agility_axis < 0 {
-            // Axis on might side: already at max with shift=0
-            let axis_reach = (self.might_agility_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.might_agility_spectrum.max(0) as u16) * 12;
-            axis_reach + spectrum_reach
-        } else {
-            // Axis on agility side: can shift spectrum to might
-            (self.might_agility_spectrum.max(0) as u16) * 12
+        let respec = [(mg_axis, mg_spectrum, mg_shift), (vf_axis, vf_spectrum, vf_shift), (ip_axis, ip_spectrum, ip_shift)];
+        for (pair, (axis, spectrum, shift)) in [&mut self.physique, &mut self.conditioning, &mut self.temperament].into_iter().zip(respec) {
+            *pair = Pair::new(axis, spectrum, 0);
+            pair.set_shift(shift);
         }
     }
 
-    /// Maximum Agility reach (including maximum shift)
-    /// When axis on agility side: axis×16 + spectrum×12 (at shift=0)
-    /// When axis on might side: spectrum×12 (max shift gives shift×12)
-    /// When axis = 0: spectrum×6 (balanced, shift blocked)
-    pub fn agility_reach(&self) -> u16 {
-        if self.might_agility_axis == 0 {
-            // Balanced: no shift allowed, reach equals current
-            (self.might_agility_spectrum.max(0) as u16) * 6
-        } else if self.might_agility_axis > 0 {
-            // Axis on agility side: already at max with shift=0
-            let axis_reach = (self.might_agility_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.might_agility_spectrum.max(0) as u16) * 12;
-            axis_reach + spectrum_reach
-        } else {
-            // Axis on might side: can shift spectrum to agility
-            (self.might_agility_spectrum.max(0) as u16) * 12
-        }
-    }
+    // Each attribute as it stands now, and the most any shift could make it
 
-    /// Current available Might (scaled)
-    /// When axis < 0 (might): axis×10 + spectrum×6 - shift×6
-    /// When axis > 0 (agility): -shift×6 only
-    /// When axis = 0: spectrum×6
-    pub fn might(&self) -> u16 {
-        let spectrum_base = (self.might_agility_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.might_agility_shift as i16) * 12;
+    pub fn might(&self) -> u16 { self.physique.value(End::Left) }
+    pub fn agility(&self) -> u16 { self.physique.value(End::Right) }
+    pub fn vitality(&self) -> u16 { self.conditioning.value(End::Left) }
+    pub fn discipline(&self) -> u16 { self.conditioning.value(End::Right) }
+    pub fn instinct(&self) -> u16 { self.temperament.value(End::Left) }
+    pub fn resolve(&self) -> u16 { self.temperament.value(End::Right) }
 
-        if self.might_agility_axis < 0 {
-            // Axis on might side: axis + spectrum - shift
-            let axis_reach = (self.might_agility_axis.unsigned_abs() as i16) * 16;
-            (axis_reach + spectrum_base - shift_scaled).max(0) as u16
-        } else if self.might_agility_axis > 0 {
-            // Axis on agility side: opposite side gets -shift only
-            (-shift_scaled).max(0) as u16
-        } else {
-            // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.might_agility_spectrum.max(0) as i16) * 6).max(0) as u16
-        }
-    }
+    pub fn might_reach(&self) -> u16 { self.physique.reach(End::Left) }
+    pub fn agility_reach(&self) -> u16 { self.physique.reach(End::Right) }
+    pub fn vitality_reach(&self) -> u16 { self.conditioning.reach(End::Left) }
+    pub fn discipline_reach(&self) -> u16 { self.conditioning.reach(End::Right) }
+    pub fn instinct_reach(&self) -> u16 { self.temperament.reach(End::Left) }
+    pub fn resolve_reach(&self) -> u16 { self.temperament.reach(End::Right) }
 
-    /// Current available Agility (scaled)
-    /// When axis > 0 (agility): axis×15 + spectrum×10 + shift×10
-    /// When axis < 0 (might): shift×10 only
-    /// When axis = 0: spectrum×7 (balanced, reduced multiplier)
-    pub fn agility(&self) -> u16 {
-        let spectrum_base = (self.might_agility_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.might_agility_shift as i16) * 12;
-
-        if self.might_agility_axis > 0 {
-            // Axis on agility side: axis + spectrum + shift
-            let axis_reach = (self.might_agility_axis as i16) * 16;
-            (axis_reach + spectrum_base + shift_scaled).max(0) as u16
-        } else if self.might_agility_axis < 0 {
-            // Axis on might side: opposite side gets shift only
-            shift_scaled.max(0) as u16
-        } else {
-            // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.might_agility_spectrum.max(0) as i16) * 6).max(0) as u16
-        }
-    }
-
-    // === VITALITY ↔ DISCIPLINE ===
-
-    /// Maximum Vitality reach (including maximum shift)
-    /// When axis on vitality side: axis×16 + spectrum×12 (at shift=0)
-    /// When axis on discipline side: spectrum×12 (shift all spectrum to vitality)
-    /// When axis = 0: spectrum×6 (balanced, shift blocked)
-    pub fn vitality_reach(&self) -> u16 {
-        if self.vitality_discipline_axis == 0 {
-            // Balanced: no shift allowed, reach equals current
-            (self.vitality_discipline_spectrum.max(0) as u16) * 6
-        } else if self.vitality_discipline_axis < 0 {
-            // Axis on vitality side: already at max with shift=0
-            let axis_reach = (self.vitality_discipline_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.vitality_discipline_spectrum.max(0) as u16) * 12;
-            axis_reach + spectrum_reach
-        } else {
-            // Axis on discipline side: can shift spectrum to vitality
-            (self.vitality_discipline_spectrum.max(0) as u16) * 12
-        }
-    }
-
-    /// Maximum Discipline reach (including maximum shift)
-    /// When axis on discipline side: axis×16 + spectrum×12 (at shift=0)
-    /// When axis on vitality side: spectrum×12 (max shift toward discipline)
-    /// When axis = 0: spectrum×6 (balanced, shift blocked)
-    pub fn discipline_reach(&self) -> u16 {
-        if self.vitality_discipline_axis == 0 {
-            // Balanced: no shift allowed, reach equals current
-            (self.vitality_discipline_spectrum.max(0) as u16) * 6
-        } else if self.vitality_discipline_axis > 0 {
-            // Axis on discipline side: already at max with shift=0
-            let axis_reach = (self.vitality_discipline_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.vitality_discipline_spectrum.max(0) as u16) * 12;
-            axis_reach + spectrum_reach
-        } else {
-            // Axis on vitality side: can shift spectrum to discipline
-            (self.vitality_discipline_spectrum.max(0) as u16) * 12
-        }
-    }
-
-    /// Current available Vitality (scaled)
-    /// When axis < 0 (vitality): axis×10 + spectrum×6 - shift×6
-    /// When axis > 0 (discipline): -shift×6 only
-    /// When axis = 0: spectrum×6
-    pub fn vitality(&self) -> u16 {
-        let spectrum_base = (self.vitality_discipline_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.vitality_discipline_shift as i16) * 12;
-
-        if self.vitality_discipline_axis < 0 {
-            // Axis on vitality side: axis + spectrum - shift
-            let axis_reach = (self.vitality_discipline_axis.unsigned_abs() as i16) * 16;
-            (axis_reach + spectrum_base - shift_scaled).max(0) as u16
-        } else if self.vitality_discipline_axis > 0 {
-            // Axis on discipline side: opposite side gets -shift only
-            (-shift_scaled).max(0) as u16
-        } else {
-            // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.vitality_discipline_spectrum.max(0) as i16) * 6).max(0) as u16
-        }
-    }
-
-    /// Current available Discipline (scaled)
-    /// When axis > 0 (discipline): axis×15 + spectrum×10 + shift×10
-    /// When axis < 0 (vitality): shift×10 only
-    /// When axis = 0: spectrum×7 (balanced, reduced multiplier)
-    pub fn discipline(&self) -> u16 {
-        let spectrum_base = (self.vitality_discipline_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.vitality_discipline_shift as i16) * 12;
-
-        if self.vitality_discipline_axis > 0 {
-            // Axis on discipline side: axis + spectrum + shift
-            let axis_reach = (self.vitality_discipline_axis as i16) * 16;
-            (axis_reach + spectrum_base + shift_scaled).max(0) as u16
-        } else if self.vitality_discipline_axis < 0 {
-            // Axis on vitality side: opposite side gets shift only
-            shift_scaled.max(0) as u16
-        } else {
-            // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.vitality_discipline_spectrum.max(0) as i16) * 6).max(0) as u16
-        }
-    }
-
-    // === INSTINCT ↔ RESOLVE ===
-
-    /// Maximum Instinct reach (including maximum shift)
-    /// When axis on instinct side: axis×16 + spectrum×12 (at shift=0)
-    /// When axis on resolve side: spectrum×12 (shift all spectrum to instinct)
-    /// When axis = 0: spectrum×6 (balanced, shift blocked)
-    pub fn instinct_reach(&self) -> u16 {
-        if self.instinct_resolve_axis == 0 {
-            // Balanced: no shift allowed, reach equals current
-            (self.instinct_resolve_spectrum.max(0) as u16) * 6
-        } else if self.instinct_resolve_axis < 0 {
-            // Axis on instinct side: already at max with shift=0
-            let axis_reach = (self.instinct_resolve_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.instinct_resolve_spectrum.max(0) as u16) * 12;
-            axis_reach + spectrum_reach
-        } else {
-            // Axis on resolve side: can shift spectrum to instinct
-            (self.instinct_resolve_spectrum.max(0) as u16) * 12
-        }
-    }
-
-    /// Maximum Resolve reach (including maximum shift)
-    /// When axis on resolve side: axis×16 + spectrum×12 (at shift=0)
-    /// When axis on instinct side: spectrum×12 (max shift toward resolve)
-    /// When axis = 0: spectrum×6 (balanced, shift blocked)
-    pub fn resolve_reach(&self) -> u16 {
-        if self.instinct_resolve_axis == 0 {
-            // Balanced: no shift allowed, reach equals current
-            (self.instinct_resolve_spectrum.max(0) as u16) * 6
-        } else if self.instinct_resolve_axis > 0 {
-            // Axis on resolve side: already at max with shift=0
-            let axis_reach = (self.instinct_resolve_axis.unsigned_abs() as u16) * 16;
-            let spectrum_reach = (self.instinct_resolve_spectrum.max(0) as u16) * 12;
-            axis_reach + spectrum_reach
-        } else {
-            // Axis on instinct side: can shift spectrum to resolve
-            (self.instinct_resolve_spectrum.max(0) as u16) * 12
-        }
-    }
-
-    /// Current available Instinct (scaled)
-    /// When axis < 0 (instinct): axis×10 + spectrum×6 - shift×6
-    /// When axis > 0 (resolve): -shift×6 only
-    /// When axis = 0: spectrum×6
-    pub fn instinct(&self) -> u16 {
-        let spectrum_base = (self.instinct_resolve_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.instinct_resolve_shift as i16) * 12;
-
-        if self.instinct_resolve_axis < 0 {
-            // Axis on instinct side: axis + spectrum - shift
-            let axis_reach = (self.instinct_resolve_axis.unsigned_abs() as i16) * 16;
-            (axis_reach + spectrum_base - shift_scaled).max(0) as u16
-        } else if self.instinct_resolve_axis > 0 {
-            // Axis on resolve side: opposite side gets -shift only
-            (-shift_scaled).max(0) as u16
-        } else {
-            // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.instinct_resolve_spectrum.max(0) as i16) * 6).max(0) as u16
-        }
-    }
-
-    /// Current available Resolve (scaled)
-    /// When axis > 0 (resolve): axis×15 + spectrum×10 + shift×10
-    /// When axis < 0 (instinct): shift×10 only
-    /// When axis = 0: spectrum×7 (balanced, reduced multiplier)
-    pub fn resolve(&self) -> u16 {
-        let spectrum_base = (self.instinct_resolve_spectrum.max(0) as i16) * 12;
-        let shift_scaled = (self.instinct_resolve_shift as i16) * 12;
-
-        if self.instinct_resolve_axis > 0 {
-            // Axis on resolve side: axis + spectrum + shift
-            let axis_reach = (self.instinct_resolve_axis as i16) * 16;
-            (axis_reach + spectrum_base + shift_scaled).max(0) as u16
-        } else if self.instinct_resolve_axis < 0 {
-            // Axis on instinct side: opposite side gets shift only
-            shift_scaled.max(0) as u16
-        } else {
-            // Balanced (axis=0): spectrum with reduced multiplier (×7)
-            ((self.instinct_resolve_spectrum.max(0) as i16) * 6).max(0) as u16
-        }
-    }
-
-    /// Calculate total level from invested attribute points
-    /// Each level grants 1 point to invest in any axis or spectrum
-    /// Fields store raw investment counts, so sum directly
+    /// The actor's level: every level it has put into an axis or a spectrum
     pub fn total_level(&self) -> u32 {
-        let mg_points = self.might_agility_axis.unsigned_abs() as u32 + self.might_agility_spectrum.max(0) as u32;
-        let vf_points = self.vitality_discipline_axis.unsigned_abs() as u32 + self.vitality_discipline_spectrum.max(0) as u32;
-        let ip_points = self.instinct_resolve_axis.unsigned_abs() as u32 + self.instinct_resolve_spectrum.max(0) as u32;
-        mg_points + vf_points + ip_points
+        self.physique.levels() + self.conditioning.levels() + self.temperament.levels()
     }
 
     // === LEVEL MULTIPLIER ===
@@ -905,22 +663,6 @@ impl ActorAttributes {
     /// every actor
     pub fn cadence_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs_f32(crate::tuning::tuning().auto_interval)
-    }
-}
-
-impl Default for ActorAttributes {
-    fn default() -> Self {
-        Self {
-            might_agility_axis: 0,
-            might_agility_spectrum: 0,
-            might_agility_shift: 0,
-            vitality_discipline_axis: 0,
-            vitality_discipline_spectrum: 0,
-            vitality_discipline_shift: 0,
-            instinct_resolve_axis: 0,
-            instinct_resolve_spectrum: 0,
-            instinct_resolve_shift: 0,
-        }
     }
 }
 
