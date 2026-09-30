@@ -45,9 +45,7 @@ impl Plugin for UiPlugin {
         app.add_systems(Update, resource_bars::update);
         app.add_systems(Update, (action_bar::sync_loadout, action_bar::update).chain());
         app.add_systems(Update, target_frame::update);
-        app.add_systems(Update, target_frame::update_ally_frame);
         app.add_systems(Update, target_frame::update_queue);
-        app.add_systems(Update, target_frame::update_ally_queue);
         app.add_systems(Update, target_indicator::update);
         app.add_systems(Update, tier_lock_range_indicator::update);
 

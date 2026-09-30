@@ -1,262 +1,198 @@
-//! Target Detail Frame System
-
-//! Shows detailed information about the currently targeted enemy in top-right corner.
-//! This enables tactical decision-making by answering questions like:
-//! - "Can they dodge?" (see their stamina)
-//! - "Is their queue full?" (see threat indicators)
-//! - "How close to death?" (exact HP numbers)
-
-
+//! The target frames: what the viewed actor has targeted, a hostile and an
+//! ally, side by side in the top-right corner. Each shows its target's
+//! level, name, triumvirate, health and the front of its threat queue, and
+//! stays on the last one targeted while that one stands in the world, so
+//! turning away does not blank it.
 
 use bevy::prelude::*;
 
 use crate::resources::Server;
-use common_bevy::components::{entity_type::*, resources::*, reaction_queue::*, ActorAttributes};
+use common_bevy::components::{ally_target::AllyTarget, entity_type::*, reaction_queue::*, resources::*, target::Target, ActorAttributes};
 
-/// Marker component for the target frame container
-#[derive(Component)]
-pub struct TargetFrame;
-
-/// Marker component for the target's name text
-#[derive(Component)]
-pub struct TargetNameText;
-
-/// Marker component for the target's health bar fill
-#[derive(Component)]
-pub struct TargetHealthBar;
-
-/// Marker component for the target's health text
-#[derive(Component)]
-pub struct TargetHealthText;
-
-/// Marker component for the target's threat queue container
-#[derive(Component)]
-pub struct TargetQueueContainer;
-
-/// Marker component for the capacity dots container
-#[derive(Component)]
-pub struct DotsContainer;
-
-/// Marker component for individual threat icons in target frame
-#[derive(Component)]
-pub struct TargetThreatIcon {
-    pub index: usize,
+/// Which of the viewed actor's targets a frame shows. Every part of a frame
+/// carries its lane, and the two differ only in what `Lane` answers.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lane {
+    Hostile,
+    Ally,
 }
 
-/// Marker component for capacity dot (filled or empty)
+const LANES: [Lane; 2] = [Lane::Hostile, Lane::Ally];
+
+/// A fixed part of a frame, by what it shows.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    Frame,
+    Name,
+    Triumvirate,
+    HealthBar,
+    HealthText,
+    LevelHex,
+    LevelText,
+    /// The threat queue section, shown for a target that has a queue
+    Queue,
+    /// Holds a [`CapacityDot`] for each slot of the target's window
+    Dots,
+    /// Holds a [`ThreatIcon`] for each of the first threats in its queue
+    Icons,
+}
+
+/// A slot of the target's queue window, lit while a threat stands in it
 #[derive(Component)]
 pub struct CapacityDot {
     pub index: usize,
 }
 
-/// Marker component for timer ring within threat icon
+/// One of the first threats in the target's queue
 #[derive(Component)]
-pub struct TargetThreatTimerRing {
+pub struct ThreatIcon;
+
+/// The ring inside a [`ThreatIcon`] that grows as the threat's time runs out
+#[derive(Component)]
+pub struct ThreatTimerRing {
     pub index: usize,
 }
 
-/// Marker component for attack type icon text within threat icon
-#[derive(Component)]
-pub struct TargetThreatAttackIcon {
-    pub index: usize,
+/// How many of the queue's threats a frame draws
+const ICONS: usize = 3;
+
+/// The colours and place that tell one lane's frame from the other's.
+struct Theme {
+    /// Pixels in from the right edge: the ally frame stands left of the hostile
+    right: f32,
+    border: Color,
+    background: Color,
+    name: Color,
+    bar_border: Color,
+    bar_background: Color,
+    bar_fill: Color,
 }
 
-/// Marker component for the target's triumvirate text (approach/resilience)
-#[derive(Component)]
-pub struct TargetTriumvirateText;
+impl Lane {
+    fn theme(self) -> Theme {
+        match self {
+            Lane::Hostile => Theme {
+                right: 10.,
+                border: Color::srgba(0.5, 0.5, 0.5, 0.8),
+                background: Color::srgba(0.1, 0.1, 0.1, 0.85),
+                name: Color::WHITE,
+                bar_border: Color::srgb(0.3, 0.3, 0.3),
+                bar_background: Color::srgb(0.2, 0.1, 0.0),
+                bar_fill: Color::srgb(0.9, 0.5, 0.0),
+            },
+            Lane::Ally => Theme {
+                right: 300.,
+                border: Color::srgba(0.0, 0.6, 0.0, 0.8),
+                background: Color::srgba(0.0, 0.15, 0.0, 0.85),
+                name: Color::srgb(0.8, 1.0, 0.8),
+                bar_border: Color::srgb(0.0, 0.4, 0.0),
+                bar_background: Color::srgb(0.0, 0.15, 0.0),
+                bar_fill: Color::srgb(0.2, 0.8, 0.2),
+            },
+        }
+    }
 
-/// Marker component for the target's level hexagon indicator
-#[derive(Component)]
-pub struct TargetLevelHex;
+    /// The target this lane's frame shows: the last the viewed actor held
+    fn target(self, target: &Target, ally: Option<&AllyTarget>) -> Option<Entity> {
+        match self {
+            Lane::Hostile => target.last_target,
+            Lane::Ally => ally.and_then(|ally| ally.last_target),
+        }
+    }
 
-/// Marker component for the ally frame container
-#[derive(Component)]
-pub struct AllyFrame;
+    /// A name's colour from its origin's: an ally's blended toward white
+    fn name(self, (r, g, b): (f32, f32, f32)) -> Color {
+        match self {
+            Lane::Hostile => Color::srgb(r, g, b),
+            Lane::Ally => Color::srgb((r * 0.7 + 0.3).min(1.0), (g * 0.7 + 0.3).min(1.0), (b * 0.7 + 0.3).min(1.0)),
+        }
+    }
 
-/// Marker component for the ally's name text
-#[derive(Component)]
-pub struct AllyNameText;
+    /// A capacity dot's fill and border: brightest in a full window, hollow
+    /// where no threat stands
+    fn dot(self, filled: bool, full: bool) -> (Color, Color) {
+        if !filled {
+            return (Color::NONE, Color::srgb(0.5, 0.5, 0.5));
+        }
+        let lit = match (self, full) {
+            (Lane::Hostile, true) => Color::srgb(1.0, 0.3, 0.3),
+            (Lane::Hostile, false) => Color::srgb(0.9, 0.4, 0.4),
+            (Lane::Ally, true) => Color::srgb(0.3, 1.0, 0.3),
+            (Lane::Ally, false) => Color::srgb(0.6, 0.9, 0.4),
+        };
+        (lit, lit)
+    }
 
-/// Marker component for the ally's health bar fill
-#[derive(Component)]
-pub struct AllyHealthBar;
+    /// A threat icon's border, brighter in a full window, and its background
+    fn icon(self, full: bool) -> (Color, Color) {
+        let strength = if full { 1.0 } else { 0.8 };
+        match self {
+            Lane::Hostile => (Color::srgb(strength, 0.2, 0.2), Color::srgb(0.3, 0.1, 0.1)),
+            Lane::Ally => (Color::srgb(0.2, strength, 0.2), Color::srgb(0.1, 0.3, 0.1)),
+        }
+    }
+}
 
-/// Marker component for the ally's health text
-#[derive(Component)]
-pub struct AllyHealthText;
+/// The level hexagon's colour for a target `diff` levels above the viewed
+/// actor: grey more than five below, green two to five below, yellow
+/// within one, red above that.
+fn level_color(diff: i32) -> Color {
+    if diff < -5 {
+        Color::srgb(0.4, 0.4, 0.4)
+    } else if diff <= -2 {
+        Color::srgb(0.2, 0.8, 0.2)
+    } else if diff.abs() <= 1 {
+        Color::srgb(0.9, 0.9, 0.2)
+    } else {
+        Color::srgb(0.9, 0.2, 0.2)
+    }
+}
 
-/// Marker component for the ally's triumvirate text (approach/resilience)
-#[derive(Component)]
-pub struct AllyTriumvirateText;
+/// A threat's timer ring at `now`: its size as a percentage of the icon,
+/// growing from 15 to 100 as the time runs out, and its colour, from yellow
+/// through orange at half to red.
+fn timer_ring(threat: &QueuedThreat, now: std::time::Duration) -> (f32, Color) {
+    let elapsed = now.saturating_sub(threat.inserted_at);
+    let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
+    let remaining = 1.0 - progress;
+    let green = if remaining > 0.5 {
+        let t = (remaining - 0.5) / 0.5;
+        0.9 * t + 0.5 * (1.0 - t)
+    } else {
+        0.5 * remaining / 0.5
+    };
+    (15.0 + 85.0 * progress, Color::srgba(1.0, green, 0.0, 0.9))
+}
 
-/// Marker component for the ally's threat queue container
-#[derive(Component)]
-pub struct AllyQueueContainer;
-
-/// Marker component for the ally's capacity dots container
-#[derive(Component)]
-pub struct AllyDotsContainer;
-
-/// Marker component for individual threat icons in ally frame
-#[derive(Component)]
-pub struct AllyThreatIcon;
-
-/// Marker component for ally capacity dot (filled or empty)
-#[derive(Component)]
-pub struct AllyCapacityDot;
-
-/// Marker component for the ally's level hexagon indicator
-#[derive(Component)]
-pub struct AllyLevelHex;
-
-/// Setup the target detail frame in top-right corner
-/// Frame is hidden by default and shown when a target is selected
+/// Builds both frames, hidden until their lane has a target.
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, With<IsDefaultUiCamera>>,
 ) {
     let camera = query.single().expect("query did not return exactly one result");
 
-    // Main container - top-right corner, 280px wide
-    commands.spawn((
-        UiTargetCamera(camera),
-        Node {
-            position_type: PositionType::Absolute,
-            width: Val::Px(280.),
-            height: Val::Auto,
-            top: Val::Px(10.),
-            right: Val::Px(10.),
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::all(Val::Px(10.)),
-            row_gap: Val::Px(6.),
-            ..default()
-        },
-        BorderColor::all(Color::srgba(0.5, 0.5, 0.5, 0.8)),
-        BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.85)),
-        Visibility::Hidden,  // Hidden by default
-        TargetFrame,
-    ))
-    .with_children(|parent| {
-        // Header row: Level hexagon + Entity name
-        parent.spawn((
+    for lane in LANES {
+        let theme = lane.theme();
+        commands.spawn((
+            UiTargetCamera(camera),
             Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(6.),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-        ))
-        .with_children(|parent| {
-            // Level hexagon indicator
-            parent.spawn((
-                Node {
-                    width: Val::Px(24.),
-                    height: Val::Px(24.),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border: UiRect::all(Val::Px(2.)),
-                    border_radius: BorderRadius::all(Val::Px(3.)), // Slight rounding to suggest hexagon
-                    ..default()
-                },
-                BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
-                BackgroundColor(Color::srgb(0.3, 0.3, 0.3)), // Will be colored based on level diff
-                TargetLevelHex,
-            ))
-            .with_children(|parent| {
-                parent.spawn((
-                    Text::new("0"),
-                    TextFont {
-                        font_size: FontSize::Px(12.0),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                ));
-            });
-
-            // Entity name
-            parent.spawn((
-                Text::new("Enemy Name"),
-                TextFont {
-                    font_size: FontSize::Px(14.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                TargetNameText,
-            ));
-        });
-
-        // Triumvirate row: Approach / Resilience (centered below name, colored by origin)
-        parent.spawn((
-            Text::new("Direct / Primal"),
-            TextFont {
-                font_size: FontSize::Px(11.0),
-                ..default()
-            },
-            TextColor(Color::srgb(0.8, 0.8, 0.8)), // Will be set dynamically based on origin
-            TargetTriumvirateText,
-        ));
-
-        // Health bar container
-        parent.spawn((
-            Node {
-                width: Val::Percent(100.),
-                height: Val::Px(16.),
-                border: UiRect::all(Val::Px(2.)),
-                justify_content: JustifyContent::FlexEnd,
-                align_items: AlignItems::Center,
-                padding: UiRect::all(Val::Px(2.)),
-                ..default()
-            },
-            BorderColor::all(Color::srgb(0.3, 0.3, 0.3)),
-            BackgroundColor(Color::srgb(0.2, 0.1, 0.0)),  // Dark orange/brown background
-        ))
-        .with_children(|parent| {
-            // Health fill bar (orange, distinct from player red)
-            parent.spawn((
-                Node {
-                    width: Val::Percent(100.),
-                    height: Val::Percent(100.),
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(0.),
-                    top: Val::Px(0.),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.9, 0.5, 0.0)),  // Orange
-                TargetHealthBar,
-            ));
-
-            // Health text (exact numbers, right-aligned on bar)
-            parent.spawn((
-                Text::new("100/100"),
-                TextFont {
-                    font_size: FontSize::Px(12.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                Node {
-                    position_type: PositionType::Relative,
-                    ..default()
-                },
-                TargetHealthText,
-            ));
-        });
-
-        // TODO: Resource bars (stamina/mana) for elite enemies/players
-        // MVP: Wild Dog enemies don't have resources yet
-
-        // Threat queue section (shown only when target has a queue)
-        parent.spawn((
-            Node {
-                width: Val::Percent(100.),
+                position_type: PositionType::Absolute,
+                width: Val::Px(280.),
+                height: Val::Auto,
+                top: Val::Px(10.),
+                right: Val::Px(theme.right),
                 flex_direction: FlexDirection::Column,
+                padding: UiRect::all(Val::Px(10.)),
                 row_gap: Val::Px(6.),
                 ..default()
             },
-            Visibility::Hidden,  // Hidden by default, shown when target has queue
-            TargetQueueContainer,
+            BorderColor::all(theme.border),
+            BackgroundColor(theme.background),
+            Visibility::Hidden,
+            (lane, Part::Frame),
         ))
         .with_children(|parent| {
-            // Top row: Warning icon + capacity dots
+            // Header row: level hexagon and name
             parent.spawn((
                 Node {
                     flex_direction: FlexDirection::Row,
@@ -266,178 +202,95 @@ pub fn setup(
                 },
             ))
             .with_children(|parent| {
-                // Capacity dots container (will be populated dynamically)
                 parent.spawn((
                     Node {
-                        flex_direction: FlexDirection::Row,
-                        column_gap: Val::Px(3.),
+                        width: Val::Px(24.),
+                        height: Val::Px(24.),
+                        justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(2.)),
+                        border_radius: BorderRadius::all(Val::Px(3.)), // Slight rounding to suggest hexagon
                         ..default()
                     },
-                    DotsContainer,
-                ));
-            });
+                    BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
+                    BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
+                    (lane, Part::LevelHex),
+                ))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Text::new("0"),
+                        TextFont { font_size: FontSize::Px(12.0), ..default() },
+                        TextColor(Color::WHITE),
+                        (lane, Part::LevelText),
+                    ));
+                });
 
-            // Bottom row: Container for threat icons (will be populated dynamically)
-            parent.spawn((
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(5.),
-                    ..default()
-                },
-            ));
-        });
-    });
-
-    // Ally frame - positioned to the left of hostile frame (side-by-side in top-right)
-    commands.spawn((
-        UiTargetCamera(camera),
-        Node {
-            position_type: PositionType::Absolute,
-            width: Val::Px(280.),
-            height: Val::Auto,
-            top: Val::Px(10.),
-            right: Val::Px(300.),  // 280px (hostile width) + 10px gap + 10px margin
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::all(Val::Px(10.)),
-            row_gap: Val::Px(6.),
-            ..default()
-        },
-        BorderColor::all(Color::srgba(0.0, 0.6, 0.0, 0.8)),  // Green border
-        BackgroundColor(Color::srgba(0.0, 0.15, 0.0, 0.85)),  // Dark green background
-        Visibility::Hidden,  // Hidden by default
-        AllyFrame,
-    ))
-    .with_children(|parent| {
-        // Header row: Level hexagon + Ally name
-        parent.spawn((
-            Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(6.),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-        ))
-        .with_children(|parent| {
-            // Level hexagon indicator
-            parent.spawn((
-                Node {
-                    width: Val::Px(24.),
-                    height: Val::Px(24.),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border: UiRect::all(Val::Px(2.)),
-                    border_radius: BorderRadius::all(Val::Px(3.)), // Slight rounding to suggest hexagon
-                    ..default()
-                },
-                BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
-                BackgroundColor(Color::srgb(0.3, 0.3, 0.3)), // Will be colored based on level diff
-                AllyLevelHex,
-            ))
-            .with_children(|parent| {
                 parent.spawn((
-                    Text::new("0"),
-                    TextFont {
-                        font_size: FontSize::Px(12.0),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
+                    Text::new(""),
+                    TextFont { font_size: FontSize::Px(14.0), ..default() },
+                    TextColor(theme.name),
+                    (lane, Part::Name),
                 ));
             });
 
-            // Ally name
+            // Approach / Resilience, coloured by origin
             parent.spawn((
-                Text::new("Ally Name"),
-                TextFont {
-                    font_size: FontSize::Px(14.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.8, 1.0, 0.8)),  // Light green tint
-                AllyNameText,
+                Text::new(""),
+                TextFont { font_size: FontSize::Px(11.0), ..default() },
+                TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                (lane, Part::Triumvirate),
             ));
-        });
 
-        // Triumvirate row: Approach / Resilience
-        parent.spawn((
-            Text::new("Direct / Primal"),
-            TextFont {
-                font_size: FontSize::Px(11.0),
-                ..default()
-            },
-            TextColor(Color::srgb(0.8, 0.8, 0.8)),
-            AllyTriumvirateText,
-        ));
-
-        // Health bar container
-        parent.spawn((
-            Node {
-                width: Val::Percent(100.),
-                height: Val::Px(16.),
-                border: UiRect::all(Val::Px(2.)),
-                justify_content: JustifyContent::FlexEnd,
-                align_items: AlignItems::Center,
-                padding: UiRect::all(Val::Px(2.)),
-                ..default()
-            },
-            BorderColor::all(Color::srgb(0.0, 0.4, 0.0)),  // Dark green border
-            BackgroundColor(Color::srgb(0.0, 0.15, 0.0)),  // Dark green background
-        ))
-        .with_children(|parent| {
-            // Health fill bar (green theme)
+            // Health bar
             parent.spawn((
                 Node {
                     width: Val::Percent(100.),
-                    height: Val::Percent(100.),
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(0.),
-                    top: Val::Px(0.),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.2, 0.8, 0.2)),  // Bright green fill
-                AllyHealthBar,
-            ));
-
-            // Health text (exact numbers, right-aligned on bar)
-            parent.spawn((
-                Text::new("100/100"),
-                TextFont {
-                    font_size: FontSize::Px(12.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                Node {
-                    position_type: PositionType::Relative,
-                    ..default()
-                },
-                AllyHealthText,
-            ));
-        });
-
-        // TODO: Resource bars (stamina/mana) - show when ally support abilities are added
-
-        // Threat queue section (shown only when ally has a queue)
-        parent.spawn((
-            Node {
-                width: Val::Percent(100.),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(6.),
-                ..default()
-            },
-            Visibility::Hidden,  // Hidden by default, shown when ally has queue
-            AllyQueueContainer,
-        ))
-        .with_children(|parent| {
-            // Top row: Warning icon + capacity dots
-            parent.spawn((
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(6.),
+                    height: Val::Px(16.),
+                    border: UiRect::all(Val::Px(2.)),
+                    justify_content: JustifyContent::FlexEnd,
                     align_items: AlignItems::Center,
+                    padding: UiRect::all(Val::Px(2.)),
                     ..default()
                 },
+                BorderColor::all(theme.bar_border),
+                BackgroundColor(theme.bar_background),
             ))
             .with_children(|parent| {
-                // Capacity dots container (will be populated dynamically)
+                parent.spawn((
+                    Node {
+                        width: Val::Percent(100.),
+                        height: Val::Percent(100.),
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.),
+                        top: Val::Px(0.),
+                        ..default()
+                    },
+                    BackgroundColor(theme.bar_fill),
+                    (lane, Part::HealthBar),
+                ));
+
+                // Exact numbers, right-aligned on the bar
+                parent.spawn((
+                    Text::new(""),
+                    TextFont { font_size: FontSize::Px(12.0), ..default() },
+                    TextColor(Color::WHITE),
+                    Node { position_type: PositionType::Relative, ..default() },
+                    (lane, Part::HealthText),
+                ));
+            });
+
+            // Threat queue: capacity dots over threat icons
+            parent.spawn((
+                Node {
+                    width: Val::Percent(100.),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(6.),
+                    ..default()
+                },
+                Visibility::Hidden,
+                (lane, Part::Queue),
+            ))
+            .with_children(|parent| {
                 parent.spawn((
                     Node {
                         flex_direction: FlexDirection::Row,
@@ -445,763 +298,261 @@ pub fn setup(
                         align_items: AlignItems::Center,
                         ..default()
                     },
-                    AllyDotsContainer,
+                    (lane, Part::Dots),
+                ));
+                parent.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(5.),
+                        ..default()
+                    },
+                    (lane, Part::Icons),
                 ));
             });
-
-            // Bottom row: Container for threat icons (will be populated dynamically)
-            parent.spawn((
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(5.),
-                    ..default()
-                },
-            ));
         });
-    });
+    }
 }
 
-/// Update target frame to show current target's information
-/// Uses sticky targeting - target persists until a new target is selected or current dies/despawns
+/// Shows in each frame the lane's last target while it stands in the
+/// world, and hides the frame with none, or while the viewed actor is dead.
 pub fn update(
-    mut frame_query: Query<&mut Visibility, With<TargetFrame>>,
-    mut name_text_query: Query<&mut Text, (With<TargetNameText>, Without<TargetHealthText>, Without<TargetTriumvirateText>)>,
-    mut name_color_query: Query<&mut TextColor, With<TargetNameText>>,
-    mut triumvirate_query: Query<(&mut Text, &mut TextColor), (With<TargetTriumvirateText>, Without<TargetNameText>, Without<TargetHealthText>)>,
-    mut health_bar_query: Query<&mut Node, With<TargetHealthBar>>,
-    mut health_text_query: Query<&mut Text, (With<TargetHealthText>, Without<TargetNameText>, Without<TargetTriumvirateText>)>,
-    mut level_hex_query: Query<(&mut BackgroundColor, &Children), With<TargetLevelHex>>,
-    mut level_text_query: Query<&mut Text, (Without<TargetNameText>, Without<TargetHealthText>, Without<TargetTriumvirateText>)>,
-    player_query: Query<(&Health, &common_bevy::components::target::Target, Option<&ActorAttributes>), With<crate::components::Viewed>>,
-    target_query: Query<(&EntityType, &Health, Option<&ReactionQueue>, Option<&ActorAttributes>)>,
+    mut parts: Query<(&Lane, &Part, &mut Visibility, Option<&mut Text>, Option<&mut TextColor>, Option<&mut Node>, Option<&mut BackgroundColor>)>,
+    viewed: Query<(&Health, &Target, Option<&AllyTarget>, Option<&ActorAttributes>), With<crate::components::Viewed>>,
+    targets: Query<(&EntityType, &Health, Has<ReactionQueue>, Option<&ActorAttributes>)>,
 ) {
-    // Get local player and target
-    let Ok((player_health, target, own_attrs)) = player_query.single() else {
+    let Ok((own_health, target, ally, own_attrs)) = viewed.single() else {
         return;
     };
+    let shown = LANES.map(|lane| {
+        lane.target(target, ally)
+            .filter(|_| own_health.state > 0.0)
+            .and_then(|ent| targets.get(ent).ok())
+    });
 
-    // Don't show target frame while dead
-    if player_health.state <= 0.0 {
-        for mut visibility in &mut frame_query {
-            *visibility = Visibility::Hidden;
-        }
-        return;
-    }
-
-    // Read sticky target from Target.last_target
-    // This persists even when you turn away (entity field clears but last_target remains)
-    let last_target = target.last_target;
-
-    // Show/hide frame and update content based on target; one gone from
-    // the world hides it, not leaves it showing what it last read
-    if let Some(target_ent) = last_target.filter(|&target| target_query.contains(target)) {
-        // Target exists - show frame and update content
-        for mut visibility in &mut frame_query {
-            *visibility = Visibility::Visible;
-        }
-
-        if let Ok((entity_type, target_health, _queue_opt, target_attrs)) = target_query.get(target_ent) {
-            // Update entity name
-            for mut text in &mut name_text_query {
-                **text = entity_type.display_name().to_string();
+    for (lane, part, mut visibility, text, color, node, background) in &mut parts {
+        let Some((typ, health, has_queue, attrs)) = shown[*lane as usize] else {
+            // A frame hides its parts with it, but the queue section, which
+            // keeps a visibility of its own
+            if matches!(part, Part::Frame | Part::Queue) {
+                *visibility = Visibility::Hidden;
             }
-
-            // Update level hexagon: the level its attributes give it,
-            // coloured by the gap to the viewed actor's own
-            if let Some(target_attrs) = target_attrs {
-                let level = target_attrs.total_level() as i32;
-                let level_diff = level - own_attrs.map_or(level, |own| own.total_level() as i32);
-
-                // >5 levels lower = gray
-                // 2-5 levels lower = green
-                // 1 level less or greater = yellow
-                // >1 level higher = red
-                let hex_color = if level_diff < -5 {
-                    Color::srgb(0.4, 0.4, 0.4) // Gray - trivial
-                } else if level_diff <= -2 {
-                    Color::srgb(0.2, 0.8, 0.2) // Green - easy
-                } else if level_diff.abs() <= 1 {
-                    Color::srgb(0.9, 0.9, 0.2) // Yellow - even match
-                } else {
-                    Color::srgb(0.9, 0.2, 0.2) // Red - dangerous
-                };
-
-                // Update hexagon color and level text
-                for (mut bg_color, children) in &mut level_hex_query {
-                    bg_color.0 = hex_color;
-
-                    // Update the level number text (child of hexagon)
-                    for child in children.iter() {
-                        if let Ok(mut level_text) = level_text_query.get_mut(child) {
-                            **level_text = level.to_string();
-                        }
-                    }
+            continue;
+        };
+        let actor = match typ {
+            EntityType::Actor(actor) => Some(actor),
+            _ => None,
+        };
+        let level = attrs.map(|attrs| attrs.total_level() as i32);
+        match part {
+            Part::Frame => *visibility = Visibility::Visible,
+            Part::Queue => *visibility = if has_queue { Visibility::Inherited } else { Visibility::Hidden },
+            Part::Name => {
+                if let Some(mut text) = text {
+                    **text = typ.display_name().to_string();
+                }
+                if let (Some(mut color), Some(actor)) = (color, actor) {
+                    color.0 = lane.name(actor.origin.color());
                 }
             }
-
-            // Update triumvirate display (only for actors)
-            if let EntityType::Actor(actor_impl) = entity_type {
-                // Set name color based on origin
-                for mut color in &mut name_color_query {
-                    let (r, g, b) = actor_impl.origin.color();
-                    color.0 = Color::srgb(r, g, b);
-                }
-
-                // Set triumvirate text (Approach / Resilience)
-                for (mut text, mut color) in &mut triumvirate_query {
-                    **text = format!("{} / {}",
-                        actor_impl.approach.display_name(),
-                        actor_impl.resilience.display_name()
-                    );
-                    // Triumvirate text also colored by origin (slightly dimmer)
-                    let (r, g, b) = actor_impl.origin.color();
+            Part::Triumvirate => {
+                if let (Some(mut text), Some(mut color), Some(actor)) = (text, color, actor) {
+                    **text = format!("{} / {}", actor.approach.display_name(), actor.resilience.display_name());
+                    // The origin's colour, dimmer than the name
+                    let (r, g, b) = actor.origin.color();
                     color.0 = Color::srgb(r * 0.8, g * 0.8, b * 0.8);
                 }
             }
-
-            // Update health bar width
-            for mut node in &mut health_bar_query {
-                let percent = if target_health.max > 0.0 {
-                    (target_health.state / target_health.max * 100.0).clamp(0.0, 100.0)
-                } else {
-                    0.0
-                };
-                node.width = Val::Percent(percent);
+            Part::HealthBar => {
+                if let Some(mut node) = node {
+                    let percent = if health.max > 0.0 { (health.state / health.max * 100.0).clamp(0.0, 100.0) } else { 0.0 };
+                    node.width = Val::Percent(percent);
+                }
             }
-
-            // Update health text (exact numbers)
-            for mut text in &mut health_text_query {
-                **text = format!("{:.0}/{:.0}", target_health.state, target_health.max);
+            Part::HealthText => {
+                if let Some(mut text) = text {
+                    **text = format!("{:.0}/{:.0}", health.state, health.max);
+                }
             }
-        }
-    } else {
-        // No target - hide frame
-        for mut visibility in &mut frame_query {
-            *visibility = Visibility::Hidden;
+            // The level its attributes give it, coloured by the gap to the viewed actor's own
+            Part::LevelHex => {
+                if let (Some(mut background), Some(level)) = (background, level) {
+                    background.0 = level_color(level - own_attrs.map_or(level, |own| own.total_level() as i32));
+                }
+            }
+            Part::LevelText => {
+                if let (Some(mut text), Some(level)) = (text, level) {
+                    **text = level.to_string();
+                }
+            }
+            Part::Dots | Part::Icons => {}
         }
     }
 }
 
-/// Update target frame queue display
-/// Separate system to avoid hitting Bevy's system parameter limits
+/// Draws each frame's queue section: a dot to each slot of the target's
+/// window, and an icon to each of the first threats in it that are not
+/// pressure and have time left. Dots and icons are rebuilt when their count
+/// changes and recoloured in place otherwise.
 pub fn update_queue(
     mut commands: Commands,
-    player_query: Query<&common_bevy::components::target::Target, With<crate::components::Viewed>>,
-    mut queue_container_query: Query<&mut Visibility, With<TargetQueueContainer>>,
-    queue_children_query: Query<&Children, With<TargetQueueContainer>>,
-    dots_container_query: Query<Entity, With<DotsContainer>>,
-    mut threat_icon_query: Query<(Entity, &TargetThreatIcon, &mut BorderColor), (Without<CapacityDot>, Without<TargetThreatTimerRing>)>,
-    capacity_dot_query: Query<(Entity, &CapacityDot)>,
-    mut dot_node_query: Query<(&mut BackgroundColor, &mut BorderColor), (With<CapacityDot>, Without<TargetThreatIcon>, Without<TargetThreatTimerRing>)>,
-    mut timer_ring_query: Query<(&TargetThreatTimerRing, &mut Node, &mut BorderColor), (Without<TargetThreatIcon>, Without<CapacityDot>)>,
-    mut attack_icon_query: Query<(&TargetThreatAttackIcon, &mut Text)>,
-    target_query: Query<Option<&ReactionQueue>>,
+    viewed: Query<(&Target, Option<&AllyTarget>), With<crate::components::Viewed>>,
+    queues: Query<&ReactionQueue>,
+    containers: Query<(Entity, &Lane, &Part)>,
+    mut dots: Query<(Entity, &Lane, &CapacityDot, &mut BackgroundColor, &mut BorderColor), (Without<ThreatIcon>, Without<ThreatTimerRing>)>,
+    mut icons: Query<(Entity, &Lane, &mut BorderColor), (With<ThreatIcon>, Without<CapacityDot>, Without<ThreatTimerRing>)>,
+    mut rings: Query<(&Lane, &ThreatTimerRing, &mut Node, &mut BorderColor), (Without<CapacityDot>, Without<ThreatIcon>)>,
     time: Res<Time>,
     server: Res<Server>,
 ) {
-    // Get player's target
-    let Ok(player_target) = player_query.single() else {
+    let Ok((target, ally)) = viewed.single() else {
         return;
     };
+    let now_ms = server.current_time(time.elapsed().as_millis());
+    let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
-    // Check if we have a target
-    let Some(target_ent) = player_target.entity else {
-        // No target - hide queue
-        for mut visibility in &mut queue_container_query {
-            *visibility = Visibility::Hidden;
-        }
-        return;
-    };
+    for lane in LANES {
+        let Some(queue) = lane.target(target, ally).and_then(|ent| queues.get(ent).ok()) else { continue };
+        let container = |wanted: Part| containers.iter().find(|(_, of, part)| **of == lane && **part == wanted).map(|(ent, ..)| ent);
+        let filled = queue.visible_count();
+        let full = filled >= queue.window_size;
 
-    // Get target's reaction queue
-    let Ok(queue_opt) = target_query.get(target_ent) else {
-        return;
-    };
-
-    // Update queue container visibility and content
-    if let Ok(mut queue_visibility) = queue_container_query.single_mut() {
-        if let Some(queue) = queue_opt {
-            // Target has a queue - show it
-            *queue_visibility = Visibility::Visible;
-
-            // Get actual queue window size from the component
-            let queue_capacity = queue.window_size;
-            let filled_slots = queue.visible_count();
-            // Queue is unbounded, but window can be "full" if all visible slots have threats
-            let is_full = filled_slots >= queue.window_size;
-
-            // Check if we need to rebuild capacity dots (capacity changed)
-            let current_dots: Vec<_> = capacity_dot_query.iter().collect();
-            let dots_need_rebuild = current_dots.len() != queue_capacity;
-
-            if dots_need_rebuild {
-                // Capacity changed - despawn all and respawn with correct count
-                for (dot_ent, _) in &current_dots {
-                    commands.entity(*dot_ent).despawn();
-                }
-
-                // Spawn capacity dots in the dots container
-                if let Ok(dots_container_ent) = dots_container_query.single() {
-                    commands.entity(dots_container_ent).with_children(|parent| {
-                        for i in 0..queue_capacity {
-                            let is_filled = i < filled_slots;
-
-                            // Use circular UI nodes instead of text characters
-                            let (bg_color, border_color) = if is_full && is_filled {
-                                // Full queue: filled dots are bright red with red border
-                                (Color::srgb(1.0, 0.3, 0.3), Color::srgb(1.0, 0.3, 0.3))
-                            } else if is_filled {
-                                // Filled but not full: orange-red fill with border
-                                (Color::srgb(0.9, 0.4, 0.4), Color::srgb(0.9, 0.4, 0.4))
-                            } else {
-                                // Empty: transparent with gray border
-                                (Color::NONE, Color::srgb(0.5, 0.5, 0.5))
-                            };
-
-                            parent.spawn((
-                                Node {
-                                    width: Val::Px(8.),
-                                    height: Val::Px(8.),
-                                    border: UiRect::all(Val::Px(1.)),
-                                    border_radius: BorderRadius::all(Val::Percent(50.)), // Make circular
-                                    ..default()
-                                },
-                                BorderColor::all(border_color),
-                                BackgroundColor(bg_color),
-                                CapacityDot { index: i },
-                            ));
-                        }
-                    });
-                }
-            } else {
-                // Capacity unchanged - just update colors of existing dots
-                for (dot_ent, dot) in &current_dots {
-                    if let Ok((mut bg_color, mut border_color)) = dot_node_query.get_mut(*dot_ent) {
-                        let is_filled = dot.index < filled_slots;
-
-                        let (new_bg, new_border) = if is_full && is_filled {
-                            // Full queue: filled dots are bright red with red border
-                            (Color::srgb(1.0, 0.3, 0.3), Color::srgb(1.0, 0.3, 0.3))
-                        } else if is_filled {
-                            // Filled but not full: orange-red fill with border
-                            (Color::srgb(0.9, 0.4, 0.4), Color::srgb(0.9, 0.4, 0.4))
-                        } else {
-                            // Empty: transparent with gray border
-                            (Color::NONE, Color::srgb(0.5, 0.5, 0.5))
-                        };
-
-                        bg_color.0 = new_bg;
-                        *border_color = BorderColor::all(new_border);
-                    }
+        if dots.iter().filter(|(_, of, ..)| **of == lane).count() != queue.window_size {
+            for (ent, of, ..) in &dots {
+                if *of == lane {
+                    commands.entity(ent).despawn();
                 }
             }
-
-            // Update threat icons (LIMIT TO FIRST 3)
-            if let Ok(queue_children) = queue_children_query.single() {
-                let threat_icons_container = queue_children.get(1).copied();
-
-                if let Some(icons_ent) = threat_icons_container {
-                    let now_ms = server.current_time(time.elapsed().as_millis());
-                    let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
-
-                    // Filter out auto-attacks and expired threats and limit to first 3
-                    let active_threats: Vec<_> = queue.threats.iter()
-                        .filter(|threat| !threat.is_pressure())
-                        .filter(|threat| {
-                            let elapsed = now.saturating_sub(threat.inserted_at);
-                            elapsed < threat.timer_duration  // Only show non-expired threats
-                        })
-                        .take(3)
-                        .enumerate()
-                        .collect();
-
-                    let target_count = active_threats.len();
-                    let current_icon_count = threat_icon_query.iter().count();
-                    let icons_need_rebuild = current_icon_count != target_count;
-
-                    if icons_need_rebuild {
-                        // Icon count changed - despawn all and respawn with correct count
-                        for (icon_ent, _, _) in threat_icon_query.iter() {
-                            commands.entity(icon_ent).despawn();
-                        }
-
-                        // Spawn new threat icons
-                        commands.entity(icons_ent).with_children(|parent| {
-                            for (index, threat) in &active_threats {
-                                // Calculate timer progress
-                                let elapsed = now.saturating_sub(threat.inserted_at);
-                                let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
-                                let remaining = 1.0 - progress;
-
-                                // Color gradient: Yellow (start) → Orange (50%) → Red (end)
-                                let timer_color = if remaining > 0.5 {
-                                    // Yellow → Orange transition (100% to 50% remaining)
-                                    let t = (remaining - 0.5) / 0.5;
-                                    Color::srgba(
-                                        1.0,
-                                        0.9 * t + 0.5 * (1.0 - t),
-                                        0.0,
-                                        0.9,
-                                    )
-                                } else {
-                                    // Orange → Red transition (50% to 0% remaining)
-                                    let t = remaining / 0.5;
-                                    Color::srgba(
-                                        1.0,
-                                        0.5 * t,
-                                        0.0,
-                                        0.9,
-                                    )
-                                };
-
-                                // Size grows from 15% to 100% as timer counts down
-                                let size_percent = 15.0 + (85.0 * progress);
-                                let offset_percent = (100.0 - size_percent) / 2.0;
-
-                                // Threat icon (circular, 40px)
-                                parent.spawn((
-                                    Node {
-                                        width: Val::Px(40.),
-                                        height: Val::Px(40.),
-                                        border: UiRect::all(Val::Px(2.)),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        border_radius: BorderRadius::all(Val::Percent(50.)), // Make circular
-                                        ..default()
-                                    },
-                                    BorderColor::all(if is_full {
-                                        Color::srgb(1.0, 0.2, 0.2)  // Brighter red when full
-                                    } else {
-                                        Color::srgb(0.8, 0.2, 0.2)  // Normal red
-                                    }),
-                                    BackgroundColor(Color::srgb(0.3, 0.1, 0.1)),
-                                    TargetThreatIcon { index: *index },
-                                ))
-                                .with_children(|parent| {
-                                    // Timer ring (grows from center as time runs out)
-                                    parent.spawn((
-                                        Node {
-                                            position_type: PositionType::Absolute,
-                                            width: Val::Percent(size_percent),
-                                            height: Val::Percent(size_percent),
-                                            left: Val::Percent(offset_percent),
-                                            top: Val::Percent(offset_percent),
-                                            border: UiRect::all(Val::Px(3.)),
-                                            border_radius: BorderRadius::all(Val::Percent(50.)),
-                                            ..default()
-                                        },
-                                        BorderColor::all(timer_color),
-                                        BackgroundColor(Color::NONE),
-                                        TargetThreatTimerRing { index: *index },
-                                    ));
-
-                                    // Attack type icon (centered)
-                                    let icon_text = "⚔";
-
-                                    parent.spawn((
-                                        Text::new(icon_text),
-                                        TextFont {
-                                            font_size: FontSize::Px(22.0),
-                                            ..default()
-                                        },
-                                        TextColor(Color::WHITE),
-                                        TargetThreatAttackIcon { index: *index },
-                                    ));
-                                });
-                            }
-                        });
-                    } else {
-                        // Icon count unchanged - update existing icons
-                        for (index, threat) in &active_threats {
-                            // Calculate timer progress
-                            let elapsed = now.saturating_sub(threat.inserted_at);
-                            let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
-                            let remaining = 1.0 - progress;
-
-                            // Color gradient for timer ring
-                            let timer_color = if remaining > 0.5 {
-                                let t = (remaining - 0.5) / 0.5;
-                                Color::srgba(1.0, 0.9 * t + 0.5 * (1.0 - t), 0.0, 0.9)
-                            } else {
-                                let t = remaining / 0.5;
-                                Color::srgba(1.0, 0.5 * t, 0.0, 0.9)
-                            };
-
-                            // Update timer ring size and color
-                            for (ring, mut node, mut border_color) in timer_ring_query.iter_mut() {
-                                if ring.index == *index {
-                                    let size_percent = 15.0 + (85.0 * progress);
-                                    let offset_percent = (100.0 - size_percent) / 2.0;
-                                    node.width = Val::Percent(size_percent);
-                                    node.height = Val::Percent(size_percent);
-                                    node.left = Val::Percent(offset_percent);
-                                    node.top = Val::Percent(offset_percent);
-                                    *border_color = BorderColor::all(timer_color);
-                                }
-                            }
-
-                            // Update attack icon text if damage type changed
-                            for (attack_icon, mut text) in attack_icon_query.iter_mut() {
-                                if attack_icon.index == *index {
-                                    let icon_text = "⚔";
-                                    **text = icon_text.to_string();
-                                }
-                            }
-
-                            // Update threat icon border color based on queue fullness
-                            for (_icon_ent, icon, mut border_color) in threat_icon_query.iter_mut() {
-                                if icon.index == *index {
-                                    *border_color = BorderColor::all(if is_full {
-                                        Color::srgb(1.0, 0.2, 0.2)
-                                    } else {
-                                        Color::srgb(0.8, 0.2, 0.2)
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Target doesn't have a queue - hide it
-            *queue_visibility = Visibility::Hidden;
-        }
-    }
-}
-
-/// Update ally frame to show current ally target's information
-/// Uses sticky targeting - ally target persists until a new ally is selected or current dies/despawns
-/// Mirrors hostile frame logic but for friendly player entities
-pub fn update_ally_frame(
-    mut frame_query: Query<&mut Visibility, With<AllyFrame>>,
-    mut name_text_query: Query<&mut Text, (With<AllyNameText>, Without<AllyHealthText>, Without<AllyTriumvirateText>)>,
-    mut name_color_query: Query<&mut TextColor, With<AllyNameText>>,
-    mut triumvirate_query: Query<(&mut Text, &mut TextColor), (With<AllyTriumvirateText>, Without<AllyNameText>, Without<AllyHealthText>)>,
-    mut health_bar_query: Query<&mut Node, With<AllyHealthBar>>,
-    mut health_text_query: Query<&mut Text, (With<AllyHealthText>, Without<AllyNameText>, Without<AllyTriumvirateText>)>,
-    mut level_hex_query: Query<(&mut BackgroundColor, &Children), With<AllyLevelHex>>,
-    mut level_text_query: Query<&mut Text, (Without<AllyNameText>, Without<AllyHealthText>, Without<AllyTriumvirateText>)>,
-    player_query: Query<(Option<&common_bevy::components::ally_target::AllyTarget>, &Health, Option<&ActorAttributes>), With<crate::components::Viewed>>,
-    ally_query: Query<(&EntityType, &Health, Option<&ActorAttributes>)>,
-) {
-    // Get local player's ally target and health
-    let Ok((ally_target, player_health, own_attrs)) = player_query.single() else {
-        return;
-    };
-
-    // Don't show ally frame while dead
-    if player_health.state <= 0.0 {
-        for mut visibility in &mut frame_query {
-            *visibility = Visibility::Hidden;
-        }
-        return;
-    }
-
-    // Read from last_target (sticky behavior - shows last ally even when not currently facing)
-    let target_entity = ally_target.and_then(|ally| ally.last_target);
-
-    // Validate ally target is still alive and exists
-    let valid_ally = if let Some(ally_ent) = target_entity {
-        if let Ok((_, ally_health, _)) = ally_query.get(ally_ent) {
-            // Only show if alive
-            ally_health.state > 0.0
-        } else {
-            // Ally entity no longer exists
-            false
-        }
-    } else {
-        false
-    };
-
-    // Show/hide frame and update content based on ally target validity
-    if valid_ally {
-        let ally_ent = target_entity.unwrap();
-        // Ally exists - show frame and update content
-        for mut visibility in &mut frame_query {
-            *visibility = Visibility::Visible;
-        }
-
-        if let Ok((entity_type, ally_health, ally_attrs)) = ally_query.get(ally_ent) {
-            // Update entity name
-            for mut text in &mut name_text_query {
-                **text = entity_type.display_name().to_string();
-            }
-
-            // Update level hexagon: the level its attributes give it,
-            // coloured by the gap to the viewed actor's own
-            if let Some(ally_attrs) = ally_attrs {
-                let level = ally_attrs.total_level() as i32;
-                let level_diff = level - own_attrs.map_or(level, |own| own.total_level() as i32);
-
-                // >5 levels lower = gray
-                // 2-5 levels lower = green
-                // 1 level less or greater = yellow
-                // >1 level higher = red
-                let hex_color = if level_diff < -5 {
-                    Color::srgb(0.4, 0.4, 0.4) // Gray - trivial
-                } else if level_diff <= -2 {
-                    Color::srgb(0.2, 0.8, 0.2) // Green - easy
-                } else if level_diff.abs() <= 1 {
-                    Color::srgb(0.9, 0.9, 0.2) // Yellow - even match
-                } else {
-                    Color::srgb(0.9, 0.2, 0.2) // Red - dangerous
-                };
-
-                // Update hexagon color and level text
-                for (mut bg_color, children) in &mut level_hex_query {
-                    bg_color.0 = hex_color;
-
-                    // Update the level number text (child of hexagon)
-                    for child in children.iter() {
-                        if let Ok(mut level_text) = level_text_query.get_mut(child) {
-                            **level_text = level.to_string();
-                        }
-                    }
-                }
-            }
-
-            // Update triumvirate display (only for actors)
-            if let EntityType::Actor(actor_impl) = entity_type {
-                // Set name color based on origin (slightly lighter green tint)
-                for mut color in &mut name_color_query {
-                    let (r, g, b) = actor_impl.origin.color();
-                    color.0 = Color::srgb(
-                        (r * 0.7 + 0.3).min(1.0),  // Blend toward light green
-                        (g * 0.7 + 0.3).min(1.0),
-                        (b * 0.7 + 0.3).min(1.0),
-                    );
-                }
-
-                // Set triumvirate text (Approach / Resilience)
-                for (mut text, mut color) in &mut triumvirate_query {
-                    **text = format!("{} / {}",
-                        actor_impl.approach.display_name(),
-                        actor_impl.resilience.display_name()
-                    );
-                    // Triumvirate text also colored by origin (dimmer)
-                    let (r, g, b) = actor_impl.origin.color();
-                    color.0 = Color::srgb(r * 0.8, g * 0.8, b * 0.8);
-                }
-            }
-
-            // Update health bar width
-            for mut node in &mut health_bar_query {
-                let percent = if ally_health.max > 0.0 {
-                    (ally_health.state / ally_health.max * 100.0).clamp(0.0, 100.0)
-                } else {
-                    0.0
-                };
-                node.width = Val::Percent(percent);
-            }
-
-            // Update health text (exact numbers)
-            for mut text in &mut health_text_query {
-                **text = format!("{:.0}/{:.0}", ally_health.state, ally_health.max);
-            }
-        }
-    } else {
-        // No ally target - hide frame
-        for mut visibility in &mut frame_query {
-            *visibility = Visibility::Hidden;
-        }
-    }
-}
-
-/// Update ally frame queue display
-/// Separate system to avoid hitting Bevy's system parameter limits
-/// Mirrors update_queue but for ally frame
-pub fn update_ally_queue(
-    mut commands: Commands,
-    player_query: Query<Option<&common_bevy::components::ally_target::AllyTarget>, With<crate::components::Viewed>>,
-    mut queue_container_query: Query<&mut Visibility, With<AllyQueueContainer>>,
-    queue_children_query: Query<&Children, With<AllyQueueContainer>>,
-    dots_container_query: Query<Entity, With<AllyDotsContainer>>,
-    threat_icon_query: Query<Entity, With<AllyThreatIcon>>,
-    capacity_dot_query: Query<Entity, With<AllyCapacityDot>>,
-    ally_query: Query<Option<&ReactionQueue>>,
-    time: Res<Time>,
-    server: Res<Server>,
-) {
-    // Get local player's ally target
-    let Ok(ally_target) = player_query.single() else {
-        return;
-    };
-
-    // Check if we have an ally target (use last_target for sticky behavior)
-    let Some(ally_ent) = ally_target.and_then(|ally| ally.last_target) else {
-        // No ally - hide queue
-        for mut visibility in &mut queue_container_query {
-            *visibility = Visibility::Hidden;
-        }
-        return;
-    };
-
-    // Get ally's reaction queue
-    let Ok(queue_opt) = ally_query.get(ally_ent) else {
-        return;
-    };
-
-    // Update queue container visibility and content
-    if let Ok(mut queue_visibility) = queue_container_query.single_mut() {
-        if let Some(queue) = queue_opt {
-            // Ally has a queue - show it
-            *queue_visibility = Visibility::Visible;
-
-            // Despawn old capacity dots and threat icons
-            for dot_ent in &capacity_dot_query {
-                commands.entity(dot_ent).despawn();
-            }
-            for icon_ent in &threat_icon_query {
-                commands.entity(icon_ent).despawn();
-            }
-
-            // Get actual queue window size from the component
-            let queue_capacity = queue.window_size;
-            let filled_slots = queue.visible_count();
-            // Queue is unbounded, but window can be "full" if all visible slots have threats
-            let is_full = filled_slots >= queue.window_size;
-
-            // Spawn capacity dots in the dots container
-            if let Ok(dots_container_ent) = dots_container_query.single() {
-                commands.entity(dots_container_ent).with_children(|parent| {
-                    for i in 0..queue_capacity {
-                        let is_filled = i < filled_slots;
-
-                        // Use circular UI nodes instead of text characters
-                        // Use green theme for ally (instead of red)
-                        let (bg_color, border_color) = if is_full && is_filled {
-                            // Full queue: filled dots are bright green with green border
-                            (Color::srgb(0.3, 1.0, 0.3), Color::srgb(0.3, 1.0, 0.3))
-                        } else if is_filled {
-                            // Filled but not full: yellow-green fill with border
-                            (Color::srgb(0.6, 0.9, 0.4), Color::srgb(0.6, 0.9, 0.4))
-                        } else {
-                            // Empty: transparent with gray border
-                            (Color::NONE, Color::srgb(0.5, 0.5, 0.5))
-                        };
-
+            if let Some(holder) = container(Part::Dots) {
+                commands.entity(holder).with_children(|parent| {
+                    for index in 0..queue.window_size {
+                        let (fill, border) = lane.dot(index < filled, full);
                         parent.spawn((
                             Node {
                                 width: Val::Px(8.),
                                 height: Val::Px(8.),
                                 border: UiRect::all(Val::Px(1.)),
-                                border_radius: BorderRadius::all(Val::Percent(50.)), // Make circular
+                                border_radius: BorderRadius::all(Val::Percent(50.)),
                                 ..default()
                             },
-                            BorderColor::all(border_color),
-                            BackgroundColor(bg_color),
-                            AllyCapacityDot,
+                            BorderColor::all(border),
+                            BackgroundColor(fill),
+                            (lane, CapacityDot { index }),
                         ));
                     }
                 });
             }
-
-            // Spawn threat icons (LIMIT TO FIRST 3)
-            if let Ok(queue_children) = queue_children_query.single() {
-                let threat_icons_container = queue_children.get(1).copied();
-
-                if let Some(icons_ent) = threat_icons_container {
-                    let now_ms = server.current_time(time.elapsed().as_millis());
-                    let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
-
-                    commands.entity(icons_ent).with_children(|parent| {
-                        // Filter out auto-attacks and expired threats and limit to first 3
-                        let active_threats: Vec<_> = queue.threats.iter()
-                            .filter(|threat| !threat.is_pressure())
-                            .filter(|threat| {
-                                let elapsed = now.saturating_sub(threat.inserted_at);
-                                elapsed < threat.timer_duration  // Only show non-expired threats
-                            })
-                            .take(3)
-                            .enumerate()
-                            .collect();
-
-                        for (_index, threat) in active_threats {
-                            // Calculate timer progress
-                            let elapsed = now.saturating_sub(threat.inserted_at);
-                            let progress = (elapsed.as_secs_f32() / threat.timer_duration.as_secs_f32()).clamp(0.0, 1.0);
-                            let remaining = 1.0 - progress;
-
-                            // Color gradient: Yellow (start) → Orange (50%) → Red (end)
-                            let timer_color = if remaining > 0.5 {
-                                // Yellow → Orange transition (100% to 50% remaining)
-                                let t = (remaining - 0.5) / 0.5;
-                                Color::srgba(
-                                    1.0,
-                                    0.9 * t + 0.5 * (1.0 - t),
-                                    0.0,
-                                    0.9,
-                                )
-                            } else {
-                                // Orange → Red transition (50% to 0% remaining)
-                                let t = remaining / 0.5;
-                                Color::srgba(
-                                    1.0,
-                                    0.5 * t,
-                                    0.0,
-                                    0.9,
-                                )
-                            };
-
-                            // Size grows from 15% to 100% as timer counts down
-                            let size_percent = 15.0 + (85.0 * progress);
-                            let offset_percent = (100.0 - size_percent) / 2.0;
-
-                            // Threat icon (circular, 40px) - use green border for ally
-                            parent.spawn((
-                                Node {
-                                    width: Val::Px(40.),
-                                    height: Val::Px(40.),
-                                    border: UiRect::all(Val::Px(2.)),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    border_radius: BorderRadius::all(Val::Percent(50.)), // Make circular
-                                    ..default()
-                                },
-                                BorderColor::all(if is_full {
-                                    Color::srgb(0.2, 1.0, 0.2)  // Bright green when full
-                                } else {
-                                    Color::srgb(0.2, 0.8, 0.2)  // Normal green
-                                }),
-                                BackgroundColor(Color::srgb(0.1, 0.3, 0.1)),
-                                AllyThreatIcon,
-                            ))
-                            .with_children(|parent| {
-                                // Timer ring (grows from center as time runs out)
-                                parent.spawn((
-                                    Node {
-                                        position_type: PositionType::Absolute,
-                                        width: Val::Percent(size_percent),
-                                        height: Val::Percent(size_percent),
-                                        left: Val::Percent(offset_percent),
-                                        top: Val::Percent(offset_percent),
-                                        border: UiRect::all(Val::Px(3.)),
-                                        border_radius: BorderRadius::all(Val::Percent(50.)),
-                                        ..default()
-                                    },
-                                    BorderColor::all(timer_color),
-                                    BackgroundColor(Color::NONE),
-                                ));
-
-                                // Attack type icon (centered)
-                                let icon_text = "⚔";
-
-                                parent.spawn((
-                                    Text::new(icon_text),
-                                    TextFont {
-                                        font_size: FontSize::Px(22.0),
-                                        ..default()
-                                    },
-                                    TextColor(Color::WHITE),
-                                ));
-                            });
-                        }
-                    });
+        } else {
+            for (_, of, dot, mut background, mut border) in &mut dots {
+                if *of == lane {
+                    let (fill, edge) = lane.dot(dot.index < filled, full);
+                    background.0 = fill;
+                    *border = BorderColor::all(edge);
                 }
             }
+        }
+
+        let threats: Vec<&QueuedThreat> = queue.threats.iter()
+            .filter(|threat| !threat.is_pressure())
+            .filter(|threat| now.saturating_sub(threat.inserted_at) < threat.timer_duration)
+            .take(ICONS)
+            .collect();
+        let (edge, fill) = lane.icon(full);
+
+        if icons.iter().filter(|(_, of, _)| **of == lane).count() != threats.len() {
+            for (ent, of, _) in &icons {
+                if *of == lane {
+                    commands.entity(ent).despawn();
+                }
+            }
+            let Some(holder) = container(Part::Icons) else { continue };
+            commands.entity(holder).with_children(|parent| {
+                for (index, threat) in threats.iter().enumerate() {
+                    let (size, color) = timer_ring(threat, now);
+                    parent.spawn((
+                        Node {
+                            width: Val::Px(40.),
+                            height: Val::Px(40.),
+                            border: UiRect::all(Val::Px(2.)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: BorderRadius::all(Val::Percent(50.)),
+                            ..default()
+                        },
+                        BorderColor::all(edge),
+                        BackgroundColor(fill),
+                        (lane, ThreatIcon),
+                    ))
+                    .with_children(|parent| {
+                        parent.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                width: Val::Percent(size),
+                                height: Val::Percent(size),
+                                left: Val::Percent((100.0 - size) / 2.0),
+                                top: Val::Percent((100.0 - size) / 2.0),
+                                border: UiRect::all(Val::Px(3.)),
+                                border_radius: BorderRadius::all(Val::Percent(50.)),
+                                ..default()
+                            },
+                            BorderColor::all(color),
+                            BackgroundColor(Color::NONE),
+                            (lane, ThreatTimerRing { index }),
+                        ));
+                        parent.spawn((
+                            Text::new("⚔"),
+                            TextFont { font_size: FontSize::Px(22.0), ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                }
+            });
         } else {
-            // Ally doesn't have a queue - hide it
-            *queue_visibility = Visibility::Hidden;
+            for (_, of, mut border) in &mut icons {
+                if *of == lane {
+                    *border = BorderColor::all(edge);
+                }
+            }
+            for (of, ring, mut node, mut border) in &mut rings {
+                let Some(threat) = threats.get(ring.index).filter(|_| *of == lane) else { continue };
+                let (size, color) = timer_ring(threat, now);
+                node.width = Val::Percent(size);
+                node.height = Val::Percent(size);
+                node.left = Val::Percent((100.0 - size) / 2.0);
+                node.top = Val::Percent((100.0 - size) / 2.0);
+                *border = BorderColor::all(color);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn a_timer_ring_grows_and_reddens_as_its_time_runs_out() {
+        let attrs = ActorAttributes::default();
+        let queued = Duration::from_secs(10);
+        let threat = common_bevy::systems::combat::queue::create_threat(Entity::PLACEHOLDER, &attrs, &attrs, 1.0, None, queued, 0.0);
+        let after = |share: f32| timer_ring(&threat, queued + threat.timer_duration.mul_f32(share));
+        let (mut size, mut green) = (0.0, f32::INFINITY);
+        for step in 0..=8 {
+            let (next, color) = after(step as f32 / 8.0);
+            let next_green = color.to_srgba().green;
+            assert!(next > size && next_green < green, "step {step}: {next} {next_green}");
+            (size, green) = (next, next_green);
+        }
+        assert_eq!(after(3.0).0, 100.0, "full, and no further, once its time is out");
+    }
+
+    #[test]
+    fn a_dot_is_hollow_until_a_threat_stands_in_its_slot() {
+        for lane in LANES {
+            assert_eq!(lane.dot(false, false).0, Color::NONE);
+            assert_eq!(lane.dot(false, true).0, Color::NONE);
+            assert_ne!(lane.dot(true, false).0, Color::NONE);
+            assert_ne!(lane.dot(true, true), lane.dot(true, false), "a full window shows");
         }
     }
 }
