@@ -8,27 +8,36 @@ use crate::{
 /// adjacent out to this.
 pub const LUNGE_RANGE: u32 = 8;
 
-/// Calculate maximum stamina from actor attributes: its Endurance's pool
-pub fn calculate_max_stamina(attrs: &ActorAttributes) -> f32 {
-    attrs.max_stamina()
+/// What every actor is spawned fighting with, all of it from its
+/// attributes: its pools full, out of combat, a reaction queue with the
+/// window its Awareness sees, no target, and loaded by no one. A player and
+/// an NPC are both spawned with it, so what one starts with the other does.
+#[derive(Bundle)]
+pub struct Fighter {
+    pub attrs: ActorAttributes,
+    pub health: Health,
+    pub stamina: Stamina,
+    pub mana: Mana,
+    pub combat_state: CombatState,
+    pub queue: crate::components::reaction_queue::ReactionQueue,
+    pub target: crate::components::target::Target,
+    pub loaded_by: crate::components::loaded_by::LoadedBy,
 }
 
-/// Calculate maximum mana from actor attributes
-/// Fixed at 100 until we determine which attributes should scale it
-pub fn calculate_max_mana(_attrs: &ActorAttributes) -> f32 {
-    100.0
-}
-
-/// Calculate stamina regeneration rate
-/// Base: 10/sec (may scale with attributes in future)
-pub fn calculate_stamina_regen_rate(_attrs: &ActorAttributes) -> f32 {
-    10.0
-}
-
-/// Calculate mana regeneration rate
-/// Base: 8/sec (may scale with attributes in future)
-pub fn calculate_mana_regen_rate(_attrs: &ActorAttributes) -> f32 {
-    8.0
+impl Fighter {
+    /// An actor with `attrs`, spawned at `now`
+    pub fn new(attrs: ActorAttributes, now: std::time::Duration) -> Self {
+        Self {
+            attrs,
+            health: Health::full(attrs.max_health()),
+            stamina: Stamina::full(attrs.max_stamina(), now),
+            mana: Mana::full(now),
+            combat_state: CombatState { in_combat: false, last_action: now },
+            queue: crate::components::reaction_queue::ReactionQueue::new(attrs.window_size()),
+            target: default(),
+            loaded_by: default(),
+        }
+    }
 }
 
 /// Regenerate stamina, mana, and health for all entities with resources
@@ -224,15 +233,17 @@ mod tests {
     }
 
     #[test]
-    fn test_stamina_regenerates_in_combat() {
-        let regen_rate = calculate_stamina_regen_rate(&test_attrs_simple(0, 0));
-        assert!(regen_rate > 0.0, "Stamina should regenerate in combat");
-    }
-
-    #[test]
-    fn test_mana_regenerates_in_combat() {
-        let regen_rate = calculate_mana_regen_rate(&test_attrs_simple(0, 0));
-        assert!(regen_rate > 0.0, "Mana should regenerate in combat");
+    fn an_actor_is_spawned_with_its_pools_full_and_its_window_open() {
+        let now = std::time::Duration::from_secs(3);
+        let attrs = test_attrs_simple(0, -5);
+        let fighter = Fighter::new(attrs, now);
+        assert_eq!((fighter.health.state, fighter.health.max), (attrs.max_health(), attrs.max_health()));
+        assert_eq!((fighter.stamina.state, fighter.stamina.max), (attrs.max_stamina(), attrs.max_stamina()));
+        assert_eq!(fighter.mana.state, fighter.mana.max);
+        assert!(fighter.stamina.regen_rate > 0.0 && fighter.mana.regen_rate > 0.0, "both regenerate, in combat or out");
+        assert_eq!(fighter.stamina.last_update, now);
+        assert!(!fighter.combat_state.in_combat);
+        assert_eq!(fighter.queue.window_size, attrs.window_size());
     }
 
     // ===== SYSTEM TESTS =====

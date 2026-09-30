@@ -21,14 +21,12 @@ use common_bevy::{
         hex_assignment::HexAssignment,
         npc_recovery::NpcRecovery,
         position::Position,
-        reaction_queue::ReactionQueue,
-        resources::{CombatState, Health, Mana, Stamina},
         AirTime, Loc,
     },
     message::{Event, Try},
     plugins::nntree::NearestNeighbor,
     spatial_difficulty::{calculate_enemy_attributes, EnemyArchetype},
-    systems::combat::resources as resource_calcs,
+    systems::combat::resources::Fighter,
 };
 
 /// How long a live NPC waits, in milliseconds, once it can afford its
@@ -162,31 +160,14 @@ pub fn spawn_engagement(
             identity: ActorIdentity::Npc(archetype),
         };
 
-        let max_health = attributes.max_health();
-        let max_stamina = resource_calcs::calculate_max_stamina(&attributes);
-        let max_mana = resource_calcs::calculate_max_mana(&attributes);
-        let stamina_regen = resource_calcs::calculate_stamina_regen_rate(&attributes);
-        let mana_regen = resource_calcs::calculate_mana_regen_rate(&attributes);
-
-        let health = Health { state: max_health, max: max_health };
-        let stamina = Stamina { state: max_stamina, max: max_stamina, regen_rate: stamina_regen, last_update: time.elapsed() };
-        let mana = Mana { state: max_mana, max: max_mana, regen_rate: mana_regen, last_update: time.elapsed() };
-        let combat_state = CombatState { in_combat: false, last_action: time.elapsed() };
-        let queue_capacity = attributes.window_size();
-        let reaction_queue = ReactionQueue::new(queue_capacity);
-
         let npc_loc = Loc::new(npc_location);
         let npc_entity = commands
             .spawn((
                 EntityType::Actor(actor_impl),
                 npc_loc,
-                attributes,
-                health, stamina, mana,
-                combat_state,
-                reaction_queue,
+                Fighter::new(attributes, time.elapsed()),
                 side,
                 EngagementMember(engagement_entity),
-                common_bevy::components::loaded_by::LoadedBy::default(),
             ))
             .id();
         // An NPC wears what the server gives it, with no bag and no asking.
@@ -205,7 +186,6 @@ pub fn spawn_engagement(
             chase,
             NpcRecovery::new(*wait.start(), *wait.end()),
             common_bevy::components::AttackRange(attack_range(archetype)),
-            common_bevy::components::target::Target::default(),
             Heading::default(),
             common_bevy::components::Turn::default(),
             Position::at_tile(npc_location),

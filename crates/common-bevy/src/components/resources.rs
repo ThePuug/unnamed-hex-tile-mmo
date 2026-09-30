@@ -21,6 +21,11 @@ impl Default for Health {
 }
 
 impl Health {
+    /// A pool of `max`, full
+    pub fn full(max: f32) -> Self {
+        Self { state: max, max }
+    }
+
     /// What the actor has now
     pub fn current(&self) -> f32 {
         self.state
@@ -39,6 +44,16 @@ pub struct Stamina {
     pub regen_rate: f32,
     #[serde(skip)]
     pub last_update: Duration,
+}
+
+impl Stamina {
+    /// Stamina every actor regains each second
+    pub const REGEN: f32 = 10.0;
+
+    /// A pool of `max`, full, regenerating from `now`
+    pub fn full(max: f32, now: Duration) -> Self {
+        Self { state: max, max, regen_rate: Self::REGEN, last_update: now }
+    }
 }
 
 impl Default for Stamina {
@@ -64,6 +79,18 @@ pub struct Mana {
     pub regen_rate: f32,
     #[serde(skip)]
     pub last_update: Duration,
+}
+
+impl Mana {
+    /// The mana every actor holds, no attribute deepening it
+    pub const MAX: f32 = 100.0;
+    /// Mana every actor regains each second
+    pub const REGEN: f32 = 8.0;
+
+    /// The pool, full, regenerating from `now`
+    pub fn full(now: Duration) -> Self {
+        Self { state: Self::MAX, max: Self::MAX, regen_rate: Self::REGEN, last_update: now }
+    }
 }
 
 impl Default for Mana {

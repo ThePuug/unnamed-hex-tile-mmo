@@ -11,16 +11,13 @@ use common_bevy::{
         },
         equipment::{Equipment, Inventory},
         keybits::*,
-        reaction_queue::*,
         resources::*,
         tier_lock::TierLock,
     },
     message::{ Event, * },
     plugins::nntree::*,
     resources::*,
-    systems::combat::{
-        resources as resource_calcs,
-    },
+    systems::combat::resources::Fighter,
 };
 use crate::*;
 
@@ -93,56 +90,21 @@ pub fn do_presence(
                     1, 0, 0,
                     -3, 4, 0,
                 );
-                // Calculate initial resources from attributes
-                let max_health = attrs.max_health();
-                let max_stamina = resource_calcs::calculate_max_stamina(&attrs);
-                let max_mana = resource_calcs::calculate_max_mana(&attrs);
-                let stamina_regen = resource_calcs::calculate_stamina_regen_rate(&attrs);
-                let mana_regen = resource_calcs::calculate_mana_regen_rate(&attrs);
-
-                let health = Health {
-                    state: max_health,
-                    max: max_health,
-                };
-                let stamina = Stamina {
-                    state: max_stamina,
-                    max: max_stamina,
-                    regen_rate: stamina_regen,
-                    last_update: time.elapsed(),
-                };
-                let mana = Mana {
-                    state: max_mana,
-                    max: max_mana,
-                    regen_rate: mana_regen,
-                    last_update: time.elapsed(),
-                };
-                let combat_state = CombatState {
-                    in_combat: false,
-                    last_action: time.elapsed(),
-                };
-                // Initialize reaction queue with the window its Awareness sees
-                let queue_capacity = attrs.window_size();
-                let reaction_queue = ReactionQueue::new(queue_capacity);
+                let fighter = Fighter::new(attrs, time.elapsed());
+                let (health, stamina, mana, combat_state) = (fighter.health, fighter.stamina, fighter.mana, fighter.combat_state);
                 let equipment = Equipment::starting_outfit();
                 let bag = Inventory::wearing(&equipment);
 
                 let ent = commands.spawn((
                     typ,
                     loc,
+                    fighter,
                     (PlayerControlled, common_bevy::components::behaviour::Side::PLAYERS),
-                    attrs,
-                    health,
-                    stamina,
-                    mana,
-                    combat_state,
-                    reaction_queue,
                     PlayerDiscoveryState::default(),
                     TierLock::new(),
-                    common_bevy::components::target::Target::default(),
                 )).id();
                 commands.entity(ent).insert((
                     NearestNeighbor::new(ent, loc),
-                    common_bevy::components::loaded_by::LoadedBy::default(),
                     common_bevy::components::AttackRange::default(),
                     equipment,
                     bag.clone(),
