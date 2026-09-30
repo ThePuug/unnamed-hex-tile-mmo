@@ -3,7 +3,7 @@ use common_bevy::{
     components::{
         engagement::EngagementMember, heading::Heading, hex_assignment::{AssignedHex, HexAssignment},
         position::Position, resources::*, AttackRange, Loc, Turn,
-        reaction_queue::DamageType, recovery::GlobalRecovery,
+        recovery::GlobalRecovery,
     },
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
     plugins::nntree::NNTree,
@@ -131,7 +131,6 @@ pub fn handle_flank(
                 source: *ent,
                 target: target_ent,
                 base_damage: attrs.endurance() * tuning.flank_endurance,
-                damage_type: DamageType::Physical,
                 ability: Some(AbilityType::Flank),
                 dot: 0.0,
             },

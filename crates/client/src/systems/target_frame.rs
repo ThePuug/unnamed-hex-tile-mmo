@@ -796,10 +796,7 @@ pub fn update_queue(
                                     ));
 
                                     // Attack type icon (centered)
-                                    let icon_text = match threat.damage_type {
-                                        DamageType::Physical => "⚔",
-                                        DamageType::Magic => "🔥",
-                                    };
+                                    let icon_text = "⚔";
 
                                     parent.spawn((
                                         Text::new(icon_text),
@@ -846,10 +843,7 @@ pub fn update_queue(
                             // Update attack icon text if damage type changed
                             for (attack_icon, mut text) in attack_icon_query.iter_mut() {
                                 if attack_icon.index == *index {
-                                    let icon_text = match threat.damage_type {
-                                        DamageType::Physical => "⚔",
-                                        DamageType::Magic => "🔥",
-                                    };
+                                    let icon_text = "⚔";
                                     **text = icon_text.to_string();
                                 }
                             }
@@ -1190,10 +1184,7 @@ pub fn update_ally_queue(
                                 ));
 
                                 // Attack type icon (centered)
-                                let icon_text = match threat.damage_type {
-                                    DamageType::Physical => "⚔",
-                                    DamageType::Magic => "🔥",
-                                };
+                                let icon_text = "⚔";
 
                                 parent.spawn((
                                     Text::new(icon_text),

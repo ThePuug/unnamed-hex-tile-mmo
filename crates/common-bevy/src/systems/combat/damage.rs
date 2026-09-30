@@ -6,7 +6,6 @@
 
 
 
-use crate::components::reaction_queue::DamageType;
 use crate::components::ActorAttributes;
 
 /// The contest points the level gap gives an actor of `level` against one
@@ -52,15 +51,6 @@ pub fn reaction_contest_factor(reflex: u16, flow: u16, edge: f32) -> f32 {
 
     let tuning = crate::tuning::tuning();
     1.0 + (delta / tuning.contest_scale).sqrt() * tuning.window_bonus
-}
-
-/// Calculate outgoing damage (Phase 1 pass-through).
-pub fn calculate_outgoing_damage(
-    base_damage: f32,
-    _attrs: &ActorAttributes,
-    _damage_type: DamageType,
-) -> f32 {
-    base_damage
 }
 
 /// An attack's damage within its range: `spread` of `damage` either side of

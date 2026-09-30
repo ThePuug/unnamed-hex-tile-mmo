@@ -28,7 +28,7 @@ pub fn process_deal_damage(
     let tuning = common_bevy::tuning::tuning();
     let event = &trigger.event().event;
 
-    if let GameEvent::DealDamage { source, target, base_damage, damage_type, ability, dot } = event {
+    if let GameEvent::DealDamage { source, target, base_damage, ability, dot } = event {
         // Get attacker attributes for scaling
         let Ok(source_attrs) = all_attrs.get(*source) else {
             return;
@@ -44,10 +44,8 @@ pub fn process_deal_damage(
             return;
         }
 
-        // Calculate outgoing damage (Phase 1)
-        let outgoing = damage_calc::calculate_outgoing_damage(*base_damage, source_attrs, *damage_type);
         let draw = rand::Rng::random_range(&mut rand::rng(), -1.0..=1.0);
-        let outgoing = damage_calc::spread(outgoing, tuning.damage_spread, draw);
+        let outgoing = damage_calc::spread(*base_damage, tuning.damage_spread, draw);
         let outgoing = damage_calc::crit(outgoing, source_attrs, rand::Rng::random_range(&mut rand::rng(), 0.0..1.0));
         let dot = damage_calc::spread(*dot, tuning.damage_spread, draw);
 
@@ -71,7 +69,6 @@ pub fn process_deal_damage(
             attrs,         // Target attributes
             source_attrs,  // Source attributes
             outgoing,      // Damage
-            *damage_type,  // Damage type
             *ability,      // Ability
             now,           // Current time
             dot,           // DoT per tick, a wound's

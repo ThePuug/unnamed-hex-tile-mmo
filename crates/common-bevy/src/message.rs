@@ -38,7 +38,6 @@ pub enum Event {
         source: Entity,
         target: Entity,
         base_damage: f32,
-        damage_type: DamageType,
         ability: Option<AbilityType>,
         /// Damage each DoT tick deals while the threat stands: a wound's, zero for a blow
         dot: f32,
@@ -211,8 +210,6 @@ pub enum AbilityFailReason {
 pub enum ClearType {
     /// Clear first N threats (Counter - blanket reaction over visible window)
     First(usize),
-    /// Clear threats by damage type (Ward - future)
-    ByType(DamageType),
     /// Clear the one threat `source` inserted at `inserted_at`, wherever it
     /// stands: an expiry, since threats from different sources expire out of
     /// queue order.

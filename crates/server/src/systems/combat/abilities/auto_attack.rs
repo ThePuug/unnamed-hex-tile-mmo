@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use common_bevy::{
     components::{
-        entity_type::*, Loc, reaction_queue::DamageType,
+        entity_type::*, Loc,
     },
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
 };
@@ -118,7 +118,6 @@ pub fn handle_auto_attack(
                     source: *ent,
                     target: target_ent,
                     base_damage: 0.0,
-                    damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Disengage),
                     dot: 0.0,
                 },
@@ -139,7 +138,6 @@ pub fn handle_auto_attack(
                     source: *ent,
                     target: target_ent,
                     base_damage,
-                    damage_type: DamageType::Physical,
                     ability: Some(AbilityType::AutoAttack),
                     dot: 0.0,
                 },

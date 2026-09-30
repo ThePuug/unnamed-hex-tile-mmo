@@ -149,7 +149,6 @@ pub fn handle_counter(
                 target_attrs,                 // Target: Original attacker
                 caster_attrs,                 // Source attrs: Counter caster's stats
                 reflected_damage,             // Damage amount
-                threat.damage_type,           // Preserve damage type
                 Some(AbilityType::Counter),   // Ability
                 now,                          // Current time
                 0.0,                          // A reflection is a blow

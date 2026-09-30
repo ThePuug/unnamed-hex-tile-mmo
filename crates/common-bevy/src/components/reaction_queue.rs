@@ -3,13 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::time::Duration;
 
-/// Damage type enumeration for threats in the reaction queue
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum DamageType {
-    Physical,
-    Magic,
-}
-
 /// A single threat in the reaction queue
 /// Represents incoming damage that has not yet been applied
 
@@ -25,8 +18,6 @@ pub struct QueuedThreat {
     pub source: Entity,
     /// Base damage amount (before modifiers)
     pub damage: f32,
-    /// Type of damage (Physical or Magic)
-    pub damage_type: DamageType,
     /// Time when this threat was inserted (from Time::elapsed())
     pub inserted_at: Duration,
     /// How long this threat has before it resolves
@@ -173,7 +164,6 @@ mod tests {
         QueuedThreat {
             source: Entity::from_raw_u32(0).unwrap(),
             damage: 10.0,
-            damage_type: DamageType::Physical,
             inserted_at: Duration::ZERO,
             timer_duration: Duration::from_secs(1),
             ability,

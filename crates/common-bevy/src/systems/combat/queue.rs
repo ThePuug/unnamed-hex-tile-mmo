@@ -4,9 +4,6 @@ use crate::message::ClearType;
 use bevy::prelude::*;
 use std::time::Duration;
 
-#[cfg(test)]
-use crate::components::reaction_queue::DamageType;
-
 /// Reaction window base from level gap.
 
 /// Pattern 2 (Baseline+Bonus): 3.0s × gap × (1.0 + 0.5 × contest_factor)
@@ -39,7 +36,6 @@ pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttribu
 /// * `target_attrs` - Defender's attributes (receives threat)
 /// * `source_attrs` - Attacker's attributes (creates threat)
 /// * `damage` - Final damage amount
-/// * `damage_type` - Physical or Magic
 /// * `ability` - Which ability created this threat
 /// * `now` - Current game time
 /// * `dot` - Damage each DoT tick deals: a wound's, zero for a blow
@@ -51,7 +47,6 @@ pub fn create_threat(
     target_attrs: &ActorAttributes,
     source_attrs: &ActorAttributes,
     damage: f32,
-    damage_type: crate::components::reaction_queue::DamageType,
     ability: Option<crate::message::AbilityType>,
     now: Duration,
     dot: f32,
@@ -59,7 +54,6 @@ pub fn create_threat(
     crate::components::reaction_queue::QueuedThreat {
         source,
         damage,
-        damage_type,
         inserted_at: now,
         timer_duration: threat_window(target_attrs, source_attrs),
         ability,
@@ -115,19 +109,6 @@ fn take_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<QueuedT
             let count = n.min(queue.threats.len());
             queue.threats.drain(..count).collect()
         }
-        ClearType::ByType(damage_type) => {
-            // Remove threats matching damage type
-            let mut cleared = Vec::new();
-            let mut i = 0;
-            while i < queue.threats.len() {
-                if queue.threats[i].damage_type == damage_type {
-                    cleared.push(queue.threats.remove(i).unwrap());
-                } else {
-                    i += 1;
-                }
-            }
-            cleared
-        }
         ClearType::Threat { source, inserted_at } => queue
             .threats
             .iter()
@@ -166,7 +147,6 @@ mod tests {
         let make_threat = |damage: f32, secs: u64| QueuedThreat {
             source: entity,
             damage,
-            damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(secs),
             timer_duration: Duration::from_secs(1),
             ability: None,
@@ -205,7 +185,6 @@ mod tests {
         let make_threat = |ability, secs: u64| QueuedThreat {
             source: entity,
             damage: 10.0,
-            damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(secs),
             timer_duration: Duration::from_secs(1),
             ability: Some(ability),
@@ -233,7 +212,6 @@ mod tests {
         let threat = QueuedThreat {
             source: entity,
             damage: 10.0,
-            damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
@@ -259,7 +237,6 @@ mod tests {
         let threat = QueuedThreat {
             source: entity,
             damage: 10.0,
-            damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
@@ -287,7 +264,6 @@ mod tests {
         let threat1 = QueuedThreat {
             source: entity,
             damage: 10.0,
-            damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(0),
             timer_duration: Duration::from_secs(1),
             ability: None,
@@ -301,7 +277,6 @@ mod tests {
         let threat2 = QueuedThreat {
             source: entity,
             damage: 15.0,
-            damage_type: DamageType::Physical,
             inserted_at: Duration::from_millis(500),
             timer_duration: Duration::from_secs(1),
             ability: None,
@@ -334,7 +309,6 @@ mod tests {
             queue.threats.push_back(QueuedThreat {
                 source: entity,
                 damage: (i + 1) as f32 * 10.0,
-                damage_type: DamageType::Physical,
                 inserted_at: Duration::from_secs(i as u64),
                 timer_duration: Duration::from_secs(1),
             ability: None,
@@ -363,7 +337,6 @@ mod tests {
             queue.threats.push_back(QueuedThreat {
                 source,
                 damage: 10.0,
-                damage_type: DamageType::Physical,
                 inserted_at: Duration::from_secs(secs),
                 timer_duration: Duration::from_secs(1),
                 ability: None,
@@ -384,80 +357,12 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_threats_by_type() {
-        let mut queue = ReactionQueue::new(4);
-        let entity = Entity::from_raw_u32(0).unwrap();
-
-        // Add mix of Physical and Magic threats
-        queue.threats.push_back(QueuedThreat {
-            source: entity,
-            damage: 10.0,
-            damage_type: DamageType::Physical,
-            inserted_at: Duration::from_secs(0),
-            timer_duration: Duration::from_secs(1),
-            ability: None,
-            dot: 0.0,
-            ticked: 0,
-            seen: false,
-
-        });
-        queue.threats.push_back(QueuedThreat {
-            source: entity,
-            damage: 15.0,
-            damage_type: DamageType::Magic,
-            inserted_at: Duration::from_secs(1),
-            timer_duration: Duration::from_secs(1),
-            ability: None,
-            dot: 0.0,
-            ticked: 0,
-            seen: false,
-
-        });
-        queue.threats.push_back(QueuedThreat {
-            source: entity,
-            damage: 20.0,
-            damage_type: DamageType::Physical,
-            inserted_at: Duration::from_secs(2),
-            timer_duration: Duration::from_secs(1),
-            ability: None,
-            dot: 0.0,
-            ticked: 0,
-            seen: false,
-
-        });
-        queue.threats.push_back(QueuedThreat {
-            source: entity,
-            damage: 25.0,
-            damage_type: DamageType::Magic,
-            inserted_at: Duration::from_secs(3),
-            timer_duration: Duration::from_secs(1),
-            ability: None,
-            dot: 0.0,
-            ticked: 0,
-            seen: false,
-
-        });
-
-        assert_eq!(queue.threats.len(), 4);
-
-        // Clear only Magic threats
-        let cleared = clear_threats(&mut queue, ClearType::ByType(DamageType::Magic));
-        assert_eq!(cleared.len(), 2);
-        assert_eq!(cleared[0].damage, 15.0);
-        assert_eq!(cleared[1].damage, 25.0);
-        assert_eq!(queue.threats.len(), 2);
-        assert_eq!(queue.threats[0].damage, 10.0); // Physical remains
-        assert_eq!(queue.threats[1].damage, 20.0); // Physical remains
-    }
-
-    #[test]
     fn wounds_queue_behind_blows_and_ahead_of_auto_attacks() {
         let mut queue = ReactionQueue::new(3);
         let source = Entity::from_raw_u32(0).unwrap();
         let make = |ability, dot: f32, secs| QueuedThreat {
             source,
             damage: 10.0,
-            damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(secs),
             timer_duration: Duration::from_secs(3),
             ability,
@@ -483,7 +388,6 @@ mod tests {
         let make = |secs, window| QueuedThreat {
             source: Entity::from_raw_u32(0).unwrap(),
             damage: 10.0,
-            damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(secs),
             timer_duration: Duration::from_secs(window),
             ability: Some(crate::message::AbilityType::Lunge),
@@ -503,7 +407,6 @@ mod tests {
         let wound = QueuedThreat {
             source: Entity::from_raw_u32(0).unwrap(),
             damage: 0.0,
-            damage_type: DamageType::Physical,
             inserted_at: Duration::from_secs(10),
             timer_duration: Duration::from_secs(3),
             ability: None,

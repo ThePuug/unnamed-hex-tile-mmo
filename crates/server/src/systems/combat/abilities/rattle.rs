@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{status::Status, resources::*, Loc, reaction_queue::DamageType, recovery::GlobalRecovery},
+    components::{status::Status, resources::*, Loc, recovery::GlobalRecovery},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
 };
 
@@ -78,7 +78,6 @@ pub fn handle_rattle(
                 source: *ent,
                 target: target_ent,
                 base_damage: bulk * tuning.rattle_health * (1.0 + tuning.rattle_growth * held as f32),
-                damage_type: DamageType::Physical,
                 ability: Some(AbilityType::Rattle),
                 dot: 0.0,
             },

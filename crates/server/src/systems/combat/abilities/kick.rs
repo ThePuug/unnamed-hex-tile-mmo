@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use std::time::Duration;
 use common_bevy::{
-    components::{entity_type::*, resources::*, stagger::Stagger, Loc, reaction_queue::{DamageType, ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+    components::{entity_type::*, resources::*, stagger::Stagger, Loc, reaction_queue::{ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     resources::map::Map,
     systems::combat::synergies::{apply_synergies, is_early, lockout, may_use, reacts_through, settle_combo},
@@ -180,7 +180,6 @@ pub fn handle_kick(
                         target_attrs,
                         caster_attrs,
                         kick_damage,
-                        DamageType::Physical,
                         Some(AbilityType::Kick),
                         now,
                         0.0,

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{resources::*, tier_lock::TierLock, Loc, reaction_queue::DamageType, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+    components::{resources::*, tier_lock::TierLock, Loc, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
     systems::{targeting::get_range_tier, combat::synergies::{apply_synergies, is_early, lockout, may_use, settle_combo}},
 };
@@ -160,7 +160,6 @@ pub fn handle_overpower(
                     source: *ent,
                     target: target_ent,
                     base_damage,
-                    damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Overpower),
                     dot: 0.0,
                 },

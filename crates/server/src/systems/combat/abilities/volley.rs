@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{resources::*, Loc, reaction_queue::DamageType, recovery::GlobalRecovery},
+    components::{resources::*, Loc, recovery::GlobalRecovery},
     message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
 };
 
@@ -82,7 +82,6 @@ pub fn handle_volley(
                     source: *ent,
                     target: target_ent,
                     base_damage: damage,
-                    damage_type: DamageType::Physical,
                     ability: Some(AbilityType::Volley),
                     dot: 0.0,
                 },
