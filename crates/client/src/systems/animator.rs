@@ -92,8 +92,8 @@ impl Clip {
         }
     }
 
-    /// The one-shot an ability plays: an archetype's signature its own,
-    /// the attack for any other strike, the counter for whatever wards.
+    /// The one-shot an ability plays: an archetype's signature and a Counter
+    /// their own, the attack for any other strike.
     pub fn of(ability: AbilityType) -> Clip {
         match ability {
             AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Kick => Clip::Attack,
@@ -102,7 +102,7 @@ impl Clip {
             AbilityType::Volley => Clip::Volley,
             AbilityType::Flank => Clip::Flank,
             AbilityType::Disengage => Clip::Disengage,
-            AbilityType::Counter | AbilityType::Deflect => Clip::Counter,
+            AbilityType::Counter => Clip::Counter,
         }
     }
 

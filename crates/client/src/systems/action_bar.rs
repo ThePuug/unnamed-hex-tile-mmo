@@ -162,7 +162,6 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Opti
             None => "",
             Some(AbilityType::Lunge) => "⚡",       // Gap closer / dash
             Some(AbilityType::Overpower) => "💥",  // Heavy strike
-            Some(AbilityType::Deflect) => "🛡",    // Shield / defense
             Some(AbilityType::AutoAttack) => "⚔",  // Auto-attack
             Some(AbilityType::Rattle) => "💫",      // Juggernaut rattle
             Some(AbilityType::Disengage) => "💨",   // Skirmisher leap away
@@ -447,14 +446,6 @@ fn get_ability_state(
                 AbilityState::Ready
             } else {
                 AbilityState::OutOfRange
-            }
-        }
-        AbilityType::Deflect => {
-            // Clear all threats: 50 stamina, no target required
-            if stamina.step >= common_bevy::tuning::tuning().cost(AbilityType::Deflect) {
-                AbilityState::Ready
-            } else {
-                AbilityState::InsufficientResources
             }
         }
         AbilityType::AutoAttack | AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => {

@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn test_global_recovery_tick_does_not_go_negative() {
-        let mut recovery = GlobalRecovery::new(0.5, AbilityType::Deflect);
+        let mut recovery = GlobalRecovery::new(0.5, AbilityType::Kick);
 
         // Tick by more than remaining (should clamp to 0, not go negative)
         recovery.tick(1.0);
@@ -235,7 +235,7 @@ mod tests {
     fn test_synergy_unlock_never_unlocks_early() {
         // Synergy with unlock_at = 0 means it only unlocks when lockout expires
         let synergy = SynergyUnlock::new(
-            AbilityType::Deflect,
+            AbilityType::Kick,
             0.0,  // Only unlocks at 0s remaining
             AbilityType::Lunge,
         );
@@ -251,7 +251,7 @@ mod tests {
     fn every_ability_but_the_auto_attack_locks_its_user_out() {
         use AbilityType::*;
         assert_eq!(get_ability_recovery_duration(AutoAttack), 0.0, "an auto-attack runs on its own timer");
-        for ability in [Lunge, Overpower, Deflect, Counter, Kick, Rattle, Disengage, Volley, Flank] {
+        for ability in [Lunge, Overpower, Counter, Kick, Rattle, Disengage, Volley, Flank] {
             assert!(get_ability_recovery_duration(ability) > 0.0, "{ability:?} locks its user out");
             assert_eq!(get_ability_recovery_duration(ability), crate::tuning::tuning().recovery(ability));
         }
@@ -321,7 +321,7 @@ mod tests {
         let recovery = GlobalRecovery::new(2.0, AbilityType::Overpower);
 
         let synergy1 = SynergyUnlock::new(AbilityType::Lunge, 1.0, AbilityType::Overpower);
-        let synergy2 = SynergyUnlock::new(AbilityType::Deflect, 0.5, AbilityType::Overpower);
+        let synergy2 = SynergyUnlock::new(AbilityType::Kick, 0.5, AbilityType::Overpower);
 
         // At 2.0s remaining: nothing unlocked
         assert!(!synergy1.is_unlocked(recovery.remaining));
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_pushback_on_expired_recovery() {
-        let mut recovery = GlobalRecovery::new(1.0, AbilityType::Deflect);
+        let mut recovery = GlobalRecovery::new(1.0, AbilityType::Kick);
 
         // Tick past expiry
         recovery.tick(1.5);

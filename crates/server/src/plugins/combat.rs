@@ -52,7 +52,6 @@ impl Plugin for CombatPlugin {
             combat::abilities::lunge::handle_lunge,
             combat::abilities::counter::handle_counter,  // Counter ability
             combat::abilities::kick::handle_kick,        // Kick: reactive knockback
-            combat::abilities::deflect::handle_deflect,
             reaction_queue::process_dismiss, // Dismiss front queue threat (no lockout)
             common_bevy::systems::combat::resources::check_death, // Check for death from ANY source
             common_bevy::systems::combat::resources::process_respawn,

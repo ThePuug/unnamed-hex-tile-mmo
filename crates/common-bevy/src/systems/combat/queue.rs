@@ -110,10 +110,6 @@ pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<Qu
 
 fn take_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<QueuedThreat> {
     match clear_type {
-        ClearType::All => {
-            // Drain entire queue
-            queue.threats.drain(..).collect()
-        }
         ClearType::First(n) => {
             // Drain first N threats (oldest)
             let count = n.min(queue.threats.len());
@@ -326,35 +322,6 @@ mod tests {
         // Check at 1.5s - both expired
         let expired = check_expired_threats(&queue, Duration::from_millis(1500));
         assert_eq!(expired.len(), 2);
-    }
-
-    #[test]
-    fn test_clear_threats_all() {
-        let mut queue = ReactionQueue::new(3);
-        let entity = Entity::from_raw_u32(0).unwrap();
-
-        // Add 3 threats
-        for i in 0..3 {
-            queue.threats.push_back(QueuedThreat {
-                source: entity,
-                damage: (i + 1) as f32 * 10.0,
-                damage_type: DamageType::Physical,
-                inserted_at: Duration::from_secs(i as u64),
-                timer_duration: Duration::from_secs(1),
-            ability: None,
-            dot: 0.0,
-            ticked: 0,
-            seen: false,
-    
-            });
-        }
-
-        assert_eq!(queue.threats.len(), 3);
-
-        // Clear all
-        let cleared = clear_threats(&mut queue, ClearType::All);
-        assert_eq!(cleared.len(), 3);
-        assert_eq!(queue.threats.len(), 0);
     }
 
     #[test]

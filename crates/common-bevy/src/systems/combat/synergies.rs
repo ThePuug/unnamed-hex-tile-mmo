@@ -13,7 +13,6 @@ pub enum SynergyTrigger {
     HeavyStrike, // Overpower
     Push,        // Knockback
     Mitigate,    // Counter
-    Defensive,   // Deflect
     Kick,        // Kick
 }
 
@@ -60,7 +59,6 @@ pub fn get_synergy_trigger(ability: AbilityType) -> Option<SynergyTrigger> {
         AbilityType::Lunge => Some(SynergyTrigger::GapCloser),
         AbilityType::Overpower => Some(SynergyTrigger::HeavyStrike),
         AbilityType::Counter => Some(SynergyTrigger::Mitigate),  // Mitigate type
-        AbilityType::Deflect => Some(SynergyTrigger::Defensive),
         AbilityType::Kick => Some(SynergyTrigger::Kick),
         AbilityType::AutoAttack | AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => None, // No synergies
     }
@@ -294,10 +292,6 @@ mod tests {
         assert_eq!(
             get_synergy_trigger(AbilityType::Counter),
             Some(SynergyTrigger::Mitigate)
-        );
-        assert_eq!(
-            get_synergy_trigger(AbilityType::Deflect),
-            Some(SynergyTrigger::Defensive)
         );
         assert_eq!(
             get_synergy_trigger(AbilityType::Kick),

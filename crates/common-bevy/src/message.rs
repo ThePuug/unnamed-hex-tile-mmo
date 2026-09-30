@@ -171,8 +171,6 @@ pub enum AbilityType {
     Lunge,
     /// W: Heavy strike - high damage melee attack (1 hex, 40 stam, 80 dmg, 2s CD)
     Overpower,
-    /// R: Emergency defense - clear all queued threats (50 stam, 0.5s GCD)
-    Deflect,
     /// Passive: Auto-attack when adjacent to hostile (20 dmg every 1.5s, free)
     AutoAttack,
     /// Counter - Clear the front of the queue, reflecting each threat onto its source at any range
@@ -193,7 +191,7 @@ impl AbilityType {
     /// Whether it answers the queue: the abilities Discipline's Preparation
     /// lets an actor use through its lockout (`synergies::reacts_through`)
     pub fn is_reaction(self) -> bool {
-        matches!(self, AbilityType::Counter | AbilityType::Kick | AbilityType::Deflect | AbilityType::Disengage)
+        matches!(self, AbilityType::Counter | AbilityType::Kick | AbilityType::Disengage)
     }
 }
 
@@ -211,8 +209,6 @@ pub enum AbilityFailReason {
 /// Types of queue clears for reaction abilities
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ClearType {
-    /// Clear all threats (Deflect - i-frame, clears visible + hidden)
-    All,
     /// Clear first N threats (Counter - blanket reaction over visible window)
     First(usize),
     /// Clear threats by damage type (Ward - future)

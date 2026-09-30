@@ -50,7 +50,7 @@ Both you and enemies can die simultaneously if attacks are in-flight. Stamina ma
 **Combat That Feels Responsive**
 Movement uses client-side prediction so there's no perceived lag. Arrow keys move you on the hex grid and set your facing direction. Enemies in front of you are automatically targeted. The combat HUD shows ability cooldowns, resource bars, and those critical threat timers.
 
-You have abilities - a gap closer (Lunge), a heavy hit (Overpower), a reactive Counter that reflects damage, and a panic button (Deflect) that clears everything. Enemies vary by archetype: melee chargers, tanky juggernauts, ranged kiters, and defensive counters.
+You have abilities - a gap closer (Lunge), a heavy hit (Overpower), a reactive Counter that reflects damage, and a Kick that answers what is on you and drives it back. Enemies vary by archetype: melee chargers, tanky juggernauts, ranged kiters, and defensive counters.
 
 **A Living World**
 Hex-based terrain generation with organic slopes, day/night cycles, and streaming chunks. **Enemies spawn dynamically as you explore** - no static spawn camps to farm. Venture into uncharted territory and engagements appear. Abandon an area and it despawns after 30 seconds. Exploration drives content discovery.
@@ -60,7 +60,7 @@ Hex-based terrain generation with organic slopes, day/night cycles, and streamin
 This is a combat prototype, not a full game. You spawn at the haven, pick a direction and distance based on how much challenge you want, then fight dynamic engagements. Death respawns you at the haven with no penalty. There's no progression system, no gear to find, no quests yet.
 
 **The questions being tested:**
-1. **Does seeing attacks coming and choosing how to respond create interesting moment-to-moment decisions?** If you find yourself thinking "should I deflect now or save stamina?" then it's working.
+1. **Does seeing attacks coming and choosing how to respond create interesting moment-to-moment decisions?** If you find yourself thinking "should I counter now or save stamina?" then it's working.
 2. **Does self-directed difficulty feel good?** Can you find the "sweet spot" distance where fights are exciting but winnable? Or does pushing further into dangerous territory scratch that risk/reward itch?
 3. **Do different enemy archetypes force tactical adaptation?** Does fighting a Kiter feel different than fighting a Berserker?
 
