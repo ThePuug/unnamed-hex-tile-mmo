@@ -43,7 +43,6 @@ impl Plugin for CombatPlugin {
             targeting::update_targets, // Update targets every frame (detects when targets move)
             combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // Auto-attack passive for NPCs only (check every 0.5s)
             npc_ability_usage::npc_ability_usage.run_if(on_timer(Duration::from_millis(500))), // NPCs use signature abilities (check every 0.5s for responsive Defender counters)
-            combat::validate_ability_prerequisites,
             combat::abilities::auto_attack::handle_auto_attack,
             combat::abilities::rattle::handle_rattle,
             combat::abilities::disengage::handle_disengage,
@@ -54,7 +53,7 @@ impl Plugin for CombatPlugin {
             combat::abilities::counter::handle_counter,  // Counter ability
             combat::abilities::kick::handle_kick,        // Kick: reactive knockback
             combat::abilities::deflect::handle_deflect,
-            reaction_queue::process_dismiss, // Dismiss front queue threat (no GCD/lockout)
+            reaction_queue::process_dismiss, // Dismiss front queue threat (no lockout)
             common_bevy::systems::combat::resources::check_death, // Check for death from ANY source
             common_bevy::systems::combat::resources::process_respawn,
             common_bevy::systems::combat::queue::sync_queue_window_size, // Sync queue window size when attributes change

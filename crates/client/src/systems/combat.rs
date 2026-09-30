@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{reaction_queue::*, resources::*, gcd::Gcd, target::Target, Loc, ActorAttributes},
+    components::{reaction_queue::*, resources::*, target::Target, Loc, ActorAttributes},
     message::{AbilityType, Do, Event as GameEvent, Try},
-    systems::combat::{damage as damage_calc, queue as queue_utils, gcd::GcdType},
+    systems::combat::{damage as damage_calc, queue as queue_utils},
 };
 
 /// Client system to handle InsertThreat events
@@ -131,29 +131,6 @@ pub fn handle_ability_failed(
     }
 }
 
-/// Client system to activate GCD component when GCD events are received from server
-/// Listens to Do<Event::Gcd> and calls gcd.activate() on the local entity
-/// This ensures client-side prediction checks (predict_dodge, etc.) see accurate GCD state
-pub fn apply_gcd(
-    mut reader: MessageReader<Do>,
-    mut query: Query<&mut Gcd>,
-    time: Res<Time>,
-) {
-    for event in reader.read() {
-        if let GameEvent::Gcd { ent, typ } = event.event {
-            if let Ok(mut gcd) = query.get_mut(ent) {
-                // GCD duration for attacks (must match server durations)
-                let duration = match typ {
-                    GcdType::Attack => std::time::Duration::from_secs(1),  // 1s for attacks
-                };
-
-                // Activate local GCD
-                gcd.activate(typ, duration, time.elapsed());
-            }
-        }
-    }
-}
-
 /// Client passive auto-attack system for players
 /// Automatically sends AutoAttack Try events when player has an adjacent target
 /// Runs periodically (every 500ms) to check for auto-attack opportunities
@@ -161,28 +138,20 @@ pub fn apply_gcd(
 /// Auto-attack will only fire if:
 /// - Player has a Target set (via reactive targeting system)
 /// - Target is within its `AttackRange` and its facing cone
-/// - No GCD active (attacks are free actions)
 /// - 1.5s has elapsed since last auto-attack
 pub fn player_auto_attack(
     mut writer: MessageWriter<Try>,
-    mut player_query: Query<(Entity, &Loc, &Target, &mut common_bevy::components::LastAutoAttack, Option<&Gcd>, &common_bevy::components::ActorAttributes, Option<&common_bevy::components::AttackRange>, Option<&common_bevy::components::heading::Heading>, Option<&common_bevy::components::status::Status>)>,
+    mut player_query: Query<(Entity, &Loc, &Target, &mut common_bevy::components::LastAutoAttack, &common_bevy::components::ActorAttributes, Option<&common_bevy::components::AttackRange>, Option<&common_bevy::components::heading::Heading>, Option<&common_bevy::components::status::Status>)>,
     target_query: Query<&Loc>,
     input_queues: Res<common_bevy::resources::InputQueues>,
     time: Res<Time>,
 ) {
     let now = time.elapsed();
 
-    for (player_ent, player_loc, player_target, mut last_auto_attack, gcd_opt, attrs, attack_range_opt, heading, status) in &mut player_query {
+    for (player_ent, player_loc, player_target, mut last_auto_attack, attrs, attack_range_opt, heading, status) in &mut player_query {
         // Only process local player (entity with InputQueue)
         if input_queues.get(&player_ent).is_none() {
             continue;
-        }
-
-        // Skip if GCD active (though auto-attack shouldn't trigger GCD)
-        if let Some(gcd) = gcd_opt {
-            if gcd.is_active(time.elapsed()) {
-                continue;
-            }
         }
 
         // Check cooldown: the fixed interval, stretched by a daze

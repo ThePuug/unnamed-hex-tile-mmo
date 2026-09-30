@@ -1,8 +1,7 @@
 // Combat-related systems module
-// Consolidates all combat mechanics (state, resources, queues, GCD, damage, recovery, synergies)
+// Consolidates all combat mechanics (state, resources, queues, damage, recovery, synergies)
 
 pub mod damage;
-pub mod gcd;
 pub mod queue;
 pub mod recovery;
 pub mod resources;

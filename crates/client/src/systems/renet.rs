@@ -38,7 +38,6 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::Stunned(_) => "Inc:Stunned",
             Component::Equipment(_) => "Inc:Equipment",
         },
-        Event::Gcd { .. } => "Gcd",
         Event::ChunkData { .. } => "ChunkData",
         Event::InsertThreat { .. } => "InsertThreat",
         Event::ApplyDamage { .. } => "ApplyDamage",
@@ -208,13 +207,6 @@ pub fn write_do(
                 let Some(&ent) = l2r.get_by_right(&ent) else { continue };
                 do_writer.write(Do { event: Event::Activity { ent, activity } });
             }
-            Do { event: Event::Gcd { ent, typ } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
-                    continue
-                };
-                do_writer.write(Do { event: Event::Gcd { ent, typ } });
-            }
             // ChunkData now arrives on ReliableUnordered — handled below
             Do { event: Event::InsertThreat { ent, threat } } => {
                 let Some(&ent) = l2r.get_by_right(&ent) else {
@@ -367,12 +359,6 @@ pub fn send_try(
                 conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Input {
                     ent: *l2r.get_by_left(ent).unwrap(),
                     key_bits: *key_bits, dt: *dt, seq: *seq,
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::Gcd { ent, typ, .. } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Gcd {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    typ: *typ,
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::Spawn { ent, typ, qrz, attrs } => {

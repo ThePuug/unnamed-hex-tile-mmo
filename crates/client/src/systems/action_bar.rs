@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{Actor, behaviour::Side, gcd::Gcd, recovery::{GlobalRecovery, SynergyUnlock}, resources::*, tier_lock::TierLock, Loc, heading::Heading, entity_type::EntityType},
+    components::{Actor, behaviour::Side, recovery::{GlobalRecovery, SynergyUnlock}, resources::*, tier_lock::TierLock, Loc, heading::Heading, entity_type::EntityType},
     message::AbilityType,
     plugins::nntree::NNTree,
     systems::targeting::select_target,
@@ -257,19 +257,15 @@ pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
     mut glow_query: Query<&mut Visibility, With<SynergyGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
-    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&TierLock>, Option<&Gcd>, Option<&GlobalRecovery>, Option<&SynergyUnlock>, Has<Actor>), With<crate::components::Viewed>>,
+    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&TierLock>, Option<&GlobalRecovery>, Option<&SynergyUnlock>, Has<Actor>), With<crate::components::Viewed>>,
     entity_query: Query<(&EntityType, &Loc, Option<&Side>)>,
     nntree: Res<NNTree>,
-    time: Res<Time>,
 ) {
     // The resources and position of the actor the client sees as
-    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, gcd_opt, recovery_opt, synergy_opt, controlled)) = player_query.single() else {
+    let Ok((player_ent, stamina, mana, player_loc, player_heading, targeting_state, recovery_opt, synergy_opt, controlled)) = player_query.single() else {
         return;
     };
     let targeting_state = targeting_state.copied().unwrap_or_default();
-
-    let now = time.elapsed();
-    let gcd_active = gcd_opt.map_or(false, |gcd| gcd.is_active(now));
 
     // Check recovery lockout and synergy state
     let recovery_active = recovery_opt.map_or(false, |r| r.is_active());
@@ -297,7 +293,6 @@ pub fn update(
                 ability,
                 stamina,
                 mana,
-                gcd_active,
                 recovery_active,
                 recovery_remaining,
                 synergy_opt,
@@ -375,7 +370,6 @@ fn get_ability_state(
     ability: AbilityType,
     stamina: &Stamina,
     _mana: &Mana,
-    gcd_active: bool,
     recovery_active: bool,
     _recovery_remaining: f32,
     synergy_opt: Option<&SynergyUnlock>,
@@ -396,10 +390,6 @@ fn get_ability_state(
             }
         }
         // Still locked (no synergy)
-        return AbilityState::OnCooldown;
-    }
-
-    if gcd_active {
         return AbilityState::OnCooldown;
     }
 

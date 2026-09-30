@@ -3,7 +3,6 @@ pub mod behaviour;
 pub mod engagement;
 pub mod entity_type;
 pub mod equipment;
-pub mod gcd;
 pub mod grit;
 pub mod heading;
 pub mod hex_assignment;

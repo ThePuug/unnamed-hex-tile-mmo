@@ -36,7 +36,7 @@ pub fn update_keybits(
     console: Res<crate::plugins::console::DevConsole>,
     menu: Res<crate::plugins::shell::menu::GameMenu>,
     focus: Res<crate::systems::focus::NumpadFocus>,
-    mut query: Query<(Entity, &mut KeyBits, Option<&common_bevy::components::gcd::Gcd>, &Target), With<Actor>>,
+    mut query: Query<(Entity, &mut KeyBits, &Target), With<Actor>>,
     mut writer: MessageWriter<Try>,
     mut buffers: ResMut<InputQueues>,
     dt: Res<Time>,
@@ -50,37 +50,34 @@ pub fn update_keybits(
         || (console.visible && console.current_menu == crate::plugins::console::MenuPath::LightingTime);
     let released = ButtonInput::default();
     let keyboard: &ButtonInput<KeyCode> = if modal { &released } else { &keyboard };
-    let Ok((ent, mut keybits0, gcd_opt, target)) = query.single_mut() else { return };
+    let Ok((ent, mut keybits0, target)) = query.single_mut() else { return };
 
     let delta_ns = dt.delta().as_nanos();
     keybits0.accumulator += delta_ns;
 
-    // Check GCD before allowing ability usage
-    let gcd_active = gcd_opt.map_or(false, |gcd| gcd.is_active(dt.elapsed()));
-
     // MVP Ability Set
 
     // Lunge ability (Q key) - Gap closer
-    if keyboard.just_pressed(KeyCode::KeyQ) && !gcd_active {
+    if keyboard.just_pressed(KeyCode::KeyQ) {
         writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Lunge, target: target.entity }});
     }
 
     // Overpower ability (W key) - Heavy strike
-    if keyboard.just_pressed(KeyCode::KeyW) && !gcd_active {
+    if keyboard.just_pressed(KeyCode::KeyW) {
         writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Overpower, target: target.entity }});
     }
 
     // Counter ability (E key) - Reactive counter-attack
-    if keyboard.just_pressed(KeyCode::KeyE) && !gcd_active {
+    if keyboard.just_pressed(KeyCode::KeyE) {
         writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Counter, target: None }});
     }
 
     // Kick ability (R key) - Reactive knockback
-    if keyboard.just_pressed(KeyCode::KeyR) && !gcd_active {
+    if keyboard.just_pressed(KeyCode::KeyR) {
         writer.write(Try { event: Event::UseAbility { ent, ability: AbilityType::Kick, target: None }});
     }
 
-    // Dismiss front queue threat (no GCD check — independent of ability system)
+    // Dismiss front queue threat (independent of the ability system)
     if keyboard.just_pressed(KeyCode::KeyD) {
         writer.write(Try { event: Event::Dismiss { ent }});
     }

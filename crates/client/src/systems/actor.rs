@@ -175,7 +175,6 @@ pub fn do_spawn(
                     .insert((
                         attrs_val,
                         reaction_queue,
-                        common_bevy::components::gcd::Gcd::new(),
                         common_bevy::components::target::Target::default(), // For targeting system
                         common_bevy::components::LastAutoAttack::default(), // For auto-attack cooldown
                         common_bevy::components::AttackRange::default(), // Auto-attack range (melee default)
@@ -193,17 +192,6 @@ pub fn do_spawn(
                 // (do_incremental handles inserting missing components)
             }
             _ => continue,
-        }
-    }
-}
-
-pub fn try_gcd(
-    mut reader: MessageReader<Try>,
-    mut writer: MessageWriter<Do>,
-) {
-    for message in reader.read() {
-        if let Try { event: Event::Gcd { ent, typ } } = message {
-            writer.write(Do { event: Event::Gcd { ent: *ent, typ: *typ }});
         }
     }
 }

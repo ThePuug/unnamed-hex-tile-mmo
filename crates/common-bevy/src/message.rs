@@ -6,7 +6,7 @@ use tinyvec::ArrayVec;
 use crate::{
     chunk::ChunkId,
     components::{ behaviour::*, entity_type::*, equipment::{Equipment, Inventory, Item}, heading::*, keybits::*, position::Position, reaction_queue::*, resources::*, * },
-    systems::{combat::gcd::*, targeting::RangeTier},
+    systems::targeting::RangeTier,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -23,7 +23,6 @@ pub enum Event {
         chunk_id: ChunkId,
         tiles: ArrayVec<[(i32, EntityType, Option<i32>); 272]>,
     },
-    Gcd { ent: Entity, typ: GcdType },
     Init { ent: Entity, dt: u128 },
     /// Client → Server: `dt` milliseconds of input `seq` on the client.s own
     /// clock. A new `seq` opens an input; the same `seq` again extends it.
@@ -75,7 +74,7 @@ pub enum Event {
     /// Server → Client: Response to ping (echoes client timestamp)
     Pong { client_time: u128 },
     /// Client → Server: Dismiss front queue threat at full unmitigated damage
-    /// No GCD, no lockout, no resource cost — queue management, not an ability
+    /// No lockout, no resource cost — queue management, not an ability
     Dismiss { ent: Entity },
     /// Client → Server: Set tier lock for targeting
     SetTierLock { ent: Entity, tier: RangeTier },

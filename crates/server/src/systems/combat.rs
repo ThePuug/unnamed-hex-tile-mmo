@@ -4,8 +4,8 @@ pub mod leap;
 
 use bevy::prelude::*;
 use common_bevy::{
-    components::{entity_type::*, reaction_queue::*, resources::*, gcd::Gcd, LastAutoAttack, *},
-    message::{AbilityFailReason, AbilityType, Do, Try, Event as GameEvent},
+    components::{entity_type::*, reaction_queue::*, resources::*, LastAutoAttack, *},
+    message::{AbilityType, Do, Try, Event as GameEvent},
     systems::{
         combat::{damage as damage_calc, queue as queue_utils},
     },
@@ -249,53 +249,6 @@ fn land_damage(ent: Entity, source: Entity, damage: f32, health: &mut Health, wr
     writer.write(Do { event: GameEvent::Incremental { ent, component: common_bevy::message::Component::Health(*health) } });
 }
 
-/// System to validate ability prerequisites (GCD, death status)
-/// Runs before individual ability systems
-/// Emits AbilityFailed for invalid attempts
-pub fn validate_ability_prerequisites(
-    mut reader: MessageReader<Try>,
-    caster_respawn_query: Query<&RespawnTimer>,
-    gcd_query: Query<&Gcd>,
-    time: Res<Time>,
-    mut writer: MessageWriter<Do>,
-) {
-    for event in reader.read() {
-        if let GameEvent::UseAbility { ent, ability: _, target: _ } = event.event {
-            // Ignore abilities from dead players (those with RespawnTimer)
-            if caster_respawn_query.get(ent).is_ok() {
-                writer.write(Do {
-                    event: GameEvent::AbilityFailed {
-                        ent,
-                        reason: AbilityFailReason::NoTargets, // Dead players can't use abilities
-                    },
-                });
-                continue;
-            }
-
-            // Check GCD - if active, reject ability
-            if let Ok(gcd) = gcd_query.get(ent) {
-                if gcd.is_active(time.elapsed()) {
-                    writer.write(Do {
-                        event: GameEvent::AbilityFailed {
-                            ent,
-                            reason: AbilityFailReason::OnCooldown,
-                        },
-                    });
-                    continue;
-                }
-            }
-        }
-    }
-}
-
-// Individual ability handlers are in combat/abilities/ module:
-// - abilities::auto_attack::handle_auto_attack
-// - abilities::overpower::handle_overpower
-// - abilities::lunge::handle_lunge
-// - abilities::knockback::handle_knockback
-// - abilities::counter::handle_counter
-// - abilities::deflect::handle_deflect
-// GCD and tier lock are now reset directly by ability systems to prevent race conditions
 
 /// System to automatically trigger auto-attacks when a hostile is in range.
 /// The cadence is fixed by `ActorAttributes::cadence_interval`, stretched
@@ -303,7 +256,7 @@ pub fn validate_ability_prerequisites(
 /// wherever it stands; its assigned hex decides only where it walks.
 pub fn process_passive_auto_attack(
     mut query: Query<
-        (Entity, &Loc, &mut LastAutoAttack, Option<&Gcd>, &common_bevy::components::target::Target,
+        (Entity, &Loc, &mut LastAutoAttack, &common_bevy::components::target::Target,
          &ActorAttributes,
          Option<&common_bevy::components::AttackRange>,
          Option<&common_bevy::components::stunned::Stunned>,
@@ -321,17 +274,10 @@ pub fn process_passive_auto_attack(
     let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
     // Only iterate over NPCs (entities Without PlayerControlled)
-    for (ent, loc, mut last_auto_attack, gcd_opt, target, attrs, attack_range_opt, stunned, heading, status) in query.iter_mut() {
+    for (ent, loc, mut last_auto_attack, target, attrs, attack_range_opt, stunned, heading, status) in query.iter_mut() {
         if common_bevy::components::stunned::Stunned::holds(stunned) {
             continue;
         }
-        // Check if on GCD
-        if let Some(gcd) = gcd_opt {
-            if gcd.is_active(time.elapsed()) {
-                continue; // Skip if on GCD
-            }
-        }
-
         // Check cooldown: the fixed interval, stretched by a daze
         let cooldown = common_bevy::components::status::Status::cadence(attrs.cadence_interval(), status);
         let time_since_last_attack = now.saturating_sub(last_auto_attack.last_attack_time);

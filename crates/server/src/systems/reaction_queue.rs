@@ -76,7 +76,7 @@ pub fn tick_dots(
 /// Server system to process Dismiss events
 /// Pops the front threat from the queue and applies full unmitigated damage,
 /// and whatever else the blow does lands with it
-/// No GCD, no lockout, no resource cost
+/// No lockout, no resource cost
 pub fn process_dismiss(
     mut commands: Commands,
     mut reader: MessageReader<Try>,

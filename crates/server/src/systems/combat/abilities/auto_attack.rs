@@ -8,7 +8,7 @@ use common_bevy::{
 
 /// Handle AutoAttack ability — entity-based, single-target
 
-/// - Passive ability (no stamina cost, no GCD)
+/// - Passive ability (no stamina cost, no lockout)
 /// - Reads target entity from the UseAbility event (player's intended target)
 /// - Server-side range check using current positions (not stale client data)
 /// - Deals damage to exactly one entity

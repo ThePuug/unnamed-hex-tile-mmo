@@ -140,7 +140,6 @@ pub fn do_presence(
                     mana,
                     combat_state,
                     reaction_queue,
-                    gcd::Gcd::new(),
                     LastAutoAttack::default(),
                     PlayerDiscoveryState::default(),
                     TierLock::new(),
@@ -294,10 +293,6 @@ pub fn write_try(
                 Try { event: Event::Input { ent: _, key_bits, dt, seq } } => {
                     let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::Input { ent, key_bits, dt, seq }});
-                }
-                Try { event: Event::Gcd { typ, .. } } => {
-                    let Some(ent) = character else { continue };
-                    writer.write(Try { event: Event::Gcd { ent, typ }});
                 }
                 Try { event: Event::Spawn { ent, .. } } => {
                     writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
@@ -466,15 +461,6 @@ pub fn write_try(
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
                 let bytes = bincode::serde::encode_to_vec(
                     Do { event: Event::ClearQueue { ent, clear_type }},
-                    bincode::config::legacy()).unwrap();
-                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
-            }
-            Event::Gcd { ent, typ } => {
-                let ent = *ent;
-                let typ = *typ;
-                let Ok(loaded_by) = loaded_by_query.get(ent) else { continue; };
-                let bytes = bincode::serde::encode_to_vec(
-                    Do { event: Event::Gcd { ent, typ }},
                     bincode::config::legacy()).unwrap();
                 broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
