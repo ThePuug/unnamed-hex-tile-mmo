@@ -1,6 +1,6 @@
 /// # NPC Ability Usage System
 
-/// NPCs with Chase or Kite behaviors will use their signature abilities
+/// NPCs will use their signature abilities
 /// based on archetype when appropriate conditions are met.
 
 use bevy::prelude::*;
@@ -14,7 +14,7 @@ use common_bevy::{
     message::{Event, Try, AbilityType},
     spatial_difficulty::EnemyArchetype,
 };
-use crate::systems::behaviour::{chase::Chase, kite::Kite};
+use crate::systems::behaviour::chase::Chase;
 
 /// System to trigger NPC signature abilities
 /// Runs periodically to check if NPCs should use their archetype abilities
@@ -22,7 +22,7 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 /// Ability usage rules:
 /// - Berserker (Lunge): Use when target is within its range, adjacent included (burst and gap closer)
 /// - Juggernaut (Rattle): Use when target is within melee reach (each one dazes it further)
-/// - Kiter (Volley): Use when target is within 6 hexes (a burst from range)
+/// - Kiter (Volley): Use when target is within its reach (a burst from range)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
 /// - Skirmisher (Disengage): Reactive - dodges the blow at the front of its queue, an auto-attack's as overflow
 /// - Ambusher (Flank): Use when target is within melee reach (stuns it and strikes from its back)
@@ -33,10 +33,9 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 
 /// Update frequency: 0.5s (fast enough for Defenders to respond to incoming threats)
 pub fn npc_ability_usage(
-    // Query NPCs with Chase or Kite behavior
     mut npc_query: Query<
         (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>, &mut NpcRecovery, Option<&common_bevy::components::heading::Heading>, &common_bevy::components::ActorAttributes),
-        Or<(With<Chase>, With<Kite>)>
+        With<Chase>
     >,
     target_query: Query<&Loc, With<common_bevy::components::behaviour::Side>>,
     time: Res<Time>,
@@ -115,7 +114,7 @@ pub fn npc_ability_usage(
             // Lunge: its burst, and its reach to anything within its range
             EnemyArchetype::Berserker => (1..=common_bevy::systems::combat::resources::LUNGE_RANGE as i32).contains(&distance),
             EnemyArchetype::Juggernaut => (1..=common_bevy::components::AttackRange::default().0).contains(&distance),
-            EnemyArchetype::Kiter => distance <= crate::systems::behaviour::kite::KITER_REACH,
+            EnemyArchetype::Kiter => distance <= crate::systems::behaviour::KITER_REACH,
             EnemyArchetype::Ambusher => (1..=common_bevy::components::AttackRange::default().0).contains(&distance),
             // Defender's Counter and Skirmisher's Disengage are handled above
             EnemyArchetype::Defender | EnemyArchetype::Skirmisher => false,

@@ -47,16 +47,8 @@ const DEN_CLEARANCE: i32 = 5;
 /// or for a Kiter the edge of its band, where it fires from.
 fn attack_range(archetype: EnemyArchetype) -> i32 {
     match archetype {
-        EnemyArchetype::Kiter => crate::systems::behaviour::kite::KITER_REACH,
+        EnemyArchetype::Kiter => crate::systems::behaviour::KITER_REACH,
         _ => common_bevy::components::AttackRange::default().0,
-    }
-}
-
-/// The range an NPC of `archetype` acquires a target within.
-fn acquisition_range(archetype: EnemyArchetype) -> u32 {
-    match archetype {
-        EnemyArchetype::Kiter => crate::systems::behaviour::kite::Kite::forest_sprite().acquisition_range,
-        EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher | EnemyArchetype::Ambusher => crate::systems::behaviour::ACQUISITION_RANGE,
     }
 }
 
@@ -86,7 +78,7 @@ pub fn try_spawn_den(
     for message in reader.read() {
         let Try { event: Event::SpawnDen { ent, archetype } } = message else { continue };
         let Ok((loc, heading, attrs)) = query.get(*ent) else { continue };
-        let ahead = den_ahead(**loc, *heading, *archetype);
+        let ahead = den_ahead(**loc, *heading);
         let den = Qrz { q: ahead.q, r: ahead.r, z: registry.elevation_at(ahead.q, ahead.r) + 1 };
         info!("den: {archetype:?} at {den:?}, ahead of {ent} at {:?}", **loc);
         let player_level = attrs.total_level().min(u8::MAX as u32) as u8;
@@ -149,7 +141,7 @@ pub fn try_spawn_party(
         let at = if *engage {
             engaging_at(**loc, heading.hex_dir(), |q, r| registry.elevation_at(q, r))
         } else {
-            let ahead = den_ahead(**loc, *heading, *archetype);
+            let ahead = den_ahead(**loc, *heading);
             Qrz { z: registry.elevation_at(ahead.q, ahead.r) + 1, ..ahead }
         };
         let side = parties.next();
@@ -158,10 +150,10 @@ pub fn try_spawn_party(
     }
 }
 
-/// The tile a den of `archetype` goes on, ahead of a player at `tile`
-/// facing `heading`; its z is the player's.
-fn den_ahead(tile: Qrz, heading: Heading, archetype: EnemyArchetype) -> Qrz {
-    tile + heading.hex_dir() * (acquisition_range(archetype) as i32 + 1 + DEN_CLEARANCE)
+/// The tile a den goes on, ahead of a player at `tile` facing `heading`;
+/// its z is the player's.
+fn den_ahead(tile: Qrz, heading: Heading) -> Qrz {
+    tile + heading.hex_dir() * (crate::systems::behaviour::ACQUISITION_RANGE as i32 + 1 + DEN_CLEARANCE)
 }
 
 /// Spawn an engagement of `npc_count` NPCs of `archetype` at `level`, on
@@ -240,43 +232,23 @@ pub fn spawn_engagement(
             commands.entity(npc_entity).insert(worn);
         }
 
-        match archetype {
-            EnemyArchetype::Berserker | EnemyArchetype::Juggernaut | EnemyArchetype::Defender | EnemyArchetype::Skirmisher | EnemyArchetype::Ambusher => {
-                let chase = crate::systems::behaviour::chase::Chase {
-                    acquisition_range: crate::systems::behaviour::ACQUISITION_RANGE,
-                    leash_distance: crate::systems::behaviour::LEASH_DISTANCE,
-                    attack_range: attack_range(archetype),
-                };
-                commands.entity(npc_entity).insert((
-                    NearestNeighbor::new(npc_entity, npc_loc),
-                    chase,
-                    NpcRecovery::new(*wait.start(), *wait.end()),
-                    common_bevy::components::AttackRange(attack_range(archetype)),
-                    common_bevy::components::target::Target::default(),
-                    Heading::default(),
-                    common_bevy::components::Turn::default(),
-                    Position::at_tile(npc_location),
-                    AirTime::default(),
-                    common_bevy::components::movement_intent_state::MovementIntentState::default(),
-                ));
-            }
-            EnemyArchetype::Kiter => {
-                let kite = crate::systems::behaviour::kite::Kite::forest_sprite();
-                commands.entity(npc_entity).insert((
-                    NearestNeighbor::new(npc_entity, npc_loc),
-                    kite,
-                    common_bevy::components::target::Target::default(),
-                    Heading::default(),
-                    common_bevy::components::Turn::default(),
-                    Position::at_tile(npc_location),
-                    AirTime::default(),
-                    common_bevy::components::AttackRange(attack_range(archetype)),
-                    LastAutoAttack::default(),
-                    NpcRecovery::new(*wait.start(), *wait.end()),
-                    common_bevy::components::movement_intent_state::MovementIntentState::default(),
-                ));
-            }
-        }
+        let chase = crate::systems::behaviour::chase::Chase {
+            acquisition_range: crate::systems::behaviour::ACQUISITION_RANGE,
+            leash_distance: crate::systems::behaviour::LEASH_DISTANCE,
+            attack_range: attack_range(archetype),
+        };
+        commands.entity(npc_entity).insert((
+            NearestNeighbor::new(npc_entity, npc_loc),
+            chase,
+            NpcRecovery::new(*wait.start(), *wait.end()),
+            common_bevy::components::AttackRange(attack_range(archetype)),
+            common_bevy::components::target::Target::default(),
+            Heading::default(),
+            common_bevy::components::Turn::default(),
+            Position::at_tile(npc_location),
+            AirTime::default(),
+            common_bevy::components::movement_intent_state::MovementIntentState::default(),
+        ));
 
         engagement.add_npc(npc_entity);
     }
@@ -347,16 +319,14 @@ mod tests {
     #[test]
     fn no_member_of_a_placed_den_starts_in_acquisition_range() {
         let player = Qrz { q: 104289, r: -4677, z: 0 };
-        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher] {
-            for slot in 0..HEADING_SLOTS {
-                let den = den_ahead(player, Heading::from_slot(slot), archetype);
-                for i in 0..3 {
-                    let member = den + get_random_hex_offset(i);
-                    assert!(
-                        player.flat_distance(&member) > acquisition_range(archetype) as i32,
-                        "{archetype:?} member {i} at slot {slot} starts in range",
-                    );
-                }
+        for slot in 0..HEADING_SLOTS {
+            let den = den_ahead(player, Heading::from_slot(slot));
+            for i in 0..3 {
+                let member = den + get_random_hex_offset(i);
+                assert!(
+                    player.flat_distance(&member) > crate::systems::behaviour::ACQUISITION_RANGE as i32,
+                    "member {i} at slot {slot} starts in range",
+                );
             }
         }
     }

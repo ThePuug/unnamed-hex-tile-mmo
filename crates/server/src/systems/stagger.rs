@@ -87,7 +87,7 @@ pub fn process_knockback(
 }
 
 /// Freeze staggered and stunned NPCs by resetting Position.offset to zero.
-/// Runs in FixedUpdate AFTER behavior systems (chase, kite) so it overrides
+/// Runs in FixedUpdate AFTER the chase behaviour so it overrides
 /// any movement they computed. Universal — no per-behavior code needed.
 /// A player's stun holds in `input::apply`, where its movement is made.
 pub fn enforce_stagger(

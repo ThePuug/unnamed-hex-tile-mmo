@@ -26,11 +26,15 @@ use super::Body;
 /// - Continuously paths toward target with greedy movement
 /// - Faces and attacks when in range
 /// - All without behavior tree composition overhead
+///
+/// Every NPC chases, melee or ranged: one that fights from range closes
+/// only until its target is within its `attack_range`, and stands and
+/// shoots from there.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Chase {
     pub acquisition_range: u32,  // How far to search for targets
     pub leash_distance: i32,     // Max chase distance (0 = infinite)
-    pub attack_range: i32,       // Distance to engage from, the ring its assigned hex is on
+    pub attack_range: i32,       // Distance to engage from: the ring its assigned hex is on, or with no hex where it stops closing
 }
 
 pub fn chase(

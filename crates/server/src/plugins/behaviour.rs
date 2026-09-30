@@ -4,7 +4,6 @@ use bevy::prelude::*;
 
 /// This plugin provides:
 /// - Chase: Unified hostile pursuit and engagement behavior
-/// - Kite: Flee behavior when player gets too close
 
 /// Only used by the server.
 pub struct BehaviourPlugin;
@@ -19,12 +18,10 @@ impl Plugin for BehaviourPlugin {
                 common_bevy::components::status::tick_status,
                 crate::systems::behaviour::hex_assignment::assign_hexes,
                 crate::systems::behaviour::chase::chase,
-                crate::systems::behaviour::kite::kite,
                 crate::systems::stagger::process_knockback
                     .after(crate::systems::stagger::tick_stagger),
                 crate::systems::stagger::enforce_stagger
                     .after(crate::systems::behaviour::chase::chase)
-                    .after(crate::systems::behaviour::kite::kite)
                     .after(crate::systems::stagger::process_knockback),
             )
         );

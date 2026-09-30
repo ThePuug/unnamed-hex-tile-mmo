@@ -207,9 +207,10 @@ pub fn assign_hexes(
                 let health = health_query.get(npc_ent).ok()?;
                 if health.current() <= 0.0 { return None; }
 
-                // Only melee NPCs (those with Chase) get hex assignments
+                // Only melee NPCs take a hex: one that fights from range
+                // stands wherever its shots reach
                 let (_, loc, chase, _) = npc_query.get(npc_ent).ok()?;
-                let chase = chase?;
+                let chase = chase.filter(|chase| chase.attack_range <= common_bevy::components::AttackRange::default().0)?;
                 reach = reach.min(chase.attack_range.max(1) as u32);
                 Some((npc_ent, engagement.archetype.positioning_strategy(), **loc))
             })

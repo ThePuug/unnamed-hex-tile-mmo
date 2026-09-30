@@ -1,6 +1,5 @@
 pub mod chase;
 pub mod hex_assignment;
-pub mod kite;
 
 use bevy::ecs::query::QueryData;
 use qrz::Qrz;
@@ -29,6 +28,10 @@ pub fn spotted(nntree: &NNTree, loc: Loc, range: u32) -> impl Iterator<Item = be
 /// How far an NPC follows a target from its den, in tiles, before it gives
 /// up and goes home.
 pub const LEASH_DISTANCE: i32 = 60;
+
+/// How far a Kiter reaches, in tiles: its auto-attack, its Volley, and
+/// where it stops closing on its target.
+pub const KITER_REACH: i32 = 20;
 
 /// Airtime an NPC leaps with to climb onto a neighbouring tile.
 const CLIMB_MS: i16 = 125;

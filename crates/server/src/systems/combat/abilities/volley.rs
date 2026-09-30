@@ -48,7 +48,7 @@ pub fn handle_volley(
         let (Ok(caster_loc), Ok(target_loc)) = (loc_query.get(*ent), loc_query.get(target_ent)) else {
             continue;
         };
-        if caster_loc.flat_distance(target_loc) > crate::systems::behaviour::kite::KITER_REACH {
+        if caster_loc.flat_distance(target_loc) > crate::systems::behaviour::KITER_REACH {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OutOfRange } });
             continue;
         }
