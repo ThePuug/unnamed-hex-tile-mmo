@@ -21,8 +21,9 @@
 //! above, and ends each report with a line `end`, so a tuning search tries
 //! values back to back in one process.
 //!
-//! Every pairing fights `runs` times, the two swapping ends each run so
-//! neither side's spawn decides it. All of a scenario's fights share one
+//! Every pairing fights `runs` times, the two swapping ends each run, each
+//! team starting on its end's tile or a neighbour and each fighter facing
+//! its foes give or take 30°, so neither end's start decides a close fight. All of a scenario's fights share one
 //! pool of workers, so no pairing waits on another's slowest fight, and
 //! each fight runs single-threaded on its worker. The report
 //! gives each pairing's win split, median fight length, the winners' health
@@ -38,6 +39,7 @@ use common_bevy::{
     components::{
         behaviour::Side,
         entity_type::{decorator::Decorator, EntityType},
+        heading::Heading,
         resources::{Health, SpawnPoint},
     },
     message::{AbilityType, Do, Event, Try},
@@ -189,6 +191,18 @@ struct Outcome {
 const WEST: Side = Side(1);
 const EAST: Side = Side(2);
 
+/// `at` or one of its neighbours no further from `foes`, at random: a
+/// team's start is not fixed to its tile, and never leaves the range the
+/// stage set it at to be spotted.
+fn jitter(at: Qrz, foes: Qrz) -> Qrz {
+    let near = at.flat_distance(&foes);
+    let starts: Vec<Qrz> = std::iter::once(at)
+        .chain(qrz::DIRECTIONS.iter().map(|&d| at + d))
+        .filter(|tile| tile.flat_distance(&foes) <= near)
+        .collect();
+    starts[rand::random_range(0..starts.len())]
+}
+
 fn flat_map() -> Map {
     let map = Map::new(qrz::Map::<EntityType>::new(
         common::camera::HEX_RADIUS,
@@ -229,17 +243,28 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
 
     let world = app.world_mut();
     let time = world.resource::<Time>().clone();
+    // The east team engages the west as a staged party engages the fighter
+    // it is spawned on, the stage's gap apart about the origin
+    let west_at = Qrz { q: -STAGE_GAP / 2, r: 0, z: 1 };
+    let east_at = engaging_at(west_at, Qrz { q: 1, r: 0, z: 0 }, |_, _| 0);
     {
         let mut commands = world.commands();
-        // The east team engages the west as a staged party engages the
-        // fighter it is spawned on, the stage's gap apart about the origin
-        let west_at = Qrz { q: -STAGE_GAP / 2, r: 0, z: 1 };
-        let east_at = engaging_at(west_at, Qrz { q: 1, r: 0, z: 0 }, |_, _| 0);
-        for (team, side, at) in [(west, WEST, west_at), (east, EAST, east_at)] {
-            spawn_engagement(at, team.archetype, side, team.level, team.size, |_, _| 0, 0..=0, &mut commands, &time);
+        for (team, side, at, foes) in [(west, WEST, west_at, east_at), (east, EAST, east_at, west_at)] {
+            spawn_engagement(jitter(at, foes), team.archetype, side, team.level, team.size, |_, _| 0, 0..=0, &mut commands, &time);
         }
     }
     world.flush();
+    // Nothing but the damage roll varies a fight, so a start the two ends
+    // do not share would decide a close one the same way every run: each
+    // fighter faces its foes' end give or take two slots, near enough to
+    // spot them as a staged party would
+    let map = world.resource::<Map>().clone();
+    let mut fighters = world.query::<(&Side, &common_bevy::components::Loc, &mut Heading)>();
+    for (side, loc, mut heading) in fighters.iter_mut(world) {
+        let foes = if *side == WEST { east_at } else { west_at };
+        let toward = Heading::between(&map, **loc, foes).unwrap_or(*heading);
+        *heading = toward.turned(rand::random_range(-2..=2));
+    }
     let mut sides = world.query::<(Entity, &Side)>();
     let roster: HashMap<Entity, Side> = sides.iter(world).map(|(e, s)| (e, *s)).collect();
     world.resource_mut::<Tally>().sides = roster;
