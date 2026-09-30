@@ -245,7 +245,7 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
         let west_at = Qrz { q: -STAGE_GAP / 2, r: 0, z: 1 };
         let east_at = engaging_at(west_at, Qrz { q: 1, r: 0, z: 0 }, |_, _| 0);
         for (team, side, at) in [(west, WEST, west_at), (east, EAST, east_at)] {
-            spawn_engagement(at, team.archetype, side, team.level, team.size, |_, _| 0, &settings.tuning, &mut commands, &time);
+            spawn_engagement(at, team.archetype, side, team.level, team.size, |_, _| 0, &settings.tuning, 0..=0, &mut commands, &time);
         }
     }
     world.flush();

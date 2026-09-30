@@ -6,6 +6,8 @@
 //! Nothing selects sites: the only den is one an admin asks for with
 //! `Event::SpawnDen`, and `ActiveSpawners` is only ever cleared.
 
+use std::ops::RangeInclusive;
+
 use bevy::prelude::*;
 use qrz::Qrz;
 use rand::Rng;
@@ -39,11 +41,11 @@ use common_bevy::{
 #[derive(Resource, Default)]
 pub struct ActiveSpawners(pub std::collections::HashSet<(i32, i32)>);
 
-/// The most an NPC waits, in milliseconds, once it can afford its signature
-/// before it uses it, drawn afresh each use: enough to spread a pack's
-/// abilities apart. The skill's own cost and recovery set how often it
-/// comes, so this stays behaviour and the balance stays with the skill.
-pub const SIGNATURE_WAIT_MS: u64 = 2000;
+/// How long a live NPC waits, in milliseconds, once it can afford its
+/// signature and is out of recovery, before it uses it, drawn afresh each
+/// use: play's pace, spreading a pack apart. It sits outside the balance,
+/// which the arena measures with no wait at all.
+pub const SIGNATURE_WAIT_MS: RangeInclusive<u64> = 3000..=6000;
 
 /// Tiles between the edge of a den's acquisition range and the player who
 /// asked for it, so the fight starts when the player walks in.
@@ -99,7 +101,7 @@ pub fn try_spawn_den(
         let player_level = attrs.total_level().min(u8::MAX as u32) as u8;
         let (npc_count, level) = den_for(player_level, rand::rng().random_bool(0.5));
         info!("den: {npc_count}x{archetype:?}@{level} for a level-{player_level} player");
-        spawn_engagement(den, *archetype, Side::WILD, level, npc_count, |q, r| registry.elevation_at(q, r), &tuning, &mut commands, &time);
+        spawn_engagement(den, *archetype, Side::WILD, level, npc_count, |q, r| registry.elevation_at(q, r), &tuning, SIGNATURE_WAIT_MS, &mut commands, &time);
     }
 }
 
@@ -162,7 +164,7 @@ pub fn try_spawn_party(
         };
         let side = parties.next();
         info!("party: {size}x{archetype:?}@{level} on {side:?} at {at:?}, {} {ent} at {:?}", if *engage { "engaging" } else { "ahead of" }, **loc);
-        spawn_engagement(at, *archetype, side, *level, *size, |q, r| registry.elevation_at(q, r), &tuning, &mut commands, &time);
+        spawn_engagement(at, *archetype, side, *level, *size, |q, r| registry.elevation_at(q, r), &tuning, SIGNATURE_WAIT_MS, &mut commands, &time);
     }
 }
 
@@ -183,6 +185,7 @@ pub fn spawn_engagement(
     npc_count: u8,
     elevation: impl Fn(i32, i32) -> i32,
     tuning: &common_bevy::tuning::Tuning,
+    wait: RangeInclusive<u64>,
     commands: &mut Commands,
     time: &Time,
 ) {
@@ -259,7 +262,7 @@ pub fn spawn_engagement(
                 commands.entity(npc_entity).insert((
                     NearestNeighbor::new(npc_entity, npc_loc),
                     chase,
-                    NpcRecovery::new(0, SIGNATURE_WAIT_MS),
+                    NpcRecovery::new(*wait.start(), *wait.end()),
                     common_bevy::components::AttackRange(attack_range(archetype)),
                     common_bevy::components::target::Target::default(),
                     Heading::default(),
@@ -281,7 +284,7 @@ pub fn spawn_engagement(
                     AirTime::default(),
                     common_bevy::components::AttackRange(attack_range(archetype)),
                     LastAutoAttack::default(),
-                    NpcRecovery::new(0, SIGNATURE_WAIT_MS),
+                    NpcRecovery::new(*wait.start(), *wait.end()),
                     common_bevy::components::movement_intent_state::MovementIntentState::default(),
                 ));
             }
