@@ -170,3 +170,41 @@ pub fn update(
         }
     }
 }
+
+/// The UI's scale for a window `window_height` physical pixels tall on a
+/// monitor `monitor_height` tall: the window's share of the monitor, so the
+/// HUD covers the same share of a window as of the full screen.
+pub fn ui_share(window_height: u32, monitor_height: u32) -> f32 {
+    if monitor_height == 0 {
+        return 1.0;
+    }
+    (window_height as f32 / monitor_height as f32).min(1.0)
+}
+
+/// Scales the UI to the window's share of the monitor it is on: a smaller
+/// window shrinks the HUD with the world instead of crowding it.
+pub fn scale_to_window(
+    windows: Query<(&Window, Option<&bevy::window::OnMonitor>), With<bevy::window::PrimaryWindow>>,
+    monitors: Query<&bevy::window::Monitor>,
+    primary: Query<&bevy::window::Monitor, With<bevy::window::PrimaryMonitor>>,
+    mut scale: ResMut<UiScale>,
+) {
+    let Ok((window, on)) = windows.single() else { return };
+    let Some(monitor) = on.and_then(|on| monitors.get(on.0).ok()).or_else(|| primary.single().ok()) else { return };
+    let share = ui_share(window.resolution.physical_height(), monitor.physical_height);
+    if (scale.0 - share).abs() > 1e-3 {
+        scale.0 = share;
+    }
+}
+
+#[cfg(test)]
+mod scale_tests {
+    use super::*;
+
+    #[test]
+    fn the_hud_takes_the_windows_share_of_the_screen() {
+        assert_eq!(ui_share(1440, 1440), 1.0, "full screen as drawn");
+        assert_eq!(ui_share(720, 1440), 0.5, "half the height, half the HUD");
+        assert_eq!(ui_share(2000, 1440), 1.0, "never past full size");
+    }
+}
