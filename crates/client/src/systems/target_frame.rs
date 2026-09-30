@@ -11,10 +11,7 @@
 use bevy::prelude::*;
 
 use crate::resources::Server;
-use common_bevy::{
-    components::{entity_type::*, resources::*, reaction_queue::*, Loc},
-    spatial_difficulty::*,
-};
+use common_bevy::components::{entity_type::*, resources::*, reaction_queue::*, ActorAttributes};
 
 /// Marker component for the target frame container
 #[derive(Component)]
@@ -475,11 +472,11 @@ pub fn update(
     mut health_text_query: Query<&mut Text, (With<TargetHealthText>, Without<TargetNameText>, Without<TargetTriumvirateText>)>,
     mut level_hex_query: Query<(&mut BackgroundColor, &Children), With<TargetLevelHex>>,
     mut level_text_query: Query<&mut Text, (Without<TargetNameText>, Without<TargetHealthText>, Without<TargetTriumvirateText>)>,
-    player_query: Query<(&Health, &common_bevy::components::target::Target), With<crate::components::Viewed>>,
-    target_query: Query<(&EntityType, &Health, Option<&ReactionQueue>, &Loc)>,
+    player_query: Query<(&Health, &common_bevy::components::target::Target, Option<&ActorAttributes>), With<crate::components::Viewed>>,
+    target_query: Query<(&EntityType, &Health, Option<&ReactionQueue>, Option<&ActorAttributes>)>,
 ) {
     // Get local player and target
-    let Ok((player_health, target)) = player_query.single() else {
+    let Ok((player_health, target, own_attrs)) = player_query.single() else {
         return;
     };
 
@@ -503,48 +500,40 @@ pub fn update(
             *visibility = Visibility::Visible;
         }
 
-        if let Ok((entity_type, target_health, _queue_opt, target_loc)) = target_query.get(target_ent) {
+        if let Ok((entity_type, target_health, _queue_opt, target_attrs)) = target_query.get(target_ent) {
             // Update entity name
             for mut text in &mut name_text_query {
                 **text = entity_type.display_name().to_string();
             }
 
-            // Update level hexagon
-            if let EntityType::Actor(actor_impl) = entity_type {
-                if let actor::ActorIdentity::Npc(_) = actor_impl.identity {
-                    // Player level is static at 10 for now
-                    const PLAYER_LEVEL: u8 = 10;
+            // Update level hexagon: the level its attributes give it,
+            // coloured by the gap to the viewed actor's own
+            if let Some(target_attrs) = target_attrs {
+                let level = target_attrs.total_level() as i32;
+                let level_diff = level - own_attrs.map_or(level, |own| own.total_level() as i32);
 
-                    // Calculate enemy level from enemy location
-                    let enemy_level = calculate_enemy_level(**target_loc, HAVEN_LOCATION);
+                // >5 levels lower = gray
+                // 2-5 levels lower = green
+                // 1 level less or greater = yellow
+                // >1 level higher = red
+                let hex_color = if level_diff < -5 {
+                    Color::srgb(0.4, 0.4, 0.4) // Gray - trivial
+                } else if level_diff <= -2 {
+                    Color::srgb(0.2, 0.8, 0.2) // Green - easy
+                } else if level_diff.abs() <= 1 {
+                    Color::srgb(0.9, 0.9, 0.2) // Yellow - even match
+                } else {
+                    Color::srgb(0.9, 0.2, 0.2) // Red - dangerous
+                };
 
-                    // Calculate level difference (enemy - player)
-                    let level_diff = enemy_level as i8 - PLAYER_LEVEL as i8;
+                // Update hexagon color and level text
+                for (mut bg_color, children) in &mut level_hex_query {
+                    bg_color.0 = hex_color;
 
-                    // Color hexagon based on level difference
-                    // >5 levels lower = gray
-                    // 2-5 levels lower = green
-                    // 1 level less or greater = yellow
-                    // >1 level higher = red
-                    let hex_color = if level_diff < -5 {
-                        Color::srgb(0.4, 0.4, 0.4) // Gray - trivial
-                    } else if level_diff <= -2 {
-                        Color::srgb(0.2, 0.8, 0.2) // Green - easy
-                    } else if level_diff.abs() <= 1 {
-                        Color::srgb(0.9, 0.9, 0.2) // Yellow - even match
-                    } else {
-                        Color::srgb(0.9, 0.2, 0.2) // Red - dangerous
-                    };
-
-                    // Update hexagon color and level text
-                    for (mut bg_color, children) in &mut level_hex_query {
-                        bg_color.0 = hex_color;
-
-                        // Update the level number text (child of hexagon)
-                        for child in children.iter() {
-                            if let Ok(mut level_text) = level_text_query.get_mut(child) {
-                                **level_text = enemy_level.to_string();
-                            }
+                    // Update the level number text (child of hexagon)
+                    for child in children.iter() {
+                        if let Ok(mut level_text) = level_text_query.get_mut(child) {
+                            **level_text = level.to_string();
                         }
                     }
                 }
@@ -898,11 +887,11 @@ pub fn update_ally_frame(
     mut health_text_query: Query<&mut Text, (With<AllyHealthText>, Without<AllyNameText>, Without<AllyTriumvirateText>)>,
     mut level_hex_query: Query<(&mut BackgroundColor, &Children), With<AllyLevelHex>>,
     mut level_text_query: Query<&mut Text, (Without<AllyNameText>, Without<AllyHealthText>, Without<AllyTriumvirateText>)>,
-    player_query: Query<(Option<&common_bevy::components::ally_target::AllyTarget>, &Health), With<crate::components::Viewed>>,
-    ally_query: Query<(&EntityType, &Health, &Loc)>,
+    player_query: Query<(Option<&common_bevy::components::ally_target::AllyTarget>, &Health, Option<&ActorAttributes>), With<crate::components::Viewed>>,
+    ally_query: Query<(&EntityType, &Health, Option<&ActorAttributes>)>,
 ) {
     // Get local player's ally target and health
-    let Ok((ally_target, player_health)) = player_query.single() else {
+    let Ok((ally_target, player_health, own_attrs)) = player_query.single() else {
         return;
     };
 
@@ -938,44 +927,40 @@ pub fn update_ally_frame(
             *visibility = Visibility::Visible;
         }
 
-        if let Ok((entity_type, ally_health, ally_loc)) = ally_query.get(ally_ent) {
+        if let Ok((entity_type, ally_health, ally_attrs)) = ally_query.get(ally_ent) {
             // Update entity name
             for mut text in &mut name_text_query {
                 **text = entity_type.display_name().to_string();
             }
 
-            // Update level hexagon
-            if let EntityType::Actor(actor_impl) = entity_type {
-                if let actor::ActorIdentity::Npc(_) = actor_impl.identity {
-                    // Player level is static at 10 for now
-                    const PLAYER_LEVEL: u8 = 10;
+            // Update level hexagon: the level its attributes give it,
+            // coloured by the gap to the viewed actor's own
+            if let Some(ally_attrs) = ally_attrs {
+                let level = ally_attrs.total_level() as i32;
+                let level_diff = level - own_attrs.map_or(level, |own| own.total_level() as i32);
 
-                    // Calculate enemy level from enemy location
-                    let enemy_level = calculate_enemy_level(**ally_loc, HAVEN_LOCATION);
+                // >5 levels lower = gray
+                // 2-5 levels lower = green
+                // 1 level less or greater = yellow
+                // >1 level higher = red
+                let hex_color = if level_diff < -5 {
+                    Color::srgb(0.4, 0.4, 0.4) // Gray - trivial
+                } else if level_diff <= -2 {
+                    Color::srgb(0.2, 0.8, 0.2) // Green - easy
+                } else if level_diff.abs() <= 1 {
+                    Color::srgb(0.9, 0.9, 0.2) // Yellow - even match
+                } else {
+                    Color::srgb(0.9, 0.2, 0.2) // Red - dangerous
+                };
 
-                    // Calculate level difference (enemy - player)
-                    let level_diff = enemy_level as i8 - PLAYER_LEVEL as i8;
+                // Update hexagon color and level text
+                for (mut bg_color, children) in &mut level_hex_query {
+                    bg_color.0 = hex_color;
 
-                    // Color hexagon based on level difference
-                    let hex_color = if level_diff < -5 {
-                        Color::srgb(0.4, 0.4, 0.4) // Gray - trivial
-                    } else if level_diff <= -2 {
-                        Color::srgb(0.2, 0.8, 0.2) // Green - easy
-                    } else if level_diff.abs() <= 1 {
-                        Color::srgb(0.9, 0.9, 0.2) // Yellow - even match
-                    } else {
-                        Color::srgb(0.9, 0.2, 0.2) // Red - dangerous
-                    };
-
-                    // Update hexagon color and level text
-                    for (mut bg_color, children) in &mut level_hex_query {
-                        bg_color.0 = hex_color;
-
-                        // Update the level number text (child of hexagon)
-                        for child in children.iter() {
-                            if let Ok(mut level_text) = level_text_query.get_mut(child) {
-                                **level_text = enemy_level.to_string();
-                            }
+                    // Update the level number text (child of hexagon)
+                    for child in children.iter() {
+                        if let Ok(mut level_text) = level_text_query.get_mut(child) {
+                            **level_text = level.to_string();
                         }
                     }
                 }
