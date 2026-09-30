@@ -34,11 +34,11 @@ pub fn reacts_through(ability: AbilityType, recovery: Option<&GlobalRecovery>, a
 /// seconds run longer by `Tuning::fatigue_recovery` of the actor's
 /// `fatigue`, 0 to 1 (`Endurance::fatigue`).
 ///
-/// A combo taken before it unlocked carries what it skipped of `prior`, so
-/// a burst fired early costs what it would have played out: Ferocity moves
-/// the recovery, never shortens it. Taken once unlocked, it carries
-/// nothing. A reaction used through a recovery (`reacts_through`) carries
-/// all of it, its own added on.
+/// A combo taken before it unlocked carries what it skipped of `prior`,
+/// less the share its Ferocity lets it off (`ActorAttributes::ferocity_relief`),
+/// so a burst fired early costs less than it would have played out. Taken
+/// once unlocked, it carries nothing. A reaction used through a recovery
+/// (`reacts_through`) carries all of it, its own added on.
 ///
 /// It offers the ability's combo (`AbilityType::combo`), unlocking through
 /// the ability's own seconds and never through what was carried: earlier by
@@ -57,7 +57,7 @@ pub fn recovery_after(ability: AbilityType, prior: Option<&GlobalRecovery>, attr
     let prior = prior.filter(|prior| prior.is_active());
     let taken = prior.and_then(|prior| prior.combo).filter(|combo| combo.ability == ability);
     let carried = match (prior, taken) {
-        (Some(prior), Some(combo)) => (prior.remaining - combo.unlock_at).max(0.0),
+        (Some(prior), Some(combo)) => (prior.remaining - combo.unlock_at).max(0.0) * (1.0 - attrs.ferocity_relief()),
         (Some(prior), None) => {
             recovery.reactions = prior.reactions.saturating_add(1);
             prior.remaining
@@ -183,7 +183,8 @@ mod tests {
 
         let second = recovery_after(combo, Some(&opener), &fierce, None, 0.0);
         assert_eq!(second.burst.map(|burst| burst.steps), Some(steps - 1), "and spends a step");
-        assert!(second.carried > 0.0, "carrying what it skipped");
+        let skipped = opener.remaining - opener.combo.unwrap().unlock_at;
+        assert!(second.carried > 0.0 && second.carried < skipped, "carrying what it skipped, less what its Ferocity lets it off");
         assert!(recovery_after(AbilityType::Lunge, None, &ActorAttributes::default(), None, 0.0).burst.is_none(), "no Ferocity, no burst");
     }
 

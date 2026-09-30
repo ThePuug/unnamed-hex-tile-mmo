@@ -56,6 +56,10 @@ pub struct Tuning {
     pub base_interval: f32,
     /// Share faster auto-attacks come at the ceiling of Tempo's share
     pub tempo_ceiling: f32,
+    /// Share of the recovery a combo fired early skipped that it is let off,
+    /// by its user's Ferocity
+    pub ferocity_relief_min: f32,
+    pub ferocity_relief_max: f32,
     /// Seconds behind the front threat a reaction reaches, by its user's
     /// Awareness; every actor has the least
     pub awareness_span_min: f32,
@@ -196,6 +200,8 @@ impl Tuning {
         health_curve_p: 2.0,
         base_interval: 2.1,
         tempo_ceiling: 0.5,
+        ferocity_relief_min: 0.0,
+        ferocity_relief_max: 0.5,
         awareness_span_min: 0.25,
         awareness_span_max: 1.0,
         grace_arc_min: 60.0,
@@ -304,6 +310,8 @@ impl Tuning {
         let number = value.parse::<f32>().map_err(|_| format!("{name} takes a number, not {value}"))?;
         let knob = match name {
             "base_interval" => &mut self.base_interval,
+            "ferocity_relief_min" => &mut self.ferocity_relief_min,
+            "ferocity_relief_max" => &mut self.ferocity_relief_max,
             "awareness_span_min" => &mut self.awareness_span_min,
             "awareness_span_max" => &mut self.awareness_span_max,
             "grace_arc_min" => &mut self.grace_arc_min,

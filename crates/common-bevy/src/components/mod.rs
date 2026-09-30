@@ -472,7 +472,7 @@ impl ActorAttributes {
 
     // Commitment: an attribute's tier, by the name it goes by
 
-    /// Ferocity, Might: combos fire before they unlock
+    /// Ferocity, Might: combos fire before they unlock, and pay less for it (`ferocity_relief`)
     pub fn ferocity(&self) -> CommitmentTier { self.tier(Attribute::Might) }
     /// Grace, Agility: the arc it strikes within (`arc`)
     pub fn grace(&self) -> CommitmentTier { self.tier(Attribute::Agility) }
@@ -573,6 +573,14 @@ impl ActorAttributes {
     /// more at the ceiling of its share
     pub fn hold(&self) -> f32 {
         1.0 + crate::tuning::tuning().concentration_hold * self.share(Attribute::Resolve)
+    }
+
+    /// The share of the recovery a combo fired early skipped that this actor
+    /// is let off, by its Ferocity: `Tuning::ferocity_relief_min` to
+    /// `ferocity_relief_max`.
+    pub fn ferocity_relief(&self) -> f32 {
+        let tuning = crate::tuning::tuning();
+        self.ferocity().between(tuning.ferocity_relief_min, tuning.ferocity_relief_max)
     }
 
     /// The share of each blow this actor lets land that it banks for its
