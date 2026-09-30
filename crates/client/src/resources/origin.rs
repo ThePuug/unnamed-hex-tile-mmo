@@ -116,12 +116,13 @@ pub fn rebase_origin(
 mod tests {
     use super::*;
     use common_bevy::components::behaviour::PlayerControlled;
+    use crate::components::Viewed;
 
     fn map() -> Map {
         Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop))
     }
 
-    /// A player far from the origin moves it: the world's roots and visuals
+    /// The viewed actor far from the origin moves it: the world's roots and visuals
     /// shift so nothing drawn moves, and a root that is not of the world
     /// stays where it stands.
     #[test]
@@ -131,7 +132,7 @@ mod tests {
         app.init_resource::<RenderOrigin>();
         app.add_systems(Update, rebase_origin);
         let tile = Qrz { q: 40_000, r: -9_000, z: 12 };
-        let player = app.world_mut().spawn((PlayerControlled, Position::at_tile(tile), Transform::default())).id();
+        let player = app.world_mut().spawn((Viewed, Position::at_tile(tile), Transform::default())).id();
         let ground = app.world_mut().spawn(Transform::from_translation(Vec3::new(3.0, 1.0, -2.0))).id();
         let stage = app.world_mut().spawn((OffWorld, Transform::from_translation(Vec3::new(0.0, -2000.0, 0.0)))).id();
         app.update();
@@ -141,6 +142,21 @@ mod tests {
         assert_eq!(app.world().get::<Transform>(player).unwrap().translation, shift);
         assert_eq!(app.world().get::<Transform>(ground).unwrap().translation, Vec3::new(3.0, 1.0, -2.0) + shift);
         assert_eq!(app.world().get::<Transform>(stage).unwrap().translation, Vec3::new(0.0, -2000.0, 0.0));
+    }
+
+    /// The origin follows the viewed actor, whoever else plays near it.
+    #[test]
+    fn the_origin_follows_the_viewed_actor_among_other_players() {
+        let mut app = App::new();
+        app.insert_resource(map());
+        app.init_resource::<RenderOrigin>();
+        app.add_systems(Update, rebase_origin);
+        let tile = Qrz { q: 40_000, r: -9_000, z: 12 };
+        app.world_mut().spawn((Viewed, Position::at_tile(tile), Transform::default()));
+        app.world_mut().spawn((PlayerControlled, Position::at_tile(Qrz { q: 40_002, ..tile }), Transform::default()));
+        app.world_mut().spawn((PlayerControlled, Position::at_tile(Qrz { q: -5, r: 3, z: 0 }), Transform::default()));
+        app.update();
+        assert_eq!(app.world().resource::<RenderOrigin>().tile(), Qrz { z: 0, ..tile });
     }
 
     /// Far from the world's origin a rendered position keeps the offset's
