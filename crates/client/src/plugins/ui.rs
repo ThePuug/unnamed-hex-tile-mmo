@@ -62,14 +62,12 @@ impl Plugin for UiPlugin {
                 closeup::stage_layers,
                 closeup::activate,
                 closeup::turn,
-                character_panel::handle_shift_drag,
                 character_panel::update_attributes,
-                character_panel::update_axis_button_visibility,
-                character_panel::update_apply_button,
-                character_panel_respec::handle_attribute_buttons,
-                character_panel_respec::handle_apply_button,
+                character_panel::update_pair_cursor,
+                character_panel::update_apply_label,
+                character_panel_respec::handle_numpad,
                 character_panel_respec::handle_respec_confirmed,
-                character_panel_respec::toggle_apply_button,
+                character_panel_respec::toggle_apply_label,
             ),
         );
 

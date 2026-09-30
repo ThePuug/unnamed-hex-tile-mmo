@@ -353,10 +353,15 @@ impl ActorAttributes {
         [self.physique, self.conditioning, self.temperament]
     }
 
+    /// The levels `pairs` put in
+    pub fn invested(pairs: &[Pair; 3]) -> u32 {
+        pairs.iter().map(|pair| pair.levels()).sum()
+    }
+
     /// Whether `pairs` is a respec an actor of `level` may take: no more
     /// levels than it has, and no spectrum below nothing.
     pub fn fits(pairs: &[Pair; 3], level: u32) -> bool {
-        pairs.iter().all(|pair| pair.spectrum >= 0) && pairs.iter().map(|pair| pair.levels()).sum::<u32>() <= level
+        pairs.iter().all(|pair| pair.spectrum >= 0) && Self::invested(pairs) <= level
     }
 
     /// Takes a whole respec, already checked (`fits`): each pair's axis and

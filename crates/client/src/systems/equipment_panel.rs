@@ -216,9 +216,9 @@ fn held_square() -> (Node, BackgroundColor, BorderColor) {
     )
 }
 
-/// The digits act on the bag; `-` and `+` move between tabs. The panel has
-/// every numpad key but `0`, which is left to the jump so the player moves
-/// with the panel open; `/` does not open the console over it. Nothing is
+/// `0` closes the panel and `-` and `+` move between tabs; while the
+/// equipment tab shows, the digits act on its bag. The other tabs read their
+/// own keys. `/` does not open the console over the panel, and nothing is
 /// read while the console is open, which has the numpad then.
 pub fn handle_numpad(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,

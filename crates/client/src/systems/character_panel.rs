@@ -5,7 +5,10 @@ use common_bevy::{
     systems::combat::damage::contest_factor,
 };
 
-use crate::systems::{bag_panel, equipment_panel};
+use crate::systems::{
+    bag_panel,
+    equipment_panel::{self, CURSOR_ROW, OTHER_ROW},
+};
 
 /// The panel's tabs, stacked down its left edge in this order.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -64,7 +67,7 @@ pub enum AttributeTitle {
     InstinctResolve,
 }
 
-/// Marker component for attribute current value row (container for values + buttons)
+/// Marker component for attribute current value row (container for values + bar)
 #[derive(Component)]
 pub enum AttributeCurrent {
     MightAgility,
@@ -100,7 +103,7 @@ pub enum AttributeBar {
 #[derive(Component)]
 pub struct SpectrumRange;
 
-/// Marker for the axis position indicator (yellow bar - draggable)
+/// Marker for the axis position indicator (yellow bar)
 #[derive(Component)]
 pub enum AxisMarker {
     MightAgility,
@@ -119,7 +122,9 @@ pub enum AbsoluteMetaAttributeStat {
     Concentration,
 }
 
-/// Marker component for relative meta-attribute stat display
+/// Marker component for meta-attribute stat display, a header with what the
+/// stat is worth and a line for what that gives: the six contest stats and
+/// the six commitments.
 #[derive(Component, Clone)]
 pub enum MetaAttributeStat {
     Impact,
@@ -128,135 +133,48 @@ pub enum MetaAttributeStat {
     Reflex,
     Focus,
     Toughness,
+    Ferocity,
+    Grace,
+    Grit,
+    Preparation,
+    Patience,
+    Awareness,
 }
 
-/// Marker for raw stat value display (e.g., "(150)")
+/// Marker for raw stat value display (e.g., "(150)", or a commitment's "(T2)")
 #[derive(Component)]
 pub struct RawStatValue;
 
-/// Marker for axis adjustment buttons (left-side positioned)
-#[derive(Component, Clone, Copy)]
-pub enum AxisAdjustButton {
-    MightAgilityDecrease,
-    MightAgilityIncrease,
-    VitalityDisciplineDecrease,
-    VitalityDisciplineIncrease,
-    InstinctResolveDecrease,
-    InstinctResolveIncrease,
-}
-
-/// Marker for axis adjustment buttons (right-side positioned)
-#[derive(Component, Clone, Copy)]
-pub enum AxisAdjustButtonRight {
-    MightAgilityDecrease,
-    MightAgilityIncrease,
-    VitalityDisciplineDecrease,
-    VitalityDisciplineIncrease,
-    InstinctResolveDecrease,
-    InstinctResolveIncrease,
-}
-
-/// Marker for spectrum adjustment buttons
-#[derive(Component, Clone, Copy)]
-pub enum SpectrumAdjustButton {
-    MightAgilityDecrease,
-    MightAgilityIncrease,
-    VitalityDisciplineDecrease,
-    VitalityDisciplineIncrease,
-    InstinctResolveDecrease,
-    InstinctResolveIncrease,
-}
-
-/// Marker for Apply Respec button
+/// A pair's section of the attributes tab, by the pair's place in a respec.
 #[derive(Component)]
-pub struct ApplyRespecButton;
+pub struct PairSection(pub usize);
 
-/// Marker for Apply button text (shows budget)
+/// Marker for the label that applies the respec
 #[derive(Component)]
-pub struct ApplyButtonText;
+pub struct ApplyRespecLabel;
 
-/// Draft attributes for respec (axis/spectrum/shift)
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DraftAttributes {
-    pub might_agility_axis: i8,
-    pub might_agility_spectrum: i8,
-    pub might_agility_shift: i8,
-    pub vitality_discipline_axis: i8,
-    pub vitality_discipline_spectrum: i8,
-    pub vitality_discipline_shift: i8,
-    pub instinct_resolve_axis: i8,
-    pub instinct_resolve_spectrum: i8,
-    pub instinct_resolve_shift: i8,
-}
+/// Marker for the apply label's text (shows budget)
+#[derive(Component)]
+pub struct ApplyLabelText;
 
-impl DraftAttributes {
-    /// Create draft from current ActorAttributes
-    pub fn from_current(attrs: &ActorAttributes) -> Self {
-        Self {
-            might_agility_axis: attrs.might_agility_axis(),
-            might_agility_spectrum: attrs.might_agility_spectrum(),
-            might_agility_shift: attrs.might_agility_shift(),
-            vitality_discipline_axis: attrs.vitality_discipline_axis(),
-            vitality_discipline_spectrum: attrs.vitality_discipline_spectrum(),
-            vitality_discipline_shift: attrs.vitality_discipline_shift(),
-            instinct_resolve_axis: attrs.instinct_resolve_axis(),
-            instinct_resolve_spectrum: attrs.instinct_resolve_spectrum(),
-            instinct_resolve_shift: attrs.instinct_resolve_shift(),
-        }
-    }
-
-    /// The draft as the three pairs a respec is
-    pub fn pairs(&self) -> [Pair; 3] {
-        [
-            Pair::new(self.might_agility_axis, self.might_agility_spectrum, self.might_agility_shift),
-            Pair::new(self.vitality_discipline_axis, self.vitality_discipline_spectrum, self.vitality_discipline_shift),
-            Pair::new(self.instinct_resolve_axis, self.instinct_resolve_spectrum, self.instinct_resolve_shift),
-        ]
-    }
-
-    /// The levels the draft has put in
-    pub fn total_investment(&self) -> u32 {
-        self.pairs().iter().map(|pair| pair.levels()).sum()
-    }
-}
-
-/// Resource to track character panel visibility and drag state
+/// Resource to track character panel visibility and the respec in hand
 #[derive(Resource, Default)]
 pub struct CharacterPanelState {
     pub visible: bool,
     pub tab: PanelTab,
     /// The bag row the digits act on.
     pub bag_row: usize,
-    pub dragging: Option<DragState>,
-    pub pending_respec: Option<DraftAttributes>,  // None = no pending changes
+    /// The pair of the attributes tab the digits act on.
+    pub pair: usize,
+    /// The respec being drafted: present exactly while it differs from the
+    /// pairs the character has.
+    pub pending_respec: Option<[Pair; 3]>,
 }
 
 impl CharacterPanelState {
     pub fn has_pending_changes(&self) -> bool {
         self.pending_respec.is_some()
     }
-
-    pub fn mark_dirty(&mut self, attrs: &ActorAttributes) {
-        if self.pending_respec.is_none() {
-            self.pending_respec = Some(DraftAttributes::from_current(attrs));
-        }
-    }
-}
-
-/// Tracks which attribute is being dragged
-#[derive(Clone, Copy)]
-pub struct DragState {
-    pub attribute: AttributeType,
-    pub bar_entity: Entity,
-    pub initial_mouse_x: f32,
-    pub initial_shift: i8,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum AttributeType {
-    MightAgility,
-    VitalityDiscipline,
-    InstinctResolve,
 }
 
 pub const KEYCODE_CHARACTER_PANEL: KeyCode = KeyCode::KeyC;
@@ -301,13 +219,14 @@ macro_rules! create_absolute_stat_display {
     };
 }
 
-/// Groups absolute + relative stat rows into one container with no internal gap
+/// Groups a pair's absolute, relative and commitment stat rows into one container
 macro_rules! create_stat_section {
-    ($parent:expr, $left_abs:expr, $right_abs:expr, $left_rel:expr, $right_rel:expr) => {
+    ($parent:expr, $left_abs:expr, $right_abs:expr, $left_rel:expr, $right_rel:expr, $left_com:expr, $right_com:expr) => {
         $parent.spawn((
             Node {
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(5.),
+                width: Val::Px(375.),
                 padding: UiRect::all(Val::Px(10.)),
                 border_radius: BorderRadius::all(Val::Px(4.)),
                 ..default()
@@ -342,6 +261,20 @@ macro_rules! create_stat_section {
                 create_stat_display!(row, $left_rel);
                 create_stat_display!(row, $right_rel);
             });
+
+            // Commitment row (label + tier + what the tier gives)
+            section.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    column_gap: Val::Px(10.),
+                    ..default()
+                },
+            ))
+            .with_children(|row| {
+                create_stat_display!(row, $left_com);
+                create_stat_display!(row, $right_com);
+            });
         });
     };
 }
@@ -356,6 +289,12 @@ macro_rules! create_stat_display {
                 MetaAttributeStat::Reflex => ("Reflex", Color::srgb(0.7, 0.5, 0.9), "Reaction Window:"),
                 MetaAttributeStat::Focus => ("Focus", Color::srgb(0.9, 0.6, 0.3), "Crit Chance:"),
                 MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Damage Mitigation:"),
+                MetaAttributeStat::Ferocity => ("Ferocity", Color::srgb(0.9, 0.5, 0.5), "Early Combos:"),
+                MetaAttributeStat::Grace => ("Grace", Color::srgb(0.9, 0.9, 0.5), "Strike Arc:"),
+                MetaAttributeStat::Grit => ("Grit", Color::srgb(0.5, 0.8, 0.5), "Blows Banked:"),
+                MetaAttributeStat::Preparation => ("Preparation", Color::srgb(0.5, 0.7, 0.9), "Recovery Reactions:"),
+                MetaAttributeStat::Patience => ("Patience", Color::srgb(0.7, 0.5, 0.9), "Swings Banked:"),
+                MetaAttributeStat::Awareness => ("Awareness", Color::srgb(0.9, 0.6, 0.3), "Reaction Span:"),
             };
 
             $parent.spawn((
@@ -422,11 +361,14 @@ macro_rules! create_stat_display {
 }
 
 macro_rules! create_attribute_section {
-    ($parent:expr, $left_name:expr, $right_name:expr, $left_color:expr, $right_color:expr, $title_marker:expr, $current_marker:expr, $bar_marker:expr, $axis_marker:expr, $left_current_marker:expr, $right_current_marker:expr, $axis_dec_left_marker:expr, $axis_inc_left_marker:expr, $axis_dec_right_marker:expr, $axis_inc_right_marker:expr, $spectrum_dec_marker:expr, $spectrum_inc_marker:expr) => {
+    ($parent:expr, $pair:expr, $left_name:expr, $right_name:expr, $left_color:expr, $right_color:expr, $title_marker:expr, $current_marker:expr, $bar_marker:expr, $axis_marker:expr, $left_current_marker:expr, $right_current_marker:expr) => {
         $parent
         .spawn((
+            PairSection($pair),
             Node {
                 flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                flex_grow: 1.0,
                 row_gap: Val::Px(5.),
                 padding: UiRect::all(Val::Px(10.)),
                 border_radius: BorderRadius::all(Val::Px(4.)),
@@ -472,7 +414,7 @@ macro_rules! create_attribute_section {
                 ));
             });
 
-            // Bar and current values row (with inline axis buttons)
+            // Bar and current values row
             section.spawn((
                 $current_marker,
                 Node {
@@ -483,39 +425,17 @@ macro_rules! create_attribute_section {
                     ..default()
                 },
             )).with_children(|bar_row| {
-                // Left value container (value + axis buttons)
+                // Left value container
                 bar_row.spawn((
                     Node {
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
                         column_gap: Val::Px(4.),
-                        min_width: Val::Px(80.),  // Reserve space for value + buttons
+                        min_width: Val::Px(80.),  // Reserve space for the value
                         ..default()
                     },
                 ))
                 .with_children(|left_container| {
-                    // Plus button (left-side) - increases commitment (outside, away from bar)
-                    left_container.spawn((
-                        $axis_inc_left_marker,
-                        Button,
-                        Node {
-                            width: Val::Px(16.),
-                            height: Val::Px(16.),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
-                        Visibility::Hidden,  // Will be shown conditionally
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("+"),
-                            TextFont { font_size: FontSize::Px(10.0), ..default() },
-                        ));
-                    });
-
-                    // Left current value (centered between buttons)
                     left_container.spawn((
                         $left_current_marker,
                         Text::new("0"),
@@ -527,30 +447,9 @@ macro_rules! create_attribute_section {
                         TextColor(Color::srgb(0.9, 0.9, 0.9)),
                         TextLayout::justify(Justify::Center),
                     ));
-
-                    // Minus button (left-side) - reduces commitment (inside, next to bar)
-                    left_container.spawn((
-                        $axis_dec_left_marker,
-                        Button,
-                        Node {
-                            width: Val::Px(16.),
-                            height: Val::Px(16.),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
-                        Visibility::Hidden,  // Will be shown conditionally
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("-"),
-                            TextFont { font_size: FontSize::Px(10.0), ..default() },
-                        ));
-                    });
                 });
 
-                // Visual bar container (spectrum buttons centered on bar)
+                // Visual bar container
                 bar_row.spawn((
                     Node {
                         position_type: PositionType::Relative,
@@ -569,7 +468,6 @@ macro_rules! create_attribute_section {
                             position_type: PositionType::Relative,
                             ..default()
                         },
-                        Interaction::default(),
                     )).with_children(|bar_container| {
                         // Background track (full range -120 to +120)
                         bar_container.spawn((
@@ -609,7 +507,7 @@ macro_rules! create_attribute_section {
                             BackgroundColor(Color::srgba(0.3, 0.5, 0.7, 0.4)),
                         ));
 
-                        // Axis bar - shows current available range (draggable)
+                        // Axis bar - shows current available range
                         bar_container.spawn((
                             $axis_marker,
                             Node {
@@ -621,60 +519,11 @@ macro_rules! create_attribute_section {
                                 ..default()
                             },
                             BackgroundColor(Color::srgba(1.0, 0.8, 0.0, 0.6)),
-                            Interaction::default(),
                         ));
-
-                        // Spectrum decrease button (above bar, centered, left side)
-                        bar_container.spawn((
-                            $spectrum_dec_marker,
-                            Button,
-                            Node {
-                                width: Val::Px(16.),
-                                height: Val::Px(16.),
-                                position_type: PositionType::Absolute,
-                                // Position at center minus 18px (16px button + 2px gap)
-                                left: Val::Px(99.5),  // 235px bar / 2 - 18px = 99.5px
-                                top: Val::Px(-20.),   // Above the bar to avoid occlusion
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
-                        ))
-                        .with_children(|btn| {
-                            btn.spawn((
-                                Text::new("-"),
-                                TextFont { font_size: FontSize::Px(10.0), ..default() },
-                            ));
-                        });
-
-                        // Spectrum increase button (above bar, centered, right side)
-                        bar_container.spawn((
-                            $spectrum_inc_marker,
-                            Button,
-                            Node {
-                                width: Val::Px(16.),
-                                height: Val::Px(16.),
-                                position_type: PositionType::Absolute,
-                                // Position at center plus 2px gap
-                                left: Val::Px(119.5),  // 235px bar / 2 + 2px = 119.5px
-                                top: Val::Px(-20.),   // Above the bar to avoid occlusion
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
-                        ))
-                        .with_children(|btn| {
-                            btn.spawn((
-                                Text::new("+"),
-                                TextFont { font_size: FontSize::Px(10.0), ..default() },
-                            ));
-                        });
                     });
                 });
 
-                // Right value container (buttons + value)
+                // Right value container
                 bar_row.spawn((
                     Node {
                         flex_direction: FlexDirection::Row,
@@ -686,28 +535,6 @@ macro_rules! create_attribute_section {
                     },
                 ))
                 .with_children(|right_container| {
-                    // Minus button (right-side) - reduces commitment (inside, next to bar)
-                    right_container.spawn((
-                        $axis_dec_right_marker,
-                        Button,
-                        Node {
-                            width: Val::Px(16.),
-                            height: Val::Px(16.),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
-                        Visibility::Hidden,  // Will be shown conditionally
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("-"),
-                            TextFont { font_size: FontSize::Px(10.0), ..default() },
-                        ));
-                    });
-
-                    // Right current value (centered between buttons)
                     right_container.spawn((
                         $right_current_marker,
                         Text::new("0"),
@@ -719,27 +546,6 @@ macro_rules! create_attribute_section {
                         TextColor(Color::srgb(0.9, 0.9, 0.9)),
                         TextLayout::justify(Justify::Center),
                     ));
-
-                    // Plus button (right-side) - increases commitment (outside, away from bar)
-                    right_container.spawn((
-                        $axis_inc_right_marker,
-                        Button,
-                        Node {
-                            width: Val::Px(16.),
-                            height: Val::Px(16.),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.4, 0.4, 0.4)),
-                        Visibility::Hidden,  // Will be shown conditionally
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("+"),
-                            TextFont { font_size: FontSize::Px(10.0), ..default() },
-                        ));
-                    });
                 });
             });
         });
@@ -803,103 +609,89 @@ pub fn setup(
     commands
         .entity(attributes)
         .with_children(|parent| {
-            // Main content: two columns (sliders left, stats right)
+            // One row to a pair: its sliders, and the stats its two attributes
+            // give, so the two stay level however tall the stats grow.
             parent.spawn((
                 Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(20.),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(15.),
                     ..default()
                 },
             ))
             .with_children(|main| {
-                // Left column: attribute sliders
-                main.spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(15.),
-                        flex_grow: 1.0,
-                        ..default()
-                    },
-                ))
-                .with_children(|left| {
-                    // MIGHT ↔ AGILITY section (Impact = red, Flow = yellow)
-                    create_attribute_section!(left, "MIGHT", "AGILITY",
+                let pair_row = || Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(20.), ..default() };
+
+                // MIGHT ↔ AGILITY (Impact = red, Flow = yellow)
+                main.spawn(pair_row()).with_children(|pair| {
+                    create_attribute_section!(pair, 0, "MIGHT", "AGILITY",
                         Color::srgb(0.9, 0.5, 0.5), Color::srgb(0.9, 0.9, 0.5),
                         AttributeTitle::MightAgility, AttributeCurrent::MightAgility, AttributeBar::MightAgility, AxisMarker::MightAgility,
-                        LeftCurrentValue::MightAgility, RightCurrentValue::MightAgility,
-                        AxisAdjustButton::MightAgilityDecrease, AxisAdjustButton::MightAgilityIncrease,
-                        AxisAdjustButtonRight::MightAgilityDecrease, AxisAdjustButtonRight::MightAgilityIncrease,
-                        SpectrumAdjustButton::MightAgilityDecrease, SpectrumAdjustButton::MightAgilityIncrease);
+                        LeftCurrentValue::MightAgility, RightCurrentValue::MightAgility);
+                    create_stat_section!(pair,
+                        AbsoluteMetaAttributeStat::Force, AbsoluteMetaAttributeStat::Tempo,
+                        MetaAttributeStat::Impact, MetaAttributeStat::Flow,
+                        MetaAttributeStat::Ferocity, MetaAttributeStat::Grace);
+                });
 
-                    // VITALITY ↔ DISCIPLINE section (Toughness = green, Composure = blue)
-                    create_attribute_section!(left, "VITALITY", "DISCIPLINE",
+                // VITALITY ↔ DISCIPLINE (Toughness = green, Composure = blue)
+                main.spawn(pair_row()).with_children(|pair| {
+                    create_attribute_section!(pair, 1, "VITALITY", "DISCIPLINE",
                         Color::srgb(0.5, 0.8, 0.5), Color::srgb(0.5, 0.7, 0.9),
                         AttributeTitle::VitalityDiscipline, AttributeCurrent::VitalityDiscipline, AttributeBar::VitalityDiscipline, AxisMarker::VitalityDiscipline,
-                        LeftCurrentValue::VitalityDiscipline, RightCurrentValue::VitalityDiscipline,
-                        AxisAdjustButton::VitalityDisciplineDecrease, AxisAdjustButton::VitalityDisciplineIncrease,
-                        AxisAdjustButtonRight::VitalityDisciplineDecrease, AxisAdjustButtonRight::VitalityDisciplineIncrease,
-                        SpectrumAdjustButton::VitalityDisciplineDecrease, SpectrumAdjustButton::VitalityDisciplineIncrease);
+                        LeftCurrentValue::VitalityDiscipline, RightCurrentValue::VitalityDiscipline);
+                    create_stat_section!(pair,
+                        AbsoluteMetaAttributeStat::Constitution, AbsoluteMetaAttributeStat::Endurance,
+                        MetaAttributeStat::Toughness, MetaAttributeStat::Composure,
+                        MetaAttributeStat::Grit, MetaAttributeStat::Preparation);
+                });
 
-                    // INSTINCT ↔ RESOLVE section (Reflex = purple, Focus = orange)
-                    create_attribute_section!(left, "INSTINCT", "RESOLVE",
+                // INSTINCT ↔ RESOLVE (Reflex = purple, Focus = orange)
+                main.spawn(pair_row()).with_children(|pair| {
+                    create_attribute_section!(pair, 2, "INSTINCT", "RESOLVE",
                         Color::srgb(0.7, 0.5, 0.9), Color::srgb(0.9, 0.6, 0.3),
                         AttributeTitle::InstinctResolve, AttributeCurrent::InstinctResolve, AttributeBar::InstinctResolve, AxisMarker::InstinctResolve,
-                        LeftCurrentValue::InstinctResolve, RightCurrentValue::InstinctResolve,
-                        AxisAdjustButton::InstinctResolveDecrease, AxisAdjustButton::InstinctResolveIncrease,
-                        AxisAdjustButtonRight::InstinctResolveDecrease, AxisAdjustButtonRight::InstinctResolveIncrease,
-                        SpectrumAdjustButton::InstinctResolveDecrease, SpectrumAdjustButton::InstinctResolveIncrease);
-                });
-
-                // Right column: meta-attribute stats
-                main.spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(15.),
-                        width: Val::Px(375.),
-                        ..default()
-                    },
-                ))
-                .with_children(|right| {
-                    // MIGHT ↔ AGILITY section (grouped container)
-                    create_stat_section!(right,
-                        AbsoluteMetaAttributeStat::Force, AbsoluteMetaAttributeStat::Tempo,
-                        MetaAttributeStat::Impact, MetaAttributeStat::Flow);
-
-                    // VITALITY ↔ DISCIPLINE section (grouped container)
-                    create_stat_section!(right,
-                        AbsoluteMetaAttributeStat::Constitution, AbsoluteMetaAttributeStat::Endurance,
-                        MetaAttributeStat::Toughness, MetaAttributeStat::Composure);
-
-                    // INSTINCT ↔ RESOLVE section (grouped container)
-                    create_stat_section!(right,
+                        LeftCurrentValue::InstinctResolve, RightCurrentValue::InstinctResolve);
+                    create_stat_section!(pair,
                         AbsoluteMetaAttributeStat::Intuition, AbsoluteMetaAttributeStat::Concentration,
-                        MetaAttributeStat::Reflex, MetaAttributeStat::Focus);
+                        MetaAttributeStat::Reflex, MetaAttributeStat::Focus,
+                        MetaAttributeStat::Patience, MetaAttributeStat::Awareness);
                 });
             });
 
-            // Apply button (hidden by default, shown when changes are pending)
-            parent.spawn((
-                ApplyRespecButton,
-                Button,
-                Node {
-                    width: Val::Px(180.),
-                    height: Val::Px(30.),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    margin: UiRect::top(Val::Px(10.)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.3, 0.7, 0.3)),
-                Visibility::Hidden,
-            ))
-            .with_children(|btn| {
-                btn.spawn((
-                    ApplyButtonText,
-                    Text::new("Apply Changes"),
-                    TextFont { font_size: FontSize::Px(14.0), ..default() },
-                ));
-            });
-
+            use crate::systems::keycap::{hint_row, keycap, Hint};
+            // The keys are laid out as a pair is drawn: spectrum over its
+            // bar, axis at its ends, shift along it.
+            hint_row(parent, None, &[
+                Hint::either(&["7", "9"], "spectrum -/+"),
+                Hint::either(&["4", "6"], "axis left/right"),
+                Hint::either(&["1", "3"], "shift left/right"),
+            ]);
+            parent
+                .spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(12.), ..default() })
+                .with_children(|row| {
+                    hint_row(row, None, &[Hint::key(".", "next pair")]);
+                    // Hidden until a respec is in hand.
+                    row.spawn((
+                        ApplyRespecLabel,
+                        Node {
+                            height: Val::Px(30.),
+                            padding: UiRect::horizontal(Val::Px(10.)),
+                            column_gap: Val::Px(8.),
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.3, 0.7, 0.3)),
+                        Visibility::Hidden,
+                    ))
+                    .with_children(|label| {
+                        keycap(label, "Ent");
+                        label.spawn((
+                            ApplyLabelText,
+                            Text::new("Apply Changes"),
+                            TextFont { font_size: FontSize::Px(14.0), ..default() },
+                        ));
+                    });
+                });
         });
 }
 
@@ -1013,119 +805,6 @@ pub fn update_tabs(
     }
 }
 
-/// Clamp a shift value given axis and spectrum (mirrors ActorAttributes::set_*_shift logic)
-pub fn clamp_shift(shift: i8, axis: i8, spectrum: i8) -> i8 {
-    if axis == 0 { return 0; }
-    let max_shift = spectrum.max(0);
-    if axis > 0 {
-        shift.clamp(-max_shift, 0)
-    } else {
-        shift.clamp(0, max_shift)
-    }
-}
-
-/// Handle mouse drag to adjust shift values (writes to draft)
-pub fn handle_shift_drag(
-    mut state: ResMut<CharacterPanelState>,
-    player_query: Query<&ActorAttributes, With<Actor>>,
-    bar_query: Query<(Entity, &AttributeBar, &Interaction, &Node)>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    windows: Query<&Window>,
-) {
-    if !state.visible {
-        return;
-    }
-
-    let Ok(attrs) = player_query.single() else {
-        return;
-    };
-
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let Some(cursor_pos) = window.cursor_position() else {
-        return;
-    };
-
-    // Start drag on mouse press over any attribute bar
-    if buttons.just_pressed(MouseButton::Left) {
-        for (bar_entity, bar_type, interaction, _node) in &bar_query {
-            if *interaction == Interaction::Hovered || *interaction == Interaction::Pressed {
-                let attr_type = match bar_type {
-                    AttributeBar::MightAgility => AttributeType::MightAgility,
-                    AttributeBar::VitalityDiscipline => AttributeType::VitalityDiscipline,
-                    AttributeBar::InstinctResolve => AttributeType::InstinctResolve,
-                };
-
-                // Initialize draft if needed
-                state.mark_dirty(attrs);
-                let draft = state.pending_respec.as_ref().unwrap();
-
-                // Get the current shift value from draft
-                let current_shift = match attr_type {
-                    AttributeType::MightAgility => draft.might_agility_shift,
-                    AttributeType::VitalityDiscipline => draft.vitality_discipline_shift,
-                    AttributeType::InstinctResolve => draft.instinct_resolve_shift,
-                };
-
-                state.dragging = Some(DragState {
-                    attribute: attr_type,
-                    bar_entity,
-                    initial_mouse_x: cursor_pos.x,
-                    initial_shift: current_shift,
-                });
-                break;
-            }
-        }
-    }
-
-    // Handle dragging
-    if let Some(drag_state) = state.dragging {
-        if buttons.pressed(MouseButton::Left) {
-            // Get the bar's width to calculate pixels per unit
-            if let Ok((_entity, _bar_type, _interaction, bar_node)) = bar_query.get(drag_state.bar_entity) {
-                let bar_width = if let Val::Px(w) = bar_node.width { w } else { 235.0 };
-
-                // Calculate max attribute value based on current level
-                let level = attrs.total_level();
-                let max_attr = (level * 2) as f32;
-
-                // Calculate mouse delta in pixels
-                let mouse_delta_pixels = cursor_pos.x - drag_state.initial_mouse_x;
-
-                // Convert pixel delta to attribute units
-                // Bar width represents the full attribute range (-max_attr to +max_attr)
-                let pixels_per_unit = bar_width / (max_attr * 2.0);
-                let delta_units = mouse_delta_pixels / pixels_per_unit;
-
-                // Calculate new shift based on initial shift + delta
-                let new_shift_f32 = drag_state.initial_shift as f32 + delta_units;
-                let new_shift = new_shift_f32.round() as i8;
-
-                // Update draft shift (clamped to valid range)
-                if let Some(draft) = state.pending_respec.as_mut() {
-                    match drag_state.attribute {
-                        AttributeType::MightAgility => {
-                            draft.might_agility_shift = clamp_shift(new_shift, draft.might_agility_axis, draft.might_agility_spectrum);
-                        }
-                        AttributeType::VitalityDiscipline => {
-                            draft.vitality_discipline_shift = clamp_shift(new_shift, draft.vitality_discipline_axis, draft.vitality_discipline_spectrum);
-                        }
-                        AttributeType::InstinctResolve => {
-                            draft.instinct_resolve_shift = clamp_shift(new_shift, draft.instinct_resolve_axis, draft.instinct_resolve_spectrum);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Stop dragging on mouse release
-    if buttons.just_released(MouseButton::Left) {
-        state.dragging = None;
-    }
-}
-
 /// Update attribute text and bar visuals when panel is visible
 pub fn update_attributes(
     state: Res<CharacterPanelState>,
@@ -1153,7 +832,7 @@ pub fn update_attributes(
     let draft_attrs = if let Some(draft) = &state.pending_respec {
         // Create a temporary ActorAttributes with draft values for display
         let mut temp_attrs = attrs.clone();
-        temp_attrs.apply_respec(draft.pairs());
+        temp_attrs.apply_respec(*draft);
         Some(temp_attrs)
     } else {
         None
@@ -1284,12 +963,18 @@ pub fn update_attributes(
             if is_raw {
                 // Update raw stat value in parentheses
                 let raw_value = match meta_stat {
-                    MetaAttributeStat::Impact => display_attrs.impact(),
-                    MetaAttributeStat::Composure => display_attrs.composure(),
-                    MetaAttributeStat::Flow => display_attrs.flow(),
-                    MetaAttributeStat::Reflex => display_attrs.reflex(),
-                    MetaAttributeStat::Focus => display_attrs.focus(),
-                    MetaAttributeStat::Toughness => display_attrs.toughness(),
+                    MetaAttributeStat::Impact => display_attrs.impact().to_string(),
+                    MetaAttributeStat::Composure => display_attrs.composure().to_string(),
+                    MetaAttributeStat::Flow => display_attrs.flow().to_string(),
+                    MetaAttributeStat::Reflex => display_attrs.reflex().to_string(),
+                    MetaAttributeStat::Focus => display_attrs.focus().to_string(),
+                    MetaAttributeStat::Toughness => display_attrs.toughness().to_string(),
+                    MetaAttributeStat::Ferocity => format!("T{}", display_attrs.ferocity().index()),
+                    MetaAttributeStat::Grace => format!("T{}", display_attrs.grace().index()),
+                    MetaAttributeStat::Grit => format!("T{}", display_attrs.grit().index()),
+                    MetaAttributeStat::Preparation => format!("T{}", display_attrs.preparation().index()),
+                    MetaAttributeStat::Patience => format!("T{}", display_attrs.patience().index()),
+                    MetaAttributeStat::Awareness => format!("T{}", display_attrs.awareness().index()),
                 };
                 **text = format!("({})", raw_value);
             } else {
@@ -1337,76 +1022,21 @@ pub fn update_attributes(
                         let mitigation_pct = (common_bevy::tuning::tuning().mitigation_share * contest) * 100.0;
                         format!("-{:.0}%", mitigation_pct)
                     },
+                    // A commitment's effect is what its tier gives, from the
+                    // same methods the fight reads.
+                    MetaAttributeStat::Ferocity => {
+                        format!("{}, -{:.0}%", display_attrs.ferocity().index(), display_attrs.ferocity_relief() * 100.0)
+                    },
+                    MetaAttributeStat::Grace => format!("+/-{:.0} deg", display_attrs.arc()),
+                    MetaAttributeStat::Grit => display_attrs.grit_holds().to_string(),
+                    MetaAttributeStat::Preparation => {
+                        format!("{}, -{:.0}%", display_attrs.preparation().index(), display_attrs.preparation_relief() * 100.0)
+                    },
+                    MetaAttributeStat::Patience => display_attrs.patience().index().to_string(),
+                    MetaAttributeStat::Awareness => format!("{:.2}s", display_attrs.span().as_secs_f32()),
                 };
             }
         }
-    }
-}
-
-/// Update axis button visibility based on current axis value
-pub fn update_axis_button_visibility(
-    state: Res<CharacterPanelState>,
-    player_query: Query<&ActorAttributes, With<Actor>>,
-    mut left_buttons: Query<(&AxisAdjustButton, &mut Visibility), Without<AxisAdjustButtonRight>>,
-    mut right_buttons: Query<(&AxisAdjustButtonRight, &mut Visibility)>,
-) {
-    // Hide all buttons if panel is not visible
-    if !state.visible {
-        for (_, mut vis) in &mut left_buttons {
-            *vis = Visibility::Hidden;
-        }
-        for (_, mut vis) in &mut right_buttons {
-            *vis = Visibility::Hidden;
-        }
-        return;
-    }
-
-    let Ok(attrs) = player_query.single() else {
-        return;
-    };
-
-    // Get current draft or use actual attributes
-    let default_draft = DraftAttributes::from_current(attrs);
-    let draft = state.pending_respec.as_ref().unwrap_or(&default_draft);
-
-    // Update left-side buttons
-    for (button, mut visibility) in &mut left_buttons {
-        let should_show = match button {
-            // Show decrease when axis < 0 (can decrease further on left side)
-            AxisAdjustButton::MightAgilityDecrease => draft.might_agility_axis < 0,
-            AxisAdjustButton::VitalityDisciplineDecrease => draft.vitality_discipline_axis < 0,
-            AxisAdjustButton::InstinctResolveDecrease => draft.instinct_resolve_axis < 0,
-            // Show increase when axis <= 0 (can commit to left, or increase left commitment)
-            AxisAdjustButton::MightAgilityIncrease => draft.might_agility_axis <= 0,
-            AxisAdjustButton::VitalityDisciplineIncrease => draft.vitality_discipline_axis <= 0,
-            AxisAdjustButton::InstinctResolveIncrease => draft.instinct_resolve_axis <= 0,
-        };
-
-        *visibility = if should_show {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-    }
-
-    // Update right-side buttons
-    for (button, mut visibility) in &mut right_buttons {
-        let should_show = match button {
-            // Show decrease when axis > 0 (can reduce right commitment)
-            AxisAdjustButtonRight::MightAgilityDecrease => draft.might_agility_axis > 0,
-            AxisAdjustButtonRight::VitalityDisciplineDecrease => draft.vitality_discipline_axis > 0,
-            AxisAdjustButtonRight::InstinctResolveDecrease => draft.instinct_resolve_axis > 0,
-            // Show increase when axis >= 0 (can commit to right, or increase right commitment)
-            AxisAdjustButtonRight::MightAgilityIncrease => draft.might_agility_axis >= 0,
-            AxisAdjustButtonRight::VitalityDisciplineIncrease => draft.vitality_discipline_axis >= 0,
-            AxisAdjustButtonRight::InstinctResolveIncrease => draft.instinct_resolve_axis >= 0,
-        };
-
-        *visibility = if should_show {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
     }
 }
 
@@ -1463,12 +1093,13 @@ fn update_axis_bar(node: &mut Node, left_current: u16, right_current: u16, max_a
     node.width = Val::Percent(width_percent);
 }
 
-/// Update Apply button text with budget counter and enable/disable based on allocation
-pub fn update_apply_button(
+/// Writes the apply label's budget counter, and colours it red while levels
+/// are left to put in, which Enter will not apply without.
+pub fn update_apply_label(
     state: Res<CharacterPanelState>,
     player_query: Query<&ActorAttributes, With<Actor>>,
-    mut button_query: Query<(&mut BackgroundColor, &Children), With<ApplyRespecButton>>,
-    mut text_query: Query<&mut Text, With<ApplyButtonText>>,
+    mut label_query: Query<(&mut BackgroundColor, &Children), With<ApplyRespecLabel>>,
+    mut text_query: Query<&mut Text, With<ApplyLabelText>>,
 ) {
     if !state.visible {
         return;
@@ -1482,27 +1113,33 @@ pub fn update_apply_button(
         return; // No pending changes
     };
 
-    let Ok((mut bg_color, children)) = button_query.single_mut() else {
+    let Ok((mut bg_color, children)) = label_query.single_mut() else {
         return;
     };
 
-    let level = attrs.total_level();
-    let investment = draft.total_investment();
-    let unallocated = level.saturating_sub(investment);
+    let unallocated = attrs.total_level().saturating_sub(ActorAttributes::invested(draft));
 
-    // Find the text child and update it
     for child in children.iter() {
         if let Ok(mut text) = text_query.get_mut(child) {
             if unallocated > 0 {
                 **text = format!("Apply ({} points left)", unallocated);
-                // Disable button (red)
                 *bg_color = BackgroundColor(Color::srgb(0.6, 0.3, 0.3));
             } else {
                 **text = "Apply Changes".to_string();
-                // Enable button (green)
                 *bg_color = BackgroundColor(Color::srgb(0.3, 0.7, 0.3));
             }
         }
+    }
+}
+
+/// Marks the pair the digits act on: its section takes the cursor's colour,
+/// as a bag's cursor row does.
+pub fn update_pair_cursor(state: Res<CharacterPanelState>, mut sections: Query<(&PairSection, &mut BackgroundColor)>) {
+    if !state.is_changed() {
+        return;
+    }
+    for (section, mut background) in &mut sections {
+        *background = BackgroundColor(if section.0 == state.pair { CURSOR_ROW } else { OTHER_ROW });
     }
 }
 
