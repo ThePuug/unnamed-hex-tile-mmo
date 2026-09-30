@@ -1,7 +1,4 @@
-//! Server-specific targeting systems
-
-//! This module contains targeting system implementations that are specific to the server,
-//! primarily distinguished by the use of TargetLock component filtering.
+//! Who each actor on the server targets.
 
 use bevy::prelude::*;
 
@@ -10,27 +7,16 @@ use common_bevy::{
     plugins::nntree::NNTree,
     systems::targeting::{arc_of, update_targets_impl},
 };
-use crate::components::target_lock::TargetLock as NpcTargetLock;
+use crate::systems::behaviour::chase::Chase;
 
-/// Update hostile targets every frame for responsive targeting (SERVER VERSION)
-
-/// Runs unconditionally to detect when target entities move out of range/cone.
-/// Excludes NPCs with NpcTargetLock - behavior tree targeting is their source of truth.
-
-/// # Server-Specific Behavior
-
-/// The server version excludes entities with NpcTargetLock component from reactive targeting.
-/// This is critical for AI behavior - NPCs with NpcTargetLock use behavior tree targeting
-/// (FindOrKeepTarget) as their source of truth.
-
-/// # Performance
-
-/// Uses spatial index (NNTree) for fast proximity queries. Designed to run at 60fps.
-/// If performance becomes an issue, can be changed to run on a timer (e.g., every 100ms).
+/// Points every actor that picks its target by facing at the hostile it
+/// faces, each frame, so a target moving out of its arc is let go at once.
+/// An NPC does not pick by facing: its `Chase` takes a target and keeps it,
+/// and is left alone here.
 pub fn update_targets(
     mut query: Query<
         (Entity, &Loc, &Heading, &mut Target, Option<&ActorAttributes>),
-        Without<NpcTargetLock>
+        Without<Chase>
     >,
     sides: Query<&Side>,
     nntree: Res<NNTree>,

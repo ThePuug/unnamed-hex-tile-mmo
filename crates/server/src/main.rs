@@ -1,5 +1,4 @@
 mod arena;
-mod components;
 pub mod network;
 mod plugins;
 mod resources;

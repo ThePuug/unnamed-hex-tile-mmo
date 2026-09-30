@@ -13,28 +13,42 @@ use common_bevy::{
     plugins::nntree::*,
     resources::map::Map,
 };
-use crate::components::{
-    target_lock::TargetLock,
-};
+use qrz::Qrz;
+
 use super::Body;
 
-/// Chase behavior - unified hostile pursuit and engagement
+/// How near its engagement's place a returning NPC counts as home, in tiles.
+const HOME: i32 = 2;
 
-/// Handles the complete chase loop in a single behavior:
-/// - Acquires hostile targets within range
-/// - Maintains sticky targeting via TargetLock
-/// - Continuously paths toward target with greedy movement
-/// - Faces and attacks when in range
-/// - All without behavior tree composition overhead
+/// An NPC's pursuit of what it fights, the whole of its behaviour: it takes
+/// a hostile within `acquisition_range` as its `Target` and keeps it while
+/// that one lives, walks to where it fights from, and faces its target
+/// there. Its `Target` is this system's alone to set
+/// (`targeting::update_targets` leaves every `Chase` be).
 ///
-/// Every NPC chases, melee or ranged: one that fights from range closes
-/// only until its target is within its `attack_range`, and stands and
+/// It fights from its assigned hex where it has one (`AssignedHex`), else
+/// from wherever its target is within `attack_range`: so one that fights
+/// from range closes only until its target is in reach, and stands and
 /// shoots from there.
+///
+/// Further than `leash_distance` from its engagement's place it lets its
+/// target go and walks home (`Returning`), taking no target until it is
+/// back.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Chase {
-    pub acquisition_range: u32,  // How far to search for targets
-    pub leash_distance: i32,     // Max chase distance (0 = infinite)
-    pub attack_range: i32,       // Distance to engage from: the ring its assigned hex is on, or with no hex where it stops closing
+    pub acquisition_range: u32,
+    pub leash_distance: i32,
+    pub attack_range: i32,
+}
+
+/// The neighbour of the floor tile `from` an NPC steps to on its way to
+/// `goal`: the nearest to it that is not crowded.
+fn step(map: &Map, nntree: &NNTree, from: Qrz, goal: Qrz) -> Option<Qrz> {
+    map.neighbors(from)
+        .into_iter()
+        .map(|(neighbor, _)| neighbor)
+        .filter(|neighbor| nntree.locate_all_at_point(&Loc::new(*neighbor + Qrz::Z)).count() < 7)
+        .min_by_key(|neighbor| neighbor.distance(&goal))
 }
 
 pub fn chase(
@@ -46,226 +60,198 @@ pub fn chase(
         &Loc,
         Body,
         Option<&ActorAttributes>,
-        Option<&TargetLock>,
-        Option<&Returning>,
+        &mut Target,
+        Has<Returning>,
         &EngagementMember,
-        Option<&AssignedHex>,  // Path to assigned hex
+        Option<&AssignedHex>,
         &Side,
         Option<&Status>,
     )>,
     q_target: Query<(&Loc, &Health, &Side)>,
-    q_spawner: Query<&Loc, Without<Chase>>,  // Query spawner locations
+    q_home: Query<&Loc, Without<Chase>>,
     nntree: Res<NNTree>,
     map: Res<Map>,
     dt: Res<Time>,
 ) {
-    for (npc_entity, &chase_config, npc_loc, mut body, attrs, lock_opt, returning_opt, engagement_member, assigned_hex_opt, own_side, status) in &mut query {
-
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status) in &mut query {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
         }
         let dt_ms = dt.delta().as_millis() as i16;
-        let movement_speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), status);
+        let speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), status);
+        let Ok(&home) = q_home.get(member.0) else {
+            continue;
+        };
+        let from_home = loc.flat_distance(&home);
+        let floor = map.get_by_qr(loc.q, loc.r).map(|(floor, _)| floor);
 
-        // Check if NPC is already in returning state
-        if returning_opt.is_some() {
-            // Get spawner location to return to
-            let Ok(&spawner_loc) = q_spawner.get(engagement_member.0) else {
-                continue;
-            };
-
-            // Check if we're back at spawn
-            let distance_to_spawn = npc_loc.flat_distance(&spawner_loc);
-            if distance_to_spawn <= 2 {
-                // Close enough to spawn - clear returning state, lock, and target
-                commands.entity(npc_entity).remove::<Returning>();
-                commands.entity(npc_entity).remove::<TargetLock>();
-                commands.entity(npc_entity).insert(Target::default());
-                continue;
+        if returning {
+            if from_home <= HOME {
+                commands.entity(npc).remove::<Returning>();
+            } else if let Some((floor, next)) = floor.and_then(|floor| Some((floor, step(&map, &nntree, floor, *home)?))) {
+                body.step_toward(loc, floor, next, speed, dt_ms, &map, &nntree);
             }
-
-            // Path back to spawn using greedy movement
-            let spawn_qrz = *spawner_loc;
-            let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
-                continue;
-            };
-
-            let neighbors = map.neighbors(start);
-            let best_neighbor = neighbors
-                .iter()
-                .filter(|(neighbor, _)| {
-                    nntree.locate_all_at_point(&Loc::new(*neighbor + qrz::Qrz::Z)).count() < 7
-                })
-                .min_by_key(|(neighbor, _)| neighbor.distance(&spawn_qrz));
-
-            if let Some((next_tile, _)) = best_neighbor {
-                body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
-            }
-
-            // Clear target while returning
-            commands.entity(npc_entity).insert(Target::default());
             continue;
         }
 
-        // 1. TARGETING: Find or keep target
-        let target_entity = if let Some(lock) = lock_opt {
-            // Validate existing lock
-            if let Ok((target_loc, target_health, _)) = q_target.get(lock.locked_target) {
-                if target_health.current() > 0.0 {
-                    if lock.is_target_valid(Some(target_loc), npc_loc) {
-                        // Keep existing target
-                        Some(lock.locked_target)
-                    } else {
-                        // Leash broken - NPC went too far from origin
-                        // Add Returning component to initiate return to spawn
-                        // Keep TargetLock to prevent re-acquisition during return
-                        commands.entity(npc_entity).insert(Returning);
-                        // Broadcast Returning to clients for leash health regen prediction
-                        writer.write(Do {
-                            event: Event::Incremental {
-                                ent: npc_entity,
-                                component: MessageComponent::Returning(Returning),
-                            },
-                        });
-                        None
-                    }
-                } else {
-                    // Target died - remove lock and search
-                    commands.entity(npc_entity).remove::<TargetLock>();
-                    None
-                }
-            } else {
-                // Target despawned - remove lock and search
-                commands.entity(npc_entity).remove::<TargetLock>();
-                None
-            }
+        // Past its leash it lets go and goes home. Clients are told: they
+        // regenerate a returning NPC's health as the server does.
+        if from_home > chase.leash_distance {
+            *target = Target::default();
+            commands.entity(npc).insert(Returning);
+            writer.write(Do { event: Event::Incremental { ent: npc, component: MessageComponent::Returning(Returning) } });
+            continue;
+        }
+
+        // The target it has, while that one lives, else any hostile in sight
+        let held = target.entity
+            .filter(|&held| q_target.get(held).is_ok_and(|(_, health, _)| health.current() > 0.0))
+            .or_else(|| {
+                super::spotted(&nntree, *loc, chase.acquisition_range)
+                    .filter(|&seen| q_target.get(seen).is_ok_and(|(_, health, side)| health.current() > 0.0 && side.is_hostile_to(*own_side)))
+                    .choose(&mut rand::rng())
+            });
+        if target.entity != held {
+            target.entity = held;
+            target.last_target = held.or(target.last_target);
+        }
+        let Some(target_loc) = held.and_then(|held| q_target.get(held).ok()).map(|(target_loc, ..)| target_loc) else {
+            continue;
+        };
+
+        // Where it fights from, it stands and faces its target
+        let placed = match assigned {
+            Some(hex) => loc.flat_distance(&Loc::new(hex.0)) == 0,
+            None => loc.distance(target_loc) <= chase.attack_range,
+        };
+        if placed {
+            body.face(loc, **target_loc, dt_ms, &map, &nntree);
+            continue;
+        }
+
+        let goal = assigned.map_or(**target_loc, |hex| hex.0);
+        let Some((floor, next)) = floor.and_then(|floor| Some((floor, step(&map, &nntree, floor, goal)?))) else {
+            continue;
+        };
+        // A step that gives ground it takes backing away, facing its
+        // target, so stepping out to its place never turns its back or
+        // costs it a swing
+        if next.flat_distance(target_loc) > floor.flat_distance(target_loc) {
+            body.back_toward(loc, floor, next, **target_loc, speed, dt_ms, &map, &nntree);
         } else {
-            None
-        };
+            body.step_toward(loc, floor, next, speed, dt_ms, &map, &nntree);
+        }
+    }
+}
 
-        let target_entity = match target_entity {
-            Some(ent) => ent,
-            None => {
-                // Check if we're too far from spawner to acquire new targets
-                let Ok(&spawner_loc) = q_spawner.get(engagement_member.0) else {
-                    continue;
-                };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    use common_bevy::components::{entity_type::EntityType, heading::Heading, position::Position, AirTime, Turn};
 
-                let distance_from_spawn = npc_loc.flat_distance(&spawner_loc);
-                if distance_from_spawn > chase_config.leash_distance {
-                    // Too far from spawn - return to spawn instead of acquiring new target
-                    let spawn_qrz = *spawner_loc;
-                    let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
-                        continue;
-                    };
+    const REACH: i32 = 2;
+    const LEASH: i32 = 20;
 
-                    let neighbors = map.neighbors(start);
-                    let best_neighbor = neighbors
-                        .iter()
-                        .filter(|(neighbor, _)| {
-                            nntree.locate_all_at_point(&Loc::new(*neighbor + qrz::Qrz::Z)).count() < 7
-                        })
-                        .min_by_key(|(neighbor, _)| neighbor.distance(&spawn_qrz));
-
-                    if let Some((next_tile, _)) = best_neighbor {
-                        body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
-                    }
-
-                    commands.entity(npc_entity).insert(Target::default());
-                    continue;
-                }
-
-                // Close enough to spawn - search for new target
-                let valid_targets: Vec<Entity> = super::spotted(&nntree, *npc_loc, chase_config.acquisition_range)
-                    .filter_map(|ent| {
-                        q_target.get(ent).ok().and_then(|(_, health, side)| {
-                            if health.current() > 0.0 && side.is_hostile_to(*own_side) {
-                                Some(ent)
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .collect();
-
-                if let Some(&new_target) = valid_targets.iter().choose(&mut rand::rng()) {
-                    // Lock new target - use spawner location as leash origin
-                    commands.entity(npc_entity).insert(TargetLock::new(
-                        new_target,
-                        chase_config.leash_distance,
-                        spawner_loc,  // Spawner location is the leash anchor point
-                    ));
-                    commands.entity(npc_entity).insert(Target { entity: Some(new_target), last_target: Some(new_target) });
-                    new_target
-                } else {
-                    // No targets found - stop chasing
-                    continue;
-                }
+    /// A world of flat ground with an engagement's place at the origin.
+    fn ground() -> (App, Entity) {
+        let mut app = App::new();
+        app.add_plugins(NNTreePlugin);
+        app.add_message::<Do>();
+        app.init_resource::<Time>();
+        let mut tiles = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+        for q in -4..=LEASH + 8 {
+            for r in -4..=4 {
+                tiles.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
             }
-        };
-
-        // 2. GET TARGET LOCATION
-        let Ok((target_loc, _, _)) = q_target.get(target_entity) else {
-            continue;
-        };
-
-        // Determine movement destination — assigned hex if available, otherwise player tile
-        let move_target = assigned_hex_opt.map(|ah| ah.0).unwrap_or(**target_loc);
-
-        // 3. CHECK RANGE — NPC must be on assigned hex AND within attack range
-        // to attack, measured as its swing measures it
-        let distance_to_player = npc_loc.distance(target_loc);
-        let on_assigned_hex = assigned_hex_opt
-            .map(|ah| npc_loc.flat_distance(&Loc::new(ah.0)) == 0)
-            .unwrap_or(true); // No assignment = no hex constraint
-
-        if distance_to_player <= chase_config.attack_range && on_assigned_hex {
-            // In attack range AND on assigned hex — face target (auto-attack handles damage)
-            body.face(npc_loc, **target_loc, dt_ms, &map, &nntree);
-            commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
-            continue;
         }
+        app.insert_resource(Map::new(tiles));
+        let home = app.world_mut().spawn(Loc::new(Qrz { q: 0, r: 0, z: 1 })).id();
+        (app, home)
+    }
 
-        // On assigned hex but not in attack range — hold position, face target.
-        // Prevents oscillation when assigned hex is farther than attack range.
-        if on_assigned_hex && assigned_hex_opt.is_some() {
-            body.face(npc_loc, **target_loc, dt_ms, &map, &nntree);
-            commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
-            continue;
-        }
+    fn actor(app: &mut App, side: Side, q: i32) -> Entity {
+        let loc = Loc::new(Qrz { q, r: 0, z: 1 });
+        let ent = app.world_mut().spawn((loc, side, Health::full(100.0))).id();
+        app.world_mut().entity_mut(ent).insert(NearestNeighbor::new(ent, loc));
+        ent
+    }
 
-        // 4. MOVEMENT: Greedy chase toward assigned hex (or player if no assignment)
-        let target_qrz = move_target;
+    fn npc(app: &mut App, home: Entity, q: i32) -> Entity {
+        let ent = actor(app, Side::WILD, q);
+        app.world_mut().entity_mut(ent).insert((
+            Chase { acquisition_range: 10, leash_distance: LEASH, attack_range: REACH },
+            Target::default(),
+            EngagementMember(home),
+            Position::at_tile(Qrz { q, r: 0, z: 1 }),
+            Heading::default(),
+            Turn::default(),
+            AirTime::default(),
+        ));
+        ent
+    }
 
-        // Find terrain under current location and target
-        let Some((start, _)) = map.get_by_qr(npc_loc.q, npc_loc.r) else {
-            continue;
-        };
+    fn run(app: &mut App) {
+        app.world_mut().run_system_once(chase).unwrap();
+    }
 
-        // Greedy: pick neighbor closest to target
-        let neighbors = map.neighbors(start);
-        let best_neighbor = neighbors
-            .iter()
-            .filter(|(neighbor, _)| {
-                nntree.locate_all_at_point(&Loc::new(*neighbor + qrz::Qrz::Z)).count() < 7
-            })
-            .min_by_key(|(neighbor, _)| neighbor.distance(&target_qrz));
+    fn target_of(app: &App, npc: Entity) -> Option<Entity> {
+        app.world().get::<Target>(npc).unwrap().entity
+    }
 
-        if let Some((next_tile, _)) = best_neighbor {
-            // A step that gives ground it takes backing away, facing its
-            // target, so stepping out to its place never turns its back or
-            // costs it a swing
-            if next_tile.flat_distance(target_loc) > start.flat_distance(target_loc) {
-                body.back_toward(npc_loc, start, *next_tile, **target_loc, movement_speed, dt_ms, &map, &nntree);
-            } else {
-                body.step_toward(npc_loc, start, *next_tile, movement_speed, dt_ms, &map, &nntree);
-            }
+    #[test]
+    fn it_keeps_its_target_while_that_one_lives_and_takes_another_when_it_falls() {
+        let (mut app, home) = ground();
+        let hunter = npc(&mut app, home, 1);
+        assert_eq!({ run(&mut app); target_of(&app, hunter) }, None, "nothing in sight, nothing targeted");
 
-            // Update Target component for reactive systems
-            commands.entity(npc_entity).insert(Target { entity: Some(target_entity), last_target: Some(target_entity) });
-        }
+        let first = actor(&mut app, Side::PLAYERS, 6);
+        let friend = actor(&mut app, Side::WILD, 2);
+        run(&mut app);
+        assert_eq!(target_of(&app, hunter), Some(first), "the one hostile in sight, never its own side");
 
-        // Behavior never "completes" during chase - always running
+        let nearer = actor(&mut app, Side::PLAYERS, 3);
+        run(&mut app);
+        assert_eq!(target_of(&app, hunter), Some(first), "a nearer hostile does not draw it off");
+
+        app.world_mut().get_mut::<Health>(first).unwrap().state = 0.0;
+        run(&mut app);
+        assert_eq!(target_of(&app, hunter), Some(nearer), "its target fell: the next in sight");
+        let _ = friend;
+    }
+
+    #[test]
+    fn past_its_leash_it_lets_go_and_takes_no_target_until_it_is_home() {
+        let (mut app, home) = ground();
+        let hunter = npc(&mut app, home, 1);
+        let prey = actor(&mut app, Side::PLAYERS, 4);
+        run(&mut app);
+        assert_eq!(target_of(&app, hunter), Some(prey));
+
+        let far = Loc::new(Qrz { q: LEASH + 1, r: 0, z: 1 });
+        app.world_mut().entity_mut(hunter).insert(far);
+        app.world_mut().entity_mut(prey).insert(Loc::new(Qrz { q: LEASH + 3, r: 0, z: 1 }));
+        // The tree learns where they stand now
+        app.update();
+        run(&mut app);
+        assert!(app.world().get::<Returning>(hunter).is_some(), "past the leash it goes home");
+        assert_eq!(target_of(&app, hunter), None);
+        run(&mut app);
+        assert_eq!(target_of(&app, hunter), None, "on its way home it takes no target, though one stands beside it");
+
+        app.world_mut().entity_mut(hunter).insert(Loc::new(Qrz { q: 1, r: 0, z: 1 }));
+        run(&mut app);
+        assert!(app.world().get::<Returning>(hunter).is_none(), "home, it is returning no more");
+    }
+
+    #[test]
+    fn a_step_goes_to_the_neighbour_nearest_the_goal() {
+        let (app, _) = ground();
+        let (map, tree) = (app.world().resource::<Map>(), app.world().resource::<NNTree>());
+        let from = Qrz { q: 0, r: 0, z: 0 };
+        let next = step(map, tree, from, Qrz { q: 6, r: 0, z: 0 }).unwrap();
+        assert_eq!(next.flat_distance(&Qrz { q: 6, r: 0, z: 0 }), 5, "one tile closer");
+        assert_eq!(next.flat_distance(&from), 1);
     }
 }
