@@ -40,7 +40,7 @@ use common_bevy::{
         entity_type::{decorator::Decorator, EntityType},
         resources::{Health, SpawnPoint},
     },
-    message::{AbilityType, Event, Try},
+    message::{AbilityType, Do, Event, Try},
     plugins::nntree::NNTreePlugin,
     resources::map::Map,
     spatial_difficulty::EnemyArchetype,
@@ -164,10 +164,10 @@ struct Tally {
     used: HashMap<(Side, AbilityType), u32>,
 }
 
-/// Counts each ability an actor asks to use, auto-attacks included.
-fn tally_used(mut reader: MessageReader<Try>, mut tally: ResMut<Tally>) {
+/// Counts each ability an actor uses, auto-attacks included.
+fn tally_used(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>) {
     for message in reader.read() {
-        let Try { event: Event::UseAbility { ent, ability, .. } } = message else { continue };
+        let Do { event: Event::UseAbility { ent, ability, .. } } = message else { continue };
         let Some(&side) = tally.sides.get(ent) else { continue };
         *tally.used.entry((side, *ability)).or_default() += 1;
     }

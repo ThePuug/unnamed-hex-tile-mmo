@@ -7,7 +7,6 @@ pub mod engagement_spawner;
 pub mod equipment;
 pub mod gathering;
 pub mod input;
-pub mod npc_ability_usage;
 pub mod reaction_queue;
 pub mod renet;
 pub mod summary;

@@ -4,8 +4,8 @@ pub mod leap;
 
 use bevy::prelude::*;
 use common_bevy::{
-    components::{entity_type::*, reaction_queue::*, resources::*, *},
-    message::{AbilityType, Do, Try, Event as GameEvent},
+    components::{reaction_queue::*, resources::*, *},
+    message::{Do, Try, Event as GameEvent},
     systems::{
         combat::{damage as damage_calc, queue as queue_utils},
     },
@@ -224,65 +224,3 @@ fn land_damage(ent: Entity, source: Entity, damage: f32, dot: bool, health: &mut
     writer.write(Do { event: GameEvent::Incremental { ent, component: common_bevy::message::Component::Health(*health) } });
 }
 
-
-/// System to automatically trigger auto-attacks when a hostile is in range.
-/// The cadence is fixed by `ActorAttributes::cadence_interval`, stretched
-/// by a daze: no random spread, and an ability's lockout does not pause it. Every actor's
-/// swings are timed here, a player's as an NPC's, so none is timed by a client. An NPC swings
-/// wherever it stands; its assigned hex decides only where it walks.
-pub fn process_passive_auto_attack(
-    query: Query<
-        (Entity, &Loc, &Swing, &common_bevy::components::target::Target,
-         &ActorAttributes,
-         Option<&common_bevy::components::AttackRange>,
-         Option<&common_bevy::components::heading::Heading>,
-         Option<&common_bevy::components::status::Status>),
-    >,
-    entity_query: Query<(&EntityType, &Loc, Option<&RespawnTimer>)>,
-    time: Res<Time>,
-    mut writer: MessageWriter<Try>,
-) {
-    for (ent, loc, swing, target, attrs, attack_range_opt, heading, status) in &query {
-        if common_bevy::components::status::Status::holds(status) {
-            continue;
-        }
-        // Due an interval after its last swing, stretched by a daze; the
-        // swing itself records when it struck (`handle_auto_attack`)
-        let cooldown = common_bevy::components::status::Status::cadence(attrs.cadence_interval(), status);
-        if swing.at.is_some_and(|at| time.elapsed().saturating_sub(at) < cooldown) {
-            continue; // Still on cooldown
-        }
-
-        // The hostile it targets: an NPC's from its chase, a player's from its facing
-        let Some(target_ent) = target.entity else {
-            continue; // No target set
-        };
-
-        // Get target's location
-        let Ok((_, target_loc, respawn_timer_opt)) = entity_query.get(target_ent) else {
-            continue; // Target entity doesn't exist or missing components
-        };
-
-        // Skip dead targets
-        if respawn_timer_opt.is_some() {
-            continue;
-        }
-
-        // Check if target is within auto-attack range (manhattan: flat hex distance + z difference)
-        let distance = loc.distance(target_loc);
-        let max_range = attack_range_opt.copied().unwrap_or_default().0;
-        if distance <= max_range && common_bevy::systems::targeting::faces(heading, attrs.arc(), loc, target_loc) {
-            // Target is in range and within its arc - trigger auto-attack
-            writer.write(Try {
-                event: GameEvent::UseAbility {
-                    ent,
-                    ability: AbilityType::AutoAttack,
-                    target: Some(target_ent),
-                },
-            });
-        }
-    }
-}
-
-// Tests removed - need proper integration testing setup with Bevy's event system
-// The core logic is tested through the common/systems/reaction_queue tests

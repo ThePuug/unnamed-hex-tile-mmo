@@ -1,9 +1,7 @@
-use std::time::Duration;
-
-use bevy::{prelude::*, time::common_conditions::on_timer};
+use bevy::prelude::*;
 use common_bevy::message::{Do, Try};
 
-use crate::systems::{combat, npc_ability_usage, reaction_queue, targeting};
+use crate::systems::{combat, reaction_queue, targeting};
 
 /// Combat as the server runs it, with no networking: damage and threats,
 /// NPC targeting, auto-attacks and signature abilities, the reaction queue,
@@ -41,17 +39,7 @@ impl Plugin for CombatPlugin {
 
         app.add_systems(Update, (
             targeting::update_targets, // Update targets every frame (detects when targets move)
-            combat::process_passive_auto_attack.run_if(on_timer(Duration::from_millis(500))), // Auto-attack passive for NPCs only (check every 0.5s)
-            npc_ability_usage::npc_ability_usage.run_if(on_timer(Duration::from_millis(500))), // NPCs use signature abilities (check every 0.5s for responsive Defender counters)
-            combat::abilities::auto_attack::handle_auto_attack,
-            combat::abilities::rattle::handle_rattle,
-            combat::abilities::disengage::handle_disengage,
-            combat::abilities::volley::handle_volley,
-            combat::abilities::flank::handle_flank,
-            combat::abilities::overpower::handle_overpower,
-            combat::abilities::lunge::handle_lunge,
-            combat::abilities::counter::handle_counter,  // Counter ability
-            combat::abilities::kick::handle_kick,        // Kick: reactive knockback
+            combat::abilities::use_abilities, // Every ability, through the one gate
             reaction_queue::process_dismiss, // Dismiss front queue threat (no lockout)
             common_bevy::systems::combat::resources::check_death, // Check for death from ANY source
             common_bevy::systems::combat::resources::process_respawn,
