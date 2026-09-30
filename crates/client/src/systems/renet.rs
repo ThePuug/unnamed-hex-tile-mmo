@@ -150,9 +150,11 @@ pub fn write_do(
                     .is_some();
 
                 if is_local_player {
-                    // For local player: DON'T despawn the entity, just mark as dead
-                    // The entity will be reused on respawn
-                    // Entity stays alive but invisible/inactive (handled by update_dead_visibility)
+                    // The player falls as any actor does, but keeps its
+                    // entity: the server respawns it, and it stands again
+                    if let Some(&local_ent) = l2r.get_by_right(&ent) {
+                        commands.entity(local_ent).try_insert(crate::components::DeathMarker { death_time: time.elapsed() });
+                    }
                 } else {
                     // For NPCs/other players: remove from EntityMap and delay despawn
                     // Entity stays alive for 3s in a death pose so damage numbers can render
