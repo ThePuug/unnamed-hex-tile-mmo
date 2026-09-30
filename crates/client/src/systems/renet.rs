@@ -435,12 +435,6 @@ pub fn send_try(
                     r: *r,
                 }}, bincode::config::legacy()).unwrap());
             }
-            Event::SpawnDen { ent, archetype } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::SpawnDen {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    archetype: *archetype,
-                }}, bincode::config::legacy()).unwrap());
-            }
             Event::SpawnParty { ent, archetype, level, size, engage } => {
                 // The anchor must be one the server knows
                 let Some(&ent) = l2r.get_by_left(ent) else { continue };

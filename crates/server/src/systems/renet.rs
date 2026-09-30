@@ -345,10 +345,6 @@ pub fn write_try(
                     let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::Teleport { ent, q, r }});
                 }
-                Try { event: Event::SpawnDen { ent: _, archetype } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
-                    writer.write(Try { event: Event::SpawnDen { ent, archetype }});
-                }
                 Try { event: Event::SpawnParty { ent, archetype, level, size, engage } } => {
                     writer.write(Try { event: Event::SpawnParty { ent, archetype, level, size, engage }});
                 }

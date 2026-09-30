@@ -351,7 +351,7 @@ pub fn update_console_menu(
                     ));
                 }
                 #[cfg(feature = "admin")]
-                MenuPath::SpawnDen | MenuPath::Stage { .. } => {
+                MenuPath::Stage(_) => {
                     for (i, (label, _)) in super::state::DENS.iter().enumerate() {
                         parent.spawn((
                             Text::new(format!("{}. {label}", i + 1)),

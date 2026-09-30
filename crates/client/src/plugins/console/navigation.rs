@@ -1,5 +1,8 @@
 use bevy::prelude::*;
 
+#[cfg(feature = "admin")]
+use super::state::Staging;
+
 use super::{
     state::{DevConsole, MenuPath, GotoCoordType, GotoInputState},
     actions::DevConsoleAction,
@@ -93,11 +96,9 @@ pub fn handle_console_input(
         #[cfg(feature = "admin")]
         MenuPath::SummaryRadius => handle_summary_radius(&mut keyboard, &mut console, &mut action_writer),
         #[cfg(feature = "admin")]
-        MenuPath::SpawnDen => handle_spawn_den_menu(&mut keyboard, &mut action_writer),
-        #[cfg(feature = "admin")]
         MenuPath::View => handle_view_menu(&mut keyboard, &mut action_writer),
         #[cfg(feature = "admin")]
-        MenuPath::Stage { engage } => handle_stage_menu(&mut keyboard, &mut action_writer, engage),
+        MenuPath::Stage(staging) => handle_stage_menu(&mut keyboard, &mut action_writer, staging),
     }
 }
 
@@ -136,13 +137,6 @@ fn handle_root_menu(
     }
 
     #[cfg(feature = "admin")]
-    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad5) {
-        console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::SpawnDen;
-        consumed = Some(KeyCode::Numpad5);
-    }
-
-    #[cfg(feature = "admin")]
     if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad6) {
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::View;
@@ -150,10 +144,10 @@ fn handle_root_menu(
     }
 
     #[cfg(feature = "admin")]
-    for (key, engage) in [(KeyCode::Numpad7, false), (KeyCode::Numpad8, true)] {
+    for (key, staging) in [(KeyCode::Numpad5, Staging::Den), (KeyCode::Numpad7, Staging::Party), (KeyCode::Numpad8, Staging::Opposition)] {
         if consumed.is_none() && keyboard.just_pressed(key) {
             console.history.push(console.current_menu.clone());
-            console.current_menu = MenuPath::Stage { engage };
+            console.current_menu = MenuPath::Stage(staging);
             consumed = Some(key);
         }
     }
@@ -309,40 +303,23 @@ fn handle_flyover_menu(
     }
 }
 
-/// Numpad 1 on places the den `DENS` lists in that row, and stays in the
-/// menu so another can follow.
-#[cfg(feature = "admin")]
-fn handle_spawn_den_menu(
-    keyboard: &mut ButtonInput<KeyCode>,
-    action_writer: &mut MessageWriter<DevConsoleAction>,
-) {
-    const KEYS: [KeyCode; 9] = [
-        KeyCode::Numpad1, KeyCode::Numpad2, KeyCode::Numpad3, KeyCode::Numpad4, KeyCode::Numpad5,
-        KeyCode::Numpad6, KeyCode::Numpad7, KeyCode::Numpad8, KeyCode::Numpad9,
-    ];
-    // Every den listed has a key, or the zip drops the rows past the last
-    const _: () = assert!(super::state::DENS.len() <= KEYS.len());
-    for (key, (_, archetype)) in KEYS.into_iter().zip(super::state::DENS) {
-        if keyboard.just_pressed(key) {
-            action_writer.write(DevConsoleAction::SpawnDen(archetype));
-            keyboard.clear_just_pressed(key);
-        }
-    }
-}
-
+/// Numpad 1 on stages the archetype `DENS` lists in that row, and stays in
+/// the menu so another can follow.
 #[cfg(feature = "admin")]
 fn handle_stage_menu(
     keyboard: &mut ButtonInput<KeyCode>,
     action_writer: &mut MessageWriter<DevConsoleAction>,
-    engage: bool,
+    staging: Staging,
 ) {
     const KEYS: [KeyCode; 9] = [
         KeyCode::Numpad1, KeyCode::Numpad2, KeyCode::Numpad3, KeyCode::Numpad4, KeyCode::Numpad5,
         KeyCode::Numpad6, KeyCode::Numpad7, KeyCode::Numpad8, KeyCode::Numpad9,
     ];
+    // Every archetype listed has a key, or the zip drops the rows past the last
+    const _: () = assert!(super::state::DENS.len() <= KEYS.len());
     for (key, (_, archetype)) in KEYS.into_iter().zip(super::state::DENS) {
         if keyboard.just_pressed(key) {
-            action_writer.write(DevConsoleAction::SpawnParty { archetype, engage });
+            action_writer.write(DevConsoleAction::SpawnParty { archetype, staging });
             keyboard.clear_just_pressed(key);
         }
     }

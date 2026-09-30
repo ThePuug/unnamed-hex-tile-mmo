@@ -86,12 +86,22 @@ pub enum MenuPath {
     #[cfg(feature = "admin")]
     SummaryRadius,
     #[cfg(feature = "admin")]
-    SpawnDen,
-    #[cfg(feature = "admin")]
     View,
-    /// Pick a party's archetype: to stand ahead, or to engage
+    /// Pick a party's archetype
     #[cfg(feature = "admin")]
-    Stage { engage: bool },
+    Stage(Staging),
+}
+
+/// What the console stages ahead of the actor the client sees as.
+#[cfg(feature = "admin")]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Staging {
+    /// A den that actor can beat alone, out of its reach
+    Den,
+    /// One fighter at the balance arena's level, out of its reach
+    Party,
+    /// One fighter at the balance arena's level, engaging it
+    Opposition,
 }
 
 /// The dens the console places, in menu order from numpad 1.
@@ -116,13 +126,13 @@ impl MenuPath {
             #[cfg(feature = "admin")]
             MenuPath::SummaryRadius => "Summary Radius",
             #[cfg(feature = "admin")]
-            MenuPath::SpawnDen => "Spawn Den",
-            #[cfg(feature = "admin")]
             MenuPath::View => "View",
             #[cfg(feature = "admin")]
-            MenuPath::Stage { engage: false } => "Stage Party",
+            MenuPath::Stage(Staging::Den) => "Spawn Den",
             #[cfg(feature = "admin")]
-            MenuPath::Stage { engage: true } => "Stage Opposition",
+            MenuPath::Stage(Staging::Party) => "Stage Party",
+            #[cfg(feature = "admin")]
+            MenuPath::Stage(Staging::Opposition) => "Stage Opposition",
         }
     }
 }

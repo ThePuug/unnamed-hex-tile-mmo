@@ -84,16 +84,13 @@ pub enum Event {
     /// request; the server decides the height and answers with the tile
     /// update every client already treats as a teleport.
     Teleport { ent: Entity, q: i32, r: i32 },
-    /// Client → Server: place a den of `archetype` ahead of the entity,
-    /// beyond the range its pack acquires a target from. An admin request,
-    /// as ungated on the wire as `Teleport`.
-    SpawnDen { ent: Entity, archetype: crate::spatial_difficulty::EnemyArchetype },
-    /// Client → Server: place a party of `size` `archetype`s at `level`, on
-    /// a side of its own, ahead of the actor `ent`: out of its reach, or
-    /// with `engage`, where it acquires them, as the balance arena sets its
-    /// teams apart. Staging a fight is a party, a view of it, then its
+    /// Client → Server: place a party of `size` `archetype`s at `level`
+    /// ahead of the actor `ent`: on the wild side, beyond the range its
+    /// pack acquires a target from, a den; or with `engage`, on a side of
+    /// its own where it acquires them, as the balance arena sets its teams
+    /// apart. Staging a fight is a party, a view of it, then its
     /// opposition engaged on the viewed fighter. An admin request, as
-    /// ungated on the wire as `SpawnDen`.
+    /// ungated on the wire as `Teleport`.
     SpawnParty {
         ent: Entity,
         archetype: crate::spatial_difficulty::EnemyArchetype,
@@ -158,7 +155,7 @@ pub enum Event {
     /// Client → Server: see the world as the actor `ent`, without control:
     /// the connection's character leaves the world while it views, and
     /// `Leave` then `Play` bring a fresh one back. An admin request, as
-    /// ungated on the wire as `SpawnDen`.
+    /// ungated on the wire as `Teleport`.
     /// Server → Client: this connection now sees the world as `ent`.
     View { ent: Entity },
 }

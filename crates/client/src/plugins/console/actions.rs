@@ -39,9 +39,6 @@ pub enum DevConsoleAction {
     SetForcedSummaryRadius(Option<u32>),
     #[cfg(feature = "admin")]
     ReportTerrain,
-    /// Place a den of this archetype ahead of the player.
-    #[cfg(feature = "admin")]
-    SpawnDen(common_bevy::spatial_difficulty::EnemyArchetype),
     /// See the world as the target of the actor the client sees as.
     #[cfg(feature = "admin")]
     ViewTarget,
@@ -49,9 +46,9 @@ pub enum DevConsoleAction {
     #[cfg(feature = "admin")]
     StopViewing,
     /// Stage a party of this archetype ahead of the actor the client sees
-    /// as: out of its reach, or engaging it.
+    /// as: a den, a party out of its reach, or one engaging it.
     #[cfg(feature = "admin")]
-    SpawnParty { archetype: common_bevy::spatial_difficulty::EnemyArchetype, engage: bool },
+    SpawnParty { archetype: common_bevy::spatial_difficulty::EnemyArchetype, staging: super::state::Staging },
 }
 
 /// System that executes console actions
@@ -185,8 +182,6 @@ pub fn execute_console_actions(
             #[cfg(feature = "admin")]
             DevConsoleAction::ReportTerrain => {}
             #[cfg(feature = "admin")]
-            DevConsoleAction::SpawnDen(_) => {}
-            #[cfg(feature = "admin")]
             DevConsoleAction::ViewTarget | DevConsoleAction::StopViewing => {}
             #[cfg(feature = "admin")]
             DevConsoleAction::SpawnParty { .. } => {}
@@ -194,21 +189,6 @@ pub fn execute_console_actions(
     }
 }
 
-
-/// Asks the server for the den the console picked, ahead of the player.
-#[cfg(feature = "admin")]
-pub fn send_spawn_den(
-    mut reader: MessageReader<DevConsoleAction>,
-    mut writer: MessageWriter<common_bevy::message::Try>,
-    player: Query<Entity, (With<common_bevy::components::Actor>, With<common_bevy::components::behaviour::PlayerControlled>)>,
-) {
-    for action in reader.read() {
-        let DevConsoleAction::SpawnDen(archetype) = *action else { continue };
-        let Ok(ent) = player.single() else { continue };
-        writer.write(common_bevy::message::Try { event: common_bevy::message::Event::SpawnDen { ent, archetype } });
-        info!("Spawn den: {archetype:?}");
-    }
-}
 
 /// Asks the server to see the world as the target of the actor the client
 /// sees as, or stops the view.
@@ -246,19 +226,51 @@ pub fn send_view(
 #[cfg(feature = "admin")]
 const PARTY: (u8, u8) = (10, 1);
 
+/// Levels below an actor each of a den's pair stands: the level rule puts
+/// a pair this far below about even with one of the actor's level.
+#[cfg(feature = "admin")]
+const PAIR_DEFICIT: u8 = 3;
+
+/// A den one actor at `level` can beat alone, as `(level, size)`: one NPC
+/// at its level, or with `pair` two `PAIR_DEFICIT` levels below it.
+#[cfg(feature = "admin")]
+fn den_for(level: u8, pair: bool) -> (u8, u8) {
+    if pair { (level.saturating_sub(PAIR_DEFICIT), 2) } else { (level, 1) }
+}
+
 /// Asks the server for the party the console picked, ahead of the actor
 /// the client sees as.
 #[cfg(feature = "admin")]
 pub fn send_spawn_party(
     mut reader: MessageReader<DevConsoleAction>,
     mut writer: MessageWriter<common_bevy::message::Try>,
-    seer: Query<Entity, With<crate::components::Viewed>>,
+    seer: Query<(Entity, &common_bevy::components::ActorAttributes), With<crate::components::Viewed>>,
 ) {
+    use super::state::Staging;
     for action in reader.read() {
-        let DevConsoleAction::SpawnParty { archetype, engage } = *action else { continue };
-        let Ok(ent) = seer.single() else { continue };
-        let (level, size) = PARTY;
+        let DevConsoleAction::SpawnParty { archetype, staging } = *action else { continue };
+        let Ok((ent, attrs)) = seer.single() else { continue };
+        let (level, size) = match staging {
+            Staging::Den => den_for(attrs.total_level().min(u8::MAX as u32) as u8, rand::Rng::random_bool(&mut rand::rng(), 0.5)),
+            Staging::Party | Staging::Opposition => PARTY,
+        };
+        let engage = staging == Staging::Opposition;
         writer.write(common_bevy::message::Try { event: common_bevy::message::Event::SpawnParty { ent, archetype, level, size, engage } });
         info!("Stage: {size}x{archetype:?}@{level}{}", if engage { ", engaging" } else { "" });
+    }
+}
+
+#[cfg(all(test, feature = "admin"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_den_is_one_at_the_actors_level_or_a_pair_below_it() {
+        for actor in [1, 3, 10, 20] {
+            assert_eq!(den_for(actor, false), (actor, 1));
+            let (level, size) = den_for(actor, true);
+            assert_eq!(size, 2);
+            assert!(level < actor, "a pair stands below a level-{actor} actor");
+        }
     }
 }
