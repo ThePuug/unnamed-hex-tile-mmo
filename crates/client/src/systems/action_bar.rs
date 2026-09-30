@@ -14,7 +14,7 @@ pub struct ActionBarDisplay;
 /// Marker component for individual ability slot UI
 #[derive(Component)]
 pub struct AbilitySlot {
-    pub ability: AbilityType,
+    pub ability: Option<AbilityType>,
 }
 
 /// The row the viewed actor's ability slots stand in
@@ -95,25 +95,28 @@ pub fn setup(
     });  // Close outer .with_children
 }
 
-/// The abilities on the bar of an actor of `typ`, each with the key that
-/// fires it: a player's four, an NPC's signature.
-pub fn loadout(typ: &EntityType) -> Vec<(Option<KeyCode>, AbilityType)> {
+/// The bar's keys, left to right, and the ability a player holds on each.
+const KEYS: [KeyCode; 4] = [KeyCode::KeyQ, KeyCode::KeyW, KeyCode::KeyE, KeyCode::KeyR];
+const PLAYER: [AbilityType; 4] = [AbilityType::Lunge, AbilityType::Overpower, AbilityType::Counter, AbilityType::Kick];
+
+/// What stands on each of the bar's keys for an actor of `typ`: a player's
+/// four; an NPC's signature on the key a player holds it on, else the
+/// first, the rest empty, so a view's bar looks as a player's does.
+pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 4] {
     use common_bevy::components::entity_type::actor::ActorIdentity;
+    let mut bar = [None; 4];
     match typ {
         EntityType::Actor(actor) => match actor.identity {
-            ActorIdentity::Player => vec![
-                (Some(KeyCode::KeyQ), AbilityType::Lunge),
-                (Some(KeyCode::KeyW), AbilityType::Overpower),
-                (Some(KeyCode::KeyE), AbilityType::Counter),
-                (Some(KeyCode::KeyR), AbilityType::Kick),
-            ],
-            ActorIdentity::Npc(npc) => common_bevy::spatial_difficulty::EnemyArchetype::of_npc(npc).ability()
-                .map(|ability| (None, ability))
-                .into_iter()
-                .collect(),
+            ActorIdentity::Player => bar = PLAYER.map(Some),
+            ActorIdentity::Npc(npc) => {
+                if let Some(signature) = common_bevy::spatial_difficulty::EnemyArchetype::of_npc(npc).ability() {
+                    bar[PLAYER.iter().position(|&a| a == signature).unwrap_or(0)] = Some(signature);
+                }
+            }
         },
-        _ => Vec::new(),
+        _ => {}
     }
+    bar
 }
 
 /// Fills the bar with the loadout of the actor the client sees as, anew
@@ -133,13 +136,13 @@ pub fn sync_loadout(
     commands.entity(container).despawn_related::<Children>();
     let Some((_, typ)) = seer else { return };
     commands.entity(container).with_children(|parent| {
-        for (keybind, ability) in loadout(typ) {
+        for (keybind, ability) in KEYS.into_iter().zip(loadout(typ)) {
             spawn_slot(parent, keybind, ability);
         }
     });
 }
 
-fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: Option<KeyCode>, ability: AbilityType) {
+fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>) {
     parent.spawn((
         Node {
             width: Val::Px(SLOT_PX),
@@ -156,16 +159,17 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: Option<KeyCode>, abili
     .with_children(|parent| {
         // Ability icon (center)
         let icon_text = match ability {
-            AbilityType::Lunge => "⚡",       // Gap closer / dash
-            AbilityType::Overpower => "💥",  // Heavy strike
-            AbilityType::Deflect => "🛡",    // Shield / defense
-            AbilityType::AutoAttack => "⚔",  // Auto-attack
-            AbilityType::Rattle => "💫",      // Juggernaut rattle
-            AbilityType::Disengage => "💨",   // Skirmisher leap away
-            AbilityType::Volley => "🏹",      // Kiter volley
-            AbilityType::Flank => "🗡",       // Ambusher flank
-            AbilityType::Counter => "↩",     // Counter / reflect
-            AbilityType::Kick => "🦶",       // Kick / knockback
+            None => "",
+            Some(AbilityType::Lunge) => "⚡",       // Gap closer / dash
+            Some(AbilityType::Overpower) => "💥",  // Heavy strike
+            Some(AbilityType::Deflect) => "🛡",    // Shield / defense
+            Some(AbilityType::AutoAttack) => "⚔",  // Auto-attack
+            Some(AbilityType::Rattle) => "💫",      // Juggernaut rattle
+            Some(AbilityType::Disengage) => "💨",   // Skirmisher leap away
+            Some(AbilityType::Volley) => "🏹",      // Kiter volley
+            Some(AbilityType::Flank) => "🗡",       // Ambusher flank
+            Some(AbilityType::Counter) => "↩",     // Counter / reflect
+            Some(AbilityType::Kick) => "🦶",       // Kick / knockback
         };
 
         parent.spawn((
@@ -182,13 +186,11 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: Option<KeyCode>, abili
             SlotIcon,
         ));
 
-        // Keybind label (top-left corner); an NPC's signature has no key
-        if let Some(keybind) = keybind {
-            crate::systems::keycap::corner_keycap(parent, &format!("{:?}", keybind).replace("Key", "")).insert(SlotKeybind);
-        }
+        // Keybind label (top-left corner)
+        crate::systems::keycap::corner_keycap(parent, &format!("{:?}", keybind).replace("Key", "")).insert(SlotKeybind);
 
         // Cost badge (bottom-right corner)
-        {
+        if let Some(ability) = ability {
             let cost_text = match ability {
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
                 AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => String::new(), // NPC-only
@@ -275,7 +277,19 @@ pub fn update(
     let recovery_duration = recovery_opt.map(|r| r.duration).unwrap_or(1.0);
 
     for (slot, mut border_color, children) in &mut slot_query {
-        let ability = slot.ability;
+        // An empty slot: dark, no glow, no overlay
+        let Some(ability) = slot.ability else {
+            *border_color = BorderColor::all(Color::srgb(0.2, 0.2, 0.2));
+            for child in children.iter() {
+                if let Ok(mut visibility) = glow_query.get_mut(child) {
+                    *visibility = Visibility::Hidden;
+                }
+                if let Ok(mut node) = overlay_query.get_mut(child) {
+                    node.height = Val::Percent(0.0);
+                }
+            }
+            continue;
+        };
         // Range is judged for the client's own character, who picks its
         // targets here; a viewed actor's targets are the server's
         let state = if controlled {
@@ -473,5 +487,28 @@ fn get_ability_state(
                 AbilityState::InsufficientResources
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod loadout_tests {
+    use super::*;
+    use common_bevy::components::entity_type::actor::*;
+
+    fn npc(npc: NpcType) -> EntityType {
+        EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Npc(npc)))
+    }
+
+    #[test]
+    fn a_player_fills_every_key() {
+        let player = EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Player));
+        assert_eq!(loadout(&player), PLAYER.map(Some));
+    }
+
+    #[test]
+    fn an_npc_signature_stands_on_a_players_key_for_it() {
+        assert_eq!(loadout(&npc(NpcType::Defender)), [None, None, Some(AbilityType::Counter), None]);
+        assert_eq!(loadout(&npc(NpcType::WildDog)), [Some(AbilityType::Lunge), None, None, None]);
+        assert_eq!(loadout(&npc(NpcType::Juggernaut)), [Some(AbilityType::Rattle), None, None, None], "one a player lacks goes first");
     }
 }
