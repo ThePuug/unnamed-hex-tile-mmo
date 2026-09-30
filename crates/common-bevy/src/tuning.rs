@@ -60,24 +60,24 @@ pub struct Tuning {
     /// Most of a recovery an Impact advantage pushes it back by
     pub pushback_share: f32,
     /// Most of a recovery a Composure advantage takes off it; below 1, so
-    /// no lockout ever runs out at once
+    /// no recovery ever runs out at once
     pub composure_share: f32,
-    /// Share of a recovery a synergy unlocks its follow-up through, at parity
-    pub synergy_floor: f32,
+    /// Share of a recovery its combo unlocks through, at parity
+    pub combo_floor: f32,
     /// Most more a Flow advantage unlocks it through
-    pub synergy_share: f32,
+    pub combo_share: f32,
     /// Seconds every threat's window starts from
     pub reaction_window: f32,
     /// Most more a Reflex advantage widens it by
     pub window_bonus: f32,
 
-    // --- Abilities: what each costs, how long it locks its user out ---
+    // --- Abilities: what each costs, how long its recovery runs ---
     /// Stamina each player ability costs
     pub lunge_cost: f32,
     pub overpower_cost: f32,
     pub counter_cost: f32,
     pub kick_cost: f32,
-    /// Seconds each ability locks its user out of every other
+    /// Seconds of recovery each ability leaves its user in
     pub lunge_recovery: f32,
     pub overpower_recovery: f32,
     pub counter_recovery: f32,
@@ -172,8 +172,8 @@ impl Tuning {
         spill_share: 0.5,
         pushback_share: 0.5,
         composure_share: 0.231,
-        synergy_floor: 0.1,
-        synergy_share: 0.66,
+        combo_floor: 0.1,
+        combo_share: 0.66,
         reaction_window: 3.0,
         window_bonus: 0.35,
         lunge_cost: 5.0,
@@ -234,7 +234,7 @@ impl Tuning {
         }
     }
 
-    /// Seconds `ability` locks its user out of every other; an auto-attack
+    /// Seconds of recovery `ability` leaves its user in; an auto-attack
     /// runs on its own timer instead.
     pub fn recovery(&self, ability: AbilityType) -> f32 {
         match ability {
@@ -290,8 +290,8 @@ impl Tuning {
             "spill_share" => &mut self.spill_share,
             "pushback_share" => &mut self.pushback_share,
             "composure_share" => &mut self.composure_share,
-            "synergy_floor" => &mut self.synergy_floor,
-            "synergy_share" => &mut self.synergy_share,
+            "combo_floor" => &mut self.combo_floor,
+            "combo_share" => &mut self.combo_share,
             "reaction_window" => &mut self.reaction_window,
             "window_bonus" => &mut self.window_bonus,
             "lunge_cost" => &mut self.lunge_cost,

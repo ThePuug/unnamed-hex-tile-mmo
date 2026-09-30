@@ -132,7 +132,7 @@ pub fn setup_health_bars(mut commands: Commands) {
 
 /// Moves each lane's bars onto the target the viewed actor holds in it
 /// and eases their fill toward what they measure: health, and how far
-/// through its lockout the target is, full with none. Hidden with no target.
+/// through its recovery the target is, full with none. Hidden with no target.
 pub fn update_world_bars(
     mut bars: Query<(&Lane, &mut WorldBar, &Children, &mut Node, &mut Visibility)>,
     mut fills: Query<&mut Node, (With<WorldBarFill>, Without<WorldBar>)>,

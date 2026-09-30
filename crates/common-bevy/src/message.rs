@@ -56,7 +56,7 @@ pub enum Event {
     /// Server-internal: Resolve a threat (apply damage with modifiers)
     ResolveThreat { ent: Entity, threat: QueuedThreat },
     /// Client → Server (Try): Request to use an ability
-    /// Server → Client (Do): Ability was used successfully (apply recovery/synergies)
+    /// Server → Client (Do): Ability was used successfully (apply recovery and combo)
     /// target: Optional target entity (player's intended target, server validates)
     UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity> },
     /// Server → Client: Clear threats from queue
@@ -66,7 +66,7 @@ pub enum Event {
     /// Server → Client: Response to ping (echoes client timestamp)
     Pong { client_time: u128 },
     /// Client → Server: take the front queue threat now, as it would land
-    /// No lockout, no resource cost — queue management, not an ability
+    /// No recovery, no resource cost — queue management, not an ability
     Dismiss { ent: Entity },
     /// Server → Client: the state a remote entity is simulated from. Sent
     /// when any of it changes and at every tile crossing while moving.
@@ -215,7 +215,7 @@ pub enum AbilityType {
 
 impl AbilityType {
     /// Whether it answers the queue: the abilities Discipline's Preparation
-    /// lets an actor use through its lockout (`synergies::reacts_through`)
+    /// lets an actor use through its recovery (`combos::reacts_through`)
     pub fn is_reaction(self) -> bool {
         matches!(self, AbilityType::Counter | AbilityType::Kick | AbilityType::Disengage)
     }
@@ -236,11 +236,11 @@ impl AbilityType {
         }
     }
 
-    /// The ability this one offers as its follow-up, the one that unlocks
-    /// through its lockout ahead of the rest (`synergies::lockout`):
+    /// The ability this one offers as its combo, the one that unlocks
+    /// through its recovery ahead of the rest (`combos::recovery_after`):
     /// the player's four run round one ring, Lunge to Overpower to Counter
     /// to Kick and back to Lunge. None for an ability that offers nothing.
-    pub fn follow_up(self) -> Option<AbilityType> {
+    pub fn combo(self) -> Option<AbilityType> {
         match self {
             AbilityType::Lunge => Some(AbilityType::Overpower),
             AbilityType::Overpower => Some(AbilityType::Counter),

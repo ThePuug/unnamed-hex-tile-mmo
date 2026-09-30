@@ -14,7 +14,7 @@ const STAGGER_SECS: f32 = 0.5;
 /// Precision, is driven four tiles away over the ground (`leap::away`),
 /// further by the kicker's hold (`ActorAttributes::hold`), and is held
 /// there a moment. With nothing queued there is nothing to kick. Its
-/// lockout is contested by the source of the first threat it answers.
+/// recovery is contested by the source of the first threat it answers.
 pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let answered = abilities.window(cast.ent);
     if answered.is_empty() {

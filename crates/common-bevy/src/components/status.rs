@@ -40,7 +40,7 @@ impl Timed {
 }
 
 /// A daze, `stacks` deep, that holds the actor to `pace` of its speed and
-/// stretches its auto-attack interval and lockouts by the inverse, until it
+/// stretches its auto-attack interval and recoveries by the inverse, until it
 /// leaves combat. The server works `pace` out from its tuning and sends it,
 /// so a client holds none of the tuning.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -72,7 +72,7 @@ impl Status {
 
     /// Whether an actor with `status` is held in place now: it neither
     /// moves, turns, jumps nor swings. Its abilities and reactions are for
-    /// the lockout whatever held it lays on alongside.
+    /// the recovery whatever held it lays on alongside.
     pub fn holds(status: Option<&Status>) -> bool {
         status.is_some_and(Status::is_held)
     }

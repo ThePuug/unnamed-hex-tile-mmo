@@ -18,7 +18,7 @@ pub const FLANK_CIRCLE_MS: u16 = 1500;
 /// `Tuning::flank_stun` seconds as it lands (`landing::land`).
 /// The strike waits in the target's queue like any threat, so the target
 /// has its window to answer it before the stun holds it: the hold
-/// (`Status::hold`) stops its movement and auto-attacks, and a lockout as
+/// (`Status::hold`) stops its movement and auto-attacks, and a recovery as
 /// long its abilities and reactions.
 /// The back tile becomes the Ambusher's assigned tile, so it holds the flank;
 /// an engagement member assigned there takes the tile the Ambusher left.

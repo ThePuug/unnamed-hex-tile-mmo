@@ -66,11 +66,11 @@ pub fn land(
 ) {
     let hold = source_attrs.map_or(1.0, ActorAttributes::hold);
     match ability {
-        // A stun holds its target completely, a lockout as long with it
+        // A stun holds its target completely, a recovery as long with it
         Some(AbilityType::Flank) => {
             let seconds = tuning.flank_stun * hold;
-            let lockout = recoveries.get(target).map_or(0.0, |recovery| recovery.remaining).max(seconds);
-            lock(target, GlobalRecovery::new(lockout).against(source_attrs), commands, writer);
+            let held = recoveries.get(target).map_or(0.0, |recovery| recovery.remaining).max(seconds);
+            recover(target, GlobalRecovery::new(held).against(source_attrs), commands, writer);
             update(target, statuses, commands, writer, |status| status.hold(seconds));
         }
         Some(AbilityType::Rattle) => update(target, statuses, commands, writer, |status| {
@@ -147,9 +147,9 @@ pub fn stumble(
     });
 }
 
-/// Starts `recovery` as `ent`'s lockout, in place of any it was in, and
-/// sends the whole of it.
-pub fn lock(ent: Entity, recovery: GlobalRecovery, commands: &mut Commands, writer: &mut MessageWriter<Do>) {
+/// Starts `recovery` on `ent`, in place of any it was in, and sends the
+/// whole of it.
+pub fn recover(ent: Entity, recovery: GlobalRecovery, commands: &mut Commands, writer: &mut MessageWriter<Do>) {
     if let Ok(mut entity) = commands.get_entity(ent) {
         entity.try_insert(recovery);
     }

@@ -352,7 +352,7 @@ macro_rules! create_stat_display {
             let (name, color, effect_label) = match $stat {
                 MetaAttributeStat::Impact => ("Impact", Color::srgb(0.9, 0.5, 0.5), "Recovery Pushback:"),
                 MetaAttributeStat::Composure => ("Composure", Color::srgb(0.5, 0.7, 0.9), "Recovery Reduction:"),
-                MetaAttributeStat::Flow => ("Flow", Color::srgb(0.9, 0.9, 0.5), "Synergy Reduction:"),
+                MetaAttributeStat::Flow => ("Flow", Color::srgb(0.9, 0.9, 0.5), "Combo Unlock:"),
                 MetaAttributeStat::Reflex => ("Reflex", Color::srgb(0.7, 0.5, 0.9), "Reaction Window:"),
                 MetaAttributeStat::Presence => ("Presence", Color::srgb(0.9, 0.6, 0.3), "Spill:"),
                 MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Damage Mitigation:"),
@@ -1310,7 +1310,7 @@ pub fn update_attributes(
                         format!("-{:.0}%", reduction_pct)
                     },
                     MetaAttributeStat::Flow => {
-                        // Synergy reduction: 0.66 × gap × contest_factor
+                        // Combo unlock: 0.66 × gap × contest_factor
                         let flow = display_attrs.flow();
                         let contest = contest_factor(flow, 0, 0.0);  // vs 0 reflex
                         let reduction_pct = (0.66 * contest) * 100.0;

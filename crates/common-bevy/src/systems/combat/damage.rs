@@ -25,7 +25,7 @@ pub fn level_edge(level: u32, opposing_level: u32) -> f32 {
 /// - Past it, `lead / (lead + contest_scale)`, so no lead at any level
 ///   wins the whole of an effect
 
-/// Used by: mitigation, pushback, healing reduction, synergy, recovery speed.
+/// Used by: mitigation, pushback, healing reduction, combo unlock, recovery speed.
 /// `edge` is the level gap's contest points on the advantage side ([`level_edge`]).
 pub fn contest_factor(advantage_stat: u16, counter_stat: u16, edge: f32) -> f32 {
     let delta = advantage_stat as f32 - counter_stat as f32 + edge;
@@ -77,10 +77,10 @@ pub fn crit(damage: f32, attacker: &ActorAttributes, draw: f32) -> f32 {
 /// Calculate recovery pushback percentage: Impact's, alone.
 
 /// Pattern 1 (Nullifying): `Tuning::pushback_share` × contest_factor(Impact,
-/// Composure), with the level gap's `edge` on the attacker's side. No ceiling: the lockout itself
+/// Composure), with the level gap's `edge` on the attacker's side. No ceiling: the recovery itself
 /// never stretches past twice its length.
 
-/// Applied to effective_recovery_base (after composure, before synergy).
+/// Applied to effective_recovery_base (after composure, before the combo).
 pub fn calculate_recovery_pushback(
     attacker_impact: u16,
     defender_composure: u16,

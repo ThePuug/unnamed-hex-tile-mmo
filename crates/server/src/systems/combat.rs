@@ -53,7 +53,7 @@ pub fn process_deal_damage(
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
         let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
 
-        // A blow pushes its target's lockout back, by the attacker's Impact
+        // A blow pushes its target's recovery back, by the attacker's Impact
         // over the target's Composure with the level gap weighing in
         if let Some(mut recovery) = recovery_opt {
             let pushback_pct = damage_calc::calculate_recovery_pushback(

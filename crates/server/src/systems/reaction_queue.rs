@@ -75,7 +75,7 @@ pub fn tick_dots(
 
 /// Server system to process Dismiss events: the front threat, always in the
 /// window, lands at once exactly as it would when its time ran out
-/// (`combat::resolve_threat`), mitigated the same. No lockout, no resource
+/// (`combat::resolve_threat`), mitigated the same. No recovery, no resource
 /// cost.
 pub fn process_dismiss(
     mut commands: Commands,

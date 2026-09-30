@@ -33,9 +33,9 @@ pub struct SlotKeybind;
 #[derive(Component)]
 pub struct SlotCost;
 
-/// Marker for ability slot synergy glow overlay
+/// Marker for the glow on a slot whose ability is offered as a combo
 #[derive(Component)]
-pub struct SynergyGlow;
+pub struct ComboGlow;
 
 /// Marker for cooldown overlay (dark rect that shrinks as recovery depletes)
 #[derive(Component)]
@@ -214,7 +214,7 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Opti
             }
         }
 
-        // Cooldown overlay: dark rect anchored at bottom, height = lockout %
+        // Cooldown overlay: dark rect anchored at bottom, height = recovery %
         parent.spawn((
             Node {
                 position_type: PositionType::Absolute,
@@ -228,7 +228,7 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Opti
             CooldownOverlay,
         ));
 
-        // Synergy glow overlay (BRIGHT gold glow when synergy unlocked)
+        // Combo glow overlay (bright gold glow while the slot's ability is offered)
         // Positioned absolutely to cover the entire slot, hidden by default
         // INTENTIONALLY VERY BRIGHT for testing - will tone down once confirmed working
         parent.spawn((
@@ -244,16 +244,16 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Opti
             BorderColor::all(Color::srgb(1.0, 1.0, 0.0)),  // BRIGHT YELLOW (impossible to miss)
             BackgroundColor(Color::srgba(1.0, 1.0, 0.0, 0.5)),  // BRIGHT semi-transparent yellow fill
             Visibility::Hidden,  // Hidden by default
-            SynergyGlow,
+            ComboGlow,
         ));
     });
 }
 
-/// Update action bar states based on player's resources, recovery, and synergies
-/// Updates border colors AND synergy glow visibility
+/// Update action bar states based on player's resources, recovery, and combo
+/// Updates border colors and the combo glow's visibility
 pub fn update(
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
-    mut glow_query: Query<&mut Visibility, With<SynergyGlow>>,
+    mut glow_query: Query<&mut Visibility, With<ComboGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
     player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&GlobalRecovery>, Option<&common_bevy::components::ActorAttributes>, Option<&common_bevy::components::AttackRange>, Has<Actor>), With<crate::components::Viewed>>,
     entity_query: Query<(&EntityType, &Loc, Option<&Side>)>,
@@ -264,9 +264,9 @@ pub fn update(
         return;
     };
 
-    // The lockout, and the follow-up it offers
+    // The recovery, and the combo it offers
     let recovery_active = recovery_opt.map_or(false, |r| r.is_active());
-    let offered = recovery_opt.and_then(|r| r.offer);
+    let offered = recovery_opt.and_then(|r| r.combo);
     let recovery_remaining = recovery_opt.map(|r| r.remaining).unwrap_or(0.0);
     let recovery_duration = recovery_opt.map(|r| r.duration).unwrap_or(1.0);
 
@@ -292,7 +292,7 @@ pub fn update(
                 stamina,
                 mana,
                 recovery_active,
-                offered.is_some_and(|offer| offer.ability == ability),
+                offered.is_some_and(|combo| combo.ability == ability),
                 player_ent,
                 *player_loc,
                 *player_heading,
@@ -302,7 +302,7 @@ pub fn update(
                 &entity_query,
             )
         } else if recovery_active {
-            if offered.is_some_and(|offer| offer.ability == ability) { AbilityState::SynergyUnlocked } else { AbilityState::OnCooldown }
+            if offered.is_some_and(|combo| combo.ability == ability) { AbilityState::ComboUnlocked } else { AbilityState::OnCooldown }
         } else if stamina.state < common_bevy::tuning::tuning().cost(ability) {
             AbilityState::InsufficientResources
         } else {
@@ -310,10 +310,10 @@ pub fn update(
         };
 
         // Update border color based on state (keep meaningful colors)
-        let (border, show_synergy_glow) = match state {
+        let (border, show_combo_glow) = match state {
             AbilityState::Ready => (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), false),           // Green
             AbilityState::OnCooldown => (BorderColor::all(Color::srgb(0.5, 0.5, 0.5)), false),      // Gray
-            AbilityState::SynergyUnlocked => {
+            AbilityState::ComboUnlocked => {
                 (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), true)  // Green + BRIGHT YELLOW GLOW!
             },
             AbilityState::InsufficientResources => (BorderColor::all(Color::srgb(0.9, 0.1, 0.1)), false), // Red
@@ -321,14 +321,14 @@ pub fn update(
         };
         *border_color = border;
 
-        // Cooldown overlay: height = proportion of lockout remaining
+        // Cooldown overlay: height = proportion of recovery remaining
         let overlay_pct = if !recovery_active || recovery_duration <= 0.0 {
             0.0
         } else {
-            let synergy_unlock_at = offered
-                .filter(|offer| offer.ability == ability)
-                .map(|offer| offer.unlock_at);
-            let ratio = match synergy_unlock_at {
+            let combo_unlock_at = offered
+                .filter(|combo| combo.ability == ability)
+                .map(|combo| combo.unlock_at);
+            let ratio = match combo_unlock_at {
                 Some(unlock_at) if recovery_duration > unlock_at => {
                     (recovery_remaining - unlock_at) / (recovery_duration - unlock_at)
                 }
@@ -337,10 +337,10 @@ pub fn update(
             ratio.clamp(0.0, 1.0) * 100.0
         };
 
-        // Update synergy glow and cooldown overlay
+        // Update combo glow and cooldown overlay
         for child in children.iter() {
             if let Ok(mut visibility) = glow_query.get_mut(child) {
-                *visibility = if show_synergy_glow {
+                *visibility = if show_combo_glow {
                     Visibility::Visible
                 } else {
                     Visibility::Hidden
@@ -358,12 +358,12 @@ pub fn update(
 enum AbilityState {
     Ready,
     OnCooldown,
-    SynergyUnlocked,  // Ability unlocked early via synergy (gold glow)
+    ComboUnlocked,  // The ability the recovery offers as its combo (gold glow)
     InsufficientResources,
     OutOfRange,
 }
 
-/// Determine ability state based on resources, recovery, synergies, and targeting
+/// Determine ability state based on resources, recovery, combo, and targeting
 fn get_ability_state(
     ability: AbilityType,
     stamina: &Stamina,
@@ -378,9 +378,9 @@ fn get_ability_state(
     nntree: &NNTree,
     entity_query: &Query<(&EntityType, &Loc, Option<&Side>)>,
 ) -> AbilityState {
-    // In lockout the offered follow-up glows from the start, and all else waits
+    // In recovery the offered combo glows from the start, and all else waits
     if recovery_active {
-        return if offered { AbilityState::SynergyUnlocked } else { AbilityState::OnCooldown };
+        return if offered { AbilityState::ComboUnlocked } else { AbilityState::OnCooldown };
     }
 
     // The actors the player may target: those on a side hostile to its own

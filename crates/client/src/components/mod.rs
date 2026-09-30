@@ -75,7 +75,7 @@ pub struct WorldBar {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Measure {
     Health,
-    /// How far through its lockout the target is, drawn flush under its health
+    /// How far through its recovery the target is, drawn flush under its health
     Recovery,
 }
 

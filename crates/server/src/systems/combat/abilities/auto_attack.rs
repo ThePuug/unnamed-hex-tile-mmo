@@ -7,7 +7,7 @@ use common_bevy::{
 use super::{disengage::Poised, Abilities, AbilityFailReason, Cast};
 
 /// An auto-attack: a blow of the caster's auto damage on its target, free
-/// and outside the lockout, due on its own cadence (the gate's to check).
+/// and outside the recovery, due on its own cadence (the gate's to check).
 /// The swings that came due since the last while it could not strike, up to
 /// its Patience, land with this one. A caster poised by a Disengage strikes
 /// harder by what it was poised with, behind a feint: a damage-free ability

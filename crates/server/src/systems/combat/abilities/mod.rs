@@ -1,16 +1,16 @@
 //! Every ability an actor uses goes through one gate, [`Abilities::cast`].
 //! The gate asks, in order and the same of every ability: is the caster
-//! alive; is it out of lockout, or taking the follow-up it was offered, or
-//! reacting through the lockout (an auto-attack asks its cadence instead);
+//! alive; is it out of recovery, or taking the combo it was offered, or
+//! reacting through the recovery (an auto-attack asks its cadence instead);
 //! does it strike a living hostile within the ability's reach and its arc;
 //! can it pay. Then the ability's own effect runs, the
 //! stamina is paid, the clients are told, a strike across the caster's line
-//! breaks its stride, and the lockout starts.
+//! breaks its stride, and the recovery starts.
 //!
-//! What each ability costs, how long it locks its user out, how far it
+//! What each ability costs, how long its recovery runs, how far it
 //! reaches, what it offers next and whether it is a reaction are the
 //! ability's own to say (`Tuning::cost`, `Tuning::recovery`,
-//! `AbilityType::reach`, `follow_up`, `is_reaction`). Its module here holds
+//! `AbilityType::reach`, `combo`, `is_reaction`). Its module here holds
 //! only what it does.
 //!
 //! One system, [`use_abilities`], runs all of it in a stated order: what
@@ -51,7 +51,7 @@ use common_bevy::{
     plugins::nntree::NNTree,
     resources::map::Map,
     systems::{
-        combat::{queue::clear_threats, synergies::{lockout, may_use, reacts_through}},
+        combat::{queue::clear_threats, combos::{may_use, reacts_through, recovery_after}},
         targeting,
     },
 };
@@ -110,7 +110,7 @@ pub struct Abilities<'w, 's> {
         Has<RespawnTimer>,
     )>,
     pub stamina: Query<'w, 's, &'static mut Stamina>,
-    pub lockouts: Query<'w, 's, &'static GlobalRecovery>,
+    pub recoveries: Query<'w, 's, &'static GlobalRecovery>,
     pub queues: Query<'w, 's, &'static mut ReactionQueue>,
     pub statuses: Query<'w, 's, &'static mut Status>,
     pub swings: Query<'w, 's, &'static mut Swing>,
@@ -174,11 +174,11 @@ impl Abilities<'_, '_> {
         let reach = range.copied().unwrap_or_default().0;
         let health_max = health.max;
         let status = self.statuses.get(ent).ok().copied();
-        let prior = self.lockouts.get(ent).ok().copied();
+        let prior = self.recoveries.get(ent).ok().copied();
 
         // An auto-attack comes due on its own cadence, stretched by a daze,
-        // whatever the lockout, and a held actor swings at nothing. Every
-        // other ability waits on the lockout.
+        // whatever the recovery, and a held actor swings at nothing. Every
+        // other ability waits on the recovery.
         if ability == AbilityType::AutoAttack {
             let interval = Status::cadence(attrs.cadence_interval(), status.as_ref());
             let now = self.time.elapsed();
@@ -220,7 +220,7 @@ impl Abilities<'_, '_> {
         }
 
         // The ability's own effect, which may still refuse before it
-        // changes anything; it names whom its lockout is contested by
+        // changes anything; it names whom its recovery is contested by
         let opponent = match ability {
             AbilityType::AutoAttack => auto_attack::swing(self, &cast),
             AbilityType::Lunge => lunge::strike(self, &cast),
@@ -246,7 +246,7 @@ impl Abilities<'_, '_> {
         }
         if ability != AbilityType::AutoAttack {
             let against = opponent.and_then(|opponent| self.actors.get(opponent).ok()).map(|(_, attrs, ..)| *attrs);
-            landing::lock(ent, lockout(ability, prior.as_ref(), &attrs, against.as_ref()), &mut self.commands, &mut self.writer);
+            landing::recover(ent, recovery_after(ability, prior.as_ref(), &attrs, against.as_ref()), &mut self.commands, &mut self.writer);
         }
         Ok(())
     }
@@ -387,25 +387,25 @@ mod tests {
         assert!(used(&said, AbilityType::Overpower));
         let world = app.world();
         assert!(world.get::<Stamina>(caster).unwrap().state < 100.0, "it is paid for");
-        assert!(world.get::<GlobalRecovery>(caster).is_some(), "and locks its user out");
+        assert!(world.get::<GlobalRecovery>(caster).is_some(), "and leaves its user recovering");
         let told = |event: &GameEvent| matches!(event, GameEvent::Incremental { ent, component: MessageComponent::Recovery(_) } if *ent == caster);
-        assert!(said.iter().any(told), "a lockout its clients are sent whole");
+        assert!(said.iter().any(told), "a recovery its clients are sent whole");
         assert_eq!(world.get::<ReactionQueue>(near).unwrap().threats.len(), 1, "its blow waits in the target's queue");
         assert!(world.get::<ReactionQueue>(far).unwrap().threats.is_empty(), "a refused one queued nothing");
     }
 
     #[test]
-    fn a_lockout_refuses_the_next_ability_and_a_swing_keeps_its_own_cadence() {
+    fn a_recovery_refuses_the_next_ability_and_a_swing_keeps_its_own_cadence() {
         let mut app = arena();
         let caster = actor(&mut app, Side::PLAYERS, 0);
         let near = actor(&mut app, Side::WILD, 1);
         app.update();
 
         assert!(used(&ask(&mut app, caster, AbilityType::Overpower, Some(near)), AbilityType::Overpower));
-        assert_eq!(refused(&mut app, caster, AbilityType::Lunge, Some(near)), Some(AbilityFailReason::OnCooldown), "locked out of every other ability");
+        assert_eq!(refused(&mut app, caster, AbilityType::Lunge, Some(near)), Some(AbilityFailReason::OnCooldown), "recovering, it uses no other ability");
 
         let said = ask(&mut app, caster, AbilityType::AutoAttack, Some(near));
-        assert!(used(&said, AbilityType::AutoAttack), "an auto-attack is outside the lockout");
+        assert!(used(&said, AbilityType::AutoAttack), "an auto-attack is outside the recovery");
         let again = ask(&mut app, caster, AbilityType::AutoAttack, Some(near));
         assert!(!used(&again, AbilityType::AutoAttack), "the next is not due yet");
         assert_eq!(refused(&mut app, caster, AbilityType::AutoAttack, Some(near)), None, "and a swing not due is refused without a reason");

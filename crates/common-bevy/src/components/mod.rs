@@ -449,13 +449,13 @@ impl ActorAttributes {
 
     // Relative: the value a contest weighs, by the name it goes by there
 
-    /// Impact, Might: pushes a target's lockout back, against its Composure
+    /// Impact, Might: pushes a target's recovery back, against its Composure
     pub fn impact(&self) -> u16 { self.value(Attribute::Might) }
-    /// Flow, Agility: unlocks a follow-up sooner, against the target's Reflex
+    /// Flow, Agility: unlocks a combo sooner, against the target's Reflex
     pub fn flow(&self) -> u16 { self.value(Attribute::Agility) }
     /// Toughness, Vitality: mitigates a blow, against the attacker's Presence
     pub fn toughness(&self) -> u16 { self.value(Attribute::Vitality) }
-    /// Composure, Discipline: shortens its own lockout, against the opponent's Impact
+    /// Composure, Discipline: shortens its own recovery, against the opponent's Impact
     pub fn composure(&self) -> u16 { self.value(Attribute::Discipline) }
     /// Reflex, Instinct: widens a threat's window, against the attacker's Flow
     pub fn reflex(&self) -> u16 { self.value(Attribute::Instinct) }
@@ -465,14 +465,14 @@ impl ActorAttributes {
 
     // Commitment: an attribute's tier, by the name it goes by
 
-    /// Ferocity, Might: a combo's follow-ups fire before they unlock
+    /// Ferocity, Might: combos fire before they unlock
     pub fn ferocity(&self) -> CommitmentTier { self.tier(Attribute::Might) }
     /// Grace, Agility: the arc it strikes within (`arc`)
     pub fn grace(&self) -> CommitmentTier { self.tier(Attribute::Agility) }
     /// Grit, Vitality: the most of its health lost in any second (`grit_cap`)
     pub fn grit(&self) -> CommitmentTier { self.tier(Attribute::Vitality) }
     /// Preparation, Discipline: its index is how many reactions the actor
-    /// may use in any one lockout
+    /// may use in any one recovery
     pub fn preparation(&self) -> CommitmentTier { self.tier(Attribute::Discipline) }
     /// Patience, Instinct: the swings banked while it could not strike (`banked`)
     pub fn patience(&self) -> CommitmentTier { self.tier(Attribute::Instinct) }

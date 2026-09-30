@@ -13,7 +13,7 @@ use super::{Abilities, AbilityFailReason, Cast};
 /// reflection never enters the source's queue, so it cannot be countered.
 /// The share is `Tuning::counter_reflect` weighted by the counterer's
 /// Resolve: its Concentration over base potency. With nothing queued there
-/// is nothing to counter. Its lockout is contested by the source of the
+/// is nothing to counter. Its recovery is contested by the source of the
 /// first threat it answers.
 pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let tuning = common_bevy::tuning::tuning();

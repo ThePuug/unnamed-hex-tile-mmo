@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::recovery::{Combo, GlobalRecovery};
+use crate::components::recovery::{Burst, GlobalRecovery};
 use crate::components::ActorAttributes;
 
 /// Calculate Composure-based recovery time reduction percentage.
@@ -20,10 +20,10 @@ pub fn calculate_composure_reduction(
     crate::tuning::tuning().composure_share * contest_factor(composure, target_impact, edge)
 }
 
-/// Counts every lockout down and ends it when it runs out, its offer and
-/// its combo with it: faster by its actor's Composure, contested by the
+/// Counts every recovery down and ends it when it runs out, its combo and
+/// its burst with it: faster by its actor's Composure, contested by the
 /// opponent's Impact with the level gap weighing in, and slower by a daze's
-/// pace. A combo's window counts down in plain seconds beside it.
+/// pace. A burst's window counts down in plain seconds beside it.
 pub fn global_recovery_system(
     time: Res<Time>,
     mut commands: Commands,
@@ -45,9 +45,9 @@ pub fn global_recovery_system(
             let effective_delta = delta * speed_multiplier * status.map_or(1.0, crate::components::status::Status::daze_pace);
 
             recovery.tick(effective_delta);
-            recovery.combo = recovery.combo
-                .map(|combo| Combo { window: combo.window - delta, ..combo })
-                .filter(|combo| combo.window > 0.0);
+            recovery.burst = recovery.burst
+                .map(|burst| Burst { window: burst.window - delta, ..burst })
+                .filter(|burst| burst.window > 0.0);
 
             if !recovery.is_active() {
                 commands.entity(entity).remove::<GlobalRecovery>();

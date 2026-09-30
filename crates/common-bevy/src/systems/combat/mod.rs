@@ -1,12 +1,12 @@
 // Combat-related systems module
-// Consolidates all combat mechanics (state, resources, queues, damage, recovery, synergies)
+// Consolidates all combat mechanics (state, resources, queues, damage, recovery, combos)
 
 pub mod damage;
 pub mod queue;
 pub mod recovery;
 pub mod resources;
 pub mod state;
-pub mod synergies;
+pub mod combos;
 
 // Re-export commonly used items for convenience
 // Note: Only re-export items that are actively used by other modules

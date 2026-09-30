@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use common_bevy::{
     components::entity_type::{actor::ActorIdentity, EntityType},
     message::AbilityType,
-    systems::combat::synergies::reacts_through,
+    systems::combat::combos::reacts_through,
 };
 
 use super::{in_arc, Abilities};
@@ -17,8 +17,8 @@ impl Abilities<'_, '_> {
     /// overflow.
     ///
     /// Every use waits out the NPC's `NpcRecovery` delay, armed once the
-    /// ability is affordable and out of lockout, or a reaction its
-    /// Preparation lets through the lockout, so NPCs that fire together
+    /// ability is affordable and out of recovery, or a reaction its
+    /// Preparation lets through the recovery, so NPCs that fire together
     /// drift apart. The delay is spent as it asks, whether or not the gate
     /// then lets the ability through.
     pub(super) fn signatures(&mut self) {
@@ -30,11 +30,11 @@ impl Abilities<'_, '_> {
             let ability = archetype.profile().ability;
             let Ok((&loc, attrs, _, heading, _, range, _)) = self.actors.get(ent) else { continue };
 
-            // Out of lockout, or a reaction its Preparation lets through it, and affordable
-            let recovery = self.lockouts.get(ent).ok();
-            let locked = recovery.is_some_and(|recovery| recovery.is_active());
+            // Out of recovery, or a reaction its Preparation lets through it, and affordable
+            let recovery = self.recoveries.get(ent).ok();
+            let recovering = recovery.is_some_and(|recovery| recovery.is_active());
             let affordable = self.stamina.get(ent).is_ok_and(|stamina| stamina.state >= common_bevy::tuning::tuning().cost(ability));
-            if (locked && !reacts_through(ability, recovery, Some(attrs))) || !affordable {
+            if (recovering && !reacts_through(ability, recovery, Some(attrs))) || !affordable {
                 continue;
             }
             delay.arm(now);
