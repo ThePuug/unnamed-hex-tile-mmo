@@ -1,6 +1,6 @@
 //! Where the haven stands, and the enemy archetypes: what each is drawn
-//! as, how it takes its place round a target, its signature ability, and
-//! how an NPC of one spends the points its level gives it.
+//! as, its signature ability, and how an NPC of one spends the points its
+//! level gives it.
 
 use qrz::Qrz;
 use crate::{components::ActorAttributes, message::AbilityType};
@@ -16,19 +16,6 @@ use crate::{components::ActorAttributes, message::AbilityType};
 /// authored.
 pub const HAVEN_LOCATION: Qrz = Qrz { q: 104289, r: -4677, z: 0 };
 
-/// Positioning strategy determines hex preference ordering for each archetype.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PositioningStrategy {
-    /// Maximize angular spread — Juggernauts surround from all sides
-    Surround,
-    /// Minimize angular spread — Berserkers cluster on one side
-    Cluster,
-    /// Hold at 2-3 hex range — Defenders don't compete for adjacent hexes
-    Perimeter,
-    /// Hold at 3-6 hex range — Kiters orbit at distance
-    Orbital,
-}
-
 /// Enemy archetypes with distinct combat profiles
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnemyArchetype {
@@ -42,21 +29,6 @@ pub enum EnemyArchetype {
 }
 
 impl EnemyArchetype {
-    /// Get the positioning strategy for this archetype.
-
-    /// All melee archetypes (Chase behavior) use adjacent strategies.
-    /// Perimeter/Orbital are reserved for future ranged archetypes.
-    pub fn positioning_strategy(&self) -> PositioningStrategy {
-        match self {
-            EnemyArchetype::Berserker => PositioningStrategy::Cluster,
-            EnemyArchetype::Juggernaut => PositioningStrategy::Surround,
-            EnemyArchetype::Defender => PositioningStrategy::Surround,
-            EnemyArchetype::Skirmisher => PositioningStrategy::Surround,
-            EnemyArchetype::Ambusher => PositioningStrategy::Surround,
-            EnemyArchetype::Kiter => PositioningStrategy::Orbital,
-        }
-    }
-
     /// Get signature ability for this archetype (None = auto-attack only)
     pub fn ability(&self) -> Option<AbilityType> {
         match self {
