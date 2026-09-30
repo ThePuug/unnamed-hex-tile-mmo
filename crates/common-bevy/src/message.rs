@@ -98,8 +98,6 @@ pub enum Event {
         size: u8,
         engage: bool,
     },
-    /// Client → Server (Try): Request to respec attribute allocation
-    /// Server → Client (Do): Attribute respec confirmed and applied
     /// Server → Client: evict these chunks (tiles + meshes). Server-authoritative
     /// to prevent client/server sync drift on which chunks are loaded.
     EvictChunks { ent: Entity, chunks: ArrayVec<[ChunkId; 64]> },
@@ -134,18 +132,9 @@ pub enum Event {
     /// Server → Client: what `ent` is seen doing at a gather, or nothing
     /// where None. Sent to every client that sees it, so each shows it.
     Activity { ent: Entity, activity: Option<common::gathering::Activity> },
-    RespecAttributes {
-        ent: Entity,
-        might_agility_axis: i8,
-        might_agility_spectrum: i8,
-        might_agility_shift: i8,
-        vitality_discipline_axis: i8,
-        vitality_discipline_spectrum: i8,
-        vitality_discipline_shift: i8,
-        instinct_resolve_axis: i8,
-        instinct_resolve_spectrum: i8,
-        instinct_resolve_shift: i8,
-    },
+    /// Client → Server (Try): put `ent`'s levels into `pairs` instead
+    /// Server → Client (Do): the respec was taken
+    RespecAttributes { ent: Entity, pairs: [Pair; 3] },
     /// Client → Server: put this connection's character in the world. The
     /// server answers with `Init`; a connection already playing is ignored.
     Play,

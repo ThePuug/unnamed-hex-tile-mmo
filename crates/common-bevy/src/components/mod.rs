@@ -233,7 +233,7 @@ impl Pair {
     }
 
     /// The levels put into the pair
-    fn levels(self) -> u32 {
+    pub fn levels(self) -> u32 {
         self.axis.unsigned_abs() as u32 + self.spectrum.max(0) as u32
     }
 
@@ -271,7 +271,7 @@ impl Pair {
     /// Shifts as far toward `shift` as the pair allows: away from the
     /// committed side only, no further than the spectrum, and not at all
     /// with no axis.
-    fn set_shift(&mut self, shift: i8) {
+    pub fn set_shift(&mut self, shift: i8) {
         let most = self.spectrum.max(0);
         self.shift = match self.axis.signum() {
             0 => 0,
@@ -334,24 +334,23 @@ impl ActorAttributes {
     pub fn set_vitality_discipline_shift(&mut self, shift: i8) { self.conditioning.set_shift(shift) }
     pub fn set_instinct_resolve_shift(&mut self, shift: i8) { self.temperament.set_shift(shift) }
 
-    /// Takes a whole respec, already validated: each pair's axis and
+    /// The three pairs: Might ↔ Agility, Vitality ↔ Discipline, Instinct ↔ Resolve
+    pub fn pairs(&self) -> [Pair; 3] {
+        [self.physique, self.conditioning, self.temperament]
+    }
+
+    /// Whether `pairs` is a respec an actor of `level` may take: no more
+    /// levels than it has, and no spectrum below nothing.
+    pub fn fits(pairs: &[Pair; 3], level: u32) -> bool {
+        pairs.iter().all(|pair| pair.spectrum >= 0) && pairs.iter().map(|pair| pair.levels()).sum::<u32>() <= level
+    }
+
+    /// Takes a whole respec, already checked (`fits`): each pair's axis and
     /// spectrum as given, its shift as far as the pair allows.
-    pub fn apply_respec(
-        &mut self,
-        mg_axis: i8,
-        mg_spectrum: i8,
-        mg_shift: i8,
-        vf_axis: i8,
-        vf_spectrum: i8,
-        vf_shift: i8,
-        ip_axis: i8,
-        ip_spectrum: i8,
-        ip_shift: i8,
-    ) {
-        let respec = [(mg_axis, mg_spectrum, mg_shift), (vf_axis, vf_spectrum, vf_shift), (ip_axis, ip_spectrum, ip_shift)];
-        for (pair, (axis, spectrum, shift)) in [&mut self.physique, &mut self.conditioning, &mut self.temperament].into_iter().zip(respec) {
-            *pair = Pair::new(axis, spectrum, 0);
-            pair.set_shift(shift);
+    pub fn apply_respec(&mut self, pairs: [Pair; 3]) {
+        for (own, respec) in [&mut self.physique, &mut self.conditioning, &mut self.temperament].into_iter().zip(pairs) {
+            *own = Pair::new(respec.axis, respec.spectrum, 0);
+            own.set_shift(respec.shift);
         }
     }
 
@@ -1048,4 +1047,17 @@ mod tests {
         assert_eq!(attrs.instinct_resolve_shift(), 0);
     }
 
+    #[test]
+    fn a_respec_fits_within_the_level_and_leans_no_further_than_its_pair_allows() {
+        let level = 10;
+        let spent = [Pair::new(-6, 2, 0), Pair::new(0, 1, 0), Pair::new(1, 0, 0)];
+        assert!(ActorAttributes::fits(&spent, level));
+        assert!(!ActorAttributes::fits(&[Pair::new(-6, 2, 0), Pair::new(0, 2, 0), Pair::new(1, 0, 0)], level), "a level too many");
+        assert!(!ActorAttributes::fits(&[Pair { axis: 0, spectrum: -1, shift: 0 }, Pair::default(), Pair::default()], level), "a spectrum below nothing");
+
+        let mut attrs = ActorAttributes::default();
+        attrs.apply_respec([Pair::new(-6, 2, 5), Pair::new(0, 1, 1), Pair::new(1, 0, -3)]);
+        assert_eq!(attrs.pairs(), [Pair::new(-6, 2, 2), Pair::new(0, 1, 0), Pair::new(1, 0, 0)], "each shift as far as its pair allows");
+        assert_eq!(attrs.total_level(), level);
+    }
 }

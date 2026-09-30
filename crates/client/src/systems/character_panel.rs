@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{Actor, ActorAttributes},
+    components::{Actor, ActorAttributes, Pair},
     systems::combat::damage::contest_factor,
 };
 
@@ -205,29 +205,18 @@ impl DraftAttributes {
         }
     }
 
-    /// Calculate total investment (for budget validation)
-    pub fn total_investment(&self) -> u32 {
-        self.might_agility_axis.unsigned_abs() as u32
-            + self.might_agility_spectrum.max(0) as u32
-            + self.vitality_discipline_axis.unsigned_abs() as u32
-            + self.vitality_discipline_spectrum.max(0) as u32
-            + self.instinct_resolve_axis.unsigned_abs() as u32
-            + self.instinct_resolve_spectrum.max(0) as u32
+    /// The draft as the three pairs a respec is
+    pub fn pairs(&self) -> [Pair; 3] {
+        [
+            Pair::new(self.might_agility_axis, self.might_agility_spectrum, self.might_agility_shift),
+            Pair::new(self.vitality_discipline_axis, self.vitality_discipline_spectrum, self.vitality_discipline_shift),
+            Pair::new(self.instinct_resolve_axis, self.instinct_resolve_spectrum, self.instinct_resolve_shift),
+        ]
     }
 
-    /// Validate draft against level budget
-    pub fn is_valid(&self, level: u32) -> bool {
-        let max_investment = level as i8;
-        self.total_investment() <= level
-            && self.might_agility_axis.abs() <= max_investment
-            && self.might_agility_spectrum >= 0
-            && self.might_agility_spectrum <= max_investment
-            && self.vitality_discipline_axis.abs() <= max_investment
-            && self.vitality_discipline_spectrum >= 0
-            && self.vitality_discipline_spectrum <= max_investment
-            && self.instinct_resolve_axis.abs() <= max_investment
-            && self.instinct_resolve_spectrum >= 0
-            && self.instinct_resolve_spectrum <= max_investment
+    /// The levels the draft has put in
+    pub fn total_investment(&self) -> u32 {
+        self.pairs().iter().map(|pair| pair.levels()).sum()
     }
 }
 
@@ -1164,17 +1153,7 @@ pub fn update_attributes(
     let draft_attrs = if let Some(draft) = &state.pending_respec {
         // Create a temporary ActorAttributes with draft values for display
         let mut temp_attrs = attrs.clone();
-        temp_attrs.apply_respec(
-            draft.might_agility_axis,
-            draft.might_agility_spectrum,
-            draft.might_agility_shift,
-            draft.vitality_discipline_axis,
-            draft.vitality_discipline_spectrum,
-            draft.vitality_discipline_shift,
-            draft.instinct_resolve_axis,
-            draft.instinct_resolve_spectrum,
-            draft.instinct_resolve_shift,
-        );
+        temp_attrs.apply_respec(draft.pairs());
         Some(temp_attrs)
     } else {
         None

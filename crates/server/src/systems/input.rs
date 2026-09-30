@@ -340,90 +340,21 @@ pub fn try_set_tier_lock(
     }
 }
 
-/// Handle attribute respec requests from clients
-
-/// Clients send RespecAttributes Try events when clicking Apply button.
-/// Server validates the respec (budget, ranges, not in combat) and broadcasts Do event.
+/// Takes the respec a client asks for where it fits the actor's level
+/// (`ActorAttributes::fits`), and says so to its client.
 pub fn try_respec_attributes(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
     mut attrs_query: Query<&mut ActorAttributes>,
 ) {
     for message in reader.read() {
-        let Try { event } = message;
-        let Event::RespecAttributes {
-            ent,
-            might_agility_axis,
-            might_agility_spectrum,
-            might_agility_shift,
-            vitality_discipline_axis,
-            vitality_discipline_spectrum,
-            vitality_discipline_shift,
-            instinct_resolve_axis,
-            instinct_resolve_spectrum,
-            instinct_resolve_shift,
-        } = event
-        else {
+        let Try { event: Event::RespecAttributes { ent, pairs } } = message else { continue };
+        let Ok(mut attrs) = attrs_query.get_mut(*ent) else { continue };
+        if !ActorAttributes::fits(pairs, attrs.total_level()) {
             continue;
-        };
-        let ent = *ent;
-        let might_agility_axis = *might_agility_axis;
-        let might_agility_spectrum = *might_agility_spectrum;
-        let might_agility_shift = *might_agility_shift;
-        let vitality_discipline_axis = *vitality_discipline_axis;
-        let vitality_discipline_spectrum = *vitality_discipline_spectrum;
-        let vitality_discipline_shift = *vitality_discipline_shift;
-        let instinct_resolve_axis = *instinct_resolve_axis;
-        let instinct_resolve_spectrum = *instinct_resolve_spectrum;
-        let instinct_resolve_shift = *instinct_resolve_shift;
-
-        let Ok(mut attrs) = attrs_query.get_mut(ent) else {
-            continue;
-        };
-
-        // Calculate draft investment
-        let draft_investment = might_agility_axis.unsigned_abs() as u32
-            + might_agility_spectrum.max(0) as u32
-            + vitality_discipline_axis.unsigned_abs() as u32
-            + vitality_discipline_spectrum.max(0) as u32
-            + instinct_resolve_axis.unsigned_abs() as u32
-            + instinct_resolve_spectrum.max(0) as u32;
-
-        // Validate budget
-        if draft_investment > attrs.total_level() {
-            continue; // Overbudget
         }
-
-        // Validate ranges (i8 max is 127, but level is practical limit)
-        let max_investment = attrs.total_level() as i8;
-        if might_agility_axis.abs() > max_investment
-            || might_agility_spectrum < 0
-            || might_agility_spectrum > max_investment
-            || vitality_discipline_axis.abs() > max_investment
-            || vitality_discipline_spectrum < 0
-            || vitality_discipline_spectrum > max_investment
-            || instinct_resolve_axis.abs() > max_investment
-            || instinct_resolve_spectrum < 0
-            || instinct_resolve_spectrum > max_investment
-        {
-            continue; // Invalid ranges
-        }
-
-        // Apply respec
-        attrs.apply_respec(
-            might_agility_axis,
-            might_agility_spectrum,
-            might_agility_shift,
-            vitality_discipline_axis,
-            vitality_discipline_spectrum,
-            vitality_discipline_shift,
-            instinct_resolve_axis,
-            instinct_resolve_spectrum,
-            instinct_resolve_shift,
-        );
-
-        // Broadcast confirmation
-        writer.write(Do { event: event.clone() });
+        attrs.apply_respec(*pairs);
+        writer.write(Do { event: message.event.clone() });
     }
 }
 

@@ -233,26 +233,8 @@ pub fn handle_apply_button(
                 continue; // Not all points allocated - don't apply
             }
 
-            // Validate ranges
-            if !draft.is_valid(attrs.total_level()) {
-                continue;
-            }
-
             // Send respec request (keep pending state until server confirms)
-            writer.write(Try {
-                event: GameEvent::RespecAttributes {
-                    ent,
-                    might_agility_axis: draft.might_agility_axis,
-                    might_agility_spectrum: draft.might_agility_spectrum,
-                    might_agility_shift: draft.might_agility_shift,
-                    vitality_discipline_axis: draft.vitality_discipline_axis,
-                    vitality_discipline_spectrum: draft.vitality_discipline_spectrum,
-                    vitality_discipline_shift: draft.vitality_discipline_shift,
-                    instinct_resolve_axis: draft.instinct_resolve_axis,
-                    instinct_resolve_spectrum: draft.instinct_resolve_spectrum,
-                    instinct_resolve_shift: draft.instinct_resolve_shift,
-                },
-            });
+            writer.write(Try { event: GameEvent::RespecAttributes { ent, pairs: draft.pairs() } });
         }
     }
 }
@@ -264,32 +246,10 @@ pub fn handle_respec_confirmed(
     mut player_query: Query<&mut ActorAttributes, With<Actor>>,
 ) {
     for message in reader.read() {
-        if let GameEvent::RespecAttributes {
-            ent,
-            might_agility_axis,
-            might_agility_spectrum,
-            might_agility_shift,
-            vitality_discipline_axis,
-            vitality_discipline_spectrum,
-            vitality_discipline_shift,
-            instinct_resolve_axis,
-            instinct_resolve_spectrum,
-            instinct_resolve_shift,
-        } = &message.event
-        {
+        if let GameEvent::RespecAttributes { ent, pairs } = &message.event {
             // Apply to player's ActorAttributes
             if let Ok(mut attrs) = player_query.get_mut(*ent) {
-                attrs.apply_respec(
-                    *might_agility_axis,
-                    *might_agility_spectrum,
-                    *might_agility_shift,
-                    *vitality_discipline_axis,
-                    *vitality_discipline_spectrum,
-                    *vitality_discipline_shift,
-                    *instinct_resolve_axis,
-                    *instinct_resolve_spectrum,
-                    *instinct_resolve_shift,
-                );
+                attrs.apply_respec(*pairs);
 
                 // Clear pending state now that server confirmed
                 state.pending_respec = None;
