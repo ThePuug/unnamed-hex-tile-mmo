@@ -27,16 +27,16 @@ use crate::components::{ResolvedThreatsContainer, ViewHud, Viewed};
 use crate::systems::threat_icons::{estimate, severity, severity_rgb, DOT_COLOR};
 
 /// Half the highway's width at the hit line, in pixels
-const HALF_WIDTH: f32 = 180.0;
+const HALF_WIDTH: f32 = 110.0;
 /// How far the far end stands above the hit line, in pixels
-const RISE: f32 = 360.0;
+const RISE: f32 = 280.0;
 /// How far the hit line stands above the highway's foot, room for a note
 /// landing on it
-const BASE: f32 = 32.0;
+const BASE: f32 = 24.0;
 /// Perspective: a note at the far end is `1 / (1 + DEPTH)` its size at the line
 const DEPTH: f32 = 2.0;
 /// A note's width at the hit line
-const NOTE: f32 = 56.0;
+const NOTE: f32 = 40.0;
 /// Clear of the resource bars below it
 const ABOVE_BARS: f32 = 30.0;
 
@@ -57,6 +57,10 @@ pub struct HighwayUniform {
     pub unused: f32,
     /// Each lane's landing flash, left to right in x, y and z, fading from 1
     pub flash: Vec4,
+    /// Each lane's colour, linear, left to right: [`lane_color`]
+    pub blow: Vec4,
+    pub wound: Vec4,
+    pub pressure: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, Clone, Debug, TypePath)]
@@ -121,6 +125,17 @@ pub fn fade(d: f32) -> f32 {
     1.0 - 0.65 * t * t * (3.0 - 2.0 * t)
 }
 
+/// The colour of a lane, which says its threats' kind: the lane is tinted
+/// with it and a landing flashes and shatters in it, while a note's own
+/// colour says how hard it hits.
+pub fn lane_color(lane: Lane) -> Color {
+    match lane {
+        Lane::Blow => Color::srgb(0.95, 0.4, 0.15),
+        Lane::Wound => DOT_COLOR,
+        Lane::AutoAttack => Color::srgb(0.8, 0.75, 0.6),
+    }
+}
+
 fn lane_index(lane: Lane) -> f32 {
     match lane {
         Lane::Blow => 0.0,
@@ -147,7 +162,15 @@ pub fn setup(
 ) {
     let camera = query.single().expect("query did not return exactly one result");
     let material = materials.add(HighwayMaterial {
-        highway: HighwayUniform { depth: DEPTH, span: SPAN.as_secs_f32(), base: BASE, ..default() },
+        highway: HighwayUniform {
+            depth: DEPTH,
+            span: SPAN.as_secs_f32(),
+            base: BASE,
+            blow: lane_color(Lane::Blow).to_linear().to_vec4(),
+            wound: lane_color(Lane::Wound).to_linear().to_vec4(),
+            pressure: lane_color(Lane::AutoAttack).to_linear().to_vec4(),
+            ..default()
+        },
     });
 
     // Laid out as the resource bars are, so it stands on them at any size
@@ -241,7 +264,8 @@ pub fn update(
                         Lane::AutoAttack => flash.z = 1.0,
                     }
                 }
-                shatter(&mut commands, highway, centre(lane, 0.0), NOTE, note.color, 12, 1.6, time.elapsed_secs());
+                // Landed, it takes its lane's colour
+                shatter(&mut commands, highway, centre(lane, 0.0), NOTE, lane_color(lane), 12, 1.6, time.elapsed_secs());
             } else {
                 shatter(&mut commands, highway, note.centre, note.size, note.color, 7, 1.0, time.elapsed_secs());
             }
@@ -315,20 +339,16 @@ pub fn update(
     }
 }
 
-/// A note's fill, rim and label: a seen threat shows its colour and damage,
-/// the rest a faceless pip; the front of its lane is rimmed.
+/// A note's fill, rim and label: a seen threat shows how hard it hits, its
+/// lane saying what kind it is, and its damage; the rest a faceless pip.
+/// The front of its lane is rimmed.
 fn look(threat: &QueuedThreat, attrs: &ActorAttributes, health: &Health, front: bool) -> (Color, Color, String) {
     let rim = if front { Color::WHITE } else { Color::srgba(0.1, 0.08, 0.06, 0.9) };
     if !threat.seen {
         return (Color::srgba(0.55, 0.5, 0.45, 0.6), rim, String::new());
     }
-    let fill = if threat.is_wound() {
-        DOT_COLOR
-    } else {
-        let (r, g, b) = severity_rgb(severity(threat, attrs, health));
-        Color::srgb(r, g, b)
-    };
-    (fill, rim, format!("{:.0}", estimate(threat, attrs)))
+    let (r, g, b) = severity_rgb(severity(threat, attrs, health));
+    (Color::srgb(r, g, b), rim, format!("{:.0}", estimate(threat, attrs)))
 }
 
 /// Break a note into `count` shards flying out from `from`; `force` scales
