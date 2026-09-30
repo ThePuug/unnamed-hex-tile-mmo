@@ -27,18 +27,22 @@ use crate::components::{ResolvedThreatsContainer, ViewHud, Viewed};
 use crate::systems::threat_icons::{estimate, severity, severity_rgb, DOT_COLOR};
 
 /// Half the highway's width at the hit line, in pixels
-const HALF_WIDTH: f32 = 110.0;
+const HALF_WIDTH: f32 = 70.0;
 /// How far the far end stands above the hit line, in pixels
-const RISE: f32 = 280.0;
+const RISE: f32 = 190.0;
 /// How far the hit line stands above the highway's foot, room for a note
 /// landing on it
 const BASE: f32 = 24.0;
 /// Perspective: a note at the far end is `1 / (1 + DEPTH)` its size at the line
 const DEPTH: f32 = 2.0;
 /// A note's width at the hit line
-const NOTE: f32 = 40.0;
+const NOTE: f32 = 32.0;
 /// Clear of the resource bars below it
 const ABOVE_BARS: f32 = 30.0;
+/// Where across the screen the highway's middle stands, as a share of its
+/// width: where the close camera, over the right shoulder, stands the
+/// player, beside what it watches rather than over it.
+const ACROSS: f32 = 28.0;
 
 /// The time the highway spans, far end to hit line: half as long again as
 /// the base reaction window, so every note moves before it lands. A note
@@ -173,7 +177,8 @@ pub fn setup(
         },
     });
 
-    // Laid out as the resource bars are, so it stands on them at any size
+    // On the resource bars' line at any size, left of them where the close
+    // camera stands the player
     commands
         .spawn((
             UiTargetCamera(camera),
@@ -181,9 +186,9 @@ pub fn setup(
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.),
                 height: Val::Percent(100.),
-                justify_content: JustifyContent::Center,
+                justify_content: JustifyContent::FlexStart,
                 align_items: AlignItems::FlexEnd,
-                padding: UiRect::bottom(Val::Percent(12.5)),
+                padding: UiRect { left: Val::Percent(ACROSS), bottom: Val::Percent(12.5), ..default() },
                 ..default()
             },
             Pickable::IGNORE,
@@ -195,7 +200,7 @@ pub fn setup(
                     Node {
                         width: Val::Px(2.0 * HALF_WIDTH),
                         height: Val::Px(RISE + BASE),
-                        margin: UiRect::bottom(Val::Px(ABOVE_BARS)),
+                        margin: UiRect { left: Val::Px(-HALF_WIDTH), bottom: Val::Px(ABOVE_BARS), ..default() },
                         ..default()
                     },
                     MaterialNode(material),
