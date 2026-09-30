@@ -40,6 +40,10 @@ pub struct Tuning {
     /// Endurance an auto-attack struck past the forward faces costs for each
     /// point of the Force it strikes with; one struck within them is free
     pub off_arc_cost: f32,
+    /// Stamina an auto-attack struck past the forward faces costs, as a
+    /// skill would; one struck within them is free. Without it the swing
+    /// waits
+    pub off_arc_stamina: f32,
     /// Share longer an actor's recoveries run with its endurance spent
     pub fatigue_recovery: f32,
     /// Share shorter the windows of threats against an actor run with its
@@ -177,6 +181,7 @@ impl Tuning {
         endurance_cost: 1.0,
         endurance_regen: 0.05,
         off_arc_cost: 0.25,
+        off_arc_stamina: 15.0,
         fatigue_recovery: 0.5,
         fatigue_window: 0.3,
         health_per_vitality: 0.9604,
@@ -299,6 +304,7 @@ impl Tuning {
             "endurance_cost" => &mut self.endurance_cost,
             "endurance_regen" => &mut self.endurance_regen,
             "off_arc_cost" => &mut self.off_arc_cost,
+            "off_arc_stamina" => &mut self.off_arc_stamina,
             "fatigue_recovery" => &mut self.fatigue_recovery,
             "fatigue_window" => &mut self.fatigue_window,
             "health_per_vitality" => &mut self.health_per_vitality,

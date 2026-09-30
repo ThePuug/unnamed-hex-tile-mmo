@@ -206,7 +206,10 @@ impl Abilities<'_, '_> {
             cast.target_loc = Some(target_loc);
         }
 
-        let cost = tuning.cost(ability);
+        // A swing struck across the caster's line is a skill's effort: it
+        // costs stamina, and waits without it
+        let across = cast.target_loc.is_some_and(|target_loc| targeting::across(heading.as_ref(), &loc, &target_loc));
+        let cost = tuning.cost(ability) + if ability == AbilityType::AutoAttack && across { tuning.off_arc_stamina } else { 0.0 };
         if self.stamina.get(ent).map_or(true, |stamina| stamina.state < cost) {
             return Err(Some(AbilityFailReason::InsufficientStamina));
         }
@@ -236,7 +239,6 @@ impl Abilities<'_, '_> {
         // skill's, or for a swing struck across the caster's line a share
         // of the Force it strikes with. A Parry has paid its own, by what
         // it turned aside
-        let across = cast.target_loc.is_some_and(|target_loc| targeting::across(heading.as_ref(), &loc, &target_loc));
         self.tire(ent, match ability {
             AbilityType::AutoAttack if across => tuning.off_arc_cost * attrs.force(),
             AbilityType::AutoAttack | AbilityType::Parry => 0.0,
@@ -675,13 +677,13 @@ mod tests {
     }
 
     #[test]
-    fn a_swing_across_its_line_costs_endurance_and_one_ahead_is_free() {
+    fn a_swing_across_its_line_costs_stamina_and_endurance_and_one_ahead_is_free() {
         let graceful = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         let mut app = arena();
-        let [ahead, across, striding] = [0, 0, 0].map(|q| actor(&mut app, Side::PLAYERS, q));
+        let [ahead, across, striding, tired] = [0, 0, 0, 0].map(|q| actor(&mut app, Side::PLAYERS, q));
         let (front, side) = (actor(&mut app, Side::WILD, 1), actor(&mut app, Side::WILD, 0));
         let pool = graceful.max_endurance();
-        for ent in [ahead, across, striding] {
+        for ent in [ahead, across, striding, tired] {
             app.world_mut().entity_mut(ent).insert((graceful, Endurance::full(pool)));
         }
         let from = Loc::new(Qrz { q: 0, r: 0, z: 1 });
@@ -695,8 +697,15 @@ mod tests {
 
         assert!(used(&ask(&mut app, ahead, AbilityType::AutoAttack, Some(front)), AbilityType::AutoAttack));
         assert_eq!(spent(&app, ahead), 0.0, "a swing within the forward faces is free");
+        let stamina = |app: &App, ent: Entity| app.world().get::<Stamina>(ent).unwrap().state;
+        let before = stamina(&app, across);
         assert!(used(&ask(&mut app, across, AbilityType::AutoAttack, Some(side)), AbilityType::AutoAttack));
         assert!(spent(&app, across) > 0.0, "one struck across its line costs endurance");
+        assert!(stamina(&app, across) < before, "and stamina, as a skill would");
+
+        app.world_mut().get_mut::<Stamina>(tired).unwrap().state = 0.0;
+        assert!(!used(&ask(&mut app, tired, AbilityType::AutoAttack, Some(side)), AbilityType::AutoAttack), "without the stamina it waits");
+        assert!(used(&ask(&mut app, tired, AbilityType::AutoAttack, Some(front)), AbilityType::AutoAttack), "while one ahead is free");
 
         assert!(used(&ask(&mut app, striding, AbilityType::PerfectStride, None), AbilityType::PerfectStride));
         let stride = spent(&app, striding);

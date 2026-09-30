@@ -35,7 +35,8 @@ const HOME: i32 = 2;
 /// in reach, and inside it gives ground: it runs forward on the heading
 /// most directly away that still keeps its target in the arc it strikes
 /// within ([`kiting`]), so it shoots as it goes, and how directly away
-/// its Grace lets it run is how well it kites. Near its leash it takes no
+/// its Grace lets it run is how well it kites, while it has the stamina a
+/// swing across its line costs; without it, it stands and fights. Near its leash it takes no
 /// heading that carries it further from its den, so it turns along the
 /// leash and circles its den.
 ///
@@ -108,6 +109,7 @@ pub fn chase(
         Option<&AssignedHex>,
         &Side,
         Option<&Status>,
+        Option<&common_bevy::components::resources::Stamina>,
     )>,
     q_target: Query<(&Loc, &Health, &Side)>,
     q_home: Query<&Loc, Without<Chase>>,
@@ -115,7 +117,7 @@ pub fn chase(
     map: Res<Map>,
     dt: Res<Time>,
 ) {
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status) in &mut query {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina) in &mut query {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
@@ -169,7 +171,9 @@ pub fn chase(
             None => loc.distance(target_loc) <= chase.attack_range,
         };
         if placed {
-            if chase.ranged() && **loc != **target_loc {
+            // It gives ground only while it can afford to shoot as it runs
+            let can_shoot_running = stamina.map_or(true, |stamina| stamina.state >= common_bevy::tuning::tuning().off_arc_stamina);
+            if chase.ranged() && **loc != **target_loc && can_shoot_running {
                 let outward = (from_home >= chase.leash_distance - LEASH_MARGIN).then(|| Heading::from_hex(Qrz { z: 0, ..**loc - *home }));
                 let goal = kiting(*loc, *target_loc, arc_of(attrs), body.turn.heading, outward);
                 body.steer(goal, Walk::Forward, speed, dt_ms, &map, &nntree);
