@@ -392,6 +392,11 @@ fn get_ability_state(
         return AbilityState::OnCooldown;
     }
 
+    // The actors the player may target: those on a side hostile to its own
+    let side_of = |ent: Entity| entity_query.get(ent).ok().and_then(|(_, _, side)| side.copied());
+    let own_side = side_of(player_ent);
+    let hostile = |ent: Entity| side_of(ent).zip(own_side).is_some_and(|(side, own)| side.is_hostile_to(own));
+
     // Check resource costs and range requirements
     match ability {
         AbilityType::Lunge => {
@@ -405,8 +410,7 @@ fn get_ability_state(
                 player_heading,
                 targeting_state.get(), // Respect tier lock
                 nntree,
-                |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
-                |ent| entity_query.get(ent).ok().and_then(|(_, _, side)| side.copied()),
+                hostile,
             );
 
             if let Some(target_ent) = target_opt {
@@ -432,8 +436,7 @@ fn get_ability_state(
                 player_heading,
                 targeting_state.get(), // Respect tier lock
                 nntree,
-                |ent| entity_query.get(ent).ok().map(|(et, _, _)| *et),
-                |ent| entity_query.get(ent).ok().and_then(|(_, _, side)| side.copied()),
+                hostile,
             );
 
             if let Some(target_ent) = target_opt {

@@ -25,7 +25,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    components::{heading::*, entity_type::*, tier_lock::TierLock, *},
+    components::{heading::*, tier_lock::TierLock, *},
     plugins::nntree::*,
 };
 
@@ -80,18 +80,14 @@ pub fn within_arc(
         return true;
     }
 
-    let heading_angle = caster_heading.to_angle();
-    let target_angle = angle_between_locs(caster_loc, target_loc);
+    off_heading(caster_heading, caster_loc, target_loc) <= arc
+}
 
-    // Calculate the angular difference
-    let mut delta = (target_angle - heading_angle).abs();
-
-    // Normalize to 0-180 range (shortest angular distance)
-    if delta > 180.0 {
-        delta = 360.0 - delta;
-    }
-
-    delta <= arc
+/// Degrees between `heading` and the bearing from `from` to `to`, the
+/// shorter way round: 0 dead ahead to 180 dead behind.
+fn off_heading(heading: Heading, from: Loc, to: Loc) -> f32 {
+    let delta = (angle_between_locs(from, to) - heading.to_angle()).abs();
+    if delta > 180.0 { 360.0 - delta } else { delta }
 }
 
 /// Whether an attacker at `from` facing `heading`, striking within `arc`
@@ -203,293 +199,38 @@ pub fn get_range_tier(distance: u32) -> RangeTier {
         .unwrap_or(RangeTier::Far)
 }
 
-/// Select the best target based on heading, distance, and optional tier lock
-
-/// This is the core targeting function called by:
-/// - Client target indicator (every frame)
-/// - Client ability usage (on key press)
-/// - Server ability validation (on Try::UseAbility)
-/// - AI targeting (for NPCs)
-
-/// # Algorithm
-
-/// 1. Query entities within max range (20 hexes) using spatial index
-/// 2. Filter to actors (NPCs and players only)
-/// 3. Filter out same-team entities (players can't target players, NPCs can't target NPCs)
-/// 4. Filter to entities within 120° facing cone
-/// 5. Apply tier filter if locked (MVP passes None)
-/// 6. Select nearest by distance
-/// 7. Geometric tiebreaker: if multiple at same distance, pick closest to heading angle
-
-/// # Performance
-
-/// Designed to run every frame for target indicator:
-/// - Uses spatial index (NNTree) for fast proximity queries
-/// - Angular checks are cheap (dot product comparisons)
-/// - No allocations in hot path
-
-/// # Arguments
-
-/// * `caster_ent` - Entity of the caster (to skip self)
-/// * `caster_loc` - Location of the caster
-/// * `caster_heading` - Heading direction of the caster
-/// * `tier_lock` - Optional tier lock (None for automatic, Some for manual tier selection)
-/// * `nntree` - Spatial index for proximity queries
-/// * `get_entity_type` - Function to get EntityType for an entity
-/// * `side_of` - Function to get an entity's `Side`; a target must be hostile to the caster
-
-/// # Returns
-
-/// `Some(Entity)` if a valid target is found, `None` otherwise
-pub fn select_target<F, G>(
+/// The entity a caster at `caster_loc` facing `caster_heading` targets: of
+/// those `wanted` within [`TARGET_RADIUS`] and its facing cone, in the tier
+/// `tier_lock` holds it to if any, the nearest, and among the equally near
+/// the one nearest dead ahead. Never the caster itself.
+///
+/// `wanted` says who may be targeted at all: an actor on a hostile side for
+/// an attack, one on the caster's own side for an ally. Hostile and ally
+/// targets are picked by this one rule, so both move with the heading alike.
+pub fn select_target(
     caster_ent: Entity,
     caster_loc: Loc,
     caster_heading: Heading,
     tier_lock: Option<RangeTier>,
     nntree: &NNTree,
-    get_entity_type: F,
-    side_of: G,
-) -> Option<Entity>
-where
-    F: Fn(Entity) -> Option<EntityType>,
-    G: Fn(Entity) -> Option<crate::components::behaviour::Side>,
-{
-    let caster_side = side_of(caster_ent)?;
-
+    wanted: impl Fn(Entity) -> bool,
+) -> Option<Entity> {
     // Squared, as the tree measures
     let max_range_sq: i64 = TARGET_RADIUS as i64 * TARGET_RADIUS as i64;
-    let nearby = nntree.locate_within_distance(caster_loc, max_range_sq);
-
-    // Build list of valid targets with their distances and angles
-    let mut candidates: Vec<(Entity, Loc, u32, f32)> = Vec::new();
-
-    for nn in nearby {
-        let ent = nn.ent;
-        let target_loc = nn.loc;
-
-        // Skip self (by entity, not location - multiple entities can be on same tile!)
-        if ent == caster_ent {
-            continue;
-        }
-
-        // Filter to actors only (players and NPCs)
-        let Some(entity_type) = get_entity_type(ent) else {
-            continue;
-        };
-        if !matches!(entity_type, EntityType::Actor(_)) {
-            continue;
-        }
-
-        // Only hostile sides are targets
-        if !side_of(ent).is_some_and(|side| side.is_hostile_to(caster_side)) {
-            continue;
-        }
-
-        // Check if in facing cone (120° cone = ±60°)
-        if !is_in_facing_cone(caster_heading, caster_loc, target_loc) {
-            continue;
-        }
-
-        // Calculate distance (use flat_distance for 2D hex grid)
-        let distance = caster_loc.flat_distance(&target_loc) as u32;
-
-        // Apply tier filter if locked
-        if let Some(required_tier) = tier_lock {
-            let target_tier = get_range_tier(distance);
-            if target_tier != required_tier {
-                continue;
-            }
-        }
-
-        // Calculate angle to target for tiebreaker
-        let target_angle = angle_between_locs(caster_loc, target_loc);
-
-        candidates.push((ent, target_loc, distance, target_angle));
-    }
-
-    // No valid targets
-    if candidates.is_empty() {
-        return None;
-    }
-
-    // Sort by distance (nearest first)
-    candidates.sort_by_key(|(_, _, dist, _)| *dist);
-    let nearest_distance = candidates[0].2;
-
-    // Find all targets at nearest distance
-    let nearest_candidates: Vec<_> = candidates
-        .iter()
-        .filter(|(_, _, dist, _)| *dist == nearest_distance)
-        .collect();
-
-    // If only one at nearest distance, return it
-    if nearest_candidates.len() == 1 {
-        return Some(nearest_candidates[0].0);
-    }
-
-    // Geometric tiebreaker: pick target closest to exact heading angle
-    let heading_angle = caster_heading.to_angle();
-    let mut best_target = nearest_candidates[0].0;
-    let mut smallest_delta = f32::MAX;
-
-    for (ent, _, _, target_angle) in nearest_candidates {
-        let mut delta = (*target_angle - heading_angle).abs();
-
-        // Normalize to 0-180 range (shortest angular distance)
-        if delta > 180.0 {
-            delta = 360.0 - delta;
-        }
-
-        if delta < smallest_delta {
-            smallest_delta = delta;
-            best_target = *ent;
-        }
-    }
-
-    Some(best_target)
+    nntree.locate_within_distance(caster_loc, max_range_sq)
+        // By entity, not location: several may stand on one tile
+        .filter(|nn| nn.ent != caster_ent && wanted(nn.ent))
+        .filter(|nn| is_in_facing_cone(caster_heading, caster_loc, nn.loc))
+        .map(|nn| (nn.ent, caster_loc.flat_distance(&nn.loc) as u32, off_heading(caster_heading, caster_loc, nn.loc)))
+        .filter(|(_, distance, _)| tier_lock.is_none_or(|tier| get_range_tier(*distance) == tier))
+        .min_by(|a, b| a.1.cmp(&b.1).then(a.2.total_cmp(&b.2)))
+        .map(|(ent, ..)| ent)
 }
 
-/// Select the nearest ally based on heading and distance
-
-/// Similar to select_target but filters for allies (the caster's side) instead of hostiles.
-/// Used for ally targeting and ally target frame display.
-
-/// # Algorithm
-
-/// 1. Query entities within max range (20 hexes) using spatial index
-/// 2. Filter to allies (the caster's side) only
-/// 3. Skip self (by entity)
-/// 4. Filter to entities within 120° facing cone
-/// 5. Apply tier filter if locked (None for automatic targeting)
-/// 6. Select nearest by distance
-/// 7. Geometric tiebreaker: if multiple at same distance, pick closest to heading angle
-
-/// # Arguments
-
-/// * `caster_ent` - Entity of the caster (to skip self)
-/// * `caster_loc` - Location of the caster
-/// * `caster_heading` - Heading direction of the caster
-/// * `tier_lock` - Optional tier lock (None for automatic, Some for manual tier selection)
-/// * `nntree` - Spatial index for proximity queries
-/// * `side_of` - Function to get an entity's `Side`; an ally is on the caster's side
-
-/// # Returns
-
-/// `Some(Entity)` if a valid ally target is found, `None` otherwise
-pub fn select_ally_target<F>(
-    caster_ent: Entity,
-    caster_loc: Loc,
-    caster_heading: Heading,
-    tier_lock: Option<RangeTier>,
-    nntree: &NNTree,
-    side_of: F,
-) -> Option<Entity>
-where
-    F: Fn(Entity) -> Option<crate::components::behaviour::Side>,
-{
-    let caster_side = side_of(caster_ent)?;
-
-    // Squared, as the tree measures
-    let max_range_sq: i64 = TARGET_RADIUS as i64 * TARGET_RADIUS as i64;
-    let nearby = nntree.locate_within_distance(caster_loc, max_range_sq);
-
-    // Build list of valid ally targets with their distances and angles
-    let mut candidates: Vec<(Entity, Loc, u32, f32)> = Vec::new();
-
-    for nn in nearby {
-        let ent = nn.ent;
-        let target_loc = nn.loc;
-
-        // Skip self
-        if ent == caster_ent {
-            continue;
-        }
-
-        // Filter to allies only (the caster's side)
-        if side_of(ent) != Some(caster_side) {
-            continue;
-        }
-
-        // Check if in facing cone (120° cone = ±60°)
-        if !is_in_facing_cone(caster_heading, caster_loc, target_loc) {
-            continue;
-        }
-
-        // Calculate distance (use flat_distance for 2D hex grid)
-        let distance = caster_loc.flat_distance(&target_loc) as u32;
-
-        // Apply tier filter if locked
-        if let Some(required_tier) = tier_lock {
-            let target_tier = get_range_tier(distance);
-            if target_tier != required_tier {
-                continue;
-            }
-        }
-
-        // Calculate angle to target for tiebreaker
-        let target_angle = angle_between_locs(caster_loc, target_loc);
-
-        candidates.push((ent, target_loc, distance, target_angle));
-    }
-
-    // No valid allies
-    if candidates.is_empty() {
-        return None;
-    }
-
-    // Sort by distance (nearest first)
-    candidates.sort_by_key(|(_, _, dist, _)| *dist);
-    let nearest_distance = candidates[0].2;
-
-    // Find all allies at nearest distance
-    let nearest_candidates: Vec<_> = candidates
-        .iter()
-        .filter(|(_, _, dist, _)| *dist == nearest_distance)
-        .collect();
-
-    // If only one at nearest distance, return it
-    if nearest_candidates.len() == 1 {
-        return Some(nearest_candidates[0].0);
-    }
-
-    // Geometric tiebreaker: pick ally closest to exact heading angle
-    let heading_angle = caster_heading.to_angle();
-    let mut best_target = nearest_candidates[0].0;
-    let mut smallest_delta = f32::MAX;
-
-    for (ent, _, _, target_angle) in nearest_candidates {
-        let mut delta = (*target_angle - heading_angle).abs();
-
-        // Normalize to 0-180 range (shortest angular distance)
-        if delta > 180.0 {
-            delta = 360.0 - delta;
-        }
-
-        if delta < smallest_delta {
-            smallest_delta = delta;
-            best_target = *ent;
-        }
-    }
-
-    Some(best_target)
-}
-
-/// Shared implementation for updating targets based on heading/location changes
-
-/// This is the core logic called by both server and client versions of update_targets_on_change.
-/// The only difference between server and client is the Query filter, which is handled in their
-/// respective modules.
-
-/// # Arguments
-
-/// * `ent` - The entity being updated
-/// * `loc` - Current location of the entity
-/// * `heading` - Current heading direction
-/// * `target` - Mutable reference to the Target component
-/// * `tier_lock` - Optional reference to TierLock component
-/// * `nntree` - Spatial index for proximity queries
-/// * `entity_types` - Query for EntityType components
-/// * `side_of` - Function to get an entity's `Side`
+/// Points `target` at the hostile actor `ent` faces from `loc` along
+/// `heading`, within `tier_lock`'s tier if it holds one. With none in its
+/// cone the current target clears and the last one stays, for a frame that
+/// keeps showing it. An entity with no side targets nothing.
 pub fn update_targets_impl(
     ent: Entity,
     loc: Loc,
@@ -497,34 +238,16 @@ pub fn update_targets_impl(
     target: &mut crate::components::target::Target,
     tier_lock: Option<&TierLock>,
     nntree: &NNTree,
-    entity_types: &Query<&EntityType>,
     side_of: impl Fn(Entity) -> Option<crate::components::behaviour::Side>,
 ) {
-    // Get tier constraint from TierLock if present
-    let tier_constraint = tier_lock.and_then(|tl| tl.get());
-
-    // Use select_target to find what this entity is facing (with tier lock filter)
-    let new_target = select_target(
-        ent,
-        loc,
-        heading,
-        tier_constraint,
-        nntree,
-        |e| entity_types.get(e).ok().copied(),
-        side_of,
-    );
-
-    // Update Target fields directly
-    match new_target {
-        Some(target_ent) => {
-            // Target found - update both entity and last_target
-            target.entity = Some(target_ent);
-            target.last_target = Some(target_ent);
-        }
-        None => {
-            // No target found - clear entity but keep last_target for sticky UI
-            target.entity = None;
-        }
+    let new_target = side_of(ent).and_then(|own| {
+        select_target(ent, loc, heading, tier_lock.and_then(|tl| tl.get()), nntree, |other| {
+            side_of(other).is_some_and(|side| side.is_hostile_to(own))
+        })
+    });
+    target.entity = new_target;
+    if new_target.is_some() {
+        target.last_target = new_target;
     }
 }
 
@@ -533,6 +256,7 @@ mod tests {
     use super::*;
     use qrz::Qrz;
     use crate::components::behaviour::{PlayerControlled, Side};
+    use crate::components::entity_type::*;
 
     // ===== HEADING TO ANGLE CONVERSION TESTS =====
 
@@ -758,6 +482,21 @@ mod tests {
         (world, nntree)
     }
 
+    fn side_of(world: &World, ent: Entity) -> Option<Side> {
+        matches!(world.get::<EntityType>(ent), Some(EntityType::Actor(_)))
+            .then(|| Side::of_player(world.get::<PlayerControlled>(ent).is_some()))
+    }
+
+    /// The actors hostile to `caster`: players against everyone else
+    fn hostile(world: &World, caster: Entity) -> impl Fn(Entity) -> bool + '_ {
+        move |ent| side_of(world, ent).zip(side_of(world, caster)).is_some_and(|(side, own)| side.is_hostile_to(own))
+    }
+
+    /// The actors on `caster`'s side
+    fn ally(world: &World, caster: Entity) -> impl Fn(Entity) -> bool + '_ {
+        move |ent| side_of(world, ent).zip(side_of(world, caster)).is_some_and(|(side, own)| side == own)
+    }
+
     // Helper to spawn an actor at a location
     fn spawn_actor(world: &mut World, nntree: &mut NNTree, loc: Loc) -> Entity {
         use crate::components::entity_type::actor::*;
@@ -805,9 +544,7 @@ mod tests {
         // Spawn target directly ahead (east) - NPC
         let target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 }));
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
-            world.get::<EntityType>(ent).copied()
-        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
 
         assert_eq!(result, Some(target), "Should select the target directly ahead");
     }
@@ -824,9 +561,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
-            world.get::<EntityType>(ent).copied()
-        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
 
         assert_eq!(result, None, "Should return None when no targets exist");
     }
@@ -846,9 +581,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
-            world.get::<EntityType>(ent).copied()
-        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
 
         assert_eq!(result, None, "Should not select target behind caster");
     }
@@ -870,9 +603,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
-            world.get::<EntityType>(ent).copied()
-        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
 
         assert_eq!(result, Some(nearest), "Should select the nearest target");
     }
@@ -894,7 +625,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(directly_ahead),
@@ -918,7 +649,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(actor),
@@ -942,7 +673,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Close), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Close), &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(close_target),
@@ -967,7 +698,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Mid), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Mid), &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(mid_target),
@@ -990,7 +721,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Far), &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, Some(RangeTier::Far), &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, None,
@@ -1015,7 +746,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| world.get::<EntityType>(ent).copied(), |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
 
         // Should select one of the targets within the cone (ne_target or se_target)
         assert!(
@@ -1044,9 +775,7 @@ mod tests {
         // Spawn NPC (hostile) - should be targetable
         let npc = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 }));
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
-            world.get::<EntityType>(ent).copied()
-        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(npc),
@@ -1073,9 +802,7 @@ mod tests {
         let player = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 2, r: 0, z: 0 }));
         world.entity_mut(player).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, None, &nntree, |ent| {
-            world.get::<EntityType>(ent).copied()
-        }, |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())));
+        let result = select_target(caster, caster_loc, heading, None, &nntree, hostile(&world, caster));
 
         assert_eq!(
             result, Some(player),
@@ -1121,8 +848,7 @@ mod tests {
             heading,
             Some(RangeTier::Close), // Tier 1
             &nntree,
-            |ent| world.get::<EntityType>(ent).copied(),
-            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
+            hostile(&world, caster),
         );
         assert_eq!(tier1_result, Some(close_target), "Tier 1 lock should select close target (2 hexes)");
 
@@ -1133,8 +859,7 @@ mod tests {
             heading,
             Some(RangeTier::Mid), // Tier 2
             &nntree,
-            |ent| world.get::<EntityType>(ent).copied(),
-            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
+            hostile(&world, caster),
         );
         assert_eq!(tier2_result, Some(mid_target), "Tier 2 lock should select mid target (5 hexes)");
 
@@ -1145,8 +870,7 @@ mod tests {
             heading,
             Some(RangeTier::Far), // Tier 3
             &nntree,
-            |ent| world.get::<EntityType>(ent).copied(),
-            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
+            hostile(&world, caster),
         );
         assert_eq!(tier3_result, Some(far_target), "Tier 3 lock should select the far target");
 
@@ -1157,8 +881,7 @@ mod tests {
             heading,
             None, // No tier lock
             &nntree,
-            |ent| world.get::<EntityType>(ent).copied(),
-            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
+            hostile(&world, caster),
         );
         assert_eq!(no_lock_result, Some(close_target), "Without tier lock should default to closest target");
     }
@@ -1197,8 +920,7 @@ mod tests {
             heading,
             None, // No tier lock
             &nntree,
-            |ent| world.get::<EntityType>(ent).copied(),
-            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
+            hostile(&world, player),
         );
         assert_eq!(
             default_result, Some(wild_dog),
@@ -1212,8 +934,7 @@ mod tests {
             heading,
             Some(RangeTier::Mid), // Tier 2 (Mid)
             &nntree,
-            |ent| world.get::<EntityType>(ent).copied(),
-            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
+            hostile(&world, player),
         );
         assert_eq!(
             tier2_result, Some(forest_sprite),
@@ -1227,8 +948,7 @@ mod tests {
             heading,
             None, // Tier lock dropped after ability
             &nntree,
-            |ent| world.get::<EntityType>(ent).copied(),
-            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
+            hostile(&world, player),
         );
         assert_eq!(
             after_ability_result, Some(wild_dog),
@@ -1259,13 +979,13 @@ mod tests {
         world.entity_mut(mid_ally).insert(PlayerControlled);
 
         // Test Close tier lock - should select close_ally only
-        let result = select_ally_target(
+        let result = select_target(
             caster,
             caster_loc,
             heading,
             Some(RangeTier::Close),
             &nntree,
-            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
+            ally(&world, caster),
         );
 
         assert_eq!(
@@ -1298,13 +1018,13 @@ mod tests {
         world.entity_mut(far_ally).insert(PlayerControlled);
 
         // Test Mid tier lock - should select mid_ally only
-        let result = select_ally_target(
+        let result = select_target(
             caster,
             caster_loc,
             heading,
             Some(RangeTier::Mid),
             &nntree,
-            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
+            ally(&world, caster),
         );
 
         assert_eq!(
@@ -1334,13 +1054,13 @@ mod tests {
         world.entity_mut(far_ally).insert(PlayerControlled);
 
         // Test Far tier lock - should select far_ally only
-        let result = select_ally_target(
+        let result = select_target(
             caster,
             caster_loc,
             heading,
             Some(RangeTier::Far),
             &nntree,
-            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
+            ally(&world, caster),
         );
 
         assert_eq!(
@@ -1373,13 +1093,13 @@ mod tests {
         world.entity_mut(far_ally).insert(PlayerControlled);
 
         // Test no tier lock (automatic) - should select nearest (close_ally)
-        let result = select_ally_target(
+        let result = select_target(
             caster,
             caster_loc,
             heading,
             None,
             &nntree,
-            |ent| Some(Side::of_player(world.get::<PlayerControlled>(ent).is_some())),
+            ally(&world, caster),
         );
 
         assert_eq!(

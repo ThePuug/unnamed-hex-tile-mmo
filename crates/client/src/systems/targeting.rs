@@ -13,10 +13,9 @@ use common_bevy::{
         Loc,
         target::Target,
         tier_lock::TierLock,
-        entity_type::EntityType
     },
     plugins::nntree::NNTree,
-    systems::targeting::{update_targets_impl, select_ally_target},
+    systems::targeting::{select_target, update_targets_impl},
 };
 
 /// Update hostile targets every frame for responsive targeting (CLIENT VERSION)
@@ -32,7 +31,6 @@ use common_bevy::{
 /// run on a timer (e.g., every 100ms).
 pub fn update_targets(
     mut query: Query<(Entity, &Loc, &Heading, &mut Target, Option<&TierLock>)>,
-    entity_types: Query<&EntityType>,
     sides: Query<&Side>,
     nntree: Res<NNTree>,
 ) {
@@ -44,7 +42,6 @@ pub fn update_targets(
             &mut target,
             tier_lock,
             &nntree,
-            &entity_types,
             |e| sides.get(e).ok().copied(),
         );
     }
@@ -58,9 +55,9 @@ pub fn update_targets(
 
 /// # Architecture
 
-/// This system mirrors update_targets() but for ally targeting.
-/// Only the targeting system calls select_ally_target() - UI systems should
-/// read from the AllyTarget component, not call selection functions directly.
+/// This system mirrors update_targets() but for ally targeting: the same
+/// selection, wanting the actors on the entity's own side. UI systems read
+/// the AllyTarget component and never select for themselves.
 
 /// # Performance
 
@@ -73,18 +70,12 @@ pub fn update_ally_targets(
     nntree: Res<NNTree>,
 ) {
     for (ent, loc, heading, mut ally_target, tier_lock) in &mut query {
-        // Get tier constraint from TierLock if present
-        let tier_constraint = tier_lock.and_then(|tl| tl.get());
-
-        // Use select_ally_target to find what ally this entity is facing (with tier lock filter)
-        let new_ally_target = select_ally_target(
-            ent,
-            *loc,
-            *heading,
-            tier_constraint,
-            &nntree,
-            |e| sides.get(e).ok().copied(),
-        );
+        // The ally this entity faces, within its tier lock if it holds one
+        let new_ally_target = sides.get(ent).ok().and_then(|own| {
+            select_target(ent, *loc, *heading, tier_lock.and_then(|tl| tl.get()), &nntree, |other| {
+                sides.get(other).is_ok_and(|side| side == own)
+            })
+        });
 
         // Update AllyTarget fields directly
         match new_ally_target {
