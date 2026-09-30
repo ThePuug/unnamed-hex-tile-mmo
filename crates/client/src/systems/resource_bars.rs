@@ -1,43 +1,58 @@
+//! The viewed actor's pools along the bottom of the screen: a bar to each,
+//! in the order [`BARS`] lists them, filled to its share of the pool and
+//! labelled with its numbers.
+
 use bevy::prelude::*;
 
 use common_bevy::components::resources::*;
 
-/// Component for the health bar UI element with interpolation state
+/// A pool a bar shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pool {
+    Stamina,
+    Health,
+    Mana,
+}
+
+/// The bars, left to right, each with its fill's colour. A pool listed here
+/// and answered in [`Pool::of`] has its bar.
+const BARS: [(Pool, Color); 3] = [
+    (Pool::Stamina, Color::srgb(0.9, 0.8, 0.0)),
+    (Pool::Health, Color::srgb(0.9, 0.1, 0.1)),
+    (Pool::Mana, Color::srgb(0.1, 0.4, 0.9)),
+];
+
+/// How fast a bar's fill eases toward its pool
+const EASE: f32 = 5.0;
+
+impl Pool {
+    /// What the pool holds now and at most
+    fn of(self, (health, stamina, mana): (&Health, &Stamina, &Mana)) -> (f32, f32) {
+        match self {
+            Pool::Stamina => (stamina.state, stamina.max),
+            Pool::Health => (health.state, health.max),
+            Pool::Mana => (mana.state, mana.max),
+        }
+    }
+}
+
+/// The fill of a pool's bar, and the percentage it shows now, which eases
+/// toward the pool's
 #[derive(Component)]
-pub struct HealthBar {
-    /// Current displayed percentage (0.0 to 100.0) for smooth interpolation
+pub struct PoolBar {
+    pub pool: Pool,
     pub current_percent: f32,
 }
 
-/// Component for the stamina bar UI element with interpolation state
+/// The label on a pool's bar, with the numbers it last wrote, so it is
+/// written again only when they change
 #[derive(Component)]
-pub struct StaminaBar {
-    /// Current displayed percentage (0.0 to 100.0) for smooth interpolation
-    pub current_percent: f32,
+pub struct PoolText {
+    pool: Pool,
+    shown: (i32, i32),
 }
 
-/// Component for the mana bar UI element with interpolation state
-#[derive(Component)]
-pub struct ManaBar {
-    /// Current displayed percentage (0.0 to 100.0) for smooth interpolation
-    pub current_percent: f32,
-}
-
-/// Marker component for the health bar text label, caches last-formatted values
-#[derive(Component)]
-pub struct HealthText(i32, i32);
-
-/// Marker component for the stamina bar text label, caches last-formatted values
-#[derive(Component)]
-pub struct StaminaText(i32, i32);
-
-/// Marker component for the mana bar text label, caches last-formatted values
-#[derive(Component)]
-pub struct ManaText(i32, i32);
-
-/// Setup resource bars in the player HUD
-/// Creates health, stamina, and mana bars in bottom-center position
-/// Positioned at midpoint between player and bottom of screen for combat-critical info
+/// Builds the bars, midway between the player and the bottom of the screen.
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, With<IsDefaultUiCamera>>,
@@ -54,7 +69,7 @@ pub fn setup(
             left: Val::Px(0.),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::FlexEnd,
-            padding: UiRect::bottom(Val::Percent(12.5)),  // Halfway between bottom and player
+            padding: UiRect::bottom(Val::Percent(12.5)),
             ..default()
         },
         Pickable::IGNORE,
@@ -68,227 +83,67 @@ pub fn setup(
                 ..default()
             },
         ))
-    .with_children(|parent| {
-        // Stamina bar (Yellow) - left position
-        parent.spawn((
-            Node {
-                width: Val::Px(200.),
-                height: Val::Px(20.),
-                border: UiRect::all(Val::Px(2.)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BorderColor::all(Color::srgb(0.3, 0.3, 0.3)),
-            BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
-        ))
         .with_children(|parent| {
-            // Stamina fill bar
-            parent.spawn((
-                Node {
-                    width: Val::Percent(100.),
-                    height: Val::Percent(100.),
-                    position_type: PositionType::Absolute,
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.9, 0.8, 0.0)), // Yellow
-                StaminaBar {
-                    current_percent: 100.0, // Initialize at full
-                },
-            ));
-            // Stamina text label
-            parent.spawn((
-                Text::new("100 / 100"),
-                TextFont {
-                    font_size: FontSize::Px(12.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                Node {
-                    position_type: PositionType::Relative,
-                    ..default()
-                },
-                StaminaText(i32::MIN, i32::MIN),
-            ));
+            for (pool, fill) in BARS {
+                parent.spawn((
+                    Node {
+                        width: Val::Px(200.),
+                        height: Val::Px(20.),
+                        border: UiRect::all(Val::Px(2.)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BorderColor::all(Color::srgb(0.3, 0.3, 0.3)),
+                    BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
+                ))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Node {
+                            width: Val::Percent(100.),
+                            height: Val::Percent(100.),
+                            position_type: PositionType::Absolute,
+                            ..default()
+                        },
+                        BackgroundColor(fill),
+                        PoolBar { pool, current_percent: 100.0 },
+                    ));
+                    parent.spawn((
+                        Text::new(""),
+                        TextFont { font_size: FontSize::Px(12.0), ..default() },
+                        TextColor(Color::WHITE),
+                        Node { position_type: PositionType::Relative, ..default() },
+                        PoolText { pool, shown: (i32::MIN, i32::MIN) },
+                    ));
+                });
+            }
         });
-
-        // Health bar (Red) - center position
-        parent.spawn((
-            Node {
-                width: Val::Px(200.),
-                height: Val::Px(20.),
-                border: UiRect::all(Val::Px(2.)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BorderColor::all(Color::srgb(0.3, 0.3, 0.3)),
-            BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
-        ))
-        .with_children(|parent| {
-            // Health fill bar
-            parent.spawn((
-                Node {
-                    width: Val::Percent(100.),
-                    height: Val::Percent(100.),
-                    position_type: PositionType::Absolute,
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.9, 0.1, 0.1)), // Red
-                HealthBar {
-                    current_percent: 100.0, // Initialize at full
-                },
-            ));
-            // Health text label
-            parent.spawn((
-                Text::new("100 / 100"),
-                TextFont {
-                    font_size: FontSize::Px(12.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                Node {
-                    position_type: PositionType::Relative,
-                    ..default()
-                },
-                HealthText(i32::MIN, i32::MIN),
-            ));
-        });
-
-        // Mana bar (Blue)
-        parent.spawn((
-            Node {
-                width: Val::Px(200.),
-                height: Val::Px(20.),
-                border: UiRect::all(Val::Px(2.)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BorderColor::all(Color::srgb(0.3, 0.3, 0.3)),
-            BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
-        ))
-        .with_children(|parent| {
-            // Mana fill bar
-            parent.spawn((
-                Node {
-                    width: Val::Percent(100.),
-                    height: Val::Percent(100.),
-                    position_type: PositionType::Absolute,
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.1, 0.4, 0.9)), // Blue
-                ManaBar {
-                    current_percent: 100.0, // Initialize at full
-                },
-            ));
-            // Mana text label
-            parent.spawn((
-                Text::new("100 / 100"),
-                TextFont {
-                    font_size: FontSize::Px(12.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                Node {
-                    position_type: PositionType::Relative,
-                    ..default()
-                },
-                ManaText(i32::MIN, i32::MIN),
-            ));
-        });
-    });
     });
 }
 
-/// Update resource bar widths and text labels based on player's current resources
-/// Smoothly interpolates bar width changes over ~0.2s for visual polish
+/// Eases each bar toward its pool's share and rewrites a label whose
+/// numbers changed.
 pub fn update(
-    mut health_query: Query<(&mut HealthBar, &mut Node), (Without<StaminaBar>, Without<ManaBar>)>,
-    mut stamina_query: Query<(&mut StaminaBar, &mut Node), (Without<HealthBar>, Without<ManaBar>)>,
-    mut mana_query: Query<(&mut ManaBar, &mut Node), (Without<HealthBar>, Without<StaminaBar>)>,
-    mut health_text_query: Query<(&mut Text, &mut HealthText), (Without<StaminaText>, Without<ManaText>)>,
-    mut stamina_text_query: Query<(&mut Text, &mut StaminaText), (Without<HealthText>, Without<ManaText>)>,
-    mut mana_text_query: Query<(&mut Text, &mut ManaText), (Without<HealthText>, Without<StaminaText>)>,
-    player_query: Query<(&Health, &Stamina, &Mana), With<crate::components::Viewed>>,
+    mut bars: Query<(&mut PoolBar, &mut Node)>,
+    mut labels: Query<(&mut PoolText, &mut Text)>,
+    viewed: Query<(&Health, &Stamina, &Mana), With<crate::components::Viewed>>,
     time: Res<Time>,
 ) {
-    const INTERPOLATION_SPEED: f32 = 5.0; // Same as world-space health bars
-
-    if let Ok((health, stamina, mana)) = player_query.single() {
-        let delta = time.delta_secs();
-
-        // Update health bar width
-        for (mut health_bar, mut node) in &mut health_query {
-            let target_percent = if health.max > 0.0 {
-                (health.state / health.max * 100.0).clamp(0.0, 100.0)
-            } else {
-                0.0
-            };
-
-            // Smoothly interpolate toward target
-            health_bar.current_percent = health_bar.current_percent.lerp(target_percent, INTERPOLATION_SPEED * delta);
-            node.width = Val::Percent(health_bar.current_percent);
+    let Ok(pools) = viewed.single() else {
+        return;
+    };
+    for (mut bar, mut node) in &mut bars {
+        let (now, max) = bar.pool.of(pools);
+        let share = if max > 0.0 { (now / max * 100.0).clamp(0.0, 100.0) } else { 0.0 };
+        bar.current_percent = bar.current_percent.lerp(share, EASE * time.delta_secs());
+        node.width = Val::Percent(bar.current_percent);
+    }
+    for (mut label, mut text) in &mut labels {
+        let (now, max) = label.pool.of(pools);
+        let shown = (now as i32, max as i32);
+        if label.shown != shown {
+            label.shown = shown;
+            **text = format!("{} / {}", shown.0, shown.1);
         }
-
-        // Update health text (only when displayed integer changes)
-        for (mut text, mut cache) in &mut health_text_query {
-            let cur = health.state as i32;
-            let max = health.max as i32;
-            if cache.0 != cur || cache.1 != max {
-                cache.0 = cur;
-                cache.1 = max;
-                **text = format!("{cur} / {max}");
-            }
-        }
-
-        // Update stamina bar width
-        for (mut stamina_bar, mut node) in &mut stamina_query {
-            let target_percent = if stamina.max > 0.0 {
-                (stamina.state / stamina.max * 100.0).clamp(0.0, 100.0)
-            } else {
-                0.0
-            };
-
-            // Smoothly interpolate toward target
-            stamina_bar.current_percent = stamina_bar.current_percent.lerp(target_percent, INTERPOLATION_SPEED * delta);
-            node.width = Val::Percent(stamina_bar.current_percent);
-        }
-
-        // Update stamina text (only when displayed integer changes)
-        for (mut text, mut cache) in &mut stamina_text_query {
-            let cur = stamina.state as i32;
-            let max = stamina.max as i32;
-            if cache.0 != cur || cache.1 != max {
-                cache.0 = cur;
-                cache.1 = max;
-                **text = format!("{cur} / {max}");
-            }
-        }
-
-        // Update mana bar width
-        for (mut mana_bar, mut node) in &mut mana_query {
-            let target_percent = if mana.max > 0.0 {
-                (mana.state / mana.max * 100.0).clamp(0.0, 100.0)
-            } else {
-                0.0
-            };
-
-            // Smoothly interpolate toward target
-            mana_bar.current_percent = mana_bar.current_percent.lerp(target_percent, INTERPOLATION_SPEED * delta);
-            node.width = Val::Percent(mana_bar.current_percent);
-        }
-
-        // Update mana text (only when displayed integer changes)
-        for (mut text, mut cache) in &mut mana_text_query {
-            let cur = mana.state as i32;
-            let max = mana.max as i32;
-            if cache.0 != cur || cache.1 != max {
-                cache.0 = cur;
-                cache.1 = max;
-                **text = format!("{cur} / {max}");
-            }
-        }
-
     }
 }
