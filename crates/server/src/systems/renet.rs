@@ -402,10 +402,8 @@ pub fn write_try(
                 let bytes = bincode::serde::encode_to_vec(
                     Do { event: Event::Despawn { ent }},
                     bincode::config::legacy()).unwrap();
-                for &player_ent in &loaded_by.players {
-                    let Some(client_id) = lobby.get_by_right(&player_ent) else { continue; };
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, bytes.clone());
-                }
+                // Its owner too: a client viewing the actor sees it fall
+                broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
             }
             Event::ChunkData { ent, .. } => {
                 let ent = *ent;
