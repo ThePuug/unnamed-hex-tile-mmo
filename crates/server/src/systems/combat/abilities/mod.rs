@@ -37,6 +37,7 @@ use common_bevy::{
     components::{
         behaviour::Side,
         engagement::{Engagement, EngagementMember},
+        grit::Grit,
         heading::Heading,
         hex_assignment::AssignedHex,
         npc_recovery::NpcRecovery,
@@ -116,6 +117,7 @@ pub struct Abilities<'w, 's> {
     pub queues: Query<'w, 's, &'static mut ReactionQueue>,
     pub statuses: Query<'w, 's, &'static mut Status>,
     pub swings: Query<'w, 's, &'static mut Swing>,
+    pub grits: Query<'w, 's, &'static mut Grit>,
     pub poised: Query<'w, 's, &'static disengage::Poised>,
     pub targets: Query<'w, 's, (Entity, &'static Target)>,
     pub npcs: Query<'w, 's, (Entity, &'static EntityType, &'static mut NpcRecovery), With<Chase>>,
@@ -259,6 +261,15 @@ impl Abilities<'_, '_> {
             landing::recover(ent, recovery_after(ability, prior.as_ref(), &attrs, against.as_ref(), fatigue), &mut self.commands, &mut self.writer);
         }
         Ok(())
+    }
+
+    /// Queues a skill's strike of `damage` from `cast`'s caster on `target`.
+    /// What the caster's Grit has banked strikes with it and is spent: every
+    /// skill that strikes deals its damage through here, and an auto-attack
+    /// or a reaction's return never does.
+    pub fn strike(&mut self, cast: &Cast, target: Entity, damage: f32, ability: AbilityType) {
+        let banked = self.grits.get_mut(cast.ent).map_or(0.0, |mut grit| grit.spend());
+        self.deal(cast.ent, target, damage + banked, ability, 0.0);
     }
 
     /// Queues a blow of `base_damage` from `source` on `target` as
@@ -458,6 +469,29 @@ mod tests {
         assert!(used(&ask(&mut app, defender, AbilityType::Counter, None), AbilityType::Counter));
         let left: Vec<Duration> = app.world().get::<ReactionQueue>(defender).unwrap().threats.iter().map(|threat| threat.inserted_at).collect();
         assert_eq!(left, vec![span * 4], "the front and the one landing within its span are taken; the later one stands");
+    }
+
+    #[test]
+    fn grit_banks_a_blow_let_land_and_the_next_skill_spends_it() {
+        let mut app = arena();
+        let gritty = actor(&mut app, Side::PLAYERS, 0);
+        let attacker = actor(&mut app, Side::WILD, 1);
+        app.world_mut().entity_mut(gritty).insert(ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0));
+        app.world_mut().entity_mut(attacker).insert(Heading::from_hex(Qrz { q: -1, r: 0, z: 0 }));
+        app.update();
+        let bank = |app: &App| app.world().get::<Grit>(gritty).unwrap().bank;
+
+        assert!(used(&ask(&mut app, attacker, AbilityType::Overpower, Some(gritty)), AbilityType::Overpower));
+        assert_eq!(bank(&app), 0.0, "a blow still in the queue banks nothing");
+        app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: gritty } });
+        app.update();
+        let banked = bank(&app);
+        assert!(banked > 0.0, "let land, a share of it is banked");
+
+        assert!(used(&ask(&mut app, gritty, AbilityType::AutoAttack, Some(attacker)), AbilityType::AutoAttack));
+        assert_eq!(bank(&app), banked, "a swing leaves the bank be");
+        assert!(used(&ask(&mut app, gritty, AbilityType::Overpower, Some(attacker)), AbilityType::Overpower));
+        assert_eq!(bank(&app), 0.0, "a skill strikes with it");
     }
 
     #[test]

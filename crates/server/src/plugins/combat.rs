@@ -31,8 +31,7 @@ impl Plugin for CombatPlugin {
             common_bevy::systems::combat::recovery::global_recovery_system, // Count every recovery down
             reaction_queue::process_expired_threats,
             reaction_queue::tick_dots,
-            combat::release_grit,
-            combat::time_swings,
+            combat::bank_in_combat,
         ));
 
         app.add_systems(Update, (

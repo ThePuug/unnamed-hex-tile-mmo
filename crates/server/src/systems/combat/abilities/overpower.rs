@@ -7,6 +7,6 @@ use super::{Abilities, AbilityFailReason, Cast};
 /// and a half times its Force.
 pub fn strike(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let (target, _) = cast.struck()?;
-    abilities.deal(cast.ent, target, cast.attrs.force() * 1.5, AbilityType::Overpower, 0.0);
+    abilities.strike(cast, target, cast.attrs.force() * 1.5, AbilityType::Overpower);
     Ok(Some(target))
 }

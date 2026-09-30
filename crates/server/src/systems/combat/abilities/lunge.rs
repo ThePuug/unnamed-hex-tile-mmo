@@ -26,7 +26,7 @@ pub fn strike(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
         leap::slide(cast.ent, landing, charge_ms, None, &mut abilities.commands, &mut abilities.writer);
     }
     let force = cast.attrs.force();
-    abilities.deal(cast.ent, target, force * tuning.lunge_force, AbilityType::Lunge, 0.0);
+    abilities.strike(cast, target, force * tuning.lunge_force, AbilityType::Lunge);
     abilities.deal(cast.ent, target, 0.0, AbilityType::Lunge, force * tuning.lunge_dot);
     Ok(Some(target))
 }

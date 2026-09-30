@@ -18,7 +18,7 @@ pub fn strike(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
     let at = abilities.game_now();
     abilities.commands.entity(cast.ent).insert(VolleyBurst { at, leapt: false });
     for _ in 0..tuning.volley_shots {
-        abilities.deal(cast.ent, target, cast.attrs.tempo() * tuning.volley_precision, AbilityType::Volley, 0.0);
+        abilities.strike(cast, target, cast.attrs.tempo() * tuning.volley_precision, AbilityType::Volley);
     }
     Ok(Some(target))
 }

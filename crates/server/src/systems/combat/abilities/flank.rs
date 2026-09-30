@@ -59,6 +59,6 @@ pub fn strike(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
         abilities.commands.entity(ent).insert(AssignedHex(landing));
     }
 
-    abilities.deal(ent, target, cast.attrs.endurance() * tuning.flank_endurance, AbilityType::Flank, 0.0);
+    abilities.strike(cast, target, cast.attrs.endurance() * tuning.flank_endurance, AbilityType::Flank);
     Ok(Some(target))
 }

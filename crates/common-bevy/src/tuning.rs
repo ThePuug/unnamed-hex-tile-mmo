@@ -64,9 +64,10 @@ pub struct Tuning {
     /// in degrees, by its Grace
     pub grace_arc_min: f32,
     pub grace_arc_max: f32,
-    /// Share of its health an actor loses at most in any second, at each Grit
-    /// tier, T0 to T3; everything at T0
-    pub grit_cap: [f32; 4],
+    /// Share of each blow an actor lets land that it banks for its next
+    /// skill, by its Grit
+    pub grit_bank_min: f32,
+    pub grit_bank_max: f32,
 
     // --- Contest: what a relative advantage wins ---
     /// Advantage in points that wins half of an effect's ceiling; every
@@ -199,7 +200,8 @@ impl Tuning {
         awareness_span_max: 1.0,
         grace_arc_min: 60.0,
         grace_arc_max: 150.0,
-        grit_cap: [f32::INFINITY, 0.4, 0.3, 0.28],
+        grit_bank_min: 0.0,
+        grit_bank_max: 0.3,
         contest_scale: 800.0,
         contest_per_level: 15.0,
         concentration_hold: 1.0,
@@ -297,21 +299,17 @@ impl Tuning {
     }
 
     /// Sets the knob `name` from text, as the arena's command line gives it.
-    /// A tier's four values are `name_0` to `name_3` (`grit_cap_2=0.25`).
     /// Errs on an unknown knob or a value that does not parse.
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
         let number = value.parse::<f32>().map_err(|_| format!("{name} takes a number, not {value}"))?;
-        let tier = |base: &str| name.strip_prefix(base).and_then(|rest| rest.strip_prefix('_')).and_then(|i| i.parse::<usize>().ok()).filter(|i| *i < 4);
-        if let Some(i) = tier("grit_cap") {
-            self.grit_cap[i] = number;
-            return Ok(());
-        }
         let knob = match name {
             "base_interval" => &mut self.base_interval,
             "awareness_span_min" => &mut self.awareness_span_min,
             "awareness_span_max" => &mut self.awareness_span_max,
             "grace_arc_min" => &mut self.grace_arc_min,
             "grace_arc_max" => &mut self.grace_arc_max,
+            "grit_bank_min" => &mut self.grit_bank_min,
+            "grit_bank_max" => &mut self.grit_bank_max,
             "tempo_ceiling" => &mut self.tempo_ceiling,
             "potency_base" => &mut self.potency_base,
             "potency_per_point" => &mut self.potency_per_point,
@@ -431,20 +429,11 @@ mod tests {
         let mut tuning = Tuning::default();
         tuning.set("lunge_pierce", "0.25").unwrap();
         tuning.set("volley_shots", "2").unwrap();
-        tuning.set("grit_cap_2", "0.25").unwrap();
+        tuning.set("grit_bank_max", "0.25").unwrap();
         assert_eq!(tuning.lunge_pierce, 0.25);
         assert_eq!(tuning.volley_shots, 2);
-        assert_eq!(tuning.grit_cap[2], 0.25);
+        assert_eq!(tuning.grit_bank_max, 0.25);
         assert!(tuning.set("lunge_pierce", "much").is_err());
-        assert!(tuning.set("grit_cap_4", "1").is_err());
         assert!(tuning.set("no_such_knob", "1").is_err());
-    }
-
-    #[test]
-    fn grit_holds_more_back_with_each_tier() {
-        let tuning = Tuning::default();
-        for t in 0..3 {
-            assert!(tuning.grit_cap[t] > tuning.grit_cap[t + 1]);
-        }
     }
 }

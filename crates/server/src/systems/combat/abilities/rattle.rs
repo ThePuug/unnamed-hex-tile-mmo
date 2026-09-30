@@ -19,6 +19,6 @@ pub fn strike(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
     let (target, _) = cast.struck()?;
     let held = Status::stacks_of(abilities.statuses.get(target).ok());
     let damage = cast.health_max * tuning.rattle_health * (1.0 + tuning.rattle_growth * held as f32);
-    abilities.deal(cast.ent, target, damage, AbilityType::Rattle, 0.0);
+    abilities.strike(cast, target, damage, AbilityType::Rattle);
     Ok(Some(target))
 }

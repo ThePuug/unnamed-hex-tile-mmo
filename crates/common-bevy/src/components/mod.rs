@@ -476,7 +476,7 @@ impl ActorAttributes {
     pub fn ferocity(&self) -> CommitmentTier { self.tier(Attribute::Might) }
     /// Grace, Agility: the arc it strikes within (`arc`)
     pub fn grace(&self) -> CommitmentTier { self.tier(Attribute::Agility) }
-    /// Grit, Vitality: the most of its health lost in any second (`grit_cap`)
+    /// Grit, Vitality: the share of each blow it lets land that it banks (`grit_bank`)
     pub fn grit(&self) -> CommitmentTier { self.tier(Attribute::Vitality) }
     /// Preparation, Discipline: its index is how many reactions the actor
     /// may use in any one recovery
@@ -575,11 +575,12 @@ impl ActorAttributes {
         1.0 + crate::tuning::tuning().concentration_hold * self.share(Attribute::Resolve)
     }
 
-    /// The most of its health this actor loses in any second
-    /// (`components::grit::Grit`): `Tuning::grit_cap` by its Grit tier, all of
-    /// it at T0. What would pass it lands in the seconds after.
-    pub fn grit_cap(&self) -> f32 {
-        crate::tuning::tuning().grit_cap[self.grit().index()]
+    /// The share of each blow this actor lets land that it banks for its
+    /// next skill to strike with (`components::grit::Grit`), by its Grit:
+    /// `Tuning::grit_bank_min` to `grit_bank_max`.
+    pub fn grit_bank(&self) -> f32 {
+        let tuning = crate::tuning::tuning();
+        self.grit().between(tuning.grit_bank_min, tuning.grit_bank_max)
     }
 
     /// The swings banked behind one that has `waited` since it came due,
