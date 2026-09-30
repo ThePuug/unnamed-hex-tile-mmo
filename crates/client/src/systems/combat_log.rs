@@ -60,7 +60,6 @@ pub fn setup(
 pub fn on_damage_applied(
     mut commands: Commands,
     content_query: Query<Entity, With<CombatLogContent>>,
-    entry_query: Query<Entity, With<CombatLogEntry>>,
     entity_type_query: Query<&EntityType>,
     viewed: Query<Entity, With<crate::components::Viewed>>,
     mut event_reader: MessageReader<common_bevy::message::Do>,
@@ -76,14 +75,6 @@ pub fn on_damage_applied(
 
     for event in event_reader.read() {
         if let GameEvent::ApplyDamage { ent, damage, source, .. } = event.event {
-            // Enforce max entries - despawn oldest if at capacity
-            let current_entries: Vec<_> = entry_query.iter().collect();
-            if current_entries.len() >= MAX_ENTRIES {
-                if let Some(&oldest) = current_entries.first() {
-                    commands.entity(oldest).despawn();
-                }
-            }
-
             // Resolve entity names using EntityType::display_name()
             let source_name = entity_type_query.get(source)
                 .map(|et| et.display_name())
@@ -123,7 +114,6 @@ pub fn on_damage_applied(
 pub fn on_queue_cleared(
     mut commands: Commands,
     content_query: Query<Entity, With<CombatLogContent>>,
-    entry_query: Query<Entity, With<CombatLogEntry>>,
     entity_type_query: Query<&EntityType>,
     mut event_reader: MessageReader<common_bevy::message::Do>,
 ) {
@@ -135,14 +125,6 @@ pub fn on_queue_cleared(
 
     for event in event_reader.read() {
         if let GameEvent::ClearQueue { ent, .. } = event.event {
-            // Enforce max entries
-            let current_entries: Vec<_> = entry_query.iter().collect();
-            if current_entries.len() >= MAX_ENTRIES {
-                if let Some(&oldest) = current_entries.first() {
-                    commands.entity(oldest).despawn();
-                }
-            }
-
             // Resolve entity name using EntityType::display_name()
             let entity_name = entity_type_query.get(ent)
                 .map(|et| et.display_name())
@@ -163,19 +145,17 @@ pub fn on_queue_cleared(
     }
 }
 
-/// Maintain log: enforce max entries
-/// Runs every frame to check for overflow
+/// Holds the log to `MAX_ENTRIES`, the oldest going first: the one place
+/// it is capped, once a frame, so no entry is taken twice.
 pub fn maintain_log(
     mut commands: Commands,
-    entry_query: Query<Entity, With<CombatLogEntry>>,
+    content_query: Query<&Children, With<CombatLogContent>>,
+    entry_query: Query<(), With<CombatLogEntry>>,
 ) {
-    // Enforce max entries (safety check in case events spawn too fast)
-    let entries: Vec<_> = entry_query.iter().collect();
-    if entries.len() > MAX_ENTRIES {
-        let excess = entries.len() - MAX_ENTRIES;
-        for &entity in entries.iter().take(excess) {
-            commands.entity(entity).despawn();
-        }
+    let Ok(children) = content_query.single() else { return };
+    let entries: Vec<Entity> = children.iter().filter(|&e| entry_query.contains(e)).collect();
+    for &entity in entries.iter().take(entries.len().saturating_sub(MAX_ENTRIES)) {
+        commands.entity(entity).despawn();
     }
 }
 
