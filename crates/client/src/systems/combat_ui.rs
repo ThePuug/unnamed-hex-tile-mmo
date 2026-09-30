@@ -6,12 +6,21 @@ use crate::{
     systems::{closeup::CloseupCamera, target_frame::{Lane, LANES}},
 };
 
+/// Where a `Node` goes to be drawn at `world`, or None where that is off
+/// screen. The camera gives the window's pixels; a node's are the UI's,
+/// which `UiScale` scales, so a node placed by the window's lands short of
+/// its mark in a window smaller than the monitor.
+fn node_at(camera: &Camera, camera_transform: &GlobalTransform, scale: &UiScale, world: Vec3) -> Option<Vec2> {
+    camera.world_to_viewport(camera_transform, world).ok().map(|at| at / scale.0)
+}
+
 /// System to update floating text (damage numbers)
 /// Projects world position to screen space, moves text upward, fades out, and despawns
 pub fn update_floating_text(
     mut commands: Commands,
     mut query: Query<(Entity, &mut crate::components::FloatingText, &mut Node, &mut TextColor)>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
+    scale: Res<UiScale>,
     time: Res<Time>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
@@ -32,9 +41,9 @@ pub fn update_floating_text(
         floating_text.world_position.y += floating_text.velocity * delta;
 
         // Project world position to screen space
-        if let Ok(viewport_pos) = camera.world_to_viewport(camera_transform, floating_text.world_position) {
-            node.left = Val::Px(viewport_pos.x);
-            node.top = Val::Px(viewport_pos.y);
+        if let Some(at) = node_at(camera, camera_transform, &scale, floating_text.world_position) {
+            node.left = Val::Px(at.x);
+            node.top = Val::Px(at.y);
         } else {
             // Position is behind camera or off-screen, hide it
             node.left = Val::Px(-1000.0);
@@ -130,6 +139,7 @@ pub fn update_world_bars(
     targets: Query<(&common_bevy::components::resources::Health, Option<&common_bevy::components::recovery::GlobalRecovery>, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
     viewed: Query<(&Target, Option<&AllyTarget>), With<crate::components::Viewed>>,
+    scale: Res<UiScale>,
     time: Res<Time>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
@@ -158,7 +168,7 @@ pub fn update_world_bars(
 
         // Over the target's head, centred on it
         let world_pos = transform.translation + Vec3::new(0.0, 1.5, 0.0);
-        let Ok(at) = camera.world_to_viewport(camera_transform, world_pos) else {
+        let Some(at) = node_at(camera, camera_transform, &scale, world_pos) else {
             node.left = Val::Px(OFF_SCREEN);
             continue;
         };
@@ -181,6 +191,7 @@ pub fn update_threat_queue_dots(
     queues: Query<(&common_bevy::components::reaction_queue::ReactionQueue, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
     viewed: Query<(&Target, Option<&AllyTarget>), With<crate::components::Viewed>>,
+    scale: Res<UiScale>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
         return;
@@ -201,7 +212,7 @@ pub fn update_threat_queue_dots(
 
         // Above the health bar, its left edge on the bar's
         let world_pos = transform.translation + Vec3::new(0.0, 2.1, 0.0);
-        let Ok(at) = camera.world_to_viewport(camera_transform, world_pos) else {
+        let Some(at) = node_at(camera, camera_transform, &scale, world_pos) else {
             node.left = Val::Px(OFF_SCREEN);
             continue;
         };
