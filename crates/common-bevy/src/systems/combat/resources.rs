@@ -49,6 +49,11 @@ pub fn regenerate_resources(
     const MAX_DT_SECS: f32 = 1.0;
 
     for (mut health, mut stamina, mut mana, combat_state, returning_opt) in &mut query {
+        // The dead regenerate nothing, in combat or out
+        if health.state <= 0.0 {
+            continue;
+        }
+
         // Calculate time delta for this tick
         let dt_stamina = current_time.saturating_sub(stamina.last_update).as_secs_f32().min(MAX_DT_SECS);
         let dt_mana = current_time.saturating_sub(mana.last_update).as_secs_f32().min(MAX_DT_SECS);
@@ -214,6 +219,26 @@ mod tests {
 
     /// Resource Regeneration During Combat
     /// Stamina and mana MUST regenerate during combat.
+    #[test]
+    fn the_dead_regenerate_nothing() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_secs(1));
+        world.insert_resource(time);
+        let body = world.spawn((
+            Health { state: 0.0, step: 0.0, max: 100.0 },
+            Stamina { state: 0.0, step: 0.0, max: 100.0, regen_rate: 10.0, last_update: std::time::Duration::ZERO },
+            Mana { state: 0.0, step: 0.0, max: 100.0, regen_rate: 10.0, last_update: std::time::Duration::ZERO },
+            CombatState { in_combat: false, last_action: std::time::Duration::ZERO },
+        )).id();
+
+        world.run_system_once(regenerate_resources).unwrap();
+
+        assert_eq!(world.get::<Health>(body).unwrap().state, 0.0, "out of combat, still dead");
+        assert_eq!(world.get::<Stamina>(body).unwrap().state, 0.0);
+    }
+
     #[test]
     fn test_stamina_regenerates_in_combat() {
         let regen_rate = calculate_stamina_regen_rate(&test_attrs_simple(0, 0));
