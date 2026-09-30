@@ -173,7 +173,6 @@ fn main() {
         combat::handle_insert_threat,
         combat::handle_apply_damage,
         combat::handle_clear_queue,
-        combat::handle_ability_failed,
         common_bevy::systems::world::try_incremental,
         common_bevy::systems::world::do_incremental,
         // A Loc that arrives with a slide must see the Displacing marker the

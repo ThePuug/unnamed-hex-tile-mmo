@@ -118,19 +118,6 @@ pub fn handle_clear_queue(
     }
 }
 
-/// Client system to handle AbilityFailed events
-/// Rolls back optimistic prediction when server rejects ability use
-pub fn handle_ability_failed(
-    mut reader: MessageReader<Do>,
-) {
-    for event in reader.read() {
-        if let GameEvent::AbilityFailed { ent: _, reason: _ } = &event.event {
-            // TODO Phase 6: Show error message in UI
-            // For now, server will send corrective Stamina and ClearQueue events
-        }
-    }
-}
-
 /// Client passive auto-attack system for players
 /// Automatically sends AutoAttack Try events when player has an adjacent target
 /// Runs periodically (every 500ms) to check for auto-attack opportunities
