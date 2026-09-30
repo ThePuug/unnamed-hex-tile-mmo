@@ -141,6 +141,7 @@ fn main() {
         actor::do_spawn,
         movement::apply_intent,
         movement::apply_displace,
+        movement::end_displace,
         actor::try_gcd,
         actor::update,
         actor_dead_visibility::update_dead_visibility,
@@ -177,8 +178,8 @@ fn main() {
         combat::handle_ability_failed,
         common_bevy::systems::world::try_incremental,
         common_bevy::systems::world::do_incremental,
-        // A Loc that ends a slide must see the Displacing marker the slide
-        // inserted, so the slide handler runs (and its commands apply) first.
+        // A Loc that arrives with a slide must see the Displacing marker the
+        // slide inserted, so the slide handler runs (and its commands apply) first.
         movement::do_loc.after(movement::apply_displace),
     ));
 

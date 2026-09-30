@@ -279,8 +279,10 @@ Ordering appears in about twenty places, most of it UI setup chaining off
 `camera::setup` and sequencing internal to one plugin. These two are the ones
 that break loudly:
 
-- `movement::do_loc.after(movement::apply_displace)` — a `Loc` that ends a
-  slide must see the `Displacing` marker the slide inserted, or it snaps.
+- `movement::do_loc.after(movement::apply_displace)` — a `Loc` that arrives
+  with a slide must see the `Displacing` marker the slide inserted, or it
+  snaps. The slide ends on its own time (`end_displace`), never on the `Loc`,
+  which the server sends with it.
 - `cover::draw::init_pipelines.after(MeshPipelineSystems)` — `MeshPipeline`
   is itself built in `RenderStartup`, so a system that clones it there finds
   no resource without the pin. Every render pipeline built on the mesh

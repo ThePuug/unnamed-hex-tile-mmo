@@ -180,9 +180,10 @@ pub fn apply_intent(
 
 /// Starts an ability displacement: a terrain-following slide to the
 /// destination over its duration, for the local player and remote entities
-/// alike. `Displacing` marks it until the matching `Loc` arrives.
+/// alike. `Displacing` marks it for that long (`end_displace`).
 pub fn apply_displace(
     origin: Res<RenderOrigin>,
+    time: Res<Time>,
     mut commands: Commands,
     mut reader: MessageReader<Do>,
     mut query: Query<(&Loc, &mut VisualPosition)>,
@@ -221,19 +222,29 @@ pub fn apply_displace(
         }
 
         if let Ok(mut e) = commands.get_entity(ent) {
-            e.insert(Displacing { destination, duration_ms });
+            e.insert(Displacing { destination, duration_ms, ends_at: time.elapsed() + Duration::from_millis(duration_ms as u64) });
+        }
+    }
+}
+
+/// Ends each slide whose time is up, handing what is drawn back to what
+/// moves it otherwise.
+pub fn end_displace(time: Res<Time>, mut commands: Commands, query: Query<(Entity, &Displacing)>) {
+    for (ent, displacing) in &query {
+        if time.elapsed() >= displacing.ends_at {
+            commands.entity(ent).try_remove::<Displacing>();
         }
     }
 }
 
 /// Applies a `Loc` update to the entity's position and visual. A slide in
-/// progress ends when its destination arrives and ignores tiles short of it;
+/// progress re-anchors the position when its destination arrives, leaving
+/// what is drawn to the slide, and ignores tiles short of it;
 /// a jump of two tiles or more snaps; a simulated remote entity is re-anchored
 /// to the tile, keeping its world position unless it has drifted; the local
 /// player keeps its confirmed position, which carries its own tile; and an
 /// entity nothing drives settles to the tile centre.
 pub fn do_loc(
-    mut commands: Commands,
     mut reader: MessageReader<Do>,
     mut query: Query<(&mut Loc, &mut Position, &mut VisualPosition, Option<&Displacing>, Option<&RemoteMotion>)>,
     buffers: Res<InputQueues>,
@@ -252,9 +263,6 @@ pub fn do_loc(
 
         if let Some(displacing) = displacing {
             if loc.flat_distance(&displacing.destination) == 0 {
-                if let Ok(mut e) = commands.get_entity(ent) {
-                    e.remove::<Displacing>();
-                }
                 *position = Position::at_tile(*loc);
             }
         } else if loc0.flat_distance(&loc) >= TELEPORT_THRESHOLD_HEXES {
