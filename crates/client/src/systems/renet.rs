@@ -54,6 +54,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::CoverChanged { .. } => "CoverChanged",
         Event::Loot { .. } => "Loot",
         Event::Activity { .. } => "Activity",
+        Event::View { .. } => "View",
         _ => "Other",
     }
 }
@@ -109,6 +110,23 @@ pub fn write_do(
                 buffers.extend_one((ent, InputQueue {
                     queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into(), ..default() }));
                 do_writer.write(Do { event: Event::Init { ent, dt }});
+            }
+
+            // The client now sees the world as an actor it does not control:
+            // its character left the world to view, and goes from here too,
+            // for a server Despawn of the local player is kept for respawn
+            Do { event: Event::View { ent } } => {
+                let Some(&viewed) = l2r.get_by_right(&ent) else {
+                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
+                    continue
+                };
+                let players: Vec<Entity> = buffers.entities().copied().collect();
+                for player in players {
+                    buffers.remove(&player);
+                    l2r.remove_by_left(&player);
+                    commands.entity(player).despawn();
+                }
+                do_writer.write(Do { event: Event::View { ent: viewed } });
             }
 
             // insert l2r entry when spawning an Actor
@@ -383,6 +401,10 @@ pub fn send_try(
             }
             Event::Play | Event::Leave => {
                 conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap());
+            }
+            Event::View { ent } => {
+                let Some(&ent) = l2r.get_by_left(ent) else { continue };
+                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::View { ent } }, bincode::config::legacy()).unwrap());
             }
             Event::Ping { client_time } => {
                 conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Ping {

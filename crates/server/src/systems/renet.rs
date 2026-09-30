@@ -31,10 +31,16 @@ use crate::network::{ServerNet, NetServerEvent};
 /// presence: a client connects to its character select, enters when it
 /// asks to play, and may leave and enter again on the one connection. A
 /// disconnect leaves the world too.
+///
+/// A client may instead view an actor: its lobby entry is then that actor,
+/// which streams the world to it and sends it what an owner sees, while
+/// nothing it sends controls it. Its character left the world to view, and
+/// leaving the view leaves the actor as it was.
 #[derive(Event, Debug)]
 pub enum Presence {
     Enter { client_id: ::renet::ClientId },
     Leave { client_id: ::renet::ClientId },
+    View { client_id: ::renet::ClientId, ent: Entity },
 }
 
 pub fn do_manage_connections(
@@ -65,6 +71,8 @@ pub fn do_presence(
     time: Res<Time>,
     runtime: Res<RunTime>,
     spawn_point: Res<common_bevy::components::resources::SpawnPoint>,
+    characters: Query<(), With<PlayerControlled>>,
+    actors: Query<(&EntityType, &Loc, Option<&ActorAttributes>), Without<RespawnTimer>>,
 ) {
     match trigger.event() {
         Presence::Enter { client_id } => {
@@ -193,34 +201,80 @@ pub fn do_presence(
             Presence::Leave { client_id } => {
                 let client_id = *client_id;
                 let Some((_, ent)) = lobby.remove_by_left(&client_id) else { return };
-                info!("Player {} left the world", client_id);
-                // What is queued for the character goes with it: a chunk
-                // arriving after the client left would stand in its map
-                // with nothing to evict it.
-                conn.drop_queued(client_id);
-                buffers.remove(&ent);
-                guards.0.remove(&ent);
-
-                // Send Despawn to all players who had this entity loaded
-                if let Ok(loaded_by) = loaded_by_query.get(ent) {
-                    let bytes = bincode::serde::encode_to_vec(
-                        Do { event: Event::Despawn { ent }},
-                        bincode::config::legacy()).unwrap();
-                    for &player_ent in &loaded_by.players {
-                        if let Some(player_client_id) = lobby.get_by_right(&player_ent) {
-                            conn.send_reliable(*player_client_id, DefaultChannel::ReliableOrdered, bytes.clone());
-                        }
-                    }
+                leave(client_id, ent, characters.contains(ent), &mut commands, &mut conn, &lobby, &mut buffers, &mut guards, &mut loaded_by_query);
+            }
+            Presence::View { client_id, ent: viewed } => {
+                let (client_id, viewed) = (*client_id, *viewed);
+                let Ok((&typ, &loc, attrs)) = actors.get(viewed) else { return };
+                if let Some((_, ent)) = lobby.remove_by_left(&client_id) {
+                    leave(client_id, ent, characters.contains(ent), &mut commands, &mut conn, &lobby, &mut buffers, &mut guards, &mut loaded_by_query);
                 }
-
-                // Remove disconnected player from all LoadedBy sets
-                for mut loaded_by in loaded_by_query.iter_mut() {
-                    loaded_by.players.remove(&ent);
-                }
-
-                commands.entity(ent).despawn();
+                info!("Client {} views {}", client_id, viewed);
+                lobby.insert(client_id, viewed);
+                let message = bincode::serde::encode_to_vec(
+                    Do { event: Event::View { ent: viewed }},
+                    bincode::config::legacy()).unwrap();
+                conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
+                // Streaming starts from the actor as it does from a character
+                // entering: `do_spawn_discover` sends the chunks round it,
+                // and AOI from its `Loc` changing, so what stands round it comes too
+                commands.entity(viewed).insert((PlayerDiscoveryState::default(), loc));
+                writer.write(Do { event: Event::Spawn { ent: viewed, typ, qrz: *loc, attrs: attrs.copied() } });
             }
         }
+}
+
+
+/// Takes `ent`, the lobby entry `client_id` just left, out of the client's
+/// hands: a character leaves the world, despawned for everyone who saw it;
+/// a viewed actor stays as it was, only no longer streaming to the client.
+#[allow(clippy::too_many_arguments)]
+fn leave(
+    client_id: ::renet::ClientId,
+    ent: Entity,
+    character: bool,
+    commands: &mut Commands,
+    conn: &mut ServerNet,
+    lobby: &Lobby,
+    buffers: &mut InputQueues,
+    guards: &mut crate::systems::input::InputGuards,
+    loaded_by_query: &mut Query<&mut common_bevy::components::loaded_by::LoadedBy>,
+) {
+    info!("Player {} left the world", client_id);
+    // What is queued for the character goes with it: a chunk
+    // arriving after the client left would stand in its map
+    // with nothing to evict it.
+    conn.drop_queued(client_id);
+
+    // Nothing is loaded on the client's behalf any more
+    for mut loaded_by in loaded_by_query.iter_mut() {
+        loaded_by.players.remove(&ent);
+    }
+
+    if !character {
+        commands.entity(ent).try_remove::<(
+            PlayerDiscoveryState,
+            crate::systems::actor::VisibleChunkCache,
+            crate::systems::summary::VisibleSummaryCache,
+        )>();
+        return;
+    }
+    buffers.remove(&ent);
+    guards.0.remove(&ent);
+
+    // Send Despawn to all players who had this entity loaded
+    if let Ok(loaded_by) = loaded_by_query.get(ent) {
+        let bytes = bincode::serde::encode_to_vec(
+            Do { event: Event::Despawn { ent }},
+            bincode::config::legacy()).unwrap();
+        for &player_ent in &loaded_by.players {
+            if let Some(player_client_id) = lobby.get_by_right(&player_ent) {
+                conn.send_reliable(*player_client_id, DefaultChannel::ReliableOrdered, bytes.clone());
+            }
+        }
+    }
+
+    commands.entity(ent).despawn();
 }
 
 pub fn write_try(
@@ -228,40 +282,43 @@ pub fn write_try(
     mut writer: MessageWriter<Try>,
     mut conn: ResMut<ServerNet>,
     lobby: Res<Lobby>,
+    characters: Query<(), With<PlayerControlled>>,
 ) {
     for client_id in conn.clients_id() {
+        // What the client controls: its character, never an actor it views
+        let character = lobby.get_by_left(&client_id).copied().filter(|&ent| characters.contains(ent));
         while let Some(serialized) = conn.receive_message(client_id, DefaultChannel::ReliableOrdered) {
             let (message, _): (Try, _) = bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
             match message {
                 Try { event: Event::Input { ent: _, key_bits, dt, seq } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::Input { ent, key_bits, dt, seq }});
                 }
                 Try { event: Event::Gcd { typ, .. } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::Gcd { ent, typ }});
                 }
                 Try { event: Event::Spawn { ent, .. } } => {
                     writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                 }
                 Try { event: Event::Gather { ent: _, q, r, slot } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::Gather { ent, q, r, slot }});
                 }
                 Try { event: Event::Take { ent: _, entry } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::Take { ent, entry }});
                 }
                 Try { event: Event::CloseLoot { ent: _ } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::CloseLoot { ent }});
                 }
                 Try { event: Event::Drop { ent: _, kind, count } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::Drop { ent, kind, count }});
                 }
                 Try { event: Event::UseAbility { ent: _, ability, target } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::UseAbility { ent, ability, target }});
                 }
                 Try { event: Event::Ping { client_time } } => {
@@ -272,23 +329,23 @@ pub fn write_try(
                     conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
                 }
                 Try { event: Event::Dismiss { ent: _ } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::Dismiss { ent }});
                 }
                 Try { event: Event::SetTierLock { ent: _, tier } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::SetTierLock { ent, tier }});
                 }
                 Try { event: Event::RespecAttributes { ent: _, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::RespecAttributes { ent, might_agility_axis, might_agility_spectrum, might_agility_shift, vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift, instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift }});
                 }
                 Try { event: Event::Wear { ent: _, item, on } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::Wear { ent, item, on }});
                 }
                 Try { event: Event::Teleport { ent: _, q, r } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
+                    let Some(ent) = character else { continue };
                     writer.write(Try { event: Event::Teleport { ent, q, r }});
                 }
                 Try { event: Event::SpawnDen { ent: _, archetype } } => {
@@ -304,6 +361,9 @@ pub fn write_try(
                 }
                 Try { event: Event::Leave } => {
                     commands.trigger(Presence::Leave { client_id });
+                }
+                Try { event: Event::View { ent } } => {
+                    commands.trigger(Presence::View { client_id, ent });
                 }
                 _ => {}
             }

@@ -204,7 +204,6 @@ use crate::{
 use common_bevy::{
     chunk::{self, loc_to_chunk, CHUNK_EXTENT_WU},
     components::{ *,
-        behaviour::PlayerControlled,
         entity_type::*,
     },
     message::{Event, *},
@@ -370,7 +369,7 @@ pub fn update(
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     server: Res<Server>,
     diagnostics_state: Res<DiagnosticsState>,
-    player_query: Query<&Loc, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
+    player_query: Query<&Loc, With<crate::components::Viewed>>,
 ) {
     let dt = diagnostics_state.lighting.at(server.current_time(time.elapsed().as_millis()));
     let dtd = (dt % DAY_MS) as f32 / DAY_MS as f32;
@@ -514,7 +513,7 @@ pub fn dispatch_summary_tasks(
     client_timers: Res<crate::resources::ClientTimers>,
     edges: Res<crate::resources::EdgeCenters>,
     origin: Res<crate::resources::RenderOrigin>,
-    player_query: Query<&Transform, (With<common_bevy::components::behaviour::PlayerControlled>, With<common_bevy::components::Actor>)>,
+    player_query: Query<&Transform, With<crate::components::Viewed>>,
     mut last_eval_pos: Local<Option<Vec3>>,
     mut last_eval_edges: Local<HashMap<u32, Vec2>>,
     mut backlog: Local<bool>,
@@ -798,7 +797,7 @@ pub fn update_terrain_cut(
     mut card_band: ResMut<crate::resources::CardBand>,
     time: Res<Time>,
     render_origin: Res<crate::resources::RenderOrigin>,
-    player_query: Query<&Transform, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
+    player_query: Query<&Transform, With<crate::components::Viewed>>,
     diagnostics_state: Res<DiagnosticsState>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {

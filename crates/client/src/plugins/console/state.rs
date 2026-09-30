@@ -87,6 +87,8 @@ pub enum MenuPath {
     SummaryRadius,
     #[cfg(feature = "admin")]
     SpawnDen,
+    #[cfg(feature = "admin")]
+    View,
 }
 
 /// The dens the console places, in menu order from numpad 1.
@@ -112,6 +114,8 @@ impl MenuPath {
             MenuPath::SummaryRadius => "Summary Radius",
             #[cfg(feature = "admin")]
             MenuPath::SpawnDen => "Spawn Den",
+            #[cfg(feature = "admin")]
+            MenuPath::View => "View",
         }
     }
 }

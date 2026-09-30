@@ -56,5 +56,7 @@ impl Plugin for DevConsolePlugin {
         );
         #[cfg(feature = "admin")]
         app.add_systems(Update, actions::send_spawn_den.after(actions::execute_console_actions));
+        #[cfg(feature = "admin")]
+        app.add_systems(Update, actions::send_view.after(actions::execute_console_actions));
     }
 }

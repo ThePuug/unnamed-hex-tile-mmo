@@ -10,6 +10,7 @@
 
 pub mod menu;
 mod screens;
+pub mod view;
 
 use std::time::Duration;
 
@@ -119,6 +120,10 @@ impl Plugin for ShellPlugin {
         app.init_resource::<Loading>();
         app.init_resource::<Entered>();
         app.init_resource::<screens::RttSamples>();
+        app.init_resource::<view::Viewing>();
+        app.init_resource::<view::Rejoin>();
+        app.add_systems(Update, (view::do_view, view::end_when_gone).chain().run_if(in_state(InWorld)));
+        app.add_systems(Update, view::rejoin.run_if(in_state(Stage::CharacterSelect)));
         app.add_systems(Startup, (menu::setup, screens::setup));
         app.add_systems(Update, (follow_link, menu::route_keys, menu::draw, screens::draw, screens::show_rtt));
         app.add_systems(Update, track_loading.run_if(in_state(Stage::Loading)));
@@ -230,8 +235,10 @@ fn leave_world(
     mut character: ResMut<CharacterPanelState>,
     mut character_view: Query<&mut Visibility, With<CharacterPanel>>,
     mut entered: ResMut<Entered>,
+    mut viewing: ResMut<view::Viewing>,
 ) {
     entered.0 = false;
+    viewing.0 = None;
     for entity in actors.iter().chain(world.iter()).chain(l2r.left_values().copied()) {
         commands.entity(entity).try_despawn();
     }

@@ -42,6 +42,12 @@ pub enum DevConsoleAction {
     /// Place a den of this archetype ahead of the player.
     #[cfg(feature = "admin")]
     SpawnDen(common_bevy::spatial_difficulty::EnemyArchetype),
+    /// See the world as the target of the actor the client sees as.
+    #[cfg(feature = "admin")]
+    ViewTarget,
+    /// Stop viewing: back as a fresh character.
+    #[cfg(feature = "admin")]
+    StopViewing,
 }
 
 /// System that executes console actions
@@ -176,6 +182,8 @@ pub fn execute_console_actions(
             DevConsoleAction::ReportTerrain => {}
             #[cfg(feature = "admin")]
             DevConsoleAction::SpawnDen(_) => {}
+            #[cfg(feature = "admin")]
+            DevConsoleAction::ViewTarget | DevConsoleAction::StopViewing => {}
         }
     }
 }
@@ -193,5 +201,36 @@ pub fn send_spawn_den(
         let Ok(ent) = player.single() else { continue };
         writer.write(common_bevy::message::Try { event: common_bevy::message::Event::SpawnDen { ent, archetype } });
         info!("Spawn den: {archetype:?}");
+    }
+}
+
+/// Asks the server to see the world as the target of the actor the client
+/// sees as, or stops the view.
+#[cfg(feature = "admin")]
+pub fn send_view(
+    mut reader: MessageReader<DevConsoleAction>,
+    mut writer: MessageWriter<common_bevy::message::Try>,
+    seer: Query<&common_bevy::components::target::Target, With<crate::components::Viewed>>,
+    mut next: ResMut<NextState<crate::plugins::shell::Stage>>,
+    mut entered: ResMut<crate::plugins::shell::Entered>,
+    mut rejoin: ResMut<crate::plugins::shell::view::Rejoin>,
+    mut viewing: ResMut<crate::plugins::shell::view::Viewing>,
+) {
+    use crate::plugins::shell::view;
+    for action in reader.read() {
+        match action {
+            DevConsoleAction::ViewTarget => {
+                let Some(ent) = seer.single().ok().and_then(|target| target.entity.or(target.last_target)) else {
+                    info!("View: nothing targeted");
+                    continue;
+                };
+                writer.write(common_bevy::message::Try { event: common_bevy::message::Event::View { ent } });
+                info!("View: {ent}");
+            }
+            DevConsoleAction::StopViewing if viewing.0.is_some() => {
+                view::stop(&mut writer, &mut next, &mut entered, &mut rejoin, &mut viewing);
+            }
+            _ => {}
+        }
     }
 }

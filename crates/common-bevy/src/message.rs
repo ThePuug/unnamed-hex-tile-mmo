@@ -161,6 +161,12 @@ pub enum Event {
     /// Client → Server: take this connection's character out of the world,
     /// keeping the connection open to play again.
     Leave,
+    /// Client → Server: see the world as the actor `ent`, without control:
+    /// the connection's character leaves the world while it views, and
+    /// `Leave` then `Play` bring a fresh one back. An admin request, as
+    /// ungated on the wire as `SpawnDen`.
+    /// Server → Client: this connection now sees the world as `ent`.
+    View { ent: Entity },
 }
 
 /// Types of abilities that can be used ( MVP ability set + Counter)

@@ -86,15 +86,15 @@ impl RenderOrigin {
 #[derive(Component)]
 pub struct OffWorld;
 
-/// Keeps the origin near the player: when the player's tile is more than
-/// `REBASE_TILES` from it, the origin moves to their tile and every rendered
+/// Keeps the origin near the actor the client sees as (`Viewed`): when its
+/// tile is more than `REBASE_TILES` from it, the origin moves there and every rendered
 /// root transform and every visual shifts by the difference in one pass,
 /// before anything reads them this frame. UI roots, the overlay camera and
 /// [`OffWorld`] roots are not of the world and stay.
 pub fn rebase_origin(
     mut origin: ResMut<RenderOrigin>,
     map: Res<Map>,
-    player: Query<&Position, With<common_bevy::components::behaviour::PlayerControlled>>,
+    player: Query<&Position, With<crate::components::Viewed>>,
     mut roots: Query<&mut Transform, (Without<ChildOf>, Without<Node>, Without<Camera2d>, Without<OffWorld>)>,
     mut visuals: Query<&mut VisualPosition>,
 ) {

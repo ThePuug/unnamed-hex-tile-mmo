@@ -122,10 +122,8 @@ pub fn request(
     if menu.open {
         return;
     }
-    let Ok((ent, mut position, mut heading, mut turn)) = player.single_mut() else {
-        warn!("gather: no single local player to gather with");
-        return;
-    };
+    // A view has no character, and nothing to gather with
+    let Ok((ent, mut position, mut heading, mut turn)) = player.single_mut() else { return };
     // An open loot window works the numpad while it is the panel opened
     // last.
     if window.entries.is_some() && focus.has(crate::systems::focus::Panel::Loot) {

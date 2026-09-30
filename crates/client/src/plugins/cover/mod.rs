@@ -671,7 +671,7 @@ fn update_cover(
     kit: Res<CoverKit>,
     mut summary_meshes: ResMut<crate::resources::SummaryMeshes>,
     origin: Res<crate::resources::RenderOrigin>,
-    player_query: Query<&Transform, (With<common_bevy::components::behaviour::PlayerControlled>, With<common_bevy::components::Actor>)>,
+    player_query: Query<&Transform, With<crate::components::Viewed>>,
     band: Res<crate::resources::CardBand>,
     #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {

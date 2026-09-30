@@ -94,6 +94,8 @@ pub fn handle_console_input(
         MenuPath::SummaryRadius => handle_summary_radius(&mut keyboard, &mut console, &mut action_writer),
         #[cfg(feature = "admin")]
         MenuPath::SpawnDen => handle_spawn_den_menu(&mut keyboard, &mut action_writer),
+        #[cfg(feature = "admin")]
+        MenuPath::View => handle_view_menu(&mut keyboard, &mut action_writer),
     }
 }
 
@@ -136,6 +138,13 @@ fn handle_root_menu(
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::SpawnDen;
         consumed = Some(KeyCode::Numpad5);
+    }
+
+    #[cfg(feature = "admin")]
+    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad6) {
+        console.history.push(console.current_menu.clone());
+        console.current_menu = MenuPath::View;
+        consumed = Some(KeyCode::Numpad6);
     }
 
     if let Some(key) = consumed {
@@ -305,6 +314,19 @@ fn handle_spawn_den_menu(
     for (key, (_, archetype)) in KEYS.into_iter().zip(super::state::DENS) {
         if keyboard.just_pressed(key) {
             action_writer.write(DevConsoleAction::SpawnDen(archetype));
+            keyboard.clear_just_pressed(key);
+        }
+    }
+}
+
+#[cfg(feature = "admin")]
+fn handle_view_menu(
+    keyboard: &mut ButtonInput<KeyCode>,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
+) {
+    for (key, action) in [(KeyCode::Numpad1, DevConsoleAction::ViewTarget), (KeyCode::Numpad2, DevConsoleAction::StopViewing)] {
+        if keyboard.just_pressed(key) {
+            action_writer.write(action);
             keyboard.clear_just_pressed(key);
         }
     }

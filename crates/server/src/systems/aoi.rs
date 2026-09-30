@@ -49,7 +49,7 @@ const EXIT_RADIUS_SQ: i64 = EXIT_RADIUS as i64 * EXIT_RADIUS as i64;
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn update_area_of_interest(
     changed_query: Query<
-        (Entity, &Loc, &NearestNeighbor, Option<&PlayerControlled>),
+        (Entity, &Loc, &NearestNeighbor),
         (Changed<Loc>, Without<RespawnTimer>),
     >,
     mut loaded_by_query: Query<&mut LoadedBy>,
@@ -75,8 +75,9 @@ pub fn update_area_of_interest(
 ) {
     if changed_query.is_empty() { return; }
     let _t = timings.scope("aoi");
-    for (ent, loc, _nn, player_controlled) in &changed_query {
-        let is_player = player_controlled.is_some();
+    for (ent, loc, _nn) in &changed_query {
+        // A client sees the world as it: its character, or an actor it views
+        let is_player = lobby.contains_right(&ent);
 
         // Step 1+2: Find nearby entities and handle enters
         buf_nearby.clear();

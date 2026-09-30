@@ -151,6 +151,13 @@ pub fn update_console_menu(
                         TextColor(Color::WHITE),
                     ));
 
+                    #[cfg(feature = "admin")]
+                    parent.spawn((
+                        Text::new("6. View"),
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+
                     parent.spawn((
                         Text::new(""),
                         TextFont { font_size: FontSize::Px(8.0), ..default() },
@@ -339,6 +346,27 @@ pub fn update_console_menu(
                     for (i, (label, _)) in super::state::DENS.iter().enumerate() {
                         parent.spawn((
                             Text::new(format!("{}. {label}", i + 1)),
+                            TextFont { font_size: FontSize::Px(16.0), ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    }
+
+                    parent.spawn((
+                        Text::new(""),
+                        TextFont { font_size: FontSize::Px(8.0), ..default() },
+                    ));
+
+                    parent.spawn((
+                        Text::new("0. Back"),
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                        TextColor(Color::srgb(0.8, 0.3, 0.3)),
+                    ));
+                }
+                #[cfg(feature = "admin")]
+                MenuPath::View => {
+                    for line in ["1. View Target", "2. Stop Viewing"] {
+                        parent.spawn((
+                            Text::new(line),
                             TextFont { font_size: FontSize::Px(16.0), ..default() },
                             TextColor(Color::WHITE),
                         ));
