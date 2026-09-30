@@ -1,7 +1,7 @@
 use bevy::prelude::*;
-use common_bevy::message::{AbilityFailReason, AbilityType};
+use common_bevy::message::AbilityType;
 
-use super::{Abilities, Cast};
+use super::{Abilities, AbilityFailReason, Cast};
 use crate::systems::combat::landing::VolleyBurst;
 
 /// Volley, the Kiter's signature: a burst of `Tuning::volley_shots` shots

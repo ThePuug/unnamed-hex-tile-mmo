@@ -41,7 +41,6 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::InsertThreat { .. } => "InsertThreat",
         Event::ApplyDamage { .. } => "ApplyDamage",
         Event::ClearQueue { .. } => "ClearQueue",
-        Event::AbilityFailed { .. } => "AbilityFailed",
         Event::UseAbility { .. } => "UseAbility",
         Event::Pong { .. } => "Pong",
         Event::MovementIntent { .. } => "MovementIntent",
@@ -192,7 +191,6 @@ pub fn write_do(
                 | Event::InsertThreat { .. }
                 | Event::ApplyDamage { .. }
                 | Event::ClearQueue { .. }
-                | Event::AbilityFailed { .. }
                 | Event::UseAbility { .. }
                 | Event::RespecAttributes { .. }
             ) } => {

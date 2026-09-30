@@ -1,7 +1,7 @@
 use bevy::prelude::*;
-use common_bevy::message::{AbilityFailReason, AbilityType};
+use common_bevy::message::AbilityType;
 
-use super::{Abilities, Cast};
+use super::{Abilities, AbilityFailReason, Cast};
 
 /// Overpower (W key): a heavy blow on a target beside the caster, for one
 /// and a half times its Force.

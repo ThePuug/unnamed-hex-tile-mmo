@@ -1,7 +1,6 @@
 use bevy::prelude::*;
-use common_bevy::message::AbilityFailReason;
 
-use super::{Abilities, Cast};
+use super::{Abilities, AbilityFailReason, Cast};
 use crate::systems::combat::leap;
 
 /// Damage a Disengage adds to its caster's next auto-attack, spent by that

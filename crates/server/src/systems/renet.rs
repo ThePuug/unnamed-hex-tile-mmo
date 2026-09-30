@@ -360,8 +360,7 @@ fn route(event: &Event) -> Option<(Entity, Route)> {
         | Event::ApplyDamage { ent, .. }
         | Event::ClearQueue { ent, .. }
         | Event::UseAbility { ent, .. } => Some((*ent, Route::Seen)),
-        Event::AbilityFailed { ent, .. }
-        | Event::Confirm { ent, .. }
+        Event::Confirm { ent, .. }
         | Event::RespecAttributes { ent, .. }
         | Event::Inventory { ent, .. }
         | Event::CoverChanged { ent, .. }
@@ -454,8 +453,6 @@ mod tests {
     #[test]
     fn what_only_its_owner_should_know_goes_to_its_owner_alone() {
         let ent = Entity::from_raw_u32(7).unwrap();
-        let reason = AbilityFailReason::OnCooldown;
-        assert_eq!(route(&Event::AbilityFailed { ent, reason }), Some((ent, Route::Owner)));
         assert_eq!(route(&Event::Loot { ent, entries: None }), Some((ent, Route::Owner)));
         assert_eq!(route(&Event::UseAbility { ent, ability: AbilityType::Lunge, target: None }), Some((ent, Route::Seen)));
         assert_eq!(route(&Event::Despawn { ent }), Some((ent, Route::Seen)));

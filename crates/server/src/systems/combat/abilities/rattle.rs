@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 use common_bevy::{
     components::status::Status,
-    message::{AbilityFailReason, AbilityType},
+    message::AbilityType,
 };
 
-use super::{Abilities, Cast};
+use super::{Abilities, AbilityFailReason, Cast};
 
 /// Rattle, the Juggernaut's signature: a strike on a target within melee
 /// reach that, as it lands (`landing::land`), adds a stack to its daze

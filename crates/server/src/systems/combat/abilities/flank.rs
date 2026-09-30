@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 use common_bevy::{
     components::{heading::Heading, hex_assignment::AssignedHex, AttackRange, Loc, Turn},
-    message::{AbilityFailReason, AbilityType},
+    message::AbilityType,
 };
 
-use super::{Abilities, Cast};
+use super::{Abilities, AbilityFailReason, Cast};
 use crate::systems::combat::leap;
 
 /// How long the circle to the target's back takes, however far round it

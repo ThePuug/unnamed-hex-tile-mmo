@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 use common_bevy::{
-    message::{AbilityFailReason, AbilityType, Event as GameEvent, Try},
+    message::{AbilityType, Event as GameEvent, Try},
     systems::combat::queue::create_threat,
 };
 
-use super::{Abilities, Cast};
+use super::{Abilities, AbilityFailReason, Cast};
 
 /// Counter: a reaction that clears as many threats from the front of the
 /// queue as the window holds. Each cleared threat goes back to its living

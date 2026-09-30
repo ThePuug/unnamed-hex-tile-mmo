@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 use common_bevy::{
-    message::{AbilityFailReason, AbilityType},
+    message::AbilityType,
     systems::combat::resources::LUNGE_RANGE,
 };
 
-use super::{Abilities, Cast};
+use super::{Abilities, AbilityFailReason, Cast};
 use crate::systems::combat::leap;
 
 /// Lunge (Q key): a charge over the ground to beside a target up to

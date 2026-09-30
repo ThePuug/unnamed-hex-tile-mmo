@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 use common_bevy::{
     components::status::Status,
-    message::{AbilityFailReason, AbilityType},
+    message::AbilityType,
 };
 
-use super::{disengage::Poised, Abilities, Cast};
+use super::{disengage::Poised, Abilities, AbilityFailReason, Cast};
 
 /// An auto-attack: a blow of the caster's auto damage on its target, free
 /// and outside the lockout, due on its own cadence (the gate's to check).

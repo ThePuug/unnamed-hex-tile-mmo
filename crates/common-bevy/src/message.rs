@@ -60,8 +60,6 @@ pub enum Event {
     /// Server → Client (Do): Ability was used successfully (apply recovery/synergies)
     /// target: Optional target entity (player's intended target, server validates)
     UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity> },
-    /// Server → Client: Ability usage failed
-    AbilityFailed { ent: Entity, reason: AbilityFailReason },
     /// Server → Client: Clear threats from queue
     ClearQueue { ent: Entity, clear_type: ClearType },
     /// Client → Server: Measure network latency (client timestamp)
@@ -171,7 +169,6 @@ impl Event {
             | Event::ApplyDamage { ent, .. }
             | Event::ResolveThreat { ent, .. }
             | Event::UseAbility { ent, .. }
-            | Event::AbilityFailed { ent, .. }
             | Event::ClearQueue { ent, .. }
             | Event::Dismiss { ent }
             | Event::SetTierLock { ent, .. }
@@ -256,17 +253,6 @@ impl AbilityType {
             AbilityType::AutoAttack | AbilityType::Rattle | AbilityType::Disengage | AbilityType::Volley | AbilityType::Flank => None,
         }
     }
-}
-
-/// Reasons why an ability usage might fail
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum AbilityFailReason {
-    InsufficientStamina,
-    NoTargets,
-    OnCooldown,
-    OutOfRange,
-    /// The target stands outside the attacker's facing cone
-    NotFacing,
 }
 
 /// Types of queue clears for reaction abilities

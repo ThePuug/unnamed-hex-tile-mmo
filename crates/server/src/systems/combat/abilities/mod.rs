@@ -48,7 +48,7 @@ use common_bevy::{
         ActorAttributes, AttackRange, Loc, Swing,
     },
     components::entity_type::EntityType,
-    message::{AbilityFailReason, AbilityType, ClearType, Component as MessageComponent, Do, Event as GameEvent, Try},
+    message::{AbilityType, ClearType, Component as MessageComponent, Do, Event as GameEvent, Try},
     plugins::nntree::NNTree,
     resources::map::Map,
     systems::{
@@ -61,6 +61,17 @@ use crate::systems::{behaviour::chase::Chase, combat::landing};
 
 /// How often auto-attacks and NPC signatures are looked at.
 const CHECK: Duration = Duration::from_millis(500);
+
+/// Why the gate refused an ability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AbilityFailReason {
+    InsufficientStamina,
+    NoTargets,
+    OnCooldown,
+    OutOfRange,
+    /// The target stands outside the caster's arc
+    NotFacing,
+}
 
 /// One use of an ability the gate has let through: who uses it, from where,
 /// and at whom.
@@ -135,19 +146,10 @@ pub fn use_abilities(mut reader: MessageReader<Try>, mut abilities: Abilities, m
 }
 
 impl Abilities<'_, '_> {
-    /// Uses `ability` for `ent` if the gate lets it, and tells `ent`'s
-    /// client why where it does not. Returns whether it was used.
+    /// Uses `ability` for `ent` if the gate lets it. Returns whether it was
+    /// used; a refusal is told to no one.
     pub fn ask(&mut self, ent: Entity, ability: AbilityType, asked: Option<Entity>) -> bool {
-        match self.cast(ent, ability, asked) {
-            Ok(()) => true,
-            Err(reason) => {
-                // A swing that is not due, or has nothing in reach, is no failure to report
-                if let Some(reason) = reason.filter(|_| ability != AbilityType::AutoAttack) {
-                    self.writer.write(Do { event: GameEvent::AbilityFailed { ent, reason } });
-                }
-                false
-            }
-        }
+        self.cast(ent, ability, asked).is_ok()
     }
 
     /// Swings for every actor whose auto-attack has come due at the hostile
@@ -354,11 +356,15 @@ mod tests {
         std::mem::take(&mut app.world_mut().resource_mut::<Said>().0)
     }
 
-    fn refused(said: &[GameEvent]) -> Option<AbilityFailReason> {
-        said.iter().find_map(|event| match event {
-            GameEvent::AbilityFailed { reason, .. } => Some(*reason),
-            _ => None,
-        })
+    /// Why the gate refuses `ent` the use of `ability`, asked of the gate
+    /// itself; None where it has nothing to say, or lets it through.
+    fn refused(app: &mut App, ent: Entity, ability: AbilityType, target: Option<Entity>) -> Option<AbilityFailReason> {
+        use bevy::ecs::system::RunSystemOnce;
+        app.world_mut()
+            .run_system_once(move |mut abilities: Abilities| abilities.cast(ent, ability, target))
+            .unwrap()
+            .err()
+            .flatten()
     }
 
     fn used(said: &[GameEvent], wanted: AbilityType) -> bool {
@@ -375,14 +381,14 @@ mod tests {
         let near = actor(&mut app, Side::WILD, 1);
         app.update();
 
-        let overpower = |app: &mut App, target| refused(&ask(app, caster, AbilityType::Overpower, target));
+        let overpower = |app: &mut App, target| refused(app, caster, AbilityType::Overpower, target);
         assert_eq!(overpower(&mut app, None), Some(AbilityFailReason::NoTargets), "no target named");
         assert_eq!(overpower(&mut app, Some(ally)), Some(AbilityFailReason::NoTargets), "an ally is no target");
         assert_eq!(overpower(&mut app, Some(far)), Some(AbilityFailReason::OutOfRange));
         assert_eq!(overpower(&mut app, Some(behind)), Some(AbilityFailReason::NotFacing));
 
         let said = ask(&mut app, caster, AbilityType::Overpower, Some(near));
-        assert!(used(&said, AbilityType::Overpower) && refused(&said).is_none());
+        assert!(used(&said, AbilityType::Overpower));
         let world = app.world();
         assert!(world.get::<Stamina>(caster).unwrap().state < 100.0, "it is paid for");
         assert!(world.get::<GlobalRecovery>(caster).is_some(), "and locks its user out");
@@ -400,14 +406,13 @@ mod tests {
         app.update();
 
         assert!(used(&ask(&mut app, caster, AbilityType::Overpower, Some(near)), AbilityType::Overpower));
-        let said = ask(&mut app, caster, AbilityType::Lunge, Some(near));
-        assert_eq!(refused(&said), Some(AbilityFailReason::OnCooldown), "locked out of every other ability");
+        assert_eq!(refused(&mut app, caster, AbilityType::Lunge, Some(near)), Some(AbilityFailReason::OnCooldown), "locked out of every other ability");
 
         let said = ask(&mut app, caster, AbilityType::AutoAttack, Some(near));
         assert!(used(&said, AbilityType::AutoAttack), "an auto-attack is outside the lockout");
         let again = ask(&mut app, caster, AbilityType::AutoAttack, Some(near));
         assert!(!used(&again, AbilityType::AutoAttack), "the next is not due yet");
-        assert_eq!(refused(&again), None, "and a swing not due is no failure to report");
+        assert_eq!(refused(&mut app, caster, AbilityType::AutoAttack, Some(near)), None, "and a swing not due is refused without a reason");
     }
 
     #[test]
@@ -418,8 +423,7 @@ mod tests {
         app.world_mut().entity_mut(attacker).insert(Heading::from_hex(Qrz { q: -1, r: 0, z: 0 }));
         app.update();
 
-        let said = ask(&mut app, defender, AbilityType::Counter, None);
-        assert_eq!(refused(&said), Some(AbilityFailReason::NoTargets), "nothing queued, nothing to counter");
+        assert_eq!(refused(&mut app, defender, AbilityType::Counter, None), Some(AbilityFailReason::NoTargets), "nothing queued, nothing to counter");
 
         assert!(used(&ask(&mut app, attacker, AbilityType::Overpower, Some(defender)), AbilityType::Overpower));
         assert_eq!(app.world().get::<ReactionQueue>(defender).unwrap().threats.len(), 1);
@@ -438,6 +442,7 @@ mod tests {
         app.update();
 
         let said = ask(&mut app, caster, AbilityType::Overpower, Some(near));
-        assert!(!used(&said, AbilityType::Overpower) && refused(&said).is_none());
+        assert!(!used(&said, AbilityType::Overpower));
+        assert_eq!(refused(&mut app, caster, AbilityType::Overpower, Some(near)), None, "refused without a reason");
     }
 }
