@@ -15,4 +15,7 @@ pub struct Displacing {
     pub duration_ms: u16,
     /// The client's elapsed time the slide ends at.
     pub ends_at: Duration,
+    /// The tile a slide round a target circles, facing the way it goes;
+    /// any other slide keeps the heading it has.
+    pub around: Option<Qrz>,
 }

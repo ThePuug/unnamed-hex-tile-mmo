@@ -222,7 +222,7 @@ pub fn apply_displace(
         }
 
         if let Ok(mut e) = commands.get_entity(ent) {
-            e.insert(Displacing { destination, duration_ms, ends_at: time.elapsed() + Duration::from_millis(duration_ms as u64) });
+            e.insert(Displacing { destination, duration_ms, ends_at: time.elapsed() + Duration::from_millis(duration_ms as u64), around: *around });
         }
     }
 }

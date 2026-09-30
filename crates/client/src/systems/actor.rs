@@ -7,6 +7,7 @@ use crate::{components::*, systems::animator::{Clip, Clips, Rig}};
 use common_bevy::{
     components::{
         behaviour::Behaviour,
+        displacing::Displacing,
         entity_type::{ actor::*, * },
         heading::*, keybits::*,
         position::{Position, VisualPosition},
@@ -79,12 +80,15 @@ pub fn face(current: Quat, heading: Heading, dt: f32) -> Quat {
     current.slerp(facing, 1.0 - (-FACING_EASE * dt).exp())
 }
 
+/// Places each actor where it is drawn, turned toward its heading — or,
+/// sliding round a target, toward the way it goes, so it runs round rather
+/// than sideways; the heading takes the turn back as the slide ends.
 pub fn update(
-    mut query: Query<(&Loc, &Heading, &mut Transform, Option<&VisualPosition>), Without<DeathMarker>>,
+    mut query: Query<(&Loc, &Heading, &mut Transform, Option<&VisualPosition>, Option<&Displacing>), Without<DeathMarker>>,
     map: Res<Map>,
     time: Res<Time>,
 ) {
-    for (&loc, &heading, mut transform0, vis_pos) in &mut query {
+    for (&loc, &heading, mut transform0, vis_pos, displacing) in &mut query {
         let final_pos = if let Some(vis) = vis_pos {
             // Use VisualPosition for smooth, jitter-free rendering
             vis.current()
@@ -93,7 +97,9 @@ pub fn update(
             map.convert(*loc)
         };
 
-        let turned = face(transform0.rotation, heading, time.delta_secs());
+        let circling = displacing.filter(|d| d.around.is_some()).and(vis_pos)
+            .and_then(|vis| Heading::toward(vis.from, vis.to));
+        let turned = face(transform0.rotation, circling.unwrap_or(heading), time.delta_secs());
         // Written only when it moves: the same value written again marks
         // the whole rig changed and the skin is re-extracted for nothing.
         if transform0.translation != final_pos || transform0.rotation != turned {
