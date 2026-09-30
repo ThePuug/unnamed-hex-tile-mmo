@@ -9,24 +9,16 @@
 //! they are worth something only if the blow lands; or with the cast, in the
 //! ability's own handler, when they stand on their own, as Disengage's leap
 //! clear of a blow does. The caster's movement goes through `leap` either way.
-//!
-//! Every blow that lands, whatever struck it, also spills onto the striker's
-//! other hostiles within its reach, by its Focus against their Toughness
-//! ([`SpillReach`]).
 
-use bevy::{ecs::system::SystemParam, prelude::*};
+use bevy::prelude::*;
 use common_bevy::{
     components::{
-        behaviour::Side,
         recovery::GlobalRecovery,
-        resources::RespawnTimer,
         status::{Daze, Status, Timed},
-        ActorAttributes, AttackRange, Loc,
+        ActorAttributes, Loc,
     },
     message::{AbilityType, Component, Do, Try, Event as GameEvent},
-    plugins::nntree::NNTree,
     resources::map::Map,
-    systems::combat::damage,
 };
 
 use common_bevy::tuning::Tuning;
@@ -98,37 +90,6 @@ pub fn land(
             }
         }
         _ => {}
-    }
-}
-
-/// Who a landed blow spills onto: the living actors near its striker, found
-/// by the tree, with their sides, attributes and reach.
-#[derive(SystemParam)]
-pub struct SpillReach<'w, 's> {
-    nntree: Res<'w, NNTree>,
-    actors: Query<'w, 's, (&'static Loc, &'static Side, &'static ActorAttributes, Option<&'static AttackRange>), Without<RespawnTimer>>,
-}
-
-impl SpillReach<'_, '_> {
-    /// Spills a blow of `damage` that `source` landed on `target` onto every
-    /// other actor hostile to `source` within its reach, each its share
-    /// ([`damage::spill_share`]), the level edge the striker's.
-    pub fn spill(&self, source: Entity, target: Entity, damage: f32, commands: &mut Commands) {
-        let Ok((loc, side, attrs, range)) = self.actors.get(source) else { return };
-        let reach = range.copied().unwrap_or_default().0.max(0) as i64;
-        for near in self.nntree.locate_within_distance(*loc, reach * reach) {
-            if near.ent == source || near.ent == target {
-                continue;
-            }
-            let Ok((_, other_side, other, _)) = self.actors.get(near.ent) else { continue };
-            if !side.is_hostile_to(*other_side) {
-                continue;
-            }
-            let share = damage::spill_share(attrs.focus(), other.toughness(), damage::level_edge(attrs.total_level(), other.total_level()));
-            if share > 0.0 {
-                commands.trigger(Try { event: GameEvent::Spill { ent: near.ent, source, damage: damage * share } });
-            }
-        }
     }
 }
 

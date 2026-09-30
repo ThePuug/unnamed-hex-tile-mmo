@@ -102,16 +102,6 @@ pub fn calculate_recovery_pushback(
     crate::tuning::tuning().pushback_share * contest_factor(attacker_impact, defender_composure, edge)
 }
 
-/// The share of a landed blow that spills onto another hostile within the
-/// striker's reach.
-
-/// Pattern 1 (Nullifying): `Tuning::spill_share` × contest_factor(the
-/// striker's Focus, that hostile's Toughness), with the level gap's
-/// `edge` on the striker's side.
-pub fn spill_share(focus: u16, toughness: u16, edge: f32) -> f32 {
-    crate::tuning::tuning().spill_share * contest_factor(focus, toughness, edge)
-}
-
 /// Apply passive mitigation to damage (unified for all damage types).
 
 /// Pattern 1 (Nullifying): `Tuning::mitigation_share` × contest_factor(the
@@ -174,14 +164,6 @@ mod tests {
         assert!(taken(&vital, 0) < 100.0, "Vitality's Toughness mitigates");
         assert!(taken(&vital, 50) > taken(&vital, 0), "Focus meets it");
         assert_eq!(taken(&vital, vital.toughness()), 100.0, "matched, it nullifies");
-    }
-
-    #[test]
-    fn focus_spills_what_toughness_does_not_hold() {
-        assert_eq!(spill_share(0, 0, 0.0), 0.0, "no Focus, no spill");
-        assert!(spill_share(100, 0, 0.0) > 0.0, "Focus spills onto the unarmoured");
-        assert!(spill_share(100, 50, 0.0) < spill_share(100, 0, 0.0), "Toughness holds some back");
-        assert_eq!(spill_share(100, 100, 0.0), 0.0, "matched, it nullifies");
     }
 
     #[test]

@@ -88,9 +88,6 @@ pub struct Tuning {
     pub concentration_hold: f32,
     /// Most of a blow Toughness mitigates, approached and never reached
     pub mitigation_share: f32,
-    /// Most of a landed blow a Focus advantage spills onto each other
-    /// hostile within the striker's reach
-    pub spill_share: f32,
     /// Most of a recovery an Impact advantage pushes it back by
     pub pushback_share: f32,
     /// Most of a recovery a Composure advantage takes off it; below 1, so
@@ -217,7 +214,6 @@ impl Tuning {
         contest_per_level: 15.0,
         concentration_hold: 1.0,
         mitigation_share: 0.525,
-        spill_share: 0.5,
         pushback_share: 0.5,
         composure_share: 0.231,
         combo_floor: 0.1,
@@ -344,7 +340,6 @@ impl Tuning {
             "contest_per_level" => &mut self.contest_per_level,
             "concentration_hold" => &mut self.concentration_hold,
             "mitigation_share" => &mut self.mitigation_share,
-            "spill_share" => &mut self.spill_share,
             "pushback_share" => &mut self.pushback_share,
             "composure_share" => &mut self.composure_share,
             "combo_floor" => &mut self.combo_floor,

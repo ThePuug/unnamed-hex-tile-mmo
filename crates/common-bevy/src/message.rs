@@ -43,9 +43,6 @@ pub enum Event {
     },
     /// Server-internal: a wound's DoT tick lands outside the queue
     DotTick { ent: Entity, source: Entity, damage: f32, ability: Option<AbilityType> },
-    /// Server-internal: the share of a landed blow that spills from its
-    /// target onto `ent`, another hostile within the striker's reach
-    Spill { ent: Entity, source: Entity, damage: f32 },
     /// Server-internal: `ent` struck across its own line and broke its stride
     Stumble { ent: Entity },
     /// Server → Client: Insert threat into reaction queue
@@ -160,7 +157,6 @@ impl Event {
             | Event::Incremental { ent, .. }
             | Event::Spawn { ent, .. }
             | Event::DotTick { ent, .. }
-            | Event::Spill { ent, .. }
             | Event::Stumble { ent }
             | Event::InsertThreat { ent, .. }
             | Event::ApplyDamage { ent, .. }

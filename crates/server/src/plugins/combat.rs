@@ -22,7 +22,6 @@ impl Plugin for CombatPlugin {
         app.add_observer(combat::process_deal_damage);
         app.add_observer(combat::resolve_threat);
         app.add_observer(combat::resolve_dot_tick);
-        app.add_observer(combat::resolve_spill);
         app.add_observer(combat::landing::stumble);
 
         app.add_systems(FixedUpdate, (
