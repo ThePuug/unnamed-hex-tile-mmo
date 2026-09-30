@@ -8,14 +8,15 @@ use std::time::Duration;
 
 use common_bevy::{
     components::{
-        behaviour::Behaviour,
         engagement::{Engagement, EngagementMember, LastPlayerProximity},
         Loc,
     },
     message::{Do, Event},
 };
 
-/// Abandonment timeout (30 seconds with no players nearby)
+use crate::resources::Lobby;
+
+/// Abandonment timeout (30 seconds with no one watching)
 const ABANDONMENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Proximity range for abandonment check.
@@ -28,7 +29,7 @@ const PROXIMITY_RANGE: i32 = 150;
 
 /// Cleanup triggers:
 /// 1. All NPCs dead (all child entities despawned)
-/// 2. Abandoned (no players within 60 tiles for 30 seconds)
+/// 2. Abandoned (no client watching within `PROXIMITY_RANGE` for 30 seconds)
 
 /// Actions on cleanup:
 /// - Despawn engagement entity
@@ -39,7 +40,8 @@ pub fn cleanup_engagements(
     time: Res<Time>,
     engagement_query: Query<(Entity, &Engagement, &Loc, &LastPlayerProximity)>,
     npc_query: Query<&EngagementMember>,
-    player_query: Query<(&Loc, &Behaviour), Without<Engagement>>,
+    lobby: Res<Lobby>,
+    locs: Query<&Loc, Without<Engagement>>,
 ) {
     for (engagement_entity, engagement, engagement_loc, last_proximity) in engagement_query.iter() {
         let mut should_cleanup = false;
@@ -55,20 +57,8 @@ pub fn cleanup_engagements(
         } else {
             // Check 2: Abandoned? (no players nearby for 30s)
             let is_abandoned = last_proximity.is_abandoned(time.elapsed(), ABANDONMENT_TIMEOUT);
-
-            if is_abandoned {
-                // Double-check: are there really no players nearby?
-                let closest_player_dist = player_query.iter()
-                    .filter(|(_, behaviour)| matches!(behaviour, Behaviour::Controlled))
-                    .map(|(player_loc, _)| engagement_loc.flat_distance(&**player_loc))
-                    .min()
-                    .unwrap_or(i32::MAX);
-
-                let any_player_nearby = closest_player_dist < PROXIMITY_RANGE;
-
-                if !any_player_nearby {
-                    should_cleanup = true;
-                }
+            if is_abandoned && !watched(engagement_loc, &lobby, &locs) {
+                should_cleanup = true;
             }
         }
 
@@ -90,24 +80,24 @@ pub fn cleanup_engagements(
     }
 }
 
-/// System that updates player proximity tracking for engagements
+/// Whether a client sees the world from within `PROXIMITY_RANGE` of `at`:
+/// through its character, or through an actor it views, which the lobby
+/// holds in its character's place.
+fn watched(at: &Loc, lobby: &Lobby, locs: &Query<&Loc, Without<Engagement>>) -> bool {
+    lobby.right_values()
+        .filter_map(|ent| locs.get(*ent).ok())
+        .any(|loc| at.flat_distance(&**loc) < PROXIMITY_RANGE)
+}
 
-/// Run frequently to keep proximity timestamps fresh
+/// Refreshes each engagement's proximity timestamp while a client watches it.
 pub fn update_engagement_proximity(
     mut engagement_query: Query<(&Loc, &mut LastPlayerProximity), With<Engagement>>,
-    player_query: Query<(&Loc, &Behaviour), Without<Engagement>>,
+    lobby: Res<Lobby>,
+    locs: Query<&Loc, Without<Engagement>>,
     time: Res<Time>,
 ) {
     for (engagement_loc, mut last_proximity) in engagement_query.iter_mut() {
-        // Check if any ACTUAL player (not NPCs) is within proximity range
-        let any_player_nearby = player_query.iter()
-            .filter(|(_, behaviour)| matches!(behaviour, Behaviour::Controlled))
-            .any(|(player_loc, _)| {
-                engagement_loc.flat_distance(&**player_loc) < PROXIMITY_RANGE
-            });
-
-        if any_player_nearby {
-            // Update timestamp - player is nearby
+        if watched(engagement_loc, &lobby, &locs) {
             last_proximity.update(time.elapsed());
         }
     }
@@ -120,6 +110,25 @@ mod tests {
         chunk::{CHUNK_SPACING, FOV_CHUNK_RADIUS, ChunkId, chunk_tiles},
         components::Loc,
     };
+
+    #[test]
+    fn a_fight_seen_through_a_viewed_actor_is_watched() {
+        use bevy::ecs::system::RunSystemOnce;
+        use qrz::Qrz;
+
+        let mut world = World::new();
+        let at = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        // No character in the world: the client sees as a fighter of the fight
+        let fighter = world.spawn(Loc::new(Qrz { q: 2, r: 0, z: 0 })).id();
+        world.insert_resource(Lobby::default());
+
+        let seen = |world: &mut World| world
+            .run_system_once(move |lobby: Res<Lobby>, locs: Query<&Loc, Without<Engagement>>| watched(&at, &lobby, &locs))
+            .unwrap();
+        assert!(!seen(&mut world), "an actor no client sees as watches nothing");
+        world.resource_mut::<Lobby>().insert(7, fighter);
+        assert!(seen(&mut world), "the viewed fighter keeps its fight");
+    }
 
     /// CRITICAL INVARIANT TEST
 
