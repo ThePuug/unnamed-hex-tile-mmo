@@ -216,7 +216,7 @@ impl Tuning {
         volley_slow_secs: 3.43,
         volley_leap: 10,
         flank_cost: 30.0,
-        flank_stun: 3.0,
+        flank_stun: 1.0,
         flank_endurance: 1.0,
         counter_reflect: 0.2271,
     };
