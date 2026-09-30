@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{
         heading::Heading, keybits::*, movement_intent_state::MovementIntentState,
-        position::Position, resources::RespawnTimer, *,
+        position::Position, resources::{Endurance, Health, RespawnTimer}, *,
     },
     message::{Event, *},
     plugins::nntree::NNTree,
@@ -312,26 +312,61 @@ pub fn broadcast_movement_intent(
 }
 
 /// Takes the respec a client asks for where it fits the actor's level
-/// (`ActorAttributes::fits`), and says so to its client.
+/// (`ActorAttributes::fits`), and says so to its client. The pools the
+/// attributes set, health and endurance, are resized with it at once, each
+/// as full as it was, so a respec neither heals nor wounds.
 pub fn try_respec_attributes(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
-    mut attrs_query: Query<&mut ActorAttributes>,
+    mut attrs_query: Query<(&mut ActorAttributes, &mut Health, Option<&mut Endurance>)>,
 ) {
     for message in reader.read() {
         let Try { event: Event::RespecAttributes { ent, pairs } } = message else { continue };
-        let Ok(mut attrs) = attrs_query.get_mut(*ent) else { continue };
+        let Ok((mut attrs, mut health, endurance)) = attrs_query.get_mut(*ent) else { continue };
         if !ActorAttributes::fits(pairs, attrs.total_level()) {
             continue;
         }
         attrs.apply_respec(*pairs);
         writer.write(Do { event: message.event.clone() });
+
+        health.resize(attrs.max_health());
+        writer.write(Do { event: Event::Incremental { ent: *ent, component: common_bevy::message::Component::Health(*health) } });
+        if let Some(mut endurance) = endurance {
+            endurance.resize(attrs.max_endurance());
+            writer.write(Do { event: Event::Incremental { ent: *ent, component: common_bevy::message::Component::Endurance(*endurance) } });
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_respec_resizes_the_pools_at_once_and_neither_heals_nor_wounds() {
+        use bevy::ecs::system::RunSystemOnce;
+        use common_bevy::components::Pair;
+        let mut world = World::new();
+        world.init_resource::<Messages<Try>>();
+        world.init_resource::<Messages<Do>>();
+        let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
+        let ent = world.spawn((
+            mighty,
+            Health { state: mighty.max_health() / 2.0, max: mighty.max_health() },
+            Endurance { state: mighty.max_endurance() / 4.0, max: mighty.max_endurance() },
+        )).id();
+
+        // Every level moved out of Might into Vitality, some of it leant to Discipline
+        let pairs = [Pair::new(0, 0, 0), Pair::new(-5, 5, 3), Pair::new(0, 0, 0)];
+        world.write_message(Try { event: Event::RespecAttributes { ent, pairs } });
+        world.run_system_once(try_respec_attributes).unwrap();
+
+        let (health, endurance) = (*world.get::<Health>(ent).unwrap(), *world.get::<Endurance>(ent).unwrap());
+        assert!(health.max > mighty.max_health(), "Vitality deepens health at once");
+        assert!((health.state / health.max - 0.5).abs() < 1e-4, "and it is as full as it was");
+        assert!(endurance.max > mighty.max_endurance(), "Discipline deepens endurance at once");
+        assert!((endurance.state / endurance.max - 0.25).abs() < 1e-4, "as full as it was");
+    }
 
     fn moving() -> KeyBits {
         KeyBits { key_bits: KB_FORWARD, accumulator: 0 }

@@ -20,10 +20,22 @@ impl Default for Health {
     }
 }
 
+/// What a pool of `max` holding `state` holds once it is resized to
+/// `new_max`: as full as it was, so a change of attributes neither fills
+/// nor drains it.
+fn resized(state: f32, max: f32, new_max: f32) -> f32 {
+    if max > 0.0 { state / max * new_max } else { new_max }
+}
+
 impl Health {
     /// A pool of `max`, full
     pub fn full(max: f32) -> Self {
         Self { state: max, max }
+    }
+
+    /// Resizes the pool to `max`, as full as it was
+    pub fn resize(&mut self, max: f32) {
+        *self = Self { state: resized(self.state, self.max, max), max };
     }
 
     /// What the actor has now
@@ -81,6 +93,11 @@ impl Endurance {
     /// A pool of `max`, full
     pub fn full(max: f32) -> Self {
         Self { state: max, max }
+    }
+
+    /// Resizes the pool to `max`, as full as it was
+    pub fn resize(&mut self, max: f32) {
+        *self = Self { state: resized(self.state, self.max, max), max };
     }
 
     /// How spent the pool is: 0 full, 1 empty. Fatigue lengthens the
