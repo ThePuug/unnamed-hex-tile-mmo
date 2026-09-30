@@ -1,19 +1,18 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{prepared::Prepared, reaction_queue::*, resources::*, recovery::{Combo, GlobalRecovery, SynergyUnlock}},
+    components::{reaction_queue::*, resources::*, recovery::{Combo, GlobalRecovery, SynergyUnlock}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
-    systems::combat::{queue as queue_utils, synergies::{apply_synergies, is_early, lockout, may_use, settle_combo}},
+    systems::combat::{queue as queue_utils, synergies::{apply_synergies, is_early, lockout, may_use, reacts_through, settle_combo}},
 };
 
 /// Handle Deflect ability (R key) - defensive ability that clears all queued threats
 /// - `Tuning::deflect_cost` stamina
 /// - Clears ALL queued threats
-/// - One prepared ahead (`super::handle_prepare`) fires free, even
-///   mid-lockout, and starts none
+/// - Discipline's Preparation lets it through a lockout (`synergies::reacts_through`)
 pub fn handle_deflect(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
-    mut queue_query: Query<(&mut ReactionQueue, &mut Stamina, &mut Prepared)>,
+    mut queue_query: Query<(&mut ReactionQueue, &mut Stamina)>,
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
     recovery_query: Query<&GlobalRecovery>,
     synergy_query: Query<&SynergyUnlock>,
@@ -30,8 +29,8 @@ pub fn handle_deflect(
             continue;
         };
 
-        // Get caster's queue, stamina and what it holds prepared
-        let Ok((mut queue, mut stamina, mut prepared)) = queue_query.get_mut(*ent) else {
+        // Get caster's queue and stamina
+        let Ok((mut queue, mut stamina)) = queue_query.get_mut(*ent) else {
             continue;
         };
         let Ok(attrs) = attrs_query.get(*ent) else {
@@ -39,9 +38,10 @@ pub fn handle_deflect(
         };
         let (prior, offer, combo) = (recovery_query.get(*ent).ok().copied(), synergy_query.get(*ent).ok().copied(), combo_query.get(*ent).ok());
 
-        // A prepared Deflect fires whatever the lockout; any other needs to be out of it
-        let held = prepared.holds(AbilityType::Deflect);
-        if !held && !may_use(AbilityType::Deflect, prior.as_ref(), offer.as_ref(), combo) {
+        // Out of lockout, or a reaction Preparation lets through the lockout
+        if !may_use(AbilityType::Deflect, prior.as_ref(), offer.as_ref(), combo)
+            && !reacts_through(AbilityType::Deflect, prior.as_ref(), Some(attrs))
+        {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OnCooldown } });
             continue;
         }
@@ -52,8 +52,7 @@ pub fn handle_deflect(
             continue;
         }
 
-        // A prepared Deflect was paid for when it was prepared
-        let deflect_cost = if held { 0.0 } else { common_bevy::tuning::tuning().deflect_cost };
+        let deflect_cost = common_bevy::tuning::tuning().deflect_cost;
 
         // Validate ability usage
         if stamina.state < deflect_cost {
@@ -96,12 +95,6 @@ pub fn handle_deflect(
                 component: common_bevy::message::Component::Stamina(*stamina),
             },
         });
-
-        // A prepared Deflect is spent, and starts no lockout and offers nothing
-        if held {
-            super::fire_prepared(*ent, AbilityType::Deflect, None, &mut prepared, &mut writer);
-            continue;
-        }
 
         // Broadcast ability success to clients (client will apply recovery/synergies)
         writer.write(Do {

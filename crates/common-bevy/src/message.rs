@@ -64,11 +64,6 @@ pub enum Event {
     /// Server → Client (Do): Ability was used successfully (apply recovery/synergies)
     /// target: Optional target entity (player's intended target, server validates)
     UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity> },
-    /// Client → Server (Try): prepare `ability`, a reaction, to hold and
-    /// fire later (`components::prepared::Prepared`)
-    /// Server → Client (Do): `ent` prepared it: its lockout starts now, and
-    /// nothing plays until the reaction is used
-    Prepare { ent: Entity, ability: AbilityType },
     /// Server → Client: Ability usage failed
     AbilityFailed { ent: Entity, reason: AbilityFailReason },
     /// Server → Client: Clear threats from queue
@@ -193,6 +188,14 @@ pub enum AbilityType {
     Flank,
 }
 
+impl AbilityType {
+    /// Whether it answers the queue: the abilities Discipline's Preparation
+    /// lets an actor use through its lockout (`synergies::reacts_through`)
+    pub fn is_reaction(self) -> bool {
+        matches!(self, AbilityType::Counter | AbilityType::Kick | AbilityType::Deflect | AbilityType::Disengage)
+    }
+}
+
 /// Reasons why an ability usage might fail
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum AbilityFailReason {
@@ -204,8 +207,6 @@ pub enum AbilityFailReason {
     OutOfRange,
     /// The target stands outside the attacker's facing cone
     NotFacing,
-    /// Only done in combat
-    NotInCombat,
 }
 
 /// Types of queue clears for reaction abilities
@@ -234,7 +235,6 @@ pub enum Component {
     Mana(Mana),
     PlayerControlled(PlayerControlled),
     Returning(crate::components::returning::Returning),
-    Prepared(crate::components::prepared::Prepared),
     Status(crate::components::status::Status),
     Stunned(crate::components::stunned::Stunned),
     Stamina(Stamina),
@@ -253,7 +253,6 @@ impl Component {
             Component::Mana(v) => { entity.insert(v); }
             Component::PlayerControlled(v) => { entity.insert(v); }
             Component::Returning(v) => { entity.insert(v); }
-            Component::Prepared(v) => { entity.insert(v); }
             Component::Status(v) => { entity.insert(v); }
             Component::Stunned(v) => { entity.insert(v); }
             Component::Stamina(v) => { entity.insert(v); }

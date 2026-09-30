@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{prepared::Prepared, reaction_queue::ReactionQueue, resources::*, Loc, recovery::{GlobalRecovery, get_ability_recovery_duration}},
+    components::{reaction_queue::ReactionQueue, resources::*, Loc, recovery::GlobalRecovery},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
-    systems::combat::queue::clear_threats,
+    systems::combat::{queue::clear_threats, synergies::{lockout, reacts_through}},
     resources::map::Map,
 };
 
@@ -27,10 +27,8 @@ pub fn leap_tiles(tuned: usize, reach: i32, distance: i32) -> usize {
 /// reach where that is more (`leap_tiles`), each the neighbour furthest
 /// from that source, and the blow misses: the front threat is cleared. Its
 /// next auto-attack strikes harder, by `disengage_endurance` of its
-/// Endurance, behind a feint (`Poised`).
-///
-/// One prepared ahead (`super::handle_prepare`) fires free, even
-/// mid-lockout, and starts none.
+/// Endurance, behind a feint (`Poised`). Discipline's Preparation lets it
+/// through a lockout (`synergies::reacts_through`).
 pub fn handle_disengage(
     mut commands: Commands,
     mut reader: MessageReader<Try>,
@@ -39,7 +37,6 @@ pub fn handle_disengage(
     mut queue_query: Query<&mut ReactionQueue>,
     recovery_query: Query<&GlobalRecovery>,
     range_query: Query<&common_bevy::components::AttackRange>,
-    mut prepared_query: Query<&mut Prepared>,
     respawn_query: Query<&RespawnTimer>,
     map: Res<Map>,
     attrs_query: Query<&common_bevy::components::ActorAttributes>,
@@ -53,9 +50,11 @@ pub fn handle_disengage(
         if respawn_query.get(*ent).is_ok() {
             continue;
         }
-        // A prepared Disengage fires whatever the lockout; any other needs to be out of it
-        let held = prepared_query.get(*ent).is_ok_and(|prepared| prepared.holds(AbilityType::Disengage));
-        if !held && recovery_query.get(*ent).is_ok_and(|recovery| recovery.is_active()) {
+        // Out of lockout, or a reaction Preparation lets through the lockout
+        let recovery = recovery_query.get(*ent).ok();
+        if recovery.is_some_and(|recovery| recovery.is_active())
+            && !reacts_through(AbilityType::Disengage, recovery, attrs_query.get(*ent).ok())
+        {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OnCooldown } });
             continue;
         }
@@ -67,7 +66,7 @@ pub fn handle_disengage(
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::NoTargets } });
             continue;
         };
-        if !held && stamina.state < tuning.disengage_cost {
+        if stamina.state < tuning.disengage_cost {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::InsufficientStamina } });
             continue;
         }
@@ -80,14 +79,11 @@ pub fn handle_disengage(
             continue;
         };
 
-        // A prepared Disengage was paid for when it was prepared
-        if !held {
-            stamina.state -= tuning.disengage_cost;
-            stamina.step = stamina.state;
-            writer.write(Do {
-                event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
-            });
-        }
+        stamina.state -= tuning.disengage_cost;
+        stamina.step = stamina.state;
+        writer.write(Do {
+            event: GameEvent::Incremental { ent: *ent, component: common_bevy::message::Component::Stamina(*stamina) },
+        });
         crate::systems::combat::leap::leap(*ent, landing, &mut commands, &mut writer);
 
         if let Ok(mut queue) = queue_query.get_mut(*ent) {
@@ -99,15 +95,8 @@ pub fn handle_disengage(
             commands.entity(*ent).insert(Poised(attrs.endurance() * tuning.disengage_endurance));
         }
 
-        // A prepared Disengage is spent, and starts no lockout
-        if held {
-            if let Ok(mut prepared) = prepared_query.get_mut(*ent) {
-                super::fire_prepared(*ent, AbilityType::Disengage, *target, &mut prepared, &mut writer);
-            }
-            continue;
-        }
         writer.write(Do { event: GameEvent::UseAbility { ent: *ent, ability: AbilityType::Disengage, target: *target } });
-        commands.entity(*ent).insert(GlobalRecovery::new(get_ability_recovery_duration(AbilityType::Disengage), AbilityType::Disengage));
+        commands.entity(*ent).insert(lockout(AbilityType::Disengage, recovery_query.get(*ent).ok(), None));
     }
 }
 

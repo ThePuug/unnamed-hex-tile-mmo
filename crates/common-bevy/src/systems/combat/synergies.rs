@@ -81,17 +81,30 @@ pub fn may_use(ability: AbilityType, recovery: Option<&GlobalRecovery>, synergy:
     }
 }
 
+/// Whether `ability`, a reaction, may be used through `recovery`'s lockout:
+/// Discipline's Preparation lets an actor with `attrs` use up to its tier of
+/// reactions in any one lockout, each adding its own onto the rest (`lockout`).
+pub fn reacts_through(ability: AbilityType, recovery: Option<&GlobalRecovery>, attrs: Option<&ActorAttributes>) -> bool {
+    let (Some(recovery), Some(attrs)) = (recovery, attrs) else { return false };
+    ability.is_reaction() && recovery.is_active() && (recovery.reactions as usize) < attrs.preparation().index()
+}
+
 /// The lockout `ability` starts, used under `prior`, the lockout it was
 /// used in, and `synergy`, the offer it took. A follow-up taken before its
 /// offer unlocked carries what it skipped of `prior`, so a combo burst early
 /// costs what it would have played out: Ferocity moves the lockout, never
-/// shortens it. Taken once unlocked, it carries nothing. Server and client
-/// both start lockouts here, so they agree.
+/// shortens it. Taken once unlocked, it carries nothing. A reaction used
+/// through a lockout (`reacts_through`) carries all of it, its own added
+/// on. Server and client both start lockouts here, so they agree.
 pub fn lockout(ability: AbilityType, prior: Option<&GlobalRecovery>, synergy: Option<&SynergyUnlock>) -> GlobalRecovery {
     let mut recovery = GlobalRecovery::new(get_ability_recovery_duration(ability), ability);
-    let carried = match (prior, synergy) {
-        (Some(prior), Some(synergy)) if prior.is_active() && synergy.ability == ability => (prior.remaining - synergy.unlock_at).max(0.0),
-        _ => 0.0,
+    let carried = match (prior.filter(|prior| prior.is_active()), synergy.filter(|synergy| synergy.ability == ability)) {
+        (Some(prior), Some(synergy)) => (prior.remaining - synergy.unlock_at).max(0.0),
+        (Some(prior), None) => {
+            recovery.reactions = prior.reactions.saturating_add(1);
+            prior.remaining
+        }
+        (None, _) => 0.0,
     };
     recovery.remaining += carried;
     recovery.duration += carried;
@@ -223,6 +236,22 @@ mod tests {
         assert!(!may_use(AbilityType::Lunge, Some(&recovery), Some(&offer), None), "not before it unlocks");
         assert!(may_use(AbilityType::Lunge, Some(&later), Some(&offer), None), "the offer, once unlocked");
         assert!(!may_use(AbilityType::Overpower, Some(&later), Some(&offer), None), "nothing else");
+    }
+
+    #[test]
+    fn preparation_reacts_through_a_lockout_up_to_its_tier_and_pays_after() {
+        let disciplined = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
+        let plain = ActorAttributes::default();
+        let lockout_now = GlobalRecovery::new(2.0, AbilityType::Overpower);
+        assert!(reacts_through(AbilityType::Counter, Some(&lockout_now), Some(&disciplined)));
+        assert!(!reacts_through(AbilityType::Counter, Some(&lockout_now), Some(&plain)), "no Preparation, no reaction in lockout");
+        assert!(!reacts_through(AbilityType::Lunge, Some(&lockout_now), Some(&disciplined)), "reactions only");
+        let through = lockout(AbilityType::Counter, Some(&lockout_now), None);
+        let own = get_ability_recovery_duration(AbilityType::Counter);
+        assert!((through.remaining - (own + 2.0)).abs() < 1e-5, "its own lockout added onto the rest");
+        assert_eq!(through.reactions, 1);
+        let full = GlobalRecovery { reactions: 3, ..through };
+        assert!(!reacts_through(AbilityType::Counter, Some(&full), Some(&disciplined)), "no more than the tier");
     }
 
     #[test]

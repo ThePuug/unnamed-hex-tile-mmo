@@ -11,100 +11,15 @@ pub mod volley;
 
 use bevy::prelude::*;
 use common_bevy::{
-    components::{
-        heading::Heading,
-        prepared::Prepared,
-        recovery::{get_ability_recovery_duration, Combo, GlobalRecovery, SynergyUnlock},
-        resources::Stamina,
-        ActorAttributes, Loc,
-    },
-    message::{AbilityFailReason, AbilityType, Component, Do, Event as GameEvent, Try},
-    systems::{combat::synergies, targeting},
+    components::{heading::Heading, ActorAttributes, Loc},
+    message::{Event as GameEvent, Try},
+    systems::targeting,
 };
 
 /// Whether a striker facing `heading` with `attrs` may strike from `from`
 /// at `to`: within the arc its Grace opens (`ActorAttributes::arc`).
 pub fn in_arc(heading: Option<&Heading>, attrs: Option<&ActorAttributes>, from: &Loc, to: &Loc) -> bool {
     targeting::faces(heading, attrs.map_or(targeting::STRIDE_ARC, ActorAttributes::arc), from, to)
-}
-
-/// Handles a request to prepare a reaction: in combat, and out of lockout
-/// or taking an offered follow-up, as any use of it must be (`prepare`).
-#[allow(clippy::too_many_arguments)]
-pub fn handle_prepare(
-    mut commands: Commands,
-    mut reader: MessageReader<Try>,
-    mut actors: Query<(&ActorAttributes, &mut Stamina, &mut Prepared, &common_bevy::components::resources::CombatState)>,
-    recovery_query: Query<&GlobalRecovery>,
-    synergy_query: Query<&SynergyUnlock>,
-    combo_query: Query<&Combo>,
-    mut writer: MessageWriter<Do>,
-) {
-    for event in reader.read() {
-        let Try { event: GameEvent::Prepare { ent, ability } } = event else { continue };
-        let Ok((attrs, mut stamina, mut prepared, combat)) = actors.get_mut(*ent) else { continue };
-        let (prior, offer, combo) = (recovery_query.get(*ent).ok().copied(), synergy_query.get(*ent).ok().copied(), combo_query.get(*ent).ok());
-        let outcome = if !combat.in_combat {
-            Err(AbilityFailReason::NotInCombat)
-        } else if !synergies::may_use(*ability, prior.as_ref(), offer.as_ref(), combo) {
-            Err(AbilityFailReason::OnCooldown)
-        } else {
-            prepare(*ent, *ability, attrs, &mut stamina, &mut prepared, prior, offer, combo, &mut commands, &mut writer)
-        };
-        if let Err(reason) = outcome {
-            writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason } });
-        }
-    }
-}
-
-/// Prepares `ability`, a reaction, for `ent`: it pays its stamina and
-/// lockout now, as any use of it does, and is held in `prepared` to fire
-/// free later. Errs where it is no reaction, Preparation holds no more, or
-/// the stamina falls short.
-#[allow(clippy::too_many_arguments)]
-pub fn prepare(
-    ent: Entity,
-    ability: AbilityType,
-    attrs: &ActorAttributes,
-    stamina: &mut Stamina,
-    prepared: &mut Prepared,
-    prior: Option<GlobalRecovery>,
-    offer: Option<SynergyUnlock>,
-    combo: Option<&Combo>,
-    commands: &mut Commands,
-    writer: &mut MessageWriter<Do>,
-) -> Result<(), AbilityFailReason> {
-    let room = attrs.preparation().index();
-    if !Prepared::is_reaction(ability) || prepared.count() >= room {
-        return Err(AbilityFailReason::NoTargets);
-    }
-    let cost = common_bevy::tuning::tuning().cost(ability);
-    if stamina.state < cost {
-        return Err(AbilityFailReason::InsufficientStamina);
-    }
-    stamina.state -= cost;
-    stamina.step = stamina.state;
-    prepared.hold(ability, room);
-    writer.write(Do { event: GameEvent::Incremental { ent, component: Component::Stamina(*stamina) } });
-    writer.write(Do { event: GameEvent::Incremental { ent, component: Component::Prepared(*prepared) } });
-    writer.write(Do { event: GameEvent::Prepare { ent, ability } });
-
-    let early = synergies::is_early(ability, prior.as_ref(), offer.as_ref());
-    let recovery = synergies::lockout(ability, prior.as_ref(), offer.as_ref());
-    commands.entity(ent).insert(recovery);
-    synergies::apply_synergies(ent, ability, &recovery, attrs, attrs, commands);
-    synergies::settle_combo(ent, ability, early, get_ability_recovery_duration(ability), attrs, combo, commands);
-    Ok(())
-}
-
-/// Spends a prepared `ability` of `ent`'s, used at `target`, after its
-/// effect: every client plays the use, and the owner's, still holding it
-/// as the use arrives, starts no lockout; then what it holds follows.
-pub fn fire_prepared(ent: Entity, ability: AbilityType, target: Option<Entity>, prepared: &mut Prepared, writer: &mut MessageWriter<Do>) {
-    if prepared.take(ability) {
-        writer.write(Do { event: GameEvent::UseAbility { ent, ability, target } });
-        writer.write(Do { event: GameEvent::Incremental { ent, component: Component::Prepared(*prepared) } });
-    }
 }
 
 /// Breaks `ent`'s stride where the strike it just made from `from` at `to`

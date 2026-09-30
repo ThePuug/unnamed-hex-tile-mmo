@@ -37,7 +37,6 @@ impl Plugin for CombatPlugin {
             reaction_queue::tick_dots,
             combat::release_grit,
             combat::forget_swings,
-            combat::forget_preparations,
         ));
 
         app.add_systems(Update, (
@@ -55,7 +54,6 @@ impl Plugin for CombatPlugin {
             combat::abilities::counter::handle_counter,  // Counter ability
             combat::abilities::kick::handle_kick,        // Kick: reactive knockback
             combat::abilities::deflect::handle_deflect,
-            combat::abilities::handle_prepare,
             reaction_queue::process_dismiss, // Dismiss front queue threat (no GCD/lockout)
             common_bevy::systems::combat::resources::check_death, // Check for death from ANY source
             common_bevy::systems::combat::resources::process_respawn,

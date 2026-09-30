@@ -24,18 +24,18 @@ use crate::systems::behaviour::{chase::Chase, kite::Kite};
 /// - Juggernaut (Rattle): Use when target is within melee reach (each one dazes it further)
 /// - Kiter (Volley): Use when target is within 6 hexes (a burst from range)
 /// - Defender (Counter): Reactive - triggers when threats appear in reaction queue
-/// - Skirmisher (Disengage): Reactive - dodges the blow at the front of its queue, an auto-attack's as overflow;
-///   in combat, out of lockout, it prepares one whenever its Preparation has room, and fires one prepared even in lockout
+/// - Skirmisher (Disengage): Reactive - dodges the blow at the front of its queue, an auto-attack's as overflow
 /// - Ambusher (Flank): Use when target is within melee reach (stuns it and strikes from its back)
 ///
 /// Every use waits out the NPC's `NpcRecovery` delay, armed once the ability
-/// is affordable and out of lockout, so NPCs that fire together drift apart.
+/// is affordable and out of lockout, or a reaction its Preparation lets
+/// through the lockout, so NPCs that fire together drift apart.
 
 /// Update frequency: 0.5s (fast enough for Defenders to respond to incoming threats)
 pub fn npc_ability_usage(
     // Query NPCs with Chase or Kite behavior
     mut npc_query: Query<
-        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>, &mut NpcRecovery, Option<&common_bevy::components::heading::Heading>, &common_bevy::components::ActorAttributes, Option<&common_bevy::components::prepared::Prepared>),
+        (Entity, &EntityType, &Loc, &Target, &Stamina, Option<&GlobalRecovery>, Option<&common_bevy::components::reaction_queue::ReactionQueue>, &mut NpcRecovery, Option<&common_bevy::components::heading::Heading>, &common_bevy::components::ActorAttributes),
         Or<(With<Chase>, With<Kite>)>
     >,
     target_query: Query<&Loc, With<common_bevy::components::behaviour::Side>>,
@@ -43,7 +43,7 @@ pub fn npc_ability_usage(
     mut writer: MessageWriter<Try>,
 ) {
     let now = time.elapsed();
-    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt, mut delay, heading, attrs, prepared) in npc_query.iter_mut() {
+    for (npc_entity, entity_type, npc_loc, target, stamina, recovery_opt, queue_opt, mut delay, heading, attrs) in npc_query.iter_mut() {
         // Get archetype from NPC type
         let EntityType::Actor(actor_impl) = entity_type else {
             continue;
@@ -59,10 +59,11 @@ pub fn npc_ability_usage(
             continue;
         };
 
-        // In lockout, or short of stamina, only a prepared signature fires
-        let held = prepared.is_some_and(|prepared| prepared.holds(ability));
+        // Out of lockout, or a reaction its Preparation lets through it, and affordable
         let locked = recovery_opt.is_some_and(|recovery| recovery.is_active());
-        if !held && (locked || stamina.state < common_bevy::tuning::tuning().cost(ability)) {
+        if (locked && !common_bevy::systems::combat::synergies::reacts_through(ability, recovery_opt, Some(attrs)))
+            || stamina.state < common_bevy::tuning::tuning().cost(ability)
+        {
             continue;
         }
         delay.arm(now);
@@ -73,18 +74,9 @@ pub fn npc_ability_usage(
         // Skirmisher Disengages from the blow at the front of its queue: an ability's
         // while one is queued, an auto-attack as overflow
         if ability == AbilityType::Disengage {
-            // A held one fires at the blow; with room, it prepares another;
-            // full, it spends its own at the blow
-            let blow = queue_opt.and_then(|queue| queue.threats.front().copied());
-            let room = prepared.map_or(0, |prepared| prepared.count()) < attrs.preparation().index();
-            if let (Some(blow), true) = (blow, held || (!locked && !room)) {
+            if let Some(blow) = queue_opt.and_then(|queue| queue.threats.front().copied()) {
                 writer.write(Try {
                     event: Event::UseAbility { ent: npc_entity, ability: AbilityType::Disengage, target: Some(blow.source) },
-                });
-                delay.spend();
-            } else if !locked && room {
-                writer.write(Try {
-                    event: Event::Prepare { ent: npc_entity, ability: AbilityType::Disengage },
                 });
                 delay.spend();
             }

@@ -33,7 +33,6 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::Behaviour(_) => "Inc:Behaviour",
             Component::PlayerControlled(_) => "Inc:PlayerControlled",
             Component::Returning(_) => "Inc:Returning",
-            Component::Prepared(_) => "Inc:Prepared",
             Component::Status(_) => "Inc:Status",
             Component::Stunned(_) => "Inc:Stunned",
             Component::Equipment(_) => "Inc:Equipment",
@@ -45,7 +44,6 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::ClearQueue { .. } => "ClearQueue",
         Event::AbilityFailed { .. } => "AbilityFailed",
         Event::UseAbility { .. } => "UseAbility",
-        Event::Prepare { .. } => "Prepare",
         Event::Pong { .. } => "Pong",
         Event::MovementIntent { .. } => "MovementIntent",
         Event::Displace { .. } => "Displace",
@@ -253,13 +251,6 @@ pub fn write_do(
                 };
                 do_writer.write(Do { event: Event::UseAbility { ent, ability, target } });
             }
-            Do { event: Event::Prepare { ent, ability } } => {
-                let Some(&ent) = l2r.get_by_right(&ent) else {
-                    try_writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
-                    continue
-                };
-                do_writer.write(Do { event: Event::Prepare { ent, ability } });
-            }
             Do { event: Event::Pong { client_time } } => {
                 // Forward Pong to Do writer for handle_pong system
                 do_writer.write(Do { event: Event::Pong { client_time } });
@@ -387,12 +378,6 @@ pub fn send_try(
                     ent: *l2r.get_by_left(ent).unwrap(),
                     ability: *ability,
                     target: remote_target
-                }}, bincode::config::legacy()).unwrap());
-            }
-            Event::Prepare { ent, ability } => {
-                conn.send_reliable(DefaultChannel::ReliableOrdered, bincode::serde::encode_to_vec(Try { event: Event::Prepare {
-                    ent: *l2r.get_by_left(ent).unwrap(),
-                    ability: *ability,
                 }}, bincode::config::legacy()).unwrap());
             }
             Event::Play | Event::Leave => {

@@ -19,6 +19,9 @@ pub struct GlobalRecovery {
     /// taken before its offer unlocked left unpaid (`synergies::lockout`).
     /// No follow-up this lockout offers unlocks through it.
     pub carried: f32,
+    /// Reactions used through this lockout, Discipline's Preparation
+    /// allowing its tier of them (`synergies::reacts_through`)
+    pub reactions: u8,
 }
 
 impl GlobalRecovery {
@@ -30,6 +33,7 @@ impl GlobalRecovery {
             target_impact: 0,
             target_level: None,
             carried: 0.0,
+            reactions: 0,
         }
     }
 
@@ -124,6 +128,7 @@ mod tests {
             target_impact: 0,
             target_level: None,
             carried: 0.0,
+            reactions: 0,
         };
         assert!(!recovery.is_active(), "Should be inactive when remaining == 0");
     }

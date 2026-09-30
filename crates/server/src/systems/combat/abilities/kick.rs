@@ -4,7 +4,7 @@ use common_bevy::{
     components::{entity_type::*, resources::*, stagger::Stagger, Loc, reaction_queue::{DamageType, ReactionQueue, QueuedThreat}, recovery::{GlobalRecovery, get_ability_recovery_duration}},
     message::{AbilityFailReason, AbilityType, ClearType, Do, Try, Event as GameEvent},
     resources::map::Map,
-    systems::combat::synergies::{apply_synergies, is_early, lockout, may_use, settle_combo},
+    systems::combat::synergies::{apply_synergies, is_early, lockout, may_use, reacts_through, settle_combo},
 };
 use crate::{resources::RunTime, systems::stagger::Knockback};
 
@@ -77,7 +77,12 @@ pub fn handle_kick(
         }
 
         // Out of lockout, or taking the follow-up the last ability offered
-        if !may_use(AbilityType::Kick, recovery_query.get(*ent).ok(), synergy_query.get(*ent).ok(), combo_query.get(*ent).ok()) {
+        // Out of lockout, the follow-up the last ability offered, or a
+        // reaction Preparation lets through the lockout
+        let recovery = recovery_query.get(*ent).ok();
+        if !may_use(AbilityType::Kick, recovery, synergy_query.get(*ent).ok(), combo_query.get(*ent).ok())
+            && !reacts_through(AbilityType::Kick, recovery, attrs_query.get(*ent).ok())
+        {
             writer.write(Do { event: GameEvent::AbilityFailed { ent: *ent, reason: AbilityFailReason::OnCooldown } });
             continue;
         }

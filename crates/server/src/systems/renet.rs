@@ -264,10 +264,6 @@ pub fn write_try(
                     let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
                     writer.write(Try { event: Event::UseAbility { ent, ability, target }});
                 }
-                Try { event: Event::Prepare { ent: _, ability } } => {
-                    let Some(&ent) = lobby.get_by_left(&client_id) else { continue };
-                    writer.write(Try { event: Event::Prepare { ent, ability }});
-                }
                 Try { event: Event::Ping { client_time } } => {
                     // Immediately respond with Pong (echo client timestamp)
                     let message = bincode::serde::encode_to_vec(
@@ -443,11 +439,6 @@ pub fn write_try(
                     Do { event: Event::UseAbility { ent, ability, target }},
                     bincode::config::legacy()).unwrap();
                 broadcast_reliable(&mut conn, &lobby, loaded_by, ent, bytes);
-            }
-            Event::Prepare { ent, .. } => {
-                let Ok(loaded_by) = loaded_by_query.get(*ent) else { continue; };
-                let bytes = bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap();
-                broadcast_reliable(&mut conn, &lobby, loaded_by, *ent, bytes);
             }
             Event::MovementIntent { ent, .. } | Event::Displace { ent, .. } => {
                 let ent = *ent;
