@@ -10,15 +10,14 @@ const MAX_ENTRIES: usize = 5;
 const ENTRY_LIFETIME: f32 = 4.0; // Seconds
 
 /// Listen for damage events and spawn resolved threat entries
-/// Only shows threats resolved AGAINST the player (incoming damage)
+/// Only shows threats resolved AGAINST the viewed actor (incoming damage)
 /// Enforces max 5 entries (oldest despawns when 6th is added)
 pub fn on_damage_resolved(
     mut commands: Commands,
     container_query: Query<Entity, With<ResolvedThreatsContainer>>,
     entry_query: Query<Entity, With<ResolvedThreatEntry>>,
     children_query: Query<&Children>,
-    input_queues: Res<common_bevy::resources::InputQueues>,
-    player_health: Query<&Health, With<common_bevy::components::Actor>>,
+    viewed: Query<(Entity, &Health), With<crate::components::Viewed>>,
     mut event_reader: MessageReader<common_bevy::message::Do>,
     time: Res<Time>,
 ) {
@@ -28,12 +27,10 @@ pub fn on_damage_resolved(
         return;
     };
 
-    // Local player is the entity with an InputQueue (only one on client)
-    let Some(&player_entity) = input_queues.entities().next() else {
+    let Some((player_entity, health)) = viewed.iter().next() else {
         return;
     };
-
-    let max_health = player_health.iter().next().map(|h| h.max).unwrap_or(100.0);
+    let max_health = health.max;
 
     // Oldest first, as the stack holds them, with each spawned below added
     // behind, so several landing in one frame each take a different one out

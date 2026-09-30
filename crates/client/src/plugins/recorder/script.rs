@@ -72,6 +72,29 @@ pub struct Stage {
     pub size: u8,
     #[serde(default)]
     pub b_size: Option<u8>,
+    /// The team whose fighter the view follows while the shot rolls: the
+    /// gameplay camera, the reaction queue and the resource bars are its,
+    /// as a player's are theirs. Where both teams are one archetype, the
+    /// nearer of them.
+    #[serde(default)]
+    pub view: Option<Team>,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Team {
+    West,
+    East,
+}
+
+impl Stage {
+    /// The archetype of `team`.
+    pub fn of(&self, team: Team) -> common_bevy::spatial_difficulty::EnemyArchetype {
+        match team {
+            Team::West => self.west,
+            Team::East => self.east,
+        }
+    }
 }
 
 fn default_level() -> u8 {
@@ -329,7 +352,7 @@ mod tests {
                 { "name": "chop", "at": [1, 2], "face": 0, "seconds": 10,
                   "clock": [[0, 14]], "input": [[1.0, "tap", "KeyG"]] },
                 { "name": "fight", "at": [0, 0], "face": 0, "seconds": 45,
-                  "clock": [[0, 12]], "stage": { "west": "Juggernaut", "east": "Kiter", "b_level": 6, "b_size": 2 } }
+                  "clock": [[0, 12]], "stage": { "west": "Juggernaut", "east": "Kiter", "b_level": 6, "b_size": 2, "view": "east" } }
             ] }"#;
         let script: Script = serde_json::from_str(text).expect("parses");
         assert_eq!(script.shots.len(), 3);
@@ -340,6 +363,7 @@ mod tests {
         let stage = script.shots[2].stage.expect("a staged fight");
         assert_eq!((stage.level, stage.size), (10, 1), "a level-10 one by default");
         assert_eq!((stage.b_level, stage.b_size), (Some(6), Some(2)));
+        assert_eq!(stage.view.map(|team| stage.of(team)), Some(common_bevy::spatial_difficulty::EnemyArchetype::Kiter));
         assert!(script.shots[0].stage.is_none());
     }
 }

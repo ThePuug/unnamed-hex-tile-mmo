@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use common_bevy::components::{Actor, resources::*};
+use common_bevy::components::resources::*;
 
 /// Component for the health bar UI element with interpolation state
 #[derive(Component)]
@@ -58,6 +58,7 @@ pub fn setup(
             ..default()
         },
         Pickable::IGNORE,
+        crate::components::ViewHud,
     ))
     .with_children(|parent| {
         parent.spawn((
@@ -210,12 +211,11 @@ pub fn update(
     mut health_text_query: Query<(&mut Text, &mut HealthText), (Without<StaminaText>, Without<ManaText>)>,
     mut stamina_text_query: Query<(&mut Text, &mut StaminaText), (Without<HealthText>, Without<ManaText>)>,
     mut mana_text_query: Query<(&mut Text, &mut ManaText), (Without<HealthText>, Without<StaminaText>)>,
-    player_query: Query<(&Health, &Stamina, &Mana), With<Actor>>,
+    player_query: Query<(&Health, &Stamina, &Mana), With<crate::components::Viewed>>,
     time: Res<Time>,
 ) {
     const INTERPOLATION_SPEED: f32 = 5.0; // Same as world-space health bars
 
-    // Find the local player (has Actor component)
     if let Ok((health, stamina, mana)) = player_query.single() {
         let delta = time.delta_secs();
 

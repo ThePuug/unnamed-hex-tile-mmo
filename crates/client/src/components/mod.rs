@@ -24,6 +24,17 @@ pub struct ChunkMesh {
     pub chunk_id: ChunkId,
 }
 
+/// The actor the view follows: the camera, the reaction queue and the
+/// resource bars read it. The local player, unless a recording views a
+/// fighter it staged.
+#[derive(Component)]
+pub struct Viewed;
+
+/// A UI root showing the viewed actor's fight, which a recording that views
+/// a fighter keeps on screen.
+#[derive(Component)]
+pub struct ViewHud;
+
 /// Debug sphere marker - shows actor origin position (toggles with terrain grid)
 #[derive(Component)]
 pub struct PlayerOriginDebug;

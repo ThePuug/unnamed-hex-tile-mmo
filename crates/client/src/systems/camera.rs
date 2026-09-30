@@ -749,7 +749,7 @@ pub fn update(
     mut orbit: ResMut<CameraOrbit>,
     mut state: ResMut<CameraPose>,
     mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
-    actor: Query<(&VisualPosition, &Heading), (With<Actor>, Without<Camera3d>)>,
+    actor: Query<(&VisualPosition, &Heading), (With<crate::components::Viewed>, Without<Camera3d>)>,
     map: Res<Map>,
     meshes: Res<SummaryMeshes>,
     edges: Res<EdgeCenters>,

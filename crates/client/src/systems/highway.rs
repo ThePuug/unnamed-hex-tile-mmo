@@ -21,9 +21,9 @@ use bevy::shader::ShaderRef;
 
 use common_bevy::components::reaction_queue::{Lane, QueuedThreat, ReactionQueue};
 use common_bevy::components::resources::{CombatState, Health};
-use common_bevy::components::{Actor, ActorAttributes};
+use common_bevy::components::ActorAttributes;
 
-use crate::components::ResolvedThreatsContainer;
+use crate::components::{ResolvedThreatsContainer, ViewHud, Viewed};
 use crate::systems::threat_icons::{estimate, severity, severity_rgb, DOT_COLOR};
 
 /// Half the highway's width at the hit line, in pixels
@@ -164,6 +164,7 @@ pub fn setup(
                 ..default()
             },
             Pickable::IGNORE,
+            ViewHud,
         ))
         .with_children(|parent| {
             parent
@@ -196,11 +197,11 @@ pub fn setup(
         });
 }
 
-/// Place a note for every threat in the local player's queue, and shatter
+/// Place a note for every threat in the viewed actor's queue, and shatter
 /// the notes of threats gone from it.
 pub fn update(
     mut commands: Commands,
-    player_query: Query<(&ReactionQueue, &ActorAttributes, &Health, Option<&CombatState>), With<Actor>>,
+    player_query: Query<(&ReactionQueue, &ActorAttributes, &Health, Option<&CombatState>), With<Viewed>>,
     mut highway_query: Query<(Entity, &mut Visibility, &MaterialNode<HighwayMaterial>), With<Highway>>,
     mut materials: ResMut<Assets<HighwayMaterial>>,
     mut note_query: Query<(Entity, &mut Note, &mut Node, &mut BackgroundColor, &mut BorderColor, &Children), Without<Highway>>,

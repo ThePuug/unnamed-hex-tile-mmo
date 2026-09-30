@@ -97,6 +97,7 @@ pub fn write_do(
                 // Health/Stamina/Mana will be inserted by Incremental events from server
                 let ent = commands.spawn((
                     Actor,
+                    crate::components::Viewed,
                     Behaviour::Controlled,
                     PlayerControlled,
                     common_bevy::components::target::Target::default(), // For unified targeting system

@@ -8,7 +8,9 @@
 //! speed and what the server times — a felling's work — keeps its length
 //! on screen. Frames are read back from the window and piped to ffmpeg,
 //! which must be on the PATH. No HUD, console or gizmo is drawn from the
-//! moment the recorder starts until the client quits.
+//! moment the recorder starts until the client quits, but for a shot that
+//! views a fighter it staged: the view is the fighter's (`Viewed`), its
+//! reaction queue and resource bars on screen as a player's are.
 
 mod script;
 mod writer;
@@ -40,6 +42,7 @@ use common_bevy::{
 };
 
 use crate::{
+    components::{ViewHud, Viewed},
     plugins::{
         diagnostics::{metrics_overlay::OverlayCameraEntity, DiagnosticsState},
         shell::{self, Entered, Stage},
@@ -74,6 +77,7 @@ impl Plugin for RecorderPlugin {
             enter,
             hide_hud,
             advance,
+            view,
             drive_camera.after(advance).after(crate::systems::camera::update),
             capture.after(drive_camera),
         ));
@@ -103,6 +107,16 @@ pub struct Recorder {
 impl Recorder {
     fn shot(&self) -> Option<&Shot> {
         self.shots.get(self.index)
+    }
+
+    /// The fighter the rolling shot views, when it views one and it has
+    /// found it.
+    fn viewing(&self) -> Option<Entity> {
+        self.shot().and_then(|s| s.stage).and_then(|s| s.view)?;
+        match &self.phase {
+            Phase::Roll(roll) | Phase::Drain(roll) => roll.fighter,
+            _ => None,
+        }
     }
 
     /// Seconds into the rolling shot, or zero before it rolls.
@@ -221,12 +235,15 @@ fn enter(
     }
 }
 
-/// Points every UI root at a camera that never draws, stops the overlay's
-/// camera, and turns gizmos off.
+/// Points every UI root at a camera that never draws — but for the viewed
+/// fighter's, while a shot views one — stops the overlay's camera, and
+/// turns gizmos off.
+#[allow(clippy::too_many_arguments)]
 fn hide_hud(
     mut recorder: ResMut<Recorder>,
     mut commands: Commands,
-    roots: Query<(Entity, Option<&UiTargetCamera>), (With<Node>, Without<ChildOf>)>,
+    roots: Query<(Entity, Option<&UiTargetCamera>, Has<ViewHud>), (With<Node>, Without<ChildOf>)>,
+    ui_camera: Query<Entity, With<IsDefaultUiCamera>>,
     overlay: Option<Res<OverlayCameraEntity>>,
     mut cameras: Query<&mut Camera>,
     mut gizmos: ResMut<GizmoConfigStore>,
@@ -234,9 +251,11 @@ fn hide_hud(
     let sink = *recorder.sink.get_or_insert_with(|| {
         commands.spawn((Camera2d, Camera { is_active: false, order: -100, ..default() })).id()
     });
-    for (entity, target) in &roots {
-        if target.is_none_or(|t| t.0 != sink) {
-            commands.entity(entity).insert(UiTargetCamera(sink));
+    let shown = ui_camera.single().ok().filter(|_| recorder.viewing().is_some());
+    for (entity, target, hud) in &roots {
+        let to = shown.filter(|_| hud).unwrap_or(sink);
+        if target.is_none_or(|t| t.0 != to) {
+            commands.entity(entity).insert(UiTargetCamera(to));
         }
     }
     if let Some(mut camera) = overlay.and_then(|o| cameras.get_mut(o.0).ok()) {
@@ -350,10 +369,13 @@ fn advance(
                 }
             }
         }
-        // The shot rolls as its fight arrives, so the film has it from its first step
+        // The shot rolls as its fight arrives, so the film has it from its
+        // first step; a shot that views a team waits for that team's
         Phase::Stage { since, before } => {
+            let viewed = shot.stage.and_then(|stage| stage.view.map(|team| stage.of(team).npc_type()));
             let fighter = npcs.iter()
                 .filter(|(e, kind, _)| is_npc(kind) && !before.contains(e))
+                .filter(|(_, kind, _)| viewed.is_none_or(|npc| matches!(kind, EntityType::Actor(actor) if actor.identity == ActorIdentity::Npc(npc))))
                 .min_by_key(|(_, _, at)| at.distance(loc))
                 .map(|(e, _, _)| e);
             let late = now - *since > STAGE_LIMIT;
@@ -380,6 +402,27 @@ fn roll(script: &Script, shot: &Shot, position: &Position, fighter: Option<Entit
     });
     info!("milestone: recorder shot {} rolling ({frames} frames)", shot.name);
     Roll { frame: 0, frames, armed: false, start: Instant::now(), anchor: position.clone(), fighter, writer, received: 0, fps }
+}
+
+/// Puts the view on the fighter the rolling shot views, and back on the
+/// player otherwise or once the fighter is gone.
+fn view(
+    recorder: Res<Recorder>,
+    buffers: Res<InputQueues>,
+    viewed: Query<Entity, With<Viewed>>,
+    actors: Query<(), With<Loc>>,
+    mut commands: Commands,
+) {
+    let Some(&player) = buffers.entities().next() else { return };
+    let wanted = recorder.viewing().filter(|&e| actors.contains(e)).unwrap_or(player);
+    for e in &viewed {
+        if e != wanted {
+            commands.entity(e).try_remove::<Viewed>();
+        }
+    }
+    if !viewed.contains(wanted) {
+        commands.entity(wanted).try_insert(Viewed);
+    }
 }
 
 fn is_npc(kind: &EntityType) -> bool {

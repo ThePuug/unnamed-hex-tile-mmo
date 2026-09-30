@@ -12,7 +12,7 @@ use bevy::{
     shader::ShaderRef,
 };
 
-use common_bevy::components::{behaviour::PlayerControlled, resources::CombatState};
+use common_bevy::components::resources::CombatState;
 
 /// Plugin that adds vignette post-processing effect
 pub struct VignettePlugin;
@@ -45,10 +45,10 @@ impl FullscreenMaterial for VignetteSettings {
     }
 }
 
-/// Update vignette intensity based on player combat state
+/// Update vignette intensity based on the viewed actor's combat state
 fn update_vignette_intensity(
     mut vignette_query: Query<&mut VignetteSettings>,
-    player_query: Query<&CombatState, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
+    player_query: Query<&CombatState, With<crate::components::Viewed>>,
     time: Res<Time>,
 ) {
     let Ok(combat_state) = player_query.single() else {
