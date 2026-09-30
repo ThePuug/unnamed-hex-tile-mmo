@@ -15,6 +15,17 @@ use common_bevy::{
 /// How far an NPC looks for a target, in tiles, whatever it chases with.
 pub const ACQUISITION_RANGE: u32 = 25;
 
+/// What an NPC at `loc` spots within `range`, measured as its swing
+/// measures reach (`Loc::distance`, the first level of height between
+/// free). The tree counts every level, so never more than one past that:
+/// it is searched a tile wider and the reach measure decides.
+pub fn spotted(nntree: &NNTree, loc: Loc, range: u32) -> impl Iterator<Item = bevy::prelude::Entity> + '_ {
+    let wider = range as i64 + 1;
+    nntree.locate_within_distance(loc, wider * wider)
+        .filter(move |nn| nn.loc.distance(&loc) <= range as i32)
+        .map(|nn| nn.ent)
+}
+
 /// How far an NPC follows a target from its den, in tiles, before it gives
 /// up and goes home.
 pub const LEASH_DISTANCE: i32 = 60;
@@ -85,5 +96,26 @@ impl BodyItem<'_, '_> {
         if let Some(goal) = Heading::between(map, **loc, to) {
             self.steer(goal, Walk::Still, 0.0, dt, map, nntree);
         }
+    }
+}
+
+#[cfg(test)]
+mod spotting_tests {
+    use super::*;
+    use bevy::prelude::*;
+    use common_bevy::plugins::nntree::{NNTreePlugin, NearestNeighbor};
+
+    #[test]
+    fn up_a_slope_a_hostile_is_spotted_as_reach_would_reach_it() {
+        let mut app = App::new();
+        app.add_plugins(NNTreePlugin);
+        let here = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let (near, far) = (Entity::from_raw_u32(1).unwrap(), Entity::from_raw_u32(2).unwrap());
+        let mut tree = app.world_mut().resource_mut::<NNTree>();
+        // 24 out and two levels up: 25 as reach measures, 26 as the tree does
+        tree.insert(NearestNeighbor::new(near, Loc::new(Qrz { q: 24, r: 0, z: 2 })));
+        tree.insert(NearestNeighbor::new(far, Loc::new(Qrz { q: 25, r: 0, z: 2 })));
+        let seen: Vec<Entity> = spotted(&tree, here, ACQUISITION_RANGE).collect();
+        assert_eq!(seen, vec![near]);
     }
 }

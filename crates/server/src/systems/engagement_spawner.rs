@@ -128,14 +128,15 @@ impl Parties {
 }
 
 /// The tile a party stands on to engage one at `from`, ahead along `dir`:
-/// `STAGE_GAP` out, drawn in until acquisition, which counts every level of
-/// height between, reaches it. On flat ground it is the arena's gap.
+/// `STAGE_GAP` out, drawn in until it stands where the one there spots it,
+/// by the measure of reach (`behaviour::spotted`). On flat ground it is the
+/// arena's gap.
 pub fn engaging_at(from: Qrz, dir: Qrz, elevation: impl Fn(i32, i32) -> i32) -> Qrz {
     let range = crate::systems::behaviour::ACQUISITION_RANGE as i32;
     (1..=STAGE_GAP).rev()
         .map(|d| from + dir * d)
         .map(|at| Qrz { z: elevation(at.q, at.r) + 1, ..at })
-        .find(|at| at.distance(&from) <= range)
+        .find(|at| Loc::new(*at).distance(&Loc::new(from)) <= range)
         .unwrap_or(from + dir)
 }
 
@@ -326,10 +327,10 @@ mod tests {
     }
 
     #[test]
-    fn up_a_slope_a_party_draws_in_until_acquisition_reaches() {
+    fn up_a_slope_a_party_draws_in_until_it_is_spotted() {
         let from = Qrz { q: 0, r: 0, z: 1 };
         let at = engaging_at(from, Qrz { q: 1, r: 0, z: 0 }, |q, _| q);
-        assert!(at.distance(&from) <= crate::systems::behaviour::ACQUISITION_RANGE as i32, "{at:?}");
+        assert!(Loc::new(at).distance(&Loc::new(from)) <= crate::systems::behaviour::ACQUISITION_RANGE as i32, "{at:?}");
         assert!(at.q < STAGE_GAP, "drawn in from the gap: {at:?}");
     }
 

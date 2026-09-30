@@ -236,14 +236,8 @@ pub fn kite(
                 }
 
                 // Close enough to spawn - search for new target
-                let nearby = nntree.locate_within_distance(
-                    *npc_loc,
-                    kite_config.acquisition_range as i64 * kite_config.acquisition_range as i64,
-                );
-
-                let valid_targets: Vec<Entity> = nearby
-                    .filter_map(|result| {
-                        let ent = result.ent;
+                let valid_targets: Vec<Entity> = super::spotted(&nntree, *npc_loc, kite_config.acquisition_range)
+                    .filter_map(|ent| {
                         q_target.get(ent).ok().and_then(|(_, health, side)| {
                             if health.current() > 0.0 && side.is_hostile_to(*own_side) {
                                 Some(ent)
