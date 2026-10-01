@@ -110,8 +110,6 @@ pub struct Tuning {
     /// Share longer and harder the effects an actor's skill inflicts hold at
     /// the ceiling of the share of the stat the skill reads
     pub effect_hold: f32,
-    /// Most of a blow Toughness mitigates, approached and never reached
-    pub mitigation_share: f32,
     /// Most of a recovery an Impact advantage pushes it back by
     pub pushback_share: f32,
     /// Most of a recovery a Composure advantage takes off it; below 1, so
@@ -230,7 +228,6 @@ impl Tuning {
         contest_scale: 800.0,
         contest_per_level: 15.0,
         effect_hold: 1.0,
-        mitigation_share: 0.525,
         pushback_share: 0.5,
         composure_share: 0.231,
         combo_floor: 0.1,
@@ -296,16 +293,6 @@ impl Tuning {
         }
     }
 
-    /// Share of the target's Toughness mitigation `ability`'s damage strikes
-    /// past: a Counter returns the attacker's own blow whole. Every other
-    /// threat meets mitigation in full.
-    pub fn pierce(&self, ability: AbilityType) -> f32 {
-        match ability {
-            AbilityType::Counter => 1.0,
-            _ => 0.0,
-        }
-    }
-
     /// Sets the knob `name` from text, as the arena's command line gives it.
     /// Errs on an unknown knob or a value that does not parse.
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
@@ -349,7 +336,6 @@ impl Tuning {
             "contest_scale" => &mut self.contest_scale,
             "contest_per_level" => &mut self.contest_per_level,
             "effect_hold" => &mut self.effect_hold,
-            "mitigation_share" => &mut self.mitigation_share,
             "pushback_share" => &mut self.pushback_share,
             "composure_share" => &mut self.composure_share,
             "combo_floor" => &mut self.combo_floor,

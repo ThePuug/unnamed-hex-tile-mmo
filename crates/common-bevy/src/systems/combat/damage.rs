@@ -67,8 +67,7 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
 /// Pattern 1 (Nullifying): `Tuning::crit_chance` × contest_factor(the
 /// attacker's Focus, the defender's Toughness), with the level gap's edge
 /// on the attacker's side: none at or below parity, and never the whole
-/// of the ceiling. The same two stats the other way round mitigate
-/// ([`apply_passive_modifiers`]).
+/// of the ceiling.
 pub fn crit_chance(attacker: &ActorAttributes, defender: &ActorAttributes) -> f32 {
     let edge = level_edge(attacker.total_level(), defender.total_level());
     crate::tuning::tuning().crit_chance * contest_factor(attacker.focus(), defender.toughness(), edge)
@@ -100,21 +99,6 @@ pub fn calculate_recovery_pushback(
     edge: f32,
 ) -> f32 {
     crate::tuning::tuning().pushback_share * contest_factor(attacker_impact, defender_composure, edge)
-}
-
-/// Apply passive mitigation to damage (unified for all damage types).
-
-/// Pattern 1 (Nullifying): `Tuning::mitigation_share` × contest_factor(the
-/// defender's Toughness, the attacker's Focus), with the level gap's
-/// `edge` on the defender's side: never all of the blow while the share is below 1.
-pub fn apply_passive_modifiers(
-    outgoing_damage: f32,
-    attrs: &ActorAttributes,
-    attacker_focus: u16,
-    edge: f32,
-) -> f32 {
-    let mitigation = crate::tuning::tuning().mitigation_share * contest_factor(attrs.toughness(), attacker_focus, edge);
-    (outgoing_damage * (1.0 - mitigation)).max(0.0)
 }
 
 #[cfg(test)]
@@ -153,17 +137,6 @@ mod tests {
         assert_eq!(crit_chance(&focused, &tough), 0.0, "Toughness that matches it nullifies it");
         assert!(crit_chance(&focused, &plain) > crit_chance(&keen, &plain), "a wider lead crits more often");
         assert_eq!(crit(100.0, &focused, &plain, 0.0), crit(100.0, &keen, &plain, 0.0), "and no harder");
-    }
-
-    #[test]
-    fn toughness_mitigates_and_the_attackers_focus_meets_it() {
-        let vital = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
-        let plain = ActorAttributes::default();
-        let taken = |attrs: &ActorAttributes, focus: u16| apply_passive_modifiers(100.0, attrs, focus, 0.0);
-        assert_eq!(taken(&plain, 0), 100.0, "no Vitality, no Toughness");
-        assert!(taken(&vital, 0) < 100.0, "Vitality's Toughness mitigates");
-        assert!(taken(&vital, 50) > taken(&vital, 0), "Focus meets it");
-        assert_eq!(taken(&vital, vital.toughness()), 100.0, "matched, it nullifies");
     }
 
     #[test]

@@ -117,7 +117,6 @@ pub fn resolve_threat(
     mut commands: Commands,
     mut query: Query<(&mut Health, &ActorAttributes, Option<&mut common_bevy::components::grit::Grit>)>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
-    actors: Query<&ActorAttributes>,
     mut writer: MessageWriter<Do>,
 ) {
     let tuning = common_bevy::tuning::tuning();
@@ -125,18 +124,9 @@ pub fn resolve_threat(
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
         if let Ok((mut health, attrs, grit)) = query.get_mut(*ent) {
-            // The defender's Toughness meets the attacker's Focus, the level
-            // edge the defender's against the attacker
-            let (attacker_level, attacker_focus) = actors.get(threat.source)
-                .map_or((attrs.total_level(), 0), |source| (source.total_level(), source.focus()));
-
-            // Apply passive mitigation (unified for all damage types), less what the
-            // ability pierces
-            let mitigated = damage_calc::apply_passive_modifiers(threat.damage, attrs, attacker_focus, damage_calc::level_edge(attrs.total_level(), attacker_level));
-            let pierce = threat.ability.map_or(0.0, |ability| tuning.pierce(ability));
             // The defender let this blow land: its Grit banks a share of it
             // for its next skill; a wound's DoT banks nothing
-            let blow = mitigated + (threat.damage - mitigated) * pierce;
+            let blow = threat.damage;
             if let Some(mut grit) = grit {
                 grit.take(blow * common_bevy::tuning::tuning().grit_share, attrs.grit_holds());
             }

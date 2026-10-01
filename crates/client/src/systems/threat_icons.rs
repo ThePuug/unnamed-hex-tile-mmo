@@ -43,9 +43,9 @@ pub fn severity_rgb(severity: f32) -> (f32, f32, f32) {
 }
 
 /// What `threat` would deal the player as it lands, a wound's DoT
-/// included: an estimate, without the attacker's dominance or level.
-pub fn estimate(threat: &QueuedThreat, attrs: &ActorAttributes) -> f32 {
-    damage::apply_passive_modifiers(threat.damage, attrs, 0, 0.0) + threat.dot_left()
+/// included.
+pub fn estimate(threat: &QueuedThreat, _attrs: &ActorAttributes) -> f32 {
+    threat.damage + threat.dot_left()
 }
 
 /// The share of the player's health `threat` would take as it lands, for

@@ -249,7 +249,7 @@ macro_rules! create_stat_display {
                 MetaAttributeStat::Flow => ("Flow", Color::srgb(0.9, 0.9, 0.5), "Combo Unlock:"),
                 MetaAttributeStat::Reflex => ("Reflex", Color::srgb(0.7, 0.5, 0.9), "Reaction Window:"),
                 MetaAttributeStat::Focus => ("Focus", Color::srgb(0.9, 0.6, 0.3), "Crit Chance:"),
-                MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Damage Mitigation:"),
+                MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Crit Resisted:"),
                 MetaAttributeStat::Ferocity => ("Ferocity", Color::srgb(0.9, 0.5, 0.5), "Early Combos:"),
                 MetaAttributeStat::Grace => ("Grace", Color::srgb(0.9, 0.9, 0.5), "Strike Arc:"),
                 MetaAttributeStat::Grit => ("Grit", Color::srgb(0.5, 0.8, 0.5), "Blows Banked:"),
@@ -969,11 +969,8 @@ pub fn update_attributes(
                         format!("{:.0}%", common_bevy::tuning::tuning().crit_chance * contest * 100.0)
                     },
                     MetaAttributeStat::Toughness => {
-                        // Damage mitigation against an attacker with no Focus
-                        let toughness = display_attrs.toughness();
-                        let contest = contest_factor(toughness, 0, 0.0);
-                        let mitigation_pct = (common_bevy::tuning::tuning().mitigation_share * contest) * 100.0;
-                        format!("-{:.0}%", mitigation_pct)
+                        // The Focus it cancels: an attacker crits it only with more
+                        display_attrs.toughness().to_string()
                     },
                     // A commitment's effect is what its tier gives, from the
                     // same methods the fight reads.
