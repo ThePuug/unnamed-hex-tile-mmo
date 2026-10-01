@@ -14,7 +14,7 @@ use common_bevy::{
 
 use super::{in_arc, Abilities};
 use crate::systems::combat::leap::away;
-use common_bevy::{components::entity_type::actor::Approach, spatial_difficulty::EnemyArchetype};
+use common_bevy::spatial_difficulty::EnemyArchetype;
 use crate::systems::behaviour::{
     approach_of,
     mind::mind_of,
@@ -53,9 +53,13 @@ impl Abilities<'_, '_> {
                 }
                 Err(_) => foe,
             };
+            // How long ago the foe's last skill was counts as much as its
+            // Approach, on its target frame, makes it count
+            let mind = mind_of(Some(archetype));
+            let approach = approach_of(target.and_then(|target| self.kinds.get(target).ok()));
+            let foe = foe.map(|foe| Foe { since_skill: foe.since_skill.map(|since| since / mind.just_acted(approach)), ..foe });
             let Some(mut view) = self.view(ent, ability, &skill, foe, target) else { continue };
             let stray = || skill.error * rng.random_range(-1.0..=1.0);
-            let mind = mind_of(Some(archetype));
             let chosen = skills::choose(&mut view, &bar, &mind, stray);
             if let (Some(decision), Some(decisions)) = (&chosen, self.decisions.as_mut()) {
                 let mut ranked = skills::weigh(&mut view, &bar, &mind);
@@ -101,7 +105,6 @@ impl Abilities<'_, '_> {
             across: targeting::across(heading, &loc, &target_loc),
             since_skill: self.last_skills.get(target?).ok()
                 .map(|last| self.time.elapsed().saturating_sub(last.0).as_secs_f32()),
-            answers_through: self.answers_through(target),
         })
     }
 
@@ -129,13 +132,6 @@ impl Abilities<'_, '_> {
             .map(|threat| threat.source)
             .collect();
         holders.len() >= capacity as usize
-    }
-
-    /// Whether `target`'s Approach, which its target frame shows, answers
-    /// through its own recovery: Ambushing, whose Preparation reacts
-    /// through it
-    fn answers_through(&self, target: Option<Entity>) -> bool {
-        approach_of(target.and_then(|target| self.kinds.get(target).ok())) == Some(Approach::Ambushing)
     }
 
     /// What `ent`, perceiving with `skill`, knows as it weighs `ability`

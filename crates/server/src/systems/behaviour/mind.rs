@@ -11,7 +11,13 @@
 
 use std::{collections::HashMap, sync::{LazyLock, RwLock}};
 
-use common_bevy::spatial_difficulty::EnemyArchetype;
+use common_bevy::{components::entity_type::actor::Approach, spatial_difficulty::EnemyArchetype};
+
+/// Every Approach a foe may show, for naming one in a setting
+const APPROACHES: [Approach; 7] = [
+    Approach::Direct, Approach::Distant, Approach::Ambushing, Approach::Patient,
+    Approach::Binding, Approach::Evasive, Approach::Overwhelming,
+];
 
 use super::{moves, skills, utility::{Consideration, Curve}};
 
@@ -25,22 +31,32 @@ pub struct Adjust {
 }
 
 /// How one NPC's decisions are shaped: the threshold of each channel, the
-/// momentum of the move under way, and what it sets of its considerations.
+/// momentum of the move under way, what it sets of its considerations, and
+/// how much each foe Approach makes the foe's last skill count.
 #[derive(Clone, Debug)]
 pub struct Mind {
     pub wait: f32,
     pub hold: f32,
     pub momentum: f32,
     adjusts: HashMap<&'static str, Adjust>,
+    just_acted: HashMap<Approach, f32>,
 }
 
 impl Default for Mind {
     fn default() -> Self {
-        Self { wait: skills::WAIT, hold: moves::HOLD, momentum: moves::MOMENTUM, adjusts: HashMap::new() }
+        Self { wait: skills::WAIT, hold: moves::HOLD, momentum: moves::MOMENTUM, adjusts: HashMap::new(), just_acted: HashMap::new() }
     }
 }
 
 impl Mind {
+    /// How much a skill its foe just used counts, by the foe's Approach as
+    /// its target frame shows it: the seconds since are divided by it, so
+    /// above 1 the skill counts longer and below 1 it fades sooner. 1 for
+    /// an Approach not set, or a foe that shows none.
+    pub fn just_acted(&self, approach: Option<Approach>) -> f32 {
+        approach.and_then(|approach| self.just_acted.get(&approach)).copied().unwrap_or(1.0).max(f32::EPSILON)
+    }
+
     /// `consideration` as this mind shapes it
     pub fn shape<V>(&self, consideration: &Consideration<V>) -> Consideration<V> {
         let Some(adjust) = self.adjusts.get(consideration.name) else { return *consideration };
@@ -60,6 +76,7 @@ struct Overrides {
     hold: Option<f32>,
     momentum: Option<f32>,
     adjusts: HashMap<&'static str, Adjust>,
+    just_acted: HashMap<Approach, f32>,
 }
 
 /// The settings each archetype fights with, as the arena's best-response
@@ -114,6 +131,7 @@ impl Minds {
             mind.wait = overrides.wait.unwrap_or(mind.wait);
             mind.hold = overrides.hold.unwrap_or(mind.hold);
             mind.momentum = overrides.momentum.unwrap_or(mind.momentum);
+            mind.just_acted.extend(overrides.just_acted.iter().map(|(&approach, &weight)| (approach, weight)));
             for (&name, adjust) in &overrides.adjusts {
                 let set = mind.adjusts.entry(name).or_default();
                 set.from = adjust.from.or(set.from);
@@ -126,8 +144,8 @@ impl Minds {
 
     /// Sets `key` from text, as the arena gives it: `<who>.<setting>`,
     /// where who is `all` or an archetype and the setting `wait`, `hold`,
-    /// `momentum`, or `<consideration>.<from|to|floor>`. Errs on anything
-    /// unknown.
+    /// `momentum`, `just_acted.<approach>`, or
+    /// `<consideration>.<from|to|floor>`. Errs on anything unknown.
     pub fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
         let number = value.parse::<f32>().map_err(|_| format!("mind.{key} takes a number, not {value}"))?;
         let (who, setting) = key.split_once('.').ok_or_else(|| format!("mind.{key} names no archetype and setting"))?;
@@ -143,6 +161,13 @@ impl Minds {
             "wait" => overrides.wait = Some(number),
             "hold" => overrides.hold = Some(number),
             "momentum" => overrides.momentum = Some(number),
+            _ if setting.starts_with("just_acted.") => {
+                let name = &setting["just_acted.".len()..];
+                let approach = APPROACHES.into_iter()
+                    .find(|approach| format!("{approach:?}").eq_ignore_ascii_case(name))
+                    .ok_or_else(|| format!("mind: no Approach {name}"))?;
+                overrides.just_acted.insert(approach, number);
+            }
             _ => {
                 let (name, part) = setting.rsplit_once('.').ok_or_else(|| format!("mind: no setting {setting}"))?;
                 let name = skills::TUNABLE.iter().chain(moves::TUNABLE).find(|&&known| known == name)
@@ -197,6 +222,17 @@ mod tests {
     fn every_tuned_setting_is_one_a_mind_knows() {
         let tuned = Minds::tuned();
         assert!(tuned.mind(Some(EnemyArchetype::Defender)).wait != Mind::default().wait);
+    }
+
+    #[test]
+    fn a_foes_approach_weighs_how_long_its_last_skill_counts() {
+        let mut minds = Minds::default();
+        minds.set("berserker.just_acted.ambushing", "0.4").unwrap();
+        let berserker = minds.mind(Some(EnemyArchetype::Berserker));
+        assert_eq!(berserker.just_acted(Some(Approach::Ambushing)), 0.4);
+        assert_eq!(berserker.just_acted(Some(Approach::Patient)), 1.0, "an Approach not set counts as it is");
+        assert_eq!(berserker.just_acted(None), 1.0);
+        assert!(minds.set("berserker.just_acted.sneaky", "1").is_err());
     }
 
     #[test]
