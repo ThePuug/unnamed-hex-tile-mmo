@@ -11,7 +11,8 @@ use super::{Abilities, AbilityFailReason, Cast};
 /// An auto-attack: a blow of the caster's auto damage on its target, free
 /// and outside the recovery, due on its own clock (the gate's to check).
 /// The swings that came due behind it while it waited, up to its Patience,
-/// land with this one, and the next comes due an interval from now.
+/// land with this one, each at `Tuning::patience_power` of it, and the next
+/// comes due an interval from now.
 pub fn swing(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let (target, _) = cast.struck()?;
     let now = abilities.time.elapsed();
@@ -22,6 +23,7 @@ pub fn swing(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, A
         swing.due = Some(now + interval);
         banked
     });
-    abilities.deal(cast.ent, target, cast.attrs.auto_damage() * (1 + banked) as f32, AbilityType::AutoAttack, Duration::ZERO);
+    let weight = 1.0 + banked as f32 * common_bevy::tuning::tuning().patience_power;
+    abilities.deal(cast.ent, target, cast.attrs.auto_damage() * weight, AbilityType::AutoAttack, Duration::ZERO);
     Ok(Some(target))
 }

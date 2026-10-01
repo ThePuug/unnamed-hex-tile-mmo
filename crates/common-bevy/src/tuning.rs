@@ -81,6 +81,10 @@ pub struct Tuning {
     /// Share of each blow an actor lets land that its Grit banks for its
     /// next skill; its tier sets how many blows it banks, 0 to 3
     pub grit_share: f32,
+    /// What each swing an actor's Patience banked strikes for, as a share of
+    /// an auto-attack, when it lands with the next; its tier sets how many
+    /// it banks, 0 to 3
+    pub patience_power: f32,
 
     // --- Contest: what a relative advantage wins ---
     /// Advantage in points that wins half of an effect's ceiling; every
@@ -197,6 +201,7 @@ impl Tuning {
         grace_arc_min: 60.0,
         grace_arc_max: 150.0,
         grit_share: 0.3,
+        patience_power: 1.25,
         contest_scale: 800.0,
         contest_per_level: 15.0,
         effect_hold: 1.0,
@@ -289,6 +294,7 @@ impl Tuning {
             "grace_arc_min" => &mut self.grace_arc_min,
             "grace_arc_max" => &mut self.grace_arc_max,
             "grit_share" => &mut self.grit_share,
+            "patience_power" => &mut self.patience_power,
             "tempo_ceiling" => &mut self.tempo_ceiling,
             "potency_base" => &mut self.potency_base,
             "potency_per_point" => &mut self.potency_per_point,
