@@ -101,7 +101,7 @@ struct Settings {
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: EnemyArchetype::ALL.to_vec(), trace: 0, tuning: Tuning::default(), minds: Minds::default() };
+        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: EnemyArchetype::ALL.to_vec(), trace: 0, tuning: Tuning::default(), minds: Minds::tuned() };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {

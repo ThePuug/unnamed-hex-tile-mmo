@@ -4,10 +4,10 @@
 //! every archetype or for one. The curve's shape is the consideration's
 //! own and is not set here.
 //!
-//! It is one process-wide set, read through [`mind_of`]. The live server
-//! never changes it; only the balance arena calls [`set_minds`], between
+//! It is one process-wide set, read through [`mind_of`], holding
+//! [`TUNED`] unless the balance arena replaces it ([`set_minds`]) between
 //! scenarios, so a search can tune each archetype's fighter without a
-//! rebuild.
+//! rebuild. What a search finds is written back into [`TUNED`].
 
 use std::{collections::HashMap, sync::{LazyLock, RwLock}};
 
@@ -62,8 +62,30 @@ struct Overrides {
     adjusts: HashMap<&'static str, Adjust>,
 }
 
+/// The settings each archetype fights with, as the arena's best-response
+/// search left them against the others: `<archetype>.<setting>` and value.
+/// An archetype or setting not named keeps the consideration's own.
+pub const TUNED: &[(&str, f32)] = &[
+    ("berserker.wait", 0.387), ("berserker.hold", 0.212), ("berserker.momentum", 0.113),
+    ("berserker.fatigue_after.floor", 0.0), ("berserker.foe_recovering.floor", 0.672),
+    ("berserker.foe_recovering.to", 0.33), ("berserker.combo_offered.floor", 0.439),
+    ("berserker.burst_carried.floor", 0.292),
+    ("defender.wait", 0.345), ("defender.hold", 0.201), ("defender.momentum", 0.267),
+    ("defender.fatigue_after.floor", 0.055), ("defender.worth_answering.to", 0.178),
+    ("defender.pressure_share.floor", 0.81), ("defender.span_closed.floor", 0.0),
+    ("skirmisher.wait", 0.206), ("skirmisher.hold", 0.164), ("skirmisher.momentum", 0.244),
+    ("skirmisher.fatigue_after.floor", 0.358), ("skirmisher.worth_answering.to", 0.575),
+    ("skirmisher.room_to_dodge.floor", 0.225), ("skirmisher.room_to_land.to", 0.215),
+    ("skirmisher.bank_full.floor", 0.101), ("skirmisher.foe_nearing.from", 0.648),
+    ("skirmisher.close_bank_full.floor", 0.094), ("skirmisher.room_to_flee.to", 0.39),
+    ("ambusher.wait", 0.347), ("ambusher.hold", 0.429), ("ambusher.momentum", 0.201),
+    ("ambusher.fatigue_after.floor", 0.121), ("ambusher.worth_answering.to", 0.098),
+    ("ambusher.pressure_share.floor", 0.521), ("ambusher.span_closed.floor", 0.4),
+    ("ambusher.reactions_left.floor", 0.586),
+];
+
 /// Every mind setting: those for all archetypes, and each archetype's on
-/// top.
+/// top. Its default sets nothing; [`Minds::tuned`] holds [`TUNED`].
 #[derive(Clone, Debug, Default)]
 pub struct Minds {
     all: Overrides,
@@ -71,6 +93,15 @@ pub struct Minds {
 }
 
 impl Minds {
+    /// The settings in [`TUNED`]
+    pub fn tuned() -> Self {
+        let mut minds = Self::default();
+        for &(key, value) in TUNED {
+            minds.set(key, &value.to_string()).unwrap_or_else(|error| panic!("TUNED: {error}"));
+        }
+        minds
+    }
+
     /// The mind of an NPC of `archetype`: every archetype's settings, its
     /// own over them
     pub fn mind(&self, archetype: Option<EnemyArchetype>) -> Mind {
@@ -126,7 +157,7 @@ impl Minds {
     }
 }
 
-static MINDS: LazyLock<RwLock<Minds>> = LazyLock::new(|| RwLock::new(Minds::default()));
+static MINDS: LazyLock<RwLock<Minds>> = LazyLock::new(|| RwLock::new(Minds::tuned()));
 
 /// The mind of an NPC of `archetype`, as the settings stand
 pub fn mind_of(archetype: Option<EnemyArchetype>) -> Mind {
@@ -157,6 +188,12 @@ mod tests {
         assert_eq!(kiter.adjusts["worth_answering"].to, Some(0.4));
         assert_eq!(defender.adjusts["span_closed"].floor, Some(0.3));
         assert!(!kiter.adjusts.contains_key("span_closed"));
+    }
+
+    #[test]
+    fn every_tuned_setting_is_one_a_mind_knows() {
+        let tuned = Minds::tuned();
+        assert!(tuned.mind(Some(EnemyArchetype::Defender)).wait != Mind::default().wait);
     }
 
     #[test]
