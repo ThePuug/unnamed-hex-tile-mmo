@@ -218,7 +218,7 @@ impl Tuning {
         preparation_relief_max: 0.5,
         grace_arc_min: 60.0,
         grace_arc_max: 150.0,
-        grit_share: 0.21,
+        grit_share: 0.3,
         patience_power: 1.25,
         contest_scale: 800.0,
         contest_per_level: 15.0,
