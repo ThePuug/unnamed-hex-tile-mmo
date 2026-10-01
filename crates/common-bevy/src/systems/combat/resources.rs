@@ -64,8 +64,9 @@ pub fn regenerate_resources(
         let dt_stamina = current_time.saturating_sub(stamina.last_update).as_secs_f32().min(MAX_DT_SECS);
         let dt_mana = current_time.saturating_sub(mana.last_update).as_secs_f32().min(MAX_DT_SECS);
 
-        // Regenerate stamina
-        stamina.state = (stamina.state + stamina.regen_rate * dt_stamina).min(stamina.max);
+        // Stamina refills slower the more tired the actor is
+        let tired = 1.0 - crate::tuning::tuning().fatigue_stamina * Endurance::fatigue_of(endurance.as_deref());
+        stamina.state = (stamina.state + stamina.regen_rate * tired * dt_stamina).min(stamina.max);
         stamina.last_update = current_time;
 
         // Endurance comes back only once stamina is whole again

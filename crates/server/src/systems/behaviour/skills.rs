@@ -14,7 +14,7 @@
 use std::time::Duration;
 
 use common_bevy::{
-    components::{reaction_queue::QueuedThreat, recovery::GlobalRecovery, ActorAttributes},
+    components::{reaction_queue::QueuedThreat, recovery::GlobalRecovery, resources::Endurance, ActorAttributes},
     message::AbilityType,
     systems::combat::combos::{may_use, reacts_through},
 };
@@ -36,6 +36,7 @@ pub struct View {
     pub health: f32,
     pub stamina: f32,
     pub endurance: f32,
+    pub endurance_max: f32,
     pub recovery: Option<GlobalRecovery>,
     /// Whether a Perfect Stride holds
     pub striding: bool,
@@ -252,19 +253,21 @@ const AFFORDABLE: Considered = step("affordable", |view| {
     flag(stamina && endurance)
 });
 
-/// The endurance it spends, over what it has: spent endurance lengthens
-/// every recovery after
+/// The fatigue it would be left with once it paid the skill's endurance:
+/// fatigue bites as the pool empties, lengthening every recovery,
+/// shortening every window against it and slowing its stamina, so a
+/// skill that spends it near empty must be worth the more
 const ENDURANCE: Considered = Consideration {
-    name: "endurance",
+    name: "fatigue after",
     read: |view| {
         let price = match view.ability {
             AbilityType::Parry => view.attrs.parry_effort(view.queue.swept),
             ability => view.attrs.skill_endurance(ability),
         };
-        price / view.endurance.max(f32::EPSILON)
+        Endurance { state: (view.endurance - price).max(0.0), max: view.endurance_max }.fatigue()
     },
     bounds: (0.0, 1.0),
-    curve: Curve::FALLING.floored(0.5),
+    curve: Curve::FALLING.floored(0.1),
 };
 
 // --- Strike ---
@@ -429,7 +432,8 @@ mod tests {
             attrs,
             health: 600.0,
             stamina: 100.0,
-            endurance: 100.0,
+            endurance: attrs.max_endurance(),
+            endurance_max: attrs.max_endurance(),
             recovery: None,
             striding: false,
             grit_held: 0,
@@ -511,6 +515,19 @@ mod tests {
         answering.capacity_taken = true;
         answering.queue = threats(&[(150.0, true, 0)], Duration::from_millis(250), Duration::from_millis(1000));
         assert!(scored(&mut answering, "answer") > WAIT, "a reaction takes no slot");
+    }
+
+    #[test]
+    fn a_skill_spent_near_empty_must_be_worth_more_than_one_spent_from_a_full_pool() {
+        let mut full = view(AbilityType::Feint, ActorAttributes::default());
+        let mut low = view(AbilityType::Feint, ActorAttributes::default());
+        let price = low.attrs.skill_endurance(AbilityType::Feint);
+        low.endurance = price * 1.5;
+        let mut half = view(AbilityType::Feint, ActorAttributes::default());
+        half.endurance = half.endurance_max / 2.0;
+        let (full, half, low) = (scored(&mut full, "strike"), scored(&mut half, "strike"), scored(&mut low, "strike"));
+        assert!(full - half < half - low, "half a pool costs little; the last of it costs much: {full} {half} {low}");
+        assert!(low < WAIT, "near empty, a plain strike is not worth it");
     }
 
     #[test]

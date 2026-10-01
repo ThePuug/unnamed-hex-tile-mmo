@@ -130,6 +130,7 @@ impl Abilities<'_, '_> {
             health: health.state,
             stamina: self.stamina.get(ent).map_or(0.0, |stamina| stamina.state),
             endurance: self.endurance.get(ent).map_or(0.0, |endurance| endurance.state),
+            endurance_max: self.endurance.get(ent).map_or(0.0, |endurance| endurance.max),
             recovery: self.recoveries.get(ent).ok().copied(),
             striding: self.strides(ent),
             grit_held: self.grits.get(ent).map_or(0, |grit| grit.held),

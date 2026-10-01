@@ -48,6 +48,11 @@ pub struct Tuning {
     /// Share shorter the windows of threats against an actor run with its
     /// endurance spent
     pub fatigue_window: f32,
+    /// The power fatigue rises by as endurance is spent: above 1 it stays
+    /// light while the pool holds and bites as it empties
+    pub fatigue_bend: f32,
+    /// Share slower an actor's stamina refills with its endurance spent
+    pub fatigue_stamina: f32,
     /// Health each point of Vitality adds before level
     pub health_per_vitality: f32,
     /// The health level curve, `(1 + level × k)^p`
@@ -186,6 +191,8 @@ impl Tuning {
         off_arc_stamina: 15.0,
         fatigue_recovery: 0.5,
         fatigue_window: 0.3,
+        fatigue_bend: 3.0,
+        fatigue_stamina: 0.75,
         health_per_vitality: 0.9604,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
@@ -309,6 +316,8 @@ impl Tuning {
             "off_arc_stamina" => &mut self.off_arc_stamina,
             "fatigue_recovery" => &mut self.fatigue_recovery,
             "fatigue_window" => &mut self.fatigue_window,
+            "fatigue_bend" => &mut self.fatigue_bend,
+            "fatigue_stamina" => &mut self.fatigue_stamina,
             "health_per_vitality" => &mut self.health_per_vitality,
             "health_curve_k" => &mut self.health_curve_k,
             "health_curve_p" => &mut self.health_curve_p,

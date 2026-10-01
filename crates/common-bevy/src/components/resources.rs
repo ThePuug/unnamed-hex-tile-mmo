@@ -100,10 +100,17 @@ impl Endurance {
         *self = Self { state: resized(self.state, self.max, max), max };
     }
 
-    /// How spent the pool is: 0 full, 1 empty. Fatigue lengthens the
-    /// actor's recoveries and shortens the windows of threats against it.
+    /// How tired the actor is, 0 with the pool full to 1 empty: the share
+    /// spent raised to `Tuning::fatigue_bend`, so it stays light while the
+    /// pool holds and bites as it empties. Fatigue lengthens the actor's
+    /// recoveries, shortens the windows of threats against it and slows
+    /// its stamina's refill.
     pub fn fatigue(&self) -> f32 {
-        if self.max > 0.0 { (1.0 - self.state / self.max).clamp(0.0, 1.0) } else { 0.0 }
+        if self.max <= 0.0 {
+            return 0.0;
+        }
+        let spent = (1.0 - self.state / self.max).clamp(0.0, 1.0);
+        spent.powf(crate::tuning::tuning().fatigue_bend)
     }
 
     /// The fatigue of an actor with `endurance`; none where it has no pool
