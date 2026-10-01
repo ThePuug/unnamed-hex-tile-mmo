@@ -21,7 +21,10 @@ pub const MOMENTUM: f32 = 0.15;
 
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
-pub const TUNABLE: &[&str] = &["pursuit_pays", "foe_nearing", "room_to_flee", "leash_tight", "bank_empty", "close_bank_full"];
+pub const TUNABLE: &[&str] = &[
+    "pursuit_pays", "foe_nearing", "room_to_flee", "leash_tight", "bank_empty", "close_bank_full",
+    "foe_closing", "shot_cost", "stride_kept",
+];
 
 /// A move an NPC makes.
 #[derive(Clone, Component, Copy, Debug, Default, Eq, PartialEq)]
@@ -53,6 +56,13 @@ pub struct Footing {
     /// It has the stamina a swing across its line costs, so it can strike
     /// as it runs
     pub strikes_running: bool,
+    /// What a shot costs on the heading it would kite on, as a share of
+    /// the stamina it has: nothing where its target stays within its
+    /// forward faces, more the further round its arc the shot goes
+    pub shot_cost: f32,
+    /// A shot on that heading breaks its stride: across its line, with no
+    /// Perfect Stride up
+    pub breaks_stride: bool,
     /// Its target strikes it from where it stands, or faces it: closing on
     /// one running from it, that cannot strike it from there, gains nothing
     pub pursuit_pays: bool,
@@ -89,13 +99,21 @@ pub fn choose(footing: &Footing, under_way: Move, mind: &Mind) -> Move {
         .map_or(Move::Hold, |(candidate, _)| candidate)
 }
 
+/// How well shooting pays from a heading whose shots cost `shot_cost` of
+/// the stamina it has and keep or break its stride, as the kite's own
+/// considerations answer it: the heading it kites on is weighed by this
+pub fn shot_value(footing: &Footing, shot_cost: f32, breaks_stride: bool, mind: &Mind) -> f32 {
+    let at = Footing { shot_cost, breaks_stride, ..*footing };
+    [SHOT_COST, STRIDE_KEPT].iter().map(|consideration| mind.shape(consideration).answer(&at)).product()
+}
+
 /// What `candidate` scores for `footing`, as `mind` shapes it
 pub fn weigh(footing: &Footing, candidate: Move, mind: &Mind) -> f32 {
     let considerations: &[Consideration<Footing>] = match candidate {
         Move::Hold => return mind.hold,
         Move::Close if footing.patience > 0 => &[NOT_PLACED, INSIDE_LEASH, PURSUIT_PAYS, BANK_FULL],
         Move::Close => &[NOT_PLACED, INSIDE_LEASH, PURSUIT_PAYS],
-        Move::Kite => &[PLACED, RANGED, STRIKES_RUNNING],
+        Move::Kite => &[PLACED, RANGED, STRIKES_RUNNING, FOE_CLOSING, SHOT_COST, STRIDE_KEPT],
         Move::Flee if footing.patience > 0 => &[FOE_NEARING, BANK_EMPTY, ROOM_TO_FLEE],
         Move::Flee => return 0.0,
         Move::Circle if footing.patience > 0 => &[CLEAR_OUTWARD, LEASH_TIGHT],
@@ -153,6 +171,33 @@ const LEASH_TIGHT: Consideration<Footing> = Consideration {
     curve: Curve::RISING,
 };
 
+/// Its target come inside its reach: at the edge it stands and shoots;
+/// the nearer the target, the more running pays
+const FOE_CLOSING: Consideration<Footing> = Consideration {
+    name: "foe_closing",
+    read: |footing| footing.distance as f32 / footing.reach.max(1) as f32,
+    bounds: (1.05, 0.7),
+    curve: Curve::RISING,
+};
+
+/// What each shot costs on the heading it would run: the dearer, against
+/// the stamina it has left, the less running pays
+const SHOT_COST: Consideration<Footing> = Consideration {
+    name: "shot_cost",
+    read: |footing| footing.shot_cost,
+    bounds: (0.0, 0.8),
+    curve: Curve::FALLING,
+};
+
+/// A shot on that heading that breaks its stride slows the run it shoots
+/// from
+const STRIDE_KEPT: Consideration<Footing> = Consideration {
+    name: "stride_kept",
+    read: |footing| flag(!footing.breaks_stride),
+    bounds: (0.0, 1.0),
+    curve: Curve::RISING.floored(0.6),
+};
+
 const CLEAR_OUTWARD: Consideration<Footing> = step("clear_outward", |footing| flag(footing.clear_outward));
 
 /// Patience: the bank it fills standing out of reach, empty
@@ -176,7 +221,7 @@ mod tests {
     use super::*;
 
     fn footing() -> Footing {
-        Footing { placed: false, ranged: false, strikes_running: true, pursuit_pays: true, at_leash: false, leash_room: 1.0, clear_outward: false, distance: 8, reach: 2, leap: 9, banked: 0, patience: 0 }
+        Footing { placed: false, ranged: false, strikes_running: true, shot_cost: 0.15, breaks_stride: true, pursuit_pays: true, at_leash: false, leash_room: 1.0, clear_outward: false, distance: 8, reach: 2, leap: 9, banked: 0, patience: 0 }
     }
 
     #[test]
@@ -200,6 +245,17 @@ mod tests {
         let placed = Footing { placed: true, ranged: true, distance: 15, reach: 20, ..footing() };
         assert_eq!(choose(&placed, Move::Hold, &Mind::default()), Move::Kite);
         assert_eq!(choose(&Footing { strikes_running: false, ..placed }, Move::Kite, &Mind::default()), Move::Hold, "spent, it stands and fights");
+    }
+
+    #[test]
+    fn a_ranged_npc_stands_and_shoots_at_its_reach_and_runs_as_its_target_closes() {
+        let placed = Footing { placed: true, ranged: true, reach: 20, ..footing() };
+        let mind = Mind::default();
+        assert_eq!(choose(&Footing { distance: 20, ..placed }, Move::Hold, &mind), Move::Hold, "at the edge of its reach it stands");
+        assert_eq!(choose(&Footing { distance: 8, ..placed }, Move::Hold, &mind), Move::Kite, "with its target closing it runs");
+        let winded = Footing { distance: 8, shot_cost: 0.5, ..placed };
+        assert!(weigh(&winded, Move::Kite, &mind) < weigh(&Footing { distance: 8, ..placed }, Move::Kite, &mind), "with each shot dearer it runs less readily");
+        assert!(weigh(&Footing { breaks_stride: false, ..winded }, Move::Kite, &mind) > weigh(&winded, Move::Kite, &mind), "and more where its shots keep its stride");
     }
 
     #[test]
