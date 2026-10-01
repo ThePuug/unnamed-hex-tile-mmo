@@ -32,8 +32,9 @@
 //! pool of workers, so no pairing waits on another's slowest fight, and
 //! each fight runs single-threaded on its worker. The report
 //! gives each pairing's win split, median fight length, the winners' health
-//! left, and where each side's damage came from: auto-attacks, skills, or
-//! reflections.
+//! left, a's edge (the share of its health a has left at the end less b's,
+//! in points, averaged over the runs: how far a won or lost by), and where
+//! each side's damage came from: auto-attacks, skills, or reflections.
 
 use std::{collections::HashMap, time::Duration};
 
@@ -204,6 +205,8 @@ struct Outcome {
     /// Decided on health left at the cap, not by a side dying
     timed_out: bool,
     dealt: HashMap<Side, Sources>,
+    /// Each side's health left at the end as a fraction of its total
+    shares: HashMap<Side, f32>,
 }
 
 const WEST: Side = Side(1);
@@ -348,7 +351,11 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
             used(WEST), tally.dealt.get(&WEST).map_or(0.0, Sources::total),
             used(EAST), tally.dealt.get(&EAST).map_or(0.0, Sources::total));
     }
-    Outcome { winner, length: elapsed, left, timed_out, dealt: tally.dealt }
+    let mut shares: HashMap<Side, f32> = HashMap::new();
+    for (side, hp) in health.iter(app.world_mut()) {
+        *shares.entry(*side).or_default() += hp.state.max(0.0) / full[side];
+    }
+    Outcome { winner, length: elapsed, left, timed_out, dealt: tally.dealt, shares }
 }
 
 /// Prints where every actor stands and what it is doing.
@@ -405,8 +412,8 @@ fn report(settings: &Settings) {
         a_team.size, a_team.level, b_team.size, b_team.level, settings.runs, settings.cap.as_secs(),
     );
     println!();
-    println!("{:<22} {:>5} {:>5} {:>5}  {:>6}  {:>5}   {:<30} {:<30}",
-        "pairing (a v b)", "a%", "b%", "capped", "median", "left", "a dealt: auto/abil/refl", "b dealt: auto/abil/refl");
+    println!("{:<22} {:>5} {:>5} {:>5}  {:>6}  {:>5}  {:>5}   {:<30} {:<30}",
+        "pairing (a v b)", "a%", "b%", "capped", "median", "left", "edge", "a dealt: auto/abil/refl", "b dealt: auto/abil/refl");
 
     let pairings: Vec<(EnemyArchetype, EnemyArchetype)> = if settings.ordered {
         settings.only.iter().flat_map(|&a| settings.only.iter().map(move |&b| (a, b))).collect()
@@ -430,6 +437,7 @@ fn report(settings: &Settings) {
         let (mut a_wins, mut b_wins, mut capped) = (0u32, 0u32, 0u32);
         let mut lengths = Vec::new();
         let mut left = Vec::new();
+        let mut edge = 0.0;
         let (mut a_dealt, mut b_dealt) = (Sources::default(), Sources::default());
         for (a_side, outcome) in outcomes {
             let a_side = *a_side;
@@ -446,6 +454,8 @@ fn report(settings: &Settings) {
                 lengths.push(outcome.length);
                 left.push(outcome.left);
             }
+            let share = |side: Side| outcome.shares.get(&side).copied().unwrap_or(0.0);
+            edge += share(a_side) - share(b_side);
             a_dealt.merge(outcome.dealt.get(&a_side).copied().unwrap_or_default());
             b_dealt.merge(outcome.dealt.get(&b_side).copied().unwrap_or_default());
         }
@@ -454,13 +464,14 @@ fn report(settings: &Settings) {
         let median = lengths.get(lengths.len() / 2).map_or(0.0, |d| d.as_secs_f32());
         let median_left = left.get(left.len() / 2).copied().unwrap_or(0.0);
         let runs = runs as f32;
-        println!("{:<22} {:>5.0} {:>5.0} {:>5.0}  {:>5.0}s  {:>4.0}%   {:<30} {:<30}",
+        println!("{:<22} {:>5.0} {:>5.0} {:>5.0}  {:>5.0}s  {:>4.0}%  {:>5.0}   {:<30} {:<30}",
             format!("{a:?} v {b:?}"),
             100.0 * a_wins as f32 / runs,
             100.0 * b_wins as f32 / runs,
             100.0 * capped as f32 / runs,
             median,
             100.0 * median_left,
+            100.0 * edge / runs,
             split(a_dealt, runs),
             split(b_dealt, runs),
         );
