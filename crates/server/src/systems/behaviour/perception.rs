@@ -136,7 +136,7 @@ mod tests {
     use super::*;
 
     fn foe(distance: i32) -> Foe {
-        Foe { distance, in_arc: true, across: false, since_skill: None }
+        Foe { distance, in_arc: true, across: false, since_skill: None, answers_through: false }
     }
 
     fn ms(millis: u64) -> Duration {

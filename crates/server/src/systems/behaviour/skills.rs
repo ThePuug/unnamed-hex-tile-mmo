@@ -28,7 +28,7 @@ pub const WAIT: f32 = 0.35;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "fatigue_after", "foe_just_acted", "worth_answering", "pressure_share", "span_closed",
+    "fatigue_after", "foe_just_acted", "foe_just_acted_through", "worth_answering", "pressure_share", "span_closed",
     "room_to_land", "room_to_dodge", "combo_offered", "burst_carried", "grit_banked",
     "reactions_left", "bank_empty", "bank_full", "foe_across",
 ];
@@ -116,10 +116,12 @@ pub struct Foe {
     pub in_arc: bool,
     /// Past its forward faces, where a swing breaks its stride
     pub across: bool,
-    /// Seconds since the foe last used a skill, as its clip showed; none
-    /// where its Approach answers through its own recovery (Ambushing's
-    /// Preparation), so a skill just used tells nothing of what it can do
+    /// Seconds since the foe last used a skill, as its clip showed
     pub since_skill: Option<f32>,
+    /// Its Approach, as its target frame shows, answers through its own
+    /// recovery (Ambushing's Preparation), so a skill it just used says
+    /// less of what it can do next
+    pub answers_through: bool,
 }
 
 /// One reason to use a skill, scored.
@@ -191,16 +193,17 @@ fn reasons(ability: AbilityType, view: &View) -> Vec<(&'static str, Vec<Consider
         .filter(|&&(reason, _)| reason != "bank" || patient)
         .map(|&(reason, part)| {
             let mut considerations = vec![OPEN, AFFORDABLE, ENDURANCE];
-            considerations.extend(part_considerations(reason, part));
+            considerations.extend(part_considerations(reason, part, view));
             considerations.extend(commitment_considerations(ability, reason, part, &view.attrs, patient));
             (reason, considerations)
         })
         .collect()
 }
 
-fn part_considerations(reason: &str, part: Part) -> Vec<Considered> {
+fn part_considerations(reason: &str, part: Part, view: &View) -> Vec<Considered> {
+    let just_acted = if view.foe.is_some_and(|foe| foe.answers_through) { FOE_JUST_ACTED_THROUGH } else { FOE_JUST_ACTED };
     match (part, reason) {
-        (Part::Strike, _) => vec![FOE_STRUCK, FOE_JUST_ACTED, CAPACITY],
+        (Part::Strike, _) => vec![FOE_STRUCK, just_acted, CAPACITY],
         (Part::Reaction, _) => vec![WORTH_ANSWERING, PRESSURE, SPAN_CLOSED],
         (Part::Clear, "dodge") => vec![FOE_IN_REACH, WORTH_ANSWERING, ROOM_TO_DODGE],
         (Part::Clear, _) => vec![FOE_IN_REACH, ROOM_TO_LAND],
@@ -298,6 +301,15 @@ const FOE_JUST_ACTED: Considered = Consideration {
     read: |view| view.foe.and_then(|foe| foe.since_skill).unwrap_or(f32::INFINITY),
     bounds: (2.0, 0.0),
     curve: Curve::RISING.floored(0.6),
+};
+
+/// The same, of a foe that answers through its own recovery: a skill it
+/// just used says less, by as much as its own curve weighs it
+const FOE_JUST_ACTED_THROUGH: Considered = Consideration {
+    name: "foe_just_acted_through",
+    read: |view| view.foe.and_then(|foe| foe.since_skill).unwrap_or(f32::INFINITY),
+    bounds: (1.0, 0.0),
+    curve: Curve::RISING.floored(0.8),
 };
 
 // --- Reaction, and a leap clear to dodge ---
@@ -457,7 +469,7 @@ mod tests {
             clear_room: 1.0,
             capacity_taken: false,
             queue: Threats::default(),
-            foe: Some(Foe { distance: 1, in_arc: true, across: false, since_skill: None }),
+            foe: Some(Foe { distance: 1, in_arc: true, across: false, since_skill: None, answers_through: false }),
         }
     }
 
@@ -541,6 +553,22 @@ mod tests {
         let (full, half, low) = (scored(&mut full, "strike"), scored(&mut half, "strike"), scored(&mut low, "strike"));
         assert!(full - half < half - low, "half a pool costs little; the last of it costs much: {full} {half} {low}");
         assert!(low < WAIT, "near empty, a plain strike is not worth it");
+    }
+
+    #[test]
+    fn a_foe_that_answers_through_its_recovery_is_trusted_less_but_still_weighed() {
+        // How much a skill the foe used just now lifts a strike over one it
+        // used long ago, of a foe that does or does not answer through
+        let lift = |answers_through: bool| {
+            let mut recent = view(AbilityType::Frenzy, ActorAttributes::default());
+            recent.foe = Some(Foe { since_skill: Some(0.2), answers_through, ..recent.foe.unwrap() });
+            let mut stale = recent.clone();
+            stale.foe = Some(Foe { since_skill: None, ..recent.foe.unwrap() });
+            scored(&mut recent, "strike") / scored(&mut stale, "strike")
+        };
+        let (plain, through) = (lift(false), lift(true));
+        assert!(plain > through, "its recent skill says less of a foe that answers through: {plain} {through}");
+        assert!(through > 1.0, "but still something: {through}");
     }
 
     #[test]

@@ -100,8 +100,8 @@ impl Abilities<'_, '_> {
             in_arc: in_arc(heading, Some(attrs), &loc, &target_loc),
             across: targeting::across(heading, &loc, &target_loc),
             since_skill: self.last_skills.get(target?).ok()
-                .filter(|_| !self.answers_through(target))
                 .map(|last| self.time.elapsed().saturating_sub(last.0).as_secs_f32()),
+            answers_through: self.answers_through(target),
         })
     }
 
