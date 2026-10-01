@@ -15,6 +15,11 @@ use common_bevy::{
     systems::{physics::{self, Walk, WALK_ARC}, targeting::is_in_facing_cone},
 };
 
+/// What NPCs decided, each a line, kept only where the resource exists:
+/// the balance arena's trace reads it.
+#[derive(bevy::prelude::Resource, Default)]
+pub struct Decisions(pub Vec<String>);
+
 /// How far an NPC looks for a target, in tiles, whatever it chases with.
 pub const ACQUISITION_RANGE: u32 = 25;
 

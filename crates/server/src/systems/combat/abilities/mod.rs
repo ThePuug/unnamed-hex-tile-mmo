@@ -128,6 +128,7 @@ pub struct Abilities<'w, 's> {
     pub map: Res<'w, Map>,
     pub time: Res<'w, Time>,
     pub runtime: Res<'w, crate::resources::RunTime>,
+    pub decisions: Option<ResMut<'w, crate::systems::behaviour::Decisions>>,
 }
 
 /// Uses every ability due or asked for this frame: the auto-attacks that

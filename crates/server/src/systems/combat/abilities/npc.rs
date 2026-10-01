@@ -45,7 +45,17 @@ impl Abilities<'_, '_> {
             };
             let Some(mut view) = self.view(ent, ability, &skill, foe, target) else { continue };
             let stray = || skill.error * rng.random_range(-1.0..=1.0);
-            let Some(decision) = skills::choose(&mut view, &bar, stray) else { continue };
+            let chosen = skills::choose(&mut view, &bar, stray);
+            if let (Some(decision), Some(decisions)) = (&chosen, self.decisions.as_mut()) {
+                let mut ranked = skills::weigh(&mut view, &bar);
+                ranked.sort_by(|a, b| b.score.total_cmp(&a.score));
+                let line = ranked.iter().take(3).map(|weighed| {
+                    let responses: Vec<String> = weighed.responses.iter().map(|(name, response)| format!("{name} {response:.2}")).collect();
+                    format!("{:?} {} {:.2} [{}]", weighed.ability, weighed.reason, weighed.score, responses.join(", "))
+                }).collect::<Vec<_>>().join(" | ");
+                decisions.0.push(format!("{ent} uses {:?} to {} at {:.2}: {line}", decision.ability, decision.reason, decision.score));
+            }
+            let Some(decision) = chosen else { continue };
             let at = match decision.ability {
                 ability if ability.is_reaction() => None,
                 AbilityType::PerfectStride => None,

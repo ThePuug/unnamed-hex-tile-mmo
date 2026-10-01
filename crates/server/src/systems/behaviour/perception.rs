@@ -36,6 +36,36 @@ impl Skill {
         error: 0.05,
     };
 
+    /// A steady player's reactions, often a little off
+    pub const STEADY: Skill = Skill {
+        fastest: Duration::from_millis(300),
+        slowest: Duration::from_millis(450),
+        error: 0.15,
+    };
+
+    /// A slow, careless one
+    pub const SLOPPY: Skill = Skill {
+        fastest: Duration::from_millis(500),
+        slowest: Duration::from_millis(800),
+        error: 0.3,
+    };
+
+    /// The skill `text` names: `sharp`, `steady` or `sloppy`, or
+    /// `fastest-slowest/error` in milliseconds and a share
+    pub fn named(text: &str) -> Result<Skill, String> {
+        match text {
+            "sharp" => return Ok(Self::SHARP),
+            "steady" => return Ok(Self::STEADY),
+            "sloppy" => return Ok(Self::SLOPPY),
+            _ => {}
+        }
+        let wrong = || format!("a skill is sharp, steady, sloppy or fastest-slowest/error, not {text}");
+        let (delays, error) = text.split_once('/').ok_or_else(wrong)?;
+        let (fastest, slowest) = delays.split_once('-').ok_or_else(wrong)?;
+        let millis = |ms: &str| ms.parse::<u64>().map(Duration::from_millis).map_err(|_| wrong());
+        Ok(Skill { fastest: millis(fastest)?, slowest: millis(slowest)?, error: error.parse().map_err(|_| wrong())? })
+    }
+
     /// The delay the change hashed from `key` reaches it after
     pub fn delay(&self, key: impl Hash) -> Duration {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -96,6 +126,14 @@ mod tests {
 
     fn ms(millis: u64) -> Duration {
         Duration::from_millis(millis)
+    }
+
+    #[test]
+    fn a_skill_is_named_or_spelled_out() {
+        assert_eq!(Skill::named("steady").unwrap().error, Skill::STEADY.error);
+        let spelled = Skill::named("200-300/0.1").unwrap();
+        assert_eq!((spelled.fastest, spelled.slowest, spelled.error), (ms(200), ms(300), 0.1));
+        assert!(Skill::named("quick").is_err());
     }
 
     #[test]

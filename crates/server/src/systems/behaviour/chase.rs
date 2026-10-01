@@ -138,6 +138,7 @@ pub fn chase(
     nntree: Res<NNTree>,
     map: Res<Map>,
     dt: Res<Time>,
+    mut decisions: Option<ResMut<super::Decisions>>,
 ) {
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
@@ -215,6 +216,9 @@ pub fn chase(
         };
         let chosen = moves::choose(&footing, under_way.as_deref().copied().unwrap_or_default());
         if let Some(under_way) = under_way.as_mut().filter(|under_way| ***under_way != chosen) {
+            if let Some(decisions) = decisions.as_mut() {
+                decisions.0.push(format!("{npc} moves {:?} -> {chosen:?}: {footing:?}", **under_way));
+            }
             **under_way = chosen;
         }
         let outward = (from_home >= chase.leash_distance - LEASH_MARGIN).then(|| Heading::from_hex(Qrz { z: 0, ..**loc - *home }));

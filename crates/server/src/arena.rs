@@ -6,7 +6,9 @@
 //! the rules the live server runs, stepped on a manual clock so it goes as
 //! fast as the CPU allows. No networking, terrain or players.
 //!
-//! Keys: `level` (10), `size` NPCs per side (1), `b_level` and `b_size` to
+//! Keys: `level` (10), `size` NPCs per side (1), `skill` its NPCs fight
+//! with (`sharp`, `steady`, `sloppy`, or `fastest-slowest/error` in
+//! milliseconds and a share; sharp), `b_level`, `b_size` and `b_skill` to
 //! set the second archetype's side apart (the same by default), `runs` per
 //! matchup (20), `cap` seconds after which the side with more health left wins
 //! (300), `only` a comma
@@ -14,7 +16,8 @@
 //! archetype against itself instead of the others, `ordered=1` to fight every
 //! ordered pair, mirrors included, `trace` to print every
 //! fight (1), with a timeline every 5s (2), or every half second for its
-//! first 12s (3). Any `Tuning` knob may be set by name too
+//! first 12s (3), with every NPC decision beside it, the three best and
+//! each consideration's response (4). Any `Tuning` knob may be set by name too
 //! (`frenzy_damage=2`), so a value is tried without a rebuild.
 //!
 //! `arena serve` runs one scenario per line of stdin, each line the keys
@@ -51,7 +54,12 @@ use common_bevy::{
 
 use crate::{
     plugins::{behaviour::BehaviourPlugin, combat::CombatPlugin},
-    systems::{actor, engagement_spawner::{engaging_at, spawn_engagement, STAGE_GAP}, renet},
+    systems::{
+        actor,
+        behaviour::{perception::Skill, Decisions},
+        engagement_spawner::{engaging_at, spawn_engagement, STAGE_GAP},
+        renet,
+    },
 };
 
 /// One simulated frame. FixedUpdate's 125ms tick runs every second frame.
@@ -61,12 +69,14 @@ const STEP: Duration = Duration::from_micros(62_500);
 /// reaches its leash before the edge.
 const ARENA_RADIUS: i32 = 80;
 
-/// One side of a fight: `size` NPCs of `archetype` at `level`.
+/// One side of a fight: `size` NPCs of `archetype` at `level`, fighting
+/// with `skill`.
 #[derive(Clone, Copy)]
 struct Team {
     archetype: EnemyArchetype,
     level: u8,
     size: u8,
+    skill: Skill,
 }
 
 struct Settings {
@@ -74,6 +84,8 @@ struct Settings {
     size: u8,
     b_level: Option<u8>,
     b_size: Option<u8>,
+    skill: Skill,
+    b_skill: Option<Skill>,
     mirror: bool,
     ordered: bool,
     runs: u32,
@@ -85,7 +97,7 @@ struct Settings {
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: EnemyArchetype::ALL.to_vec(), trace: 0, tuning: Tuning::default() };
+        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: EnemyArchetype::ALL.to_vec(), trace: 0, tuning: Tuning::default() };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {
@@ -93,12 +105,14 @@ impl Settings {
                 "size" => settings.size = value.parse().expect("size is a whole number"),
                 "b_level" => settings.b_level = Some(value.parse().expect("b_level is a whole number")),
                 "b_size" => settings.b_size = Some(value.parse().expect("b_size is a whole number")),
+                "skill" => settings.skill = Skill::named(value).unwrap_or_else(|error| panic!("arena: {error}")),
+                "b_skill" => settings.b_skill = Some(Skill::named(value).unwrap_or_else(|error| panic!("arena: {error}"))),
                 "mirror" => settings.mirror = value == "1",
                 "ordered" => settings.ordered = value == "1",
                 "runs" => settings.runs = value.parse().expect("runs is a whole number"),
                 "cap" => settings.cap = Duration::from_secs(value.parse().expect("cap is whole seconds")),
                 "only" => settings.only = value.split(',').map(archetype_named).collect(),
-                "trace" => settings.trace = value.parse().expect("trace is 0 to 3"),
+                "trace" => settings.trace = value.parse().expect("trace is 0 to 4"),
                 _ => settings.tuning.set(key, value).unwrap_or_else(|error| panic!("arena: {error}")),
             }
         }
@@ -106,11 +120,11 @@ impl Settings {
     }
 
     fn team_a(&self, archetype: EnemyArchetype) -> Team {
-        Team { archetype, level: self.level, size: self.size }
+        Team { archetype, level: self.level, size: self.size, skill: self.skill }
     }
 
     fn team_b(&self, archetype: EnemyArchetype) -> Team {
-        Team { archetype, level: self.b_level.unwrap_or(self.level), size: self.b_size.unwrap_or(self.size) }
+        Team { archetype, level: self.b_level.unwrap_or(self.level), size: self.b_size.unwrap_or(self.size), skill: self.b_skill.unwrap_or(self.skill) }
     }
 }
 
@@ -228,6 +242,9 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     app.insert_resource(flat_map());
     app.insert_resource(SpawnPoint(Qrz { q: 0, r: 0, z: 1 }));
     app.init_resource::<Tally>();
+    if settings.trace > 3 {
+        app.init_resource::<Decisions>();
+    }
     app.add_systems(Update, (actor::update, tally_used));
     app.add_systems(PostUpdate, renet::cleanup_despawned);
     app.add_observer(tally_resolved);
@@ -254,6 +271,10 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
         }
     }
     world.flush();
+    let mut skills = world.query::<(&Side, &mut Skill)>();
+    for (side, mut skill) in skills.iter_mut(world) {
+        *skill = if *side == WEST { west.skill } else { east.skill };
+    }
     // Nothing but the damage roll varies a fight, so a start the two ends
     // do not share would decide a close one the same way every run: each
     // fighter faces its foes' end give or take two slots, near enough to
@@ -280,6 +301,11 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
         app.update();
         elapsed += STEP;
         let world = app.world_mut();
+        if let Some(mut decisions) = world.get_resource_mut::<Decisions>() {
+            for line in decisions.0.drain(..) {
+                println!("    t={:5.2}s {line}", elapsed.as_secs_f32());
+            }
+        }
         let mut alive: HashMap<Side, (f32, f32)> = HashMap::new();
         for (side, hp) in health.iter(world) {
             if hp.state > 0.0 {
