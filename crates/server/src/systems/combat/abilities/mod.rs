@@ -309,15 +309,16 @@ impl Abilities<'_, '_> {
     /// Queues a skill's strike on `target` for `damage` in all, in `parts`:
     /// each a share of it, struck its delay after now ([`WHOLE`] for one
     /// strike made at once). What the caster's Grit has banked strikes with
-    /// it, split as the damage is, and is spent, and every part binds its
-    /// target: dazed out of `Tuning::grit_bind` of its pace for each blow
-    /// the bank held, as it lands. Every skill that strikes deals its
-    /// damage through here, and an auto-attack or a reaction's return
-    /// never does.
+    /// it, split as the damage is, and is spent, and its last part binds
+    /// its target, once: dazed out of `Tuning::grit_bind` of its pace for
+    /// each blow the bank held, as it lands, a Feint's real strike and not
+    /// its feint. Every skill that strikes deals its damage through here,
+    /// and an auto-attack or a reaction's return never does.
     pub fn strike(&mut self, cast: &Cast, target: Entity, damage: f32, ability: AbilityType, parts: &[(f32, Duration)]) {
         let (bank, held) = self.grits.get_mut(cast.ent).map_or((0.0, 0), |mut grit| grit.spend());
         let bind = (common_bevy::tuning::tuning().grit_bind * held as f32).min(MOST_BIND);
-        for &(share, delay) in parts {
+        for (i, &(share, delay)) in parts.iter().enumerate() {
+            let bind = if i + 1 == parts.len() { bind } else { 0.0 };
             self.deal(cast.ent, target, (damage + bank) * share, ability, bind, delay);
         }
     }
@@ -745,12 +746,17 @@ mod tests {
         assert_eq!(bank(&app), banked, "a swing leaves the bank be");
         assert!(used(&ask(&mut app, gritty, AbilityType::Feint, Some(attacker)), AbilityType::Feint));
         assert_eq!(bank(&app), 0.0, "a skill strikes with it");
-        assert!(queue(&app, attacker).iter().filter(|threat| threat.ability == Some(AbilityType::Feint)).all(|threat| threat.bind > 0.0), "and every part of it binds");
+        let binds: Vec<bool> = queue(&app, attacker).iter().filter(|threat| threat.ability == Some(AbilityType::Feint)).map(|threat| threat.bind > 0.0).collect();
+        assert_eq!(binds, vec![false, true], "the real strike binds, the feint before it does not");
         let dazed = |app: &App| app.world().get::<Status>(attacker).is_some_and(|status| status.daze_pace() < 1.0);
-        assert!(!dazed(&app), "nothing binds before it lands");
-        app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: attacker } });
-        app.update();
-        assert!(dazed(&app), "landed, it dazes its target");
+        let land_front = |app: &mut App| {
+            app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: attacker } });
+            app.update();
+        };
+        land_front(&mut app);
+        assert!(!dazed(&app), "the feint landed binds nothing");
+        land_front(&mut app);
+        assert!(dazed(&app), "the real strike landed dazes its target");
     }
 
     #[test]
