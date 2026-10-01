@@ -141,10 +141,10 @@ pub struct Actor;
 
 /// Discrete commitment tier: T0 (<20%), T1 (≥20%), T2 (≥40%), T3 (≥60%).
 ///
-/// The percentage is against `total_level × 10` — the most a single attribute
-/// could reach — not against the summed budget. A summed denominator inflates
-/// with spread, so a spectrum build would tier lower than an axis build holding
-/// identical points.
+/// The percentage is against the most a single attribute could reach
+/// (`ActorAttributes::ceiling`), not against the summed budget. A summed
+/// denominator inflates with spread, so a spectrum build would tier lower than
+/// an axis build holding identical points.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CommitmentTier {
     /// No commitment identity — baseline only
@@ -420,11 +420,17 @@ impl ActorAttributes {
     }
 
     /// `attribute`'s commitment tier: its value as a share of the most any
-    /// one attribute could reach at the actor's level, `total_level × 10`.
-    /// The summed budget would tier a spectrum build below an axis build
-    /// holding the same points.
+    /// one attribute could reach at the actor's level (`ceiling`). The summed
+    /// budget would tier a spectrum build below an axis build holding the
+    /// same points.
     pub fn tier(&self, attribute: Attribute) -> CommitmentTier {
-        CommitmentTier::calculate(self.value(attribute), self.total_level() * 10)
+        CommitmentTier::calculate(self.value(attribute), self.ceiling())
+    }
+
+    /// The most any one attribute can be worth at the actor's level: every
+    /// level in one axis.
+    pub fn ceiling(&self) -> u32 {
+        self.total_level() * Pair::AXIS as u32
     }
 
     // Each attribute by name, and the most any shift could make it
@@ -963,8 +969,8 @@ mod tests {
     #[test]
     fn test_tier_of_convenience() {
         // Specialist build: heavy investment in one attribute
-        // axis=-5, spectrum=0 → might=50, agility=0, total_budget=50
-        // might commitment: 50/50 = 100% → T3
+        // axis=-5, spectrum=0 → might=80, agility=0, ceiling=80
+        // might commitment: 80/80 = 100% → T3
         let attrs = ActorAttributes::new(-5, 0, 0, 0, 0, 0, 0, 0, 0);
         assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T3);
         assert_eq!(attrs.tier(Attribute::Agility), CommitmentTier::T0);
@@ -972,45 +978,40 @@ mod tests {
 
     #[test]
     fn test_tier_of_balanced_build() {
-        // Spread across pairs: each pair gets some investment
-        // M/G: axis=0, spectrum=3 → might=18, agility=18 (3×6 balanced multiplier)
-        // V/F: axis=0, spectrum=3 → vitality=18, discipline=18
-        // I/P: axis=0, spectrum=3 → instinct=18, resolve=18
-        // total_level = 9, max_possible = 90
-        // each attr = 18/90 = 20% → T1 (exactly at threshold)
-        let attrs = ActorAttributes::new(0, 3, 0, 0, 3, 0, 0, 3, 0);
-        assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T1);
-        assert_eq!(attrs.tier(Attribute::Agility), CommitmentTier::T1);
-        assert_eq!(attrs.tier(Attribute::Vitality), CommitmentTier::T1);
-        assert_eq!(attrs.tier(Attribute::Discipline), CommitmentTier::T1);
+        // A balanced spectrum pays 6 a level to each side, against a ceiling
+        // of 16 a level: every level in one pair is 54/144 = 37.5% → T1 both
+        let committed = ActorAttributes::new(0, 9, 0, 0, 0, 0, 0, 0, 0);
+        assert_eq!(committed.tier(Attribute::Might), CommitmentTier::T1);
+        assert_eq!(committed.tier(Attribute::Agility), CommitmentTier::T1);
+
+        // Spread evenly over all three pairs: 18/144 = 12.5% → T0 everywhere
+        let spread = ActorAttributes::new(0, 3, 0, 0, 3, 0, 0, 3, 0);
+        assert_eq!(spread.tier(Attribute::Might), CommitmentTier::T0);
+        assert_eq!(spread.tier(Attribute::Resolve), CommitmentTier::T0);
     }
 
     #[test]
     fn test_commitment_tier_budget_constraints() {
-        // T3+T2 build:
-        // axis=-6 → might = 6×16 = 96, axis=-3 → vitality = 3×16 = 48
-        // total_level = 9, max_possible = 90
-        // might: 96/90 = 106.7% → T3 ✓
-        // vitality: 48/90 = 53.3% → T2 ✓
-        let attrs = ActorAttributes::new(-6, 0, 0, -3, 0, 0, 0, 0, 0);
+        // T3+T2 takes every level: 6+4 axis at level 10, ceiling 160
+        // might: 96/160 = 60% → T3; vitality: 64/160 = 40% → T2
+        let attrs = ActorAttributes::new(-6, 0, 0, -4, 0, 0, 0, 0, 0);
         assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T3);
         assert_eq!(attrs.tier(Attribute::Vitality), CommitmentTier::T2);
+
+        // 5+5 axis: 80/160 = 50% each → T2, so two T3s are out of reach
+        let split = ActorAttributes::new(-5, 0, 0, -5, 0, 0, 0, 0, 0);
+        assert_eq!(split.tier(Attribute::Might), CommitmentTier::T2);
+        assert_eq!(split.tier(Attribute::Vitality), CommitmentTier::T2);
     }
 
     #[test]
     fn test_commitment_tier_dual_t2() {
-        // Dual T2 with axis×16 scaling:
-        // axis=-3 on two pairs: total_level = 6, max_possible = 60
-        // might = 3×16 = 48 → 48/60 = 80% → T3 (too high for single pair!)
-
-        // Spread to three pairs for T2:
-        // axis=-3 each → total_level = 9, max_possible = 90
-        // might = 48 → 48/90 = 53.3% → T2 ✓
-        // vitality = 48 → 53.3% → T2 ✓
-        let attrs = ActorAttributes::new(-3, 0, 0, -3, 0, 0, -3, 0, 0);
+        // 4+4+2 axis at level 10, ceiling 160
+        // might, vitality: 64/160 = 40% → T2; instinct: 32/160 = 20% → T1
+        let attrs = ActorAttributes::new(-4, 0, 0, -4, 0, 0, -2, 0, 0);
         assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T2);
         assert_eq!(attrs.tier(Attribute::Vitality), CommitmentTier::T2);
-        assert_eq!(attrs.tier(Attribute::Instinct), CommitmentTier::T2);
+        assert_eq!(attrs.tier(Attribute::Instinct), CommitmentTier::T1);
     }
 
     // ===== SHIFT CONSTRAINT TESTS =====
