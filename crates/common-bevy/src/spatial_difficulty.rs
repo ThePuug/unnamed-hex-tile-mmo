@@ -20,7 +20,7 @@ use crate::{
 pub const HAVEN_LOCATION: Qrz = Qrz { q: 104289, r: -4677, z: 0 };
 
 /// The enemy archetypes, each built on one attribute.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum EnemyArchetype {
     #[default]
     Berserker,

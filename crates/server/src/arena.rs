@@ -18,7 +18,9 @@
 //! fight (1), with a timeline every 5s (2), or every half second for its
 //! first 12s (3), with every NPC decision beside it, the three best and
 //! each consideration's response (4). Any `Tuning` knob may be set by name too
-//! (`frenzy_damage=2`), so a value is tried without a rebuild.
+//! (`frenzy_damage=2`), so a value is tried without a rebuild, and any mind
+//! setting as `mind.<all|archetype>.<setting>` (`behaviour::mind`), so a
+//! search tunes each archetype's fighter the same way.
 //!
 //! `arena serve` runs one scenario per line of stdin, each line the keys
 //! above, and ends each report with a line `end`, so a tuning search tries
@@ -56,7 +58,7 @@ use crate::{
     plugins::{behaviour::BehaviourPlugin, combat::CombatPlugin},
     systems::{
         actor,
-        behaviour::{perception::Skill, Decisions},
+        behaviour::{mind::{set_minds, Minds}, perception::Skill, Decisions},
         engagement_spawner::{engaging_at, spawn_engagement, STAGE_GAP},
         renet,
     },
@@ -93,11 +95,12 @@ struct Settings {
     only: Vec<EnemyArchetype>,
     trace: u8,
     tuning: Tuning,
+    minds: Minds,
 }
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: EnemyArchetype::ALL.to_vec(), trace: 0, tuning: Tuning::default() };
+        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: EnemyArchetype::ALL.to_vec(), trace: 0, tuning: Tuning::default(), minds: Minds::default() };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {
@@ -113,6 +116,7 @@ impl Settings {
                 "cap" => settings.cap = Duration::from_secs(value.parse().expect("cap is whole seconds")),
                 "only" => settings.only = value.split(',').map(archetype_named).collect(),
                 "trace" => settings.trace = value.parse().expect("trace is 0 to 4"),
+                _ if key.starts_with("mind.") => settings.minds.set(&key["mind.".len()..], value).unwrap_or_else(|error| panic!("arena: {error}")),
                 _ => settings.tuning.set(key, value).unwrap_or_else(|error| panic!("arena: {error}")),
             }
         }
@@ -394,6 +398,7 @@ fn serve() {
 /// Runs every pairing under the scenario's tuning and prints the report.
 fn report(settings: &Settings) {
     set_tuning(settings.tuning);
+    set_minds(settings.minds.clone());
     let (a_team, b_team) = (settings.team_a(EnemyArchetype::Berserker), settings.team_b(EnemyArchetype::Berserker));
     println!(
         "arena: a is {} at level {}, b is {} at level {}; {} runs per pairing, decided on health after {}s",

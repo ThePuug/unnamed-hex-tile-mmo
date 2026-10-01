@@ -56,7 +56,7 @@ impl Curve {
 
 /// One input to a decision, as data: where it is read from, the bounds it
 /// is scaled between, and the curve that answers it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct Consideration<V> {
     pub name: &'static str,
     pub read: fn(&V) -> f32,
@@ -65,6 +65,14 @@ pub struct Consideration<V> {
     pub bounds: (f32, f32),
     pub curve: Curve,
 }
+
+impl<V> Clone for Consideration<V> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<V> Copy for Consideration<V> {}
 
 impl<V> Consideration<V> {
     /// Its response to what `view` reads

@@ -14,7 +14,9 @@ use common_bevy::{
 
 use super::{in_arc, Abilities};
 use crate::systems::combat::leap::away;
+use common_bevy::spatial_difficulty::EnemyArchetype;
 use crate::systems::behaviour::{
+    mind::mind_of,
     perception::Skill,
     skills::{self, Foe, Threats, View},
 };
@@ -22,10 +24,10 @@ use crate::systems::behaviour::{
 impl Abilities<'_, '_> {
     /// Asks, for each NPC, the skill its skills channel chooses, if any.
     pub(super) fn skills(&mut self) {
-        let npcs: Vec<(Entity, AbilityType)> = self.npcs.iter()
+        let npcs: Vec<(Entity, EnemyArchetype)> = self.npcs.iter()
             .filter_map(|(ent, entity_type)| match entity_type {
                 EntityType::Actor(actor) => match actor.identity {
-                    ActorIdentity::Npc(archetype) => Some((ent, archetype.profile().ability)),
+                    ActorIdentity::Npc(archetype) => Some((ent, archetype)),
                     _ => None,
                 },
                 _ => None,
@@ -33,7 +35,8 @@ impl Abilities<'_, '_> {
             .collect();
         let mut asks: Vec<(Entity, AbilityType, Option<Entity>)> = Vec::new();
         let mut rng = rand::rng();
-        for (ent, ability) in npcs {
+        for (ent, archetype) in npcs {
+            let ability = archetype.profile().ability;
             let bar = [ability];
             let skill = self.minds.get(ent).map_or(Skill::SHARP, |(skill, _)| *skill);
             let target = self.targets.get(ent).ok().and_then(|(_, target)| target.entity);
@@ -45,9 +48,10 @@ impl Abilities<'_, '_> {
             };
             let Some(mut view) = self.view(ent, ability, &skill, foe, target) else { continue };
             let stray = || skill.error * rng.random_range(-1.0..=1.0);
-            let chosen = skills::choose(&mut view, &bar, stray);
+            let mind = mind_of(Some(archetype));
+            let chosen = skills::choose(&mut view, &bar, &mind, stray);
             if let (Some(decision), Some(decisions)) = (&chosen, self.decisions.as_mut()) {
-                let mut ranked = skills::weigh(&mut view, &bar);
+                let mut ranked = skills::weigh(&mut view, &bar, &mind);
                 ranked.sort_by(|a, b| b.score.total_cmp(&a.score));
                 let line = ranked.iter().take(3).map(|weighed| {
                     let responses: Vec<String> = weighed.responses.iter().map(|(name, response)| format!("{name} {response:.2}")).collect();

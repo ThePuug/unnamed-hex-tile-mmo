@@ -19,10 +19,19 @@ use common_bevy::{
     systems::combat::combos::{may_use, reacts_through},
 };
 
-use super::utility::{score, Consideration, Curve, Shape};
+use super::{mind::Mind, utility::{score, Consideration, Curve, Shape}};
 
-/// What waiting scores: the threshold every skill's decision must beat.
+/// What waiting scores unless a mind sets it: the threshold every skill's
+/// decision must beat.
 pub const WAIT: f32 = 0.35;
+
+/// The considerations a mind may tune ([`super::mind`]): those with a
+/// curve to shape, where a condition only holds or fails.
+pub const TUNABLE: &[&str] = &[
+    "fatigue_after", "foe_recovering", "worth_answering", "pressure_share", "span_closed",
+    "room_to_land", "room_to_dodge", "combo_offered", "burst_carried", "grit_banked",
+    "reactions_left", "bank_empty", "bank_full", "foe_across",
+];
 
 /// The blow, as a share of its own health, a reaction or a leap clear
 /// counts as fully worth answering.
@@ -121,24 +130,25 @@ pub struct Decision {
     pub responses: Vec<(&'static str, f32)>,
 }
 
-/// The best of `bar`'s decisions for what `view` perceives, where it beats
-/// waiting; None to wait. `view.ability` is set to each skill in turn.
-/// `stray` gives each score's error, a share of it.
-pub fn choose(view: &mut View, bar: &[AbilityType], mut stray: impl FnMut() -> f32) -> Option<Decision> {
-    weigh(view, bar).into_iter()
+/// The best of `bar`'s decisions for what `view` perceives, as `mind`
+/// shapes them, where it beats waiting; None to wait. `view.ability` is
+/// set to each skill in turn. `stray` gives each score's error, a share of
+/// it.
+pub fn choose(view: &mut View, bar: &[AbilityType], mind: &Mind, mut stray: impl FnMut() -> f32) -> Option<Decision> {
+    weigh(view, bar, mind).into_iter()
         .map(|decision| Decision { score: decision.score * (1.0 + stray()), ..decision })
-        .filter(|decision| decision.score > WAIT)
+        .filter(|decision| decision.score > mind.wait)
         .max_by(|a, b| a.score.total_cmp(&b.score))
 }
 
-/// Every decision `bar` brings, scored.
-pub fn weigh(view: &mut View, bar: &[AbilityType]) -> Vec<Decision> {
+/// Every decision `bar` brings, scored as `mind` shapes it.
+pub fn weigh(view: &mut View, bar: &[AbilityType], mind: &Mind) -> Vec<Decision> {
     let mut decisions = Vec::new();
     for &ability in bar {
         view.ability = ability;
         for (reason, considerations) in reasons(ability, view) {
             let responses: Vec<(&'static str, f32)> = considerations.iter()
-                .map(|consideration| (consideration.name, consideration.answer(view)))
+                .map(|consideration| (consideration.name, mind.shape(consideration).answer(view)))
                 .collect();
             let score = score(1.0, responses.iter().map(|&(_, response)| response));
             decisions.push(Decision { ability, reason, score, responses });
@@ -258,7 +268,7 @@ const AFFORDABLE: Considered = step("affordable", |view| {
 /// shortening every window against it and slowing its stamina, so a
 /// skill that spends it near empty must be worth the more
 const ENDURANCE: Considered = Consideration {
-    name: "fatigue after",
+    name: "fatigue_after",
     read: |view| {
         let price = match view.ability {
             AbilityType::Parry => view.attrs.parry_effort(view.queue.swept),
@@ -272,7 +282,7 @@ const ENDURANCE: Considered = Consideration {
 
 // --- Strike ---
 
-const FOE_STRUCK: Considered = step("foe in reach and arc", |view| {
+const FOE_STRUCK: Considered = step("foe_struck", |view| {
     flag(view.foe.is_some_and(|foe| foe.distance <= view.reach && foe.in_arc))
 });
 
@@ -281,7 +291,7 @@ const CAPACITY: Considered = step("capacity", |view| flag(!view.capacity_taken))
 
 /// A foe in recovery cannot answer with a skill
 const FOE_RECOVERING: Considered = Consideration {
-    name: "foe recovering",
+    name: "foe_recovering",
     read: |view| view.foe.map_or(0.0, |foe| foe.recovering),
     bounds: (0.0, 0.5),
     curve: Curve::RISING.floored(0.6),
@@ -291,7 +301,7 @@ const FOE_RECOVERING: Considered = Consideration {
 
 /// What it would clear, over its health
 const WORTH_ANSWERING: Considered = Consideration {
-    name: "worth answering",
+    name: "worth_answering",
     read: |view| view.queue.swept / health(view),
     bounds: (0.0, WORTH),
     curve: Curve { shape: Shape::Logistic { mid: 0.4, steep: 8.0 }, falling: false, floor: 0.0 },
@@ -300,7 +310,7 @@ const WORTH_ANSWERING: Considered = Consideration {
 /// Auto-attacks are pressure, steady and light; abilities are what a
 /// reaction is for
 const PRESSURE: Considered = Consideration {
-    name: "pressure share",
+    name: "pressure_share",
     read: |view| if view.queue.swept > 0.0 { view.queue.swept_pressure / view.queue.swept } else { 0.0 },
     bounds: (0.0, 1.0),
     curve: Curve::FALLING.floored(0.5),
@@ -309,7 +319,7 @@ const PRESSURE: Considered = Consideration {
 /// A threat queued once the span has closed lands past it, so waiting
 /// until then lets the most join one answer
 const SPAN_CLOSED: Considered = Consideration {
-    name: "span closed",
+    name: "span_closed",
     read: |view| view.queue.span_closed,
     bounds: (0.0, 1.0),
     curve: Curve { shape: Shape::Power(2.0), falling: false, floor: 0.1 },
@@ -317,19 +327,19 @@ const SPAN_CLOSED: Considered = Consideration {
 
 // --- Leap ---
 
-const FOE_IN_REACH: Considered = step("foe in reach", |view| flag(foe_distance(view).is_some_and(|d| d <= view.reach)));
+const FOE_IN_REACH: Considered = step("foe_in_reach", |view| flag(foe_distance(view).is_some_and(|d| d <= view.reach)));
 
-const FOE_OUT_OF_REACH: Considered = step("foe out of reach", |view| flag(foe_distance(view).is_some_and(|d| d > view.reach)));
+const FOE_OUT_OF_REACH: Considered = step("foe_out_of_reach", |view| flag(foe_distance(view).is_some_and(|d| d > view.reach)));
 
 /// A dive lands it in reach to strike
-const FOE_WITHIN_A_DIVE: Considered = step("foe within a dive", |view| {
+const FOE_WITHIN_A_DIVE: Considered = step("foe_within_a_dive", |view| {
     flag(foe_distance(view).is_some_and(|d| d <= view.leap + view.reach))
 });
 
 /// A leap clear toward its leash's edge lands where it has no room left
 /// to give ground; one back inward leaves it room
 const ROOM_TO_LAND: Considered = Consideration {
-    name: "room to land",
+    name: "room_to_land",
     read: |view| view.clear_room,
     bounds: (0.0, 0.3),
     curve: Curve::RISING,
@@ -337,7 +347,7 @@ const ROOM_TO_LAND: Considered = Consideration {
 
 /// A dodge clears its span wherever it lands, so a short room only weighs
 const ROOM_TO_DODGE: Considered = Consideration {
-    name: "room to land",
+    name: "room_to_dodge",
     read: |view| view.clear_room,
     bounds: (0.0, 0.3),
     curve: Curve::RISING.floored(0.4),
@@ -345,13 +355,13 @@ const ROOM_TO_DODGE: Considered = Consideration {
 
 // --- Stance ---
 
-const NOT_STRIDING: Considered = step("not striding", |view| flag(!view.striding));
+const NOT_STRIDING: Considered = step("not_striding", |view| flag(!view.striding));
 
 // --- Commitments ---
 
 /// Ferocity: the skill is the combo its recovery offers, a burst under way
 const COMBO_OFFERED: Considered = Consideration {
-    name: "combo offered",
+    name: "combo_offered",
     read: |view| flag(view.recovery.as_ref().and_then(|recovery| recovery.combo).is_some_and(|combo| combo.ability == view.ability)),
     bounds: (0.0, 1.0),
     curve: Curve::RISING.floored(0.6),
@@ -359,7 +369,7 @@ const COMBO_OFFERED: Considered = Consideration {
 
 /// Ferocity: stamina to carry a whole burst, every bite its tier fires early
 const BURST_CARRIED: Considered = Consideration {
-    name: "burst carried",
+    name: "burst_carried",
     read: |view| {
         let burst = common_bevy::tuning::tuning().cost(view.ability) * (view.attrs.ferocity().index() as f32 + 1.0);
         view.stamina / burst.max(f32::EPSILON)
@@ -370,7 +380,7 @@ const BURST_CARRIED: Considered = Consideration {
 
 /// Grit: the blows banked, against what it holds
 const GRIT_BANKED: Considered = Consideration {
-    name: "grit banked",
+    name: "grit_banked",
     read: |view| view.grit_held as f32 / view.attrs.grit_holds().max(1) as f32,
     bounds: (0.0, 1.0),
     curve: Curve::RISING.floored(0.3),
@@ -378,7 +388,7 @@ const GRIT_BANKED: Considered = Consideration {
 
 /// Preparation: reactions it may still take through this recovery
 const REACTIONS_LEFT: Considered = Consideration {
-    name: "reactions left",
+    name: "reactions_left",
     read: |view| {
         let tier = view.attrs.preparation().index() as f32;
         match view.recovery.as_ref().filter(|recovery| recovery.is_active()) {
@@ -392,7 +402,7 @@ const REACTIONS_LEFT: Considered = Consideration {
 
 /// Patience: a bank with room to fill, which it fills standing out of reach
 const BANK_EMPTY: Considered = Consideration {
-    name: "bank empty",
+    name: "bank_empty",
     read: |view| view.banked as f32 / view.attrs.patience().index().max(1) as f32,
     bounds: (0.0, 1.0),
     curve: Curve::FALLING,
@@ -400,7 +410,7 @@ const BANK_EMPTY: Considered = Consideration {
 
 /// Patience: a full bank, spent by a dive
 const BANK_FULL: Considered = Consideration {
-    name: "bank full",
+    name: "bank_full",
     read: |view| view.banked as f32 / view.attrs.patience().index().max(1) as f32,
     bounds: (0.0, 1.0),
     curve: Curve { shape: Shape::Power(2.0), falling: false, floor: 0.2 },
@@ -408,7 +418,7 @@ const BANK_FULL: Considered = Consideration {
 
 /// Grace: a foe past its forward faces, struck there only in a stride
 const FOE_ACROSS: Considered = Consideration {
-    name: "foe across",
+    name: "foe_across",
     read: |view| flag(view.foe.is_some_and(|foe| foe.across && foe.in_arc)),
     bounds: (0.0, 1.0),
     curve: Curve::RISING.floored(0.3),
@@ -460,13 +470,13 @@ mod tests {
 
     fn scored(view: &mut View, reason: &str) -> f32 {
         let bar = [view.ability];
-        weigh(view, &bar).into_iter().find(|decision| decision.reason == reason).map_or(0.0, |decision| decision.score)
+        weigh(view, &bar, &Mind::default()).into_iter().find(|decision| decision.reason == reason).map_or(0.0, |decision| decision.score)
     }
 
     #[test]
     fn nothing_queued_nothing_to_answer() {
         let mut quiet = view(AbilityType::Counter, ActorAttributes::default());
-        assert!(choose(&mut quiet, &[AbilityType::Counter], || 0.0).is_none());
+        assert!(choose(&mut quiet, &[AbilityType::Counter], &Mind::default(), || 0.0).is_none());
     }
 
     #[test]
@@ -570,9 +580,9 @@ mod tests {
     #[test]
     fn without_patience_a_leap_clear_is_only_a_dodge() {
         let mut plain = view(AbilityType::Leap, ActorAttributes::default());
-        let reasons: Vec<&str> = weigh(&mut plain, &[AbilityType::Leap]).iter().map(|decision| decision.reason).collect();
+        let reasons: Vec<&str> = weigh(&mut plain, &[AbilityType::Leap], &Mind::default()).iter().map(|decision| decision.reason).collect();
         assert!(!reasons.contains(&"bank"));
-        assert!(choose(&mut plain, &[AbilityType::Leap], || 0.0).is_none(), "in reach with nothing queued, it stays");
+        assert!(choose(&mut plain, &[AbilityType::Leap], &Mind::default(), || 0.0).is_none(), "in reach with nothing queued, it stays");
     }
 
     #[test]

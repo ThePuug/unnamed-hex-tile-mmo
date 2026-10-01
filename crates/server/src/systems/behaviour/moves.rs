@@ -10,13 +10,18 @@
 
 use bevy::prelude::*;
 
-use super::utility::{score, Consideration, Curve};
+use super::{mind::Mind, utility::{score, Consideration, Curve}};
 
-/// What holding scores: the threshold every other move must beat.
+/// What holding scores unless a mind sets it: the threshold every other
+/// move must beat.
 pub const HOLD: f32 = 0.35;
 
-/// What the move under way scores beside its own
+/// What the move under way scores beside its own, unless a mind sets it
 pub const MOMENTUM: f32 = 0.15;
+
+/// The considerations a mind may tune ([`super::mind`]): those with a
+/// curve to shape, where a condition only holds or fails.
+pub const TUNABLE: &[&str] = &["pursuit_pays", "foe_nearing", "room_to_flee", "leash_tight", "bank_empty", "close_bank_full"];
 
 /// A move an NPC makes.
 #[derive(Clone, Component, Copy, Debug, Default, Eq, PartialEq)]
@@ -70,24 +75,24 @@ pub struct Footing {
     pub patience: u32,
 }
 
-/// The move `footing` scores highest, where it beats holding; `under_way`
-/// is the move it is making.
-pub fn choose(footing: &Footing, under_way: Move) -> Move {
+/// The move `footing` scores highest as `mind` shapes it, where it beats
+/// holding; `under_way` is the move it is making.
+pub fn choose(footing: &Footing, under_way: Move, mind: &Mind) -> Move {
     [Move::Close, Move::Kite, Move::Flee, Move::Circle]
         .into_iter()
         .map(|candidate| {
-            let momentum = if candidate == under_way { MOMENTUM } else { 0.0 };
-            (candidate, weigh(footing, candidate) + momentum)
+            let momentum = if candidate == under_way { mind.momentum } else { 0.0 };
+            (candidate, weigh(footing, candidate, mind) + momentum)
         })
-        .filter(|&(_, scored)| scored > HOLD + if under_way == Move::Hold { MOMENTUM } else { 0.0 })
+        .filter(|&(_, scored)| scored > mind.hold + if under_way == Move::Hold { mind.momentum } else { 0.0 })
         .max_by(|a, b| a.1.total_cmp(&b.1))
         .map_or(Move::Hold, |(candidate, _)| candidate)
 }
 
-/// What `candidate` scores for `footing`
-pub fn weigh(footing: &Footing, candidate: Move) -> f32 {
+/// What `candidate` scores for `footing`, as `mind` shapes it
+pub fn weigh(footing: &Footing, candidate: Move, mind: &Mind) -> f32 {
     let considerations: &[Consideration<Footing>] = match candidate {
-        Move::Hold => return HOLD,
+        Move::Hold => return mind.hold,
         Move::Close if footing.patience > 0 => &[NOT_PLACED, INSIDE_LEASH, PURSUIT_PAYS, BANK_FULL],
         Move::Close => &[NOT_PLACED, INSIDE_LEASH, PURSUIT_PAYS],
         Move::Kite => &[PLACED, RANGED, STRIKES_RUNNING],
@@ -96,7 +101,7 @@ pub fn weigh(footing: &Footing, candidate: Move) -> f32 {
         Move::Circle if footing.patience > 0 => &[CLEAR_OUTWARD, LEASH_TIGHT],
         Move::Circle => return 0.0,
     };
-    score(1.0, considerations.iter().map(|consideration| consideration.answer(footing)))
+    score(1.0, considerations.iter().map(|consideration| mind.shape(consideration).answer(footing)))
 }
 
 fn flag(on: bool) -> f32 {
@@ -107,26 +112,26 @@ const fn step(name: &'static str, read: fn(&Footing) -> f32) -> Consideration<Fo
     Consideration { name, read, bounds: (1.0, 1.0), curve: Curve::RISING }
 }
 
-const NOT_PLACED: Consideration<Footing> = step("not placed", |footing| flag(!footing.placed));
+const NOT_PLACED: Consideration<Footing> = step("not_placed", |footing| flag(!footing.placed));
 
 const PURSUIT_PAYS: Consideration<Footing> = Consideration {
-    name: "pursuit pays",
+    name: "pursuit_pays",
     read: |footing| flag(footing.pursuit_pays),
     bounds: (0.0, 1.0),
     curve: Curve::RISING.floored(0.1),
 };
 
-const INSIDE_LEASH: Consideration<Footing> = step("inside leash", |footing| flag(!footing.at_leash));
+const INSIDE_LEASH: Consideration<Footing> = step("inside_leash", |footing| flag(!footing.at_leash));
 
 const PLACED: Consideration<Footing> = step("placed", |footing| flag(footing.placed));
 
 const RANGED: Consideration<Footing> = step("ranged", |footing| flag(footing.ranged));
 
-const STRIKES_RUNNING: Consideration<Footing> = step("strikes running", |footing| flag(footing.strikes_running));
+const STRIKES_RUNNING: Consideration<Footing> = step("strikes_running", |footing| flag(footing.strikes_running));
 
 /// Its target closing on it, from half a leap past its reach to within it
 const FOE_NEARING: Consideration<Footing> = Consideration {
-    name: "foe nearing",
+    name: "foe_nearing",
     read: |footing| (footing.distance - footing.reach) as f32 / footing.leap.max(1) as f32,
     bounds: (0.5, 0.0),
     curve: Curve::RISING,
@@ -134,7 +139,7 @@ const FOE_NEARING: Consideration<Footing> = Consideration {
 
 /// Room left on its leash to run through
 const ROOM_TO_FLEE: Consideration<Footing> = Consideration {
-    name: "room to flee",
+    name: "room_to_flee",
     read: |footing| footing.leash_room,
     bounds: (0.1, 0.4),
     curve: Curve::RISING,
@@ -142,17 +147,17 @@ const ROOM_TO_FLEE: Consideration<Footing> = Consideration {
 
 /// Its leash nearly run out
 const LEASH_TIGHT: Consideration<Footing> = Consideration {
-    name: "leash tight",
+    name: "leash_tight",
     read: |footing| footing.leash_room,
     bounds: (0.5, 0.15),
     curve: Curve::RISING,
 };
 
-const CLEAR_OUTWARD: Consideration<Footing> = step("clear outward", |footing| flag(footing.clear_outward));
+const CLEAR_OUTWARD: Consideration<Footing> = step("clear_outward", |footing| flag(footing.clear_outward));
 
 /// Patience: the bank it fills standing out of reach, empty
 const BANK_EMPTY: Consideration<Footing> = Consideration {
-    name: "bank empty",
+    name: "bank_empty",
     read: |footing| footing.banked as f32 / footing.patience.max(1) as f32,
     bounds: (0.0, 1.0),
     curve: Curve::FALLING,
@@ -160,7 +165,7 @@ const BANK_EMPTY: Consideration<Footing> = Consideration {
 
 /// Patience: the bank full, so it closes to spend it
 const BANK_FULL: Consideration<Footing> = Consideration {
-    name: "bank full",
+    name: "close_bank_full",
     read: |footing| footing.banked as f32 / footing.patience.max(1) as f32,
     bounds: (0.0, 1.0),
     curve: Curve::RISING.floored(0.1),
@@ -176,50 +181,50 @@ mod tests {
 
     #[test]
     fn it_closes_until_placed_and_then_holds() {
-        assert_eq!(choose(&footing(), Move::Hold), Move::Close);
-        assert_eq!(choose(&Footing { placed: true, distance: 2, ..footing() }, Move::Close), Move::Hold);
+        assert_eq!(choose(&footing(), Move::Hold, &Mind::default()), Move::Close);
+        assert_eq!(choose(&Footing { placed: true, distance: 2, ..footing() }, Move::Close, &Mind::default()), Move::Hold);
     }
 
     #[test]
     fn it_holds_rather_than_chase_one_running_that_cannot_strike_it() {
-        assert_eq!(choose(&Footing { pursuit_pays: false, ..footing() }, Move::Close), Move::Hold);
+        assert_eq!(choose(&Footing { pursuit_pays: false, ..footing() }, Move::Close, &Mind::default()), Move::Hold);
     }
 
     #[test]
     fn at_its_leash_it_holds_rather_than_close_further_out() {
-        assert_eq!(choose(&Footing { at_leash: true, ..footing() }, Move::Close), Move::Hold);
+        assert_eq!(choose(&Footing { at_leash: true, ..footing() }, Move::Close, &Mind::default()), Move::Hold);
     }
 
     #[test]
     fn placed_with_its_target_in_reach_a_ranged_npc_kites_while_it_can_strike_running() {
         let placed = Footing { placed: true, ranged: true, distance: 15, reach: 20, ..footing() };
-        assert_eq!(choose(&placed, Move::Hold), Move::Kite);
-        assert_eq!(choose(&Footing { strikes_running: false, ..placed }, Move::Kite), Move::Hold, "spent, it stands and fights");
+        assert_eq!(choose(&placed, Move::Hold, &Mind::default()), Move::Kite);
+        assert_eq!(choose(&Footing { strikes_running: false, ..placed }, Move::Kite, &Mind::default()), Move::Hold, "spent, it stands and fights");
     }
 
     #[test]
     fn patience_keeps_away_while_its_bank_fills_and_closes_once_it_is_full() {
         let patient = Footing { patience: 3, ..footing() };
-        assert_eq!(choose(&patient, Move::Hold), Move::Hold, "out of reach with its bank empty it waits");
-        assert_eq!(choose(&Footing { distance: 3, ..patient }, Move::Hold), Move::Flee, "and runs as its target nears");
-        assert_eq!(choose(&Footing { banked: 3, ..patient }, Move::Hold), Move::Close, "full, it closes");
+        assert_eq!(choose(&patient, Move::Hold, &Mind::default()), Move::Hold, "out of reach with its bank empty it waits");
+        assert_eq!(choose(&Footing { distance: 3, ..patient }, Move::Hold, &Mind::default()), Move::Flee, "and runs as its target nears");
+        assert_eq!(choose(&Footing { banked: 3, ..patient }, Move::Hold, &Mind::default()), Move::Close, "full, it closes");
     }
 
     #[test]
     fn near_its_leash_a_patient_npc_circles_inward_rather_than_flee_out() {
         let patient = Footing { patience: 3, distance: 3, ..footing() };
         let cornered = Footing { leash_room: 0.12, clear_outward: true, ..patient };
-        assert_eq!(choose(&patient, Move::Hold), Move::Flee, "with room it flees");
-        assert_eq!(choose(&cornered, Move::Flee), Move::Circle, "at the edge it circles round toward its den");
-        assert_eq!(choose(&Footing { clear_outward: false, ..cornered }, Move::Hold), Move::Hold, "with its target outward already, it has nothing to circle for");
+        assert_eq!(choose(&patient, Move::Hold, &Mind::default()), Move::Flee, "with room it flees");
+        assert_eq!(choose(&cornered, Move::Flee, &Mind::default()), Move::Circle, "at the edge it circles round toward its den");
+        assert_eq!(choose(&Footing { clear_outward: false, ..cornered }, Move::Hold, &Mind::default()), Move::Hold, "with its target outward already, it has nothing to circle for");
     }
 
     #[test]
     fn the_move_under_way_holds_against_one_scoring_alike() {
         let patient = Footing { patience: 3, distance: 5, ..footing() };
-        let flee = weigh(&patient, Move::Flee);
+        let flee = weigh(&patient, Move::Flee, &Mind::default());
         assert!((flee - HOLD).abs() < MOMENTUM, "flee and hold score near alike here: {flee}");
-        assert_eq!(choose(&patient, Move::Flee), Move::Flee);
-        assert_eq!(choose(&patient, Move::Hold), Move::Hold);
+        assert_eq!(choose(&patient, Move::Flee, &Mind::default()), Move::Flee);
+        assert_eq!(choose(&patient, Move::Hold, &Mind::default()), Move::Hold);
     }
 }

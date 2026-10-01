@@ -5,6 +5,7 @@ use rand::seq::IteratorRandom;
 
 use common_bevy::{
     components::{
+        entity_type::{actor::ActorIdentity, EntityType},
         heading::{Heading, HEADING_SLOTS, SLOT_DEGREES},
         AttackRange, Loc, resources::Health,
         behaviour::Side, status::Status, ActorAttributes, Swing, target::Target,
@@ -19,7 +20,7 @@ use common_bevy::{
 };
 use qrz::Qrz;
 
-use super::{moves::{self, Footing, Move}, Body};
+use super::{mind::mind_of, moves::{self, Footing, Move}, Body};
 
 /// How near its engagement's place a returning NPC counts as home, in tiles.
 const HOME: i32 = 2;
@@ -130,8 +131,7 @@ pub fn chase(
         &Side,
         Option<&Status>,
         Option<&common_bevy::components::resources::Stamina>,
-        Option<&Swing>,
-        Option<&mut Move>,
+        (Option<&Swing>, Option<&mut Move>, Option<&EntityType>),
     )>, Query<(Entity, &Heading)>)>,
     q_target: Query<(&Loc, &Health, &Side, Option<&AttackRange>)>,
     q_home: Query<&Loc, Without<Chase>>,
@@ -142,7 +142,7 @@ pub fn chase(
 ) {
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, swing, mut under_way) in actors.p0().iter_mut() {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, (swing, mut under_way, kind)) in actors.p0().iter_mut() {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
@@ -214,7 +214,14 @@ pub fn chase(
             patience: attrs.filter(|_| swing.is_some_and(|swing| swing.due.is_some()))
                 .map_or(0, |attrs| attrs.patience().index() as u32),
         };
-        let chosen = moves::choose(&footing, under_way.as_deref().copied().unwrap_or_default());
+        let archetype = match kind {
+            Some(EntityType::Actor(actor)) => match actor.identity {
+                ActorIdentity::Npc(archetype) => Some(archetype),
+                _ => None,
+            },
+            _ => None,
+        };
+        let chosen = moves::choose(&footing, under_way.as_deref().copied().unwrap_or_default(), &mind_of(archetype));
         if let Some(under_way) = under_way.as_mut().filter(|under_way| ***under_way != chosen) {
             if let Some(decisions) = decisions.as_mut() {
                 decisions.0.push(format!("{npc} moves {:?} -> {chosen:?}: {footing:?}", **under_way));
