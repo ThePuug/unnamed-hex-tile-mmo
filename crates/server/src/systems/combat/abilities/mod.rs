@@ -56,7 +56,10 @@ use common_bevy::{
     },
 };
 
-use crate::systems::{behaviour::chase::Chase, combat::landing};
+use crate::systems::{
+    behaviour::{chase::Chase, perception::{Sight, Skill}},
+    combat::landing,
+};
 
 /// Why the gate refused an ability.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -118,6 +121,7 @@ pub struct Abilities<'w, 's> {
     pub striding: Query<'w, 's, &'static stride::PerfectStride>,
     pub targets: Query<'w, 's, (Entity, &'static Target)>,
     pub npcs: Query<'w, 's, (Entity, &'static EntityType), With<Chase>>,
+    pub minds: Query<'w, 's, (&'static Skill, &'static mut Sight)>,
     pub leashed: Query<'w, 's, (&'static Chase, &'static EngagementMember)>,
     pub dens: Query<'w, 's, &'static Loc, With<Engagement>>,
     pub map: Res<'w, Map>,

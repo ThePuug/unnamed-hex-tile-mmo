@@ -174,6 +174,8 @@ pub fn spawn_engagement(
         commands.entity(npc_entity).insert((
             NearestNeighbor::new(npc_entity, npc_loc),
             chase,
+            crate::systems::behaviour::perception::Skill::default(),
+            crate::systems::behaviour::perception::Sight::default(),
             common_bevy::components::AttackRange(attack_range(archetype)),
             Heading::default(),
             common_bevy::components::Turn::default(),

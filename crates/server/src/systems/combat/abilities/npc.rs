@@ -1,8 +1,11 @@
 //! When an NPC uses a skill: its skills channel ([`skills`]) weighs what
-//! it perceives, and it asks the gate for the best decision that beats
-//! waiting, as a player's key press would.
+//! it perceives ([`perception`]), and it asks the gate for the best
+//! decision that beats waiting, as a player's key press would.
+//!
+//! [`perception`]: crate::systems::behaviour::perception
 
 use bevy::prelude::*;
+use rand::Rng;
 use common_bevy::{
     components::entity_type::{actor::ActorIdentity, EntityType},
     message::AbilityType,
@@ -10,19 +13,38 @@ use common_bevy::{
 };
 
 use super::{in_arc, Abilities};
-use crate::systems::behaviour::skills::{self, Foe, Threats, View};
+use crate::systems::behaviour::{
+    perception::Skill,
+    skills::{self, Foe, Threats, View},
+};
 
 impl Abilities<'_, '_> {
     /// Asks, for each NPC, the skill its skills channel chooses, if any.
     pub(super) fn skills(&mut self) {
+        let npcs: Vec<(Entity, AbilityType)> = self.npcs.iter()
+            .filter_map(|(ent, entity_type)| match entity_type {
+                EntityType::Actor(actor) => match actor.identity {
+                    ActorIdentity::Npc(archetype) => Some((ent, archetype.profile().ability)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
         let mut asks: Vec<(Entity, AbilityType, Option<Entity>)> = Vec::new();
-        for (ent, entity_type) in &self.npcs {
-            let EntityType::Actor(actor) = entity_type else { continue };
-            let ActorIdentity::Npc(archetype) = actor.identity else { continue };
-            let bar = [archetype.profile().ability];
-            let Some(mut view) = self.view(ent, bar[0]) else { continue };
-            let Some(decision) = skills::choose(&mut view, &bar) else { continue };
+        let mut rng = rand::rng();
+        for (ent, ability) in npcs {
+            let bar = [ability];
+            let skill = self.minds.get(ent).map_or(Skill::SHARP, |(skill, _)| *skill);
             let target = self.targets.get(ent).ok().and_then(|(_, target)| target.entity);
+            let foe = self.foe_of(ent, target);
+            let now = self.time.elapsed();
+            let foe = match self.minds.get_mut(ent) {
+                Ok((_, mut sight)) => sight.look(ent, &skill, now, target.zip(foe)),
+                Err(_) => foe,
+            };
+            let Some(mut view) = self.view(ent, ability, &skill, foe) else { continue };
+            let stray = || skill.error * rng.random_range(-1.0..=1.0);
+            let Some(decision) = skills::choose(&mut view, &bar, stray) else { continue };
             let at = match decision.ability {
                 ability if ability.is_reaction() => None,
                 AbilityType::PerfectStride => None,
@@ -36,26 +58,33 @@ impl Abilities<'_, '_> {
         }
     }
 
-    /// What `ent` perceives as it weighs `ability`; None for the dead.
-    fn view(&self, ent: Entity, ability: AbilityType) -> Option<View> {
-        let (&loc, &attrs, health, heading, _, range, dead) = self.actors.get(ent).ok()?;
+    /// How `target` stands as `ent` would see it now
+    fn foe_of(&self, ent: Entity, target: Option<Entity>) -> Option<Foe> {
+        let (&loc, attrs, _, heading, ..) = self.actors.get(ent).ok()?;
+        let (&target_loc, ..) = self.actors.get(target?).ok()?;
+        Some(Foe {
+            distance: loc.distance(&target_loc),
+            in_arc: in_arc(heading, Some(attrs), &loc, &target_loc),
+            across: targeting::across(heading, &loc, &target_loc),
+            recovering: self.recoveries.get(target?).ok()
+                .filter(|recovery| recovery.is_active() && recovery.duration > 0.0)
+                .map_or(0.0, |recovery| recovery.remaining / recovery.duration),
+        })
+    }
+
+    /// What `ent`, perceiving with `skill`, knows as it weighs `ability`
+    /// against `foe`, its target as it perceives it; None for the dead. Its
+    /// own state it knows at once; a threat only once its delay has run.
+    fn view(&self, ent: Entity, ability: AbilityType, skill: &Skill, foe: Option<Foe>) -> Option<View> {
+        let (_, &attrs, health, _, _, range, dead) = self.actors.get(ent).ok()?;
         if dead {
             return None;
         }
         let tuning = common_bevy::tuning::tuning();
-        let now = self.time.elapsed();
-        let queue: Vec<_> = self.queues.get(ent).map(|queue| queue.threats.iter().copied().collect()).unwrap_or_default();
-        let foe = self.targets.get(ent).ok()
-            .and_then(|(_, target)| target.entity)
-            .and_then(|target| Some((target, self.actors.get(target).ok()?)))
-            .map(|(target, (&target_loc, ..))| Foe {
-                distance: loc.distance(&target_loc),
-                in_arc: in_arc(heading, Some(&attrs), &loc, &target_loc),
-                across: targeting::across(heading, &loc, &target_loc),
-                recovering: self.recoveries.get(target).ok()
-                    .filter(|recovery| recovery.is_active() && recovery.duration > 0.0)
-                    .map_or(0.0, |recovery| recovery.remaining / recovery.duration),
-            });
+        let (now, game_now) = (self.time.elapsed(), self.game_now());
+        let queue: Vec<_> = self.queues.get(ent)
+            .map(|queue| queue.threats.iter().filter(|threat| skill.sees(ent, threat, game_now)).copied().collect())
+            .unwrap_or_default();
         let waited = self.swings.get(ent).ok().and_then(|swing| swing.waited(now));
         Some(View {
             ability,
@@ -69,7 +98,7 @@ impl Abilities<'_, '_> {
             banked: waited.map_or(0, |waited| attrs.banked(waited, attrs.cadence_interval())),
             reach: range.copied().unwrap_or_default().0,
             leap: tuning.leap_distance as i32,
-            queue: Threats::reading(&queue, attrs.span(), self.game_now()),
+            queue: Threats::reading(&queue, attrs.span(), game_now),
             foe,
         })
     }

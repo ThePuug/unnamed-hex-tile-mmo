@@ -1,5 +1,6 @@
 pub mod chase;
 pub mod hex_assignment;
+pub mod perception;
 pub mod skills;
 pub mod utility;
 

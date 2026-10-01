@@ -91,7 +91,7 @@ impl Threats {
 }
 
 /// Its target, as it sees it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Foe {
     pub distance: i32,
     /// Within the arc it strikes within
@@ -114,8 +114,10 @@ pub struct Decision {
 
 /// The best of `bar`'s decisions for what `view` perceives, where it beats
 /// waiting; None to wait. `view.ability` is set to each skill in turn.
-pub fn choose(view: &mut View, bar: &[AbilityType]) -> Option<Decision> {
+/// `stray` gives each score's error, a share of it.
+pub fn choose(view: &mut View, bar: &[AbilityType], mut stray: impl FnMut() -> f32) -> Option<Decision> {
     weigh(view, bar).into_iter()
+        .map(|decision| Decision { score: decision.score * (1.0 + stray()), ..decision })
         .filter(|decision| decision.score > WAIT)
         .max_by(|a, b| a.score.total_cmp(&b.score))
 }
@@ -427,7 +429,7 @@ mod tests {
     #[test]
     fn nothing_queued_nothing_to_answer() {
         let mut quiet = view(AbilityType::Counter, ActorAttributes::default());
-        assert!(choose(&mut quiet, &[AbilityType::Counter]).is_none());
+        assert!(choose(&mut quiet, &[AbilityType::Counter], || 0.0).is_none());
     }
 
     #[test]
@@ -499,7 +501,7 @@ mod tests {
         let mut plain = view(AbilityType::Leap, ActorAttributes::default());
         let reasons: Vec<&str> = weigh(&mut plain, &[AbilityType::Leap]).iter().map(|decision| decision.reason).collect();
         assert!(!reasons.contains(&"bank"));
-        assert!(choose(&mut plain, &[AbilityType::Leap]).is_none(), "in reach with nothing queued, it stays");
+        assert!(choose(&mut plain, &[AbilityType::Leap], || 0.0).is_none(), "in reach with nothing queued, it stays");
     }
 
     #[test]
