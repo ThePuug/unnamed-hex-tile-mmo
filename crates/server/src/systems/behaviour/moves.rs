@@ -1,5 +1,5 @@
 //! An NPC's movement channel: whether it closes on its target, gives
-//! ground, or holds where it stands, facing it.
+//! ground, circles it, or holds where it stands, facing it.
 //!
 //! Each move is a decision scored as a skill's is ([`super::utility`]),
 //! from considerations its reach and its commitments bring, and holding
@@ -31,6 +31,10 @@ pub enum Move {
     Kite,
     /// It runs straight from its target
     Flee,
+    /// It steps round its target, as far from it as it stands, toward its
+    /// den: once its target stands outward of it, the way clear of it leads
+    /// back in
+    Circle,
 }
 
 /// What an NPC knows as it weighs its moves.
@@ -50,6 +54,11 @@ pub struct Footing {
     /// Closing would carry it out past the edge of its leash, where it
     /// would let its target go and walk home
     pub at_leash: bool,
+    /// Share of its leash it has left where it stands: 1 with none
+    pub leash_room: f32,
+    /// Its target stands nearer its den than it does, so the way clear of
+    /// its target leads out toward its leash
+    pub clear_outward: bool,
     /// Tiles to its target
     pub distance: i32,
     pub reach: i32,
@@ -64,7 +73,7 @@ pub struct Footing {
 /// The move `footing` scores highest, where it beats holding; `under_way`
 /// is the move it is making.
 pub fn choose(footing: &Footing, under_way: Move) -> Move {
-    [Move::Close, Move::Kite, Move::Flee]
+    [Move::Close, Move::Kite, Move::Flee, Move::Circle]
         .into_iter()
         .map(|candidate| {
             let momentum = if candidate == under_way { MOMENTUM } else { 0.0 };
@@ -82,8 +91,10 @@ pub fn weigh(footing: &Footing, candidate: Move) -> f32 {
         Move::Close if footing.patience > 0 => &[NOT_PLACED, INSIDE_LEASH, PURSUIT_PAYS, BANK_FULL],
         Move::Close => &[NOT_PLACED, INSIDE_LEASH, PURSUIT_PAYS],
         Move::Kite => &[PLACED, RANGED, STRIKES_RUNNING],
-        Move::Flee if footing.patience > 0 => &[FOE_NEARING, BANK_EMPTY],
+        Move::Flee if footing.patience > 0 => &[FOE_NEARING, BANK_EMPTY, ROOM_TO_FLEE],
         Move::Flee => return 0.0,
+        Move::Circle if footing.patience > 0 => &[CLEAR_OUTWARD, LEASH_TIGHT],
+        Move::Circle => return 0.0,
     };
     score(1.0, considerations.iter().map(|consideration| consideration.answer(footing)))
 }
@@ -121,6 +132,24 @@ const FOE_NEARING: Consideration<Footing> = Consideration {
     curve: Curve::RISING,
 };
 
+/// Room left on its leash to run through
+const ROOM_TO_FLEE: Consideration<Footing> = Consideration {
+    name: "room to flee",
+    read: |footing| footing.leash_room,
+    bounds: (0.1, 0.4),
+    curve: Curve::RISING,
+};
+
+/// Its leash nearly run out
+const LEASH_TIGHT: Consideration<Footing> = Consideration {
+    name: "leash tight",
+    read: |footing| footing.leash_room,
+    bounds: (0.5, 0.15),
+    curve: Curve::RISING,
+};
+
+const CLEAR_OUTWARD: Consideration<Footing> = step("clear outward", |footing| flag(footing.clear_outward));
+
 /// Patience: the bank it fills standing out of reach, empty
 const BANK_EMPTY: Consideration<Footing> = Consideration {
     name: "bank empty",
@@ -142,7 +171,7 @@ mod tests {
     use super::*;
 
     fn footing() -> Footing {
-        Footing { placed: false, ranged: false, strikes_running: true, pursuit_pays: true, at_leash: false, distance: 8, reach: 2, leap: 9, banked: 0, patience: 0 }
+        Footing { placed: false, ranged: false, strikes_running: true, pursuit_pays: true, at_leash: false, leash_room: 1.0, clear_outward: false, distance: 8, reach: 2, leap: 9, banked: 0, patience: 0 }
     }
 
     #[test]
@@ -174,6 +203,15 @@ mod tests {
         assert_eq!(choose(&patient, Move::Hold), Move::Hold, "out of reach with its bank empty it waits");
         assert_eq!(choose(&Footing { distance: 3, ..patient }, Move::Hold), Move::Flee, "and runs as its target nears");
         assert_eq!(choose(&Footing { banked: 3, ..patient }, Move::Hold), Move::Close, "full, it closes");
+    }
+
+    #[test]
+    fn near_its_leash_a_patient_npc_circles_inward_rather_than_flee_out() {
+        let patient = Footing { patience: 3, distance: 3, ..footing() };
+        let cornered = Footing { leash_room: 0.12, clear_outward: true, ..patient };
+        assert_eq!(choose(&patient, Move::Hold), Move::Flee, "with room it flees");
+        assert_eq!(choose(&cornered, Move::Flee), Move::Circle, "at the edge it circles round toward its den");
+        assert_eq!(choose(&Footing { clear_outward: false, ..cornered }, Move::Hold), Move::Hold, "with its target outward already, it has nothing to circle for");
     }
 
     #[test]

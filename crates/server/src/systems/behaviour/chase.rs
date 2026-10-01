@@ -101,6 +101,19 @@ fn step(map: &Map, nntree: &NNTree, from: Qrz, goal: Qrz) -> Option<Qrz> {
         .min_by_key(|neighbor| neighbor.distance(&goal))
 }
 
+/// The neighbour of the floor tile `from` an NPC circling `target` steps
+/// to: of those as far from it as `from` is, a tile either way, and not
+/// crowded, the nearest `home`.
+fn round(map: &Map, nntree: &NNTree, from: Qrz, target: Qrz, home: Qrz) -> Option<Qrz> {
+    let distance = from.flat_distance(&target);
+    map.neighbors(from)
+        .into_iter()
+        .map(|(neighbor, _)| neighbor)
+        .filter(|neighbor| (neighbor.flat_distance(&target) - distance).abs() <= 1 && neighbor.flat_distance(&target) >= distance.min(2))
+        .filter(|neighbor| nntree.locate_all_at_point(&Loc::new(*neighbor + Qrz::Z)).count() < 7)
+        .min_by_key(|neighbor| neighbor.flat_distance(&home))
+}
+
 pub fn chase(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
@@ -190,6 +203,8 @@ pub fn chase(
             pursuit_pays: target_range.copied().unwrap_or_default().0 >= target_loc.distance(loc)
                 || target_heading.is_none_or(|&heading| is_in_facing_cone(heading, *target_loc, *loc)),
             at_leash: from_home >= chase.leash_distance - LEASH_EDGE && target_loc.flat_distance(&home) > from_home,
+            leash_room: (chase.leash_distance - from_home) as f32 / chase.leash_distance.max(1) as f32,
+            clear_outward: target_loc.flat_distance(&home) < from_home,
             distance: loc.distance(target_loc),
             reach: chase.attack_range,
             leap: tuning.leap_distance as i32,
@@ -212,6 +227,14 @@ pub fn chase(
                 let arc = if chosen == Move::Kite { arc_of(attrs) } else { FLEE_ARC };
                 let goal = kiting(*loc, *target_loc, arc, body.turn.heading, outward);
                 body.steer(goal, Walk::Forward, speed, dt_ms, &map, &nntree);
+                continue;
+            }
+            Move::Circle => {
+                if let Some((floor, next)) = floor.and_then(|floor| Some((floor, round(&map, &nntree, floor, **target_loc, *home)?))) {
+                    body.step_toward(loc, floor, next, speed, dt_ms, &map, &nntree);
+                } else {
+                    body.face(loc, **target_loc, dt_ms, &map, &nntree);
+                }
                 continue;
             }
             Move::Close => {}

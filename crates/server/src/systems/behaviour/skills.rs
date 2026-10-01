@@ -49,6 +49,9 @@ pub struct View {
     pub reach: i32,
     /// Tiles a Leap carries it
     pub leap: i32,
+    /// Share of its leash it would have left where a leap clear of its
+    /// target lands: 1 with no leash, 0 with nowhere to land
+    pub clear_room: f32,
     pub queue: Threats,
     pub foe: Option<Foe>,
 }
@@ -183,8 +186,8 @@ fn part_considerations(reason: &str, part: Part) -> Vec<Considered> {
     match (part, reason) {
         (Part::Strike, _) => vec![FOE_STRUCK, FOE_RECOVERING],
         (Part::Reaction, _) => vec![WORTH_ANSWERING, PRESSURE, SPAN_CLOSED],
-        (Part::Clear, "dodge") => vec![FOE_IN_REACH, WORTH_ANSWERING],
-        (Part::Clear, _) => vec![FOE_IN_REACH],
+        (Part::Clear, "dodge") => vec![FOE_IN_REACH, WORTH_ANSWERING, ROOM_TO_DODGE],
+        (Part::Clear, _) => vec![FOE_IN_REACH, ROOM_TO_LAND],
         (Part::Dive, _) => vec![FOE_OUT_OF_REACH, FOE_WITHIN_A_DIVE],
         (Part::Stance, _) => vec![NOT_STRIDING, FOE_IN_REACH],
     }
@@ -314,6 +317,23 @@ const FOE_WITHIN_A_DIVE: Considered = step("foe within a dive", |view| {
     flag(foe_distance(view).is_some_and(|d| d <= view.leap + view.reach))
 });
 
+/// A leap clear toward its leash's edge lands where it has no room left
+/// to give ground; one back inward leaves it room
+const ROOM_TO_LAND: Considered = Consideration {
+    name: "room to land",
+    read: |view| view.clear_room,
+    bounds: (0.0, 0.3),
+    curve: Curve::RISING,
+};
+
+/// A dodge clears its span wherever it lands, so a short room only weighs
+const ROOM_TO_DODGE: Considered = Consideration {
+    name: "room to land",
+    read: |view| view.clear_room,
+    bounds: (0.0, 0.3),
+    curve: Curve::RISING.floored(0.4),
+};
+
 // --- Stance ---
 
 const NOT_STRIDING: Considered = step("not striding", |view| flag(!view.striding));
@@ -411,6 +431,7 @@ mod tests {
             banking: true,
             reach: 2,
             leap: 9,
+            clear_room: 1.0,
             queue: Threats::default(),
             foe: Some(Foe { distance: 1, in_arc: true, across: false, recovering: 0.0 }),
         }
@@ -499,6 +520,16 @@ mod tests {
         assert!(scored(&mut full, "dive") > scored(&mut empty, "dive"));
         assert!(scored(&mut full, "dive") > WAIT, "a full bank dives");
         assert_eq!(scored(&mut empty, "bank"), 0.0, "and out of reach there is nothing to leap clear of");
+    }
+
+    #[test]
+    fn a_leap_clear_toward_its_leash_scores_below_one_back_inward() {
+        let patient = built([0, 0, 0, 0, 0, 0, -10, 0, 0]);
+        let mut inward = view(AbilityType::Leap, patient);
+        let mut outward = view(AbilityType::Leap, patient);
+        outward.clear_room = 0.05;
+        assert!(scored(&mut inward, "bank") > scored(&mut outward, "bank"));
+        assert!(scored(&mut outward, "bank") < WAIT, "it does not leap to its leash's edge to bank");
     }
 
     #[test]

@@ -7,12 +7,13 @@
 use bevy::prelude::*;
 use rand::Rng;
 use common_bevy::{
-    components::entity_type::{actor::ActorIdentity, EntityType},
+    components::{entity_type::{actor::ActorIdentity, EntityType}, Loc},
     message::AbilityType,
     systems::targeting,
 };
 
 use super::{in_arc, Abilities};
+use crate::systems::combat::leap::away;
 use crate::systems::behaviour::{
     perception::Skill,
     skills::{self, Foe, Threats, View},
@@ -42,7 +43,7 @@ impl Abilities<'_, '_> {
                 Ok((_, mut sight)) => sight.look(ent, &skill, now, target.zip(foe)),
                 Err(_) => foe,
             };
-            let Some(mut view) = self.view(ent, ability, &skill, foe) else { continue };
+            let Some(mut view) = self.view(ent, ability, &skill, foe, target) else { continue };
             let stray = || skill.error * rng.random_range(-1.0..=1.0);
             let Some(decision) = skills::choose(&mut view, &bar, stray) else { continue };
             let at = match decision.ability {
@@ -72,11 +73,21 @@ impl Abilities<'_, '_> {
         })
     }
 
+    /// Share of `ent`'s leash left where a leap clear of `target` from
+    /// `loc` lands: 1 with no leash or no target, 0 with nowhere to land
+    fn clear_room(&self, ent: Entity, loc: Loc, target: Option<Entity>) -> f32 {
+        let Some(leash) = self.leash(ent) else { return 1.0 };
+        let Some((&target_loc, ..)) = target.and_then(|target| self.actors.get(target).ok()) else { return 1.0 };
+        let distance = common_bevy::tuning::tuning().leap_distance;
+        away(&self.map, *loc, *target_loc, distance, Some(leash))
+            .map_or(0.0, |landing| (leash.reach - landing.flat_distance(&leash.den)) as f32 / leash.reach.max(1) as f32)
+    }
+
     /// What `ent`, perceiving with `skill`, knows as it weighs `ability`
     /// against `foe`, its target as it perceives it; None for the dead. Its
     /// own state it knows at once; a threat only once its delay has run.
-    fn view(&self, ent: Entity, ability: AbilityType, skill: &Skill, foe: Option<Foe>) -> Option<View> {
-        let (_, &attrs, health, _, _, range, dead) = self.actors.get(ent).ok()?;
+    fn view(&self, ent: Entity, ability: AbilityType, skill: &Skill, foe: Option<Foe>, target: Option<Entity>) -> Option<View> {
+        let (&loc, &attrs, health, _, _, range, dead) = self.actors.get(ent).ok()?;
         if dead {
             return None;
         }
@@ -100,6 +111,7 @@ impl Abilities<'_, '_> {
             banking: swing.is_some_and(|swing| swing.due.is_some()),
             reach: range.copied().unwrap_or_default().0,
             leap: tuning.leap_distance as i32,
+            clear_room: self.clear_room(ent, loc, target),
             queue: Threats::reading(&queue, attrs.span(), game_now),
             foe,
         })
