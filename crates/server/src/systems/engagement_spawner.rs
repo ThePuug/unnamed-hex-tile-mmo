@@ -3,8 +3,6 @@
 //! Builds an engagement — a group of NPCs at a location. Nothing selects
 //! sites: a den or a party is one an admin asks for (`Event::SpawnParty`).
 
-use std::ops::RangeInclusive;
-
 use bevy::prelude::*;
 use qrz::Qrz;
 
@@ -19,7 +17,6 @@ use common_bevy::{
         },
         heading::Heading,
         hex_assignment::HexAssignment,
-        npc_recovery::NpcRecovery,
         position::Position,
         AirTime, Loc,
     },
@@ -28,12 +25,6 @@ use common_bevy::{
     spatial_difficulty::{calculate_enemy_attributes, EnemyArchetype},
     systems::combat::resources::Fighter,
 };
-
-/// How long a live NPC waits, in milliseconds, once it can afford its
-/// skill and is out of recovery, before it uses it, drawn afresh each
-/// use: play's pace, spreading a pack apart. It sits outside the balance,
-/// which the arena measures with no wait at all.
-pub const SIGNATURE_WAIT_MS: RangeInclusive<u64> = 3000..=6000;
 
 /// Tiles between the edge of a den's acquisition range and the actor it
 /// is placed ahead of, so the fight starts when that one walks in.
@@ -109,7 +100,7 @@ pub fn try_spawn_party(
         };
         let side = if *engage { parties.next() } else { Side::WILD };
         info!("party: {size}x{archetype:?}@{level} on {side:?} at {at:?}, {} {ent} at {:?}", if *engage { "engaging" } else { "ahead of" }, **loc);
-        spawn_engagement(at, *archetype, side, *level, *size, |q, r| registry.elevation_at(q, r), SIGNATURE_WAIT_MS, &mut commands, &time);
+        spawn_engagement(at, *archetype, side, *level, *size, |q, r| registry.elevation_at(q, r), &mut commands, &time);
     }
 }
 
@@ -129,7 +120,6 @@ pub fn spawn_engagement(
     level: u8,
     npc_count: u8,
     elevation: impl Fn(i32, i32) -> i32,
-    wait: RangeInclusive<u64>,
     commands: &mut Commands,
     time: &Time,
 ) {
@@ -184,7 +174,6 @@ pub fn spawn_engagement(
         commands.entity(npc_entity).insert((
             NearestNeighbor::new(npc_entity, npc_loc),
             chase,
-            NpcRecovery::new(*wait.start(), *wait.end()),
             common_bevy::components::AttackRange(attack_range(archetype)),
             Heading::default(),
             common_bevy::components::Turn::default(),

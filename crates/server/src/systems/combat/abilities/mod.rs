@@ -17,9 +17,10 @@
 //! only what it does.
 //!
 //! One system, [`use_abilities`], runs all of it in a stated order: the
-//! auto-attacks come due, then what players asked for, then each NPC's
-//! skill. An ability is handled the frame it is asked for, whoever asks,
-//! and a due swing the frame its target comes within its reach.
+//! auto-attacks come due, then what players asked for, then what each
+//! NPC's skills channel chooses. An ability is handled the frame it is
+//! asked for, whoever asks, and a due swing the frame its target comes
+//! within its reach.
 
 pub mod auto_attack;
 pub mod counter;
@@ -39,7 +40,6 @@ use common_bevy::{
         engagement::{Engagement, EngagementMember},
         grit::Grit,
         heading::Heading,
-        npc_recovery::NpcRecovery,
         reaction_queue::{QueuedThreat, ReactionQueue},
         recovery::GlobalRecovery,
         resources::{Endurance, Health, RespawnTimer, Stamina},
@@ -57,9 +57,6 @@ use common_bevy::{
 };
 
 use crate::systems::{behaviour::chase::Chase, combat::landing};
-
-/// How often NPC skills are looked at.
-const CHECK: Duration = Duration::from_millis(500);
 
 /// Why the gate refused an ability.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,7 +117,7 @@ pub struct Abilities<'w, 's> {
     pub grits: Query<'w, 's, &'static mut Grit>,
     pub striding: Query<'w, 's, &'static stride::PerfectStride>,
     pub targets: Query<'w, 's, (Entity, &'static Target)>,
-    pub npcs: Query<'w, 's, (Entity, &'static EntityType, &'static mut NpcRecovery, Has<leap::Traded>), With<Chase>>,
+    pub npcs: Query<'w, 's, (Entity, &'static EntityType), With<Chase>>,
     pub leashed: Query<'w, 's, (&'static Chase, &'static EngagementMember)>,
     pub dens: Query<'w, 's, &'static Loc, With<Engagement>>,
     pub map: Res<'w, Map>,
@@ -129,9 +126,9 @@ pub struct Abilities<'w, 's> {
 }
 
 /// Uses every ability due or asked for this frame: the auto-attacks that
-/// have come due, then what players asked, in the order asked, then each
-/// [`CHECK`] each NPC's skill.
-pub fn use_abilities(mut reader: MessageReader<Try>, mut abilities: Abilities, mut since_check: Local<Duration>) {
+/// have come due, then what players asked, in the order asked, then what
+/// each NPC chooses.
+pub fn use_abilities(mut reader: MessageReader<Try>, mut abilities: Abilities) {
     // Swings go first: a Leap moves its user as the frame ends, so a swing
     // after it would still strike from where it stood
     abilities.swing();
@@ -139,11 +136,6 @@ pub fn use_abilities(mut reader: MessageReader<Try>, mut abilities: Abilities, m
         let Try { event: GameEvent::UseAbility { ent, ability, target } } = message else { continue };
         abilities.ask(*ent, *ability, *target);
     }
-    *since_check += abilities.time.delta();
-    if *since_check < CHECK {
-        return;
-    }
-    *since_check -= CHECK;
     abilities.skills();
 }
 
@@ -617,12 +609,9 @@ mod tests {
 
         assert_eq!(refused(&mut app, leaper, AbilityType::Leap, None), Some(AbilityFailReason::NoTargets), "a leap needs someone to leap from or onto");
 
-        // It swings at what it faces as soon as it targets it; let that blow land
+        // It swings at what it faces as soon as it targets it
         app.update();
         assert_eq!(queue(&app, near).len(), 1, "its first swing waits in its target's queue");
-        app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: near } });
-        app.update();
-        assert!(app.world().get::<leap::Traded>(leaper).is_some(), "a blow of its own landed: it has traded");
 
         // In reach, with a blow queued on it: clear of both
         assert!(used(&ask(&mut app, near, AbilityType::Frenzy, Some(leaper)), AbilityType::Frenzy));
@@ -631,7 +620,6 @@ mod tests {
         assert!(distance(&app) > reach, "it leaps out of reach");
         assert!(queue(&app, leaper).is_empty(), "and the blow misses");
         assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "a leap clear strikes nothing");
-        assert!(app.world().get::<leap::Traded>(leaper).is_none(), "what it had traded is behind it");
         let now = app.world().resource::<Time>().elapsed();
         assert_eq!(app.world().get::<Swing>(leaper).unwrap().waited(now).map(|_| ()), Some(()), "a swing is due and held");
 

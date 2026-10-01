@@ -250,7 +250,7 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     {
         let mut commands = world.commands();
         for (team, side, at, foes) in [(west, WEST, west_at, east_at), (east, EAST, east_at, west_at)] {
-            spawn_engagement(jitter(at, foes), team.archetype, side, team.level, team.size, |_, _| 0, 0..=0, &mut commands, &time);
+            spawn_engagement(jitter(at, foes), team.archetype, side, team.level, team.size, |_, _| 0, &mut commands, &time);
         }
     }
     world.flush();

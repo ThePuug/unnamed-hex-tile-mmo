@@ -6,8 +6,7 @@
 //! It is one process-wide set, read through [`tuning`]. The live client and
 //! server never change it, so they agree on every number; only the balance
 //! arena calls [`set_tuning`], between scenarios, to try values without a
-//! rebuild. How long an NPC waits to use its signature is behaviour, not
-//! balance, and is not here.
+//! rebuild.
 
 use std::sync::RwLock;
 

@@ -4,11 +4,6 @@ use common_bevy::{components::Loc, message::{AbilityType, ClearType}};
 use super::{Abilities, AbilityFailReason, Cast, WHOLE};
 use crate::systems::combat::leap::{away, slide, toward, LEAP_MS};
 
-/// An actor has traded: a blow of its own has landed since it last leapt.
-/// An NPC leaps clear of a fight only once it has (`npc::skills`).
-#[derive(Clone, Component, Copy, Debug)]
-pub struct Traded;
-
 /// Leap, the Skirmisher's skill: an action that carries its user
 /// `Tuning::leap_distance` tiles over the ground, by where its target, a
 /// living hostile, stands.
@@ -39,7 +34,6 @@ pub fn leap(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, Ab
     };
     let landing = landing.ok_or(AbilityFailReason::OutOfRange)?;
     slide(cast.ent, landing, LEAP_MS, None, &mut abilities.commands, &mut abilities.writer);
-    abilities.commands.entity(cast.ent).remove::<Traded>();
     if clear {
         abilities.clear(cast.ent, ClearType::Span(cast.attrs.span()));
         let now = abilities.time.elapsed();

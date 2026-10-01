@@ -1,74 +1,76 @@
-//! When an NPC uses its archetype's skill.
+//! When an NPC uses a skill: its skills channel ([`skills`]) weighs what
+//! it perceives, and it asks the gate for the best decision that beats
+//! waiting, as a player's key press would.
 
 use bevy::prelude::*;
 use common_bevy::{
     components::entity_type::{actor::ActorIdentity, EntityType},
     message::AbilityType,
-    systems::combat::combos::{may_use, reacts_through},
+    systems::targeting,
 };
 
 use super::{in_arc, Abilities};
+use crate::systems::behaviour::skills::{self, Foe, Threats, View};
 
 impl Abilities<'_, '_> {
-    /// Uses each NPC's skill where it would:
-    /// - a strike (Frenzy, Feint) when its target stands within its reach
-    ///   and arc;
-    /// - a Parry or a Counter when threats stand in its queue;
-    /// - a Leap clear of a target in its reach once it has traded, a blow
-    ///   of its own landed since its last leap (`leap::Traded`), and threats
-    ///   stand in its queue; and a Leap onto a target out of its reach;
-    /// - a Perfect Stride when its target stands within its reach and it
-    ///   is in none.
-    ///
-    /// Every use out of recovery waits out the NPC's `NpcRecovery` delay,
-    /// armed once the skill is affordable, so NPCs that fire together drift
-    /// apart. What it takes inside a recovery, the combo it was offered or
-    /// a reaction its Preparation lets through, follows without the wait.
-    /// The delay is spent as it asks, whether or not the gate then lets the
-    /// skill through.
+    /// Asks, for each NPC, the skill its skills channel chooses, if any.
     pub(super) fn skills(&mut self) {
-        let now = self.time.elapsed();
         let mut asks: Vec<(Entity, AbilityType, Option<Entity>)> = Vec::new();
-        for (ent, entity_type, mut delay, traded) in &mut self.npcs {
+        for (ent, entity_type) in &self.npcs {
             let EntityType::Actor(actor) = entity_type else { continue };
             let ActorIdentity::Npc(archetype) = actor.identity else { continue };
-            let ability = archetype.profile().ability;
-            let Ok((&loc, attrs, _, heading, _, range, _)) = self.actors.get(ent) else { continue };
-            let own = range.copied().unwrap_or_default().0;
-
-            let recovery = self.recoveries.get(ent).ok();
-            let open = may_use(ability, recovery) || reacts_through(ability, recovery, Some(attrs));
-            let affordable = self.stamina.get(ent).is_ok_and(|stamina| stamina.state >= common_bevy::tuning::tuning().cost(ability));
-            if !open || !affordable {
-                continue;
-            }
-            if !recovery.is_some_and(|recovery| recovery.is_active()) {
-                delay.arm(now);
-                if !delay.is_ready(now) {
-                    continue;
-                }
-            }
-
-            let threatened = self.queues.get(ent).is_ok_and(|queue| !queue.is_empty());
+            let bar = [archetype.profile().ability];
+            let Some(mut view) = self.view(ent, bar[0]) else { continue };
+            let Some(decision) = skills::choose(&mut view, &bar) else { continue };
             let target = self.targets.get(ent).ok().and_then(|(_, target)| target.entity);
-            let target_loc = target.and_then(|target| self.actors.get(target).ok()).map(|(&target_loc, ..)| target_loc);
-            let in_reach = target_loc.is_some_and(|target_loc| loc.distance(&target_loc) <= own);
-            let ask = match ability {
-                AbilityType::Parry | AbilityType::Counter => threatened.then_some(None),
-                AbilityType::Leap => target.filter(|_| !in_reach || (traded && threatened)).map(Some),
-                AbilityType::PerfectStride => (in_reach && !self.striding.get(ent).is_ok_and(|stride| stride.until > now)).then_some(None),
-                _ => target.zip(target_loc).filter(|(_, target_loc)| {
-                    ability.reach(own).is_some_and(|reach| reach.contains(&loc.distance(target_loc)))
-                        && in_arc(heading, Some(attrs), &loc, target_loc)
-                }).map(|(target, _)| Some(target)),
+            let at = match decision.ability {
+                ability if ability.is_reaction() => None,
+                AbilityType::PerfectStride => None,
+                _ => target,
             };
-            if let Some(asked) = ask {
-                delay.spend();
-                asks.push((ent, ability, asked));
-            }
+            debug!("npc {ent} {:?} to {}: {:.2} {:?}", decision.ability, decision.reason, decision.score, decision.responses);
+            asks.push((ent, decision.ability, at));
         }
-        for (ent, ability, asked) in asks {
-            self.ask(ent, ability, asked);
+        for (ent, ability, at) in asks {
+            self.ask(ent, ability, at);
         }
+    }
+
+    /// What `ent` perceives as it weighs `ability`; None for the dead.
+    fn view(&self, ent: Entity, ability: AbilityType) -> Option<View> {
+        let (&loc, &attrs, health, heading, _, range, dead) = self.actors.get(ent).ok()?;
+        if dead {
+            return None;
+        }
+        let tuning = common_bevy::tuning::tuning();
+        let now = self.time.elapsed();
+        let queue: Vec<_> = self.queues.get(ent).map(|queue| queue.threats.iter().copied().collect()).unwrap_or_default();
+        let foe = self.targets.get(ent).ok()
+            .and_then(|(_, target)| target.entity)
+            .and_then(|target| Some((target, self.actors.get(target).ok()?)))
+            .map(|(target, (&target_loc, ..))| Foe {
+                distance: loc.distance(&target_loc),
+                in_arc: in_arc(heading, Some(&attrs), &loc, &target_loc),
+                across: targeting::across(heading, &loc, &target_loc),
+                recovering: self.recoveries.get(target).ok()
+                    .filter(|recovery| recovery.is_active() && recovery.duration > 0.0)
+                    .map_or(0.0, |recovery| recovery.remaining / recovery.duration),
+            });
+        let waited = self.swings.get(ent).ok().and_then(|swing| swing.waited(now));
+        Some(View {
+            ability,
+            attrs,
+            health: health.state,
+            stamina: self.stamina.get(ent).map_or(0.0, |stamina| stamina.state),
+            endurance: self.endurance.get(ent).map_or(0.0, |endurance| endurance.state),
+            recovery: self.recoveries.get(ent).ok().copied(),
+            striding: self.strides(ent),
+            grit_held: self.grits.get(ent).map_or(0, |grit| grit.held),
+            banked: waited.map_or(0, |waited| attrs.banked(waited, attrs.cadence_interval())),
+            reach: range.copied().unwrap_or_default().0,
+            leap: tuning.leap_distance as i32,
+            queue: Threats::reading(&queue, attrs.span(), self.game_now()),
+            foe,
+        })
     }
 }

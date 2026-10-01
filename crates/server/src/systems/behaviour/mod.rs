@@ -1,5 +1,7 @@
 pub mod chase;
 pub mod hex_assignment;
+pub mod skills;
+pub mod utility;
 
 use bevy::ecs::query::QueryData;
 use qrz::Qrz;

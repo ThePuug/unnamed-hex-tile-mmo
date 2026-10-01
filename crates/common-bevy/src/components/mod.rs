@@ -10,7 +10,6 @@ pub mod keybits;
 pub mod loaded_by;
 pub mod movement_intent_state;
 pub mod displacing;
-pub mod npc_recovery;
 pub mod position;
 pub mod reaction_queue;
 pub mod recovery;
