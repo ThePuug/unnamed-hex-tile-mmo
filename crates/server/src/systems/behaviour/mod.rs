@@ -21,6 +21,24 @@ use common_bevy::{
 #[derive(bevy::prelude::Resource, Default)]
 pub struct Decisions(pub Vec<String>);
 
+/// The Approach an actor of `kind` shows on its target frame, if it is an
+/// actor
+pub fn approach_of(kind: Option<&common_bevy::components::entity_type::EntityType>) -> Option<common_bevy::components::entity_type::actor::Approach> {
+    match kind {
+        Some(common_bevy::components::entity_type::EntityType::Actor(actor)) => Some(actor.approach),
+        _ => None,
+    }
+}
+
+/// How far a foe of `approach` is taken to strike from before it has been
+/// seen to: a Distant one from its reach, any other from a melee swing's
+pub fn reach_guessed(approach: Option<common_bevy::components::entity_type::actor::Approach>) -> i32 {
+    match approach {
+        Some(common_bevy::components::entity_type::actor::Approach::Distant) => KITER_REACH,
+        _ => common_bevy::components::AttackRange::default().0,
+    }
+}
+
 /// How far an NPC looks for a target, in tiles, whatever it chases with.
 pub const ACQUISITION_RANGE: u32 = 25;
 

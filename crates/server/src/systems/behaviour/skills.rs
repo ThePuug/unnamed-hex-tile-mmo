@@ -28,7 +28,7 @@ pub const WAIT: f32 = 0.35;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "fatigue_after", "foe_recovering", "worth_answering", "pressure_share", "span_closed",
+    "fatigue_after", "foe_just_acted", "worth_answering", "pressure_share", "span_closed",
     "room_to_land", "room_to_dodge", "combo_offered", "burst_carried", "grit_banked",
     "reactions_left", "bank_empty", "bank_full", "foe_across",
 ];
@@ -116,8 +116,10 @@ pub struct Foe {
     pub in_arc: bool,
     /// Past its forward faces, where a swing breaks its stride
     pub across: bool,
-    /// Share of the foe's recovery still to run, 0 with none
-    pub recovering: f32,
+    /// Seconds since the foe last used a skill, as its clip showed; none
+    /// where its Approach answers through its own recovery (Ambushing's
+    /// Preparation), so a skill just used tells nothing of what it can do
+    pub since_skill: Option<f32>,
 }
 
 /// One reason to use a skill, scored.
@@ -198,7 +200,7 @@ fn reasons(ability: AbilityType, view: &View) -> Vec<(&'static str, Vec<Consider
 
 fn part_considerations(reason: &str, part: Part) -> Vec<Considered> {
     match (part, reason) {
-        (Part::Strike, _) => vec![FOE_STRUCK, FOE_RECOVERING, CAPACITY],
+        (Part::Strike, _) => vec![FOE_STRUCK, FOE_JUST_ACTED, CAPACITY],
         (Part::Reaction, _) => vec![WORTH_ANSWERING, PRESSURE, SPAN_CLOSED],
         (Part::Clear, "dodge") => vec![FOE_IN_REACH, WORTH_ANSWERING, ROOM_TO_DODGE],
         (Part::Clear, _) => vec![FOE_IN_REACH, ROOM_TO_LAND],
@@ -289,11 +291,12 @@ const FOE_STRUCK: Considered = step("foe_struck", |view| {
 /// Room in its pack's attack capacity on its target
 const CAPACITY: Considered = step("capacity", |view| flag(!view.capacity_taken));
 
-/// A foe in recovery cannot answer with a skill
-const FOE_RECOVERING: Considered = Consideration {
-    name: "foe_recovering",
-    read: |view| view.foe.map_or(0.0, |foe| foe.recovering),
-    bounds: (0.0, 0.5),
+/// A foe that has just used a skill is likely in its recovery and cannot
+/// answer with another: the sooner after, the likelier
+const FOE_JUST_ACTED: Considered = Consideration {
+    name: "foe_just_acted",
+    read: |view| view.foe.and_then(|foe| foe.since_skill).unwrap_or(f32::INFINITY),
+    bounds: (2.0, 0.0),
     curve: Curve::RISING.floored(0.6),
 };
 
@@ -454,7 +457,7 @@ mod tests {
             clear_room: 1.0,
             capacity_taken: false,
             queue: Threats::default(),
-            foe: Some(Foe { distance: 1, in_arc: true, across: false, recovering: 0.0 }),
+            foe: Some(Foe { distance: 1, in_arc: true, across: false, since_skill: None }),
         }
     }
 
@@ -503,10 +506,10 @@ mod tests {
     }
 
     #[test]
-    fn a_strike_needs_its_foe_in_reach_and_arc_and_prefers_one_recovering() {
+    fn a_strike_needs_its_foe_in_reach_and_arc_and_prefers_one_that_just_acted() {
         let mut fresh = view(AbilityType::Feint, ActorAttributes::default());
         let mut spent = view(AbilityType::Feint, ActorAttributes::default());
-        spent.foe = Some(Foe { recovering: 0.5, ..fresh.foe.unwrap() });
+        spent.foe = Some(Foe { since_skill: Some(0.3), ..fresh.foe.unwrap() });
         assert!(scored(&mut spent, "strike") > scored(&mut fresh, "strike"));
         let mut far = view(AbilityType::Feint, ActorAttributes::default());
         far.foe = Some(Foe { distance: 3, ..fresh.foe.unwrap() });

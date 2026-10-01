@@ -88,23 +88,38 @@ impl Default for Skill {
 }
 
 /// What an NPC has seen of its target: each change as it stood when it
-/// happened, newest last, back to the one it perceives.
+/// happened, newest last, back to the one it perceives; and the furthest
+/// it has seen its target strike it from, which a new target starts over.
 #[derive(Clone, Component, Debug, Default)]
 pub struct Sight {
     seen: VecDeque<(Duration, Entity, Foe)>,
+    reach: i32,
 }
 
 impl Sight {
+    /// It has seen its target strike it from `distance` tiles off
+    pub fn saw_strike(&mut self, distance: i32) {
+        self.reach = self.reach.max(distance);
+    }
+
+    /// The furthest it has seen its target strike it from, 0 where it has
+    /// seen none
+    pub fn reach(&self) -> i32 {
+        self.reach
+    }
+
     /// Takes in how its target `target` stands at `now`, and returns how
     /// the NPC `ent` perceives it: the newest change whose delay has run.
     /// A new target is unseen until its first change reaches it.
     pub fn look(&mut self, ent: Entity, skill: &Skill, now: Duration, target: Option<(Entity, Foe)>) -> Option<Foe> {
         let Some((target, foe)) = target else {
             self.seen.clear();
+            self.reach = 0;
             return None;
         };
         if self.seen.back().is_some_and(|&(_, seen, _)| seen != target) {
             self.seen.clear();
+            self.reach = 0;
         }
         if self.seen.back().is_none_or(|&(_, _, last)| last != foe) {
             self.seen.push_back((now, target, foe));
@@ -121,7 +136,7 @@ mod tests {
     use super::*;
 
     fn foe(distance: i32) -> Foe {
-        Foe { distance, in_arc: true, across: false, recovering: 0.0 }
+        Foe { distance, in_arc: true, across: false, since_skill: None }
     }
 
     fn ms(millis: u64) -> Duration {
@@ -134,6 +149,18 @@ mod tests {
         let spelled = Skill::named("200-300/0.1").unwrap();
         assert_eq!((spelled.fastest, spelled.slowest, spelled.error), (ms(200), ms(300), 0.1));
         assert!(Skill::named("quick").is_err());
+    }
+
+    #[test]
+    fn it_learns_how_far_its_target_strikes_from_and_a_new_target_starts_over() {
+        let (ent, target, other) = (Entity::from_raw_u32(1).unwrap(), Entity::from_raw_u32(2).unwrap(), Entity::from_raw_u32(3).unwrap());
+        let mut sight = Sight::default();
+        sight.look(ent, &Skill::SHARP, ms(0), Some((target, foe(12))));
+        sight.saw_strike(12);
+        sight.saw_strike(4);
+        assert_eq!(sight.reach(), 12, "the furthest it has seen");
+        sight.look(ent, &Skill::SHARP, ms(10), Some((other, foe(3))));
+        assert_eq!(sight.reach(), 0, "a new target is unknown");
     }
 
     #[test]

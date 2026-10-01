@@ -94,6 +94,11 @@ impl Cast {
     }
 }
 
+/// When an actor last used a skill, on the server's clock: what anyone
+/// watching sees, its clip starting. An auto-attack is no skill.
+#[derive(Clone, Component, Copy, Debug)]
+pub struct LastSkill(pub Duration);
+
 /// A skill's strike made whole and at once ([`Abilities::strike`])
 pub const WHOLE: [(f32, Duration); 1] = [(1.0, Duration::ZERO)];
 
@@ -128,6 +133,8 @@ pub struct Abilities<'w, 's> {
     pub leashed: Query<'w, 's, (&'static Chase, &'static EngagementMember)>,
     pub dens: Query<'w, 's, &'static Loc, With<Engagement>>,
     pub engagements: Query<'w, 's, &'static Engagement>,
+    pub last_skills: Query<'w, 's, &'static LastSkill>,
+    pub kinds: Query<'w, 's, &'static EntityType>,
     pub map: Res<'w, Map>,
     pub time: Res<'w, Time>,
     pub runtime: Res<'w, crate::resources::RunTime>,
@@ -255,6 +262,7 @@ impl Abilities<'_, '_> {
             self.commands.trigger(Try { event: GameEvent::Stumble { ent } });
         }
         if ability != AbilityType::AutoAttack {
+            self.commands.entity(ent).try_insert(LastSkill(self.time.elapsed()));
             let against = opponent.and_then(|opponent| self.actors.get(opponent).ok()).map(|(_, attrs, ..)| *attrs);
             landing::recover(ent, recovery_after(ability, prior.as_ref(), &attrs, against.as_ref(), fatigue), &mut self.commands, &mut self.writer);
         }

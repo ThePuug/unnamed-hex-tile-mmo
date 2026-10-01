@@ -67,10 +67,10 @@ struct Overrides {
 /// An archetype or setting not named keeps the consideration's own.
 pub const TUNED: &[(&str, f32)] = &[
     ("berserker.wait", 0.498), ("berserker.hold", 0.056), ("berserker.momentum", 0.129),
-    ("berserker.fatigue_after.floor", 0.0), ("berserker.foe_recovering.floor", 0.659), ("berserker.foe_recovering.to", 0.112),
+    ("berserker.fatigue_after.floor", 0.0),
     ("berserker.combo_offered.floor", 0.659), ("berserker.burst_carried.floor", 0.258),
     ("juggernaut.wait", 0.483), ("juggernaut.hold", 0.083), ("juggernaut.momentum", 0.174),
-    ("juggernaut.fatigue_after.floor", 0.0), ("juggernaut.foe_recovering.floor", 0.625), ("juggernaut.foe_recovering.to", 0.636),
+    ("juggernaut.fatigue_after.floor", 0.0),
     ("juggernaut.grit_banked.floor", 0.848),
     ("kiter.wait", 0.316), ("kiter.hold", 0.41), ("kiter.momentum", 0.102),
     ("kiter.fatigue_after.floor", 0.112), ("kiter.foe_across.floor", 0.241), ("kiter.foe_closing.from", 1.097),

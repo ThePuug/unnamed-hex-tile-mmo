@@ -14,8 +14,9 @@ use common_bevy::{
 
 use super::{in_arc, Abilities};
 use crate::systems::combat::leap::away;
-use common_bevy::spatial_difficulty::EnemyArchetype;
+use common_bevy::{components::entity_type::actor::Approach, spatial_difficulty::EnemyArchetype};
 use crate::systems::behaviour::{
+    approach_of,
     mind::mind_of,
     perception::Skill,
     skills::{self, Foe, Threats, View},
@@ -42,8 +43,14 @@ impl Abilities<'_, '_> {
             let target = self.targets.get(ent).ok().and_then(|(_, target)| target.entity);
             let foe = self.foe_of(ent, target);
             let now = self.time.elapsed();
+            let reach = target.and_then(|target| self.reach_seen(ent, target));
             let foe = match self.minds.get_mut(ent) {
-                Ok((_, mut sight)) => sight.look(ent, &skill, now, target.zip(foe)),
+                Ok((_, mut sight)) => {
+                    if let Some(reach) = reach {
+                        sight.saw_strike(reach);
+                    }
+                    sight.look(ent, &skill, now, target.zip(foe))
+                }
                 Err(_) => foe,
             };
             let Some(mut view) = self.view(ent, ability, &skill, foe, target) else { continue };
@@ -73,6 +80,17 @@ impl Abilities<'_, '_> {
         }
     }
 
+    /// How far off `target` stood as a threat of its, new in `ent`'s queue
+    /// this frame, came in: what `ent` sees of how far it strikes from
+    fn reach_seen(&self, ent: Entity, target: Entity) -> Option<i32> {
+        let queue = self.queues.get(ent).ok()?;
+        let game_now = self.game_now();
+        let fresh = queue.threats.iter().any(|threat| threat.source == target && game_now.saturating_sub(threat.inserted_at) < self.time.delta() * 2);
+        let (&loc, ..) = self.actors.get(ent).ok()?;
+        let (&target_loc, ..) = self.actors.get(target).ok()?;
+        fresh.then(|| loc.distance(&target_loc))
+    }
+
     /// How `target` stands as `ent` would see it now
     fn foe_of(&self, ent: Entity, target: Option<Entity>) -> Option<Foe> {
         let (&loc, attrs, _, heading, ..) = self.actors.get(ent).ok()?;
@@ -81,9 +99,9 @@ impl Abilities<'_, '_> {
             distance: loc.distance(&target_loc),
             in_arc: in_arc(heading, Some(attrs), &loc, &target_loc),
             across: targeting::across(heading, &loc, &target_loc),
-            recovering: self.recoveries.get(target?).ok()
-                .filter(|recovery| recovery.is_active() && recovery.duration > 0.0)
-                .map_or(0.0, |recovery| recovery.remaining / recovery.duration),
+            since_skill: self.last_skills.get(target?).ok()
+                .filter(|_| !self.answers_through(target))
+                .map(|last| self.time.elapsed().saturating_sub(last.0).as_secs_f32()),
         })
     }
 
@@ -111,6 +129,13 @@ impl Abilities<'_, '_> {
             .map(|threat| threat.source)
             .collect();
         holders.len() >= capacity as usize
+    }
+
+    /// Whether `target`'s Approach, which its target frame shows, answers
+    /// through its own recovery: Ambushing, whose Preparation reacts
+    /// through it
+    fn answers_through(&self, target: Option<Entity>) -> bool {
+        approach_of(target.and_then(|target| self.kinds.get(target).ok())) == Some(Approach::Ambushing)
     }
 
     /// What `ent`, perceiving with `skill`, knows as it weighs `ability`

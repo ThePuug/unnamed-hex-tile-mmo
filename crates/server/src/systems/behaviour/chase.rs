@@ -20,7 +20,7 @@ use common_bevy::{
 };
 use qrz::Qrz;
 
-use super::{mind::mind_of, moves::{self, Footing, Move}, Body};
+use super::{mind::mind_of, moves::{self, Footing, Move}, perception::Sight, Body};
 
 /// How near its engagement's place a returning NPC counts as home, in tiles.
 const HOME: i32 = 2;
@@ -136,9 +136,9 @@ pub fn chase(
         &Side,
         Option<&Status>,
         Option<&common_bevy::components::resources::Stamina>,
-        (Option<&Swing>, Option<&mut Move>, Option<&EntityType>),
+        (Option<&Swing>, Option<&mut Move>, Option<&EntityType>, Option<&Sight>),
     )>, Query<(Entity, &Heading)>)>,
-    q_target: Query<(&Loc, &Health, &Side, Option<&AttackRange>)>,
+    q_target: Query<(&Loc, &Health, &Side, Option<&EntityType>)>,
     q_home: Query<&Loc, Without<Chase>>,
     nntree: Res<NNTree>,
     map: Res<Map>,
@@ -147,7 +147,7 @@ pub fn chase(
 ) {
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, (swing, mut under_way, kind)) in actors.p0().iter_mut() {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, (swing, mut under_way, kind, sight)) in actors.p0().iter_mut() {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
@@ -190,7 +190,7 @@ pub fn chase(
             target.entity = held;
             target.last_target = held.or(target.last_target);
         }
-        let Some((held, (target_loc, _, _, target_range))) = held.and_then(|held| Some((held, q_target.get(held).ok()?))) else {
+        let Some((held, (target_loc, _, _, target_kind))) = held.and_then(|held| Some((held, q_target.get(held).ok()?))) else {
             continue;
         };
         let target_heading = headings.get(&held);
@@ -226,7 +226,9 @@ pub fn chase(
             strikes_running: **loc != **target_loc && stamina.map_or(true, |stamina| stamina.state >= tuning.off_arc_stamina),
             shot_cost: 0.0,
             breaks_stride: false,
-            pursuit_pays: target_range.copied().unwrap_or_default().0 >= target_loc.distance(loc)
+            // It knows how far its target strikes from by having been
+            // struck, and before that by its Approach
+            pursuit_pays: sight.map_or(0, Sight::reach).max(super::reach_guessed(super::approach_of(target_kind))) >= target_loc.distance(loc)
                 || target_heading.is_none_or(|&heading| is_in_facing_cone(heading, *target_loc, *loc)),
             at_leash: from_home >= chase.leash_distance - LEASH_EDGE && target_loc.flat_distance(&home) > from_home,
             leash_room: (chase.leash_distance - from_home) as f32 / chase.leash_distance.max(1) as f32,
