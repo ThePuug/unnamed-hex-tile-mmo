@@ -800,12 +800,9 @@ pub fn update_attributes(
     };
     let display_attrs = draft_attrs.as_ref().unwrap_or(attrs);
 
-    // Calculate max scaled attribute value based on ACTUAL character level (not draft)
-    // The bar scale should stay fixed regardless of draft allocation
-    // Each level grants 1 point. Max scaled value if all points → one axis: level × 10
-    // At level 10: max is ±100 (10 points × 10 scaling)
-    let level = attrs.total_level(); // Use actual level, not draft
-    let max_attr_scaled = (level * 10) as i16;
+    // The bar spans the actual character's ceiling, not the draft's, so its
+    // scale holds still while a draft is laid out
+    let max_attr_scaled = attrs.ceiling() as i16;
 
     // Update title rows (reach values)
     for (title_entity, attr_type) in &title_query {
