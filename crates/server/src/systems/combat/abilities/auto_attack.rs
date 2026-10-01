@@ -12,7 +12,8 @@ use super::{Abilities, AbilityFailReason, Cast};
 /// and outside the recovery, due on its own clock (the gate's to check).
 /// The swings that came due behind it while it waited, up to its Patience,
 /// land with this one, each at `Tuning::patience_power` of it, and the next
-/// comes due an interval from now.
+/// comes due an interval from now. Struck in a Perfect Stride it lands
+/// `Tuning::stride_damage` harder.
 pub fn swing(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let (target, _) = cast.struck()?;
     let now = abilities.time.elapsed();
@@ -23,7 +24,9 @@ pub fn swing(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, A
         swing.due = Some(now + interval);
         banked
     });
-    let weight = 1.0 + banked as f32 * common_bevy::tuning::tuning().patience_power;
+    let tuning = common_bevy::tuning::tuning();
+    let stride = if status.is_some_and(|status| status.is_striding()) { 1.0 + tuning.stride_damage } else { 1.0 };
+    let weight = (1.0 + banked as f32 * tuning.patience_power) * stride;
     abilities.deal(cast.ent, target, cast.attrs.auto_damage() * weight, AbilityType::AutoAttack, Duration::ZERO);
     Ok(Some(target))
 }
