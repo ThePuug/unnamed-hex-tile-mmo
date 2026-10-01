@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 use rand::seq::IteratorRandom;
 
@@ -5,7 +7,7 @@ use common_bevy::{
     components::{
         heading::{Heading, HEADING_SLOTS, SLOT_DEGREES},
         AttackRange, Loc, resources::Health,
-        behaviour::Side, status::Status, ActorAttributes, target::Target,
+        behaviour::Side, status::Status, ActorAttributes, Swing, target::Target,
         returning::Returning,
         hex_assignment::AssignedHex,
         engagement::EngagementMember,
@@ -13,32 +15,29 @@ use common_bevy::{
     message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
     resources::map::Map,
-    systems::{physics::Walk, targeting::arc_of},
+    systems::{physics::Walk, targeting::{arc_of, is_in_facing_cone}},
 };
 use qrz::Qrz;
 
-use super::Body;
+use super::{moves::{self, Footing, Move}, Body};
 
 /// How near its engagement's place a returning NPC counts as home, in tiles.
 const HOME: i32 = 2;
 
-/// An NPC's pursuit of what it fights, the whole of its behaviour: it takes
-/// a hostile within `acquisition_range` as its `Target` and keeps it while
-/// that one lives, walks to where it fights from, and faces its target
-/// there. Its `Target` is this system's alone to set
-/// (`targeting::update_targets` leaves every `Chase` be).
+/// An NPC's pursuit of what it fights: it takes a hostile within
+/// `acquisition_range` as its `Target` and keeps it while that one lives,
+/// and walks the move its movement channel chooses ([`moves`]). Its
+/// `Target` is this system's alone to set (`targeting::update_targets`
+/// leaves every `Chase` be).
 ///
 /// It fights from its assigned hex where it has one (`AssignedHex`), else
-/// from wherever its target is within `attack_range`. One that reaches no
-/// further than a melee swing stands there and faces its target. One that
-/// fights from range ([`Chase::ranged`]) closes only until its target is
-/// in reach, and inside it gives ground: it runs forward on the heading
-/// most directly away that still keeps its target in the arc it strikes
-/// within ([`kiting`]), so it shoots as it goes, and how directly away
-/// its Grace lets it run is how well it kites, while it has the stamina a
-/// swing across its line costs; without it, it stands and fights. Near its leash it takes no
-/// heading that carries it further from its den, so it turns along the
-/// leash and circles its den.
+/// from wherever its target is within `attack_range`. Closing, it walks
+/// there; holding, it stands and faces its target. Kiting, it runs forward
+/// on the heading most directly away that still keeps its target in the
+/// arc it strikes within ([`kiting`]), so it shoots as it goes, and how
+/// directly away its Grace lets it run is how well it kites. Fleeing, it
+/// runs straight away. Near its leash it takes no heading that carries it
+/// further from its den, so it turns along the leash and circles its den.
 ///
 /// Further than `leash_distance` from its engagement's place it lets its
 /// target go and walks home (`Returning`), taking no target until it is
@@ -59,6 +58,14 @@ impl Chase {
 
 /// How near its leash, in tiles, an NPC giving ground stops running out.
 const LEASH_MARGIN: i32 = 12;
+
+/// How near its leash, in tiles, an NPC stops closing on a target further
+/// out, so it waits at the edge rather than let it go.
+const LEASH_EDGE: i32 = 2;
+
+/// The arc a fleeing NPC keeps its target within: all of it, so it runs
+/// straight from it.
+const FLEE_ARC: f32 = 180.0;
 
 /// The heading an actor at `loc`, facing `facing`, runs on from `target`
 /// while it keeps it within the `arc` it strikes within. Of the headings
@@ -97,7 +104,7 @@ fn step(map: &Map, nntree: &NNTree, from: Qrz, goal: Qrz) -> Option<Qrz> {
 pub fn chase(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
-    mut query: Query<(
+    mut actors: ParamSet<(Query<(
         Entity,
         &Chase,
         &Loc,
@@ -110,14 +117,18 @@ pub fn chase(
         &Side,
         Option<&Status>,
         Option<&common_bevy::components::resources::Stamina>,
-    )>,
-    q_target: Query<(&Loc, &Health, &Side)>,
+        Option<&Swing>,
+        Option<&mut Move>,
+    )>, Query<(Entity, &Heading)>)>,
+    q_target: Query<(&Loc, &Health, &Side, Option<&AttackRange>)>,
     q_home: Query<&Loc, Without<Chase>>,
     nntree: Res<NNTree>,
     map: Res<Map>,
     dt: Res<Time>,
 ) {
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina) in &mut query {
+    // Which way each actor faces, read apart from the bodies this turns
+    let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, swing, mut under_way) in actors.p0().iter_mut() {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
@@ -150,37 +161,60 @@ pub fn chase(
 
         // The target it has, while that one lives, else any hostile in sight
         let held = target.entity
-            .filter(|&held| q_target.get(held).is_ok_and(|(_, health, _)| health.current() > 0.0))
+            .filter(|&held| q_target.get(held).is_ok_and(|(_, health, ..)| health.current() > 0.0))
             .or_else(|| {
                 super::spotted(&nntree, *loc, chase.acquisition_range)
-                    .filter(|&seen| q_target.get(seen).is_ok_and(|(_, health, side)| health.current() > 0.0 && side.is_hostile_to(*own_side)))
+                    .filter(|&seen| q_target.get(seen).is_ok_and(|(_, health, side, ..)| health.current() > 0.0 && side.is_hostile_to(*own_side)))
                     .choose(&mut rand::rng())
             });
         if target.entity != held {
             target.entity = held;
             target.last_target = held.or(target.last_target);
         }
-        let Some(target_loc) = held.and_then(|held| q_target.get(held).ok()).map(|(target_loc, ..)| target_loc) else {
+        let Some((held, (target_loc, _, _, target_range))) = held.and_then(|held| Some((held, q_target.get(held).ok()?))) else {
             continue;
         };
+        let target_heading = headings.get(&held);
 
-        // Where it fights from, it stands and faces its target, or, fighting
-        // from range, runs with it at the edge of its arc
-        let placed = match assigned {
-            Some(hex) => loc.flat_distance(&Loc::new(hex.0)) == 0,
-            None => loc.distance(target_loc) <= chase.attack_range,
+        // Its movement channel chooses the move; the move is walked here
+        let tuning = common_bevy::tuning::tuning();
+        let banked = attrs.zip(swing.and_then(|swing| swing.waited(dt.elapsed())))
+            .map_or(0, |(attrs, waited)| attrs.banked(waited, attrs.cadence_interval()));
+        let footing = Footing {
+            placed: match assigned {
+                Some(hex) => loc.flat_distance(&Loc::new(hex.0)) == 0,
+                None => loc.distance(target_loc) <= chase.attack_range,
+            },
+            ranged: chase.ranged(),
+            strikes_running: **loc != **target_loc && stamina.map_or(true, |stamina| stamina.state >= tuning.off_arc_stamina),
+            pursuit_pays: target_range.copied().unwrap_or_default().0 >= target_loc.distance(loc)
+                || target_heading.is_none_or(|&heading| is_in_facing_cone(heading, *target_loc, *loc)),
+            at_leash: from_home >= chase.leash_distance - LEASH_EDGE && target_loc.flat_distance(&home) > from_home,
+            distance: loc.distance(target_loc),
+            reach: chase.attack_range,
+            leap: tuning.leap_distance as i32,
+            banked,
+            // Its Patience banks only while its swing clock runs, in a fight
+            patience: attrs.filter(|_| swing.is_some_and(|swing| swing.due.is_some()))
+                .map_or(0, |attrs| attrs.patience().index() as u32),
         };
-        if placed {
-            // It gives ground only while it can afford to shoot as it runs
-            let can_shoot_running = stamina.map_or(true, |stamina| stamina.state >= common_bevy::tuning::tuning().off_arc_stamina);
-            if chase.ranged() && **loc != **target_loc && can_shoot_running {
-                let outward = (from_home >= chase.leash_distance - LEASH_MARGIN).then(|| Heading::from_hex(Qrz { z: 0, ..**loc - *home }));
-                let goal = kiting(*loc, *target_loc, arc_of(attrs), body.turn.heading, outward);
-                body.steer(goal, Walk::Forward, speed, dt_ms, &map, &nntree);
-            } else {
+        let chosen = moves::choose(&footing, under_way.as_deref().copied().unwrap_or_default());
+        if let Some(under_way) = under_way.as_mut().filter(|under_way| ***under_way != chosen) {
+            **under_way = chosen;
+        }
+        let outward = (from_home >= chase.leash_distance - LEASH_MARGIN).then(|| Heading::from_hex(Qrz { z: 0, ..**loc - *home }));
+        match chosen {
+            Move::Hold => {
                 body.face(loc, **target_loc, dt_ms, &map, &nntree);
+                continue;
             }
-            continue;
+            Move::Kite | Move::Flee => {
+                let arc = if chosen == Move::Kite { arc_of(attrs) } else { FLEE_ARC };
+                let goal = kiting(*loc, *target_loc, arc, body.turn.heading, outward);
+                body.steer(goal, Walk::Forward, speed, dt_ms, &map, &nntree);
+                continue;
+            }
+            Move::Close => {}
         }
 
         let goal = assigned.map_or(**target_loc, |hex| hex.0);

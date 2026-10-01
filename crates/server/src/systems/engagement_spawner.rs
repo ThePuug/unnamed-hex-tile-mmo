@@ -176,6 +176,7 @@ pub fn spawn_engagement(
             chase,
             crate::systems::behaviour::perception::Skill::default(),
             crate::systems::behaviour::perception::Sight::default(),
+            crate::systems::behaviour::moves::Move::default(),
             common_bevy::components::AttackRange(attack_range(archetype)),
             Heading::default(),
             common_bevy::components::Turn::default(),

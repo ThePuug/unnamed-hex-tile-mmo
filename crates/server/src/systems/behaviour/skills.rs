@@ -43,6 +43,8 @@ pub struct View {
     pub grit_held: u8,
     /// Swings its Patience holds behind the due one
     pub banked: u32,
+    /// Its swing clock runs, in a fight, so its Patience banks
+    pub banking: bool,
     /// Its own reach, in tiles
     pub reach: i32,
     /// Tiles a Leap carries it
@@ -127,7 +129,7 @@ pub fn weigh(view: &mut View, bar: &[AbilityType]) -> Vec<Decision> {
     let mut decisions = Vec::new();
     for &ability in bar {
         view.ability = ability;
-        for (reason, considerations) in reasons(ability, &view.attrs) {
+        for (reason, considerations) in reasons(ability, view) {
             let responses: Vec<(&'static str, f32)> = considerations.iter()
                 .map(|consideration| (consideration.name, consideration.answer(view)))
                 .collect();
@@ -153,10 +155,12 @@ enum Part {
     Stance,
 }
 
-/// Each reason to use `ability`, and its considerations for a user with
-/// `attrs`: what any skill asks, what its part asks, and what the
-/// commitments its user holds ask of that part.
-fn reasons(ability: AbilityType, attrs: &ActorAttributes) -> Vec<(&'static str, Vec<Considered>)> {
+/// Each reason to use `ability`, and its considerations for what `view`
+/// perceives: what any skill asks, what its part asks, and what the
+/// commitments its user holds ask of that part. Patience asks only while
+/// it banks.
+fn reasons(ability: AbilityType, view: &View) -> Vec<(&'static str, Vec<Considered>)> {
+    let patient = view.banking && view.attrs.patience().index() > 0;
     let parts: &[(&'static str, Part)] = match ability {
         AbilityType::AutoAttack => &[],
         AbilityType::Frenzy | AbilityType::Feint => &[("strike", Part::Strike)],
@@ -165,11 +169,11 @@ fn reasons(ability: AbilityType, attrs: &ActorAttributes) -> Vec<(&'static str, 
         AbilityType::PerfectStride => &[("stride", Part::Stance)],
     };
     parts.iter()
-        .filter(|&&(reason, _)| reason != "bank" || attrs.patience().index() > 0)
+        .filter(|&&(reason, _)| reason != "bank" || patient)
         .map(|&(reason, part)| {
             let mut considerations = vec![OPEN, AFFORDABLE, ENDURANCE];
             considerations.extend(part_considerations(reason, part));
-            considerations.extend(commitment_considerations(ability, reason, part, attrs));
+            considerations.extend(commitment_considerations(ability, reason, part, &view.attrs, patient));
             (reason, considerations)
         })
         .collect()
@@ -186,7 +190,7 @@ fn part_considerations(reason: &str, part: Part) -> Vec<Considered> {
     }
 }
 
-fn commitment_considerations(ability: AbilityType, reason: &str, part: Part, attrs: &ActorAttributes) -> Vec<Considered> {
+fn commitment_considerations(ability: AbilityType, reason: &str, part: Part, attrs: &ActorAttributes, patient: bool) -> Vec<Considered> {
     let mut considerations = Vec::new();
     if attrs.ferocity().index() > 0 && ability.combo().is_some() {
         considerations.extend([COMBO_OFFERED, BURST_CARRIED]);
@@ -197,7 +201,7 @@ fn commitment_considerations(ability: AbilityType, reason: &str, part: Part, att
     if attrs.preparation().index() > 0 && part == Part::Reaction {
         considerations.push(REACTIONS_LEFT);
     }
-    if attrs.patience().index() > 0 {
+    if patient {
         match (part, reason) {
             (Part::Clear, "bank") => considerations.push(BANK_EMPTY),
             (Part::Dive, _) => considerations.push(BANK_FULL),
@@ -404,6 +408,7 @@ mod tests {
             striding: false,
             grit_held: 0,
             banked: 0,
+            banking: true,
             reach: 2,
             leap: 9,
             queue: Threats::default(),

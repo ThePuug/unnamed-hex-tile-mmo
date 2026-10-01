@@ -85,7 +85,8 @@ impl Abilities<'_, '_> {
         let queue: Vec<_> = self.queues.get(ent)
             .map(|queue| queue.threats.iter().filter(|threat| skill.sees(ent, threat, game_now)).copied().collect())
             .unwrap_or_default();
-        let waited = self.swings.get(ent).ok().and_then(|swing| swing.waited(now));
+        let swing = self.swings.get(ent).ok();
+        let waited = swing.and_then(|swing| swing.waited(now));
         Some(View {
             ability,
             attrs,
@@ -96,6 +97,7 @@ impl Abilities<'_, '_> {
             striding: self.strides(ent),
             grit_held: self.grits.get(ent).map_or(0, |grit| grit.held),
             banked: waited.map_or(0, |waited| attrs.banked(waited, attrs.cadence_interval())),
+            banking: swing.is_some_and(|swing| swing.due.is_some()),
             reach: range.copied().unwrap_or_default().0,
             leap: tuning.leap_distance as i32,
             queue: Threats::reading(&queue, attrs.span(), game_now),
