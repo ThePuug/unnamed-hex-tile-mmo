@@ -178,6 +178,8 @@ pub struct Tuning {
     pub stride_recovery: f32,
     /// Seconds a Perfect Stride lasts
     pub stride_secs: f32,
+    /// Share faster a Perfect Stride runs its user
+    pub stride_speed: f32,
 }
 
 impl Tuning {
@@ -254,6 +256,7 @@ impl Tuning {
         stride_cost: 30.0,
         stride_recovery: 1.0,
         stride_secs: 4.0,
+        stride_speed: 0.25,
     };
 
     /// Stamina `ability` costs; an auto-attack is free.
@@ -368,6 +371,7 @@ impl Tuning {
             "stride_cost" => &mut self.stride_cost,
             "stride_recovery" => &mut self.stride_recovery,
             "stride_secs" => &mut self.stride_secs,
+            "stride_speed" => &mut self.stride_speed,
             "leap_distance" => {
                 self.leap_distance = number.round().max(1.0) as usize;
                 return Ok(());

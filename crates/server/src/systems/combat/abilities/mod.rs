@@ -118,7 +118,6 @@ pub struct Abilities<'w, 's> {
     pub statuses: Query<'w, 's, &'static mut Status>,
     pub swings: Query<'w, 's, &'static mut Swing>,
     pub grits: Query<'w, 's, &'static mut Grit>,
-    pub striding: Query<'w, 's, &'static stride::PerfectStride>,
     pub targets: Query<'w, 's, (Entity, &'static Target)>,
     pub npcs: Query<'w, 's, (Entity, &'static EntityType), With<Chase>>,
     pub minds: Query<'w, 's, (&'static Skill, &'static mut Sight)>,
@@ -292,7 +291,7 @@ impl Abilities<'_, '_> {
 
     /// Whether `ent` is in a Perfect Stride now
     pub fn strides(&self, ent: Entity) -> bool {
-        self.striding.get(ent).is_ok_and(|stride| stride.until > self.time.elapsed())
+        self.statuses.get(ent).is_ok_and(|status| status.is_striding())
     }
 
     /// Queues a skill's strike on `target` for `damage` in all, in `parts`:

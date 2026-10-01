@@ -21,7 +21,6 @@ use common_bevy::{
 use qrz::Qrz;
 
 use super::{mind::mind_of, moves::{self, Footing, Move}, Body};
-use crate::systems::combat::abilities::stride::PerfectStride;
 
 /// How near its engagement's place a returning NPC counts as home, in tiles.
 const HOME: i32 = 2;
@@ -137,7 +136,7 @@ pub fn chase(
         &Side,
         Option<&Status>,
         Option<&common_bevy::components::resources::Stamina>,
-        (Option<&Swing>, Option<&mut Move>, Option<&EntityType>, Option<&PerfectStride>),
+        (Option<&Swing>, Option<&mut Move>, Option<&EntityType>),
     )>, Query<(Entity, &Heading)>)>,
     q_target: Query<(&Loc, &Health, &Side, Option<&AttackRange>)>,
     q_home: Query<&Loc, Without<Chase>>,
@@ -148,7 +147,7 @@ pub fn chase(
 ) {
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, (swing, mut under_way, kind, stride)) in actors.p0().iter_mut() {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, (swing, mut under_way, kind)) in actors.p0().iter_mut() {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
@@ -212,7 +211,7 @@ pub fn chase(
         // whether it breaks stride: across its line a swing spends stamina,
         // the more the further round its arc, and breaks stride but in a
         // Perfect Stride
-        let striding = stride.is_some_and(|stride| stride.until > dt.elapsed());
+        let striding = status.is_some_and(Status::is_striding);
         let held = stamina.map_or(f32::INFINITY, |stamina| stamina.state.max(f32::EPSILON));
         let shot = |heading: Heading| (
             tuning.off_arc_stamina * across_share(&heading, loc, target_loc) / held,
