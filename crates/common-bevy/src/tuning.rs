@@ -43,6 +43,12 @@ pub struct Tuning {
     /// skill would; one struck within them is free. Without it the swing
     /// waits
     pub off_arc_stamina: f32,
+    /// Share of those two costs a swing pays in the first band past the
+    /// forward faces, out to the first Grace tier's arc
+    pub off_arc_share_min: f32,
+    /// Share it pays in the last band, out to the third tier's arc; the
+    /// band between pays evenly between
+    pub off_arc_share_max: f32,
     /// Share longer an actor's recoveries run with its endurance spent
     pub fatigue_recovery: f32,
     /// Share shorter the windows of threats against an actor run with its
@@ -189,6 +195,8 @@ impl Tuning {
         endurance_regen: 0.05,
         off_arc_cost: 0.25,
         off_arc_stamina: 15.0,
+        off_arc_share_min: 1.0 / 3.0,
+        off_arc_share_max: 1.0,
         fatigue_recovery: 0.5,
         fatigue_window: 0.3,
         fatigue_bend: 3.0,
@@ -314,6 +322,8 @@ impl Tuning {
             "endurance_regen" => &mut self.endurance_regen,
             "off_arc_cost" => &mut self.off_arc_cost,
             "off_arc_stamina" => &mut self.off_arc_stamina,
+            "off_arc_share_min" => &mut self.off_arc_share_min,
+            "off_arc_share_max" => &mut self.off_arc_share_max,
             "fatigue_recovery" => &mut self.fatigue_recovery,
             "fatigue_window" => &mut self.fatigue_window,
             "fatigue_bend" => &mut self.fatigue_bend,

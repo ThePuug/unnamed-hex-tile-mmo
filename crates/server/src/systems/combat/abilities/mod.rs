@@ -205,9 +205,11 @@ impl Abilities<'_, '_> {
         }
 
         // A swing struck across the caster's line is a skill's effort: it
-        // costs stamina, and waits without it
+        // costs stamina, the more the further round its arc, and waits
+        // without it
         let across = cast.target_loc.is_some_and(|target_loc| targeting::across(heading.as_ref(), &loc, &target_loc));
-        let cost = tuning.cost(ability) + if ability == AbilityType::AutoAttack && across { tuning.off_arc_stamina } else { 0.0 };
+        let share = heading.as_ref().zip(cast.target_loc).map_or(0.0, |(heading, target_loc)| targeting::across_share(heading, &loc, &target_loc));
+        let cost = tuning.cost(ability) + if ability == AbilityType::AutoAttack { tuning.off_arc_stamina * share } else { 0.0 };
         if self.stamina.get(ent).map_or(true, |stamina| stamina.state < cost) {
             return Err(Some(AbilityFailReason::InsufficientStamina));
         }
@@ -235,10 +237,10 @@ impl Abilities<'_, '_> {
         }
         // Endurance is spent beside the stamina and refuses nothing: a
         // skill's, or for a swing struck across the caster's line a share
-        // of the Force it strikes with. A Parry has paid its own, by what
-        // it turned aside
+        // of the Force it strikes with, the more the further round its arc.
+        // A Parry has paid its own, by what it turned aside
         self.tire(ent, match ability {
-            AbilityType::AutoAttack if across => tuning.off_arc_cost * attrs.force(),
+            AbilityType::AutoAttack if across => tuning.off_arc_cost * share * attrs.force(),
             AbilityType::AutoAttack | AbilityType::Parry => 0.0,
             _ => attrs.skill_endurance(ability),
         });
