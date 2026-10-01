@@ -91,6 +91,11 @@ pub struct Tuning {
     /// Share of each blow an actor lets land that its Grit banks for its
     /// next skill; its tier sets how many blows it banks, 0 to 3
     pub grit_share: f32,
+    /// Share of its target's pace each blow in Grit's bank dazes away as
+    /// the bank strikes back: movement, swings and recovery
+    pub grit_bind: f32,
+    /// Seconds that daze holds
+    pub grit_bind_secs: f32,
     /// What each swing an actor's Patience banked strikes for, as a share of
     /// an auto-attack, when it lands with the next; its tier sets how many
     /// it banks, 0 to 3
@@ -219,6 +224,8 @@ impl Tuning {
         grace_arc_min: 60.0,
         grace_arc_max: 150.0,
         grit_share: 0.3,
+        grit_bind: 0.1,
+        grit_bind_secs: 3.0,
         patience_power: 1.25,
         contest_scale: 800.0,
         contest_per_level: 15.0,
@@ -314,6 +321,8 @@ impl Tuning {
             "grace_arc_min" => &mut self.grace_arc_min,
             "grace_arc_max" => &mut self.grace_arc_max,
             "grit_share" => &mut self.grit_share,
+            "grit_bind" => &mut self.grit_bind,
+            "grit_bind_secs" => &mut self.grit_bind_secs,
             "patience_power" => &mut self.patience_power,
             "tempo_ceiling" => &mut self.tempo_ceiling,
             "potency_base" => &mut self.potency_base,

@@ -97,6 +97,10 @@ impl Cast {
 /// A skill's strike made whole and at once ([`Abilities::strike`])
 pub const WHOLE: [(f32, Duration); 1] = [(1.0, Duration::ZERO)];
 
+/// The most of its pace a bind dazes away, so a dazed actor still moves
+/// and swings
+const MOST_BIND: f32 = 0.6;
+
 /// Everything an ability reads or changes as it is used.
 #[derive(SystemParam)]
 pub struct Abilities<'w, 's> {
@@ -297,21 +301,25 @@ impl Abilities<'_, '_> {
     /// Queues a skill's strike on `target` for `damage` in all, in `parts`:
     /// each a share of it, struck its delay after now ([`WHOLE`] for one
     /// strike made at once). What the caster's Grit has banked strikes with
-    /// it, split as the damage is, and is spent: every skill that strikes
-    /// deals its damage through here, and an auto-attack or a reaction's
-    /// return never does.
+    /// it, split as the damage is, and is spent, and every part binds its
+    /// target: dazed out of `Tuning::grit_bind` of its pace for each blow
+    /// the bank held, as it lands. Every skill that strikes deals its
+    /// damage through here, and an auto-attack or a reaction's return
+    /// never does.
     pub fn strike(&mut self, cast: &Cast, target: Entity, damage: f32, ability: AbilityType, parts: &[(f32, Duration)]) {
-        let total = damage + self.grits.get_mut(cast.ent).map_or(0.0, |mut grit| grit.spend());
+        let (bank, held) = self.grits.get_mut(cast.ent).map_or((0.0, 0), |mut grit| grit.spend());
+        let bind = (common_bevy::tuning::tuning().grit_bind * held as f32).min(MOST_BIND);
         for &(share, delay) in parts {
-            self.deal(cast.ent, target, total * share, ability, delay);
+            self.deal(cast.ent, target, (damage + bank) * share, ability, bind, delay);
         }
     }
 
     /// Queues a blow of `base_damage` from `source` on `target` as
-    /// `ability`'s, struck `delay` after now.
-    pub fn deal(&mut self, source: Entity, target: Entity, base_damage: f32, ability: AbilityType, delay: Duration) {
+    /// `ability`'s, struck `delay` after now, dazing away `bind` of its
+    /// pace as it lands.
+    pub fn deal(&mut self, source: Entity, target: Entity, base_damage: f32, ability: AbilityType, bind: f32, delay: Duration) {
         self.commands.trigger(Try {
-            event: GameEvent::DealDamage { source, target, base_damage, ability: Some(ability), dot: 0.0, delay },
+            event: GameEvent::DealDamage { source, target, base_damage, ability: Some(ability), dot: 0.0, bind, delay },
         });
     }
 
@@ -729,6 +737,12 @@ mod tests {
         assert_eq!(bank(&app), banked, "a swing leaves the bank be");
         assert!(used(&ask(&mut app, gritty, AbilityType::Feint, Some(attacker)), AbilityType::Feint));
         assert_eq!(bank(&app), 0.0, "a skill strikes with it");
+        assert!(queue(&app, attacker).iter().filter(|threat| threat.ability == Some(AbilityType::Feint)).all(|threat| threat.bind > 0.0), "and every part of it binds");
+        let dazed = |app: &App| app.world().get::<Status>(attacker).is_some_and(|status| status.daze_pace() < 1.0);
+        assert!(!dazed(&app), "nothing binds before it lands");
+        app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: attacker } });
+        app.update();
+        assert!(dazed(&app), "landed, it dazes its target");
     }
 
     #[test]

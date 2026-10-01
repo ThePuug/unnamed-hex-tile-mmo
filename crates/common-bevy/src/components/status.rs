@@ -23,8 +23,12 @@ pub struct Status {
     pub perfect_stride: Option<Timed>,
     /// Held in place, by a stun or by the stagger of a Kick ([`Status::hold`])
     pub held: Option<Timed>,
-    /// A Juggernaut's Rattles this fight
-    pub daze: Option<Daze>,
+    /// Dazed, by a blow Grit's bank struck back: held to `pace` of its
+    /// speed, its auto-attack interval and recoveries stretched by the
+    /// inverse, for `remaining` seconds or until it leaves combat. The
+    /// server works `pace` out from its tuning and sends it, so a client
+    /// holds none of the tuning.
+    pub daze: Option<Timed>,
     /// Carrying past the bag's burden limit
     pub burden: bool,
 }
@@ -40,16 +44,6 @@ impl Timed {
     fn pace(slot: Option<Timed>) -> f32 {
         slot.filter(|timed| timed.remaining > 0.0).map_or(1.0, |timed| timed.pace)
     }
-}
-
-/// A daze, `stacks` deep, that holds the actor to `pace` of its speed and
-/// stretches its auto-attack interval and recoveries by the inverse, until it
-/// leaves combat. The server works `pace` out from its tuning and sends it,
-/// so a client holds none of the tuning.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-pub struct Daze {
-    pub stacks: u8,
-    pub pace: f32,
 }
 
 /// The share of its speed an overburdened actor keeps: slow enough that its
@@ -94,12 +88,14 @@ impl Status {
 
     /// The share of its pace a daze leaves the actor's swings and recovery
     pub fn daze_pace(&self) -> f32 {
-        self.daze.map_or(1.0, |daze| daze.pace)
+        Timed::pace(self.daze)
     }
 
-    /// The daze stacks on an actor with `status`
-    pub fn stacks_of(status: Option<&Status>) -> u8 {
-        status.and_then(|status| status.daze).map_or(0, |daze| daze.stacks)
+    /// Dazes the actor to `pace` for `seconds`, keeping what a daze already
+    /// on it holds deeper or longer: a light daze never eases a deep one.
+    pub fn daze(&mut self, pace: f32, seconds: f32) {
+        let (held, left) = self.daze.map_or((1.0, 0.0), |daze| (daze.pace, daze.remaining));
+        self.daze = Some(Timed { pace: pace.min(held), remaining: seconds.max(left) });
     }
 
     /// The auto-attack interval of an actor whose own is `interval`, under
@@ -111,7 +107,7 @@ impl Status {
 
     /// Counts the timed effects down by `dt` seconds, dropping spent ones
     pub fn tick(&mut self, dt: f32) {
-        for slot in [&mut self.slow, &mut self.stride, &mut self.perfect_stride, &mut self.held] {
+        for slot in [&mut self.slow, &mut self.stride, &mut self.perfect_stride, &mut self.held, &mut self.daze] {
             if let Some(timed) = slot {
                 timed.remaining -= dt;
                 if timed.remaining <= 0.0 {
@@ -127,7 +123,7 @@ impl Status {
 pub fn tick_status(mut query: Query<&mut Status>, time: Res<Time>) {
     let dt = time.delta_secs();
     for mut status in &mut query {
-        if status.slow.is_some() || status.stride.is_some() || status.perfect_stride.is_some() || status.held.is_some() {
+        if status.slow.is_some() || status.stride.is_some() || status.perfect_stride.is_some() || status.held.is_some() || status.daze.is_some() {
             status.tick(dt);
         }
     }
@@ -137,6 +133,16 @@ pub fn tick_status(mut query: Query<&mut Status>, time: Res<Time>) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn a_daze_holds_the_deeper_and_the_longer_of_two() {
+        let mut status = Status::default();
+        status.daze(0.7, 1.0);
+        status.daze(0.9, 3.0);
+        assert_eq!(status.daze, Some(Timed { pace: 0.7, remaining: 3.0 }), "a light daze never eases a deep one, and lengthens it");
+        status.tick(3.0);
+        assert_eq!(status.daze_pace(), 1.0, "it runs out");
+    }
 
     #[test]
     fn a_perfect_stride_runs_its_user_faster_until_it_runs_out() {
@@ -149,7 +155,7 @@ mod tests {
     #[test]
     fn every_effect_adjusts_the_one_pace() {
         let slowed = Status { slow: Some(Timed { pace: 0.8, remaining: 1.0 }), ..default() };
-        let dazed = Status { daze: Some(Daze { stacks: 1, pace: 0.9 }), ..default() };
+        let dazed = Status { daze: Some(Timed { pace: 0.9, remaining: 1.0 }), ..default() };
         let both = Status { slow: slowed.slow, daze: dazed.daze, ..default() };
         assert!(slowed.pace() < 1.0 && dazed.pace() < 1.0);
         assert!((both.pace() - slowed.pace() * dazed.pace()).abs() < 1e-6, "effects multiply");
@@ -196,8 +202,8 @@ mod tests {
     #[test]
     fn a_deeper_daze_swings_slower_and_none_swings_as_its_own() {
         let own = Duration::from_millis(1500);
-        let light = Status { daze: Some(Daze { stacks: 1, pace: 0.9 }), ..default() };
-        let deep = Status { daze: Some(Daze { stacks: 3, pace: 0.7 }), ..default() };
+        let light = Status { daze: Some(Timed { pace: 0.9, remaining: 1.0 }), ..default() };
+        let deep = Status { daze: Some(Timed { pace: 0.7, remaining: 1.0 }), ..default() };
         let slowed = Status { slow: Some(Timed { pace: 0.5, remaining: 1.0 }), ..default() };
         assert_eq!(Status::cadence(own, None), own);
         assert_eq!(Status::cadence(own, Some(&slowed)), own, "only a daze stretches a swing");

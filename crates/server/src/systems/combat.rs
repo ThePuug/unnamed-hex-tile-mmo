@@ -29,7 +29,7 @@ pub fn process_deal_damage(
     let tuning = common_bevy::tuning::tuning();
     let event = &trigger.event().event;
 
-    if let GameEvent::DealDamage { source, target, base_damage, ability, dot, delay } = event {
+    if let GameEvent::DealDamage { source, target, base_damage, ability, dot, bind, delay } = event {
         // Get attacker attributes for scaling
         let Ok(source_attrs) = all_attrs.get(*source) else {
             return;
@@ -76,7 +76,7 @@ pub fn process_deal_damage(
             now,           // When the strike is made
             dot,           // DoT per tick, a wound's
             Endurance::fatigue_of(endurance),
-        );
+        ).binding(*bind);
 
         // Try to insert threat into queue
         let _overflow = queue_utils::insert_threat(&mut queue, threat, now);
@@ -114,7 +114,9 @@ pub fn process_deal_damage(
 /// Processes ResolveThreat events: a threat whose time ran out, one dismissed, a Counter's reflection
 pub fn resolve_threat(
     trigger: On<Try>,
+    mut commands: Commands,
     mut query: Query<(&mut Health, &ActorAttributes, Option<&mut common_bevy::components::grit::Grit>)>,
+    mut statuses: Query<&mut common_bevy::components::status::Status>,
     actors: Query<&ActorAttributes>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -141,6 +143,12 @@ pub fn resolve_threat(
             let final_damage = blow + threat.dot_left();
 
             land_damage(*ent, threat.source, final_damage, threat.is_wound(), &mut health, &mut writer);
+
+            // A blow Grit's bank struck back binds its target as it lands
+            if threat.bind > 0.0 {
+                let seconds = tuning.grit_bind_secs;
+                landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| status.daze(1.0 - threat.bind, seconds));
+            }
 
             // Death check moved to dedicated check_death system (decoupled from combat)
         }

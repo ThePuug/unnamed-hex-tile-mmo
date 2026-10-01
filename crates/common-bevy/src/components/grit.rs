@@ -22,10 +22,9 @@ impl Grit {
         }
     }
 
-    /// Takes the whole bank, leaving it empty
-    pub fn spend(&mut self) -> f32 {
-        self.held = 0;
-        std::mem::take(&mut self.bank)
+    /// Takes the whole bank and the count of blows in it, leaving it empty
+    pub fn spend(&mut self) -> (f32, u8) {
+        (std::mem::take(&mut self.bank), std::mem::take(&mut self.held))
     }
 }
 
@@ -39,9 +38,9 @@ mod tests {
         for share in [30.0, 12.0, 8.0] {
             grit.take(share, 2);
         }
-        assert_eq!(grit.spend(), 42.0, "the first it holds strike together; full, it banked no more");
-        assert_eq!(grit.spend(), 0.0, "and only once");
+        assert_eq!(grit.spend(), (42.0, 2), "the first it holds strike together; full, it banked no more");
+        assert_eq!(grit.spend(), (0.0, 0), "and only once");
         grit.take(5.0, 2);
-        assert_eq!(grit.spend(), 5.0, "spent, it banks again");
+        assert_eq!(grit.spend(), (5.0, 1), "spent, it banks again");
     }
 }

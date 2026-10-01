@@ -32,6 +32,10 @@ pub struct QueuedThreat {
     pub dot: f32,
     /// DoT ticks this wound has dealt. Only the server counts them.
     pub ticked: u8,
+    /// Share of its pace the target is dazed out of as the threat lands:
+    /// Grit's bank struck back, binding the target. Zero for most threats;
+    /// a reaction that clears the threat clears it too.
+    pub bind: f32,
 }
 
 /// The lane a threat runs in, in the order the queue keeps them: every
@@ -47,6 +51,11 @@ pub enum Lane {
 pub const DOT_TICK: Duration = Duration::from_secs(1);
 
 impl QueuedThreat {
+    /// This threat dazing its target out of `bind` of its pace as it lands
+    pub fn binding(self, bind: f32) -> Self {
+        Self { bind, ..self }
+    }
+
     /// A wound: its DoT ticks while it stands, queued behind every blow and
     /// ahead of every auto-attack, and shown in the window like a blow.
     pub fn is_wound(&self) -> bool {
@@ -139,6 +148,7 @@ mod tests {
             ability,
             dot,
             ticked: 0,
+            bind: 0.0,
         }
     }
 

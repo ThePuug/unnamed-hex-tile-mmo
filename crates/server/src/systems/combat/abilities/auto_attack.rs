@@ -27,6 +27,6 @@ pub fn swing(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, A
     let tuning = common_bevy::tuning::tuning();
     let stride = if status.is_some_and(|status| status.is_striding()) { 1.0 + tuning.stride_damage } else { 1.0 };
     let weight = (1.0 + banked as f32 * tuning.patience_power) * stride;
-    abilities.deal(cast.ent, target, cast.attrs.auto_damage() * weight, AbilityType::AutoAttack, Duration::ZERO);
+    abilities.deal(cast.ent, target, cast.attrs.auto_damage() * weight, AbilityType::AutoAttack, 0.0, Duration::ZERO);
     Ok(Some(target))
 }

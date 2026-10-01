@@ -40,6 +40,9 @@ pub enum Event {
         ability: Option<AbilityType>,
         /// Damage each DoT tick deals while the threat stands: a wound's, zero for a blow
         dot: f32,
+        /// Share of its target's pace the threat dazes away as it lands
+        /// (`QueuedThreat::bind`), zero for most
+        bind: f32,
         /// How long after now the strike is made: its threat's window starts then
         delay: std::time::Duration,
     },
