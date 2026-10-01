@@ -225,7 +225,7 @@ impl Tuning {
         grace_arc_max: 150.0,
         grit_share: 0.3,
         grit_bind: 0.1,
-        grit_bind_secs: 3.0,
+        grit_bind_secs: 1.0,
         patience_power: 1.25,
         contest_scale: 800.0,
         contest_per_level: 15.0,
@@ -253,7 +253,7 @@ impl Tuning {
         feint_gap: 0.4,
         parry_cost: 25.0,
         parry_recovery: 1.5,
-        parry_effort: 0.969,
+        parry_effort: 1.2,
         parry_per_threat: 0.23,
         counter_cost: 60.0,
         counter_recovery: 0.5,
@@ -266,7 +266,7 @@ impl Tuning {
         stride_recovery: 1.0,
         stride_secs: 4.0,
         stride_speed: 0.25,
-        stride_damage: 0.25,
+        stride_damage: 0.4,
     };
 
     /// Stamina `ability` costs; an auto-attack is free.
