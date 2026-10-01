@@ -124,6 +124,7 @@ pub struct Abilities<'w, 's> {
     pub minds: Query<'w, 's, (&'static Skill, &'static mut Sight)>,
     pub leashed: Query<'w, 's, (&'static Chase, &'static EngagementMember)>,
     pub dens: Query<'w, 's, &'static Loc, With<Engagement>>,
+    pub engagements: Query<'w, 's, &'static Engagement>,
     pub map: Res<'w, Map>,
     pub time: Res<'w, Time>,
     pub runtime: Res<'w, crate::resources::RunTime>,

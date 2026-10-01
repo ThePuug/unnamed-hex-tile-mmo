@@ -19,7 +19,15 @@ pub struct Engagement {
     pub npc_count: u8,
     /// Child NPC entities (tracked for cleanup)
     pub spawned_npcs: Vec<Entity>,
+    /// How many of its NPCs may have an ability standing in one target's
+    /// queue at once. A reaction's span answers abilities that land
+    /// together, so it seldom binds: high by default, lower to make an
+    /// engagement easier.
+    pub attack_capacity: u8,
 }
+
+/// An engagement's attack capacity unless set lower
+pub const ATTACK_CAPACITY: u8 = 6;
 
 impl Engagement {
     /// Create new engagement
@@ -35,6 +43,7 @@ impl Engagement {
             archetype,
             npc_count,
             spawned_npcs: Vec::new(),
+            attack_capacity: ATTACK_CAPACITY,
         }
     }
 

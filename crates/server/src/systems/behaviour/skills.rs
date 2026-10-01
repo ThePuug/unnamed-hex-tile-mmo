@@ -52,6 +52,9 @@ pub struct View {
     /// Share of its leash it would have left where a leap clear of its
     /// target lands: 1 with no leash, 0 with nowhere to land
     pub clear_room: f32,
+    /// Its pack's attack capacity on its target is taken: as many others of
+    /// its engagement have an ability standing in the target's queue
+    pub capacity_taken: bool,
     pub queue: Threats,
     pub foe: Option<Foe>,
 }
@@ -184,11 +187,11 @@ fn reasons(ability: AbilityType, view: &View) -> Vec<(&'static str, Vec<Consider
 
 fn part_considerations(reason: &str, part: Part) -> Vec<Considered> {
     match (part, reason) {
-        (Part::Strike, _) => vec![FOE_STRUCK, FOE_RECOVERING],
+        (Part::Strike, _) => vec![FOE_STRUCK, FOE_RECOVERING, CAPACITY],
         (Part::Reaction, _) => vec![WORTH_ANSWERING, PRESSURE, SPAN_CLOSED],
         (Part::Clear, "dodge") => vec![FOE_IN_REACH, WORTH_ANSWERING, ROOM_TO_DODGE],
         (Part::Clear, _) => vec![FOE_IN_REACH, ROOM_TO_LAND],
-        (Part::Dive, _) => vec![FOE_OUT_OF_REACH, FOE_WITHIN_A_DIVE],
+        (Part::Dive, _) => vec![FOE_OUT_OF_REACH, FOE_WITHIN_A_DIVE, CAPACITY],
         (Part::Stance, _) => vec![NOT_STRIDING, FOE_IN_REACH],
     }
 }
@@ -269,6 +272,9 @@ const ENDURANCE: Considered = Consideration {
 const FOE_STRUCK: Considered = step("foe in reach and arc", |view| {
     flag(view.foe.is_some_and(|foe| foe.distance <= view.reach && foe.in_arc))
 });
+
+/// Room in its pack's attack capacity on its target
+const CAPACITY: Considered = step("capacity", |view| flag(!view.capacity_taken));
 
 /// A foe in recovery cannot answer with a skill
 const FOE_RECOVERING: Considered = Consideration {
@@ -432,6 +438,7 @@ mod tests {
             reach: 2,
             leap: 9,
             clear_room: 1.0,
+            capacity_taken: false,
             queue: Threats::default(),
             foe: Some(Foe { distance: 1, in_arc: true, across: false, recovering: 0.0 }),
         }
@@ -493,6 +500,17 @@ mod tests {
         let mut poor = view(AbilityType::Feint, ActorAttributes::default());
         poor.stamina = 0.0;
         assert_eq!(scored(&mut poor, "strike"), 0.0, "what it cannot afford it never asks for");
+    }
+
+    #[test]
+    fn a_strike_waits_while_its_pack_holds_the_capacity() {
+        let mut full = view(AbilityType::Frenzy, ActorAttributes::default());
+        full.capacity_taken = true;
+        assert_eq!(scored(&mut full, "strike"), 0.0);
+        let mut answering = view(AbilityType::Counter, ActorAttributes::default());
+        answering.capacity_taken = true;
+        answering.queue = threats(&[(150.0, true, 0)], Duration::from_millis(250), Duration::from_millis(1000));
+        assert!(scored(&mut answering, "answer") > WAIT, "a reaction takes no slot");
     }
 
     #[test]

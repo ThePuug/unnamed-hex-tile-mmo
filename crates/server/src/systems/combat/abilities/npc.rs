@@ -83,6 +83,22 @@ impl Abilities<'_, '_> {
             .map_or(0.0, |landing| (leash.reach - landing.flat_distance(&leash.den)) as f32 / leash.reach.max(1) as f32)
     }
 
+    /// Whether as many others of `ent`'s engagement as it lets attack at
+    /// once have an ability standing in `target`'s queue: a member holds
+    /// its slot from its ability's use until the last threat it queued
+    /// resolves.
+    fn capacity_taken(&self, ent: Entity, target: Option<Entity>) -> bool {
+        let Some(engagement) = self.leashed.get(ent).ok().map(|(_, member)| member.0) else { return false };
+        let Some(capacity) = self.engagements.get(engagement).ok().map(|engagement| engagement.attack_capacity) else { return false };
+        let Some(queue) = target.and_then(|target| self.queues.get(target).ok()) else { return false };
+        let holders: std::collections::HashSet<Entity> = queue.threats.iter()
+            .filter(|threat| !threat.is_pressure() && threat.source != ent)
+            .filter(|threat| self.leashed.get(threat.source).is_ok_and(|(_, member)| member.0 == engagement))
+            .map(|threat| threat.source)
+            .collect();
+        holders.len() >= capacity as usize
+    }
+
     /// What `ent`, perceiving with `skill`, knows as it weighs `ability`
     /// against `foe`, its target as it perceives it; None for the dead. Its
     /// own state it knows at once; a threat only once its delay has run.
@@ -112,6 +128,7 @@ impl Abilities<'_, '_> {
             reach: range.copied().unwrap_or_default().0,
             leap: tuning.leap_distance as i32,
             clear_room: self.clear_room(ent, loc, target),
+            capacity_taken: self.capacity_taken(ent, target),
             queue: Threats::reading(&queue, attrs.span(), game_now),
             foe,
         })
