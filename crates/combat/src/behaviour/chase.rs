@@ -6,7 +6,7 @@ use common_bevy::{
     components::{
         entity_type::{actor::ActorIdentity, EntityType},
         heading::{Heading, HEADING_SLOTS, SLOT_DEGREES},
-        AttackRange, Loc, resources::Health,
+        Loc, resources::Health,
         behaviour::Side, status::Status, ActorAttributes, Swing, target::Target,
         returning::Returning,
         hex_assignment::AssignedHex,
@@ -19,7 +19,7 @@ use common_bevy::{
 };
 use qrz::Qrz;
 
-use super::{mind::Minds, moves::{self, Footing, Move}, perception::Sight, Body};
+use super::{mind::Minds, moves::{self, Footing, Move}, Body};
 use common_bevy::tuning::Tuning;
 
 /// How near its engagement's place a returning NPC counts as home, in tiles.
@@ -51,10 +51,6 @@ pub struct Chase {
 
 /// How near its leash, in tiles, an NPC giving ground stops running out.
 const LEASH_MARGIN: i32 = 12;
-
-/// How near its leash, in tiles, an NPC stops closing on a target further
-/// out, so it waits at the edge rather than let it go.
-const LEASH_EDGE: i32 = 2;
 
 /// The heading an actor at `loc`, facing `facing`, runs on from `target`:
 /// the one most directly away, and of two alike the one nearer the way it
@@ -121,7 +117,7 @@ pub fn chase(
         &Side,
         Option<&Status>,
         Option<&common_bevy::components::resources::Stamina>,
-        (Option<&Swing>, Option<&mut Move>, Option<&EntityType>, Option<&Sight>),
+        (Option<&Swing>, Option<&mut Move>, Option<&EntityType>),
     )>, Query<(Entity, &Heading)>)>,
     q_target: Query<(&Loc, &Health, &Side)>,
     q_home: Query<&Loc, Without<Chase>>,
@@ -135,7 +131,7 @@ pub fn chase(
 ) {
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, (swing, mut under_way, kind, sight)) in actors.p0().iter_mut() {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, (swing, mut under_way, kind)) in actors.p0().iter_mut() {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
@@ -210,6 +206,7 @@ pub fn chase(
             let share = if striding { 0.0 } else { across_share(&tuning, &heading, loc, target_loc) };
             (tuning.off_arc_stamina * share / held, across(Some(&heading), loc, target_loc) && !striding)
         });
+        let room = |from_home: i32| (chase.leash_distance - from_home).max(0) as f32 / chase.leash_distance.max(1) as f32;
         let footing = Footing {
             placed: match assigned {
                 Some(hex) => loc.flat_distance(&Loc::new(hex.0)) == 0,
@@ -219,12 +216,11 @@ pub fn chase(
             foe_facing: target_heading.is_none_or(|&heading| is_in_facing_cone(heading, *target_loc, *loc)),
             strike_cost,
             breaks_stride,
-            // It knows how far its target strikes from by having been
-            // struck, and before that takes it for a melee swing's
-            pursuit_pays: sight.map_or(0, Sight::reach).max(AttackRange::default().0) >= target_loc.distance(loc)
-                || target_heading.is_none_or(|&heading| is_in_facing_cone(heading, *target_loc, *loc)),
-            at_leash: from_home >= chase.leash_distance - LEASH_EDGE && target_loc.flat_distance(&home) > from_home,
-            leash_room: (chase.leash_distance - from_home) as f32 / chase.leash_distance.max(1) as f32,
+            leash_room: room(from_home),
+            // A step toward its target takes it out where its target stands
+            // further from its den, and a step away where it stands nearer
+            room_closing: room(from_home + (target_loc.flat_distance(&home) - from_home).signum()),
+            room_fleeing: room(from_home + (from_home - target_loc.flat_distance(&home)).signum()),
             clear_outward: target_loc.flat_distance(&home) < from_home,
             distance: loc.distance(target_loc),
             reach: chase.attack_range,

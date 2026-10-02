@@ -112,6 +112,31 @@ fn released_into(tuning: &Tuning, damage: f32, released: bool) -> (f32, f32) {
     if released { (damage * (1.0 + tuning.grit_share), tuning.grit_bind) } else { (damage, 0.0) }
 }
 
+/// What the gate asks of `ability` before it does anything, in order: out
+/// of `prior`, the recovery its caster is in, or let through it (an
+/// auto-attack's own clock is asked apart); for one with a reach out of
+/// `reach`, a target at `foe`'s distance and inside its arc, None for no
+/// target; and `stamina` to pay `cost`. An NPC's skills channel asks the
+/// same of what it perceives, so it never weighs a skill the gate refuses.
+pub fn admits(ability: AbilityType, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool)>, stamina: f32, cost: f32) -> Result<(), AbilityFailReason> {
+    if ability != AbilityType::AutoAttack && !may_use(ability, prior) && !reacts_through(ability, prior, Some(attrs)) {
+        return Err(AbilityFailReason::OnCooldown);
+    }
+    if let Some(within) = ability.reach(reach) {
+        let (distance, in_arc) = foe.ok_or(AbilityFailReason::NoTargets)?;
+        if !within.contains(&distance) {
+            return Err(AbilityFailReason::OutOfRange);
+        }
+        if !in_arc {
+            return Err(AbilityFailReason::NotFacing);
+        }
+    }
+    if stamina < cost {
+        return Err(AbilityFailReason::InsufficientStamina);
+    }
+    Ok(())
+}
+
 /// Everything an ability reads or changes as it is used.
 #[derive(SystemParam)]
 pub struct Abilities<'w, 's> {
@@ -198,31 +223,22 @@ impl Abilities<'_, '_> {
         let prior = self.recoveries.get(ent).ok().copied();
 
         // An auto-attack comes due on its own clock, whatever the recovery,
-        // and a held actor swings at nothing. Every other ability waits on
-        // the recovery.
+        // and a held actor swings at nothing
         if ability == AbilityType::AutoAttack {
             let due = self.swings.get(ent).is_ok_and(|swing| swing.waited(self.time.elapsed()).is_some());
             if !due || Status::holds(status.as_ref()) {
                 return Err(None);
             }
-        } else if !may_use(ability, prior.as_ref()) && !reacts_through(ability, prior.as_ref(), Some(&attrs)) {
-            return Err(Some(AbilityFailReason::OnCooldown));
         }
 
         // A strike needs a living hostile within its reach and its arc;
         // reach is measured as a swing measures it, the first level of
         // height between free
         let mut cast = Cast { ent, loc, attrs, side, reach, target: asked, target_loc: None };
-        if let Some(within) = ability.reach(reach) {
-            let (_, target_loc) = self.foe(&cast).map_err(Some)?;
-            if !within.contains(&loc.distance(&target_loc)) {
-                return Err(Some(AbilityFailReason::OutOfRange));
-            }
-            if !in_arc(&tuning, heading.as_ref(), Some(&attrs), &loc, &target_loc) {
-                return Err(Some(AbilityFailReason::NotFacing));
-            }
-            cast.target_loc = Some(target_loc);
+        if ability.reach(reach).is_some() {
+            cast.target_loc = self.foe(&cast).ok().map(|(_, target_loc)| target_loc);
         }
+        let foe = cast.target_loc.map(|target_loc| (loc.distance(&target_loc), in_arc(&tuning, heading.as_ref(), Some(&attrs), &loc, &target_loc)));
 
         // A swing struck across the caster's line is a skill's effort: it
         // costs stamina, the more the further round its arc, and waits
@@ -232,9 +248,8 @@ impl Abilities<'_, '_> {
             heading.as_ref().zip(cast.target_loc).map_or(0.0, |(heading, target_loc)| targeting::across_share(&tuning, heading, &loc, &target_loc))
         };
         let cost = tuning.cost(ability) + if ability == AbilityType::AutoAttack { tuning.off_arc_stamina * share } else { 0.0 };
-        if self.stamina.get(ent).map_or(true, |stamina| stamina.state < cost) {
-            return Err(Some(AbilityFailReason::InsufficientStamina));
-        }
+        let stamina = self.stamina.get(ent).map_or(0.0, |stamina| stamina.state);
+        admits(ability, prior.as_ref(), &attrs, reach, foe, stamina, cost).map_err(Some)?;
 
         // The recovery runs by how spent the actor is as it uses the ability
         let fatigue = self.endurance.get(ent).map_or(0.0, |endurance| endurance.fatigue(&tuning));

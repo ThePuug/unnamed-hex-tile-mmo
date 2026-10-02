@@ -10,7 +10,7 @@
 
 use bevy::prelude::*;
 
-use super::{mind::Mind, utility::{score, Consideration, Curve}};
+use super::{mind::Mind, skills::{LEASH_LEFT_BOUNDS, LEASH_LEFT_CURVE, STAMINA_LEFT_BOUNDS, STAMINA_LEFT_CURVE}, utility::{score, Consideration, Curve}};
 
 /// What holding scores unless a mind sets it: the threshold every other
 /// move must beat.
@@ -22,7 +22,7 @@ pub const MOMENTUM: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "pursuit_pays", "foe_nearing", "room_to_flee", "leash_tight", "stamina_spent", "close_stamina_ready",
+    "leash_left", "stamina_left", "foe_nearing", "leash_tight", "stamina_spent",
     "foe_facing", "strike_cost", "stride_kept",
 ];
 
@@ -62,14 +62,12 @@ pub struct Footing {
     /// A strike on that heading breaks its stride: across its line, with
     /// no Perfect Stride up
     pub breaks_stride: bool,
-    /// Its target strikes it from where it stands, or faces it: closing on
-    /// one running from it, that cannot strike it from there, gains nothing
-    pub pursuit_pays: bool,
-    /// Closing would carry it out past the edge of its leash, where it
-    /// would let its target go and walk home
-    pub at_leash: bool,
     /// Share of its leash it has left where it stands: 1 with none
     pub leash_room: f32,
+    /// Share of its leash it would have left a step on toward its target
+    pub room_closing: f32,
+    /// Share of its leash it would have left a step on away from its target
+    pub room_fleeing: f32,
     /// Its target stands nearer its den than it does, so the way clear of
     /// its target leads out toward its leash
     pub clear_outward: bool,
@@ -103,9 +101,8 @@ pub fn choose(footing: &Footing, under_way: Move, mind: &Mind) -> Move {
 pub fn weigh(footing: &Footing, candidate: Move, mind: &Mind) -> f32 {
     let considerations: &[Consideration<Footing>] = match candidate {
         Move::Hold => return mind.hold,
-        Move::Close if footing.patience > 0 => &[NOT_PLACED, INSIDE_LEASH, PURSUIT_PAYS, STAMINA_READY],
-        Move::Close => &[NOT_PLACED, INSIDE_LEASH, PURSUIT_PAYS],
-        Move::Flee if footing.patience > 0 => &[FOE_NEARING, STAMINA_SPENT, ROOM_TO_FLEE],
+        Move::Close => &[NOT_PLACED, CLOSING_LEASH, STAMINA_LEFT],
+        Move::Flee if footing.patience > 0 => &[FOE_NEARING, STAMINA_SPENT, FLEEING_LEASH],
         Move::Flee => return 0.0,
         Move::Circle if footing.patience > 0 => &[CLEAR_OUTWARD, LEASH_TIGHT],
         Move::Circle if footing.grace => &[IN_REACH, FOE_FACING, STRIKE_COST, STRIDE_KEPT],
@@ -124,14 +121,31 @@ const fn step(name: &'static str, read: fn(&Footing) -> f32) -> Consideration<Fo
 
 const NOT_PLACED: Consideration<Footing> = step("not_placed", |footing| flag(!footing.placed));
 
-const PURSUIT_PAYS: Consideration<Footing> = Consideration {
-    name: "pursuit_pays",
-    read: |footing| flag(footing.pursuit_pays),
-    bounds: (0.0, 1.0),
-    curve: Curve::RISING.floored(0.1),
+/// The share of its leash it would have left a step on toward its target:
+/// `leash_left` as a Leap reads it where it lands
+const CLOSING_LEASH: Consideration<Footing> = Consideration {
+    name: "leash_left",
+    read: |footing| footing.room_closing,
+    bounds: LEASH_LEFT_BOUNDS,
+    curve: LEASH_LEFT_CURVE,
 };
 
-const INSIDE_LEASH: Consideration<Footing> = step("inside_leash", |footing| flag(!footing.at_leash));
+/// The share of its leash it would have left a step on away from its target
+const FLEEING_LEASH: Consideration<Footing> = Consideration {
+    name: "leash_left",
+    read: |footing| footing.room_fleeing,
+    bounds: LEASH_LEFT_BOUNDS,
+    curve: LEASH_LEFT_CURVE,
+};
+
+/// The stamina it would have left, of its most: a move costs none, so what
+/// it has. One setting with a skill's `stamina_left`
+const STAMINA_LEFT: Consideration<Footing> = Consideration {
+    name: "stamina_left",
+    read: |footing| footing.stamina,
+    bounds: STAMINA_LEFT_BOUNDS,
+    curve: STAMINA_LEFT_CURVE,
+};
 
 const IN_REACH: Consideration<Footing> = step("in_reach", |footing| flag(footing.distance <= footing.reach));
 
@@ -149,14 +163,6 @@ const FOE_NEARING: Consideration<Footing> = Consideration {
     name: "foe_nearing",
     read: |footing| (footing.distance - footing.reach) as f32 / footing.leap.max(1) as f32,
     bounds: (0.5, 0.0),
-    curve: Curve::RISING,
-};
-
-/// Room left on its leash to run through
-const ROOM_TO_FLEE: Consideration<Footing> = Consideration {
-    name: "room_to_flee",
-    read: |footing| footing.leash_room,
-    bounds: (0.1, 0.4),
     curve: Curve::RISING,
 };
 
@@ -195,20 +201,20 @@ const STAMINA_SPENT: Consideration<Footing> = Consideration {
     curve: Curve::FALLING,
 };
 
-/// Patience: stamina back, so it closes to spend it
-const STAMINA_READY: Consideration<Footing> = Consideration {
-    name: "close_stamina_ready",
-    read: |footing| footing.stamina,
-    bounds: (0.0, 1.0),
-    curve: Curve::RISING.floored(0.1),
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn footing() -> Footing {
-        Footing { placed: false, grace: false, foe_facing: true, strike_cost: 0.05, breaks_stride: true, pursuit_pays: true, at_leash: false, leash_room: 1.0, clear_outward: false, distance: 8, reach: 2, leap: 9, stamina: 0.0, patience: 0 }
+        Footing { placed: false, grace: false, foe_facing: true, strike_cost: 0.05, breaks_stride: true, leash_room: 1.0, room_closing: 1.0, room_fleeing: 1.0, clear_outward: false, distance: 8, reach: 2, leap: 9, stamina: 0.0, patience: 0 }
+    }
+
+    /// A mind that keeps its stamina back: it closes only with stamina to
+    /// spend
+    fn keeping() -> Mind {
+        let mut minds = crate::behaviour::mind::Minds::default();
+        minds.set("all.stamina_left.floor", "0").unwrap();
+        minds.mind(None)
     }
 
     #[test]
@@ -218,13 +224,8 @@ mod tests {
     }
 
     #[test]
-    fn it_holds_rather_than_chase_one_running_that_cannot_strike_it() {
-        assert_eq!(choose(&Footing { pursuit_pays: false, ..footing() }, Move::Close, &Mind::default()), Move::Hold);
-    }
-
-    #[test]
     fn at_its_leash_it_holds_rather_than_close_further_out() {
-        assert_eq!(choose(&Footing { at_leash: true, ..footing() }, Move::Close, &Mind::default()), Move::Hold);
+        assert_eq!(choose(&Footing { room_closing: 0.0, ..footing() }, Move::Close, &Mind::default()), Move::Hold);
     }
 
     #[test]
@@ -242,27 +243,33 @@ mod tests {
 
     #[test]
     fn patience_keeps_away_while_its_stamina_refills_and_closes_once_it_is_back() {
-        let patient = Footing { patience: 3, ..footing() };
-        assert_eq!(choose(&patient, Move::Hold, &Mind::default()), Move::Hold, "out of reach with its stamina spent it waits");
-        assert_eq!(choose(&Footing { distance: 3, ..patient }, Move::Hold, &Mind::default()), Move::Flee, "and runs as its target nears");
-        assert_eq!(choose(&Footing { stamina: 1.0, ..patient }, Move::Hold, &Mind::default()), Move::Close, "refilled, it closes");
+        let (patient, mind) = (Footing { patience: 3, ..footing() }, keeping());
+        assert_eq!(choose(&patient, Move::Hold, &mind), Move::Hold, "out of reach with its stamina spent it waits");
+        assert_eq!(choose(&Footing { distance: 3, ..patient }, Move::Hold, &mind), Move::Flee, "and runs as its target nears");
+        assert_eq!(choose(&Footing { stamina: 1.0, ..patient }, Move::Hold, &mind), Move::Close, "refilled, it closes");
+    }
+
+    #[test]
+    fn a_mind_that_keeps_no_stamina_back_closes_spent() {
+        assert_eq!(choose(&footing(), Move::Hold, &Mind::default()), Move::Close);
+        assert_eq!(choose(&footing(), Move::Hold, &keeping()), Move::Hold);
     }
 
     #[test]
     fn near_its_leash_a_patient_npc_circles_inward_rather_than_flee_out() {
-        let patient = Footing { patience: 3, distance: 3, ..footing() };
-        let cornered = Footing { leash_room: 0.12, clear_outward: true, ..patient };
-        assert_eq!(choose(&patient, Move::Hold, &Mind::default()), Move::Flee, "with room it flees");
-        assert_eq!(choose(&cornered, Move::Flee, &Mind::default()), Move::Circle, "at the edge it circles round toward its den");
-        assert_eq!(choose(&Footing { clear_outward: false, ..cornered }, Move::Hold, &Mind::default()), Move::Hold, "with its target outward already, it has nothing to circle for");
+        let (patient, mind) = (Footing { patience: 3, distance: 3, ..footing() }, keeping());
+        let cornered = Footing { leash_room: 0.12, room_fleeing: 0.05, clear_outward: true, ..patient };
+        assert_eq!(choose(&patient, Move::Hold, &mind), Move::Flee, "with room it flees");
+        assert_eq!(choose(&cornered, Move::Flee, &mind), Move::Circle, "at the edge it circles round toward its den");
+        assert_eq!(choose(&Footing { clear_outward: false, ..cornered }, Move::Hold, &mind), Move::Hold, "with its target outward already, it has nothing to circle for");
     }
 
     #[test]
     fn the_move_under_way_holds_against_one_scoring_alike() {
-        let patient = Footing { patience: 3, distance: 5, ..footing() };
-        let flee = weigh(&patient, Move::Flee, &Mind::default());
+        let (patient, mind) = (Footing { patience: 3, distance: 5, ..footing() }, keeping());
+        let flee = weigh(&patient, Move::Flee, &mind);
         assert!((flee - HOLD).abs() < MOMENTUM, "flee and hold score near alike here: {flee}");
-        assert_eq!(choose(&patient, Move::Flee, &Mind::default()), Move::Flee);
-        assert_eq!(choose(&patient, Move::Hold, &Mind::default()), Move::Hold);
+        assert_eq!(choose(&patient, Move::Flee, &mind), Move::Flee);
+        assert_eq!(choose(&patient, Move::Hold, &mind), Move::Hold);
     }
 }

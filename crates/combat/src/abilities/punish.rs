@@ -19,7 +19,7 @@ pub fn strike(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
 
 /// What a Punish's damage is weighted by: `Tuning::punish_bonus` more on a
 /// target `recovering`
-fn weight(tuning: &Tuning, recovering: bool) -> f32 {
+pub(crate) fn weight(tuning: &Tuning, recovering: bool) -> f32 {
     if recovering { 1.0 + tuning.punish_bonus } else { 1.0 }
 }
 

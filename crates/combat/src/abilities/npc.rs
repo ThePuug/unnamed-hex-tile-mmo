@@ -12,7 +12,7 @@ use common_bevy::{
 };
 
 use super::{in_arc, Abilities};
-use crate::leap::away;
+use crate::leap::{away, toward};
 use common_bevy::archetype::EnemyArchetype;
 use crate::behaviour::{
     approach_of,
@@ -105,18 +105,24 @@ impl Abilities<'_, '_> {
             across: targeting::across(heading, &loc, &target_loc),
             since_skill: self.last_skills.get(target?).ok()
                 .map(|last| self.time.elapsed().saturating_sub(last.0).as_secs_f32()),
+            status: self.statuses.get(target?).ok().copied().unwrap_or_default(),
         })
     }
 
-    /// Share of `ent`'s leash left where a leap clear of `target` from
-    /// `loc` lands: 1 with no leash or no target, 0 with nowhere to land
-    fn clear_room(&self, ent: Entity, loc: Loc, target: Option<Entity>) -> f32 {
+    /// Share of `ent`'s leash left where a Leap from `loc` lands, clear of
+    /// `target` within `reach` or onto it beyond, as the Leap's own rule
+    /// has it: 1 with no leash or no target, 0 with nowhere to land
+    fn leap_room(&self, ent: Entity, loc: Loc, reach: i32, target: Option<Entity>) -> f32 {
         let tuning = *self.tuning;
         let Some(leash) = self.leash(ent) else { return 1.0 };
         let Some((&target_loc, ..)) = target.and_then(|target| self.actors.get(target).ok()) else { return 1.0 };
         let distance = self.actors.get(ent).map_or(tuning.leap_distance, |(_, attrs, ..)| attrs.leap_tiles(&tuning));
-        away(&self.map, *loc, *target_loc, distance, Some(leash))
-            .map_or(0.0, |landing| (leash.reach - landing.flat_distance(&leash.den)) as f32 / leash.reach.max(1) as f32)
+        let landing = if loc.distance(&target_loc) <= reach {
+            away(&self.map, *loc, *target_loc, distance, Some(leash))
+        } else {
+            toward(&self.map, *loc, *target_loc, distance, Some(leash))
+        };
+        landing.map_or(0.0, |landing| (leash.reach - landing.flat_distance(&leash.den)) as f32 / leash.reach.max(1) as f32)
     }
 
     /// Whether as many others of `ent`'s engagement as it lets attack at
@@ -148,7 +154,7 @@ impl Abilities<'_, '_> {
         let queue: Vec<_> = self.queues.get(ent)
             .map(|queue| queue.threats.iter().filter(|threat| skill.sees(&self.dice, ent, threat, game_now)).copied().collect())
             .unwrap_or_default();
-        let swing = self.swings.get(ent).ok();
+        let reach = range.copied().unwrap_or_default().0;
         Some(View {
             tuning,
             ability,
@@ -158,15 +164,15 @@ impl Abilities<'_, '_> {
             endurance: self.endurance.get(ent).map_or(0.0, |endurance| endurance.state),
             endurance_max: self.endurance.get(ent).map_or(0.0, |endurance| endurance.max),
             recovery: self.recoveries.get(ent).ok().copied(),
-            striding: self.strides(ent),
+            status: self.statuses.get(ent).ok().copied().unwrap_or_default(),
             grit_filled: self.grits.get(ent).map_or(0.0, |grit| grit.filled as f32 / common_bevy::components::grit::Grit::size(&tuning) as f32),
-            engaged: swing.is_some_and(|swing| swing.due.is_some()),
-            reach: range.copied().unwrap_or_default().0,
+            reach,
             leap: attrs.leap_tiles(&tuning) as i32,
-            clear_room: self.clear_room(ent, loc, target),
+            leap_room: self.leap_room(ent, loc, reach, target),
             capacity_taken: self.capacity_taken(ent, target),
             queue: Threats::reading(&queue, attrs.span(&tuning), game_now),
             foe,
+            foe_recovering: false,
         })
     }
 }
