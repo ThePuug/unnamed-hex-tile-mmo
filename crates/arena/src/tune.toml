@@ -1,8 +1,13 @@
 # What `arena tune` searches, within what bounds, what every scenario holds
 # fixed, and how a matrix is scored (`tune.rs`). Read as a command starts.
 
-# Fights per pairing in an evaluation, and the skill tier the NPCs fight at
-runs = 20
+# Fights per pairing in a search's evaluation, and in the longer look that
+# decides whether a search keeps what it found; how many times CMA-ES's own
+# count of candidates each generation holds, its fights shared (`tune.rs`);
+# and the skill tier the NPCs fight at
+runs = 10
+check_runs = 40
+population = 2.0
 skill = "sharp"
 
 # Held in every scenario: endurance has no effect for now, in the fights or
@@ -16,21 +21,16 @@ fatigue_recovery = 0.0
 fatigue_window = 0.0
 fatigue_stamina = 0.0
 
+# Balance lessens each pairing's edge and its fights run to the cap, each a
+# hundred points off fair, both at `edge` a point, and what its median
+# fight falls short of `short` seconds; it keeps nothing that widens a
+# pairing's win split past `band` points either side of even. A mind
+# raises its archetype's edge, each fight run to the cap a loss at full
+# health
 [score]
-# Balance: win-split points either side of even a pairing may sit at no cost
 band = 15.0
-# Edge (health-left points) past which each point costs `edge`
-edge_band = 10.0
 edge = 1.0
-# A median fight shorter than this many seconds costs its difference
 short = 24.0
-# Points for each point of a pairing's fights run to the cap
-capped = 0.5
-# Minds: what an archetype's own score adds per point of edge, and per
-# point of fights both sides died in (better than losing); a stall never pays
-mind_edge = 0.5
-draw = 0.5
-mind_capped = 0.5
 
 [screen]
 # A knob whose sweep across its bounds moves no pairing's edge by this many

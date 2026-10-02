@@ -38,7 +38,8 @@
 //! each fight runs single-threaded on its worker. The report
 //! gives each pairing's win split, median fight length, the winners' health
 //! left, a's edge (the share of its health a has left at the end less b's,
-//! in points, averaged over the runs: how far a won or lost by), and where
+//! in points, averaged over the runs: how far a won or lost by; a fight run
+//! to the cap adds nothing, as it is never won on health), and where
 //! each side's damage came from: auto-attacks, skills, or reflections.
 //!
 //! A side's ledger says why, per fight: each ability's uses, the damage it
@@ -617,8 +618,10 @@ fn matrix(settings: &Settings) -> Vec<Pairing> {
             if outcome.winner.is_some() {
                 left.push(outcome.left);
             }
-            let share = |side: Side| outcome.shares.get(&side).copied().unwrap_or(0.0);
-            edge += share(a_side) - share(b_side);
+            if !outcome.timed_out {
+                let share = |side: Side| outcome.shares.get(&side).copied().unwrap_or(0.0);
+                edge += share(a_side) - share(b_side);
+            }
             let none = Ledger::default();
             a_ledger.merge(outcome.ledgers.get(&a_side).unwrap_or(&none));
             b_ledger.merge(outcome.ledgers.get(&b_side).unwrap_or(&none));

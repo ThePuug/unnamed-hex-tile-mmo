@@ -24,7 +24,11 @@
 //! Each search runs in a space where every setting's bounds are 0 and 1,
 //! starts from the state, and keeps what it found only where a second,
 //! longer evaluation says it beats the start: a search never makes the
-//! state worse.
+//! state worse. Every candidate of a generation fights the same seeded
+//! fights, and the check fights the start and the find on the same seeds,
+//! so a comparison weighs the settings rather than the dice
+//! (`combat::dice`); each generation draws a seed of its own, so no search
+//! fits one set of fights.
 
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -45,6 +49,8 @@ const LOOK_EVERY: usize = 5;
 #[derive(Deserialize)]
 struct Config {
     runs: u32,
+    check_runs: u32,
+    population: f64,
     skill: String,
     fixed: BTreeMap<String, f32>,
     score: Score,
@@ -56,13 +62,8 @@ struct Config {
 #[derive(Deserialize)]
 struct Score {
     band: f32,
-    edge_band: f32,
     edge: f32,
     short: f32,
-    capped: f32,
-    mind_edge: f32,
-    draw: f32,
-    mind_capped: f32,
 }
 
 #[derive(Deserialize)]
@@ -150,10 +151,12 @@ fn knob(state: &State, name: &str) -> f32 {
 }
 
 /// A scenario of `runs` fights a pairing under the state, with `knobs` and
-/// `minds` laid over it, and `focus`'s pairings alone where given
-fn settings(config: &Config, state: &State, knobs: &BTreeMap<String, f32>, minds: &BTreeMap<String, f32>, focus: Option<EnemyArchetype>, runs: u32) -> Settings {
+/// `minds` laid over it, and `focus`'s pairings alone where given, its
+/// fights rolled from `seed`
+fn settings(config: &Config, state: &State, knobs: &BTreeMap<String, f32>, minds: &BTreeMap<String, f32>, focus: Option<EnemyArchetype>, runs: u32, seed: u64) -> Settings {
     let mut settings = Settings::parse(&[format!("runs={runs}"), format!("skill={}", config.skill)]);
     settings.focus = focus;
+    settings.seed = seed;
     let mut tuning = Tuning::default();
     for (name, value) in state.knobs.iter().chain(knobs) {
         tuning.set(name, &value.to_string()).unwrap_or_else(|error| panic!("tune: {error}"));
@@ -170,29 +173,33 @@ fn settings(config: &Config, state: &State, knobs: &BTreeMap<String, f32>, minds
     settings
 }
 
-/// How far `rows` lie from fair: what each pairing's split lies past
-/// `band` from even (a fight both sides die in is a draw, a win for
-/// neither), its edge past `edge_band`, its median fight short of `short`
-/// seconds, and its fights run to the cap; the mean over pairings.
+/// How far `rows` lie from fair, what the balance search lessens: each
+/// pairing's edge, and each of its fights run to the cap as a hundred
+/// points off fair, the furthest a fight lies, both by `edge` a point; and
+/// its median fight short of `short` seconds. The mean over pairings.
 fn imbalance(score: &Score, rows: &[Pairing]) -> f32 {
     let each = rows.iter().map(|row| {
-        ((row.a_wins - row.b_wins).abs() / 2.0 - score.band).max(0.0)
-            + score.edge * (row.edge.abs() - score.edge_band).max(0.0)
+        score.edge * (row.edge.abs() + row.capped)
             + (score.short - row.median).max(0.0)
-            + score.capped * row.capped
     });
     each.sum::<f32>() / rows.len().max(1) as f32
 }
 
-/// How well `archetype` does in `rows`: its share of wins, more by
-/// `mind_edge` of its edge and `draw` of the fights both sides die in, less
-/// by `mind_capped` of those run to the cap, which are lost on both sides;
-/// the mean over its pairings.
-fn standing(score: &Score, rows: &[Pairing], archetype: EnemyArchetype) -> f32 {
+/// How far each pairing's split of wins lies past `band` from even, a
+/// fight both sides die in a win for neither; the mean over pairings. A
+/// balance search keeps nothing that widens it.
+fn split(score: &Score, rows: &[Pairing]) -> f32 {
+    let each = rows.iter().map(|row| ((row.a_wins - row.b_wins).abs() / 2.0 - score.band).max(0.0));
+    each.sum::<f32>() / rows.len().max(1) as f32
+}
+
+/// How well `archetype` does in `rows`, what its mind search raises: its
+/// edge, a fight both sides die in nothing and each fight run to the cap a
+/// loss at full health, a hundred points; the mean over its pairings.
+fn standing(rows: &[Pairing], archetype: EnemyArchetype) -> f32 {
     let mine: Vec<f32> = rows.iter().filter(|row| row.a == archetype || row.b == archetype).map(|row| {
-        let (own, edge) = if row.a == archetype { (row.a_wins, row.edge) } else { (row.b_wins, -row.edge) };
-        let draw = (100.0 - row.a_wins - row.b_wins - row.capped).max(0.0);
-        own + score.mind_edge * edge + score.draw * draw - score.mind_capped * row.capped
+        let edge = if row.a == archetype { row.edge } else { -row.edge };
+        edge - row.capped
     }).collect();
     mine.iter().sum::<f32>() / mine.len().max(1) as f32
 }
@@ -211,19 +218,24 @@ fn standings(rows: &[Pairing]) -> String {
 
 /// Minimizes `objective` over `ranges` by CMA-ES from `start`, for no more
 /// than `evals` evaluations, and returns the search's mean, its estimate of
-/// the best, in each setting's own units. A point outside the bounds is
-/// scored at the nearest inside and penalized by how far out it lies. Every
-/// `LOOK_EVERY` generations it prints `look` of the mean as it stands.
-fn search(label: &str, ranges: &[Range], start: &[f32], evals: usize, mut objective: impl FnMut(&[f32]) -> f32, look: impl Fn(&[f32]) -> String) -> Vec<f32> {
+/// the best, in each setting's own units. Each generation holds
+/// `population` times CMA-ES's own count of candidates, every one scored on
+/// the generation's seed. A point outside the bounds is scored at the
+/// nearest inside and penalized by how far out it lies. Every `LOOK_EVERY`
+/// generations it prints `look` of the mean as it stands.
+fn search(label: &str, ranges: &[Range], start: &[f32], evals: usize, population: f64, mut objective: impl FnMut(&[f32], u64) -> f32, look: impl Fn(&[f32]) -> String) -> Vec<f32> {
     let unit: Vec<f64> = ranges.iter().zip(start).map(|(range, &value)| range.to_unit(value)).collect();
+    let candidates = (population * (4.0 + (3.0 * (ranges.len() as f64).ln()).floor())).round().max(2.0) as usize;
+    let seeds: u64 = rand::random();
     let mut evaluated = 0;
     let penalized = |x: &DVector<f64>| -> f64 {
         let values: Vec<f32> = ranges.iter().zip(x.iter()).map(|(range, &u)| range.from_unit(u)).collect();
         let outside: f64 = x.iter().map(|&u| (u - u.clamp(0.0, 1.0)).powi(2)).sum();
+        let seed = seeds.wrapping_add((evaluated / candidates) as u64);
         evaluated += 1;
-        objective(&values) as f64 + 100.0 * outside
+        objective(&values, seed) as f64 + 100.0 * outside
     };
-    let mut cma = CMAESOptions::new(unit, SIGMA).max_function_evals(evals).build(penalized)
+    let mut cma = CMAESOptions::new(unit, SIGMA).population_size(candidates).max_function_evals(evals).build(penalized)
         .unwrap_or_else(|error| panic!("tune: {error:?}"));
     loop {
         let done = cma.next();
@@ -271,9 +283,9 @@ pub fn run(args: &[String]) {
         }
         Some("show") => {
             let state = load();
-            let rows = matrix(&settings(&config, &state, &BTreeMap::new(), &BTreeMap::new(), None, config.runs));
+            let rows = matrix(&settings(&config, &state, &BTreeMap::new(), &BTreeMap::new(), None, config.check_runs, rand::random()));
             print_matrix(&rows, args.get(1).is_some_and(|arg| arg == "ledger"));
-            println!("imbalance {:.1}; {}", imbalance(&config.score, &rows), standings(&rows));
+            println!("imbalance {:.1}, split {:.1}; {}", imbalance(&config.score, &rows), split(&config.score, &rows), standings(&rows));
         }
         Some("apply") => apply(&load()),
         _ => panic!("arena tune takes screen, balance [evals], minds [evals] [archetype ...], settle [evals], loop <count> [evals], show [ledger] or apply"),
@@ -286,11 +298,12 @@ pub fn run(args: &[String]) {
 fn screen(config: &Config) {
     let state = load();
     let none = BTreeMap::new();
-    let base = matrix(&settings(config, &state, &none, &none, None, config.runs));
+    let seed = rand::random();
+    let base = matrix(&settings(config, &state, &none, &none, None, config.runs, seed));
     println!("baseline imbalance {:.1}", imbalance(&config.score, &base));
     let mut moved = BTreeMap::new();
     for range in &config.knobs {
-        let at = |value: f32| matrix(&settings(config, &state, &BTreeMap::from([(range.name.clone(), value)]), &none, None, config.runs));
+        let at = |value: f32| matrix(&settings(config, &state, &BTreeMap::from([(range.name.clone(), value)]), &none, None, config.runs, seed));
         let (low, high) = (at(range.min), at(range.max));
         let most = low.iter().zip(&high).map(|(l, h)| (l.edge - h.edge).abs()).fold(0.0, f32::max);
         println!("{:<22} moves an edge {:>5.1}  imbalance {:>5.1} .. {:>5.1}", range.name, most, imbalance(&config.score, &low), imbalance(&config.score, &high));
@@ -316,23 +329,26 @@ fn balance(config: &Config, evals: usize) {
     println!("balance over {} knobs: {}", ranges.len(), ranges.iter().map(|range| range.name.as_str()).collect::<Vec<_>>().join(", "));
     let start: Vec<f32> = ranges.iter().map(|range| knob(&state, &range.name).clamp(range.min, range.max)).collect();
     let none = BTreeMap::new();
-    let found = search("balance", &ranges, &start, evals, |values| {
-        imbalance(&config.score, &matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs)))
+    let found = search("balance", &ranges, &start, evals, config.population, |values, seed| {
+        imbalance(&config.score, &matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs, seed)))
     }, |values| {
-        let rows = matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs));
-        format!("imbalance {:.1}; {}", imbalance(&config.score, &rows), standings(&rows))
+        let rows = matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs, rand::random()));
+        format!("imbalance {:.1}, split {:.1}; {}", imbalance(&config.score, &rows), split(&config.score, &rows), standings(&rows))
     });
-    // Kept only where a longer look says it beats where it started
-    let check = |values: &[f32]| matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs * 2));
+    // Kept only where a longer look on the same fights says it beats where
+    // it started, its split of wins no wider
+    let seed = rand::random();
+    let check = |values: &[f32]| matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.check_runs, seed));
     let (before, after) = (check(&start), check(&found));
     let (was, now) = (imbalance(&config.score, &before), imbalance(&config.score, &after));
-    if now < was {
+    let (split_was, split_now) = (split(&config.score, &before), split(&config.score, &after));
+    if now < was && split_now <= split_was {
         state.knobs.extend(named(&ranges, &found));
         save(&state);
-        println!("balance kept: imbalance {was:.1} -> {now:.1}; {}", standings(&after));
+        println!("balance kept: imbalance {was:.1} -> {now:.1}, split {split_was:.1} -> {split_now:.1}; {}", standings(&after));
         print_matrix(&after, false);
     } else {
-        println!("balance found nothing better: {was:.1} against {now:.1}");
+        println!("balance found nothing better: imbalance {was:.1} against {now:.1}, split {split_was:.1} against {split_now:.1}");
     }
 }
 
@@ -381,12 +397,13 @@ fn minds(config: &Config, evals: usize, only: &[EnemyArchetype]) -> Vec<(EnemyAr
         let start: Vec<f32> = ranges.iter().map(|range| state.minds.get(&range.name).copied()
             .or(range.start).unwrap_or((range.min + range.max) / 2.0).clamp(range.min, range.max)).collect();
         let label = format!("{archetype:?}");
-        let found = search(&label, &ranges, &start, evals, |values| {
-            -standing(&config.score, &matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.runs)), archetype)
+        let found = search(&label, &ranges, &start, evals, config.population, |values, seed| {
+            -standing(&matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.runs, seed)), archetype)
         }, |values| {
-            format!("standing {:.1}", standing(&config.score, &matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.runs)), archetype))
+            format!("standing {:.1}", standing(&matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.runs, rand::random())), archetype))
         });
-        let check = |values: &[f32]| standing(&config.score, &matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.runs * 2)), archetype);
+        let seed = rand::random();
+        let check = |values: &[f32]| standing(&matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.check_runs, seed)), archetype);
         let (was, now) = (check(&start), check(&found));
         if now > was {
             state.minds.extend(named(&ranges, &found));
