@@ -142,7 +142,6 @@ impl Abilities<'_, '_> {
         if dead {
             return None;
         }
-        let tuning = common_bevy::tuning::tuning();
         let game_now = self.game_now();
         let queue: Vec<_> = self.queues.get(ent)
             .map(|queue| queue.threats.iter().filter(|threat| skill.sees(ent, threat, game_now)).copied().collect())

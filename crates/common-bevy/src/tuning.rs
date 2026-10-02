@@ -180,6 +180,8 @@ pub struct Tuning {
     /// Tiles a Leap carries its user, clear of its target or toward it, at
     /// full commitment to its Instinct line
     pub leap_distance: usize,
+    /// Share of base potency a Leap onto a target strikes for as it lands
+    pub leap_strike: f32,
     pub stride_cost: f32,
     pub stride_recovery: f32,
     /// Seconds a Perfect Stride lasts
@@ -278,6 +280,7 @@ impl Tuning {
         leap_cost: 30.0,
         leap_recovery: 1.0,
         leap_distance: 9,
+        leap_strike: 1.0,
         stride_cost: 30.0,
         stride_recovery: 1.0,
         frenzy_line: 0.2,
@@ -314,7 +317,8 @@ impl Tuning {
             AbilityType::Feint => self.feint_damage,
             AbilityType::Overpower => self.overpower_damage,
             AbilityType::Punish => self.punish_damage,
-            AbilityType::AutoAttack | AbilityType::Parry | AbilityType::Counter | AbilityType::Leap | AbilityType::PerfectStride => 0.0,
+            AbilityType::Leap => self.leap_strike,
+            AbilityType::AutoAttack | AbilityType::Parry | AbilityType::Counter | AbilityType::PerfectStride => 0.0,
         }
     }
 
@@ -437,6 +441,7 @@ impl Tuning {
             "stride_line" => &mut self.stride_line,
             "leap_line" => &mut self.leap_line,
             "stride_damage" => &mut self.stride_damage,
+            "leap_strike" => &mut self.leap_strike,
             "leap_distance" => {
                 self.leap_distance = number.round().max(1.0) as usize;
                 return Ok(());

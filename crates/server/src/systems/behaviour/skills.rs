@@ -181,7 +181,7 @@ fn reasons(ability: AbilityType, view: &View) -> Vec<(&'static str, Vec<Consider
         AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower => &[("strike", Part::Strike)],
         AbilityType::Punish => &[("punish", Part::Strike)],
         AbilityType::Parry | AbilityType::Counter => &[("answer", Part::Reaction)],
-        AbilityType::Leap => &[("recover", Part::Clear), ("dive", Part::Dive)],
+        AbilityType::Leap => &[("dodge", Part::Clear), ("recover", Part::Clear), ("dive", Part::Dive)],
         AbilityType::PerfectStride => &[("stride", Part::Stance)],
     };
     parts.iter()
@@ -200,8 +200,9 @@ fn part_considerations(reason: &str, part: Part) -> Vec<Considered> {
         (Part::Strike, "punish") => vec![FOE_STRUCK, FOE_JUST_ACTED, CAPACITY, STRIKE_WORTH, OPENING],
         (Part::Strike, _) => vec![FOE_STRUCK, FOE_JUST_ACTED, CAPACITY, STRIKE_WORTH],
         (Part::Reaction, _) => vec![WORTH_ANSWERING, PRESSURE, SPAN_CLOSED],
+        (Part::Clear, "dodge") => vec![FOE_IN_REACH, WORTH_ANSWERING, ROOM_TO_LAND],
         (Part::Clear, _) => vec![FOE_IN_REACH, ROOM_TO_LAND],
-        (Part::Dive, _) => vec![FOE_OUT_OF_REACH, FOE_WITHIN_A_DIVE, CAPACITY],
+        (Part::Dive, _) => vec![FOE_OUT_OF_REACH, FOE_WITHIN_A_DIVE, CAPACITY, STRIKE_WORTH],
         (Part::Stance, _) => vec![NOT_STRIDING, FOE_IN_REACH],
     }
 }
@@ -615,11 +616,11 @@ mod tests {
     }
 
     #[test]
-    fn without_patience_nothing_pays_a_leap_clear() {
+    fn without_patience_a_leap_clear_is_only_a_dodge() {
         let mut plain = view(AbilityType::Leap, ActorAttributes::default());
         let reasons: Vec<&str> = weigh(&mut plain, &[AbilityType::Leap], &Mind::default()).iter().map(|decision| decision.reason).collect();
-        assert_eq!(reasons, vec!["dive"]);
-        assert!(choose(&mut plain, &[AbilityType::Leap], &Mind::default(), || 0.0).is_none(), "in reach, it stays");
+        assert_eq!(reasons, vec!["dodge", "dive"]);
+        assert!(choose(&mut plain, &[AbilityType::Leap], &Mind::default(), || 0.0).is_none(), "in reach with nothing queued, it stays");
     }
 
     #[test]

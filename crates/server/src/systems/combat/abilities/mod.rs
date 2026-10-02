@@ -348,13 +348,22 @@ impl Abilities<'_, '_> {
     /// the same and is spent, its fatigue the price. Errs with nothing
     /// queued.
     pub fn react(&mut self, cast: &Cast) -> Result<Vec<QueuedThreat>, AbilityFailReason> {
-        let cleared = self.clear(cast.ent, ClearType::Span(cast.attrs.span()));
+        let cleared = self.answer_span(cast);
         if cleared.is_empty() {
             return Err(AbilityFailReason::NoTargets);
         }
+        Ok(cleared)
+    }
+
+    /// Takes the threats in `cast`'s user's span out of its queue, the
+    /// front one and those landing within its span behind it, and pays
+    /// endurance for each (`ActorAttributes::reaction_effort`): what a
+    /// reaction clears, and a Leap clear of its target
+    pub fn answer_span(&mut self, cast: &Cast) -> Vec<QueuedThreat> {
+        let cleared = self.clear(cast.ent, ClearType::Span(cast.attrs.span()));
         let price: f32 = cleared.iter().map(|threat| cast.attrs.reaction_effort(threat.damage)).sum();
         self.tire(cast.ent, price);
-        Ok(cleared)
+        cleared
     }
 
     /// Takes the threats `clear_type` names out of `ent`'s queue, tells its
@@ -608,6 +617,8 @@ mod tests {
         assert_eq!(endurance(&app), 0.0, "and leaves its user spent");
 
         app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
+        let full = app.world().get::<Stamina>(defender).unwrap().max;
+        app.world_mut().get_mut::<Stamina>(defender).unwrap().state = full;
         assert_eq!(refused(&mut app, defender, AbilityType::Parry, None), Some(AbilityFailReason::NoTargets), "with nothing queued there is nothing to answer");
     }
 
@@ -649,11 +660,13 @@ mod tests {
         app.update();
         assert_eq!(queue(&app, near).len(), 1, "its first swing waits in its target's queue");
 
-        // In reach: clear of it, striking nothing
+        // In reach, with a blow queued on it: clear of both
+        assert!(used(&ask(&mut app, near, AbilityType::Frenzy, Some(leaper)), AbilityType::Frenzy));
         assert!(used(&ask(&mut app, leaper, AbilityType::Leap, Some(near)), AbilityType::Leap));
         app.update();
         assert!(distance(&app) > reach, "it leaps out of reach");
-        assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "a leap strikes nothing");
+        assert!(queue(&app, leaper).iter().all(|threat| threat.ability != Some(AbilityType::Frenzy)), "and the blow misses");
+        assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "a leap clear strikes nothing");
 
         // Out of reach, once its recovery has run and its stamina is back: onto it
         app.world_mut().entity_mut(leaper).remove::<GlobalRecovery>();
@@ -663,7 +676,7 @@ mod tests {
         app.update();
         app.update();
         assert_eq!(distance(&app), 1, "it leaps to beside its target");
-        assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "and strikes nothing of its own");
+        assert_eq!(queue(&app, near).iter().filter(|threat| threat.ability == Some(AbilityType::Leap)).count(), 1, "striking it as it lands");
     }
 
     #[test]
