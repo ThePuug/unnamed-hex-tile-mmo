@@ -132,9 +132,9 @@ pub struct Decision {
 /// shapes them, where it beats waiting; None to wait. `view.ability` is
 /// set to each skill in turn. `stray` gives each score's error, a share of
 /// it.
-pub fn choose(view: &mut View, bar: &[AbilityType], mind: &Mind, mut stray: impl FnMut() -> f32) -> Option<Decision> {
+pub fn choose(view: &mut View, bar: &[AbilityType], mind: &Mind, mut stray: impl FnMut(&Decision) -> f32) -> Option<Decision> {
     weigh(view, bar, mind).into_iter()
-        .map(|decision| Decision { score: decision.score * (1.0 + stray()), ..decision })
+        .map(|decision| Decision { score: decision.score * (1.0 + stray(&decision)), ..decision })
         .filter(|decision| decision.score > mind.wait)
         .max_by(|a, b| a.score.total_cmp(&b.score))
 }
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn nothing_queued_nothing_to_answer() {
         let mut quiet = view(AbilityType::Counter, ActorAttributes::default());
-        assert!(choose(&mut quiet, &[AbilityType::Counter], &Mind::default(), || 0.0).is_none());
+        assert!(choose(&mut quiet, &[AbilityType::Counter], &Mind::default(), |_| 0.0).is_none());
     }
 
     #[test]
@@ -620,7 +620,7 @@ mod tests {
         let mut plain = view(AbilityType::Leap, ActorAttributes::default());
         let reasons: Vec<&str> = weigh(&mut plain, &[AbilityType::Leap], &Mind::default()).iter().map(|decision| decision.reason).collect();
         assert_eq!(reasons, vec!["dodge", "dive"]);
-        assert!(choose(&mut plain, &[AbilityType::Leap], &Mind::default(), || 0.0).is_none(), "in reach with nothing queued, it stays");
+        assert!(choose(&mut plain, &[AbilityType::Leap], &Mind::default(), |_| 0.0).is_none(), "in reach with nothing queued, it stays");
     }
 
     #[test]

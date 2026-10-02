@@ -18,7 +18,8 @@ impl Plugin for CombatPlugin {
         app.add_message::<Do>();
         app.add_message::<Try>();
         app.init_resource::<crate::resources::RunTime>();
-        app.init_resource::<crate::resources::Dice>();
+        app.init_resource::<combat::dice::Dice>();
+        app.register_required_components::<common_bevy::components::ActorAttributes, combat::dice::Rolls>();
 
         app.add_observer(combat::process_deal_damage);
         app.add_observer(combat::resolve_threat);

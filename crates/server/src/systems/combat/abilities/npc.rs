@@ -5,7 +5,6 @@
 //! [`perception`]: crate::systems::behaviour::perception
 
 use bevy::prelude::*;
-use rand::Rng;
 use common_bevy::{
     components::{entity_type::{actor::ActorIdentity, EntityType}, Loc},
     message::AbilityType,
@@ -47,7 +46,7 @@ impl Abilities<'_, '_> {
                     if let Some(reach) = reach {
                         sight.saw_strike(reach);
                     }
-                    sight.look(ent, &skill, now, target.zip(foe))
+                    sight.look(&self.dice, ent, &skill, now, target.zip(foe))
                 }
                 Err(_) => foe,
             };
@@ -57,7 +56,9 @@ impl Abilities<'_, '_> {
             let approach = approach_of(target.and_then(|target| self.kinds.get(target).ok()));
             let foe = foe.map(|foe| Foe { since_skill: foe.since_skill.map(|since| since / mind.just_acted(approach)), ..foe });
             let Some(mut view) = self.view(ent, ability, &skill, foe, target) else { continue };
-            let stray = || skill.error * self.dice.random_range(-1.0..=1.0);
+            let Ok(mut rolls) = self.rolls.get_mut(ent) else { continue };
+            let dice = *self.dice;
+            let stray = |decision: &skills::Decision| skill.error * dice.draw(&mut rolls, ("stray", ent, decision.ability, decision.reason)).signed();
             let chosen = skills::choose(&mut view, &bar, &mind, stray);
             if let (Some(decision), Some(decisions)) = (&chosen, self.decisions.as_mut()) {
                 let mut ranked = skills::weigh(&mut view, &bar, &mind);
@@ -143,7 +144,7 @@ impl Abilities<'_, '_> {
         }
         let game_now = self.game_now();
         let queue: Vec<_> = self.queues.get(ent)
-            .map(|queue| queue.threats.iter().filter(|threat| skill.sees(ent, threat, game_now)).copied().collect())
+            .map(|queue| queue.threats.iter().filter(|threat| skill.sees(&self.dice, ent, threat, game_now)).copied().collect())
             .unwrap_or_default();
         let swing = self.swings.get(ent).ok();
         Some(View {

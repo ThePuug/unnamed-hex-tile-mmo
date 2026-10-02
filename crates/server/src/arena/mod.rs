@@ -55,7 +55,6 @@ use std::{collections::HashMap, time::Duration};
 
 use bevy::{prelude::*, time::TimeUpdateStrategy};
 use qrz::Qrz;
-use rand::Rng;
 
 use common_bevy::{
     components::{
@@ -78,10 +77,10 @@ use common_bevy::{
 
 use crate::{
     plugins::{behaviour::BehaviourPlugin, combat::CombatPlugin},
-    resources::Dice,
     systems::{
         actor,
         behaviour::{mind::{set_minds, Minds}, moves::Move, perception::Skill, Bar, Decisions},
+        combat::dice::Dice,
         engagement_spawner::{engaging_at, spawn_engagement, STAGE_GAP},
         renet,
     },
@@ -323,13 +322,13 @@ const EAST: Side = Side(2);
 /// `at` or one of its neighbours no further from `foes`, at random: a
 /// team's start is not fixed to its tile, and never leaves the range the
 /// stage set it at to be spotted.
-fn jitter(at: Qrz, foes: Qrz, dice: &mut Dice) -> Qrz {
+fn jitter(at: Qrz, foes: Qrz, dice: &Dice) -> Qrz {
     let near = at.flat_distance(&foes);
     let starts: Vec<Qrz> = std::iter::once(at)
         .chain(qrz::DIRECTIONS.iter().map(|&d| at + d))
         .filter(|tile| tile.flat_distance(&foes) <= near)
         .collect();
-    starts[dice.random_range(0..starts.len())]
+    starts[dice.roll(("start", at)).pick(starts.len())]
 }
 
 /// The flat arena every fight stands on, laid once: a `Map` shares its
@@ -389,14 +388,11 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     // it is spawned on, the stage's gap apart about the origin
     let west_at = Qrz { q: -STAGE_GAP / 2, r: 0, z: 1 };
     let east_at = engaging_at(west_at, Qrz { q: 1, r: 0, z: 0 }, |_, _| 0);
-    let starts: Vec<Qrz> = {
-        let mut dice = world.resource_mut::<Dice>();
-        [(west_at, east_at), (east_at, west_at)].map(|(at, foes)| jitter(at, foes, &mut dice)).into()
-    };
+    let dice = *world.resource::<Dice>();
     {
         let mut commands = world.commands();
-        for ((team, side), start) in [(west, WEST), (east, EAST)].into_iter().zip(starts) {
-            spawn_engagement(start, team.archetype, side, team.level, team.size, |_, _| 0, &mut commands, &time);
+        for (team, side, at, foes) in [(west, WEST, west_at, east_at), (east, EAST, east_at, west_at)] {
+            spawn_engagement(jitter(at, foes, &dice), team.archetype, side, team.level, team.size, |_, _| 0, &mut commands, &time);
         }
     }
     world.flush();
@@ -415,16 +411,11 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     // fighter faces its foes' end give or take two slots, near enough to
     // spot them as a staged party would
     let map = world.resource::<Map>().clone();
-    let mut fighters = world.query::<(&Side, &common_bevy::components::Loc, &mut Heading)>();
-    let turns: Vec<i32> = {
-        let count = fighters.iter(world).count();
-        let mut dice = world.resource_mut::<Dice>();
-        (0..count).map(|_| dice.random_range(-2..=2)).collect()
-    };
-    for ((side, loc, mut heading), turn) in fighters.iter_mut(world).zip(turns) {
+    let mut fighters = world.query::<(Entity, &Side, &common_bevy::components::Loc, &mut Heading)>();
+    for (ent, side, loc, mut heading) in fighters.iter_mut(world) {
         let foes = if *side == WEST { east_at } else { west_at };
         let toward = Heading::between(&map, **loc, foes).unwrap_or(*heading);
-        *heading = toward.turned(turn);
+        *heading = toward.turned(dice.roll(("facing", ent)).pick(5) as i32 - 2);
     }
     let mut sides = world.query::<(Entity, &Side)>();
     let roster: HashMap<Entity, Side> = sides.iter(world).map(|(e, s)| (e, *s)).collect();

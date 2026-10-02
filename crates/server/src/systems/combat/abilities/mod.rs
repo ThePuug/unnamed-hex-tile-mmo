@@ -144,7 +144,8 @@ pub struct Abilities<'w, 's> {
     pub map: Res<'w, Map>,
     pub time: Res<'w, Time>,
     pub runtime: Res<'w, crate::resources::RunTime>,
-    pub dice: ResMut<'w, crate::resources::Dice>,
+    pub dice: Res<'w, crate::systems::combat::dice::Dice>,
+    pub rolls: Query<'w, 's, &'static mut crate::systems::combat::dice::Rolls>,
     pub decisions: Option<ResMut<'w, crate::systems::behaviour::Decisions>>,
 }
 

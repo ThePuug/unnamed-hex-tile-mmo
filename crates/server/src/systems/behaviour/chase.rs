@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use rand::seq::IteratorRandom;
 
 use common_bevy::{
     components::{
@@ -127,7 +126,8 @@ pub fn chase(
     nntree: Res<NNTree>,
     map: Res<Map>,
     dt: Res<Time>,
-    mut dice: ResMut<crate::resources::Dice>,
+    dice: Res<crate::systems::combat::dice::Dice>,
+    mut rolls: Query<&mut crate::systems::combat::dice::Rolls>,
     mut decisions: Option<ResMut<super::Decisions>>,
 ) {
     // Which way each actor faces, read apart from the bodies this turns
@@ -167,9 +167,11 @@ pub fn chase(
         let held = target.entity
             .filter(|&held| q_target.get(held).is_ok_and(|(_, health, ..)| health.current() > 0.0))
             .or_else(|| {
-                super::spotted(&nntree, *loc, chase.acquisition_range)
+                let foes: Vec<Entity> = super::spotted(&nntree, *loc, chase.acquisition_range)
                     .filter(|&seen| q_target.get(seen).is_ok_and(|(_, health, side, ..)| health.current() > 0.0 && side.is_hostile_to(*own_side)))
-                    .choose(&mut **dice)
+                    .collect();
+                let mut rolls = rolls.get_mut(npc).ok()?;
+                (!foes.is_empty()).then(|| foes[dice.draw(&mut rolls, ("foe", npc)).pick(foes.len())])
             });
         if target.entity != held {
             target.entity = held;
@@ -288,6 +290,8 @@ mod tests {
         app.add_plugins(NNTreePlugin);
         app.add_message::<Do>();
         app.init_resource::<Time>();
+        app.insert_resource(crate::systems::combat::dice::Dice::seeded(0));
+        app.register_required_components::<Chase, crate::systems::combat::dice::Rolls>();
         let mut tiles = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         for q in -4..=LEASH + 8 {
             for r in -4..=4 {

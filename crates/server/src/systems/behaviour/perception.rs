@@ -3,20 +3,17 @@
 //! An NPC sees what a player in its place is shown and nothing more, and
 //! each change reaches its decisions a reaction delay after it happens,
 //! drawn afresh for each change from its [`Skill`]. Its own state it knows
-//! at once, as a player knows their own bars. What a change's delay is
-//! comes from hashing the change itself, so a threat seen once stays seen
+//! at once, as a player knows their own bars. A change's delay is the
+//! [`Dice`] roll for the change itself, so a threat seen once stays seen
 //! and no draw needs keeping.
 
-use std::{
-    collections::VecDeque,
-    hash::{Hash, Hasher},
-    time::Duration,
-};
+use std::{collections::VecDeque, hash::Hash, time::Duration};
 
 use bevy::prelude::*;
 use common_bevy::components::reaction_queue::QueuedThreat;
 
 use super::skills::Foe;
+use crate::systems::combat::dice::Dice;
 
 /// How well an NPC carries out its decisions: how late each change
 /// reaches it, and how far its judgement strays, a random spread on every
@@ -66,18 +63,15 @@ impl Skill {
         Ok(Skill { fastest: millis(fastest)?, slowest: millis(slowest)?, error: error.parse().map_err(|_| wrong())? })
     }
 
-    /// The delay the change hashed from `key` reaches it after
-    pub fn delay(&self, key: impl Hash) -> Duration {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        key.hash(&mut hasher);
-        let share = (hasher.finish() % 10_000) as f32 / 10_000.0;
-        self.fastest + (self.slowest.saturating_sub(self.fastest)).mul_f32(share)
+    /// The delay the change `key` reaches it after
+    pub fn delay(&self, dice: &Dice, key: impl Hash) -> Duration {
+        self.fastest + (self.slowest.saturating_sub(self.fastest)).mul_f32(dice.roll(("delay", key)).share())
     }
 
     /// Whether `threat`, in the queue of the NPC `ent`, has reached it by
     /// `now`, the game's clock
-    pub fn sees(&self, ent: Entity, threat: &QueuedThreat, now: Duration) -> bool {
-        threat.inserted_at + self.delay((ent, threat.source, threat.inserted_at)) <= now
+    pub fn sees(&self, dice: &Dice, ent: Entity, threat: &QueuedThreat, now: Duration) -> bool {
+        threat.inserted_at + self.delay(dice, (ent, threat.source, threat.inserted_at)) <= now
     }
 }
 
@@ -111,7 +105,7 @@ impl Sight {
     /// Takes in how its target `target` stands at `now`, and returns how
     /// the NPC `ent` perceives it: the newest change whose delay has run.
     /// A new target is unseen until its first change reaches it.
-    pub fn look(&mut self, ent: Entity, skill: &Skill, now: Duration, target: Option<(Entity, Foe)>) -> Option<Foe> {
+    pub fn look(&mut self, dice: &Dice, ent: Entity, skill: &Skill, now: Duration, target: Option<(Entity, Foe)>) -> Option<Foe> {
         let Some((target, foe)) = target else {
             self.seen.clear();
             self.reach = 0;
@@ -124,7 +118,7 @@ impl Sight {
         if self.seen.back().is_none_or(|&(_, _, last)| last != foe) {
             self.seen.push_back((now, target, foe));
         }
-        let reached = |&(at, _, _): &(Duration, Entity, Foe)| at + skill.delay((ent, at)) <= now;
+        let reached = |&(at, _, _): &(Duration, Entity, Foe)| at + skill.delay(dice, (ent, at)) <= now;
         let newest = self.seen.iter().rposition(reached)?;
         self.seen.drain(..newest);
         self.seen.front().map(|&(_, _, foe)| foe)
@@ -134,6 +128,8 @@ impl Sight {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const DICE: Dice = Dice::seeded(0);
 
     fn foe(distance: i32) -> Foe {
         Foe { distance, health: 600.0, in_arc: true, across: false, since_skill: None }
@@ -155,11 +151,11 @@ mod tests {
     fn it_learns_how_far_its_target_strikes_from_and_a_new_target_starts_over() {
         let (ent, target, other) = (Entity::from_raw_u32(1).unwrap(), Entity::from_raw_u32(2).unwrap(), Entity::from_raw_u32(3).unwrap());
         let mut sight = Sight::default();
-        sight.look(ent, &Skill::SHARP, ms(0), Some((target, foe(12))));
+        sight.look(&DICE, ent, &Skill::SHARP, ms(0), Some((target, foe(12))));
         sight.saw_strike(12);
         sight.saw_strike(4);
         assert_eq!(sight.reach(), 12, "the furthest it has seen");
-        sight.look(ent, &Skill::SHARP, ms(10), Some((other, foe(3))));
+        sight.look(&DICE, ent, &Skill::SHARP, ms(10), Some((other, foe(3))));
         assert_eq!(sight.reach(), 0, "a new target is unknown");
     }
 
@@ -167,7 +163,7 @@ mod tests {
     fn every_delay_falls_within_its_skill() {
         let skill = Skill::SHARP;
         for key in 0..500 {
-            let delay = skill.delay(key);
+            let delay = skill.delay(&DICE, key);
             assert!(delay >= skill.fastest && delay <= skill.slowest);
         }
     }
@@ -177,10 +173,10 @@ mod tests {
         let (ent, target) = (Entity::from_raw_u32(1).unwrap(), Entity::from_raw_u32(2).unwrap());
         let skill = Skill::SHARP;
         let mut sight = Sight::default();
-        assert_eq!(sight.look(ent, &skill, ms(0), Some((target, foe(5)))), None, "nothing has reached it yet");
-        assert_eq!(sight.look(ent, &skill, ms(300), Some((target, foe(4)))), Some(foe(5)), "the first change has, the second not");
-        assert_eq!(sight.look(ent, &skill, ms(600), Some((target, foe(4)))), Some(foe(4)));
+        assert_eq!(sight.look(&DICE, ent, &skill, ms(0), Some((target, foe(5)))), None, "nothing has reached it yet");
+        assert_eq!(sight.look(&DICE, ent, &skill, ms(300), Some((target, foe(4)))), Some(foe(5)), "the first change has, the second not");
+        assert_eq!(sight.look(&DICE, ent, &skill, ms(600), Some((target, foe(4)))), Some(foe(4)));
         let other = Entity::from_raw_u32(3).unwrap();
-        assert_eq!(sight.look(ent, &skill, ms(610), Some((other, foe(1)))), None, "a new target starts unseen");
+        assert_eq!(sight.look(&DICE, ent, &skill, ms(610), Some((other, foe(1)))), None, "a new target starts unseen");
     }
 }

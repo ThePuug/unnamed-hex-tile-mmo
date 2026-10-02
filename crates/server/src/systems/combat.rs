@@ -1,4 +1,5 @@
 pub mod abilities;
+pub mod dice;
 pub mod landing;
 pub mod leap;
 
@@ -24,7 +25,8 @@ pub fn process_deal_damage(
     all_attrs: Query<&ActorAttributes>,
     time: Res<Time>,
     runtime: Res<crate::resources::RunTime>,
-    mut dice: ResMut<crate::resources::Dice>,
+    dice: Res<dice::Dice>,
+    mut rolls: Query<&mut dice::Rolls>,
     mut writer: MessageWriter<Do>,
 ) {
     let tuning = common_bevy::tuning::tuning();
@@ -32,7 +34,7 @@ pub fn process_deal_damage(
 
     if let GameEvent::DealDamage { source, target, base_damage, ability, dot, bind, delay } = event {
         // Get attacker attributes for scaling
-        let Ok(source_attrs) = all_attrs.get(*source) else {
+        let (Ok(source_attrs), Ok(mut rolls)) = (all_attrs.get(*source), rolls.get_mut(*source)) else {
             return;
         };
 
@@ -46,9 +48,9 @@ pub fn process_deal_damage(
             return;
         }
 
-        let draw = rand::Rng::random_range(&mut **dice, -1.0..=1.0);
+        let draw = dice.draw(&mut rolls, ("spread", *source)).signed();
         let outgoing = damage_calc::spread(*base_damage, tuning.damage_spread, draw);
-        let outgoing = damage_calc::crit(outgoing, source_attrs, attrs, rand::Rng::random_range(&mut **dice, 0.0..1.0));
+        let outgoing = damage_calc::crit(outgoing, source_attrs, attrs, dice.draw(&mut rolls, ("crit", *source)).share());
         let dot = damage_calc::spread(*dot, tuning.damage_spread, draw);
 
         // Use game world time (server uptime + offset) for consistent time base

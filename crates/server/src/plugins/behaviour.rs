@@ -10,7 +10,8 @@ pub struct BehaviourPlugin;
 
 impl Plugin for BehaviourPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<crate::resources::Dice>();
+        app.init_resource::<crate::systems::combat::dice::Dice>();
+        app.register_required_components::<crate::systems::behaviour::chase::Chase, crate::systems::combat::dice::Rolls>();
         app.add_systems(
             FixedUpdate,
             (
