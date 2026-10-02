@@ -37,7 +37,7 @@ pub const COMBO: f32 = 0.15;
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
     "fatigue_after", "stamina_left", "recovery_left", "foe_just_acted", "worth_answering",
-    "pressure_share", "span_closed", "room_to_land", "grit_banked", "strike_worth", "opening",
+    "span_closed", "room_to_land", "grit_banked", "strike_worth", "opening",
     "reactions_left", "stamina_spent", "stamina_ready", "foe_across",
 ];
 
@@ -83,8 +83,6 @@ pub struct Threats {
     /// Of that, what the blows deal on landing, apart from what their
     /// DoTs have left: what a reflection returns a share of
     pub swept_direct: f32,
-    /// Of that, what auto-attacks would deal
-    pub swept_pressure: f32,
     /// How long ago the front threat was queued, against its user's span:
     /// a threat queued after the span closes lands past it
     pub span_closed: f32,
@@ -97,20 +95,16 @@ impl Threats {
         let Some(front) = queue.first() else { return Self::default() };
         let (first, last) = (front.lands_at(), front.lands_at() + span);
         let swept = queue.iter().filter(|threat| (first..=last).contains(&threat.lands_at()));
-        let (mut damage, mut direct, mut pressure) = (0.0, 0.0, 0.0);
+        let (mut damage, mut direct) = (0.0, 0.0);
         for threat in swept {
             let blow = threat.damage + threat.dot_left();
             damage += blow;
             direct += threat.damage;
-            if threat.is_pressure() {
-                pressure += blow;
-            }
         }
         let since = now.saturating_sub(front.inserted_at).as_secs_f32();
         Self {
             swept: damage,
             swept_direct: direct,
-            swept_pressure: pressure,
             span_closed: if span.is_zero() { 1.0 } else { since / span.as_secs_f32() },
         }
     }
@@ -216,7 +210,7 @@ fn part_considerations(reason: &str, part: Part) -> Vec<Considered> {
     match (part, reason) {
         (Part::Strike, "punish") => vec![FOE_STRUCK, FOE_JUST_ACTED, CAPACITY, STRIKE_WORTH, OPENING],
         (Part::Strike, _) => vec![FOE_STRUCK, FOE_JUST_ACTED, CAPACITY, STRIKE_WORTH],
-        (Part::Reaction, _) => vec![WORTH_ANSWERING, PRESSURE, SPAN_CLOSED],
+        (Part::Reaction, _) => vec![WORTH_ANSWERING, SPAN_CLOSED],
         (Part::Clear, "dodge") => vec![FOE_IN_REACH, WORTH_ANSWERING, ROOM_TO_LAND],
         (Part::Clear, _) => vec![FOE_IN_REACH, ROOM_TO_LAND],
         (Part::Dive, _) => vec![FOE_OUT_OF_REACH, FOE_WITHIN_A_DIVE, CAPACITY, STRIKE_WORTH],
@@ -362,15 +356,6 @@ const WORTH_ANSWERING: Considered = Consideration {
     },
     bounds: (0.0, WORTH),
     curve: Curve { shape: Shape::Logistic { mid: 0.4, steep: 8.0 }, falling: false, floor: 0.0 },
-};
-
-/// Auto-attacks are pressure, steady and light; abilities are what a
-/// reaction is for
-const PRESSURE: Considered = Consideration {
-    name: "pressure_share",
-    read: |view| if view.queue.swept > 0.0 { view.queue.swept_pressure / view.queue.swept } else { 0.0 },
-    bounds: (0.0, 1.0),
-    curve: Curve::FALLING.floored(0.5),
 };
 
 /// A threat queued once the span has closed lands past it, so waiting
