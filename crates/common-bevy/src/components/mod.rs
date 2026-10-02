@@ -575,14 +575,25 @@ impl ActorAttributes {
         }
     }
 
-    /// How much `ability`'s line raises it for this actor: 1 with none of
-    /// its attribute or no line, more by `Tuning::line` of what its
-    /// attribute's potency adds over base potency. What it raises is the
+    /// The share of its own numbers `ability` has for this actor: whole for
+    /// a skill of no line; for one of a line, `Tuning::line` with no points
+    /// in its attribute, rising evenly to whole as the attribute nears the
+    /// most it can be worth at the actor's level (`ceiling`), so a skill is
+    /// weak in a build that has not invested in it. What it scales is the
     /// skill's own: a strike's damage, Counter's reflection, Perfect
-    /// Stride's duration, and a Leap's recovery, which it shortens.
+    /// Stride's speed and a Leap's distance.
     pub fn line_power(&self, ability: crate::message::AbilityType) -> f32 {
         let Some(attribute) = Self::line(ability) else { return 1.0 };
-        1.0 + crate::tuning::tuning().line(ability) * (self.potency(attribute) / self.base_potency() - 1.0)
+        let invested = if self.ceiling() == 0 { 0.0 } else { (self.value(attribute) as f32 / self.ceiling() as f32).min(1.0) };
+        let floor = crate::tuning::tuning().line(ability);
+        floor + (1.0 - floor) * invested
+    }
+
+    /// Tiles this actor's Leap carries it: `Tuning::leap_distance` as its
+    /// Instinct line has it, never less than one
+    pub fn leap_tiles(&self) -> usize {
+        let tiles = crate::tuning::tuning().leap_distance as f32 * self.line_power(crate::message::AbilityType::Leap);
+        tiles.round().max(1.0) as usize
     }
 
     /// The endurance `ability`, a skill, costs this actor:
@@ -768,14 +779,17 @@ mod tests {
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let instinctive = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
         let plain = ActorAttributes::default();
-        assert!(mighty.line_power(Frenzy) > 1.0, "Might raises a bite");
-        assert_eq!(instinctive.line_power(Frenzy), 1.0, "and nothing else does");
-        assert!(instinctive.line_power(Leap) > 1.0);
+        assert_eq!(mighty.line_power(Frenzy), 1.0, "full commitment to Might bites whole");
+        assert_eq!(instinctive.line_power(Frenzy), crate::tuning::tuning().line(Frenzy), "with none, its floor");
+        assert!(instinctive.line_power(Frenzy) < 1.0, "a skill out of its line is weak");
+        assert!(instinctive.leap_tiles() > mighty.leap_tiles(), "Instinct leaps further");
         for shared in [Feint, Parry, AutoAttack] {
             assert_eq!(mighty.line_power(shared), 1.0, "{shared:?} belongs to no line");
             assert_eq!(instinctive.line_power(shared), 1.0, "{shared:?} belongs to no line");
         }
-        assert_eq!(plain.line_power(Frenzy), 1.0, "with none of its attribute, as it is");
+        let half = ActorAttributes::new(-5, 0, 0, -5, 0, 0, 0, 0, 0);
+        assert!(half.line_power(Frenzy) > instinctive.line_power(Frenzy) && half.line_power(Frenzy) < 1.0, "between, by how much it has invested");
+        assert_eq!(plain.line_power(Frenzy), crate::tuning::tuning().line(Frenzy), "a build of no level has invested nothing");
         assert_eq!(mighty.reaction_effort(10.0), instinctive.reaction_effort(10.0), "a reaction's price reads no attribute");
         assert!(plain.reaction_effort(20.0) > plain.reaction_effort(10.0), "more by the damage it clears");
     }

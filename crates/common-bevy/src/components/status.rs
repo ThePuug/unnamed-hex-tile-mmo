@@ -21,9 +21,9 @@ pub struct Status {
     pub slow: Option<Timed>,
     /// A strike across the striker's own line, its stride broken
     pub stride: Option<Timed>,
-    /// Seconds a Perfect Stride under way has left: its strikes across its
-    /// own line break no stride
-    pub perfect_stride: Option<f32>,
+    /// A Perfect Stride under way: its strikes across its own line break no
+    /// stride, and it runs at `pace` of its speed, above whole
+    pub perfect_stride: Option<Timed>,
     /// Held in place, by a stun or by the stagger of a Kick ([`Status::hold`])
     pub held: Option<Timed>,
     /// Carrying past the bag's burden limit
@@ -55,7 +55,7 @@ impl Status {
     /// The share of its speed the actor moves at under every effect on it
     pub fn pace(&self) -> f32 {
         let burden = if self.burden { BURDENED_PACE } else { 1.0 };
-        Timed::pace(self.slow) * Timed::pace(self.stride) * Timed::pace(self.held) * burden
+        Timed::pace(self.slow) * Timed::pace(self.stride) * Timed::pace(self.perfect_stride) * Timed::pace(self.held) * burden
     }
 
     /// The pace of an actor with `status`, whole with none
@@ -65,7 +65,7 @@ impl Status {
 
     /// Whether a Perfect Stride holds now
     pub fn is_striding(&self) -> bool {
-        self.perfect_stride.is_some_and(|remaining| remaining > 0.0)
+        self.perfect_stride.is_some_and(|stride| stride.remaining > 0.0)
     }
 
     /// Whether the actor is held in place now
@@ -96,18 +96,12 @@ impl Status {
 
     /// Counts the timed effects down by `dt` seconds, dropping spent ones
     pub fn tick(&mut self, dt: f32) {
-        for slot in [&mut self.slow, &mut self.stride, &mut self.held] {
+        for slot in [&mut self.slow, &mut self.stride, &mut self.perfect_stride, &mut self.held] {
             if let Some(timed) = slot {
                 timed.remaining -= dt;
                 if timed.remaining <= 0.0 {
                     *slot = None;
                 }
-            }
-        }
-        if let Some(remaining) = &mut self.perfect_stride {
-            *remaining -= dt;
-            if *remaining <= 0.0 {
-                self.perfect_stride = None;
             }
         }
     }
@@ -139,11 +133,11 @@ mod tests {
     }
 
     #[test]
-    fn a_perfect_stride_holds_until_it_runs_out_and_leaves_its_users_pace_be() {
-        let mut status = Status { perfect_stride: Some(1.0), ..default() };
-        assert!(status.is_striding() && status.pace() == 1.0);
+    fn a_perfect_stride_runs_its_user_faster_until_it_runs_out() {
+        let mut status = Status { perfect_stride: Some(Timed { pace: 1.25, remaining: 1.0 }), ..default() };
+        assert!(status.is_striding() && status.pace() > 1.0);
         status.tick(1.0);
-        assert!(!status.is_striding(), "spent");
+        assert!(!status.is_striding() && status.pace() == 1.0, "spent, it runs at its own pace");
     }
 
     #[test]

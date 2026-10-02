@@ -57,9 +57,7 @@ pub fn recovery_after(ability: AbilityType, prior: Option<&GlobalRecovery>, attr
     let taken = prior.and_then(|prior| prior.combo).filter(|combo| combo.ability == ability);
     let through = prior.is_some() && taken.is_none();
     let relief = if through { attrs.preparation_relief() } else { 0.0 };
-    // A Leap's line shortens its recovery (`ActorAttributes::line_power`)
-    let line = if ability == AbilityType::Leap { attrs.line_power(ability) } else { 1.0 };
-    let own = tuning.recovery(ability) / line * (1.0 + tuning.fatigue_recovery * fatigue) * (1.0 - relief);
+    let own = tuning.recovery(ability) * (1.0 + tuning.fatigue_recovery * fatigue) * (1.0 - relief);
     let mut recovery = GlobalRecovery::new(own).against(against);
 
     let carried = match (prior, taken) {

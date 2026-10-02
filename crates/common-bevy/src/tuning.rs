@@ -177,15 +177,20 @@ pub struct Tuning {
     pub counter_reflect: f32,
     pub leap_cost: f32,
     pub leap_recovery: f32,
-    /// Tiles a Leap carries its user, clear of its target or toward it
+    /// Tiles a Leap carries its user, clear of its target or toward it, at
+    /// full commitment to its Instinct line
     pub leap_distance: usize,
     pub stride_cost: f32,
     pub stride_recovery: f32,
     /// Seconds a Perfect Stride lasts
     pub stride_secs: f32,
+    /// Share faster a Perfect Stride runs its user, at full commitment to
+    /// its Agility line
+    pub stride_speed: f32,
 
-    // --- Lines: how much of what its attribute's potency adds over base
-    // potency raises each skill that belongs to one (`ActorAttributes::line_power`) ---
+    // --- Lines: the share of a skill's own numbers it has with no points in
+    // its line, rising evenly to all of them at full commitment
+    // (`ActorAttributes::line_power`) ---
     pub frenzy_line: f32,
     pub overpower_line: f32,
     pub punish_line: f32,
@@ -275,13 +280,14 @@ impl Tuning {
         leap_distance: 9,
         stride_cost: 30.0,
         stride_recovery: 1.0,
-        frenzy_line: 1.0,
-        overpower_line: 1.0,
-        punish_line: 1.0,
-        counter_line: 1.0,
-        stride_line: 0.25,
-        leap_line: 0.25,
+        frenzy_line: 0.2,
+        overpower_line: 0.2,
+        punish_line: 0.2,
+        counter_line: 0.2,
+        stride_line: 0.2,
+        leap_line: 0.2,
         stride_secs: 4.0,
+        stride_speed: 0.25,
         stride_damage: 1.0,
     };
 
@@ -312,8 +318,8 @@ impl Tuning {
         }
     }
 
-    /// How much of what its line's potency adds over base potency raises
-    /// `ability`: none for a skill of no line
+    /// The share of its own numbers `ability` has with no points in its
+    /// line: whole for a skill of no line
     pub fn line(&self, ability: AbilityType) -> f32 {
         match ability {
             AbilityType::Frenzy => self.frenzy_line,
@@ -322,7 +328,7 @@ impl Tuning {
             AbilityType::Counter => self.counter_line,
             AbilityType::PerfectStride => self.stride_line,
             AbilityType::Leap => self.leap_line,
-            AbilityType::AutoAttack | AbilityType::Feint | AbilityType::Parry => 0.0,
+            AbilityType::AutoAttack | AbilityType::Feint | AbilityType::Parry => 1.0,
         }
     }
 
@@ -423,6 +429,7 @@ impl Tuning {
             "stride_cost" => &mut self.stride_cost,
             "stride_recovery" => &mut self.stride_recovery,
             "stride_secs" => &mut self.stride_secs,
+            "stride_speed" => &mut self.stride_speed,
             "frenzy_line" => &mut self.frenzy_line,
             "overpower_line" => &mut self.overpower_line,
             "punish_line" => &mut self.punish_line,

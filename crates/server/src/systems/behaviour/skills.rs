@@ -575,10 +575,11 @@ mod tests {
 
     #[test]
     fn a_heavier_strike_and_a_weaker_foe_are_worth_more() {
-        let plain = ActorAttributes::default();
-        let (mut light, mut heavy) = (view(AbilityType::Feint, plain), view(AbilityType::Overpower, plain));
+        // Committed to Vitality, Overpower's line, so it strikes whole
+        let vital = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
+        let (mut light, mut heavy) = (view(AbilityType::Feint, vital), view(AbilityType::Overpower, vital));
         assert!(scored(&mut heavy, "strike") > scored(&mut light, "strike"));
-        let mut finishing = view(AbilityType::Feint, plain);
+        let mut finishing = view(AbilityType::Feint, vital);
         finishing.foe = Some(Foe { health: 20.0, ..finishing.foe.unwrap() });
         assert!(scored(&mut finishing, "strike") > scored(&mut light, "strike"), "a blow that nears the kill");
     }

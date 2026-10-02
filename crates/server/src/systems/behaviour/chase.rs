@@ -223,7 +223,7 @@ pub fn chase(
             clear_outward: target_loc.flat_distance(&home) < from_home,
             distance: loc.distance(target_loc),
             reach: chase.attack_range,
-            leap: tuning.leap_distance as i32,
+            leap: attrs.map_or(tuning.leap_distance, ActorAttributes::leap_tiles) as i32,
             stamina: stamina.zip(attrs).map_or(1.0, |(stamina, attrs)| stamina.state / attrs.max_stamina().max(1.0)),
             // Its Patience pays only while its swing clock runs, engaged
             patience: attrs.filter(|_| swing.is_some_and(|swing| swing.due.is_some()))

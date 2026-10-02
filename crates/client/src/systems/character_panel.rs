@@ -242,7 +242,7 @@ macro_rules! create_stat_display {
                 MetaAttributeStat::Tempo => ("Tempo", Color::srgb(0.9, 0.9, 0.5), "Auto-Attack Speed:"),
                 MetaAttributeStat::Constitution => ("Constitution", Color::srgb(0.5, 0.8, 0.5), "Health:"),
                 MetaAttributeStat::Endurance => ("Endurance", Color::srgb(0.5, 0.7, 0.9), "Endurance Pool:"),
-                MetaAttributeStat::Intuition => ("Leap", Color::srgb(0.7, 0.5, 0.9), "Recovery Faster:"),
+                MetaAttributeStat::Intuition => ("Leap", Color::srgb(0.7, 0.5, 0.9), "Distance:"),
                 MetaAttributeStat::Concentration => ("Counter", Color::srgb(0.9, 0.6, 0.3), "Reflection:"),
                 MetaAttributeStat::Impact => ("Impact", Color::srgb(0.9, 0.5, 0.5), "Recovery Pushback:"),
                 MetaAttributeStat::Composure => ("Composure", Color::srgb(0.5, 0.7, 0.9), "Recovery Reduction:"),
