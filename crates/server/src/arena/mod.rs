@@ -18,7 +18,9 @@
 //! fight (1), with a timeline every 5s (2), or every half second for its
 //! first 12s (3), with every NPC decision beside it, the three best and
 //! each consideration's response (4). `ledger=1` prints each side's ledger
-//! under its pairing's row (below). Any `Tuning` knob may be set by name too
+//! under its pairing's row (below). `seed` sets where every fight's rolls
+//! come from (random, and printed): a scenario run again with its seed
+//! fights the same fights. Any `Tuning` knob may be set by name too
 //! (`frenzy_damage=2`), so a value is tried without a rebuild; `bar` a comma
 //! list of the skills every fighter weighs in place of its archetype's own
 //! (`bar=parry,feint`); and any mind
@@ -53,6 +55,7 @@ use std::{collections::HashMap, time::Duration};
 
 use bevy::{prelude::*, time::TimeUpdateStrategy};
 use qrz::Qrz;
+use rand::Rng;
 
 use common_bevy::{
     components::{
@@ -75,6 +78,7 @@ use common_bevy::{
 
 use crate::{
     plugins::{behaviour::BehaviourPlugin, combat::CombatPlugin},
+    resources::Dice,
     systems::{
         actor,
         behaviour::{mind::{set_minds, Minds}, moves::Move, perception::Skill, Bar, Decisions},
@@ -117,13 +121,16 @@ struct Settings {
     focus: Option<EnemyArchetype>,
     trace: u8,
     ledger: bool,
+    /// Where every fight's rolls come from: a pairing's run fights the same
+    /// fight under any scenario that shares it
+    seed: u64,
     tuning: Tuning,
     minds: Minds,
 }
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, bar: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(120), only: EnemyArchetype::ALL.to_vec(), focus: None, trace: 0, ledger: false, tuning: Tuning::default(), minds: Minds::tuned() };
+        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, bar: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(120), only: EnemyArchetype::ALL.to_vec(), focus: None, trace: 0, ledger: false, seed: rand::random(), tuning: Tuning::default(), minds: Minds::tuned() };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {
@@ -141,6 +148,7 @@ impl Settings {
                 "only" => settings.only = value.split(',').map(archetype_named).collect(),
                 "trace" => settings.trace = value.parse().expect("trace is 0 to 4"),
                 "ledger" => settings.ledger = value == "1",
+                "seed" => settings.seed = value.parse().expect("seed is a whole number"),
                 _ if key.starts_with("mind.") => settings.minds.set(&key["mind.".len()..], value).unwrap_or_else(|error| panic!("arena: {error}")),
                 _ => settings.tuning.set(key, value).unwrap_or_else(|error| panic!("arena: {error}")),
             }
@@ -315,13 +323,13 @@ const EAST: Side = Side(2);
 /// `at` or one of its neighbours no further from `foes`, at random: a
 /// team's start is not fixed to its tile, and never leaves the range the
 /// stage set it at to be spotted.
-fn jitter(at: Qrz, foes: Qrz) -> Qrz {
+fn jitter(at: Qrz, foes: Qrz, dice: &mut Dice) -> Qrz {
     let near = at.flat_distance(&foes);
     let starts: Vec<Qrz> = std::iter::once(at)
         .chain(qrz::DIRECTIONS.iter().map(|&d| at + d))
         .filter(|tile| tile.flat_distance(&foes) <= near)
         .collect();
-    starts[rand::random_range(0..starts.len())]
+    starts[dice.random_range(0..starts.len())]
 }
 
 /// The flat arena every fight stands on, laid once: a `Map` shares its
@@ -347,8 +355,10 @@ fn lay_flat_map() -> Map {
     map
 }
 
-/// Fights `west` against `east` until one side is dead or `cap` passes.
-fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
+/// Fights `west` against `east` until one side is dead or `cap` passes,
+/// every roll drawn from `seed`: the same seed and settings fight the same
+/// fight.
+fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, NNTreePlugin, BehaviourPlugin, CombatPlugin));
     app.insert_resource(TimeUpdateStrategy::ManualDuration(STEP));
@@ -356,6 +366,7 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     app.insert_resource(flat_map());
     app.insert_resource(SpawnPoint(Qrz { q: 0, r: 0, z: 1 }));
     app.init_resource::<Tally>();
+    app.insert_resource(Dice::seeded(seed));
     if settings.trace > 3 {
         app.init_resource::<Decisions>();
     }
@@ -378,10 +389,14 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     // it is spawned on, the stage's gap apart about the origin
     let west_at = Qrz { q: -STAGE_GAP / 2, r: 0, z: 1 };
     let east_at = engaging_at(west_at, Qrz { q: 1, r: 0, z: 0 }, |_, _| 0);
+    let starts: Vec<Qrz> = {
+        let mut dice = world.resource_mut::<Dice>();
+        [(west_at, east_at), (east_at, west_at)].map(|(at, foes)| jitter(at, foes, &mut dice)).into()
+    };
     {
         let mut commands = world.commands();
-        for (team, side, at, foes) in [(west, WEST, west_at, east_at), (east, EAST, east_at, west_at)] {
-            spawn_engagement(jitter(at, foes), team.archetype, side, team.level, team.size, |_, _| 0, &mut commands, &time);
+        for ((team, side), start) in [(west, WEST), (east, EAST)].into_iter().zip(starts) {
+            spawn_engagement(start, team.archetype, side, team.level, team.size, |_, _| 0, &mut commands, &time);
         }
     }
     world.flush();
@@ -401,10 +416,15 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
     // spot them as a staged party would
     let map = world.resource::<Map>().clone();
     let mut fighters = world.query::<(&Side, &common_bevy::components::Loc, &mut Heading)>();
-    for (side, loc, mut heading) in fighters.iter_mut(world) {
+    let turns: Vec<i32> = {
+        let count = fighters.iter(world).count();
+        let mut dice = world.resource_mut::<Dice>();
+        (0..count).map(|_| dice.random_range(-2..=2)).collect()
+    };
+    for ((side, loc, mut heading), turn) in fighters.iter_mut(world).zip(turns) {
         let foes = if *side == WEST { east_at } else { west_at };
         let toward = Heading::between(&map, **loc, foes).unwrap_or(*heading);
-        *heading = toward.turned(rand::random_range(-2..=2));
+        *heading = toward.turned(turn);
     }
     let mut sides = world.query::<(Entity, &Side)>();
     let roster: HashMap<Entity, Side> = sides.iter(world).map(|(e, s)| (e, *s)).collect();
@@ -530,8 +550,8 @@ fn serve() {
 fn report(settings: &Settings) {
     let (a_team, b_team) = (settings.team_a(EnemyArchetype::Berserker), settings.team_b(EnemyArchetype::Berserker));
     println!(
-        "arena: a is {} at level {}, b is {} at level {}; {} runs per pairing, a loss for both sides standing at {}s",
-        a_team.size, a_team.level, b_team.size, b_team.level, settings.runs, settings.cap.as_secs(),
+        "arena: a is {} at level {}, b is {} at level {}; {} runs per pairing, a loss for both sides standing at {}s; seed={}",
+        a_team.size, a_team.level, b_team.size, b_team.level, settings.runs, settings.cap.as_secs(), settings.seed,
     );
     println!();
     print_matrix(&matrix(settings), settings.ledger);
@@ -591,7 +611,7 @@ fn matrix(settings: &Settings) -> Vec<Pairing> {
         // Swap ends every run so the spawn layout favours neither archetype
         let (team_a, team_b) = (settings.team_a(a), settings.team_b(b));
         let (west, east, a_side) = if run % 2 == 0 { (team_a, team_b, WEST) } else { (team_b, team_a, EAST) };
-        (a_side, fight(west, east, settings))
+        (a_side, fight(west, east, settings, fight_seed(settings.seed, a, b, run)))
     });
     let mut rows = Vec::new();
     for (&(a, b), outcomes) in pairings.iter().zip(outcomes.chunks(runs as usize)) {
@@ -638,6 +658,15 @@ fn matrix(settings: &Settings) -> Vec<Pairing> {
         });
     }
     rows
+}
+
+/// The seed of `run` of the pairing `a` v `b` under `seed`, the same
+/// whichever pairings the scenario fights beside it.
+fn fight_seed(seed: u64, a: EnemyArchetype, b: EnemyArchetype, run: u32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    (seed, a, b, run).hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Runs `job` for each of `0..count` on up to `workers` threads, results in
@@ -696,4 +725,22 @@ fn ledger_line(ledger: &Ledger, runs: f32) -> String {
     format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% circling {:.0}% fatigue {:.0}%",
         abilities.join(" | "),
         share(ledger.recovering), share(ledger.held), share(ledger.slowed), share(ledger.beyond_reach), share(ledger.circling), share(ledger.fatigue))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One pairing's outcome, every number of it, as bits
+    fn fingerprint(rows: &[Pairing]) -> Vec<u32> {
+        rows.iter().flat_map(|row| [row.a_wins, row.b_wins, row.capped, row.median, row.left, row.edge,
+            row.a_ledger.landed_total(), row.b_ledger.landed_total(), row.a_ledger.alive, row.b_ledger.alive]).map(f32::to_bits).collect()
+    }
+
+    #[test]
+    fn a_seed_fights_the_same_fights() {
+        let args = ["only=berserker,ambusher", "runs=2", "seed=7"].map(str::to_owned);
+        let settings = Settings::parse(&args);
+        assert_eq!(fingerprint(&matrix(&settings)), fingerprint(&matrix(&settings)));
+    }
 }

@@ -127,6 +127,7 @@ pub fn chase(
     nntree: Res<NNTree>,
     map: Res<Map>,
     dt: Res<Time>,
+    mut dice: ResMut<crate::resources::Dice>,
     mut decisions: Option<ResMut<super::Decisions>>,
 ) {
     // Which way each actor faces, read apart from the bodies this turns
@@ -168,7 +169,7 @@ pub fn chase(
             .or_else(|| {
                 super::spotted(&nntree, *loc, chase.acquisition_range)
                     .filter(|&seen| q_target.get(seen).is_ok_and(|(_, health, side, ..)| health.current() > 0.0 && side.is_hostile_to(*own_side)))
-                    .choose(&mut rand::rng())
+                    .choose(&mut **dice)
             });
         if target.entity != held {
             target.entity = held;

@@ -10,6 +10,7 @@ pub struct BehaviourPlugin;
 
 impl Plugin for BehaviourPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<crate::resources::Dice>();
         app.add_systems(
             FixedUpdate,
             (

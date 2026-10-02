@@ -35,7 +35,6 @@ impl Abilities<'_, '_> {
             })
             .collect();
         let mut asks: Vec<(Entity, AbilityType, Option<Entity>)> = Vec::new();
-        let mut rng = rand::rng();
         for (ent, archetype, bar) in npcs {
             let Some(&ability) = bar.first() else { continue };
             let skill = self.minds.get(ent).map_or(Skill::SHARP, |(skill, _)| *skill);
@@ -58,7 +57,7 @@ impl Abilities<'_, '_> {
             let approach = approach_of(target.and_then(|target| self.kinds.get(target).ok()));
             let foe = foe.map(|foe| Foe { since_skill: foe.since_skill.map(|since| since / mind.just_acted(approach)), ..foe });
             let Some(mut view) = self.view(ent, ability, &skill, foe, target) else { continue };
-            let stray = || skill.error * rng.random_range(-1.0..=1.0);
+            let stray = || skill.error * self.dice.random_range(-1.0..=1.0);
             let chosen = skills::choose(&mut view, &bar, &mind, stray);
             if let (Some(decision), Some(decisions)) = (&chosen, self.decisions.as_mut()) {
                 let mut ranked = skills::weigh(&mut view, &bar, &mind);
