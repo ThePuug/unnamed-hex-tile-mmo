@@ -25,10 +25,10 @@ use crate::systems::behaviour::{
 impl Abilities<'_, '_> {
     /// Asks, for each NPC, the skill its skills channel chooses, if any.
     pub(super) fn skills(&mut self) {
-        let npcs: Vec<(Entity, EnemyArchetype)> = self.npcs.iter()
-            .filter_map(|(ent, entity_type)| match entity_type {
+        let npcs: Vec<(Entity, EnemyArchetype, Vec<AbilityType>)> = self.npcs.iter()
+            .filter_map(|(ent, entity_type, bar)| match entity_type {
                 EntityType::Actor(actor) => match actor.identity {
-                    ActorIdentity::Npc(archetype) => Some((ent, archetype)),
+                    ActorIdentity::Npc(archetype) => Some((ent, archetype, bar.0.clone())),
                     _ => None,
                 },
                 _ => None,
@@ -36,9 +36,8 @@ impl Abilities<'_, '_> {
             .collect();
         let mut asks: Vec<(Entity, AbilityType, Option<Entity>)> = Vec::new();
         let mut rng = rand::rng();
-        for (ent, archetype) in npcs {
-            let ability = archetype.profile().ability;
-            let bar = [ability];
+        for (ent, archetype, bar) in npcs {
+            let Some(&ability) = bar.first() else { continue };
             let skill = self.minds.get(ent).map_or(Skill::SHARP, |(skill, _)| *skill);
             let target = self.targets.get(ent).ok().and_then(|(_, target)| target.entity);
             let foe = self.foe_of(ent, target);
@@ -98,9 +97,10 @@ impl Abilities<'_, '_> {
     /// How `target` stands as `ent` would see it now
     fn foe_of(&self, ent: Entity, target: Option<Entity>) -> Option<Foe> {
         let (&loc, attrs, _, heading, ..) = self.actors.get(ent).ok()?;
-        let (&target_loc, ..) = self.actors.get(target?).ok()?;
+        let (&target_loc, _, target_health, ..) = self.actors.get(target?).ok()?;
         Some(Foe {
             distance: loc.distance(&target_loc),
+            health: target_health.state,
             in_arc: in_arc(heading, Some(attrs), &loc, &target_loc),
             across: targeting::across(heading, &loc, &target_loc),
             since_skill: self.last_skills.get(target?).ok()
@@ -158,7 +158,7 @@ impl Abilities<'_, '_> {
             endurance_max: self.endurance.get(ent).map_or(0.0, |endurance| endurance.max),
             recovery: self.recoveries.get(ent).ok().copied(),
             striding: self.strides(ent),
-            grit_held: self.grits.get(ent).map_or(0, |grit| grit.held),
+            grit_filled: self.grits.get(ent).map_or(0.0, |grit| grit.filled as f32 / common_bevy::components::grit::Grit::size() as f32),
             banked: waited.map_or(0, |waited| attrs.banked(waited, attrs.cadence_interval())),
             banking: swing.is_some_and(|swing| swing.due.is_some()),
             reach: range.copied().unwrap_or_default().0,

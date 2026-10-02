@@ -40,7 +40,7 @@ pub enum Event {
         ability: Option<AbilityType>,
         /// Damage each DoT tick deals while the threat stands: a wound's, zero for a blow
         dot: f32,
-        /// Share of its target's pace the threat dazes away as it lands
+        /// Share of its target's speed the threat slows away as it lands
         /// (`QueuedThreat::bind`), zero for most
         bind: f32,
         /// How long after now the strike is made: its threat's window starts then
@@ -199,18 +199,21 @@ pub enum AbilityType {
     AutoAttack,
     /// The Berserker's bite. Its combo is itself, so Ferocity fires bites in a burst
     Frenzy,
-    /// The Juggernaut's feint and the real strike a moment behind it, which
-    /// split its damage and its Grit's bank between them
+    /// A light strike, cheap and quickly recovered from, on every bar. Its
+    /// combo is a Parry
     Feint,
-    /// The Ambusher's reaction, clearing the threats in its span that its
-    /// endurance pays for; Preparation chains it through a recovery
+    /// The Juggernaut's heavy blow
+    Overpower,
+    /// The Ambusher's strike, harder on a target still in recovery
+    Punish,
+    /// A reaction clearing the threats in its span, on every bar;
+    /// Preparation chains it through a recovery. Its combo is a Feint
     Parry,
     /// The Defender's reaction, clearing every threat in its span and
     /// sending a share of each back; Awareness lengthens the span
     Counter,
-    /// The Skirmisher's leap: clear of a target in its reach, dodging its
-    /// span, or onto one out of it, where it strikes and the swings
-    /// Patience banked land
+    /// The Skirmisher's leap: clear of a target in its reach, or onto one
+    /// out of it
     Leap,
     /// The Kiter's stride: for a while its strikes past the forward faces
     /// break no stride, so Grace strikes on the run
@@ -233,17 +236,20 @@ impl AbilityType {
     /// checks its own, or the stride.
     pub fn reach(self, own: i32) -> Option<std::ops::RangeInclusive<i32>> {
         match self {
-            AbilityType::AutoAttack | AbilityType::Frenzy | AbilityType::Feint => Some(0..=own),
+            AbilityType::AutoAttack | AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Punish => Some(0..=own),
             AbilityType::Parry | AbilityType::Counter | AbilityType::Leap | AbilityType::PerfectStride => None,
         }
     }
 
     /// The ability this one offers as its combo, the one that unlocks
     /// through its recovery ahead of the rest (`combos::recovery_after`): a
-    /// bite's is another bite. None for an ability that offers nothing.
+    /// bite's is another bite, and a Parry and a Feint offer each other.
+    /// None for an ability that offers nothing.
     pub fn combo(self) -> Option<AbilityType> {
         match self {
             AbilityType::Frenzy => Some(AbilityType::Frenzy),
+            AbilityType::Parry => Some(AbilityType::Feint),
+            AbilityType::Feint => Some(AbilityType::Parry),
             _ => None,
         }
     }

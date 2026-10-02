@@ -22,16 +22,15 @@ pub fn calculate_composure_reduction(
 
 /// Counts every recovery down and ends it when it runs out, its combo and
 /// its burst with it: faster by its actor's Composure, contested by the
-/// opponent's Impact with the level gap weighing in, and slower by a daze's
-/// pace. A burst's window counts down in plain seconds beside it.
+/// opponent's Impact with the level gap weighing in. A burst's window counts down in plain seconds beside it.
 pub fn global_recovery_system(
     time: Res<Time>,
     mut commands: Commands,
-    mut query: Query<(Entity, &mut GlobalRecovery, &ActorAttributes, Option<&crate::components::status::Status>)>,
+    mut query: Query<(Entity, &mut GlobalRecovery, &ActorAttributes)>,
 ) {
     let delta = time.delta_secs();
 
-    for (entity, mut recovery, attrs, status) in query.iter_mut() {
+    for (entity, mut recovery, attrs) in query.iter_mut() {
         if recovery.is_active() {
             let composure = attrs.composure();
             let reduction_pct = calculate_composure_reduction(
@@ -42,7 +41,7 @@ pub fn global_recovery_system(
 
             let speed_multiplier = 1.0 / (1.0 - reduction_pct);
 
-            let effective_delta = delta * speed_multiplier * status.map_or(1.0, crate::components::status::Status::daze_pace);
+            let effective_delta = delta * speed_multiplier;
 
             recovery.tick(effective_delta);
             recovery.burst = recovery.burst

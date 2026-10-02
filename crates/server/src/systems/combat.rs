@@ -124,11 +124,11 @@ pub fn resolve_threat(
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
         if let Ok((mut health, attrs, grit)) = query.get_mut(*ent) {
-            // The defender let this blow land: its Grit banks a share of it
-            // for its next skill; a wound's DoT banks nothing
+            // The defender let this blow land: its Grit's bank fills by its
+            // tier; a wound's DoT fills nothing
             let blow = threat.damage;
             if let Some(mut grit) = grit {
-                grit.take(blow * common_bevy::tuning::tuning().grit_share, attrs.grit_holds());
+                grit.take(attrs.grit_fill());
             }
             let final_damage = blow + threat.dot_left();
 
@@ -137,7 +137,7 @@ pub fn resolve_threat(
             // A blow Grit's bank struck back binds its target as it lands
             if threat.bind > 0.0 {
                 let seconds = tuning.grit_bind_secs;
-                landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| status.daze(1.0 - threat.bind, seconds));
+                landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| status.slow(1.0 - threat.bind, seconds));
             }
 
             // Death check moved to dedicated check_death system (decoupled from combat)
@@ -160,20 +160,33 @@ pub fn resolve_dot_tick(
     land_damage(*ent, *source, *damage, true, &mut health, &mut writer);
 }
 
-/// Keeps what an actor banks to its fight. Out of combat a swing is due
-/// and nothing is banked, neither Patience's swings nor Grit's blows; as
-/// combat finds an actor not yet swinging its clock starts, that swing
-/// due at once. So each banks only in the fight, and the fight's end
-/// empties both.
-pub fn bank_in_combat(mut query: Query<(&CombatState, &mut common_bevy::components::Swing, &mut common_bevy::components::grit::Grit)>, time: Res<Time>) {
-    for (state, mut swing, mut grit) in &mut query {
-        match (state.in_combat, swing.due) {
+/// Keeps what an actor banks to its engagement. Its swing clock runs, and
+/// Patience banks the swings it misses, while it is engaged: in combat, or
+/// with a living hostile within the range a fight is taken up at
+/// (`behaviour::ACQUISITION_RANGE`), first contact or not. As it is engaged
+/// its clock starts, a swing due at once; disengaged, a swing is due and
+/// nothing is banked. Grit banks only blows, so only in the fight, and
+/// the fight's end empties it.
+pub fn bank_while_engaged(
+    mut query: Query<(Entity, &CombatState, &Loc, Option<&common_bevy::components::behaviour::Side>, &mut common_bevy::components::Swing, &mut common_bevy::components::grit::Grit)>,
+    others: Query<(&common_bevy::components::behaviour::Side, &Health)>,
+    nntree: Res<common_bevy::plugins::nntree::NNTree>,
+    time: Res<Time>,
+) {
+    for (ent, state, &loc, side, mut swing, mut grit) in &mut query {
+        let hostile_near = side.is_some_and(|&side| {
+            crate::systems::behaviour::spotted(&nntree, loc, crate::systems::behaviour::ACQUISITION_RANGE)
+                .filter(|&other| other != ent)
+                .any(|other| others.get(other).is_ok_and(|(other_side, health)| side.is_hostile_to(*other_side) && health.state > 0.0))
+        });
+        let engaged = state.in_combat || hostile_near;
+        match (engaged, swing.due) {
             (false, Some(_)) => swing.due = None,
             (true, None) => swing.due = Some(time.elapsed()),
             _ => {}
         }
-        if !state.in_combat && grit.held > 0 {
-            grit.spend();
+        if !state.in_combat {
+            grit.filled = 0;
         }
     }
 }
@@ -194,25 +207,54 @@ mod tests {
     use common_bevy::components::{grit::Grit, Swing};
     use std::time::Duration;
 
+    fn engaging(world: &mut World) {
+        world.run_system_once(bank_while_engaged).unwrap();
+    }
+
+    #[test]
+    fn a_hostile_in_range_starts_the_swing_clock_before_first_contact() {
+        use common_bevy::{components::{behaviour::Side, Loc}, plugins::nntree::{NNTreePlugin, NearestNeighbor}};
+        let mut app = App::new();
+        app.add_plugins(NNTreePlugin);
+        app.init_resource::<Time>();
+        let at = |q: i32| Loc::new(qrz::Qrz { q, r: 0, z: 0 });
+        let calm = CombatState { in_combat: false, last_action: Duration::ZERO };
+        let waiting = app.world_mut().spawn((calm, at(0), Side::WILD, Health::full(100.0), Swing::default(), Grit::default())).id();
+        app.world_mut().entity_mut(waiting).insert(NearestNeighbor::new(waiting, at(0)));
+        app.update();
+        engaging(app.world_mut());
+        assert_eq!(app.world().get::<Swing>(waiting).unwrap().due, None, "with no hostile near it banks nothing");
+
+        let far = crate::systems::behaviour::ACQUISITION_RANGE as i32 - 1;
+        let hostile = app.world_mut().spawn((at(far), Side::PLAYERS, Health::full(100.0))).id();
+        app.world_mut().entity_mut(hostile).insert(NearestNeighbor::new(hostile, at(far)));
+        app.update();
+        engaging(app.world_mut());
+        assert!(app.world().get::<Swing>(waiting).unwrap().due.is_some(), "a hostile within range starts its clock, out of combat");
+    }
+
     #[test]
     fn a_fight_starts_the_swing_clock_and_its_end_empties_both_banks() {
         let secs = Duration::from_secs;
-        let mut world = World::new();
+        let mut app = App::new();
+        app.add_plugins(common_bevy::plugins::nntree::NNTreePlugin);
+        let world = app.world_mut();
         let mut time = Time::<()>::default();
         time.advance_by(secs(10));
         world.insert_resource(time);
-        let fighter = world.spawn((CombatState { in_combat: true, last_action: Duration::ZERO }, Swing::default(), Grit { bank: 50.0, held: 1 })).id();
+        let here = Loc::new(qrz::Qrz { q: 0, r: 0, z: 0 });
+        let fighter = world.spawn((CombatState { in_combat: true, last_action: Duration::ZERO }, here, Swing::default(), Grit { filled: 4 })).id();
 
-        world.run_system_once(bank_in_combat).unwrap();
-        assert_eq!(world.get::<Grit>(fighter).unwrap().bank, 50.0, "in the fight, Grit keeps what it banked");
+        engaging(world);
+        assert_eq!(world.get::<Grit>(fighter).unwrap().filled, 4, "in the fight, Grit keeps what it banked");
         let swing = *world.get::<Swing>(fighter).unwrap();
         assert_eq!(swing.waited(secs(10)), Some(Duration::ZERO), "due as the fight finds it");
         assert_eq!(swing.waited(secs(15)), Some(secs(5)), "and waiting from then");
         assert_eq!(Swing { due: Some(secs(20)) }.waited(secs(15)), None, "one still to come due waits for nothing");
 
         world.get_mut::<CombatState>(fighter).unwrap().in_combat = false;
-        world.run_system_once(bank_in_combat).unwrap();
-        assert_eq!(world.get::<Grit>(fighter).unwrap().bank, 0.0, "the fight over, it is gone");
+        engaging(world);
+        assert_eq!(world.get::<Grit>(fighter).unwrap().filled, 0, "the fight over, it is gone");
         assert_eq!(world.get::<Swing>(fighter).unwrap().waited(secs(60)), Some(Duration::ZERO), "out of combat it is due and has banked nothing");
     }
 }

@@ -101,8 +101,8 @@ pub const KEYS: [KeyCode; 4] = [KeyCode::KeyQ, KeyCode::KeyW, KeyCode::KeyE, Key
 pub const PLAYER: [AbilityType; 4] = [AbilityType::Frenzy, AbilityType::Feint, AbilityType::Counter, AbilityType::Leap];
 
 /// What stands on each of the bar's keys for an actor of `typ`: a player's
-/// four; an NPC's skill on the key a player holds it on, else the first,
-/// the rest empty, so a view's bar looks as a player's does.
+/// four; each of an NPC's skills on the key a player holds it on, else the
+/// first one free, so a view's bar looks as a player's does.
 pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 4] {
     use common_bevy::components::entity_type::actor::ActorIdentity;
     let mut bar = [None; 4];
@@ -110,8 +110,17 @@ pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 4] {
         EntityType::Actor(actor) => match actor.identity {
             ActorIdentity::Player => bar = PLAYER.map(Some),
             ActorIdentity::Npc(npc) => {
-                let skill = npc.profile().ability;
-                bar[PLAYER.iter().position(|&a| a == skill).unwrap_or(0)] = Some(skill);
+                let skills = npc.bar();
+                for &skill in &skills {
+                    if let Some(key) = PLAYER.iter().position(|&a| a == skill) {
+                        bar[key] = Some(skill);
+                    }
+                }
+                for &skill in skills.iter().filter(|skill| !PLAYER.contains(skill)) {
+                    if let Some(free) = bar.iter_mut().find(|key| key.is_none()) {
+                        *free = Some(skill);
+                    }
+                }
             }
         },
         _ => {}
@@ -163,6 +172,8 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Opti
             Some(AbilityType::AutoAttack) => "⚔",
             Some(AbilityType::Frenzy) => "💥",
             Some(AbilityType::Feint) => "💫",
+            Some(AbilityType::Overpower) => "🔨",
+            Some(AbilityType::Punish) => "🐊",
             Some(AbilityType::Parry) => "🗡",
             Some(AbilityType::Counter) => "↩",
             Some(AbilityType::Leap) => "💨",
@@ -419,8 +430,9 @@ mod loadout_tests {
 
     #[test]
     fn an_npc_skill_stands_on_a_players_key_for_it() {
-        assert_eq!(loadout(&npc(EnemyArchetype::Defender)), [None, None, Some(AbilityType::Counter), None]);
-        assert_eq!(loadout(&npc(EnemyArchetype::Juggernaut)), [None, Some(AbilityType::Feint), None, None]);
-        assert_eq!(loadout(&npc(EnemyArchetype::Ambusher)), [Some(AbilityType::Parry), None, None, None], "one a player lacks goes first");
+        use AbilityType::*;
+        assert_eq!(loadout(&npc(EnemyArchetype::Defender)), [Some(Parry), Some(Feint), Some(Counter), None]);
+        assert_eq!(loadout(&npc(EnemyArchetype::Berserker)), [Some(Frenzy), Some(Feint), Some(Parry), None], "one a player lacks takes the first key free");
+        assert_eq!(loadout(&npc(EnemyArchetype::Ambusher)), [Some(Punish), Some(Feint), Some(Parry), None]);
     }
 }

@@ -16,7 +16,7 @@ use common_bevy::{
     message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
     resources::map::Map,
-    systems::{physics::Walk, targeting::{across, across_share, arc_of, is_in_facing_cone}},
+    systems::{physics::Walk, targeting::{across, across_share, is_in_facing_cone}},
 };
 use qrz::Qrz;
 
@@ -33,12 +33,11 @@ const HOME: i32 = 2;
 ///
 /// It fights from its assigned hex where it has one (`AssignedHex`), else
 /// from wherever its target is within `attack_range`. Closing, it walks
-/// there; holding, it stands and faces its target. Kiting, it runs forward
-/// on the heading most directly away that still keeps its target in the
-/// arc it strikes within ([`kiting`]), so it shoots as it goes, and how
-/// directly away its Grace lets it run is how well it kites. Fleeing, it
-/// runs straight away. Near its leash it takes no heading that carries it
-/// further from its den, so it turns along the leash and circles its den.
+/// there; holding, it stands and faces its target. Circling, it steps
+/// round its target ([`round`]): with Grace toward its target's back, with
+/// Patience toward its den. Fleeing, it runs straight away ([`fleeing`]).
+/// Near its leash it takes no heading that carries it further from its
+/// den, so it turns along the leash and circles its den.
 ///
 /// Further than `leash_distance` from its engagement's place it lets its
 /// target go and walks home (`Returning`), taking no target until it is
@@ -50,13 +49,6 @@ pub struct Chase {
     pub attack_range: i32,
 }
 
-impl Chase {
-    /// Whether it fights from range: its reach is past a melee swing's
-    pub fn ranged(&self) -> bool {
-        self.attack_range > AttackRange::default().0
-    }
-}
-
 /// How near its leash, in tiles, an NPC giving ground stops running out.
 const LEASH_MARGIN: i32 = 12;
 
@@ -64,34 +56,26 @@ const LEASH_MARGIN: i32 = 12;
 /// out, so it waits at the edge rather than let it go.
 const LEASH_EDGE: i32 = 2;
 
-/// The arc a fleeing NPC keeps its target within: all of it, so it runs
-/// straight from it.
-const FLEE_ARC: f32 = 180.0;
-
-/// The heading an actor at `loc`, facing `facing`, runs on from `target`
-/// while it keeps it within the `arc` it strikes within. Of the headings
-/// no further than a step short of the arc from the bearing to the target,
-/// it takes the one where how directly it runs away, times what `shots`
-/// gives a heading for shooting from it (1 where shooting costs nothing),
-/// is greatest, and of two alike the one nearer the way it faces, so it
-/// holds a course.
+/// The heading an actor at `loc`, facing `facing`, runs on from `target`:
+/// the one most directly away, and of two alike the one nearer the way it
+/// faces, so it holds a course.
 ///
 /// `outward`, given while it nears its leash, is the bearing from its den:
-/// it then takes none of those headings that leads further out where one
+/// it then takes none of the headings that leads further out where one
 /// leads along the leash or in, and the least outward of them where none
 /// does.
-fn kiting(loc: Loc, target: Loc, arc: f32, facing: Heading, outward: Option<Heading>, shots: impl Fn(Heading) -> f32) -> Heading {
+fn fleeing(loc: Loc, target: Loc, facing: Heading, outward: Option<Heading>) -> Heading {
     let quarter = HEADING_SLOTS / 4;
     let toward = Heading::from_hex(Qrz { z: 0, ..*target - *loc });
-    let steps = ((arc / SLOT_DEGREES) as i32 - 1).max(0);
     // How directly away a heading `off` slots from the target runs: 0
     // straight at it, 1 straight from it
     let away = |off: i32| (1.0 - (off as f32 * SLOT_DEGREES).to_radians().cos()) / 2.0;
-    (-steps..=steps)
+    let half = HEADING_SLOTS as i32 / 2;
+    (1 - half..=half)
         .map(|off| {
             let heading = toward.turned(off);
             let leash = outward.map(|outward| outward.turn_toward(heading).1.min(quarter));
-            (heading, leash, away(off) * shots(heading), facing.turn_toward(heading).1)
+            (heading, leash, away(off), facing.turn_toward(heading).1)
         })
         .max_by(|a, b| a.1.cmp(&b.1).then(a.2.total_cmp(&b.2)).then(b.3.cmp(&a.3)))
         .map_or(toward, |(heading, ..)| heading)
@@ -109,15 +93,15 @@ fn step(map: &Map, nntree: &NNTree, from: Qrz, goal: Qrz) -> Option<Qrz> {
 
 /// The neighbour of the floor tile `from` an NPC circling `target` steps
 /// to: of those as far from it as `from` is, a tile either way, and not
-/// crowded, the nearest `home`.
-fn round(map: &Map, nntree: &NNTree, from: Qrz, target: Qrz, home: Qrz) -> Option<Qrz> {
+/// crowded, the nearest `toward`.
+fn round(map: &Map, nntree: &NNTree, from: Qrz, target: Qrz, toward: Qrz) -> Option<Qrz> {
     let distance = from.flat_distance(&target);
     map.neighbors(from)
         .into_iter()
         .map(|(neighbor, _)| neighbor)
         .filter(|neighbor| (neighbor.flat_distance(&target) - distance).abs() <= 1 && neighbor.flat_distance(&target) >= distance.min(2))
         .filter(|neighbor| nntree.locate_all_at_point(&Loc::new(*neighbor + Qrz::Z)).count() < 7)
-        .min_by_key(|neighbor| neighbor.flat_distance(&home))
+        .min_by_key(|neighbor| neighbor.flat_distance(&toward))
 }
 
 pub fn chase(
@@ -138,7 +122,7 @@ pub fn chase(
         Option<&common_bevy::components::resources::Stamina>,
         (Option<&Swing>, Option<&mut Move>, Option<&EntityType>, Option<&Sight>),
     )>, Query<(Entity, &Heading)>)>,
-    q_target: Query<(&Loc, &Health, &Side, Option<&EntityType>)>,
+    q_target: Query<(&Loc, &Health, &Side)>,
     q_home: Query<&Loc, Without<Chase>>,
     nntree: Res<NNTree>,
     map: Res<Map>,
@@ -190,7 +174,7 @@ pub fn chase(
             target.entity = held;
             target.last_target = held.or(target.last_target);
         }
-        let Some((held, (target_loc, _, _, target_kind))) = held.and_then(|held| Some((held, q_target.get(held).ok()?))) else {
+        let Some((held, (target_loc, _, _))) = held.and_then(|held| Some((held, q_target.get(held).ok()?))) else {
             continue;
         };
         let target_heading = headings.get(&held);
@@ -207,28 +191,34 @@ pub fn chase(
             _ => None,
         };
         let mind = mind_of(archetype);
-        // What a shot from a heading costs of the stamina it has, and
-        // whether it breaks stride: across its line a swing spends stamina,
-        // the more the further round its arc, and breaks stride but in a
-        // Perfect Stride
+        // Circling, Grace steps toward its target's back, Patience toward
+        // its den; it is weighed by what a strike costs on that step's
+        // heading of the stamina it has, and whether it breaks stride:
+        // across its line a swing spends stamina, the more the further
+        // round its arc, and breaks stride, both but in a Perfect Stride
+        let patient = attrs.is_some_and(|attrs| attrs.patience().index() > 0);
+        let distance = loc.flat_distance(target_loc);
+        let behind = **target_loc + target_heading.map_or(Qrz::default(), |heading| heading.reversed().hex_dir() * distance);
+        let rounding = floor.and_then(|floor| Some((floor, round(&map, &nntree, floor, **target_loc, if patient { *home } else { behind })?)));
         let striding = status.is_some_and(Status::is_striding);
         let held = stamina.map_or(f32::INFINITY, |stamina| stamina.state.max(f32::EPSILON));
-        let shot = |heading: Heading| (
-            tuning.off_arc_stamina * across_share(&heading, loc, target_loc) / held,
-            across(Some(&heading), loc, target_loc) && !striding,
-        );
-        let mut footing = Footing {
+        let (strike_cost, breaks_stride) = rounding.map_or((0.0, false), |(floor, next)| {
+            let heading = Heading::from_hex(Qrz { z: 0, ..next - floor });
+            let share = if striding { 0.0 } else { across_share(&heading, loc, target_loc) };
+            (tuning.off_arc_stamina * share / held, across(Some(&heading), loc, target_loc) && !striding)
+        });
+        let footing = Footing {
             placed: match assigned {
                 Some(hex) => loc.flat_distance(&Loc::new(hex.0)) == 0,
                 None => loc.distance(target_loc) <= chase.attack_range,
             },
-            ranged: chase.ranged(),
-            strikes_running: **loc != **target_loc && stamina.map_or(true, |stamina| stamina.state >= tuning.off_arc_stamina),
-            shot_cost: 0.0,
-            breaks_stride: false,
+            grace: attrs.is_some_and(|attrs| attrs.grace().index() > 0),
+            foe_facing: target_heading.is_none_or(|&heading| is_in_facing_cone(heading, *target_loc, *loc)),
+            strike_cost,
+            breaks_stride,
             // It knows how far its target strikes from by having been
-            // struck, and before that by its Approach
-            pursuit_pays: sight.map_or(0, Sight::reach).max(super::reach_guessed(super::approach_of(target_kind))) >= target_loc.distance(loc)
+            // struck, and before that takes it for a melee swing's
+            pursuit_pays: sight.map_or(0, Sight::reach).max(AttackRange::default().0) >= target_loc.distance(loc)
                 || target_heading.is_none_or(|&heading| is_in_facing_cone(heading, *target_loc, *loc)),
             at_leash: from_home >= chase.leash_distance - LEASH_EDGE && target_loc.flat_distance(&home) > from_home,
             leash_room: (chase.leash_distance - from_home) as f32 / chase.leash_distance.max(1) as f32,
@@ -241,14 +231,6 @@ pub fn chase(
             patience: attrs.filter(|_| swing.is_some_and(|swing| swing.due.is_some()))
                 .map_or(0, |attrs| attrs.patience().index() as u32),
         };
-        // Kiting, it runs on the heading that best weighs running away
-        // against what its shots cost there, and the kite is scored on it
-        let outward = (from_home >= chase.leash_distance - LEASH_MARGIN).then(|| Heading::from_hex(Qrz { z: 0, ..**loc - *home }));
-        let kite = kiting(*loc, *target_loc, arc_of(attrs), body.turn.heading, outward, |heading| {
-            let (cost, breaks) = shot(heading);
-            moves::shot_value(&footing, cost, breaks, &mind)
-        });
-        (footing.shot_cost, footing.breaks_stride) = shot(kite);
         let chosen = moves::choose(&footing, under_way.as_deref().copied().unwrap_or_default(), &mind);
         if let Some(under_way) = under_way.as_mut().filter(|under_way| ***under_way != chosen) {
             if let Some(decisions) = decisions.as_mut() {
@@ -261,13 +243,13 @@ pub fn chase(
                 body.face(loc, **target_loc, dt_ms, &map, &nntree);
                 continue;
             }
-            Move::Kite | Move::Flee => {
-                let goal = if chosen == Move::Kite { kite } else { kiting(*loc, *target_loc, FLEE_ARC, body.turn.heading, outward, |_| 1.0) };
-                body.steer(goal, Walk::Forward, speed, dt_ms, &map, &nntree);
+            Move::Flee => {
+                let outward = (from_home >= chase.leash_distance - LEASH_MARGIN).then(|| Heading::from_hex(Qrz { z: 0, ..**loc - *home }));
+                body.steer(fleeing(*loc, *target_loc, body.turn.heading, outward), Walk::Forward, speed, dt_ms, &map, &nntree);
                 continue;
             }
             Move::Circle => {
-                if let Some((floor, next)) = floor.and_then(|floor| Some((floor, round(&map, &nntree, floor, **target_loc, *home)?))) {
+                if let Some((floor, next)) = rounding {
                     body.step_toward(loc, floor, next, speed, dt_ms, &map, &nntree);
                 } else {
                     body.face(loc, **target_loc, dt_ms, &map, &nntree);
@@ -348,41 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn a_kiter_runs_the_way_most_directly_from_its_target_that_still_strikes_it() {
-        use common_bevy::systems::targeting::within_arc;
-        let here = Loc::new(Qrz { q: 0, r: 0, z: 1 });
-        let target = Loc::new(Qrz { q: 5, r: 0, z: 1 });
-        let toward = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
-        for arc in [60.0, 90.0, 120.0, 150.0] {
-            let goal = kiting(here, target, arc, toward, None, |_| 1.0);
-            assert!(within_arc(goal, arc, here, target), "at {arc} it still strikes its target");
-            assert!(!within_arc(goal, arc - 2.0 * SLOT_DEGREES, here, target), "from the edge of the arc");
-        }
-        let away = |arc| toward.reversed().turn_toward(kiting(here, target, arc, toward, None, |_| 1.0)).1;
-        assert!(away(150.0) < away(90.0), "more Grace runs more directly away");
-
-        let (left, right) = (toward.turned(-2), toward.turned(2));
-        let run = |facing| kiting(here, target, 150.0, facing, None, |_| 1.0);
-        assert_ne!(run(left), run(right), "it runs to the side it already leans");
-        assert_eq!(run(run(left)), run(left), "and holds that course");
-    }
-
-    #[test]
-    fn shots_dear_far_round_its_arc_turn_its_run_in_toward_its_target() {
-        use common_bevy::systems::targeting::within_arc;
-        let here = Loc::new(Qrz { q: 0, r: 0, z: 1 });
-        let target = Loc::new(Qrz { q: 5, r: 0, z: 1 });
-        let toward = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
-        let free = kiting(here, target, 150.0, toward, None, |_| 1.0);
-        let dear = kiting(here, target, 150.0, toward, None, |heading| if within_arc(heading, 120.0, here, target) { 1.0 } else { 0.2 });
-        let away = |heading: Heading| toward.reversed().turn_toward(heading).1;
-        assert!(away(dear) > away(free), "it runs less directly away");
-        assert!(within_arc(dear, 120.0, here, target), "on a heading its shots come cheaper from");
-    }
-
-    #[test]
-    fn near_its_leash_a_kiter_turns_along_it_and_never_further_out() {
-        use common_bevy::systems::targeting::within_arc;
+    fn a_fleeing_npc_runs_straight_away_and_near_its_leash_along_it_never_further_out() {
         let here = Loc::new(Qrz { q: 0, r: 0, z: 1 });
         let east = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
         let outward = east;
@@ -390,20 +338,14 @@ mod tests {
 
         // Its target comes from its den's side: straight away from it is straight out
         let chaser = Loc::new(Qrz { q: -5, r: 0, z: 1 });
-        assert!(outward.turn_toward(kiting(here, chaser, 150.0, east, None, |_| 1.0)).1 < quarter, "clear of its leash it runs out");
-        let along = kiting(here, chaser, 150.0, east, Some(outward), |_| 1.0);
+        assert_eq!(fleeing(here, chaser, east, None), east, "clear of its leash it runs straight away");
+        let along = fleeing(here, chaser, east, Some(outward));
         assert_eq!(outward.turn_toward(along).1, quarter, "near it, along the leash: as far from its target as that allows");
-        assert!(within_arc(along, 150.0, here, chaser), "still striking it");
-        assert_eq!(kiting(here, chaser, 150.0, along, Some(outward), |_| 1.0), along, "and it keeps circling the way it goes");
+        assert_eq!(fleeing(here, chaser, along, Some(outward)), along, "and it keeps going the way it goes");
 
         // Its target stands further out than it: away from it is already inward
         let beyond = Loc::new(Qrz { q: 5, r: 0, z: 1 });
-        assert_eq!(kiting(here, beyond, 150.0, east, Some(outward), |_| 1.0), kiting(here, beyond, 150.0, east, None, |_| 1.0), "a heading that leads in is taken as it is");
-
-        // With no Grace no heading that strikes a target further out leads in: the least outward
-        let narrow = kiting(here, beyond, 60.0, east, Some(outward), |_| 1.0);
-        assert!(within_arc(narrow, 60.0, here, beyond));
-        assert_eq!(outward.turn_toward(narrow).1, 3, "the edge of its arc, as far from out as it reaches");
+        assert_eq!(fleeing(here, beyond, east, Some(outward)), fleeing(here, beyond, east, None), "a heading that leads in is taken as it is");
     }
 
     #[test]

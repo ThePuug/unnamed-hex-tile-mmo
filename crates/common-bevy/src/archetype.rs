@@ -42,12 +42,21 @@ impl EnemyArchetype {
         use Resilience::*;
         match self {
             Self::Berserker  => Profile { name: "Wild Dog",      ability: Frenzy,        approach: Direct,    resilience: Primal,   build: [-1, 0, 0] },
-            Self::Juggernaut => Profile { name: "Juggernaut",    ability: Feint,         approach: Binding,   resilience: Vital,    build: [0, -1, 0] },
+            Self::Juggernaut => Profile { name: "Juggernaut",    ability: Overpower,     approach: Binding,   resilience: Vital,    build: [0, -1, 0] },
             Self::Kiter      => Profile { name: "Forest Sprite", ability: PerfectStride, approach: Distant,   resilience: Mental,   build: [1, 0, 0] },
             Self::Defender   => Profile { name: "Defender",      ability: Counter,       approach: Patient,   resilience: Hardened, build: [0, 0, 1] },
             Self::Skirmisher => Profile { name: "Skirmisher",    ability: Leap,          approach: Evasive,   resilience: Shielded, build: [0, 0, -1] },
-            Self::Ambusher   => Profile { name: "Ambusher",      ability: Parry,         approach: Ambushing, resilience: Blessed,  build: [0, 1, 0] },
+            Self::Ambusher   => Profile { name: "Ambusher",      ability: Punish,        approach: Ambushing, resilience: Blessed,  build: [0, 1, 0] },
         }
+    }
+}
+
+impl EnemyArchetype {
+    /// The skills an NPC of it holds: its own, and a Feint and a Parry, as
+    /// every fighter does
+    pub fn bar(self) -> Vec<AbilityType> {
+        let own = self.profile().ability;
+        std::iter::once(own).chain([AbilityType::Feint, AbilityType::Parry].into_iter().filter(|&shared| shared != own)).collect()
     }
 }
 

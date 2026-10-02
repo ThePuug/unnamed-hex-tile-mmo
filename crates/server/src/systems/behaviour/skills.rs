@@ -29,7 +29,7 @@ pub const WAIT: f32 = 0.35;
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
     "fatigue_after", "foe_just_acted", "worth_answering", "pressure_share", "span_closed",
-    "room_to_land", "room_to_dodge", "combo_offered", "burst_carried", "grit_banked",
+    "room_to_land", "combo_offered", "burst_carried", "grit_banked", "strike_worth", "opening",
     "reactions_left", "bank_empty", "bank_full", "foe_across",
 ];
 
@@ -49,8 +49,8 @@ pub struct View {
     pub recovery: Option<GlobalRecovery>,
     /// Whether a Perfect Stride holds
     pub striding: bool,
-    /// Blows its Grit holds
-    pub grit_held: u8,
+    /// How full its Grit's bank is, of what it holds full
+    pub grit_filled: f32,
     /// Swings its Patience holds behind the due one
     pub banked: u32,
     /// Its swing clock runs, in a fight, so its Patience banks
@@ -76,8 +76,6 @@ pub struct Threats {
     pub swept: f32,
     /// Of that, what auto-attacks would deal
     pub swept_pressure: f32,
-    /// The front threat's damage
-    pub front: f32,
     /// How long ago the front threat was queued, against its user's span:
     /// a threat queued after the span closes lands past it
     pub span_closed: f32,
@@ -102,7 +100,6 @@ impl Threats {
         Self {
             swept: damage,
             swept_pressure: pressure,
-            front: front.damage + front.dot_left(),
             span_closed: if span.is_zero() { 1.0 } else { since / span.as_secs_f32() },
         }
     }
@@ -112,6 +109,8 @@ impl Threats {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Foe {
     pub distance: i32,
+    /// The health it has left, as its target frame shows it
+    pub health: f32,
     /// Within the arc it strikes within
     pub in_arc: bool,
     /// Past its forward faces, where a swing breaks its stride
@@ -181,9 +180,10 @@ fn reasons(ability: AbilityType, view: &View) -> Vec<(&'static str, Vec<Consider
     let patient = view.banking && view.attrs.patience().index() > 0;
     let parts: &[(&'static str, Part)] = match ability {
         AbilityType::AutoAttack => &[],
-        AbilityType::Frenzy | AbilityType::Feint => &[("strike", Part::Strike)],
+        AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower => &[("strike", Part::Strike)],
+        AbilityType::Punish => &[("punish", Part::Strike)],
         AbilityType::Parry | AbilityType::Counter => &[("answer", Part::Reaction)],
-        AbilityType::Leap => &[("dodge", Part::Clear), ("bank", Part::Clear), ("dive", Part::Dive)],
+        AbilityType::Leap => &[("bank", Part::Clear), ("dive", Part::Dive)],
         AbilityType::PerfectStride => &[("stride", Part::Stance)],
     };
     parts.iter()
@@ -199,9 +199,9 @@ fn reasons(ability: AbilityType, view: &View) -> Vec<(&'static str, Vec<Consider
 
 fn part_considerations(reason: &str, part: Part) -> Vec<Considered> {
     match (part, reason) {
-        (Part::Strike, _) => vec![FOE_STRUCK, FOE_JUST_ACTED, CAPACITY],
+        (Part::Strike, "punish") => vec![FOE_STRUCK, FOE_JUST_ACTED, CAPACITY, STRIKE_WORTH, OPENING],
+        (Part::Strike, _) => vec![FOE_STRUCK, FOE_JUST_ACTED, CAPACITY, STRIKE_WORTH],
         (Part::Reaction, _) => vec![WORTH_ANSWERING, PRESSURE, SPAN_CLOSED],
-        (Part::Clear, "dodge") => vec![FOE_IN_REACH, WORTH_ANSWERING, ROOM_TO_DODGE],
         (Part::Clear, _) => vec![FOE_IN_REACH, ROOM_TO_LAND],
         (Part::Dive, _) => vec![FOE_OUT_OF_REACH, FOE_WITHIN_A_DIVE, CAPACITY],
         (Part::Stance, _) => vec![NOT_STRIDING, FOE_IN_REACH],
@@ -213,7 +213,7 @@ fn commitment_considerations(ability: AbilityType, reason: &str, part: Part, att
     if attrs.ferocity().index() > 0 && ability.combo().is_some() {
         considerations.extend([COMBO_OFFERED, BURST_CARRIED]);
     }
-    if attrs.grit_holds() > 0 && matches!(part, Part::Strike | Part::Dive) {
+    if attrs.grit_fill() > 0 && part == Part::Strike {
         considerations.push(GRIT_BANKED);
     }
     if attrs.preparation().index() > 0 && part == Part::Reaction {
@@ -257,11 +257,10 @@ const OPEN: Considered = step("open", |view| {
     flag(may_use(view.ability, recovery) || reacts_through(view.ability, recovery, Some(&view.attrs)))
 });
 
-/// It has the stamina, and a Parry the endurance for the front threat
+/// It has the stamina; endurance refuses nothing, and is weighed as the
+/// fatigue it leaves
 const AFFORDABLE: Considered = step("affordable", |view| {
-    let stamina = view.stamina >= common_bevy::tuning::tuning().cost(view.ability);
-    let endurance = view.ability != AbilityType::Parry || view.endurance >= view.attrs.parry_effort(view.queue.front);
-    flag(stamina && endurance)
+    flag(view.stamina >= common_bevy::tuning::tuning().cost(view.ability))
 });
 
 /// The fatigue it would be left with once it paid the skill's endurance:
@@ -272,7 +271,7 @@ const ENDURANCE: Considered = Consideration {
     name: "fatigue_after",
     read: |view| {
         let price = match view.ability {
-            AbilityType::Parry => view.attrs.parry_effort(view.queue.swept),
+            ability if ability.is_reaction() => view.attrs.skill_endurance(ability) + view.attrs.reaction_effort(view.queue.swept),
             ability => view.attrs.skill_endurance(ability),
         };
         Endurance { state: (view.endurance - price).max(0.0), max: view.endurance_max }.fatigue()
@@ -297,6 +296,15 @@ const FOE_JUST_ACTED: Considered = Consideration {
     read: |view| view.foe.and_then(|foe| foe.since_skill).unwrap_or(f32::INFINITY),
     bounds: (2.0, 0.0),
     curve: Curve::RISING.floored(0.6),
+};
+
+/// Punish: what it pays for is a foe still recovering, so the opening a
+/// skill it just used leaves weighs on it apart from any strike's
+const OPENING: Considered = Consideration {
+    name: "opening",
+    read: |view| view.foe.and_then(|foe| foe.since_skill).unwrap_or(f32::INFINITY),
+    bounds: (2.0, 0.0),
+    curve: Curve::RISING.floored(0.2),
 };
 
 // --- Reaction, and a leap clear to dodge ---
@@ -347,14 +355,6 @@ const ROOM_TO_LAND: Considered = Consideration {
     curve: Curve::RISING,
 };
 
-/// A dodge clears its span wherever it lands, so a short room only weighs
-const ROOM_TO_DODGE: Considered = Consideration {
-    name: "room_to_dodge",
-    read: |view| view.clear_room,
-    bounds: (0.0, 0.3),
-    curve: Curve::RISING.floored(0.4),
-};
-
 // --- Stance ---
 
 const NOT_STRIDING: Considered = step("not_striding", |view| flag(!view.striding));
@@ -380,10 +380,25 @@ const BURST_CARRIED: Considered = Consideration {
     curve: Curve::RISING.floored(0.4),
 };
 
-/// Grit: the blows banked, against what it holds
+/// What a strike deals, as a share of the health its foe has left: how much
+/// nearer it brings the kill, a finishing blow most. More by Grit's share
+/// with a full bank to release into it
+const STRIKE_WORTH: Considered = Consideration {
+    name: "strike_worth",
+    read: |view| {
+        let tuning = common_bevy::tuning::tuning();
+        let release = if view.grit_filled >= 1.0 { 1.0 + tuning.grit_share } else { 1.0 };
+        let dealt = view.attrs.skill_potency(view.ability) * tuning.damage(view.ability) * release;
+        view.foe.map_or(0.0, |foe| dealt / foe.health.max(1.0))
+    },
+    bounds: (0.0, 0.25),
+    curve: Curve::RISING.floored(0.3),
+};
+
+/// Grit: how full its bank is, only a full one released
 const GRIT_BANKED: Considered = Consideration {
     name: "grit_banked",
-    read: |view| view.grit_held as f32 / view.attrs.grit_holds().max(1) as f32,
+    read: |view| view.grit_filled,
     bounds: (0.0, 1.0),
     curve: Curve::RISING.floored(0.3),
 };
@@ -444,11 +459,12 @@ mod tests {
             attrs,
             health: 600.0,
             stamina: 100.0,
-            endurance: attrs.max_endurance(),
-            endurance_max: attrs.max_endurance(),
+            // A pool deep enough to clear the blows these tests queue
+            endurance: attrs.max_endurance().max(1000.0),
+            endurance_max: attrs.max_endurance().max(1000.0),
             recovery: None,
             striding: false,
-            grit_held: 0,
+            grit_filled: 0.0,
             banked: 0,
             banking: true,
             reach: 2,
@@ -456,7 +472,7 @@ mod tests {
             clear_room: 1.0,
             capacity_taken: false,
             queue: Threats::default(),
-            foe: Some(Foe { distance: 1, in_arc: true, across: false, since_skill: None }),
+            foe: Some(Foe { distance: 1, health: 600.0, in_arc: true, across: false, since_skill: None }),
         }
     }
 
@@ -543,13 +559,31 @@ mod tests {
     }
 
     #[test]
-    fn grit_strikes_harder_the_more_it_has_banked() {
+    fn grit_strikes_more_readily_the_fuller_its_bank() {
         let gritty = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
-        assert!(gritty.grit_holds() > 0);
+        assert!(gritty.grit_fill() > 0);
         let mut empty = view(AbilityType::Feint, gritty);
         let mut full = view(AbilityType::Feint, gritty);
-        full.grit_held = gritty.grit_holds();
+        full.grit_filled = 1.0;
         assert!(scored(&mut full, "strike") > scored(&mut empty, "strike"));
+    }
+
+    #[test]
+    fn a_punish_waits_for_an_opening() {
+        let mut fresh = view(AbilityType::Punish, ActorAttributes::default());
+        let mut opened = fresh.clone();
+        opened.foe = Some(Foe { since_skill: Some(0.2), ..opened.foe.unwrap() });
+        assert!(scored(&mut opened, "punish") > scored(&mut fresh, "punish"));
+    }
+
+    #[test]
+    fn a_heavier_strike_and_a_weaker_foe_are_worth_more() {
+        let plain = ActorAttributes::default();
+        let (mut light, mut heavy) = (view(AbilityType::Feint, plain), view(AbilityType::Overpower, plain));
+        assert!(scored(&mut heavy, "strike") > scored(&mut light, "strike"));
+        let mut finishing = view(AbilityType::Feint, plain);
+        finishing.foe = Some(Foe { health: 20.0, ..finishing.foe.unwrap() });
+        assert!(scored(&mut finishing, "strike") > scored(&mut light, "strike"), "a blow that nears the kill");
     }
 
     #[test]
@@ -580,11 +614,11 @@ mod tests {
     }
 
     #[test]
-    fn without_patience_a_leap_clear_is_only_a_dodge() {
+    fn without_patience_nothing_pays_a_leap_clear() {
         let mut plain = view(AbilityType::Leap, ActorAttributes::default());
         let reasons: Vec<&str> = weigh(&mut plain, &[AbilityType::Leap], &Mind::default()).iter().map(|decision| decision.reason).collect();
-        assert!(!reasons.contains(&"bank"));
-        assert!(choose(&mut plain, &[AbilityType::Leap], &Mind::default(), || 0.0).is_none(), "in reach with nothing queued, it stays");
+        assert_eq!(reasons, vec!["dive"]);
+        assert!(choose(&mut plain, &[AbilityType::Leap], &Mind::default(), || 0.0).is_none(), "in reach, it stays");
     }
 
     #[test]

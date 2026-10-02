@@ -575,24 +575,27 @@ impl ActorAttributes {
     }
 
     /// The endurance `ability`, a skill, costs this actor:
-    /// `Tuning::endurance_cost` for each point of the potency it reads
-    /// (`skill_potency`). It grows with level as the pool does, so a pool
-    /// with no Discipline in it holds the same count of a build's skills at
-    /// any level. A Parry pays by what it turns aside instead
-    /// (`parry_effort`).
+    /// `Tuning::endurance_cost` of the potency it reads (`skill_potency`)
+    /// for each point of stamina it costs, so a cheap skill is cheap in
+    /// both. It grows with level as the pool does, so a pool with no
+    /// Discipline in it holds the same count of a build's skills at any
+    /// level. A reaction pays besides for what it clears
+    /// (`reaction_effort`).
     pub fn skill_endurance(&self, ability: crate::message::AbilityType) -> f32 {
-        crate::tuning::tuning().endurance_cost * self.skill_potency(ability)
+        let tuning = crate::tuning::tuning();
+        tuning.endurance_cost * tuning.cost(ability) * self.skill_potency(ability)
     }
 
-    /// The endurance it costs this actor to parry a threat of `damage`:
-    /// `Tuning::parry_per_threat` of base potency for the threat itself and
-    /// `Tuning::parry_effort` for each point of its damage, with no Resolve,
-    /// all of it less by its Concentration over base potency. A threat costs
-    /// something however light, so a stream of small ones is not parried free.
-    pub fn parry_effort(&self, damage: f32) -> f32 {
+    /// The endurance it costs this actor's reaction to clear a threat of
+    /// `damage`, beside the reaction's flat cost: `Tuning::reaction_per_threat`
+    /// of base potency for the threat itself and `Tuning::reaction_effort`
+    /// for each point of its damage, with no Resolve, all of it less by its
+    /// Concentration over base potency. A threat costs something however
+    /// light, so a stream of small ones is not cleared free.
+    pub fn reaction_effort(&self, damage: f32) -> f32 {
         let tuning = crate::tuning::tuning();
         let base = self.base_potency();
-        (tuning.parry_per_threat * base + damage * tuning.parry_effort) * base / self.concentration()
+        (tuning.reaction_per_threat * base + damage * tuning.reaction_effort) * base / self.concentration()
     }
 
     /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
@@ -602,7 +605,7 @@ impl ActorAttributes {
         self.base_potency() * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(Attribute::Might))
     }
 
-    /// How much longer and harder the stuns, dazes, slows and knockbacks this
+    /// How much longer and harder the stuns, slows and knockbacks this
     /// actor inflicts with `ability` hold: 1 with none of the attribute the
     /// ability reads, `Tuning::effect_hold` more at the ceiling of that
     /// attribute's share. A share, never the potency, so an effect keeps
@@ -627,10 +630,9 @@ impl ActorAttributes {
         self.preparation().between(tuning.preparation_relief_min, tuning.preparation_relief_max)
     }
 
-    /// How many of the blows this actor lets land its Grit banks for its
-    /// next skill to strike with (`components::grit::Grit`): its tier's
-    /// index, 0 to 3, each at `Tuning::grit_share` of the blow.
-    pub fn grit_holds(&self) -> u8 {
+    /// How much each blow this actor lets land fills its Grit's bank
+    /// (`components::grit::Grit`): its tier's index, 0 to 3.
+    pub fn grit_fill(&self) -> u8 {
         self.grit().index() as u8
     }
 
@@ -758,6 +760,8 @@ mod tests {
         assert!(instinctive.skill_endurance(Frenzy) > mighty.skill_endurance(Frenzy), "a skill costs by the potency it reads");
         assert_eq!(instinctive.skill_endurance(Counter), mighty.skill_endurance(Counter));
         assert!(resolute.skill_endurance(Counter) > mighty.skill_endurance(Counter));
+        use crate::message::AbilityType::{Feint, Overpower};
+        assert!(plain.skill_endurance(Feint) < plain.skill_endurance(Overpower), "a skill cheap in stamina is cheap in endurance");
     }
 
     #[test]
@@ -766,7 +770,7 @@ mod tests {
         let instinctive = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
         let resolute = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
-        for action in [Frenzy, Feint, Leap, PerfectStride] {
+        for action in [Frenzy, Feint, Overpower, Punish, Leap, PerfectStride] {
             assert_eq!(instinctive.skill_potency(action), instinctive.intuition(), "{action:?}");
             assert_eq!(resolute.skill_potency(action), resolute.base_potency(), "{action:?} reads no Resolve");
             assert!(instinctive.hold(action) > 1.0 && resolute.hold(action) == 1.0, "its effects hold by Intuition's share");
@@ -777,10 +781,10 @@ mod tests {
             assert!(resolute.hold(reaction) > 1.0 && instinctive.hold(reaction) == 1.0, "its effects hold by Concentration's share");
         }
         assert_eq!(mighty.skill_potency(Frenzy), mighty.base_potency(), "with none of either, base potency");
-        assert_eq!(mighty.parry_effort(10.0), instinctive.parry_effort(10.0), "a parry costs the same with no Resolve");
-        assert!(resolute.parry_effort(10.0) < mighty.parry_effort(10.0), "and less by Concentration");
-        assert!(mighty.parry_effort(20.0) > mighty.parry_effort(10.0), "more by the damage it turns aside");
-        assert!(mighty.parry_effort(0.0) > 0.0, "and something for a threat however light");
+        assert_eq!(mighty.reaction_effort(10.0), instinctive.reaction_effort(10.0), "a parry costs the same with no Resolve");
+        assert!(resolute.reaction_effort(10.0) < mighty.reaction_effort(10.0), "and less by Concentration");
+        assert!(mighty.reaction_effort(20.0) > mighty.reaction_effort(10.0), "more by the damage it turns aside");
+        assert!(mighty.reaction_effort(0.0) > 0.0, "and something for a threat however light");
         assert!(instinctive.hold(Frenzy) < 1.0 + crate::tuning::tuning().effect_hold, "a share keeps an effect under its ceiling");
     }
 

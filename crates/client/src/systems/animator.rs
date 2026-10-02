@@ -88,13 +88,13 @@ impl Clip {
         }
     }
 
-    /// The one-shot an ability plays: a swing the attack, a Frenzy its
-    /// snap, a Feint the rattle, a Parry its sweep, a Counter the counter,
+    /// The one-shot an ability plays: a swing, an Overpower and a Punish the attack,
+    /// a Frenzy its snap, a Feint the rattle, a Parry its sweep, a Counter the counter,
     /// a Leap the disengage, whichever way it goes. A Perfect Stride plays
     /// none: the gait it keeps shows it.
     pub fn of(ability: AbilityType) -> Option<Clip> {
         match ability {
-            AbilityType::AutoAttack => Some(Clip::Attack),
+            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Punish => Some(Clip::Attack),
             AbilityType::Frenzy => Some(Clip::Frenzy),
             AbilityType::Feint => Some(Clip::Rattle),
             AbilityType::Parry => Some(Clip::Parry),
@@ -125,14 +125,12 @@ pub struct Rig(pub Handle<Gltf>);
 /// What a clip declares in the asset's extras, under `animgen` on the
 /// armature node, keyed by the clip's name: its length in seconds, the
 /// ground one cycle covers in the model's units — zero for a clip that
-/// covers none — a jump's three moments, and the seconds a clip of two
-/// blows lands each at.
+/// covers none — and a jump's three moments.
 #[derive(Clone, Debug, Deserialize)]
 struct Declaration {
     stride: Option<f32>,
     seconds: Option<f32>,
     flights: Option<Vec<[f32; 3]>>,
-    beats: Option<Vec<f32>>,
     leave: Option<f32>,
     freeze: Option<f32>,
     land: Option<f32>,
@@ -240,7 +238,6 @@ pub struct Clips {
     jump: Option<Moments>,
     strides: HashMap<Clip, Stride>,
     freezes: HashMap<Clip, f32>,
-    gaps: HashMap<Clip, f32>,
 }
 
 impl Clips {
@@ -266,9 +263,6 @@ impl Clips {
             if let Some(freeze) = declared.animgen.get(clip.name()).and_then(|d| d.freeze) {
                 clips.freezes.insert(clip, freeze);
             }
-            if let Some(&[first, second, ..]) = declared.animgen.get(clip.name()).and_then(|d| d.beats.as_deref()) {
-                clips.gaps.insert(clip, second - first);
-            }
         }
         for clip in Clip::STRIDED {
             let Some(d) = declared.animgen.get(clip.name()) else { continue };
@@ -289,12 +283,6 @@ impl Clips {
     /// asset has it and its stand-in where not, with the clip it is.
     fn playing(&self, clip: Clip) -> Option<(Clip, AnimationNodeIndex)> {
         [Some(clip), clip.stand_in()].into_iter().flatten().find_map(|clip| Some((clip, self.node(clip)?)))
-    }
-
-    /// How long `clip` runs between its two blows, as authored, where it
-    /// declares them.
-    fn gap(&self, clip: Clip) -> Option<f32> {
-        self.gaps.get(&clip).copied()
     }
 
     /// Whether `node` plays `clip`.
@@ -413,12 +401,6 @@ impl Jumping {
     }
 }
 
-/// The playback rate that lands a clip's two blows `apart` seconds from
-/// each other, when it authors them `authored` apart.
-fn pace(authored: f32, apart: f32) -> f32 {
-    authored / apart
-}
-
 /// A swing that came in behind a leap's slide, played once the slide ends:
 /// a Leap onto a target lands the swing it banked the frame after, and the
 /// swing's clip would cut the flight off at once.
@@ -430,10 +412,8 @@ const BLEND: Duration = Duration::from_millis(120);
 const SETTLE: Duration = Duration::from_millis(300);
 
 /// Plays the one-shot for each ability the server confirms, where the
-/// actor's graph has that clip or its stand-in. A Feint plays at the rate
-/// that lands its clip's two blows as far apart as the server queues them
-/// (`Tuning::feint_gap`); a swing behind a leap's slide waits for it to end
-/// (`Held`).
+/// actor's graph has that clip or its stand-in. A swing behind a leap's
+/// slide waits for it to end (`Held`).
 pub fn play_abilities(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
@@ -450,11 +430,7 @@ pub fn play_abilities(
             commands.entity(*ent).insert(Held(clip));
             continue;
         }
-        let rate = match (*ability, clips.gap(clip)) {
-            (AbilityType::Feint, Some(authored)) => pace(authored, common_bevy::tuning::tuning().feint_gap),
-            _ => 1.,
-        };
-        transitions.play(&mut player, node, BLEND).set_speed(rate);
+        transitions.play(&mut player, node, BLEND);
     }
 }
 
@@ -636,13 +612,6 @@ mod tests {
             assert!(held_in > 0.0, "at x{rate} no flight's top was held");
             assert_eq!(held_out, 0.0, "at x{rate} it held with a foot down");
         }
-    }
-
-    #[test]
-    fn a_shorter_gap_between_blows_plays_the_clip_faster() {
-        assert!((pace(0.4, 0.4) - 1.0).abs() < 1e-6, "the authored gap plays as authored");
-        assert!(pace(0.4, 0.2) > pace(0.4, 0.4));
-        assert!(pace(0.4, 0.8) < pace(0.4, 0.4));
     }
 
     #[test]

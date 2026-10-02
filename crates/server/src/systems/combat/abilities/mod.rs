@@ -28,7 +28,9 @@ pub mod feint;
 pub mod frenzy;
 pub mod leap;
 pub mod npc;
+pub mod overpower;
 pub mod parry;
+pub mod punish;
 pub mod stride;
 
 use std::time::Duration;
@@ -102,9 +104,13 @@ pub struct LastSkill(pub Duration);
 /// A skill's strike made whole and at once ([`Abilities::strike`])
 pub const WHOLE: [(f32, Duration); 1] = [(1.0, Duration::ZERO)];
 
-/// The most of its pace a bind dazes away, so a dazed actor still moves
-/// and swings
-const MOST_BIND: f32 = 0.6;
+/// A strike of `damage`, and the share of its target's speed it binds away:
+/// `Tuning::grit_share` harder and `grit_bind` binding with a full Grit
+/// bank `released` into it, as it is without.
+fn released_into(damage: f32, released: bool) -> (f32, f32) {
+    let tuning = common_bevy::tuning::tuning();
+    if released { (damage * (1.0 + tuning.grit_share), tuning.grit_bind) } else { (damage, 0.0) }
+}
 
 /// Everything an ability reads or changes as it is used.
 #[derive(SystemParam)]
@@ -128,7 +134,7 @@ pub struct Abilities<'w, 's> {
     pub swings: Query<'w, 's, &'static mut Swing>,
     pub grits: Query<'w, 's, &'static mut Grit>,
     pub targets: Query<'w, 's, (Entity, &'static Target)>,
-    pub npcs: Query<'w, 's, (Entity, &'static EntityType), With<Chase>>,
+    pub npcs: Query<'w, 's, (Entity, &'static EntityType, &'static crate::systems::behaviour::Bar), With<Chase>>,
     pub minds: Query<'w, 's, (&'static Skill, &'static mut Sight)>,
     pub leashed: Query<'w, 's, (&'static Chase, &'static EngagementMember)>,
     pub dens: Query<'w, 's, &'static Loc, With<Engagement>>,
@@ -216,9 +222,11 @@ impl Abilities<'_, '_> {
 
         // A swing struck across the caster's line is a skill's effort: it
         // costs stamina, the more the further round its arc, and waits
-        // without it
+        // without it. A Perfect Stride waives it
         let across = cast.target_loc.is_some_and(|target_loc| targeting::across(heading.as_ref(), &loc, &target_loc));
-        let share = heading.as_ref().zip(cast.target_loc).map_or(0.0, |(heading, target_loc)| targeting::across_share(heading, &loc, &target_loc));
+        let share = if self.strides(ent) { 0.0 } else {
+            heading.as_ref().zip(cast.target_loc).map_or(0.0, |(heading, target_loc)| targeting::across_share(heading, &loc, &target_loc))
+        };
         let cost = tuning.cost(ability) + if ability == AbilityType::AutoAttack { tuning.off_arc_stamina * share } else { 0.0 };
         if self.stamina.get(ent).map_or(true, |stamina| stamina.state < cost) {
             return Err(Some(AbilityFailReason::InsufficientStamina));
@@ -233,6 +241,8 @@ impl Abilities<'_, '_> {
             AbilityType::AutoAttack => auto_attack::swing(self, &cast),
             AbilityType::Frenzy => frenzy::strike(self, &cast),
             AbilityType::Feint => feint::strike(self, &cast),
+            AbilityType::Overpower => overpower::strike(self, &cast),
+            AbilityType::Punish => punish::strike(self, &cast),
             AbilityType::Parry => parry::answer(self, &cast),
             AbilityType::Counter => counter::answer(self, &cast),
             AbilityType::Leap => leap::leap(self, &cast),
@@ -248,10 +258,10 @@ impl Abilities<'_, '_> {
         // Endurance is spent beside the stamina and refuses nothing: a
         // skill's, or for a swing struck across the caster's line a share
         // of the Force it strikes with, the more the further round its arc.
-        // A Parry has paid its own, by what it turned aside
+        // A reaction has paid besides for what it cleared (`react`)
         self.tire(ent, match ability {
             AbilityType::AutoAttack if across => tuning.off_arc_cost * share * attrs.force(),
-            AbilityType::AutoAttack | AbilityType::Parry => 0.0,
+            AbilityType::AutoAttack => 0.0,
             _ => attrs.skill_endurance(ability),
         });
         // Every client near draws it
@@ -308,18 +318,17 @@ impl Abilities<'_, '_> {
 
     /// Queues a skill's strike on `target` for `damage` in all, in `parts`:
     /// each a share of it, struck its delay after now ([`WHOLE`] for one
-    /// strike made at once). What the caster's Grit has banked strikes with
-    /// it, split as the damage is, and is spent, and its last part binds
-    /// its target, once: dazed out of `Tuning::grit_bind` of its pace for
-    /// each blow the bank held, as it lands, a Feint's real strike and not
-    /// its feint. Every skill that strikes deals its damage through here,
+    /// strike made at once). A full Grit bank is released into it
+    /// (`Grit::release`): it lands `Tuning::grit_share` harder, and its last
+    /// part binds its target, slowed out of `Tuning::grit_bind` of its speed
+    /// as it lands. Every skill that strikes deals its damage through here,
     /// and an auto-attack or a reaction's return never does.
     pub fn strike(&mut self, cast: &Cast, target: Entity, damage: f32, ability: AbilityType, parts: &[(f32, Duration)]) {
-        let (bank, held) = self.grits.get_mut(cast.ent).map_or((0.0, 0), |mut grit| grit.spend());
-        let bind = (common_bevy::tuning::tuning().grit_bind * held as f32).min(MOST_BIND);
+        let released = self.grits.get_mut(cast.ent).is_ok_and(|mut grit| grit.release());
+        let (damage, bind) = released_into(damage, released);
         for (i, &(share, delay)) in parts.iter().enumerate() {
             let bind = if i + 1 == parts.len() { bind } else { 0.0 };
-            self.deal(cast.ent, target, (damage + bank) * share, ability, bind, delay);
+            self.deal(cast.ent, target, damage * share, ability, bind, delay);
         }
     }
 
@@ -332,9 +341,24 @@ impl Abilities<'_, '_> {
         });
     }
 
+    /// The threats a reaction by `cast` clears, taken out of its user's
+    /// queue: the front one and those landing within its span behind it.
+    /// Each is paid for in endurance (`ActorAttributes::reaction_effort`),
+    /// which refuses nothing: a user without the endurance clears them all
+    /// the same and is spent, its fatigue the price. Errs with nothing
+    /// queued.
+    pub fn react(&mut self, cast: &Cast) -> Result<Vec<QueuedThreat>, AbilityFailReason> {
+        let cleared = self.clear(cast.ent, ClearType::Span(cast.attrs.span()));
+        if cleared.is_empty() {
+            return Err(AbilityFailReason::NoTargets);
+        }
+        let price: f32 = cleared.iter().map(|threat| cast.attrs.reaction_effort(threat.damage)).sum();
+        self.tire(cast.ent, price);
+        Ok(cleared)
+    }
+
     /// Takes the threats `clear_type` names out of `ent`'s queue, tells its
-    /// clients where any stood there, and returns them: a reaction's are
-    /// `ClearType::Span` of its user's span (`ActorAttributes::span`).
+    /// clients where any stood there, and returns them
     pub fn clear(&mut self, ent: Entity, clear_type: ClearType) -> Vec<QueuedThreat> {
         let Ok(mut queue) = self.queues.get_mut(ent) else { return Vec::new() };
         let cleared = clear_threats(&mut queue, clear_type);
@@ -503,19 +527,16 @@ mod tests {
     }
 
     #[test]
-    fn a_feint_queues_its_real_strike_the_gap_behind_and_splits_the_damage() {
+    fn a_feint_queues_one_light_strike() {
         let mut app = arena();
         let caster = actor(&mut app, Side::PLAYERS, 0);
         let near = actor(&mut app, Side::WILD, 1);
         app.update();
-        let tuning = common_bevy::tuning::tuning();
 
         assert!(used(&ask(&mut app, caster, AbilityType::Feint, Some(near)), AbilityType::Feint));
-        let [feint, real] = queue(&app, near)[..] else { panic!("a feint and a real strike") };
-        assert_eq!(real.lands_at() - feint.lands_at(), Duration::from_secs_f32(tuning.feint_gap), "the real strike lands the gap behind");
-        assert_eq!(real.timer_duration, feint.timer_duration, "each with the window any threat between the two takes");
-        assert!(feint.damage < real.damage, "the feint is the lesser share");
-        assert!(tuning.feint_gap > tuning.awareness_span_min, "a reaction with no Awareness takes one and not the other");
+        let [feint] = queue(&app, near)[..] else { panic!("one strike") };
+        let attrs = ActorAttributes::default();
+        assert!(feint.damage < attrs.skill_potency(AbilityType::Frenzy) * common_bevy::tuning::tuning().frenzy_damage, "lighter than a bite");
     }
 
     #[test]
@@ -551,12 +572,12 @@ mod tests {
         assert!(used(&ask(&mut app, attacker, AbilityType::Feint, Some(defender)), AbilityType::Feint));
         let before = app.world().get::<Health>(attacker).unwrap().state;
         assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry));
-        assert_eq!(queue(&app, defender).len(), 1, "the feint is parried; the real strike lands past a span with no Awareness");
+        assert!(queue(&app, defender).is_empty(), "the feint is parried");
         assert_eq!(app.world().get::<Health>(attacker).unwrap().state, before, "and nothing goes back");
     }
 
     #[test]
-    fn a_parry_pays_endurance_for_what_it_turns_aside_and_stops_at_what_it_cannot() {
+    fn a_reaction_pays_endurance_for_what_it_clears_and_without_it_is_spent_not_refused() {
         use common_bevy::systems::combat::queue::{create_threat, insert_threat};
         let mut app = arena();
         let defender = actor(&mut app, Side::PLAYERS, 0);
@@ -565,38 +586,29 @@ mod tests {
 
         let plain = ActorAttributes::default();
         let endurance = |app: &App| app.world().get::<Endurance>(defender).unwrap().state;
-        // The damage a parry pays `share` of the defender's whole pool for
         let pool = endurance(&app);
-        let (fixed, per_point) = (plain.parry_effort(0.0), plain.parry_effort(1.0) - plain.parry_effort(0.0));
-        let costing = |share: f32| (share * pool - fixed) / per_point;
         let queued = |app: &mut App, damage: f32, millis: u64| {
             let at = Duration::from_millis(millis);
             let threat = create_threat(attacker, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
             insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat, at);
         };
-        // Three within one span: the pool pays for the first two, not the third
-        for (damage, millis) in [(costing(0.5), 0), (costing(0.4), 50), (costing(0.3), 100)] {
-            queued(&mut app, damage, millis);
-        }
+        let flat = plain.skill_endurance(AbilityType::Parry);
+        queued(&mut app, 10.0, 0);
         assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry));
-        let left: Vec<u128> = queue(&app, defender).iter().map(|threat| threat.inserted_at.as_millis()).collect();
-        assert_eq!(left, vec![100], "the front two are paid for and cleared whole; the third stands");
-        let after = endurance(&app);
-        assert!((after - pool * 0.1).abs() < pool * 1e-3, "it paid for the two it cleared and nothing beside: {after} of {pool}");
+        let paid = pool - endurance(&app);
+        assert!((paid - flat - plain.reaction_effort(10.0)).abs() < 1e-3, "its flat cost as any skill, and a price for what it cleared: {paid}");
+
+        // More than the pool holds, in one span: all of it is cleared, and its user spent
+        app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
+        for millis in [0, 50, 100] {
+            queued(&mut app, pool * 10.0, millis);
+        }
+        assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry), "endurance refuses no reaction");
+        assert!(queue(&app, defender).is_empty(), "it clears its whole span");
+        assert_eq!(endurance(&app), 0.0, "and leaves its user spent");
 
         app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
-        app.world_mut().get_mut::<ReactionQueue>(defender).unwrap().threats.clear();
-        queued(&mut app, costing(0.05), 0);
-        queued(&mut app, costing(0.5), 50);
-        let stamina = app.world().get::<Stamina>(defender).unwrap().state;
-        assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry), "a large threat behind one it can pay for refuses nothing");
-        assert_eq!(queue(&app, defender).len(), 1, "it lands, with what stands behind it");
-
-        app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
-        let (before, stamina) = (endurance(&app), stamina - common_bevy::tuning::tuning().parry_cost);
-        assert_eq!(refused(&mut app, defender, AbilityType::Parry, None), Some(AbilityFailReason::NoTargets), "without the endurance for the front threat there is nothing to parry");
-        assert_eq!(endurance(&app), before, "and a refusal costs nothing");
-        assert_eq!(app.world().get::<Stamina>(defender).unwrap().state, stamina);
+        assert_eq!(refused(&mut app, defender, AbilityType::Parry, None), Some(AbilityFailReason::NoTargets), "with nothing queued there is nothing to answer");
     }
 
     #[test]
@@ -637,25 +649,19 @@ mod tests {
         app.update();
         assert_eq!(queue(&app, near).len(), 1, "its first swing waits in its target's queue");
 
-        // In reach, with a blow queued on it: clear of both
-        assert!(used(&ask(&mut app, near, AbilityType::Frenzy, Some(leaper)), AbilityType::Frenzy));
+        // In reach: clear of it, striking nothing
         assert!(used(&ask(&mut app, leaper, AbilityType::Leap, Some(near)), AbilityType::Leap));
         app.update();
         assert!(distance(&app) > reach, "it leaps out of reach");
-        assert!(queue(&app, leaper).is_empty(), "and the blow misses");
-        assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "a leap clear strikes nothing");
-        let now = app.world().resource::<Time>().elapsed();
-        assert_eq!(app.world().get::<Swing>(leaper).unwrap().waited(now).map(|_| ()), Some(()), "a swing is due and held");
+        assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "a leap strikes nothing");
 
-        // Out of reach, once its recovery has run: onto it, and the held swing lands
+        // Out of reach, once its recovery has run: onto it
         app.world_mut().entity_mut(leaper).remove::<GlobalRecovery>();
         assert!(used(&ask(&mut app, leaper, AbilityType::Leap, Some(near)), AbilityType::Leap));
-        app.world_mut().resource_mut::<Said>().0.clear();
         app.update();
         app.update();
-        assert_eq!(distance(&app), 1, "it dives to beside its target");
-        assert_eq!(queue(&app, near).iter().filter(|threat| threat.ability == Some(AbilityType::Leap)).count(), 1, "striking it as it lands");
-        assert!(used(&app.world().resource::<Said>().0, AbilityType::AutoAttack), "and strikes as it lands");
+        assert_eq!(distance(&app), 1, "it leaps to beside its target");
+        assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "and strikes nothing of its own");
     }
 
     #[test]
@@ -689,7 +695,7 @@ mod tests {
     }
 
     #[test]
-    fn a_swing_across_its_line_costs_stamina_and_endurance_and_one_ahead_is_free() {
+    fn a_swing_across_its_line_costs_stamina_and_endurance_but_ahead_or_in_a_perfect_stride() {
         let graceful = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         let mut app = arena();
         let [ahead, across, striding, tired] = [0, 0, 0, 0].map(|q| actor(&mut app, Side::PLAYERS, q));
@@ -720,43 +726,49 @@ mod tests {
         assert!(used(&ask(&mut app, tired, AbilityType::AutoAttack, Some(front)), AbilityType::AutoAttack), "while one ahead is free");
 
         assert!(used(&ask(&mut app, striding, AbilityType::PerfectStride, None), AbilityType::PerfectStride));
-        let stride = spent(&app, striding);
+        let (stride, before) = (spent(&app, striding), stamina(&app, striding));
         assert!(used(&ask(&mut app, striding, AbilityType::AutoAttack, Some(side)), AbilityType::AutoAttack));
-        assert!((spent(&app, striding) - stride - spent(&app, across)).abs() < 1e-2, "a Perfect Stride waives none of it");
+        assert_eq!((spent(&app, striding), stamina(&app, striding)), (stride, before), "a Perfect Stride waives it");
     }
 
     #[test]
-    fn grit_banks_a_blow_let_land_and_the_next_skill_spends_it() {
+    fn grit_fills_by_its_tier_and_only_a_full_bank_is_released() {
         let mut app = arena();
         let gritty = actor(&mut app, Side::PLAYERS, 0);
         let attacker = actor(&mut app, Side::WILD, 1);
-        app.world_mut().entity_mut(gritty).insert(ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0));
+        let attrs = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
+        app.world_mut().entity_mut(gritty).insert(attrs);
         turned_to(&mut app, attacker, -1);
         app.update();
-        let bank = |app: &App| app.world().get::<Grit>(gritty).unwrap().bank;
+        let filled = |app: &App| app.world().get::<Grit>(gritty).unwrap().filled;
+        let feints = |app: &App| queue(app, attacker).into_iter().filter(|threat| threat.ability == Some(AbilityType::Feint)).collect::<Vec<_>>();
 
         assert!(used(&ask(&mut app, attacker, AbilityType::Frenzy, Some(gritty)), AbilityType::Frenzy));
-        assert_eq!(bank(&app), 0.0, "a blow still in the queue banks nothing");
+        assert_eq!(filled(&app), 0, "a blow still in the queue fills nothing");
         app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: gritty } });
         app.update();
-        let banked = bank(&app);
-        assert!(banked > 0.0, "let land, a share of it is banked");
+        assert_eq!(filled(&app), attrs.grit_fill(), "let land, it fills the bank by the tier");
 
-        assert!(used(&ask(&mut app, gritty, AbilityType::AutoAttack, Some(attacker)), AbilityType::AutoAttack));
-        assert_eq!(bank(&app), banked, "a swing leaves the bank be");
         assert!(used(&ask(&mut app, gritty, AbilityType::Feint, Some(attacker)), AbilityType::Feint));
-        assert_eq!(bank(&app), 0.0, "a skill strikes with it");
-        let binds: Vec<bool> = queue(&app, attacker).iter().filter(|threat| threat.ability == Some(AbilityType::Feint)).map(|threat| threat.bind > 0.0).collect();
-        assert_eq!(binds, vec![false, true], "the real strike binds, the feint before it does not");
-        let dazed = |app: &App| app.world().get::<Status>(attacker).is_some_and(|status| status.daze_pace() < 1.0);
-        let land_front = |app: &mut App| {
-            app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: attacker } });
-            app.update();
-        };
-        land_front(&mut app);
-        assert!(!dazed(&app), "the feint landed binds nothing");
-        land_front(&mut app);
-        assert!(dazed(&app), "the real strike landed dazes its target");
+        assert_eq!(filled(&app), attrs.grit_fill(), "short of full, a skill leaves it be");
+        let plain = feints(&app)[0];
+        assert_eq!(plain.bind, 0.0);
+
+        app.world_mut().entity_mut(gritty).remove::<GlobalRecovery>();
+        app.world_mut().get_mut::<Grit>(gritty).unwrap().filled = Grit::size();
+        assert!(used(&ask(&mut app, gritty, AbilityType::Feint, Some(attacker)), AbilityType::Feint));
+        assert_eq!(filled(&app), 0, "full, the next skill releases it");
+        assert!(feints(&app)[1].bind > 0.0, "binding");
+        let tuning = common_bevy::tuning::tuning();
+        assert_eq!(released_into(100.0, true), (100.0 * (1.0 + tuning.grit_share), tuning.grit_bind), "and landing harder");
+        assert_eq!(released_into(100.0, false), (100.0, 0.0));
+        app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: attacker } });
+        app.update();
+        let slowed = |app: &App| app.world().get::<Status>(attacker).is_some_and(|status| status.slow.is_some());
+        assert!(!slowed(&app), "queued, it binds nothing yet");
+        app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: attacker } });
+        app.update();
+        assert!(slowed(&app), "landed, it slows its target");
     }
 
     #[test]

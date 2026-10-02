@@ -6,7 +6,6 @@ use bevy::prelude::*;
 use common_bevy::components::reaction_queue::*;
 use common_bevy::components::resources::Health;
 use common_bevy::components::ActorAttributes;
-use common_bevy::systems::combat::damage;
 
 /// Map severity (estimated_damage / max_health) to an RGB color.
 

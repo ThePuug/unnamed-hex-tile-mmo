@@ -14,21 +14,18 @@ use serde::{Deserialize, Serialize};
 /// the pace the server does without waiting on word that an effect ended.
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Status {
-    /// A Volley's slow on its target
+    /// Slowed, by a blow Grit's bank struck back: held to `pace` of its
+    /// speed for `remaining` seconds ([`Status::slow`]). The server works
+    /// `pace` out from its tuning and sends it, so a client holds none of
+    /// the tuning.
     pub slow: Option<Timed>,
     /// A strike across the striker's own line, its stride broken
     pub stride: Option<Timed>,
-    /// A Perfect Stride under way: its strikes across its own line break no
-    /// stride, and it runs at `pace` of its speed, above whole
-    pub perfect_stride: Option<Timed>,
+    /// Seconds a Perfect Stride under way has left: its strikes across its
+    /// own line break no stride
+    pub perfect_stride: Option<f32>,
     /// Held in place, by a stun or by the stagger of a Kick ([`Status::hold`])
     pub held: Option<Timed>,
-    /// Dazed, by a blow Grit's bank struck back: held to `pace` of its
-    /// speed, its auto-attack interval and recoveries stretched by the
-    /// inverse, for `remaining` seconds or until it leaves combat. The
-    /// server works `pace` out from its tuning and sends it, so a client
-    /// holds none of the tuning.
-    pub daze: Option<Timed>,
     /// Carrying past the bag's burden limit
     pub burden: bool,
 }
@@ -54,7 +51,7 @@ impl Status {
     /// The share of its speed the actor moves at under every effect on it
     pub fn pace(&self) -> f32 {
         let burden = if self.burden { BURDENED_PACE } else { 1.0 };
-        Timed::pace(self.slow) * Timed::pace(self.stride) * Timed::pace(self.perfect_stride) * Timed::pace(self.held) * self.daze_pace() * burden
+        Timed::pace(self.slow) * Timed::pace(self.stride) * Timed::pace(self.held) * burden
     }
 
     /// The pace of an actor with `status`, whole with none
@@ -64,7 +61,7 @@ impl Status {
 
     /// Whether a Perfect Stride holds now
     pub fn is_striding(&self) -> bool {
-        self.perfect_stride.is_some_and(|stride| stride.remaining > 0.0)
+        self.perfect_stride.is_some_and(|remaining| remaining > 0.0)
     }
 
     /// Whether the actor is held in place now
@@ -86,33 +83,27 @@ impl Status {
         self.held = Some(Timed { pace: 0.0, remaining: seconds.max(left) });
     }
 
-    /// The share of its pace a daze leaves the actor's swings and recovery
-    pub fn daze_pace(&self) -> f32 {
-        Timed::pace(self.daze)
-    }
-
-    /// Dazes the actor to `pace` for `seconds`, keeping what a daze already
-    /// on it holds deeper or longer: a light daze never eases a deep one.
-    pub fn daze(&mut self, pace: f32, seconds: f32) {
-        let (held, left) = self.daze.map_or((1.0, 0.0), |daze| (daze.pace, daze.remaining));
-        self.daze = Some(Timed { pace: pace.min(held), remaining: seconds.max(left) });
-    }
-
-    /// The auto-attack interval of an actor whose own is `interval`, under
-    /// `status`'s daze. Every caller that times an auto-attack reads it here,
-    /// so the server's NPCs and a client's own player swing alike.
-    pub fn cadence(interval: std::time::Duration, status: Option<&Status>) -> std::time::Duration {
-        interval.div_f32(status.map_or(1.0, Status::daze_pace))
+    /// Slows the actor to `pace` for `seconds`, keeping what a slow already
+    /// on it holds deeper or longer: a light slow never eases a deep one.
+    pub fn slow(&mut self, pace: f32, seconds: f32) {
+        let (held, left) = self.slow.map_or((1.0, 0.0), |slow| (slow.pace, slow.remaining));
+        self.slow = Some(Timed { pace: pace.min(held), remaining: seconds.max(left) });
     }
 
     /// Counts the timed effects down by `dt` seconds, dropping spent ones
     pub fn tick(&mut self, dt: f32) {
-        for slot in [&mut self.slow, &mut self.stride, &mut self.perfect_stride, &mut self.held, &mut self.daze] {
+        for slot in [&mut self.slow, &mut self.stride, &mut self.held] {
             if let Some(timed) = slot {
                 timed.remaining -= dt;
                 if timed.remaining <= 0.0 {
                     *slot = None;
                 }
+            }
+        }
+        if let Some(remaining) = &mut self.perfect_stride {
+            *remaining -= dt;
+            if *remaining <= 0.0 {
+                self.perfect_stride = None;
             }
         }
     }
@@ -123,7 +114,7 @@ impl Status {
 pub fn tick_status(mut query: Query<&mut Status>, time: Res<Time>) {
     let dt = time.delta_secs();
     for mut status in &mut query {
-        if status.slow.is_some() || status.stride.is_some() || status.perfect_stride.is_some() || status.held.is_some() || status.daze.is_some() {
+        if status.slow.is_some() || status.stride.is_some() || status.perfect_stride.is_some() || status.held.is_some() {
             status.tick(dt);
         }
     }
@@ -132,33 +123,32 @@ pub fn tick_status(mut query: Query<&mut Status>, time: Res<Time>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
-    fn a_daze_holds_the_deeper_and_the_longer_of_two() {
+    fn a_slow_holds_the_deeper_and_the_longer_of_two() {
         let mut status = Status::default();
-        status.daze(0.7, 1.0);
-        status.daze(0.9, 3.0);
-        assert_eq!(status.daze, Some(Timed { pace: 0.7, remaining: 3.0 }), "a light daze never eases a deep one, and lengthens it");
+        status.slow(0.7, 1.0);
+        status.slow(0.9, 3.0);
+        assert_eq!(status.slow, Some(Timed { pace: 0.7, remaining: 3.0 }), "a light slow never eases a deep one, and lengthens it");
         status.tick(3.0);
-        assert_eq!(status.daze_pace(), 1.0, "it runs out");
+        assert_eq!(status.pace(), 1.0, "it runs out");
     }
 
     #[test]
-    fn a_perfect_stride_runs_its_user_faster_until_it_runs_out() {
-        let mut status = Status { perfect_stride: Some(Timed { pace: 1.25, remaining: 1.0 }), ..default() };
-        assert!(status.is_striding() && status.pace() > 1.0);
+    fn a_perfect_stride_holds_until_it_runs_out_and_leaves_its_users_pace_be() {
+        let mut status = Status { perfect_stride: Some(1.0), ..default() };
+        assert!(status.is_striding() && status.pace() == 1.0);
         status.tick(1.0);
-        assert!(!status.is_striding() && status.pace() == 1.0, "spent, it runs at its own pace");
+        assert!(!status.is_striding(), "spent");
     }
 
     #[test]
     fn every_effect_adjusts_the_one_pace() {
         let slowed = Status { slow: Some(Timed { pace: 0.8, remaining: 1.0 }), ..default() };
-        let dazed = Status { daze: Some(Timed { pace: 0.9, remaining: 1.0 }), ..default() };
-        let both = Status { slow: slowed.slow, daze: dazed.daze, ..default() };
-        assert!(slowed.pace() < 1.0 && dazed.pace() < 1.0);
-        assert!((both.pace() - slowed.pace() * dazed.pace()).abs() < 1e-6, "effects multiply");
+        let stumbling = Status { stride: Some(Timed { pace: 0.9, remaining: 1.0 }), ..default() };
+        let both = Status { slow: slowed.slow, stride: stumbling.stride, ..default() };
+        assert!(slowed.pace() < 1.0 && stumbling.pace() < 1.0);
+        assert!((both.pace() - slowed.pace() * stumbling.pace()).abs() < 1e-6, "effects multiply");
         let burdened = Status { burden: true, ..both };
         assert!(burdened.pace() < both.pace());
         assert_eq!(Status::pace_of(None), 1.0);
@@ -197,17 +187,5 @@ mod tests {
         status.tick(0.3);
         assert_eq!(status.slow, None);
         assert_eq!(status.pace(), 1.0);
-    }
-
-    #[test]
-    fn a_deeper_daze_swings_slower_and_none_swings_as_its_own() {
-        let own = Duration::from_millis(1500);
-        let light = Status { daze: Some(Timed { pace: 0.9, remaining: 1.0 }), ..default() };
-        let deep = Status { daze: Some(Timed { pace: 0.7, remaining: 1.0 }), ..default() };
-        let slowed = Status { slow: Some(Timed { pace: 0.5, remaining: 1.0 }), ..default() };
-        assert_eq!(Status::cadence(own, None), own);
-        assert_eq!(Status::cadence(own, Some(&slowed)), own, "only a daze stretches a swing");
-        assert!(Status::cadence(own, Some(&light)) > own);
-        assert!(Status::cadence(own, Some(&deep)) > Status::cadence(own, Some(&light)));
     }
 }

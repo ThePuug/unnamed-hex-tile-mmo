@@ -130,7 +130,7 @@ mod tests {
         use AbilityType::*;
         let tuning = crate::tuning::tuning();
         assert_eq!(tuning.recovery(AutoAttack), 0.0, "an auto-attack runs on its own timer");
-        for ability in [Frenzy, Feint, Parry, Counter, Leap, PerfectStride] {
+        for ability in [Frenzy, Feint, Overpower, Punish, Parry, Counter, Leap, PerfectStride] {
             assert!(tuning.recovery(ability) > 0.0, "{ability:?} leaves its user recovering");
         }
     }

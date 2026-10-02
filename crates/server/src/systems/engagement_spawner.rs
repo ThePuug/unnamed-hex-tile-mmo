@@ -30,15 +30,6 @@ use common_bevy::{
 /// is placed ahead of, so the fight starts when that one walks in.
 const DEN_CLEARANCE: i32 = 5;
 
-/// How far an NPC of `archetype` reaches with its auto-attack: melee reach,
-/// or for a Kiter the edge of its band, where it fires from.
-fn attack_range(archetype: EnemyArchetype) -> i32 {
-    match archetype {
-        EnemyArchetype::Kiter => crate::systems::behaviour::KITER_REACH,
-        _ => common_bevy::components::AttackRange::default().0,
-    }
-}
-
 /// How far apart two parties staged to fight stand, as the balance arena
 /// sets its teams apart: inside the range either acquires a target from.
 pub const STAGE_GAP: i32 = 24;
@@ -169,15 +160,16 @@ pub fn spawn_engagement(
         let chase = crate::systems::behaviour::chase::Chase {
             acquisition_range: crate::systems::behaviour::ACQUISITION_RANGE,
             leash_distance: crate::systems::behaviour::LEASH_DISTANCE,
-            attack_range: attack_range(archetype),
+            attack_range: common_bevy::components::AttackRange::default().0,
         };
         commands.entity(npc_entity).insert((
             NearestNeighbor::new(npc_entity, npc_loc),
             chase,
             crate::systems::behaviour::perception::Skill::default(),
+            crate::systems::behaviour::Bar::of(archetype),
             crate::systems::behaviour::perception::Sight::default(),
             crate::systems::behaviour::moves::Move::default(),
-            common_bevy::components::AttackRange(attack_range(archetype)),
+            common_bevy::components::AttackRange::default(),
             Heading::default(),
             common_bevy::components::Turn::default(),
             Position::at_tile(npc_location),

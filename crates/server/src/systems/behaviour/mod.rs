@@ -16,6 +16,17 @@ use common_bevy::{
     systems::{physics::{self, Walk, WALK_ARC}, targeting::is_in_facing_cone},
 };
 
+/// The skills an NPC weighs using: its archetype's
+/// (`EnemyArchetype::bar`) unless it is given others.
+#[derive(bevy::prelude::Component, Clone, Debug)]
+pub struct Bar(pub Vec<common_bevy::message::AbilityType>);
+
+impl Bar {
+    pub fn of(archetype: common_bevy::archetype::EnemyArchetype) -> Self {
+        Self(archetype.bar())
+    }
+}
+
 /// What NPCs decided, each a line, kept only where the resource exists:
 /// the balance arena's trace reads it.
 #[derive(bevy::prelude::Resource, Default)]
@@ -27,15 +38,6 @@ pub fn approach_of(kind: Option<&common_bevy::components::entity_type::EntityTyp
     match kind {
         Some(common_bevy::components::entity_type::EntityType::Actor(actor)) => Some(actor.approach),
         _ => None,
-    }
-}
-
-/// How far a foe of `approach` is taken to strike from before it has been
-/// seen to: a Distant one from its reach, any other from a melee swing's
-pub fn reach_guessed(approach: Option<common_bevy::components::entity_type::actor::Approach>) -> i32 {
-    match approach {
-        Some(common_bevy::components::entity_type::actor::Approach::Distant) => KITER_REACH,
-        _ => common_bevy::components::AttackRange::default().0,
     }
 }
 
@@ -56,10 +58,6 @@ pub fn spotted(nntree: &NNTree, loc: Loc, range: u32) -> impl Iterator<Item = be
 /// How far an NPC follows a target from its den, in tiles, before it gives
 /// up and goes home.
 pub const LEASH_DISTANCE: i32 = 60;
-
-/// How far a Kiter reaches, in tiles: its auto-attack, its Volley, and
-/// where it stops closing on its target.
-pub const KITER_REACH: i32 = 20;
 
 /// Airtime an NPC leaps with to climb onto a neighbouring tile.
 const CLIMB_MS: i16 = 125;

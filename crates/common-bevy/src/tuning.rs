@@ -32,7 +32,8 @@ pub struct Tuning {
     pub stamina_base: f32,
     /// Endurance an actor holds for each point of its Endurance potency
     pub endurance_pool: f32,
-    /// Endurance a skill costs for each point of the potency its kind reads
+    /// Endurance a skill costs for each point of the stamina it costs, as a
+    /// share of the potency its kind reads
     pub endurance_cost: f32,
     /// Share of its endurance an actor regains each second its stamina is full
     pub endurance_regen: f32,
@@ -88,13 +89,14 @@ pub struct Tuning {
     /// in degrees, by its Grace
     pub grace_arc_min: f32,
     pub grace_arc_max: f32,
-    /// Share of each blow an actor lets land that its Grit banks for its
-    /// next skill; its tier sets how many blows it banks, 0 to 3
+    /// How much Grit's bank holds, filled by each blow an actor lets land
+    /// as much as its tier's index (`Grit`), rounded to whole units
+    pub grit_bank: f32,
+    /// Share harder the skill a full bank releases into lands
     pub grit_share: f32,
-    /// Share of its target's pace each blow in Grit's bank dazes away as
-    /// the bank strikes back: movement, swings and recovery
+    /// Share of its target's speed a full bank's release slows away
     pub grit_bind: f32,
-    /// Seconds that daze holds
+    /// Seconds that slow holds
     pub grit_bind_secs: f32,
     /// What each swing an actor's Patience banked strikes for, as a share of
     /// an auto-attack, when it lands with the next; its tier sets how many
@@ -150,22 +152,27 @@ pub struct Tuning {
     pub frenzy_damage: f32,
     pub feint_cost: f32,
     pub feint_recovery: f32,
-    /// Share of Intuition a Feint's two strikes deal together
+    pub overpower_cost: f32,
+    pub overpower_recovery: f32,
+    /// Share of Intuition an Overpower strikes for
+    pub overpower_damage: f32,
+    pub punish_cost: f32,
+    pub punish_recovery: f32,
+    /// Share of Intuition a Punish strikes for
+    pub punish_damage: f32,
+    /// Share harder a Punish lands on a target still in recovery
+    pub punish_bonus: f32,
+    /// Share of Intuition a Feint strikes for
     pub feint_damage: f32,
-    /// Share of that the feint deals; the real strike deals the rest
-    pub feint_share: f32,
-    /// Seconds the real strike follows the feint by: longer than the span
-    /// every actor has (`awareness_span_min`), so a reaction with no
-    /// Awareness takes one and not the other
-    pub feint_gap: f32,
     pub parry_cost: f32,
     pub parry_recovery: f32,
-    /// Endurance a Parry pays for each point of damage it turns aside,
-    /// with no Resolve; less by its user's Concentration over base potency
-    pub parry_effort: f32,
-    /// Endurance a Parry pays for each threat it turns aside, as a share of
+    /// Endurance a reaction pays for each point of damage it clears, beside
+    /// its flat cost, with no Resolve; less by its user's Concentration over
+    /// base potency
+    pub reaction_effort: f32,
+    /// Endurance a reaction pays for each threat it clears, as a share of
     /// base potency, whatever the damage; less by Concentration as above
-    pub parry_per_threat: f32,
+    pub reaction_per_threat: f32,
     pub counter_cost: f32,
     pub counter_recovery: f32,
     /// Share of each countered threat's damage sent back by a counterer
@@ -175,14 +182,10 @@ pub struct Tuning {
     pub leap_recovery: f32,
     /// Tiles a Leap carries its user, clear of its target or toward it
     pub leap_distance: usize,
-    /// Share of Intuition a dive strikes for as it lands in reach
-    pub leap_strike: f32,
     pub stride_cost: f32,
     pub stride_recovery: f32,
     /// Seconds a Perfect Stride lasts
     pub stride_secs: f32,
-    /// Share faster a Perfect Stride runs its user
-    pub stride_speed: f32,
     /// Share harder its user's auto-attacks land in a Perfect Stride
     pub stride_damage: f32,
 }
@@ -198,16 +201,16 @@ impl Tuning {
         base_health: 588.0,
         stamina_base: 100.0,
         endurance_pool: 10.0,
-        endurance_cost: 1.0,
+        endurance_cost: 0.04,
         endurance_regen: 0.05,
         off_arc_cost: 0.25,
         off_arc_stamina: 15.0,
         off_arc_share_min: 1.0 / 3.0,
         off_arc_share_max: 1.0,
-        fatigue_recovery: 0.5,
-        fatigue_window: 0.3,
+        fatigue_recovery: 1.5,
+        fatigue_window: 0.5,
         fatigue_bend: 3.0,
-        fatigue_stamina: 0.75,
+        fatigue_stamina: 0.9,
         health_per_vitality: 0.9604,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
@@ -221,8 +224,9 @@ impl Tuning {
         preparation_relief_max: 0.5,
         grace_arc_min: 60.0,
         grace_arc_max: 150.0,
-        grit_share: 0.3,
-        grit_bind: 0.1,
+        grit_bank: 12.0,
+        grit_share: 0.1,
+        grit_bind: 0.25,
         grit_bind_secs: 1.0,
         patience_power: 1.25,
         contest_scale: 800.0,
@@ -237,33 +241,36 @@ impl Tuning {
         auto_damage: 1.029,
         force_auto: 1.0,
         stride_pace: 0.7,
-        damage_spread: 0.2,
+        damage_spread: 0.05,
         crit_chance: 0.35,
         crit_power: 1.5,
         frenzy_cost: 20.0,
         frenzy_recovery: 1.5,
         frenzy_damage: 2.069,
-        feint_cost: 30.0,
-        feint_recovery: 2.5,
-        feint_damage: 2.371,
-        feint_share: 0.25,
-        feint_gap: 0.4,
-        parry_cost: 25.0,
-        parry_recovery: 1.5,
-        parry_effort: 1.2,
-        parry_per_threat: 0.23,
+        feint_cost: 10.0,
+        feint_recovery: 0.25,
+        feint_damage: 0.5,
+        overpower_cost: 30.0,
+        overpower_recovery: 3.0,
+        overpower_damage: 2.2,
+        punish_cost: 20.0,
+        punish_recovery: 1.5,
+        punish_damage: 1.0,
+        punish_bonus: 1.0,
+        parry_cost: 10.0,
+        parry_recovery: 1.0,
+        reaction_effort: 1.2,
+        reaction_per_threat: 0.23,
         counter_cost: 60.0,
-        counter_recovery: 0.5,
+        counter_recovery: 1.5,
         counter_reflect: 0.6,
         leap_cost: 30.0,
         leap_recovery: 1.0,
         leap_distance: 9,
-        leap_strike: 1.0,
         stride_cost: 30.0,
         stride_recovery: 1.0,
         stride_secs: 4.0,
-        stride_speed: 0.25,
-        stride_damage: 0.4,
+        stride_damage: 1.0,
     };
 
     /// Stamina `ability` costs; an auto-attack is free.
@@ -272,10 +279,24 @@ impl Tuning {
             AbilityType::AutoAttack => 0.0,
             AbilityType::Frenzy => self.frenzy_cost,
             AbilityType::Feint => self.feint_cost,
+            AbilityType::Overpower => self.overpower_cost,
+            AbilityType::Punish => self.punish_cost,
             AbilityType::Parry => self.parry_cost,
             AbilityType::Counter => self.counter_cost,
             AbilityType::Leap => self.leap_cost,
             AbilityType::PerfectStride => self.stride_cost,
+        }
+    }
+
+    /// The share of the potency it reads `ability` strikes for: none for
+    /// one that strikes nothing of its own
+    pub fn damage(&self, ability: AbilityType) -> f32 {
+        match ability {
+            AbilityType::Frenzy => self.frenzy_damage,
+            AbilityType::Feint => self.feint_damage,
+            AbilityType::Overpower => self.overpower_damage,
+            AbilityType::Punish => self.punish_damage,
+            AbilityType::AutoAttack | AbilityType::Parry | AbilityType::Counter | AbilityType::Leap | AbilityType::PerfectStride => 0.0,
         }
     }
 
@@ -286,6 +307,8 @@ impl Tuning {
             AbilityType::AutoAttack => 0.0,
             AbilityType::Frenzy => self.frenzy_recovery,
             AbilityType::Feint => self.feint_recovery,
+            AbilityType::Overpower => self.overpower_recovery,
+            AbilityType::Punish => self.punish_recovery,
             AbilityType::Parry => self.parry_recovery,
             AbilityType::Counter => self.counter_recovery,
             AbilityType::Leap => self.leap_recovery,
@@ -307,6 +330,7 @@ impl Tuning {
             "preparation_relief_max" => &mut self.preparation_relief_max,
             "grace_arc_min" => &mut self.grace_arc_min,
             "grace_arc_max" => &mut self.grace_arc_max,
+            "grit_bank" => &mut self.grit_bank,
             "grit_share" => &mut self.grit_share,
             "grit_bind" => &mut self.grit_bind,
             "grit_bind_secs" => &mut self.grit_bind_secs,
@@ -354,22 +378,25 @@ impl Tuning {
             "feint_cost" => &mut self.feint_cost,
             "feint_recovery" => &mut self.feint_recovery,
             "feint_damage" => &mut self.feint_damage,
-            "feint_share" => &mut self.feint_share,
-            "feint_gap" => &mut self.feint_gap,
+            "overpower_cost" => &mut self.overpower_cost,
+            "overpower_recovery" => &mut self.overpower_recovery,
+            "overpower_damage" => &mut self.overpower_damage,
+            "punish_cost" => &mut self.punish_cost,
+            "punish_recovery" => &mut self.punish_recovery,
+            "punish_damage" => &mut self.punish_damage,
+            "punish_bonus" => &mut self.punish_bonus,
             "parry_cost" => &mut self.parry_cost,
             "parry_recovery" => &mut self.parry_recovery,
-            "parry_effort" => &mut self.parry_effort,
-            "parry_per_threat" => &mut self.parry_per_threat,
+            "reaction_effort" => &mut self.reaction_effort,
+            "reaction_per_threat" => &mut self.reaction_per_threat,
             "counter_cost" => &mut self.counter_cost,
             "counter_recovery" => &mut self.counter_recovery,
             "counter_reflect" => &mut self.counter_reflect,
             "leap_cost" => &mut self.leap_cost,
             "leap_recovery" => &mut self.leap_recovery,
-            "leap_strike" => &mut self.leap_strike,
             "stride_cost" => &mut self.stride_cost,
             "stride_recovery" => &mut self.stride_recovery,
             "stride_secs" => &mut self.stride_secs,
-            "stride_speed" => &mut self.stride_speed,
             "stride_damage" => &mut self.stride_damage,
             "leap_distance" => {
                 self.leap_distance = number.round().max(1.0) as usize;

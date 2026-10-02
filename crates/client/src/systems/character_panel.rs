@@ -252,7 +252,7 @@ macro_rules! create_stat_display {
                 MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Crit Resisted:"),
                 MetaAttributeStat::Ferocity => ("Ferocity", Color::srgb(0.9, 0.5, 0.5), "Early Combos:"),
                 MetaAttributeStat::Grace => ("Grace", Color::srgb(0.9, 0.9, 0.5), "Strike Arc:"),
-                MetaAttributeStat::Grit => ("Grit", Color::srgb(0.5, 0.8, 0.5), "Blows Banked:"),
+                MetaAttributeStat::Grit => ("Grit", Color::srgb(0.5, 0.8, 0.5), "Bank per Blow:"),
                 MetaAttributeStat::Preparation => ("Preparation", Color::srgb(0.5, 0.7, 0.9), "Recovery Reactions:"),
                 MetaAttributeStat::Patience => ("Patience", Color::srgb(0.7, 0.5, 0.9), "Swings Banked:"),
                 MetaAttributeStat::Awareness => ("Awareness", Color::srgb(0.9, 0.6, 0.3), "Reaction Span:"),
@@ -978,7 +978,7 @@ pub fn update_attributes(
                         format!("{}, -{:.0}%", display_attrs.ferocity().index(), display_attrs.ferocity_relief() * 100.0)
                     },
                     MetaAttributeStat::Grace => format!("+/-{:.0} deg", display_attrs.arc()),
-                    MetaAttributeStat::Grit => display_attrs.grit_holds().to_string(),
+                    MetaAttributeStat::Grit => display_attrs.grit_fill().to_string(),
                     MetaAttributeStat::Preparation => {
                         format!("{}, -{:.0}%", display_attrs.preparation().index(), display_attrs.preparation_relief() * 100.0)
                     },

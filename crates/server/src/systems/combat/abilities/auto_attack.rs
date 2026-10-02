@@ -1,10 +1,7 @@
 use std::time::Duration;
 
 use bevy::prelude::*;
-use common_bevy::{
-    components::status::Status,
-    message::AbilityType,
-};
+use common_bevy::message::AbilityType;
 
 use super::{Abilities, AbilityFailReason, Cast};
 
@@ -18,7 +15,7 @@ pub fn swing(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, A
     let (target, _) = cast.struck()?;
     let now = abilities.time.elapsed();
     let status = abilities.statuses.get(cast.ent).ok().copied();
-    let interval = Status::cadence(cast.attrs.cadence_interval(), status.as_ref());
+    let interval = cast.attrs.cadence_interval();
     let banked = abilities.swings.get_mut(cast.ent).map_or(0, |mut swing| {
         let banked = swing.waited(now).map_or(0, |waited| cast.attrs.banked(waited, interval));
         swing.due = Some(now + interval);

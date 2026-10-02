@@ -32,7 +32,7 @@ pub struct QueuedThreat {
     pub dot: f32,
     /// DoT ticks this wound has dealt. Only the server counts them.
     pub ticked: u8,
-    /// Share of its pace the target is dazed out of as the threat lands:
+    /// Share of its speed the target is slowed out of as the threat lands:
     /// Grit's bank struck back, binding the target. Zero for most threats;
     /// a reaction that clears the threat clears it too.
     pub bind: f32,

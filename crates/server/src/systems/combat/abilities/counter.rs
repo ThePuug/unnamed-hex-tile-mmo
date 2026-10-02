@@ -1,26 +1,23 @@
 use bevy::prelude::*;
 use common_bevy::{
-    message::{AbilityType, ClearType, Event as GameEvent, Try},
+    message::{AbilityType, Event as GameEvent, Try},
     systems::combat::queue::create_threat,
 };
 
 use super::{Abilities, AbilityFailReason, Cast};
 
-/// Counter, the Defender's skill: a reaction that clears the front threat
-/// and every threat landing within its user's span behind it, so Awareness
-/// answers more with one. Each cleared threat goes back to its living
+/// Counter, the Defender's skill: a reaction that clears the threats in its
+/// user's span, as far as its endurance pays for them ([`Abilities::react`]),
+/// so Awareness answers more with one. Each cleared threat goes back to its living
 /// source wherever it stands, at `Tuning::counter_reflect` of the threat's
 /// own damage weighted by the counterer's Concentration over base potency
 /// and nothing more, so a Counter returns what comes in, and lands at
 /// once: a reflection never enters the source's queue, so it
-/// cannot be countered. With nothing queued there is nothing to counter.
-/// Its recovery is contested by the source of the first threat it answers.
+/// cannot be countered. Its recovery is contested by the source of the
+/// first threat it answers.
 pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let tuning = common_bevy::tuning::tuning();
-    let answered = abilities.clear(cast.ent, ClearType::Span(cast.attrs.span()));
-    if answered.is_empty() {
-        return Err(AbilityFailReason::NoTargets);
-    }
+    let answered = abilities.react(cast)?;
 
     let now = abilities.game_now();
     let weight = cast.attrs.skill_potency(AbilityType::Counter) / cast.attrs.base_potency();

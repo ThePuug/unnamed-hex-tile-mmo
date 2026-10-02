@@ -165,7 +165,7 @@ mod tests {
         let early = recovery_after(AbilityType::Frenzy, Some(&prior), &plain, None, 0.0);
         assert!(early.carried > 0.0);
         assert_eq!(early.combo.map(|combo| combo.unlock_at), fresh.combo.map(|combo| combo.unlock_at));
-        assert!(recovery_after(AbilityType::Feint, None, &plain, None, 0.0).combo.is_none(), "a Feint leads on to nothing");
+        assert!(recovery_after(AbilityType::Counter, None, &plain, None, 0.0).combo.is_none(), "a Counter leads on to nothing");
     }
 
     #[test]
@@ -205,10 +205,11 @@ mod tests {
     }
 
     #[test]
-    fn a_bites_combo_is_another_bite_and_no_other_skill_leads_on() {
+    fn a_bites_combo_is_another_bite_a_parry_and_a_feint_offer_each_other_and_no_other_skill_leads_on() {
         use AbilityType::*;
         assert_eq!(Frenzy.combo(), Some(Frenzy));
-        for ability in [AutoAttack, Feint, Parry, Counter, Leap, PerfectStride] {
+        assert_eq!((Parry.combo(), Feint.combo()), (Some(Feint), Some(Parry)));
+        for ability in [AutoAttack, Overpower, Punish, Counter, Leap, PerfectStride] {
             assert_eq!(ability.combo(), None, "{ability:?}");
         }
     }
