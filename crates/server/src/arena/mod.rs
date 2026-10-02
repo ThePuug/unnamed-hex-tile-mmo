@@ -10,8 +10,8 @@
 //! with (`sharp`, `steady`, `sloppy`, or `fastest-slowest/error` in
 //! milliseconds and a share; sharp), `b_level`, `b_size` and `b_skill` to
 //! set the second archetype's side apart (the same by default), `runs` per
-//! matchup (20), `cap` seconds after which the side with more health left wins
-//! (300), `only` a comma
+//! matchup (20), `cap` seconds after which a fight with both sides standing
+//! is lost on both (120), `only` a comma
 //! list of archetypes to restrict the matchups to, `mirror=1` to fight each
 //! archetype against itself instead of the others, `ordered=1` to fight every
 //! ordered pair, mirrors included, `trace` to print every
@@ -123,7 +123,7 @@ struct Settings {
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, bar: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: EnemyArchetype::ALL.to_vec(), focus: None, trace: 0, ledger: false, tuning: Tuning::default(), minds: Minds::tuned() };
+        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, bar: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(120), only: EnemyArchetype::ALL.to_vec(), focus: None, trace: 0, ledger: false, tuning: Tuning::default(), minds: Minds::tuned() };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {
