@@ -3,6 +3,7 @@ use crate::components::ActorAttributes;
 use crate::message::ClearType;
 use bevy::prelude::*;
 use std::time::Duration;
+use crate::tuning::Tuning;
 
 /// Reaction window base from level gap.
 
@@ -15,12 +16,11 @@ use std::time::Duration;
 /// the attacker's Flow, with the level gap's edge on the defender's side.
 /// The defender's `fatigue`, 0 to 1 (`Endurance::fatigue`), shortens it by
 /// `Tuning::fatigue_window` of it.
-pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttributes, fatigue: f32) -> Duration {
+pub fn threat_window(tuning: &Tuning, target_attrs: &ActorAttributes, source_attrs: &ActorAttributes, fatigue: f32) -> Duration {
     use crate::systems::combat::damage::{level_edge, reaction_contest_factor};
 
-    let tuning = crate::tuning::tuning();
-    let edge = level_edge(target_attrs.total_level(), source_attrs.total_level());
-    let multiplier = reaction_contest_factor(target_attrs.reflex(), source_attrs.flow(), edge);
+    let edge = level_edge(tuning, target_attrs.total_level(), source_attrs.total_level());
+    let multiplier = reaction_contest_factor(tuning, target_attrs.reflex(), source_attrs.flow(), edge);
     Duration::from_secs_f32(tuning.reaction_window * multiplier * (1.0 - tuning.fatigue_window * fatigue))
 }
 
@@ -45,6 +45,7 @@ pub fn threat_window(target_attrs: &ActorAttributes, source_attrs: &ActorAttribu
 /// # Returns
 /// Fully-formed QueuedThreat with correct timer duration
 pub fn create_threat(
+    tuning: &Tuning,
     source: bevy::prelude::Entity,
     target_attrs: &ActorAttributes,
     source_attrs: &ActorAttributes,
@@ -58,7 +59,7 @@ pub fn create_threat(
         source,
         damage,
         inserted_at: now,
-        timer_duration: threat_window(target_attrs, source_attrs, fatigue),
+        timer_duration: threat_window(tuning, target_attrs, source_attrs, fatigue),
         ability,
         dot,
         ticked: 0,
@@ -123,11 +124,12 @@ mod tests {
 
     #[test]
     fn a_fatigued_target_has_less_time_to_answer() {
+        let tuning = Tuning::DEFAULT;
         let plain = ActorAttributes::default();
-        let fresh = threat_window(&plain, &plain, 0.0);
-        assert!(threat_window(&plain, &plain, 0.5) < fresh);
-        assert!(threat_window(&plain, &plain, 1.0) < threat_window(&plain, &plain, 0.5));
-        assert!(threat_window(&plain, &plain, 1.0) > Duration::ZERO, "spent, it still has a window");
+        let fresh = threat_window(&tuning, &plain, &plain, 0.0);
+        assert!(threat_window(&tuning, &plain, &plain, 0.5) < fresh);
+        assert!(threat_window(&tuning, &plain, &plain, 1.0) < threat_window(&tuning, &plain, &plain, 0.5));
+        assert!(threat_window(&tuning, &plain, &plain, 1.0) > Duration::ZERO, "spent, it still has a window");
     }
 
     #[test]

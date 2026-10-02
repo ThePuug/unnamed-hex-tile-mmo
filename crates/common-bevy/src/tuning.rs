@@ -3,16 +3,16 @@
 //! absolute (a potency that grows with level), commitment (a tier's effect)
 //! and contest (a share won by a relative advantage).
 //!
-//! It is one process-wide set, read through [`tuning`]. The live client and
-//! server never change it, so they agree on every number; only the balance
-//! arena calls [`set_tuning`], between scenarios, to try values without a
-//! rebuild.
+//! Each world holds one set as a resource, [`Tuning::DEFAULT`] on the live
+//! client and server, so they agree on every number; the balance arena
+//! gives each fight its own, to try values without a rebuild. Whatever
+//! reads a number takes the set it plays by.
 
-use std::sync::RwLock;
+use bevy::prelude::Resource;
 
 use crate::message::AbilityType;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Resource)]
 pub struct Tuning {
     // --- Absolute: potency, level curves, health ---
     /// Potency every actor has before any attribute
@@ -470,20 +470,6 @@ impl Default for Tuning {
     fn default() -> Self {
         Self::DEFAULT
     }
-}
-
-static TUNING: RwLock<Tuning> = RwLock::new(Tuning::DEFAULT);
-
-/// The numbers combat plays by, as a copy: hold it through a system, never
-/// across a scenario the arena might change.
-pub fn tuning() -> Tuning {
-    *TUNING.read().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// Replaces the numbers combat plays by. Only the balance arena calls it,
-/// between scenarios, with no fight running.
-pub fn set_tuning(tuning: Tuning) {
-    *TUNING.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = tuning;
 }
 
 #[cfg(test)]

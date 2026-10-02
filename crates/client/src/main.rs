@@ -206,6 +206,7 @@ fn main() {
     app.insert_resource(crate::resources::world_map());
 
     app.init_resource::<InputQueues>();
+    app.init_resource::<common_bevy::tuning::Tuning>();
     app.init_resource::<crate::resources::RenderOrigin>();
     app.init_resource::<gathering::LootWindow>();
     app.init_resource::<crate::systems::focus::NumpadFocus>();

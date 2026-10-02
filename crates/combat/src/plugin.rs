@@ -19,6 +19,7 @@ impl Plugin for CombatPlugin {
         app.add_message::<Try>();
         app.init_resource::<crate::RunTime>();
         app.init_resource::<combat::dice::Dice>();
+        app.init_resource::<common_bevy::tuning::Tuning>();
         app.insert_resource(behaviour::mind::Minds::tuned());
         app.register_required_components::<common_bevy::components::ActorAttributes, combat::dice::Rolls>();
 

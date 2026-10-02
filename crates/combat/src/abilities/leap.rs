@@ -20,7 +20,8 @@ use crate::leap::{away, slide, toward, LEAP_MS};
 /// An NPC's leap stops at its leash (`Abilities::leash`). With nowhere to
 /// leap it is out of range.
 pub fn leap(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
-    let distance = cast.attrs.leap_tiles();
+    let tuning = *abilities.tuning;
+    let distance = cast.attrs.leap_tiles(&tuning);
     let (target, target_loc) = abilities.foe(cast)?;
     let leash = abilities.leash(cast.ent);
     let clear = cast.loc.distance(&target_loc) <= cast.reach;
@@ -34,7 +35,7 @@ pub fn leap(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, Ab
     if clear {
         abilities.answer_span(cast);
     } else if Loc::new(landing).distance(&target_loc) <= cast.reach {
-        let damage = cast.attrs.base_potency() * common_bevy::tuning::tuning().leap_strike * cast.attrs.line_power(AbilityType::Leap);
+        let damage = cast.attrs.base_potency(&tuning) * tuning.leap_strike * cast.attrs.line_power(&tuning, AbilityType::Leap);
         abilities.strike(cast, target, damage, AbilityType::Leap, &WHOLE);
     }
     Ok(Some(target))

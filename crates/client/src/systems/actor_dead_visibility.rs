@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use common_bevy::components::{Actor, reaction_queue::ReactionQueue, resources::{CombatState, Health}};
 use crate::components::{DeathMarker, Viewed};
+use common_bevy::tuning::Tuning;
 
 /// Restore visibility for actors that were hidden (e.g. after respawn)
 /// Dead actors now get a death pose via DeathMarker instead of being hidden
@@ -141,10 +142,12 @@ mod tests {
 
     #[test]
     fn a_body_leaves_the_fight_as_it_falls() {
+        let tuning = Tuning::DEFAULT;
         let mut world = World::new();
         world.insert_resource(Time::<()>::default());
         let mut queue = ReactionQueue::default();
         queue.threats.push_back(common_bevy::systems::combat::queue::create_threat(
+            &tuning,
             Entity::PLACEHOLDER, &Default::default(), &Default::default(), 10.0,
             None, std::time::Duration::ZERO, 0.0, 0.0,
         ));

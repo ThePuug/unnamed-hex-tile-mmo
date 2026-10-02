@@ -21,6 +21,7 @@ pub mod target;
 use bevy::prelude::*;
 use qrz::Qrz;
 use serde::{Deserialize, Serialize};
+use crate::tuning::Tuning;
 
 #[derive(Clone, Component, Copy, Debug, Default, Deref, DerefMut, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Loc(Qrz);
@@ -414,9 +415,8 @@ impl ActorAttributes {
     /// `attribute`'s absolute stat, a potency that grows with level:
     /// `Tuning::potency_base` and `potency_per_point` more for each point of
     /// the attribute, scaled by the damage level curve.
-    pub fn potency(&self, attribute: Attribute) -> f32 {
-        let tuning = crate::tuning::tuning();
-        (tuning.potency_base + self.value(attribute) as f32 * tuning.potency_per_point) * self.damage_level_multiplier()
+    pub fn potency(&self, tuning: &Tuning, attribute: Attribute) -> f32 {
+        (tuning.potency_base + self.value(attribute) as f32 * tuning.potency_per_point) * self.damage_level_multiplier(tuning)
     }
 
     /// `attribute`'s commitment tier: its value as a share of the most any
@@ -452,22 +452,21 @@ impl ActorAttributes {
     // Absolute: an attribute's potency, by the name its stat goes by
 
     /// Force, Might's: what its share adds to an auto-attack (`auto_damage`)
-    pub fn force(&self) -> f32 { self.potency(Attribute::Might) }
+    pub fn force(&self, tuning: &Tuning) -> f32 { self.potency(tuning, Attribute::Might) }
     /// Tempo, Agility's: how fast its auto-attacks come (`cadence_interval`)
-    pub fn tempo(&self) -> f32 { self.potency(Attribute::Agility) }
+    pub fn tempo(&self, tuning: &Tuning) -> f32 { self.potency(tuning, Attribute::Agility) }
     /// Endurance, Discipline's: how deep the endurance pool is (`max_endurance`)
-    pub fn endurance(&self) -> f32 { self.potency(Attribute::Discipline) }
+    pub fn endurance(&self, tuning: &Tuning) -> f32 { self.potency(tuning, Attribute::Discipline) }
 
     /// Constitution, Vitality's, which is max health: the health every actor
     /// has (`Tuning::base_health`) and what each point of Vitality adds
     /// (`Tuning::health_per_vitality`), scaled by the health level curve.
-    pub fn constitution(&self) -> f32 {
-        let tuning = crate::tuning::tuning();
-        (tuning.base_health + self.vitality() as f32 * tuning.health_per_vitality) * self.hp_level_multiplier()
+    pub fn constitution(&self, tuning: &Tuning) -> f32 {
+        (tuning.base_health + self.vitality() as f32 * tuning.health_per_vitality) * self.hp_level_multiplier(tuning)
     }
 
-    pub fn max_health(&self) -> f32 {
-        self.constitution()
+    pub fn max_health(&self, tuning: &Tuning) -> f32 {
+        self.constitution(tuning)
     }
 
     // Relative: the value a contest weighs, by the name it goes by there
@@ -515,14 +514,12 @@ impl ActorAttributes {
     }
 
     /// The health level curve at the actor's level
-    pub fn hp_level_multiplier(&self) -> f32 {
-        let tuning = crate::tuning::tuning();
+    pub fn hp_level_multiplier(&self, tuning: &Tuning) -> f32 {
         Self::level_multiplier(self.total_level(), tuning.health_curve_k, tuning.health_curve_p)
     }
 
     /// The damage level curve at the actor's level, which every potency scales by
-    pub fn damage_level_multiplier(&self) -> f32 {
-        let tuning = crate::tuning::tuning();
+    pub fn damage_level_multiplier(&self, tuning: &Tuning) -> f32 {
         Self::level_multiplier(self.total_level(), tuning.damage_curve_k, tuning.damage_curve_p)
     }
 
@@ -533,28 +530,28 @@ impl ActorAttributes {
 
     /// The potency every actor has before any attribute, scaled by level: what
     /// each absolute stat starts from.
-    pub fn base_potency(&self) -> f32 {
-        crate::tuning::tuning().potency_base * self.damage_level_multiplier()
+    pub fn base_potency(&self, tuning: &Tuning) -> f32 {
+        tuning.potency_base * self.damage_level_multiplier(tuning)
     }
 
     /// How far its points have carried `attribute`'s absolute stat toward
     /// its ceiling: 0 with none, half at `Tuning::share_bend` points, rising
     /// toward 1 with diminishing returns, the same at every level. Each
     /// absolute's passive effect is its ceiling times this share.
-    pub fn share(&self, attribute: Attribute) -> f32 {
+    pub fn share(&self, tuning: &Tuning, attribute: Attribute) -> f32 {
         let points = self.value(attribute) as f32;
-        points / (points + crate::tuning::tuning().share_bend)
+        points / (points + tuning.share_bend)
     }
 
     /// The stamina pool: `Tuning::stamina_base`, the same for every actor
-    pub fn max_stamina(&self) -> f32 {
-        crate::tuning::tuning().stamina_base
+    pub fn max_stamina(&self, tuning: &Tuning) -> f32 {
+        tuning.stamina_base
     }
 
     /// The endurance pool: `Tuning::endurance_pool` for each point of
     /// Endurance, so it deepens with level and with Discipline
-    pub fn max_endurance(&self) -> f32 {
-        crate::tuning::tuning().endurance_pool * self.endurance()
+    pub fn max_endurance(&self, tuning: &Tuning) -> f32 {
+        tuning.endurance_pool * self.endurance(tuning)
     }
 
     /// The attribute `ability` reads: Resolve for a reaction, Instinct for
@@ -582,17 +579,17 @@ impl ActorAttributes {
     /// weak in a build that has not invested in it. What it scales is the
     /// skill's own: a strike's damage, Counter's reflection, Perfect
     /// Stride's speed and a Leap's distance.
-    pub fn line_power(&self, ability: crate::message::AbilityType) -> f32 {
+    pub fn line_power(&self, tuning: &Tuning, ability: crate::message::AbilityType) -> f32 {
         let Some(attribute) = Self::line(ability) else { return 1.0 };
         let invested = if self.ceiling() == 0 { 0.0 } else { (self.value(attribute) as f32 / self.ceiling() as f32).min(1.0) };
-        let floor = crate::tuning::tuning().line(ability);
+        let floor = tuning.line(ability);
         floor + (1.0 - floor) * invested
     }
 
     /// Tiles this actor's Leap carries it: `Tuning::leap_distance` as its
     /// Instinct line has it, never less than one
-    pub fn leap_tiles(&self) -> usize {
-        let tiles = crate::tuning::tuning().leap_distance as f32 * self.line_power(crate::message::AbilityType::Leap);
+    pub fn leap_tiles(&self, tuning: &Tuning) -> usize {
+        let tiles = tuning.leap_distance as f32 * self.line_power(tuning, crate::message::AbilityType::Leap);
         tiles.round().max(1.0) as usize
     }
 
@@ -602,9 +599,8 @@ impl ActorAttributes {
     /// pool does, so a pool with no Discipline in it holds the same count of
     /// a build's skills at any level. A reaction pays besides for what it
     /// clears (`reaction_effort`).
-    pub fn skill_endurance(&self, ability: crate::message::AbilityType) -> f32 {
-        let tuning = crate::tuning::tuning();
-        tuning.endurance_cost * tuning.cost(ability) * self.base_potency()
+    pub fn skill_endurance(&self, tuning: &Tuning, ability: crate::message::AbilityType) -> f32 {
+        tuning.endurance_cost * tuning.cost(ability) * self.base_potency(tuning)
     }
 
     /// The endurance it costs this actor's reaction to clear a threat of
@@ -612,31 +608,27 @@ impl ActorAttributes {
     /// of base potency for the threat itself and `Tuning::reaction_effort`
     /// for each point of its damage. A threat costs something however
     /// light, so a stream of small ones is not cleared free.
-    pub fn reaction_effort(&self, damage: f32) -> f32 {
-        let tuning = crate::tuning::tuning();
-        tuning.reaction_per_threat * self.base_potency() + damage * tuning.reaction_effort
+    pub fn reaction_effort(&self, tuning: &Tuning, damage: f32) -> f32 {
+        tuning.reaction_per_threat * self.base_potency(tuning) + damage * tuning.reaction_effort
     }
 
     /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
     /// `Tuning::force_auto` at the ceiling of Force's share
-    pub fn auto_damage(&self) -> f32 {
-        let tuning = crate::tuning::tuning();
-        self.base_potency() * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(Attribute::Might))
+    pub fn auto_damage(&self, tuning: &Tuning) -> f32 {
+        self.base_potency(tuning) * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(tuning, Attribute::Might))
     }
 
     /// The share of the recovery a combo fired early skipped that this actor
     /// is let off, by its Ferocity: `Tuning::ferocity_relief_min` to
     /// `ferocity_relief_max`.
-    pub fn ferocity_relief(&self) -> f32 {
-        let tuning = crate::tuning::tuning();
+    pub fn ferocity_relief(&self, tuning: &Tuning) -> f32 {
         self.ferocity().between(tuning.ferocity_relief_min, tuning.ferocity_relief_max)
     }
 
     /// The share of its own recovery a reaction this actor uses through a
     /// recovery is let off, by its Preparation:
     /// `Tuning::preparation_relief_min` to `preparation_relief_max`.
-    pub fn preparation_relief(&self) -> f32 {
-        let tuning = crate::tuning::tuning();
+    pub fn preparation_relief(&self, tuning: &Tuning) -> f32 {
         self.preparation().between(tuning.preparation_relief_min, tuning.preparation_relief_max)
     }
 
@@ -649,8 +641,7 @@ impl ActorAttributes {
     /// The share faster this actor's stamina refills while it waits on a
     /// swing it could not strike (`Status::waiting`): `Tuning::patience_regen_min`
     /// at T0 to `patience_regen_max` at T3.
-    pub fn patience_regen(&self) -> f32 {
-        let tuning = crate::tuning::tuning();
+    pub fn patience_regen(&self, tuning: &Tuning) -> f32 {
         self.patience().between(tuning.patience_regen_min, tuning.patience_regen_max)
     }
 
@@ -658,8 +649,7 @@ impl ActorAttributes {
     /// Awareness: `Tuning::awareness_span_min`, which every actor has, to
     /// `awareness_span_max`. A reaction takes the front threat and every
     /// threat landing within this long after it (`ReactionQueue::swept`).
-    pub fn span(&self) -> std::time::Duration {
-        let tuning = crate::tuning::tuning();
+    pub fn span(&self, tuning: &Tuning) -> std::time::Duration {
         std::time::Duration::from_secs_f32(self.awareness().between(tuning.awareness_span_min, tuning.awareness_span_max))
     }
 
@@ -668,17 +658,15 @@ impl ActorAttributes {
     /// each tier wider to `grace_arc_max`, which leaves only what stands
     /// straight behind it out of reach. A strike past the forward faces
     /// breaks its stride (`targeting::across`).
-    pub fn arc(&self) -> f32 {
-        let tuning = crate::tuning::tuning();
+    pub fn arc(&self, tuning: &Tuning) -> f32 {
         self.grace().between(tuning.grace_arc_min, tuning.grace_arc_max)
     }
 
     /// Seconds between auto-attacks: `Tuning::base_interval`, the one pace
     /// every actor starts from, quickened by `Tuning::tempo_ceiling` at the
     /// ceiling of Tempo's share. No actor swings slower than the base.
-    pub fn cadence_interval(&self) -> std::time::Duration {
-        let tuning = crate::tuning::tuning();
-        std::time::Duration::from_secs_f32(tuning.base_interval / (1.0 + tuning.tempo_ceiling * self.share(Attribute::Agility)))
+    pub fn cadence_interval(&self, tuning: &Tuning) -> std::time::Duration {
+        std::time::Duration::from_secs_f32(tuning.base_interval / (1.0 + tuning.tempo_ceiling * self.share(tuning, Attribute::Agility)))
     }
 }
 
@@ -734,18 +722,20 @@ mod tests {
 
     #[test]
     fn an_attributes_potency_follows_its_own_points() {
+        let tuning = Tuning::DEFAULT;
         let resolve = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
         let might = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
-        assert!(resolve.potency(Attribute::Resolve) > might.potency(Attribute::Resolve));
-        assert!(might.force() > resolve.force());
-        assert_eq!(might.potency(Attribute::Resolve), resolve.force());
+        assert!(resolve.potency(&tuning, Attribute::Resolve) > might.potency(&tuning, Attribute::Resolve));
+        assert!(might.force(&tuning) > resolve.force(&tuning));
+        assert_eq!(might.potency(&tuning, Attribute::Resolve), resolve.force(&tuning));
     }
 
     #[test]
     fn a_share_rises_with_investment_and_diminishes() {
+        let tuning = Tuning::DEFAULT;
         let share = |points: i8| {
             let attrs = ActorAttributes::new(-points, 0, 0, 0, 0, 0, 0, 0, 0);
-            attrs.share(Attribute::Might)
+            attrs.share(&tuning, Attribute::Might)
         };
         assert_eq!(share(0), 0.0, "none invested, none of the ceiling");
         assert!(share(5) > 0.0 && share(10) > share(5), "more invested, more of it");
@@ -755,68 +745,73 @@ mod tests {
 
     #[test]
     fn endurance_deepens_its_own_pool_and_every_actor_has_the_one_stamina() {
+        let tuning = Tuning::DEFAULT;
         let disciplined = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
-        assert_eq!(disciplined.max_stamina(), plain.max_stamina());
-        assert!(disciplined.max_endurance() > mighty.max_endurance(), "Discipline deepens it");
-        assert!(mighty.max_endurance() > plain.max_endurance(), "and so does level");
+        assert_eq!(disciplined.max_stamina(&tuning), plain.max_stamina(&tuning));
+        assert!(disciplined.max_endurance(&tuning) > mighty.max_endurance(&tuning), "Discipline deepens it");
+        assert!(mighty.max_endurance(&tuning) > plain.max_endurance(&tuning), "and so does level");
         use crate::message::AbilityType::{Counter, Frenzy};
-        assert_eq!(disciplined.skill_endurance(Frenzy), mighty.skill_endurance(Frenzy), "a skill costs the same at a level where neither reads its stat");
-        let skills = |attrs: &ActorAttributes| attrs.max_endurance() / attrs.skill_endurance(Frenzy);
+        assert_eq!(disciplined.skill_endurance(&tuning, Frenzy), mighty.skill_endurance(&tuning, Frenzy), "a skill costs the same at a level where neither reads its stat");
+        let skills = |attrs: &ActorAttributes| attrs.max_endurance(&tuning) / attrs.skill_endurance(&tuning, Frenzy);
         assert!((skills(&mighty) - skills(&plain)).abs() < 1e-3, "with no Discipline a pool holds as many skills at any level");
 
         let (instinctive, resolute) = (ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0), ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0));
-        assert_eq!(instinctive.skill_endurance(Frenzy), mighty.skill_endurance(Frenzy), "a skill costs what its stamina does, whatever the build");
-        assert_eq!(resolute.skill_endurance(Counter), mighty.skill_endurance(Counter));
+        assert_eq!(instinctive.skill_endurance(&tuning, Frenzy), mighty.skill_endurance(&tuning, Frenzy), "a skill costs what its stamina does, whatever the build");
+        assert_eq!(resolute.skill_endurance(&tuning, Counter), mighty.skill_endurance(&tuning, Counter));
         use crate::message::AbilityType::{Feint, Overpower};
-        assert!(plain.skill_endurance(Feint) < plain.skill_endurance(Overpower), "a skill cheap in stamina is cheap in endurance");
+        assert!(plain.skill_endurance(&tuning, Feint) < plain.skill_endurance(&tuning, Overpower), "a skill cheap in stamina is cheap in endurance");
     }
 
     #[test]
     fn a_skill_is_raised_by_its_line_and_the_shared_ones_by_none() {
+        let tuning = Tuning::DEFAULT;
         use crate::message::AbilityType::*;
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let instinctive = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
         let plain = ActorAttributes::default();
-        assert_eq!(mighty.line_power(Frenzy), 1.0, "full commitment to Might bites whole");
-        assert_eq!(instinctive.line_power(Frenzy), crate::tuning::tuning().line(Frenzy), "with none, its floor");
-        assert!(instinctive.line_power(Frenzy) < 1.0, "a skill out of its line is weak");
-        assert!(instinctive.leap_tiles() > mighty.leap_tiles(), "Instinct leaps further");
+        assert_eq!(mighty.line_power(&tuning, Frenzy), 1.0, "full commitment to Might bites whole");
+        assert_eq!(instinctive.line_power(&tuning, Frenzy), tuning.line(Frenzy), "with none, its floor");
+        assert!(instinctive.line_power(&tuning, Frenzy) < 1.0, "a skill out of its line is weak");
+        assert!(instinctive.leap_tiles(&tuning) > mighty.leap_tiles(&tuning), "Instinct leaps further");
         for shared in [Feint, Parry, AutoAttack] {
-            assert_eq!(mighty.line_power(shared), 1.0, "{shared:?} belongs to no line");
-            assert_eq!(instinctive.line_power(shared), 1.0, "{shared:?} belongs to no line");
+            assert_eq!(mighty.line_power(&tuning, shared), 1.0, "{shared:?} belongs to no line");
+            assert_eq!(instinctive.line_power(&tuning, shared), 1.0, "{shared:?} belongs to no line");
         }
         let half = ActorAttributes::new(-5, 0, 0, -5, 0, 0, 0, 0, 0);
-        assert!(half.line_power(Frenzy) > instinctive.line_power(Frenzy) && half.line_power(Frenzy) < 1.0, "between, by how much it has invested");
-        assert_eq!(plain.line_power(Frenzy), crate::tuning::tuning().line(Frenzy), "a build of no level has invested nothing");
-        assert_eq!(mighty.reaction_effort(10.0), instinctive.reaction_effort(10.0), "a reaction's price reads no attribute");
-        assert!(plain.reaction_effort(20.0) > plain.reaction_effort(10.0), "more by the damage it clears");
+        assert!(half.line_power(&tuning, Frenzy) > instinctive.line_power(&tuning, Frenzy) && half.line_power(&tuning, Frenzy) < 1.0, "between, by how much it has invested");
+        assert_eq!(plain.line_power(&tuning, Frenzy), tuning.line(Frenzy), "a build of no level has invested nothing");
+        assert_eq!(mighty.reaction_effort(&tuning, 10.0), instinctive.reaction_effort(&tuning, 10.0), "a reaction's price reads no attribute");
+        assert!(plain.reaction_effort(&tuning, 20.0) > plain.reaction_effort(&tuning, 10.0), "more by the damage it clears");
     }
 
     #[test]
     fn tempo_quickens_the_swing_and_no_one_is_slower_than_the_base() {
-        let base = std::time::Duration::from_secs_f32(crate::tuning::tuning().base_interval);
-        let quick = |points: i8| ActorAttributes::new(points, 0, 0, 0, 0, 0, 0, 0, 0).cadence_interval();
-        assert_eq!(ActorAttributes::default().cadence_interval(), base);
-        assert_eq!(ActorAttributes::new(-10, 0, 0, -10, 0, 0, 0, 0, 0).cadence_interval(), base, "no other attribute changes the pace");
+        let tuning = Tuning::DEFAULT;
+        let base = std::time::Duration::from_secs_f32(tuning.base_interval);
+        let quick = |points: i8| ActorAttributes::new(points, 0, 0, 0, 0, 0, 0, 0, 0).cadence_interval(&tuning);
+        assert_eq!(ActorAttributes::default().cadence_interval(&tuning), base);
+        assert_eq!(ActorAttributes::new(-10, 0, 0, -10, 0, 0, 0, 0, 0).cadence_interval(&tuning), base, "no other attribute changes the pace");
         assert!(quick(5) < base && quick(10) < quick(5), "more Agility, a faster swing");
     }
 
     #[test]
     fn grace_widens_the_arc_to_all_but_straight_behind() {
+        let tuning = Tuning::DEFAULT;
         let graceful = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
-        assert_eq!(plain.arc(), crate::systems::targeting::STRIDE_ARC, "no Grace, the forward faces");
-        assert!(graceful.arc() > plain.arc() && graceful.arc() < 180.0, "full commitment still cannot strike straight behind");
+        assert_eq!(plain.arc(&tuning), crate::systems::targeting::STRIDE_ARC, "no Grace, the forward faces");
+        assert!(graceful.arc(&tuning) > plain.arc(&tuning) && graceful.arc(&tuning) < 180.0, "full commitment still cannot strike straight behind");
     }
 
     #[test]
     fn awareness_lengthens_the_span_and_every_actor_has_the_least() {
+        let tuning = Tuning::DEFAULT;
         let aware = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
         let plain = ActorAttributes::default();
-        assert!(plain.span() > std::time::Duration::ZERO, "no Awareness, still a span");
-        assert!(aware.span() > plain.span());
+        assert!(plain.span(&tuning) > std::time::Duration::ZERO, "no Awareness, still a span");
+        assert!(aware.span(&tuning) > plain.span(&tuning));
     }
 
     #[test]
@@ -828,19 +823,20 @@ mod tests {
 
     #[test]
     fn patience_refills_stamina_faster_by_its_tier() {
+        let tuning = Tuning::DEFAULT;
         let patient = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
-        let tuning = crate::tuning::tuning();
-        assert_eq!(ActorAttributes::default().patience_regen(), tuning.patience_regen_min, "without Patience, no faster");
-        assert_eq!(patient.patience_regen(), patient.patience().between(tuning.patience_regen_min, tuning.patience_regen_max));
-        assert!(patient.patience_regen() > ActorAttributes::default().patience_regen());
+        assert_eq!(ActorAttributes::default().patience_regen(&tuning), tuning.patience_regen_min, "without Patience, no faster");
+        assert_eq!(patient.patience_regen(&tuning), patient.patience().between(tuning.patience_regen_min, tuning.patience_regen_max));
+        assert!(patient.patience_regen(&tuning) > ActorAttributes::default().patience_regen(&tuning));
     }
 
     #[test]
     fn force_strengthens_auto_attacks() {
+        let tuning = Tuning::DEFAULT;
         let might = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let vital = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
-        assert!(might.auto_damage() > vital.auto_damage());
-        assert_eq!(vital.auto_damage(), vital.base_potency() * crate::tuning::tuning().auto_damage);
+        assert!(might.auto_damage(&tuning) > vital.auto_damage(&tuning));
+        assert_eq!(vital.auto_damage(&tuning), vital.base_potency(&tuning) * tuning.auto_damage);
     }
 
     #[test]
@@ -883,6 +879,7 @@ mod tests {
 
     #[test]
     fn test_damage_multiplier_exceeds_hp_multiplier() {
+        let tuning = Tuning::DEFAULT;
         // Damage scales more aggressively than HP at all positive levels
         for level in 1..=20u32 {
             let attrs = ActorAttributes::new(
@@ -891,7 +888,7 @@ mod tests {
                 0, 0, 0,
             );
             assert!(
-                attrs.damage_level_multiplier() >= attrs.hp_level_multiplier(),
+                attrs.damage_level_multiplier(&tuning) >= attrs.hp_level_multiplier(&tuning),
                 "Damage multiplier should >= HP multiplier at level {}",
                 level
             );
@@ -900,26 +897,28 @@ mod tests {
 
     #[test]
     fn test_max_health_increases_with_level() {
+        let tuning = Tuning::DEFAULT;
         let level_0 = ActorAttributes::default();
         let level_5 = ActorAttributes::new(-3, -2, 0, 0, 0, 0, 0, 0, 0); // 5 points invested
         let level_10 = ActorAttributes::new(-5, -3, 0, -1, -1, 0, 0, 0, 0); // 10 points invested
 
         assert!(
-            level_5.max_health() > level_0.max_health(),
+            level_5.max_health(&tuning) > level_0.max_health(&tuning),
             "Level 5 should have more HP than level 0"
         );
         assert!(
-            level_10.max_health() > level_5.max_health(),
+            level_10.max_health(&tuning) > level_5.max_health(&tuning),
             "Level 10 should have more HP than level 5"
         );
     }
 
     #[test]
     fn test_default_attrs_max_health_is_base() {
+        let tuning = Tuning::DEFAULT;
         // Level 0, no investment: max_health = base HP * multiplier(0) = base * 1.0
         let attrs = ActorAttributes::default();
         assert_eq!(attrs.total_level(), 0);
-        assert_eq!(attrs.max_health(), crate::tuning::tuning().base_health, "Level 0 with no vitality should have the base health");
+        assert_eq!(attrs.max_health(&tuning), tuning.base_health, "Level 0 with no vitality should have the base health");
     }
 
     // ===== COMMITMENT TIER TESTS (, Layer 2) =====
@@ -1122,11 +1121,12 @@ mod tests {
 
     #[test]
     fn a_draft_keeps_the_level_so_its_tiers_answer_only_to_their_own_pair() {
+        let tuning = Tuning::DEFAULT;
         let attrs = ActorAttributes::new(-3, 0, 0, 7, 0, 0, 0, 0, 0);
         let mut draft = attrs;
         draft.apply_respec([Pair::new(-3, 0, 0), Pair::new(2, 0, 0), Pair::default()]);
         assert_eq!(draft.total_level(), attrs.total_level(), "levels taken out of one pair are still the actor's");
         assert_eq!(draft.ferocity(), attrs.ferocity(), "Might untouched, its tier holds");
-        assert_eq!(draft.damage_level_multiplier(), attrs.damage_level_multiplier());
+        assert_eq!(draft.damage_level_multiplier(&tuning), attrs.damage_level_multiplier(&tuning));
     }
 }

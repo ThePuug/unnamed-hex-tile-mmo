@@ -9,6 +9,7 @@ use crate::systems::{
     bag_panel,
     equipment_panel::{self, CURSOR_ROW, OTHER_ROW},
 };
+use common_bevy::tuning::Tuning;
 
 /// The panel's tabs, stacked down its left edge in this order.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -769,6 +770,7 @@ pub fn update_tabs(
 
 /// Update attribute text and bar visuals when panel is visible
 pub fn update_attributes(
+    tuning: Res<Tuning>,
     state: Res<CharacterPanelState>,
     player_query: Query<&ActorAttributes, With<Actor>>,
     title_query: Query<(Entity, &AttributeTitle)>,
@@ -892,7 +894,6 @@ pub fn update_attributes(
     }
 
     // Update meta-attribute raw values and calculated effects
-    let tuning = common_bevy::tuning::tuning();
     for (meta_stat, entity) in &meta_query {
         if let Ok(mut text) = text_query.get_mut(entity) {
             // Check if this is a raw value display (starts with '(')
@@ -927,31 +928,31 @@ pub fn update_attributes(
                     // An absolute's effect is how much more its points make
                     // what the fight reads it as than an actor of its level
                     // with none
-                    MetaAttributeStat::Force => increase(display_attrs.auto_damage(), display_attrs.base_potency() * tuning.auto_damage),
-                    MetaAttributeStat::Tempo => increase(tuning.base_interval, display_attrs.cadence_interval().as_secs_f32()),
-                    MetaAttributeStat::Constitution => increase(display_attrs.constitution(), tuning.base_health * display_attrs.hp_level_multiplier()),
-                    MetaAttributeStat::Endurance => increase(display_attrs.endurance(), display_attrs.base_potency()),
+                    MetaAttributeStat::Force => increase(display_attrs.auto_damage(&tuning), display_attrs.base_potency(&tuning) * tuning.auto_damage),
+                    MetaAttributeStat::Tempo => increase(tuning.base_interval, display_attrs.cadence_interval(&tuning).as_secs_f32()),
+                    MetaAttributeStat::Constitution => increase(display_attrs.constitution(&tuning), tuning.base_health * display_attrs.hp_level_multiplier(&tuning)),
+                    MetaAttributeStat::Endurance => increase(display_attrs.endurance(&tuning), display_attrs.base_potency(&tuning)),
                     // Instinct's and Resolve's own: the skill each line raises
-                    MetaAttributeStat::Intuition => increase(display_attrs.line_power(common_bevy::message::AbilityType::Leap), 1.0),
-                    MetaAttributeStat::Concentration => increase(display_attrs.line_power(common_bevy::message::AbilityType::Counter), 1.0),
+                    MetaAttributeStat::Intuition => increase(display_attrs.line_power(&tuning, common_bevy::message::AbilityType::Leap), 1.0),
+                    MetaAttributeStat::Concentration => increase(display_attrs.line_power(&tuning, common_bevy::message::AbilityType::Counter), 1.0),
                     MetaAttributeStat::Impact => {
                         // Recovery pushback: 0.50 × gap × contest_factor
                         let impact = display_attrs.impact();
-                        let contest = contest_factor(impact, 0, 0.0);  // vs 0 composure
+                        let contest = contest_factor(&tuning, impact, 0, 0.0);  // vs 0 composure
                         let pushback_pct = (0.50 * contest) * 100.0;
                         format!("+{:.0}%", pushback_pct)
                     },
                     MetaAttributeStat::Composure => {
                         // Recovery time reduction: 0.33 × gap × contest_factor
                         let composure = display_attrs.composure();
-                        let contest = contest_factor(composure, 0, 0.0);  // vs 0 impact
+                        let contest = contest_factor(&tuning, composure, 0, 0.0);  // vs 0 impact
                         let reduction_pct = (0.33 * contest) * 100.0;
                         format!("-{:.0}%", reduction_pct)
                     },
                     MetaAttributeStat::Flow => {
                         // Combo unlock: 0.66 × gap × contest_factor
                         let flow = display_attrs.flow();
-                        let contest = contest_factor(flow, 0, 0.0);  // vs 0 reflex
+                        let contest = contest_factor(&tuning, flow, 0, 0.0);  // vs 0 reflex
                         let reduction_pct = (0.66 * contest) * 100.0;
                         format!("-{:.0}%", reduction_pct)
                     },
@@ -959,15 +960,15 @@ pub fn update_attributes(
                         // Reaction window: 3.0s × (1.0 + 0.5 × contest_factor)
                         // Display raw time value (different pattern from other stats)
                         let reflex = display_attrs.reflex();
-                        let contest = contest_factor(reflex, 0, 0.0);  // vs 0 flow
+                        let contest = contest_factor(&tuning, reflex, 0, 0.0);  // vs 0 flow
                         let multiplier = 1.0 + 0.5 * contest;
                         let window_seconds = 3.0 * multiplier;
                         format!("{:.1}s", window_seconds)
                     },
                     MetaAttributeStat::Focus => {
                         // Crit chance on a target of its level with no Toughness
-                        let contest = contest_factor(display_attrs.focus(), 0, 0.0);
-                        format!("{:.0}%", common_bevy::tuning::tuning().crit_chance * contest * 100.0)
+                        let contest = contest_factor(&tuning, display_attrs.focus(), 0, 0.0);
+                        format!("{:.0}%", tuning.crit_chance * contest * 100.0)
                     },
                     MetaAttributeStat::Toughness => {
                         // The Focus it cancels: an attacker crits it only with more
@@ -976,15 +977,15 @@ pub fn update_attributes(
                     // A commitment's effect is what its tier gives, from the
                     // same methods the fight reads.
                     MetaAttributeStat::Ferocity => {
-                        format!("{}, -{:.0}%", display_attrs.ferocity().index(), display_attrs.ferocity_relief() * 100.0)
+                        format!("{}, -{:.0}%", display_attrs.ferocity().index(), display_attrs.ferocity_relief(&tuning) * 100.0)
                     },
-                    MetaAttributeStat::Grace => format!("+/-{:.0} deg", display_attrs.arc()),
+                    MetaAttributeStat::Grace => format!("+/-{:.0} deg", display_attrs.arc(&tuning)),
                     MetaAttributeStat::Grit => display_attrs.grit_fill().to_string(),
                     MetaAttributeStat::Preparation => {
-                        format!("{}, -{:.0}%", display_attrs.preparation().index(), display_attrs.preparation_relief() * 100.0)
+                        format!("{}, -{:.0}%", display_attrs.preparation().index(), display_attrs.preparation_relief(&tuning) * 100.0)
                     },
-                    MetaAttributeStat::Patience => format!("+{:.0}%", display_attrs.patience_regen() * 100.0),
-                    MetaAttributeStat::Awareness => format!("{:.2}s", display_attrs.span().as_secs_f32()),
+                    MetaAttributeStat::Patience => format!("+{:.0}%", display_attrs.patience_regen(&tuning) * 100.0),
+                    MetaAttributeStat::Awareness => format!("{:.2}s", display_attrs.span(&tuning).as_secs_f32()),
                 };
             }
         }

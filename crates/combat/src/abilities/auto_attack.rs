@@ -10,13 +10,14 @@ use super::{Abilities, AbilityFailReason, Cast};
 /// the next comes due an interval from now. Struck in a Perfect Stride it
 /// lands `Tuning::stride_damage` harder.
 pub fn swing(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
+    let tuning = *abilities.tuning;
     let (target, _) = cast.struck()?;
     let now = abilities.time.elapsed();
     let status = abilities.statuses.get(cast.ent).ok().copied();
     if let Ok(mut swing) = abilities.swings.get_mut(cast.ent) {
-        swing.due = Some(now + cast.attrs.cadence_interval());
+        swing.due = Some(now + cast.attrs.cadence_interval(&tuning));
     }
-    let stride = if status.is_some_and(|status| status.is_striding()) { 1.0 + common_bevy::tuning::tuning().stride_damage } else { 1.0 };
-    abilities.deal(cast.ent, target, cast.attrs.auto_damage() * stride, AbilityType::AutoAttack, 0.0, Duration::ZERO);
+    let stride = if status.is_some_and(|status| status.is_striding()) { 1.0 + tuning.stride_damage } else { 1.0 };
+    abilities.deal(cast.ent, target, cast.attrs.auto_damage(&tuning) * stride, AbilityType::AutoAttack, 0.0, Duration::ZERO);
     Ok(Some(target))
 }

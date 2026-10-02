@@ -20,6 +20,7 @@ use common_bevy::{
 use qrz::Qrz;
 
 use super::{mind::Minds, moves::{self, Footing, Move}, perception::Sight, Body};
+use common_bevy::tuning::Tuning;
 
 /// How near its engagement's place a returning NPC counts as home, in tiles.
 const HOME: i32 = 2;
@@ -104,6 +105,7 @@ fn round(map: &Map, nntree: &NNTree, from: Qrz, target: Qrz, toward: Qrz) -> Opt
 }
 
 pub fn chase(
+    tuning: Res<Tuning>,
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
     mut actors: ParamSet<(Query<(
@@ -184,7 +186,6 @@ pub fn chase(
         let target_heading = headings.get(&held);
 
         // Its movement channel chooses the move; the move is walked here
-        let tuning = common_bevy::tuning::tuning();
         let archetype = match kind {
             Some(EntityType::Actor(actor)) => match actor.identity {
                 ActorIdentity::Npc(archetype) => Some(archetype),
@@ -206,7 +207,7 @@ pub fn chase(
         let held = stamina.map_or(f32::INFINITY, |stamina| stamina.state.max(f32::EPSILON));
         let (strike_cost, breaks_stride) = rounding.map_or((0.0, false), |(floor, next)| {
             let heading = Heading::from_hex(Qrz { z: 0, ..next - floor });
-            let share = if striding { 0.0 } else { across_share(&heading, loc, target_loc) };
+            let share = if striding { 0.0 } else { across_share(&tuning, &heading, loc, target_loc) };
             (tuning.off_arc_stamina * share / held, across(Some(&heading), loc, target_loc) && !striding)
         });
         let footing = Footing {
@@ -227,8 +228,8 @@ pub fn chase(
             clear_outward: target_loc.flat_distance(&home) < from_home,
             distance: loc.distance(target_loc),
             reach: chase.attack_range,
-            leap: attrs.map_or(tuning.leap_distance, ActorAttributes::leap_tiles) as i32,
-            stamina: stamina.zip(attrs).map_or(1.0, |(stamina, attrs)| stamina.state / attrs.max_stamina().max(1.0)),
+            leap: attrs.map_or(tuning.leap_distance, |attrs| attrs.leap_tiles(&tuning)) as i32,
+            stamina: stamina.zip(attrs).map_or(1.0, |(stamina, attrs)| stamina.state / attrs.max_stamina(&tuning).max(1.0)),
             // Its Patience pays only while its swing clock runs, engaged
             patience: attrs.filter(|_| swing.is_some_and(|swing| swing.due.is_some()))
                 .map_or(0, |attrs| attrs.patience().index() as u32),
@@ -293,6 +294,7 @@ mod tests {
         app.init_resource::<Time>();
         app.insert_resource(crate::dice::Dice::seeded(0));
         app.insert_resource(Minds::tuned());
+        app.init_resource::<Tuning>();
         app.register_required_components::<Chase, crate::dice::Rolls>();
         let mut tiles = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         for q in -4..=LEASH + 8 {

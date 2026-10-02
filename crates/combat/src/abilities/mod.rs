@@ -62,6 +62,7 @@ use crate::{
     behaviour::{chase::Chase, perception::{Sight, Skill}},
     landing,
 };
+use common_bevy::tuning::Tuning;
 
 /// Why the gate refused an ability.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -107,8 +108,7 @@ pub const WHOLE: [(f32, Duration); 1] = [(1.0, Duration::ZERO)];
 /// A strike of `damage`, and the share of its target's speed it binds away:
 /// `Tuning::grit_share` harder and `grit_bind` binding with a full Grit
 /// bank `released` into it, as it is without.
-fn released_into(damage: f32, released: bool) -> (f32, f32) {
-    let tuning = common_bevy::tuning::tuning();
+fn released_into(tuning: &Tuning, damage: f32, released: bool) -> (f32, f32) {
     if released { (damage * (1.0 + tuning.grit_share), tuning.grit_bind) } else { (damage, 0.0) }
 }
 
@@ -145,6 +145,7 @@ pub struct Abilities<'w, 's> {
     pub time: Res<'w, Time>,
     pub runtime: Res<'w, crate::RunTime>,
     pub dice: Res<'w, crate::dice::Dice>,
+    pub tuning: Res<'w, common_bevy::tuning::Tuning>,
     pub mind_set: Res<'w, crate::behaviour::mind::Minds>,
     pub rolls: Query<'w, 's, &'static mut crate::dice::Rolls>,
     pub decisions: Option<ResMut<'w, crate::behaviour::Decisions>>,
@@ -186,7 +187,7 @@ impl Abilities<'_, '_> {
     /// target, a Leap's. Errs with the reason it was refused, or with none
     /// where there is nothing to tell: a dead caster, a swing not yet due.
     fn cast(&mut self, ent: Entity, ability: AbilityType, asked: Option<Entity>) -> Result<(), Option<AbilityFailReason>> {
-        let tuning = common_bevy::tuning::tuning();
+        let tuning = *self.tuning;
         let Ok((&loc, &attrs, _, heading, side, range, dead)) = self.actors.get(ent) else { return Err(None) };
         if dead {
             return Err(None);
@@ -217,7 +218,7 @@ impl Abilities<'_, '_> {
             if !within.contains(&loc.distance(&target_loc)) {
                 return Err(Some(AbilityFailReason::OutOfRange));
             }
-            if !in_arc(heading.as_ref(), Some(&attrs), &loc, &target_loc) {
+            if !in_arc(&tuning, heading.as_ref(), Some(&attrs), &loc, &target_loc) {
                 return Err(Some(AbilityFailReason::NotFacing));
             }
             cast.target_loc = Some(target_loc);
@@ -228,7 +229,7 @@ impl Abilities<'_, '_> {
         // without it. A Perfect Stride waives it
         let across = cast.target_loc.is_some_and(|target_loc| targeting::across(heading.as_ref(), &loc, &target_loc));
         let share = if self.strides(ent) { 0.0 } else {
-            heading.as_ref().zip(cast.target_loc).map_or(0.0, |(heading, target_loc)| targeting::across_share(heading, &loc, &target_loc))
+            heading.as_ref().zip(cast.target_loc).map_or(0.0, |(heading, target_loc)| targeting::across_share(&tuning, heading, &loc, &target_loc))
         };
         let cost = tuning.cost(ability) + if ability == AbilityType::AutoAttack { tuning.off_arc_stamina * share } else { 0.0 };
         if self.stamina.get(ent).map_or(true, |stamina| stamina.state < cost) {
@@ -236,7 +237,7 @@ impl Abilities<'_, '_> {
         }
 
         // The recovery runs by how spent the actor is as it uses the ability
-        let fatigue = self.endurance.get(ent).map_or(0.0, |endurance| endurance.fatigue());
+        let fatigue = self.endurance.get(ent).map_or(0.0, |endurance| endurance.fatigue(&tuning));
 
         // The ability's own effect, which may still refuse before it
         // changes anything; it names whom its recovery is contested by
@@ -263,9 +264,9 @@ impl Abilities<'_, '_> {
         // of the Force it strikes with, the more the further round its arc.
         // A reaction has paid besides for what it cleared (`react`)
         self.tire(ent, match ability {
-            AbilityType::AutoAttack if across => tuning.off_arc_cost * share * attrs.force(),
+            AbilityType::AutoAttack if across => tuning.off_arc_cost * share * attrs.force(&tuning),
             AbilityType::AutoAttack => 0.0,
-            _ => attrs.skill_endurance(ability),
+            _ => attrs.skill_endurance(&tuning, ability),
         });
         // Every client near draws it
         self.writer.write(Do { event: GameEvent::UseAbility { ent, ability, target: opponent } });
@@ -277,7 +278,7 @@ impl Abilities<'_, '_> {
         if ability != AbilityType::AutoAttack {
             self.commands.entity(ent).try_insert(LastSkill(self.time.elapsed()));
             let against = opponent.and_then(|opponent| self.actors.get(opponent).ok()).map(|(_, attrs, ..)| *attrs);
-            landing::recover(ent, recovery_after(ability, prior.as_ref(), &attrs, against.as_ref(), fatigue), &mut self.commands, &mut self.writer);
+            landing::recover(ent, recovery_after(&tuning, ability, prior.as_ref(), &attrs, against.as_ref(), fatigue), &mut self.commands, &mut self.writer);
         }
         Ok(())
     }
@@ -327,8 +328,9 @@ impl Abilities<'_, '_> {
     /// as it lands. Every skill that strikes deals its damage through here,
     /// and an auto-attack or a reaction's return never does.
     pub fn strike(&mut self, cast: &Cast, target: Entity, damage: f32, ability: AbilityType, parts: &[(f32, Duration)]) {
-        let released = self.grits.get_mut(cast.ent).is_ok_and(|mut grit| grit.release());
-        let (damage, bind) = released_into(damage, released);
+        let tuning = *self.tuning;
+        let released = self.grits.get_mut(cast.ent).is_ok_and(|mut grit| grit.release(&tuning));
+        let (damage, bind) = released_into(&tuning, damage, released);
         for (i, &(share, delay)) in parts.iter().enumerate() {
             let bind = if i + 1 == parts.len() { bind } else { 0.0 };
             self.deal(cast.ent, target, damage * share, ability, bind, delay);
@@ -363,8 +365,9 @@ impl Abilities<'_, '_> {
     /// endurance for each (`ActorAttributes::reaction_effort`): what a
     /// reaction clears, and a Leap clear of its target
     pub fn answer_span(&mut self, cast: &Cast) -> Vec<QueuedThreat> {
-        let cleared = self.clear(cast.ent, ClearType::Span(cast.attrs.span()));
-        let price: f32 = cleared.iter().map(|threat| cast.attrs.reaction_effort(threat.damage)).sum();
+        let tuning = *self.tuning;
+        let cleared = self.clear(cast.ent, ClearType::Span(cast.attrs.span(&tuning)));
+        let price: f32 = cleared.iter().map(|threat| cast.attrs.reaction_effort(&tuning, threat.damage)).sum();
         self.tire(cast.ent, price);
         cleared
     }
@@ -389,8 +392,8 @@ impl Abilities<'_, '_> {
 
 /// Whether a striker facing `heading` with `attrs` may strike from `from`
 /// at `to`: within the arc its Grace opens (`ActorAttributes::arc`).
-pub fn in_arc(heading: Option<&Heading>, attrs: Option<&ActorAttributes>, from: &Loc, to: &Loc) -> bool {
-    targeting::faces(heading, targeting::arc_of(attrs), from, to)
+pub fn in_arc(tuning: &Tuning, heading: Option<&Heading>, attrs: Option<&ActorAttributes>, from: &Loc, to: &Loc) -> bool {
+    targeting::faces(heading, targeting::arc_of(tuning, attrs), from, to)
 }
 
 #[cfg(test)]
@@ -540,6 +543,7 @@ mod tests {
 
     #[test]
     fn a_feint_queues_one_light_strike() {
+        let tuning = Tuning::DEFAULT;
         let mut app = arena();
         let caster = actor(&mut app, Side::PLAYERS, 0);
         let near = actor(&mut app, Side::WILD, 1);
@@ -548,7 +552,7 @@ mod tests {
         assert!(used(&ask(&mut app, caster, AbilityType::Feint, Some(near)), AbilityType::Feint));
         let [feint] = queue(&app, near)[..] else { panic!("one strike") };
         let attrs = ActorAttributes::default();
-        assert!(feint.damage < attrs.base_potency() * common_bevy::tuning::tuning().frenzy_damage, "lighter than a bite");
+        assert!(feint.damage < attrs.base_potency(&tuning) * tuning.frenzy_damage, "lighter than a bite");
     }
 
     #[test]
@@ -590,6 +594,7 @@ mod tests {
 
     #[test]
     fn a_reaction_pays_endurance_for_what_it_clears_and_without_it_is_spent_not_refused() {
+        let tuning = Tuning::DEFAULT;
         use common_bevy::systems::combat::queue::{create_threat, insert_threat};
         let mut app = arena();
         let defender = actor(&mut app, Side::PLAYERS, 0);
@@ -601,14 +606,14 @@ mod tests {
         let pool = endurance(&app);
         let queued = |app: &mut App, damage: f32, millis: u64| {
             let at = Duration::from_millis(millis);
-            let threat = create_threat(attacker, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
+            let threat = create_threat(&tuning, attacker, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
             insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat, at);
         };
-        let flat = plain.skill_endurance(AbilityType::Parry);
+        let flat = plain.skill_endurance(&tuning, AbilityType::Parry);
         queued(&mut app, 10.0, 0);
         assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry));
         let paid = pool - endurance(&app);
-        assert!((paid - flat - plain.reaction_effort(10.0)).abs() < 1e-3, "its flat cost as any skill, and a price for what it cleared: {paid}");
+        assert!((paid - flat - plain.reaction_effort(&tuning, 10.0)).abs() < 1e-3, "its flat cost as any skill, and a price for what it cleared: {paid}");
 
         // More than the pool holds, in one span: all of it is cleared, and its user spent
         app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
@@ -627,6 +632,7 @@ mod tests {
 
     #[test]
     fn a_reaction_takes_the_front_threat_and_its_span_and_leaves_what_lands_later() {
+        let tuning = Tuning::DEFAULT;
         use common_bevy::systems::combat::queue::{create_threat, insert_threat};
         let mut app = arena();
         let defender = actor(&mut app, Side::PLAYERS, 0);
@@ -634,9 +640,9 @@ mod tests {
         app.update();
 
         let plain = ActorAttributes::default();
-        let span = plain.span();
+        let span = plain.span(&tuning);
         for at in [Duration::ZERO, span / 2, span * 4] {
-            let threat = create_threat(attacker, &plain, &plain, 10.0, Some(AbilityType::Frenzy), at, 0.0, 0.0);
+            let threat = create_threat(&tuning, attacker, &plain, &plain, 10.0, Some(AbilityType::Frenzy), at, 0.0, 0.0);
             insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat, at);
         }
 
@@ -684,6 +690,7 @@ mod tests {
 
     #[test]
     fn a_perfect_stride_strikes_across_its_line_without_breaking_stride() {
+        let tuning = Tuning::DEFAULT;
         let graceful = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         let broken = |app: &App, ent: Entity| app.world().get::<Status>(ent).is_some_and(|status| status.stride.is_some());
         let mut app = arena();
@@ -697,7 +704,7 @@ mod tests {
         let from = Loc::new(Qrz { q: 0, r: 0, z: 1 });
         let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
         let across = (-2..=2).flat_map(|q| (-2..=2).map(move |r| Loc::new(Qrz { q, r, z: 1 })))
-            .find(|to| *to != from && from.distance(to) <= 2 && targeting::across(Some(&heading), &from, to) && in_arc(Some(&heading), Some(&graceful), &from, to))
+            .find(|to| *to != from && from.distance(to) <= 2 && targeting::across(Some(&heading), &from, to) && in_arc(&tuning, Some(&heading), Some(&graceful), &from, to))
             .expect("a tile across the line that Grace reaches");
         app.world_mut().entity_mut(beside).insert(across);
         app.update();
@@ -714,18 +721,19 @@ mod tests {
 
     #[test]
     fn a_swing_across_its_line_costs_stamina_and_endurance_but_ahead_or_in_a_perfect_stride() {
+        let tuning = Tuning::DEFAULT;
         let graceful = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         let mut app = arena();
         let [ahead, across, striding, tired] = [0, 0, 0, 0].map(|q| actor(&mut app, Side::PLAYERS, q));
         let (front, side) = (actor(&mut app, Side::WILD, 1), actor(&mut app, Side::WILD, 0));
-        let pool = graceful.max_endurance();
+        let pool = graceful.max_endurance(&tuning);
         for ent in [ahead, across, striding, tired] {
             app.world_mut().entity_mut(ent).insert((graceful, Endurance::full(pool)));
         }
         let from = Loc::new(Qrz { q: 0, r: 0, z: 1 });
         let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
         let off = (-2..=2).flat_map(|q| (-2..=2).map(move |r| Loc::new(Qrz { q, r, z: 1 })))
-            .find(|to| *to != from && from.distance(to) <= 2 && targeting::across(Some(&heading), &from, to) && in_arc(Some(&heading), Some(&graceful), &from, to))
+            .find(|to| *to != from && from.distance(to) <= 2 && targeting::across(Some(&heading), &from, to) && in_arc(&tuning, Some(&heading), Some(&graceful), &from, to))
             .expect("a tile across the line that Grace reaches");
         app.world_mut().entity_mut(side).insert(off);
         app.update();
@@ -751,6 +759,7 @@ mod tests {
 
     #[test]
     fn grit_fills_by_its_tier_and_only_a_full_bank_is_released() {
+        let tuning = Tuning::DEFAULT;
         let mut app = arena();
         let gritty = actor(&mut app, Side::PLAYERS, 0);
         let attacker = actor(&mut app, Side::WILD, 1);
@@ -773,13 +782,12 @@ mod tests {
         assert_eq!(plain.bind, 0.0);
 
         app.world_mut().entity_mut(gritty).remove::<GlobalRecovery>();
-        app.world_mut().get_mut::<Grit>(gritty).unwrap().filled = Grit::size();
+        app.world_mut().get_mut::<Grit>(gritty).unwrap().filled = Grit::size(&tuning);
         assert!(used(&ask(&mut app, gritty, AbilityType::Feint, Some(attacker)), AbilityType::Feint));
         assert_eq!(filled(&app), 0, "full, the next skill releases it");
         assert!(feints(&app)[1].bind > 0.0, "binding");
-        let tuning = common_bevy::tuning::tuning();
-        assert_eq!(released_into(100.0, true), (100.0 * (1.0 + tuning.grit_share), tuning.grit_bind), "and landing harder");
-        assert_eq!(released_into(100.0, false), (100.0, 0.0));
+        assert_eq!(released_into(&tuning, 100.0, true), (100.0 * (1.0 + tuning.grit_share), tuning.grit_bind), "and landing harder");
+        assert_eq!(released_into(&tuning, 100.0, false), (100.0, 0.0));
         app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: attacker } });
         app.update();
         let slowed = |app: &App| app.world().get::<Status>(attacker).is_some_and(|status| status.slow.is_some());

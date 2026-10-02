@@ -71,7 +71,7 @@ use common_bevy::{
     plugins::nntree::NNTreePlugin,
     resources::map::Map,
     archetype::EnemyArchetype,
-    tuning::{set_tuning, Tuning},
+    tuning::Tuning,
 };
 
 use combat::{
@@ -278,12 +278,13 @@ fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>) {
 /// is recovering, held, slowed, has its target beyond its reach or circles
 /// it, and its fatigue.
 fn tally_states(world: &mut World, step: f32) {
+    let tuning = *world.resource::<Tuning>();
     let mut locs = world.query::<(Entity, &Loc)>();
     let locs: HashMap<Entity, Loc> = locs.iter(world).map(|(ent, loc)| (ent, *loc)).collect();
     let mut actors = world.query::<(Entity, &Health, &Loc, &AttackRange, Option<&Target>, Option<&GlobalRecovery>, Option<&Status>, Option<&Endurance>, Option<&Move>)>();
     let frames: Vec<_> = actors.iter(world).filter(|(_, health, ..)| health.state > 0.0).map(|(ent, _, loc, range, target, recovery, status, endurance, under_way)| {
         let beyond = target.and_then(|target| target.entity).and_then(|foe| locs.get(&foe)).is_some_and(|foe| loc.flat_distance(foe) > range.0);
-        (ent, recovery.is_some(), Status::holds(status), status.is_some_and(|status| status.slow.is_some()), beyond, under_way == Some(&Move::Circle), Endurance::fatigue_of(endurance))
+        (ent, recovery.is_some(), Status::holds(status), status.is_some_and(|status| status.slow.is_some()), beyond, under_way == Some(&Move::Circle), Endurance::fatigue_of(&tuning, endurance))
     }).collect();
     let mut tally = world.resource_mut::<Tally>();
     for (ent, recovering, held, slowed, beyond, circling, fatigue) in frames {
@@ -362,6 +363,7 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     app.insert_resource(SpawnPoint(Qrz { q: 0, r: 0, z: 1 }));
     app.init_resource::<Tally>();
     app.insert_resource(Dice::seeded(seed));
+    app.insert_resource(settings.tuning);
     app.insert_resource(settings.minds.clone());
     if settings.trace > 3 {
         app.init_resource::<Decisions>();
@@ -389,7 +391,7 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     {
         let mut commands = world.commands();
         for (team, side, at, foes) in [(west, WEST, west_at, east_at), (east, EAST, east_at, west_at)] {
-            spawn_engagement(jitter(at, foes, &dice), team.archetype, side, team.level, team.size, |_, _| 0, &mut commands, &time);
+            spawn_engagement(&settings.tuning, jitter(at, foes, &dice), team.archetype, side, team.level, team.size, |_, _| 0, &mut commands, &time);
         }
     }
     world.flush();
@@ -573,19 +575,16 @@ fn print_matrix(rows: &[Pairing], ledger: bool) {
     }
 }
 
-/// Fights every pairing of the scenario `runs` times under its tuning,
-/// which it makes the process's own for the while, and its minds.
+/// Fights every pairing of the scenario `runs` times under its tuning and
+/// minds.
 fn matrix(settings: &Settings) -> Vec<Pairing> {
     matrices(std::slice::from_ref(settings)).remove(0)
 }
 
 /// Each scenario's `matrix`, their fights all in one pool of workers, so
-/// none waits on another's slowest. Every scenario plays the same tuning,
-/// which is process-wide; their minds are each fight's own.
+/// none waits on another's slowest; each fight plays its scenario's tuning
+/// and minds.
 fn matrices(scenarios: &[Settings]) -> Vec<Vec<Pairing>> {
-    let tuning = scenarios[0].tuning;
-    assert!(scenarios.iter().all(|settings| format!("{:?}", settings.tuning) == format!("{tuning:?}")), "arena: scenarios fought together share their tuning");
-    set_tuning(tuning);
     // Each scenario's pairings, and its fights' place among all of them
     let pairings: Vec<Vec<(EnemyArchetype, EnemyArchetype)>> = scenarios.iter().map(pairings).collect();
     let jobs: Vec<(usize, (EnemyArchetype, EnemyArchetype), u32)> = scenarios.iter().zip(&pairings).enumerate()

@@ -16,6 +16,7 @@ use common_bevy::{
     plugins::nntree::NNTree,
     systems::targeting::{arc_of, select_target, update_targets_impl},
 };
+use common_bevy::tuning::Tuning;
 
 /// Update hostile targets every frame for responsive targeting (CLIENT VERSION)
 
@@ -29,6 +30,7 @@ use common_bevy::{
 /// alongside target indicator. If performance becomes an issue, can be changed to
 /// run on a timer (e.g., every 100ms).
 pub fn update_targets(
+    tuning: Res<Tuning>,
     mut query: Query<(Entity, &Loc, &Heading, &mut Target, Option<&ActorAttributes>)>,
     sides: Query<&Side>,
     nntree: Res<NNTree>,
@@ -38,7 +40,7 @@ pub fn update_targets(
             ent,
             *loc,
             *heading,
-            arc_of(attrs),
+            arc_of(&tuning, attrs),
             &mut target,
             &nntree,
             |e| sides.get(e).ok().copied(),
@@ -64,6 +66,7 @@ pub fn update_targets(
 /// alongside target indicator. If performance becomes an issue, can be changed to
 /// run on a timer (e.g., every 100ms).
 pub fn update_ally_targets(
+    tuning: Res<Tuning>,
     mut query: Query<(Entity, &Loc, &Heading, &mut AllyTarget, Option<&ActorAttributes>)>,
     sides: Query<&Side>,
     nntree: Res<NNTree>,
@@ -71,7 +74,7 @@ pub fn update_ally_targets(
     for (ent, loc, heading, mut ally_target, attrs) in &mut query {
         // The ally this entity faces
         let new_ally_target = sides.get(ent).ok().and_then(|own| {
-            select_target(ent, *loc, *heading, arc_of(attrs), &nntree, |other| {
+            select_target(ent, *loc, *heading, arc_of(&tuning, attrs), &nntree, |other| {
                 sides.get(other).is_ok_and(|side| side == own)
             })
         });

@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use crate::tuning::Tuning;
 
 /// Health, as the server holds it and sends it
 /// - state: what the actor has now
@@ -105,17 +106,17 @@ impl Endurance {
     /// pool holds and bites as it empties. Fatigue lengthens the actor's
     /// recoveries, shortens the windows of threats against it and slows
     /// its stamina's refill.
-    pub fn fatigue(&self) -> f32 {
+    pub fn fatigue(&self, tuning: &Tuning) -> f32 {
         if self.max <= 0.0 {
             return 0.0;
         }
         let spent = (1.0 - self.state / self.max).clamp(0.0, 1.0);
-        spent.powf(crate::tuning::tuning().fatigue_bend)
+        spent.powf(tuning.fatigue_bend)
     }
 
     /// The fatigue of an actor with `endurance`; none where it has no pool
-    pub fn fatigue_of(endurance: Option<&Endurance>) -> f32 {
-        endurance.map_or(0.0, Endurance::fatigue)
+    pub fn fatigue_of(tuning: &Tuning, endurance: Option<&Endurance>) -> f32 {
+        endurance.map_or(0.0, |endurance| endurance.fatigue(tuning))
     }
 }
 

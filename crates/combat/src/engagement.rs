@@ -25,6 +25,7 @@ use common_bevy::{
     archetype::{calculate_enemy_attributes, EnemyArchetype},
     systems::combat::resources::Fighter,
 };
+use common_bevy::tuning::Tuning;
 
 /// How far apart two parties staged to fight stand, as the balance arena
 /// sets its teams apart: inside the range either acquires a target from.
@@ -47,6 +48,7 @@ pub fn engaging_at(from: Qrz, dir: Qrz, elevation: impl Fn(i32, i32) -> i32) -> 
 /// `side`, round `location`; each stands a tile above the ground
 /// `elevation` gives at its column.
 pub fn spawn_engagement(
+    tuning: &Tuning,
     location: Qrz,
     archetype: EnemyArchetype,
     side: Side,
@@ -88,7 +90,7 @@ pub fn spawn_engagement(
             .spawn((
                 EntityType::Actor(actor_impl),
                 npc_loc,
-                Fighter::new(attributes, time.elapsed()),
+                Fighter::new(tuning, attributes, time.elapsed()),
                 side,
                 EngagementMember(engagement_entity),
             ))

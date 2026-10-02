@@ -28,6 +28,7 @@ use common_bevy::{
         combat::{damage as damage_calc, queue as queue_utils},
     },
 };
+use common_bevy::tuning::Tuning;
 
 #[derive(Default, Resource)]
 pub struct RunTime {
@@ -41,6 +42,7 @@ pub struct RunTime {
 /// now, or its `delay` after
 pub fn process_deal_damage(
     trigger: On<Try>,
+    tuning: Res<Tuning>,
     _commands: Commands,
     mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health, Option<&Endurance>, Option<&mut common_bevy::components::recovery::GlobalRecovery>)>,
     mut combat_query: Query<&mut CombatState>,
@@ -51,7 +53,6 @@ pub fn process_deal_damage(
     mut rolls: Query<&mut dice::Rolls>,
     mut writer: MessageWriter<Do>,
 ) {
-    let tuning = common_bevy::tuning::tuning();
     let event = &trigger.event().event;
 
     if let GameEvent::DealDamage { source, target, base_damage, ability, dot, bind, delay } = event {
@@ -72,7 +73,7 @@ pub fn process_deal_damage(
 
         let draw = dice.draw(&mut rolls, ("spread", *source)).signed();
         let outgoing = damage_calc::spread(*base_damage, tuning.damage_spread, draw);
-        let outgoing = damage_calc::crit(outgoing, source_attrs, attrs, dice.draw(&mut rolls, ("crit", *source)).share());
+        let outgoing = damage_calc::crit(&tuning, outgoing, source_attrs, attrs, dice.draw(&mut rolls, ("crit", *source)).share());
         let dot = damage_calc::spread(*dot, tuning.damage_spread, draw);
 
         // Use game world time (server uptime + offset) for consistent time base
@@ -83,9 +84,10 @@ pub fn process_deal_damage(
         // over the target's Composure with the level gap weighing in
         if let Some(mut recovery) = recovery_opt {
             let pushback_pct = damage_calc::calculate_recovery_pushback(
+                &tuning,
                 source_attrs.impact(),
                 attrs.composure(),
-                damage_calc::level_edge(source_attrs.total_level(), attrs.total_level()),
+                damage_calc::level_edge(&tuning, source_attrs.total_level(), attrs.total_level()),
             );
             recovery.apply_pushback(pushback_pct);
             writer.write(Do { event: GameEvent::Incremental { ent: *target, component: common_bevy::message::Component::Recovery(*recovery) } });
@@ -93,6 +95,7 @@ pub fn process_deal_damage(
 
         // Create threat using canonical helper (INV-003: ensures consistent timers)
         let threat = queue_utils::create_threat(
+            &tuning,
             *source,       // Source entity
             attrs,         // Target attributes
             source_attrs,  // Source attributes
@@ -100,7 +103,7 @@ pub fn process_deal_damage(
             *ability,      // Ability
             now,           // When the strike is made
             dot,           // DoT per tick, a wound's
-            Endurance::fatigue_of(endurance),
+            Endurance::fatigue_of(&tuning, endurance),
         ).binding(*bind);
 
         // Try to insert threat into queue
@@ -139,12 +142,12 @@ pub fn process_deal_damage(
 /// Processes ResolveThreat events: a threat whose time ran out, one dismissed, a Counter's reflection
 pub fn resolve_threat(
     trigger: On<Try>,
+    tuning: Res<Tuning>,
     mut commands: Commands,
     mut query: Query<(&mut Health, &ActorAttributes, Option<&mut common_bevy::components::grit::Grit>)>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     mut writer: MessageWriter<Do>,
 ) {
-    let tuning = common_bevy::tuning::tuning();
     let event = &trigger.event().event;
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
@@ -153,7 +156,7 @@ pub fn resolve_threat(
             // tier; a wound's DoT fills nothing
             let blow = threat.damage;
             if let Some(mut grit) = grit {
-                grit.take(attrs.grit_fill());
+                grit.take(&tuning, attrs.grit_fill());
             }
             let final_damage = blow + threat.dot_left();
 

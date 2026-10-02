@@ -26,6 +26,7 @@ use common_bevy::components::ActorAttributes;
 
 use crate::components::{ResolvedThreatsContainer, ViewHud, Viewed};
 use crate::systems::threat_icons::{estimate, severity, severity_rgb, DOT_COLOR};
+use common_bevy::tuning::Tuning;
 
 /// Half the highway's width at the hit line, in pixels
 const HALF_WIDTH: f32 = 70.0;
@@ -232,6 +233,7 @@ pub fn setup(
 /// Place a note for every threat in the viewed actor's queue, and shatter
 /// the notes of threats gone from it.
 pub fn update(
+    tuning: Res<Tuning>,
     mut commands: Commands,
     player_query: Query<(&ReactionQueue, &ActorAttributes, &Health, Option<&CombatState>), With<Viewed>>,
     mut highway_query: Query<(Entity, &mut Visibility, &MaterialNode<HighwayMaterial>), With<Highway>>,
@@ -261,7 +263,7 @@ pub fn update(
     let mut drawn = Vec::with_capacity(queue.threats.len());
 
     // The span a reaction reaches, anchored on the front threat
-    let span = attrs.span();
+    let span = attrs.span(&tuning);
     let band = queue.threats.front().map_or(Vec4::ZERO, |front| {
         let near = front.lands_at().saturating_sub(now).as_secs_f32();
         Vec4::new(near, near + span.as_secs_f32(), 0.0, 0.0)

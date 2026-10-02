@@ -10,17 +10,18 @@ use common_bevy::{
     },
     message::{Component, Do, Try, Event as GameEvent},
 };
+use common_bevy::tuning::Tuning;
 
 /// A strike across its striker's line breaks its stride: `Tuning::stride_pace`
 /// of its speed for one base interval.
 pub fn stumble(
     trigger: On<Try>,
+    tuning: Res<Tuning>,
     mut statuses: Query<&mut Status>,
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
 ) {
     let Try { event: GameEvent::Stumble { ent } } = trigger.event() else { return };
-    let tuning = common_bevy::tuning::tuning();
     update(*ent, &mut statuses, &mut commands, &mut writer, |status| {
         status.stride = Some(Timed { pace: tuning.stride_pace, remaining: tuning.base_interval });
     });

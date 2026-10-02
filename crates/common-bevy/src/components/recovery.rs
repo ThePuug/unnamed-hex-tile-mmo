@@ -105,6 +105,7 @@ pub struct Burst {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tuning::Tuning;
 
     #[test]
     fn a_recovery_counts_down_to_nothing_and_no_further() {
@@ -127,8 +128,8 @@ mod tests {
 
     #[test]
     fn every_ability_but_the_auto_attack_leaves_its_user_recovering() {
+        let tuning = Tuning::DEFAULT;
         use AbilityType::*;
-        let tuning = crate::tuning::tuning();
         assert_eq!(tuning.recovery(AutoAttack), 0.0, "an auto-attack runs on its own timer");
         for ability in [Frenzy, Feint, Overpower, Punish, Parry, Counter, Leap, PerfectStride] {
             assert!(tuning.recovery(ability) > 0.0, "{ability:?} leaves its user recovering");

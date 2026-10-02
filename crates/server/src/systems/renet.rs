@@ -23,6 +23,7 @@ use crate::*;
 
 use crate::network::{ServerNet, NetServerEvent};
 use combat::RunTime;
+use common_bevy::tuning::Tuning;
 
 /// A connected client entering the world or leaving it. Connection is not
 /// presence: a client connects to its character select, enters when it
@@ -58,6 +59,7 @@ pub fn do_manage_connections(
 #[allow(clippy::too_many_arguments)]
 pub fn do_presence(
     trigger: On<Presence>,
+    tuning: Res<Tuning>,
     mut commands: Commands,
     mut conn: ResMut<ServerNet>,
     mut lobby: ResMut<Lobby>,
@@ -90,7 +92,7 @@ pub fn do_presence(
                     1, 0, 0,
                     -3, 4, 0,
                 );
-                let fighter = Fighter::new(attrs, time.elapsed());
+                let fighter = Fighter::new(&tuning, attrs, time.elapsed());
                 let (health, stamina, endurance, mana, combat_state) = (fighter.health, fighter.stamina, fighter.endurance, fighter.mana, fighter.combat_state);
                 let equipment = Equipment::starting_outfit();
                 let bag = Inventory::wearing(&equipment);

@@ -95,12 +95,13 @@ impl Abilities<'_, '_> {
 
     /// How `target` stands as `ent` would see it now
     fn foe_of(&self, ent: Entity, target: Option<Entity>) -> Option<Foe> {
+        let tuning = *self.tuning;
         let (&loc, attrs, _, heading, ..) = self.actors.get(ent).ok()?;
         let (&target_loc, _, target_health, ..) = self.actors.get(target?).ok()?;
         Some(Foe {
             distance: loc.distance(&target_loc),
             health: target_health.state,
-            in_arc: in_arc(heading, Some(attrs), &loc, &target_loc),
+            in_arc: in_arc(&tuning, heading, Some(attrs), &loc, &target_loc),
             across: targeting::across(heading, &loc, &target_loc),
             since_skill: self.last_skills.get(target?).ok()
                 .map(|last| self.time.elapsed().saturating_sub(last.0).as_secs_f32()),
@@ -110,9 +111,10 @@ impl Abilities<'_, '_> {
     /// Share of `ent`'s leash left where a leap clear of `target` from
     /// `loc` lands: 1 with no leash or no target, 0 with nowhere to land
     fn clear_room(&self, ent: Entity, loc: Loc, target: Option<Entity>) -> f32 {
+        let tuning = *self.tuning;
         let Some(leash) = self.leash(ent) else { return 1.0 };
         let Some((&target_loc, ..)) = target.and_then(|target| self.actors.get(target).ok()) else { return 1.0 };
-        let distance = self.actors.get(ent).map_or(common_bevy::tuning::tuning().leap_distance, |(_, attrs, ..)| attrs.leap_tiles());
+        let distance = self.actors.get(ent).map_or(tuning.leap_distance, |(_, attrs, ..)| attrs.leap_tiles(&tuning));
         away(&self.map, *loc, *target_loc, distance, Some(leash))
             .map_or(0.0, |landing| (leash.reach - landing.flat_distance(&leash.den)) as f32 / leash.reach.max(1) as f32)
     }
@@ -137,6 +139,7 @@ impl Abilities<'_, '_> {
     /// against `foe`, its target as it perceives it; None for the dead. Its
     /// own state it knows at once; a threat only once its delay has run.
     fn view(&self, ent: Entity, ability: AbilityType, skill: &Skill, foe: Option<Foe>, target: Option<Entity>) -> Option<View> {
+        let tuning = *self.tuning;
         let (&loc, &attrs, health, _, _, range, dead) = self.actors.get(ent).ok()?;
         if dead {
             return None;
@@ -147,6 +150,7 @@ impl Abilities<'_, '_> {
             .unwrap_or_default();
         let swing = self.swings.get(ent).ok();
         Some(View {
+            tuning,
             ability,
             attrs,
             health: health.state,
@@ -155,13 +159,13 @@ impl Abilities<'_, '_> {
             endurance_max: self.endurance.get(ent).map_or(0.0, |endurance| endurance.max),
             recovery: self.recoveries.get(ent).ok().copied(),
             striding: self.strides(ent),
-            grit_filled: self.grits.get(ent).map_or(0.0, |grit| grit.filled as f32 / common_bevy::components::grit::Grit::size() as f32),
+            grit_filled: self.grits.get(ent).map_or(0.0, |grit| grit.filled as f32 / common_bevy::components::grit::Grit::size(&tuning) as f32),
             engaged: swing.is_some_and(|swing| swing.due.is_some()),
             reach: range.copied().unwrap_or_default().0,
-            leap: attrs.leap_tiles() as i32,
+            leap: attrs.leap_tiles(&tuning) as i32,
             clear_room: self.clear_room(ent, loc, target),
             capacity_taken: self.capacity_taken(ent, target),
-            queue: Threats::reading(&queue, attrs.span(), game_now),
+            queue: Threats::reading(&queue, attrs.span(&tuning), game_now),
             foe,
         })
     }

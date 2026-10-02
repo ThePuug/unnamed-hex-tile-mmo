@@ -24,6 +24,7 @@ use common_bevy::{
 };
 
 use super::{mind::Mind, utility::{score, Consideration, Curve, Shape}};
+use common_bevy::tuning::Tuning;
 
 /// What waiting scores unless a mind sets it: the threshold every skill's
 /// decision must beat.
@@ -48,6 +49,8 @@ const WORTH: f32 = 0.3;
 /// What an NPC perceives as it weighs its skills, and the skill it weighs.
 #[derive(Clone, Debug)]
 pub struct View {
+    /// The numbers it plays by
+    pub tuning: Tuning,
     pub ability: AbilityType,
     pub attrs: ActorAttributes,
     pub health: f32,
@@ -253,9 +256,9 @@ fn foe_distance(view: &View) -> Option<i32> {
 
 /// The share of each blow it clears that `ability` sends back to the blow's
 /// source: Counter's reflection, and nothing for any other
-fn returned(ability: AbilityType) -> f32 {
+fn returned(tuning: &Tuning, ability: AbilityType) -> f32 {
     match ability {
-        AbilityType::Counter => common_bevy::tuning::tuning().counter_reflect,
+        AbilityType::Counter => tuning.counter_reflect,
         _ => 0.0,
     }
 }
@@ -276,7 +279,7 @@ const OPEN: Considered = step("open", |view| {
 /// It has the stamina; endurance refuses nothing, and is weighed as the
 /// fatigue it leaves
 const AFFORDABLE: Considered = step("affordable", |view| {
-    flag(view.stamina >= common_bevy::tuning::tuning().cost(view.ability))
+    flag(view.stamina >= view.tuning.cost(view.ability))
 });
 
 /// The fatigue it would be left with once it paid the skill's endurance:
@@ -287,10 +290,10 @@ const ENDURANCE: Considered = Consideration {
     name: "fatigue_after",
     read: |view| {
         let price = match view.ability {
-            ability if ability.is_reaction() => view.attrs.skill_endurance(ability) + view.attrs.reaction_effort(view.queue.swept),
-            ability => view.attrs.skill_endurance(ability),
+            ability if ability.is_reaction() => view.attrs.skill_endurance(&view.tuning, ability) + view.attrs.reaction_effort(&view.tuning, view.queue.swept),
+            ability => view.attrs.skill_endurance(&view.tuning, ability),
         };
-        Endurance { state: (view.endurance - price).max(0.0), max: view.endurance_max }.fatigue()
+        Endurance { state: (view.endurance - price).max(0.0), max: view.endurance_max }.fatigue(&view.tuning)
     },
     bounds: (0.0, 1.0),
     curve: Curve::FALLING.floored(0.1),
@@ -300,7 +303,7 @@ const ENDURANCE: Considered = Consideration {
 /// for whatever it does next. Weighed only as far as a mind lowers its floor
 const STAMINA_LEFT: Considered = Consideration {
     name: "stamina_left",
-    read: |view| (view.stamina - common_bevy::tuning::tuning().cost(view.ability)) / view.attrs.max_stamina().max(1.0),
+    read: |view| (view.stamina - view.tuning.cost(view.ability)) / view.attrs.max_stamina(&view.tuning).max(1.0),
     bounds: (0.0, 0.5),
     curve: Curve::RISING.floored(1.0),
 };
@@ -311,8 +314,8 @@ const STAMINA_LEFT: Considered = Consideration {
 const RECOVERY_LEFT: Considered = Consideration {
     name: "recovery_left",
     read: |view| {
-        let fatigue = Endurance { state: view.endurance, max: view.endurance_max }.fatigue();
-        recovery_after(view.ability, view.recovery.as_ref(), &view.attrs, None, fatigue).remaining
+        let fatigue = Endurance { state: view.endurance, max: view.endurance_max }.fatigue(&view.tuning);
+        recovery_after(&view.tuning, view.ability, view.recovery.as_ref(), &view.attrs, None, fatigue).remaining
     },
     bounds: (0.0, 6.0),
     curve: Curve::FALLING.floored(1.0),
@@ -351,7 +354,7 @@ const OPENING: Considered = Consideration {
 const WORTH_ANSWERING: Considered = Consideration {
     name: "worth_answering",
     read: |view| {
-        let returned = view.queue.swept_direct * returned(view.ability) * view.attrs.line_power(view.ability);
+        let returned = view.queue.swept_direct * returned(&view.tuning, view.ability) * view.attrs.line_power(&view.tuning, view.ability);
         (view.queue.swept + returned) / health(view)
     },
     bounds: (0.0, WORTH),
@@ -396,9 +399,8 @@ const NOT_STRIDING: Considered = step("not_striding", |view| flag(!view.striding
 const STRIKE_WORTH: Considered = Consideration {
     name: "strike_worth",
     read: |view| {
-        let tuning = common_bevy::tuning::tuning();
-        let release = if view.grit_filled >= 1.0 { 1.0 + tuning.grit_share } else { 1.0 };
-        let dealt = view.attrs.base_potency() * tuning.damage(view.ability) * view.attrs.line_power(view.ability) * release;
+        let release = if view.grit_filled >= 1.0 { 1.0 + view.tuning.grit_share } else { 1.0 };
+        let dealt = view.attrs.base_potency(&view.tuning) * view.tuning.damage(view.ability) * view.attrs.line_power(&view.tuning, view.ability) * release;
         view.foe.map_or(0.0, |foe| dealt / foe.health.max(1.0))
     },
     bounds: (0.0, 0.25),
@@ -430,7 +432,7 @@ const REACTIONS_LEFT: Considered = Consideration {
 /// Patience: stamina spent, which it refills faster out of reach
 const STAMINA_SPENT: Considered = Consideration {
     name: "stamina_spent",
-    read: |view| view.stamina / view.attrs.max_stamina().max(1.0),
+    read: |view| view.stamina / view.attrs.max_stamina(&view.tuning).max(1.0),
     bounds: (0.0, 1.0),
     curve: Curve::FALLING,
 };
@@ -438,7 +440,7 @@ const STAMINA_SPENT: Considered = Consideration {
 /// Patience: stamina back, to spend on a dive and what follows it
 const STAMINA_READY: Considered = Consideration {
     name: "stamina_ready",
-    read: |view| view.stamina / view.attrs.max_stamina().max(1.0),
+    read: |view| view.stamina / view.attrs.max_stamina(&view.tuning).max(1.0),
     bounds: (0.0, 1.0),
     curve: Curve { shape: Shape::Power(2.0), falling: false, floor: 0.2 },
 };
@@ -463,15 +465,16 @@ mod tests {
         ActorAttributes::new(a, b, c, d, e, f, g, h, i)
     }
 
-    fn view(ability: AbilityType, attrs: ActorAttributes) -> View {
+    fn view(tuning: &Tuning, ability: AbilityType, attrs: ActorAttributes) -> View {
         View {
+            tuning: *tuning,
             ability,
             attrs,
             health: 600.0,
             stamina: 100.0,
             // A pool deep enough to clear the blows these tests queue
-            endurance: attrs.max_endurance().max(1000.0),
-            endurance_max: attrs.max_endurance().max(1000.0),
+            endurance: attrs.max_endurance(tuning).max(1000.0),
+            endurance_max: attrs.max_endurance(tuning).max(1000.0),
             recovery: None,
             striding: false,
             grit_filled: 0.0,
@@ -485,12 +488,12 @@ mod tests {
         }
     }
 
-    fn threats(blows: &[(f32, bool, u64)], span: Duration, now: Duration) -> Threats {
+    fn threats(tuning: &Tuning, blows: &[(f32, bool, u64)], span: Duration, now: Duration) -> Threats {
         let plain = ActorAttributes::default();
         let source = Entity::from_raw_u32(9).unwrap();
         let queue: Vec<QueuedThreat> = blows.iter().map(|&(damage, ability, queued)| {
             let ability = Some(if ability { AbilityType::Frenzy } else { AbilityType::AutoAttack });
-            create_threat(source, &plain, &plain, damage, ability, Duration::from_millis(queued), 0.0, 0.0)
+            create_threat(tuning, source, &plain, &plain, damage, ability, Duration::from_millis(queued), 0.0, 0.0)
         }).collect();
         Threats::reading(&queue, span, now)
     }
@@ -502,39 +505,42 @@ mod tests {
 
     #[test]
     fn nothing_queued_nothing_to_answer() {
-        let mut quiet = view(AbilityType::Counter, ActorAttributes::default());
+        let tuning = Tuning::DEFAULT;
+        let mut quiet = view(&tuning, AbilityType::Counter, ActorAttributes::default());
         assert!(choose(&mut quiet, &[AbilityType::Counter], &Mind::default(), |_| 0.0).is_none());
     }
 
     #[test]
     fn a_heavy_blow_is_answered_before_light_pressure() {
+        let tuning = Tuning::DEFAULT;
         let span = Duration::from_millis(250);
         let now = Duration::from_millis(1000);
-        let mut heavy = view(AbilityType::Counter, ActorAttributes::default());
-        heavy.queue = threats(&[(150.0, true, 0)], span, now);
-        let mut light = view(AbilityType::Counter, ActorAttributes::default());
-        light.queue = threats(&[(40.0, false, 0)], span, now);
+        let mut heavy = view(&tuning, AbilityType::Counter, ActorAttributes::default());
+        heavy.queue = threats(&tuning, &[(150.0, true, 0)], span, now);
+        let mut light = view(&tuning, AbilityType::Counter, ActorAttributes::default());
+        light.queue = threats(&tuning, &[(40.0, false, 0)], span, now);
         assert!(scored(&mut heavy, "answer") > WAIT, "a blow of a quarter of its health is answered");
         assert!(scored(&mut light, "answer") < WAIT, "one light auto-attack is let land");
     }
 
     #[test]
     fn a_reaction_waits_for_its_span_to_close() {
+        let tuning = Tuning::DEFAULT;
         let span = Duration::from_millis(1000);
-        let mut fresh = view(AbilityType::Counter, ActorAttributes::default());
-        fresh.queue = threats(&[(150.0, true, 0)], span, Duration::from_millis(900));
-        let mut closed = view(AbilityType::Counter, ActorAttributes::default());
-        closed.queue = threats(&[(150.0, true, 0)], span, Duration::from_millis(1100));
+        let mut fresh = view(&tuning, AbilityType::Counter, ActorAttributes::default());
+        fresh.queue = threats(&tuning, &[(150.0, true, 0)], span, Duration::from_millis(900));
+        let mut closed = view(&tuning, AbilityType::Counter, ActorAttributes::default());
+        closed.queue = threats(&tuning, &[(150.0, true, 0)], span, Duration::from_millis(1100));
         assert_eq!(scored(&mut fresh, "answer"), 0.0, "a blow just queued waits for what may join it");
         assert!(scored(&mut closed, "answer") > WAIT);
-        let mut dodge = view(AbilityType::Leap, ActorAttributes::default());
+        let mut dodge = view(&tuning, AbilityType::Leap, ActorAttributes::default());
         dodge.queue = fresh.queue;
         assert_eq!(scored(&mut dodge, "dodge"), 0.0, "and so does a leap clear");
     }
 
     #[test]
     fn every_window_outlasts_the_widest_span_and_the_slowest_reaction() {
-        let tuning = common_bevy::tuning::tuning();
+        let tuning = Tuning::DEFAULT;
         let shortest = tuning.reaction_window * (1.0 - tuning.fatigue_window);
         let slowest = crate::behaviour::perception::Skill::SLOPPY.slowest.as_secs_f32();
         assert!(shortest > tuning.awareness_span_max + slowest, "{shortest}s against {}s", tuning.awareness_span_max + slowest);
@@ -542,36 +548,39 @@ mod tests {
 
     #[test]
     fn a_strike_needs_its_foe_in_reach_and_arc_and_prefers_one_that_just_acted() {
-        let mut fresh = view(AbilityType::Feint, ActorAttributes::default());
-        let mut spent = view(AbilityType::Feint, ActorAttributes::default());
+        let tuning = Tuning::DEFAULT;
+        let mut fresh = view(&tuning, AbilityType::Feint, ActorAttributes::default());
+        let mut spent = view(&tuning, AbilityType::Feint, ActorAttributes::default());
         spent.foe = Some(Foe { since_skill: Some(0.3), ..fresh.foe.unwrap() });
         assert!(scored(&mut spent, "strike") > scored(&mut fresh, "strike"));
-        let mut far = view(AbilityType::Feint, ActorAttributes::default());
+        let mut far = view(&tuning, AbilityType::Feint, ActorAttributes::default());
         far.foe = Some(Foe { distance: 3, ..fresh.foe.unwrap() });
         assert_eq!(scored(&mut far, "strike"), 0.0);
-        let mut poor = view(AbilityType::Feint, ActorAttributes::default());
+        let mut poor = view(&tuning, AbilityType::Feint, ActorAttributes::default());
         poor.stamina = 0.0;
         assert_eq!(scored(&mut poor, "strike"), 0.0, "what it cannot afford it never asks for");
     }
 
     #[test]
     fn a_strike_waits_while_its_pack_holds_the_capacity() {
-        let mut full = view(AbilityType::Frenzy, ActorAttributes::default());
+        let tuning = Tuning::DEFAULT;
+        let mut full = view(&tuning, AbilityType::Frenzy, ActorAttributes::default());
         full.capacity_taken = true;
         assert_eq!(scored(&mut full, "strike"), 0.0);
-        let mut answering = view(AbilityType::Counter, ActorAttributes::default());
+        let mut answering = view(&tuning, AbilityType::Counter, ActorAttributes::default());
         answering.capacity_taken = true;
-        answering.queue = threats(&[(150.0, true, 0)], Duration::from_millis(250), Duration::from_millis(1000));
+        answering.queue = threats(&tuning, &[(150.0, true, 0)], Duration::from_millis(250), Duration::from_millis(1000));
         assert!(scored(&mut answering, "answer") > WAIT, "a reaction takes no slot");
     }
 
     #[test]
     fn a_skill_spent_near_empty_must_be_worth_more_than_one_spent_from_a_full_pool() {
-        let mut full = view(AbilityType::Feint, ActorAttributes::default());
-        let mut low = view(AbilityType::Feint, ActorAttributes::default());
-        let price = low.attrs.skill_endurance(AbilityType::Feint);
+        let tuning = Tuning::DEFAULT;
+        let mut full = view(&tuning, AbilityType::Feint, ActorAttributes::default());
+        let mut low = view(&tuning, AbilityType::Feint, ActorAttributes::default());
+        let price = low.attrs.skill_endurance(&tuning, AbilityType::Feint);
         low.endurance = price * 1.5;
-        let mut half = view(AbilityType::Feint, ActorAttributes::default());
+        let mut half = view(&tuning, AbilityType::Feint, ActorAttributes::default());
         half.endurance = half.endurance_max / 2.0;
         let (full, half, low) = (scored(&mut full, "strike"), scored(&mut half, "strike"), scored(&mut low, "strike"));
         assert!(full - half < half - low, "half a pool costs little; the last of it costs much: {full} {half} {low}");
@@ -580,18 +589,20 @@ mod tests {
 
     #[test]
     fn grit_strikes_more_readily_the_fuller_its_bank() {
+        let tuning = Tuning::DEFAULT;
         let gritty = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
         assert!(gritty.grit_fill() > 0);
-        let mut empty = view(AbilityType::Feint, gritty);
-        let mut full = view(AbilityType::Feint, gritty);
+        let mut empty = view(&tuning, AbilityType::Feint, gritty);
+        let mut full = view(&tuning, AbilityType::Feint, gritty);
         full.grit_filled = 1.0;
         assert!(scored(&mut full, "strike") > scored(&mut empty, "strike"));
     }
 
     #[test]
     fn the_combo_its_recovery_offers_beats_waiting_where_it_would_not_alone() {
-        let mut offered = view(AbilityType::Feint, ActorAttributes::default());
-        offered.recovery = Some(recovery_after(AbilityType::Parry, None, &offered.attrs, None, 0.0));
+        let tuning = Tuning::DEFAULT;
+        let mut offered = view(&tuning, AbilityType::Feint, ActorAttributes::default());
+        offered.recovery = Some(recovery_after(&tuning, AbilityType::Parry, None, &offered.attrs, None, 0.0));
         let combo = offered.recovery.unwrap().combo.unwrap();
         assert_eq!(combo.ability, AbilityType::Feint);
         offered.recovery.as_mut().unwrap().remaining = combo.unlock_at;
@@ -600,40 +611,40 @@ mod tests {
         mind.wait = alone + 0.01;
         let chosen = choose(&mut offered, &[AbilityType::Feint], &mind, |_| 0.0);
         assert!(chosen.is_some_and(|decision| decision.ability == AbilityType::Feint), "carried on past a wait it would not beat alone");
-        let mut fresh = view(AbilityType::Feint, ActorAttributes::default());
+        let mut fresh = view(&tuning, AbilityType::Feint, ActorAttributes::default());
         assert!(choose(&mut fresh, &[AbilityType::Feint], &mind, |_| 0.0).is_none(), "and out of recovery the same strike waits");
     }
 
     #[test]
     fn a_mind_keeping_stamina_back_takes_the_cheaper_strike_when_short() {
+        let tuning = Tuning::DEFAULT;
         let mut minds = crate::behaviour::mind::Minds::default();
         minds.set("all.stamina_left.floor", "0").unwrap();
         let mind = minds.mind(None);
         let attrs = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
-        let tuning = common_bevy::tuning::tuning();
-        let short = tuning.cost(AbilityType::Overpower) + attrs.max_stamina() * 0.1;
+        let short = tuning.cost(AbilityType::Overpower) + attrs.max_stamina(&tuning) * 0.1;
         let shape = |ability, stamina| {
-            let mut v = view(ability, attrs);
+            let mut v = view(&tuning, ability, attrs);
             v.stamina = stamina;
             weigh(&mut v, &[ability], &mind)[0].responses.iter().find(|(name, _)| *name == "stamina_left").unwrap().1
         };
         assert!(shape(AbilityType::Overpower, short) < shape(AbilityType::Feint, short), "the dearer strike leaves less behind");
-        assert_eq!(shape(AbilityType::Overpower, attrs.max_stamina()), shape(AbilityType::Feint, attrs.max_stamina()), "with a full pool, neither is held back");
+        assert_eq!(shape(AbilityType::Overpower, attrs.max_stamina(&tuning)), shape(AbilityType::Feint, attrs.max_stamina(&tuning)), "with a full pool, neither is held back");
     }
 
     #[test]
     fn a_mind_weighing_time_marks_a_long_recovery_down() {
+        let tuning = Tuning::DEFAULT;
         let mut minds = crate::behaviour::mind::Minds::default();
         minds.set("all.recovery_left.floor", "0").unwrap();
         let mind = minds.mind(None);
-        let tuning = common_bevy::tuning::tuning();
         let (quick, slow) = if tuning.recovery(AbilityType::Feint) < tuning.recovery(AbilityType::Overpower) {
             (AbilityType::Feint, AbilityType::Overpower)
         } else {
             (AbilityType::Overpower, AbilityType::Feint)
         };
         let response = |ability| {
-            let mut v = view(ability, ActorAttributes::default());
+            let mut v = view(&tuning, ability, ActorAttributes::default());
             weigh(&mut v, &[ability], &mind)[0].responses.iter().find(|(name, _)| *name == "recovery_left").unwrap().1
         };
         assert!(response(slow) < response(quick));
@@ -641,19 +652,21 @@ mod tests {
 
     #[test]
     fn a_counter_is_worth_more_than_a_parry_by_what_it_returns() {
+        let tuning = Tuning::DEFAULT;
         let span = Duration::from_millis(250);
         let now = Duration::from_millis(1000);
-        let queue = threats(&[(60.0, true, 0)], span, now);
-        let mut parry = view(AbilityType::Parry, ActorAttributes::default());
+        let queue = threats(&tuning, &[(60.0, true, 0)], span, now);
+        let mut parry = view(&tuning, AbilityType::Parry, ActorAttributes::default());
         parry.queue = queue;
-        let mut counter = view(AbilityType::Counter, ActorAttributes::default());
+        let mut counter = view(&tuning, AbilityType::Counter, ActorAttributes::default());
         counter.queue = queue;
         assert!(scored(&mut counter, "answer") > scored(&mut parry, "answer"));
     }
 
     #[test]
     fn a_punish_waits_for_an_opening() {
-        let mut fresh = view(AbilityType::Punish, ActorAttributes::default());
+        let tuning = Tuning::DEFAULT;
+        let mut fresh = view(&tuning, AbilityType::Punish, ActorAttributes::default());
         let mut opened = fresh.clone();
         opened.foe = Some(Foe { since_skill: Some(0.2), ..opened.foe.unwrap() });
         assert!(scored(&mut opened, "punish") > scored(&mut fresh, "punish"));
@@ -661,24 +674,26 @@ mod tests {
 
     #[test]
     fn a_heavier_strike_and_a_weaker_foe_are_worth_more() {
+        let tuning = Tuning::DEFAULT;
         // Committed to Vitality, Overpower's line, so it strikes whole
         let vital = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
-        let (mut light, mut heavy) = (view(AbilityType::Feint, vital), view(AbilityType::Overpower, vital));
+        let (mut light, mut heavy) = (view(&tuning, AbilityType::Feint, vital), view(&tuning, AbilityType::Overpower, vital));
         assert!(scored(&mut heavy, "strike") > scored(&mut light, "strike"));
-        let mut finishing = view(AbilityType::Feint, vital);
+        let mut finishing = view(&tuning, AbilityType::Feint, vital);
         finishing.foe = Some(Foe { health: 20.0, ..finishing.foe.unwrap() });
         assert!(scored(&mut finishing, "strike") > scored(&mut light, "strike"), "a blow that nears the kill");
     }
 
     #[test]
     fn patience_leaps_clear_with_its_stamina_spent_and_dives_with_it_back() {
+        let tuning = Tuning::DEFAULT;
         let patient = built([0, 0, 0, 0, 0, 0, -10, 0, 0]);
         assert!(patient.patience().index() > 0);
         // Spent, with the stamina for a Leap and little more
-        let mut empty = view(AbilityType::Leap, patient);
-        empty.stamina = common_bevy::tuning::tuning().cost(AbilityType::Leap);
-        let mut full = view(AbilityType::Leap, patient);
-        full.stamina = patient.max_stamina();
+        let mut empty = view(&tuning, AbilityType::Leap, patient);
+        empty.stamina = tuning.cost(AbilityType::Leap);
+        let mut full = view(&tuning, AbilityType::Leap, patient);
+        full.stamina = patient.max_stamina(&tuning);
         assert!(scored(&mut empty, "recover") > scored(&mut full, "recover"));
         for v in [&mut empty, &mut full] {
             v.foe = Some(Foe { distance: 8, ..v.foe.unwrap() });
@@ -690,11 +705,12 @@ mod tests {
 
     #[test]
     fn a_leap_clear_toward_its_leash_scores_below_one_back_inward() {
+        let tuning = Tuning::DEFAULT;
         let patient = built([0, 0, 0, 0, 0, 0, -10, 0, 0]);
-        let mut inward = view(AbilityType::Leap, patient);
-        let mut outward = view(AbilityType::Leap, patient);
+        let mut inward = view(&tuning, AbilityType::Leap, patient);
+        let mut outward = view(&tuning, AbilityType::Leap, patient);
         outward.clear_room = 0.05;
-        inward.stamina = common_bevy::tuning::tuning().cost(AbilityType::Leap);
+        inward.stamina = tuning.cost(AbilityType::Leap);
         outward.stamina = inward.stamina;
         assert!(scored(&mut inward, "recover") > scored(&mut outward, "recover"));
         assert!(scored(&mut outward, "recover") < WAIT, "it does not leap to its leash's edge to recover");
@@ -702,7 +718,8 @@ mod tests {
 
     #[test]
     fn without_patience_a_leap_clear_is_only_a_dodge() {
-        let mut plain = view(AbilityType::Leap, ActorAttributes::default());
+        let tuning = Tuning::DEFAULT;
+        let mut plain = view(&tuning, AbilityType::Leap, ActorAttributes::default());
         let reasons: Vec<&str> = weigh(&mut plain, &[AbilityType::Leap], &Mind::default()).iter().map(|decision| decision.reason).collect();
         assert_eq!(reasons, vec!["dodge", "dive"]);
         assert!(choose(&mut plain, &[AbilityType::Leap], &Mind::default(), |_| 0.0).is_none(), "in reach with nothing queued, it stays");
@@ -710,8 +727,9 @@ mod tests {
 
     #[test]
     fn a_stride_is_taken_once_and_for_a_foe_in_reach() {
+        let tuning = Tuning::DEFAULT;
         let graceful = built([10, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let mut fresh = view(AbilityType::PerfectStride, graceful);
+        let mut fresh = view(&tuning, AbilityType::PerfectStride, graceful);
         fresh.foe = Some(Foe { across: true, ..fresh.foe.unwrap() });
         assert!(scored(&mut fresh, "stride") > WAIT);
         let mut held = fresh.clone();

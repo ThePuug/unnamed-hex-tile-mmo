@@ -4,6 +4,7 @@ use common_bevy::{
     message::{Do, Event as GameEvent},
     systems::combat::queue as queue_utils,
 };
+use common_bevy::tuning::Tuning;
 
 /// Client system to handle InsertThreat events
 /// Inserts threats into the visual reaction queue for display
@@ -109,6 +110,7 @@ mod tests {
 
     #[test]
     fn a_threat_clears_after_its_source_is_gone_here() {
+        let tuning = Tuning::DEFAULT;
         let mut app = App::new();
         app.add_message::<Do>();
         app.init_resource::<Time>();
@@ -122,6 +124,7 @@ mod tests {
         app.world_mut().resource_mut::<crate::resources::EntityMap>().insert(attacker, on_server);
 
         let threat = queue_utils::create_threat(
+            &tuning,
             on_server, &ActorAttributes::default(), &ActorAttributes::default(),
             50.0, Some(AbilityType::Frenzy), Duration::from_secs(10), 0.0, 0.0,
         );

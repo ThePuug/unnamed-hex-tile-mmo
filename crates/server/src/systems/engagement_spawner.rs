@@ -11,6 +11,7 @@ use common_bevy::{
     components::{behaviour::Side, heading::Heading, Loc},
     message::{Event, Try},
 };
+use common_bevy::tuning::Tuning;
 
 /// Tiles between the edge of a den's acquisition range and the actor it
 /// is placed ahead of, so the fight starts when that one walks in.
@@ -42,6 +43,7 @@ impl Parties {
 /// of its own. Acquisition measures `|Δz|` on top of the flat distance, so
 /// a flat distance past the range is past it on any slope.
 pub fn try_spawn_party(
+    tuning: Res<Tuning>,
     mut reader: MessageReader<Try>,
     mut commands: Commands,
     query: Query<(&Loc, &Heading)>,
@@ -60,7 +62,7 @@ pub fn try_spawn_party(
         };
         let side = if *engage { parties.next() } else { Side::WILD };
         info!("party: {size}x{archetype:?}@{level} on {side:?} at {at:?}, {} {ent} at {:?}", if *engage { "engaging" } else { "ahead of" }, **loc);
-        spawn_engagement(at, *archetype, side, *level, *size, |q, r| registry.elevation_at(q, r), &mut commands, &time);
+        spawn_engagement(&tuning, at, *archetype, side, *level, *size, |q, r| registry.elevation_at(q, r), &mut commands, &time);
     }
 }
 

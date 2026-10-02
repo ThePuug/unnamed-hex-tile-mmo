@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use crate::components::recovery::{Burst, GlobalRecovery};
 use crate::components::ActorAttributes;
+use crate::tuning::Tuning;
 
 /// Calculate Composure-based recovery time reduction percentage.
 
@@ -11,19 +12,21 @@ use crate::components::ActorAttributes;
 /// Returns the reduction, 0 up to `Tuning::composure_share`, never reaching it.
 /// Caller converts to speed multiplier: 1.0 / (1.0 - reduction).
 pub fn calculate_composure_reduction(
+    tuning: &Tuning,
     composure: u16,
     target_impact: u16,
     edge: f32,
 ) -> f32 {
     use crate::systems::combat::damage::contest_factor;
 
-    crate::tuning::tuning().composure_share * contest_factor(composure, target_impact, edge)
+    tuning.composure_share * contest_factor(tuning, composure, target_impact, edge)
 }
 
 /// Counts every recovery down and ends it when it runs out, its combo and
 /// its burst with it: faster by its actor's Composure, contested by the
 /// opponent's Impact with the level gap weighing in. A burst's window counts down in plain seconds beside it.
 pub fn global_recovery_system(
+    tuning: Res<Tuning>,
     time: Res<Time>,
     mut commands: Commands,
     mut query: Query<(Entity, &mut GlobalRecovery, &ActorAttributes)>,
@@ -34,9 +37,10 @@ pub fn global_recovery_system(
         if recovery.is_active() {
             let composure = attrs.composure();
             let reduction_pct = calculate_composure_reduction(
+                &tuning,
                 composure,
                 recovery.target_impact,
-                recovery.target_level.map_or(0.0, |target| crate::systems::combat::damage::level_edge(attrs.total_level(), target)),
+                recovery.target_level.map_or(0.0, |target| crate::systems::combat::damage::level_edge(&tuning, attrs.total_level(), target)),
             );
 
             let speed_multiplier = 1.0 / (1.0 - reduction_pct);
@@ -61,14 +65,16 @@ mod tests {
 
     #[test]
     fn test_composure_reduction_zero() {
-        let reduction = calculate_composure_reduction(0, 0, 0.0);
+        let tuning = Tuning::DEFAULT;
+        let reduction = calculate_composure_reduction(&tuning, 0, 0, 0.0);
         assert!((reduction - 0.0).abs() < 0.001, "0 composure → 0% reduction, got {reduction}");
     }
 
     #[test]
     fn test_composure_reduction_nullifies_at_equal() {
+        let tuning = Tuning::DEFAULT;
         // Equal level, equal stats: contest = 0 → nullified
-        let reduction = calculate_composure_reduction(100, 100, 0.0);
+        let reduction = calculate_composure_reduction(&tuning, 100, 100, 0.0);
         assert!((reduction - 0.0).abs() < 0.001, "Equal stats → 0% reduction, got {reduction}");
     }
 }

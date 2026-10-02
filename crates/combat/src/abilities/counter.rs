@@ -17,11 +17,11 @@ use super::{Abilities, AbilityFailReason, Cast};
 /// cannot be countered. Its recovery is contested by the source of the
 /// first threat it answers.
 pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
-    let tuning = common_bevy::tuning::tuning();
+    let tuning = *abilities.tuning;
     let answered = abilities.react(cast)?;
 
     let now = abilities.game_now();
-    let weight = cast.attrs.line_power(AbilityType::Counter);
+    let weight = cast.attrs.line_power(&tuning, AbilityType::Counter);
     for threat in &answered {
         // A reflection needs a living source to go back to
         let Ok((_, source_attrs, _, _, _, _, dead)) = abilities.actors.get(threat.source) else { continue };
@@ -30,6 +30,7 @@ pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
         }
         // A reflection lands on impact and never waits its window out
         let reflected = create_threat(
+            &tuning,
             cast.ent,
             source_attrs,
             &cast.attrs,

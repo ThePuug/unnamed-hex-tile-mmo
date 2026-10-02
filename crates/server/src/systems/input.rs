@@ -16,6 +16,7 @@ use common_bevy::{
     systems::movement::{calculate_movement, speed, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED},
 };
 use crate::{network::ServerNet, *};
+use common_bevy::tuning::Tuning;
 
 /// Longest slice of time one input message may carry. Legitimate messages
 /// carry a few ticks; this also keeps the i16 cast in physics unreachable.
@@ -316,6 +317,7 @@ pub fn broadcast_movement_intent(
 /// attributes set, health and endurance, are resized with it at once, each
 /// as full as it was, so a respec neither heals nor wounds.
 pub fn try_respec_attributes(
+    tuning: Res<Tuning>,
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
     mut attrs_query: Query<(&mut ActorAttributes, &mut Health, Option<&mut Endurance>)>,
@@ -329,10 +331,10 @@ pub fn try_respec_attributes(
         attrs.apply_respec(*pairs);
         writer.write(Do { event: message.event.clone() });
 
-        health.resize(attrs.max_health());
+        health.resize(attrs.max_health(&tuning));
         writer.write(Do { event: Event::Incremental { ent: *ent, component: common_bevy::message::Component::Health(*health) } });
         if let Some(mut endurance) = endurance {
-            endurance.resize(attrs.max_endurance());
+            endurance.resize(attrs.max_endurance(&tuning));
             writer.write(Do { event: Event::Incremental { ent: *ent, component: common_bevy::message::Component::Endurance(*endurance) } });
         }
     }
@@ -344,16 +346,18 @@ mod tests {
 
     #[test]
     fn a_respec_resizes_the_pools_at_once_and_neither_heals_nor_wounds() {
+        let tuning = Tuning::DEFAULT;
         use bevy::ecs::system::RunSystemOnce;
         use common_bevy::components::Pair;
         let mut world = World::new();
         world.init_resource::<Messages<Try>>();
         world.init_resource::<Messages<Do>>();
+        world.init_resource::<Tuning>();
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let ent = world.spawn((
             mighty,
-            Health { state: mighty.max_health() / 2.0, max: mighty.max_health() },
-            Endurance { state: mighty.max_endurance() / 4.0, max: mighty.max_endurance() },
+            Health { state: mighty.max_health(&tuning) / 2.0, max: mighty.max_health(&tuning) },
+            Endurance { state: mighty.max_endurance(&tuning) / 4.0, max: mighty.max_endurance(&tuning) },
         )).id();
 
         // Every level moved out of Might into Vitality, some of it leant to Discipline
@@ -362,9 +366,9 @@ mod tests {
         world.run_system_once(try_respec_attributes).unwrap();
 
         let (health, endurance) = (*world.get::<Health>(ent).unwrap(), *world.get::<Endurance>(ent).unwrap());
-        assert!(health.max > mighty.max_health(), "Vitality deepens health at once");
+        assert!(health.max > mighty.max_health(&tuning), "Vitality deepens health at once");
         assert!((health.state / health.max - 0.5).abs() < 1e-4, "and it is as full as it was");
-        assert!(endurance.max > mighty.max_endurance(), "Discipline deepens endurance at once");
+        assert!(endurance.max > mighty.max_endurance(&tuning), "Discipline deepens endurance at once");
         assert!((endurance.state / endurance.max - 0.25).abs() < 1e-4, "as full as it was");
     }
 

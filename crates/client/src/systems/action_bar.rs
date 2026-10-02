@@ -6,6 +6,7 @@ use common_bevy::{
     plugins::nntree::NNTree,
     systems::targeting::select_target,
 };
+use common_bevy::tuning::Tuning;
 
 /// Marker component for the action bar container
 #[derive(Component)]
@@ -131,6 +132,7 @@ pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 4] {
 /// Fills the bar with the loadout of the actor the client sees as, anew
 /// whenever that actor changes.
 pub fn sync_loadout(
+    tuning: Res<Tuning>,
     mut commands: Commands,
     seer: Query<(Entity, &EntityType), With<crate::components::Viewed>>,
     slots: Query<Entity, With<AbilitySlots>>,
@@ -146,12 +148,12 @@ pub fn sync_loadout(
     let Some((_, typ)) = seer else { return };
     commands.entity(container).with_children(|parent| {
         for (keybind, ability) in KEYS.into_iter().zip(loadout(typ)) {
-            spawn_slot(parent, keybind, ability);
+            spawn_slot(&tuning, parent, keybind, ability);
         }
     });
 }
 
-fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>) {
+fn spawn_slot(tuning: &Tuning, parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>) {
     parent.spawn((
         Node {
             width: Val::Px(SLOT_PX),
@@ -201,7 +203,7 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Opti
         if let Some(ability) = ability {
             let cost_text = match ability {
                 AbilityType::AutoAttack => String::new(),     // Free (passive)
-                _ => format!("{:.0}", common_bevy::tuning::tuning().cost(ability)),
+                _ => format!("{:.0}", tuning.cost(ability)),
             };
 
             if !cost_text.is_empty() {
@@ -261,6 +263,7 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Opti
 /// Update action bar states based on player's resources, recovery, and combo
 /// Updates border colors and the combo glow's visibility
 pub fn update(
+    tuning: Res<Tuning>,
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
     mut glow_query: Query<&mut Visibility, With<ComboGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
@@ -297,6 +300,7 @@ pub fn update(
         // targets here; a viewed actor's targets are the server's
         let state = if controlled {
             get_ability_state(
+                &tuning,
                 ability,
                 stamina,
                 mana,
@@ -305,14 +309,14 @@ pub fn update(
                 player_ent,
                 *player_loc,
                 *player_heading,
-                common_bevy::systems::targeting::arc_of(attrs),
+                common_bevy::systems::targeting::arc_of(&tuning, attrs),
                 own_reach.copied().unwrap_or_default().0,
                 &nntree,
                 &entity_query,
             )
         } else if recovery_active {
             if offered.is_some_and(|combo| combo.ability == ability) { AbilityState::ComboUnlocked } else { AbilityState::OnCooldown }
-        } else if stamina.state < common_bevy::tuning::tuning().cost(ability) {
+        } else if stamina.state < tuning.cost(ability) {
             AbilityState::InsufficientResources
         } else {
             AbilityState::Ready
@@ -374,6 +378,7 @@ enum AbilityState {
 
 /// Determine ability state based on resources, recovery, combo, and targeting
 fn get_ability_state(
+    tuning: &Tuning,
     ability: AbilityType,
     stamina: &Stamina,
     _mana: &Mana,
@@ -397,7 +402,7 @@ fn get_ability_state(
     let own_side = side_of(player_ent);
     let hostile = |ent: Entity| side_of(ent).zip(own_side).is_some_and(|(side, own)| side.is_hostile_to(own));
 
-    if stamina.state < common_bevy::tuning::tuning().cost(ability) {
+    if stamina.state < tuning.cost(ability) {
         return AbilityState::InsufficientResources;
     }
 

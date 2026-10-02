@@ -3,6 +3,7 @@ use crate::{
     components::{ActorAttributes, Loc, position::Position, resources::*, entity_type::EntityType},
     message::{Component as MessageComponent, Event, *},
 };
+use crate::tuning::Tuning;
 
 /// What every actor is spawned fighting with, all of it from its
 /// attributes: its pools full, out of combat, an empty reaction queue,
@@ -23,12 +24,12 @@ pub struct Fighter {
 
 impl Fighter {
     /// An actor with `attrs`, spawned at `now`
-    pub fn new(attrs: ActorAttributes, now: std::time::Duration) -> Self {
+    pub fn new(tuning: &Tuning, attrs: ActorAttributes, now: std::time::Duration) -> Self {
         Self {
             attrs,
-            health: Health::full(attrs.max_health()),
-            stamina: Stamina::full(attrs.max_stamina(), now),
-            endurance: Endurance::full(attrs.max_endurance()),
+            health: Health::full(attrs.max_health(tuning)),
+            stamina: Stamina::full(attrs.max_stamina(tuning), now),
+            endurance: Endurance::full(attrs.max_endurance(tuning)),
             mana: Mana::full(now),
             combat_state: CombatState { in_combat: false, last_action: now },
             queue: default(),
@@ -46,6 +47,7 @@ impl Fighter {
 /// - 5 HP/sec when out of combat (normal regen)
 /// - 0 HP/sec when in combat
 pub fn regenerate_resources(
+    tuning: Res<Tuning>,
     mut query: Query<(&mut Health, &mut Stamina, &mut Mana, Option<&mut Endurance>, &CombatState, Option<&crate::components::returning::Returning>, Option<&crate::components::status::Status>, Option<&crate::components::ActorAttributes>)>,
     time: Res<Time>,
 ) {
@@ -66,14 +68,14 @@ pub fn regenerate_resources(
 
         // Stamina refills slower the more tired the actor is
         // Slower spent; faster waiting on a swing it could not strike, by Patience
-        let tired = 1.0 - crate::tuning::tuning().fatigue_stamina * Endurance::fatigue_of(endurance.as_deref());
-        let patient = 1.0 + attrs.filter(|_| status.is_some_and(|status| status.waiting)).map_or(0.0, |attrs| attrs.patience_regen());
+        let tired = 1.0 - tuning.fatigue_stamina * Endurance::fatigue_of(&tuning, endurance.as_deref());
+        let patient = 1.0 + attrs.filter(|_| status.is_some_and(|status| status.waiting)).map_or(0.0, |attrs| attrs.patience_regen(&tuning));
         stamina.state = (stamina.state + stamina.regen_rate * tired * patient * dt_stamina).min(stamina.max);
         stamina.last_update = current_time;
 
         // Endurance comes back only once stamina is whole again
         if let Some(mut endurance) = endurance.filter(|endurance| stamina.state >= stamina.max && endurance.state < endurance.max) {
-            let regained = crate::tuning::tuning().endurance_regen * endurance.max * dt_stamina;
+            let regained = tuning.endurance_regen * endurance.max * dt_stamina;
             endurance.state = (endurance.state + regained).min(endurance.max);
         }
 
@@ -231,6 +233,7 @@ mod tests {
         let mut time = Time::<()>::default();
         time.advance_by(std::time::Duration::from_secs(1));
         world.insert_resource(time);
+        world.init_resource::<Tuning>();
         let body = world.spawn((
             Health { state: 0.0, max: 100.0 },
             Stamina { state: 0.0, max: 100.0, regen_rate: 10.0, last_update: std::time::Duration::ZERO },
@@ -251,6 +254,7 @@ mod tests {
         let mut time = Time::<()>::default();
         time.advance_by(std::time::Duration::from_secs(1));
         world.insert_resource(time);
+        world.init_resource::<Tuning>();
         let pools = |stamina: f32| (
             Health { state: 100.0, max: 100.0 },
             Stamina { state: stamina, max: 100.0, regen_rate: 0.0, last_update: std::time::Duration::ZERO },
@@ -269,13 +273,14 @@ mod tests {
 
     #[test]
     fn an_actor_is_spawned_with_its_pools_full() {
+        let tuning = Tuning::DEFAULT;
         let now = std::time::Duration::from_secs(3);
         let attrs = test_attrs_simple(0, -5);
-        let fighter = Fighter::new(attrs, now);
-        assert_eq!((fighter.health.state, fighter.health.max), (attrs.max_health(), attrs.max_health()));
-        assert_eq!((fighter.stamina.state, fighter.stamina.max), (attrs.max_stamina(), attrs.max_stamina()));
+        let fighter = Fighter::new(&tuning, attrs, now);
+        assert_eq!((fighter.health.state, fighter.health.max), (attrs.max_health(&tuning), attrs.max_health(&tuning)));
+        assert_eq!((fighter.stamina.state, fighter.stamina.max), (attrs.max_stamina(&tuning), attrs.max_stamina(&tuning)));
         assert_eq!(fighter.mana.state, fighter.mana.max);
-        assert_eq!((fighter.endurance.state, fighter.endurance.max), (attrs.max_endurance(), attrs.max_endurance()));
+        assert_eq!((fighter.endurance.state, fighter.endurance.max), (attrs.max_endurance(&tuning), attrs.max_endurance(&tuning)));
         assert!(fighter.stamina.regen_rate > 0.0 && fighter.mana.regen_rate > 0.0, "both regenerate, in combat or out");
         assert_eq!(fighter.stamina.last_update, now);
         assert!(!fighter.combat_state.in_combat);

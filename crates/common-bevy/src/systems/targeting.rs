@@ -27,6 +27,7 @@ use crate::{
     components::{heading::*, *},
     plugins::nntree::*,
 };
+use crate::tuning::Tuning;
 
 /// Check if a target location is within the caster's facing cone
 
@@ -108,7 +109,7 @@ pub fn across(heading: Option<&Heading>, from: &Loc, to: &Loc) -> bool {
 /// by the band of the Grace arc it reaches into, each tier's arc a band:
 /// `Tuning::off_arc_share_min` out to the first tier's arc, evenly more to
 /// `off_arc_share_max` out to the third's.
-pub fn across_share(heading: &Heading, from: &Loc, to: &Loc) -> f32 {
+pub fn across_share(tuning: &Tuning, heading: &Heading, from: &Loc, to: &Loc) -> f32 {
     if **from == **to {
         return 0.0;
     }
@@ -116,7 +117,6 @@ pub fn across_share(heading: &Heading, from: &Loc, to: &Loc) -> f32 {
     if off <= STRIDE_ARC {
         return 0.0;
     }
-    let tuning = crate::tuning::tuning();
     let width = (tuning.grace_arc_max - tuning.grace_arc_min) / 3.0;
     let band = ((off - tuning.grace_arc_min) / width).ceil().clamp(1.0, 3.0);
     tuning.off_arc_share_min + (tuning.off_arc_share_max - tuning.off_arc_share_min) * (band - 1.0) / 2.0
@@ -215,8 +215,8 @@ pub fn select_target(
 
 /// The half-angle an actor with `attrs` strikes and targets within: the
 /// arc its Grace opens, the forward faces for one with no attributes.
-pub fn arc_of(attrs: Option<&ActorAttributes>) -> f32 {
-    attrs.map_or(STRIDE_ARC, ActorAttributes::arc)
+pub fn arc_of(tuning: &Tuning, attrs: Option<&ActorAttributes>) -> f32 {
+    attrs.map_or(STRIDE_ARC, |attrs| attrs.arc(tuning))
 }
 
 /// Points `target` at the hostile actor `ent` faces from `loc` along
@@ -252,10 +252,11 @@ mod tests {
 
     #[test]
     fn a_swing_across_its_line_costs_more_the_further_round_the_arc() {
+        let tuning = Tuning::DEFAULT;
         let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
         let from = Loc::new(Qrz { q: 0, r: 0, z: 0 });
         let ring: Vec<Loc> = (-6..=6).flat_map(|q| (-6..=6).map(move |r| Loc::new(Qrz { q, r, z: 0 }))).filter(|to| *to != from).collect();
-        let mut by_angle: Vec<(f32, f32)> = ring.iter().map(|to| (off_heading(heading, from, *to), across_share(&heading, &from, to))).collect();
+        let mut by_angle: Vec<(f32, f32)> = ring.iter().map(|to| (off_heading(heading, from, *to), across_share(&tuning, &heading, &from, to))).collect();
         by_angle.sort_by(|a, b| a.0.total_cmp(&b.0));
         assert!(by_angle.iter().filter(|(off, _)| *off <= STRIDE_ARC).all(|(_, share)| *share == 0.0), "free within the forward faces");
         assert!(by_angle.windows(2).all(|pair| pair[0].1 <= pair[1].1), "never cheaper further round");

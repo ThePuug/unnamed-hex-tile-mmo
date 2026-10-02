@@ -12,8 +12,8 @@ use crate::landing;
 /// (`Status::perfect_stride`), so every client moves its user at the pace
 /// the server does.
 pub fn take(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
-    let tuning = common_bevy::tuning::tuning();
-    let stride = Timed { pace: 1.0 + tuning.stride_speed * cast.attrs.line_power(AbilityType::PerfectStride), remaining: tuning.stride_secs };
+    let tuning = *abilities.tuning;
+    let stride = Timed { pace: 1.0 + tuning.stride_speed * cast.attrs.line_power(&tuning, AbilityType::PerfectStride), remaining: tuning.stride_secs };
     landing::update(cast.ent, &mut abilities.statuses, &mut abilities.commands, &mut abilities.writer, |status| {
         status.perfect_stride = Some(stride);
     });

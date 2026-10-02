@@ -7,14 +7,15 @@
 
 
 use crate::components::ActorAttributes;
+use crate::tuning::Tuning;
 
 /// The contest points the level gap gives an actor of `level` against one
 /// of `opposing_level`: `Tuning::contest_per_level` a level, positive for
 /// the higher, negative for the lower, nothing between equals. It weighs in
 /// every relative contest, so an actor wins each a little against those
 /// below it whatever it has invested.
-pub fn level_edge(level: u32, opposing_level: u32) -> f32 {
-    (level as f32 - opposing_level as f32) * crate::tuning::tuning().contest_per_level
+pub fn level_edge(tuning: &Tuning, level: u32, opposing_level: u32) -> f32 {
+    (level as f32 - opposing_level as f32) * tuning.contest_per_level
 }
 
 /// Contest factor (Pattern 1: Nullifying).
@@ -27,13 +28,13 @@ pub fn level_edge(level: u32, opposing_level: u32) -> f32 {
 
 /// Used by: mitigation, pushback, healing reduction, combo unlock, recovery speed.
 /// `edge` is the level gap's contest points on the advantage side ([`level_edge`]).
-pub fn contest_factor(advantage_stat: u16, counter_stat: u16, edge: f32) -> f32 {
+pub fn contest_factor(tuning: &Tuning, advantage_stat: u16, counter_stat: u16, edge: f32) -> f32 {
     let delta = advantage_stat as f32 - counter_stat as f32 + edge;
     if delta <= 0.0 {
         return 0.0;
     }
 
-    delta / (delta + crate::tuning::tuning().contest_scale)
+    delta / (delta + tuning.contest_scale)
 }
 
 /// Reaction window contest (Pattern 2: Baseline+Bonus).
@@ -44,13 +45,12 @@ pub fn contest_factor(advantage_stat: u16, counter_stat: u16, edge: f32) -> f32 
 
 /// Used ONLY by reaction window to ensure playable baseline.
 /// `edge` is the level gap's contest points on the defender's side ([`level_edge`]).
-pub fn reaction_contest_factor(reflex: u16, flow: u16, edge: f32) -> f32 {
+pub fn reaction_contest_factor(tuning: &Tuning, reflex: u16, flow: u16, edge: f32) -> f32 {
     let delta = reflex as f32 - flow as f32 + edge;
     if delta <= 0.0 {
         return 1.0;
     }
 
-    let tuning = crate::tuning::tuning();
     1.0 + delta / (delta + tuning.contest_scale) * tuning.window_bonus
 }
 
@@ -68,9 +68,9 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
 /// attacker's Focus, the defender's Toughness), with the level gap's edge
 /// on the attacker's side: none at or below parity, and never the whole
 /// of the ceiling.
-pub fn crit_chance(attacker: &ActorAttributes, defender: &ActorAttributes) -> f32 {
-    let edge = level_edge(attacker.total_level(), defender.total_level());
-    crate::tuning::tuning().crit_chance * contest_factor(attacker.focus(), defender.toughness(), edge)
+pub fn crit_chance(tuning: &Tuning, attacker: &ActorAttributes, defender: &ActorAttributes) -> f32 {
+    let edge = level_edge(tuning, attacker.total_level(), defender.total_level());
+    tuning.crit_chance * contest_factor(tuning, attacker.focus(), defender.toughness(), edge)
 }
 
 /// A blow's damage after its crit roll: `Tuning::crit_power` times
@@ -78,9 +78,9 @@ pub fn crit_chance(attacker: &ActorAttributes, defender: &ActorAttributes) -> f3
 /// crits on `defender` ([`crit_chance`]), else as it was. The contest
 /// decides whether, never how hard. Rolled as the blow enters the queue,
 /// so a crit stands there at its full weight for the defender to see.
-pub fn crit(damage: f32, attacker: &ActorAttributes, defender: &ActorAttributes, draw: f32) -> f32 {
-    if draw < crit_chance(attacker, defender) {
-        damage * crate::tuning::tuning().crit_power
+pub fn crit(tuning: &Tuning, damage: f32, attacker: &ActorAttributes, defender: &ActorAttributes, draw: f32) -> f32 {
+    if draw < crit_chance(tuning, attacker, defender) {
+        damage * tuning.crit_power
     } else {
         damage
     }
@@ -94,11 +94,12 @@ pub fn crit(damage: f32, attacker: &ActorAttributes, defender: &ActorAttributes,
 
 /// Applied to effective_recovery_base (after composure, before the combo).
 pub fn calculate_recovery_pushback(
+    tuning: &Tuning,
     attacker_impact: u16,
     defender_composure: u16,
     edge: f32,
 ) -> f32 {
-    crate::tuning::tuning().pushback_share * contest_factor(attacker_impact, defender_composure, edge)
+    tuning.pushback_share * contest_factor(tuning, attacker_impact, defender_composure, edge)
 }
 
 #[cfg(test)]
@@ -107,9 +108,10 @@ mod tests {
 
     #[test]
     fn no_lead_wins_a_whole_effect() {
+        let tuning = Tuning::DEFAULT;
         let mut last = 0.0;
         for lead in [1, 50, 500, 5_000, 60_000] {
-            let contest = contest_factor(lead, 0, level_edge(100, 1));
+            let contest = contest_factor(&tuning, lead, 0, level_edge(&tuning, 100, 1));
             assert!(contest > last, "a wider lead wins more");
             assert!(contest < 1.0, "a lead of {lead} reached the ceiling");
             last = contest;
@@ -127,26 +129,28 @@ mod tests {
 
     #[test]
     fn focus_over_toughness_decides_whether_a_blow_crits_and_never_how_hard() {
+        let tuning = Tuning::DEFAULT;
         let focused = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
         let keen = ActorAttributes::new(0, 0, 0, 0, 0, 0, 5, 0, 0);
         let tough = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
-        assert!(crit(100.0, &focused, &plain, 0.0) > 100.0, "a draw under the chance crits");
-        assert_eq!(crit(100.0, &focused, &plain, 0.999), 100.0, "a draw over it does not");
-        assert_eq!(crit(100.0, &plain, &plain, 0.0), 100.0, "without a Focus lead nothing crits");
-        assert_eq!(crit_chance(&focused, &tough), 0.0, "Toughness that matches it nullifies it");
-        assert!(crit_chance(&focused, &plain) > crit_chance(&keen, &plain), "a wider lead crits more often");
-        assert_eq!(crit(100.0, &focused, &plain, 0.0), crit(100.0, &keen, &plain, 0.0), "and no harder");
+        assert!(crit(&tuning, 100.0, &focused, &plain, 0.0) > 100.0, "a draw under the chance crits");
+        assert_eq!(crit(&tuning, 100.0, &focused, &plain, 0.999), 100.0, "a draw over it does not");
+        assert_eq!(crit(&tuning, 100.0, &plain, &plain, 0.0), 100.0, "without a Focus lead nothing crits");
+        assert_eq!(crit_chance(&tuning, &focused, &tough), 0.0, "Toughness that matches it nullifies it");
+        assert!(crit_chance(&tuning, &focused, &plain) > crit_chance(&tuning, &keen, &plain), "a wider lead crits more often");
+        assert_eq!(crit(&tuning, 100.0, &focused, &plain, 0.0), crit(&tuning, 100.0, &keen, &plain, 0.0), "and no harder");
     }
 
     #[test]
     fn a_level_edge_favours_the_higher_level_in_a_contest() {
-        assert_eq!(level_edge(10, 10), 0.0, "equals, no edge");
-        assert!(level_edge(10, 6) > 0.0 && level_edge(6, 10) < 0.0, "the higher level's edge, the lower's deficit");
-        assert_eq!(contest_factor(100, 100, 0.0), 0.0, "equal stats nullify");
-        assert!(contest_factor(100, 100, level_edge(10, 6)) > 0.0, "a level edge wins an even contest");
-        assert!(contest_factor(150, 100, level_edge(6, 10)) < contest_factor(150, 100, 0.0), "outleveled, an advantage shrinks");
-        assert_eq!(reaction_contest_factor(0, 0, level_edge(6, 10)), 1.0, "an outleveled window keeps its base");
-        assert!(reaction_contest_factor(0, 0, level_edge(10, 6)) > 1.0, "a higher-level defender's window grows");
+        let tuning = Tuning::DEFAULT;
+        assert_eq!(level_edge(&tuning, 10, 10), 0.0, "equals, no edge");
+        assert!(level_edge(&tuning, 10, 6) > 0.0 && level_edge(&tuning, 6, 10) < 0.0, "the higher level's edge, the lower's deficit");
+        assert_eq!(contest_factor(&tuning, 100, 100, 0.0), 0.0, "equal stats nullify");
+        assert!(contest_factor(&tuning, 100, 100, level_edge(&tuning, 10, 6)) > 0.0, "a level edge wins an even contest");
+        assert!(contest_factor(&tuning, 150, 100, level_edge(&tuning, 6, 10)) < contest_factor(&tuning, 150, 100, 0.0), "outleveled, an advantage shrinks");
+        assert_eq!(reaction_contest_factor(&tuning, 0, 0, level_edge(&tuning, 6, 10)), 1.0, "an outleveled window keeps its base");
+        assert!(reaction_contest_factor(&tuning, 0, 0, level_edge(&tuning, 10, 6)) > 1.0, "a higher-level defender's window grows");
     }
 }
