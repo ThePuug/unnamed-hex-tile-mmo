@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use common_bevy::message::{Do, Try};
 
-use crate::systems::{combat, reaction_queue, targeting};
+use crate::{self as combat, behaviour, reaction_queue, targeting};
 
 /// Combat as the server runs it, with no networking: damage and threats,
 /// NPC targeting, auto-attacks and signature abilities, the reaction queue,
@@ -9,7 +9,7 @@ use crate::systems::{combat, reaction_queue, targeting};
 ///
 /// Both the live server and the balance arena install it, so the arena
 /// fights by the rules players meet. Movement, behaviour (`BehaviourPlugin`)
-/// and the removal of the dead (`renet::cleanup_despawned`) are the
+/// and the removal of the dead (`actor::cleanup_despawned`) are the
 /// installer's, since the live server orders removal after the network send.
 pub struct CombatPlugin;
 
@@ -17,7 +17,7 @@ impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<Do>();
         app.add_message::<Try>();
-        app.init_resource::<crate::resources::RunTime>();
+        app.init_resource::<crate::RunTime>();
         app.init_resource::<combat::dice::Dice>();
         app.register_required_components::<common_bevy::components::ActorAttributes, combat::dice::Rolls>();
 
@@ -42,5 +42,24 @@ impl Plugin for CombatPlugin {
             common_bevy::systems::combat::resources::check_death, // Check for death from ANY source
             common_bevy::systems::combat::resources::process_respawn,
         ));
+    }
+}
+
+/// How NPCs fight: each chases, holds its place in its engagement and
+/// chooses its moves, as the live server and the balance arena both run it.
+pub struct BehaviourPlugin;
+
+impl Plugin for BehaviourPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<combat::dice::Dice>();
+        app.register_required_components::<behaviour::chase::Chase, combat::dice::Rolls>();
+        app.add_systems(
+            FixedUpdate,
+            (
+                common_bevy::components::status::tick_status,
+                behaviour::hex_assignment::assign_hexes,
+                behaviour::chase::chase,
+            )
+        );
     }
 }

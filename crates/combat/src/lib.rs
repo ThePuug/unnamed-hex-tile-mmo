@@ -1,7 +1,24 @@
+//! # Combat
+//!
+//! The fight as the live server runs it, with no networking: damage and
+//! threats, the reaction queue, every ability through one gate, targeting,
+//! how NPCs behave and choose, and the engagements they fight in. The
+//! server installs it with its network round it; the balance arena
+//! (`crates/arena`) installs it bare, so the arena fights by the rules
+//! players meet.
+
 pub mod abilities;
+pub mod actor;
+pub mod behaviour;
 pub mod dice;
+pub mod engagement;
 pub mod landing;
 pub mod leap;
+mod plugin;
+pub mod reaction_queue;
+pub mod targeting;
+
+pub use plugin::{BehaviourPlugin, CombatPlugin};
 
 use bevy::prelude::*;
 use common_bevy::{
@@ -11,6 +28,11 @@ use common_bevy::{
         combat::{damage as damage_calc, queue as queue_utils},
     },
 };
+
+#[derive(Default, Resource)]
+pub struct RunTime {
+    pub elapsed_offset: u128,
+}
 
 /// System to process DealDamage events (Phase 1: Outgoing damage calculation)
 /// Rolls the attack's damage within its range (`Tuning::damage_spread`,
@@ -24,7 +46,7 @@ pub fn process_deal_damage(
     mut combat_query: Query<&mut CombatState>,
     all_attrs: Query<&ActorAttributes>,
     time: Res<Time>,
-    runtime: Res<crate::resources::RunTime>,
+    runtime: Res<crate::RunTime>,
     dice: Res<dice::Dice>,
     mut rolls: Query<&mut dice::Rolls>,
     mut writer: MessageWriter<Do>,
@@ -175,7 +197,7 @@ pub fn resolve_dot_tick(
 pub fn track_engagement(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
-    mut query: Query<(Entity, &CombatState, &Loc, Option<&common_bevy::components::behaviour::Side>, &mut common_bevy::components::Swing, &mut common_bevy::components::grit::Grit, Option<&crate::systems::combat::abilities::LastSkill>)>,
+    mut query: Query<(Entity, &CombatState, &Loc, Option<&common_bevy::components::behaviour::Side>, &mut common_bevy::components::Swing, &mut common_bevy::components::grit::Grit, Option<&crate::abilities::LastSkill>)>,
     others: Query<(&common_bevy::components::behaviour::Side, &Health)>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     nntree: Res<common_bevy::plugins::nntree::NNTree>,
@@ -184,7 +206,7 @@ pub fn track_engagement(
     let now = time.elapsed();
     for (ent, state, &loc, side, mut swing, mut grit, last_skill) in &mut query {
         let hostile_near = side.is_some_and(|&side| {
-            crate::systems::behaviour::spotted(&nntree, loc, crate::systems::behaviour::ACQUISITION_RANGE)
+            crate::behaviour::spotted(&nntree, loc, crate::behaviour::ACQUISITION_RANGE)
                 .filter(|&other| other != ent)
                 .any(|other| others.get(other).is_ok_and(|(other_side, health)| side.is_hostile_to(*other_side) && health.state > 0.0))
         });
@@ -239,7 +261,7 @@ mod tests {
         engaging(app.world_mut());
         assert_eq!(app.world().get::<Swing>(waiting).unwrap().due, None, "with no hostile near it banks nothing");
 
-        let far = crate::systems::behaviour::ACQUISITION_RANGE as i32 - 1;
+        let far = crate::behaviour::ACQUISITION_RANGE as i32 - 1;
         let hostile = app.world_mut().spawn((at(far), Side::PLAYERS, Health::full(100.0))).id();
         app.world_mut().entity_mut(hostile).insert(NearestNeighbor::new(hostile, at(far)));
         app.update();
@@ -251,7 +273,7 @@ mod tests {
         engaging(app.world_mut());
         assert!(waits(&app), "its swing come due and unstruck, it waits");
         let now = app.world().resource::<Time>().elapsed();
-        app.world_mut().entity_mut(waiting).insert(crate::systems::combat::abilities::LastSkill(now));
+        app.world_mut().entity_mut(waiting).insert(crate::abilities::LastSkill(now));
         engaging(app.world_mut());
         assert!(!waits(&app), "a skill used ends it");
     }

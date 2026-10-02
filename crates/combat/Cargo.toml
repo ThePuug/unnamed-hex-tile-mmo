@@ -1,0 +1,17 @@
+[package]
+name = "combat"
+version = "0.1.0"
+edition = "2021"
+
+# Off here, switched on by the binaries that want it (see common-bevy)
+[features]
+default = []
+dynamic = ["bevy/dynamic_linking", "common-bevy/dynamic"]
+
+[dependencies]
+common-bevy = { path = "../common-bevy" }
+bevy = "0.19"
+rand = "0.9"
+
+[dependencies.qrz]
+path = "../qrz"

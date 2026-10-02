@@ -1,4 +1,3 @@
-mod arena;
 pub mod network;
 mod plugins;
 mod resources;
@@ -20,11 +19,6 @@ use crate::{
 
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().is_some_and(|a| a == "arena") {
-        return arena::run(&args[1..]);
-    }
-
     let mut app = App::new();
     app.add_plugins((
         // Without a wait the runner spins a core. Physics is FixedUpdate, so
@@ -44,8 +38,8 @@ fn main() {
         crate::network::NetworkPlugin,
         EasingsPlugin::default(),
         nntree::NNTreePlugin,
-        crate::plugins::behaviour::BehaviourPlugin,
-        crate::plugins::combat::CombatPlugin,
+        combat::BehaviourPlugin,
+        combat::CombatPlugin,
         crate::plugins::metrics::MetricsPlugin::default(),
         crate::plugins::world_streaming::WorldStreamingPlugin,
     ));
@@ -71,7 +65,7 @@ fn main() {
     // Actor systems
     app.add_systems(Update, (
         actor::do_incremental,
-        actor::update,
+        combat::actor::update,
     ));
 
     // World, network, and spawner systems
@@ -99,7 +93,7 @@ fn main() {
     app.add_systems(PostUpdate, (
         aoi::update_area_of_interest,
         renet::send_do.after(aoi::update_area_of_interest),
-        renet::cleanup_despawned.after(renet::send_do),
+        combat::actor::cleanup_despawned.after(renet::send_do),
     ));
 
 

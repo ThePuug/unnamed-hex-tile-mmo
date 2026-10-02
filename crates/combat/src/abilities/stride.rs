@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use common_bevy::{components::status::Timed, message::AbilityType};
 
 use super::{Abilities, AbilityFailReason, Cast};
-use crate::systems::combat::landing;
+use crate::landing;
 
 /// Perfect Stride, the Kiter's skill: for `Tuning::stride_secs` its user
 /// strikes past its forward faces, as far round as its Grace opens, without

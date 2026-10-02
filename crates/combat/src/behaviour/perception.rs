@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use common_bevy::components::reaction_queue::QueuedThreat;
 
 use super::skills::Foe;
-use crate::systems::combat::dice::Dice;
+use crate::dice::Dice;
 
 /// How well an NPC carries out its decisions: how late each change
 /// reaches it, and how far its judgement strays, a random spread on every

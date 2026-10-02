@@ -16,7 +16,7 @@ use common_bevy::{
     message::{ Component, Event, * },
     systems::*
 };
-use crate::resources::*;
+use ::combat::RunTime;
 
 /// Helper function to generate Spawn event + component sync events for an actor entity.
 /// This ensures consistent syncing of actor state across different scenarios:

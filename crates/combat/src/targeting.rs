@@ -7,7 +7,7 @@ use common_bevy::{
     plugins::nntree::NNTree,
     systems::targeting::{arc_of, update_targets_impl},
 };
-use crate::systems::behaviour::chase::Chase;
+use crate::behaviour::chase::Chase;
 
 /// Points every actor that picks its target by facing at the hostile it
 /// faces, each frame, so a target moving out of its arc is let go at once.

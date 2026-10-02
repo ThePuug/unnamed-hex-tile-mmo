@@ -11,7 +11,7 @@ use common_bevy::{
 pub fn process_expired_threats(
     mut commands: Commands,
     time: Res<Time>,
-    runtime: Res<crate::resources::RunTime>,
+    runtime: Res<crate::RunTime>,
     mut query: Query<(Entity, &mut ReactionQueue, &ActorAttributes)>,
     mut writer: MessageWriter<Do>,
 ) {
@@ -55,7 +55,7 @@ pub fn process_expired_threats(
 pub fn tick_dots(
     mut commands: Commands,
     time: Res<Time>,
-    runtime: Res<crate::resources::RunTime>,
+    runtime: Res<crate::RunTime>,
     mut query: Query<(Entity, &mut ReactionQueue)>,
 ) {
     let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;

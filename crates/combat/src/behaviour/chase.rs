@@ -126,8 +126,8 @@ pub fn chase(
     nntree: Res<NNTree>,
     map: Res<Map>,
     dt: Res<Time>,
-    dice: Res<crate::systems::combat::dice::Dice>,
-    mut rolls: Query<&mut crate::systems::combat::dice::Rolls>,
+    dice: Res<crate::dice::Dice>,
+    mut rolls: Query<&mut crate::dice::Rolls>,
     mut decisions: Option<ResMut<super::Decisions>>,
 ) {
     // Which way each actor faces, read apart from the bodies this turns
@@ -290,8 +290,8 @@ mod tests {
         app.add_plugins(NNTreePlugin);
         app.add_message::<Do>();
         app.init_resource::<Time>();
-        app.insert_resource(crate::systems::combat::dice::Dice::seeded(0));
-        app.register_required_components::<Chase, crate::systems::combat::dice::Rolls>();
+        app.insert_resource(crate::dice::Dice::seeded(0));
+        app.register_required_components::<Chase, crate::dice::Rolls>();
         let mut tiles = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         for q in -4..=LEASH + 8 {
             for r in -4..=4 {

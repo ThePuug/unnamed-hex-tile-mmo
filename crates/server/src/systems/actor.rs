@@ -380,28 +380,6 @@ pub fn poll_chunk_tasks(
     task_queue.tasks = pending;
 }
 
-/// Moves each actor's `Loc` onto the tile its `Position` has reached. Timed when
-/// the metrics plugin is installed; the balance arena runs without it.
-pub fn update(
-    mut writer: MessageWriter<Try>,
-    mut query: Query<(Entity, &mut Loc, &mut Position), Changed<Position>>,
-    map: Res<Map>,
-    timings: Option<Res<SystemTimings>>,
-) {
-    if query.is_empty() { return; }
-    let _t = timings.as_ref().map(|t| t.scope("actor_update"));
-    for (ent, mut loc0, mut position) in &mut query {
-        let qrz = position.reached(&map);
-        if **loc0 != qrz {
-            position.rebase(qrz, &map);
-            **loc0 = qrz;
-
-            // Send Loc update to client
-            writer.write(Try { event: Event::Incremental { ent, component: Component::Loc(Loc::new(qrz)) } });
-        }
-    }
-}
-
 /// Puts a player on the ground at the tile it asks for, as a spawn does:
 /// standing on the terrain there, whatever the map holds yet, and the tile
 /// broadcast so the stream, the area of interest and every client follow.

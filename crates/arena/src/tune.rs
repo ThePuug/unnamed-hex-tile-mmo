@@ -1,6 +1,6 @@
 //! # Tuning search
 //!
-//! `cargo run --bin server --features tune -- arena tune <command>` searches
+//! `cargo run --bin arena -- tune <command>` searches
 //! the game's numbers and the NPCs' minds against the balance arena, in
 //! process. What it searches, within what bounds, what every scenario holds
 //! fixed and how a matrix is scored are `tune.toml` beside this file, read
@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use common_bevy::{archetype::EnemyArchetype, tuning::Tuning};
 
 use super::{matrix, print_matrix, Pairing, Settings};
-use crate::systems::behaviour::mind::{Minds, TUNED};
+use combat::behaviour::mind::{Minds, TUNED};
 
 /// The step a search starts with, in the space where each bound is 0 and 1
 const SIGMA: f64 = 0.2;
@@ -121,7 +121,7 @@ fn results() -> PathBuf {
 }
 
 fn config() -> Config {
-    let path = manifest().join("src/arena/tune.toml");
+    let path = manifest().join("src/tune.toml");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     toml::from_str(&text).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
@@ -418,7 +418,7 @@ fn apply(state: &State) {
     }).collect();
     std::fs::write(&path, lines.join(nl)).expect("tune: tuning.rs");
 
-    let path = manifest().join("src/systems/behaviour/mind.rs");
+    let path = manifest().join("../combat/src/behaviour/mind.rs");
     let text = std::fs::read_to_string(&path).expect("tune: mind.rs");
     let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let open = "pub const TUNED: &[(&str, f32)] = &[";

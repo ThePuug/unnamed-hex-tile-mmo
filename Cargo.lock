@@ -396,6 +396,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "arena"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "cmaes",
+ "combat",
+ "common",
+ "common-bevy",
+ "qrz",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "arg_enum_proc_macro"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2630,6 +2646,16 @@ name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
+
+[[package]]
+name = "combat"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "common-bevy",
+ "qrz",
+ "rand 0.9.2",
+]
 
 [[package]]
 name = "combine"
@@ -6543,7 +6569,7 @@ dependencies = [
  "bimap",
  "bincode",
  "chrono",
- "cmaes",
+ "combat",
  "common",
  "common-bevy",
  "qrz",
@@ -6551,9 +6577,7 @@ dependencies = [
  "renet",
  "renet_netcode",
  "serde",
- "serde_json",
  "tinyvec",
- "toml",
  "world",
 ]
 

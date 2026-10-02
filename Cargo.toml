@@ -5,6 +5,8 @@ members = [
     "crates/common-bevy",
     "crates/client",
     "crates/server",
+    "crates/combat",
+    "crates/arena",
     "crates/qrz",
     "crates/console",
     "crates/world",

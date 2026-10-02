@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use common_bevy::{components::Loc, message::AbilityType};
 
 use super::{Abilities, AbilityFailReason, Cast, WHOLE};
-use crate::systems::combat::leap::{away, slide, toward, LEAP_MS};
+use crate::leap::{away, slide, toward, LEAP_MS};
 
 /// Leap, the Skirmisher's skill: an action that carries its user its
 /// distance (`ActorAttributes::leap_tiles`) over the ground, by where its

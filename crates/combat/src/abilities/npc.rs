@@ -2,7 +2,7 @@
 //! it perceives ([`perception`]), and it asks the gate for the best
 //! decision that beats waiting, as a player's key press would.
 //!
-//! [`perception`]: crate::systems::behaviour::perception
+//! [`perception`]: crate::behaviour::perception
 
 use bevy::prelude::*;
 use common_bevy::{
@@ -12,9 +12,9 @@ use common_bevy::{
 };
 
 use super::{in_arc, Abilities};
-use crate::systems::combat::leap::away;
+use crate::leap::away;
 use common_bevy::archetype::EnemyArchetype;
-use crate::systems::behaviour::{
+use crate::behaviour::{
     approach_of,
     mind::mind_of,
     perception::Skill,

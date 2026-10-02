@@ -58,9 +58,9 @@ use common_bevy::{
     },
 };
 
-use crate::systems::{
+use crate::{
     behaviour::{chase::Chase, perception::{Sight, Skill}},
-    combat::landing,
+    landing,
 };
 
 /// Why the gate refused an ability.
@@ -134,7 +134,7 @@ pub struct Abilities<'w, 's> {
     pub swings: Query<'w, 's, &'static mut Swing>,
     pub grits: Query<'w, 's, &'static mut Grit>,
     pub targets: Query<'w, 's, (Entity, &'static Target)>,
-    pub npcs: Query<'w, 's, (Entity, &'static EntityType, &'static crate::systems::behaviour::Bar), With<Chase>>,
+    pub npcs: Query<'w, 's, (Entity, &'static EntityType, &'static crate::behaviour::Bar), With<Chase>>,
     pub minds: Query<'w, 's, (&'static Skill, &'static mut Sight)>,
     pub leashed: Query<'w, 's, (&'static Chase, &'static EngagementMember)>,
     pub dens: Query<'w, 's, &'static Loc, With<Engagement>>,
@@ -143,10 +143,10 @@ pub struct Abilities<'w, 's> {
     pub kinds: Query<'w, 's, &'static EntityType>,
     pub map: Res<'w, Map>,
     pub time: Res<'w, Time>,
-    pub runtime: Res<'w, crate::resources::RunTime>,
-    pub dice: Res<'w, crate::systems::combat::dice::Dice>,
-    pub rolls: Query<'w, 's, &'static mut crate::systems::combat::dice::Rolls>,
-    pub decisions: Option<ResMut<'w, crate::systems::behaviour::Decisions>>,
+    pub runtime: Res<'w, crate::RunTime>,
+    pub dice: Res<'w, crate::dice::Dice>,
+    pub rolls: Query<'w, 's, &'static mut crate::dice::Rolls>,
+    pub decisions: Option<ResMut<'w, crate::behaviour::Decisions>>,
 }
 
 /// Uses every ability due or asked for this frame: the auto-attacks that
@@ -296,10 +296,10 @@ impl Abilities<'_, '_> {
 
     /// The leash `ent`'s moves keep inside: an NPC's, round its
     /// engagement's place. A player has none.
-    pub fn leash(&self, ent: Entity) -> Option<crate::systems::combat::leap::Leash> {
+    pub fn leash(&self, ent: Entity) -> Option<crate::leap::Leash> {
         let (chase, member) = self.leashed.get(ent).ok()?;
         let den = self.dens.get(member.0).ok()?;
-        Some(crate::systems::combat::leap::Leash { den: **den, reach: chase.leash_distance })
+        Some(crate::leap::Leash { den: **den, reach: chase.leash_distance })
     }
 
     /// Spends `spent` of `ent`'s endurance, as far as it has any, and tells
@@ -411,7 +411,7 @@ mod tests {
 
     fn arena() -> App {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, NNTreePlugin, crate::plugins::combat::CombatPlugin));
+        app.add_plugins((MinimalPlugins, NNTreePlugin, crate::plugin::CombatPlugin));
         let mut tiles = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         for q in -12..=12 {
             for r in -12..=12 {

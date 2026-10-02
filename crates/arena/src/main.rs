@@ -1,6 +1,6 @@
 //! # Balance arena
 //!
-//! `cargo run --bin server -- arena [key=value ...]` sets NPC archetypes
+//! `cargo run --bin arena -- [key=value ...]` sets NPC archetypes
 //! against each other on a flat, empty map and reports who wins. Each fight
 //! is its own headless app running `CombatPlugin` and `BehaviourPlugin`,
 //! the rules the live server runs, stepped on a manual clock so it goes as
@@ -24,13 +24,12 @@
 //! (`frenzy_damage=2`), so a value is tried without a rebuild; `bar` a comma
 //! list of the skills every fighter weighs in place of its archetype's own
 //! (`bar=parry,feint`); and any mind
-//! setting as `mind.<all|archetype>.<setting>` (`behaviour::mind`), so a
+//! setting as `mind.<all|archetype>.<setting>` (`combat::behaviour::mind`), so a
 //! search tunes each archetype's fighter the same way.
 //!
 //! `arena serve` runs one scenario per line of stdin, each line the keys
 //! above, and ends each report with a line `end`. `arena tune ...` searches
-//! the game's numbers and the NPCs' minds in-process ([`tune`], with the
-//! `tune` feature).
+//! the game's numbers and the NPCs' minds in-process ([`tune`]).
 //!
 //! Every pairing fights `runs` times, the two swapping ends each run, each
 //! team starting on its end's tile or a neighbour and each fighter facing
@@ -48,7 +47,6 @@
 //! fight it spent recovering, held, slowed, with its target beyond its
 //! reach and circling it, and its mean fatigue.
 
-#[cfg(feature = "tune")]
 mod tune;
 
 use std::{collections::HashMap, time::Duration};
@@ -75,15 +73,12 @@ use common_bevy::{
     tuning::{set_tuning, Tuning},
 };
 
-use crate::{
-    plugins::{behaviour::BehaviourPlugin, combat::CombatPlugin},
-    systems::{
-        actor,
-        behaviour::{mind::{set_minds, Minds}, moves::Move, perception::Skill, Bar, Decisions},
-        combat::dice::Dice,
-        engagement_spawner::{engaging_at, spawn_engagement, STAGE_GAP},
-        renet,
-    },
+use combat::{
+    actor,
+    behaviour::{mind::{set_minds, Minds}, moves::Move, perception::Skill, Bar, Decisions},
+    dice::Dice,
+    engagement::{engaging_at, spawn_engagement, STAGE_GAP},
+    BehaviourPlugin, CombatPlugin,
 };
 
 /// One simulated frame. FixedUpdate's 125ms tick runs every second frame.
@@ -370,7 +365,7 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
         app.init_resource::<Decisions>();
     }
     app.add_systems(Update, (actor::update, tally_sent));
-    app.add_systems(PostUpdate, renet::cleanup_despawned);
+    app.add_systems(PostUpdate, actor::cleanup_despawned);
     app.add_observer(tally_resolved);
     app.finish();
     app.cleanup();
@@ -504,19 +499,15 @@ fn timeline(world: &mut World, elapsed: Duration) {
     println!("    t={:>5.1}s {} || engagements {}", elapsed.as_secs_f32(), lines.join(" | "), assigning.join(" "));
 }
 
-/// Runs the arena: `serve` answers scenarios from stdin, anything else is
-/// one scenario's keys.
-pub fn run(args: &[String]) {
-    if args.first().is_some_and(|a| a == "serve") {
-        return serve();
+/// Runs the arena: `serve` answers scenarios from stdin, `tune` searches,
+/// anything else is one scenario's keys.
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("serve") => serve(),
+        Some("tune") => tune::run(&args[1..]),
+        _ => report(&Settings::parse(&args)),
     }
-    if args.first().is_some_and(|a| a == "tune") {
-        #[cfg(feature = "tune")]
-        return tune::run(&args[1..]);
-        #[cfg(not(feature = "tune"))]
-        panic!("arena tune needs the server built with `--features tune`");
-    }
-    report(&Settings::parse(args));
 }
 
 /// Answers each line of stdin as a scenario, closing each report with `end`.

@@ -1,0 +1,24 @@
+[package]
+name = "arena"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["dynamic"]
+# Bevy links as a dylib so an edit rebuilds this crate instead of the engine;
+# drop it with `--no-default-features` for an optimized build.
+dynamic = ["bevy/dynamic_linking", "common-bevy/dynamic", "combat/dynamic"]
+
+[dependencies]
+combat = { path = "../combat" }
+common = { path = "../common" }
+common-bevy = { path = "../common-bevy" }
+bevy = "0.19"
+rand = "0.9"
+serde = { version = "1", features = ["derive"] }
+cmaes = { version = "0.2", default-features = false }
+toml = "0.8"
+serde_json = "1"
+
+[dependencies.qrz]
+path = "../qrz"

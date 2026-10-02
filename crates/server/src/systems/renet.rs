@@ -22,6 +22,7 @@ use crate::*;
 
 
 use crate::network::{ServerNet, NetServerEvent};
+use combat::RunTime;
 
 /// A connected client entering the world or leaving it. Connection is not
 /// presence: a client connects to its character select, enters when it
@@ -383,25 +384,6 @@ pub fn send_do(
                     conn.send_unreliable(*client_id, bytes.clone());
                 }
             }
-        }
-    }
-}
-
-/// System that actually despawns entities after network messages have been sent
-/// This runs in PostUpdate after send_do to avoid race conditions
-pub fn cleanup_despawned(
-    mut commands: Commands,
-    mut reader: MessageReader<Do>,
-    respawn_query: Query<&RespawnTimer>,
-) {
-    for message in reader.read() {
-        if let Do { event: Event::Despawn { ent } } = message {
-            let ent = *ent;
-            // Don't despawn entities with RespawnTimer (dead players waiting to respawn)
-            if respawn_query.get(ent).is_ok() {
-                continue;
-            }
-            commands.entity(ent).despawn();
         }
     }
 }

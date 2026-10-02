@@ -21,7 +21,7 @@ use common_bevy::{
     plugins::nntree::NNTree,
     resources::map::Map,
 };
-use crate::systems::behaviour::chase::Chase;
+use crate::behaviour::chase::Chase;
 
 /// Steps between two entries of a ring `slots` long, the shorter way
 /// round: `min(|a - b|, slots - |a - b|)`.

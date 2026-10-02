@@ -32,11 +32,11 @@ say in the proposal why neither did.
 cargo build
 cargo run --bin server             # separate processes
 cargo run --bin client
-cargo run --bin server -- arena      # archetype v archetype balance, headless; keys in server/src/arena/mod.rs
-cargo run --bin server -- arena tune screen|balance|minds|settle|loop|show|apply   # searches; bounds in arena/tune.toml
+cargo run --bin arena               # archetype v archetype balance, headless; keys in arena/src/main.rs
+cargo run --bin arena -- tune screen|balance|minds|settle|loop|show|apply   # searches; bounds in arena/src/tune.toml
 cargo test                         # all tests
 cargo test -p common-bevy physics  # specific module
-cargo test -p server reaction_queue
+cargo test -p combat reaction_queue
 
 cargo build --release --no-default-features -p server -p client   # optimized
 ```
@@ -71,7 +71,9 @@ flat-top hex grid. All crates under `crates/`:
 | `common` | Non-Bevy shared library — plate tags, hex spatial grid, pure data |
 | `common-bevy` | Shared Bevy code — components, chunks, physics, messages, map |
 | `client` | Rendering, input, networking |
-| `server` | Authority, AI, terrain serving, connections |
+| `combat` | The fight with no networking — damage, the reaction queue, abilities, NPC behaviour and minds, engagements; the server and the arena both install its plugins |
+| `server` | Authority, terrain serving, connections; combat's network round it |
+| `arena` | Headless balance arena and tuning search over `combat` |
 | `world` | World event system + terrain generation, no Bevy |
 | `world-viewer` | CLI rendering the event stack, or one event's field or index, to an image; its README says what a view may read |
 | `qrz` | Hex grid library — see `crates/qrz/AGENTS.md` |
