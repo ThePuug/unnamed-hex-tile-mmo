@@ -1,7 +1,8 @@
 //! The numbers an NPC's decisions are shaped by, apart from the
 //! considerations that read the fight: each continuous consideration's
-//! bounds and floor, and each channel's threshold and momentum, set for
-//! every archetype or for one. The curve's shape is the consideration's
+//! bounds and floor, each channel's threshold, the movement channel's
+//! momentum and the skills channel's combo bonus, set for every archetype
+//! or for one. The curve's shape is the consideration's
 //! own and is not set here.
 //!
 //! The world holds one set as a resource, [`TUNED`] (`CombatPlugin`),
@@ -31,20 +32,22 @@ pub struct Adjust {
 }
 
 /// How one NPC's decisions are shaped: the threshold of each channel, the
-/// momentum of the move under way, what it sets of its considerations, and
-/// how much each foe Approach makes the foe's last skill count.
+/// momentum of the move under way, the bonus of the combo its recovery
+/// offers, what it sets of its considerations, and how much each foe
+/// Approach makes the foe's last skill count.
 #[derive(Clone, Debug)]
 pub struct Mind {
     pub wait: f32,
     pub hold: f32,
     pub momentum: f32,
+    pub combo: f32,
     adjusts: HashMap<&'static str, Adjust>,
     just_acted: HashMap<Approach, f32>,
 }
 
 impl Default for Mind {
     fn default() -> Self {
-        Self { wait: skills::WAIT, hold: moves::HOLD, momentum: moves::MOMENTUM, adjusts: HashMap::new(), just_acted: HashMap::new() }
+        Self { wait: skills::WAIT, hold: moves::HOLD, momentum: moves::MOMENTUM, combo: skills::COMBO, adjusts: HashMap::new(), just_acted: HashMap::new() }
     }
 }
 
@@ -75,6 +78,7 @@ struct Overrides {
     wait: Option<f32>,
     hold: Option<f32>,
     momentum: Option<f32>,
+    combo: Option<f32>,
     adjusts: HashMap<&'static str, Adjust>,
     just_acted: HashMap<Approach, f32>,
 }
@@ -86,8 +90,7 @@ pub const TUNED: &[(&str, f32)] = &[
     ("berserker.wait", 0.512), ("berserker.hold", 0.154), ("berserker.momentum", 0.172),
     ("berserker.fatigue_after.floor", 0.143), ("berserker.foe_just_acted.floor", 0.633), ("berserker.foe_just_acted.from", 2.789),
     ("berserker.just_acted.binding", 0.464), ("berserker.just_acted.distant", 1.946), ("berserker.just_acted.patient", 0.77),
-    ("berserker.just_acted.evasive", 0.85), ("berserker.just_acted.ambushing", 0.987), ("berserker.combo_offered.floor", 0.925),
-    ("berserker.burst_carried.floor", 0.001), ("juggernaut.wait", 0.481), ("juggernaut.hold", 0.094),
+    ("berserker.just_acted.evasive", 0.85), ("berserker.just_acted.ambushing", 0.987), ("juggernaut.wait", 0.481), ("juggernaut.hold", 0.094),
     ("juggernaut.momentum", 0.181), ("juggernaut.fatigue_after.floor", 0.0), ("juggernaut.foe_just_acted.floor", 0.572),
     ("juggernaut.foe_just_acted.from", 2.394), ("juggernaut.just_acted.direct", 1.0), ("juggernaut.just_acted.distant", 1.0),
     ("juggernaut.just_acted.patient", 1.0), ("juggernaut.just_acted.evasive", 1.0), ("juggernaut.just_acted.ambushing", 1.0),
@@ -131,6 +134,7 @@ impl Minds {
             mind.wait = overrides.wait.unwrap_or(mind.wait);
             mind.hold = overrides.hold.unwrap_or(mind.hold);
             mind.momentum = overrides.momentum.unwrap_or(mind.momentum);
+            mind.combo = overrides.combo.unwrap_or(mind.combo);
             mind.just_acted.extend(overrides.just_acted.iter().map(|(&approach, &weight)| (approach, weight)));
             for (&name, adjust) in &overrides.adjusts {
                 let set = mind.adjusts.entry(name).or_default();
@@ -144,7 +148,7 @@ impl Minds {
 
     /// Sets `key` from text, as the arena gives it: `<who>.<setting>`,
     /// where who is `all` or an archetype and the setting `wait`, `hold`,
-    /// `momentum`, `just_acted.<approach>`, or
+    /// `momentum`, `combo`, `just_acted.<approach>`, or
     /// `<consideration>.<from|to|floor>`. Errs on anything unknown.
     pub fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
         let number = value.parse::<f32>().map_err(|_| format!("mind.{key} takes a number, not {value}"))?;
@@ -161,6 +165,7 @@ impl Minds {
             "wait" => overrides.wait = Some(number),
             "hold" => overrides.hold = Some(number),
             "momentum" => overrides.momentum = Some(number),
+            "combo" => overrides.combo = Some(number),
             _ if setting.starts_with("just_acted.") => {
                 let name = &setting["just_acted.".len()..];
                 let approach = APPROACHES.into_iter()

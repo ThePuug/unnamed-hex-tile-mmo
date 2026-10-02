@@ -5,8 +5,12 @@
 //! strike, a reaction, a leap clear or in, a stance) and from the
 //! commitments its user holds. A commitment's considerations read its own
 //! state, so an NPC that scores them plays the way its commitment pays:
-//! no style is written down. The channel's do-nothing decision, waiting,
-//! scores [`WAIT`], and a skill is used only where it scores higher.
+//! no style is written down. Every skill's worth is weighed against both
+//! its costs, the stamina and the recovery it leaves. The channel's
+//! do-nothing decision, waiting, scores [`WAIT`], and a skill is used only
+//! where it scores higher; the combo its recovery offers scores
+//! [`COMBO`] more, so a chain carries on rather than wait for another
+//! skill to unlock.
 //!
 //! Every input is a ratio in the game's own terms, so a curve means the
 //! same at any level and holds when a skill's numbers change.
@@ -16,7 +20,7 @@ use std::time::Duration;
 use common_bevy::{
     components::{reaction_queue::QueuedThreat, recovery::GlobalRecovery, resources::Endurance, ActorAttributes},
     message::AbilityType,
-    systems::combat::combos::{may_use, reacts_through},
+    systems::combat::combos::{may_use, reacts_through, recovery_after},
 };
 
 use super::{mind::Mind, utility::{score, Consideration, Curve, Shape}};
@@ -25,11 +29,15 @@ use super::{mind::Mind, utility::{score, Consideration, Curve, Shape}};
 /// decision must beat.
 pub const WAIT: f32 = 0.35;
 
+/// What the combo its recovery offers scores beside its own, unless a mind
+/// sets it
+pub const COMBO: f32 = 0.15;
+
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "fatigue_after", "foe_just_acted", "worth_answering", "pressure_share", "span_closed",
-    "room_to_land", "combo_offered", "burst_carried", "grit_banked", "strike_worth", "opening",
+    "fatigue_after", "stamina_left", "recovery_left", "foe_just_acted", "worth_answering",
+    "pressure_share", "span_closed", "room_to_land", "grit_banked", "strike_worth", "opening",
     "reactions_left", "stamina_spent", "stamina_ready", "foe_across",
 ];
 
@@ -72,6 +80,9 @@ pub struct View {
 pub struct Threats {
     /// Damage a reaction would take now: the front threat and its span
     pub swept: f32,
+    /// Of that, what the blows deal on landing, apart from what their
+    /// DoTs have left: what a reflection returns a share of
+    pub swept_direct: f32,
     /// Of that, what auto-attacks would deal
     pub swept_pressure: f32,
     /// How long ago the front threat was queued, against its user's span:
@@ -86,10 +97,11 @@ impl Threats {
         let Some(front) = queue.first() else { return Self::default() };
         let (first, last) = (front.lands_at(), front.lands_at() + span);
         let swept = queue.iter().filter(|threat| (first..=last).contains(&threat.lands_at()));
-        let (mut damage, mut pressure) = (0.0, 0.0);
+        let (mut damage, mut direct, mut pressure) = (0.0, 0.0, 0.0);
         for threat in swept {
             let blow = threat.damage + threat.dot_left();
             damage += blow;
+            direct += threat.damage;
             if threat.is_pressure() {
                 pressure += blow;
             }
@@ -97,6 +109,7 @@ impl Threats {
         let since = now.saturating_sub(front.inserted_at).as_secs_f32();
         Self {
             swept: damage,
+            swept_direct: direct,
             swept_pressure: pressure,
             span_closed: if span.is_zero() { 1.0 } else { since / span.as_secs_f32() },
         }
@@ -129,12 +142,16 @@ pub struct Decision {
 }
 
 /// The best of `bar`'s decisions for what `view` perceives, as `mind`
-/// shapes them, where it beats waiting; None to wait. `view.ability` is
-/// set to each skill in turn. `stray` gives each score's error, a share of
-/// it.
+/// shapes them, where it beats waiting; None to wait. The combo its
+/// recovery offers scores `mind.combo` more. `view.ability` is set to each
+/// skill in turn. `stray` gives each score's error, a share of it.
 pub fn choose(view: &mut View, bar: &[AbilityType], mind: &Mind, mut stray: impl FnMut(&Decision) -> f32) -> Option<Decision> {
+    let offered = view.recovery.as_ref().filter(|recovery| recovery.is_active()).and_then(|recovery| recovery.combo).map(|combo| combo.ability);
     weigh(view, bar, mind).into_iter()
-        .map(|decision| Decision { score: decision.score * (1.0 + stray(&decision)), ..decision })
+        .map(|decision| {
+            let chained = if offered == Some(decision.ability) && decision.score > 0.0 { mind.combo } else { 0.0 };
+            Decision { score: decision.score * (1.0 + stray(&decision)) + chained, ..decision }
+        })
         .filter(|decision| decision.score > mind.wait)
         .max_by(|a, b| a.score.total_cmp(&b.score))
 }
@@ -187,9 +204,9 @@ fn reasons(ability: AbilityType, view: &View) -> Vec<(&'static str, Vec<Consider
     parts.iter()
         .filter(|&&(reason, _)| reason != "recover" || patient)
         .map(|&(reason, part)| {
-            let mut considerations = vec![OPEN, AFFORDABLE, ENDURANCE];
+            let mut considerations = vec![OPEN, AFFORDABLE, ENDURANCE, STAMINA_LEFT, RECOVERY_LEFT];
             considerations.extend(part_considerations(reason, part));
-            considerations.extend(commitment_considerations(ability, reason, part, &view.attrs, patient));
+            considerations.extend(commitment_considerations(reason, part, &view.attrs, patient));
             (reason, considerations)
         })
         .collect()
@@ -207,11 +224,8 @@ fn part_considerations(reason: &str, part: Part) -> Vec<Considered> {
     }
 }
 
-fn commitment_considerations(ability: AbilityType, reason: &str, part: Part, attrs: &ActorAttributes, patient: bool) -> Vec<Considered> {
+fn commitment_considerations(reason: &str, part: Part, attrs: &ActorAttributes, patient: bool) -> Vec<Considered> {
     let mut considerations = Vec::new();
-    if attrs.ferocity().index() > 0 && ability.combo().is_some() {
-        considerations.extend([COMBO_OFFERED, BURST_CARRIED]);
-    }
     if attrs.grit_fill() > 0 && part == Part::Strike {
         considerations.push(GRIT_BANKED);
     }
@@ -241,6 +255,15 @@ fn flag(on: bool) -> f32 {
 
 fn foe_distance(view: &View) -> Option<i32> {
     view.foe.map(|foe| foe.distance)
+}
+
+/// The share of each blow it clears that `ability` sends back to the blow's
+/// source: Counter's reflection, and nothing for any other
+fn returned(ability: AbilityType) -> f32 {
+    match ability {
+        AbilityType::Counter => common_bevy::tuning::tuning().counter_reflect,
+        _ => 0.0,
+    }
 }
 
 /// Its health, never so low a ratio over it runs away
@@ -279,6 +302,28 @@ const ENDURANCE: Considered = Consideration {
     curve: Curve::FALLING.floored(0.1),
 };
 
+/// The stamina it would have left once it paid, of its most: what it keeps
+/// for whatever it does next. Weighed only as far as a mind lowers its floor
+const STAMINA_LEFT: Considered = Consideration {
+    name: "stamina_left",
+    read: |view| (view.stamina - common_bevy::tuning::tuning().cost(view.ability)) / view.attrs.max_stamina().max(1.0),
+    bounds: (0.0, 0.5),
+    curve: Curve::RISING.floored(1.0),
+};
+
+/// Seconds of recovery the skill would leave it in, as its fatigue, a combo
+/// fired early or a reaction through a recovery make them: the time it
+/// spends. Weighed only as far as a mind lowers its floor
+const RECOVERY_LEFT: Considered = Consideration {
+    name: "recovery_left",
+    read: |view| {
+        let fatigue = Endurance { state: view.endurance, max: view.endurance_max }.fatigue();
+        recovery_after(view.ability, view.recovery.as_ref(), &view.attrs, None, fatigue).remaining
+    },
+    bounds: (0.0, 6.0),
+    curve: Curve::FALLING.floored(1.0),
+};
+
 // --- Strike ---
 
 const FOE_STRUCK: Considered = step("foe_struck", |view| {
@@ -308,10 +353,13 @@ const OPENING: Considered = Consideration {
 
 // --- Reaction, and a leap clear to dodge ---
 
-/// What it would clear, over its health
+/// What it would clear, and what it would return of that, over its health
 const WORTH_ANSWERING: Considered = Consideration {
     name: "worth_answering",
-    read: |view| view.queue.swept / health(view),
+    read: |view| {
+        let returned = view.queue.swept_direct * returned(view.ability) * view.attrs.line_power(view.ability);
+        (view.queue.swept + returned) / health(view)
+    },
     bounds: (0.0, WORTH),
     curve: Curve { shape: Shape::Logistic { mid: 0.4, steep: 8.0 }, falling: false, floor: 0.0 },
 };
@@ -359,25 +407,6 @@ const ROOM_TO_LAND: Considered = Consideration {
 const NOT_STRIDING: Considered = step("not_striding", |view| flag(!view.striding));
 
 // --- Commitments ---
-
-/// Ferocity: the skill is the combo its recovery offers, a burst under way
-const COMBO_OFFERED: Considered = Consideration {
-    name: "combo_offered",
-    read: |view| flag(view.recovery.as_ref().and_then(|recovery| recovery.combo).is_some_and(|combo| combo.ability == view.ability)),
-    bounds: (0.0, 1.0),
-    curve: Curve::RISING.floored(0.6),
-};
-
-/// Ferocity: stamina to carry a whole burst, every bite its tier fires early
-const BURST_CARRIED: Considered = Consideration {
-    name: "burst_carried",
-    read: |view| {
-        let burst = common_bevy::tuning::tuning().cost(view.ability) * (view.attrs.ferocity().index() as f32 + 1.0);
-        view.stamina / burst.max(f32::EPSILON)
-    },
-    bounds: (0.0, 1.0),
-    curve: Curve::RISING.floored(0.4),
-};
 
 /// What a strike deals, as a share of the health its foe has left: how much
 /// nearer it brings the kill, a finishing blow most. More by Grit's share
@@ -564,6 +593,69 @@ mod tests {
         let mut full = view(AbilityType::Feint, gritty);
         full.grit_filled = 1.0;
         assert!(scored(&mut full, "strike") > scored(&mut empty, "strike"));
+    }
+
+    #[test]
+    fn the_combo_its_recovery_offers_beats_waiting_where_it_would_not_alone() {
+        let mut offered = view(AbilityType::Feint, ActorAttributes::default());
+        offered.recovery = Some(recovery_after(AbilityType::Parry, None, &offered.attrs, None, 0.0));
+        let combo = offered.recovery.unwrap().combo.unwrap();
+        assert_eq!(combo.ability, AbilityType::Feint);
+        offered.recovery.as_mut().unwrap().remaining = combo.unlock_at;
+        let alone = scored(&mut offered, "strike");
+        let mut mind = Mind::default();
+        mind.wait = alone + 0.01;
+        let chosen = choose(&mut offered, &[AbilityType::Feint], &mind, |_| 0.0);
+        assert!(chosen.is_some_and(|decision| decision.ability == AbilityType::Feint), "carried on past a wait it would not beat alone");
+        let mut fresh = view(AbilityType::Feint, ActorAttributes::default());
+        assert!(choose(&mut fresh, &[AbilityType::Feint], &mind, |_| 0.0).is_none(), "and out of recovery the same strike waits");
+    }
+
+    #[test]
+    fn a_mind_keeping_stamina_back_takes_the_cheaper_strike_when_short() {
+        let mut minds = crate::behaviour::mind::Minds::default();
+        minds.set("all.stamina_left.floor", "0").unwrap();
+        let mind = minds.mind(None);
+        let attrs = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
+        let tuning = common_bevy::tuning::tuning();
+        let short = tuning.cost(AbilityType::Overpower) + attrs.max_stamina() * 0.1;
+        let shape = |ability, stamina| {
+            let mut v = view(ability, attrs);
+            v.stamina = stamina;
+            weigh(&mut v, &[ability], &mind)[0].responses.iter().find(|(name, _)| *name == "stamina_left").unwrap().1
+        };
+        assert!(shape(AbilityType::Overpower, short) < shape(AbilityType::Feint, short), "the dearer strike leaves less behind");
+        assert_eq!(shape(AbilityType::Overpower, attrs.max_stamina()), shape(AbilityType::Feint, attrs.max_stamina()), "with a full pool, neither is held back");
+    }
+
+    #[test]
+    fn a_mind_weighing_time_marks_a_long_recovery_down() {
+        let mut minds = crate::behaviour::mind::Minds::default();
+        minds.set("all.recovery_left.floor", "0").unwrap();
+        let mind = minds.mind(None);
+        let tuning = common_bevy::tuning::tuning();
+        let (quick, slow) = if tuning.recovery(AbilityType::Feint) < tuning.recovery(AbilityType::Overpower) {
+            (AbilityType::Feint, AbilityType::Overpower)
+        } else {
+            (AbilityType::Overpower, AbilityType::Feint)
+        };
+        let response = |ability| {
+            let mut v = view(ability, ActorAttributes::default());
+            weigh(&mut v, &[ability], &mind)[0].responses.iter().find(|(name, _)| *name == "recovery_left").unwrap().1
+        };
+        assert!(response(slow) < response(quick));
+    }
+
+    #[test]
+    fn a_counter_is_worth_more_than_a_parry_by_what_it_returns() {
+        let span = Duration::from_millis(250);
+        let now = Duration::from_millis(1000);
+        let queue = threats(&[(60.0, true, 0)], span, now);
+        let mut parry = view(AbilityType::Parry, ActorAttributes::default());
+        parry.queue = queue;
+        let mut counter = view(AbilityType::Counter, ActorAttributes::default());
+        counter.queue = queue;
+        assert!(scored(&mut counter, "answer") > scored(&mut parry, "answer"));
     }
 
     #[test]
