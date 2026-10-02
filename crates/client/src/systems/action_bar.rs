@@ -132,6 +132,7 @@ pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 8] {
 /// whenever that actor changes.
 pub fn sync_loadout(
     tuning: Res<Tuning>,
+    asset_server: Res<AssetServer>,
     mut commands: Commands,
     seer: Query<(Entity, &EntityType), With<crate::components::Viewed>>,
     slots: Query<Entity, With<AbilitySlots>>,
@@ -145,14 +146,19 @@ pub fn sync_loadout(
     *shown = seer.map(|(ent, _)| ent);
     commands.entity(container).despawn_related::<Children>();
     let Some((_, typ)) = seer else { return };
+    let icons: Handle<Font> = asset_server.load(ICON_FONT);
     commands.entity(container).with_children(|parent| {
         for (keybind, ability) in KEYS.into_iter().zip(loadout(typ)) {
-            spawn_slot(&tuning, parent, keybind, ability);
+            spawn_slot(&tuning, &icons, parent, keybind, ability);
         }
     });
 }
 
-fn spawn_slot(tuning: &Tuning, parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>) {
+/// The font a slot's icon is drawn in: a Nerd Font, whose private-use
+/// glyphs stand for the skills until they have icons of their own.
+const ICON_FONT: &str = "fonts/IosevkaNerdFont-Regular.ttf";
+
+fn spawn_slot(tuning: &Tuning, icons: &Handle<Font>, parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>) {
     parent.spawn((
         Node {
             width: Val::Px(SLOT_PX),
@@ -167,24 +173,25 @@ fn spawn_slot(tuning: &Tuning, parent: &mut ChildSpawnerCommands, keybind: KeyCo
         AbilitySlot { ability },
     ))
     .with_children(|parent| {
-        // Ability icon (center)
+        // Ability icon (center), named for its glyph in `ICON_FONT`
         let icon_text = match ability {
             None => "",
-            Some(AbilityType::AutoAttack) => "⚔",
-            Some(AbilityType::Frenzy) => "💥",
-            Some(AbilityType::Feint) => "💫",
-            Some(AbilityType::Overpower) => "🔨",
-            Some(AbilityType::Punish) => "🐊",
-            Some(AbilityType::Parry) => "🗡",
-            Some(AbilityType::Counter) => "↩",
-            Some(AbilityType::Leap) => "💨",
-            Some(AbilityType::PerfectStride) => "🏹",
+            Some(AbilityType::AutoAttack) => "\u{F04E5}",     // md-sword
+            Some(AbilityType::Frenzy) => "\u{EEB5}",          // fa-teeth_open
+            Some(AbilityType::Feint) => "\u{F0D02}",          // md-drama_masks
+            Some(AbilityType::Overpower) => "\u{F08EA}",      // md-hammer
+            Some(AbilityType::Punish) => "\u{F09FC}",         // md-knife_military
+            Some(AbilityType::Parry) => "\u{F0498}",          // md-shield
+            Some(AbilityType::Counter) => "\u{F045A}",        // md-reply
+            Some(AbilityType::Leap) => "\u{F0907}",           // md-rabbit
+            Some(AbilityType::PerfectStride) => "\u{F046E}",  // md-run_fast
         };
 
         parent.spawn((
             Text::new(icon_text),
             TextFont {
-                font_size: FontSize::Px(32.0),
+                font: icons.clone().into(),
+                font_size: FontSize::Px(36.0),
                 ..default()
             },
             TextColor(Color::WHITE),
