@@ -26,8 +26,9 @@
 //! search tunes each archetype's fighter the same way.
 //!
 //! `arena serve` runs one scenario per line of stdin, each line the keys
-//! above, and ends each report with a line `end`, so a tuning search tries
-//! values back to back in one process.
+//! above, and ends each report with a line `end`. `arena tune ...` searches
+//! the game's numbers and the NPCs' minds in-process ([`tune`], with the
+//! `tune` feature).
 //!
 //! Every pairing fights `runs` times, the two swapping ends each run, each
 //! team starting on its end's tile or a neighbour and each fighter facing
@@ -44,6 +45,9 @@
 //! rest answered (a reaction's is what it reflected); then the share of the
 //! fight it spent recovering, held, slowed, with its target beyond its
 //! reach and circling it, and its mean fatigue.
+
+#[cfg(feature = "tune")]
+mod tune;
 
 use std::{collections::HashMap, time::Duration};
 
@@ -109,6 +113,8 @@ struct Settings {
     runs: u32,
     cap: Duration,
     only: Vec<EnemyArchetype>,
+    /// Only the pairings this archetype fights in
+    focus: Option<EnemyArchetype>,
     trace: u8,
     ledger: bool,
     tuning: Tuning,
@@ -117,7 +123,7 @@ struct Settings {
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, bar: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: EnemyArchetype::ALL.to_vec(), trace: 0, ledger: false, tuning: Tuning::default(), minds: Minds::tuned() };
+        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, bar: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(300), only: EnemyArchetype::ALL.to_vec(), focus: None, trace: 0, ledger: false, tuning: Tuning::default(), minds: Minds::tuned() };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {
@@ -317,7 +323,14 @@ fn jitter(at: Qrz, foes: Qrz) -> Qrz {
     starts[rand::random_range(0..starts.len())]
 }
 
+/// The flat arena every fight stands on, laid once: a `Map` shares its
+/// tiles between clones, and no fight changes them.
 fn flat_map() -> Map {
+    static ARENA: std::sync::OnceLock<Map> = std::sync::OnceLock::new();
+    ARENA.get_or_init(lay_flat_map).clone()
+}
+
+fn lay_flat_map() -> Map {
     let map = Map::new(qrz::Map::<EntityType>::new(
         common::camera::HEX_RADIUS,
         common::camera::RISE,
@@ -487,6 +500,12 @@ pub fn run(args: &[String]) {
     if args.first().is_some_and(|a| a == "serve") {
         return serve();
     }
+    if args.first().is_some_and(|a| a == "tune") {
+        #[cfg(feature = "tune")]
+        return tune::run(&args[1..]);
+        #[cfg(not(feature = "tune"))]
+        panic!("arena tune needs the server built with `--features tune`");
+    }
     report(&Settings::parse(args));
 }
 
@@ -510,17 +529,52 @@ fn serve() {
 
 /// Runs every pairing under the scenario's tuning and prints the report.
 fn report(settings: &Settings) {
-    set_tuning(settings.tuning);
-    set_minds(settings.minds.clone());
     let (a_team, b_team) = (settings.team_a(EnemyArchetype::Berserker), settings.team_b(EnemyArchetype::Berserker));
     println!(
         "arena: a is {} at level {}, b is {} at level {}; {} runs per pairing, decided on health after {}s",
         a_team.size, a_team.level, b_team.size, b_team.level, settings.runs, settings.cap.as_secs(),
     );
     println!();
+    print_matrix(&matrix(settings), settings.ledger);
+}
+
+/// One pairing's fights, summed: each side's share of wins, of fights run
+/// to the cap and the median length, the winners' median health left, and
+/// a's edge, all as percentages but the length; and each side's ledger.
+pub struct Pairing {
+    pub a: EnemyArchetype,
+    pub b: EnemyArchetype,
+    pub a_wins: f32,
+    pub b_wins: f32,
+    pub capped: f32,
+    pub median: f32,
+    pub left: f32,
+    pub edge: f32,
+    a_ledger: Ledger,
+    b_ledger: Ledger,
+    runs: f32,
+}
+
+/// Prints `rows` as the report does, with each side's ledger when `ledger`.
+fn print_matrix(rows: &[Pairing], ledger: bool) {
     println!("{:<22} {:>5} {:>5} {:>5}  {:>6}  {:>5}  {:>5}   {:<30} {:<30}",
         "pairing (a v b)", "a%", "b%", "capped", "median", "left", "edge", "a dealt: auto/abil/refl", "b dealt: auto/abil/refl");
+    for row in rows {
+        println!("{:<22} {:>5.0} {:>5.0} {:>5.0}  {:>5.0}s  {:>4.0}%  {:>5.0}   {:<30} {:<30}",
+            format!("{:?} v {:?}", row.a, row.b), row.a_wins, row.b_wins, row.capped, row.median, row.left, row.edge,
+            split(&row.a_ledger, row.runs), split(&row.b_ledger, row.runs));
+        if ledger {
+            println!("    {:?}: {}", row.a, ledger_line(&row.a_ledger, row.runs));
+            println!("    {:?}: {}", row.b, ledger_line(&row.b_ledger, row.runs));
+        }
+    }
+}
 
+/// Fights every pairing of the scenario `runs` times under its tuning and
+/// minds, which it makes the process's own for the while.
+fn matrix(settings: &Settings) -> Vec<Pairing> {
+    set_tuning(settings.tuning);
+    set_minds(settings.minds.clone());
     let pairings: Vec<(EnemyArchetype, EnemyArchetype)> = if settings.ordered {
         settings.only.iter().flat_map(|&a| settings.only.iter().map(move |&b| (a, b))).collect()
     } else if settings.mirror {
@@ -530,6 +584,7 @@ fn report(settings: &Settings) {
             .flat_map(|(i, &a)| settings.only[i + 1..].iter().map(move |&b| (a, b)))
             .collect()
     };
+    let pairings: Vec<_> = pairings.into_iter().filter(|&(a, b)| settings.focus.is_none_or(|focus| a == focus || b == focus)).collect();
     let workers = if settings.trace > 0 { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()) };
     let runs = settings.runs;
     let outcomes = in_parallel(pairings.len() as u32 * runs, workers, |job| {
@@ -539,6 +594,7 @@ fn report(settings: &Settings) {
         let (west, east, a_side) = if run % 2 == 0 { (team_a, team_b, WEST) } else { (team_b, team_a, EAST) };
         (a_side, fight(west, east, settings))
     });
+    let mut rows = Vec::new();
     for (&(a, b), outcomes) in pairings.iter().zip(outcomes.chunks(runs as usize)) {
         let (mut a_wins, mut b_wins, mut capped) = (0u32, 0u32, 0u32);
         let mut lengths = Vec::new();
@@ -571,22 +627,18 @@ fn report(settings: &Settings) {
         let median = lengths.get(lengths.len() / 2).map_or(0.0, |d| d.as_secs_f32());
         let median_left = left.get(left.len() / 2).copied().unwrap_or(0.0);
         let runs = runs as f32;
-        println!("{:<22} {:>5.0} {:>5.0} {:>5.0}  {:>5.0}s  {:>4.0}%  {:>5.0}   {:<30} {:<30}",
-            format!("{a:?} v {b:?}"),
-            100.0 * a_wins as f32 / runs,
-            100.0 * b_wins as f32 / runs,
-            100.0 * capped as f32 / runs,
+        rows.push(Pairing {
+            a, b,
+            a_wins: 100.0 * a_wins as f32 / runs,
+            b_wins: 100.0 * b_wins as f32 / runs,
+            capped: 100.0 * capped as f32 / runs,
             median,
-            100.0 * median_left,
-            100.0 * edge / runs,
-            split(&a_ledger, runs),
-            split(&b_ledger, runs),
-        );
-        if settings.ledger {
-            println!("    {a:?}: {}", ledger_line(&a_ledger, runs));
-            println!("    {b:?}: {}", ledger_line(&b_ledger, runs));
-        }
+            left: 100.0 * median_left,
+            edge: 100.0 * edge / runs,
+            a_ledger, b_ledger, runs,
+        });
     }
+    rows
 }
 
 /// Runs `job` for each of `0..count` on up to `workers` threads, results in

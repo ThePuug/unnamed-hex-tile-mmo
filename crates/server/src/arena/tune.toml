@@ -1,0 +1,254 @@
+# What `arena tune` searches, within what bounds, what every scenario holds
+# fixed, and how a matrix is scored (`tune.rs`). Read as a command starts.
+
+# Fights per pairing in an evaluation, and the skill tier the NPCs fight at
+runs = 20
+skill = "sharp"
+
+# Held in every scenario: endurance has no effect for now, in the fights or
+# in the minds
+[fixed]
+endurance_cost = 0.0
+reaction_effort = 0.0
+reaction_per_threat = 0.0
+off_arc_cost = 0.0
+fatigue_recovery = 0.0
+fatigue_window = 0.0
+fatigue_stamina = 0.0
+
+[score]
+# Balance: win-split points either side of even a pairing may sit at no cost
+band = 15.0
+# Edge (health-left points) past which each point costs `edge`
+edge_band = 10.0
+edge = 1.0
+# A median fight shorter than this many seconds costs its difference
+short = 24.0
+# Points for each point of a pairing's fights run to the cap
+capped = 0.5
+# Minds: what an archetype's own score adds per point of edge, and per
+# point of fights both sides died in (better than losing); a stall never pays
+mind_edge = 0.5
+draw = 0.5
+mind_capped = 0.5
+
+[screen]
+# A knob whose sweep across its bounds moves no pairing's edge by this many
+# points is left out of the balance search
+min_moved = 3.0
+
+# The game's numbers searched, each within its bounds. The bounds hold the
+# authored hard constraints: Grit share at least 0.1, Counter's recovery
+# over 0.5s, Parry's at least 1s.
+
+[[knobs]]
+name = "frenzy_damage"
+min = 1.2
+max = 3.0
+
+[[knobs]]
+name = "overpower_damage"
+min = 1.2
+max = 3.5
+
+[[knobs]]
+name = "punish_damage"
+min = 0.5
+max = 2.0
+
+[[knobs]]
+name = "punish_bonus"
+min = 0.25
+max = 2.0
+
+[[knobs]]
+name = "counter_reflect"
+min = 0.3
+max = 1.0
+
+[[knobs]]
+name = "counter_cost"
+min = 20.0
+max = 100.0
+
+[[knobs]]
+name = "counter_recovery"
+min = 0.51
+max = 4.0
+
+[[knobs]]
+name = "parry_cost"
+min = 5.0
+max = 40.0
+
+[[knobs]]
+name = "parry_recovery"
+min = 1.0
+max = 3.0
+
+[[knobs]]
+name = "frenzy_cost"
+min = 5.0
+max = 60.0
+
+[[knobs]]
+name = "frenzy_recovery"
+min = 0.5
+max = 4.0
+
+[[knobs]]
+name = "feint_cost"
+min = 2.0
+max = 40.0
+
+[[knobs]]
+name = "feint_recovery"
+min = 0.1
+max = 2.0
+
+[[knobs]]
+name = "overpower_cost"
+min = 10.0
+max = 80.0
+
+[[knobs]]
+name = "overpower_recovery"
+min = 1.0
+max = 6.0
+
+[[knobs]]
+name = "punish_cost"
+min = 5.0
+max = 60.0
+
+[[knobs]]
+name = "punish_recovery"
+min = 0.5
+max = 4.0
+
+[[knobs]]
+name = "leap_cost"
+min = 5.0
+max = 60.0
+
+[[knobs]]
+name = "leap_recovery"
+min = 0.3
+max = 3.0
+
+[[knobs]]
+name = "leap_distance"
+min = 3.0
+max = 15.0
+
+[[knobs]]
+name = "leap_strike"
+min = 0.3
+max = 3.0
+
+[[knobs]]
+name = "stride_cost"
+min = 5.0
+max = 60.0
+
+[[knobs]]
+name = "stride_recovery"
+min = 0.3
+max = 3.0
+
+[[knobs]]
+name = "patience_regen_max"
+min = 0.0
+max = 1.5
+
+[[knobs]]
+name = "health_per_vitality"
+min = 0.5
+max = 1.2
+
+[[knobs]]
+name = "grit_bind_secs"
+min = 0.5
+max = 3.0
+
+[[knobs]]
+name = "grit_share"
+min = 0.1
+max = 0.5
+
+[[knobs]]
+name = "grit_bind"
+min = 0.1
+max = 0.6
+
+[[knobs]]
+name = "stride_speed"
+min = 0.0
+max = 1.0
+
+[[knobs]]
+name = "stride_damage"
+min = 0.0
+max = 3.0
+
+[[knobs]]
+name = "stride_secs"
+min = 2.0
+max = 8.0
+
+# Each archetype's mind: every one tunes `common`, `strike` and `reaction`
+# (every bar holds a Feint and a Parry), how much each foe Approach's last
+# skill counts (`just_acted`), and its own. A setting not yet in
+# `mind::TUNED` starts at `start`, or its range's middle.
+[minds]
+just_acted = { min = 0.2, max = 3.0 }
+common = [
+    { name = "wait", min = 0.05, max = 0.7, start = 0.35 },
+    { name = "hold", min = 0.05, max = 0.6, start = 0.35 },
+    { name = "momentum", min = 0.0, max = 0.3, start = 0.15 },
+]
+strike = [
+    { name = "foe_just_acted.floor", min = 0.2, max = 1.0, start = 0.6 },
+    { name = "foe_just_acted.from", min = 0.5, max = 4.0, start = 2.0 },
+    { name = "strike_worth.to", min = 0.05, max = 1.0, start = 0.25 },
+    { name = "strike_worth.floor", min = 0.0, max = 1.0, start = 0.3 },
+]
+reaction = [
+    { name = "worth_answering.to", min = 0.05, max = 0.8, start = 0.3 },
+    { name = "pressure_share.floor", min = 0.0, max = 1.0, start = 0.5 },
+    { name = "span_closed.floor", min = 0.0, max = 1.0, start = 0.1 },
+]
+
+[minds.own]
+berserker = [
+    { name = "combo_offered.floor", min = 0.2, max = 1.0, start = 0.6 },
+    { name = "burst_carried.floor", min = 0.0, max = 1.0, start = 0.4 },
+]
+juggernaut = [
+    { name = "combo_offered.floor", min = 0.2, max = 1.0, start = 0.6 },
+    { name = "grit_banked.floor", min = 0.0, max = 1.0, start = 0.3 },
+]
+kiter = [
+    { name = "combo_offered.floor", min = 0.2, max = 1.0, start = 0.6 },
+    { name = "foe_across.floor", min = 0.0, max = 1.0, start = 0.3 },
+    { name = "foe_facing.floor", min = 0.0, max = 1.0, start = 0.2 },
+    { name = "strike_cost.to", min = 0.2, max = 2.0, start = 0.8 },
+    { name = "stride_kept.floor", min = 0.0, max = 1.0, start = 0.6 },
+]
+defender = [
+    { name = "combo_offered.floor", min = 0.2, max = 1.0, start = 0.6 },
+]
+skirmisher = [
+    { name = "combo_offered.floor", min = 0.2, max = 1.0, start = 0.6 },
+    { name = "room_to_land.to", min = 0.05, max = 0.6, start = 0.3 },
+    { name = "stamina_ready.floor", min = 0.0, max = 1.0, start = 0.2 },
+    { name = "foe_nearing.from", min = 0.1, max = 1.0, start = 0.5 },
+    { name = "close_stamina_ready.floor", min = 0.0, max = 1.0, start = 0.1 },
+    { name = "room_to_flee.to", min = 0.1, max = 0.8, start = 0.4 },
+]
+ambusher = [
+    { name = "combo_offered.floor", min = 0.2, max = 1.0, start = 0.6 },
+    { name = "reactions_left.floor", min = 0.0, max = 1.0, start = 0.6 },
+    { name = "opening.floor", min = 0.0, max = 1.0, start = 0.2 },
+    { name = "opening.from", min = 0.5, max = 4.0, start = 2.0 },
+]

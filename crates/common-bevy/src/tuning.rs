@@ -356,7 +356,26 @@ impl Tuning {
     /// Errs on an unknown knob or a value that does not parse.
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
         let number = value.parse::<f32>().map_err(|_| format!("{name} takes a number, not {value}"))?;
-        let knob = match name {
+        if name == "leap_distance" {
+            self.leap_distance = number.round().max(1.0) as usize;
+            return Ok(());
+        }
+        *self.knob(name)? = number;
+        Ok(())
+    }
+
+    /// The knob `name`'s value, as `set` names it. Errs on an unknown knob.
+    pub fn get(&self, name: &str) -> Result<f32, String> {
+        if name == "leap_distance" {
+            return Ok(self.leap_distance as f32);
+        }
+        let mut copy = *self;
+        copy.knob(name).map(|knob| *knob)
+    }
+
+    /// The fractional knob `name`
+    fn knob(&mut self, name: &str) -> Result<&mut f32, String> {
+        Ok(match name {
             "base_interval" => &mut self.base_interval,
             "ferocity_relief_min" => &mut self.ferocity_relief_min,
             "ferocity_relief_max" => &mut self.ferocity_relief_max,
@@ -442,14 +461,8 @@ impl Tuning {
             "leap_line" => &mut self.leap_line,
             "stride_damage" => &mut self.stride_damage,
             "leap_strike" => &mut self.leap_strike,
-            "leap_distance" => {
-                self.leap_distance = number.round().max(1.0) as usize;
-                return Ok(());
-            }
             _ => return Err(format!("no tuning knob {name}")),
-        };
-        *knob = number;
-        Ok(())
+        })
     }
 }
 
@@ -486,6 +499,9 @@ mod tests {
         assert_eq!(tuning.frenzy_damage, 0.25);
         assert_eq!(tuning.leap_distance, 2);
         assert_eq!(tuning.grit_share, 0.25);
+        assert_eq!(tuning.get("grit_share"), Ok(0.25));
+        assert_eq!(tuning.get("leap_distance"), Ok(2.0));
+        assert!(tuning.get("no_such_knob").is_err());
         assert!(tuning.set("frenzy_damage", "much").is_err());
         assert!(tuning.set("no_such_knob", "1").is_err());
     }
