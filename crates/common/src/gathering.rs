@@ -110,13 +110,11 @@ pub enum Activity {
     Pickup,
 }
 
-/// How far ahead of the actor's feet each gather's clip lands its work, as
-/// the player's clips declare it: where the axe's edge meets the trunk,
-/// the pick's point the boulder, and the fists the pile. A test holds these
-/// to the clips.
-pub const CHOP_REACH: f32 = 1.1171;
-pub const MINE_REACH: f32 = 1.0200;
-pub const PICKUP_REACH: f32 = 0.5;
+// How far ahead of the actor's feet each gather's clip lands its work, as
+// the player's clips declare it, read from them at build time (`build.rs`):
+// where the axe's edge meets the trunk, the pick's point the boulder, and the
+// fists the pile.
+include!(concat!(env!("OUT_DIR"), "/reaches.rs"));
 
 /// How far ahead of the actor's feet `activity` lands its work.
 pub fn reach(activity: Activity) -> f32 {

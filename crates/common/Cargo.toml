@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 tinyvec = { version = "1.10.0", features = ["rustc_1_55", "serde"] }
+
+[build-dependencies]
+serde_json = "1"
