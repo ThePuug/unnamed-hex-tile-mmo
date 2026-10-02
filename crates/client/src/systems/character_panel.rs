@@ -242,8 +242,8 @@ macro_rules! create_stat_display {
                 MetaAttributeStat::Tempo => ("Tempo", Color::srgb(0.9, 0.9, 0.5), "Auto-Attack Speed:"),
                 MetaAttributeStat::Constitution => ("Constitution", Color::srgb(0.5, 0.8, 0.5), "Health:"),
                 MetaAttributeStat::Endurance => ("Endurance", Color::srgb(0.5, 0.7, 0.9), "Endurance Pool:"),
-                MetaAttributeStat::Intuition => ("Intuition", Color::srgb(0.7, 0.5, 0.9), "Action Potency:"),
-                MetaAttributeStat::Concentration => ("Concentration", Color::srgb(0.9, 0.6, 0.3), "Reaction Potency:"),
+                MetaAttributeStat::Intuition => ("Leap", Color::srgb(0.7, 0.5, 0.9), "Recovery Faster:"),
+                MetaAttributeStat::Concentration => ("Counter", Color::srgb(0.9, 0.6, 0.3), "Reflection:"),
                 MetaAttributeStat::Impact => ("Impact", Color::srgb(0.9, 0.5, 0.5), "Recovery Pushback:"),
                 MetaAttributeStat::Composure => ("Composure", Color::srgb(0.5, 0.7, 0.9), "Recovery Reduction:"),
                 MetaAttributeStat::Flow => ("Flow", Color::srgb(0.9, 0.9, 0.5), "Combo Unlock:"),
@@ -931,8 +931,9 @@ pub fn update_attributes(
                     MetaAttributeStat::Tempo => increase(tuning.base_interval, display_attrs.cadence_interval().as_secs_f32()),
                     MetaAttributeStat::Constitution => increase(display_attrs.constitution(), tuning.base_health * display_attrs.hp_level_multiplier()),
                     MetaAttributeStat::Endurance => increase(display_attrs.endurance(), display_attrs.base_potency()),
-                    MetaAttributeStat::Intuition => increase(display_attrs.intuition(), display_attrs.base_potency()),
-                    MetaAttributeStat::Concentration => increase(display_attrs.concentration(), display_attrs.base_potency()),
+                    // Instinct's and Resolve's own: the skill each line raises
+                    MetaAttributeStat::Intuition => increase(display_attrs.line_power(common_bevy::message::AbilityType::Leap), 1.0),
+                    MetaAttributeStat::Concentration => increase(display_attrs.line_power(common_bevy::message::AbilityType::Counter), 1.0),
                     MetaAttributeStat::Impact => {
                         // Recovery pushback: 0.50 × gap × contest_factor
                         let impact = display_attrs.impact();

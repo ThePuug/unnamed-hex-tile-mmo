@@ -109,9 +109,6 @@ pub struct Tuning {
     pub contest_scale: f32,
     /// Contest points each level of gap is worth to the higher level
     pub contest_per_level: f32,
-    /// Share longer and harder the effects an actor's skill inflicts hold at
-    /// the ceiling of the share of the stat the skill reads
-    pub effect_hold: f32,
     /// Most of a recovery an Impact advantage pushes it back by
     pub pushback_share: f32,
     /// Most of a recovery a Composure advantage takes off it; below 1, so
@@ -186,6 +183,15 @@ pub struct Tuning {
     pub stride_recovery: f32,
     /// Seconds a Perfect Stride lasts
     pub stride_secs: f32,
+
+    // --- Lines: how much of what its attribute's potency adds over base
+    // potency raises each skill that belongs to one (`ActorAttributes::line_power`) ---
+    pub frenzy_line: f32,
+    pub overpower_line: f32,
+    pub punish_line: f32,
+    pub counter_line: f32,
+    pub stride_line: f32,
+    pub leap_line: f32,
     /// Share harder its user's auto-attacks land in a Perfect Stride
     pub stride_damage: f32,
 }
@@ -232,7 +238,6 @@ impl Tuning {
         patience_regen_max: 0.6,
         contest_scale: 800.0,
         contest_per_level: 15.0,
-        effect_hold: 1.0,
         pushback_share: 0.5,
         composure_share: 0.231,
         combo_floor: 0.1,
@@ -270,6 +275,12 @@ impl Tuning {
         leap_distance: 9,
         stride_cost: 30.0,
         stride_recovery: 1.0,
+        frenzy_line: 1.0,
+        overpower_line: 1.0,
+        punish_line: 1.0,
+        counter_line: 1.0,
+        stride_line: 0.25,
+        leap_line: 0.25,
         stride_secs: 4.0,
         stride_damage: 1.0,
     };
@@ -298,6 +309,20 @@ impl Tuning {
             AbilityType::Overpower => self.overpower_damage,
             AbilityType::Punish => self.punish_damage,
             AbilityType::AutoAttack | AbilityType::Parry | AbilityType::Counter | AbilityType::Leap | AbilityType::PerfectStride => 0.0,
+        }
+    }
+
+    /// How much of what its line's potency adds over base potency raises
+    /// `ability`: none for a skill of no line
+    pub fn line(&self, ability: AbilityType) -> f32 {
+        match ability {
+            AbilityType::Frenzy => self.frenzy_line,
+            AbilityType::Overpower => self.overpower_line,
+            AbilityType::Punish => self.punish_line,
+            AbilityType::Counter => self.counter_line,
+            AbilityType::PerfectStride => self.stride_line,
+            AbilityType::Leap => self.leap_line,
+            AbilityType::AutoAttack | AbilityType::Feint | AbilityType::Parry => 0.0,
         }
     }
 
@@ -361,7 +386,6 @@ impl Tuning {
             "health_curve_p" => &mut self.health_curve_p,
             "contest_scale" => &mut self.contest_scale,
             "contest_per_level" => &mut self.contest_per_level,
-            "effect_hold" => &mut self.effect_hold,
             "pushback_share" => &mut self.pushback_share,
             "composure_share" => &mut self.composure_share,
             "combo_floor" => &mut self.combo_floor,
@@ -399,6 +423,12 @@ impl Tuning {
             "stride_cost" => &mut self.stride_cost,
             "stride_recovery" => &mut self.stride_recovery,
             "stride_secs" => &mut self.stride_secs,
+            "frenzy_line" => &mut self.frenzy_line,
+            "overpower_line" => &mut self.overpower_line,
+            "punish_line" => &mut self.punish_line,
+            "counter_line" => &mut self.counter_line,
+            "stride_line" => &mut self.stride_line,
+            "leap_line" => &mut self.leap_line,
             "stride_damage" => &mut self.stride_damage,
             "leap_distance" => {
                 self.leap_distance = number.round().max(1.0) as usize;

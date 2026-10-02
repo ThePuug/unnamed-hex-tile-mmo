@@ -536,7 +536,7 @@ mod tests {
         assert!(used(&ask(&mut app, caster, AbilityType::Feint, Some(near)), AbilityType::Feint));
         let [feint] = queue(&app, near)[..] else { panic!("one strike") };
         let attrs = ActorAttributes::default();
-        assert!(feint.damage < attrs.skill_potency(AbilityType::Frenzy) * common_bevy::tuning::tuning().frenzy_damage, "lighter than a bite");
+        assert!(feint.damage < attrs.base_potency() * common_bevy::tuning::tuning().frenzy_damage, "lighter than a bite");
     }
 
     #[test]
@@ -655,8 +655,10 @@ mod tests {
         assert!(distance(&app) > reach, "it leaps out of reach");
         assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "a leap strikes nothing");
 
-        // Out of reach, once its recovery has run: onto it
+        // Out of reach, once its recovery has run and its stamina is back: onto it
         app.world_mut().entity_mut(leaper).remove::<GlobalRecovery>();
+        let full = app.world().get::<Stamina>(leaper).unwrap().max;
+        app.world_mut().get_mut::<Stamina>(leaper).unwrap().state = full;
         assert!(used(&ask(&mut app, leaper, AbilityType::Leap, Some(near)), AbilityType::Leap));
         app.update();
         app.update();

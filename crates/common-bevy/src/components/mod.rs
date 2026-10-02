@@ -457,10 +457,6 @@ impl ActorAttributes {
     pub fn tempo(&self) -> f32 { self.potency(Attribute::Agility) }
     /// Endurance, Discipline's: how deep the endurance pool is (`max_endurance`)
     pub fn endurance(&self) -> f32 { self.potency(Attribute::Discipline) }
-    /// Intuition, Instinct's: what an action is sized by (`skill_potency`)
-    pub fn intuition(&self) -> f32 { self.potency(Attribute::Instinct) }
-    /// Concentration, Resolve's: what a reaction is sized by (`skill_potency`)
-    pub fn concentration(&self) -> f32 { self.potency(Attribute::Resolve) }
 
     /// Constitution, Vitality's, which is max health: the health every actor
     /// has (`Tuning::base_health`) and what each point of Vitality adds
@@ -563,39 +559,51 @@ impl ActorAttributes {
 
     /// The attribute `ability` reads: Resolve for a reaction, Instinct for
     /// any other skill, an action.
-    fn read_by(ability: crate::message::AbilityType) -> Attribute {
-        if ability.is_reaction() { Attribute::Resolve } else { Attribute::Instinct }
+    /// The attribute line `ability` belongs to, whose points raise it: none
+    /// for the auto-attack and the skills every fighter holds alike, Feint
+    /// and Parry.
+    pub fn line(ability: crate::message::AbilityType) -> Option<Attribute> {
+        use crate::message::AbilityType::*;
+        match ability {
+            Frenzy => Some(Attribute::Might),
+            Overpower => Some(Attribute::Vitality),
+            PerfectStride => Some(Attribute::Agility),
+            Punish => Some(Attribute::Discipline),
+            Leap => Some(Attribute::Instinct),
+            Counter => Some(Attribute::Resolve),
+            AutoAttack | Feint | Parry => None,
+        }
     }
 
-    /// The potency `ability`, a skill, is sized by: Concentration for a
-    /// reaction, Intuition for an action. With none of that attribute it is
-    /// base potency. An auto-attack is sized by `auto_damage` instead.
-    pub fn skill_potency(&self, ability: crate::message::AbilityType) -> f32 {
-        self.potency(Self::read_by(ability))
+    /// How much `ability`'s line raises it for this actor: 1 with none of
+    /// its attribute or no line, more by `Tuning::line` of what its
+    /// attribute's potency adds over base potency. What it raises is the
+    /// skill's own: a strike's damage, Counter's reflection, Perfect
+    /// Stride's duration, and a Leap's recovery, which it shortens.
+    pub fn line_power(&self, ability: crate::message::AbilityType) -> f32 {
+        let Some(attribute) = Self::line(ability) else { return 1.0 };
+        1.0 + crate::tuning::tuning().line(ability) * (self.potency(attribute) / self.base_potency() - 1.0)
     }
 
     /// The endurance `ability`, a skill, costs this actor:
-    /// `Tuning::endurance_cost` of the potency it reads (`skill_potency`)
-    /// for each point of stamina it costs, so a cheap skill is cheap in
-    /// both. It grows with level as the pool does, so a pool with no
-    /// Discipline in it holds the same count of a build's skills at any
-    /// level. A reaction pays besides for what it clears
-    /// (`reaction_effort`).
+    /// `Tuning::endurance_cost` of base potency for each point of stamina it
+    /// costs, so a cheap skill is cheap in both. It grows with level as the
+    /// pool does, so a pool with no Discipline in it holds the same count of
+    /// a build's skills at any level. A reaction pays besides for what it
+    /// clears (`reaction_effort`).
     pub fn skill_endurance(&self, ability: crate::message::AbilityType) -> f32 {
         let tuning = crate::tuning::tuning();
-        tuning.endurance_cost * tuning.cost(ability) * self.skill_potency(ability)
+        tuning.endurance_cost * tuning.cost(ability) * self.base_potency()
     }
 
     /// The endurance it costs this actor's reaction to clear a threat of
     /// `damage`, beside the reaction's flat cost: `Tuning::reaction_per_threat`
     /// of base potency for the threat itself and `Tuning::reaction_effort`
-    /// for each point of its damage, with no Resolve, all of it less by its
-    /// Concentration over base potency. A threat costs something however
+    /// for each point of its damage. A threat costs something however
     /// light, so a stream of small ones is not cleared free.
     pub fn reaction_effort(&self, damage: f32) -> f32 {
         let tuning = crate::tuning::tuning();
-        let base = self.base_potency();
-        (tuning.reaction_per_threat * base + damage * tuning.reaction_effort) * base / self.concentration()
+        tuning.reaction_per_threat * self.base_potency() + damage * tuning.reaction_effort
     }
 
     /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
@@ -603,15 +611,6 @@ impl ActorAttributes {
     pub fn auto_damage(&self) -> f32 {
         let tuning = crate::tuning::tuning();
         self.base_potency() * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(Attribute::Might))
-    }
-
-    /// How much longer and harder the stuns, slows and knockbacks this
-    /// actor inflicts with `ability` hold: 1 with none of the attribute the
-    /// ability reads, `Tuning::effect_hold` more at the ceiling of that
-    /// attribute's share. A share, never the potency, so an effect keeps
-    /// under its ceiling at any level.
-    pub fn hold(&self, ability: crate::message::AbilityType) -> f32 {
-        1.0 + crate::tuning::tuning().effect_hold * self.share(Self::read_by(ability))
     }
 
     /// The share of the recovery a combo fired early skipped that this actor
@@ -723,12 +722,12 @@ mod tests {
     // Property tests only — no specific formula values, survives balance tuning
 
     #[test]
-    fn test_concentration_follows_resolve_not_might() {
+    fn an_attributes_potency_follows_its_own_points() {
         let resolve = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
         let might = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
-        assert!(resolve.concentration() > might.concentration());
+        assert!(resolve.potency(Attribute::Resolve) > might.potency(Attribute::Resolve));
         assert!(might.force() > resolve.force());
-        assert_eq!(might.concentration(), resolve.force());
+        assert_eq!(might.potency(Attribute::Resolve), resolve.force());
     }
 
     #[test]
@@ -757,35 +756,28 @@ mod tests {
         assert!((skills(&mighty) - skills(&plain)).abs() < 1e-3, "with no Discipline a pool holds as many skills at any level");
 
         let (instinctive, resolute) = (ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0), ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0));
-        assert!(instinctive.skill_endurance(Frenzy) > mighty.skill_endurance(Frenzy), "a skill costs by the potency it reads");
-        assert_eq!(instinctive.skill_endurance(Counter), mighty.skill_endurance(Counter));
-        assert!(resolute.skill_endurance(Counter) > mighty.skill_endurance(Counter));
+        assert_eq!(instinctive.skill_endurance(Frenzy), mighty.skill_endurance(Frenzy), "a skill costs what its stamina does, whatever the build");
+        assert_eq!(resolute.skill_endurance(Counter), mighty.skill_endurance(Counter));
         use crate::message::AbilityType::{Feint, Overpower};
         assert!(plain.skill_endurance(Feint) < plain.skill_endurance(Overpower), "a skill cheap in stamina is cheap in endurance");
     }
 
     #[test]
-    fn an_action_reads_intuition_and_a_reaction_concentration() {
+    fn a_skill_is_raised_by_its_line_and_the_shared_ones_by_none() {
         use crate::message::AbilityType::*;
-        let instinctive = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
-        let resolute = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
-        for action in [Frenzy, Feint, Overpower, Punish, Leap, PerfectStride] {
-            assert_eq!(instinctive.skill_potency(action), instinctive.intuition(), "{action:?}");
-            assert_eq!(resolute.skill_potency(action), resolute.base_potency(), "{action:?} reads no Resolve");
-            assert!(instinctive.hold(action) > 1.0 && resolute.hold(action) == 1.0, "its effects hold by Intuition's share");
+        let instinctive = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
+        let plain = ActorAttributes::default();
+        assert!(mighty.line_power(Frenzy) > 1.0, "Might raises a bite");
+        assert_eq!(instinctive.line_power(Frenzy), 1.0, "and nothing else does");
+        assert!(instinctive.line_power(Leap) > 1.0);
+        for shared in [Feint, Parry, AutoAttack] {
+            assert_eq!(mighty.line_power(shared), 1.0, "{shared:?} belongs to no line");
+            assert_eq!(instinctive.line_power(shared), 1.0, "{shared:?} belongs to no line");
         }
-        for reaction in [Parry, Counter] {
-            assert_eq!(resolute.skill_potency(reaction), resolute.concentration(), "{reaction:?}");
-            assert_eq!(instinctive.skill_potency(reaction), instinctive.base_potency(), "{reaction:?} reads no Instinct");
-            assert!(resolute.hold(reaction) > 1.0 && instinctive.hold(reaction) == 1.0, "its effects hold by Concentration's share");
-        }
-        assert_eq!(mighty.skill_potency(Frenzy), mighty.base_potency(), "with none of either, base potency");
-        assert_eq!(mighty.reaction_effort(10.0), instinctive.reaction_effort(10.0), "a parry costs the same with no Resolve");
-        assert!(resolute.reaction_effort(10.0) < mighty.reaction_effort(10.0), "and less by Concentration");
-        assert!(mighty.reaction_effort(20.0) > mighty.reaction_effort(10.0), "more by the damage it turns aside");
-        assert!(mighty.reaction_effort(0.0) > 0.0, "and something for a threat however light");
-        assert!(instinctive.hold(Frenzy) < 1.0 + crate::tuning::tuning().effect_hold, "a share keeps an effect under its ceiling");
+        assert_eq!(plain.line_power(Frenzy), 1.0, "with none of its attribute, as it is");
+        assert_eq!(mighty.reaction_effort(10.0), instinctive.reaction_effort(10.0), "a reaction's price reads no attribute");
+        assert!(plain.reaction_effort(20.0) > plain.reaction_effort(10.0), "more by the damage it clears");
     }
 
     #[test]

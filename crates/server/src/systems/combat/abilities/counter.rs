@@ -10,7 +10,8 @@ use super::{Abilities, AbilityFailReason, Cast};
 /// user's span, as far as its endurance pays for them ([`Abilities::react`]),
 /// so Awareness answers more with one. Each cleared threat goes back to its living
 /// source wherever it stands, at `Tuning::counter_reflect` of the threat's
-/// own damage weighted by the counterer's Concentration over base potency
+/// own damage raised by the counterer's Resolve line
+/// (`ActorAttributes::line_power`)
 /// and nothing more, so a Counter returns what comes in, and lands at
 /// once: a reflection never enters the source's queue, so it
 /// cannot be countered. Its recovery is contested by the source of the
@@ -20,7 +21,7 @@ pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
     let answered = abilities.react(cast)?;
 
     let now = abilities.game_now();
-    let weight = cast.attrs.skill_potency(AbilityType::Counter) / cast.attrs.base_potency();
+    let weight = cast.attrs.line_power(AbilityType::Counter);
     for threat in &answered {
         // A reflection needs a living source to go back to
         let Ok((_, source_attrs, _, _, _, _, dead)) = abilities.actors.get(threat.source) else { continue };

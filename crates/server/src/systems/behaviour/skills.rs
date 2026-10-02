@@ -386,7 +386,7 @@ const STRIKE_WORTH: Considered = Consideration {
     read: |view| {
         let tuning = common_bevy::tuning::tuning();
         let release = if view.grit_filled >= 1.0 { 1.0 + tuning.grit_share } else { 1.0 };
-        let dealt = view.attrs.skill_potency(view.ability) * tuning.damage(view.ability) * release;
+        let dealt = view.attrs.base_potency() * tuning.damage(view.ability) * view.attrs.line_power(view.ability) * release;
         view.foe.map_or(0.0, |foe| dealt / foe.health.max(1.0))
     },
     bounds: (0.0, 0.25),
@@ -587,8 +587,9 @@ mod tests {
     fn patience_leaps_clear_with_its_stamina_spent_and_dives_with_it_back() {
         let patient = built([0, 0, 0, 0, 0, 0, -10, 0, 0]);
         assert!(patient.patience().index() > 0);
+        // Spent, with the stamina for a Leap and little more
         let mut empty = view(AbilityType::Leap, patient);
-        empty.stamina = patient.max_stamina() * 0.35;
+        empty.stamina = common_bevy::tuning::tuning().cost(AbilityType::Leap);
         let mut full = view(AbilityType::Leap, patient);
         full.stamina = patient.max_stamina();
         assert!(scored(&mut empty, "recover") > scored(&mut full, "recover"));
@@ -606,7 +607,7 @@ mod tests {
         let mut inward = view(AbilityType::Leap, patient);
         let mut outward = view(AbilityType::Leap, patient);
         outward.clear_room = 0.05;
-        inward.stamina = patient.max_stamina() * 0.35;
+        inward.stamina = common_bevy::tuning::tuning().cost(AbilityType::Leap);
         outward.stamina = inward.stamina;
         assert!(scored(&mut inward, "recover") > scored(&mut outward, "recover"));
         assert!(scored(&mut outward, "recover") < WAIT, "it does not leap to its leash's edge to recover");

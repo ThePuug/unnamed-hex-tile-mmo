@@ -4,13 +4,14 @@ use common_bevy::message::AbilityType;
 use super::{Abilities, AbilityFailReason, Cast, WHOLE};
 
 /// Punish, the Ambusher's skill: a strike on a target within the caster's
-/// reach, for `Tuning::punish_damage` of its Intuition, `punish_bonus`
-/// harder on a target still in recovery from what it last used.
+/// reach, for `Tuning::punish_damage` of base potency raised by its
+/// Discipline line (`ActorAttributes::line_power`), `punish_bonus` harder
+/// on a target still in recovery from what it last used.
 pub fn strike(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let tuning = common_bevy::tuning::tuning();
     let (target, _) = cast.struck()?;
     let recovering = abilities.recoveries.get(target).is_ok_and(|recovery| recovery.is_active());
-    let damage = cast.attrs.skill_potency(AbilityType::Punish) * tuning.punish_damage * weight(recovering);
+    let damage = cast.attrs.base_potency() * tuning.punish_damage * cast.attrs.line_power(AbilityType::Punish) * weight(recovering);
     abilities.strike(cast, target, damage, AbilityType::Punish, &WHOLE);
     Ok(Some(target))
 }
