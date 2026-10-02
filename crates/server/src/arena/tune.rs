@@ -412,7 +412,7 @@ fn apply(state: &State) {
         match state.knobs.get(name) {
             // A whole-tile knob is written whole
             Some(&value) if name == "leap_distance" => format!("        {name}: {},", value.round().max(1.0) as usize),
-            Some(&value) => format!("        {name}: {},", (value * 1000.0).round() / 1000.0),
+            Some(&value) => format!("        {name}: {:?},", (value * 1000.0).round() / 1000.0),
             None => line.to_owned(),
         }
     }).collect();
@@ -424,7 +424,7 @@ fn apply(state: &State) {
     let open = "pub const TUNED: &[(&str, f32)] = &[";
     let from = text.find(open).expect("tune: mind.rs holds no TUNED") + open.len() + nl.len();
     let to = from + text[from..].find("];").expect("tune: TUNED unclosed");
-    let entries: Vec<String> = state.minds.iter().map(|(key, value)| format!("(\"{key}\", {})", (value * 1000.0).round() / 1000.0)).collect();
+    let entries: Vec<String> = state.minds.iter().map(|(key, value)| format!("(\"{key}\", {:?})", (value * 1000.0).round() / 1000.0)).collect();
     let body: String = entries.chunks(3).map(|chunk| format!("    {},{nl}", chunk.join(", "))).collect();
     std::fs::write(&path, format!("{}{body}{}", &text[..from], &text[to..])).expect("tune: mind.rs");
     println!("applied {} knobs and {} mind settings", state.knobs.len(), state.minds.len());
