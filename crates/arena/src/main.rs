@@ -216,7 +216,11 @@ impl Ledger {
     }
 
     fn landed_total(&self) -> f32 {
-        self.landed.values().sum()
+        // Summed in one order: a map iterates in its own, and float sums
+        // in two orders round apart
+        let mut landed: Vec<f32> = self.landed.values().copied().collect();
+        landed.sort_by(f32::total_cmp);
+        landed.iter().sum()
     }
 
     /// Landed damage as auto-attacks, skills and reflections
