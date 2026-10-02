@@ -62,7 +62,7 @@ pub fn update_keybits(
     }
 
     // Dismiss front queue threat (independent of the ability system)
-    if keyboard.just_pressed(KeyCode::KeyD) {
+    if keyboard.just_pressed(KeyCode::KeyZ) {
         writer.write(Try { event: Event::Dismiss { ent }});
     }
 

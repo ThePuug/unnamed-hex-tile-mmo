@@ -48,7 +48,7 @@ const SLOT_PX: f32 = 80.;
 const SLOT_BORDER_PX: f32 = 3.;
 
 /// Setup action bar UI below resource bars
-/// Creates 4 ability slots (Q, W, E, R), and the compass beside them
+/// Creates the ability slots, four to a row, and the compass beside them
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, With<IsDefaultUiCamera>>,
@@ -76,6 +76,7 @@ pub fn setup(
         parent.spawn((
             Node {
                 flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
                 column_gap: Val::Px(10.),
                 ..default()
             },
@@ -84,8 +85,10 @@ pub fn setup(
             // The viewed actor's loadout, filled in by `sync_loadout`
             parent.spawn((
                 Node {
-                    flex_direction: FlexDirection::Row,
+                    display: Display::Grid,
+                    grid_template_columns: RepeatedGridTrack::px(4, SLOT_PX),
                     column_gap: Val::Px(10.),
+                    row_gap: Val::Px(10.),
                     ..default()
                 },
                 AbilitySlots,
@@ -96,37 +99,33 @@ pub fn setup(
     });  // Close outer .with_children
 }
 
-/// The bar's keys, left to right, and the ability a player holds on each:
-/// two attacks, then two reactions.
-pub const KEYS: [KeyCode; 4] = [KeyCode::KeyQ, KeyCode::KeyW, KeyCode::KeyE, KeyCode::KeyR];
-pub const PLAYER: [AbilityType; 4] = [AbilityType::Frenzy, AbilityType::Feint, AbilityType::Counter, AbilityType::Leap];
+/// The bar's keys, row by row, and the ability a player holds on each: the
+/// four strikes on the top row; the reactions, then the moves, below. Every
+/// skill of the kit has its key.
+pub const KEYS: [KeyCode; 8] = [
+    KeyCode::KeyQ, KeyCode::KeyW, KeyCode::KeyE, KeyCode::KeyR,
+    KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD, KeyCode::KeyF,
+];
+pub const PLAYER: [AbilityType; 8] = [
+    AbilityType::Frenzy, AbilityType::Feint, AbilityType::Overpower, AbilityType::Punish,
+    AbilityType::Parry, AbilityType::Counter, AbilityType::Leap, AbilityType::PerfectStride,
+];
 
 /// What stands on each of the bar's keys for an actor of `typ`: a player's
-/// four; each of an NPC's skills on the key a player holds it on, else the
-/// first one free, so a view's bar looks as a player's does.
-pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 4] {
+/// whole kit; each of an NPC's skills on the key a player holds it on, so a
+/// view's bar looks as a player's does.
+pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 8] {
     use common_bevy::components::entity_type::actor::ActorIdentity;
-    let mut bar = [None; 4];
     match typ {
         EntityType::Actor(actor) => match actor.identity {
-            ActorIdentity::Player => bar = PLAYER.map(Some),
+            ActorIdentity::Player => PLAYER.map(Some),
             ActorIdentity::Npc(npc) => {
                 let skills = npc.bar();
-                for &skill in &skills {
-                    if let Some(key) = PLAYER.iter().position(|&a| a == skill) {
-                        bar[key] = Some(skill);
-                    }
-                }
-                for &skill in skills.iter().filter(|skill| !PLAYER.contains(skill)) {
-                    if let Some(free) = bar.iter_mut().find(|key| key.is_none()) {
-                        *free = Some(skill);
-                    }
-                }
+                PLAYER.map(|ability| skills.contains(&ability).then_some(ability))
             }
         },
-        _ => {}
+        _ => [None; 8],
     }
-    bar
 }
 
 /// Fills the bar with the loadout of the actor the client sees as, anew
@@ -435,9 +434,13 @@ mod loadout_tests {
 
     #[test]
     fn an_npc_skill_stands_on_a_players_key_for_it() {
-        use AbilityType::*;
-        assert_eq!(loadout(&npc(EnemyArchetype::Defender)), [Some(Parry), Some(Feint), Some(Counter), None]);
-        assert_eq!(loadout(&npc(EnemyArchetype::Berserker)), [Some(Frenzy), Some(Feint), Some(Parry), None], "one a player lacks takes the first key free");
-        assert_eq!(loadout(&npc(EnemyArchetype::Ambusher)), [Some(Punish), Some(Feint), Some(Parry), None]);
+        for archetype in EnemyArchetype::ALL {
+            let bar = loadout(&npc(archetype));
+            for skill in archetype.bar() {
+                let key = PLAYER.iter().position(|&a| a == skill).expect("every skill has a player's key");
+                assert_eq!(bar[key], Some(skill), "{archetype:?}");
+            }
+            assert_eq!(bar.iter().flatten().count(), archetype.bar().len(), "{archetype:?} shows only its own");
+        }
     }
 }
