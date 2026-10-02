@@ -47,8 +47,9 @@ pub struct CooldownOverlay;
 const SLOT_PX: f32 = 80.;
 const SLOT_BORDER_PX: f32 = 3.;
 
-/// Setup action bar UI below resource bars
-/// Creates the ability slots, four to a row, and the compass beside them
+/// Setup action bar UI, hung below the resource bars' line
+/// Creates the ability slots, four to a row, and the compass beside the top
+/// row
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, With<IsDefaultUiCamera>>,
@@ -60,12 +61,12 @@ pub fn setup(
         Node {
             position_type: PositionType::Absolute,
             width: Val::Percent(100.),
-            height: Val::Percent(100.),
+            height: Val::Vw(crate::systems::resource_bars::LINE_VW),
             bottom: Val::Px(0.),
             left: Val::Px(0.),
             justify_content: JustifyContent::Center,
-            align_items: AlignItems::FlexEnd,
-            padding: UiRect::bottom(Val::Percent(6.0)),  // Above resource bars
+            align_items: AlignItems::FlexStart,
+            padding: UiRect::top(Val::Px(10.)),
             ..default()
         },
         Pickable::IGNORE,
@@ -76,7 +77,7 @@ pub fn setup(
         parent.spawn((
             Node {
                 flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
+                align_items: AlignItems::FlexStart,
                 column_gap: Val::Px(10.),
                 ..default()
             },

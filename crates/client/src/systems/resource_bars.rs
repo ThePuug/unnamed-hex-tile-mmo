@@ -52,7 +52,12 @@ pub struct PoolText {
     shown: (i32, i32),
 }
 
-/// Builds the bars, midway between the player and the bottom of the screen.
+/// How far up the screen the bars' line stands, in hundredths of the
+/// window's width: midway between the player and the bottom of the screen.
+/// The highway stands on it and the action bar hangs below it.
+pub const LINE_VW: f32 = 12.5;
+
+/// Builds the bars on their line (`LINE_VW`).
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, With<IsDefaultUiCamera>>,
@@ -69,7 +74,7 @@ pub fn setup(
             left: Val::Px(0.),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::FlexEnd,
-            padding: UiRect::bottom(Val::Percent(12.5)),
+            padding: UiRect::bottom(Val::Vw(LINE_VW)),
             ..default()
         },
         Pickable::IGNORE,

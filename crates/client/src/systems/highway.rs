@@ -193,7 +193,7 @@ pub fn setup(
                 height: Val::Percent(100.),
                 justify_content: JustifyContent::FlexStart,
                 align_items: AlignItems::FlexEnd,
-                padding: UiRect { left: Val::Percent(ACROSS), bottom: Val::Percent(12.5), ..default() },
+                padding: UiRect { left: Val::Percent(ACROSS), bottom: Val::Vw(crate::systems::resource_bars::LINE_VW), ..default() },
                 ..default()
             },
             Pickable::IGNORE,
