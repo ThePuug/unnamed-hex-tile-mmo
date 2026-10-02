@@ -239,7 +239,7 @@ Feint and `disengage` for a Leap, whichever way it goes — and
 name and an actor lacking one has no node for it: a Frenzy or a Feint it
 lacks plays its `attack`, a Parry its `counter` (`Clip::stand_in`). A
 swing that arrives while a leap's slide runs waits for it to end
-(`animator::Held`), or the swing a Leap onto a target banks would cut the
+(`animator::Held`), or the swing due as a Leap lands would cut the
 flight off. The actor holds its `Gltf` root (`animator::Rig`) from spawn or the names are gone by then. A
 jump clip never rises: the armature node's `animgen` extras declare
 `leave`, `freeze` and `land` in seconds, and `animator::Jumping` plays it

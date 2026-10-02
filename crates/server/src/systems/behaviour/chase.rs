@@ -181,8 +181,6 @@ pub fn chase(
 
         // Its movement channel chooses the move; the move is walked here
         let tuning = common_bevy::tuning::tuning();
-        let banked = attrs.zip(swing.and_then(|swing| swing.waited(dt.elapsed())))
-            .map_or(0, |(attrs, waited)| attrs.banked(waited, attrs.cadence_interval()));
         let archetype = match kind {
             Some(EntityType::Actor(actor)) => match actor.identity {
                 ActorIdentity::Npc(archetype) => Some(archetype),
@@ -226,8 +224,8 @@ pub fn chase(
             distance: loc.distance(target_loc),
             reach: chase.attack_range,
             leap: tuning.leap_distance as i32,
-            banked,
-            // Its Patience banks only while its swing clock runs, in a fight
+            stamina: stamina.zip(attrs).map_or(1.0, |(stamina, attrs)| stamina.state / attrs.max_stamina().max(1.0)),
+            // Its Patience pays only while its swing clock runs, engaged
             patience: attrs.filter(|_| swing.is_some_and(|swing| swing.due.is_some()))
                 .map_or(0, |attrs| attrs.patience().index() as u32),
         };

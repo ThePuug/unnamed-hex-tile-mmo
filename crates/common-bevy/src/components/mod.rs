@@ -502,7 +502,7 @@ impl ActorAttributes {
     /// may use in any one recovery, each paying less of its own after
     /// (`preparation_relief`)
     pub fn preparation(&self) -> CommitmentTier { self.tier(Attribute::Discipline) }
-    /// Patience, Instinct: the swings banked while it could not strike (`banked`)
+    /// Patience, Instinct: stamina refilled faster waiting on a swing it could not strike (`patience_regen`)
     pub fn patience(&self) -> CommitmentTier { self.tier(Attribute::Instinct) }
     /// Awareness, Resolve: how far behind the front threat its reactions reach (`span`)
     pub fn awareness(&self) -> CommitmentTier { self.tier(Attribute::Resolve) }
@@ -636,12 +636,12 @@ impl ActorAttributes {
         self.grit().index() as u8
     }
 
-    /// The swings banked behind one that has `waited` since it came due,
-    /// at an auto-attack `interval`: one for each interval waited, up to the
-    /// Patience tier, 0 to 3, to land with it.
-    pub fn banked(&self, waited: std::time::Duration, interval: std::time::Duration) -> u32 {
-        let came_due = (waited.as_secs_f32() / interval.as_secs_f32()).floor() as u32;
-        came_due.min(self.patience().index() as u32)
+    /// The share faster this actor's stamina refills while it waits on a
+    /// swing it could not strike (`Status::waiting`): `Tuning::patience_regen_min`
+    /// at T0 to `patience_regen_max` at T3.
+    pub fn patience_regen(&self) -> f32 {
+        let tuning = crate::tuning::tuning();
+        self.patience().between(tuning.patience_regen_min, tuning.patience_regen_max)
     }
 
     /// How far behind the front threat this actor's reactions reach, from
@@ -680,10 +680,10 @@ pub struct Moon();
 
 /// When an actor's next auto-attack comes due, as the server counts it:
 /// an interval after its last, or the moment its fight found it not yet
-/// swinging. A due swing waits for a target it can strike, and the swings
-/// that come due behind it while it waits, up to its Patience, land with
-/// it (`ActorAttributes::banked`). None out of combat: a swing is due, and
-/// nothing banks until a fight starts the clock.
+/// swinging. A due swing waits for a target it can strike, and while it
+/// waits Patience refills the actor's stamina faster
+/// (`ActorAttributes::patience_regen`). None disengaged: a swing is due,
+/// and nothing waits until an engagement starts the clock.
 #[derive(Clone, Component, Copy, Debug, Default)]
 pub struct Swing {
     pub due: Option<std::time::Duration>,
@@ -821,15 +821,12 @@ mod tests {
     }
 
     #[test]
-    fn patience_banks_what_came_due_behind_a_waiting_swing_up_to_its_tier() {
+    fn patience_refills_stamina_faster_by_its_tier() {
         let patient = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
-        let plain = ActorAttributes::default();
-        let interval = std::time::Duration::from_secs(2);
-        let secs = std::time::Duration::from_secs;
-        assert_eq!(patient.banked(secs(1), interval), 0, "the due swing alone");
-        assert_eq!(patient.banked(secs(3), interval), 1, "one more came due behind it");
-        assert_eq!(patient.banked(secs(60), interval), 3, "no more than full commitment banks");
-        assert_eq!(plain.banked(secs(60), interval), 0, "without Patience, missed swings are lost");
+        let tuning = crate::tuning::tuning();
+        assert_eq!(ActorAttributes::default().patience_regen(), tuning.patience_regen_min, "without Patience, no faster");
+        assert_eq!(patient.patience_regen(), patient.patience().between(tuning.patience_regen_min, tuning.patience_regen_max));
+        assert!(patient.patience_regen() > ActorAttributes::default().patience_regen());
     }
 
     #[test]

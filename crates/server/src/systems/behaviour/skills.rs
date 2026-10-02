@@ -30,7 +30,7 @@ pub const WAIT: f32 = 0.35;
 pub const TUNABLE: &[&str] = &[
     "fatigue_after", "foe_just_acted", "worth_answering", "pressure_share", "span_closed",
     "room_to_land", "combo_offered", "burst_carried", "grit_banked", "strike_worth", "opening",
-    "reactions_left", "bank_empty", "bank_full", "foe_across",
+    "reactions_left", "stamina_spent", "stamina_ready", "foe_across",
 ];
 
 /// The blow, as a share of its own health, a reaction or a leap clear
@@ -51,10 +51,8 @@ pub struct View {
     pub striding: bool,
     /// How full its Grit's bank is, of what it holds full
     pub grit_filled: f32,
-    /// Swings its Patience holds behind the due one
-    pub banked: u32,
-    /// Its swing clock runs, in a fight, so its Patience banks
-    pub banking: bool,
+    /// Its swing clock runs, engaged, so its Patience pays
+    pub engaged: bool,
     /// Its own reach, in tiles
     pub reach: i32,
     /// Tiles a Leap carries it
@@ -175,19 +173,19 @@ enum Part {
 /// Each reason to use `ability`, and its considerations for what `view`
 /// perceives: what any skill asks, what its part asks, and what the
 /// commitments its user holds ask of that part. Patience asks only while
-/// it banks.
+/// it is engaged.
 fn reasons(ability: AbilityType, view: &View) -> Vec<(&'static str, Vec<Considered>)> {
-    let patient = view.banking && view.attrs.patience().index() > 0;
+    let patient = view.engaged && view.attrs.patience().index() > 0;
     let parts: &[(&'static str, Part)] = match ability {
         AbilityType::AutoAttack => &[],
         AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower => &[("strike", Part::Strike)],
         AbilityType::Punish => &[("punish", Part::Strike)],
         AbilityType::Parry | AbilityType::Counter => &[("answer", Part::Reaction)],
-        AbilityType::Leap => &[("bank", Part::Clear), ("dive", Part::Dive)],
+        AbilityType::Leap => &[("recover", Part::Clear), ("dive", Part::Dive)],
         AbilityType::PerfectStride => &[("stride", Part::Stance)],
     };
     parts.iter()
-        .filter(|&&(reason, _)| reason != "bank" || patient)
+        .filter(|&&(reason, _)| reason != "recover" || patient)
         .map(|&(reason, part)| {
             let mut considerations = vec![OPEN, AFFORDABLE, ENDURANCE];
             considerations.extend(part_considerations(reason, part));
@@ -221,8 +219,8 @@ fn commitment_considerations(ability: AbilityType, reason: &str, part: Part, att
     }
     if patient {
         match (part, reason) {
-            (Part::Clear, "bank") => considerations.push(BANK_EMPTY),
-            (Part::Dive, _) => considerations.push(BANK_FULL),
+            (Part::Clear, "recover") => considerations.push(STAMINA_SPENT),
+            (Part::Dive, _) => considerations.push(STAMINA_READY),
             _ => {}
         }
     }
@@ -417,18 +415,18 @@ const REACTIONS_LEFT: Considered = Consideration {
     curve: Curve::RISING.floored(0.6),
 };
 
-/// Patience: a bank with room to fill, which it fills standing out of reach
-const BANK_EMPTY: Considered = Consideration {
-    name: "bank_empty",
-    read: |view| view.banked as f32 / view.attrs.patience().index().max(1) as f32,
+/// Patience: stamina spent, which it refills faster out of reach
+const STAMINA_SPENT: Considered = Consideration {
+    name: "stamina_spent",
+    read: |view| view.stamina / view.attrs.max_stamina().max(1.0),
     bounds: (0.0, 1.0),
     curve: Curve::FALLING,
 };
 
-/// Patience: a full bank, spent by a dive
-const BANK_FULL: Considered = Consideration {
-    name: "bank_full",
-    read: |view| view.banked as f32 / view.attrs.patience().index().max(1) as f32,
+/// Patience: stamina back, to spend on a dive and what follows it
+const STAMINA_READY: Considered = Consideration {
+    name: "stamina_ready",
+    read: |view| view.stamina / view.attrs.max_stamina().max(1.0),
     bounds: (0.0, 1.0),
     curve: Curve { shape: Shape::Power(2.0), falling: false, floor: 0.2 },
 };
@@ -465,8 +463,7 @@ mod tests {
             recovery: None,
             striding: false,
             grit_filled: 0.0,
-            banked: 0,
-            banking: true,
+            engaged: true,
             reach: 2,
             leap: 9,
             clear_room: 1.0,
@@ -587,20 +584,20 @@ mod tests {
     }
 
     #[test]
-    fn patience_leaps_clear_with_its_bank_empty_and_dives_with_it_full() {
+    fn patience_leaps_clear_with_its_stamina_spent_and_dives_with_it_back() {
         let patient = built([0, 0, 0, 0, 0, 0, -10, 0, 0]);
         assert!(patient.patience().index() > 0);
-        let tier = patient.patience().index() as u32;
         let mut empty = view(AbilityType::Leap, patient);
+        empty.stamina = patient.max_stamina() * 0.35;
         let mut full = view(AbilityType::Leap, patient);
-        full.banked = tier;
-        assert!(scored(&mut empty, "bank") > scored(&mut full, "bank"));
+        full.stamina = patient.max_stamina();
+        assert!(scored(&mut empty, "recover") > scored(&mut full, "recover"));
         for v in [&mut empty, &mut full] {
             v.foe = Some(Foe { distance: 8, ..v.foe.unwrap() });
         }
         assert!(scored(&mut full, "dive") > scored(&mut empty, "dive"));
-        assert!(scored(&mut full, "dive") > WAIT, "a full bank dives");
-        assert_eq!(scored(&mut empty, "bank"), 0.0, "and out of reach there is nothing to leap clear of");
+        assert!(scored(&mut full, "dive") > WAIT, "refilled, it dives");
+        assert_eq!(scored(&mut empty, "recover"), 0.0, "and out of reach there is nothing to leap clear of");
     }
 
     #[test]
@@ -609,8 +606,10 @@ mod tests {
         let mut inward = view(AbilityType::Leap, patient);
         let mut outward = view(AbilityType::Leap, patient);
         outward.clear_room = 0.05;
-        assert!(scored(&mut inward, "bank") > scored(&mut outward, "bank"));
-        assert!(scored(&mut outward, "bank") < WAIT, "it does not leap to its leash's edge to bank");
+        inward.stamina = patient.max_stamina() * 0.35;
+        outward.stamina = inward.stamina;
+        assert!(scored(&mut inward, "recover") > scored(&mut outward, "recover"));
+        assert!(scored(&mut outward, "recover") < WAIT, "it does not leap to its leash's edge to recover");
     }
 
     #[test]

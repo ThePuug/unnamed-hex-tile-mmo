@@ -402,7 +402,7 @@ impl Jumping {
 }
 
 /// A swing that came in behind a leap's slide, played once the slide ends:
-/// a Leap onto a target lands the swing it banked the frame after, and the
+/// a Leap onto a target lands the swing due the frame after, and the
 /// swing's clip would cut the flight off at once.
 #[derive(Component)]
 pub struct Held(Clip);

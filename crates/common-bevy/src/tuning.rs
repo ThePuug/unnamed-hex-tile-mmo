@@ -98,10 +98,10 @@ pub struct Tuning {
     pub grit_bind: f32,
     /// Seconds that slow holds
     pub grit_bind_secs: f32,
-    /// What each swing an actor's Patience banked strikes for, as a share of
-    /// an auto-attack, when it lands with the next; its tier sets how many
-    /// it banks, 0 to 3
-    pub patience_power: f32,
+    /// Share faster an actor's stamina refills while it waits on a swing it
+    /// could not strike, by its Patience
+    pub patience_regen_min: f32,
+    pub patience_regen_max: f32,
 
     // --- Contest: what a relative advantage wins ---
     /// Advantage in points that wins half of an effect's ceiling; every
@@ -228,7 +228,8 @@ impl Tuning {
         grit_share: 0.1,
         grit_bind: 0.25,
         grit_bind_secs: 1.0,
-        patience_power: 1.25,
+        patience_regen_min: 0.0,
+        patience_regen_max: 0.6,
         contest_scale: 800.0,
         contest_per_level: 15.0,
         effect_hold: 1.0,
@@ -334,7 +335,8 @@ impl Tuning {
             "grit_share" => &mut self.grit_share,
             "grit_bind" => &mut self.grit_bind,
             "grit_bind_secs" => &mut self.grit_bind_secs,
-            "patience_power" => &mut self.patience_power,
+            "patience_regen_min" => &mut self.patience_regen_min,
+            "patience_regen_max" => &mut self.patience_regen_max,
             "tempo_ceiling" => &mut self.tempo_ceiling,
             "potency_base" => &mut self.potency_base,
             "potency_per_point" => &mut self.potency_per_point,

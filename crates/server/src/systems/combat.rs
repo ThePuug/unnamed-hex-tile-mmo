@@ -160,20 +160,26 @@ pub fn resolve_dot_tick(
     land_damage(*ent, *source, *damage, true, &mut health, &mut writer);
 }
 
-/// Keeps what an actor banks to its engagement. Its swing clock runs, and
-/// Patience banks the swings it misses, while it is engaged: in combat, or
-/// with a living hostile within the range a fight is taken up at
-/// (`behaviour::ACQUISITION_RANGE`), first contact or not. As it is engaged
-/// its clock starts, a swing due at once; disengaged, a swing is due and
-/// nothing is banked. Grit banks only blows, so only in the fight, and
-/// the fight's end empties it.
-pub fn bank_while_engaged(
-    mut query: Query<(Entity, &CombatState, &Loc, Option<&common_bevy::components::behaviour::Side>, &mut common_bevy::components::Swing, &mut common_bevy::components::grit::Grit)>,
+/// Keeps an actor's swing clock to its engagement. The clock runs while it
+/// is engaged: in combat, or with a living hostile within the range a fight
+/// is taken up at (`behaviour::ACQUISITION_RANGE`), first contact or not.
+/// As it is engaged its clock starts, a swing due at once; disengaged, no
+/// swing waits. A swing that has come due and gone unstruck leaves it
+/// waiting (`Status::waiting`), and Patience refills its stamina faster,
+/// until it swings or uses a skill. Grit banks only blows, so only in the
+/// fight, and the fight's end empties it.
+#[allow(clippy::too_many_arguments)]
+pub fn track_engagement(
+    mut commands: Commands,
+    mut writer: MessageWriter<Do>,
+    mut query: Query<(Entity, &CombatState, &Loc, Option<&common_bevy::components::behaviour::Side>, &mut common_bevy::components::Swing, &mut common_bevy::components::grit::Grit, Option<&crate::systems::combat::abilities::LastSkill>)>,
     others: Query<(&common_bevy::components::behaviour::Side, &Health)>,
+    mut statuses: Query<&mut common_bevy::components::status::Status>,
     nntree: Res<common_bevy::plugins::nntree::NNTree>,
     time: Res<Time>,
 ) {
-    for (ent, state, &loc, side, mut swing, mut grit) in &mut query {
+    let now = time.elapsed();
+    for (ent, state, &loc, side, mut swing, mut grit, last_skill) in &mut query {
         let hostile_near = side.is_some_and(|&side| {
             crate::systems::behaviour::spotted(&nntree, loc, crate::systems::behaviour::ACQUISITION_RANGE)
                 .filter(|&other| other != ent)
@@ -187,6 +193,10 @@ pub fn bank_while_engaged(
         }
         if !state.in_combat {
             grit.filled = 0;
+        }
+        let waiting = swing.due.is_some_and(|due| due < now && last_skill.is_none_or(|last| last.0 < due));
+        if statuses.get(ent).map_or(false, |status| status.waiting) != waiting {
+            landing::update(ent, &mut statuses, &mut commands, &mut writer, |status| status.waiting = waiting);
         }
     }
 }
@@ -208,7 +218,7 @@ mod tests {
     use std::time::Duration;
 
     fn engaging(world: &mut World) {
-        world.run_system_once(bank_while_engaged).unwrap();
+        world.run_system_once(track_engagement).unwrap();
     }
 
     #[test]
@@ -216,6 +226,7 @@ mod tests {
         use common_bevy::{components::{behaviour::Side, Loc}, plugins::nntree::{NNTreePlugin, NearestNeighbor}};
         let mut app = App::new();
         app.add_plugins(NNTreePlugin);
+        app.add_message::<Do>();
         app.init_resource::<Time>();
         let at = |q: i32| Loc::new(qrz::Qrz { q, r: 0, z: 0 });
         let calm = CombatState { in_combat: false, last_action: Duration::ZERO };
@@ -231,6 +242,15 @@ mod tests {
         app.update();
         engaging(app.world_mut());
         assert!(app.world().get::<Swing>(waiting).unwrap().due.is_some(), "a hostile within range starts its clock, out of combat");
+
+        let waits = |app: &App| app.world().get::<common_bevy::components::status::Status>(waiting).is_some_and(|status| status.waiting);
+        app.world_mut().resource_mut::<Time>().advance_by(Duration::from_secs(1));
+        engaging(app.world_mut());
+        assert!(waits(&app), "its swing come due and unstruck, it waits");
+        let now = app.world().resource::<Time>().elapsed();
+        app.world_mut().entity_mut(waiting).insert(crate::systems::combat::abilities::LastSkill(now));
+        engaging(app.world_mut());
+        assert!(!waits(&app), "a skill used ends it");
     }
 
     #[test]
@@ -238,6 +258,7 @@ mod tests {
         let secs = Duration::from_secs;
         let mut app = App::new();
         app.add_plugins(common_bevy::plugins::nntree::NNTreePlugin);
+        app.add_message::<Do>();
         let world = app.world_mut();
         let mut time = Time::<()>::default();
         time.advance_by(secs(10));
@@ -255,6 +276,6 @@ mod tests {
         world.get_mut::<CombatState>(fighter).unwrap().in_combat = false;
         engaging(world);
         assert_eq!(world.get::<Grit>(fighter).unwrap().filled, 0, "the fight over, it is gone");
-        assert_eq!(world.get::<Swing>(fighter).unwrap().waited(secs(60)), Some(Duration::ZERO), "out of combat it is due and has banked nothing");
+        assert_eq!(world.get::<Swing>(fighter).unwrap().waited(secs(60)), Some(Duration::ZERO), "disengaged, it is due and has waited no time");
     }
 }

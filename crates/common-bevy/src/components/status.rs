@@ -28,6 +28,10 @@ pub struct Status {
     pub held: Option<Timed>,
     /// Carrying past the bag's burden limit
     pub burden: bool,
+    /// Waiting on a swing it could not strike, and nothing struck or used
+    /// since: Patience refills its stamina faster
+    /// (`ActorAttributes::patience_regen`). The server decides and sends it.
+    pub waiting: bool,
 }
 
 /// An effect that lasts `remaining` seconds at `pace` of the actor's speed.

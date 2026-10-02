@@ -143,12 +143,11 @@ impl Abilities<'_, '_> {
             return None;
         }
         let tuning = common_bevy::tuning::tuning();
-        let (now, game_now) = (self.time.elapsed(), self.game_now());
+        let game_now = self.game_now();
         let queue: Vec<_> = self.queues.get(ent)
             .map(|queue| queue.threats.iter().filter(|threat| skill.sees(ent, threat, game_now)).copied().collect())
             .unwrap_or_default();
         let swing = self.swings.get(ent).ok();
-        let waited = swing.and_then(|swing| swing.waited(now));
         Some(View {
             ability,
             attrs,
@@ -159,8 +158,7 @@ impl Abilities<'_, '_> {
             recovery: self.recoveries.get(ent).ok().copied(),
             striding: self.strides(ent),
             grit_filled: self.grits.get(ent).map_or(0.0, |grit| grit.filled as f32 / common_bevy::components::grit::Grit::size() as f32),
-            banked: waited.map_or(0, |waited| attrs.banked(waited, attrs.cadence_interval())),
-            banking: swing.is_some_and(|swing| swing.due.is_some()),
+            engaged: swing.is_some_and(|swing| swing.due.is_some()),
             reach: range.copied().unwrap_or_default().0,
             leap: tuning.leap_distance as i32,
             clear_room: self.clear_room(ent, loc, target),

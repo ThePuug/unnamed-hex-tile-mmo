@@ -22,7 +22,7 @@ pub const MOMENTUM: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "pursuit_pays", "foe_nearing", "room_to_flee", "leash_tight", "bank_empty", "close_bank_full",
+    "pursuit_pays", "foe_nearing", "room_to_flee", "leash_tight", "stamina_spent", "close_stamina_ready",
     "foe_facing", "strike_cost", "stride_kept",
 ];
 
@@ -78,9 +78,10 @@ pub struct Footing {
     pub reach: i32,
     /// Tiles a Leap carries it
     pub leap: i32,
-    /// Swings its Patience holds, and the most it holds: none while it is
-    /// out of a fight and banks nothing
-    pub banked: u32,
+    /// Share of its stamina it has
+    pub stamina: f32,
+    /// Its Patience tier, while it is engaged and its stamina refills
+    /// faster waiting on a swing: none otherwise
     pub patience: u32,
 }
 
@@ -102,9 +103,9 @@ pub fn choose(footing: &Footing, under_way: Move, mind: &Mind) -> Move {
 pub fn weigh(footing: &Footing, candidate: Move, mind: &Mind) -> f32 {
     let considerations: &[Consideration<Footing>] = match candidate {
         Move::Hold => return mind.hold,
-        Move::Close if footing.patience > 0 => &[NOT_PLACED, INSIDE_LEASH, PURSUIT_PAYS, BANK_FULL],
+        Move::Close if footing.patience > 0 => &[NOT_PLACED, INSIDE_LEASH, PURSUIT_PAYS, STAMINA_READY],
         Move::Close => &[NOT_PLACED, INSIDE_LEASH, PURSUIT_PAYS],
-        Move::Flee if footing.patience > 0 => &[FOE_NEARING, BANK_EMPTY, ROOM_TO_FLEE],
+        Move::Flee if footing.patience > 0 => &[FOE_NEARING, STAMINA_SPENT, ROOM_TO_FLEE],
         Move::Flee => return 0.0,
         Move::Circle if footing.patience > 0 => &[CLEAR_OUTWARD, LEASH_TIGHT],
         Move::Circle if footing.grace => &[IN_REACH, FOE_FACING, STRIKE_COST, STRIDE_KEPT],
@@ -186,18 +187,18 @@ const STRIDE_KEPT: Consideration<Footing> = Consideration {
 
 const CLEAR_OUTWARD: Consideration<Footing> = step("clear_outward", |footing| flag(footing.clear_outward));
 
-/// Patience: the bank it fills standing out of reach, empty
-const BANK_EMPTY: Consideration<Footing> = Consideration {
-    name: "bank_empty",
-    read: |footing| footing.banked as f32 / footing.patience.max(1) as f32,
+/// Patience: stamina spent, which it refills faster out of reach
+const STAMINA_SPENT: Consideration<Footing> = Consideration {
+    name: "stamina_spent",
+    read: |footing| footing.stamina,
     bounds: (0.0, 1.0),
     curve: Curve::FALLING,
 };
 
-/// Patience: the bank full, so it closes to spend it
-const BANK_FULL: Consideration<Footing> = Consideration {
-    name: "close_bank_full",
-    read: |footing| footing.banked as f32 / footing.patience.max(1) as f32,
+/// Patience: stamina back, so it closes to spend it
+const STAMINA_READY: Consideration<Footing> = Consideration {
+    name: "close_stamina_ready",
+    read: |footing| footing.stamina,
     bounds: (0.0, 1.0),
     curve: Curve::RISING.floored(0.1),
 };
@@ -207,7 +208,7 @@ mod tests {
     use super::*;
 
     fn footing() -> Footing {
-        Footing { placed: false, grace: false, foe_facing: true, strike_cost: 0.05, breaks_stride: true, pursuit_pays: true, at_leash: false, leash_room: 1.0, clear_outward: false, distance: 8, reach: 2, leap: 9, banked: 0, patience: 0 }
+        Footing { placed: false, grace: false, foe_facing: true, strike_cost: 0.05, breaks_stride: true, pursuit_pays: true, at_leash: false, leash_room: 1.0, clear_outward: false, distance: 8, reach: 2, leap: 9, stamina: 0.0, patience: 0 }
     }
 
     #[test]
@@ -240,11 +241,11 @@ mod tests {
     }
 
     #[test]
-    fn patience_keeps_away_while_its_bank_fills_and_closes_once_it_is_full() {
+    fn patience_keeps_away_while_its_stamina_refills_and_closes_once_it_is_back() {
         let patient = Footing { patience: 3, ..footing() };
-        assert_eq!(choose(&patient, Move::Hold, &Mind::default()), Move::Hold, "out of reach with its bank empty it waits");
+        assert_eq!(choose(&patient, Move::Hold, &Mind::default()), Move::Hold, "out of reach with its stamina spent it waits");
         assert_eq!(choose(&Footing { distance: 3, ..patient }, Move::Hold, &Mind::default()), Move::Flee, "and runs as its target nears");
-        assert_eq!(choose(&Footing { banked: 3, ..patient }, Move::Hold, &Mind::default()), Move::Close, "full, it closes");
+        assert_eq!(choose(&Footing { stamina: 1.0, ..patient }, Move::Hold, &Mind::default()), Move::Close, "refilled, it closes");
     }
 
     #[test]

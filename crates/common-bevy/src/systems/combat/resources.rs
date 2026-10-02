@@ -46,7 +46,7 @@ impl Fighter {
 /// - 5 HP/sec when out of combat (normal regen)
 /// - 0 HP/sec when in combat
 pub fn regenerate_resources(
-    mut query: Query<(&mut Health, &mut Stamina, &mut Mana, Option<&mut Endurance>, &CombatState, Option<&crate::components::returning::Returning>)>,
+    mut query: Query<(&mut Health, &mut Stamina, &mut Mana, Option<&mut Endurance>, &CombatState, Option<&crate::components::returning::Returning>, Option<&crate::components::status::Status>, Option<&crate::components::ActorAttributes>)>,
     time: Res<Time>,
 ) {
     let current_time = time.elapsed();
@@ -54,7 +54,7 @@ pub fn regenerate_resources(
     // (e.g., after network updates where last_update gets reset to Duration::ZERO)
     const MAX_DT_SECS: f32 = 1.0;
 
-    for (mut health, mut stamina, mut mana, endurance, combat_state, returning_opt) in &mut query {
+    for (mut health, mut stamina, mut mana, endurance, combat_state, returning_opt, status, attrs) in &mut query {
         // The dead regenerate nothing, in combat or out
         if health.state <= 0.0 {
             continue;
@@ -65,8 +65,10 @@ pub fn regenerate_resources(
         let dt_mana = current_time.saturating_sub(mana.last_update).as_secs_f32().min(MAX_DT_SECS);
 
         // Stamina refills slower the more tired the actor is
+        // Slower spent; faster waiting on a swing it could not strike, by Patience
         let tired = 1.0 - crate::tuning::tuning().fatigue_stamina * Endurance::fatigue_of(endurance.as_deref());
-        stamina.state = (stamina.state + stamina.regen_rate * tired * dt_stamina).min(stamina.max);
+        let patient = 1.0 + attrs.filter(|_| status.is_some_and(|status| status.waiting)).map_or(0.0, |attrs| attrs.patience_regen());
+        stamina.state = (stamina.state + stamina.regen_rate * tired * patient * dt_stamina).min(stamina.max);
         stamina.last_update = current_time;
 
         // Endurance comes back only once stamina is whole again

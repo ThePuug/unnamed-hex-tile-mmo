@@ -254,7 +254,7 @@ macro_rules! create_stat_display {
                 MetaAttributeStat::Grace => ("Grace", Color::srgb(0.9, 0.9, 0.5), "Strike Arc:"),
                 MetaAttributeStat::Grit => ("Grit", Color::srgb(0.5, 0.8, 0.5), "Bank per Blow:"),
                 MetaAttributeStat::Preparation => ("Preparation", Color::srgb(0.5, 0.7, 0.9), "Recovery Reactions:"),
-                MetaAttributeStat::Patience => ("Patience", Color::srgb(0.7, 0.5, 0.9), "Swings Banked:"),
+                MetaAttributeStat::Patience => ("Patience", Color::srgb(0.7, 0.5, 0.9), "Waiting Refill:"),
                 MetaAttributeStat::Awareness => ("Awareness", Color::srgb(0.9, 0.6, 0.3), "Reaction Span:"),
             };
 
@@ -982,7 +982,7 @@ pub fn update_attributes(
                     MetaAttributeStat::Preparation => {
                         format!("{}, -{:.0}%", display_attrs.preparation().index(), display_attrs.preparation_relief() * 100.0)
                     },
-                    MetaAttributeStat::Patience => display_attrs.patience().index().to_string(),
+                    MetaAttributeStat::Patience => format!("+{:.0}%", display_attrs.patience_regen() * 100.0),
                     MetaAttributeStat::Awareness => format!("{:.2}s", display_attrs.span().as_secs_f32()),
                 };
             }
