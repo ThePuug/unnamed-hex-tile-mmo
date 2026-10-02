@@ -14,8 +14,12 @@
 //! - `balance [evals]`: CMA-ES over the knobs that matter, for the least
 //!   imbalance
 //! - `minds [evals] [archetype ...]`: CMA-ES over each archetype's mind, for
-//!   its own score against the rest as they stand: one pass
-//! - `settle [evals]`: passes of `minds` until no archetype gains more than
+//!   its own score against the field: one pass
+//! - `exploit [evals] [archetype ...]`: a fresh search for each archetype's
+//!   best answer to the minds as they stand, and how far it beats the mind
+//!   it has; one that beats it by `minds.exploit_margin` joins the field
+//! - `settle [evals]`: passes of `minds`, an `exploit` pass every
+//!   `minds.exploit_every`, until no archetype gains more than
 //!   `minds.settle` in one, or `minds.rounds` have run
 //! - `loop <count> [evals]`: settle the minds, then balance, `count` times
 //! - `show [ledger]`: the matrix as the state stands
@@ -29,6 +33,14 @@
 //! so a comparison weighs the settings rather than the dice
 //! (`combat::dice`); each generation draws a seed of its own, so no search
 //! fits one set of fights.
+//!
+//! A mind is searched against a field: the minds as they stand and those of
+//! the last `minds.pool` - 1 passes, and any exploiter that joined it. A
+//! mind that answers only the latest of its foes' minds would chase them
+//! round in circles, each pass undoing the last; one that answers the field
+//! holds up against all of them. An exploiter keeps the field honest: what
+//! beats the minds as they stand is found afresh, from anywhere in the
+//! bounds, and those it beats must learn to answer it.
 
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -42,6 +54,9 @@ use combat::behaviour::mind::{Minds, TUNED};
 
 /// The step a search starts with, in the space where each bound is 0 and 1
 const SIGMA: f64 = 0.2;
+
+/// The step an exploiter starts with, from anywhere in the bounds
+const EXPLORE: f64 = 0.3;
 
 /// Generations between looks at where a search's mean stands
 const LOOK_EVERY: usize = 5;
@@ -99,6 +114,9 @@ struct Bounds {
 struct MindRanges {
     settle: f32,
     rounds: usize,
+    pool: usize,
+    exploit_every: usize,
+    exploit_margin: f32,
     just_acted: Bounds,
     common: Vec<Range>,
     strike: Vec<Range>,
@@ -106,11 +124,14 @@ struct MindRanges {
     own: BTreeMap<String, Vec<Range>>,
 }
 
-/// The numbers and minds found so far, by the names the arena sets them by
+/// The numbers and minds found so far, by the names the arena sets them by,
+/// and the field's minds of passes past, oldest first
 #[derive(Default, Deserialize, Serialize)]
 struct State {
     knobs: BTreeMap<String, f32>,
     minds: BTreeMap<String, f32>,
+    #[serde(default)]
+    history: Vec<BTreeMap<String, f32>>,
 }
 
 fn manifest() -> PathBuf {
@@ -216,14 +237,15 @@ fn standings(rows: &[Pairing]) -> String {
     }).collect::<Vec<_>>().join(", ")
 }
 
-/// Minimizes `objective` over `ranges` by CMA-ES from `start`, for no more
-/// than `evals` evaluations, and returns the search's mean, its estimate of
-/// the best, in each setting's own units. Each generation holds
+/// Minimizes `objective` over `ranges` by CMA-ES from `start` with a first
+/// step of `sigma`, for no more than `evals` evaluations, and returns the
+/// search's mean, its estimate of the best, in each setting's own units.
+/// Each generation holds
 /// `population` times CMA-ES's own count of candidates, every one scored on
 /// the generation's seed. A point outside the bounds is scored at the
 /// nearest inside and penalized by how far out it lies. Every `LOOK_EVERY`
 /// generations it prints `look` of the mean as it stands.
-fn search(label: &str, ranges: &[Range], start: &[f32], evals: usize, population: f64, mut objective: impl FnMut(&[f32], u64) -> f32, look: impl Fn(&[f32]) -> String) -> Vec<f32> {
+fn search(label: &str, ranges: &[Range], start: &[f32], sigma: f64, evals: usize, population: f64, mut objective: impl FnMut(&[f32], u64) -> f32, look: impl Fn(&[f32]) -> String) -> Vec<f32> {
     let unit: Vec<f64> = ranges.iter().zip(start).map(|(range, &value)| range.to_unit(value)).collect();
     let candidates = (population * (4.0 + (3.0 * (ranges.len() as f64).ln()).floor())).round().max(2.0) as usize;
     let seeds: u64 = rand::random();
@@ -235,7 +257,7 @@ fn search(label: &str, ranges: &[Range], start: &[f32], evals: usize, population
         evaluated += 1;
         objective(&values, seed) as f64 + 100.0 * outside
     };
-    let mut cma = CMAESOptions::new(unit, SIGMA).population_size(candidates).max_function_evals(evals).build(penalized)
+    let mut cma = CMAESOptions::new(unit, sigma).population_size(candidates).max_function_evals(evals).build(penalized)
         .unwrap_or_else(|error| panic!("tune: {error:?}"));
     loop {
         let done = cma.next();
@@ -271,6 +293,10 @@ pub fn run(args: &[String]) {
             let only: Vec<EnemyArchetype> = args.iter().skip(2).map(|name| super::archetype_named(name)).collect();
             minds(&config, number(1, 150), &only);
         }
+        Some("exploit") => {
+            let only: Vec<EnemyArchetype> = args.iter().skip(2).map(|name| super::archetype_named(name)).collect();
+            exploit(&config, number(1, 150), &only);
+        }
         Some("settle") => settle(&config, number(1, 150)),
         Some("loop") => {
             let evals = number(2, 150);
@@ -288,7 +314,7 @@ pub fn run(args: &[String]) {
             println!("imbalance {:.1}, split {:.1}; {}", imbalance(&config.score, &rows), split(&config.score, &rows), standings(&rows));
         }
         Some("apply") => apply(&load()),
-        _ => panic!("arena tune takes screen, balance [evals], minds [evals] [archetype ...], settle [evals], loop <count> [evals], show [ledger] or apply"),
+        _ => panic!("arena tune takes screen, balance [evals], minds [evals] [archetype ...], exploit [evals] [archetype ...], settle [evals], loop <count> [evals], show [ledger] or apply"),
     }
 }
 
@@ -329,7 +355,7 @@ fn balance(config: &Config, evals: usize) {
     println!("balance over {} knobs: {}", ranges.len(), ranges.iter().map(|range| range.name.as_str()).collect::<Vec<_>>().join(", "));
     let start: Vec<f32> = ranges.iter().map(|range| knob(&state, &range.name).clamp(range.min, range.max)).collect();
     let none = BTreeMap::new();
-    let found = search("balance", &ranges, &start, evals, config.population, |values, seed| {
+    let found = search("balance", &ranges, &start, SIGMA, evals, config.population, |values, seed| {
         imbalance(&config.score, &matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs, seed)))
     }, |values| {
         let rows = matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs, rand::random()));
@@ -369,10 +395,14 @@ fn mind_ranges(config: &Config, archetype: EnemyArchetype) -> Vec<Range> {
         .collect()
 }
 
-/// Passes of `minds` until no archetype's gain in one passes `minds.settle`,
-/// or `minds.rounds` have run
+/// Passes of `minds`, an `exploit` pass before every `minds.exploit_every`th,
+/// until no archetype's gain in one passes `minds.settle`, or
+/// `minds.rounds` have run
 fn settle(config: &Config, evals: usize) {
     for round in 0..config.minds.rounds {
+        if config.minds.exploit_every > 0 && round > 0 && round % config.minds.exploit_every == 0 {
+            exploit(config, evals, &[]);
+        }
         let gains = minds(config, evals, &[]);
         let most = gains.iter().map(|&(_, gain)| gain).fold(0.0, f32::max);
         println!("minds round {round}: {}; most gained {most:.1}",
@@ -385,37 +415,95 @@ fn settle(config: &Config, evals: usize) {
     println!("minds still moving after {} rounds", config.minds.rounds);
 }
 
+/// The minds a mind is searched against: those of the last `minds.pool` - 1
+/// passes, and the minds as they stand
+fn field(config: &Config, state: &State) -> Vec<BTreeMap<String, f32>> {
+    let past = state.history.len().saturating_sub(config.minds.pool.saturating_sub(1));
+    state.history[past..].iter().cloned().chain(std::iter::once(state.minds.clone())).collect()
+}
+
+/// How `archetype` stands with `values` for its `ranges`, against each mind
+/// of `field` in turn, the pairings' `runs` fights shared among them; the
+/// mean over the field
+fn standing_in(config: &Config, state: &State, field: &[BTreeMap<String, f32>], archetype: EnemyArchetype, ranges: &[Range], values: &[f32], runs: u32, seed: u64) -> f32 {
+    let each = (runs / field.len() as u32 / 2).max(1) * 2;
+    let none = BTreeMap::new();
+    let standings: Vec<f32> = field.iter().enumerate().map(|(i, minds)| {
+        let mut minds = minds.clone();
+        minds.extend(named(ranges, values));
+        standing(&matrix(&settings(config, state, &none, &minds, Some(archetype), each, seed.wrapping_add(i as u64))), archetype)
+    }).collect();
+    standings.iter().sum::<f32>() / standings.len() as f32
+}
+
 /// One pass over the archetypes (all, or `only`), each mind searched
-/// against the rest as they stand; what each gained, nothing where it kept
-/// nothing
+/// against the field; what each gained, nothing where it kept nothing. The
+/// minds the pass leaves join the field's history.
 fn minds(config: &Config, evals: usize, only: &[EnemyArchetype]) -> Vec<(EnemyArchetype, f32)> {
     let mut state = load();
-    let none = BTreeMap::new();
     let mut gains = Vec::new();
     for &archetype in EnemyArchetype::ALL.iter().filter(|archetype| only.is_empty() || only.contains(archetype)) {
         let ranges = mind_ranges(config, archetype);
         let start: Vec<f32> = ranges.iter().map(|range| state.minds.get(&range.name).copied()
             .or(range.start).unwrap_or((range.min + range.max) / 2.0).clamp(range.min, range.max)).collect();
         let label = format!("{archetype:?}");
-        let found = search(&label, &ranges, &start, evals, config.population, |values, seed| {
-            -standing(&matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.runs, seed)), archetype)
+        let field = field(config, &state);
+        let found = search(&label, &ranges, &start, SIGMA, evals, config.population, |values, seed| {
+            -standing_in(config, &state, &field, archetype, &ranges, values, config.runs, seed)
         }, |values| {
-            format!("standing {:.1}", standing(&matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.runs, rand::random())), archetype))
+            format!("standing {:.1}", standing_in(config, &state, &field, archetype, &ranges, values, config.runs, rand::random()))
         });
         let seed = rand::random();
-        let check = |values: &[f32]| standing(&matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.check_runs, seed)), archetype);
+        let check = |values: &[f32]| standing_in(config, &state, &field, archetype, &ranges, values, config.check_runs, seed);
         let (was, now) = (check(&start), check(&found));
         if now > was {
             state.minds.extend(named(&ranges, &found));
             save(&state);
-            println!("{label} kept: {was:.1} -> {now:.1}");
+            println!("{label} kept: {was:.1} -> {now:.1} against a field of {}", field.len());
             gains.push((archetype, now - was));
         } else {
             println!("{label} found nothing better: {was:.1} against {now:.1}");
             gains.push((archetype, 0.0));
         }
     }
+    state.history.push(state.minds.clone());
+    let keep = state.history.len().saturating_sub(config.minds.pool);
+    state.history.drain(..keep);
+    save(&state);
     gains
+}
+
+/// For each archetype (all, or `only`), a fresh search from anywhere in the
+/// bounds for its best answer to the minds as they stand, and how far that
+/// beats the mind it has on the same fights. One that beats it by
+/// `minds.exploit_margin` joins the field, as the minds stand with it in
+/// its archetype's place, so the rest learn to answer it.
+fn exploit(config: &Config, evals: usize, only: &[EnemyArchetype]) {
+    let mut state = load();
+    for &archetype in EnemyArchetype::ALL.iter().filter(|archetype| only.is_empty() || only.contains(archetype)) {
+        let ranges = mind_ranges(config, archetype);
+        let held: Vec<f32> = ranges.iter().map(|range| state.minds.get(&range.name).copied()
+            .or(range.start).unwrap_or((range.min + range.max) / 2.0).clamp(range.min, range.max)).collect();
+        let anywhere: Vec<f32> = ranges.iter().map(|range| range.from_unit(rand::random())).collect();
+        let label = format!("{archetype:?} exploiter");
+        let as_they_stand = std::slice::from_ref(&state.minds);
+        let found = search(&label, &ranges, &anywhere, EXPLORE, evals, config.population, |values, seed| {
+            -standing_in(config, &state, as_they_stand, archetype, &ranges, values, config.runs, seed)
+        }, |values| {
+            format!("standing {:.1}", standing_in(config, &state, as_they_stand, archetype, &ranges, values, config.runs, rand::random()))
+        });
+        let seed = rand::random();
+        let check = |values: &[f32]| standing_in(config, &state, as_they_stand, archetype, &ranges, values, config.check_runs, seed);
+        let (mind, exploiter) = (check(&held), check(&found));
+        println!("{label}: {exploiter:.1} against its mind's {mind:.1}, {:+.1}", exploiter - mind);
+        if exploiter - mind > config.minds.exploit_margin {
+            let mut joined = state.minds.clone();
+            joined.extend(named(&ranges, &found));
+            state.history.push(joined);
+            save(&state);
+            println!("{label} joins the field");
+        }
+    }
 }
 
 /// Writes the state's knobs into `Tuning`'s defaults and its minds into
