@@ -4,12 +4,12 @@
 //! every archetype or for one. The curve's shape is the consideration's
 //! own and is not set here.
 //!
-//! It is one process-wide set, read through [`mind_of`], holding
-//! [`TUNED`] unless the balance arena replaces it ([`set_minds`]) between
-//! scenarios, so a search can tune each archetype's fighter without a
-//! rebuild. What a search finds is written back into [`TUNED`].
+//! The world holds one set as a resource, [`TUNED`] (`CombatPlugin`),
+//! unless the balance arena gives a fight its own, so a search can tune
+//! each archetype's fighter without a rebuild. What a search finds is
+//! written back into [`TUNED`].
 
-use std::{collections::HashMap, sync::{LazyLock, RwLock}};
+use std::collections::HashMap;
 
 use common_bevy::{components::entity_type::actor::Approach, archetype::EnemyArchetype};
 
@@ -106,7 +106,7 @@ pub const TUNED: &[(&str, f32)] = &[
 
 /// Every mind setting: those for all archetypes, and each archetype's on
 /// top. Its default sets nothing; [`Minds::tuned`] holds [`TUNED`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, bevy::prelude::Resource)]
 pub struct Minds {
     all: Overrides,
     each: HashMap<EnemyArchetype, Overrides>,
@@ -185,18 +185,6 @@ impl Minds {
     }
 }
 
-static MINDS: LazyLock<RwLock<Minds>> = LazyLock::new(|| RwLock::new(Minds::tuned()));
-
-/// The mind of an NPC of `archetype`, as the settings stand
-pub fn mind_of(archetype: Option<EnemyArchetype>) -> Mind {
-    MINDS.read().unwrap_or_else(|poisoned| poisoned.into_inner()).mind(archetype)
-}
-
-/// Replaces every mind setting. Only the balance arena calls it, between
-/// scenarios, with no fight running.
-pub fn set_minds(minds: Minds) {
-    *MINDS.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = minds;
-}
 
 #[cfg(test)]
 mod tests {

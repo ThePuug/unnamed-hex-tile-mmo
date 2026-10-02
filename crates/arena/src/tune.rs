@@ -49,7 +49,7 @@ use serde::{Deserialize, Serialize};
 
 use common_bevy::{archetype::EnemyArchetype, tuning::Tuning};
 
-use super::{matrix, print_matrix, Pairing, Settings};
+use super::{matrices, matrix, print_matrix, Pairing, Settings};
 use combat::behaviour::mind::{Minds, TUNED};
 
 /// The step a search starts with, in the space where each bound is 0 and 1
@@ -428,11 +428,12 @@ fn field(config: &Config, state: &State) -> Vec<BTreeMap<String, f32>> {
 fn standing_in(config: &Config, state: &State, field: &[BTreeMap<String, f32>], archetype: EnemyArchetype, ranges: &[Range], values: &[f32], runs: u32, seed: u64) -> f32 {
     let each = (runs / field.len() as u32 / 2).max(1) * 2;
     let none = BTreeMap::new();
-    let standings: Vec<f32> = field.iter().enumerate().map(|(i, minds)| {
+    let scenarios: Vec<Settings> = field.iter().enumerate().map(|(i, minds)| {
         let mut minds = minds.clone();
         minds.extend(named(ranges, values));
-        standing(&matrix(&settings(config, state, &none, &minds, Some(archetype), each, seed.wrapping_add(i as u64))), archetype)
+        settings(config, state, &none, &minds, Some(archetype), each, seed.wrapping_add(i as u64))
     }).collect();
+    let standings: Vec<f32> = matrices(&scenarios).iter().map(|rows| standing(rows, archetype)).collect();
     standings.iter().sum::<f32>() / standings.len() as f32
 }
 

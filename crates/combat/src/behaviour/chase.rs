@@ -19,7 +19,7 @@ use common_bevy::{
 };
 use qrz::Qrz;
 
-use super::{mind::mind_of, moves::{self, Footing, Move}, perception::Sight, Body};
+use super::{mind::Minds, moves::{self, Footing, Move}, perception::Sight, Body};
 
 /// How near its engagement's place a returning NPC counts as home, in tiles.
 const HOME: i32 = 2;
@@ -127,6 +127,7 @@ pub fn chase(
     map: Res<Map>,
     dt: Res<Time>,
     dice: Res<crate::dice::Dice>,
+    minds: Res<Minds>,
     mut rolls: Query<&mut crate::dice::Rolls>,
     mut decisions: Option<ResMut<super::Decisions>>,
 ) {
@@ -191,7 +192,7 @@ pub fn chase(
             },
             _ => None,
         };
-        let mind = mind_of(archetype);
+        let mind = minds.mind(archetype);
         // Circling, Grace steps toward its target's back, Patience toward
         // its den; it is weighed by what a strike costs on that step's
         // heading of the stamina it has, and whether it breaks stride:
@@ -291,6 +292,7 @@ mod tests {
         app.add_message::<Do>();
         app.init_resource::<Time>();
         app.insert_resource(crate::dice::Dice::seeded(0));
+        app.insert_resource(Minds::tuned());
         app.register_required_components::<Chase, crate::dice::Rolls>();
         let mut tiles = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         for q in -4..=LEASH + 8 {

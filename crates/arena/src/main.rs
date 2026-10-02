@@ -76,7 +76,7 @@ use common_bevy::{
 
 use combat::{
     actor,
-    behaviour::{mind::{set_minds, Minds}, moves::Move, perception::Skill, Bar, Decisions},
+    behaviour::{mind::Minds, moves::Move, perception::Skill, Bar, Decisions},
     dice::Dice,
     engagement::{engaging_at, spawn_engagement, STAGE_GAP},
     BehaviourPlugin, CombatPlugin,
@@ -362,6 +362,7 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     app.insert_resource(SpawnPoint(Qrz { q: 0, r: 0, z: 1 }));
     app.init_resource::<Tally>();
     app.insert_resource(Dice::seeded(seed));
+    app.insert_resource(settings.minds.clone());
     if settings.trace > 3 {
         app.init_resource::<Decisions>();
     }
@@ -572,11 +573,41 @@ fn print_matrix(rows: &[Pairing], ledger: bool) {
     }
 }
 
-/// Fights every pairing of the scenario `runs` times under its tuning and
-/// minds, which it makes the process's own for the while.
+/// Fights every pairing of the scenario `runs` times under its tuning,
+/// which it makes the process's own for the while, and its minds.
 fn matrix(settings: &Settings) -> Vec<Pairing> {
-    set_tuning(settings.tuning);
-    set_minds(settings.minds.clone());
+    matrices(std::slice::from_ref(settings)).remove(0)
+}
+
+/// Each scenario's `matrix`, their fights all in one pool of workers, so
+/// none waits on another's slowest. Every scenario plays the same tuning,
+/// which is process-wide; their minds are each fight's own.
+fn matrices(scenarios: &[Settings]) -> Vec<Vec<Pairing>> {
+    let tuning = scenarios[0].tuning;
+    assert!(scenarios.iter().all(|settings| format!("{:?}", settings.tuning) == format!("{tuning:?}")), "arena: scenarios fought together share their tuning");
+    set_tuning(tuning);
+    // Each scenario's pairings, and its fights' place among all of them
+    let pairings: Vec<Vec<(EnemyArchetype, EnemyArchetype)>> = scenarios.iter().map(pairings).collect();
+    let jobs: Vec<(usize, (EnemyArchetype, EnemyArchetype), u32)> = scenarios.iter().zip(&pairings).enumerate()
+        .flat_map(|(i, (settings, pairings))| pairings.iter().flat_map(move |&pairing| (0..settings.runs).map(move |run| (i, pairing, run))))
+        .collect();
+    let workers = if scenarios.iter().any(|settings| settings.trace > 0) { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()) };
+    let mut outcomes = in_parallel(jobs.len() as u32, workers, |job| {
+        let (i, (a, b), run) = jobs[job as usize];
+        let settings = &scenarios[i];
+        // Swap ends every run so the spawn layout favours neither archetype
+        let (team_a, team_b) = (settings.team_a(a), settings.team_b(b));
+        let (west, east, a_side) = if run % 2 == 0 { (team_a, team_b, WEST) } else { (team_b, team_a, EAST) };
+        (a_side, fight(west, east, settings, fight_seed(settings.seed, a, b, run)))
+    }).into_iter();
+    scenarios.iter().zip(&pairings).map(|(settings, pairings)| {
+        let outcomes: Vec<_> = outcomes.by_ref().take(pairings.len() * settings.runs as usize).collect();
+        rows(pairings, &outcomes, settings.runs)
+    }).collect()
+}
+
+/// The pairings a scenario fights
+fn pairings(settings: &Settings) -> Vec<(EnemyArchetype, EnemyArchetype)> {
     let pairings: Vec<(EnemyArchetype, EnemyArchetype)> = if settings.ordered {
         settings.only.iter().flat_map(|&a| settings.only.iter().map(move |&b| (a, b))).collect()
     } else if settings.mirror {
@@ -586,16 +617,11 @@ fn matrix(settings: &Settings) -> Vec<Pairing> {
             .flat_map(|(i, &a)| settings.only[i + 1..].iter().map(move |&b| (a, b)))
             .collect()
     };
-    let pairings: Vec<_> = pairings.into_iter().filter(|&(a, b)| settings.focus.is_none_or(|focus| a == focus || b == focus)).collect();
-    let workers = if settings.trace > 0 { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()) };
-    let runs = settings.runs;
-    let outcomes = in_parallel(pairings.len() as u32 * runs, workers, |job| {
-        let ((a, b), run) = (pairings[(job / runs) as usize], job % runs);
-        // Swap ends every run so the spawn layout favours neither archetype
-        let (team_a, team_b) = (settings.team_a(a), settings.team_b(b));
-        let (west, east, a_side) = if run % 2 == 0 { (team_a, team_b, WEST) } else { (team_b, team_a, EAST) };
-        (a_side, fight(west, east, settings, fight_seed(settings.seed, a, b, run)))
-    });
+    pairings.into_iter().filter(|&(a, b)| settings.focus.is_none_or(|focus| a == focus || b == focus)).collect()
+}
+
+/// Each pairing's `runs` outcomes, in order, summed into its row
+fn rows(pairings: &[(EnemyArchetype, EnemyArchetype)], outcomes: &[(Side, Outcome)], runs: u32) -> Vec<Pairing> {
     let mut rows = Vec::new();
     for (&(a, b), outcomes) in pairings.iter().zip(outcomes.chunks(runs as usize)) {
         let (mut a_wins, mut b_wins, mut capped) = (0u32, 0u32, 0u32);

@@ -16,7 +16,6 @@ use crate::leap::away;
 use common_bevy::archetype::EnemyArchetype;
 use crate::behaviour::{
     approach_of,
-    mind::mind_of,
     perception::Skill,
     skills::{self, Foe, Threats, View},
 };
@@ -52,7 +51,7 @@ impl Abilities<'_, '_> {
             };
             // How long ago the foe's last skill was counts as much as its
             // Approach, on its target frame, makes it count
-            let mind = mind_of(Some(archetype));
+            let mind = self.mind_set.mind(Some(archetype));
             let approach = approach_of(target.and_then(|target| self.kinds.get(target).ok()));
             let foe = foe.map(|foe| Foe { since_skill: foe.since_skill.map(|since| since / mind.just_acted(approach)), ..foe });
             let Some(mut view) = self.view(ent, ability, &skill, foe, target) else { continue };
