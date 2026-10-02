@@ -90,7 +90,7 @@ pub enum Event {
     /// ungated on the wire as `Teleport`.
     SpawnParty {
         ent: Entity,
-        archetype: crate::spatial_difficulty::EnemyArchetype,
+        archetype: crate::archetype::EnemyArchetype,
         level: u8,
         size: u8,
         engage: bool,

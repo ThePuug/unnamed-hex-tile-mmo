@@ -117,7 +117,7 @@ fn main() {
     let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED);
     // One definition of where the world starts: the difficulty origin and the
     // spawn are the same place, and the z comes from the terrain there.
-    let haven = common_bevy::spatial_difficulty::HAVEN_LOCATION;
+    let haven = common_bevy::haven::HAVEN_LOCATION;
     // `CLEARING=<radius>[@<q>,<r>][~]` fells and mines every tile that far
     // round the tile named, or the haven, before anything is served: a
     // fixture for seeing changes from afar. With `~` it thins out toward its

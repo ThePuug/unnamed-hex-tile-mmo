@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::spatial_difficulty::EnemyArchetype;
+use crate::archetype::EnemyArchetype;
 
 /// Who an actor is, which names it and picks the body it is drawn with: a
 /// player, or an NPC of an archetype.

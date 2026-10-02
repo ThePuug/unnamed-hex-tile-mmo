@@ -1,23 +1,10 @@
-//! Where the haven stands, and the enemy archetypes: what each is drawn
-//! as, its signature ability, and how an NPC of one spends the points its
-//! level gives it.
+//! The enemy archetypes: what each is drawn as, its signature ability,
+//! and how an NPC of one spends the points its level gives it.
 
-use qrz::Qrz;
 use crate::{
     components::{entity_type::actor::{Approach, Resilience}, ActorAttributes},
     message::AbilityType,
 };
-
-/// Haven location, in hex coordinates.
-///
-/// Sited on the brink of a belt's plateau on the home continent: the
-/// front falls away to a basin plain some 560 z-levels below over the next
-/// 300 tiles in the -r direction, with the next belt rising beyond it, the
-/// plateau top lies a few levels up behind, and no water stands within six
-/// hundred tiles. The z is a placeholder — the server resolves the real one
-/// from the terrain at startup, because elevation is generated, not
-/// authored.
-pub const HAVEN_LOCATION: Qrz = Qrz { q: 104289, r: -4677, z: 0 };
 
 /// The enemy archetypes, each built on one attribute.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -67,15 +54,6 @@ impl EnemyArchetype {
 /// The attributes of an NPC of `archetype` at `level`: every point of its
 /// level in the one attribute the archetype is built on, none in a spectrum
 /// and none shifted.
-///
-/// # Examples
-/// ```
-/// # use common_bevy::spatial_difficulty::*;
-/// let attrs = calculate_enemy_attributes(10, EnemyArchetype::Juggernaut);
-/// assert_eq!(attrs.might_agility_axis(), 0);
-/// assert_eq!(attrs.vitality_discipline_axis(), -10);
-/// assert_eq!(attrs.instinct_resolve_axis(), 0);
-/// ```
 pub fn calculate_enemy_attributes(
     level: u8,
     archetype: EnemyArchetype,

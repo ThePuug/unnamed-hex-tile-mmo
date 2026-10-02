@@ -22,7 +22,7 @@ use common_bevy::{
     },
     message::{Event, Try},
     plugins::nntree::NearestNeighbor,
-    spatial_difficulty::{calculate_enemy_attributes, EnemyArchetype},
+    archetype::{calculate_enemy_attributes, EnemyArchetype},
     systems::combat::resources::Fighter,
 };
 

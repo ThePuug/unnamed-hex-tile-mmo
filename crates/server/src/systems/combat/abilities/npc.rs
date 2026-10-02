@@ -14,7 +14,7 @@ use common_bevy::{
 
 use super::{in_arc, Abilities};
 use crate::systems::combat::leap::away;
-use common_bevy::spatial_difficulty::EnemyArchetype;
+use common_bevy::archetype::EnemyArchetype;
 use crate::systems::behaviour::{
     approach_of,
     mind::mind_of,

@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use qrz::Qrz;
 
-use crate::spatial_difficulty::EnemyArchetype;
+use crate::archetype::EnemyArchetype;
 
 /// A group of NPCs spawned together. It is cleaned up once every one is
 /// dead, or no client has watched it for a while (`engagement_cleanup`).
@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn test_engagement_creation() {
-        use crate::spatial_difficulty::EnemyArchetype;
+        use crate::archetype::EnemyArchetype;
 
         let spawn = Qrz { q: 30, r: 0, z: 0 };
         let engagement = Engagement::new(

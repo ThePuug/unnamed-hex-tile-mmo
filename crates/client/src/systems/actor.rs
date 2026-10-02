@@ -16,7 +16,7 @@ use common_bevy::{
     message::{ Event, * },
     plugins::nntree::NearestNeighbor,
     resources::map::Map,
-    spatial_difficulty::EnemyArchetype,
+    archetype::EnemyArchetype,
 };
 
 pub fn setup() {}

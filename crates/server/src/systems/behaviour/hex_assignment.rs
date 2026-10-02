@@ -265,7 +265,7 @@ mod tests {
     /// An engagement of two melee NPCs either side of a target at the
     /// origin, on flat ground: the world, the target and the two NPCs.
     fn engaged() -> (App, Entity, [Entity; 2]) {
-        use common_bevy::{components::entity_type::EntityType, spatial_difficulty::EnemyArchetype};
+        use common_bevy::{components::entity_type::EntityType, archetype::EnemyArchetype};
 
         let mut app = App::new();
         app.add_plugins(common_bevy::plugins::nntree::NNTreePlugin);

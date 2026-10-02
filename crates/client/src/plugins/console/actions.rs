@@ -48,7 +48,7 @@ pub enum DevConsoleAction {
     /// Stage a party of this archetype ahead of the actor the client sees
     /// as: a den, a party out of its reach, or one engaging it.
     #[cfg(feature = "admin")]
-    SpawnParty { archetype: common_bevy::spatial_difficulty::EnemyArchetype, staging: super::state::Staging },
+    SpawnParty { archetype: common_bevy::archetype::EnemyArchetype, staging: super::state::Staging },
 }
 
 /// System that executes console actions

@@ -405,7 +405,7 @@ fn get_ability_state(
 #[cfg(test)]
 mod loadout_tests {
     use super::*;
-    use common_bevy::{components::entity_type::actor::*, spatial_difficulty::EnemyArchetype};
+    use common_bevy::{components::entity_type::actor::*, archetype::EnemyArchetype};
 
     fn npc(npc: EnemyArchetype) -> EntityType {
         EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Npc(npc)))

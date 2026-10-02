@@ -11,7 +11,7 @@
 
 use std::{collections::HashMap, sync::{LazyLock, RwLock}};
 
-use common_bevy::{components::entity_type::actor::Approach, spatial_difficulty::EnemyArchetype};
+use common_bevy::{components::entity_type::actor::Approach, archetype::EnemyArchetype};
 
 /// Every Approach a foe may show, for naming one in a setting
 const APPROACHES: [Approach; 7] = [

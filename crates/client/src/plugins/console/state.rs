@@ -106,8 +106,8 @@ pub enum Staging {
 
 /// The dens the console places, in menu order from numpad 1.
 #[cfg(feature = "admin")]
-pub const DENS: [(&str, common_bevy::spatial_difficulty::EnemyArchetype); 6] = {
-    use common_bevy::spatial_difficulty::EnemyArchetype::*;
+pub const DENS: [(&str, common_bevy::archetype::EnemyArchetype); 6] = {
+    use common_bevy::archetype::EnemyArchetype::*;
     [("Dog Pack", Berserker), ("Forest Sprites", Kiter), ("Juggernauts", Juggernaut), ("Defenders", Defender), ("Skirmishers", Skirmisher), ("Ambushers", Ambusher)]
 };
 

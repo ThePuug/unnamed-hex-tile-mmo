@@ -51,7 +51,7 @@ use common_bevy::{
     message::{AbilityType, Do, Event, Try},
     plugins::nntree::NNTreePlugin,
     resources::map::Map,
-    spatial_difficulty::EnemyArchetype,
+    archetype::EnemyArchetype,
     tuning::{set_tuning, Tuning},
 };
 

@@ -8,7 +8,7 @@ use crate::{
 };
 use common_bevy::{
     components::Loc,
-    spatial_difficulty::HAVEN_LOCATION,
+    haven::HAVEN_LOCATION,
     systems::*,
 };
 
