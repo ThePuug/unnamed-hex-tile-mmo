@@ -301,7 +301,8 @@ struct Outcome {
     length: Duration,
     /// The winners' remaining health as a fraction of their total
     left: f32,
-    /// Decided on health left at the cap, not by a side dying
+    /// Run to the cap with both sides standing: a loss for both, never won
+    /// on health
     timed_out: bool,
     ledgers: HashMap<Side, Ledger>,
     /// Each side's health left at the end as a fraction of its total
@@ -441,11 +442,9 @@ fn fight(west: Team, east: Team, settings: &Settings) -> Outcome {
             (Some(&(state, max)), None) => break (Some(WEST), state / max),
             (None, Some(&(state, max))) => break (Some(EAST), state / max),
             (None, None) => break (None, 0.0),
-            // At the cap the side with more of its health left wins on points
-            (Some(&(west, _)), Some(&(east, _))) if elapsed >= settings.cap => {
+            (Some(_), Some(_)) if elapsed >= settings.cap => {
                 timed_out = true;
-                let (west, east) = (west / full[&WEST], east / full[&EAST]);
-                break if west >= east { (Some(WEST), west) } else { (Some(EAST), east) };
+                break (None, 0.0);
             }
             _ => {}
         }
@@ -531,7 +530,7 @@ fn serve() {
 fn report(settings: &Settings) {
     let (a_team, b_team) = (settings.team_a(EnemyArchetype::Berserker), settings.team_b(EnemyArchetype::Berserker));
     println!(
-        "arena: a is {} at level {}, b is {} at level {}; {} runs per pairing, decided on health after {}s",
+        "arena: a is {} at level {}, b is {} at level {}; {} runs per pairing, a loss for both sides standing at {}s",
         a_team.size, a_team.level, b_team.size, b_team.level, settings.runs, settings.cap.as_secs(),
     );
     println!();
@@ -612,8 +611,8 @@ fn matrix(settings: &Settings) -> Vec<Pairing> {
             if outcome.timed_out {
                 capped += 1;
             }
+            lengths.push(outcome.length);
             if outcome.winner.is_some() {
-                lengths.push(outcome.length);
                 left.push(outcome.left);
             }
             let share = |side: Side| outcome.shares.get(&side).copied().unwrap_or(0.0);

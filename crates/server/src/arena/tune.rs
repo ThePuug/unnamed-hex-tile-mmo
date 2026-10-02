@@ -186,11 +186,12 @@ fn imbalance(score: &Score, rows: &[Pairing]) -> f32 {
 
 /// How well `archetype` does in `rows`: its share of wins, more by
 /// `mind_edge` of its edge and `draw` of the fights both sides die in, less
-/// by `mind_capped` of those run to the cap; the mean over its pairings.
+/// by `mind_capped` of those run to the cap, which are lost on both sides;
+/// the mean over its pairings.
 fn standing(score: &Score, rows: &[Pairing], archetype: EnemyArchetype) -> f32 {
     let mine: Vec<f32> = rows.iter().filter(|row| row.a == archetype || row.b == archetype).map(|row| {
         let (own, edge) = if row.a == archetype { (row.a_wins, row.edge) } else { (row.b_wins, -row.edge) };
-        let draw = (100.0 - row.a_wins - row.b_wins).max(0.0);
+        let draw = (100.0 - row.a_wins - row.b_wins - row.capped).max(0.0);
         own + score.mind_edge * edge + score.draw * draw - score.mind_capped * row.capped
     }).collect();
     mine.iter().sum::<f32>() / mine.len().max(1) as f32
