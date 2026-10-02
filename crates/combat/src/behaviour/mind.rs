@@ -98,13 +98,13 @@ pub const TUNED: &[(&str, f32)] = &[
     ("kiter.momentum", 0.125), ("kiter.fatigue_after.floor", 0.113), ("kiter.foe_across.floor", 0.319),
     ("kiter.stride_kept.floor", 0.472), ("defender.wait", 0.159), ("defender.hold", 0.05),
     ("defender.momentum", 0.4), ("defender.fatigue_after.floor", 0.222), ("defender.worth_answering.to", 0.339),
-    ("defender.span_closed.floor", 0.209), ("skirmisher.wait", 0.241),
+    ("skirmisher.wait", 0.241),
     ("skirmisher.hold", 0.46), ("skirmisher.momentum", 0.367), ("skirmisher.fatigue_after.floor", 0.46),
     ("skirmisher.worth_answering.to", 0.308), ("skirmisher.room_to_land.to", 0.278), ("skirmisher.stamina_ready.floor", 0.144),
     ("skirmisher.foe_nearing.from", 0.962), ("skirmisher.close_stamina_ready.floor", 0.0), ("skirmisher.room_to_flee.to", 0.257),
     ("ambusher.wait", 0.569), ("ambusher.hold", 0.455), ("ambusher.momentum", 0.337),
     ("ambusher.fatigue_after.floor", 0.035), ("ambusher.worth_answering.to", 0.088), 
-    ("ambusher.span_closed.floor", 0.315), ("ambusher.reactions_left.floor", 0.479),
+    ("ambusher.reactions_left.floor", 0.479),
 ];
 
 /// Every mind setting: those for all archetypes, and each archetype's on
@@ -201,14 +201,14 @@ mod tests {
         minds.set("all.wait", "0.5").unwrap();
         minds.set("all.worth_answering.to", "0.4").unwrap();
         minds.set("defender.worth_answering.to", "0.2").unwrap();
-        minds.set("defender.span_closed.floor", "0.3").unwrap();
+        minds.set("defender.strike_worth.floor", "0.3").unwrap();
         let defender = minds.mind(Some(EnemyArchetype::Defender));
         let kiter = minds.mind(Some(EnemyArchetype::Kiter));
         assert_eq!((defender.wait, kiter.wait), (0.5, 0.5));
         assert_eq!(defender.adjusts["worth_answering"].to, Some(0.2));
         assert_eq!(kiter.adjusts["worth_answering"].to, Some(0.4));
-        assert_eq!(defender.adjusts["span_closed"].floor, Some(0.3));
-        assert!(!kiter.adjusts.contains_key("span_closed"));
+        assert_eq!(defender.adjusts["strike_worth"].floor, Some(0.3));
+        assert!(!kiter.adjusts.contains_key("strike_worth"));
     }
 
     #[test]

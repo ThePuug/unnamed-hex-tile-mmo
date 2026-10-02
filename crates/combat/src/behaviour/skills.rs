@@ -37,7 +37,7 @@ pub const COMBO: f32 = 0.15;
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
     "fatigue_after", "stamina_left", "recovery_left", "foe_just_acted", "worth_answering",
-    "span_closed", "room_to_land", "grit_banked", "strike_worth", "opening",
+    "room_to_land", "grit_banked", "strike_worth", "opening",
     "reactions_left", "stamina_spent", "stamina_ready", "foe_across",
 ];
 
@@ -210,8 +210,8 @@ fn part_considerations(reason: &str, part: Part) -> Vec<Considered> {
     match (part, reason) {
         (Part::Strike, "punish") => vec![FOE_STRUCK, FOE_JUST_ACTED, CAPACITY, STRIKE_WORTH, OPENING],
         (Part::Strike, _) => vec![FOE_STRUCK, FOE_JUST_ACTED, CAPACITY, STRIKE_WORTH],
-        (Part::Reaction, _) => vec![WORTH_ANSWERING, SPAN_CLOSED],
-        (Part::Clear, "dodge") => vec![FOE_IN_REACH, WORTH_ANSWERING, ROOM_TO_LAND],
+        (Part::Reaction, _) => vec![SPAN_CLOSED, WORTH_ANSWERING],
+        (Part::Clear, "dodge") => vec![FOE_IN_REACH, SPAN_CLOSED, WORTH_ANSWERING, ROOM_TO_LAND],
         (Part::Clear, _) => vec![FOE_IN_REACH, ROOM_TO_LAND],
         (Part::Dive, _) => vec![FOE_OUT_OF_REACH, FOE_WITHIN_A_DIVE, CAPACITY, STRIKE_WORTH],
         (Part::Stance, _) => vec![NOT_STRIDING, FOE_IN_REACH],
@@ -358,14 +358,11 @@ const WORTH_ANSWERING: Considered = Consideration {
     curve: Curve { shape: Shape::Logistic { mid: 0.4, steep: 8.0 }, falling: false, floor: 0.0 },
 };
 
-/// A threat queued once the span has closed lands past it, so waiting
-/// until then lets the most join one answer
-const SPAN_CLOSED: Considered = Consideration {
-    name: "span_closed",
-    read: |view| view.queue.span_closed,
-    bounds: (0.0, 1.0),
-    curve: Curve { shape: Shape::Power(2.0), falling: false, floor: 0.1 },
-};
+/// Its span has closed: a threat queued after it lands past it, so no
+/// threat still to come can join the answer. Every threat's window outlasts
+/// the widest span and the slowest reaction delay, so waiting for it never
+/// lets the front threat land
+const SPAN_CLOSED: Considered = step("span_closed", |view| flag(view.queue.span_closed >= 1.0));
 
 // --- Leap ---
 
@@ -525,11 +522,22 @@ mod tests {
     fn a_reaction_waits_for_its_span_to_close() {
         let span = Duration::from_millis(1000);
         let mut fresh = view(AbilityType::Counter, ActorAttributes::default());
-        fresh.queue = threats(&[(150.0, true, 0)], span, Duration::from_millis(100));
+        fresh.queue = threats(&[(150.0, true, 0)], span, Duration::from_millis(900));
         let mut closed = view(AbilityType::Counter, ActorAttributes::default());
         closed.queue = threats(&[(150.0, true, 0)], span, Duration::from_millis(1100));
-        assert!(scored(&mut fresh, "answer") < scored(&mut closed, "answer"));
-        assert!(scored(&mut fresh, "answer") < WAIT, "a blow just queued waits for what may join it");
+        assert_eq!(scored(&mut fresh, "answer"), 0.0, "a blow just queued waits for what may join it");
+        assert!(scored(&mut closed, "answer") > WAIT);
+        let mut dodge = view(AbilityType::Leap, ActorAttributes::default());
+        dodge.queue = fresh.queue;
+        assert_eq!(scored(&mut dodge, "dodge"), 0.0, "and so does a leap clear");
+    }
+
+    #[test]
+    fn every_window_outlasts_the_widest_span_and_the_slowest_reaction() {
+        let tuning = common_bevy::tuning::tuning();
+        let shortest = tuning.reaction_window * (1.0 - tuning.fatigue_window);
+        let slowest = crate::behaviour::perception::Skill::SLOPPY.slowest.as_secs_f32();
+        assert!(shortest > tuning.awareness_span_max + slowest, "{shortest}s against {}s", tuning.awareness_span_max + slowest);
     }
 
     #[test]
