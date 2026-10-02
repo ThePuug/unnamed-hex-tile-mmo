@@ -33,7 +33,7 @@ cargo build
 cargo run --bin server             # separate processes
 cargo run --bin client
 cargo run --bin server -- arena      # archetype v archetype balance, headless; keys in server/src/arena/mod.rs
-cargo run --bin server -- arena tune screen|balance|minds|loop|show|apply   # searches; bounds in arena/tune.toml
+cargo run --bin server -- arena tune screen|balance|minds|settle|loop|show|apply   # searches; bounds in arena/tune.toml
 cargo test                         # all tests
 cargo test -p common-bevy physics  # specific module
 cargo test -p server reaction_queue

@@ -14,8 +14,10 @@
 //! - `balance [evals]`: CMA-ES over the knobs that matter, for the least
 //!   imbalance
 //! - `minds [evals] [archetype ...]`: CMA-ES over each archetype's mind, for
-//!   its own score against the rest as they stand
-//! - `loop <count> [evals]`: minds, then balance, `count` times
+//!   its own score against the rest as they stand: one pass
+//! - `settle [evals]`: passes of `minds` until no archetype gains more than
+//!   `minds.settle` in one, or `minds.rounds` have run
+//! - `loop <count> [evals]`: settle the minds, then balance, `count` times
 //! - `show [ledger]`: the matrix as the state stands
 //! - `apply`: writes the state into the source
 //!
@@ -36,6 +38,9 @@ use crate::systems::behaviour::mind::{Minds, TUNED};
 
 /// The step a search starts with, in the space where each bound is 0 and 1
 const SIGMA: f64 = 0.2;
+
+/// Generations between looks at where a search's mean stands
+const LOOK_EVERY: usize = 5;
 
 #[derive(Deserialize)]
 struct Config {
@@ -91,6 +96,8 @@ struct Bounds {
 
 #[derive(Deserialize)]
 struct MindRanges {
+    settle: f32,
+    rounds: usize,
     just_acted: Bounds,
     common: Vec<Range>,
     strike: Vec<Range>,
@@ -204,8 +211,9 @@ fn standings(rows: &[Pairing]) -> String {
 /// Minimizes `objective` over `ranges` by CMA-ES from `start`, for no more
 /// than `evals` evaluations, and returns the search's mean, its estimate of
 /// the best, in each setting's own units. A point outside the bounds is
-/// scored at the nearest inside and penalized by how far out it lies.
-fn search(label: &str, ranges: &[Range], start: &[f32], evals: usize, mut objective: impl FnMut(&[f32]) -> f32) -> Vec<f32> {
+/// scored at the nearest inside and penalized by how far out it lies. Every
+/// `LOOK_EVERY` generations it prints `look` of the mean as it stands.
+fn search(label: &str, ranges: &[Range], start: &[f32], evals: usize, mut objective: impl FnMut(&[f32]) -> f32, look: impl Fn(&[f32]) -> String) -> Vec<f32> {
     let unit: Vec<f64> = ranges.iter().zip(start).map(|(range, &value)| range.to_unit(value)).collect();
     let mut evaluated = 0;
     let penalized = |x: &DVector<f64>| -> f64 {
@@ -223,8 +231,16 @@ fn search(label: &str, ranges: &[Range], start: &[f32], evals: usize, mut object
         if done.is_some() {
             break;
         }
+        if cma.generation() % LOOK_EVERY == 0 {
+            println!("  {label} mean at generation {}: {}", cma.generation(), look(&from_unit(ranges, cma.mean())));
+        }
     }
-    ranges.iter().zip(cma.mean().iter()).map(|(range, &u)| range.from_unit(u)).collect()
+    from_unit(ranges, cma.mean())
+}
+
+/// A point of the unit space in each setting's own units
+fn from_unit(ranges: &[Range], unit: &DVector<f64>) -> Vec<f32> {
+    ranges.iter().zip(unit.iter()).map(|(range, &u)| range.from_unit(u)).collect()
 }
 
 /// `values` for `ranges`, by name
@@ -240,13 +256,14 @@ pub fn run(args: &[String]) {
         Some("balance") => balance(&config, number(1, 200)),
         Some("minds") => {
             let only: Vec<EnemyArchetype> = args.iter().skip(2).map(|name| super::archetype_named(name)).collect();
-            minds(&config, number(1, 150), &only)
+            minds(&config, number(1, 150), &only);
         }
+        Some("settle") => settle(&config, number(1, 150)),
         Some("loop") => {
             let evals = number(2, 150);
             for round in 0..number(1, 1) {
                 println!("loop {round}: minds");
-                minds(&config, evals, &[]);
+                settle(&config, evals);
                 println!("loop {round}: balance");
                 balance(&config, evals);
             }
@@ -258,7 +275,7 @@ pub fn run(args: &[String]) {
             println!("imbalance {:.1}; {}", imbalance(&config.score, &rows), standings(&rows));
         }
         Some("apply") => apply(&load()),
-        _ => panic!("arena tune takes screen, balance [evals], minds [evals] [archetype ...], loop <count> [evals], show [ledger] or apply"),
+        _ => panic!("arena tune takes screen, balance [evals], minds [evals] [archetype ...], settle [evals], loop <count> [evals], show [ledger] or apply"),
     }
 }
 
@@ -300,6 +317,9 @@ fn balance(config: &Config, evals: usize) {
     let none = BTreeMap::new();
     let found = search("balance", &ranges, &start, evals, |values| {
         imbalance(&config.score, &matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs)))
+    }, |values| {
+        let rows = matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs));
+        format!("imbalance {:.1}; {}", imbalance(&config.score, &rows), standings(&rows))
     });
     // Kept only where a longer look says it beats where it started
     let check = |values: &[f32]| matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs * 2));
@@ -332,9 +352,29 @@ fn mind_ranges(config: &Config, archetype: EnemyArchetype) -> Vec<Range> {
         .collect()
 }
 
-fn minds(config: &Config, evals: usize, only: &[EnemyArchetype]) {
+/// Passes of `minds` until no archetype's gain in one passes `minds.settle`,
+/// or `minds.rounds` have run
+fn settle(config: &Config, evals: usize) {
+    for round in 0..config.minds.rounds {
+        let gains = minds(config, evals, &[]);
+        let most = gains.iter().map(|&(_, gain)| gain).fold(0.0, f32::max);
+        println!("minds round {round}: {}; most gained {most:.1}",
+            gains.iter().map(|(archetype, gain)| format!("{archetype:?} {gain:+.1}")).collect::<Vec<_>>().join(", "));
+        if most <= config.minds.settle {
+            println!("minds settled after {} rounds", round + 1);
+            return;
+        }
+    }
+    println!("minds still moving after {} rounds", config.minds.rounds);
+}
+
+/// One pass over the archetypes (all, or `only`), each mind searched
+/// against the rest as they stand; what each gained, nothing where it kept
+/// nothing
+fn minds(config: &Config, evals: usize, only: &[EnemyArchetype]) -> Vec<(EnemyArchetype, f32)> {
     let mut state = load();
     let none = BTreeMap::new();
+    let mut gains = Vec::new();
     for &archetype in EnemyArchetype::ALL.iter().filter(|archetype| only.is_empty() || only.contains(archetype)) {
         let ranges = mind_ranges(config, archetype);
         let start: Vec<f32> = ranges.iter().map(|range| state.minds.get(&range.name).copied()
@@ -342,6 +382,8 @@ fn minds(config: &Config, evals: usize, only: &[EnemyArchetype]) {
         let label = format!("{archetype:?}");
         let found = search(&label, &ranges, &start, evals, |values| {
             -standing(&config.score, &matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.runs)), archetype)
+        }, |values| {
+            format!("standing {:.1}", standing(&config.score, &matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.runs)), archetype))
         });
         let check = |values: &[f32]| standing(&config.score, &matrix(&settings(config, &state, &none, &named(&ranges, values), Some(archetype), config.runs * 2)), archetype);
         let (was, now) = (check(&start), check(&found));
@@ -349,10 +391,13 @@ fn minds(config: &Config, evals: usize, only: &[EnemyArchetype]) {
             state.minds.extend(named(&ranges, &found));
             save(&state);
             println!("{label} kept: {was:.1} -> {now:.1}");
+            gains.push((archetype, now - was));
         } else {
             println!("{label} found nothing better: {was:.1} against {now:.1}");
+            gains.push((archetype, 0.0));
         }
     }
+    gains
 }
 
 /// Writes the state's knobs into `Tuning`'s defaults and its minds into

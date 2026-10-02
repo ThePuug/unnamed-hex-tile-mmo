@@ -201,6 +201,10 @@ max = 8.0
 # skill counts (`just_acted`), and its own. A setting not yet in
 # `mind::TUNED` starts at `start`, or its range's middle.
 [minds]
+# Passes over every archetype until no mind gains more than `settle` points
+# in one, and no more than `rounds`: best responses may cycle rather than settle
+settle = 3.0
+rounds = 15
 just_acted = { min = 0.2, max = 3.0 }
 common = [
     { name = "wait", min = 0.05, max = 0.7, start = 0.35 },
