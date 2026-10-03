@@ -1,5 +1,6 @@
 pub mod camera;
 pub mod cover;
+pub mod den;
 pub mod gathering;
 pub mod glyphs;
 pub mod hex_lattice;
