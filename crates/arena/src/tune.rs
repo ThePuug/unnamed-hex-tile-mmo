@@ -255,18 +255,20 @@ fn commitment(archetype: EnemyArchetype) -> Attribute {
     ActorAttributes::line(archetype.profile().ability).expect("tune: an archetype's own skill has a line")
 }
 
-/// How much `ledger`'s side worked `attribute`'s commitment, per minute it
-/// was alive: Ferocity's combos fired early, Grit's banks released,
-/// Grace's strikes across its line, Preparation's reactions through a
-/// recovery, Awareness's threats swept beyond the front one; Patience's,
-/// the share of its time its swing waited, in points.
-fn style_use(ledger: &Ledger, attribute: Attribute) -> f32 {
+/// How much `ledger`'s side worked `attribute`'s commitment against the
+/// side `foe`'s ledger keeps: Grit's, the share of its foe's time alive its
+/// bind held it, in points; Grace's, the share of its strikes struck across
+/// its line, in points; Patience's, the share of its own time its swing
+/// waited, in points; and per minute it was alive, Ferocity's combos fired
+/// early, Preparation's reactions through a recovery and Awareness's
+/// threats swept beyond the front one.
+fn style_use(ledger: &Ledger, foe: &Ledger, attribute: Attribute) -> f32 {
     let minutes = (ledger.alive / 60.0).max(f32::EPSILON);
     let per_minute = |count: u32| count as f32 / minutes;
     match attribute {
         Attribute::Might => per_minute(ledger.early_combos),
-        Attribute::Vitality => per_minute(ledger.releases),
-        Attribute::Agility => per_minute(ledger.across),
+        Attribute::Vitality => 100.0 * ledger.bind / foe.alive.max(f32::EPSILON),
+        Attribute::Agility => 100.0 * ledger.across as f32 / ledger.strikes.max(1) as f32,
         Attribute::Discipline => per_minute(ledger.through),
         Attribute::Instinct => 100.0 * ledger.waiting / ledger.alive.max(f32::EPSILON),
         Attribute::Resolve => per_minute(ledger.queued_on.saturating_sub(ledger.landed_on + ledger.pending_on).saturating_sub(ledger.clears)),
@@ -276,10 +278,10 @@ fn style_use(ledger: &Ledger, attribute: Attribute) -> f32 {
 /// `archetype`'s use of its commitment, the mean over its pairings
 fn use_of(rows: &[Pairing], archetype: EnemyArchetype) -> f32 {
     let uses: Vec<f32> = rows.iter().filter_map(|row| match (row.a == archetype, row.b == archetype) {
-        (true, _) => Some(&row.a_ledger),
-        (_, true) => Some(&row.b_ledger),
+        (true, _) => Some((&row.a_ledger, &row.b_ledger)),
+        (_, true) => Some((&row.b_ledger, &row.a_ledger)),
         _ => None,
-    }).map(|ledger| style_use(ledger, commitment(archetype))).collect();
+    }).map(|(own, foe)| style_use(own, foe, commitment(archetype))).collect();
     uses.iter().sum::<f32>() / uses.len().max(1) as f32
 }
 

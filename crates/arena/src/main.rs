@@ -199,12 +199,16 @@ struct Ledger {
     fatigue: f32,
     /// Its commitments at work: combos fired before they unlocked
     /// (Ferocity), reactions taken through a recovery (Preparation), Grit
-    /// banks released, strikes struck across its own line (Grace), and
-    /// seconds its swing waited unstruck (Patience)
+    /// banks released and the seconds their bind held its foes, each foe's
+    /// binds merged so a refresh counts once (Grit), strikes struck across
+    /// its own line of all it struck (Grace), and seconds its swing waited
+    /// unstruck (Patience)
     early_combos: u32,
     through: u32,
     releases: u32,
+    bind: f32,
     across: u32,
+    strikes: u32,
     waiting: f32,
     /// Threats queued on it, of those landed and still queued at the end,
     /// and the clears that took the rest: how many each clear answered
@@ -235,7 +239,9 @@ impl Ledger {
         self.early_combos += other.early_combos;
         self.through += other.through;
         self.releases += other.releases;
+        self.bind += other.bind;
         self.across += other.across;
+        self.strikes += other.strikes;
         self.waiting += other.waiting;
         self.queued_on += other.queued_on;
         self.landed_on += other.landed_on;
@@ -270,6 +276,8 @@ impl Ledger {
 struct Tally {
     sides: HashMap<Entity, Side>,
     ledgers: HashMap<Side, Ledger>,
+    /// Each actor Grit has bound: when its bind ends, and whose Grit bound it
+    bound: HashMap<Entity, (Duration, Entity)>,
 }
 
 impl Tally {
@@ -298,6 +306,7 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
                     .is_some_and(|((target_loc, _), (loc, heading))| targeting::across(heading, loc, target_loc));
                 if let Some(ledger) = tally.of(*ent) {
                     *ledger.used.entry(*ability).or_default() += 1;
+                    ledger.strikes += ability.reach(1).is_some() as u32;
                     ledger.across += across as u32;
                 }
             }
@@ -330,12 +339,23 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
 /// that sent it, each threat that lands on an actor out of its queue (a
 /// reflection never stood in one), and each blow that binds, a Grit bank
 /// released into it.
-fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>) {
+fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>, time: Res<Time>, tuning: Res<Tuning>) {
     let (source, ability, damage) = match trigger.event() {
         Try { event: Event::ResolveThreat { ent, threat } } => {
             if threat.ability != Some(AbilityType::Counter) {
                 if let Some(ledger) = tally.of(*ent) {
                     ledger.landed_on += 1;
+                }
+            }
+            // A blow Grit's bank struck back binds as it lands, a bind
+            // already running taking the longer of the two
+            if threat.bind > 0.0 {
+                let now = time.elapsed();
+                let until = now + Duration::from_secs_f32(tuning.grit_bind_secs);
+                let open = tally.bound.get(ent).map_or(now, |&(end, _)| end.max(now));
+                tally.bound.insert(*ent, (until.max(open), threat.source));
+                if let Some(ledger) = tally.of(threat.source) {
+                    ledger.bind += until.saturating_sub(open).as_secs_f32();
                 }
             }
             (threat.source, threat.ability, whole(threat))
@@ -550,6 +570,13 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     let mut queues = app.world_mut().query::<(Entity, &ReactionQueue)>();
     let pending: Vec<(Entity, QueuedThreat)> = queues.iter(app.world()).flat_map(|(ent, queue)| queue.threats.iter().map(move |threat| (ent, *threat))).collect();
     let mut tally = std::mem::take(&mut *app.world_mut().resource_mut::<Tally>());
+    let now = app.world().resource::<Time>().elapsed();
+    let bound: Vec<(Duration, Entity)> = tally.bound.values().copied().collect();
+    for (until, source) in bound {
+        if let Some(ledger) = tally.of(source) {
+            ledger.bind -= until.saturating_sub(now).as_secs_f32();
+        }
+    }
     for (on, threat) in pending {
         if let Some(ledger) = tally.of(threat.source) {
             *ledger.pending.entry(threat.ability).or_default() += whole(&threat);
@@ -824,10 +851,10 @@ fn ledger_line(ledger: &Ledger, runs: f32) -> String {
     let alive = ledger.alive.max(f32::EPSILON);
     let share = |seconds: f32| 100.0 * seconds / alive;
     let each = |count: u32| count as f32 / runs;
-    format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% past faces {:.0}% fatigue {:.0}% || commitments: early combos {:.1} releases {:.1} across {:.1} waiting {:.0}% through {:.1} per answer {:.1}",
+    format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% past faces {:.0}% fatigue {:.0}% || commitments: early combos {:.1} releases {:.1} bind {:.1}s across {:.1} of {:.1} strikes waiting {:.0}% through {:.1} per answer {:.1}",
         abilities.join(" | "),
         share(ledger.recovering), share(ledger.held), share(ledger.slowed), share(ledger.beyond_reach), share(ledger.past_faces), share(ledger.fatigue),
-        each(ledger.early_combos), each(ledger.releases), each(ledger.across), share(ledger.waiting), each(ledger.through), ledger.per_answer())
+        each(ledger.early_combos), each(ledger.releases), ledger.bind / runs, each(ledger.across), each(ledger.strikes), share(ledger.waiting), each(ledger.through), ledger.per_answer())
 }
 
 #[cfg(test)]
