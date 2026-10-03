@@ -22,10 +22,11 @@ fatigue_window = 0.0
 fatigue_stamina = 0.0
 
 # Balance lessens each pairing's edge and its fights run to the cap, each a
-# hundred points off fair, both at `edge` a point, and what its median
-# fight falls short of `short` seconds; it keeps nothing that widens a
-# pairing's win split past `band` points either side of even, or the mean
-# of how far the minds fall short of their styles ([style]). A mind
+# hundred points off fair, both at `edge` a point, what its median fight
+# falls short of `short` seconds, and the mean of how far the minds fall
+# short of their styles ([style]); it keeps nothing that widens a
+# pairing's win split past `band` points either side of even, or that
+# shortfall. A mind
 # raises its archetype's edge, each fight run to the cap a loss at full
 # health
 [score]

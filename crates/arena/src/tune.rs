@@ -12,8 +12,8 @@
 //!   it moves each pairing's edge; the balance search leaves out the knobs
 //!   that move none past `screen.min_moved`
 //! - `balance [evals]`: CMA-ES over the knobs that matter, for the least
-//!   imbalance, keeping nothing that widens the split of wins or how far
-//!   the minds fall short of their styles
+//!   imbalance and shortfall of the minds' styles together, keeping
+//!   nothing that widens either the split of wins or that shortfall
 //! - `minds [evals] [archetype ...]`: CMA-ES over each archetype's mind, for
 //!   its own score against the field: one pass
 //! - `exploit [evals] [archetype ...]`: a fresh search for each archetype's
@@ -446,11 +446,14 @@ fn balance(config: &Config, evals: usize) {
     println!("balance over {} knobs: {}", ranges.len(), ranges.iter().map(|range| range.name.as_str()).collect::<Vec<_>>().join(", "));
     let start: Vec<f32> = ranges.iter().map(|range| knob(&state, &range.name).clamp(range.min, range.max)).collect();
     let none = BTreeMap::new();
+    // Fair and every style in play, in one measure: a search that weighed
+    // fairness alone would price a style's skills out of use
+    let unfair = |rows: &[Pairing]| imbalance(&config.score, rows) + short_of_style(&config.style, rows);
     let found = search("balance", &ranges, &start, SIGMA, evals, config.population, |values, seed| {
-        imbalance(&config.score, &matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs, seed)))
+        unfair(&matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs, seed)))
     }, |values| {
         let rows = matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.runs, rand::random()));
-        format!("imbalance {:.1}, split {:.1}; {}", imbalance(&config.score, &rows), split(&config.score, &rows), standings(&rows))
+        format!("imbalance {:.1}, split {:.1}, short of style {:.1}; {}", imbalance(&config.score, &rows), split(&config.score, &rows), short_of_style(&config.style, &rows), standings(&rows))
     });
     // Kept only where a longer look on the same fights says it beats where
     // it started, its split of wins and the minds' shortfall of their
@@ -458,10 +461,10 @@ fn balance(config: &Config, evals: usize) {
     let seed = rand::random();
     let check = |values: &[f32]| matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.check_runs, seed));
     let (before, after) = (check(&start), check(&found));
-    let (was, now) = (imbalance(&config.score, &before), imbalance(&config.score, &after));
+    let (was, now) = (unfair(&before), unfair(&after));
     let (split_was, split_now) = (split(&config.score, &before), split(&config.score, &after));
     let (short_was, short_now) = (short_of_style(&config.style, &before), short_of_style(&config.style, &after));
-    let looks = format!("imbalance {was:.1} -> {now:.1}, split {split_was:.1} -> {split_now:.1}, short of style {short_was:.1} -> {short_now:.1}");
+    let looks = format!("imbalance and short of style {was:.1} -> {now:.1}, split {split_was:.1} -> {split_now:.1}, short of style {short_was:.1} -> {short_now:.1}");
     if now < was && split_now <= split_was && short_now <= short_was {
         state.knobs.extend(named(&ranges, &found));
         save(&state);
