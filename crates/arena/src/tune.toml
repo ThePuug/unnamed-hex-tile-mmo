@@ -33,16 +33,20 @@ edge = 1.0
 short = 24.0
 
 # A mind is held to its archetype's style: the commitment its build invests
-# in, used at least `floor` (per minute of the fight: Ferocity's early
-# combos, Grit's releases, Grace's strikes across the line, Preparation's
-# reactions through a recovery, Awareness's threats swept beyond the front;
-# Patience's, the share of the fight its swing waits, in points). Below it
+# in, used at least `floor`: in points, Ferocity's early combos of its
+# skills (at most three in four), Grit's bind uptime on its foe, Grace's
+# strikes across its line of its strikes (at most two in three), Patience's
+# share of the fight its swing waits; per minute of the fight,
+# Preparation's reactions through a recovery and Awareness's threats swept
+# beyond the front. Each floor is three quarters of what the style can
+# reach where that is known. Below it
 # the mind's score loses `weight` of a hundred points for each share of the
 # floor it falls short of. An archetype with no floor is held to nothing.
 [style]
 weight = 0.25
 
 [style.floor]
+berserker = 56.25
 juggernaut = 25.0
 kiter = 50.0
 

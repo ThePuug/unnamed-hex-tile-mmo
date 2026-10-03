@@ -53,7 +53,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 use cmaes::{CMAESOptions, DVector};
 use serde::{Deserialize, Serialize};
 
-use common_bevy::{archetype::EnemyArchetype, components::{ActorAttributes, Attribute}, tuning::Tuning};
+use common_bevy::{archetype::EnemyArchetype, components::{ActorAttributes, Attribute}, message::AbilityType, tuning::Tuning};
 
 use super::{matrices, matrix, print_matrix, Ledger, Pairing, Settings};
 use combat::behaviour::mind::{Minds, TUNED};
@@ -256,17 +256,21 @@ fn commitment(archetype: EnemyArchetype) -> Attribute {
 }
 
 /// How much `ledger`'s side worked `attribute`'s commitment against the
-/// side `foe`'s ledger keeps: Grit's, the share of its foe's time alive its
-/// bind held it, in points; Grace's, the share of its strikes struck across
-/// its line, in points; Patience's, the share of its own time its swing
-/// waited, in points; and per minute it was alive, Ferocity's combos fired
-/// early, Preparation's reactions through a recovery and Awareness's
-/// threats swept beyond the front one.
+/// side `foe`'s ledger keeps: Ferocity's, the share of its skills that were
+/// combos fired early, in points; Grit's, the share of its foe's time alive
+/// its bind held it, in points; Grace's, the share of its strikes struck
+/// across its line, in points; Patience's, the share of its own time its
+/// swing waited, in points; and per minute it was alive, Preparation's
+/// reactions through a recovery and Awareness's threats swept beyond the
+/// front one.
 fn style_use(ledger: &Ledger, foe: &Ledger, attribute: Attribute) -> f32 {
     let minutes = (ledger.alive / 60.0).max(f32::EPSILON);
     let per_minute = |count: u32| count as f32 / minutes;
     match attribute {
-        Attribute::Might => per_minute(ledger.early_combos),
+        Attribute::Might => {
+            let skills: u32 = ledger.used.iter().filter(|&(&ability, _)| ability != AbilityType::AutoAttack).map(|(_, &uses)| uses).sum();
+            100.0 * ledger.early_combos as f32 / skills.max(1) as f32
+        }
         Attribute::Vitality => 100.0 * ledger.bind / foe.alive.max(f32::EPSILON),
         Attribute::Agility => 100.0 * ledger.across as f32 / ledger.strikes.max(1) as f32,
         Attribute::Discipline => per_minute(ledger.through),
