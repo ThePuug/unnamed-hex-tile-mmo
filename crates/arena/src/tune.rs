@@ -12,7 +12,8 @@
 //!   it moves each pairing's edge; the balance search leaves out the knobs
 //!   that move none past `screen.min_moved`
 //! - `balance [evals]`: CMA-ES over the knobs that matter, for the least
-//!   imbalance
+//!   imbalance, keeping nothing that widens the split of wins or how far
+//!   the minds fall short of their styles
 //! - `minds [evals] [archetype ...]`: CMA-ES over each archetype's mind, for
 //!   its own score against the field: one pass
 //! - `exploit [evals] [archetype ...]`: a fresh search for each archetype's
@@ -232,18 +233,28 @@ fn split(score: &Score, rows: &[Pairing]) -> f32 {
 
 /// How well `archetype` does in `rows`, what its mind search raises: its
 /// edge, a fight both sides die in nothing and each fight run to the cap a
-/// loss at full health, a hundred points; the mean over its pairings. Held
-/// to `style`, it loses `weight` of a hundred points for each share of its
-/// floor its commitment's use falls short of, and nothing above it.
+/// loss at full health, a hundred points; the mean over its pairings, less
+/// its `shortfall` where held to `style`.
 fn standing(rows: &[Pairing], archetype: EnemyArchetype, style: Option<&Style>) -> f32 {
     let mine: Vec<f32> = rows.iter().filter(|row| row.a == archetype || row.b == archetype).map(|row| {
         let edge = if row.a == archetype { row.edge } else { -row.edge };
         edge - row.capped
     }).collect();
-    let short = style.and_then(|style| Some((style.weight, *style.floor.get(&name(archetype))?)))
-        .filter(|&(_, floor)| floor > 0.0)
-        .map_or(0.0, |(weight, floor)| weight * 100.0 * (1.0 - use_of(rows, archetype) / floor).max(0.0));
-    mine.iter().sum::<f32>() / mine.len().max(1) as f32 - short
+    mine.iter().sum::<f32>() / mine.len().max(1) as f32 - style.map_or(0.0, |style| shortfall(style, rows, archetype))
+}
+
+/// How far `archetype` falls short of its style in `rows`: `weight` of a
+/// hundred points for each share of its floor its commitment's use falls
+/// short of, nothing above it or with no floor
+fn shortfall(style: &Style, rows: &[Pairing], archetype: EnemyArchetype) -> f32 {
+    style.floor.get(&name(archetype)).filter(|&&floor| floor > 0.0)
+        .map_or(0.0, |&floor| style.weight * 100.0 * (1.0 - use_of(rows, archetype) / floor).max(0.0))
+}
+
+/// Every archetype's `shortfall` in `rows`, the mean over them. A balance
+/// search keeps nothing that widens it.
+fn short_of_style(style: &Style, rows: &[Pairing]) -> f32 {
+    EnemyArchetype::ALL.iter().map(|&archetype| shortfall(style, rows, archetype)).sum::<f32>() / EnemyArchetype::ALL.len() as f32
 }
 
 /// The attribute `archetype`'s build invests in, whose commitment is its
@@ -391,7 +402,7 @@ pub fn run(args: &[String]) {
             let rows = matrix(&settings(&config, &state, &BTreeMap::new(), &BTreeMap::new(), None, config.check_runs, rand::random()));
             print_matrix(&rows, args.get(1).is_some_and(|arg| arg == "ledger"));
             println!("imbalance {:.1}, split {:.1}; {}", imbalance(&config.score, &rows), split(&config.score, &rows), standings(&rows));
-            println!("style use: {}", style_uses(&config.style, &rows));
+            println!("style use: {}; short of style {:.1}", style_uses(&config.style, &rows), short_of_style(&config.style, &rows));
         }
         Some("apply") => apply(&load()),
         _ => panic!("arena tune takes screen, balance [evals], minds [evals] [archetype ...], exploit [evals] [archetype ...], settle [evals], loop <count> [evals], show [ledger] or apply"),
@@ -442,19 +453,22 @@ fn balance(config: &Config, evals: usize) {
         format!("imbalance {:.1}, split {:.1}; {}", imbalance(&config.score, &rows), split(&config.score, &rows), standings(&rows))
     });
     // Kept only where a longer look on the same fights says it beats where
-    // it started, its split of wins no wider
+    // it started, its split of wins and the minds' shortfall of their
+    // styles no wider
     let seed = rand::random();
     let check = |values: &[f32]| matrix(&settings(config, &state, &named(&ranges, values), &none, None, config.check_runs, seed));
     let (before, after) = (check(&start), check(&found));
     let (was, now) = (imbalance(&config.score, &before), imbalance(&config.score, &after));
     let (split_was, split_now) = (split(&config.score, &before), split(&config.score, &after));
-    if now < was && split_now <= split_was {
+    let (short_was, short_now) = (short_of_style(&config.style, &before), short_of_style(&config.style, &after));
+    let looks = format!("imbalance {was:.1} -> {now:.1}, split {split_was:.1} -> {split_now:.1}, short of style {short_was:.1} -> {short_now:.1}");
+    if now < was && split_now <= split_was && short_now <= short_was {
         state.knobs.extend(named(&ranges, &found));
         save(&state);
-        println!("balance kept: imbalance {was:.1} -> {now:.1}, split {split_was:.1} -> {split_now:.1}; {}", standings(&after));
+        println!("balance kept: {looks}; {}", standings(&after));
         print_matrix(&after, false);
     } else {
-        println!("balance found nothing better: imbalance {was:.1} against {now:.1}, split {split_was:.1} against {split_now:.1}");
+        println!("balance found nothing better: {looks}");
     }
 }
 
