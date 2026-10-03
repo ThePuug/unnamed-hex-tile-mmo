@@ -278,6 +278,9 @@ struct Tally {
     ledgers: HashMap<Side, Ledger>,
     /// Each actor Grit has bound: when its bind ends, and whose Grit bound it
     bound: HashMap<Entity, (Duration, Entity)>,
+    /// Each actor's recovery as last sent: a blow's pushback resends it
+    /// longer, which is no new reaction or combo
+    recoveries: HashMap<Entity, GlobalRecovery>,
 }
 
 impl Tally {
@@ -323,11 +326,15 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
             Event::ClearQueue { ent, clear_type: ClearType::Span(_) } => if let Some(ledger) = tally.of(*ent) {
                 ledger.clears += 1;
             },
-            Event::Incremental { ent, component: MessageComponent::Recovery(recovery) } => if let Some(ledger) = tally.of(*ent) {
-                if recovery.reactions > 0 {
-                    ledger.through += 1;
-                } else if recovery.carried > 0.0 {
-                    ledger.early_combos += 1;
+            Event::Incremental { ent, component: MessageComponent::Recovery(recovery) } => {
+                let last = tally.recoveries.insert(*ent, *recovery);
+                let reactions = last.filter(|last| last.reactions <= recovery.reactions).map_or(recovery.reactions, |last| recovery.reactions - last.reactions);
+                let early = recovery.carried > 0.0 && last.is_none_or(|last| last.carried != recovery.carried || last.duration != recovery.duration);
+                if let Some(ledger) = tally.of(*ent) {
+                    ledger.through += reactions as u32;
+                    if reactions == 0 && early {
+                        ledger.early_combos += 1;
+                    }
                 }
             },
             _ => {}
