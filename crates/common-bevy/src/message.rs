@@ -222,9 +222,8 @@ pub enum AbilityType {
 
 impl AbilityType {
     /// Whether it is a reaction, an answer to what is queued, where every
-    /// other skill is an action. Discipline's Preparation lets a reaction
-    /// through a recovery
-    /// (`combos::reacts_through`).
+    /// other skill is an action. Discipline's Preparation fires a reaction
+    /// early (`combos::may_use`).
     pub fn is_reaction(self) -> bool {
         matches!(self, AbilityType::Parry | AbilityType::Counter)
     }

@@ -976,14 +976,10 @@ pub fn update_attributes(
                     },
                     // A commitment's effect is what its tier gives, from the
                     // same methods the fight reads.
-                    MetaAttributeStat::Ferocity => {
-                        format!("{}, -{:.0}%", display_attrs.ferocity().index(), display_attrs.ferocity_relief(&tuning) * 100.0)
-                    },
+                    MetaAttributeStat::Ferocity => display_attrs.ferocity().index().to_string(),
                     MetaAttributeStat::Grace => format!("+/-{:.0} deg", display_attrs.arc(&tuning)),
                     MetaAttributeStat::Grit => display_attrs.grit_fill().to_string(),
-                    MetaAttributeStat::Preparation => {
-                        format!("{}, -{:.0}%", display_attrs.preparation().index(), display_attrs.preparation_relief(&tuning) * 100.0)
-                    },
+                    MetaAttributeStat::Preparation => display_attrs.preparation().index().to_string(),
                     MetaAttributeStat::Patience => format!("+{:.0}%", display_attrs.patience_regen(&tuning) * 100.0),
                     MetaAttributeStat::Awareness => format!("{:.2}s", display_attrs.span(&tuning).as_secs_f32()),
                 };

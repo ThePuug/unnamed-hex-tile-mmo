@@ -4,9 +4,11 @@ use serde::{Deserialize, Serialize};
 use crate::message::AbilityType;
 
 /// The recovery an ability leaves its user in: no other ability until it
-/// runs out, but the combo it offers and what Preparation lets through
-/// (`combos::may_use`, `reacts_through`). The combo it offers and the burst
-/// it is part of are its own, and end with it.
+/// runs out, but the combo it offers and what Ferocity and Preparation fire
+/// early (`combos::may_use`). The combo it offers is its own; the chain it
+/// is part of runs on through the recoveries of the skills that continue
+/// it, and what the chain owes is paid as one more recovery once the last
+/// runs out (`tick`).
 ///
 /// The server starts and changes every recovery and sends the whole of it
 /// (`message::Component::Recovery`); server and client count it down alike
@@ -23,18 +25,28 @@ pub struct GlobalRecovery {
     /// Level of the opponent, for the level edge in Composure's contest;
     /// None with no opponent, which gives no edge
     pub target_level: Option<u32>,
-    /// Seconds of the recovery carried from the one before, which a combo
-    /// taken before it unlocked left unpaid (`combos::recovery_after`). No
-    /// combo this recovery offers unlocks through it.
-    pub carried: f32,
-    /// Reactions used through this recovery, Discipline's Preparation
-    /// allowing its tier of them (`combos::reacts_through`)
-    pub reactions: u8,
     /// The combo this recovery offers, none where the ability leads on to
     /// nothing or its contest leaves no time to take it in
     pub combo: Option<Combo>,
-    /// The Ferocity burst this recovery is part of
-    pub burst: Option<Burst>,
+    /// The chain this recovery is part of
+    pub chain: Chain,
+}
+
+/// A chain of skills: opened by one taken in its own time, out of recovery,
+/// and continued by each skill used inside its recoveries
+/// (`combos::recovery_after`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Chain {
+    /// Seconds it owes, a share of what each skill fired early skipped,
+    /// paid once its last recovery runs out
+    pub owed: f32,
+    /// Combos Ferocity fired early in it
+    pub early_combos: u8,
+    /// Reactions Preparation fired early in it
+    pub early_reactions: u8,
+    /// A strike taken in its own time stands in it, which lets Preparation
+    /// fire reactions early
+    pub struck: bool,
 }
 
 impl GlobalRecovery {
@@ -44,10 +56,8 @@ impl GlobalRecovery {
             duration,
             target_impact: 0,
             target_level: None,
-            carried: 0.0,
-            reactions: 0,
             combo: None,
-            burst: None,
+            chain: Chain::default(),
         }
     }
 
@@ -66,9 +76,14 @@ impl GlobalRecovery {
         self.remaining > 0.0
     }
 
-    /// Counts the recovery down by `delta` seconds
+    /// Counts the recovery down by `delta` seconds. Run out with time its
+    /// chain owes, it becomes a recovery of that time, offering nothing,
+    /// and the chain ends.
     pub fn tick(&mut self, delta: f32) {
         self.remaining = (self.remaining - delta).max(0.0);
+        if self.remaining <= 0.0 && self.chain.owed > 0.0 {
+            *self = Self { remaining: self.chain.owed, duration: self.chain.owed, combo: None, chain: Chain::default(), ..*self };
+        }
     }
 
     /// Pushes the recovery back by `pushback_amount` of its duration, to at
@@ -93,15 +108,6 @@ impl Combo {
     }
 }
 
-/// A Ferocity burst under way: `window` seconds left of its opener's
-/// recovery, inside which `steps` more combos may fire before they unlock.
-/// Each recovery of the burst hands it to the next.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct Burst {
-    pub window: f32,
-    pub steps: u8,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,6 +122,22 @@ mod tests {
         recovery.tick(1.0);
         assert_eq!(recovery.remaining, 0.0);
         assert!(!recovery.is_active());
+    }
+
+    #[test]
+    fn what_a_chain_owes_is_paid_once_its_last_recovery_runs_out_offering_nothing() {
+        let mut recovery = GlobalRecovery {
+            combo: Some(Combo { ability: AbilityType::Frenzy, unlock_at: 0.5 }),
+            chain: Chain { owed: 0.125, early_reactions: 1, struck: true, ..Chain::default() },
+            ..GlobalRecovery::new(1.0)
+        };
+        recovery.tick(1.0);
+        assert!(recovery.is_active(), "the debt becomes a recovery of its own");
+        assert!((recovery.remaining - 0.125).abs() < 1e-6 && (recovery.duration - 0.125).abs() < 1e-6);
+        assert!(recovery.combo.is_none(), "offering nothing");
+        assert_eq!(recovery.chain, Chain::default(), "and the chain ends");
+        recovery.tick(0.125);
+        assert!(!recovery.is_active(), "then it is over");
     }
 
     #[test]

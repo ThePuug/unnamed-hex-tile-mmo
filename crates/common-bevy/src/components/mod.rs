@@ -487,15 +487,16 @@ impl ActorAttributes {
 
     // Commitment: an attribute's tier, by the name it goes by
 
-    /// Ferocity, Might: combos fire before they unlock, and pay less for it (`ferocity_relief`)
+    /// Ferocity, Might: its index is how many combos it may fire early in a
+    /// chain (`combos::may_use`)
     pub fn ferocity(&self) -> CommitmentTier { self.tier(Attribute::Might) }
     /// Grace, Agility: the arc it strikes within (`arc`)
     pub fn grace(&self) -> CommitmentTier { self.tier(Attribute::Agility) }
     /// Grit, Vitality: its index is how many of the blows it lets land it banks
     pub fn grit(&self) -> CommitmentTier { self.tier(Attribute::Vitality) }
-    /// Preparation, Discipline: its index is how many reactions the actor
-    /// may use in any one recovery, each paying less of its own after
-    /// (`preparation_relief`)
+    /// Preparation, Discipline: its index is how many reactions it may fire
+    /// early in a chain once a strike taken in its own time stands in it
+    /// (`combos::may_use`)
     pub fn preparation(&self) -> CommitmentTier { self.tier(Attribute::Discipline) }
     /// Patience, Instinct: stamina refilled faster waiting on a swing it could not strike (`patience_regen`)
     pub fn patience(&self) -> CommitmentTier { self.tier(Attribute::Instinct) }
@@ -616,20 +617,6 @@ impl ActorAttributes {
     /// `Tuning::force_auto` at the ceiling of Force's share
     pub fn auto_damage(&self, tuning: &Tuning) -> f32 {
         self.base_potency(tuning) * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(tuning, Attribute::Might))
-    }
-
-    /// The share of the recovery a combo fired early skipped that this actor
-    /// is let off, by its Ferocity: `Tuning::ferocity_relief_min` to
-    /// `ferocity_relief_max`.
-    pub fn ferocity_relief(&self, tuning: &Tuning) -> f32 {
-        self.ferocity().between(tuning.ferocity_relief_min, tuning.ferocity_relief_max)
-    }
-
-    /// The share of its own recovery a reaction this actor uses through a
-    /// recovery is let off, by its Preparation:
-    /// `Tuning::preparation_relief_min` to `preparation_relief_max`.
-    pub fn preparation_relief(&self, tuning: &Tuning) -> f32 {
-        self.preparation().between(tuning.preparation_relief_min, tuning.preparation_relief_max)
     }
 
     /// How much each blow this actor lets land fills its Grit's bank

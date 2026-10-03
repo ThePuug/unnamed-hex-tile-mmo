@@ -53,7 +53,7 @@ use common_bevy::{
     message::{AbilityType, ClearType, Component as MessageComponent, Do, Event as GameEvent, Try},
     resources::map::Map,
     systems::{
-        combat::{queue::clear_threats, combos::{may_use, reacts_through, recovery_after}},
+        combat::{queue::clear_threats, combos::{may_use, recovery_after}},
         targeting,
     },
 };
@@ -119,7 +119,7 @@ fn released_into(tuning: &Tuning, damage: f32, released: bool) -> (f32, f32) {
 /// target; and `stamina` to pay `cost`. An NPC's skills channel asks the
 /// same of what it perceives, so it never weighs a skill the gate refuses.
 pub fn admits(ability: AbilityType, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool)>, stamina: f32, cost: f32) -> Result<(), AbilityFailReason> {
-    if ability != AbilityType::AutoAttack && !may_use(ability, prior) && !reacts_through(ability, prior, Some(attrs)) {
+    if ability != AbilityType::AutoAttack && !may_use(ability, prior, attrs) {
         return Err(AbilityFailReason::OnCooldown);
     }
     if let Some(within) = ability.reach(reach) {

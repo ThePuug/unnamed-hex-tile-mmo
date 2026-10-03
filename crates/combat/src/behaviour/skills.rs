@@ -356,7 +356,8 @@ const RECOVERY_LEFT: Considered = Consideration {
     name: "recovery_left",
     read: |view| {
         let fatigue = Endurance { state: view.endurance, max: view.endurance_max }.fatigue(&view.tuning);
-        recovery_after(&view.tuning, view.ability, view.recovery.as_ref(), &view.attrs, None, fatigue).remaining
+        let after = recovery_after(&view.tuning, view.ability, view.recovery.as_ref(), &view.attrs, None, fatigue);
+        after.remaining + after.chain.owed
     },
     bounds: (0.0, 6.0),
     curve: Curve::FALLING.floored(1.0),
@@ -448,13 +449,13 @@ const IN_REACH: Considered = step("in_reach", |view| flag(view.foe.is_some_and(|
 
 // --- Commitments ---
 
-/// Preparation: reactions it may still take through this recovery
+/// Preparation: reactions it may still fire early in this chain
 const REACTIONS_LEFT: Considered = Consideration {
     name: "reactions_left",
     read: |view| {
         let tier = view.attrs.preparation().index() as f32;
         match view.recovery.as_ref().filter(|recovery| recovery.is_active()) {
-            Some(recovery) => (tier - recovery.reactions as f32) / tier.max(1.0),
+            Some(recovery) => (tier - recovery.chain.early_reactions as f32) / tier.max(1.0),
             None => 1.0,
         }
     },

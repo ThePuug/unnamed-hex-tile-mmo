@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::recovery::{Burst, GlobalRecovery};
+use crate::components::recovery::GlobalRecovery;
 use crate::components::ActorAttributes;
 use crate::tuning::Tuning;
 
@@ -48,9 +48,6 @@ pub fn global_recovery_system(
             let effective_delta = delta * speed_multiplier;
 
             recovery.tick(effective_delta);
-            recovery.burst = recovery.burst
-                .map(|burst| Burst { window: burst.window - delta, ..burst })
-                .filter(|burst| burst.window > 0.0);
 
             if !recovery.is_active() {
                 commands.entity(entity).remove::<GlobalRecovery>();

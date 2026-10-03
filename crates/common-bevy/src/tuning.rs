@@ -73,18 +73,14 @@ pub struct Tuning {
     pub base_interval: f32,
     /// Share faster auto-attacks come at the ceiling of Tempo's share
     pub tempo_ceiling: f32,
-    /// Share of the recovery a combo fired early skipped that it is let off,
-    /// by its user's Ferocity
-    pub ferocity_relief_min: f32,
-    pub ferocity_relief_max: f32,
+    /// Share of the time a skill fired early skipped that its chain owes,
+    /// paid once the chain ends (`combos::recovery_after`). Authored, never
+    /// searched: it sets how far Ferocity and Preparation reach
+    pub early_owed: f32,
     /// Seconds behind the front threat a reaction reaches, by its user's
     /// Awareness; every actor has the least
     pub awareness_span_min: f32,
     pub awareness_span_max: f32,
-    /// Share of its own recovery a reaction used through a recovery is let
-    /// off, by its user's Preparation
-    pub preparation_relief_min: f32,
-    pub preparation_relief_max: f32,
     /// The half-angle either side of its heading an actor strikes within,
     /// in degrees, by its Grace
     pub grace_arc_min: f32,
@@ -229,12 +225,9 @@ impl Tuning {
         health_curve_p: 2.0,
         base_interval: 2.1,
         tempo_ceiling: 0.5,
-        ferocity_relief_min: 0.0,
-        ferocity_relief_max: 0.5,
+        early_owed: 0.5,
         awareness_span_min: 0.25,
         awareness_span_max: 1.0,
-        preparation_relief_min: 0.0,
-        preparation_relief_max: 0.5,
         grace_arc_min: 60.0,
         grace_arc_max: 150.0,
         grit_bank: 12.0,
@@ -377,12 +370,9 @@ impl Tuning {
     fn knob(&mut self, name: &str) -> Result<&mut f32, String> {
         Ok(match name {
             "base_interval" => &mut self.base_interval,
-            "ferocity_relief_min" => &mut self.ferocity_relief_min,
-            "ferocity_relief_max" => &mut self.ferocity_relief_max,
+            "early_owed" => &mut self.early_owed,
             "awareness_span_min" => &mut self.awareness_span_min,
             "awareness_span_max" => &mut self.awareness_span_max,
-            "preparation_relief_min" => &mut self.preparation_relief_min,
-            "preparation_relief_max" => &mut self.preparation_relief_max,
             "grace_arc_min" => &mut self.grace_arc_min,
             "grace_arc_max" => &mut self.grace_arc_max,
             "grit_bank" => &mut self.grit_bank,

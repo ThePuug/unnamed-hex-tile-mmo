@@ -1,76 +1,80 @@
 use crate::{
-    components::{recovery::{Burst, Combo, GlobalRecovery}, ActorAttributes},
+    components::{recovery::{Chain, Combo, GlobalRecovery}, ActorAttributes},
     message::AbilityType,
     systems::combat::damage as damage_calc,
 };
 use crate::tuning::Tuning;
 
-/// Whether `ability` may be used under `recovery`: anything out of
-/// recovery; in it, the combo it offers once that unlocks, or before then
-/// while its burst has a step left inside its opener's recovery. Every
-/// ability that can be offered asks here.
-pub fn may_use(ability: AbilityType, recovery: Option<&GlobalRecovery>) -> bool {
-    match recovery {
-        Some(recovery) if recovery.is_active() => recovery.combo.is_some_and(|combo| {
-            combo.ability == ability
-                && (combo.is_unlocked(recovery.remaining) || recovery.burst.is_some_and(|burst| burst.steps > 0 && burst.window > 0.0))
-        }),
-        _ => true,
+/// When a skill may be used under a recovery (`timing`)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Timing {
+    /// In its own time: out of recovery, or the combo it offers once that
+    /// unlocks
+    OnTime,
+    /// Before the recovery would offer it, by a commitment
+    Early(Early),
+}
+
+/// The commitment that fires a skill early
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Early {
+    /// The combo the recovery offers, strike or reaction
+    Ferocity,
+    /// Any reaction, once a strike taken in its own time stands in the chain
+    Preparation,
+}
+
+/// When `ability` may be used under `recovery` by an actor with `attrs`:
+/// in its own time, or early while its Ferocity has a step left in the
+/// chain (the combo offered) or its Preparation has one (any reaction, once
+/// a strike taken in its own time stands in the chain); None where it may
+/// not. An offered reaction fired early spends Ferocity's step first.
+pub fn timing(ability: AbilityType, recovery: Option<&GlobalRecovery>, attrs: &ActorAttributes) -> Option<Timing> {
+    let Some(recovery) = recovery.filter(|recovery| recovery.is_active()) else { return Some(Timing::OnTime) };
+    let offered = recovery.combo.filter(|combo| combo.ability == ability);
+    if offered.is_some_and(|combo| combo.is_unlocked(recovery.remaining)) {
+        return Some(Timing::OnTime);
+    }
+    let chain = recovery.chain;
+    if offered.is_some() && (chain.early_combos as usize) < attrs.ferocity().index() {
+        Some(Timing::Early(Early::Ferocity))
+    } else if ability.is_reaction() && chain.struck && (chain.early_reactions as usize) < attrs.preparation().index() {
+        Some(Timing::Early(Early::Preparation))
+    } else {
+        None
     }
 }
 
-/// Whether `ability`, a reaction, may be used through `recovery`:
-/// Discipline's Preparation lets an actor with `attrs` use up to its tier of
-/// reactions in any one recovery, each adding its own onto the rest, less
-/// what its Preparation lets it off (`recovery_after`).
-pub fn reacts_through(ability: AbilityType, recovery: Option<&GlobalRecovery>, attrs: Option<&ActorAttributes>) -> bool {
-    let (Some(recovery), Some(attrs)) = (recovery, attrs) else { return false };
-    ability.is_reaction() && recovery.is_active() && (recovery.reactions as usize) < attrs.preparation().index()
+/// Whether `ability` may be used under `recovery` by an actor with `attrs`
+/// (`timing`). Every ability but the auto-attack, which keeps its own
+/// clock, asks here.
+pub fn may_use(ability: AbilityType, recovery: Option<&GlobalRecovery>, attrs: &ActorAttributes) -> bool {
+    timing(ability, recovery, attrs).is_some()
 }
 
 /// The recovery `ability` leaves an actor with `attrs` in, used under
 /// `prior`, the recovery it was used in, and contested by `against`, the
 /// one it was used against: a strike's target, or the source of the threat
-/// a reaction answers (`GlobalRecovery::against`). The ability's own
-/// seconds run longer by `Tuning::fatigue_recovery` of the actor's
-/// `fatigue`, 0 to 1 (`Endurance::fatigue`).
+/// a reaction answers (`GlobalRecovery::against`). It runs the ability's own
+/// seconds, longer by `Tuning::fatigue_recovery` of the actor's `fatigue`,
+/// 0 to 1 (`Endurance::fatigue`).
 ///
-/// A combo taken before it unlocked carries what it skipped of `prior`,
-/// less the share its Ferocity lets it off (`ActorAttributes::ferocity_relief`),
-/// so a burst fired early costs less than it would have played out. Taken
-/// once unlocked, it carries nothing. A reaction used through a recovery
-/// (`reacts_through`) carries all of it and adds its own, less the share
-/// its Preparation lets it off (`ActorAttributes::preparation_relief`):
-/// it pays after, and pays less.
+/// Used out of recovery, it opens a chain; inside one, it continues
+/// `prior`'s. Fired early (`timing`), it adds `Tuning::early_owed` of what it
+/// skipped to what the chain owes, which `GlobalRecovery::tick` turns into
+/// a recovery once the chain's last runs out: from now to when `prior`
+/// would have offered it, its combo's unlock or its end. A strike taken in
+/// its own time lets Preparation fire reactions early from then on.
 ///
 /// It offers the ability's combo (`AbilityType::combo`), unlocking through
-/// the ability's own seconds and never through what was carried: earlier by
-/// a floor every actor has (`Tuning::combo_floor`), and more by the user's
-/// Flow over the Reflex of a strike's target, the level gap weighing in; a
-/// reaction's is contested by no one.
-///
-/// A combo fired early spends a step of the burst `prior` was part of; any
-/// other use of an ability that leads on opens one of the Ferocity tier's
-/// steps, 0 to 3, inside its own seconds.
+/// the ability's own seconds: earlier by a floor every actor has
+/// (`Tuning::combo_floor`), and more by the user's Flow over the Reflex of
+/// a strike's target, the level gap weighing in; a reaction's is contested
+/// by no one.
 pub fn recovery_after(tuning: &Tuning, ability: AbilityType, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, against: Option<&ActorAttributes>, fatigue: f32) -> GlobalRecovery {
     let prior = prior.filter(|prior| prior.is_active());
-    let taken = prior.and_then(|prior| prior.combo).filter(|combo| combo.ability == ability);
-    let through = prior.is_some() && taken.is_none();
-    let relief = if through { attrs.preparation_relief(tuning) } else { 0.0 };
-    let own = tuning.recovery(ability) * (1.0 + tuning.fatigue_recovery * fatigue) * (1.0 - relief);
+    let own = tuning.recovery(ability) * (1.0 + tuning.fatigue_recovery * fatigue);
     let mut recovery = GlobalRecovery::new(own).against(against);
-
-    let carried = match (prior, taken) {
-        (Some(prior), Some(combo)) => (prior.remaining - combo.unlock_at).max(0.0) * (1.0 - attrs.ferocity_relief(tuning)),
-        (Some(prior), None) => {
-            recovery.reactions = prior.reactions.saturating_add(1);
-            prior.remaining
-        }
-        (None, _) => 0.0,
-    };
-    recovery.remaining += carried;
-    recovery.duration += carried;
-    recovery.carried = carried;
 
     recovery.combo = ability.combo().and_then(|next| {
         let defender = against.filter(|_| !ability.is_reaction()).unwrap_or(attrs);
@@ -80,12 +84,20 @@ pub fn recovery_after(tuning: &Tuning, ability: AbilityType, prior: Option<&Glob
         (reduction >= f32::EPSILON).then(|| Combo { ability: next, unlock_at: (own * reduction).min(own) })
     });
 
-    let early = prior.zip(taken).is_some_and(|(prior, combo)| !combo.is_unlocked(prior.remaining));
-    recovery.burst = if early {
-        prior.and_then(|prior| prior.burst).map(|burst| Burst { steps: burst.steps.saturating_sub(1), ..burst })
-    } else {
-        let steps = attrs.ferocity().index() as u8;
-        (steps > 0 && ability.combo().is_some()).then_some(Burst { window: own, steps })
+    let strike = ability.reach(1).is_some();
+    recovery.chain = match (prior, timing(ability, prior, attrs)) {
+        (Some(prior), Some(Timing::Early(by))) => {
+            let offered_at = prior.combo.filter(|combo| combo.ability == ability).map_or(0.0, |combo| combo.unlock_at);
+            let mut chain = prior.chain;
+            chain.owed += tuning.early_owed * (prior.remaining - offered_at).max(0.0);
+            match by {
+                Early::Ferocity => chain.early_combos += 1,
+                Early::Preparation => chain.early_reactions += 1,
+            }
+            chain
+        }
+        (Some(prior), _) => Chain { struck: prior.chain.struck || strike, ..prior.chain },
+        (None, _) => Chain { struck: strike, ..Chain::default() },
     };
     recovery
 }
@@ -98,77 +110,123 @@ mod tests {
         GlobalRecovery { combo: Some(Combo { ability, unlock_at }), ..GlobalRecovery::new(seconds) }
     }
 
+    /// All of its levels in Might, Discipline or nothing
+    fn fierce() -> ActorAttributes { ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0) }
+    fn prepared() -> ActorAttributes { ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0) }
+    fn plain() -> ActorAttributes { ActorAttributes::default() }
+
     #[test]
     fn only_the_offered_combo_passes_the_recovery_once_it_unlocks() {
         let recovery = offering(2.0, AbilityType::Frenzy, 1.5);
         let mut later = recovery;
         later.tick(1.0);
-        assert!(may_use(AbilityType::Feint, None), "out of recovery, anything");
-        assert!(!may_use(AbilityType::Frenzy, Some(&recovery)), "not before it unlocks");
-        assert!(may_use(AbilityType::Frenzy, Some(&later)), "the combo, once unlocked");
-        assert!(!may_use(AbilityType::Feint, Some(&later)), "nothing else");
+        assert!(may_use(AbilityType::Feint, None, &plain()), "out of recovery, anything");
+        assert!(!may_use(AbilityType::Frenzy, Some(&recovery), &plain()), "not before it unlocks");
+        assert!(may_use(AbilityType::Frenzy, Some(&later), &plain()), "the combo, once unlocked");
+        assert!(!may_use(AbilityType::Feint, Some(&later), &plain()), "nothing else");
     }
 
     #[test]
-    fn preparation_reacts_through_a_recovery_up_to_its_tier_and_pays_after() {
+    fn ferocity_fires_the_offered_combo_early_up_to_its_tier_in_a_chain() {
+        let fierce = fierce();
+        let steps = fierce.ferocity().index();
+        assert!(steps > 0, "all of it in Might reaches a Ferocity tier");
+        let recovery = offering(2.0, AbilityType::Frenzy, 1.5);
+        assert_eq!(timing(AbilityType::Frenzy, Some(&recovery), &fierce), Some(Timing::Early(Early::Ferocity)));
+        assert!(!may_use(AbilityType::Feint, Some(&recovery), &fierce), "only the combo offered");
+        assert!(!may_use(AbilityType::Frenzy, Some(&recovery), &plain()), "no Ferocity, no early combo");
+        let spent = GlobalRecovery { chain: Chain { early_combos: steps as u8, ..Chain::default() }, ..recovery };
+        assert!(!may_use(AbilityType::Frenzy, Some(&spent), &fierce), "no more than its tier in a chain");
+        let reaction = offering(2.0, AbilityType::Parry, 1.5);
+        assert_eq!(timing(AbilityType::Parry, Some(&reaction), &fierce), Some(Timing::Early(Early::Ferocity)), "a reaction offered as the combo too");
+    }
+
+    #[test]
+    fn preparation_fires_any_reaction_early_once_a_strike_stands_in_the_chain() {
+        let prepared = prepared();
+        let steps = prepared.preparation().index();
+        assert!(steps > 0, "all of it in Discipline reaches a Preparation tier");
+        let struck = GlobalRecovery { chain: Chain { struck: true, ..Chain::default() }, ..GlobalRecovery::new(2.0) };
+        assert_eq!(timing(AbilityType::Counter, Some(&struck), &prepared), Some(Timing::Early(Early::Preparation)));
+        assert!(!may_use(AbilityType::Frenzy, Some(&struck), &prepared), "reactions only");
+        assert!(!may_use(AbilityType::Counter, Some(&struck), &plain()), "no Preparation, no early reaction");
+        assert!(!may_use(AbilityType::Counter, Some(&GlobalRecovery::new(2.0)), &prepared), "with no strike in the chain, none");
+        let spent = GlobalRecovery { chain: Chain { struck: true, early_reactions: steps as u8, ..Chain::default() }, ..struck };
+        assert!(!may_use(AbilityType::Counter, Some(&spent), &prepared), "no more than its tier in a chain");
+    }
+
+    #[test]
+    fn an_early_skill_owes_half_of_what_it_skipped_and_one_on_time_nothing() {
+        // A 1s recovery offering its combo halfway, fired a quarter second
+        // in: a quarter second skipped, an eighth owed
         let tuning = Tuning::DEFAULT;
-        let disciplined = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
-        let plain = ActorAttributes::default();
-        let recovering = GlobalRecovery::new(2.0);
-        assert!(reacts_through(AbilityType::Counter, Some(&recovering), Some(&disciplined)));
-        assert!(!reacts_through(AbilityType::Counter, Some(&recovering), Some(&plain)), "no Preparation, no reaction in recovery");
-        assert!(!reacts_through(AbilityType::Frenzy, Some(&recovering), Some(&disciplined)), "reactions only");
-        assert!(!reacts_through(AbilityType::Leap, Some(&recovering), Some(&disciplined)), "a Leap is an action");
-        let through = recovery_after(&tuning, AbilityType::Counter, Some(&recovering), &disciplined, None, 0.0);
-        let own = tuning.recovery(AbilityType::Counter);
-        assert!(through.remaining > 2.0 && through.remaining < own + 2.0, "its own recovery added onto the rest, less what Preparation lets it off");
-        assert_eq!(recovery_after(&tuning, AbilityType::Counter, None, &disciplined, None, 0.0).remaining, own, "out of recovery, the whole of its own");
-        assert_eq!(through.reactions, 1);
-        let full = GlobalRecovery { reactions: 3, ..through };
-        assert!(!reacts_through(AbilityType::Counter, Some(&full), Some(&disciplined)), "no more than the tier");
-    }
+        let mut prior = offering(1.0, AbilityType::Parry, 0.5);
+        prior.tick(0.25);
+        let early = recovery_after(&tuning, AbilityType::Parry, Some(&prior), &fierce(), None, 0.0);
+        assert!((early.chain.owed - 0.125).abs() < 1e-6, "owes {}", early.chain.owed);
+        assert_eq!(early.remaining, tuning.recovery(AbilityType::Parry), "its own recovery, the skipped time owed apart");
+        assert_eq!(early.chain.early_combos, 1);
 
-    #[test]
-    fn a_burst_fires_the_combo_early_while_it_has_steps() {
-        let burst = Burst { window: 1.0, steps: 1 };
-        let with = |burst| GlobalRecovery { burst: Some(burst), ..offering(2.0, AbilityType::Frenzy, 1.5) };
-        assert!(may_use(AbilityType::Frenzy, Some(&with(burst))), "at once, with a step");
-        assert!(!may_use(AbilityType::Frenzy, Some(&with(Burst { steps: 0, ..burst }))), "none left");
-        assert!(!may_use(AbilityType::Frenzy, Some(&with(Burst { window: 0.0, ..burst }))), "past the opener's recovery");
-        assert!(!may_use(AbilityType::Feint, Some(&with(burst))), "only the combo");
-    }
-
-    #[test]
-    fn an_early_combo_carries_what_it_skipped_and_an_unlocked_one_nothing() {
-        let tuning = Tuning::DEFAULT;
-        let plain = ActorAttributes::default();
-        let prior = offering(2.0, AbilityType::Frenzy, 1.5);
-        let own = tuning.recovery(AbilityType::Frenzy);
-        let early = recovery_after(&tuning, AbilityType::Frenzy, Some(&prior), &plain, None, 0.0);
-        assert!((early.remaining - (own + 0.5)).abs() < 1e-5, "the half second it skipped comes after");
         let mut waited = prior;
-        waited.tick(0.6);
-        assert_eq!(recovery_after(&tuning, AbilityType::Frenzy, Some(&waited), &plain, None, 0.0).remaining, own, "on time, its own");
-        assert_eq!(recovery_after(&tuning, AbilityType::Frenzy, None, &plain, None, 0.0).remaining, own, "fresh, its own");
+        waited.tick(0.3);
+        let on_time = recovery_after(&tuning, AbilityType::Parry, Some(&waited), &fierce(), None, 0.0);
+        assert_eq!(on_time.chain.owed, 0.0, "taken once unlocked, it owes nothing");
+        assert_eq!(on_time.chain.early_combos, 0);
+    }
+
+    #[test]
+    fn a_parry_then_its_feint_then_a_parry_fired_early_is_one_chain() {
+        let tuning = Tuning::DEFAULT;
+        let prepared = prepared();
+        let parry = recovery_after(&tuning, AbilityType::Parry, None, &prepared, None, 0.0);
+        assert!(!parry.chain.struck, "a reaction opens it, striking nothing");
+        assert!(!may_use(AbilityType::Counter, Some(&parry), &prepared), "so no reaction fires early yet");
+
+        let mut unlocked = parry;
+        unlocked.tick(parry.remaining - parry.combo.unwrap().unlock_at);
+        assert_eq!(timing(AbilityType::Feint, Some(&unlocked), &prepared), Some(Timing::OnTime));
+        let feint = recovery_after(&tuning, AbilityType::Feint, Some(&unlocked), &prepared, None, 0.0);
+        assert!(feint.chain.struck, "its Feint, taken in its own time, strikes");
+
+        assert_eq!(timing(AbilityType::Parry, Some(&feint), &prepared), Some(Timing::Early(Early::Preparation)));
+        let again = recovery_after(&tuning, AbilityType::Parry, Some(&feint), &prepared, None, 0.0);
+        let offered_at = feint.combo.filter(|combo| combo.ability == AbilityType::Parry).map_or(0.0, |combo| combo.unlock_at);
+        assert!((again.chain.owed - tuning.early_owed * (feint.remaining - offered_at)).abs() < 1e-5, "half of what it skipped of the Feint's recovery");
+        assert_eq!((again.chain.early_reactions, again.chain.struck), (1, true), "one chain throughout");
+    }
+
+    #[test]
+    fn a_chain_sums_what_each_early_skill_owes() {
+        let tuning = Tuning::DEFAULT;
+        let prepared = prepared();
+        let struck = GlobalRecovery { chain: Chain { struck: true, ..Chain::default() }, ..GlobalRecovery::new(2.0) };
+        let first = recovery_after(&tuning, AbilityType::Counter, Some(&struck), &prepared, None, 0.0);
+        if prepared.preparation().index() > 1 {
+            let second = recovery_after(&tuning, AbilityType::Parry, Some(&first), &prepared, None, 0.0);
+            let skipped = 2.0 + first.remaining;
+            assert!((second.chain.owed - tuning.early_owed * skipped).abs() < 1e-5, "each pays half its own skip, summed");
+        }
+        assert!((first.chain.owed - tuning.early_owed * 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn out_of_recovery_a_skill_opens_a_fresh_chain() {
+        let tuning = Tuning::DEFAULT;
+        let fresh = recovery_after(&tuning, AbilityType::Frenzy, None, &fierce(), None, 0.0);
+        assert_eq!(fresh.chain, Chain { struck: true, ..Chain::default() }, "a strike in its own time, owing nothing");
+        assert_eq!(fresh.remaining, tuning.recovery(AbilityType::Frenzy));
     }
 
     #[test]
     fn a_recovery_offers_its_combo_inside_its_own_seconds() {
         let tuning = Tuning::DEFAULT;
-        let plain = ActorAttributes::default();
         let own = tuning.recovery(AbilityType::Frenzy);
-        let fresh = recovery_after(&tuning, AbilityType::Frenzy, None, &plain, None, 0.0);
+        let fresh = recovery_after(&tuning, AbilityType::Frenzy, None, &plain(), None, 0.0);
         if let Some(combo) = fresh.combo {
             assert_eq!(Some(combo.ability), AbilityType::Frenzy.combo());
             assert!((0.0..=own).contains(&combo.unlock_at));
         }
-
-        // What an early combo carried is never unlocked through
-        let prior = offering(2.0, AbilityType::Frenzy, 0.5);
-        let early = recovery_after(&tuning, AbilityType::Frenzy, Some(&prior), &plain, None, 0.0);
-        assert!(early.carried > 0.0);
-        assert_eq!(early.combo.map(|combo| combo.unlock_at), fresh.combo.map(|combo| combo.unlock_at));
-        assert!(recovery_after(&tuning, AbilityType::Counter, None, &plain, None, 0.0).combo.is_none(), "a Counter leads on to nothing");
+        assert!(recovery_after(&tuning, AbilityType::Counter, None, &plain(), None, 0.0).combo.is_none(), "a Counter leads on to nothing");
     }
 
     #[test]
@@ -186,28 +244,10 @@ mod tests {
     #[test]
     fn fatigue_lengthens_a_recovery() {
         let tuning = Tuning::DEFAULT;
-        let plain = ActorAttributes::default();
-        let fresh = recovery_after(&tuning, AbilityType::Frenzy, None, &plain, None, 0.0);
-        let tired = recovery_after(&tuning, AbilityType::Frenzy, None, &plain, None, 0.5);
-        let spent = recovery_after(&tuning, AbilityType::Frenzy, None, &plain, None, 1.0);
+        let fresh = recovery_after(&tuning, AbilityType::Frenzy, None, &plain(), None, 0.0);
+        let tired = recovery_after(&tuning, AbilityType::Frenzy, None, &plain(), None, 0.5);
+        let spent = recovery_after(&tuning, AbilityType::Frenzy, None, &plain(), None, 1.0);
         assert!(tired.remaining > fresh.remaining && spent.remaining > tired.remaining, "the more spent, the longer");
-    }
-
-    #[test]
-    fn ferocity_opens_a_burst_and_each_early_combo_spends_a_step() {
-        let tuning = Tuning::DEFAULT;
-        let fierce = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
-        let steps = fierce.ferocity().index() as u8;
-        assert!(steps > 0, "all of it in Might reaches a Ferocity tier");
-        let opener = recovery_after(&tuning, AbilityType::Frenzy, None, &fierce, None, 0.0);
-        assert_eq!(opener.burst.map(|burst| burst.steps), Some(steps));
-        assert!(may_use(AbilityType::Frenzy, Some(&opener)), "the next bite fires at once");
-
-        let second = recovery_after(&tuning, AbilityType::Frenzy, Some(&opener), &fierce, None, 0.0);
-        assert_eq!(second.burst.map(|burst| burst.steps), Some(steps - 1), "and spends a step");
-        let skipped = opener.remaining - opener.combo.unwrap().unlock_at;
-        assert!(second.carried > 0.0 && second.carried < skipped, "carrying what it skipped, less what its Ferocity lets it off");
-        assert!(recovery_after(&tuning, AbilityType::Frenzy, None, &ActorAttributes::default(), None, 0.0).burst.is_none(), "no Ferocity, no burst");
     }
 
     #[test]
