@@ -39,6 +39,11 @@ impl EventRegistry {
         self.composite.cover_at(q, r)
     }
 
+    /// The habitat of the den whose site is this tile, where one is.
+    pub fn den_at(&self, q: i32, r: i32) -> Option<common::den::Habitat> {
+        self.composite.den_at(q, r)
+    }
+
     /// Drain event metrics (reads gauges, resets interval counters).
     pub fn drain_metrics(&self) -> world::events::EventMetricsSnapshot {
         self.composite.drain_metrics()

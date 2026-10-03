@@ -17,7 +17,8 @@ use common_bevy::{
 };
 use crate::resources::event_registry::EventRegistry;
 use crate::plugins::metrics::SystemTimings;
-use crate::systems::gathering::WorldChanges;
+use crate::systems::{dens::Dens, gathering::WorldChanges};
+use common::den::Habitat;
 
 
 
@@ -39,10 +40,11 @@ pub struct VisibleChunkCache {
 pub const MAX_CHUNK_TASKS: usize = 16;
 
 /// In-flight async chunk generation tasks.
-/// Task returns (chunk, duration_ms) so we can report async metrics.
+/// Task returns (chunk, the den sites on it, duration_ms) so we can report
+/// async metrics.
 #[derive(Resource, Default)]
 pub struct ChunkTaskQueue {
-    tasks: Vec<(ChunkId, Task<(TerrainChunk, f32)>)>,
+    tasks: Vec<(ChunkId, Task<(TerrainChunk, Vec<(Qrz, Habitat)>, f32)>)>,
     /// Chunks currently being generated (avoid duplicate tasks).
     pub in_flight: std::collections::HashSet<ChunkId>,
     /// Cache-missed chunks awaiting a task slot, drained nearest-first.
@@ -211,9 +213,11 @@ pub fn do_incremental(
     }
 }
 
-/// Generate a chunk of terrain tiles (pure computation, no ECS access).
-fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> TerrainChunk {
+/// Generate a chunk of terrain tiles, and the den sites among them (pure
+/// computation, no ECS access).
+fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> (TerrainChunk, Vec<(Qrz, Habitat)>) {
     let mut tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>); 272]> = tinyvec::ArrayVec::new();
+    let mut dens = Vec::new();
     let coords: Vec<(i32, i32)> = chunk::chunk_tiles(chunk_id).collect();
 
     for &(q, r) in &coords {
@@ -223,9 +227,12 @@ fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> TerrainChunk {
         let qrz = Qrz { q, r, z };
         let typ = EntityType::Decorator(Decorator { cover, is_solid: true });
         tiles.push((qrz, typ, water));
+        if let Some(habitat) = registry.den_at(q, r) {
+            dens.push((qrz, habitat));
+        }
     }
 
-    TerrainChunk::new(tiles)
+    (TerrainChunk::new(tiles), dens)
 }
 
 /// Merge a chunk's tiles into the server Map for physics, collision and AI,
@@ -304,9 +311,9 @@ pub fn try_discover_chunk(
             let reg = registry.clone();
             let task = AsyncComputeTaskPool::get().spawn(async move {
                 let start = std::time::Instant::now();
-                let chunk = generate_chunk(chunk_id, &reg);
+                let (chunk, dens) = generate_chunk(chunk_id, &reg);
                 let duration_ms = start.elapsed().as_secs_f64() as f32 * 1000.0;
-                (chunk, duration_ms)
+                (chunk, dens, duration_ms)
             });
             task_queue.tasks.push((chunk_id, task));
         }
@@ -344,13 +351,14 @@ pub fn poll_chunk_tasks(
     snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
     timings: Res<SystemTimings>,
     changes: Res<WorldChanges>,
+    mut den_sites: ResMut<Dens>,
 ) {
     let mut _t = None;
     let mut pending = Vec::new();
     let current = std::mem::take(&mut task_queue.tasks);
 
     for (chunk_id, mut task) in current {
-        if let Some((chunk, duration_ms)) = block_on(poll_once(&mut task)) {
+        if let Some((chunk, dens, duration_ms)) = block_on(poll_once(&mut task)) {
             _t.get_or_insert_with(|| timings.scope("chunk_poll"));
             snapshot.record(&[("chunk.dur_ms", duration_ms)]);
             let chunk = Arc::new(chunk);
@@ -363,6 +371,9 @@ pub fn poll_chunk_tasks(
             }
             world_cache.chunks.insert(chunk_id, Arc::clone(&chunk));
             world_cache.access_order.get_or_insert(chunk_id, || ());
+            for (site, habitat) in dens {
+                den_sites.found(site, habitat);
+            }
 
             let wire_tiles = merge_and_pack(&chunk, &map, &changes);
             for ent in task_queue.release(chunk_id) {

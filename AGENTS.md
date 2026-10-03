@@ -167,7 +167,7 @@ that skips it serves the tree a player felled.
 **INV-009 — The world's stack is opaque.** Outside
 `crates/world/src/events`, the world is read through `Composite::tile_at` and
 its siblings (`tiles_at`, `elevation_at`, `water_at`, `tags_at`,
-`cover_at`): a tile, composed. No caller learns which layers exist, reads a
+`cover_at`, `den_at`): a tile, composed. No caller learns which layers exist, reads a
 layer's index, or skips a layer it thinks it does not need. A layer's work
 changes behind that contract, and a bypass becomes load-bearing. A layer too
 slow for the tile path is made cheaper inside itself, never at the

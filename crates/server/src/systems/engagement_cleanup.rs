@@ -14,7 +14,7 @@ use common_bevy::{
     message::{Do, Event},
 };
 
-use crate::resources::Lobby;
+use crate::{resources::Lobby, systems::dens::EngagementEnded};
 
 /// Abandonment timeout (30 seconds with no one watching)
 const ABANDONMENT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -33,9 +33,12 @@ const PROXIMITY_RANGE: i32 = 150;
 
 /// Actions on cleanup:
 /// - Despawn engagement entity
+/// - Say which way it ended ([`EngagementEnded`]), so a den is cleared only
+///   when its pack died
 pub fn cleanup_engagements(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
+    mut ended: MessageWriter<EngagementEnded>,
     time: Res<Time>,
     engagement_query: Query<(Entity, &Engagement, &Loc, &LastPlayerProximity)>,
     npc_query: Query<&EngagementMember>,
@@ -72,6 +75,7 @@ pub fn cleanup_engagements(
 
             // Despawn engagement entity directly (no network component, clients don't know about it)
             commands.entity(engagement_entity).despawn();
+            ended.write(EngagementEnded { at: engagement.spawn_location, cleared: all_npcs_dead });
         }
     }
 }

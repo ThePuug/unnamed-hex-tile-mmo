@@ -1,6 +1,8 @@
 //! The enemy archetypes: what each is drawn as, its signature ability,
 //! and how an NPC of one spends the points its level gives it.
 
+use common::den::Habitat;
+
 use crate::{
     components::{entity_type::actor::{Approach, Resilience}, ActorAttributes},
     message::AbilityType,
@@ -30,6 +32,8 @@ pub struct Profile {
     /// (Might-Agility, Vitality-Discipline, Instinct-Resolve): negative the
     /// pair's left attribute, positive its right
     pub build: [i8; 3],
+    /// The ground it dens on: a den site of this habitat is one of its
+    pub habitat: Habitat,
 }
 
 impl EnemyArchetype {
@@ -41,13 +45,18 @@ impl EnemyArchetype {
         use Approach::*;
         use Resilience::*;
         match self {
-            Self::Berserker  => Profile { name: "Wild Dog",      ability: Frenzy,        approach: Direct,    resilience: Primal,   build: [-1, 0, 0] },
-            Self::Juggernaut => Profile { name: "Juggernaut",    ability: Overpower,     approach: Binding,   resilience: Vital,    build: [0, -1, 0] },
-            Self::Kiter      => Profile { name: "Forest Sprite", ability: PerfectStride, approach: Distant,   resilience: Mental,   build: [1, 0, 0] },
-            Self::Defender   => Profile { name: "Defender",      ability: Counter,       approach: Patient,   resilience: Hardened, build: [0, 0, 1] },
-            Self::Skirmisher => Profile { name: "Skirmisher",    ability: Leap,          approach: Evasive,   resilience: Shielded, build: [0, 0, -1] },
-            Self::Ambusher   => Profile { name: "Ambusher",      ability: Punish,        approach: Ambushing, resilience: Blessed,  build: [0, 1, 0] },
+            Self::Berserker  => Profile { name: "Wild Dog",      ability: Frenzy,        approach: Direct,    resilience: Primal,   build: [-1, 0, 0], habitat: Habitat::Open },
+            Self::Juggernaut => Profile { name: "Juggernaut",    ability: Overpower,     approach: Binding,   resilience: Vital,    build: [0, -1, 0], habitat: Habitat::Rock },
+            Self::Kiter      => Profile { name: "Forest Sprite", ability: PerfectStride, approach: Distant,   resilience: Mental,   build: [1, 0, 0], habitat: Habitat::Woods },
+            Self::Defender   => Profile { name: "Defender",      ability: Counter,       approach: Patient,   resilience: Hardened, build: [0, 0, 1], habitat: Habitat::Range },
+            Self::Skirmisher => Profile { name: "Skirmisher",    ability: Leap,          approach: Evasive,   resilience: Shielded, build: [0, 0, -1], habitat: Habitat::Scrub },
+            Self::Ambusher   => Profile { name: "Ambusher",      ability: Punish,        approach: Ambushing, resilience: Blessed,  build: [0, 1, 0], habitat: Habitat::River },
         }
+    }
+
+    /// The archetype that dens on `habitat`
+    pub fn denning_on(habitat: Habitat) -> Self {
+        Self::ALL.into_iter().find(|archetype| archetype.profile().habitat == habitat).unwrap_or_default()
     }
 }
 
@@ -75,6 +84,15 @@ pub fn calculate_enemy_attributes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_habitat_has_the_one_archetype_that_dens_on_it() {
+        for habitat in Habitat::ALL {
+            let denning: Vec<_> = EnemyArchetype::ALL.into_iter().filter(|archetype| archetype.profile().habitat == habitat).collect();
+            assert_eq!(denning.len(), 1, "{habitat:?}");
+            assert_eq!(EnemyArchetype::denning_on(habitat), denning[0]);
+        }
+    }
 
     #[test]
     fn no_two_archetypes_share_a_name_a_skill_or_a_build() {

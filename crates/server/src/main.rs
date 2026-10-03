@@ -86,6 +86,7 @@ fn main() {
         common_bevy::systems::movement::update_burden,
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // Update proximity tracking
         engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // Clean up dead/abandoned engagements
+        crate::systems::dens::tend_dens.run_if(on_timer(Duration::from_secs(1))),
         world::do_spawn,
         world::try_spawn,
     ));
@@ -136,6 +137,8 @@ fn main() {
     app.insert_resource(registry);
     app.init_resource::<crate::resources::summary_cache::SummaryCache>();
     app.init_resource::<engagement_spawner::Parties>();
+    app.init_resource::<crate::systems::dens::Dens>();
+    app.add_message::<crate::systems::dens::EngagementEnded>();
 
     app.run();
 }

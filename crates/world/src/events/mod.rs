@@ -787,6 +787,11 @@ impl Composite {
         self.tile_at(q, r).cover
     }
 
+    /// The habitat of the den whose site is this tile, where one is.
+    pub fn den_at(&self, q: i32, r: i32) -> Option<Habitat> {
+        self.tile_at(q, r).den
+    }
+
     /// Access the IndexRegistry directly (no lock needed — interior
     /// mutability): for the world viewer and the probes, never the game,
     /// which reads tiles (INV-009).
