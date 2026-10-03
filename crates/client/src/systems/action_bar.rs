@@ -283,8 +283,14 @@ pub fn update(
         return;
     };
 
-    // The recovery, and the combo it offers
+    // The recovery, the combo it offers, and what the gate would let fire
+    // early in its chain (`combos::timing`)
     let recovery_active = recovery_opt.map_or(false, |r| r.is_active());
+    let own_attrs = attrs.copied().unwrap_or_default();
+    let early_reaction = |ability: AbilityType| matches!(
+        common_bevy::systems::combat::combos::timing(ability, recovery_opt, &own_attrs),
+        Some(common_bevy::systems::combat::combos::Timing::Early(common_bevy::systems::combat::combos::Early::Preparation))
+    );
     let offered = recovery_opt.and_then(|r| r.combo);
     let recovery_remaining = recovery_opt.map(|r| r.remaining).unwrap_or(0.0);
     let recovery_duration = recovery_opt.map(|r| r.duration).unwrap_or(1.0);
@@ -313,6 +319,7 @@ pub fn update(
                 mana,
                 recovery_active,
                 offered.is_some_and(|combo| combo.ability == ability),
+                early_reaction(ability),
                 player_ent,
                 *player_loc,
                 *player_heading,
@@ -322,7 +329,7 @@ pub fn update(
                 &entity_query,
             )
         } else if recovery_active {
-            if offered.is_some_and(|combo| combo.ability == ability) { AbilityState::ComboUnlocked } else { AbilityState::OnCooldown }
+            recovery_state(&tuning, ability, stamina, offered.is_some_and(|combo| combo.ability == ability), early_reaction(ability))
         } else if stamina.state < tuning.cost(ability) {
             AbilityState::InsufficientResources
         } else {
@@ -336,13 +343,14 @@ pub fn update(
             AbilityState::ComboUnlocked => {
                 (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), true)  // Green + BRIGHT YELLOW GLOW!
             },
+            AbilityState::EarlyReaction => (BorderColor::all(Color::srgb(0.2, 0.8, 0.9)), false),   // Cyan
             AbilityState::InsufficientResources => (BorderColor::all(Color::srgb(0.9, 0.1, 0.1)), false), // Red
             AbilityState::OutOfRange => (BorderColor::all(Color::srgb(0.8, 0.5, 0.1)), false),      // Orange
         };
         *border_color = border;
 
         // Cooldown overlay: height = proportion of recovery remaining
-        let overlay_pct = if !recovery_active || recovery_duration <= 0.0 {
+        let overlay_pct = if !recovery_active || recovery_duration <= 0.0 || matches!(state, AbilityState::EarlyReaction) {
             0.0
         } else {
             let combo_unlock_at = offered
@@ -379,8 +387,24 @@ enum AbilityState {
     Ready,
     OnCooldown,
     ComboUnlocked,  // The ability the recovery offers as its combo (gold glow)
+    EarlyReaction,  // A reaction Preparation fires early in the chain (cyan)
     InsufficientResources,
     OutOfRange,
+}
+
+/// A slot's state in recovery: the offered combo glowing from the moment
+/// it is offered, a reaction Preparation fires early usable where its
+/// stamina pays, and all else waiting
+fn recovery_state(tuning: &Tuning, ability: AbilityType, stamina: &Stamina, offered: bool, early_reaction: bool) -> AbilityState {
+    if offered {
+        AbilityState::ComboUnlocked
+    } else if !early_reaction {
+        AbilityState::OnCooldown
+    } else if stamina.state < tuning.cost(ability) {
+        AbilityState::InsufficientResources
+    } else {
+        AbilityState::EarlyReaction
+    }
 }
 
 /// Determine ability state based on resources, recovery, combo, and targeting
@@ -391,6 +415,7 @@ fn get_ability_state(
     _mana: &Mana,
     recovery_active: bool,
     offered: bool,
+    early_reaction: bool,
     player_ent: Entity,
     player_loc: Loc,
     player_heading: Heading,
@@ -399,9 +424,10 @@ fn get_ability_state(
     nntree: &NNTree,
     entity_query: &Query<(&EntityType, &Loc, Option<&Side>)>,
 ) -> AbilityState {
-    // In recovery the offered combo glows from the start, and all else waits
+    // In recovery the offered combo glows from the start, a reaction
+    // Preparation fires early shows it may, and all else waits
     if recovery_active {
-        return if offered { AbilityState::ComboUnlocked } else { AbilityState::OnCooldown };
+        return recovery_state(tuning, ability, stamina, offered, early_reaction);
     }
 
     // The actors the player may target: those on a side hostile to its own
@@ -450,5 +476,24 @@ mod loadout_tests {
             }
             assert_eq!(bar.iter().flatten().count(), archetype.bar().len(), "{archetype:?} shows only its own");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stamina(state: f32) -> Stamina {
+        Stamina { state, max: 100.0, regen_rate: 0.0, last_update: std::time::Duration::ZERO }
+    }
+
+    #[test]
+    fn in_recovery_the_combo_glows_an_early_reaction_shows_usable_and_the_rest_waits() {
+        let tuning = Tuning::DEFAULT;
+        let full = stamina(100.0);
+        assert!(matches!(recovery_state(&tuning, AbilityType::Feint, &full, true, false), AbilityState::ComboUnlocked));
+        assert!(matches!(recovery_state(&tuning, AbilityType::Parry, &full, false, true), AbilityState::EarlyReaction));
+        assert!(matches!(recovery_state(&tuning, AbilityType::Parry, &stamina(0.0), false, true), AbilityState::InsufficientResources), "one it cannot pay for");
+        assert!(matches!(recovery_state(&tuning, AbilityType::Frenzy, &full, false, false), AbilityState::OnCooldown));
     }
 }
