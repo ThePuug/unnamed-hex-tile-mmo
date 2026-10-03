@@ -46,7 +46,8 @@
 //! sent into its foes' queues and the share of what settled that landed, the
 //! rest answered (a reaction's is what it reflected); then the share of the
 //! fight it spent recovering, held, slowed, with its target beyond its
-//! reach and circling it, and its mean fatigue.
+//! reach and standing past its target's forward faces, and its mean
+//! fatigue; then how much it used its commitment.
 
 mod tune;
 
@@ -77,7 +78,7 @@ use common_bevy::{
 
 use combat::{
     actor,
-    behaviour::{mind::Minds, moves::Move, perception::Skill, Bar, Decisions},
+    behaviour::{mind::Minds, perception::Skill, Bar, Decisions},
     dice::Dice,
     engagement::{engaging_at, spawn_engagement, STAGE_GAP},
     BehaviourPlugin, CombatPlugin,
@@ -186,14 +187,15 @@ struct Ledger {
     /// Damage of its still queued when the fight ended, neither landed nor
     /// answered
     pending: HashMap<Option<AbilityType>, f32>,
-    /// Seconds alive, and of those recovering, held, slowed and with its
-    /// target beyond its reach; and its fatigue summed over them
+    /// Seconds alive, and of those recovering, held, slowed, with its
+    /// target beyond its reach and standing past its target's forward
+    /// faces; and its fatigue summed over them
     alive: f32,
     recovering: f32,
     held: f32,
     slowed: f32,
     beyond_reach: f32,
-    circling: f32,
+    past_faces: f32,
     fatigue: f32,
     /// Its commitments at work: combos fired before they unlocked
     /// (Ferocity), reactions taken through a recovery (Preparation), Grit
@@ -228,7 +230,7 @@ impl Ledger {
         self.held += other.held;
         self.slowed += other.slowed;
         self.beyond_reach += other.beyond_reach;
-        self.circling += other.circling;
+        self.past_faces += other.past_faces;
         self.fatigue += other.fatigue;
         self.early_combos += other.early_combos;
         self.through += other.through;
@@ -354,20 +356,25 @@ fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>) {
 }
 
 /// Adds a frame of `step` seconds to each living actor's side: whether it
-/// is recovering, held, slowed, has its target beyond its reach or circles
-/// it, and its fatigue.
+/// is recovering, held, slowed, has its target beyond its reach or stands
+/// past its target's forward faces, and its fatigue.
 fn tally_states(world: &mut World, step: f32) {
     let tuning = *world.resource::<Tuning>();
     let mut locs = world.query::<(Entity, &Loc)>();
     let locs: HashMap<Entity, Loc> = locs.iter(world).map(|(ent, loc)| (ent, *loc)).collect();
-    let mut actors = world.query::<(Entity, &Health, &Loc, &AttackRange, Option<&Target>, Option<&GlobalRecovery>, Option<&Status>, Option<&Endurance>, Option<&Move>)>();
-    let frames: Vec<_> = actors.iter(world).filter(|(_, health, ..)| health.state > 0.0).map(|(ent, _, loc, range, target, recovery, status, endurance, under_way)| {
-        let beyond = target.and_then(|target| target.entity).and_then(|foe| locs.get(&foe)).is_some_and(|foe| loc.flat_distance(foe) > range.0);
+    let mut headings = world.query::<(Entity, &Heading)>();
+    let headings: HashMap<Entity, Heading> = headings.iter(world).map(|(ent, heading)| (ent, *heading)).collect();
+    let mut actors = world.query::<(Entity, &Health, &Loc, &AttackRange, Option<&Target>, Option<&GlobalRecovery>, Option<&Status>, Option<&Endurance>)>();
+    let frames: Vec<_> = actors.iter(world).filter(|(_, health, ..)| health.state > 0.0).map(|(ent, _, loc, range, target, recovery, status, endurance)| {
+        let foe = target.and_then(|target| target.entity);
+        let beyond = foe.and_then(|foe| locs.get(&foe)).is_some_and(|foe| loc.flat_distance(foe) > range.0);
+        let past_faces = foe.and_then(|foe| Some((locs.get(&foe)?, headings.get(&foe)?)))
+            .is_some_and(|(foe_loc, heading)| !targeting::is_in_facing_cone(*heading, *foe_loc, *loc));
         let waiting = status.is_some_and(|status| status.waiting);
-        (ent, recovery.is_some(), Status::holds(status), status.is_some_and(|status| status.slow.is_some()), beyond, under_way == Some(&Move::Circle), Endurance::fatigue_of(&tuning, endurance), waiting)
+        (ent, recovery.is_some(), Status::holds(status), status.is_some_and(|status| status.slow.is_some()), beyond, past_faces, Endurance::fatigue_of(&tuning, endurance), waiting)
     }).collect();
     let mut tally = world.resource_mut::<Tally>();
-    for (ent, recovering, held, slowed, beyond, circling, fatigue, waiting) in frames {
+    for (ent, recovering, held, slowed, beyond, past_faces, fatigue, waiting) in frames {
         let Some(ledger) = tally.of(ent) else { continue };
         let during = |state: bool| if state { step } else { 0.0 };
         ledger.alive += step;
@@ -375,7 +382,7 @@ fn tally_states(world: &mut World, step: f32) {
         ledger.held += during(held);
         ledger.slowed += during(slowed);
         ledger.beyond_reach += during(beyond);
-        ledger.circling += during(circling);
+        ledger.past_faces += during(past_faces);
         ledger.fatigue += fatigue * step;
         ledger.waiting += during(waiting);
     }
@@ -817,9 +824,9 @@ fn ledger_line(ledger: &Ledger, runs: f32) -> String {
     let alive = ledger.alive.max(f32::EPSILON);
     let share = |seconds: f32| 100.0 * seconds / alive;
     let each = |count: u32| count as f32 / runs;
-    format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% circling {:.0}% fatigue {:.0}% || commitments: early combos {:.1} releases {:.1} across {:.1} waiting {:.0}% through {:.1} per answer {:.1}",
+    format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% past faces {:.0}% fatigue {:.0}% || commitments: early combos {:.1} releases {:.1} across {:.1} waiting {:.0}% through {:.1} per answer {:.1}",
         abilities.join(" | "),
-        share(ledger.recovering), share(ledger.held), share(ledger.slowed), share(ledger.beyond_reach), share(ledger.circling), share(ledger.fatigue),
+        share(ledger.recovering), share(ledger.held), share(ledger.slowed), share(ledger.beyond_reach), share(ledger.past_faces), share(ledger.fatigue),
         each(ledger.early_combos), each(ledger.releases), each(ledger.across), share(ledger.waiting), each(ledger.through), ledger.per_answer())
 }
 

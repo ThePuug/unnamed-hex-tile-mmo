@@ -101,7 +101,7 @@ pub const TUNED: &[(&str, f32)] = &[
     ("skirmisher.wait", 0.241),
     ("skirmisher.hold", 0.46), ("skirmisher.momentum", 0.367), ("skirmisher.fatigue_after.floor", 0.46),
     ("skirmisher.worth_answering.to", 0.308), 
-    ("skirmisher.foe_nearing.from", 0.962), 
+    
     ("ambusher.wait", 0.569), ("ambusher.hold", 0.455), ("ambusher.momentum", 0.337),
     ("ambusher.fatigue_after.floor", 0.035), ("ambusher.worth_answering.to", 0.088), 
     ("ambusher.reactions_left.floor", 0.479),

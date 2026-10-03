@@ -5,8 +5,8 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{
         entity_type::{actor::ActorIdentity, EntityType},
-        heading::{Heading, HEADING_SLOTS, SLOT_DEGREES},
-        Loc, resources::Health,
+        heading::{Heading, HEADING_SLOTS},
+        AttackRange, Loc, resources::Health,
         behaviour::Side, status::Status, ActorAttributes, Swing, target::Target,
         returning::Returning,
         hex_assignment::AssignedHex,
@@ -15,11 +15,13 @@ use common_bevy::{
     message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
     resources::map::Map,
-    systems::{physics::Walk, targeting::{across, across_share, is_in_facing_cone}},
+    systems::{movement::speed, targeting::{across, across_share}},
 };
-use qrz::Qrz;
+use common_bevy::message::AbilityType;
+use qrz::{Convert, Qrz};
 
-use super::{mind::Minds, moves::{self, Footing, Move}, Body};
+use super::{mind::Minds, moves::{self, Candidate, Footing, Move}, perception::Sight, Bar, Body};
+use crate::leap::LEAP_MS;
 use common_bevy::tuning::Tuning;
 
 /// How near its engagement's place a returning NPC counts as home, in tiles.
@@ -27,17 +29,14 @@ const HOME: i32 = 2;
 
 /// An NPC's pursuit of what it fights: it takes a hostile within
 /// `acquisition_range` as its `Target` and keeps it while that one lives,
-/// and walks the move its movement channel chooses ([`moves`]). Its
-/// `Target` is this system's alone to set (`targeting::update_targets`
-/// leaves every `Chase` be).
+/// and steps to the tile its movement channel chooses of its own and its
+/// uncrowded neighbours ([`moves`]). Its `Target` is this system's alone to
+/// set (`targeting::update_targets` leaves every `Chase` be).
 ///
-/// It fights from its assigned hex where it has one (`AssignedHex`), else
-/// from wherever its target is within `attack_range`. Closing, it walks
-/// there; holding, it stands and faces its target. Circling, it steps
-/// round its target ([`round`]): with Grace toward its target's back, with
-/// Patience toward its den. Fleeing, it runs straight away ([`fleeing`]).
-/// Near its leash it takes no heading that carries it further from its
-/// den, so it turns along the leash and circles its den.
+/// It strikes from its assigned hex where it has one (`AssignedHex`), else
+/// from wherever its target is within `attack_range`. A step that gives
+/// ground it takes backing away, facing its target; holding, or keeping to
+/// its tile, it stands and faces it.
 ///
 /// Further than `leash_distance` from its engagement's place it lets its
 /// target go and walks home (`Returning`), taking no target until it is
@@ -49,55 +48,24 @@ pub struct Chase {
     pub attack_range: i32,
 }
 
-/// How near its leash, in tiles, an NPC giving ground stops running out.
-const LEASH_MARGIN: i32 = 12;
-
-/// The heading an actor at `loc`, facing `facing`, runs on from `target`:
-/// the one most directly away, and of two alike the one nearer the way it
-/// faces, so it holds a course.
-///
-/// `outward`, given while it nears its leash, is the bearing from its den:
-/// it then takes none of the headings that leads further out where one
-/// leads along the leash or in, and the least outward of them where none
-/// does.
-fn fleeing(loc: Loc, target: Loc, facing: Heading, outward: Option<Heading>) -> Heading {
-    let quarter = HEADING_SLOTS / 4;
-    let toward = Heading::from_hex(Qrz { z: 0, ..*target - *loc });
-    // How directly away a heading `off` slots from the target runs: 0
-    // straight at it, 1 straight from it
-    let away = |off: i32| (1.0 - (off as f32 * SLOT_DEGREES).to_radians().cos()) / 2.0;
-    let half = HEADING_SLOTS as i32 / 2;
-    (1 - half..=half)
-        .map(|off| {
-            let heading = toward.turned(off);
-            let leash = outward.map(|outward| outward.turn_toward(heading).1.min(quarter));
-            (heading, leash, away(off), facing.turn_toward(heading).1)
-        })
-        .max_by(|a, b| a.1.cmp(&b.1).then(a.2.total_cmp(&b.2)).then(b.3.cmp(&a.3)))
-        .map_or(toward, |(heading, ..)| heading)
+/// Whether the floor tile `tile` has room to stand on
+fn uncrowded(nntree: &NNTree, tile: Qrz) -> bool {
+    nntree.locate_all_at_point(&Loc::new(tile + Qrz::Z)).count() < 7
 }
 
-/// The neighbour of the floor tile `from` an NPC steps to on its way to
-/// `goal`: the nearest to it that is not crowded.
+/// The neighbour of the floor tile `from` a returning NPC steps to on its
+/// way to `goal`: the nearest to it that is not crowded.
 fn step(map: &Map, nntree: &NNTree, from: Qrz, goal: Qrz) -> Option<Qrz> {
     map.neighbors(from)
         .into_iter()
         .map(|(neighbor, _)| neighbor)
-        .filter(|neighbor| nntree.locate_all_at_point(&Loc::new(*neighbor + Qrz::Z)).count() < 7)
+        .filter(|&neighbor| uncrowded(nntree, neighbor))
         .min_by_key(|neighbor| neighbor.distance(&goal))
 }
 
-/// The neighbour of the floor tile `from` an NPC circling `target` steps
-/// to: of those as far from it as `from` is, a tile either way, and not
-/// crowded, the nearest `toward`.
-fn round(map: &Map, nntree: &NNTree, from: Qrz, target: Qrz, toward: Qrz) -> Option<Qrz> {
-    let distance = from.flat_distance(&target);
-    map.neighbors(from)
-        .into_iter()
-        .map(|(neighbor, _)| neighbor)
-        .filter(|neighbor| (neighbor.flat_distance(&target) - distance).abs() <= 1 && neighbor.flat_distance(&target) >= distance.min(2))
-        .filter(|neighbor| nntree.locate_all_at_point(&Loc::new(*neighbor + Qrz::Z)).count() < 7)
-        .min_by_key(|neighbor| neighbor.flat_distance(&toward))
+/// Seconds to cover `tiles` at `per_second`, never less than nothing
+fn seconds(tiles: i32, per_second: f32) -> f32 {
+    tiles.max(0) as f32 / per_second.max(f32::EPSILON)
 }
 
 pub fn chase(
@@ -117,9 +85,9 @@ pub fn chase(
         &Side,
         Option<&Status>,
         Option<&common_bevy::components::resources::Stamina>,
-        (Option<&Swing>, Option<&mut Move>, Option<&EntityType>),
+        (Option<&Swing>, Option<&mut Move>, Option<&EntityType>, Option<&Sight>, Option<&Bar>),
     )>, Query<(Entity, &Heading)>)>,
-    q_target: Query<(&Loc, &Health, &Side)>,
+    q_target: Query<(&Loc, &Health, &Side, Option<&ActorAttributes>, Option<&Status>)>,
     q_home: Query<&Loc, Without<Chase>>,
     nntree: Res<NNTree>,
     map: Res<Map>,
@@ -131,13 +99,13 @@ pub fn chase(
 ) {
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, (swing, mut under_way, kind)) in actors.p0().iter_mut() {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, (swing, mut under_way, kind, sight, bar)) in actors.p0().iter_mut() {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
         }
         let dt_ms = dt.delta().as_millis() as i16;
-        let speed = common_bevy::systems::movement::speed(attrs.map_or(0.005, |a| a.movement_speed()), status);
+        let speed = speed(attrs.map_or(0.005, |a| a.movement_speed()), status);
         let Ok(&home) = q_home.get(member.0) else {
             continue;
         };
@@ -176,12 +144,12 @@ pub fn chase(
             target.entity = held;
             target.last_target = held.or(target.last_target);
         }
-        let Some((held, (target_loc, _, _))) = held.and_then(|held| Some((held, q_target.get(held).ok()?))) else {
+        let Some((held, (target_loc, _, _, target_attrs, target_status))) = held.and_then(|held| Some((held, q_target.get(held).ok()?))) else {
             continue;
         };
         let target_heading = headings.get(&held);
 
-        // Its movement channel chooses the move; the move is walked here
+        // Its movement channel chooses its step; the step is walked here
         let archetype = match kind {
             Some(EntityType::Actor(actor)) => match actor.identity {
                 ActorIdentity::Npc(archetype) => Some(archetype),
@@ -190,81 +158,84 @@ pub fn chase(
             _ => None,
         };
         let mind = minds.mind(archetype);
-        // Circling, Grace steps toward its target's back, Patience toward
-        // its den; it is weighed by what a strike costs on that step's
-        // heading of the stamina it has, and whether it breaks stride:
-        // across its line a swing spends stamina, the more the further
-        // round its arc, and breaks stride, both but in a Perfect Stride
-        let patient = attrs.is_some_and(|attrs| attrs.patience().index() > 0);
-        let distance = loc.flat_distance(target_loc);
-        let behind = **target_loc + target_heading.map_or(Qrz::default(), |heading| heading.reversed().hex_dir() * distance);
-        let rounding = floor.and_then(|floor| Some((floor, round(&map, &nntree, floor, **target_loc, if patient { *home } else { behind })?)));
+        let Some(floor) = floor else { continue };
+        // How fast it and its target cover ground, in tiles a second; it
+        // closes by a Leap where its bar holds one it can pay for
+        let tile = (map.convert(Qrz { q: 1, r: 0, z: 0 }) - map.convert(Qrz::default())).xz().length().max(f32::EPSILON);
+        let per_second = |speed: f32| speed * 1000.0 / tile;
+        let own_pace = per_second(speed);
+        let target_pace = per_second(common_bevy::systems::movement::speed(target_attrs.map_or(0.005, |a| a.movement_speed()), target_status));
+        let leap = bar.filter(|bar| bar.0.contains(&AbilityType::Leap))
+            .filter(|_| stamina.is_some_and(|stamina| stamina.state >= tuning.cost(AbilityType::Leap)))
+            .and_then(|_| attrs)
+            .map(|attrs| attrs.leap_tiles(&tuning) as i32);
+        // It knows how far its target strikes from by having been struck,
+        // and before that takes it for a melee swing's
+        let target_reach = sight.map_or(0, Sight::reach).max(AttackRange::default().0);
+        let to_strike = |at: Qrz| -> f32 {
+            if let Some(hex) = assigned {
+                return seconds(at.flat_distance(&hex.0), own_pace);
+            }
+            let gap = Loc::new(at + Qrz::Z).distance(target_loc) - chase.attack_range;
+            let walked = seconds(gap, own_pace);
+            match leap {
+                Some(tiles) if gap > 0 => walked.min(LEAP_MS as f32 / 1000.0 + seconds(gap - tiles, own_pace)),
+                _ => walked,
+            }
+        };
         let striding = status.is_some_and(Status::is_striding);
         let held = stamina.map_or(f32::INFINITY, |stamina| stamina.state.max(f32::EPSILON));
-        let (strike_cost, breaks_stride) = rounding.map_or((0.0, false), |(floor, next)| {
-            let heading = Heading::from_hex(Qrz { z: 0, ..next - floor });
-            let share = if striding { 0.0 } else { across_share(&tuning, &heading, loc, target_loc) };
-            (tuning.off_arc_stamina * share / held, across(Some(&heading), loc, target_loc) && !striding)
-        });
-        let room = |from_home: i32| (chase.leash_distance - from_home).max(0) as f32 / chase.leash_distance.max(1) as f32;
+        let room = |at: Qrz| (chase.leash_distance - at.flat_distance(&home)).max(0) as f32 / chase.leash_distance.max(1) as f32;
+        let tiles: Vec<Qrz> = std::iter::once(floor)
+            .chain(map.neighbors(floor).into_iter().map(|(neighbor, _)| neighbor).filter(|&neighbor| uncrowded(&nntree, neighbor)))
+            .collect();
+        let mut candidates: Vec<Candidate> = tiles.iter().map(|&at| {
+            let standing = Loc::new(at + Qrz::Z);
+            // A strike on the step there: on its heading there, or where it
+            // stands, facing its target, free
+            let (strike_cost, breaks_stride) = if at == floor { (0.0, false) } else {
+                let heading = Heading::from_hex(Qrz { z: 0, ..at - floor });
+                let share = if striding { 0.0 } else { across_share(&tuning, &heading, loc, target_loc) };
+                (tuning.off_arc_stamina * share / held, across(Some(&heading), loc, target_loc) && !striding)
+            };
+            Candidate {
+                tile: at,
+                time_to_strike: to_strike(at),
+                detour: 0.0,
+                time_to_be_struck: seconds(standing.distance(target_loc) - target_reach, target_pace),
+                room: room(at),
+                behind: target_heading.filter(|_| at != **target_loc - Qrz::Z).map_or(0.0, |&heading| {
+                    let bearing = Heading::from_hex(Qrz { z: 0, ..at - (**target_loc - Qrz::Z) });
+                    heading.turn_toward(bearing).1 as f32 / (HEADING_SLOTS / 2) as f32
+                }),
+                strike_cost,
+                breaks_stride,
+            }
+        }).collect();
+        let soonest = candidates.iter().map(|candidate| candidate.time_to_strike).fold(f32::INFINITY, f32::min);
+        for candidate in &mut candidates {
+            candidate.detour = candidate.time_to_strike - soonest;
+        }
         let footing = Footing {
-            placed: match assigned {
-                Some(hex) => loc.flat_distance(&Loc::new(hex.0)) == 0,
-                None => loc.distance(target_loc) <= chase.attack_range,
-            },
             grace: attrs.is_some_and(|attrs| attrs.grace().index() > 0),
-            foe_facing: target_heading.is_none_or(|&heading| is_in_facing_cone(heading, *target_loc, *loc)),
-            strike_cost,
-            breaks_stride,
-            leash_room: room(from_home),
-            // A step toward its target takes it out where its target stands
-            // further from its den, and a step away where it stands nearer
-            room_closing: room(from_home + (target_loc.flat_distance(&home) - from_home).signum()),
-            room_fleeing: room(from_home + (from_home - target_loc.flat_distance(&home)).signum()),
-            clear_outward: target_loc.flat_distance(&home) < from_home,
-            distance: loc.distance(target_loc),
-            reach: chase.attack_range,
-            leap: attrs.map_or(tuning.leap_distance, |attrs| attrs.leap_tiles(&tuning)) as i32,
             stamina: stamina.zip(attrs).map_or(1.0, |(stamina, attrs)| stamina.state / attrs.max_stamina(&tuning).max(1.0)),
             // Its Patience pays only while its swing clock runs, engaged
             patience: attrs.filter(|_| swing.is_some_and(|swing| swing.due.is_some()))
                 .map_or(0, |attrs| attrs.patience().index() as u32),
         };
-        let chosen = moves::choose(&footing, under_way.as_deref().copied().unwrap_or_default(), &mind);
+        let (chosen, step) = moves::choose(&footing, &candidates, under_way.as_deref().copied().unwrap_or_default(), &mind);
         if let Some(under_way) = under_way.as_mut().filter(|under_way| ***under_way != chosen) {
             if let Some(decisions) = decisions.as_mut() {
-                decisions.0.push(format!("{npc} moves {:?} -> {chosen:?}: {footing:?}", **under_way));
+                decisions.0.push(format!("{npc} moves {:?} -> {chosen:?}: {footing:?} {step:?}", **under_way));
             }
             **under_way = chosen;
         }
-        match chosen {
-            Move::Hold => {
-                body.face(loc, **target_loc, dt_ms, &map, &nntree);
-                continue;
-            }
-            Move::Flee => {
-                let outward = (from_home >= chase.leash_distance - LEASH_MARGIN).then(|| Heading::from_hex(Qrz { z: 0, ..**loc - *home }));
-                body.steer(fleeing(*loc, *target_loc, body.turn.heading, outward), Walk::Forward, speed, dt_ms, &map, &nntree);
-                continue;
-            }
-            Move::Circle => {
-                if let Some((floor, next)) = rounding {
-                    body.step_toward(loc, floor, next, speed, dt_ms, &map, &nntree);
-                } else {
-                    body.face(loc, **target_loc, dt_ms, &map, &nntree);
-                }
-                continue;
-            }
-            Move::Close => {}
-        }
-
-        let goal = assigned.map_or(**target_loc, |hex| hex.0);
-        let Some((floor, next)) = floor.and_then(|floor| Some((floor, step(&map, &nntree, floor, goal)?))) else {
+        let Some(next) = step.map(|step| step.tile).filter(|&next| next != floor) else {
+            body.face(loc, **target_loc, dt_ms, &map, &nntree);
             continue;
         };
         // A step that gives ground it takes backing away, facing its
-        // target, so stepping out to its place never turns its back or
-        // costs it a swing
+        // target, so it never turns its back or costs it a swing
         if next.flat_distance(target_loc) > floor.flat_distance(target_loc) {
             body.back_toward(loc, floor, next, **target_loc, speed, dt_ms, &map, &nntree);
         } else {
@@ -330,25 +301,6 @@ mod tests {
 
     fn target_of(app: &App, npc: Entity) -> Option<Entity> {
         app.world().get::<Target>(npc).unwrap().entity
-    }
-
-    #[test]
-    fn a_fleeing_npc_runs_straight_away_and_near_its_leash_along_it_never_further_out() {
-        let here = Loc::new(Qrz { q: 0, r: 0, z: 1 });
-        let east = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
-        let outward = east;
-        let quarter = HEADING_SLOTS / 4;
-
-        // Its target comes from its den's side: straight away from it is straight out
-        let chaser = Loc::new(Qrz { q: -5, r: 0, z: 1 });
-        assert_eq!(fleeing(here, chaser, east, None), east, "clear of its leash it runs straight away");
-        let along = fleeing(here, chaser, east, Some(outward));
-        assert_eq!(outward.turn_toward(along).1, quarter, "near it, along the leash: as far from its target as that allows");
-        assert_eq!(fleeing(here, chaser, along, Some(outward)), along, "and it keeps going the way it goes");
-
-        // Its target stands further out than it: away from it is already inward
-        let beyond = Loc::new(Qrz { q: 5, r: 0, z: 1 });
-        assert_eq!(fleeing(here, beyond, east, Some(outward)), fleeing(here, beyond, east, None), "a heading that leads in is taken as it is");
     }
 
     #[test]

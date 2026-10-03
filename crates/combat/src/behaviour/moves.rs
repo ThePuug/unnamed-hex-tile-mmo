@@ -1,81 +1,55 @@
-//! An NPC's movement channel: whether it closes on its target, gives
-//! ground, circles it, or holds where it stands, facing it.
+//! An NPC's movement channel: which tile it steps to next, its own or one
+//! of its neighbours, and for what.
 //!
-//! Each move is a decision scored as a skill's is ([`super::utility`]),
-//! from considerations its reach and its commitments bring, and holding
-//! scores [`HOLD`], the threshold the others must beat. The move under way
-//! scores [`MOMENTUM`] more, so two moves scoring alike do not trade
-//! places every tick. How a move is walked is its pursuit's
-//! ([`super::chase`]).
+//! Every candidate tile is scored for each thing a step may be for, as a
+//! skill's decision is ([`super::utility`]): to engage its target, from
+//! where it strikes it soonest, and, with its Patience under way, to keep
+//! away from it while its stamina refills, out of its target's reach but
+//! ready to strike. The best pair is taken where it beats holding, which
+//! scores [`HOLD`]; the decision under way scores [`MOMENTUM`] more, so two
+//! scoring alike do not trade places every tick. Every reading is the
+//! candidate's own: the seconds from it to striking and to being struck,
+//! the leash left there, how far round toward its target's back it
+//! stands, and what a strike on the step there costs. How a step is walked
+//! is its pursuit's ([`super::chase`]).
 
 use bevy::prelude::*;
+use qrz::Qrz;
 
 use super::{mind::Mind, skills::{LEASH_LEFT_BOUNDS, LEASH_LEFT_CURVE, STAMINA_LEFT_BOUNDS, STAMINA_LEFT_CURVE}, utility::{score, Consideration, Curve}};
 
-/// What holding scores unless a mind sets it: the threshold every other
-/// move must beat.
+/// What holding scores unless a mind sets it: the threshold every step must
+/// beat.
 pub const HOLD: f32 = 0.35;
 
-/// What the move under way scores beside its own, unless a mind sets it
+/// What the decision under way scores beside its own, unless a mind sets it
 pub const MOMENTUM: f32 = 0.15;
 
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "leash_left", "stamina_left", "foe_nearing", "leash_tight", "stamina_spent",
-    "foe_facing", "strike_cost", "stride_kept",
+    "leash_left", "stamina_left", "stamina_spent", "detour", "time_to_strike", "time_to_be_struck",
+    "behind", "strike_cost", "stride_kept",
 ];
 
-/// A move an NPC makes.
+/// What a step is for.
 #[derive(Clone, Component, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Move {
     /// It stands where it is and faces its target
     #[default]
     Hold,
-    /// It walks to where it fights from
-    Close,
-    /// It runs straight from its target
-    Flee,
-    /// It steps round its target, as far from it as it stands: with Grace
-    /// toward its target's back, past its target's forward faces, where a
-    /// target without Grace cannot strike it and one with Grace pays to,
-    /// while its own strikes still land; with Patience toward its den, so once its
-    /// target stands outward of it the way clear of it leads back in
-    Circle,
+    /// It steps to where it strikes its target soonest
+    Engage,
+    /// It steps out of its target's reach while its stamina refills,
+    /// staying ready to strike: Patience's
+    KeepAway,
 }
 
-/// What an NPC knows as it weighs its moves.
+/// What an NPC knows of itself as it weighs where to step.
 #[derive(Clone, Copy, Debug)]
 pub struct Footing {
-    /// It stands where it fights from: its assigned hex, or with its
-    /// target in reach
-    pub placed: bool,
     /// Its Grace lets it strike past its forward faces
     pub grace: bool,
-    /// Its target has it within its forward faces, where its target strikes
-    /// it without crossing its line
-    pub foe_facing: bool,
-    /// What a strike costs on the heading it would circle on, as a share of
-    /// the stamina it has: nothing where its target stays within its
-    /// forward faces, more the further round its arc the strike goes
-    pub strike_cost: f32,
-    /// A strike on that heading breaks its stride: across its line, with
-    /// no Perfect Stride up
-    pub breaks_stride: bool,
-    /// Share of its leash it has left where it stands: 1 with none
-    pub leash_room: f32,
-    /// Share of its leash it would have left a step on toward its target
-    pub room_closing: f32,
-    /// Share of its leash it would have left a step on away from its target
-    pub room_fleeing: f32,
-    /// Its target stands nearer its den than it does, so the way clear of
-    /// its target leads out toward its leash
-    pub clear_outward: bool,
-    /// Tiles to its target
-    pub distance: i32,
-    pub reach: i32,
-    /// Tiles a Leap carries it
-    pub leap: i32,
     /// Share of its stamina it has
     pub stamina: f32,
     /// Its Patience tier, while it is engaged and its stamina refills
@@ -83,122 +57,159 @@ pub struct Footing {
     pub patience: u32,
 }
 
-/// The move `footing` scores highest as `mind` shapes it, where it beats
-/// holding; `under_way` is the move it is making.
-pub fn choose(footing: &Footing, under_way: Move, mind: &Mind) -> Move {
-    [Move::Close, Move::Flee, Move::Circle]
-        .into_iter()
-        .map(|candidate| {
-            let momentum = if candidate == under_way { mind.momentum } else { 0.0 };
-            (candidate, weigh(footing, candidate, mind) + momentum)
-        })
-        .filter(|&(_, scored)| scored > mind.hold + if under_way == Move::Hold { mind.momentum } else { 0.0 })
-        .max_by(|a, b| a.1.total_cmp(&b.1))
-        .map_or(Move::Hold, |(candidate, _)| candidate)
+/// One tile it may step to, as it would find it there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Candidate {
+    pub tile: Qrz,
+    /// Seconds from the tile until it could strike its target: to its
+    /// assigned hex where it has one, else until its target stands in its
+    /// reach, by the fastest way it can close
+    pub time_to_strike: f32,
+    /// Of that, how many seconds more than from the best of the candidates
+    pub detour: f32,
+    /// Seconds from the tile until its target could strike it there, at
+    /// the pace it sees its target move, from the reach it has seen it
+    /// strike from
+    pub time_to_be_struck: f32,
+    /// Share of its leash it would have left there: 1 with none
+    pub room: f32,
+    /// How far round toward its target's back the tile stands, off its
+    /// target's heading: 0 straight before it, 1 straight behind. Past a
+    /// third it stands outside its target's forward faces, where a target
+    /// without Grace cannot strike it
+    pub behind: f32,
+    /// What a strike on the step there costs, of the stamina it has:
+    /// nothing within its target's forward faces of its heading, more the
+    /// further round its arc
+    pub strike_cost: f32,
+    /// A strike on the step there breaks its stride: across its line, with
+    /// no Perfect Stride up
+    pub breaks_stride: bool,
 }
 
-/// What `candidate` scores for `footing`, as `mind` shapes it
-pub fn weigh(footing: &Footing, candidate: Move, mind: &Mind) -> f32 {
-    let considerations: &[Consideration<Footing>] = match candidate {
+/// What it weighs a step by: itself and the candidate.
+#[derive(Clone, Copy, Debug)]
+struct Ground {
+    footing: Footing,
+    candidate: Candidate,
+}
+
+/// The step `candidates` offer that scores highest for `footing` as `mind`
+/// shapes it, and what it is for, where it beats holding; `under_way` is
+/// what its last step was for. The first candidate is the tile it stands
+/// on, and of steps scoring alike it keeps to it.
+pub fn choose(footing: &Footing, candidates: &[Candidate], under_way: Move, mind: &Mind) -> (Move, Option<Candidate>) {
+    let threshold = mind.hold + if under_way == Move::Hold { mind.momentum } else { 0.0 };
+    let mut best: Option<(Move, Candidate, f32)> = None;
+    for &candidate in candidates {
+        for decision in [Move::Engage, Move::KeepAway] {
+            let momentum = if decision == under_way { mind.momentum } else { 0.0 };
+            let scored = weigh(footing, &candidate, decision, mind) + momentum;
+            if scored > threshold && best.is_none_or(|(.., top)| scored > top) {
+                best = Some((decision, candidate, scored));
+            }
+        }
+    }
+    best.map_or((Move::Hold, None), |(decision, candidate, _)| (decision, Some(candidate)))
+}
+
+/// What a step to `candidate` scores for `decision`, for `footing`, as
+/// `mind` shapes it
+pub fn weigh(footing: &Footing, candidate: &Candidate, decision: Move, mind: &Mind) -> f32 {
+    let considerations: &[Consideration<Ground>] = match decision {
         Move::Hold => return mind.hold,
-        Move::Close => &[NOT_PLACED, CLOSING_LEASH, STAMINA_LEFT],
-        Move::Flee if footing.patience > 0 => &[FOE_NEARING, STAMINA_SPENT, FLEEING_LEASH],
-        Move::Flee => return 0.0,
-        Move::Circle if footing.patience > 0 => &[CLEAR_OUTWARD, LEASH_TIGHT],
-        Move::Circle if footing.grace => &[IN_REACH, FOE_FACING, STRIKE_COST, STRIDE_KEPT],
-        Move::Circle => return 0.0,
+        Move::Engage if footing.grace => &[DETOUR, LEASH_LEFT, STAMINA_LEFT, BEHIND, STRIKE_COST, STRIDE_KEPT],
+        Move::Engage => &[DETOUR, LEASH_LEFT, STAMINA_LEFT],
+        Move::KeepAway if footing.patience > 0 => &[TIME_TO_BE_STRUCK, TIME_TO_STRIKE, STAMINA_SPENT, LEASH_LEFT],
+        Move::KeepAway => return 0.0,
     };
-    score(1.0, considerations.iter().map(|consideration| mind.shape(consideration).answer(footing)))
+    let ground = Ground { footing: *footing, candidate: *candidate };
+    score(1.0, considerations.iter().map(|consideration| mind.shape(consideration).answer(&ground)))
 }
 
 fn flag(on: bool) -> f32 {
     if on { 1.0 } else { 0.0 }
 }
 
-const fn step(name: &'static str, read: fn(&Footing) -> f32) -> Consideration<Footing> {
-    Consideration { name, read, bounds: (1.0, 1.0), curve: Curve::RISING }
-}
+/// Seconds more the step costs it on its way to strike than the best one:
+/// the best step answers whole however far it has to go
+const DETOUR: Consideration<Ground> = Consideration {
+    name: "detour",
+    read: |ground| ground.candidate.detour,
+    bounds: (0.0, 0.5),
+    curve: Curve::FALLING,
+};
 
-const NOT_PLACED: Consideration<Footing> = step("not_placed", |footing| flag(!footing.placed));
-
-/// The share of its leash it would have left a step on toward its target:
-/// `leash_left` as a Leap reads it where it lands
-const CLOSING_LEASH: Consideration<Footing> = Consideration {
+/// The share of its leash it would have left there; `leash_left` as a Leap
+/// reads it where it lands
+const LEASH_LEFT: Consideration<Ground> = Consideration {
     name: "leash_left",
-    read: |footing| footing.room_closing,
+    read: |ground| ground.candidate.room,
     bounds: LEASH_LEFT_BOUNDS,
     curve: LEASH_LEFT_CURVE,
 };
 
-/// The share of its leash it would have left a step on away from its target
-const FLEEING_LEASH: Consideration<Footing> = Consideration {
-    name: "leash_left",
-    read: |footing| footing.room_fleeing,
-    bounds: LEASH_LEFT_BOUNDS,
-    curve: LEASH_LEFT_CURVE,
-};
-
-/// The stamina it would have left, of its most: a move costs none, so what
+/// The stamina it would have left, of its most: a step costs none, so what
 /// it has. One setting with a skill's `stamina_left`
-const STAMINA_LEFT: Consideration<Footing> = Consideration {
+const STAMINA_LEFT: Consideration<Ground> = Consideration {
     name: "stamina_left",
-    read: |footing| footing.stamina,
+    read: |ground| ground.footing.stamina,
     bounds: STAMINA_LEFT_BOUNDS,
     curve: STAMINA_LEFT_CURVE,
 };
 
-const IN_REACH: Consideration<Footing> = step("in_reach", |footing| flag(footing.distance <= footing.reach));
-
-/// Grace: its target faces it, so circling takes it past its target's
-/// forward faces; behind it already, it has what circling gains
-const FOE_FACING: Consideration<Footing> = Consideration {
-    name: "foe_facing",
-    read: |footing| flag(footing.foe_facing),
+/// Patience: stamina spent, which it refills faster out of its target's
+/// reach
+const STAMINA_SPENT: Consideration<Ground> = Consideration {
+    name: "stamina_spent",
+    read: |ground| ground.footing.stamina,
     bounds: (0.0, 1.0),
+    curve: Curve::FALLING,
+};
+
+/// Seconds from the tile until its target could strike it: the later, the
+/// safer it refills
+const TIME_TO_BE_STRUCK: Consideration<Ground> = Consideration {
+    name: "time_to_be_struck",
+    read: |ground| ground.candidate.time_to_be_struck,
+    bounds: (0.0, 0.5),
+    curve: Curve::RISING.floored(0.1),
+};
+
+/// Seconds from the tile until it could strike: kept short, it stays ready
+/// to strike as its stamina comes back
+const TIME_TO_STRIKE: Consideration<Ground> = Consideration {
+    name: "time_to_strike",
+    read: |ground| ground.candidate.time_to_strike,
+    bounds: (0.0, 3.0),
+    curve: Curve::FALLING.floored(0.1),
+};
+
+/// Grace: how far round toward its target's back the tile stands, every
+/// step round worth more until it stands to its target's side, past its
+/// forward faces
+const BEHIND: Consideration<Ground> = Consideration {
+    name: "behind",
+    read: |ground| ground.candidate.behind,
+    bounds: (0.0, 0.5),
     curve: Curve::RISING.floored(0.2),
 };
 
-/// Its target closing on it, from half a leap past its reach to within it
-const FOE_NEARING: Consideration<Footing> = Consideration {
-    name: "foe_nearing",
-    read: |footing| (footing.distance - footing.reach) as f32 / footing.leap.max(1) as f32,
-    bounds: (0.5, 0.0),
-    curve: Curve::RISING,
-};
-
-/// Its leash nearly run out
-const LEASH_TIGHT: Consideration<Footing> = Consideration {
-    name: "leash_tight",
-    read: |footing| footing.leash_room,
-    bounds: (0.5, 0.15),
-    curve: Curve::RISING,
-};
-
-/// What each strike costs on the heading it would circle on: the dearer,
-/// against the stamina it has left, the less circling pays
-const STRIKE_COST: Consideration<Footing> = Consideration {
+/// What a strike on the step costs: the dearer, against the stamina it has
+/// left, the less the step pays
+const STRIKE_COST: Consideration<Ground> = Consideration {
     name: "strike_cost",
-    read: |footing| footing.strike_cost,
+    read: |ground| ground.candidate.strike_cost,
     bounds: (0.0, 0.8),
     curve: Curve::FALLING,
 };
 
-/// A strike on that heading that breaks its stride slows it as it goes
-const STRIDE_KEPT: Consideration<Footing> = Consideration {
+/// A strike on the step that breaks its stride slows it as it goes
+const STRIDE_KEPT: Consideration<Ground> = Consideration {
     name: "stride_kept",
-    read: |footing| flag(!footing.breaks_stride),
+    read: |ground| flag(!ground.candidate.breaks_stride),
     bounds: (0.0, 1.0),
     curve: Curve::RISING.floored(0.6),
-};
-
-const CLEAR_OUTWARD: Consideration<Footing> = step("clear_outward", |footing| flag(footing.clear_outward));
-
-/// Patience: stamina spent, which it refills faster out of reach
-const STAMINA_SPENT: Consideration<Footing> = Consideration {
-    name: "stamina_spent",
-    read: |footing| footing.stamina,
-    bounds: (0.0, 1.0),
-    curve: Curve::FALLING,
 };
 
 #[cfg(test)]
@@ -206,10 +217,37 @@ mod tests {
     use super::*;
 
     fn footing() -> Footing {
-        Footing { placed: false, grace: false, foe_facing: true, strike_cost: 0.05, breaks_stride: true, leash_room: 1.0, room_closing: 1.0, room_fleeing: 1.0, clear_outward: false, distance: 8, reach: 2, leap: 9, stamina: 0.0, patience: 0 }
+        Footing { grace: false, stamina: 1.0, patience: 0 }
     }
 
-    /// A mind that keeps its stamina back: it closes only with stamina to
+    /// A tile `q` east of the origin, with its target standing further
+    /// east: struck from in two tiles, struck at in two
+    fn candidate(q: i32, target: i32) -> Candidate {
+        let gap = (target - q).abs();
+        Candidate {
+            tile: Qrz { q, r: 0, z: 0 },
+            time_to_strike: (gap - 2).max(0) as f32 * 0.25,
+            detour: 0.0,
+            time_to_be_struck: (gap - 2).max(0) as f32 * 0.25,
+            room: 1.0,
+            behind: 0.0,
+            strike_cost: 0.0,
+            breaks_stride: false,
+        }
+    }
+
+    /// The tile it stands on and its two neighbours east and west, each's
+    /// detour against the best of them
+    fn around(q: i32, target: i32) -> Vec<Candidate> {
+        let mut candidates = vec![candidate(q, target), candidate(q + 1, target), candidate(q - 1, target)];
+        let best = candidates.iter().map(|candidate| candidate.time_to_strike).fold(f32::INFINITY, f32::min);
+        for candidate in &mut candidates {
+            candidate.detour = candidate.time_to_strike - best;
+        }
+        candidates
+    }
+
+    /// A mind that keeps its stamina back: it engages only with stamina to
     /// spend
     fn keeping() -> Mind {
         let mut minds = crate::behaviour::mind::Minds::default();
@@ -218,58 +256,65 @@ mod tests {
     }
 
     #[test]
-    fn it_closes_until_placed_and_then_holds() {
-        assert_eq!(choose(&footing(), Move::Hold, &Mind::default()), Move::Close);
-        assert_eq!(choose(&Footing { placed: true, distance: 2, ..footing() }, Move::Close, &Mind::default()), Move::Hold);
-    }
-
-    #[test]
-    fn at_its_leash_it_holds_rather_than_close_further_out() {
-        assert_eq!(choose(&Footing { room_closing: 0.0, ..footing() }, Move::Close, &Mind::default()), Move::Hold);
-    }
-
-    #[test]
-    fn grace_circles_a_target_in_reach_that_faces_it_and_stands_once_behind_it() {
+    fn it_steps_toward_where_it_strikes_soonest_and_stands_once_there() {
         let mind = Mind::default();
-        let graceful = Footing { placed: true, grace: true, distance: 1, ..footing() };
-        assert_eq!(choose(&graceful, Move::Hold, &mind), Move::Circle, "faced, it steps round across its target's line");
-        assert_eq!(choose(&Footing { foe_facing: false, ..graceful }, Move::Circle, &mind), Move::Hold, "behind it, it stands and strikes");
-        assert_eq!(choose(&Footing { grace: false, ..graceful }, Move::Hold, &mind), Move::Hold, "with no Grace its strikes on the move would cross its own line");
-        assert_eq!(choose(&Footing { distance: 4, ..graceful }, Move::Hold, &mind), Move::Hold, "out of reach it has nothing to circle for");
-        let dear = Footing { strike_cost: 0.6, ..graceful };
-        assert!(weigh(&dear, Move::Circle, &mind) < weigh(&graceful, Move::Circle, &mind), "with each strike dearer it circles less readily");
-        assert!(weigh(&Footing { breaks_stride: false, ..dear }, Move::Circle, &mind) > weigh(&dear, Move::Circle, &mind), "and more in a Perfect Stride");
+        let (decision, step) = choose(&footing(), &around(0, 8), Move::Hold, &mind);
+        assert_eq!((decision, step.map(|step| step.tile.q)), (Move::Engage, Some(1)), "far off, it steps in");
+        let (decision, step) = choose(&footing(), &around(6, 8), Move::Engage, &mind);
+        assert_eq!((decision, step.map(|step| step.tile.q)), (Move::Engage, Some(6)), "in reach, it keeps to its tile");
     }
 
     #[test]
-    fn patience_keeps_away_while_its_stamina_refills_and_closes_once_it_is_back() {
-        let (patient, mind) = (Footing { patience: 3, ..footing() }, keeping());
-        assert_eq!(choose(&patient, Move::Hold, &mind), Move::Hold, "out of reach with its stamina spent it waits");
-        assert_eq!(choose(&Footing { distance: 3, ..patient }, Move::Hold, &mind), Move::Flee, "and runs as its target nears");
-        assert_eq!(choose(&Footing { stamina: 1.0, ..patient }, Move::Hold, &mind), Move::Close, "refilled, it closes");
+    fn it_holds_rather_than_step_out_to_its_leash_edge() {
+        let mut candidates = around(0, 8);
+        for candidate in &mut candidates {
+            candidate.room = if candidate.tile.q > 0 { 0.0 } else { 1.0 };
+        }
+        let (_, step) = choose(&footing(), &candidates, Move::Hold, &Mind::default());
+        assert_ne!(step.map(|step| step.tile.q), Some(1), "never onto a tile with no leash left");
     }
 
     #[test]
-    fn a_mind_that_keeps_no_stamina_back_closes_spent() {
-        assert_eq!(choose(&footing(), Move::Hold, &Mind::default()), Move::Close);
-        assert_eq!(choose(&footing(), Move::Hold, &keeping()), Move::Hold);
+    fn a_mind_keeping_stamina_back_holds_while_spent() {
+        let spent = Footing { stamina: 0.0, ..footing() };
+        assert_eq!(choose(&spent, &around(0, 8), Move::Hold, &Mind::default()).0, Move::Engage);
+        assert_eq!(choose(&spent, &around(0, 8), Move::Hold, &keeping()).0, Move::Hold);
     }
 
     #[test]
-    fn near_its_leash_a_patient_npc_circles_inward_rather_than_flee_out() {
-        let (patient, mind) = (Footing { patience: 3, distance: 3, ..footing() }, keeping());
-        let cornered = Footing { leash_room: 0.12, room_fleeing: 0.05, clear_outward: true, ..patient };
-        assert_eq!(choose(&patient, Move::Hold, &mind), Move::Flee, "with room it flees");
-        assert_eq!(choose(&cornered, Move::Flee, &mind), Move::Circle, "at the edge it circles round toward its den");
-        assert_eq!(choose(&Footing { clear_outward: false, ..cornered }, Move::Hold, &mind), Move::Hold, "with its target outward already, it has nothing to circle for");
+    fn grace_steps_round_toward_its_targets_back_and_stands_once_past_its_faces() {
+        let mind = Mind::default();
+        let graceful = Footing { grace: true, ..footing() };
+        let mut candidates = around(6, 8);
+        candidates[1].behind = 0.17;
+        let (_, step) = choose(&graceful, &candidates, Move::Engage, &mind);
+        assert_eq!(step.map(|step| step.tile.q), Some(7), "faced, any step round is worth taking");
+        candidates[1].behind = 0.5;
+        candidates[0].behind = 0.5;
+        let (_, step) = choose(&graceful, &candidates, Move::Engage, &mind);
+        assert_eq!(step.map(|step| step.tile.q), Some(6), "past its faces already, it stands and strikes");
+        let plain = choose(&footing(), &candidates, Move::Engage, &mind).1;
+        assert_eq!(plain.map(|step| step.tile.q), Some(6), "with no Grace a tile past its target's faces is worth no step");
+        candidates[1].strike_cost = 0.6;
+        candidates[0].behind = 0.0;
+        assert!(weigh(&graceful, &candidates[1], Move::Engage, &mind) < weigh(&graceful, &Candidate { strike_cost: 0.0, ..candidates[1] }, Move::Engage, &mind), "with each strike dearer it steps round less readily");
     }
 
     #[test]
-    fn the_move_under_way_holds_against_one_scoring_alike() {
-        let (patient, mind) = (Footing { patience: 3, distance: 5, ..footing() }, keeping());
-        let flee = weigh(&patient, Move::Flee, &mind);
-        assert!((flee - HOLD).abs() < MOMENTUM, "flee and hold score near alike here: {flee}");
-        assert_eq!(choose(&patient, Move::Flee, &mind), Move::Flee);
-        assert_eq!(choose(&patient, Move::Hold, &mind), Move::Hold);
+    fn patience_keeps_away_out_of_reach_but_ready_and_engages_once_refilled() {
+        let mind = keeping();
+        let patient = Footing { patience: 3, stamina: 0.0, ..footing() };
+        let (decision, step) = choose(&patient, &around(6, 8), Move::Hold, &mind);
+        assert_eq!((decision, step.map(|step| step.tile.q)), (Move::KeepAway, Some(5)), "spent in its target's reach, it steps out");
+        let refilled = Footing { stamina: 1.0, ..patient };
+        assert_eq!(choose(&refilled, &around(3, 8), Move::KeepAway, &mind).0, Move::Engage, "refilled, it engages");
+        let far = choose(&patient, &around(0, 12), Move::Hold, &mind);
+        assert_ne!(far.1.map(|step| step.tile.q), Some(-1), "and it gives no ground it need not, out of reach already");
+    }
+
+    #[test]
+    fn without_patience_it_never_keeps_away() {
+        let spent = Footing { stamina: 0.0, ..footing() };
+        assert_eq!(weigh(&spent, &candidate(5, 8), Move::KeepAway, &Mind::default()), 0.0);
     }
 }
