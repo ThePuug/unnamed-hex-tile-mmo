@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-world = { path = "../world" }
+world = { path = "../world", features = ["inspect"] }
 common = { path = "../common" }
 image = "0"
 rapid-qoi = "0"

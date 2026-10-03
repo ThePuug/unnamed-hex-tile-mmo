@@ -69,6 +69,13 @@
 //! `crates/world/tests/relief_probe.rs` shows the shape: contiguous chunk,
 //! sparse sample, summary region, each read either side of the layer. A ratio
 //! that only looks reasonable on the dense pattern is not a result.
+//!
+//! **A layer pays its own way.** When the measurement says a layer costs too
+//! much, the fix is inside it: less read in `deform`, more resolved once in
+//! `prepare`, less done in `query`. Never at the composite's boundary: no
+//! trait method that lets the composite skip a layer, and no reader outside
+//! the stack that reads a layer's index. A caller sees tiles and nothing else
+//! (INV-009), and what a layer offers a caller rides on the tile.
 
 pub mod den;
 pub mod dissection;
@@ -694,7 +701,8 @@ impl Composite {
         self.events.push(event);
     }
 
-    /// Get the final tile state at (q, r). Lazily triggers deform + query cascades.
+    /// Get the final tile state at (q, r): how anything outside the stack
+    /// reads the world (INV-009). Lazily triggers deform + query cascades.
     /// Thread-safe: no global lock. Per-cell deform locks serialize cold cells.
     pub fn tile_at(&self, q: i32, r: i32) -> TileView {
         let _span = tracing::info_span!("tile_at").entered();
@@ -779,7 +787,10 @@ impl Composite {
         self.tile_at(q, r).cover
     }
 
-    /// Access the IndexRegistry directly (no lock needed — interior mutability).
+    /// Access the IndexRegistry directly (no lock needed — interior
+    /// mutability): for the world viewer and the probes, never the game,
+    /// which reads tiles (INV-009).
+    #[cfg(feature = "inspect")]
     pub fn with_indexes<R>(&self, f: impl FnOnce(&IndexRegistry) -> R) -> R {
         f(&self.indexes)
     }

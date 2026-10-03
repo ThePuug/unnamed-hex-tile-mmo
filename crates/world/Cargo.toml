@@ -3,8 +3,17 @@ name = "world"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# A layer's indexes, readable from outside the stack: for the world viewer
+# and the probes only, never the game (INV-009)
+inspect = []
+
 [dependencies]
 common = { path = "../common" }
 dashmap = "6"
 parking_lot = "0.12"
 tracing = "0.1"
+
+[dev-dependencies]
+# The crate's own tests and probes read indexes
+world = { path = ".", features = ["inspect"] }

@@ -164,6 +164,17 @@ summary reads its samples through `WorldChanges::over`, in
 `summary::dispatch_summary_tasks` and `summary::revise_summaries`. A path
 that skips it serves the tree a player felled.
 
+**INV-009 — The world's stack is opaque.** Outside
+`crates/world/src/events`, the world is read through `Composite::tile_at` and
+its siblings (`tiles_at`, `elevation_at`, `water_at`, `tags_at`,
+`cover_at`): a tile, composed. No caller learns which layers exist, reads a
+layer's index, or skips a layer it thinks it does not need. A layer's work
+changes behind that contract, and a bypass becomes load-bearing. A layer too
+slow for the tile path is made cheaper inside itself, never at the
+composite's boundary; what a layer offers a caller rides on the tile, as a
+den site's habitat does. `Composite::with_indexes` is for the world viewer
+and the probes, behind the world crate's `inspect` feature.
+
 ## Patterns
 
 **Position and movement.** `Position { tile: Qrz, offset: Vec3 }` is
