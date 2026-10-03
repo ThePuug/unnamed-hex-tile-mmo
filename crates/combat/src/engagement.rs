@@ -46,7 +46,7 @@ pub fn engaging_at(from: Qrz, dir: Qrz, elevation: impl Fn(i32, i32) -> i32) -> 
 
 /// Spawn an engagement of `npc_count` NPCs of `archetype` at `level`, on
 /// `side`, round `location`; each stands a tile above the ground
-/// `elevation` gives at its column.
+/// `elevation` gives at its column. Returns the engagement.
 pub fn spawn_engagement(
     tuning: &Tuning,
     location: Qrz,
@@ -57,8 +57,7 @@ pub fn spawn_engagement(
     elevation: impl Fn(i32, i32) -> i32,
     commands: &mut Commands,
     time: &Time,
-) {
-
+) -> Entity {
     let mut engagement = Engagement::new(location, level, archetype, npc_count);
 
     let engagement_entity = commands
@@ -125,6 +124,7 @@ pub fn spawn_engagement(
     }
 
     commands.entity(engagement_entity).insert(engagement);
+    engagement_entity
 }
 
 pub fn get_random_hex_offset(index: usize) -> Qrz {

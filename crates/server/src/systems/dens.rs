@@ -3,14 +3,16 @@
 //!
 //! The world says where a den may stand and on what ground: a tile carries
 //! a den site's habitat (`EventRegistry::den_at`), and a chunk's sites are
-//! found as it is generated. Whether a den stands on a site is a change to
-//! the world, the server's to make: a site with none, a player near and its
-//! regrowth past, gets one of the archetype that dens on its ground, at the
-//! level its distance from the haven gives, never nearer the player's own
-//! than [`MARGIN`]. A den keeps its pack while players come and go: one
-//! despawned unwatched comes back whole when a player returns. Killing it
-//! clears the change, and the site regrows after [`REGROWTH`]. Dens are held
-//! in memory, as every change to the world is.
+//! found as it is generated. A den on a site is a change to the world, the
+//! server's to make, and it ages on world time. A site with none, a player
+//! near, gets one of the archetype that dens on its ground, at the level its
+//! distance from the haven gives, never nearer the player's own than
+//! [`MARGIN`]. A standing den keeps its pack while players come and go: one
+//! abandoned unwatched comes back whole when a player returns. Killing the
+//! pack leaves the den cleared, a change that stands for [`DECAY`] and then
+//! is gone, leaving the site as the world made it. A standing den's growth
+//! with age is unbuilt. Dens are held in memory, as every change to the
+//! world is.
 
 use std::{collections::HashMap, time::Duration};
 
@@ -35,8 +37,11 @@ pub const PLACE_RANGE: i32 = 80;
 /// Chunks round a player's that hold every site within [`PLACE_RANGE`]
 const PLACE_CHUNKS: u8 = 5;
 
-/// How long a cleared site takes to hold a den again
-pub const REGROWTH: Duration = Duration::from_secs(600);
+/// How long a cleared den stands before the site is as the world made it
+pub const DECAY: Duration = Duration::from_secs(600);
+
+/// How often dens are raised and packs brought back
+const TEND: Duration = Duration::from_secs(1);
 
 /// Tiles from the haven each level of a den lies further out
 pub const STRETCH: i32 = 400;
@@ -47,17 +52,15 @@ pub const MARGIN: u32 = 5;
 /// How many tiles a den's search for dry ground round its site may look at
 const SEARCH: usize = 400;
 
-/// A den site the server has generated, and the den standing on it, if any.
+/// A den site the server has generated, and the den on it, if any.
 #[derive(Clone, Debug)]
 pub struct Site {
     pub tile: Qrz,
     pub habitat: Habitat,
     pub den: Option<Den>,
-    /// When the site may hold a den again, after its last was cleared
-    pub regrows_at: Duration,
 }
 
-/// A den: the pack that lives on a site, and the tile it was raised on.
+/// A den: the pack that lives on a site, where it stands, and how it is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Den {
     pub archetype: EnemyArchetype,
@@ -66,10 +69,30 @@ pub struct Den {
     /// Where its pack stands, on dry ground near the site; none until it
     /// has first stood
     pub at: Option<Qrz>,
+    pub state: DenState,
+    /// When it came to be as it is
+    pub since: Duration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DenState {
+    /// Its pack lives: the engagement out in the world, none while no
+    /// player is near
+    Standing { pack: Option<Entity> },
+    /// Its pack was killed
+    Cleared,
+}
+
+impl Den {
+    /// Whether the den has decayed by `now`, and the site is as the world
+    /// made it.
+    pub fn decayed(&self, now: Duration) -> bool {
+        self.state == DenState::Cleared && now >= self.since + DECAY
+    }
 }
 
 /// Every den site the server has generated, by the chunk it lies in, with
-/// the dens standing on them.
+/// the dens on them.
 #[derive(Resource, Default)]
 pub struct Dens {
     sites: HashMap<ChunkId, Vec<Site>>,
@@ -81,21 +104,31 @@ impl Dens {
     pub fn found(&mut self, tile: Qrz, habitat: Habitat) {
         let sites = self.sites.entry(loc_to_chunk(tile)).or_default();
         if !sites.iter().any(|site| site.tile == tile) {
-            sites.push(Site { tile, habitat, den: None, regrows_at: Duration::ZERO });
+            sites.push(Site { tile, habitat, den: None });
         }
     }
 
-    /// The site whose den's pack stands at `at`
-    fn holding(&mut self, at: Qrz) -> Option<&mut Site> {
-        self.sites.values_mut().flatten().find(|site| site.den.is_some_and(|den| den.at == Some(at)))
+    /// Notes how `pack` ended at `now`: killed, its den is cleared from
+    /// then; abandoned, its den stands without it.
+    pub fn ended(&mut self, pack: Entity, cleared: bool, now: Duration) {
+        let Some(den) = self.sites.values_mut().flatten().filter_map(|site| site.den.as_mut())
+            .find(|den| den.state == DenState::Standing { pack: Some(pack) })
+        else {
+            return;
+        };
+        *den = if cleared {
+            Den { state: DenState::Cleared, since: now, ..*den }
+        } else {
+            Den { state: DenState::Standing { pack: None }, ..*den }
+        };
     }
 }
 
 /// An engagement gone: `cleared` when every member died, else abandoned
-/// unwatched. `at` is where it was raised.
+/// unwatched.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct EngagementEnded {
-    pub at: Qrz,
+    pub engagement: Entity,
     pub cleared: bool,
 }
 
@@ -132,51 +165,57 @@ pub fn dry_ground_near(map: &Map, site: Qrz) -> Option<Qrz> {
     None
 }
 
-/// Raises a den on every site near a player that has none and has
-/// regrown, brings back the pack of a den abandoned unwatched, and clears
-/// the den whose pack died.
+/// Hears every frame how packs ended, and each [`TEND`] raises a den on
+/// every site near a player that has none, brings back the pack of a
+/// standing den that has none, and lets a decayed den go.
+#[allow(clippy::too_many_arguments)]
 pub fn tend_dens(
     mut dens: ResMut<Dens>,
     mut ended: MessageReader<EngagementEnded>,
     lobby: Res<Lobby>,
     players: Query<(&Loc, Option<&ActorAttributes>)>,
-    engagements: Query<&Engagement>,
+    engagements: Query<(), With<Engagement>>,
     map: Res<Map>,
     registry: Res<EventRegistry>,
     tuning: Res<Tuning>,
     time: Res<Time>,
+    mut next: Local<Duration>,
     mut commands: Commands,
 ) {
     let now = time.elapsed();
     for ending in ended.read() {
-        let Some(site) = dens.holding(ending.at) else { continue };
-        if ending.cleared {
-            info!("den cleared at ({}, {}); it regrows in {}s", site.tile.q, site.tile.r, REGROWTH.as_secs());
-            site.den = None;
-            site.regrows_at = now + REGROWTH;
-        }
+        dens.ended(ending.engagement, ending.cleared, now);
     }
+    if now < *next {
+        return;
+    }
+    *next = now + TEND;
 
-    let standing: std::collections::HashSet<Qrz> = engagements.iter().map(|engagement| engagement.spawn_location).collect();
     for &player in lobby.right_values() {
         let Ok((loc, attrs)) = players.get(player) else { continue };
         let level = attrs.map_or(0, ActorAttributes::total_level);
         for chunk in calculate_visible_chunks(loc_to_chunk(**loc), PLACE_CHUNKS) {
             let Some(sites) = dens.sites.get_mut(&chunk) else { continue };
             for site in sites.iter_mut().filter(|site| site.tile.flat_distance(loc) <= PLACE_RANGE) {
-                if site.den.is_none() && now >= site.regrows_at {
+                if site.den.is_some_and(|den| den.decayed(now)) {
+                    info!("den decayed at ({}, {})", site.tile.q, site.tile.r);
+                    site.den = None;
+                }
+                let den = site.den.get_or_insert_with(|| {
                     // The spec's den: one at its level, or two three below it
                     let level = den_level(site.tile, level);
                     let pair = rand::random::<bool>() && level >= 3;
-                    site.den = Some(Den {
+                    Den {
                         archetype: EnemyArchetype::denning_on(site.habitat),
                         level: if pair { level - 3 } else { level },
                         size: if pair { 2 } else { 1 },
                         at: None,
-                    });
-                }
-                let Some(den) = site.den.as_mut() else { continue };
-                if den.at.is_some_and(|at| standing.contains(&at)) {
+                        state: DenState::Standing { pack: None },
+                        since: now,
+                    }
+                });
+                let DenState::Standing { pack } = den.state else { continue };
+                if pack.is_some_and(|pack| engagements.contains(pack)) {
                     continue;
                 }
                 let Some(at) = den.at.or_else(|| dry_ground_near(&map, site.tile)) else { continue };
@@ -184,10 +223,11 @@ pub fn tend_dens(
                     info!("den of {} {:?} at level {} on {:?} ground at ({}, {})", den.size, den.archetype, den.level, site.habitat, at.q, at.r);
                 }
                 den.at = Some(at);
-                combat::engagement::spawn_engagement(
+                let pack = combat::engagement::spawn_engagement(
                     &tuning, at, den.archetype, Side::WILD, den.level, den.size,
                     |q, r| registry.elevation_at(q, r), &mut commands, &time,
                 );
+                den.state = DenState::Standing { pack: Some(pack) };
             }
         }
     }
@@ -204,6 +244,29 @@ mod tests {
         assert!(den_level(at(STRETCH * 4), 15) > den_level(at(STRETCH), 15), "further out, deeper");
         assert_eq!(den_level(at(STRETCH * 100), 15), 10, "never within the margin of the player's level");
         assert_eq!(den_level(at(STRETCH * 100), 3), 0, "and a player below the margin meets the weakest");
+    }
+
+    #[test]
+    fn a_cleared_den_stands_until_it_decays_and_an_abandoned_one_waits_for_its_pack() {
+        let site = Qrz { q: 0, r: 0, z: 0 };
+        let pack = Entity::from_raw_u32(7).unwrap();
+        let mut dens = Dens::default();
+        dens.found(site, Habitat::Open);
+        let den = |dens: &Dens| dens.sites[&loc_to_chunk(site)][0].den.unwrap();
+        dens.sites.get_mut(&loc_to_chunk(site)).unwrap()[0].den = Some(Den {
+            archetype: EnemyArchetype::Berserker, level: 0, size: 1, at: Some(site),
+            state: DenState::Standing { pack: Some(pack) }, since: Duration::ZERO,
+        });
+
+        dens.ended(pack, false, Duration::from_secs(5));
+        assert_eq!(den(&dens).state, DenState::Standing { pack: None }, "abandoned, it stands without its pack");
+
+        dens.sites.get_mut(&loc_to_chunk(site)).unwrap()[0].den.as_mut().unwrap().state = DenState::Standing { pack: Some(pack) };
+        let killed = Duration::from_secs(10);
+        dens.ended(pack, true, killed);
+        assert_eq!(den(&dens).state, DenState::Cleared);
+        assert!(!den(&dens).decayed(killed + DECAY - Duration::from_secs(1)), "cleared, it stands a while");
+        assert!(den(&dens).decayed(killed + DECAY), "then it is gone");
     }
 
     #[test]

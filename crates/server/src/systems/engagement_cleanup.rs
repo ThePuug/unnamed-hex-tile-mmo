@@ -75,7 +75,7 @@ pub fn cleanup_engagements(
 
             // Despawn engagement entity directly (no network component, clients don't know about it)
             commands.entity(engagement_entity).despawn();
-            ended.write(EngagementEnded { at: engagement.spawn_location, cleared: all_npcs_dead });
+            ended.write(EngagementEnded { engagement: engagement_entity, cleared: all_npcs_dead });
         }
     }
 }
