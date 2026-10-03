@@ -67,9 +67,10 @@ use common_bevy::{
         target::Target,
         AttackRange, Loc,
     },
-    message::{AbilityType, Do, Event, Try},
+    message::{AbilityType, ClearType, Component as MessageComponent, Do, Event, Try},
     plugins::nntree::NNTreePlugin,
     resources::map::Map,
+    systems::targeting,
     archetype::EnemyArchetype,
     tuning::Tuning,
 };
@@ -194,6 +195,22 @@ struct Ledger {
     beyond_reach: f32,
     circling: f32,
     fatigue: f32,
+    /// Its commitments at work: combos fired before they unlocked
+    /// (Ferocity), reactions taken through a recovery (Preparation), Grit
+    /// banks released, strikes struck across its own line (Grace), and
+    /// seconds its swing waited unstruck (Patience)
+    early_combos: u32,
+    through: u32,
+    releases: u32,
+    across: u32,
+    waiting: f32,
+    /// Threats queued on it, of those landed and still queued at the end,
+    /// and the clears that took the rest: how many each clear answered
+    /// (Awareness)
+    queued_on: u32,
+    landed_on: u32,
+    pending_on: u32,
+    clears: u32,
 }
 
 impl Ledger {
@@ -213,6 +230,21 @@ impl Ledger {
         self.beyond_reach += other.beyond_reach;
         self.circling += other.circling;
         self.fatigue += other.fatigue;
+        self.early_combos += other.early_combos;
+        self.through += other.through;
+        self.releases += other.releases;
+        self.across += other.across;
+        self.waiting += other.waiting;
+        self.queued_on += other.queued_on;
+        self.landed_on += other.landed_on;
+        self.pending_on += other.pending_on;
+        self.clears += other.clears;
+    }
+
+    /// Threats each of its clears answered
+    fn per_answer(&self) -> f32 {
+        let answered = self.queued_on.saturating_sub(self.landed_on + self.pending_on);
+        answered as f32 / self.clears.max(1) as f32
     }
 
     fn landed_total(&self) -> f32 {
@@ -251,15 +283,41 @@ fn whole(threat: &QueuedThreat) -> f32 {
 }
 
 /// Counts each ability an actor uses, auto-attacks included, and each
-/// threat it sends.
-fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>) {
+/// threat it sends; a strike struck across its user's line; each threat
+/// queued on an actor and each answer that cleared its span; and of each recovery an
+/// ability starts, a combo fired before it unlocked (it carries what it
+/// skipped, with no reaction through it) or a reaction taken through one.
+fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Query<(&Loc, Option<&Heading>)>) {
     for message in reader.read() {
         match &message.event {
-            Event::UseAbility { ent, ability, .. } => if let Some(ledger) = tally.of(*ent) {
-                *ledger.used.entry(*ability).or_default() += 1;
+            Event::UseAbility { ent, ability, target } => {
+                let across = ability.reach(1).is_some() && target.and_then(|target| places.get(target).ok())
+                    .zip(places.get(*ent).ok())
+                    .is_some_and(|((target_loc, _), (loc, heading))| targeting::across(heading, loc, target_loc));
+                if let Some(ledger) = tally.of(*ent) {
+                    *ledger.used.entry(*ability).or_default() += 1;
+                    ledger.across += across as u32;
+                }
+            }
+            Event::InsertThreat { ent, threat } => {
+                if let Some(ledger) = tally.of(threat.source) {
+                    *ledger.sent.entry(threat.ability).or_default() += whole(threat);
+                }
+                if let Some(ledger) = tally.of(*ent) {
+                    ledger.queued_on += 1;
+                }
+            }
+            // A threat landing clears it too; only a span cleared is an
+            // answer, a reaction's or a leap clear's
+            Event::ClearQueue { ent, clear_type: ClearType::Span(_) } => if let Some(ledger) = tally.of(*ent) {
+                ledger.clears += 1;
             },
-            Event::InsertThreat { threat, .. } => if let Some(ledger) = tally.of(threat.source) {
-                *ledger.sent.entry(threat.ability).or_default() += whole(threat);
+            Event::Incremental { ent, component: MessageComponent::Recovery(recovery) } => if let Some(ledger) = tally.of(*ent) {
+                if recovery.reactions > 0 {
+                    ledger.through += 1;
+                } else if recovery.carried > 0.0 {
+                    ledger.early_combos += 1;
+                }
             },
             _ => {}
         }
@@ -267,11 +325,28 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>) {
 }
 
 /// Counts each resolved threat and DoT tick against the side of the actor
-/// that sent it.
+/// that sent it, each threat that lands on an actor out of its queue (a
+/// reflection never stood in one), and each blow that binds, a Grit bank
+/// released into it.
 fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>) {
     let (source, ability, damage) = match trigger.event() {
-        Try { event: Event::ResolveThreat { threat, .. } } => (threat.source, threat.ability, whole(threat)),
+        Try { event: Event::ResolveThreat { ent, threat } } => {
+            if threat.ability != Some(AbilityType::Counter) {
+                if let Some(ledger) = tally.of(*ent) {
+                    ledger.landed_on += 1;
+                }
+            }
+            (threat.source, threat.ability, whole(threat))
+        }
         Try { event: Event::DotTick { source, ability, damage, .. } } => (*source, *ability, *damage),
+        Try { event: Event::DealDamage { source, bind, .. } } => {
+            if *bind > 0.0 {
+                if let Some(ledger) = tally.of(*source) {
+                    ledger.releases += 1;
+                }
+            }
+            return;
+        }
         _ => return,
     };
     let Some(ledger) = tally.of(source) else { return };
@@ -288,10 +363,11 @@ fn tally_states(world: &mut World, step: f32) {
     let mut actors = world.query::<(Entity, &Health, &Loc, &AttackRange, Option<&Target>, Option<&GlobalRecovery>, Option<&Status>, Option<&Endurance>, Option<&Move>)>();
     let frames: Vec<_> = actors.iter(world).filter(|(_, health, ..)| health.state > 0.0).map(|(ent, _, loc, range, target, recovery, status, endurance, under_way)| {
         let beyond = target.and_then(|target| target.entity).and_then(|foe| locs.get(&foe)).is_some_and(|foe| loc.flat_distance(foe) > range.0);
-        (ent, recovery.is_some(), Status::holds(status), status.is_some_and(|status| status.slow.is_some()), beyond, under_way == Some(&Move::Circle), Endurance::fatigue_of(&tuning, endurance))
+        let waiting = status.is_some_and(|status| status.waiting);
+        (ent, recovery.is_some(), Status::holds(status), status.is_some_and(|status| status.slow.is_some()), beyond, under_way == Some(&Move::Circle), Endurance::fatigue_of(&tuning, endurance), waiting)
     }).collect();
     let mut tally = world.resource_mut::<Tally>();
-    for (ent, recovering, held, slowed, beyond, circling, fatigue) in frames {
+    for (ent, recovering, held, slowed, beyond, circling, fatigue, waiting) in frames {
         let Some(ledger) = tally.of(ent) else { continue };
         let during = |state: bool| if state { step } else { 0.0 };
         ledger.alive += step;
@@ -301,6 +377,7 @@ fn tally_states(world: &mut World, step: f32) {
         ledger.beyond_reach += during(beyond);
         ledger.circling += during(circling);
         ledger.fatigue += fatigue * step;
+        ledger.waiting += during(waiting);
     }
 }
 
@@ -463,12 +540,15 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
             _ => {}
         }
     };
-    let mut queues = app.world_mut().query::<&ReactionQueue>();
-    let pending: Vec<QueuedThreat> = queues.iter(app.world()).flat_map(|queue| queue.threats.iter().copied()).collect();
+    let mut queues = app.world_mut().query::<(Entity, &ReactionQueue)>();
+    let pending: Vec<(Entity, QueuedThreat)> = queues.iter(app.world()).flat_map(|(ent, queue)| queue.threats.iter().map(move |threat| (ent, *threat))).collect();
     let mut tally = std::mem::take(&mut *app.world_mut().resource_mut::<Tally>());
-    for threat in pending {
+    for (on, threat) in pending {
         if let Some(ledger) = tally.of(threat.source) {
             *ledger.pending.entry(threat.ability).or_default() += whole(&threat);
+        }
+        if let Some(ledger) = tally.of(on) {
+            ledger.pending_on += 1;
         }
     }
     if settings.trace > 0 {
@@ -736,9 +816,11 @@ fn ledger_line(ledger: &Ledger, runs: f32) -> String {
     }).collect();
     let alive = ledger.alive.max(f32::EPSILON);
     let share = |seconds: f32| 100.0 * seconds / alive;
-    format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% circling {:.0}% fatigue {:.0}%",
+    let each = |count: u32| count as f32 / runs;
+    format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% circling {:.0}% fatigue {:.0}% || commitments: early combos {:.1} releases {:.1} across {:.1} waiting {:.0}% through {:.1} per answer {:.1}",
         abilities.join(" | "),
-        share(ledger.recovering), share(ledger.held), share(ledger.slowed), share(ledger.beyond_reach), share(ledger.circling), share(ledger.fatigue))
+        share(ledger.recovering), share(ledger.held), share(ledger.slowed), share(ledger.beyond_reach), share(ledger.circling), share(ledger.fatigue),
+        each(ledger.early_combos), each(ledger.releases), each(ledger.across), share(ledger.waiting), each(ledger.through), ledger.per_answer())
 }
 
 #[cfg(test)]
