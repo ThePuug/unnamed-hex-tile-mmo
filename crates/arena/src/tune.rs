@@ -16,8 +16,8 @@
 //! - `minds [evals] [archetype ...]`: CMA-ES over each archetype's mind, for
 //!   its own score against the field: one pass
 //! - `exploit [evals] [archetype ...]`: a fresh search for each archetype's
-//!   best answer to the minds as they stand, and how far it beats the mind
-//!   it has; one that beats it by `minds.exploit_margin` joins the field
+//!   best answer to the minds as they stand, on winning alone, and how far
+//!   it beats the mind it has: reported, never joining the field
 //! - `settle [evals]`: passes of `minds`, an `exploit` pass every
 //!   `minds.exploit_every`, until no archetype gains more than
 //!   `minds.settle` in one, or `minds.rounds` have run
@@ -35,7 +35,7 @@
 //! fits one set of fights.
 //!
 //! A mind is searched against a field: the minds as they stand and those of
-//! the last `minds.pool` - 1 passes, and any exploiter that joined it. A
+//! the last `minds.pool` - 1 passes. A
 //! mind that answers only the latest of its foes' minds would chase them
 //! round in circles, each pass undoing the last; one that answers the field
 //! holds up against all of them. A mind's score also holds its archetype
@@ -43,10 +43,8 @@
 //! used less than `style.floor`, so a mind keeps its style in play at the
 //! cost of some fights, and a style the numbers make too dear shows as
 //! lost fights rather than as fighters that stopped playing it. An
-//! exploiter scores on winning alone, so how far it beats a held mind is
-//! the style's price, and it keeps the field honest: what
-//! beats the minds as they stand is found afresh, from anywhere in the
-//! bounds, and those it beats must learn to answer it.
+//! exploiter, searched afresh from anywhere in the bounds, scores on
+//! winning alone, so how far it beats a held mind is the style's price.
 
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -135,7 +133,6 @@ struct MindRanges {
     rounds: usize,
     pool: usize,
     exploit_every: usize,
-    exploit_margin: f32,
     just_acted: Bounds,
     common: Vec<Range>,
     strike: Vec<Range>,
@@ -562,11 +559,10 @@ fn minds(config: &Config, evals: usize, only: &[EnemyArchetype]) -> Vec<(EnemyAr
 /// For each archetype (all, or `only`), a fresh search from anywhere in the
 /// bounds for its best answer to the minds as they stand, scored on winning
 /// alone, and how far that beats the mind it has on the same fights, also
-/// scored on winning alone: the price of its style. One that beats it by
-/// `minds.exploit_margin` joins the field, as the minds stand with it in
-/// its archetype's place, so the rest learn to answer it.
+/// scored on winning alone: the price of its style. Reported only; no
+/// exploiter joins the field.
 fn exploit(config: &Config, evals: usize, only: &[EnemyArchetype]) {
-    let mut state = load();
+    let state = load();
     for &archetype in EnemyArchetype::ALL.iter().filter(|archetype| only.is_empty() || only.contains(archetype)) {
         let ranges = mind_ranges(config, archetype);
         let held: Vec<f32> = ranges.iter().map(|range| state.minds.get(&range.name).copied()
@@ -583,13 +579,6 @@ fn exploit(config: &Config, evals: usize, only: &[EnemyArchetype]) {
         let check = |values: &[f32]| standing_in(config, &state, as_they_stand, archetype, &ranges, values, config.check_runs, seed, None);
         let (mind, exploiter) = (check(&held), check(&found));
         println!("{label}: {exploiter:.1} against its mind's {mind:.1} on winning alone, {:+.1}", exploiter - mind);
-        if exploiter - mind > config.minds.exploit_margin {
-            let mut joined = state.minds.clone();
-            joined.extend(named(&ranges, &found));
-            state.history.push(joined);
-            save(&state);
-            println!("{label} joins the field");
-        }
     }
 }
 
