@@ -15,6 +15,7 @@ pub mod equipment;
 pub mod equipment_panel;
 pub mod focus;
 pub mod gathering;
+pub mod help;
 pub mod highway;
 pub mod hiding;
 pub mod input;

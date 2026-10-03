@@ -110,7 +110,7 @@ pub fn gather_target(map: &Map, position: &Position, heading: Heading) -> Option
 /// Asks the server to gather the target when G is pressed; the menu holds
 /// it as it holds every gameplay key.
 pub fn request(
-    mut keyboard: ResMut<ButtonInput<KeyCode>>,
+    mut keys: crate::systems::help::Keys,
     menu: Res<crate::plugins::shell::menu::GameMenu>,
     focus: Res<crate::systems::focus::NumpadFocus>,
     mut window: ResMut<LootWindow>,
@@ -129,22 +129,22 @@ pub fn request(
     if window.entries.is_some() && focus.has(crate::systems::focus::Panel::Loot) {
         let row = window.row;
         for (i, key) in ENTRY_KEYS.iter().enumerate() {
-            if keyboard.clear_just_pressed(*key) {
+            if keys.take(*key, "Take the entry in this column") {
                 let entry = (row * ENTRY_KEYS.len() + i) as u8;
                 writer.write(Try { event: Event::Take { ent, entry: Some(entry) } });
             }
         }
-        if keyboard.clear_just_pressed(KEYCODE_TAKE_ALL) {
+        if keys.take(KEYCODE_TAKE_ALL, "Take everything in the loot window") {
             writer.write(Try { event: Event::Take { ent, entry: None } });
         }
-        if keyboard.clear_just_pressed(KEYCODE_NEXT_ROW) {
+        if keys.take(KEYCODE_NEXT_ROW, "Show the loot window's next row") {
             window.row = (row + 1) % window.rows();
         }
-        if keyboard.clear_just_pressed(KEYCODE_CLOSE) {
+        if keys.take(KEYCODE_CLOSE, "Close the loot window") {
             writer.write(Try { event: Event::CloseLoot { ent } });
         }
     }
-    if !keyboard.just_pressed(KEYCODE_GATHER) {
+    if !keys.pressed(KEYCODE_GATHER, "Gather what you face, or open the pile") {
         return;
     }
     let here = position.reached(&map);

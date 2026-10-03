@@ -112,6 +112,21 @@ pub const PLAYER: [AbilityType; 8] = [
     AbilityType::Parry, AbilityType::Counter, AbilityType::Leap, AbilityType::PerfectStride,
 ];
 
+/// What `ability` does, as its key's help says.
+pub fn tells(ability: AbilityType) -> &'static str {
+    match ability {
+        AbilityType::AutoAttack => "Auto-attack: strikes the hostile target within reach on its own",
+        AbilityType::Frenzy => "Frenzy: a bite on the target in reach; its combo is another bite",
+        AbilityType::Feint => "Feint: a light strike on the target in reach",
+        AbilityType::Overpower => "Overpower: one heavy blow on the target in reach",
+        AbilityType::Punish => "Punish: a strike on the target in reach, harder on one still in recovery",
+        AbilityType::Parry => "Parry: clear the span, sending nothing back",
+        AbilityType::Counter => "Counter: clear the span, and send a share of each threat back to its source at any range",
+        AbilityType::Leap => "Leap: clear of the target in reach, or onto the one out of it",
+        AbilityType::PerfectStride => "Perfect Stride: for a few seconds, strike past the forward faces freely and run faster",
+    }
+}
+
 /// What stands on each of the bar's keys for an actor of `typ`: a player's
 /// whole kit; each of an NPC's skills on the key a player holds it on, so a
 /// view's bar looks as a player's does.
@@ -204,7 +219,7 @@ fn spawn_slot(tuning: &Tuning, icons: &Handle<Font>, parent: &mut ChildSpawnerCo
         ));
 
         // Keybind label (top-left corner)
-        crate::systems::keycap::corner_keycap(parent, &format!("{:?}", keybind).replace("Key", "")).insert(SlotKeybind);
+        crate::systems::keycap::corner_keycap(parent, keybind).insert(SlotKeybind);
 
         // Cost badge (bottom-right corner)
         if let Some(ability) = ability {

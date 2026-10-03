@@ -204,6 +204,9 @@ fn main() {
     app.init_resource::<crate::resources::RenderOrigin>();
     app.init_resource::<gathering::LootWindow>();
     app.init_resource::<crate::systems::focus::NumpadFocus>();
+    app.init_resource::<crate::systems::help::Help>();
+    app.add_systems(Startup, crate::systems::help::setup);
+    app.add_systems(Update, crate::systems::help::show);
     app.init_resource::<hiding::HiddenMeshes>();
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();

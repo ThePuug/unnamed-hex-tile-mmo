@@ -71,15 +71,12 @@ impl GameMenu {
     }
 }
 
-/// Keys the shell acts on; any other frame leaves its state untouched.
-const KEYS: [KeyCode; 5] = [KeyCode::Escape, KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::Enter, KeyCode::NumpadEnter];
-
 /// Routes this frame's keys to whichever of the menu and the settings
 /// panel is on top. The console's own keys come first: while it shows, it
 /// has them.
 #[allow(clippy::too_many_arguments)]
 pub fn route_keys(
-    keyboard: Res<ButtonInput<KeyCode>>,
+    mut keys: crate::systems::help::Keys,
     console: Res<DevConsole>,
     stage: Res<State<Stage>>,
     mut next: ResMut<NextState<Stage>>,
@@ -100,15 +97,13 @@ pub fn route_keys(
         return;
     }
     if panel.open {
-        settings::navigate(&mut panel, &mut video, &keyboard);
-        return;
-    }
-    if !keyboard.any_just_pressed(KEYS) {
+        settings::navigate(&mut panel, &mut video, &mut keys);
         return;
     }
     let stage = *stage.get();
     if stage == Stage::Playing && !menu.open {
-        if keyboard.just_pressed(KeyCode::Escape) {
+        let does = if character.visible { "Close the character panel" } else { "Open the menu" };
+        if keys.pressed(KeyCode::Escape, does) {
             if character.visible {
                 if let Ok(mut visibility) = character_view.single_mut() {
                     character_panel::close(&mut character, &mut visibility);
@@ -120,14 +115,17 @@ pub fn route_keys(
         return;
     }
     if menu.confirming {
-        if keyboard.just_pressed(KeyCode::Escape) {
+        const PICK: &str = "Choose between leaving and staying";
+        if keys.pressed(KeyCode::Escape, "Stay in the world") {
             menu.confirming = false;
-        } else if keyboard.any_just_pressed([KeyCode::ArrowUp, KeyCode::ArrowDown]) {
+        } else if keys.pressed(KeyCode::ArrowUp, PICK) || keys.pressed(KeyCode::ArrowDown, PICK) {
             menu.cancel_picked = !menu.cancel_picked;
-        } else if menu.cancel_picked {
-            menu.confirming = false;
-        } else {
-            super::leave(&mut writer, &mut next, &mut entered);
+        } else if entered_choice(&mut keys, "Do what is chosen") {
+            if menu.cancel_picked {
+                menu.confirming = false;
+            } else {
+                super::leave(&mut writer, &mut next, &mut entered);
+            }
         }
         return;
     }
@@ -136,15 +134,13 @@ pub fn route_keys(
         return;
     }
     let rows = offered.len();
-    if keyboard.just_pressed(KeyCode::Escape) {
-        if stage == Stage::Playing {
-            menu.close();
-        }
-    } else if keyboard.just_pressed(KeyCode::ArrowUp) {
+    if stage == Stage::Playing && keys.pressed(KeyCode::Escape, "Close the menu") {
+        menu.close();
+    } else if keys.pressed(KeyCode::ArrowUp, "Choose the row above") {
         menu.row = (menu.row + rows - 1) % rows;
-    } else if keyboard.just_pressed(KeyCode::ArrowDown) {
+    } else if keys.pressed(KeyCode::ArrowDown, "Choose the row below") {
         menu.row = (menu.row + 1) % rows;
-    } else {
+    } else if entered_choice(&mut keys, "Do what the row says") {
         match offered[menu.row.min(rows - 1)] {
             Choice::RetryNow => link.retry_now(),
             Choice::Play => super::play(&mut writer, &mut next, &mut entered),
@@ -159,6 +155,11 @@ pub fn route_keys(
             }
         }
     }
+}
+
+/// Whether Enter, either of them, went down to do what `does` says.
+fn entered_choice(keys: &mut crate::systems::help::Keys, does: &'static str) -> bool {
+    keys.pressed(KeyCode::Enter, does) | keys.pressed(KeyCode::NumpadEnter, does)
 }
 
 #[derive(Component)]

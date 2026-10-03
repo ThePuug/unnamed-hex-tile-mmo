@@ -185,7 +185,7 @@ pub fn activate(
 /// Left and right turn the figure a stop at a time, as they orbit the
 /// camera in the world, and it settles toward the stop.
 pub fn turn(
-    keyboard: Res<ButtonInput<KeyCode>>,
+    mut keys: crate::systems::help::Keys,
     state: Res<CharacterPanelState>,
     stage: Res<State<Stage>>,
     settings: Res<SettingsPanel>,
@@ -194,10 +194,10 @@ pub fn turn(
     mut figure: Query<&mut Transform, With<Figure>>,
 ) {
     if on_screen(&state, *stage.get()) && !settings.open {
-        if keyboard.just_pressed(KeyCode::ArrowLeft) {
+        if keys.pressed(KeyCode::ArrowLeft, "Turn the figure left") {
             turn.target += TURN;
         }
-        if keyboard.just_pressed(KeyCode::ArrowRight) {
+        if keys.pressed(KeyCode::ArrowRight, "Turn the figure right") {
             turn.target -= TURN;
         }
     }

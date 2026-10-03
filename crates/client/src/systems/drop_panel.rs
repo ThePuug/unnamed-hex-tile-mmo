@@ -32,6 +32,9 @@ const DIGIT_KEYS: [KeyCode; 10] = [
     ENTRY_KEYS[4], ENTRY_KEYS[5], ENTRY_KEYS[6], ENTRY_KEYS[7], ENTRY_KEYS[8],
 ];
 
+const MORE: &str = "Raise the count; hold to keep raising it";
+const LESS: &str = "Lower the count; hold to keep lowering it";
+
 /// How long a held + or - waits before it repeats.
 const SCROLL_DELAY_MS: u64 = 400;
 /// How often a held + or - repeats.
@@ -127,7 +130,7 @@ impl DropChoice {
 /// - scroll it, Enter drops that many and `.` closes it. It closes with
 /// the bag tab, and when the bag holds none of its stack.
 pub fn handle_keys(
-    mut keyboard: ResMut<ButtonInput<KeyCode>>,
+    mut keys: crate::systems::help::Keys,
     console: Res<DevConsole>,
     focus: Res<NumpadFocus>,
     state: Res<CharacterPanelState>,
@@ -145,11 +148,11 @@ pub fn handle_keys(
     }
     chosen.count = chosen.count.min(most);
     if focus.has(Panel::Drop) && !console.visible {
-        if keyboard.clear_just_pressed(KEYCODE_CANCEL) {
+        if keys.take(KEYCODE_CANCEL, "Cancel the drop") {
             choice.0 = None;
             return;
         }
-        if keyboard.clear_just_pressed(KEYCODE_DROP) {
+        if keys.take(KEYCODE_DROP, "Drop the count chosen") {
             if chosen.count > 0 {
                 writer.write(Try { event: Event::Drop { ent, kind: chosen.kind, count: chosen.count } });
             }
@@ -157,20 +160,23 @@ pub fn handle_keys(
             return;
         }
         for (digit, key) in DIGIT_KEYS.iter().enumerate() {
-            if keyboard.clear_just_pressed(*key) {
+            if keys.take(*key, "Type a digit of the count") {
                 chosen.type_digit(digit as u32, most);
             }
         }
-        if keyboard.clear_just_pressed(KEYCODE_ERASE) {
+        if keys.take(KEYCODE_ERASE, "Erase the count's last digit") {
             chosen.erase();
         }
-        for (key, more) in [(KEYCODE_MORE, true), (KEYCODE_LESS, false)] {
-            if keyboard.clear_just_pressed(key) {
+        for (key, more, does) in [(KEYCODE_MORE, true, MORE), (KEYCODE_LESS, false, LESS)] {
+            if keys.take(key, does) {
                 chosen.press_scroll(more, time.elapsed());
             }
         }
     }
-    chosen.scroll = chosen.scroll.filter(|s| keyboard.pressed(if s.more { KEYCODE_MORE } else { KEYCODE_LESS }));
+    if let Some(scroll) = chosen.scroll {
+        let still = if scroll.more { keys.held(KEYCODE_MORE, MORE) } else { keys.held(KEYCODE_LESS, LESS) };
+        chosen.scroll = still.then_some(scroll);
+    }
     chosen.hold_scroll(time.elapsed(), most);
     choice.0 = Some(chosen);
 }
@@ -187,7 +193,7 @@ pub fn spawn_entry(parent: &mut ChildSpawnerCommands, count: u32) {
     parent
         .spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(6.), ..default() })
         .with_children(|line| {
-            keycap(line, "-");
+            keycap(line, KEYCODE_LESS);
             line.spawn((
                 Node {
                     min_width: Val::Px(80.),
@@ -203,9 +209,9 @@ pub fn spawn_entry(parent: &mut ChildSpawnerCommands, count: u32) {
             .with_children(|field| {
                 field.spawn((DropCount, Text::new(count.to_string()), TextFont { font_size: FontSize::Px(20.0), ..default() }, TextColor(Color::WHITE)));
             });
-            keycap(line, "+");
+            keycap(line, KEYCODE_MORE);
         });
-    hint_row(parent, None, &[Hint::key("Ent", "drop"), Hint::key(".", "cancel")]);
+    hint_row(parent, None, &[Hint::key(KEYCODE_DROP, "drop"), Hint::key(KEYCODE_CANCEL, "cancel")]);
 }
 
 /// Writes the count chosen into the panel's text box.

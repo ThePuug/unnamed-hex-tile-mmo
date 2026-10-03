@@ -25,13 +25,13 @@ pub enum Change {
 
 /// The keys that change the pair under the cursor, set out as a pair is
 /// drawn: spectrum over its bar, axis at its ends, shift along it.
-const KEYS: [(KeyCode, Change); 6] = [
-    (KeyCode::Numpad7, Change::Spectrum(-1)),
-    (KeyCode::Numpad9, Change::Spectrum(1)),
-    (KeyCode::Numpad4, Change::Axis(-1)),
-    (KeyCode::Numpad6, Change::Axis(1)),
-    (KeyCode::Numpad1, Change::Shift(-1)),
-    (KeyCode::Numpad3, Change::Shift(1)),
+const KEYS: [(KeyCode, Change, &str); 6] = [
+    (KeyCode::Numpad7, Change::Spectrum(-1), "Narrow the pair's spectrum"),
+    (KeyCode::Numpad9, Change::Spectrum(1), "Widen the pair's spectrum"),
+    (KeyCode::Numpad4, Change::Axis(-1), "Move the pair's axis left"),
+    (KeyCode::Numpad6, Change::Axis(1), "Move the pair's axis right"),
+    (KeyCode::Numpad1, Change::Shift(-1), "Shift the pair left"),
+    (KeyCode::Numpad3, Change::Shift(1), "Shift the pair right"),
 ];
 
 /// The keys that act on the panel as a whole.
@@ -58,7 +58,7 @@ pub fn step(mut draft: [Pair; 3], at: usize, change: Change, level: u32) -> [Pai
 /// pair, wrapping to the first; the keys of [`KEYS`] change the pair under it
 /// in the draft; Enter sends the draft once it has put in every level.
 pub fn handle_numpad(
-    mut keyboard: ResMut<ButtonInput<KeyCode>>,
+    mut keys: crate::systems::help::Keys,
     console: Res<DevConsole>,
     focus: Res<NumpadFocus>,
     mut state: ResMut<CharacterPanelState>,
@@ -70,17 +70,17 @@ pub fn handle_numpad(
     }
     let Ok((ent, attrs)) = player.single() else { return };
     let level = attrs.total_level();
-    if keyboard.clear_just_pressed(KEYCODE_NEXT_PAIR) {
+    if keys.take(KEYCODE_NEXT_PAIR, "Move to the next pair") {
         state.pair = (state.pair + 1) % 3;
     }
-    for (key, change) in KEYS {
-        if keyboard.clear_just_pressed(key) {
+    for (key, change, does) in KEYS {
+        if keys.take(key, does) {
             let own = attrs.pairs();
             let draft = step(state.pending_respec.unwrap_or(own), state.pair, change, level);
             state.pending_respec = (draft != own).then_some(draft);
         }
     }
-    if keyboard.clear_just_pressed(KEYCODE_APPLY) {
+    if keys.take(KEYCODE_APPLY, "Apply the respec once every level is put in") {
         if let Some(draft) = state.pending_respec.filter(|draft| ActorAttributes::is_complete(draft, level)) {
             // The draft stays until the server confirms it.
             writer.write(Try { event: GameEvent::RespecAttributes { ent, pairs: draft } });
@@ -220,9 +220,9 @@ mod tests {
             KEYCODE_NEXT_PAIR,
             KEYCODE_APPLY,
         ];
-        for (i, (key, _)) in KEYS.iter().enumerate() {
+        for (i, (key, _, _)) in KEYS.iter().enumerate() {
             assert!(!taken.contains(key));
-            assert!(KEYS[i + 1..].iter().all(|(other, _)| other != key));
+            assert!(KEYS[i + 1..].iter().all(|(other, _, _)| other != key));
         }
     }
 }

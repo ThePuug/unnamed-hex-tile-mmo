@@ -96,7 +96,7 @@ impl BagCursor {
 /// moves the cursor down a row, wrapping to the top; Enter opens the drop
 /// panel on the selected stack. A piece is not dropped.
 pub fn handle_numpad(
-    mut keyboard: ResMut<ButtonInput<KeyCode>>,
+    mut keys: crate::systems::help::Keys,
     console: Res<DevConsole>,
     focus: Res<NumpadFocus>,
     state: Res<CharacterPanelState>,
@@ -109,15 +109,15 @@ pub fn handle_numpad(
     }
     let Ok((bag, worn)) = player.single() else { return };
     let cells = cells_of(bag, worn);
-    if keyboard.clear_just_pressed(KeyCode::NumpadDecimal) {
+    if keys.take(KeyCode::NumpadDecimal, "Show the bag's next row") {
         cursor.row = (cursor.row + 1) % rows(cells.len());
     }
     for (column, key) in ENTRY_KEYS.iter().enumerate() {
-        if keyboard.clear_just_pressed(*key) {
+        if keys.take(*key, "Select the stack in this column") {
             cursor.picked = cells.get(cursor.row * BAG_WIDTH + column).map(|cell| cell.pick());
         }
     }
-    if keyboard.clear_just_pressed(KEYCODE_DROP) {
+    if keys.take(KEYCODE_DROP, "Choose how much of the selected stack to drop") {
         if let Some(Cell::Stack(stack)) = cursor.selected(&cells) {
             choice.open(stack);
         }
@@ -156,7 +156,7 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                 TextFont { font_size: FontSize::Px(14.0), ..default() },
                 TextColor(Color::srgb(0.85, 0.85, 0.85)),
             ));
-            hint_row(tab, None, &[Hint::range("1", "9", "select"), Hint::key(".", "next row")]);
+            hint_row(tab, None, &[Hint::range(&ENTRY_KEYS, "select"), Hint::key(KeyCode::NumpadDecimal, "next row")]);
             tab.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(12.), ..default() }).with_children(|row| {
                 row.spawn((
                     BagCells,
@@ -260,7 +260,7 @@ pub fn update(
                             let Some(slot) = slot else { return };
                             cell_contents(cell, &asset_server, slot, 1.0);
                             if on_cursor {
-                                corner_keycap(cell, &(column + 1).to_string());
+                                corner_keycap(cell, ENTRY_KEYS[column]);
                             }
                         });
                 }
@@ -329,7 +329,7 @@ fn spawn_detail(pane: &mut ChildSpawnerCommands, asset_server: &AssetServer, sel
             if let Some((_, count)) = dropping.filter(|&(kind, _)| kind == stack.kind) {
                 crate::systems::drop_panel::spawn_entry(pane, count);
             } else {
-                hint_row(pane, None, &[Hint::key("Ent", "drop")]);
+                hint_row(pane, None, &[Hint::key(KEYCODE_DROP, "drop")]);
             }
         }
     }

@@ -73,7 +73,7 @@ pub fn update(
                         Node { width: Val::Px(CELL - 8.0), height: Val::Px(CELL - 8.0), ..default() },
                     ));
                     if cursor {
-                        crate::systems::keycap::corner_keycap(cell, &(i + 1).to_string());
+                        crate::systems::keycap::corner_keycap(cell, ENTRY_KEYS[i]);
                     }
                     cell.spawn((
                         Text::new(stack.count.to_string()),
@@ -113,7 +113,7 @@ fn spawn(commands: &mut Commands) -> Entity {
             panel
                 .spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(4.), ..default() })
                 .with_children(|buttons| {
-                    for (does, key) in [("Take all", "Ent"), ("Close", "0")] {
+                    for (does, key) in [("Take all", crate::systems::gathering::KEYCODE_TAKE_ALL), ("Close", crate::systems::gathering::KEYCODE_CLOSE)] {
                         buttons
                             .spawn((
                                 Node {

@@ -625,14 +625,14 @@ pub fn setup(
             // The keys are laid out as a pair is drawn: spectrum over its
             // bar, axis at its ends, shift along it.
             hint_row(parent, None, &[
-                Hint::either(&["7", "9"], "spectrum -/+"),
-                Hint::either(&["4", "6"], "axis left/right"),
-                Hint::either(&["1", "3"], "shift left/right"),
+                Hint::either(&[KeyCode::Numpad7, KeyCode::Numpad9], "spectrum -/+"),
+                Hint::either(&[KeyCode::Numpad4, KeyCode::Numpad6], "axis left/right"),
+                Hint::either(&[KeyCode::Numpad1, KeyCode::Numpad3], "shift left/right"),
             ]);
             parent
                 .spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(12.), ..default() })
                 .with_children(|row| {
-                    hint_row(row, None, &[Hint::key(".", "next pair")]);
+                    hint_row(row, None, &[Hint::key(KeyCode::NumpadDecimal, "next pair")]);
                     // Hidden until a respec is in hand.
                     row.spawn((
                         ApplyRespecLabel,
@@ -647,7 +647,7 @@ pub fn setup(
                         Visibility::Hidden,
                     ))
                     .with_children(|label| {
-                        keycap(label, "Ent");
+                        keycap(label, KeyCode::NumpadEnter);
                         label.spawn((
                             ApplyLabelText,
                             Text::new("Apply Changes"),
@@ -660,11 +660,11 @@ pub fn setup(
 
 /// Toggle panel visibility when 'C' key is pressed
 pub fn toggle_panel(
-    keyboard: Res<ButtonInput<KeyCode>>,
+    mut keys: crate::systems::help::Keys,
     mut state: ResMut<CharacterPanelState>,
     mut query: Query<&mut Visibility, With<CharacterPanel>>,
 ) {
-    if keyboard.just_pressed(KEYCODE_CHARACTER_PANEL) {
+    if keys.pressed(KEYCODE_CHARACTER_PANEL, "Open or close the character panel") {
         if let Ok(mut visibility) = query.single_mut() {
             if state.visible {
                 close(&mut state, &mut visibility);
@@ -734,7 +734,7 @@ fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
             use crate::systems::keycap::{hint_column, Hint};
             hint_column(
                 strip,
-                &[Hint::key("-", "prev"), Hint::key("+", "next"), Hint::key("C", "close")],
+                &[Hint::key(KeyCode::NumpadSubtract, "prev"), Hint::key(KeyCode::NumpadAdd, "next"), Hint::key(KEYCODE_CHARACTER_PANEL, "close")],
                 Node { margin: UiRect::new(Val::Px(0.), Val::Px(8.), Val::Px(8.), Val::Px(0.)), align_self: AlignSelf::FlexEnd, ..default() },
             );
         });

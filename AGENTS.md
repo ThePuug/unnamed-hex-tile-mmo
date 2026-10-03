@@ -219,6 +219,12 @@ the wire, the server's `input::apply` runs exactly that dt and answers
 into `VisualPosition` and `Heading`. Remote entities run the same physics in
 `movement::simulate_remote` from their last `MovementIntent`.
 
+**Keys.** Every key a player presses is read through
+`client::systems::help::Keys`, which takes what the key does: held Right
+Alt turns a press into that statement beside the cap naming the key
+(`keycap::Names`). Only the admin console and the metrics overlay read
+raw `ButtonInput`, and have no help.
+
 **Network events.** `Try` (client→server) → server validates → `Do`
 (server→client broadcast). Never write `Do` directly.
 

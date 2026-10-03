@@ -22,6 +22,7 @@ pub const KEYCODE_UP: KeyCode = KeyCode::ArrowUp;
 pub const KEYCODE_DOWN: KeyCode = KeyCode::ArrowDown;
 pub const KEYCODE_LEFT: KeyCode = KeyCode::ArrowLeft;
 pub const KEYCODE_RIGHT: KeyCode = KeyCode::ArrowRight;
+pub const KEYCODE_DISMISS: KeyCode = KeyCode::KeyZ;
 
 /// Milliseconds an input stays open before a new one is opened for the same
 /// keys, so the server confirms at least this often.
@@ -31,7 +32,7 @@ pub const INPUT_ROLL_MS: u128 = 1000;
 pub const INPUT_SEND_MS: u16 = 50;
 
 pub fn update_keybits(
-    keyboard: Res<ButtonInput<KeyCode>>,
+    mut keys: crate::systems::help::Keys,
     console: Res<crate::plugins::console::DevConsole>,
     menu: Res<crate::plugins::shell::menu::GameMenu>,
     focus: Res<crate::systems::focus::NumpadFocus>,
@@ -47,31 +48,30 @@ pub fn update_keybits(
     // open.
     let modal = menu.open
         || (console.visible && console.current_menu == crate::plugins::console::MenuPath::LightingTime);
-    let released = ButtonInput::default();
-    let keyboard: &ButtonInput<KeyCode> = if modal { &released } else { &keyboard };
     let Ok((ent, mut keybits0, target)) = query.single_mut() else { return };
 
     let delta_ns = dt.delta().as_nanos();
     keybits0.accumulator += delta_ns;
 
-    // The player's kit: each key's ability, used on the hostile it faces
-    for (key, ability) in crate::systems::action_bar::KEYS.into_iter().zip(crate::systems::action_bar::PLAYER) {
-        if keyboard.just_pressed(key) {
-            writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity }});
-        }
-    }
-
-    // Dismiss front queue threat (independent of the ability system)
-    if keyboard.just_pressed(KeyCode::KeyZ) {
-        writer.write(Try { event: Event::Dismiss { ent }});
-    }
-
     let mut keybits = KeyBits::default();
-    keybits.set_pressed([KB_JUMP], focus.is_empty() && keyboard.any_just_pressed([KEYCODE_JUMP]));
-    keybits.set_pressed([KB_FORWARD], keyboard.pressed(KEYCODE_UP));
-    keybits.set_pressed([KB_BACK], keyboard.pressed(KEYCODE_DOWN));
-    keybits.set_pressed([KB_LEFT], keyboard.pressed(KEYCODE_LEFT));
-    keybits.set_pressed([KB_RIGHT], keyboard.pressed(KEYCODE_RIGHT));
+    if !modal {
+        // The player's kit: each key's ability, used on the hostile it faces
+        for (key, ability) in crate::systems::action_bar::KEYS.into_iter().zip(crate::systems::action_bar::PLAYER) {
+            if keys.pressed(key, crate::systems::action_bar::tells(ability)) {
+                writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity }});
+            }
+        }
+
+        if keys.pressed(KEYCODE_DISMISS, "Dismiss: take the front threat now, as it would land") {
+            writer.write(Try { event: Event::Dismiss { ent }});
+        }
+
+        keybits.set_pressed([KB_JUMP], focus.is_empty() && keys.pressed(KEYCODE_JUMP, "Jump"));
+        keybits.set_pressed([KB_FORWARD], keys.held(KEYCODE_UP, "Move forward"));
+        keybits.set_pressed([KB_BACK], keys.held(KEYCODE_DOWN, "Move back, facing ahead"));
+        keybits.set_pressed([KB_LEFT], keys.held(KEYCODE_LEFT, "Turn left"));
+        keybits.set_pressed([KB_RIGHT], keys.held(KEYCODE_RIGHT, "Turn right"));
+    }
 
     // A new input opens when the keys change, or after INPUT_ROLL_MS so the
     // server confirms at least that often.

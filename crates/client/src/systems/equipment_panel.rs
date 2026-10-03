@@ -145,7 +145,7 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
             })
             .with_children(|bag| {
                 use crate::systems::keycap::{hint_row, Hint};
-                hint_row(bag, Some("Wearables"), &[Hint::range("1", "9", "wear or take off"), Hint::key(".", "next row")]);
+                hint_row(bag, Some("Wearables"), &[Hint::range(&crate::systems::gathering::ENTRY_KEYS, "wear or take off"), Hint::key(KeyCode::NumpadDecimal, "next row")]);
                 bag.spawn((
                     BagGrid,
                     Node {
@@ -221,7 +221,7 @@ fn held_square() -> (Node, BackgroundColor, BorderColor) {
 /// own keys. `/` does not open the console over the panel, and nothing is
 /// read while the console is open, which has the numpad then.
 pub fn handle_numpad(
-    mut keyboard: ResMut<ButtonInput<KeyCode>>,
+    mut keys: crate::systems::help::Keys,
     console: Res<DevConsole>,
     focus: Res<crate::systems::focus::NumpadFocus>,
     mut state: ResMut<CharacterPanelState>,
@@ -232,32 +232,27 @@ pub fn handle_numpad(
     if !focus.has(crate::systems::focus::Panel::Character) || console.visible {
         return;
     }
-    if keyboard.clear_just_pressed(KeyCode::Numpad0) {
+    if keys.take(KeyCode::Numpad0, "Close the character panel") {
         if let Ok(mut visibility) = panel.single_mut() {
             close(&mut state, &mut visibility);
         }
         return;
     }
-    if keyboard.clear_just_pressed(KeyCode::NumpadSubtract) {
+    if keys.take(KeyCode::NumpadSubtract, "Show the tab above") {
         state.tab = state.tab.above();
     }
-    if keyboard.clear_just_pressed(KeyCode::NumpadAdd) {
+    if keys.take(KeyCode::NumpadAdd, "Show the tab below") {
         state.tab = state.tab.below();
     }
     if state.tab != PanelTab::Equipment {
         return;
     }
     let Ok((ent, bag, equipment)) = player.single() else { return };
-    if keyboard.clear_just_pressed(KeyCode::NumpadDecimal) {
+    if keys.take(KeyCode::NumpadDecimal, "Show the wearables' next row") {
         state.bag_row = (state.bag_row + 1) % rows(bag.items.len());
     }
-    const DIGITS: [KeyCode; BAG_WIDTH] = [
-        KeyCode::Numpad1, KeyCode::Numpad2, KeyCode::Numpad3,
-        KeyCode::Numpad4, KeyCode::Numpad5, KeyCode::Numpad6,
-        KeyCode::Numpad7, KeyCode::Numpad8, KeyCode::Numpad9,
-    ];
-    for (column, key) in DIGITS.iter().enumerate() {
-        if !keyboard.clear_just_pressed(*key) {
+    for (column, key) in crate::systems::gathering::ENTRY_KEYS.iter().enumerate() {
+        if !keys.take(*key, "Wear or take off the piece in this column") {
             continue;
         }
         let Some(&item) = bag.items.get(state.bag_row * BAG_WIDTH + column) else { continue };
@@ -307,7 +302,7 @@ pub fn rebuild_bag(
                                 ImageNode::new(icon(&asset_server, item)),
                                 Node { width: Val::Px(CELL - 8.0), height: Val::Px(CELL - 8.0), ..default() },
                             ));
-                            crate::systems::keycap::corner_keycap(cell, &(c + 1).to_string()).insert((BagCellKey, Visibility::Hidden));
+                            crate::systems::keycap::corner_keycap(cell, crate::systems::gathering::ENTRY_KEYS[c]).insert((BagCellKey, Visibility::Hidden));
                         });
                 }
             });

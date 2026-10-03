@@ -207,29 +207,23 @@ impl SettingsPanel {
 pub fn navigate(
     panel: &mut ResMut<SettingsPanel>,
     video: &mut ResMut<VideoSettings>,
-    keyboard: &ButtonInput<KeyCode>,
+    keys: &mut crate::systems::help::Keys,
 ) {
-    const KEYS: [KeyCode; 7] = [
-        KeyCode::Escape, KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft,
-        KeyCode::ArrowRight, KeyCode::Enter, KeyCode::NumpadEnter,
-    ];
-    if !keyboard.any_just_pressed(KEYS) {
-        return;
-    }
-    if keyboard.any_just_pressed([KeyCode::Escape, KeyCode::Enter, KeyCode::NumpadEnter]) {
+    const BACK: &str = "Close the settings";
+    if keys.pressed(KeyCode::Escape, BACK) | keys.pressed(KeyCode::Enter, BACK) | keys.pressed(KeyCode::NumpadEnter, BACK) {
         panel.open = false;
         return;
     }
     let rows = Row::ALL.len();
-    if keyboard.just_pressed(KeyCode::ArrowUp) {
+    if keys.pressed(KeyCode::ArrowUp, "Choose the setting above") {
         panel.row = (panel.row + rows - 1) % rows;
     }
-    if keyboard.just_pressed(KeyCode::ArrowDown) {
+    if keys.pressed(KeyCode::ArrowDown, "Choose the setting below") {
         panel.row = (panel.row + 1) % rows;
     }
-    let by = if keyboard.just_pressed(KeyCode::ArrowLeft) {
+    let by = if keys.pressed(KeyCode::ArrowLeft, "Change the setting back") {
         -1
-    } else if keyboard.just_pressed(KeyCode::ArrowRight) {
+    } else if keys.pressed(KeyCode::ArrowRight, "Change the setting on") {
         1
     } else {
         0
@@ -329,7 +323,11 @@ fn setup(mut commands: Commands) {
             hint_row(
                 parent,
                 None,
-                &[Hint::either(&["Up", "Dn"], "choose"), Hint::either(&["Lt", "Rt"], "change"), Hint::either(&["Ent", "Esc"], "back")],
+                &[
+                    Hint::either(&[KeyCode::ArrowUp, KeyCode::ArrowDown], "choose"),
+                    Hint::either(&[KeyCode::ArrowLeft, KeyCode::ArrowRight], "change"),
+                    Hint::either(&[KeyCode::Enter, KeyCode::Escape], "back"),
+                ],
             );
         });
 }
