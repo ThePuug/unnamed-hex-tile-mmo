@@ -32,6 +32,18 @@ band = 15.0
 edge = 1.0
 short = 24.0
 
+# A mind is held to its archetype's style: the commitment its build invests
+# in, used at least `floor` (per minute of the fight: Ferocity's early
+# combos, Grit's releases, Grace's strikes across the line, Preparation's
+# reactions through a recovery, Awareness's threats swept beyond the front;
+# Patience's, the share of the fight its swing waits, in points). Below it
+# the mind's score loses `weight` of a hundred points for each share of the
+# floor it falls short of. An archetype with no floor is held to nothing.
+[style]
+weight = 0.25
+
+[style.floor]
+
 [screen]
 # A knob whose sweep across its bounds moves no pairing's edge by this many
 # points is left out of the balance search

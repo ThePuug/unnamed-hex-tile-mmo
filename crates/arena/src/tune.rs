@@ -38,7 +38,13 @@
 //! the last `minds.pool` - 1 passes, and any exploiter that joined it. A
 //! mind that answers only the latest of its foes' minds would chase them
 //! round in circles, each pass undoing the last; one that answers the field
-//! holds up against all of them. An exploiter keeps the field honest: what
+//! holds up against all of them. A mind's score also holds its archetype
+//! to its style: what it loses when the commitment its build invests in is
+//! used less than `style.floor`, so a mind keeps its style in play at the
+//! cost of some fights, and a style the numbers make too dear shows as
+//! lost fights rather than as fighters that stopped playing it. An
+//! exploiter scores on winning alone, so how far it beats a held mind is
+//! the style's price, and it keeps the field honest: what
 //! beats the minds as they stand is found afresh, from anywhere in the
 //! bounds, and those it beats must learn to answer it.
 
@@ -47,9 +53,9 @@ use std::{collections::BTreeMap, path::PathBuf};
 use cmaes::{CMAESOptions, DVector};
 use serde::{Deserialize, Serialize};
 
-use common_bevy::{archetype::EnemyArchetype, tuning::Tuning};
+use common_bevy::{archetype::EnemyArchetype, components::{ActorAttributes, Attribute}, tuning::Tuning};
 
-use super::{matrices, matrix, print_matrix, Pairing, Settings};
+use super::{matrices, matrix, print_matrix, Ledger, Pairing, Settings};
 use combat::behaviour::mind::{Minds, TUNED};
 
 /// The step a search starts with, in the space where each bound is 0 and 1
@@ -72,6 +78,19 @@ struct Config {
     screen: Screen,
     knobs: Vec<Range>,
     minds: MindRanges,
+    style: Style,
+}
+
+/// What holds a mind to its archetype's style (`style_use`)
+#[derive(Deserialize)]
+struct Style {
+    /// Points a mind's score loses, of a hundred, for each share of its
+    /// floor its commitment's use falls short of
+    weight: f32,
+    /// Each archetype's floor, by name, in its commitment's own measure;
+    /// none where it has none
+    #[serde(default)]
+    floor: BTreeMap<String, f32>,
 }
 
 #[derive(Deserialize)]
@@ -216,13 +235,65 @@ fn split(score: &Score, rows: &[Pairing]) -> f32 {
 
 /// How well `archetype` does in `rows`, what its mind search raises: its
 /// edge, a fight both sides die in nothing and each fight run to the cap a
-/// loss at full health, a hundred points; the mean over its pairings.
-fn standing(rows: &[Pairing], archetype: EnemyArchetype) -> f32 {
+/// loss at full health, a hundred points; the mean over its pairings. Held
+/// to `style`, it loses `weight` of a hundred points for each share of its
+/// floor its commitment's use falls short of, and nothing above it.
+fn standing(rows: &[Pairing], archetype: EnemyArchetype, style: Option<&Style>) -> f32 {
     let mine: Vec<f32> = rows.iter().filter(|row| row.a == archetype || row.b == archetype).map(|row| {
         let edge = if row.a == archetype { row.edge } else { -row.edge };
         edge - row.capped
     }).collect();
-    mine.iter().sum::<f32>() / mine.len().max(1) as f32
+    let short = style.and_then(|style| Some((style.weight, *style.floor.get(&name(archetype))?)))
+        .filter(|&(_, floor)| floor > 0.0)
+        .map_or(0.0, |(weight, floor)| weight * 100.0 * (1.0 - use_of(rows, archetype) / floor).max(0.0));
+    mine.iter().sum::<f32>() / mine.len().max(1) as f32 - short
+}
+
+/// The attribute `archetype`'s build invests in, whose commitment is its
+/// style: the line of its own skill
+fn commitment(archetype: EnemyArchetype) -> Attribute {
+    ActorAttributes::line(archetype.profile().ability).expect("tune: an archetype's own skill has a line")
+}
+
+/// How much `ledger`'s side worked `attribute`'s commitment, per minute it
+/// was alive: Ferocity's combos fired early, Grit's banks released,
+/// Grace's strikes across its line, Preparation's reactions through a
+/// recovery, Awareness's threats swept beyond the front one; Patience's,
+/// the share of its time its swing waited, in points.
+fn style_use(ledger: &Ledger, attribute: Attribute) -> f32 {
+    let minutes = (ledger.alive / 60.0).max(f32::EPSILON);
+    let per_minute = |count: u32| count as f32 / minutes;
+    match attribute {
+        Attribute::Might => per_minute(ledger.early_combos),
+        Attribute::Vitality => per_minute(ledger.releases),
+        Attribute::Agility => per_minute(ledger.across),
+        Attribute::Discipline => per_minute(ledger.through),
+        Attribute::Instinct => 100.0 * ledger.waiting / ledger.alive.max(f32::EPSILON),
+        Attribute::Resolve => per_minute(ledger.queued_on.saturating_sub(ledger.landed_on + ledger.pending_on).saturating_sub(ledger.clears)),
+    }
+}
+
+/// `archetype`'s use of its commitment, the mean over its pairings
+fn use_of(rows: &[Pairing], archetype: EnemyArchetype) -> f32 {
+    let uses: Vec<f32> = rows.iter().filter_map(|row| match (row.a == archetype, row.b == archetype) {
+        (true, _) => Some(&row.a_ledger),
+        (_, true) => Some(&row.b_ledger),
+        _ => None,
+    }).map(|ledger| style_use(ledger, commitment(archetype))).collect();
+    uses.iter().sum::<f32>() / uses.len().max(1) as f32
+}
+
+/// An archetype's name as `tune.toml` keys it
+fn name(archetype: EnemyArchetype) -> String {
+    format!("{archetype:?}").to_lowercase()
+}
+
+/// Each archetype's use of its commitment in `rows`, and its floor
+fn style_uses(style: &Style, rows: &[Pairing]) -> String {
+    EnemyArchetype::ALL.iter().map(|&archetype| {
+        let floor = style.floor.get(&name(archetype)).map_or(String::new(), |floor| format!(" (floor {floor:.2})"));
+        format!("{archetype:?} {:?} {:.2}{floor}", commitment(archetype), use_of(rows, archetype))
+    }).collect::<Vec<_>>().join(", ")
 }
 
 /// Each archetype's mean share of wins over its pairings in `rows`
@@ -312,6 +383,7 @@ pub fn run(args: &[String]) {
             let rows = matrix(&settings(&config, &state, &BTreeMap::new(), &BTreeMap::new(), None, config.check_runs, rand::random()));
             print_matrix(&rows, args.get(1).is_some_and(|arg| arg == "ledger"));
             println!("imbalance {:.1}, split {:.1}; {}", imbalance(&config.score, &rows), split(&config.score, &rows), standings(&rows));
+            println!("style use: {}", style_uses(&config.style, &rows));
         }
         Some("apply") => apply(&load()),
         _ => panic!("arena tune takes screen, balance [evals], minds [evals] [archetype ...], exploit [evals] [archetype ...], settle [evals], loop <count> [evals], show [ledger] or apply"),
@@ -422,10 +494,11 @@ fn field(config: &Config, state: &State) -> Vec<BTreeMap<String, f32>> {
     state.history[past..].iter().cloned().chain(std::iter::once(state.minds.clone())).collect()
 }
 
-/// How `archetype` stands with `values` for its `ranges`, against each mind
-/// of `field` in turn, the pairings' `runs` fights shared among them; the
-/// mean over the field
-fn standing_in(config: &Config, state: &State, field: &[BTreeMap<String, f32>], archetype: EnemyArchetype, ranges: &[Range], values: &[f32], runs: u32, seed: u64) -> f32 {
+/// How `archetype` stands with `values` for its `ranges`, held to `style`
+/// where given, against each mind of `field` in turn, the pairings' `runs`
+/// fights shared among them; the mean over the field
+#[allow(clippy::too_many_arguments)]
+fn standing_in(config: &Config, state: &State, field: &[BTreeMap<String, f32>], archetype: EnemyArchetype, ranges: &[Range], values: &[f32], runs: u32, seed: u64, style: Option<&Style>) -> f32 {
     let each = (runs / field.len() as u32 / 2).max(1) * 2;
     let none = BTreeMap::new();
     let scenarios: Vec<Settings> = field.iter().enumerate().map(|(i, minds)| {
@@ -433,7 +506,7 @@ fn standing_in(config: &Config, state: &State, field: &[BTreeMap<String, f32>], 
         minds.extend(named(ranges, values));
         settings(config, state, &none, &minds, Some(archetype), each, seed.wrapping_add(i as u64))
     }).collect();
-    let standings: Vec<f32> = matrices(&scenarios).iter().map(|rows| standing(rows, archetype)).collect();
+    let standings: Vec<f32> = matrices(&scenarios).iter().map(|rows| standing(rows, archetype, style)).collect();
     standings.iter().sum::<f32>() / standings.len() as f32
 }
 
@@ -449,13 +522,14 @@ fn minds(config: &Config, evals: usize, only: &[EnemyArchetype]) -> Vec<(EnemyAr
             .or(range.start).unwrap_or((range.min + range.max) / 2.0).clamp(range.min, range.max)).collect();
         let label = format!("{archetype:?}");
         let field = field(config, &state);
+        let style = Some(&config.style);
         let found = search(&label, &ranges, &start, SIGMA, evals, config.population, |values, seed| {
-            -standing_in(config, &state, &field, archetype, &ranges, values, config.runs, seed)
+            -standing_in(config, &state, &field, archetype, &ranges, values, config.runs, seed, style)
         }, |values| {
-            format!("standing {:.1}", standing_in(config, &state, &field, archetype, &ranges, values, config.runs, rand::random()))
+            format!("standing {:.1}", standing_in(config, &state, &field, archetype, &ranges, values, config.runs, rand::random(), style))
         });
         let seed = rand::random();
-        let check = |values: &[f32]| standing_in(config, &state, &field, archetype, &ranges, values, config.check_runs, seed);
+        let check = |values: &[f32]| standing_in(config, &state, &field, archetype, &ranges, values, config.check_runs, seed, style);
         let (was, now) = (check(&start), check(&found));
         if now > was {
             state.minds.extend(named(&ranges, &found));
@@ -475,8 +549,9 @@ fn minds(config: &Config, evals: usize, only: &[EnemyArchetype]) -> Vec<(EnemyAr
 }
 
 /// For each archetype (all, or `only`), a fresh search from anywhere in the
-/// bounds for its best answer to the minds as they stand, and how far that
-/// beats the mind it has on the same fights. One that beats it by
+/// bounds for its best answer to the minds as they stand, scored on winning
+/// alone, and how far that beats the mind it has on the same fights, also
+/// scored on winning alone: the price of its style. One that beats it by
 /// `minds.exploit_margin` joins the field, as the minds stand with it in
 /// its archetype's place, so the rest learn to answer it.
 fn exploit(config: &Config, evals: usize, only: &[EnemyArchetype]) {
@@ -489,14 +564,14 @@ fn exploit(config: &Config, evals: usize, only: &[EnemyArchetype]) {
         let label = format!("{archetype:?} exploiter");
         let as_they_stand = std::slice::from_ref(&state.minds);
         let found = search(&label, &ranges, &anywhere, EXPLORE, evals, config.population, |values, seed| {
-            -standing_in(config, &state, as_they_stand, archetype, &ranges, values, config.runs, seed)
+            -standing_in(config, &state, as_they_stand, archetype, &ranges, values, config.runs, seed, None)
         }, |values| {
-            format!("standing {:.1}", standing_in(config, &state, as_they_stand, archetype, &ranges, values, config.runs, rand::random()))
+            format!("standing {:.1}", standing_in(config, &state, as_they_stand, archetype, &ranges, values, config.runs, rand::random(), None))
         });
         let seed = rand::random();
-        let check = |values: &[f32]| standing_in(config, &state, as_they_stand, archetype, &ranges, values, config.check_runs, seed);
+        let check = |values: &[f32]| standing_in(config, &state, as_they_stand, archetype, &ranges, values, config.check_runs, seed, None);
         let (mind, exploiter) = (check(&held), check(&found));
-        println!("{label}: {exploiter:.1} against its mind's {mind:.1}, {:+.1}", exploiter - mind);
+        println!("{label}: {exploiter:.1} against its mind's {mind:.1} on winning alone, {:+.1}", exploiter - mind);
         if exploiter - mind > config.minds.exploit_margin {
             let mut joined = state.minds.clone();
             joined.extend(named(&ranges, &found));
