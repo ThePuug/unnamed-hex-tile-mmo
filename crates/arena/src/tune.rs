@@ -256,16 +256,14 @@ fn commitment(archetype: EnemyArchetype) -> Attribute {
 }
 
 /// How much `ledger`'s side worked `attribute`'s commitment against the
-/// side `foe`'s ledger keeps: Ferocity's, the share of its skills that were
-/// combos fired early, in points; Grit's, the share of its foe's time alive
-/// its bind held it, in points; Grace's, the share of its strikes struck
-/// across its line, in points; Patience's, the share of its own time its
-/// swing waited, in points; and per minute it was alive, Preparation's
-/// reactions through a recovery and Awareness's threats swept beyond the
-/// front one.
+/// side `foe`'s ledger keeps, each a share in points but Awareness's:
+/// Ferocity's, of its skills the combos fired early; Grit's, of its foe's
+/// time alive the time its bind held it; Grace's, of its strikes those
+/// struck across its line; Preparation's, of its reactions those fired
+/// early; Patience's, of the time its stamina refilled the time at
+/// Patience's faster rate; Awareness's, the damage each clear answered in
+/// threats' worth, a threat's worth the mean damage of those queued on it.
 fn style_use(ledger: &Ledger, foe: &Ledger, attribute: Attribute) -> f32 {
-    let minutes = (ledger.alive / 60.0).max(f32::EPSILON);
-    let per_minute = |count: u32| count as f32 / minutes;
     match attribute {
         Attribute::Might => {
             let skills: u32 = ledger.used.iter().filter(|&(&ability, _)| ability != AbilityType::AutoAttack).map(|(_, &uses)| uses).sum();
@@ -273,9 +271,16 @@ fn style_use(ledger: &Ledger, foe: &Ledger, attribute: Attribute) -> f32 {
         }
         Attribute::Vitality => 100.0 * ledger.bind / foe.alive.max(f32::EPSILON),
         Attribute::Agility => 100.0 * ledger.across as f32 / ledger.strikes.max(1) as f32,
-        Attribute::Discipline => per_minute(ledger.through),
-        Attribute::Instinct => 100.0 * ledger.waiting / ledger.alive.max(f32::EPSILON),
-        Attribute::Resolve => per_minute(ledger.queued_on.saturating_sub(ledger.landed_on + ledger.pending_on).saturating_sub(ledger.clears)),
+        Attribute::Discipline => {
+            let reactions: u32 = ledger.used.iter().filter(|&(ability, _)| ability.is_reaction()).map(|(_, &uses)| uses).sum();
+            100.0 * ledger.through as f32 / reactions.max(1) as f32
+        }
+        Attribute::Instinct => 100.0 * ledger.refilling_fast / ledger.refilling.max(f32::EPSILON),
+        Attribute::Resolve => {
+            let answered = (ledger.queued_damage_on - ledger.landed_damage_on - ledger.pending_damage_on).max(0.0);
+            let threat = ledger.queued_damage_on / ledger.queued_on.max(1) as f32;
+            if threat > 0.0 { answered / ledger.clears.max(1) as f32 / threat } else { 0.0 }
+        }
     }
 }
 
