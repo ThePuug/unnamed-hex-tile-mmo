@@ -240,7 +240,7 @@ impl Tuning {
         grit_bank: 12.0,
         grit_share: 0.1,
         grit_bind: 0.25,
-        grit_bind_secs: 1.0,
+        grit_bind_secs: 3.0,
         patience_regen_min: 0.0,
         patience_regen_max: 0.6,
         contest_scale: 800.0,

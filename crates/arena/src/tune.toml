@@ -43,6 +43,8 @@ short = 24.0
 weight = 0.25
 
 [style.floor]
+juggernaut = 25.0
+kiter = 50.0
 
 [screen]
 # A knob whose sweep across its bounds moves no pairing's edge by this many
@@ -51,7 +53,9 @@ min_moved = 3.0
 
 # The game's numbers searched, each within its bounds. The bounds hold the
 # authored hard constraints: Grit share at least 0.1, Counter's recovery
-# over 0.5s, Parry's at least 1s.
+# over 0.5s, Parry's at least 1s. A number that sets how far a style can
+# reach is held out of the search, or its floor ([style]) could fall out of
+# reach: Grit's bind, 3s.
 
 [[knobs]]
 name = "frenzy_damage"
@@ -177,11 +181,6 @@ max = 1.5
 name = "health_per_vitality"
 min = 0.5
 max = 1.2
-
-[[knobs]]
-name = "grit_bind_secs"
-min = 0.5
-max = 3.0
 
 [[knobs]]
 name = "grit_share"
