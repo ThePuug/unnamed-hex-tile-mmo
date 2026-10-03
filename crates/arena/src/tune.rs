@@ -16,6 +16,10 @@
 //!   nothing that widens either the split of wins or that shortfall
 //! - `minds [evals] [archetype ...]`: CMA-ES over each archetype's mind, for
 //!   its own score against the field: one pass
+//! - `restart [evals] archetype ...`: a fresh search for each archetype's
+//!   mind from anywhere in its bounds, scored as `minds` scores, keeping
+//!   what it found where it beats the mind held: for a mind stuck where no
+//!   small change pays
 //! - `exploit [evals] [archetype ...]`: a fresh search for each archetype's
 //!   best answer to the minds as they stand, on winning alone, and how far
 //!   it beats the mind it has: reported, never joining the field
@@ -387,6 +391,11 @@ pub fn run(args: &[String]) {
             let only: Vec<EnemyArchetype> = args.iter().skip(2).map(|name| super::archetype_named(name)).collect();
             exploit(&config, number(1, 150), &only);
         }
+        Some("restart") => {
+            let only: Vec<EnemyArchetype> = args.iter().skip(2).map(|name| super::archetype_named(name)).collect();
+            assert!(!only.is_empty(), "arena tune restart names the archetypes to restart");
+            restart(&config, number(1, 150), &only);
+        }
         Some("settle") => settle(&config, number(1, 150)),
         Some("loop") => {
             let evals = number(2, 150);
@@ -405,7 +414,7 @@ pub fn run(args: &[String]) {
             println!("style use: {}; short of style {:.1}", style_uses(&config.style, &rows), short_of_style(&config.style, &rows));
         }
         Some("apply") => apply(&load()),
-        _ => panic!("arena tune takes screen, balance [evals], minds [evals] [archetype ...], exploit [evals] [archetype ...], settle [evals], loop <count> [evals], show [ledger] or apply"),
+        _ => panic!("arena tune takes screen, balance [evals], minds [evals] [archetype ...], restart [evals] archetype ..., exploit [evals] [archetype ...], settle [evals], loop <count> [evals], show [ledger] or apply"),
     }
 }
 
@@ -542,35 +551,60 @@ fn minds(config: &Config, evals: usize, only: &[EnemyArchetype]) -> Vec<(EnemyAr
     let mut state = load();
     let mut gains = Vec::new();
     for &archetype in EnemyArchetype::ALL.iter().filter(|archetype| only.is_empty() || only.contains(archetype)) {
-        let ranges = mind_ranges(config, archetype);
-        let start: Vec<f32> = ranges.iter().map(|range| state.minds.get(&range.name).copied()
-            .or(range.start).unwrap_or((range.min + range.max) / 2.0).clamp(range.min, range.max)).collect();
-        let label = format!("{archetype:?}");
-        let field = field(config, &state);
-        let style = Some(&config.style);
-        let found = search(&label, &ranges, &start, SIGMA, evals, config.population, |values, seed| {
-            -standing_in(config, &state, &field, archetype, &ranges, values, config.runs, seed, style)
-        }, |values| {
-            format!("standing {:.1}", standing_in(config, &state, &field, archetype, &ranges, values, config.runs, rand::random(), style))
-        });
-        let seed = rand::random();
-        let check = |values: &[f32]| standing_in(config, &state, &field, archetype, &ranges, values, config.check_runs, seed, style);
-        let (was, now) = (check(&start), check(&found));
-        if now > was {
-            state.minds.extend(named(&ranges, &found));
-            save(&state);
-            println!("{label} kept: {was:.1} -> {now:.1} against a field of {}", field.len());
-            gains.push((archetype, now - was));
-        } else {
-            println!("{label} found nothing better: {was:.1} against {now:.1}");
-            gains.push((archetype, 0.0));
-        }
+        let held = held_mind(config, &state, archetype);
+        gains.push((archetype, improve(config, &mut state, archetype, &held, SIGMA, evals, &format!("{archetype:?}"))));
     }
     state.history.push(state.minds.clone());
     let keep = state.history.len().saturating_sub(config.minds.pool);
     state.history.drain(..keep);
     save(&state);
     gains
+}
+
+/// `archetype`'s mind as the state holds it, a setting it holds none of at
+/// its range's start or middle
+fn held_mind(config: &Config, state: &State, archetype: EnemyArchetype) -> Vec<f32> {
+    mind_ranges(config, archetype).iter().map(|range| state.minds.get(&range.name).copied()
+        .or(range.start).unwrap_or((range.min + range.max) / 2.0).clamp(range.min, range.max)).collect()
+}
+
+/// Searches `archetype`'s mind from `start` with a first step of `sigma`,
+/// against the field and held to its style, and keeps what it found where a
+/// longer look on the same fights says it beats the mind `state` holds;
+/// what it gained, nothing where it kept nothing
+fn improve(config: &Config, state: &mut State, archetype: EnemyArchetype, start: &[f32], sigma: f64, evals: usize, label: &str) -> f32 {
+    let ranges = mind_ranges(config, archetype);
+    let held = held_mind(config, state, archetype);
+    let field = field(config, state);
+    let style = Some(&config.style);
+    let found = search(label, &ranges, start, sigma, evals, config.population, |values, seed| {
+        -standing_in(config, state, &field, archetype, &ranges, values, config.runs, seed, style)
+    }, |values| {
+        format!("standing {:.1}", standing_in(config, state, &field, archetype, &ranges, values, config.runs, rand::random(), style))
+    });
+    let seed = rand::random();
+    let check = |values: &[f32]| standing_in(config, state, &field, archetype, &ranges, values, config.check_runs, seed, style);
+    let (was, now) = (check(&held), check(&found));
+    if now > was {
+        state.minds.extend(named(&ranges, &found));
+        save(state);
+        println!("{label} kept: {was:.1} -> {now:.1} against a field of {}", field.len());
+        now - was
+    } else {
+        println!("{label} found nothing better: {was:.1} against {now:.1}");
+        0.0
+    }
+}
+
+/// For each archetype in `only`, a fresh search for its mind from anywhere
+/// in its bounds, as `minds` scores it, kept where it beats the mind held:
+/// a mind stuck where no small change pays starts over
+fn restart(config: &Config, evals: usize, only: &[EnemyArchetype]) {
+    let mut state = load();
+    for &archetype in only {
+        let anywhere: Vec<f32> = mind_ranges(config, archetype).iter().map(|range| range.from_unit(rand::random())).collect();
+        improve(config, &mut state, archetype, &anywhere, EXPLORE, evals, &format!("{archetype:?} restart"));
+    }
 }
 
 /// For each archetype (all, or `only`), a fresh search from anywhere in the
@@ -582,8 +616,7 @@ fn exploit(config: &Config, evals: usize, only: &[EnemyArchetype]) {
     let state = load();
     for &archetype in EnemyArchetype::ALL.iter().filter(|archetype| only.is_empty() || only.contains(archetype)) {
         let ranges = mind_ranges(config, archetype);
-        let held: Vec<f32> = ranges.iter().map(|range| state.minds.get(&range.name).copied()
-            .or(range.start).unwrap_or((range.min + range.max) / 2.0).clamp(range.min, range.max)).collect();
+        let held = held_mind(config, &state, archetype);
         let anywhere: Vec<f32> = ranges.iter().map(|range| range.from_unit(rand::random())).collect();
         let label = format!("{archetype:?} exploiter");
         let as_they_stand = std::slice::from_ref(&state.minds);
