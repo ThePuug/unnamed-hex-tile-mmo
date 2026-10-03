@@ -22,6 +22,12 @@ pub struct AbilitySlot {
 #[derive(Component)]
 pub struct AbilitySlots;
 
+/// The slot under the compass that dismisses the front threat: no
+/// ability's, and never refused, so it is lit while there is a threat to
+/// take.
+#[derive(Component)]
+pub struct DismissSlot;
+
 /// Marker for ability slot icon
 #[derive(Component)]
 pub struct SlotIcon;
@@ -48,12 +54,14 @@ const SLOT_PX: f32 = 80.;
 const SLOT_BORDER_PX: f32 = 3.;
 
 /// Setup action bar UI, hung below the resource bars' line
-/// Creates the ability slots, four to a row, and the compass beside the top
-/// row
+/// Creates the ability slots, four to a row, and beside them the compass
+/// over the dismiss slot
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, With<IsDefaultUiCamera>>,
+    asset_server: Res<AssetServer>,
 ) {
+    let icons: Handle<Font> = asset_server.load(ICON_FONT);
     let camera = query.single().expect("query did not return exactly one result");
 
     commands.spawn((
@@ -95,7 +103,12 @@ pub fn setup(
                 AbilitySlots,
             ));
 
-            crate::systems::ui::spawn_compass(parent, SLOT_PX, SLOT_BORDER_PX);
+            parent
+                .spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(10.), ..default() })
+                .with_children(|column| {
+                    crate::systems::ui::spawn_compass(column, SLOT_PX, SLOT_BORDER_PX);
+                    slot_frame(column, &icons, crate::systems::input::KEYCODE_DISMISS, DISMISS_ICON).insert(DismissSlot);
+                });
         });  // Close .with_children from line 73 (action bar children)
     });  // Close outer .with_children
 }
@@ -174,8 +187,17 @@ pub fn sync_loadout(
 /// glyphs stand for the skills until they have icons of their own.
 const ICON_FONT: &str = "fonts/IosevkaNerdFont-Regular.ttf";
 
-fn spawn_slot(tuning: &Tuning, icons: &Handle<Font>, parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>) {
-    parent.spawn((
+/// The dismiss slot's icon, a glyph in `ICON_FONT`: md-skip_next.
+const DISMISS_ICON: &str = "\u{F04AD}";
+
+const READY: Color = Color::srgb(0.3, 0.8, 0.3);
+const EMPTY: Color = Color::srgb(0.2, 0.2, 0.2);
+
+/// A slot under `parent`: its border and fill, `icon` at its centre in
+/// `ICON_FONT`, and the cap of the key that works it in its corner.
+/// Returns the slot, for what else it holds.
+fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, icons: &Handle<Font>, keybind: KeyCode, icon: &str) -> EntityCommands<'a> {
+    let mut slot = parent.spawn((
         Node {
             width: Val::Px(SLOT_PX),
             height: Val::Px(SLOT_PX),
@@ -184,27 +206,12 @@ fn spawn_slot(tuning: &Tuning, icons: &Handle<Font>, parent: &mut ChildSpawnerCo
             align_items: AlignItems::Center,
             ..default()
         },
-        BorderColor::all(Color::srgb(0.3, 0.8, 0.3)),  // Default: Green (ready)
+        BorderColor::all(READY),
         BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
-        AbilitySlot { ability },
-    ))
-    .with_children(|parent| {
-        // Ability icon (center), named for its glyph in `ICON_FONT`
-        let icon_text = match ability {
-            None => "",
-            Some(AbilityType::AutoAttack) => "\u{F04E5}",     // md-sword
-            Some(AbilityType::Frenzy) => "\u{EEB5}",          // fa-teeth_open
-            Some(AbilityType::Feint) => "\u{F0D02}",          // md-drama_masks
-            Some(AbilityType::Overpower) => "\u{F08EA}",      // md-hammer
-            Some(AbilityType::Punish) => "\u{F09FC}",         // md-knife_military
-            Some(AbilityType::Parry) => "\u{F0498}",          // md-shield
-            Some(AbilityType::Counter) => "\u{F045A}",        // md-reply
-            Some(AbilityType::Leap) => "\u{F0907}",           // md-rabbit
-            Some(AbilityType::PerfectStride) => "\u{F046E}",  // md-run_fast
-        };
-
+    ));
+    slot.with_children(|parent| {
         parent.spawn((
-            Text::new(icon_text),
+            Text::new(icon),
             TextFont {
                 font: icons.clone().into(),
                 font_size: FontSize::Px(36.0),
@@ -217,10 +224,26 @@ fn spawn_slot(tuning: &Tuning, icons: &Handle<Font>, parent: &mut ChildSpawnerCo
             },
             SlotIcon,
         ));
-
-        // Keybind label (top-left corner)
         crate::systems::keycap::corner_keycap(parent, keybind).insert(SlotKeybind);
+    });
+    slot
+}
 
+fn spawn_slot(tuning: &Tuning, icons: &Handle<Font>, parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>) {
+    // Ability icon, named for its glyph in `ICON_FONT`
+    let icon = match ability {
+        None => "",
+        Some(AbilityType::AutoAttack) => "\u{F04E5}",     // md-sword
+        Some(AbilityType::Frenzy) => "\u{EEB5}",          // fa-teeth_open
+        Some(AbilityType::Feint) => "\u{F0D02}",          // md-drama_masks
+        Some(AbilityType::Overpower) => "\u{F08EA}",      // md-hammer
+        Some(AbilityType::Punish) => "\u{F09FC}",         // md-knife_military
+        Some(AbilityType::Parry) => "\u{F0498}",          // md-shield
+        Some(AbilityType::Counter) => "\u{F045A}",        // md-reply
+        Some(AbilityType::Leap) => "\u{F0907}",           // md-rabbit
+        Some(AbilityType::PerfectStride) => "\u{F046E}",  // md-run_fast
+    };
+    slot_frame(parent, icons, keybind, icon).insert(AbilitySlot { ability }).with_children(|parent| {
         // Cost badge (bottom-right corner)
         if let Some(ability) = ability {
             let cost_text = match ability {
@@ -313,7 +336,7 @@ pub fn update(
     for (slot, mut border_color, children) in &mut slot_query {
         // An empty slot: dark, no glow, no overlay
         let Some(ability) = slot.ability else {
-            *border_color = BorderColor::all(Color::srgb(0.2, 0.2, 0.2));
+            *border_color = BorderColor::all(EMPTY);
             for child in children.iter() {
                 if let Ok(mut visibility) = glow_query.get_mut(child) {
                     *visibility = Visibility::Hidden;
@@ -394,6 +417,17 @@ pub fn update(
             }
         }
     }
+}
+
+/// Lights the dismiss slot while the actor the client sees as has a
+/// threat queued to take.
+pub fn update_dismiss(
+    mut slot: Query<&mut BorderColor, With<DismissSlot>>,
+    viewed: Query<&common_bevy::components::reaction_queue::ReactionQueue, With<crate::components::Viewed>>,
+) {
+    let Ok(mut border) = slot.single_mut() else { return };
+    let lit = viewed.single().is_ok_and(|queue| !queue.is_empty());
+    border.set_if_neq(BorderColor::all(if lit { READY } else { EMPTY }));
 }
 
 /// Ability states for UI feedback
