@@ -4,28 +4,26 @@
 //!
 //! # Claims
 //!
-//! A site is its lattice cell's centre jittered by the cell's hash, and the
-//! cell its origin falls in publishes it. Its habitat is read once, at the
-//! origin, from what the layers below published, never from a tile: within
-//! reach of a river's channel; inside a forest stand, woods where trees
-//! fill most of it and scrub where brush does; on a range's raised ground;
-//! on rock harder than limestone; else open land. Where several hold, the
-//! first of those does. A site off the land publishes nothing.
+//! A site is a pure function of its lattice cell's hash: the cell's centre
+//! jittered. A cell finds once the sites of its own lattice cell and the
+//! six around it, as far as a site strays, a tile whether it is one of
+//! them, and nothing is published. A site reads its
+//! habitat from its own tile, as the layers beneath compose it, and from
+//! nothing else: on a valley's floor, where rivers run; under trees in
+//! most of its growth sites; under brush in most of them; on ground near
+//! repose; on rock harder than limestone; else open land. Where several
+//! hold, the first of those does. A site under water has no den.
 //!
-//! The layer places nothing in a tile. What stands at a site, and exactly
-//! where, is the server's to decide once the ground there is materialized.
+//! The tile carries its den's habitat and nothing more. What stands at a
+//! site, and exactly where, is the server's to decide on the ground it has
+//! materialized round the site.
 
-use std::collections::HashMap;
-
-use common::{den::Habitat, HexLattice};
+use common::{den::Habitat, Canopy, HexLattice, SITES};
 
 use crate::noise::hash_channel_f64;
 use crate::{hex_to_world, world_to_hex};
-use super::forest::{axes_of, coasts_of, Reach, StandIndex};
-use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
-use super::lithology::rock_on;
-use super::plates::GRAPH_CELL_SCALE;
-use super::thrusting::{OutlineIndex, Outlines, RANGE_RISE};
+use super::index::CellId;
+use super::thrusting::REPOSE_GRADE;
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 const DEN_SEED: u64 = 0x6465_6e73;
@@ -37,139 +35,73 @@ pub const DEN_LATTICE: u32 = 86;
 /// How far a site strays from its cell's centre, as a share of the spacing.
 pub const DEN_JITTER: f64 = 0.3;
 
-/// Tiles beyond a channel's flow line a site still counts as beside it.
-pub const RIVER_REACH: f64 = 12.0;
+/// How far up a valley's wall still counts as its floor, where rivers run.
+pub const RIVER_FLOOR: f64 = 0.1;
 
-/// The stand density under which a site is not inside a stand.
-pub const STAND_DENSITY: f64 = 0.15;
+/// The growth sites of a tile's three that trees or brush must hold for a
+/// den there to be in woods or scrub.
+pub const GROWN: u32 = 2;
 
-/// The share of a stand's filling that is trees from which it is woods.
-pub const WOODS_TREES: f64 = 0.5;
-
-/// The share of a range's full rise from which ground counts as a range.
-pub const RANGE_SHARE: f64 = 0.25;
+/// The share of repose from which ground counts as a range's high ground.
+pub const RANGE_GRADE: f64 = 0.5;
 
 /// The erodibility under which rock counts as hard: harder than limestone.
 pub const HARD_ROCK: f64 = 0.45;
-
-/// A den site: its origin's tile and its habitat.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Den {
-    pub q: i32,
-    pub r: i32,
-    pub habitat: Habitat,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct DenCell {
-    pub dens: Vec<Den>,
-}
-
-#[derive(Default)]
-pub struct DenIndex {
-    pub cells: HashMap<CellId, DenCell>,
-}
-
-impl CellIndex for DenIndex {
-    type Cell = DenCell;
-
-    fn set(&mut self, cell: CellId, entry: Self::Cell) {
-        self.cells.insert(cell, entry);
-    }
-
-    fn get(&self, cell: CellId) -> Option<&Self::Cell> {
-        self.cells.get(&cell)
-    }
-}
-
-impl EventIndex for DenIndex {
-    fn source_scale(&self) -> u32 { DEN_LATTICE }
-
-    /// Each den at its origin's tile.
-    fn tiles(&self, cell_ids: &[CellId]) -> Vec<(i32, i32)> {
-        cell_ids.iter().filter_map(|id| self.cells.get(id)).flat_map(|c| c.dens.iter().map(|d| (d.q, d.r))).collect()
-    }
-
-    fn neighbors(&self, _q: i32, _r: i32) -> Vec<(i32, i32)> { Vec::new() }
-
-    fn remove_cell(&mut self, cell_id: CellId) {
-        self.cells.remove(&cell_id);
-    }
-}
 
 /// The lattice den sites stand on.
 pub fn den_lattice() -> HexLattice {
     HexLattice::new(DEN_LATTICE)
 }
 
-/// The origin a lattice cell puts its den site at: the cell's centre,
+/// The tile a lattice cell puts its den site on: the cell's centre,
 /// jittered by the cell's hash.
-pub fn origin_of(lattice: &HexLattice, id: CellId, seed: u64) -> (f64, f64) {
+pub fn site_of(lattice: &HexLattice, id: CellId, seed: u64) -> (i32, i32) {
     let (cq, cr) = lattice.cell_center(id);
     let (cx, cy) = hex_to_world(cq, cr);
     let swing = 2.0 * DEN_JITTER * (lattice.tiles_per_cell() as f64).sqrt();
     let h = |channel: u64| hash_channel_f64(id.0 as i64, id.1 as i64, seed ^ DEN_SEED, channel);
-    (cx + (h(1) - 0.5) * swing, cy + (h(2) - 0.5) * swing)
+    world_to_hex(cx + (h(1) - 0.5) * swing, cy + (h(2) - 0.5) * swing)
 }
 
-/// A site's habitat from what holds at its origin, the first that does:
-/// `river` within reach of a channel, the stand there as its densest and
-/// the share of its filling that is trees, the share of a range's rise the
-/// ground stands at, and whether its rock is hard.
-pub fn habitat(river: bool, (density, trees): (f64, f64), range: f64, hard: bool) -> Habitat {
-    if river {
+/// The sites a cell's tiles may be: its own and the six around it, which is
+/// as far as a site strays.
+pub fn sites_near(lattice: &HexLattice, cell: CellId, seed: u64) -> [(i32, i32); 7] {
+    let mut sites = [site_of(lattice, cell, seed); 7];
+    for (slot, id) in sites.iter_mut().skip(1).zip(lattice.neighbor_cells(cell)) {
+        *slot = site_of(lattice, id, seed);
+    }
+    sites
+}
+
+/// A site's habitat from its own tile, the first that holds; None under
+/// water.
+pub fn habitat(tile: &TileView) -> Option<Habitat> {
+    if tile.water.is_some() {
+        return None;
+    }
+    let [pine, deciduous, brush] = Canopy::tally(tile.cover);
+    let habitat = if tile.valley.is_some_and(|wall| wall <= RIVER_FLOOR) {
         Habitat::River
-    } else if density >= STAND_DENSITY && trees >= WOODS_TREES {
+    } else if pine + deciduous >= GROWN {
         Habitat::Woods
-    } else if density >= STAND_DENSITY {
+    } else if brush >= GROWN {
         Habitat::Scrub
-    } else if range >= RANGE_SHARE {
+    } else if tile.grade() >= RANGE_GRADE * REPOSE_GRADE {
         Habitat::Range
-    } else if hard {
+    } else if tile.rock.is_some_and(|rock| rock.erodibility() <= HARD_ROCK) {
         Habitat::Rock
     } else {
         Habitat::Open
-    }
+    };
+    Some(habitat)
 }
 
-/// The dens whose origins fall in a cell, each with its habitat read at
-/// its origin.
-fn dens_of(scope: &CellScope) -> Vec<Den> {
-    let seed = scope.seed();
-    let lattice = scope.lattice();
-    let cell = scope.cell();
-
-    // Every index is deformed under the footprint before any guard is held
-    let axes = axes_of(scope);
-    scope.source_cells::<OutlineIndex>();
-    scope.source_cells::<StandIndex>();
-    let coasts = coasts_of(scope);
-    let outlines = scope.read::<OutlineIndex>();
-    let stands = Reach::new(scope.read::<StandIndex>().iter().flat_map(|idx| idx.entries().flat_map(|c| c.stands.clone()).collect::<Vec<_>>()));
-    let graph = HexLattice::new(GRAPH_CELL_SCALE);
-
-    let mut out = Vec::new();
-    for id in std::iter::once(cell).chain(lattice.neighbor_cells(cell)) {
-        let (ox, oy) = origin_of(lattice, id, seed);
-        let (oq, or) = world_to_hex(ox, oy);
-        if lattice.cell_id(oq, or) != cell || !coasts.shore(ox, oy).1 {
-            continue;
-        }
-        let outline = outlines.as_ref()
-            .and_then(|idx| idx.entry(graph.cell_id(oq, or)).cloned())
-            .unwrap_or_else(|| std::sync::Arc::new(Outlines::new(&[], seed)));
-        let river = axes.nearest(ox, oy, RIVER_REACH).is_some();
-        let range = outline.relief(ox, oy) / RANGE_RISE;
-        let hard = rock_on(ox, oy, seed, &coasts, &outline).erodibility <= HARD_ROCK;
-        out.push(Den { q: oq, r: or, habitat: habitat(river, stands.at(ox, oy), range, hard) });
-    }
-    out
+pub struct DenEvent {
+    lattice: HexLattice,
 }
-
-pub struct DenEvent;
 
 impl DenEvent {
-    pub fn new() -> Self { DenEvent }
+    pub fn new() -> Self { DenEvent { lattice: den_lattice() } }
 }
 
 impl Default for DenEvent {
@@ -178,50 +110,70 @@ impl Default for DenEvent {
 
 impl WorldEvent for DenEvent {
     fn name(&self) -> &str { "den" }
+
+    /// A site is found from its hash, so nothing is published and the scale
+    /// only sets how often `prepare` runs.
     fn scale(&self) -> u32 { DEN_LATTICE }
 
-    /// A den is a place, not a tile's content: the layer stands out of the
-    /// tile cascade, and its sites are found when the server reads them
-    fn shapes_tiles(&self) -> bool { false }
+    /// Nothing to place: a site is its lattice cell's hash.
+    fn deform(&self, _scope: &CellScope) {}
 
-    fn register_indexes(&self, registry: &mut IndexRegistry) {
-        registry.pre_register::<DenIndex>();
+    /// The sites the cell's tiles may be, found once for all of them
+    fn prepare(&self, scope: &CellScope) -> Box<dyn std::any::Any + Send + Sync> {
+        Box::new(sites_near(&self.lattice, scope.cell(), scope.seed()))
     }
 
-    fn deform(&self, scope: &CellScope) {
-        scope.publish::<DenIndex>(DenCell { dens: dens_of(scope) });
-    }
-
-    /// Never asked: the layer shapes no tile
-    fn query(&self, _q: i32, _r: i32, _below: &TileView, _cell: &(dyn std::any::Any + Send + Sync), _seed: u64) -> Option<TileOutput> {
-        None
+    fn query(&self, q: i32, r: i32, below: &TileView, cell: &(dyn std::any::Any + Send + Sync), _seed: u64) -> Option<TileOutput> {
+        let sites = cell.downcast_ref::<[(i32, i32); 7]>()?;
+        if !sites.contains(&(q, r)) {
+            return None;
+        }
+        Some(TileOutput { den: Some(habitat(below)?), ..TileOutput::default() })
     }
 }
+
+const _: () = assert!(SITES.len() == 3, "GROWN counts of a tile's three growth sites");
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::{Content, Cover, Rock};
 
-    #[test]
-    fn the_most_specific_habitat_holds() {
-        assert_eq!(habitat(true, (0.9, 0.9), 1.0, true), Habitat::River, "a river beats every other");
-        assert_eq!(habitat(false, (0.9, 0.9), 1.0, true), Habitat::Woods);
-        assert_eq!(habitat(false, (0.9, 0.1), 1.0, true), Habitat::Scrub, "a stand mostly brush is scrub");
-        assert_eq!(habitat(false, (0.0, 0.0), 1.0, true), Habitat::Range);
-        assert_eq!(habitat(false, (0.0, 0.0), 0.0, true), Habitat::Rock);
-        assert_eq!(habitat(false, (0.0, 0.0), 0.0, false), Habitat::Open);
+    fn ground() -> TileView {
+        let mut tile = TileView::at(0, 0);
+        tile.rock = Some(Rock::Shale);
+        tile
+    }
+
+    fn grown(content: Content, sites: usize) -> Cover {
+        (0..sites).fold(Cover::NONE, |cover, k| cover.with(k, content))
     }
 
     #[test]
-    fn each_cell_puts_its_site_near_its_centre() {
+    fn a_site_takes_the_first_habitat_its_tile_holds() {
+        let mut tile = ground();
+        assert_eq!(habitat(&tile), Some(Habitat::Open));
+        tile.rock = Some(Rock::Basement);
+        assert_eq!(habitat(&tile), Some(Habitat::Rock), "hard rock");
+        tile.gradient = (REPOSE_GRADE, 0.0);
+        assert_eq!(habitat(&tile), Some(Habitat::Range), "steep ground beats hard rock");
+        tile.cover = grown(Content::Brush, 2);
+        assert_eq!(habitat(&tile), Some(Habitat::Scrub));
+        tile.cover = grown(Content::Pine, 2);
+        assert_eq!(habitat(&tile), Some(Habitat::Woods));
+        tile.valley = Some(0.0);
+        assert_eq!(habitat(&tile), Some(Habitat::River), "a valley floor beats every other");
+        tile.water = Some(1.0);
+        assert_eq!(habitat(&tile), None, "under water, no den");
+    }
+
+    #[test]
+    fn every_cell_has_one_site_and_the_cell_its_tile_lies_in_finds_it() {
         let lattice = den_lattice();
-        let spacing = (lattice.tiles_per_cell() as f64).sqrt();
         for id in [(0, 0), (3, -2), (-5, 7)] {
-            let (cq, cr) = lattice.cell_center(id);
-            let (cx, cy) = hex_to_world(cq, cr);
-            let (ox, oy) = origin_of(&lattice, id, 7);
-            assert!((ox - cx).hypot(oy - cy) <= DEN_JITTER * spacing * std::f64::consts::SQRT_2);
-            assert_eq!(origin_of(&lattice, id, 7), (ox, oy), "a site is its cell's hash");
+            let (q, r) = site_of(&lattice, id, 7);
+            assert!(sites_near(&lattice, lattice.cell_id(q, r), 7).contains(&(q, r)), "a site strays no further than the ring");
+            assert_eq!(site_of(&lattice, id, 7), (q, r), "a site is its cell's hash");
         }
     }
 }

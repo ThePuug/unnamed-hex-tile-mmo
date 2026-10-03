@@ -417,7 +417,7 @@ pub fn gallery(wall: f64) -> f64 {
 /// under the cell and its ring: the coast edges whose straight line lies
 /// within the shore ramp's reach of the cell, with the swing a chain and
 /// the warp take off it. The rest would be built and never read.
-pub(super) fn coasts_of(scope: &CellScope) -> Coasts {
+fn coasts_of(scope: &CellScope) -> Coasts {
     let (cq, cr) = scope.lattice().cell_center(scope.cell());
     let (cx, cy) = hex_to_world(cq, cr);
     let within = scope.lattice().radius as f64 + COAST_READ;
@@ -428,7 +428,7 @@ pub(super) fn coasts_of(scope: &CellScope) -> Coasts {
 
 /// The channel axes in reach of a cell's origins, from the channels
 /// migration published under the cell and its ring.
-pub(super) fn axes_of(scope: &CellScope) -> SegmentGrid {
+fn axes_of(scope: &CellScope) -> SegmentGrid {
     let (cq, cr) = scope.lattice().cell_center(scope.cell());
     let (cx, cy) = hex_to_world(cq, cr);
     let within = scope.lattice().radius as f64 + 2.0 * VALLEY_HALF_WIDTH;

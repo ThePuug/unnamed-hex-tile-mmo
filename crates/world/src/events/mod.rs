@@ -92,7 +92,7 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use dashmap::DashMap;
 use parking_lot::{MappedRwLockReadGuard, Mutex};
 
-use common::{Cover, HexLattice, Rock, TagSet};
+use common::{den::Habitat, Cover, HexLattice, Rock, TagSet};
 
 use crate::hex_to_world;
 
@@ -127,6 +127,8 @@ pub struct TileOutput {
     /// What stands in the tile's seven slots, where a layer puts anything.
     /// A later layer's cover replaces an earlier one's.
     pub cover: Cover,
+    /// The habitat of a den whose site is this tile, where a layer says so
+    pub den: Option<Habitat>,
 }
 
 /// Read-only composite view at a single tile.
@@ -149,12 +151,14 @@ pub struct TileView {
     pub rock: Option<Rock>,
     /// What stands in the tile's seven slots.
     pub cover: Cover,
+    /// The habitat of a den whose site is this tile, as [`TileOutput::den`].
+    pub den: Option<Habitat>,
 }
 
 impl TileView {
     fn at(q: i32, r: i32) -> Self {
         let (wx, wy) = hex_to_world(q, r);
-        TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, gradient: (0.0, 0.0), water: None, valley: None, rock: None, cover: Cover::NONE }
+        TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, gradient: (0.0, 0.0), water: None, valley: None, rock: None, cover: Cover::NONE, den: None }
     }
 
     fn compose(&mut self, out: &TileOutput) {
@@ -174,6 +178,9 @@ impl TileView {
         }
         if !out.cover.is_empty() {
             self.cover = out.cover;
+        }
+        if out.den.is_some() {
+            self.den = out.den;
         }
     }
 }
@@ -310,13 +317,6 @@ pub trait WorldEvent: Send + Sync {
     /// against an undeformed cell returns empty rather than failing, so nothing
     /// reports it.
     fn max_influence(&self) -> u32 { 0 }
-
-    /// Whether the layer contributes to tiles. One that only publishes an
-    /// index for readers outside the stack, the dens the server places,
-    /// stands out of the tile cascade: a tile read neither deforms its cells
-    /// nor queries it, so it costs a tile nothing, and its index is built
-    /// only when something reads it ([`Composite::entries_around`]).
-    fn shapes_tiles(&self) -> bool { true }
 
     /// Pre-register index types this event writes during deform.
     /// Called once during `Composite::add_event()`. Events call
@@ -628,8 +628,6 @@ pub struct Composite {
     events: Vec<Box<dyn WorldEvent>>,
     lattices: Vec<HexLattice>,
     cell_caches: Vec<CellCache>,
-    /// The layers a tile read walks: those that shape tiles
-    tile_layers: Vec<usize>,
     indexes: IndexRegistry,
     metrics: CompositeMetrics,
     seed: u64,
@@ -641,7 +639,6 @@ impl Composite {
             events: Vec::new(),
             lattices: Vec::new(),
             cell_caches: Vec::new(),
-            tile_layers: Vec::new(),
             indexes: IndexRegistry::new(),
             metrics: CompositeMetrics::default(),
             seed,
@@ -694,9 +691,6 @@ impl Composite {
         event.register_indexes(&mut self.indexes);
         self.cell_caches.push(CellCache::new(DEFAULT_MAX_CELLS));
         self.lattices.push(lattice);
-        if event.shapes_tiles() {
-            self.tile_layers.push(self.events.len());
-        }
         self.events.push(event);
     }
 
@@ -708,7 +702,7 @@ impl Composite {
         // Phase 1: Deform cascade — ensure all cells containing this tile are deformed.
         {
             let _s = tracing::debug_span!("deform").entered();
-            for &layer in &self.tile_layers {
+            for layer in 0..self.events.len() {
                 let cell_id = self.lattices[layer].cell_id(q, r);
                 self.ensure_query_neighbourhood(layer, cell_id);
             }
@@ -719,7 +713,7 @@ impl Composite {
 
         {
             let _s = tracing::debug_span!("query").entered();
-            for &layer in &self.tile_layers {
+            for layer in 0..self.events.len() {
                 let cell_id = self.lattices[layer].cell_id(q, r);
                 self.cell_caches[layer].touch(cell_id);
 
@@ -783,23 +777,6 @@ impl Composite {
     /// What stands in a tile's slots.
     pub fn cover_at(&self, q: i32, r: i32) -> Cover {
         self.tile_at(q, r).cover
-    }
-
-    /// The entries of `T` over the cell of `T`'s own lattice holding tile
-    /// `(q, r)` and its ring, those cells deformed first: how a reader
-    /// outside the stack, the server finding the dens near a player, reads
-    /// an index. Empty for an index nothing registered.
-    pub fn entries_around<T: CellIndex>(&self, q: i32, r: i32) -> Vec<T::Cell>
-    where
-        T::Cell: Clone,
-    {
-        let Some(layer) = self.indexes.layer_of::<T>() else { return Vec::new() };
-        let cells = self.lattices[layer].cells_within_distance(self.lattices[layer].cell_id(q, r), 1);
-        for &cell in &cells {
-            self.ensure_deformed(layer, cell);
-        }
-        let Some(index) = self.indexes.get::<T>() else { return Vec::new() };
-        cells.iter().filter_map(|&cell| index.get(cell).cloned()).collect()
     }
 
     /// Access the IndexRegistry directly (no lock needed — interior mutability).
@@ -937,7 +914,7 @@ impl Composite {
     fn resolve_below(&self, up_to: usize, q: i32, r: i32) -> TileView {
         let mut view = TileView::at(q, r);
 
-        for &li in self.tile_layers.iter().take_while(|&&li| li < up_to) {
+        for li in 0..up_to {
             let cell_id = self.lattices[li].cell_id(q, r);
             let tile_out = if let Some(cached) = self.cell_caches[li].get_tile(cell_id, q, r) {
                 cached

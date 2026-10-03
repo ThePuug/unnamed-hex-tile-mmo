@@ -216,9 +216,7 @@ into `VisualPosition` and `Heading`. Remote entities run the same physics in
 
 **World event system.** Events implement `WorldEvent` — required `name`,
 `scale`, `deform`, `query`; optional `max_influence`, `register_indexes`,
-`prepare`, `shapes_tiles`. A layer that only publishes an index for readers
-outside the stack (`den`) says it shapes no tiles, and a tile read never
-deforms or queries it; `Composite::entries_around` builds it on demand. A cell reads itself and one ring, never more: an event needing
+`prepare`. A cell reads itself and one ring, never more: an event needing
 wider reach needs a larger `scale`, which `max_influence` asserts at setup.
 Deform places its own features from the indexes below — there is no predicate
 or survey framework. Two independent cascades: deform (index→index,
