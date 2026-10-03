@@ -4,7 +4,6 @@ use common_bevy::{
     message::{Do, Event as GameEvent},
     systems::combat::queue as queue_utils,
 };
-use common_bevy::tuning::Tuning;
 
 /// Client system to handle InsertThreat events
 /// Inserts threats into the visual reaction queue for display
@@ -105,7 +104,7 @@ pub fn handle_clear_queue(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common_bevy::{components::ActorAttributes, message::{AbilityType, ClearType}};
+    use common_bevy::{components::ActorAttributes, message::{AbilityType, ClearType}, tuning::Tuning};
     use std::time::Duration;
 
     #[test]

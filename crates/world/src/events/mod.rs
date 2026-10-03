@@ -438,14 +438,6 @@ pub struct LayerMetricsSnapshot {
 
 // ── Cell Cache (concurrent) ─────────────────────────────────────────────────
 
-const DEFAULT_MAX_CELLS: usize = 2000;
-
-/// Tiles in a hex ball of the given radius.
-fn hex_ball_tiles(radius: u32) -> usize {
-    let r = radius as usize;
-    3 * r * r + 3 * r + 1
-}
-
 /// Hex distance between two tile coordinates.
 fn hex_distance(a: (i32, i32), b: (i32, i32)) -> i32 {
     let (dq, dr) = (a.0 - b.0, a.1 - b.1);
@@ -542,7 +534,6 @@ fn one_ring_clearance(lattice: &HexLattice) -> f64 {
 
 struct CellEntry {
     tiles: parking_lot::RwLock<HashMap<(i32, i32), TileOutput>>,
-    last_accessed: AtomicU64,
 }
 
 struct CellCache {
@@ -558,21 +549,16 @@ struct CellCache {
     /// Cells whose ring has been deformed. Lets the hot path settle for a
     /// single lookup instead of re-walking the ring on every tile in the cell.
     neighbourhood_ready: DashMap<CellId, ()>,
-    /// Monotonic counter for LRU ordering (lock-free touch).
-    access_counter: AtomicU64,
-    max_cells: usize,
     metrics: LayerMetrics,
 }
 
 impl CellCache {
-    fn new(max_cells: usize) -> Self {
+    fn new() -> Self {
         Self {
             cells: DashMap::new(),
             contexts: DashMap::new(),
             deform_locks: DashMap::new(),
             neighbourhood_ready: DashMap::new(),
-            access_counter: AtomicU64::new(0),
-            max_cells,
             metrics: LayerMetrics::default(),
         }
     }
@@ -595,13 +581,11 @@ impl CellCache {
             .and_then(|entry| entry.tiles.read().get(&(q, r)).copied())
     }
 
+    /// Caches grow unbounded: eviction is unbuilt.
     fn insert_empty(&self, cell_id: CellId) {
-        let stamp = self.access_counter.fetch_add(1, Relaxed) + 1;
         self.cells.entry(cell_id).or_insert_with(|| Arc::new(CellEntry {
             tiles: parking_lot::RwLock::new(HashMap::new()),
-            last_accessed: AtomicU64::new(stamp),
         }));
-        self.evict_if_over_budget();
     }
 
     fn insert_tile(&self, cell_id: CellId, q: i32, r: i32, tile: TileOutput) {
@@ -610,20 +594,8 @@ impl CellCache {
         }
     }
 
-    fn touch(&self, cell_id: CellId) {
-        let stamp = self.access_counter.fetch_add(1, Relaxed) + 1;
-        if let Some(entry) = self.cells.get(&cell_id) {
-            entry.last_accessed.store(stamp, Relaxed);
-        }
-    }
-
     fn tile_count(&self) -> usize {
         self.cells.iter().map(|e| e.tiles.read().len()).sum()
-    }
-
-    fn evict_if_over_budget(&self) {
-        // Eviction is unbuilt: caches grow unbounded. `max_cells`, `last_accessed`
-        // and `access_counter` wait on it.
     }
 }
 
@@ -696,7 +668,7 @@ impl Composite {
         // Pre-register indexes declared by this event (HashMap frozen after init)
         self.indexes.set_registering_layer(self.events.len());
         event.register_indexes(&mut self.indexes);
-        self.cell_caches.push(CellCache::new(DEFAULT_MAX_CELLS));
+        self.cell_caches.push(CellCache::new());
         self.lattices.push(lattice);
         self.events.push(event);
     }
@@ -723,7 +695,6 @@ impl Composite {
             let _s = tracing::debug_span!("query").entered();
             for layer in 0..self.events.len() {
                 let cell_id = self.lattices[layer].cell_id(q, r);
-                self.cell_caches[layer].touch(cell_id);
 
                 let cached = self.cell_caches[layer].get_tile(cell_id, q, r);
                 let tile_out = if let Some(to) = cached {
@@ -922,38 +893,6 @@ impl Composite {
         // Mark cell as deformed
         self.cell_caches[layer].insert_empty(cell_id);
     }
-
-    /// Resolve the composite TileView from layers 0..up_to.
-    /// Used by the `below` closure passed to query. Writes computed results
-    /// through to the cell caches so the work is never recomputed (insert is a
-    /// no-op for cells not yet deformed).
-    fn resolve_below(&self, up_to: usize, q: i32, r: i32) -> TileView {
-        let mut view = TileView::at(q, r);
-
-        for li in 0..up_to {
-            let cell_id = self.lattices[li].cell_id(q, r);
-            let tile_out = if let Some(cached) = self.cell_caches[li].get_tile(cell_id, q, r) {
-                cached
-            } else {
-                // Same guarantee tile_at makes: a query must not run against a
-                // half-deformed neighbourhood, or it caches a wrong tile. This
-                // path is reached from `below` closures,
-                // which tile_at's phase 1 does not cover.
-                self.ensure_query_neighbourhood(li, cell_id);
-                let ctx = self.cell_context(li, cell_id);
-                let _s = tracing::debug_span!("event_query", event = self.events[li].name()).entered();
-                let to = self.events[li]
-                    .query(q, r, &view, &*ctx, self.seed)
-                    .unwrap_or_default();
-                self.cell_caches[li].insert_tile(cell_id, q, r, to);
-                to
-            };
-
-            view.compose(&tile_out);
-        }
-
-        view
-    }
 }
 
 /// Every tile is there: one materialisation serves the height, the water
@@ -968,6 +907,12 @@ impl common::summary::SummarySource for Composite {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Tiles in a hex ball of the given radius.
+    fn hex_ball_tiles(radius: u32) -> usize {
+        let r = radius as usize;
+        3 * r * r + 3 * r + 1
+    }
 
     /// Where the ground is steeper than a step, the gradient the layers
     /// report reads the slope between a tile's neighbours along the
@@ -1028,9 +973,6 @@ mod tests {
     /// Records which cells the framework deforms, so the one-ring contract can
     /// be checked without paying for real terrain generation.
     struct ReachProbe {
-        /// What the event would *like* to read. The framework has no way to
-        /// honour it, and that is the property under test.
-        reach: u32,
         deformed: Arc<parking_lot::Mutex<Vec<CellId>>>,
     }
 
@@ -1055,19 +997,11 @@ mod tests {
     /// and that is how whole mountains went missing depending on access order.
     #[test]
     fn every_event_gets_exactly_one_ring() {
-        for reach in 0..=2u32 {
-            let deformed = Arc::new(parking_lot::Mutex::new(Vec::new()));
-            let mut c = Composite::new(1);
-            c.add_event(Box::new(ReachProbe { reach, deformed: deformed.clone() }));
-            c.tile_at(0, 0);
-
-            let cells = deformed.lock();
-            assert_eq!(
-                cells.len(), 7,
-                "an event wanting {reach} rings still got {} cells, not 7",
-                cells.len(),
-            );
-        }
+        let deformed = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let mut c = Composite::new(1);
+        c.add_event(Box::new(ReachProbe { deformed: deformed.clone() }));
+        c.tile_at(0, 0);
+        assert_eq!(deformed.lock().len(), 7, "an event deforms its own cell and one ring");
     }
 
     /// The ring walk must not land on the per-tile hot path: every tile in a
@@ -1076,7 +1010,7 @@ mod tests {
     fn query_neighbourhood_is_walked_once_per_cell() {
         let deformed = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let mut c = Composite::new(1);
-        c.add_event(Box::new(ReachProbe { reach: 1, deformed: deformed.clone() }));
+        c.add_event(Box::new(ReachProbe { deformed: deformed.clone() }));
 
         // Many tiles inside one radius-32 cell.
         for q in -5..=5 {

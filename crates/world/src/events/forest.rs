@@ -46,7 +46,7 @@ use crate::tectonic::{Edge, PLATE_SPACING};
 use crate::{hex_to_world, world_to_hex};
 use super::drainage::DrainageIndex;
 use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
-use super::lithology::{rock_on, Rock};
+use super::lithology::rock_on;
 use super::migration::{ChannelIndex, VALLEY_HALF_WIDTH};
 use super::plates::{Coasts, PlateEdgeIndex, COAST_REACH, GRAPH_CELL_SCALE, WARP_SWING};
 use super::thrusting::{rim_of, sheets_of, smoothstep, EdgeOutline, OutlineIndex, Outlines, RANGE_RISE, RANGE_SPACING, WEDGE_SHEETS};
@@ -667,6 +667,7 @@ impl WorldEvent for ForestEvent {
 mod tests {
     use super::*;
     use super::super::Composite;
+    use super::super::lithology::Rock;
     use super::super::plates::unwarp;
     use crate::tectonic::PLATE_REACH;
 

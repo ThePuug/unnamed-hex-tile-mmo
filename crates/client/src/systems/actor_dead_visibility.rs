@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use common_bevy::components::{Actor, reaction_queue::ReactionQueue, resources::{CombatState, Health}};
 use crate::components::{DeathMarker, Viewed};
-use common_bevy::tuning::Tuning;
 
 /// Restore visibility for actors that were hidden (e.g. after respawn)
 /// Dead actors now get a death pose via DeathMarker instead of being hidden
@@ -57,6 +56,7 @@ pub fn cleanup_dead_entities(
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
+    use common_bevy::tuning::Tuning;
 
     #[test]
     fn test_dead_actor_stays_visible() {

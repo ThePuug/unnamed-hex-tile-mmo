@@ -17,7 +17,7 @@ use bevy::gltf::{Gltf, GltfMesh, GltfNode};
 use bevy::prelude::*;
 use bevy_mesh::{Indices, VertexAttributeValues};
 use serde::Deserialize;
-use common::{Content, SITES, TILE_SLOTS};
+use common::{Content, TILE_SLOTS};
 use common_bevy::geometry::{boulder_center, flat_top_tile_center, slot_center};
 use common_bevy::surface::height_y;
 use common_bevy::summary_mesh::MeshRegionKey;
@@ -707,7 +707,7 @@ fn update_cover(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::Cover;
+    use common::{Cover, SITES};
     use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
     use common_bevy::geometry::flat_top_tile_center;
     use common_bevy::resources::map::Map;
