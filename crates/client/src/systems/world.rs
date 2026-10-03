@@ -1518,10 +1518,7 @@ mod tests {
     /// boundary, the producer enumerates it (so its data will exist).
     #[test]
     fn lod_bands_cover_horizon_without_gaps() {
-        use common_bevy::chunk::{
-            calculate_visible_chunks, ChunkId, APOTHEM_FACTOR, CHUNK_EXTENT_WU,
-            FIXED_STREAM_APOTHEM_WU, FIXED_STREAM_RADIUS,
-        };
+        use common_bevy::chunk::{calculate_visible_chunks, ChunkId, FIXED_STREAM_APOTHEM_WU, FIXED_STREAM_RADIUS};
         use common_bevy::summary::{compute_active_bands, mesh_region_extent_wu};
         use common_bevy::summary_mesh::visible_lod_regions;
 
