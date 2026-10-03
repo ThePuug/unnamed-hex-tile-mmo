@@ -144,9 +144,9 @@ authority prevents drift over which chunks are loaded.
 
 **INV-006 — LoD levels nest.** Summary scales triple (`LOD_LEVELS`), so every
 coarse summary center is also a fine summary center, and `sample_center_z`'s 7
-sample points at `d = scale/3` land exactly on the child level's centers. All
-three producers — local `Map`, server `EventRegistry`, flyover
-`AdminComposite` — use that one rule, or refinement changes the silhouette.
+sample points at `d = scale/3` land exactly on the child level's centers. Both
+producers — local `Map` and server `EventRegistry` — use that one rule, or
+refinement changes the silhouette.
 
 **INV-007 — Client-timed input is credit-bound.** Every millisecond of
 player physics the server runs came from a `Try::Input` the client timed,

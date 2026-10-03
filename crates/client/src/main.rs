@@ -35,7 +35,7 @@ use crate::{
     systems::{actor, actor_dead_visibility, animator, camera, combat, equipment, gathering, hiding, input, movement, renet, targeting, world}
 };
 #[cfg(feature = "admin")]
-use crate::plugins::{flyover, recorder};
+use crate::plugins::recorder;
 
 fn setup(
     mut config_store: ResMut<GizmoConfigStore>,
@@ -106,9 +106,6 @@ fn main() {
     // Keys move the character only while the world is played: loading, it
     // stands where the server put it.
     let playing = in_state(crate::plugins::shell::Stage::Playing);
-    #[cfg(feature = "admin")]
-    app.add_systems(PreUpdate, input::update_keybits.run_if(playing.and_then(flyover::not_in_flyover)));
-    #[cfg(not(feature = "admin"))]
     app.add_systems(PreUpdate, input::update_keybits.run_if(playing));
 
     app.add_systems(FixedUpdate, (
@@ -148,12 +145,9 @@ fn main() {
         targeting::update_ally_targets, // Update ally targets every frame (detects when allies move)
     ));
 
-    // Camera: conditional on flyover state in admin builds, and on the
-    // recorder not running a camera path
+    // Camera: in admin builds, while the recorder runs no camera path
     #[cfg(feature = "admin")]
-    app.add_systems(Update, (
-        camera::update.run_if(flyover::not_in_flyover.and_then(not(recorder::camera_free))),
-    ));
+    app.add_systems(Update, camera::update.run_if(not(recorder::camera_free)));
     #[cfg(not(feature = "admin"))]
     app.add_systems(Update, camera::update);
 
@@ -213,10 +207,9 @@ fn main() {
     app.init_resource::<hiding::HiddenMeshes>();
     app.init_resource::<EntityMap>();
     app.init_resource::<Server>();
-    app.init_resource::<crate::resources::SkipNeighborRegen>();
 
     #[cfg(feature = "admin")]
-    app.add_plugins((flyover::FlyoverPlugin, recorder::RecorderPlugin));
+    app.add_plugins(recorder::RecorderPlugin);
 
 
     app.run();

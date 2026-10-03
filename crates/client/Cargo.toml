@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["admin", "dynamic"]
-admin = ["dep:world"]
+admin = []
 # Bevy links as a dylib for fast iteration builds. Incompatible with the
 # release profile's LTO, which needs bitcode the dylib does not carry — drop it
 # with `--no-default-features` for an optimized build.
@@ -39,7 +39,3 @@ bevy_egui = "0.42"
 
 [dependencies.qrz]
 path = "../qrz"
-
-[dependencies.world]
-path = "../world"
-optional = true

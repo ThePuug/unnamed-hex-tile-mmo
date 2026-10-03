@@ -196,7 +196,7 @@ use crate::{
     plugins::diagnostics::DiagnosticsState,
     systems::camera::HAZE_COLOR,
     resources::{
-        ForcedSummaryRadius, LodTriangleStats, LoadedChunks,
+        LodTriangleStats, LoadedChunks,
         Server, SummaryMesh, SummaryMeshBuildResult, SummaryMeshState, SummaryMeshes,
         TerrainMaterial,
     },
@@ -508,7 +508,6 @@ pub fn dispatch_summary_tasks(
     loaded_chunks: Res<LoadedChunks>,
     map: Res<common_bevy::resources::map::Map>,
     mut summary_meshes: ResMut<SummaryMeshes>,
-    forced_radius: Res<ForcedSummaryRadius>,
     summary_cache: Res<crate::resources::SummaryCache>,
     client_timers: Res<crate::resources::ClientTimers>,
     edges: Res<crate::resources::EdgeCenters>,
@@ -517,17 +516,9 @@ pub fn dispatch_summary_tasks(
     mut last_eval_pos: Local<Option<Vec3>>,
     mut last_eval_edges: Local<HashMap<u32, Vec2>>,
     mut backlog: Local<bool>,
-    #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
     // The camera's world position, for the regions: the player is drawn
     // about the render origin.
-    #[cfg(feature = "admin")]
-    let camera_pos = flyover
-        .as_ref()
-        .filter(|f| f.active)
-        .map(|f| f.world_position)
-        .or_else(|| player_query.single().ok().map(|t| origin.world(t.translation)));
-    #[cfg(not(feature = "admin"))]
     let camera_pos = player_query.single().ok().map(|t| origin.world(t.translation));
 
     let map_changed = map.take_changed();
@@ -565,16 +556,8 @@ pub fn dispatch_summary_tasks(
 
     // Local-data boundary: the largest circle inside guaranteed chunk
     // coverage (the hexagonal chunk set's APOTHEM — the circumradius
-    // over-claims by ~80 WU in edge directions). In gameplay the server
-    // streams chunks to FIXED_STREAM_RADIUS; in flyover only the
-    // detail-chunk disc around the camera exists.
-    #[cfg(feature = "admin")]
-    let local_boundary = flyover
-        .as_ref()
-        .filter(|f| f.active)
-        .map(|f| f.local_boundary_wu())
-        .unwrap_or(common_bevy::chunk::FIXED_STREAM_APOTHEM_WU);
-    #[cfg(not(feature = "admin"))]
+    // over-claims by ~80 WU in edge directions): the server streams chunks
+    // to FIXED_STREAM_RADIUS.
     let local_boundary = common_bevy::chunk::FIXED_STREAM_APOTHEM_WU;
 
     // Local regions: camera-dependent (bands within streaming radius).
@@ -583,13 +566,8 @@ pub fn dispatch_summary_tasks(
     let (needed, keep): (
         std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey>,
         std::collections::HashSet<common_bevy::summary_mesh::MeshRegionKey>,
-    ) = match (camera_pos, forced_radius.0) {
-        (_, Some(r)) => {
-            let n = common_bevy::summary_mesh::visible_mesh_regions(r, &loaded_chunks.chunks);
-            let k = n.clone();
-            (n, k)
-        }
-        (Some(pos), None) => {
+    ) = match camera_pos {
+        Some(pos) => {
             let regions = |at: Vec2, margin: f32| {
                 compute_auto_mode_regions(at, &loaded_chunks.chunks, margin, local_boundary)
             };
@@ -608,7 +586,7 @@ pub fn dispatch_summary_tasks(
             k.extend(n.iter().copied());
             (n, k)
         }
-        (None, None) => {
+        None => {
             // No camera yet — can't compute local regions.
             // Re-arm map changed so we retry once the player spawns.
             if map_changed { map.force_changed(); }
@@ -654,8 +632,8 @@ pub fn dispatch_summary_tasks(
     }
 
     // Dispatch build tasks for needed regions, nearest-first so the terrain
-    // in front of the camera fills before the horizon (matches server and
-    // flyover dispatch order).
+    // in front of the camera fills before the horizon (matches the server's
+    // dispatch order).
     let pool = bevy::tasks::AsyncComputeTaskPool::get();
     const MAX_MESH_TASKS: usize = 16;
     let mut mesh_dispatched = 0;
@@ -696,7 +674,7 @@ pub fn dispatch_summary_tasks(
             continue;
         }
 
-        // r>0 regions beyond the local-data boundary are server/flyover-owned:
+        // r>0 regions beyond the local-data boundary are server-owned:
         // without cache data their build would produce nothing — wait for it.
         // Regions within the boundary are Map-built and dispatch regardless
         // of cache state.
@@ -731,15 +709,7 @@ pub fn dispatch_summary_tasks(
                     mesh_handle: None,
                     tri_count: 0,
                     mesh_origin,
-                    base_positions: Vec::new(),
-                    base_normals: Vec::new(),
-                    base_coarse: Vec::new(),
-                    base_canopy: Vec::new(),
-                    base_parts: Vec::new(),
-                    base_indices: Vec::new(),
-                    base_tri_count: 0,
-                    base_water: Default::default(),
-                    base_cover: Vec::new(),
+                    cover: Vec::new(),
                     models_spawned: false,
                     cards_spawned: false,
                     waiting: false,
@@ -758,8 +728,8 @@ pub fn dispatch_summary_tasks(
     }
 }
 
-/// Active bands out to the reach, the same bound the server and flyover
-/// producers cover to. `margin` widens it for the keep set.
+/// Active bands out to the reach, the same bound the server's producer
+/// covers to. `margin` widens it for the keep set.
 fn horizon_bands(margin: f32) -> Vec<common_bevy::summary::Band> {
     common_bevy::summary::compute_active_bands(common_bevy::summary::reach_wu() * (1.0 + margin))
 }
@@ -785,13 +755,12 @@ const EDGE_MAX_LAG: f32 = 0.5;
 /// morph strip inside its outer edge. Regions are built whole and the
 /// shaders drop fragments outside the band, so band edges follow the
 /// player with no rebuild. An edge moves only where both its levels are
-/// drawn, and eases when it does. A forced debug radius lifts the cut.
+/// drawn, and eases when it does.
 /// The edges live in world coordinates, the frame of the region lattice;
 /// the uniform carries them as rendered, the frame the shaders see.
 pub fn update_terrain_cut(
     mut materials: ResMut<Assets<crate::resources::TerrainMaterialAsset>>,
     terrain_material: Res<TerrainMaterial>,
-    forced_radius: Res<ForcedSummaryRadius>,
     summary_meshes: Res<SummaryMeshes>,
     mut edges: ResMut<crate::resources::EdgeCenters>,
     mut card_band: ResMut<crate::resources::CardBand>,
@@ -799,33 +768,20 @@ pub fn update_terrain_cut(
     render_origin: Res<crate::resources::RenderOrigin>,
     player_query: Query<&Transform, With<crate::components::Viewed>>,
     diagnostics_state: Res<DiagnosticsState>,
-    #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
     let parts_on = u32::from(!diagnostics_state.canopy_parts_off);
-    let player = || player_query.single().ok().map(|t| render_origin.world(t.translation));
-    #[cfg(feature = "admin")]
-    let origin = match flyover.as_ref().filter(|f| f.active) {
-        Some(f) => Some(f.world_position),
-        None => player(),
-    };
-    #[cfg(not(feature = "admin"))]
-    let origin = player();
-    let Some(origin) = origin else { return };
+    let Some(origin) = player_query.single().ok().map(|t| render_origin.world(t.translation)) else { return };
 
     let bands = horizon_bands(0.0);
     let target = origin.xz();
-    if forced_radius.0.is_none() {
-        advance_edges(&mut edges.0, &bands, target, time.delta_secs(), &summary_meshes);
-    }
+    advance_edges(&mut edges.0, &bands, target, time.delta_secs(), &summary_meshes);
 
     // The span the canopy's ground rises over is the cards' own: from the
     // ring where the models hand over to where the last card is drawn.
     // It falls away again across the whole of the next level's band, so
     // the level past that carries none. Every level is given the same
     // spans, so the ground they draw agrees where their bands meet.
-    let (lift, fall) = if forced_radius.0.is_some() {
-        (Vec4::ZERO, Vec4::ZERO)
-    } else {
+    let (lift, fall) = {
         let at = |r: u32| level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz());
         let ring = at(0);
         let cards = at(common_bevy::summary::LOD_LEVELS[1]).outer;
@@ -838,11 +794,7 @@ pub fn update_terrain_cut(
     // specialised again, which for the terrain is every mesh it has.
     let mut band = *card_band;
     for (&r, handle) in &terrain_material.by_level {
-        let cut = if forced_radius.0.is_some() {
-            crate::resources::TerrainCut::default()
-        } else {
-            level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz())
-        };
+        let cut = level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz());
         let Some(material) = materials.get(handle) else { continue };
         let canopy = &material.extension.canopy;
         if material.extension.cut != cut || canopy.lift != lift || canopy.fall != fall || material.extension.lattice.on != parts_on {
@@ -983,10 +935,9 @@ fn level_cut(
 /// Compute visible mesh regions for auto mode (multi-band).
 
 /// Local bands (within `local_boundary_wu`): gated on loaded chunks.
-/// Remote bands (beyond it): ungated — data from server/flyover summaries.
+/// Remote bands (beyond it): ungated — data from the server's summaries.
 
-/// `local_boundary_wu`: the extent the Map can serve — FIXED_STREAM_RADIUS_WU
-/// in gameplay, the flyover's detail-chunk radius while flyover is active.
+/// `local_boundary_wu`: the extent the Map can serve — FIXED_STREAM_RADIUS_WU.
 /// `margin`: hysteresis expansion of each band's annulus (0.0 = crisp band
 /// assignment for building; > 0.0 = widened keep set for eviction).
 fn compute_auto_mode_regions(
@@ -1002,7 +953,7 @@ fn compute_auto_mode_regions(
 
     // Bands are split at the stream-radius boundary, not assigned to one
     // side: a band straddling it contributes a gated segment (client-owned,
-    // chunk-fed) AND an ungated segment (server/flyover-fed). Assigning the
+    // chunk-fed) AND an ungated segment (server-fed). Assigning the
     // whole band to one side left its other segment with no regions at all.
     for band in &bands {
         // Footprint-overlap enumeration over the band: a region is built
@@ -1032,7 +983,7 @@ fn compute_auto_mode_regions(
         }
         if band_outer > local_boundary_wu {
             // Segment beyond the boundary: ungated (SummaryCache-fed from
-            // server or flyover producer)
+            // the server)
             let inner = band_inner.max(local_boundary_wu);
             let regions = visible_mesh_regions_in_band_ungated(
                 band.r,
@@ -1051,8 +1002,8 @@ fn compute_auto_mode_regions(
 /// Build a mesh region (runs off main thread).
 
 /// One builder for every level; only the height lookup differs. r=0 reads
-/// tile z straight from the Map. r>0 reads the SummaryCache (server- or
-/// flyover-fed) and falls back to sampling the Map with the same 7-sample
+/// tile z straight from the Map. r>0 reads the SummaryCache (server-fed)
+/// and falls back to sampling the Map with the same 7-sample
 /// rule every producer uses — Map z and server elevation agree by
 /// construction, so the value is the same whichever side computed it. The
 /// next coarser level, which the morph targets read, comes through the
@@ -1245,83 +1196,32 @@ pub fn poll_summary_meshes(
     // since the last run give theirs back before any is claimed.
     canopy_parts.release(|key| summary_meshes.states.get(key).is_some_and(|state| state.entity.is_some()));
 
-    // Poll async tasks, keeping the geometry so the entity can be respawned
-    // without a rebuild.
-    let mut to_upload: Vec<common_bevy::summary_mesh::MeshRegionKey> = Vec::new();
-
-    for (&region_key, state) in summary_meshes.states.iter_mut() {
-        if let Some(task) = &mut state.task {
-            if let Some(result) = block_on(future::poll_once(task)) {
-                state.task = None;
-                state.mesh_origin = result.mesh_origin;
-                state.base_positions = result.positions;
-                state.base_normals = result.normals;
-                state.base_coarse = result.coarse;
-                state.base_canopy = result.canopy;
-                state.base_parts = result.parts;
-                state.base_indices = result.indices;
-                state.base_tri_count = result.tri_count;
-                state.base_water = result.water;
-                state.base_cover = result.cover;
-                state.waiting = result.tri_count == 0;
-                to_upload.push(region_key);
-            }
+    // Poll async tasks; the region keeps its cover, to spawn once the kit
+    // has loaded.
+    let mut builds = Vec::new();
+    for (&key, state) in summary_meshes.states.iter_mut() {
+        let Some(task) = &mut state.task else { continue };
+        let Some(mut result) = block_on(future::poll_once(task)) else { continue };
+        state.task = None;
+        state.mesh_origin = result.mesh_origin;
+        state.cover = std::mem::take(&mut result.cover);
+        state.waiting = result.tri_count == 0;
+        if result.tri_count > 0 {
+            builds.push((key, result));
         }
     }
-
-    // Orphaned states: geometry but no entity, after a flyover stash restore
-    // (entities were despawned on toggle-on). A task may already be pending;
-    // the stored geometry goes up now so there is no flash.
-    for (&region_key, state) in summary_meshes.states.iter() {
-        if !state.base_positions.is_empty() && state.entity.is_none() && !to_upload.contains(&region_key) {
-            to_upload.push(region_key);
-        }
-    }
-
-    struct MeshBuild {
-        key: common_bevy::summary_mesh::MeshRegionKey,
-        positions: Vec<[f32; 3]>,
-        normals: Vec<[f32; 3]>,
-        coarse: Vec<[f32; 4]>,
-        canopy: Vec<[f32; 4]>,
-        parts: Vec<u16>,
-        indices: Vec<u32>,
-        tri_count: u32,
-        water: crate::resources::WaterGeometry,
-    }
-
-    let builds: Vec<MeshBuild> = to_upload
-        .iter()
-        .filter_map(|&key| {
-            let state = summary_meshes.states.get(&key)?;
-            (!state.base_positions.is_empty()).then(|| MeshBuild {
-                key,
-                positions: state.base_positions.clone(),
-                normals: state.base_normals.clone(),
-                coarse: state.base_coarse.clone(),
-                canopy: state.base_canopy.clone(),
-                parts: state.base_parts.clone(),
-                indices: state.base_indices.clone(),
-                tri_count: state.base_tri_count,
-                water: state.base_water.clone(),
-            })
-        })
-        .collect();
 
     // Upload meshes, spawn/update entities.
-    for build in builds {
-        if build.tri_count == 0 {
-            continue;
-        }
+    for (key, build) in builds {
 
         let mesh = build_bevy_mesh(&build.positions, &build.normals, Some(&build.coarse), &build.canopy, &build.indices);
         let mesh_handle = meshes.add(mesh);
 
-        let state = summary_meshes.states.get_mut(&build.key).unwrap();
+        let state = summary_meshes.states.get_mut(&key).unwrap();
         state.mesh_handle = Some(mesh_handle.clone());
         state.tri_count = build.tri_count;
-        let canopied = crate::resources::TerrainMaterial::canopied(build.key.r);
-        let parts = canopy_parts.image(build.key.r, canopied, &mut images);
+        let canopied = crate::resources::TerrainMaterial::canopied(key.r);
+        let parts = canopy_parts.image(key.r, canopied, &mut images);
 
         let entity = match state.entity {
             Some(entity) => {
@@ -1335,9 +1235,9 @@ pub fn poll_summary_meshes(
                 let entity = commands
                     .spawn((
                         Mesh3d(mesh_handle),
-                        MeshMaterial3d(terrain_material.for_level(build.key.r, &mut materials, parts)),
+                        MeshMaterial3d(terrain_material.for_level(key.r, &mut materials, parts)),
                         Transform::from_translation(origin.render_world(state.mesh_origin)),
-                        SummaryMesh { region_key: build.key },
+                        SummaryMesh { region_key: key },
                     ))
                     .id();
                 state.entity = Some(entity);
@@ -1348,7 +1248,7 @@ pub fn poll_summary_meshes(
         state.cards_spawned = false;
         let tag = match build.parts.is_empty() {
             true => crate::plugins::canopy::NO_LAYER,
-            false => canopy_parts.write(build.key, build.parts),
+            false => canopy_parts.write(key, build.parts),
         };
         commands.entity(entity).insert(bevy::mesh::MeshTag(tag));
 
@@ -1539,15 +1439,7 @@ mod tests {
                         mesh_handle: None,
                         tri_count: 0,
                         mesh_origin: Vec3::ZERO,
-                        base_positions: Vec::new(),
-                        base_normals: Vec::new(),
-                        base_coarse: Vec::new(),
-                        base_canopy: Vec::new(),
-                        base_parts: Vec::new(),
-                        base_indices: Vec::new(),
-                        base_tri_count: 0,
-                        base_water: Default::default(),
-                        base_cover: Vec::new(),
+                        cover: Vec::new(),
                         models_spawned: false,
                         cards_spawned: false,
                         waiting: false,
@@ -1589,15 +1481,7 @@ mod tests {
             mesh_handle: None,
             tri_count: 0,
             mesh_origin: Vec3::ZERO,
-            base_positions: Vec::new(),
-            base_normals: Vec::new(),
-            base_coarse: Vec::new(),
-            base_canopy: Vec::new(),
-            base_parts: Vec::new(),
-            base_indices: Vec::new(),
-            base_tri_count: 0,
-            base_water: Default::default(),
-            base_cover: Vec::new(),
+            cover: Vec::new(),
             models_spawned: false,
             cards_spawned: false,
             waiting: true,
@@ -1632,10 +1516,6 @@ mod tests {
     /// the horizon (a) lies within at least one needed region at its band's
     /// level, and (b) if that region's footprint extends past the local-data
     /// boundary, the producer enumerates it (so its data will exist).
-
-    /// Run for gameplay (boundary = FIXED_STREAM_RADIUS_WU) and flyover
-    /// (small detail-chunk boundary) — the flyover case caught the missing
-    /// ring between the flyover's chunks and the first produced band.
     #[test]
     fn lod_bands_cover_horizon_without_gaps() {
         use common_bevy::chunk::{
@@ -1649,18 +1529,6 @@ mod tests {
             // (fov, camera ground y, loaded chunk ring, local boundary)
             (common::camera::MAX_GAMEPLAY_FOV, 0.0, FIXED_STREAM_RADIUS, FIXED_STREAM_APOTHEM_WU),
             (common::camera::MAX_GAMEPLAY_FOV, 80.0, FIXED_STREAM_RADIUS, FIXED_STREAM_APOTHEM_WU),
-            (
-                crate::systems::camera::MAX_FLYOVER_FOV,
-                0.0,
-                6,
-                6.0 * CHUNK_EXTENT_WU * APOTHEM_FACTOR,
-            ),
-            (
-                crate::systems::camera::MAX_FLYOVER_FOV,
-                200.0,
-                9,
-                9.0 * CHUNK_EXTENT_WU * APOTHEM_FACTOR,
-            ),
         ];
 
         for &(fov, cam_y, chunk_ring, boundary) in cases {

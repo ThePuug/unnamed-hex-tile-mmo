@@ -652,9 +652,9 @@ impl Composite {
         }
     }
 
-    /// The world's stack. The server, the client's flyover, the viewer and
-    /// every probe of the whole world build it here, so what any of them
-    /// reads is what the world generates.
+    /// The world's stack. The server, the viewer and every probe of the
+    /// whole world build it here, so what any of them reads is what the
+    /// world generates.
     pub fn standard(seed: u64) -> Self {
         let mut composite = Self::new(seed);
         composite.add_event(Box::new(plates::PlateEvent::new()));

@@ -2,8 +2,8 @@
 //! outcrop stand for a group of tiles at a distance, read from seven of
 //! them, and what canopy each of its nine parts wears, read at the part's
 //! own tile. Every producer of a summary — the client's map, the server,
-//! the flyover, the world viewer — reads this one rule, or their
-//! silhouettes differ where they meet.
+//! the world viewer — reads this one rule, or their silhouettes differ
+//! where they meet.
 
 use serde::{Deserialize, Serialize};
 

@@ -1,7 +1,6 @@
 //! The gameplay camera: a pose behind the player that follows the heading,
 //! opens toward the ceiling over open ground, and never frames ground that
-//! is not drawn. No key moves it. Flyover drives the same camera entity by
-//! hand through `CameraOrbit` and its own update.
+//! is not drawn. No key moves it.
 
 use bevy::{core_pipeline::prepass::DepthPrepass, pbr::{DistanceFog, FogFalloff}, prelude::*};
 use crate::systems::closeup::CloseupCamera;
@@ -22,8 +21,6 @@ use common_bevy::{
 pub const ORBIT_STOPS: usize = HEADING_SLOTS as usize;
 /// Angular separation between orbit stops.
 const ORBIT_STEP: f32 = 2.0 * PI / ORBIT_STOPS as f32;
-/// Seconds between steps while a flyover turn key is held.
-const ORBIT_REPEAT_SECS: f32 = 0.08;
 /// Exponential decay constant of the yaw's easing: slow enough that the
 /// heading's steps blend into one turn, quick enough to lag it by a stop
 /// or two at most.
@@ -102,8 +99,6 @@ const TILT_RINGS_WU: [f32; 2] = [20.0, 45.0];
 const CLOSE_TILT_RINGS_WU: [f32; 2] = [2.0 * TILE_ACROSS_WU, 3.0 * TILE_ACROSS_WU];
 /// A tile's width flat to flat.
 const TILE_ACROSS_WU: f32 = 1.732_050_8 * common::camera::HEX_RADIUS;
-/// Maximum FOV for flyover mode (admin).
-pub const MAX_FLYOVER_FOV: f32 = 90_f32.to_radians();
 
 /// Camera height for normal gameplay (convenience alias).
 pub fn gameplay_camera_height() -> f32 {
@@ -305,22 +300,19 @@ fn ease(from: f32, to: f32, k: f32, dt: f32) -> f32 {
 }
 
 /// Camera orbit state: discrete stops, one per heading, and smooth
-/// interpolation. In gameplay the target stop follows the player's heading
-/// and `current` is the pose's yaw; flyover steps it by key.
+/// interpolation. The target stop follows the player's heading and
+/// `current` is the pose's yaw.
 #[derive(Resource)]
 pub struct CameraOrbit {
     /// Current interpolated angle (radians, 0 = behind player facing north)
     pub current: f32,
     /// Target stop index, counter-clockwise from behind the player
     pub target_index: usize,
-    /// Whether a turn key is held, and the seconds until it steps again
-    held: bool,
-    repeat: f32,
 }
 
 impl Default for CameraOrbit {
     fn default() -> Self {
-        Self { current: 0.0, target_index: 0, held: false, repeat: 0.0 }
+        Self { current: 0.0, target_index: 0 }
     }
 }
 
@@ -329,40 +321,9 @@ impl CameraOrbit {
         self.target_index as f32 * ORBIT_STEP
     }
 
-    /// The heading the camera faces: the orbit angle runs counter-clockwise
-    /// and a bearing clockwise, so the stop index counts down from north.
-    pub fn forward(&self) -> Heading {
-        Heading::from_slot(((ORBIT_STOPS - self.target_index) % ORBIT_STOPS) as u8)
-    }
-
     /// Stand behind `heading`.
     pub fn follow(&mut self, heading: Heading) {
         self.target_index = (ORBIT_STOPS - heading.slot() as usize) % ORBIT_STOPS;
-    }
-
-    /// One step on the first call while held, then one every ORBIT_REPEAT_SECS.
-    fn step(&mut self, delta: isize, dt: f32) {
-        if self.held {
-            self.repeat -= dt;
-            if self.repeat > 0.0 { return; }
-        }
-        self.held = true;
-        self.repeat = ORBIT_REPEAT_SECS;
-        self.target_index = (self.target_index as isize + delta).rem_euclid(ORBIT_STOPS as isize) as usize;
-    }
-
-    pub fn step_cw(&mut self, dt: f32) {
-        self.step(-1, dt);
-    }
-
-    pub fn step_ccw(&mut self, dt: f32) {
-        self.step(1, dt);
-    }
-
-    /// The turn keys are up: the next press steps at once.
-    pub fn release(&mut self) {
-        self.held = false;
-        self.repeat = 0.0;
     }
 }
 

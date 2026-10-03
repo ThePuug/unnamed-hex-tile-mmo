@@ -422,14 +422,6 @@ impl TerrainMaterial {
     }
 }
 
-/// Chunks whose appearance should NOT trigger neighbor mesh regeneration.
-/// When the admin flyover generates all chunks (including a buffer zone) at once,
-/// the mesh pipeline already has correct neighbor data — no cascade needed.
-#[derive(Debug, Default, Resource)]
-pub struct SkipNeighborRegen {
-    pub chunks: HashSet<ChunkId>,
-}
-
 /// Triangle statistics.
 #[derive(Resource, Default)]
 pub struct LodTriangleStats {
@@ -465,18 +457,6 @@ impl LoadedChunks {
     }
 }
 
-/// Forced summary radius for flyover inspection.
-
-/// `None` = auto (use r(d) formula; currently falls back to tile meshes).
-/// `Some(0)` = individual tiles everywhere (existing pipeline, parity test).
-/// `Some(r)` = all terrain at summary radius r.
-#[derive(Resource)]
-pub struct ForcedSummaryRadius(pub Option<u32>);
-
-impl Default for ForcedSummaryRadius {
-    fn default() -> Self { Self(None) }
-}
-
 /// Per-mesh-region state for summary rendering.
 pub struct SummaryMeshState {
     pub task: Option<bevy::tasks::Task<SummaryMeshBuildResult>>,
@@ -484,21 +464,9 @@ pub struct SummaryMeshState {
     pub mesh_handle: Option<Handle<Mesh>>,
     pub tri_count: u32,
     pub mesh_origin: Vec3,
-    /// Geometry from the async build, kept so the entity can be respawned
-    /// without a rebuild (flyover stash/restore).
-    pub base_positions: Vec<[f32; 3]>,
-    pub base_normals: Vec<[f32; 3]>,
-    pub base_coarse: Vec<[f32; 4]>,
-    pub base_canopy: Vec<[f32; 4]>,
-    pub base_parts: Vec<u16>,
-    pub base_indices: Vec<u32>,
-    pub base_tri_count: u32,
-    /// The water standing over the region, built with the ground and drawn
-    /// as a child of its entity, so it lives and dies with the ground.
-    pub base_water: WaterGeometry,
     /// The region's cover, placed with the ground and spawned as children
     /// of its entity once the cover kit has loaded.
-    pub base_cover: Vec<crate::plugins::cover::CoverInstance>,
+    pub cover: Vec<crate::plugins::cover::CoverInstance>,
     /// Whether the entity now standing carries its cover as models: set as
     /// they are spawned within the models' reach, cleared as they are taken
     /// down beyond it and whenever the entity or its children go.
@@ -590,17 +558,6 @@ pub struct SummaryMesh {
 #[derive(Component)]
 pub struct WaterMesh;
 
-/// Where a cached region's values came from. Values are identical across
-/// producers (same 7-sample rule over the same elevation field) but for
-/// what players changed, which only the server lays over its samples —
-/// provenance governs lifecycle: server data is durable for the whole
-/// session, flyover data is discarded when flyover toggles.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RegionSource {
-    Server,
-    Flyover,
-}
-
 /// Per-region summary elevation cache.
 
 /// Each entry holds all ~271 center_z values for one mesh region.
@@ -618,13 +575,12 @@ pub struct SummaryCache {
 /// One mesh region's summary cells.
 pub struct RegionData {
     pub cells: HashMap<(i32, i32), common_bevy::summary::SummaryCell>,
-    pub source: RegionSource,
 }
 
 impl SummaryCache {
     /// Insert region data, merging into any existing entry. Merge keeps the
     /// union of cells (a partial batch can never erase previously received
-    /// cells) and promotes provenance to Server if either side is Server.
+    /// cells).
     /// A cell that arrives with a value other than the one held is a
     /// revision: the regions drawing it are noted for [`Self::take_revised`].
     pub fn insert_region(&self, key: MeshRegionKey, data: RegionData) {
@@ -643,14 +599,7 @@ impl SummaryCache {
                 drop(revised);
                 let mut cells = existing.cells.clone();
                 cells.extend(data.cells);
-                let source = if existing.source == RegionSource::Server
-                    || data.source == RegionSource::Server
-                {
-                    RegionSource::Server
-                } else {
-                    RegionSource::Flyover
-                };
-                self.regions.insert(key, Arc::new(RegionData { cells, source }));
+                self.regions.insert(key, Arc::new(RegionData { cells }));
             }
             None => {
                 self.regions.insert(key, Arc::new(data));
@@ -677,16 +626,6 @@ impl SummaryCache {
     /// The regions noted as drawing a revised summary since the last call.
     pub fn take_revised(&self) -> HashSet<MeshRegionKey> {
         std::mem::take(&mut *self.revised.lock().expect("the lock is never poisoned"))
-    }
-
-    /// Drop flyover-sourced regions (flyover toggle). Server-sourced data
-    /// is durable — the server tracks what it has sent per client and
-    /// resends only a revision, so discarding it would blank the horizon
-    /// until the player walks regions out of and back into the server's
-    /// visible set.
-    pub fn clear_flyover(&self) {
-        self.regions.retain(|_, v| v.source == RegionSource::Server);
-        self.new_data.store(true, Ordering::Relaxed);
     }
 }
 

@@ -673,23 +673,14 @@ fn update_cover(
     origin: Res<crate::resources::RenderOrigin>,
     player_query: Query<&Transform, With<crate::components::Viewed>>,
     band: Res<crate::resources::CardBand>,
-    #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
-    #[cfg(feature = "admin")]
-    let camera = flyover
-        .as_ref()
-        .filter(|f| f.active)
-        .map(|f| f.world_position)
-        .or_else(|| player_query.single().ok().map(|t| origin.world(t.translation)));
-    #[cfg(not(feature = "admin"))]
-    let camera = player_query.single().ok().map(|t| origin.world(t.translation));
-    let Some(camera) = camera else { return };
+    let Some(camera) = player_query.single().ok().map(|t| origin.world(t.translation)) else { return };
     // The ring, or where it will be once the cuts are set.
     let ring = if band.inner > 0.0 { band.inner } else { common_bevy::summary::threshold_horiz(0) };
 
     for (key, state) in summary_meshes.states.iter_mut() {
         let Some(entity) = state.entity else { continue };
-        if state.base_cover.is_empty() {
+        if state.cover.is_empty() {
             continue;
         }
         // The tiles' cover is models and the summaries' is cards; the
@@ -700,14 +691,14 @@ fn update_cover(
         if key.r == 0 {
             let d = state.mesh_origin.xz().distance(camera.xz());
             if !state.models_spawned && d <= ring + RING_MARGIN {
-                spawn_models(&mut commands, entity, &state.base_cover, &kit);
+                spawn_models(&mut commands, entity, &state.cover, &kit);
                 state.models_spawned = true;
             } else if state.models_spawned && d > ring + 2.0 * RING_MARGIN {
                 commands.entity(entity).remove::<draw::RegionCover>();
                 state.models_spawned = false;
             }
         } else if !state.cards_spawned {
-            spawn_cards(&mut commands, entity, &state.base_cover, &kit);
+            spawn_cards(&mut commands, entity, &state.cover, &kit);
             state.cards_spawned = true;
         }
     }

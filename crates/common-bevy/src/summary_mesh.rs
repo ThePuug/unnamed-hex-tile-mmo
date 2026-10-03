@@ -604,14 +604,12 @@ pub fn region_tiles_loaded(key: MeshRegionKey, loaded_chunks: &HashSet<ChunkId>)
     chunk::calculate_visible_chunks(centre, radius).iter().all(|c| loaded_chunks.contains(c))
 }
 
-/// Collect visible mesh regions across all bands for the producers (server,
-/// flyover): everything beyond the local-data boundary, plus regions whose
-/// footprint straddles it.
+/// Collect visible mesh regions across all bands for the server's producer:
+/// everything beyond the local-data boundary, plus regions whose footprint
+/// straddles it.
 
 /// `local_boundary_wu` is the extent the consumer's Map can serve:
-/// FIXED_STREAM_RADIUS_WU in gameplay, the flyover's detail-chunk radius in
-/// flyover (much smaller — using the gameplay constant there left an
-/// un-rendered ring between the flyover's chunks and the first produced band).
+/// FIXED_STREAM_RADIUS_WU.
 
 /// Straddling matters: a region centered just inside the boundary has
 /// summaries beyond it whose tiles the Map can never resolve — the producer
@@ -669,37 +667,6 @@ pub fn visible_lod_regions(
     }
     out
 }
-
-/// Enumerate all mesh region keys that overlap a set of loaded chunks,
-/// for a given summary radius. Used by forced-radius mode (no distance filter).
-pub fn visible_mesh_regions(
-    radius: u32,
-    loaded_chunks: &HashSet<ChunkId>,
-) -> HashSet<MeshRegionKey> {
-    let summary_lat = summary_lattice(radius);
-    let region_lat = mesh_region_lattice();
-    let mut regions = HashSet::new();
-
-    for &chunk_id in loaded_chunks {
-        let center = chunk_id.center();
-        let summary_cell = summary_lat.cell_id(center.q, center.r);
-        let region = region_lat.cell_id(summary_cell.0, summary_cell.1);
-        regions.insert(MeshRegionKey {
-            r: radius,
-            mn: region.0,
-            mm: region.1,
-        });
-
-        for &(dn, dm) in &[(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)] {
-            let nb = (summary_cell.0 + dn, summary_cell.1 + dm);
-            let rid = region_lat.cell_id(nb.0, nb.1);
-            regions.insert(MeshRegionKey { r: radius, mn: rid.0, mm: rid.1 });
-        }
-    }
-
-    regions
-}
-
 
 #[cfg(test)]
 mod tests {

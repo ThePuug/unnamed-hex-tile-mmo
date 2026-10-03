@@ -506,7 +506,6 @@ pub fn update_metrics_overlay(
     origin: Res<crate::resources::RenderOrigin>,
     cover: Res<crate::plugins::cover::CoverDraws>,
     census: Res<super::RenderCensus>,
-    #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
 ) {
     if !state.metrics_overlay_visible {
         if let Ok(mut camera) = camera_q.single_mut() {
@@ -569,20 +568,7 @@ pub fn update_metrics_overlay(
 
     // ── Collect data ──
 
-    let world_pos: Option<Vec3> = {
-        #[cfg(feature = "admin")]
-        {
-            if flyover.active {
-                Some(flyover.world_position)
-            } else {
-                player_q.single().ok().map(|(t, _)| origin.world(t.translation))
-            }
-        }
-        #[cfg(not(feature = "admin"))]
-        {
-            player_q.single().ok().map(|(t, _)| origin.world(t.translation))
-        }
-    };
+    let world_pos: Option<Vec3> = player_q.single().ok().map(|(t, _)| origin.world(t.translation));
 
     let _player_loc = player_q.single().ok().and_then(|(_, loc)| loc.copied());
 

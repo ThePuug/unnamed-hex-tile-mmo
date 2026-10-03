@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    resources::{ForcedSummaryRadius, LoadedChunks, LodTriangleStats, SummaryCache, SummaryMeshes, TerrainMaterial},
+    resources::{LoadedChunks, LodTriangleStats, SummaryCache, SummaryMeshes, TerrainMaterial},
     systems::world,
 };
 
@@ -15,7 +15,6 @@ impl Plugin for WorldStreamingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LoadedChunks>();
         app.init_resource::<SummaryMeshes>();
-        app.init_resource::<ForcedSummaryRadius>();
         app.init_resource::<LodTriangleStats>();
         app.init_resource::<SummaryCache>();
         app.init_resource::<TerrainMaterial>();
@@ -31,12 +30,6 @@ impl Plugin for WorldStreamingPlugin {
             world::update_terrain_cut,
         ));
 
-        #[cfg(feature = "admin")]
-        app.add_systems(
-            Update,
-            world::evict_data.run_if(crate::plugins::flyover::not_in_flyover),
-        );
-        #[cfg(not(feature = "admin"))]
         app.add_systems(Update, world::evict_data);
     }
 }

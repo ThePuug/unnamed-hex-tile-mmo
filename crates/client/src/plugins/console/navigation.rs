@@ -15,7 +15,6 @@ pub fn handle_console_input(
     panel: Res<crate::systems::character_panel::CharacterPanelState>,
     mut action_writer: MessageWriter<DevConsoleAction>,
     time: Res<Time>,
-    #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
 ) {
     // Toggle console visibility with NumpadDivide. The open character panel
     // has the numpad, so the console does not open over it.
@@ -40,7 +39,7 @@ pub fn handle_console_input(
     #[cfg(feature = "admin")]
     let uses_escape_back = matches!(
         console.current_menu,
-        MenuPath::GotoInput | MenuPath::SummaryRadius | MenuPath::LightingTime
+        MenuPath::GotoInput | MenuPath::LightingTime
     );
     #[cfg(not(feature = "admin"))]
     let uses_escape_back = matches!(console.current_menu, MenuPath::LightingTime);
@@ -58,10 +57,6 @@ pub fn handle_console_input(
             #[cfg(feature = "admin")]
             if matches!(console.current_menu, MenuPath::GotoInput) {
                 console.goto_input = None;
-            }
-            #[cfg(feature = "admin")]
-            if matches!(console.current_menu, MenuPath::SummaryRadius) {
-                console.summary_radius_buf.clear();
             }
             if matches!(console.current_menu, MenuPath::LightingTime) {
                 console.lighting_time_buf.clear();
@@ -88,13 +83,9 @@ pub fn handle_console_input(
         MenuPath::Terrain => handle_terrain_menu(&mut keyboard, &mut console, &mut action_writer),
         MenuPath::LightingTime => handle_lighting_time(&mut keyboard, &mut console, &mut action_writer, time.delta_secs()),
         #[cfg(feature = "admin")]
-        MenuPath::Flyover => handle_flyover_menu(&mut keyboard, &mut console, &mut action_writer, &flyover),
-        #[cfg(feature = "admin")]
         MenuPath::GotoSelect => handle_goto_select_menu(&mut keyboard, &mut console),
         #[cfg(feature = "admin")]
         MenuPath::GotoInput => handle_goto_input(&mut keyboard, &mut console, &mut action_writer),
-        #[cfg(feature = "admin")]
-        MenuPath::SummaryRadius => handle_summary_radius(&mut keyboard, &mut console, &mut action_writer),
         #[cfg(feature = "admin")]
         MenuPath::View => handle_view_menu(&mut keyboard, &mut action_writer),
         #[cfg(feature = "admin")]
@@ -119,7 +110,7 @@ fn handle_root_menu(
     #[cfg(feature = "admin")]
     if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad2) {
         console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::Flyover;
+        console.current_menu = MenuPath::GotoSelect;
         consumed = Some(KeyCode::Numpad2);
     }
 
@@ -272,37 +263,6 @@ const DIGIT_KEYS: &[(KeyCode, char)] = &[
     (KeyCode::Numpad9, '9'),
 ];
 
-#[cfg(feature = "admin")]
-fn handle_flyover_menu(
-    keyboard: &mut ButtonInput<KeyCode>,
-    console: &mut DevConsole,
-    action_writer: &mut MessageWriter<DevConsoleAction>,
-    flyover: &crate::plugins::flyover::FlyoverState,
-) {
-    let mut consumed = None;
-
-    if keyboard.just_pressed(KeyCode::Numpad1) {
-        action_writer.write(DevConsoleAction::ToggleFlyover);
-        consumed = Some(KeyCode::Numpad1);
-    } else if keyboard.just_pressed(KeyCode::Numpad2) {
-        console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::GotoSelect;
-        consumed = Some(KeyCode::Numpad2);
-    } else if keyboard.just_pressed(KeyCode::Numpad3) && flyover.active {
-        console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::SummaryRadius;
-        console.summary_radius_buf.clear();
-        consumed = Some(KeyCode::Numpad3);
-    } else if keyboard.just_pressed(KeyCode::Numpad4) && flyover.active {
-        action_writer.write(DevConsoleAction::ReportTerrain);
-        consumed = Some(KeyCode::Numpad4);
-    }
-
-    if let Some(key) = consumed {
-        keyboard.clear_just_pressed(key);
-    }
-}
-
 /// Numpad 1 on stages the archetype `DENS` lists in that row, and stays in
 /// the menu so another can follow.
 #[cfg(feature = "admin")]
@@ -385,8 +345,8 @@ fn handle_goto_input(
                 if let (Ok(x), Ok(y)) = (a.parse::<f64>(), b.parse::<f64>()) {
                     action_writer.write(DevConsoleAction::GotoWorldUnits(x, y));
                     console.goto_input = None;
-                    console.current_menu = MenuPath::Flyover;
-                    console.history.retain(|p| !matches!(p, MenuPath::Flyover | MenuPath::GotoSelect | MenuPath::GotoInput));
+                    console.current_menu = MenuPath::Root;
+                    console.history.clear();
                 } else {
                     info!("Goto: invalid world unit coordinates");
                 }
@@ -395,8 +355,8 @@ fn handle_goto_input(
                 if let (Ok(q), Ok(r)) = (a.parse::<i32>(), b.parse::<i32>()) {
                     action_writer.write(DevConsoleAction::GotoQR(q, r));
                     console.goto_input = None;
-                    console.current_menu = MenuPath::Flyover;
-                    console.history.retain(|p| !matches!(p, MenuPath::Flyover | MenuPath::GotoSelect | MenuPath::GotoInput));
+                    console.current_menu = MenuPath::Root;
+                    console.history.clear();
                 } else {
                     info!("Goto: invalid QR coordinates");
                 }
@@ -440,46 +400,6 @@ fn handle_goto_input(
 
     if keyboard.just_pressed(KeyCode::Backspace) {
         input.buffers[input.active_field].pop();
-        keyboard.clear_just_pressed(KeyCode::Backspace);
-    }
-}
-
-#[cfg(feature = "admin")]
-fn handle_summary_radius(
-    keyboard: &mut ButtonInput<KeyCode>,
-    console: &mut DevConsole,
-    action_writer: &mut MessageWriter<DevConsoleAction>,
-) {
-    // Enter: submit. Empty → Auto (None). Number → Some(r).
-    if keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::NumpadEnter) {
-        let buf = console.summary_radius_buf.trim().to_string();
-        let value = if buf.is_empty() {
-            None // Auto
-        } else if let Ok(r) = buf.parse::<u32>() {
-            Some(r)
-        } else {
-            info!("Summary radius: invalid input '{buf}'");
-            keyboard.clear_just_pressed(KeyCode::Enter);
-            keyboard.clear_just_pressed(KeyCode::NumpadEnter);
-            return;
-        };
-        action_writer.write(DevConsoleAction::SetForcedSummaryRadius(value));
-        console.summary_radius_buf.clear();
-        console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
-        keyboard.clear_just_pressed(KeyCode::Enter);
-        keyboard.clear_just_pressed(KeyCode::NumpadEnter);
-        return;
-    }
-
-    for &(key, ch) in DIGIT_KEYS {
-        if keyboard.just_pressed(key) {
-            console.summary_radius_buf.push(ch);
-            keyboard.clear_just_pressed(key);
-        }
-    }
-
-    if keyboard.just_pressed(KeyCode::Backspace) {
-        console.summary_radius_buf.pop();
         keyboard.clear_just_pressed(KeyCode::Backspace);
     }
 }

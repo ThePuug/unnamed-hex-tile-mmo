@@ -2,7 +2,7 @@
 
 //! Not a pass/fail test — prints timing data for the production event stack
 //! under realistic access patterns (chunk materialization, sparse LoD sampling,
-//! dense flyover regions).
+//! dense regions).
 
 //! Run: cargo test -p world --release --test perf_probe -- --ignored --nocapture
 
@@ -135,7 +135,7 @@ fn perf_probe() {
     }
     println!();
 
-    // ── 5. Sparse sampling, 2000-tile spacing (far-band / flyover pattern) ─
+    // ── 5. Sparse sampling, 2000-tile spacing (far-band pattern) ───────────
     // Every sample in a distinct cell of every layer.
     {
         let c = composite_full();
@@ -157,7 +157,7 @@ fn perf_probe() {
     }
     println!();
 
-    // ── 6. Dense region: 10,000 contiguous tiles (flyover region build) ────
+    // ── 6. Dense region: 10,000 contiguous tiles ───────────────────────────
     {
         let c = composite_full();
         let t = Instant::now();
@@ -179,7 +179,7 @@ fn perf_probe() {
 /// What each layer costs, by building the stack one layer at a time and
 /// materialising the same fresh patches through each: the first tile is
 /// the cascade, the patch is the steady state, and a second patch a
-/// flyover's stride away is what moving on costs. The increments between
+/// stride away is what moving on costs. The increments between
 /// stacks are each layer's own.
 #[test]
 #[ignore]

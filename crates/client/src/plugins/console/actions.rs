@@ -30,15 +30,9 @@ pub enum DevConsoleAction {
 
     // Admin actions
     #[cfg(feature = "admin")]
-    ToggleFlyover,
-    #[cfg(feature = "admin")]
     GotoWorldUnits(f64, f64),
     #[cfg(feature = "admin")]
     GotoQR(i32, i32),
-    #[cfg(feature = "admin")]
-    SetForcedSummaryRadius(Option<u32>),
-    #[cfg(feature = "admin")]
-    ReportTerrain,
     /// See the world as the target of the actor the client sees as.
     #[cfg(feature = "admin")]
     ViewTarget,
@@ -172,15 +166,9 @@ pub fn execute_console_actions(
             }
 
             #[cfg(feature = "admin")]
-            DevConsoleAction::ToggleFlyover => {}
-            #[cfg(feature = "admin")]
             DevConsoleAction::GotoWorldUnits(_, _) => {}
             #[cfg(feature = "admin")]
             DevConsoleAction::GotoQR(_, _) => {}
-            #[cfg(feature = "admin")]
-            DevConsoleAction::SetForcedSummaryRadius(_) => {}
-            #[cfg(feature = "admin")]
-            DevConsoleAction::ReportTerrain => {}
             #[cfg(feature = "admin")]
             DevConsoleAction::ViewTarget | DevConsoleAction::StopViewing => {}
             #[cfg(feature = "admin")]
@@ -218,6 +206,28 @@ pub fn send_view(
             }
             _ => {}
         }
+    }
+}
+
+/// Asks the server to teleport the player to the tile the console named.
+#[cfg(feature = "admin")]
+pub fn send_goto(
+    mut reader: MessageReader<DevConsoleAction>,
+    mut writer: MessageWriter<common_bevy::message::Try>,
+    player: Query<Entity, (With<Actor>, With<common_bevy::components::behaviour::PlayerControlled>)>,
+) {
+    for action in reader.read() {
+        let (q, r) = match *action {
+            DevConsoleAction::GotoWorldUnits(wx, wy) => {
+                let rf = wy * 2.0 / 3_f64.sqrt();
+                ((wx - rf * 0.5).round() as i32, rf.round() as i32)
+            }
+            DevConsoleAction::GotoQR(q, r) => (q, r),
+            _ => continue,
+        };
+        let Ok(ent) = player.single() else { continue };
+        writer.write(common_bevy::message::Try { event: common_bevy::message::Event::Teleport { ent, q, r } });
+        info!("Goto: qr ({q}, {r})");
     }
 }
 

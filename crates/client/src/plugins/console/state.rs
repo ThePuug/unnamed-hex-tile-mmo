@@ -46,8 +46,6 @@ pub struct DevConsole {
     pub history: Vec<MenuPath>,
     /// Active goto text input (when in GotoInput menu)
     pub goto_input: Option<GotoInputState>,
-    /// Text buffer for summary radius input (when in SummaryRadius menu)
-    pub summary_radius_buf: String,
     /// Text buffer for the lighting hour (when in LightingTime menu)
     pub lighting_time_buf: String,
     /// How long an arrow has scrubbed the lighting clock, in seconds.
@@ -63,7 +61,6 @@ impl Default for DevConsole {
             current_menu: MenuPath::Root,
             history: Vec::new(),
             goto_input: None,
-            summary_radius_buf: String::new(),
             lighting_time_buf: String::new(),
             lighting_scrub_secs: 0.0,
             lighting_date_field: DateField::default(),
@@ -78,13 +75,9 @@ pub enum MenuPath {
     Terrain,
     LightingTime,
     #[cfg(feature = "admin")]
-    Flyover,
-    #[cfg(feature = "admin")]
     GotoSelect,
     #[cfg(feature = "admin")]
     GotoInput,
-    #[cfg(feature = "admin")]
-    SummaryRadius,
     #[cfg(feature = "admin")]
     View,
     /// Pick a party's archetype
@@ -118,13 +111,9 @@ impl MenuPath {
             MenuPath::Terrain => "Terrain Settings",
             MenuPath::LightingTime => "Lighting Time",
             #[cfg(feature = "admin")]
-            MenuPath::Flyover => "Flyover Camera",
-            #[cfg(feature = "admin")]
             MenuPath::GotoSelect => "Goto — Select Coordinates",
             #[cfg(feature = "admin")]
             MenuPath::GotoInput => "Goto — Enter Coordinates",
-            #[cfg(feature = "admin")]
-            MenuPath::SummaryRadius => "Summary Radius",
             #[cfg(feature = "admin")]
             MenuPath::View => "View",
             #[cfg(feature = "admin")]

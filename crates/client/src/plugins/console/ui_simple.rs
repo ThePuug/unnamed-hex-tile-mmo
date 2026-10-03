@@ -82,8 +82,6 @@ pub fn update_console_menu(
     metrics_dump: Res<crate::plugins::diagnostics::MetricsDump>,
     server: Res<crate::resources::Server>,
     time: Res<Time>,
-    #[cfg(feature = "admin")] flyover: Res<crate::plugins::flyover::FlyoverState>,
-    #[cfg(feature = "admin")] forced_radius: Res<crate::resources::ForcedSummaryRadius>,
     mut breadcrumb_query: Query<&mut Text, (With<BreadcrumbText>, Without<MenuItemsContainer>)>,
     menu_query: Query<(Entity, Option<&Children>), With<MenuItemsContainer>>,
     mut commands: Commands,
@@ -115,7 +113,7 @@ pub fn update_console_menu(
 
                     #[cfg(feature = "admin")]
                     parent.spawn((
-                        Text::new("2. Flyover"),
+                        Text::new("2. Goto Coordinates"),
                         TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::WHITE),
                     ));
@@ -305,52 +303,6 @@ pub fn update_console_menu(
                     ));
                 }
                 #[cfg(feature = "admin")]
-                MenuPath::Flyover => {
-                    let flyover_label = if flyover.active { "Disable" } else { "Enable" };
-                    parent.spawn((
-                        Text::new(format!("1. {} Flyover Camera", flyover_label)),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(Color::srgb(0.8, 0.8, 0.2)),
-                    ));
-
-                    let goto_target = if flyover.active { "cursor" } else { "player" };
-                    parent.spawn((
-                        Text::new(format!("2. Goto Coordinates    [{goto_target}]")),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(Color::WHITE),
-                    ));
-
-                    let active_color = if flyover.active {
-                        Color::WHITE
-                    } else {
-                        Color::srgb(0.4, 0.4, 0.4)
-                    };
-
-                    let radius_label = forced_radius.0.map_or("Auto".to_string(), |r| format!("r={r}"));
-                    parent.spawn((
-                        Text::new(format!("3. Summary Radius    [{radius_label}]")),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(active_color),
-                    ));
-
-                    parent.spawn((
-                        Text::new("4. Report Terrain at Cursor"),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(active_color),
-                    ));
-
-                    parent.spawn((
-                        Text::new(""),
-                        TextFont { font_size: FontSize::Px(8.0), ..default() },
-                    ));
-
-                    parent.spawn((
-                        Text::new("0. Back to Main Menu"),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(Color::srgb(0.8, 0.3, 0.3)),
-                    ));
-                }
-                #[cfg(feature = "admin")]
                 MenuPath::Stage(_) => {
                     for (i, (label, _)) in super::state::DENS.iter().enumerate() {
                         parent.spawn((
@@ -454,40 +406,6 @@ pub fn update_console_menu(
                             TextColor(Color::srgb(0.8, 0.3, 0.3)),
                         ));
                     }
-                }
-                #[cfg(feature = "admin")]
-                MenuPath::SummaryRadius => {
-                    let current = forced_radius.0.map_or("Auto".to_string(), |r| format!("r={r}"));
-                    parent.spawn((
-                        Text::new(format!("Current: {current}")),
-                        TextFont { font_size: FontSize::Px(14.0), ..default() },
-                        TextColor(Color::srgb(0.6, 0.8, 1.0)),
-                    ));
-
-                    let buf = &console.summary_radius_buf;
-                    let display = if buf.is_empty() { "_" } else { buf };
-                    parent.spawn((
-                        Text::new(format!("r = {display}")),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(Color::srgb(0.9, 0.9, 0.4)),
-                    ));
-
-                    parent.spawn((
-                        Text::new("Enter number, press Enter (empty = Auto)"),
-                        TextFont { font_size: FontSize::Px(12.0), ..default() },
-                        TextColor(Color::srgb(0.6, 0.6, 0.6)),
-                    ));
-
-                    parent.spawn((
-                        Text::new(""),
-                        TextFont { font_size: FontSize::Px(8.0), ..default() },
-                    ));
-
-                    parent.spawn((
-                        Text::new("Esc. Back"),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(Color::srgb(0.8, 0.3, 0.3)),
-                    ));
                 }
             }
         });

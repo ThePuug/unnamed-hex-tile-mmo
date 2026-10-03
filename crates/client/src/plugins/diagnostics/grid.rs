@@ -93,7 +93,7 @@ struct ChunkMeshSnapshot {
 /// Extracts triangle edges from the actually-displayed chunk meshes so the grid
 /// outlines the decimated geometry (inner hex fans, partial residuals, etc.)
 /// rather than the full-detail tile hexagons.
-/// Maximum chunk distance from player/flyover for grid overlay.
+/// Maximum chunk distance from the player for grid overlay.
 const GRID_RADIUS: i32 = 5;
 
 pub fn spawn_grid_mesh_task(
@@ -103,7 +103,6 @@ pub fn spawn_grid_mesh_task(
     state: Res<DiagnosticsState>,
     mut pending_mesh: ResMut<PendingGridMesh>,
     player_query: Query<&common_bevy::components::Loc, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
-    #[cfg(feature = "admin")] flyover: Option<Res<crate::plugins::flyover::FlyoverState>>,
 ) {
     let Ok(mut overlay) = grid_query.single_mut() else {
         return;
@@ -121,37 +120,11 @@ pub fn spawn_grid_mesh_task(
 
     overlay.needs_regeneration = false;
 
-    // Determine center position from flyover or player
-    let center_pos: Option<Vec3> = {
-        #[cfg(feature = "admin")]
-        {
-            if let Some(ref fly) = flyover {
-                if fly.active {
-                    Some(fly.world_position)
-                } else {
-                    player_query.iter().next().map(|loc| {
-                        use qrz::Convert;
-                        let m = qrz::Map::<()>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
-                        m.convert(**loc)
-                    })
-                }
-            } else {
-                player_query.iter().next().map(|loc| {
-                    use qrz::Convert;
-                    let m = qrz::Map::<()>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
-                    m.convert(**loc)
-                })
-            }
-        }
-        #[cfg(not(feature = "admin"))]
-        {
-            player_query.iter().next().map(|loc| {
-                use qrz::Convert;
-                let m = qrz::Map::<()>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
-                m.convert(**loc)
-            })
-        }
-    };
+    let center_pos: Option<Vec3> = player_query.iter().next().map(|loc| {
+        use qrz::Convert;
+        let m = qrz::Map::<()>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+        m.convert(**loc)
+    });
 
     // Extract mesh data from nearby summary mesh regions
     let grid_wu = GRID_RADIUS as f32 * common_bevy::chunk::CHUNK_EXTENT_WU;
