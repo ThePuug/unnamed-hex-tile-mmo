@@ -20,8 +20,9 @@ pub struct Tune {
     /// What each bar's degrees are shifted by, the piece's sequence.
     pub shifts: Vec<i32>,
     /// The degrees of the mode the line stands on, where a style sings in
-    /// fewer than seven — the blues' pentatonic; a tone off them falls to
-    /// the one under it. Every degree where `None`.
+    /// fewer than seven — the blues' pentatonic: the tune's degrees count
+    /// this scale's steps, so a step of the theme is a step of the scale
+    /// and never a tone struck again. Every degree where `None`.
     pub scale: Option<&'static [i32]>,
 }
 
@@ -96,10 +97,10 @@ impl Tune {
         let last = ((b + bars - 1) % bars) as usize;
         let mut prev = self.bars[last]
             .last()
-            .map(|t| key.pitch(home_degree + t.degree + self.shifts[last], 4));
+            .map(|t| key.pitch(home_degree + self.on_scale(t.degree) + self.shifts[last], 4));
         bar.iter()
             .map(|t| {
-                let mut pitch = key.pitch(self.on_scale(home_degree + t.degree + shift), 4);
+                let mut pitch = key.pitch(home_degree + self.on_scale(t.degree) + shift, 4);
                 if score.meter.strong(t.onset) && !chord.holds(key, pitch) {
                     pitch = bent_to_chord(key, chord, pitch, prev, lo, hi);
                 }
@@ -179,12 +180,15 @@ impl Tune {
 }
 
 impl Tune {
-    /// `degree`, or where the scale leaves it out, the scale's degree
-    /// under it.
-    fn on_scale(&self, degree: i32) -> i32 {
+    /// The mode's degree from home of the tune's `step` from home: the
+    /// step itself, or where there is a scale, that many of its steps.
+    fn on_scale(&self, step: i32) -> i32 {
         match self.scale {
-            Some(scale) => (0..7).map(|k| degree - k).find(|d| scale.contains(&d.rem_euclid(7))).unwrap(),
-            None => degree,
+            Some(scale) => {
+                let n = scale.len() as i32;
+                7 * step.div_euclid(n) + scale[step.rem_euclid(n) as usize]
+            }
+            None => step,
         }
     }
 

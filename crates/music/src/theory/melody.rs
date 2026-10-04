@@ -42,8 +42,10 @@ pub enum Shape {
 /// which is a Western tune's way.
 pub const FOLK_SHAPES: [Shape; 5] = [Shape::Arch, Shape::Descent, Shape::Circling, Shape::LeapBack, Shape::Wave];
 
-/// The shapes a blues sings in, the fall the most often.
-pub const BLUES_SHAPES: [Shape; 5] = [Shape::Tumble, Shape::Riff, Shape::Tumble, Shape::Descent, Shape::Arch];
+/// The shapes a blues sings in, the fall the most often; counted in
+/// the pentatonic's steps, each keeps within the fifth over home, the
+/// core a blues line moves in.
+pub const BLUES_SHAPES: [Shape; 4] = [Shape::Tumble, Shape::Riff, Shape::Tumble, Shape::Wave];
 
 impl Shape {
     /// The shape over six strong beats; a skeleton of another length
@@ -55,7 +57,7 @@ impl Shape {
             Shape::Circling => [0, 1, 0, -1, 0, 1],
             Shape::LeapBack => [0, 4, 3, 2, 1, 0],
             Shape::Wave => [0, 2, 1, 3, 2, 0],
-            Shape::Tumble => [4, 3, 2, 0, -1, 0],
+            Shape::Tumble => [3, 2, 1, 0, -1, 0],
             Shape::Riff => [0, 2, 0, -1, 0, 0],
         }
     }
