@@ -734,7 +734,9 @@ fn arpeggio(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// takes the last eighth on a tone of the key a step from the next root —
 /// the passing tone between where they are a third apart — on a third of
 /// the changes and on every cadence's; under the kit's solo it holds the
-/// root through every bar, the pedal the drums play over.
+/// root through every bar, the pedal the drums play over, struck again
+/// at the variant bar's middle and stepping into the next root on the
+/// cadence.
 fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
     let key = score.key;
     let strong = score.meter.strong_eighths();
@@ -749,7 +751,26 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
         let root = at_degree(&key, chord, chord.root, 28, 40, 36);
         let start = b * form.bar;
         if form.stop_time(b) {
-            score.add(Note { start, len: form.bar - E / 8, pitch: root, vel: vel(0, rng), channel: CH_BASS });
+            // The pedal strikes again at the bar's middle on the variant,
+            // and steps into the next bar's root on the cadence.
+            let middle = strong[strong.len() / 2] * E;
+            let into = (variation::role(b) == Bar::Cadence && !form.last(b)).then(|| {
+                let next = form.chord(b + 1);
+                let to = at_degree(&key, next, next.root, 28, 40, root);
+                key.pitch(key.absolute_degree(to).unwrap() + if to > root { -1 } else { 1 }, 4).clamp(28, 52)
+            });
+            let held = match variation::role(b) {
+                Bar::Variant => middle,
+                _ if into.is_some() => form.bar - E,
+                _ => form.bar,
+            };
+            score.add(Note { start, len: held - E / 8, pitch: root, vel: vel(0, rng), channel: CH_BASS });
+            if variation::role(b) == Bar::Variant {
+                score.add(Note { start: start + middle, len: form.bar - middle - E / 8, pitch: root, vel: vel(-4, rng), channel: CH_BASS });
+            }
+            if let Some(from) = into {
+                score.add(Note { start: start + form.bar - E, len: E * 3 / 4, pitch: from, vel: vel(-6, rng), channel: CH_BASS });
+            }
             continue;
         }
         let next = (!form.last(b) && !form.stop_time(b + 1)).then(|| form.chord(b + 1)).filter(|n| n.root != chord.root || cadence(b));
@@ -1424,6 +1445,19 @@ fn bass_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
             let dropped = b + 1 == st.climax;
             let pedal = if dropped { last_group * E } else { form.bar / 2 } - E / 8;
             score.add(Note { start: bar_start, len: pedal, pitch: root, vel: vel(4, rng), channel: CH_BASS });
+            // The pedal strikes again at the bar's middle on the variant,
+            // and walks into the next bar's root on the cadence.
+            let middle_beat = strong[strong.len() / 2];
+            match variation::role(b) {
+                Bar::Variant if !dropped => score.add(Note { start: bar_start + middle_beat * E, len: E * 2, pitch: root, vel: vel(-4, rng), channel: CH_BASS }),
+                Bar::Cadence if b + 1 < z && !dropped => {
+                    let next = form.chord(b + 1);
+                    let to = at_degree(&key, next, next.root, 28, 40, root);
+                    let from = key.pitch(key.absolute_degree(to).unwrap() + if to > root { -1 } else { 1 }, 4).clamp(28, 52);
+                    score.add(Note { start: bar_start + (eighths - 1) * E, len: E * 3 / 4, pitch: from, vel: vel(-6, rng), channel: CH_BASS });
+                }
+                _ => {}
+            }
             // The chord's root nearest the middle of the solo's register.
             let base = (middle - 4..=middle + 3).find(|d| key.degree_of(key.pitch(*d, 4)) == Some(chord.root.rem_euclid(7) as usize)).unwrap_or(middle);
             if b < st.woven || b >= st.landing {
