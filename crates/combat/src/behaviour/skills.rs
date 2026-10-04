@@ -42,6 +42,11 @@ pub const TUNABLE: &[&str] = &[
     "leash_left", "strike_worth", "effect_added", "reactions_left", "foe_across",
 ];
 
+/// `recovery_left`'s bounds and curve, shared with the movement channel's:
+/// one setting shapes both
+pub const RECOVERY_LEFT_BOUNDS: (f32, f32) = (0.0, 10.0);
+pub const RECOVERY_LEFT_CURVE: Curve = Curve::FALLING.floored(1.0);
+
 /// `leash_left`'s bounds and curve, shared with the movement channel's
 pub const LEASH_LEFT_BOUNDS: (f32, f32) = (0.0, 0.3);
 pub const LEASH_LEFT_CURVE: Curve = Curve::RISING;
@@ -343,8 +348,8 @@ const RECOVERY_LEFT: Considered = Consideration {
         let after = recovery_after(&view.tuning, view.ability, view.recovery.as_ref(), &view.attrs, None, fatigue);
         after.remaining + after.chain.owed
     },
-    bounds: (0.0, 10.0),
-    curve: Curve::FALLING.floored(1.0),
+    bounds: RECOVERY_LEFT_BOUNDS,
+    curve: RECOVERY_LEFT_CURVE,
 };
 
 /// How much of the timed effect it would put on someone is new: what a

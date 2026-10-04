@@ -16,7 +16,7 @@
 use bevy::prelude::*;
 use qrz::Qrz;
 
-use super::{mind::Mind, skills::{LEASH_LEFT_BOUNDS, LEASH_LEFT_CURVE}, utility::{score, Consideration, Curve}};
+use super::{mind::Mind, skills::{LEASH_LEFT_BOUNDS, LEASH_LEFT_CURVE, RECOVERY_LEFT_BOUNDS, RECOVERY_LEFT_CURVE}, utility::{score, Consideration, Curve}};
 
 /// What holding scores unless a mind sets it: the threshold every step must
 /// beat.
@@ -28,7 +28,7 @@ pub const MOMENTUM: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "leash_left", "ready", "recovering", "detour", "time_to_strike", "time_to_be_struck",
+    "leash_left", "recovery_left", "recovering", "detour", "time_to_strike", "time_to_be_struck",
     "behind", "strike_cost", "stride_kept",
 ];
 
@@ -50,8 +50,9 @@ pub enum Move {
 pub struct Footing {
     /// Its Grace lets it strike past its forward faces
     pub grace: bool,
-    /// Share of its recovery it has left: 0 out of recovery
-    pub recovering: f32,
+    /// Seconds of recovery it is in, with what its chain owes: 0 out of
+    /// recovery
+    pub recovery_left: f32,
     /// Its Patience tier, while it is engaged and its recovery runs faster
     /// waiting on a swing: none otherwise
     pub patience: u32,
@@ -118,8 +119,8 @@ pub fn choose(footing: &Footing, candidates: &[Candidate], under_way: Move, mind
 pub fn weigh(footing: &Footing, candidate: &Candidate, decision: Move, mind: &Mind) -> f32 {
     let considerations: &[Consideration<Ground>] = match decision {
         Move::Hold => return mind.hold,
-        Move::Engage if footing.grace => &[DETOUR, LEASH_LEFT, READY, BEHIND, STRIKE_COST, STRIDE_KEPT],
-        Move::Engage => &[DETOUR, LEASH_LEFT, READY],
+        Move::Engage if footing.grace => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND, STRIKE_COST, STRIDE_KEPT],
+        Move::Engage => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT],
         Move::KeepAway if footing.patience > 0 => &[TIME_TO_BE_STRUCK, TIME_TO_STRIKE, RECOVERING, LEASH_LEFT],
         Move::KeepAway => return 0.0,
     };
@@ -149,20 +150,22 @@ const LEASH_LEFT: Consideration<Ground> = Consideration {
     curve: LEASH_LEFT_CURVE,
 };
 
-/// How far through its recovery it is: 1 out of it. Weighed only as far
+/// The seconds of recovery it would be left in: a step costs none, so what
+/// it is in. One setting with a skill's `recovery_left`, weighed only as far
 /// as a mind lowers its floor, holding back from a fight it cannot act in
-const READY: Consideration<Ground> = Consideration {
-    name: "ready",
-    read: |ground| 1.0 - ground.footing.recovering,
-    bounds: (0.0, 0.5),
-    curve: Curve::RISING.floored(1.0),
+const RECOVERY_LEFT: Consideration<Ground> = Consideration {
+    name: "recovery_left",
+    read: |ground| ground.footing.recovery_left,
+    bounds: RECOVERY_LEFT_BOUNDS,
+    curve: RECOVERY_LEFT_CURVE,
 };
 
-/// Patience: recovery left, which runs faster out of its target's reach
+/// Patience: seconds of recovery left, which run faster out of its
+/// target's reach
 const RECOVERING: Consideration<Ground> = Consideration {
     name: "recovering",
-    read: |ground| ground.footing.recovering,
-    bounds: (0.0, 1.0),
+    read: |ground| ground.footing.recovery_left,
+    bounds: (0.0, 4.0),
     curve: Curve::RISING,
 };
 
@@ -216,7 +219,7 @@ mod tests {
     use super::*;
 
     fn footing() -> Footing {
-        Footing { grace: false, recovering: 0.0, patience: 0 }
+        Footing { grace: false, recovery_left: 0.0, patience: 0 }
     }
 
     /// A tile `q` east of the origin, with its target standing further
@@ -250,7 +253,7 @@ mod tests {
     /// act
     fn keeping() -> Mind {
         let mut minds = crate::behaviour::mind::Minds::default();
-        minds.set("all.ready.floor", "0").unwrap();
+        minds.set("all.recovery_left.floor", "0").unwrap();
         minds.mind(None)
     }
 
@@ -275,7 +278,7 @@ mod tests {
 
     #[test]
     fn a_mind_holding_back_holds_while_it_recovers() {
-        let recovering = Footing { recovering: 1.0, ..footing() };
+        let recovering = Footing { recovery_left: 10.0, ..footing() };
         assert_eq!(choose(&recovering, &around(0, 8), Move::Hold, &Mind::default()).0, Move::Engage);
         assert_eq!(choose(&recovering, &around(0, 8), Move::Hold, &keeping()).0, Move::Hold);
     }
@@ -302,10 +305,10 @@ mod tests {
     #[test]
     fn patience_keeps_away_out_of_reach_but_ready_and_engages_once_recovered() {
         let mind = keeping();
-        let patient = Footing { patience: 3, recovering: 1.0, ..footing() };
+        let patient = Footing { patience: 3, recovery_left: 10.0, ..footing() };
         let (decision, step) = choose(&patient, &around(6, 8), Move::Hold, &mind);
         assert_eq!((decision, step.map(|step| step.tile.q)), (Move::KeepAway, Some(5)), "recovering in its target's reach, it steps out");
-        let recovered = Footing { recovering: 0.0, ..patient };
+        let recovered = Footing { recovery_left: 0.0, ..patient };
         assert_eq!(choose(&recovered, &around(3, 8), Move::KeepAway, &mind).0, Move::Engage, "recovered, it engages");
         let far = choose(&patient, &around(0, 12), Move::Hold, &mind);
         assert_ne!(far.1.map(|step| step.tile.q), Some(-1), "and it gives no ground it need not, out of reach already");
@@ -313,7 +316,7 @@ mod tests {
 
     #[test]
     fn without_patience_it_never_keeps_away() {
-        let recovering = Footing { recovering: 1.0, ..footing() };
+        let recovering = Footing { recovery_left: 10.0, ..footing() };
         assert_eq!(weigh(&recovering, &candidate(5, 8), Move::KeepAway, &Mind::default()), 0.0);
     }
 }

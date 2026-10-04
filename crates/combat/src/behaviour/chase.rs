@@ -218,7 +218,7 @@ pub fn chase(
         }
         let footing = Footing {
             grace: attrs.is_some_and(|attrs| attrs.grace().index() > 0),
-            recovering: recovery.filter(|recovery| recovery.is_active()).map_or(0.0, |recovery| (recovery.remaining / recovery.duration.max(f32::EPSILON)).min(1.0)),
+            recovery_left: recovery.filter(|recovery| recovery.is_active()).map_or(0.0, |recovery| recovery.remaining + recovery.chain.owed),
             // Its Patience pays only while its swing clock runs, engaged
             patience: attrs.filter(|_| swing.is_some_and(|swing| swing.due.is_some()))
                 .map_or(0, |attrs| attrs.patience().index() as u32),

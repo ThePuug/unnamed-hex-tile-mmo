@@ -236,8 +236,6 @@ common = [
     { name = "hold", min = 0.05, max = 0.6, start = 0.35 },
     { name = "momentum", min = 0.0, max = 0.3, start = 0.15 },
     { name = "combo", min = 0.0, max = 0.3, start = 0.15 },
-    { name = "ready.to", min = 0.05, max = 1.0, start = 0.5 },
-    { name = "ready.floor", min = 0.0, max = 1.0, start = 1.0 },
     { name = "recovery_left.to", min = 1.0, max = 12.0, start = 10.0 },
     { name = "recovery_left.floor", min = 0.0, max = 1.0, start = 1.0 },
     { name = "leash_left.to", min = 0.05, max = 0.6, start = 0.3 },
