@@ -18,6 +18,9 @@
 //! brings its pitch to the level its instrument has across its range, as
 //! the bank sounds it: a short tone of every pitch, measured once.
 //!
+//! The summed band goes through the mix bus (`master`) before it is
+//! kept.
+//!
 //! A loop is played through twice and the second pass kept, so its head
 //! already carries the tail's reverb and held tones; its last blocks are
 //! blended into the first pass's last blocks, which the head follows
@@ -34,6 +37,7 @@ use std::sync::{Arc, Mutex};
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
 use crate::hall;
+use crate::master;
 use crate::perform::{perform, Msg};
 use crate::pieces::{Params, Piece};
 use crate::score::{Instrument, Role, Score};
@@ -186,7 +190,8 @@ impl Bank {
 const RING_KEPT_S: f32 = 0.5;
 
 /// `piece` at `seed` as its file sounds: composed, its sections set to
-/// their levels, rendered, set to the piece's loudness, and a one-shot
+/// their levels, rendered, set to the piece's loudness and limited under
+/// its ceiling, and a one-shot
 /// cut `RING_KEPT_S` past the last sample over the silence floor — the
 /// room's ring under that is no sound anyone hears.
 pub fn take(piece: &Piece, seed: u64, bank: &Bank) -> (Score, Vec<[f32; 2]>) {
@@ -194,6 +199,7 @@ pub fn take(piece: &Piece, seed: u64, bank: &Bank) -> (Score, Vec<[f32; 2]>) {
     set_levels(&mut score, bank);
     let mut audio = render(&score, bank);
     audio::encode::set_loudness(&mut audio, piece.lufs);
+    master::limit(&mut audio);
     if !score.loops {
         let (_, tail) = audio::measure::silence(&audio);
         if tail > RING_KEPT_S {
@@ -256,10 +262,15 @@ pub fn render(score: &Score, bank: &Bank) -> Vec<[f32; 2]> {
     // fall of 60 dB, past which is silence; a loop's tails ring into its
     // head.
     if !score.loops {
-        return mixed(score, bank, score.end(), (score.room as f64 * SAMPLE_RATE as f64) as usize);
+        let mut once = mixed(score, bank, score.end(), (score.room as f64 * SAMPLE_RATE as f64) as usize);
+        master::master(&mut once);
+        return once;
     }
     let twice = score.unrolled(2);
-    let all = mixed(&twice, bank, score.end(), BLOCK);
+    let mut all = mixed(&twice, bank, score.end(), BLOCK);
+    // Through the bus before the pass is kept, so the compressor arrives
+    // at the seam already settled.
+    master::master(&mut all);
     let (a, b) = (block_at(score, score.end()), block_at(&twice, twice.end()));
     let mut out = all[a..b].to_vec();
     let n = SEAM.min(a).min(out.len());

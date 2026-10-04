@@ -7,6 +7,7 @@
 pub mod cue;
 pub mod hall;
 pub mod ladder;
+pub mod master;
 pub mod perform;
 pub mod pieces;
 pub mod render;
