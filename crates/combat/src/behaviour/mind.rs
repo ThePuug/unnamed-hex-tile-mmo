@@ -91,7 +91,6 @@ pub const TUNED: &[(&str, f32)] = &[
     ("ambusher.hold", 0.46), ("ambusher.just_acted.binding", 2.295), ("ambusher.just_acted.direct", 0.445),
     ("ambusher.just_acted.distant", 2.131), ("ambusher.just_acted.evasive", 1.732), ("ambusher.just_acted.patient", 1.623),
     ("ambusher.momentum", 0.033), 
-    ("ambusher.reactions_left.floor", 0.81), 
     ("ambusher.strike_worth.floor", 0.0), ("ambusher.strike_worth.to", 0.644), ("ambusher.wait", 0.06),
     ("ambusher.worth_answering.to", 0.338), ("berserker.foe_just_acted.floor", 0.833), ("berserker.foe_just_acted.from", 1.351), ("berserker.hold", 0.158),
     ("berserker.just_acted.ambushing", 1.914), ("berserker.just_acted.binding", 2.7), ("berserker.just_acted.distant", 1.291),

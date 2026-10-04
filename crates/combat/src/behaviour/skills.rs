@@ -39,7 +39,7 @@ pub const COMBO: f32 = 0.15;
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
     "fatigue_after", "recovery_left", "foe_just_acted", "worth_answering",
-    "leash_left", "strike_worth", "effect_added", "reactions_left", "foe_across",
+    "leash_left", "strike_worth", "effect_added", "foe_across",
 ];
 
 /// `recovery_left`'s bounds and curve, shared with the movement channel's:
@@ -236,9 +236,6 @@ fn part_considerations(part: Part) -> Vec<Considered> {
 
 fn commitment_considerations(part: Part, attrs: &ActorAttributes) -> Vec<Considered> {
     let mut considerations = Vec::new();
-    if attrs.preparation().index() > 0 && part == Part::Reaction {
-        considerations.push(REACTIONS_LEFT);
-    }
     if attrs.grace().index() > 0 && part == Part::Effect {
         considerations.push(FOE_ACROSS);
     }
@@ -437,20 +434,6 @@ const LEASH_LEFT: Considered = Consideration {
 const IN_REACH: Considered = step("in_reach", |view| flag(view.foe.is_some_and(|foe| foe.distance <= view.reach)));
 
 // --- Commitments ---
-
-/// Preparation: reactions it may still fire early in this chain
-const REACTIONS_LEFT: Considered = Consideration {
-    name: "reactions_left",
-    read: |view| {
-        let tier = view.attrs.preparation().index() as f32;
-        match view.recovery.as_ref().filter(|recovery| recovery.is_active()) {
-            Some(recovery) => (tier - recovery.chain.early_reactions as f32) / tier.max(1.0),
-            None => 1.0,
-        }
-    },
-    bounds: (0.0, 1.0),
-    curve: Curve::RISING.floored(0.6),
-};
 
 /// Grace: a foe past its forward faces, struck there only in a stride
 const FOE_ACROSS: Considered = Consideration {
