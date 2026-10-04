@@ -6,17 +6,22 @@
 //! — so two seeds are two nights in one city. The seed picks which
 //! shape at every level; it never picks the next note.
 //!
-//! A story is a ladder of the bed's layers, walked as `ladder` says;
-//! the story is the texture's, and the loudness holds, the pedal
-//! giving back what each layer adds. The bed is a band: the bass in
-//! two or walking, the piano's shells and the guitar's four, the kit on
-//! the brushes, the organ as the wash, and the seed's colours. One
-//! theme runs under the whole piece, chorus after chorus, on the three
-//! rows of the twelve-bar, and one player tells it, the lead: it sings
-//! the tune, plays it as a riff, calls with a phrase's first half and
-//! answers itself with the riff in its second, which is what a blues
-//! is, and holds a tone between the tellings. The weave echoes it and
-//! a second horn holds tones under the riff.
+//! A story is a ladder of the bed's layers, walked as `ladder` says,
+//! the band's loudness rising a little as it fills, declared and met by
+//! the render. The bed is a band: the bass in two or walking, the
+//! piano's comp and the guitar's, the kit on the brushes, the organ as
+//! the wash, and the seed's colours. A blues holds its form and varies
+//! what fills its slots: every chorus is the twelve-bar, and its rows —
+//! the quick change or not, the turn home through the V or the flat
+//! sixth — are drawn afresh each chorus but the first and the last, so
+//! the head comes back as it was. One theme runs the piece, and one
+//! player tells it, the lead, in the blues' AAB: a row's line, the same
+//! line again over the IV, and an answer; the lead calls through a
+//! row's first two bars and lands, and leaves its last two to the band,
+//! where the weave answers with the call. No player of the band plays
+//! one bar over and over: the comp draws its rhythm a bar at a time,
+//! never the same three bars running; the bass walks or skips; the kit
+//! comps on the snare and fills where a blues fills.
 
 use crate::ladder::{self, turn, Bed, Story, Walk};
 use crate::pieces::Params;
@@ -28,7 +33,10 @@ use crate::theory::melody::Theme;
 use crate::theory::phrase::{Form as PhraseForm, FORMS};
 use crate::theory::schema::{Schema, TWELVE_BAR};
 use crate::theory::{interval_class, Chord, Key, Mode};
+use crate::theory::melody::Tone;
+use crate::theory::phrase;
 use crate::tune::{self, Tune};
+use crate::variation::{self, Role as Bar};
 
 /// General MIDI programs, 0-based.
 const PIANO: u8 = 0;
@@ -89,22 +97,10 @@ fn lead_level(program: u8) -> f32 {
 /// dynamic for the whole band, since its story is in what plays.
 const VEL: i32 = 85;
 
-/// What each layer at each notch adds to the band's power, and what
-/// each lead adds, the voice's held tones alone being one: the pedal
-/// takes the sum's level back through the part, so a full band is no
-/// louder than a held tone over the organ. Powers, not decibels: a
-/// lead that is the whole level alone adds next to nothing under a
-/// full band, and a lift in decibels a layer could not say that.
-/// Fitted to the render, every section of sixty seeds against what
-/// was on in it; the range check holds them true.
-const POWER_BASS: [f32; 3] = [0.0, 0.34, 0.80];
-const POWER_COMP: [f32; 3] = [0.0, 0.84, 2.85];
-const POWER_KIT: [f32; 3] = [0.0, 0.44, 0.81];
-const POWER_ORGAN: [f32; 3] = [0.0, 0.21, 0.46];
-const POWER_COLOURS: f32 = 1.00;
-const POWER_WEAVE: [f32; 3] = [0.0, 0.86, 1.46];
-/// By telling, in `Telling`'s order; the city's lead is never silent.
-const POWER_LEAD: [f32; 6] = [0.0, 1.00, 2.63, 2.50, 2.31, 2.90];
+/// Where the band's foot sits under its top rung, LU: the night grows a
+/// little as the band fills, by a level the render meets on whatever
+/// bank plays it, and no more — the city is a bed the game plays over.
+const LEVEL_FOOT: f32 = -2.5;
 
 /// The tune's register; the lead and the second take it here, the weave
 /// an octave under. Home is the tonic a third under its middle, with
@@ -186,13 +182,6 @@ struct Texture {
 
 impl Texture {
     const BARE: Texture = Texture { bass: Bass::Off, comp: Comp::Off, kit: Kit::Off, organ: Organ::Off, colours: false, weave: Weave::Off };
-
-    /// The pedal's gain under this texture and `lead`: the level of
-    /// what they add together, given back.
-    fn trim(&self, lead: Telling) -> f32 {
-        let power = POWER_BASS[self.bass as usize] + POWER_COMP[self.comp as usize] + POWER_KIT[self.kit as usize] + POWER_ORGAN[self.organ as usize] + if self.colours { POWER_COLOURS } else { 0.0 } + POWER_WEAVE[self.weave as usize] + POWER_LEAD[lead as usize];
-        ladder::gain(10.0 * power.log10())
-    }
 }
 
 impl Bed for Texture {
@@ -356,7 +345,7 @@ pub fn build(params: &Params) -> Score {
         groove,
         form: FORMS[skeleton.below(FORMS.len())],
         theme: Theme::draw(groove, &mut skeleton),
-        rows: [&TWELVE_BAR[0][skeleton.below(TWELVE_BAR[0].len())], &TWELVE_BAR[1][skeleton.below(TWELVE_BAR[1].len())], &TWELVE_BAR[2][skeleton.below(TWELVE_BAR[2].len())]],
+        rows: [row(0, mode, &mut skeleton), row(1, mode, &mut skeleton), row(2, mode, &mut skeleton)],
     };
     let instruments = vec![
         Instrument { name: "bass", program: UPRIGHT_BASS, channel: CH_BASS, role: Role::Pluck, low: 28, high: 60, reverb: 25, pan: 0, level: 0.0 },
@@ -405,13 +394,27 @@ pub fn build(params: &Params) -> Score {
 
     // The walk, in half-phrases, and whole choruses of them, so the
     // loop closes on the turn home.
-    let walk = story.place(&mut skeleton, &mut score, 2 * TWELVE_BAR.len() as u32, |texture, lead| texture.trim(lead));
+    let walk = story.place(&mut skeleton, &mut score, 2 * TWELVE_BAR.len() as u32, |_, _| 1.0);
+    let upper = story.ladder.len().max(1);
+    for (section, part) in score.sections.iter_mut().zip(&walk.parts) {
+        section.level = Some(LEVEL_FOOT * (1.0 - part.rung as f32 / upper as f32));
+    }
 
+    // The rows of every chorus: the piece's own at the head and at the
+    // end, so the return is heard, and drawn afresh between.
+    let choruses = walk.bars() / (TWELVE_BAR.len() as u32 * phrase::BARS);
+    let mut changes = rng.fork(11);
+    let rows: Vec<&Schema> = (0..choruses)
+        .flat_map(|c| {
+            let own = c == 0 || c + 1 == choruses;
+            (0..TWELVE_BAR.len()).map(|r| if own { design.rows[r] } else { row(r, mode, &mut changes) }).collect::<Vec<_>>()
+        })
+        .collect();
     // The tune a third up on the ladder's top, else as written: a blues
     // keeps its tune and moves the changes under it.
-    let upper = story.ladder.len().max(1);
     let shifts: Vec<i32> = (0..walk.bars()).map(|b| if walk.at(b).rung >= upper { CLIMB } else { 0 }).collect();
-    let tune = Tune::compose(&design.theme, &score.meter, design.form, &design.rows, 4, shifts);
+    let mut tune = Tune::compose(&design.theme, &score.meter, design.form, &rows, 4, shifts);
+    aab(&mut tune, score.meter.eighths());
     score.harmony = tune.chords.clone();
     let form = Form { bar, walk, tune, design };
 
@@ -450,6 +453,87 @@ pub fn build(params: &Params) -> Score {
     score
 }
 
+/// One of row `r`'s schemata the mode can take.
+fn row(r: usize, mode: Mode, rng: &mut Rng) -> &'static Schema {
+    let fits: Vec<&'static Schema> = TWELVE_BAR[r].iter().filter(|s| s.modes.contains(&mode)).collect();
+    fits[rng.below(fits.len())]
+}
+
+/// The tune as a blues sings it, every chorus AAB: the second row's line
+/// is the first's again — bent to the IV where its strong beats meet it
+/// — and the third answers; in every row the lead calls through the
+/// first two bars, holds the row's last tone through the third, and
+/// leaves the fourth to the band, the hole the weave answers in.
+fn aab(tune: &mut Tune, eighths: u32) {
+    let rows = TWELVE_BAR.len();
+    let bars = phrase::BARS as usize;
+    for chorus in 0..tune.bars.len() / (rows * bars) {
+        let head = chorus * rows * bars;
+        for k in 0..bars {
+            tune.bars[head + bars + k] = tune.bars[head + k].clone();
+        }
+        for r in 0..rows {
+            let row = head + r * bars;
+            if let Some(end) = tune.bars[row + bars - 1].last().copied() {
+                tune.bars[row + bars - 2] = vec![Tone { onset: 0, len: eighths, degree: end.degree }];
+            }
+            tune.bars[row + bars - 1].clear();
+        }
+    }
+}
+
+/// Whether bar `b` is a row's response hole, the two bars the lead
+/// leaves to the band.
+fn hole(b: u32) -> bool {
+    b % phrase::BARS >= phrase::BARS - 2
+}
+
+/// A comp's rhythm for a bar: the eighths it strikes on, and whether it
+/// holds its chord to the bar's end. A comping player draws one a bar —
+/// the Charleston, its reverse, the backbeats, the shuffle's strikes, a
+/// push on the bar's last eighth, a chord held, a bar laid out — and
+/// never the same three bars running, since one rhythm over and over is
+/// the riff a blues varies and not one it plays.
+struct Cell {
+    strikes: &'static [u32],
+    held: bool,
+}
+
+/// The cells of the four, and of the shuffle's twelve-eight, with how
+/// often each is drawn.
+const CELLS_FOUR: [(Cell, f32); 6] = [
+    (Cell { strikes: &[0, 3], held: false }, 3.0),
+    (Cell { strikes: &[1, 4], held: false }, 2.0),
+    (Cell { strikes: &[2, 6], held: false }, 2.0),
+    (Cell { strikes: &[3, 7], held: false }, 1.5),
+    (Cell { strikes: &[0], held: true }, 1.0),
+    (Cell { strikes: &[], held: false }, 0.5),
+];
+const CELLS_SHUFFLE: [(Cell, f32); 6] = [
+    (Cell { strikes: &[0, 5], held: false }, 3.0),
+    (Cell { strikes: &[2, 6], held: false }, 2.0),
+    (Cell { strikes: &[3, 9], held: false }, 2.0),
+    (Cell { strikes: &[2, 5, 8, 11], held: false }, 2.0),
+    (Cell { strikes: &[0], held: true }, 1.0),
+    (Cell { strikes: &[], held: false }, 0.5),
+];
+
+/// A cell for each bar of the piece, drawn, never the same three bars
+/// running.
+fn cells(meter: &crate::theory::Meter, bars: u32, rng: &mut Rng) -> Vec<&'static Cell> {
+    let pool: &'static [(Cell, f32)] = if meter.groups[0] == 3 { &CELLS_SHUFFLE } else { &CELLS_FOUR };
+    let weights: Vec<f32> = pool.iter().map(|(_, w)| *w).collect();
+    let mut out: Vec<usize> = Vec::new();
+    for _ in 0..bars {
+        let mut k = rng.weighted(&weights);
+        while out.len() >= 2 && out[out.len() - 1] == k && out[out.len() - 2] == k {
+            k = rng.weighted(&weights);
+        }
+        out.push(k);
+    }
+    out.into_iter().map(|k| &pool[k].0).collect()
+}
+
 /// The chord's pitches in `lo..=hi` at `degree` of the mode.
 fn at_degree(key: &Key, chord: Chord, degree: i32, lo: u8, hi: u8) -> Vec<u8> {
     chord.pitches_within(&key, lo, hi).into_iter().filter(|p| key.degree_of(*p) == Some(degree.rem_euclid(7) as usize)).collect()
@@ -475,7 +559,9 @@ fn led(candidates: &[u8], voices: &[u8]) -> Vec<u8> {
 
 /// The bass: in two, the root on one and the fifth on three, held to
 /// the next; walking, a chord tone on every beat — the root first,
-/// then up or down through the chord, the way turning bar by bar.
+/// then up or down through the chord, the way turning bar by bar, and
+/// again on a phrase's cadence; its variant bar skips into its third
+/// beat from a step of the mode off it.
 /// Either way, on the last eighth a pickup one step of the mode toward
 /// the next bar's root, from the side the line comes from, so a change
 /// is walked into and not jumped at, and the loop's head has a pickup
@@ -507,12 +593,32 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
             Bass::Two => {
                 let fifth = if root >= lo + 5 { root - 5 } else { root + 7 };
                 let half = (groups[0] + groups[1]) as u32 * E;
-                score.add(Note { start: beat(0), len: half - 40, pitch: root, vel: vel(-18, rng), channel: CH_BASS });
-                score.add(Note { start: beat(2), len: half - E - 40, pitch: fifth, vel: vel(-24, rng), channel: CH_BASS });
-                p = fifth;
+                // Where the chord stands a second bar, the fifth takes the
+                // one and the root the three; on the variant bar a skip
+                // note leads into the three.
+                let held = b > 0 && form.chord(b - 1) == chord && form.texture_at(b - 1).bass != Bass::Off;
+                let (one, three) = if held { (fifth, root) } else { (root, fifth) };
+                let third = at_degree(&key, chord, chord.root + 2, lo, hi);
+                let three = if variation::role(b) == Bar::Cadence && !third.is_empty() { nearest(&third, three) } else { three };
+                let skip = variation::role(b) == Bar::Variant;
+                let first = if skip { half - E - 40 } else { half - 40 };
+                score.add(Note { start: beat(0), len: first, pitch: one, vel: vel(-18, rng), channel: CH_BASS });
+                if skip {
+                    let passing = key.pitch(key.absolute_degree(three).unwrap() + if three > one { -1 } else { 1 }, 4);
+                    score.add(Note { start: beat(2) - E, len: E - 40, pitch: passing.clamp(lo, hi), vel: vel(-28, rng), channel: CH_BASS });
+                }
+                score.add(Note { start: beat(2), len: half - E - 40, pitch: three, vel: vel(-24, rng), channel: CH_BASS });
+                p = three;
             }
             Bass::Walking => {
                 let tones = chord.pitches_within(&key, lo, hi);
+                // The cadence turns the line the other way; the variant
+                // skips into its third beat a step of the mode off it.
+                let role = variation::role(b);
+                if role == Bar::Cadence {
+                    rising = !rising;
+                }
+                let mut line = Vec::with_capacity(strong.len());
                 for g in 0..strong.len() {
                     if g > 0 {
                         let up = tones.iter().copied().find(|t| *t > p);
@@ -525,9 +631,20 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
                             }
                         };
                     }
+                    line.push(p);
+                }
+                let skip = (role == Bar::Variant && line.len() > 2).then(|| {
+                    let to = line[2];
+                    key.pitch(key.absolute_degree(to).unwrap() + if line[1] > to { 1 } else { -1 }, 4).clamp(lo, hi)
+                });
+                for (g, pitch) in line.iter().enumerate() {
                     let last_beat = g + 1 == strong.len();
-                    let len = groups[g] as u32 * E - if last_beat { E } else { 0 } - 40;
-                    score.add(Note { start: beat(g), len, pitch: p, vel: vel(if g == 0 { -16 } else { -24 }, rng), channel: CH_BASS });
+                    let short = last_beat || (g == 1 && skip.is_some());
+                    let len = groups[g] as u32 * E - if short { E } else { 0 } - 40;
+                    score.add(Note { start: beat(g), len, pitch: *pitch, vel: vel(if g == 0 { -16 } else { -24 }, rng), channel: CH_BASS });
+                }
+                if let Some(pitch) = skip {
+                    score.add(Note { start: beat(2) - E, len: E - 40, pitch, vel: vel(-30, rng), channel: CH_BASS });
                 }
                 rising = !rising;
             }
@@ -542,24 +659,22 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
     }
 }
 
-/// The piano's comp on the feel's strikes: the chord's third and
-/// seventh, each voice to the nearest tone of the next chord so a
-/// change moves by step; at the full notch the fifth on top. Short,
-/// and under the band's level: a strike at the band's level cuts in.
+/// The piano's comp: the chord's third and seventh, each voice to the
+/// nearest tone of the next chord so a change moves by step, at the full
+/// notch the fifth on top, on the bar's drawn rhythm (`cells`); into a
+/// row's first bar, now and then, the next chord pushed on the last
+/// eighth. Short, and under the band's level: a strike at the band's
+/// level cuts in.
 fn piano(score: &mut Score, form: &Form, rng: &mut Rng) {
     let key = score.key;
     // Under the tune's register, so the comp is a floor and not a rival.
     let (lo, hi) = (50, 66);
+    let rhythm = cells(&score.meter, form.bars(), rng);
+    let eighths = score.meter.eighths();
     let mut prev: Option<Vec<u8>> = None;
-    for b in 0..form.bars() {
-        let mode = form.texture_at(b).comp;
-        if mode == Comp::Off {
-            prev = None;
-            continue;
-        }
-        let chord = form.chord(b);
+    let voicing_of = |chord: Chord, prev: &Option<Vec<u8>>, full: bool| -> Vec<u8> {
         let voice = |degree: i32, near: u8| nearest(&at_degree(&key, chord, degree, lo, hi), near);
-        let (third, seventh) = match &prev {
+        let (third, seventh) = match prev {
             Some(v) => (voice(chord.root + 2, v[0]), voice(chord.root + 6, v[1])),
             None => {
                 let third = voice(chord.root + 2, 56);
@@ -567,26 +682,46 @@ fn piano(score: &mut Score, form: &Form, rng: &mut Rng) {
             }
         };
         let mut voicing = vec![third, seventh];
-        if mode == Comp::Full {
+        if full {
             voicing.push(voice(chord.root + 4, third.max(seventh) + 4));
         }
-        for i in form.design.groove.chord {
-            let start = b * form.bar + i * E;
+        voicing
+    };
+    for b in 0..form.bars() {
+        let mode = form.texture_at(b).comp;
+        if mode == Comp::Off {
+            prev = None;
+            continue;
+        }
+        let voicing = voicing_of(form.chord(b), &prev, mode == Comp::Full);
+        let cell = rhythm[b as usize];
+        for i in cell.strikes {
+            let len = if cell.held { form.bar - E / 4 } else { E - 60 };
             for p in &voicing {
-                score.add(Note { start, len: E - 60, pitch: *p, vel: vel(-20, rng), channel: CH_PIANO });
+                score.add(Note { start: b * form.bar + i * E, len, pitch: *p, vel: vel(-20, rng), channel: CH_PIANO });
+            }
+        }
+        let into_row = b + 1 < form.bars() && (b + 1) % phrase::BARS == 0;
+        if into_row && !cell.strikes.contains(&(eighths - 1)) && !cell.held && rng.chance(0.5) {
+            let next = voicing_of(form.chord(b + 1), &Some(voicing.clone()), mode == Comp::Full);
+            for p in &next {
+                score.add(Note { start: b * form.bar + (eighths - 1) * E, len: E - 60, pitch: *p, vel: vel(-18, rng), channel: CH_PIANO });
             }
         }
         prev = Some(voicing);
     }
 }
 
-/// The guitar, four to the bar where the comp is full: the chord in a
-/// close voicing under the piano's, struck short on every beat and
-/// softer still, the pulse under the comp.
+/// The guitar where the comp is full: the chord in a close voicing under
+/// the piano's, short, four to the bar — but on the phrase's variant bar
+/// it leaves the third beat and pushes the bar's last eighth, and on its
+/// cadence it strikes only the backbeats, so the pulse under the comp
+/// breathes with the phrase.
 fn guitar(score: &mut Score, form: &Form, rng: &mut Rng) {
     let key = score.key;
     let (lo, hi) = (48, 64);
     let strong = score.meter.strong_eighths();
+    let eighths = score.meter.eighths();
     let mut prev: Option<Vec<u8>> = None;
     for b in 0..form.bars() {
         if form.texture_at(b).comp != Comp::Full {
@@ -598,10 +733,14 @@ fn guitar(score: &mut Score, form: &Form, rng: &mut Rng) {
             Some(v) => led(&chord.pitches_within(&key, lo, hi), v),
             None => [chord.root, chord.root + 4, chord.root + 6].iter().zip([52, 59, 62]).map(|(d, near)| nearest(&at_degree(&key, chord, *d, lo, hi), near)).collect(),
         };
-        for g in &strong {
-            let start = b * form.bar + g * E;
+        let strikes: Vec<u32> = match variation::role(b) {
+            Bar::Variant => strong.iter().copied().enumerate().filter(|(g, _)| *g != 2).map(|(_, e)| e).chain(std::iter::once(eighths - 1)).collect(),
+            Bar::Cadence => strong.iter().copied().enumerate().filter(|(g, _)| g % 2 == 1).map(|(_, e)| e).collect(),
+            _ => strong.clone(),
+        };
+        for e in strikes {
             for p in &voicing {
-                score.add(Note { start, len: E / 2, pitch: *p, vel: vel(-24, rng), channel: CH_GUITAR });
+                score.add(Note { start: b * form.bar + e * E, len: E / 2, pitch: *p, vel: vel(-24, rng), channel: CH_GUITAR });
             }
         }
         prev = Some(voicing);
@@ -613,7 +752,9 @@ fn guitar(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// keeps them, each voice to the nearest tone of the next chord; thin,
 /// one tone alone, rocking to the next of the three each bar the chord
 /// stands. Never the third: the third against the seventh of the
-/// dominant is the tritone, which the piano strikes and no one holds.
+/// dominant is the tritone, which the piano strikes and no one holds —
+/// but under a major seventh, root, third and fifth, since that seventh
+/// is a semitone from the root and no one holds that either.
 /// Every note lingers half an eighth into the next chord, so a change
 /// is a crossfade and not a cut.
 fn organ(score: &mut Score, form: &Form, rng: &mut Rng) {
@@ -633,7 +774,9 @@ fn organ(score: &mut Score, form: &Form, rng: &mut Rng) {
             continue;
         }
         let chord = form.chord(b);
-        let candidates: Vec<u8> = [chord.root, chord.root + 4, chord.root + 6].iter().flat_map(|d| at_degree(&key, chord, *d, lo, hi)).collect::<std::collections::BTreeSet<u8>>().into_iter().collect();
+        let major_seventh = (key.pitch(chord.root + 6, 4) as i32 - key.pitch(chord.root, 4) as i32).rem_euclid(12) == 11;
+        let held: [i32; 3] = if major_seventh { [chord.root, chord.root + 2, chord.root + 4] } else { [chord.root, chord.root + 4, chord.root + 6] };
+        let candidates: Vec<u8> = held.iter().flat_map(|d| at_degree(&key, chord, *d, lo, hi)).collect::<std::collections::BTreeSet<u8>>().into_iter().collect();
         if mode == Organ::Thin {
             let stands = b > 0 && form.chord(b - 1) == chord;
             let v = match alone {
@@ -660,7 +803,7 @@ fn organ(score: &mut Score, form: &Form, rng: &mut Rng) {
             (Some(prev), _) => led(&candidates, prev),
             _ => {
                 let root = nearest(&at_degree(&key, chord, chord.root, lo, hi), alone.unwrap_or(57).saturating_sub(5));
-                [chord.root + 4, chord.root + 6].iter().zip([root + 7, root + 10]).fold(vec![root], |mut v, (d, near)| {
+                held[1..].iter().zip([root + 7, root + 10]).fold(vec![root], |mut v, (d, near)| {
                     v.push(nearest(&at_degree(&key, chord, *d, lo, hi), near));
                     v
                 })
@@ -727,39 +870,34 @@ fn scoop(key: &Key, pitch: u8, hi: u8) -> Option<u8> {
     (grace <= hi).then_some(grace)
 }
 
-/// The tune echoed under everything, soft, where the band asks: the
-/// electric piano plays each bar the tune of the bar before, detached,
-/// an octave under the tune's register — a canon at the bar, so the
-/// tune is in the air before the riff takes it and behind it after,
-/// and never in the voice's own register, where an echo is a second
-/// comp; at the second notch the vibes take the bar's own skeleton,
-/// its strong-beat tones, a foot late and a third up over the tune,
-/// bent to the chord.
+/// The weave answers the lead in a row's hole, soft, where the band asks
+/// for it, and never while the lead calls: the electric piano plays the
+/// call — the row's first two bars — again in the hole, an octave under
+/// the tune's register, its strong beats bent to the hole's chords; at the
+/// second notch the vibes take the call's skeleton, its strong-beat
+/// tones, a foot late and a third up, bent to the chord.
 fn weave(score: &mut Score, form: &Form, rng: &mut Rng) {
     let (lo, hi) = (TUNE.0 - 12, TUNE.1 - 12);
-    let bars = form.bars();
     let late = form.design.theme.feet[0][0].1;
     let eighths = score.meter.eighths();
-    for b in 0..bars {
+    for b in (0..form.bars()).filter(|b| hole(*b)) {
         let mode = form.texture_at(b).weave;
         if mode == Weave::Off {
             continue;
         }
-        let behind = (b + bars - 1) % bars;
+        let call = b - 2;
         let chord = form.chord(b);
-        for (start, len, pitch) in form.tune.bar(score, behind, lo, hi, false) {
-            let onset = start - behind * form.bar;
+        for (start, len, pitch) in form.tune.bar(score, call, lo, hi, false) {
+            let onset = start - call * form.bar;
             let held = if len >= 3 * E { 2 * E } else { len - E / 2 };
-            // A bar behind, the tune meets this bar's chord: its strong
-            // beats bend to it as the tune's own would.
             let pitch = if score.meter.strong(onset / E) && !chord.holds(&score.key, pitch) { tune::nearest_chord_tone(&score.key, chord, pitch, lo, hi) } else { pitch };
             score.add(Note { start: b * form.bar + onset, len: held, pitch, vel: vel(-14, rng), channel: CH_WEAVE });
         }
         if mode != Weave::Two {
             continue;
         }
-        for (start, len, pitch) in form.tune.bar(score, b, TUNE.0, TUNE.1, false) {
-            let onset = (start - b * form.bar) / E;
+        for (start, len, pitch) in form.tune.bar(score, call, TUNE.0, TUNE.1, false) {
+            let onset = (start - call * form.bar) / E;
             if !score.meter.strong(onset) || onset + late >= eighths {
                 continue;
             }
@@ -768,41 +906,86 @@ fn weave(score: &mut Score, form: &Form, rng: &mut Rng) {
                 third = tune::nearest_chord_tone(&score.key, chord, third, TUNE.0, 89);
             }
             let held = (len - E / 2).min((eighths - onset - late) * E - E / 4);
-            score.add(Note { start: start + late * E, len: held, pitch: third, vel: vel(-18, rng), channel: CH_WEAVE_2 });
+            score.add(Note { start: b * form.bar + (onset + late) * E, len: held, pitch: third, vel: vel(-18, rng), channel: CH_WEAVE_2 });
         }
     }
 }
 
-/// The kit on the brushes where the band asks for it: time is the
-/// ride on every beat and on the feel's strikes — the swung third of
-/// the beat, or the push — and the hat's pedal on the backbeat; the
-/// whole kit adds the kick on the feel's low strokes and the brush on
-/// the snare on its high. The cymbals strike at the top of the
-/// velocity and the kick well under the band's, since the bank keeps
-/// its cymbals some twenty decibels under its kick, and a stroke's
-/// length changes nothing.
+/// The toms a brush fill falls down through, high to low.
+const TOMS: [u8; 4] = [50, 47, 45, 41];
+const CRASH: u8 = 49;
+
+/// The kit on the brushes where the band asks for it: time is the ride on
+/// every beat and on the feel's strikes — the swung third of the beat,
+/// or the push — and the hat's pedal on the backbeat; the whole kit adds
+/// the kick on the feel's low strokes and the brush on the snare on its
+/// high, and comps on the snare, soft, an eighth or two drawn afresh
+/// every bar. A blues fills where it turns: through the last beat of a
+/// chorus's last bar most often, into its ninth bar less, into its fifth
+/// least, and at time a phrase's variant bar leaves the ride's last
+/// strike for the hat; every other chorus the whole kit opens on the
+/// crash. The cymbals strike at the top of the velocity and the kick
+/// well under the band's, since the bank keeps its cymbals some twenty
+/// decibels under its kick, and a stroke's length changes nothing.
 fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
     let strong = score.meter.strong_eighths();
+    let eighths = score.meter.eighths();
+    let groove = form.design.groove;
+    let chorus = TWELVE_BAR.len() as u32 * phrase::BARS;
+    let last_beat = *strong.last().unwrap();
     for b in 0..form.bars() {
         let mode = form.texture_at(b).kit;
         if mode == Kit::Off {
             continue;
         }
-        let mut stroke = |i: &u32, pitch: u8, accent: i32| {
-            score.add(Note { start: b * form.bar + i * E, len: E - 20, pitch, vel: vel(accent, rng), channel: CH_KIT });
+        let in_chorus = b % chorus;
+        let fills = b + 1 < form.bars()
+            && rng.chance(match in_chorus {
+                11 => 0.7,
+                7 => 0.3,
+                3 => 0.2,
+                _ => 0.0,
+            });
+        let until = if fills { last_beat } else { eighths };
+        let role = variation::role(b);
+        let mut stroke = |e: u32, pitch: u8, accent: i32, rng: &mut Rng| {
+            score.add(Note { start: b * form.bar + e * E, len: E - 20, pitch, vel: vel(accent, rng), channel: CH_KIT });
         };
-        for i in strong.iter().chain(form.design.groove.chord) {
-            stroke(i, RIDE, if strong.contains(i) { 42 } else { 24 });
+        let ride: Vec<u32> = strong.iter().chain(groove.chord).copied().filter(|e| *e < until).collect();
+        let dropped = (role == Bar::Variant).then(|| ride.iter().copied().max()).flatten();
+        for e in &ride {
+            if Some(*e) == dropped {
+                stroke(*e, HAT_PEDAL, 30, rng);
+            } else {
+                stroke(*e, RIDE, if strong.contains(e) { 42 } else { 24 }, rng);
+            }
         }
-        for i in form.design.groove.tek {
-            stroke(i, HAT_PEDAL, 38);
+        for e in groove.tek.iter().filter(|e| **e < until) {
+            stroke(*e, HAT_PEDAL, 38, rng);
         }
         if mode == Kit::Full {
-            for i in form.design.groove.dum {
-                stroke(i, KICK, -14);
+            for e in groove.dum.iter().filter(|e| **e < until) {
+                stroke(*e, KICK, -14, rng);
             }
-            for i in form.design.groove.tek {
-                stroke(i, SNARE, 24);
+            for e in groove.tek.iter().filter(|e| **e < until) {
+                stroke(*e, SNARE, 24, rng);
+            }
+            let open: Vec<u32> = (0..until).filter(|e| !strong.contains(e) && !groove.tek.contains(e)).collect();
+            for _ in 0..rng.range(1, 2) {
+                if !open.is_empty() {
+                    let e = open[rng.below(open.len())];
+                    stroke(e, SNARE, 4, rng);
+                }
+            }
+            if in_chorus == 0 && (b / chorus) % 2 == 1 {
+                stroke(0, CRASH, 44, rng);
+            }
+        }
+        if fills {
+            let n = (eighths - last_beat) * 2;
+            for k in 0..n {
+                let pitch = if mode == Kit::Full { TOMS[(k as usize * TOMS.len() / n as usize).min(TOMS.len() - 1)] } else { SNARE };
+                score.add(Note { start: b * form.bar + last_beat * E + k * E / 2, len: E / 2 - 10, pitch, vel: vel(4 + (16 * k / n) as i32, rng), channel: CH_KIT });
             }
         }
     }
@@ -837,10 +1020,10 @@ mod tests {
             }
             for (i, chord) in score.harmony.iter().enumerate() {
                 assert_eq!(chord.size, 4);
-                assert!(matches!(chord.root, 0 | 3 | 4), "seed {seed}: bar {i} on {}", chord.root);
+                assert!(matches!(chord.root, 0 | 3 | 4) || (chord.root == 5 && score.key.mode == Mode::Aeolian), "seed {seed}: bar {i} on {}", chord.root);
             }
             assert_eq!(score.harmony[0].root, 0);
-            assert_eq!(score.harmony[8].root, 4);
+            assert!(matches!(score.harmony[8].root, 4 | 5));
             for n in score.notes.iter().filter(|n| matches!(n.channel, CH_LEAD | CH_SECOND) && n.len >= E / 2) {
                 assert!((TUNE.0..=TUNE.1).contains(&n.pitch), "seed {seed}: the tune at {} leaves its register", n.pitch);
             }
