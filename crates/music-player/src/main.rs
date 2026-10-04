@@ -6,6 +6,9 @@
 //! the time bar can seek anywhere; the next is rendered while the
 //! current plays.
 
+// A release build opens no console window beside its own on Windows.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
