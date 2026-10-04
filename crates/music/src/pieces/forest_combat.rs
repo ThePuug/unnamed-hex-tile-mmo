@@ -531,8 +531,11 @@ fn drum(score: &mut Score, form: &Form, rng: &mut Rng) {
         // The variant's stick picks up into the long group; the taiko
         // answers the stick's first stroke there, and on the cadence rolls
         // two sixteenths into the next phrase.
+        // The eighths neither hand plays, where a pickup can go.
+        let free: Vec<u32> = (1..groove.eighths()).filter(|e| !groove.dum.contains(e) && !groove.tek.contains(e)).collect();
         if role == Bar::Variant {
-            if let Some(e) = groove.dum.get(1).map(|d| d - 1).filter(|e| !groove.tek.contains(e)) {
+            let into_long = groove.dum.get(1).map(|d| d - 1).filter(|e| free.contains(e));
+            if let Some(e) = into_long.or(free.first().copied()) {
                 score.add(Note { start: b * form.bar + e * E, len: E / 2, pitch: SIDE_STICK, vel: vel(-12, rng), channel: CH_KIT });
             }
             if let Some(i) = groove.tek.first() {
@@ -541,6 +544,9 @@ fn drum(score: &mut Score, form: &Form, rng: &mut Rng) {
         }
         if role == Bar::Cadence && b + 1 < form.bars() && !groove.dum.contains(&last_eighth) {
             variation::roll(score, CH_TAIKO, 36, b * form.bar + last_eighth * E, 2, |x| vel(-14 + (8.0 * x) as i32, rng));
+            if mode != Drum::Full {
+                score.add(Note { start: b * form.bar + last_eighth * E, len: E / 2, pitch: FLOOR_TOM, vel: vel(-10, rng), channel: CH_KIT });
+            }
         }
         if mode != Drum::Full {
             continue;
