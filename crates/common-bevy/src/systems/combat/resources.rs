@@ -13,7 +13,6 @@ use crate::tuning::Tuning;
 pub struct Fighter {
     pub attrs: ActorAttributes,
     pub health: Health,
-    pub stamina: Stamina,
     pub endurance: Endurance,
     pub mana: Mana,
     pub combat_state: CombatState,
@@ -28,7 +27,6 @@ impl Fighter {
         Self {
             attrs,
             health: Health::full(attrs.max_health(tuning)),
-            stamina: Stamina::full(attrs.max_stamina(tuning), now),
             endurance: Endurance::full(attrs.max_endurance(tuning)),
             mana: Mana::full(now),
             combat_state: CombatState { in_combat: false, last_action: now },
@@ -39,43 +37,35 @@ impl Fighter {
     }
 }
 
-/// Regenerate stamina, mana, endurance and health for all entities with resources
+/// Regenerate mana, endurance and health for all entities with resources
 /// Runs in FixedUpdate schedule (125ms ticks)
-/// Endurance regenerates only while stamina is full, in combat or out.
+/// Endurance regenerates steadily, in combat or out.
 /// Health regenerates at:
 /// - 100 HP/sec when Returning (leashing NPCs)
 /// - 5 HP/sec when out of combat (normal regen)
 /// - 0 HP/sec when in combat
 pub fn regenerate_resources(
     tuning: Res<Tuning>,
-    mut query: Query<(&mut Health, &mut Stamina, &mut Mana, Option<&mut Endurance>, &CombatState, Option<&crate::components::returning::Returning>, Option<&crate::components::status::Status>, Option<&crate::components::ActorAttributes>)>,
+    mut query: Query<(&mut Health, &mut Mana, Option<&mut Endurance>, &CombatState, Option<&crate::components::returning::Returning>)>,
     time: Res<Time>,
 ) {
     let current_time = time.elapsed();
+    let dt = time.delta_secs();
     // Cap dt to 1 second max to prevent instant regen from stale last_update values
     // (e.g., after network updates where last_update gets reset to Duration::ZERO)
     const MAX_DT_SECS: f32 = 1.0;
 
-    for (mut health, mut stamina, mut mana, endurance, combat_state, returning_opt, status, attrs) in &mut query {
+    for (mut health, mut mana, endurance, combat_state, returning_opt) in &mut query {
         // The dead regenerate nothing, in combat or out
         if health.state <= 0.0 {
             continue;
         }
 
         // Calculate time delta for this tick
-        let dt_stamina = current_time.saturating_sub(stamina.last_update).as_secs_f32().min(MAX_DT_SECS);
         let dt_mana = current_time.saturating_sub(mana.last_update).as_secs_f32().min(MAX_DT_SECS);
 
-        // Stamina refills slower the more tired the actor is
-        // Slower spent; faster waiting on a swing it could not strike, by Patience
-        let tired = 1.0 - tuning.fatigue_stamina * Endurance::fatigue_of(&tuning, endurance.as_deref());
-        let patient = 1.0 + attrs.filter(|_| status.is_some_and(|status| status.waiting)).map_or(0.0, |attrs| attrs.patience_regen(&tuning));
-        stamina.state = (stamina.state + stamina.regen_rate * tired * patient * dt_stamina).min(stamina.max);
-        stamina.last_update = current_time;
-
-        // Endurance comes back only once stamina is whole again
-        if let Some(mut endurance) = endurance.filter(|endurance| stamina.state >= stamina.max && endurance.state < endurance.max) {
-            let regained = tuning.endurance_regen * endurance.max * dt_stamina;
+        if let Some(mut endurance) = endurance.filter(|endurance| endurance.state < endurance.max) {
+            let regained = tuning.endurance_regen * endurance.max * dt;
             endurance.state = (endurance.state + regained).min(endurance.max);
         }
 
@@ -94,7 +84,7 @@ pub fn regenerate_resources(
         };
 
         if health_regen_rate > 0.0 {
-            health.state = (health.state + health_regen_rate * dt_stamina).min(health.max);
+            health.state = (health.state + health_regen_rate * dt).min(health.max);
         }
     }
 }
@@ -107,13 +97,12 @@ pub fn check_death(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
-    mut query: Query<(Entity, Has<crate::components::behaviour::PlayerControlled>, &mut Health, &mut Stamina, &mut Mana), Without<RespawnTimer>>,
+    mut query: Query<(Entity, Has<crate::components::behaviour::PlayerControlled>, &mut Health, &mut Mana), Without<RespawnTimer>>,
 ) {
-    for (ent, is_player, mut health, mut stamina, mut mana) in &mut query {
+    for (ent, is_player, mut health, mut mana) in &mut query {
         if health.state <= 0.0 {
             // Set resources to 0 to prevent "zombie" state
             health.state = 0.0;
-            stamina.state = 0.0;
             mana.state = 0.0;
 
             if is_player {
@@ -137,9 +126,9 @@ pub fn process_respawn(
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
     spawn_point: Res<SpawnPoint>,
-    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Stamina, &mut Mana, Option<&mut Endurance>, &mut Loc, &mut Position, &ActorAttributes, &EntityType, Option<&crate::components::behaviour::PlayerControlled>)>,
+    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Mana, Option<&mut Endurance>, &mut Loc, &mut Position, &ActorAttributes, &EntityType, Option<&crate::components::behaviour::PlayerControlled>)>,
 ) {
-    for (ent, timer, mut health, mut stamina, mut mana, endurance, mut loc, mut position, attrs, entity_type, player_controlled) in &mut query {
+    for (ent, timer, mut health, mut mana, endurance, mut loc, mut position, attrs, entity_type, player_controlled) in &mut query {
         if timer.should_respawn(time.elapsed()) {
             let spawn_qrz = spawn_point.0;
             *loc = Loc::new(spawn_qrz);
@@ -150,7 +139,6 @@ pub fn process_respawn(
 
             // Restore resources to full
             health.state = health.max;
-            stamina.state = stamina.max;
             mana.state = mana.max;
 
             // Remove respawn timer
@@ -172,12 +160,6 @@ pub fn process_respawn(
                 event: Event::Incremental {
                     ent,
                     component: MessageComponent::Health(*health),
-                },
-            });
-            writer.write(Do {
-                event: Event::Incremental {
-                    ent,
-                    component: MessageComponent::Stamina(*stamina),
                 },
             });
             writer.write(Do {
@@ -224,8 +206,6 @@ mod tests {
     // ===== INVARIANT TESTS =====
     // These tests verify critical architectural invariants
 
-    /// Resource Regeneration During Combat
-    /// Stamina and mana MUST regenerate during combat.
     #[test]
     fn the_dead_regenerate_nothing() {
         use bevy::ecs::system::RunSystemOnce;
@@ -236,7 +216,6 @@ mod tests {
         world.init_resource::<Tuning>();
         let body = world.spawn((
             Health { state: 0.0, max: 100.0 },
-            Stamina { state: 0.0, max: 100.0, regen_rate: 10.0, last_update: std::time::Duration::ZERO },
             Mana { state: 0.0, max: 100.0, regen_rate: 10.0, last_update: std::time::Duration::ZERO },
             CombatState { in_combat: false, last_action: std::time::Duration::ZERO },
         )).id();
@@ -244,31 +223,30 @@ mod tests {
         world.run_system_once(regenerate_resources).unwrap();
 
         assert_eq!(world.get::<Health>(body).unwrap().state, 0.0, "out of combat, still dead");
-        assert_eq!(world.get::<Stamina>(body).unwrap().state, 0.0);
+        assert_eq!(world.get::<Mana>(body).unwrap().state, 0.0);
     }
 
     #[test]
-    fn endurance_comes_back_only_while_stamina_is_full() {
+    fn endurance_comes_back_in_combat_as_out() {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
         let mut time = Time::<()>::default();
         time.advance_by(std::time::Duration::from_secs(1));
         world.insert_resource(time);
         world.init_resource::<Tuning>();
-        let pools = |stamina: f32| (
+        let pools = |in_combat: bool| (
             Health { state: 100.0, max: 100.0 },
-            Stamina { state: stamina, max: 100.0, regen_rate: 0.0, last_update: std::time::Duration::ZERO },
             Mana { state: 100.0, max: 100.0, regen_rate: 0.0, last_update: std::time::Duration::ZERO },
             Endurance { state: 10.0, max: 100.0 },
-            CombatState { in_combat: true, last_action: std::time::Duration::ZERO },
+            CombatState { in_combat, last_action: std::time::Duration::ZERO },
         );
-        let rested = world.spawn(pools(100.0)).id();
-        let winded = world.spawn(pools(60.0)).id();
+        let fighting = world.spawn(pools(true)).id();
+        let resting = world.spawn(pools(false)).id();
 
         world.run_system_once(regenerate_resources).unwrap();
 
-        assert!(world.get::<Endurance>(rested).unwrap().state > 10.0, "stamina full, it comes back, in combat as out");
-        assert_eq!(world.get::<Endurance>(winded).unwrap().state, 10.0, "stamina short, it waits");
+        assert!(world.get::<Endurance>(fighting).unwrap().state > 10.0, "in combat, it comes back");
+        assert_eq!(world.get::<Endurance>(fighting).unwrap().state, world.get::<Endurance>(resting).unwrap().state, "as fast as out of it");
     }
 
     #[test]
@@ -278,11 +256,10 @@ mod tests {
         let attrs = test_attrs_simple(0, -5);
         let fighter = Fighter::new(&tuning, attrs, now);
         assert_eq!((fighter.health.state, fighter.health.max), (attrs.max_health(&tuning), attrs.max_health(&tuning)));
-        assert_eq!((fighter.stamina.state, fighter.stamina.max), (attrs.max_stamina(&tuning), attrs.max_stamina(&tuning)));
         assert_eq!(fighter.mana.state, fighter.mana.max);
         assert_eq!((fighter.endurance.state, fighter.endurance.max), (attrs.max_endurance(&tuning), attrs.max_endurance(&tuning)));
-        assert!(fighter.stamina.regen_rate > 0.0 && fighter.mana.regen_rate > 0.0, "both regenerate, in combat or out");
-        assert_eq!(fighter.stamina.last_update, now);
+        assert!(fighter.mana.regen_rate > 0.0, "it regenerates, in combat or out");
+        assert_eq!(fighter.mana.last_update, now);
         assert!(!fighter.combat_state.in_combat);
         assert!(fighter.queue.is_empty());
     }
@@ -314,12 +291,6 @@ mod tests {
             Health {
                 max: 100.0,
                 state: 0.0,
-            },
-            Stamina {
-                max: 100.0,
-                state: 0.0,
-                regen_rate: 10.0,
-                last_update: std::time::Duration::ZERO,
             },
             Mana {
                 max: 100.0,
@@ -366,12 +337,6 @@ mod tests {
                 max: 100.0,
                 state: 0.0,
             },
-            Stamina {
-                max: 100.0,
-                state: 0.0,
-                regen_rate: 10.0,
-                last_update: Duration::ZERO,
-            },
             Mana {
                 max: 100.0,
                 state: 0.0,
@@ -416,12 +381,6 @@ mod tests {
             Health {
                 max: 100.0,
                 state: 50.0,
-            },
-            Stamina {
-                max: 100.0,
-                state: 50.0,
-                regen_rate: 10.0,
-                last_update: Duration::ZERO,
             },
             Mana {
                 max: 100.0,

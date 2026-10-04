@@ -35,7 +35,6 @@ pub fn generate_actor_spawn_events(
     side: Option<&common_bevy::components::behaviour::Side>,
     heading: Option<&Heading>,
     health: Option<&Health>,
-    stamina: Option<&Stamina>,
     endurance: Option<&Endurance>,
     mana: Option<&Mana>,
     combat_state: Option<&CombatState>,
@@ -61,10 +60,6 @@ pub fn generate_actor_spawn_events(
 
     if let Some(h) = health {
         events.push(Do { event: Event::Incremental { ent, component: Component::Health(*h) }});
-    }
-
-    if let Some(s) = stamina {
-        events.push(Do { event: Event::Incremental { ent, component: Component::Stamina(*s) }});
     }
 
     if let Some(e) = endurance {
@@ -111,7 +106,6 @@ pub fn try_spawn(
         Option<&common_bevy::components::behaviour::Side>,
         Option<&Heading>,
         Option<&Health>,
-        Option<&Stamina>,
         Option<&Endurance>,
         Option<&Mana>,
         Option<&CombatState>,
@@ -123,7 +117,7 @@ pub fn try_spawn(
         let ent = *ent;
         // Skip dead players (those with RespawnTimer) - they shouldn't be discovered/spawned
         // until process_respawn sends an official Spawn event after the 5-second timer
-        let Ok((loc, typ, attrs, player_controlled, side, heading, health, stamina, endurance, mana, combat_state, equipment)) = query.get(ent) else { continue; };
+        let Ok((loc, typ, attrs, player_controlled, side, heading, health, endurance, mana, combat_state, equipment)) = query.get(ent) else { continue; };
 
         // Send Spawn + all available actor components using shared helper
         // This ensures remote players are immediately visible and targetable
@@ -136,7 +130,6 @@ pub fn try_spawn(
             side,
             heading,
             health,
-            stamina,
             endurance,
             mana,
             combat_state,

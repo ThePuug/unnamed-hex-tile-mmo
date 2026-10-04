@@ -17,7 +17,7 @@ use common_bevy::{
         entity_type::EntityType,
         heading::Heading,
         loaded_by::LoadedBy,
-        resources::{CombatState, Endurance, Health, Mana, RespawnTimer, Stamina},
+        resources::{CombatState, Endurance, Health, Mana, RespawnTimer},
         ActorAttributes, Loc,
     },
     plugins::nntree::{NNTree, NearestNeighbor},
@@ -61,7 +61,6 @@ pub fn update_area_of_interest(
         Option<&common_bevy::components::behaviour::Side>,
         Option<&Heading>,
         Option<&Health>,
-        Option<&Stamina>,
         Option<&Endurance>,
         Option<&Mana>,
         Option<&CombatState>,
@@ -98,10 +97,10 @@ pub fn update_area_of_interest(
                     if !e_loaded_by.players.contains(&other_ent) {
                         e_loaded_by.players.insert(other_ent);
                         // Send Spawn(E) to other player
-                        if let Ok((_, &typ, attrs, pc, side, heading, health, stamina, endurance, mana, combat_state, equipment)) = actor_query.get(ent) {
+                        if let Ok((_, &typ, attrs, pc, side, heading, health, endurance, mana, combat_state, equipment)) = actor_query.get(ent) {
                             let spawn_events = generate_actor_spawn_events(
                                 ent, typ, **loc,
-                                attrs.copied(), pc, side, heading, health, stamina, endurance, mana, combat_state, equipment,
+                                attrs.copied(), pc, side, heading, health, endurance, mana, combat_state, equipment,
                             );
                             for event in spawn_events {
                                 let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
@@ -119,10 +118,10 @@ pub fn update_area_of_interest(
                         if !other_loaded_by.players.contains(&ent) {
                             other_loaded_by.players.insert(ent);
                             // Send Spawn(other) to E
-                            if let Ok((&other_loc, &other_typ, other_attrs, other_pc, other_side, other_heading, other_health, other_stamina, other_endurance, other_mana, other_combat_state, other_equipment)) = actor_query.get(other_ent) {
+                            if let Ok((&other_loc, &other_typ, other_attrs, other_pc, other_side, other_heading, other_health, other_endurance, other_mana, other_combat_state, other_equipment)) = actor_query.get(other_ent) {
                                 let spawn_events = generate_actor_spawn_events(
                                     other_ent, other_typ, *other_loc,
-                                    other_attrs.copied(), other_pc, other_side, other_heading, other_health, other_stamina, other_endurance, other_mana, other_combat_state, other_equipment,
+                                    other_attrs.copied(), other_pc, other_side, other_heading, other_health, other_endurance, other_mana, other_combat_state, other_equipment,
                                 );
                                 for event in spawn_events {
                                     let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();

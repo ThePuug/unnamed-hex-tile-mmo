@@ -2,9 +2,9 @@
 //! The gate asks, in order and the same of every ability: is the caster
 //! alive; is it out of recovery, or taking the combo it was offered, or
 //! reacting through the recovery (an auto-attack asks its clock instead);
-//! does it strike a living hostile within the ability's reach and its arc;
-//! can it pay. Then the ability's own effect runs, the
-//! stamina and endurance are paid, the clients are told, a strike across
+//! does it strike a living hostile within the ability's reach and its arc.
+//! Nothing it holds refuses it. Then the ability's own effect runs, its
+//! endurance is paid, the clients are told, a strike across
 //! the caster's line breaks its stride, and the recovery starts, longer
 //! for an actor whose endurance is spent. A skill costs endurance, and so
 //! does a swing struck across the caster's line; a swing within its
@@ -44,7 +44,7 @@ use common_bevy::{
         heading::Heading,
         reaction_queue::{QueuedThreat, ReactionQueue},
         recovery::GlobalRecovery,
-        resources::{Endurance, Health, RespawnTimer, Stamina},
+        resources::{Endurance, Health, RespawnTimer},
         status::Status,
         target::Target,
         ActorAttributes, AttackRange, Loc, Swing,
@@ -67,7 +67,6 @@ use common_bevy::tuning::Tuning;
 /// Why the gate refused an ability.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AbilityFailReason {
-    InsufficientStamina,
     NoTargets,
     OnCooldown,
     OutOfRange,
@@ -116,9 +115,9 @@ fn released_into(tuning: &Tuning, damage: f32, released: bool) -> (f32, f32) {
 /// of `prior`, the recovery its caster is in, or let through it (an
 /// auto-attack's own clock is asked apart); for one with a reach out of
 /// `reach`, a target at `foe`'s distance and inside its arc, None for no
-/// target; and `stamina` to pay `cost`. An NPC's skills channel asks the
+/// target. An NPC's skills channel asks the
 /// same of what it perceives, so it never weighs a skill the gate refuses.
-pub fn admits(ability: AbilityType, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool)>, stamina: f32, cost: f32) -> Result<(), AbilityFailReason> {
+pub fn admits(ability: AbilityType, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool)>) -> Result<(), AbilityFailReason> {
     if ability != AbilityType::AutoAttack && !may_use(ability, prior, attrs) {
         return Err(AbilityFailReason::OnCooldown);
     }
@@ -130,9 +129,6 @@ pub fn admits(ability: AbilityType, prior: Option<&GlobalRecovery>, attrs: &Acto
         if !in_arc {
             return Err(AbilityFailReason::NotFacing);
         }
-    }
-    if stamina < cost {
-        return Err(AbilityFailReason::InsufficientStamina);
     }
     Ok(())
 }
@@ -151,7 +147,6 @@ pub struct Abilities<'w, 's> {
         Option<&'static AttackRange>,
         Has<RespawnTimer>,
     )>,
-    pub stamina: Query<'w, 's, &'static mut Stamina>,
     pub endurance: Query<'w, 's, &'static mut Endurance>,
     pub recoveries: Query<'w, 's, &'static GlobalRecovery>,
     pub queues: Query<'w, 's, &'static mut ReactionQueue>,
@@ -241,15 +236,13 @@ impl Abilities<'_, '_> {
         let foe = cast.target_loc.map(|target_loc| (loc.distance(&target_loc), in_arc(&tuning, heading.as_ref(), Some(&attrs), &loc, &target_loc)));
 
         // A swing struck across the caster's line is a skill's effort: it
-        // costs stamina, the more the further round its arc, and waits
-        // without it. A Perfect Stride waives it
+        // costs endurance, the more the further round its arc. A Perfect
+        // Stride waives it
         let across = cast.target_loc.is_some_and(|target_loc| targeting::across(heading.as_ref(), &loc, &target_loc));
         let share = if self.strides(ent) { 0.0 } else {
             heading.as_ref().zip(cast.target_loc).map_or(0.0, |(heading, target_loc)| targeting::across_share(&tuning, heading, &loc, &target_loc))
         };
-        let cost = tuning.cost(ability) + if ability == AbilityType::AutoAttack { tuning.off_arc_stamina * share } else { 0.0 };
-        let stamina = self.stamina.get(ent).map_or(0.0, |stamina| stamina.state);
-        admits(ability, prior.as_ref(), &attrs, reach, foe, stamina, cost).map_err(Some)?;
+        admits(ability, prior.as_ref(), &attrs, reach, foe).map_err(Some)?;
 
         // The recovery runs by how spent the actor is as it uses the ability
         let fatigue = self.endurance.get(ent).map_or(0.0, |endurance| endurance.fatigue(&tuning));
@@ -268,13 +261,7 @@ impl Abilities<'_, '_> {
             AbilityType::PerfectStride => stride::take(self, &cast),
         }.map_err(Some)?;
 
-        if cost > 0.0 {
-            if let Ok(mut stamina) = self.stamina.get_mut(ent) {
-                stamina.state -= cost;
-                self.writer.write(Do { event: GameEvent::Incremental { ent, component: MessageComponent::Stamina(*stamina) } });
-            }
-        }
-        // Endurance is spent beside the stamina and refuses nothing: a
+        // Endurance is spent and refuses nothing: a
         // skill's, or for a swing struck across the caster's line a share
         // of the Force it strikes with, the more the further round its arc.
         // A reaction has paid besides for what it cleared (`react`)
@@ -428,9 +415,14 @@ mod tests {
         said.0.extend(reader.read().map(|message| message.event.clone()));
     }
 
+    /// The numbers the game plays by, with every endurance price set, so
+    /// what endurance does is seen whatever the live prices stand at
+    const PRICED: Tuning = Tuning { endurance_cost: 0.04, reaction_effort: 1.2, reaction_per_threat: 0.23, off_arc_cost: 0.25, ..Tuning::DEFAULT };
+
     fn arena() -> App {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, NNTreePlugin, crate::plugin::CombatPlugin));
+        app.insert_resource(PRICED);
         let mut tiles = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
         for q in -12..=12 {
             for r in -12..=12 {
@@ -452,7 +444,6 @@ mod tests {
             ActorAttributes::default(),
             side,
             Health { state: 1000.0, max: 1000.0 },
-            Stamina { state: 100.0, max: 100.0, regen_rate: 0.0, last_update: Duration::ZERO },
             Endurance::full(100.0),
             ReactionQueue::default(),
             Heading::from_hex(Qrz { q: 1, r: 0, z: 0 }),
@@ -511,8 +502,7 @@ mod tests {
         let said = ask(&mut app, caster, AbilityType::Frenzy, Some(near));
         assert!(used(&said, AbilityType::Frenzy));
         let world = app.world();
-        assert!(world.get::<Stamina>(caster).unwrap().state < 100.0, "it is paid for");
-        assert!(world.get::<Endurance>(caster).unwrap().state < 100.0, "in endurance too");
+        assert!(world.get::<Endurance>(caster).unwrap().state < 100.0, "it is paid for in endurance");
         assert!(world.get::<GlobalRecovery>(caster).is_some(), "and leaves its user recovering");
         let told = |event: &GameEvent| matches!(event, GameEvent::Incremental { ent, component: MessageComponent::Recovery(_) } if *ent == caster);
         assert!(said.iter().any(told), "a recovery its clients are sent whole");
@@ -558,7 +548,7 @@ mod tests {
 
     #[test]
     fn a_feint_queues_one_light_strike() {
-        let tuning = Tuning::DEFAULT;
+        let tuning = PRICED;
         let mut app = arena();
         let caster = actor(&mut app, Side::PLAYERS, 0);
         let near = actor(&mut app, Side::WILD, 1);
@@ -609,7 +599,7 @@ mod tests {
 
     #[test]
     fn a_reaction_pays_endurance_for_what_it_clears_and_without_it_is_spent_not_refused() {
-        let tuning = Tuning::DEFAULT;
+        let tuning = PRICED;
         use common_bevy::systems::combat::queue::{create_threat, insert_threat};
         let mut app = arena();
         let defender = actor(&mut app, Side::PLAYERS, 0);
@@ -640,14 +630,12 @@ mod tests {
         assert_eq!(endurance(&app), 0.0, "and leaves its user spent");
 
         app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
-        let full = app.world().get::<Stamina>(defender).unwrap().max;
-        app.world_mut().get_mut::<Stamina>(defender).unwrap().state = full;
         assert_eq!(refused(&mut app, defender, AbilityType::Parry, None), Some(AbilityFailReason::NoTargets), "with nothing queued there is nothing to answer");
     }
 
     #[test]
     fn a_reaction_takes_the_front_threat_and_its_span_and_leaves_what_lands_later() {
-        let tuning = Tuning::DEFAULT;
+        let tuning = PRICED;
         use common_bevy::systems::combat::queue::{create_threat, insert_threat};
         let mut app = arena();
         let defender = actor(&mut app, Side::PLAYERS, 0);
@@ -692,10 +680,8 @@ mod tests {
         assert!(queue(&app, leaper).iter().all(|threat| threat.ability != Some(AbilityType::Frenzy)), "and the blow misses");
         assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "a leap clear strikes nothing");
 
-        // Out of reach, once its recovery has run and its stamina is back: onto it
+        // Out of reach, once its recovery has run: onto it
         app.world_mut().entity_mut(leaper).remove::<GlobalRecovery>();
-        let full = app.world().get::<Stamina>(leaper).unwrap().max;
-        app.world_mut().get_mut::<Stamina>(leaper).unwrap().state = full;
         assert!(used(&ask(&mut app, leaper, AbilityType::Leap, Some(near)), AbilityType::Leap));
         app.update();
         app.update();
@@ -705,7 +691,7 @@ mod tests {
 
     #[test]
     fn a_perfect_stride_strikes_across_its_line_without_breaking_stride() {
-        let tuning = Tuning::DEFAULT;
+        let tuning = PRICED;
         let graceful = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         let broken = |app: &App, ent: Entity| app.world().get::<Status>(ent).is_some_and(|status| status.stride.is_some());
         let mut app = arena();
@@ -735,8 +721,8 @@ mod tests {
     }
 
     #[test]
-    fn a_swing_across_its_line_costs_stamina_and_endurance_but_ahead_or_in_a_perfect_stride() {
-        let tuning = Tuning::DEFAULT;
+    fn a_swing_across_its_line_costs_endurance_but_ahead_or_in_a_perfect_stride() {
+        let tuning = PRICED;
         let graceful = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         let mut app = arena();
         let [ahead, across, striding, tired] = [0, 0, 0, 0].map(|q| actor(&mut app, Side::PLAYERS, q));
@@ -756,25 +742,21 @@ mod tests {
 
         assert!(used(&ask(&mut app, ahead, AbilityType::AutoAttack, Some(front)), AbilityType::AutoAttack));
         assert_eq!(spent(&app, ahead), 0.0, "a swing within the forward faces is free");
-        let stamina = |app: &App, ent: Entity| app.world().get::<Stamina>(ent).unwrap().state;
-        let before = stamina(&app, across);
         assert!(used(&ask(&mut app, across, AbilityType::AutoAttack, Some(side)), AbilityType::AutoAttack));
         assert!(spent(&app, across) > 0.0, "one struck across its line costs endurance");
-        assert!(stamina(&app, across) < before, "and stamina, as a skill would");
 
-        app.world_mut().get_mut::<Stamina>(tired).unwrap().state = 0.0;
-        assert!(!used(&ask(&mut app, tired, AbilityType::AutoAttack, Some(side)), AbilityType::AutoAttack), "without the stamina it waits");
-        assert!(used(&ask(&mut app, tired, AbilityType::AutoAttack, Some(front)), AbilityType::AutoAttack), "while one ahead is free");
+        app.world_mut().get_mut::<Endurance>(tired).unwrap().state = 0.0;
+        assert!(used(&ask(&mut app, tired, AbilityType::AutoAttack, Some(side)), AbilityType::AutoAttack), "and is struck spent all the same");
 
         assert!(used(&ask(&mut app, striding, AbilityType::PerfectStride, None), AbilityType::PerfectStride));
-        let (stride, before) = (spent(&app, striding), stamina(&app, striding));
+        let stride = spent(&app, striding);
         assert!(used(&ask(&mut app, striding, AbilityType::AutoAttack, Some(side)), AbilityType::AutoAttack));
-        assert_eq!((spent(&app, striding), stamina(&app, striding)), (stride, before), "a Perfect Stride waives it");
+        assert_eq!(spent(&app, striding), stride, "a Perfect Stride waives it");
     }
 
     #[test]
     fn grit_fills_by_its_tier_and_only_a_full_bank_is_released() {
-        let tuning = Tuning::DEFAULT;
+        let tuning = PRICED;
         let mut app = arena();
         let gritty = actor(&mut app, Side::PLAYERS, 0);
         let attacker = actor(&mut app, Side::WILD, 1);

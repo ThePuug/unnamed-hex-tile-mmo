@@ -28,23 +28,17 @@ pub struct Tuning {
     pub share_bend: f32,
     /// Health every actor has before Vitality and level
     pub base_health: f32,
-    /// Stamina every actor has
-    pub stamina_base: f32,
     /// Endurance an actor holds for each point of its Endurance potency
     pub endurance_pool: f32,
-    /// Endurance a skill costs for each point of the stamina it costs, as a
-    /// share of the potency its kind reads
+    /// Endurance a skill costs for each point of its cost, as a share of
+    /// the potency its kind reads
     pub endurance_cost: f32,
-    /// Share of its endurance an actor regains each second its stamina is full
+    /// Share of its endurance an actor regains each second, in combat or out
     pub endurance_regen: f32,
     /// Endurance an auto-attack struck past the forward faces costs for each
     /// point of the Force it strikes with; one struck within them is free
     pub off_arc_cost: f32,
-    /// Stamina an auto-attack struck past the forward faces costs, as a
-    /// skill would; one struck within them is free. Without it the swing
-    /// waits
-    pub off_arc_stamina: f32,
-    /// Share of those two costs a swing pays in the first band past the
+    /// Share of that cost a swing pays in the first band past the
     /// forward faces, out to the first Grace tier's arc
     pub off_arc_share_min: f32,
     /// Share it pays in the last band, out to the third tier's arc; the
@@ -58,8 +52,6 @@ pub struct Tuning {
     /// The power fatigue rises by as endurance is spent: above 1 it stays
     /// light while the pool holds and bites as it empties
     pub fatigue_bend: f32,
-    /// Share slower an actor's stamina refills with its endurance spent
-    pub fatigue_stamina: f32,
     /// Health each point of Vitality adds before level
     pub health_per_vitality: f32,
     /// The health level curve, `(1 + level × k)^p`
@@ -94,10 +86,10 @@ pub struct Tuning {
     pub grit_bind: f32,
     /// Seconds that slow holds
     pub grit_bind_secs: f32,
-    /// Share faster an actor's stamina refills while it waits on a swing it
+    /// Share faster an actor's recovery runs while it waits on a swing it
     /// could not strike, by its Patience
-    pub patience_regen_min: f32,
-    pub patience_regen_max: f32,
+    pub patience_recovery_min: f32,
+    pub patience_recovery_max: f32,
 
     // --- Contest: what a relative advantage wins ---
     /// Advantage in points that wins half of an effect's ceiling; every
@@ -135,7 +127,7 @@ pub struct Tuning {
     /// What a crit multiplies its blow by
     pub crit_power: f32,
 
-    // --- The early kit: each skill's stamina, its seconds of recovery, and
+    // --- The early kit: each skill's cost, its seconds of recovery, and
     // what it does, every value flat. What sizes a skill is the potency its
     // kind reads, an action's Intuition and a reaction's Concentration; what
     // shapes it is the commitment it shows ---
@@ -208,18 +200,15 @@ impl Tuning {
         damage_curve_p: 1.75,
         share_bend: 800.0,
         base_health: 588.0,
-        stamina_base: 100.0,
         endurance_pool: 7.551,
-        endurance_cost: 0.04,
-        endurance_regen: 0.05,
-        off_arc_cost: 0.25,
-        off_arc_stamina: 15.0,
+        endurance_cost: 0.0,
+        endurance_regen: 0.01,
+        off_arc_cost: 0.0,
         off_arc_share_min: 1.0 / 3.0,
         off_arc_share_max: 1.0,
         fatigue_recovery: 3.545,
         fatigue_window: 0.319,
         fatigue_bend: 3.297,
-        fatigue_stamina: 0.742,
         health_per_vitality: 0.649,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
@@ -234,14 +223,14 @@ impl Tuning {
         grit_share: 0.146,
         grit_bind: 0.213,
         grit_bind_secs: 3.0,
-        patience_regen_min: 0.0,
-        patience_regen_max: 1.19,
+        patience_recovery_min: 0.0,
+        patience_recovery_max: 0.6,
         contest_scale: 800.0,
         contest_per_level: 15.0,
         pushback_share: 0.5,
         composure_share: 0.231,
-        combo_floor: 0.1,
-        combo_share: 0.66,
+        combo_floor: 0.5,
+        combo_share: 0.4,
         reaction_window: 3.0,
         window_bonus: 0.35,
         auto_damage: 1.029,
@@ -250,32 +239,32 @@ impl Tuning {
         damage_spread: 0.05,
         crit_chance: 0.35,
         crit_power: 1.5,
-        frenzy_cost: 42.751,
-        frenzy_recovery: 3.089,
+        frenzy_cost: 40.0,
+        frenzy_recovery: 4.0,
         frenzy_damage: 1.209,
-        feint_cost: 15.533,
-        feint_recovery: 1.798,
+        feint_cost: 15.0,
+        feint_recovery: 4.0,
         feint_damage: 0.5,
-        overpower_cost: 46.594,
-        overpower_recovery: 5.651,
+        overpower_cost: 45.0,
+        overpower_recovery: 6.0,
         overpower_damage: 2.326,
-        punish_cost: 15.607,
-        punish_recovery: 3.808,
+        punish_cost: 15.0,
+        punish_recovery: 4.0,
         punish_damage: 1.274,
         punish_bonus: 0.707,
-        parry_cost: 32.343,
-        parry_recovery: 1.055,
-        reaction_effort: 1.918,
-        reaction_per_threat: 0.422,
-        counter_cost: 77.483,
-        counter_recovery: 3.452,
+        parry_cost: 35.0,
+        parry_recovery: 4.0,
+        reaction_effort: 0.0,
+        reaction_per_threat: 0.0,
+        counter_cost: 75.0,
+        counter_recovery: 8.0,
         counter_reflect: 0.954,
         leap_cost: 5.0,
-        leap_recovery: 2.246,
+        leap_recovery: 4.0,
         leap_distance: 10,
         leap_strike: 1.72,
-        stride_cost: 45.259,
-        stride_recovery: 2.67,
+        stride_cost: 45.0,
+        stride_recovery: 6.0,
         frenzy_line: 0.2,
         overpower_line: 0.2,
         punish_line: 0.2,
@@ -287,7 +276,8 @@ impl Tuning {
         stride_damage: 1.111,
     };
 
-    /// Stamina `ability` costs; an auto-attack is free.
+    /// What `ability` costs, its endurance reckoned from it
+    /// (`ActorAttributes::skill_endurance`); an auto-attack is free.
     pub fn cost(&self, ability: AbilityType) -> f32 {
         match ability {
             AbilityType::AutoAttack => 0.0,
@@ -379,8 +369,8 @@ impl Tuning {
             "grit_share" => &mut self.grit_share,
             "grit_bind" => &mut self.grit_bind,
             "grit_bind_secs" => &mut self.grit_bind_secs,
-            "patience_regen_min" => &mut self.patience_regen_min,
-            "patience_regen_max" => &mut self.patience_regen_max,
+            "patience_recovery_min" => &mut self.patience_recovery_min,
+            "patience_recovery_max" => &mut self.patience_recovery_max,
             "tempo_ceiling" => &mut self.tempo_ceiling,
             "potency_base" => &mut self.potency_base,
             "potency_per_point" => &mut self.potency_per_point,
@@ -388,18 +378,15 @@ impl Tuning {
             "damage_curve_p" => &mut self.damage_curve_p,
             "share_bend" => &mut self.share_bend,
             "base_health" => &mut self.base_health,
-            "stamina_base" => &mut self.stamina_base,
             "endurance_pool" => &mut self.endurance_pool,
             "endurance_cost" => &mut self.endurance_cost,
             "endurance_regen" => &mut self.endurance_regen,
             "off_arc_cost" => &mut self.off_arc_cost,
-            "off_arc_stamina" => &mut self.off_arc_stamina,
             "off_arc_share_min" => &mut self.off_arc_share_min,
             "off_arc_share_max" => &mut self.off_arc_share_max,
             "fatigue_recovery" => &mut self.fatigue_recovery,
             "fatigue_window" => &mut self.fatigue_window,
             "fatigue_bend" => &mut self.fatigue_bend,
-            "fatigue_stamina" => &mut self.fatigue_stamina,
             "health_per_vitality" => &mut self.health_per_vitality,
             "health_curve_k" => &mut self.health_curve_k,
             "health_curve_p" => &mut self.health_curve_p,

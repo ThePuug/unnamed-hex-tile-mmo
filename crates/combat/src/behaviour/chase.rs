@@ -84,8 +84,8 @@ pub fn chase(
         Option<&AssignedHex>,
         &Side,
         Option<&Status>,
-        Option<&common_bevy::components::resources::Stamina>,
         (Option<&Swing>, Option<&mut Move>, Option<&EntityType>, Option<&Sight>, Option<&Bar>),
+        (Option<&common_bevy::components::recovery::GlobalRecovery>, Option<&common_bevy::components::resources::Endurance>),
     )>, Query<(Entity, &Heading)>)>,
     q_target: Query<(&Loc, &Health, &Side, Option<&ActorAttributes>, Option<&Status>)>,
     q_home: Query<&Loc, Without<Chase>>,
@@ -99,7 +99,7 @@ pub fn chase(
 ) {
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, stamina, (swing, mut under_way, kind, sight, bar)) in actors.p0().iter_mut() {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, (swing, mut under_way, kind, sight, bar), (recovery, endurance)) in actors.p0().iter_mut() {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
@@ -160,13 +160,12 @@ pub fn chase(
         let mind = minds.mind(archetype);
         let Some(floor) = floor else { continue };
         // How fast it and its target cover ground, in tiles a second; it
-        // closes by a Leap where its bar holds one it can pay for
+        // closes by a Leap where its bar holds one
         let tile = (map.convert(Qrz { q: 1, r: 0, z: 0 }) - map.convert(Qrz::default())).xz().length().max(f32::EPSILON);
         let per_second = |speed: f32| speed * 1000.0 / tile;
         let own_pace = per_second(speed);
         let target_pace = per_second(common_bevy::systems::movement::speed(target_attrs.map_or(0.005, |a| a.movement_speed()), target_status));
         let leap = bar.filter(|bar| bar.0.contains(&AbilityType::Leap))
-            .filter(|_| stamina.is_some_and(|stamina| stamina.state >= tuning.cost(AbilityType::Leap)))
             .and_then(|_| attrs)
             .map(|attrs| attrs.leap_tiles(&tuning) as i32);
         // It knows how far its target strikes from by having been struck,
@@ -184,7 +183,8 @@ pub fn chase(
             }
         };
         let striding = status.is_some_and(Status::is_striding);
-        let held = stamina.map_or(f32::INFINITY, |stamina| stamina.state.max(f32::EPSILON));
+        let held = endurance.map_or(f32::INFINITY, |endurance| endurance.state.max(f32::EPSILON));
+        let force = attrs.map_or(0.0, |attrs| attrs.force(&tuning));
         let room = |at: Qrz| (chase.leash_distance - at.flat_distance(&home)).max(0) as f32 / chase.leash_distance.max(1) as f32;
         let tiles: Vec<Qrz> = std::iter::once(floor)
             .chain(map.neighbors(floor).into_iter().map(|(neighbor, _)| neighbor).filter(|&neighbor| uncrowded(&nntree, neighbor)))
@@ -196,7 +196,7 @@ pub fn chase(
             let (strike_cost, breaks_stride) = if at == floor { (0.0, false) } else {
                 let heading = Heading::from_hex(Qrz { z: 0, ..at - floor });
                 let share = if striding { 0.0 } else { across_share(&tuning, &heading, loc, target_loc) };
-                (tuning.off_arc_stamina * share / held, across(Some(&heading), loc, target_loc) && !striding)
+                (tuning.off_arc_cost * share * force / held, across(Some(&heading), loc, target_loc) && !striding)
             };
             Candidate {
                 tile: at,
@@ -218,7 +218,7 @@ pub fn chase(
         }
         let footing = Footing {
             grace: attrs.is_some_and(|attrs| attrs.grace().index() > 0),
-            stamina: stamina.zip(attrs).map_or(1.0, |(stamina, attrs)| stamina.state / attrs.max_stamina(&tuning).max(1.0)),
+            recovering: recovery.filter(|recovery| recovery.is_active()).map_or(0.0, |recovery| (recovery.remaining / recovery.duration.max(f32::EPSILON)).min(1.0)),
             // Its Patience pays only while its swing clock runs, engaged
             patience: attrs.filter(|_| swing.is_some_and(|swing| swing.due.is_some()))
                 .map_or(0, |attrs| attrs.patience().index() as u32),

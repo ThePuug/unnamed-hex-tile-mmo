@@ -6,8 +6,7 @@
 //! and from the commitments its user holds. A commitment's considerations
 //! read its own state, so an NPC that scores them plays the way its
 //! commitment pays: no style is written down. Every skill's worth is
-//! weighed against both its costs, the stamina and the recovery it leaves,
-//! and no decision is weighed that the gate would refuse
+//! weighed against its cost, the recovery it leaves, and no decision is weighed that the gate would refuse
 //! ([`admits`]). The channel's do-nothing decision, waiting, scores
 //! [`WAIT`], and a skill is used only where it scores higher; the combo its
 //! recovery offers scores [`COMBO`] more, so a chain carries on rather than
@@ -39,14 +38,9 @@ pub const COMBO: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "fatigue_after", "stamina_left", "recovery_left", "foe_just_acted", "worth_answering",
+    "fatigue_after", "recovery_left", "foe_just_acted", "worth_answering",
     "leash_left", "strike_worth", "effect_added", "reactions_left", "foe_across",
 ];
-
-/// `stamina_left`'s bounds and curve, which the movement channel's reads by
-/// the same name share: one setting shapes both
-pub const STAMINA_LEFT_BOUNDS: (f32, f32) = (0.0, 0.5);
-pub const STAMINA_LEFT_CURVE: Curve = Curve::RISING.floored(1.0);
 
 /// `leash_left`'s bounds and curve, shared with the movement channel's
 pub const LEASH_LEFT_BOUNDS: (f32, f32) = (0.0, 0.3);
@@ -64,7 +58,6 @@ pub struct View {
     pub ability: AbilityType,
     pub attrs: ActorAttributes,
     pub health: f32,
-    pub stamina: f32,
     pub endurance: f32,
     pub endurance_max: f32,
     pub recovery: Option<GlobalRecovery>,
@@ -217,7 +210,7 @@ fn reason(ability: AbilityType, view: &View) -> Option<(&'static str, Vec<Consid
         },
         AbilityType::PerfectStride => ("stride", Part::Effect),
     };
-    let mut considerations = vec![USABLE, ENDURANCE, STAMINA_LEFT, RECOVERY_LEFT];
+    let mut considerations = vec![USABLE, ENDURANCE, RECOVERY_LEFT];
     considerations.extend(part_considerations(part));
     considerations.extend(commitment_considerations(part, &view.attrs));
     if effect(view).is_some() {
@@ -317,16 +310,16 @@ fn health(view: &View) -> f32 {
 // --- Any skill ---
 
 /// The gate would let the skill through on its foe now: its recovery, its
-/// foe within its reach and arc for one that strikes, and its stamina
+/// foe within its reach and arc for one that strikes
 const USABLE: Considered = step("usable", |view| {
     let foe = view.foe.map(|foe| (foe.distance, foe.in_arc));
-    flag(admits(view.ability, view.recovery.as_ref(), &view.attrs, view.reach, foe, view.stamina, view.tuning.cost(view.ability)).is_ok())
+    flag(admits(view.ability, view.recovery.as_ref(), &view.attrs, view.reach, foe).is_ok())
 });
 
 /// The fatigue it would be left with once it paid the skill's endurance:
-/// fatigue bites as the pool empties, lengthening every recovery,
-/// shortening every window against it and slowing its stamina, so a
-/// skill that spends it near empty must be worth the more
+/// fatigue bites as the pool empties, lengthening every recovery and
+/// shortening every window against it, so a skill that spends it near
+/// empty must be worth the more
 const ENDURANCE: Considered = Consideration {
     name: "fatigue_after",
     read: |view| {
@@ -338,15 +331,6 @@ const ENDURANCE: Considered = Consideration {
     },
     bounds: (0.0, 1.0),
     curve: Curve::FALLING.floored(0.1),
-};
-
-/// The stamina it would have left once it paid, of its most: what it keeps
-/// for whatever it does next. Weighed only as far as a mind lowers its floor
-const STAMINA_LEFT: Considered = Consideration {
-    name: "stamina_left",
-    read: |view| (view.stamina - view.tuning.cost(view.ability)) / view.attrs.max_stamina(&view.tuning).max(1.0),
-    bounds: STAMINA_LEFT_BOUNDS,
-    curve: STAMINA_LEFT_CURVE,
 };
 
 /// Seconds of recovery the skill would leave it in, as its fatigue, a combo
@@ -489,7 +473,6 @@ mod tests {
             ability,
             attrs,
             health: 600.0,
-            stamina: 100.0,
             // A pool deep enough to clear the blows these tests queue
             endurance: attrs.max_endurance(tuning).max(1000.0),
             endurance_max: attrs.max_endurance(tuning).max(1000.0),
@@ -582,9 +565,6 @@ mod tests {
         let mut behind = view(&tuning, AbilityType::Feint, ActorAttributes::default());
         behind.foe = Some(Foe { in_arc: false, ..behind.foe.unwrap() });
         assert_eq!(scored(&mut behind, "strike"), 0.0, "outside its arc");
-        let mut poor = view(&tuning, AbilityType::Feint, ActorAttributes::default());
-        poor.stamina = 0.0;
-        assert_eq!(scored(&mut poor, "strike"), 0.0, "what it cannot afford");
         let mut recovering = view(&tuning, AbilityType::Feint, ActorAttributes::default());
         recovering.recovery = Some(GlobalRecovery::new(2.0));
         assert_eq!(scored(&mut recovering, "strike"), 0.0, "in a recovery that offers it nothing");
@@ -665,23 +645,6 @@ mod tests {
         assert!(chosen.is_some_and(|decision| decision.ability == AbilityType::Feint), "carried on past a wait it would not beat alone");
         let mut fresh = view(&tuning, AbilityType::Feint, ActorAttributes::default());
         assert!(choose(&mut fresh, &[AbilityType::Feint], &mind, |_| 0.0).is_none(), "and out of recovery the same strike waits");
-    }
-
-    #[test]
-    fn a_mind_keeping_stamina_back_takes_the_cheaper_strike_when_short() {
-        let tuning = Tuning::DEFAULT;
-        let mut minds = crate::behaviour::mind::Minds::default();
-        minds.set("all.stamina_left.floor", "0").unwrap();
-        let mind = minds.mind(None);
-        let attrs = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
-        let short = tuning.cost(AbilityType::Overpower) + attrs.max_stamina(&tuning) * 0.1;
-        let shape = |ability, stamina| {
-            let mut v = view(&tuning, ability, attrs);
-            v.stamina = stamina;
-            response(&mut v, "stamina_left", &mind)
-        };
-        assert!(shape(AbilityType::Overpower, short) < shape(AbilityType::Feint, short), "the dearer strike leaves less behind");
-        assert_eq!(shape(AbilityType::Overpower, attrs.max_stamina(&tuning)), shape(AbilityType::Feint, attrs.max_stamina(&tuning)), "with a full pool, neither is held back");
     }
 
     #[test]

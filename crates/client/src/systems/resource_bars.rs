@@ -9,15 +9,13 @@ use common_bevy::components::resources::*;
 /// A pool a bar shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pool {
-    Stamina,
     Health,
     Endurance,
 }
 
 /// The bars, left to right, each with its fill's colour. A pool listed here
 /// and answered in [`Pool::of`] has its bar.
-const BARS: [(Pool, Color); 3] = [
-    (Pool::Stamina, Color::srgb(0.9, 0.8, 0.0)),
+const BARS: [(Pool, Color); 2] = [
     (Pool::Health, Color::srgb(0.9, 0.1, 0.1)),
     (Pool::Endurance, Color::srgb(0.2, 0.65, 0.45)),
 ];
@@ -27,9 +25,8 @@ const EASE: f32 = 5.0;
 
 impl Pool {
     /// What the pool holds now and at most
-    fn of(self, (health, stamina, endurance): (&Health, &Stamina, &Endurance)) -> (f32, f32) {
+    fn of(self, (health, endurance): (&Health, &Endurance)) -> (f32, f32) {
         match self {
-            Pool::Stamina => (stamina.state, stamina.max),
             Pool::Health => (health.state, health.max),
             Pool::Endurance => (endurance.state, endurance.max),
         }
@@ -131,7 +128,7 @@ pub fn setup(
 pub fn update(
     mut bars: Query<(&mut PoolBar, &mut Node)>,
     mut labels: Query<(&mut PoolText, &mut Text)>,
-    viewed: Query<(&Health, &Stamina, &Endurance), With<crate::components::Viewed>>,
+    viewed: Query<(&Health, &Endurance), With<crate::components::Viewed>>,
     time: Res<Time>,
 ) {
     let Ok(pools) = viewed.single() else {

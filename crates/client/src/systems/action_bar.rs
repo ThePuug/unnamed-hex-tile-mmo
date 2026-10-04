@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{Actor, behaviour::Side, recovery::GlobalRecovery, resources::*, Loc, heading::Heading, entity_type::EntityType},
+    components::{Actor, behaviour::Side, recovery::GlobalRecovery, Loc, heading::Heading, entity_type::EntityType},
     message::AbilityType,
     plugins::nntree::NNTree,
     systems::targeting::select_target,
@@ -35,10 +35,6 @@ pub struct SlotIcon;
 /// Marker for ability slot keybind label
 #[derive(Component)]
 pub struct SlotKeybind;
-
-/// Marker for ability slot cost badge
-#[derive(Component)]
-pub struct SlotCost;
 
 /// Marker for the glow on a slot whose ability is offered as a combo
 #[derive(Component)]
@@ -160,7 +156,6 @@ pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 8] {
 /// Fills the bar with the loadout of the actor the client sees as, anew
 /// whenever that actor changes.
 pub fn sync_loadout(
-    tuning: Res<Tuning>,
     asset_server: Res<AssetServer>,
     mut commands: Commands,
     seer: Query<(Entity, &EntityType), With<crate::components::Viewed>>,
@@ -178,7 +173,7 @@ pub fn sync_loadout(
     let icons: Handle<Font> = asset_server.load(ICON_FONT);
     commands.entity(container).with_children(|parent| {
         for (keybind, ability) in KEYS.into_iter().zip(loadout(typ)) {
-            spawn_slot(&tuning, &icons, parent, keybind, ability);
+            spawn_slot(&icons, parent, keybind, ability);
         }
     });
 }
@@ -229,7 +224,7 @@ fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, icons: &Handle<Font>, ke
     slot
 }
 
-fn spawn_slot(tuning: &Tuning, icons: &Handle<Font>, parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>) {
+fn spawn_slot(icons: &Handle<Font>, parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>) {
     // Ability icon, named for its glyph in `ICON_FONT`
     let icon = match ability {
         None => "",
@@ -244,32 +239,6 @@ fn spawn_slot(tuning: &Tuning, icons: &Handle<Font>, parent: &mut ChildSpawnerCo
         Some(AbilityType::PerfectStride) => "\u{F046E}",  // md-run_fast
     };
     slot_frame(parent, icons, keybind, icon).insert(AbilitySlot { ability }).with_children(|parent| {
-        // Cost badge (bottom-right corner)
-        if let Some(ability) = ability {
-            let cost_text = match ability {
-                AbilityType::AutoAttack => String::new(),     // Free (passive)
-                _ => format!("{:.0}", tuning.cost(ability)),
-            };
-
-            if !cost_text.is_empty() {
-                parent.spawn((
-                    Text::new(cost_text),
-                    TextFont {
-                        font_size: FontSize::Px(12.0),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.9, 0.8, 0.0)),  // Yellow for stamina cost
-                    Node {
-                        position_type: PositionType::Absolute,
-                        bottom: Val::Px(4.),
-                        right: Val::Px(6.),
-                        ..default()
-                    },
-                    SlotCost,
-                ));
-            }
-        }
-
         // Cooldown overlay: dark rect anchored at bottom, height = recovery %
         parent.spawn((
             Node {
@@ -305,19 +274,19 @@ fn spawn_slot(tuning: &Tuning, icons: &Handle<Font>, parent: &mut ChildSpawnerCo
     });
 }
 
-/// Update action bar states based on player's resources, recovery, and combo
+/// Update action bar states based on player's recovery, combo and range
 /// Updates border colors and the combo glow's visibility
 pub fn update(
     tuning: Res<Tuning>,
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
     mut glow_query: Query<&mut Visibility, With<ComboGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
-    player_query: Query<(Entity, &Stamina, &Mana, &Loc, &Heading, Option<&GlobalRecovery>, Option<&common_bevy::components::ActorAttributes>, Option<&common_bevy::components::AttackRange>, Has<Actor>), With<crate::components::Viewed>>,
+    player_query: Query<(Entity, &Loc, &Heading, Option<&GlobalRecovery>, Option<&common_bevy::components::ActorAttributes>, Option<&common_bevy::components::AttackRange>, Has<Actor>), With<crate::components::Viewed>>,
     entity_query: Query<(&EntityType, &Loc, Option<&Side>)>,
     nntree: Res<NNTree>,
 ) {
-    // The resources and position of the actor the client sees as
-    let Ok((player_ent, stamina, mana, player_loc, player_heading, recovery_opt, attrs, own_reach, controlled)) = player_query.single() else {
+    // The position of the actor the client sees as
+    let Ok((player_ent, player_loc, player_heading, recovery_opt, attrs, own_reach, controlled)) = player_query.single() else {
         return;
     };
 
@@ -351,10 +320,7 @@ pub fn update(
         // targets here; a viewed actor's targets are the server's
         let state = if controlled {
             get_ability_state(
-                &tuning,
                 ability,
-                stamina,
-                mana,
                 recovery_active,
                 offered.is_some_and(|combo| combo.ability == ability),
                 early_reaction(ability),
@@ -367,9 +333,7 @@ pub fn update(
                 &entity_query,
             )
         } else if recovery_active {
-            recovery_state(&tuning, ability, stamina, offered.is_some_and(|combo| combo.ability == ability), early_reaction(ability))
-        } else if stamina.state < tuning.cost(ability) {
-            AbilityState::InsufficientResources
+            recovery_state(offered.is_some_and(|combo| combo.ability == ability), early_reaction(ability))
         } else {
             AbilityState::Ready
         };
@@ -382,7 +346,6 @@ pub fn update(
                 (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), true)  // Green + BRIGHT YELLOW GLOW!
             },
             AbilityState::EarlyReaction => (BorderColor::all(Color::srgb(0.2, 0.8, 0.9)), false),   // Cyan
-            AbilityState::InsufficientResources => (BorderColor::all(Color::srgb(0.9, 0.1, 0.1)), false), // Red
             AbilityState::OutOfRange => (BorderColor::all(Color::srgb(0.8, 0.5, 0.1)), false),      // Orange
         };
         *border_color = border;
@@ -437,31 +400,25 @@ enum AbilityState {
     OnCooldown,
     ComboUnlocked,  // The ability the recovery offers as its combo (gold glow)
     EarlyReaction,  // A reaction Preparation fires early in the chain (cyan)
-    InsufficientResources,
     OutOfRange,
 }
 
 /// A slot's state in recovery: the offered combo glowing from the moment
-/// it is offered, a reaction Preparation fires early usable where its
-/// stamina pays, and all else waiting
-fn recovery_state(tuning: &Tuning, ability: AbilityType, stamina: &Stamina, offered: bool, early_reaction: bool) -> AbilityState {
+/// it is offered, a reaction Preparation fires early usable, and all else
+/// waiting
+fn recovery_state(offered: bool, early_reaction: bool) -> AbilityState {
     if offered {
         AbilityState::ComboUnlocked
-    } else if !early_reaction {
-        AbilityState::OnCooldown
-    } else if stamina.state < tuning.cost(ability) {
-        AbilityState::InsufficientResources
-    } else {
+    } else if early_reaction {
         AbilityState::EarlyReaction
+    } else {
+        AbilityState::OnCooldown
     }
 }
 
-/// Determine ability state based on resources, recovery, combo, and targeting
+/// Determine ability state based on recovery, combo, and targeting
 fn get_ability_state(
-    tuning: &Tuning,
     ability: AbilityType,
-    stamina: &Stamina,
-    _mana: &Mana,
     recovery_active: bool,
     offered: bool,
     early_reaction: bool,
@@ -476,17 +433,13 @@ fn get_ability_state(
     // In recovery the offered combo glows from the start, a reaction
     // Preparation fires early shows it may, and all else waits
     if recovery_active {
-        return recovery_state(tuning, ability, stamina, offered, early_reaction);
+        return recovery_state(offered, early_reaction);
     }
 
     // The actors the player may target: those on a side hostile to its own
     let side_of = |ent: Entity| entity_query.get(ent).ok().and_then(|(_, _, side)| side.copied());
     let own_side = side_of(player_ent);
     let hostile = |ent: Entity| side_of(ent).zip(own_side).is_some_and(|(side, own)| side.is_hostile_to(own));
-
-    if stamina.state < tuning.cost(ability) {
-        return AbilityState::InsufficientResources;
-    }
 
     // Only a strike is held to a reach: it needs the hostile the player
     // faces within it
@@ -532,17 +485,10 @@ mod loadout_tests {
 mod tests {
     use super::*;
 
-    fn stamina(state: f32) -> Stamina {
-        Stamina { state, max: 100.0, regen_rate: 0.0, last_update: std::time::Duration::ZERO }
-    }
-
     #[test]
     fn in_recovery_the_combo_glows_an_early_reaction_shows_usable_and_the_rest_waits() {
-        let tuning = Tuning::DEFAULT;
-        let full = stamina(100.0);
-        assert!(matches!(recovery_state(&tuning, AbilityType::Feint, &full, true, false), AbilityState::ComboUnlocked));
-        assert!(matches!(recovery_state(&tuning, AbilityType::Parry, &full, false, true), AbilityState::EarlyReaction));
-        assert!(matches!(recovery_state(&tuning, AbilityType::Parry, &stamina(0.0), false, true), AbilityState::InsufficientResources), "one it cannot pay for");
-        assert!(matches!(recovery_state(&tuning, AbilityType::Frenzy, &full, false, false), AbilityState::OnCooldown));
+        assert!(matches!(recovery_state(true, false), AbilityState::ComboUnlocked));
+        assert!(matches!(recovery_state(false, true), AbilityState::EarlyReaction));
+        assert!(matches!(recovery_state(false, false), AbilityState::OnCooldown));
     }
 }

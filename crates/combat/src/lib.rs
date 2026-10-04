@@ -193,7 +193,7 @@ pub fn resolve_dot_tick(
 /// is taken up at (`behaviour::ACQUISITION_RANGE`), first contact or not.
 /// As it is engaged its clock starts, a swing due at once; disengaged, no
 /// swing waits. A swing that has come due and gone unstruck leaves it
-/// waiting (`Status::waiting`), and Patience refills its stamina faster,
+/// waiting (`Status::waiting`), and Patience runs its recovery faster,
 /// until it swings or uses a skill. Grit banks only blows, so only in the
 /// fight, and the fight's end empties it.
 #[allow(clippy::too_many_arguments)]

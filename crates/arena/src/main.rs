@@ -63,7 +63,7 @@ use common_bevy::{
         heading::Heading,
         reaction_queue::{QueuedThreat, ReactionQueue},
         recovery::GlobalRecovery,
-        resources::{Endurance, Health, SpawnPoint, Stamina},
+        resources::{Endurance, Health, SpawnPoint},
         status::Status,
         target::Target,
         AttackRange, Loc,
@@ -210,10 +210,9 @@ struct Ledger {
     across: u32,
     strikes: u32,
     waiting: f32,
-    /// Seconds its stamina refilled, and of those the seconds at Patience's
-    /// faster rate, its swing waiting
-    refilling: f32,
-    refilling_fast: f32,
+    /// Of the seconds it recovered, those at Patience's faster rate, its
+    /// swing waiting
+    recovering_fast: f32,
     /// Threats queued on it, of those landed and still queued at the end,
     /// and the clears that took the rest: how many each clear answered
     /// (Awareness); and the damage of each, whole
@@ -250,8 +249,7 @@ impl Ledger {
         self.across += other.across;
         self.strikes += other.strikes;
         self.waiting += other.waiting;
-        self.refilling += other.refilling;
-        self.refilling_fast += other.refilling_fast;
+        self.recovering_fast += other.recovering_fast;
         self.queued_damage_on += other.queued_damage_on;
         self.landed_damage_on += other.landed_damage_on;
         self.pending_damage_on += other.pending_damage_on;
@@ -403,18 +401,17 @@ fn tally_states(world: &mut World, step: f32) {
     let locs: HashMap<Entity, Loc> = locs.iter(world).map(|(ent, loc)| (ent, *loc)).collect();
     let mut headings = world.query::<(Entity, &Heading)>();
     let headings: HashMap<Entity, Heading> = headings.iter(world).map(|(ent, heading)| (ent, *heading)).collect();
-    let mut actors = world.query::<(Entity, &Health, &Loc, &AttackRange, Option<&Target>, Option<&GlobalRecovery>, Option<&Status>, Option<&Endurance>, Option<&Stamina>)>();
-    let frames: Vec<_> = actors.iter(world).filter(|(_, health, ..)| health.state > 0.0).map(|(ent, _, loc, range, target, recovery, status, endurance, stamina)| {
+    let mut actors = world.query::<(Entity, &Health, &Loc, &AttackRange, Option<&Target>, Option<&GlobalRecovery>, Option<&Status>, Option<&Endurance>)>();
+    let frames: Vec<_> = actors.iter(world).filter(|(_, health, ..)| health.state > 0.0).map(|(ent, _, loc, range, target, recovery, status, endurance)| {
         let foe = target.and_then(|target| target.entity);
         let beyond = foe.and_then(|foe| locs.get(&foe)).is_some_and(|foe| loc.flat_distance(foe) > range.0);
         let past_faces = foe.and_then(|foe| Some((locs.get(&foe)?, headings.get(&foe)?)))
             .is_some_and(|(foe_loc, heading)| !targeting::is_in_facing_cone(*heading, *foe_loc, *loc));
         let waiting = status.is_some_and(|status| status.waiting);
-        let refilling = stamina.is_some_and(|stamina| stamina.state < stamina.max);
-        (ent, recovery.is_some(), Status::holds(status), status.is_some_and(|status| status.slow.is_some()), beyond, past_faces, Endurance::fatigue_of(&tuning, endurance), waiting, refilling)
+        (ent, recovery.is_some(), Status::holds(status), status.is_some_and(|status| status.slow.is_some()), beyond, past_faces, Endurance::fatigue_of(&tuning, endurance), waiting)
     }).collect();
     let mut tally = world.resource_mut::<Tally>();
-    for (ent, recovering, held, slowed, beyond, past_faces, fatigue, waiting, refilling) in frames {
+    for (ent, recovering, held, slowed, beyond, past_faces, fatigue, waiting) in frames {
         let Some(ledger) = tally.of(ent) else { continue };
         let during = |state: bool| if state { step } else { 0.0 };
         ledger.alive += step;
@@ -425,8 +422,7 @@ fn tally_states(world: &mut World, step: f32) {
         ledger.past_faces += during(past_faces);
         ledger.fatigue += fatigue * step;
         ledger.waiting += during(waiting);
-        ledger.refilling += during(refilling);
-        ledger.refilling_fast += during(refilling && waiting);
+        ledger.recovering_fast += during(recovering && waiting);
     }
 }
 

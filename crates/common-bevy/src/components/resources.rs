@@ -45,45 +45,10 @@ impl Health {
     }
 }
 
-/// Stamina, as the server holds it and sends it
-/// - state: what the actor has now
-/// - max: Maximum stamina calculated from ActorAttributes
-/// - regen_rate: Stamina regeneration per second
-/// - last_update: Duration from Time::elapsed() when last regenerated
-#[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
-pub struct Stamina {
-    pub state: f32,
-    pub max: f32,
-    pub regen_rate: f32,
-    #[serde(skip)]
-    pub last_update: Duration,
-}
-
-impl Stamina {
-    /// Stamina every actor regains each second
-    pub const REGEN: f32 = 10.0;
-
-    /// A pool of `max`, full, regenerating from `now`
-    pub fn full(max: f32, now: Duration) -> Self {
-        Self { state: max, max, regen_rate: Self::REGEN, last_update: now }
-    }
-}
-
-impl Default for Stamina {
-    fn default() -> Self {
-        Self {
-            state: 100.0,
-            max: 100.0,
-            regen_rate: 10.0,
-            last_update: Duration::ZERO,
-        }
-    }
-}
-
 /// Endurance, as the server holds it and sends it: what an actor spends on
-/// every skill and reaction beside its stamina. It refuses nothing; spent,
-/// it tires the actor ([`Endurance::fatigue`]). It refills only while
-/// stamina is full (`resources::regenerate_resources`).
+/// every skill and reaction. It refuses nothing; spent, it tires the actor
+/// ([`Endurance::fatigue`]). It refills steadily, in combat or out
+/// (`resources::regenerate_resources`).
 #[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
 pub struct Endurance {
     pub state: f32,
@@ -104,8 +69,7 @@ impl Endurance {
     /// How tired the actor is, 0 with the pool full to 1 empty: the share
     /// spent raised to `Tuning::fatigue_bend`, so it stays light while the
     /// pool holds and bites as it empties. Fatigue lengthens the actor's
-    /// recoveries, shortens the windows of threats against it and slows
-    /// its stamina's refill.
+    /// recoveries and shortens the windows of threats against it.
     pub fn fatigue(&self, tuning: &Tuning) -> f32 {
         if self.max <= 0.0 {
             return 0.0;

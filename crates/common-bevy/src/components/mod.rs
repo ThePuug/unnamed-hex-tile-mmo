@@ -498,7 +498,7 @@ impl ActorAttributes {
     /// early in a chain once a strike taken in its own time stands in it
     /// (`combos::may_use`)
     pub fn preparation(&self) -> CommitmentTier { self.tier(Attribute::Discipline) }
-    /// Patience, Instinct: stamina refilled faster waiting on a swing it could not strike (`patience_regen`)
+    /// Patience, Instinct: recovery runs faster waiting on a swing it could not strike (`patience_recovery`)
     pub fn patience(&self) -> CommitmentTier { self.tier(Attribute::Instinct) }
     /// Awareness, Resolve: how far behind the front threat its reactions reach (`span`)
     pub fn awareness(&self) -> CommitmentTier { self.tier(Attribute::Resolve) }
@@ -542,11 +542,6 @@ impl ActorAttributes {
     pub fn share(&self, tuning: &Tuning, attribute: Attribute) -> f32 {
         let points = self.value(attribute) as f32;
         points / (points + tuning.share_bend)
-    }
-
-    /// The stamina pool: `Tuning::stamina_base`, the same for every actor
-    pub fn max_stamina(&self, tuning: &Tuning) -> f32 {
-        tuning.stamina_base
     }
 
     /// The endurance pool: `Tuning::endurance_pool` for each point of
@@ -595,8 +590,8 @@ impl ActorAttributes {
     }
 
     /// The endurance `ability`, a skill, costs this actor:
-    /// `Tuning::endurance_cost` of base potency for each point of stamina it
-    /// costs, so a cheap skill is cheap in both. It grows with level as the
+    /// `Tuning::endurance_cost` of base potency for each point of its cost
+    /// (`Tuning::cost`). It grows with level as the
     /// pool does, so a pool with no Discipline in it holds the same count of
     /// a build's skills at any level. A reaction pays besides for what it
     /// clears (`reaction_effort`).
@@ -625,11 +620,11 @@ impl ActorAttributes {
         self.grit().index() as u8
     }
 
-    /// The share faster this actor's stamina refills while it waits on a
-    /// swing it could not strike (`Status::waiting`): `Tuning::patience_regen_min`
-    /// at T0 to `patience_regen_max` at T3.
-    pub fn patience_regen(&self, tuning: &Tuning) -> f32 {
-        self.patience().between(tuning.patience_regen_min, tuning.patience_regen_max)
+    /// The share faster this actor's recovery runs while it waits on a
+    /// swing it could not strike (`Status::waiting`): `Tuning::patience_recovery_min`
+    /// at T0 to `patience_recovery_max` at T3.
+    pub fn patience_recovery(&self, tuning: &Tuning) -> f32 {
+        self.patience().between(tuning.patience_recovery_min, tuning.patience_recovery_max)
     }
 
     /// How far behind the front threat this actor's reactions reach, from
@@ -666,8 +661,8 @@ pub struct Moon();
 /// When an actor's next auto-attack comes due, as the server counts it:
 /// an interval after its last, or the moment its fight found it not yet
 /// swinging. A due swing waits for a target it can strike, and while it
-/// waits Patience refills the actor's stamina faster
-/// (`ActorAttributes::patience_regen`). None disengaged: a swing is due,
+/// waits Patience runs the actor's recovery faster
+/// (`ActorAttributes::patience_recovery`). None disengaged: a swing is due,
 /// and nothing waits until an engagement starts the clock.
 #[derive(Clone, Component, Copy, Debug, Default)]
 pub struct Swing {
@@ -731,12 +726,11 @@ mod tests {
     }
 
     #[test]
-    fn endurance_deepens_its_own_pool_and_every_actor_has_the_one_stamina() {
-        let tuning = Tuning::DEFAULT;
+    fn endurance_deepens_its_own_pool_and_a_skill_costs_by_its_own_cost() {
+        let tuning = Tuning { endurance_cost: 0.04, ..Tuning::DEFAULT };
         let disciplined = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
-        assert_eq!(disciplined.max_stamina(&tuning), plain.max_stamina(&tuning));
         assert!(disciplined.max_endurance(&tuning) > mighty.max_endurance(&tuning), "Discipline deepens it");
         assert!(mighty.max_endurance(&tuning) > plain.max_endurance(&tuning), "and so does level");
         use crate::message::AbilityType::{Counter, Frenzy};
@@ -745,15 +739,15 @@ mod tests {
         assert!((skills(&mighty) - skills(&plain)).abs() < 1e-3, "with no Discipline a pool holds as many skills at any level");
 
         let (instinctive, resolute) = (ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0), ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0));
-        assert_eq!(instinctive.skill_endurance(&tuning, Frenzy), mighty.skill_endurance(&tuning, Frenzy), "a skill costs what its stamina does, whatever the build");
+        assert_eq!(instinctive.skill_endurance(&tuning, Frenzy), mighty.skill_endurance(&tuning, Frenzy), "a skill costs what its cost does, whatever the build");
         assert_eq!(resolute.skill_endurance(&tuning, Counter), mighty.skill_endurance(&tuning, Counter));
         use crate::message::AbilityType::{Feint, Overpower};
-        assert!(plain.skill_endurance(&tuning, Feint) < plain.skill_endurance(&tuning, Overpower), "a skill cheap in stamina is cheap in endurance");
+        assert!(plain.skill_endurance(&tuning, Feint) < plain.skill_endurance(&tuning, Overpower), "a cheap skill is cheap in endurance");
     }
 
     #[test]
     fn a_skill_is_raised_by_its_line_and_the_shared_ones_by_none() {
-        let tuning = Tuning::DEFAULT;
+        let tuning = Tuning { reaction_effort: 1.0, reaction_per_threat: 0.2, ..Tuning::DEFAULT };
         use crate::message::AbilityType::*;
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let instinctive = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
@@ -809,12 +803,12 @@ mod tests {
     }
 
     #[test]
-    fn patience_refills_stamina_faster_by_its_tier() {
+    fn patience_runs_recovery_faster_by_its_tier() {
         let tuning = Tuning::DEFAULT;
         let patient = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
-        assert_eq!(ActorAttributes::default().patience_regen(&tuning), tuning.patience_regen_min, "without Patience, no faster");
-        assert_eq!(patient.patience_regen(&tuning), patient.patience().between(tuning.patience_regen_min, tuning.patience_regen_max));
-        assert!(patient.patience_regen(&tuning) > ActorAttributes::default().patience_regen(&tuning));
+        assert_eq!(ActorAttributes::default().patience_recovery(&tuning), tuning.patience_recovery_min, "without Patience, no faster");
+        assert_eq!(patient.patience_recovery(&tuning), patient.patience().between(tuning.patience_recovery_min, tuning.patience_recovery_max));
+        assert!(patient.patience_recovery(&tuning) > ActorAttributes::default().patience_recovery(&tuning));
     }
 
     #[test]

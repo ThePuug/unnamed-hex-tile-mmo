@@ -29,8 +29,8 @@ pub struct Status {
     /// Carrying past the bag's burden limit
     pub burden: bool,
     /// Waiting on a swing it could not strike, and nothing struck or used
-    /// since: Patience refills its stamina faster
-    /// (`ActorAttributes::patience_regen`). The server decides and sends it.
+    /// since: Patience runs its recovery faster
+    /// (`ActorAttributes::patience_recovery`). The server decides and sends it.
     pub waiting: bool,
 }
 

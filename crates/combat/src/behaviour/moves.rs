@@ -4,8 +4,8 @@
 //! Every candidate tile is scored for each thing a step may be for, as a
 //! skill's decision is ([`super::utility`]): to engage its target, from
 //! where it strikes it soonest, and, with its Patience under way, to keep
-//! away from it while its stamina refills, out of its target's reach but
-//! ready to strike. The best pair is taken where it beats holding, which
+//! away from it while its recovery runs down, out of its target's reach
+//! but ready to strike. The best pair is taken where it beats holding, which
 //! scores [`HOLD`]; the decision under way scores [`MOMENTUM`] more, so two
 //! scoring alike do not trade places every tick. Every reading is the
 //! candidate's own: the seconds from it to striking and to being struck,
@@ -16,7 +16,7 @@
 use bevy::prelude::*;
 use qrz::Qrz;
 
-use super::{mind::Mind, skills::{LEASH_LEFT_BOUNDS, LEASH_LEFT_CURVE, STAMINA_LEFT_BOUNDS, STAMINA_LEFT_CURVE}, utility::{score, Consideration, Curve}};
+use super::{mind::Mind, skills::{LEASH_LEFT_BOUNDS, LEASH_LEFT_CURVE}, utility::{score, Consideration, Curve}};
 
 /// What holding scores unless a mind sets it: the threshold every step must
 /// beat.
@@ -28,7 +28,7 @@ pub const MOMENTUM: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "leash_left", "stamina_left", "stamina_spent", "detour", "time_to_strike", "time_to_be_struck",
+    "leash_left", "ready", "recovering", "detour", "time_to_strike", "time_to_be_struck",
     "behind", "strike_cost", "stride_kept",
 ];
 
@@ -40,7 +40,7 @@ pub enum Move {
     Hold,
     /// It steps to where it strikes its target soonest
     Engage,
-    /// It steps out of its target's reach while its stamina refills,
+    /// It steps out of its target's reach while its recovery runs down,
     /// staying ready to strike: Patience's
     KeepAway,
 }
@@ -50,10 +50,10 @@ pub enum Move {
 pub struct Footing {
     /// Its Grace lets it strike past its forward faces
     pub grace: bool,
-    /// Share of its stamina it has
-    pub stamina: f32,
-    /// Its Patience tier, while it is engaged and its stamina refills
-    /// faster waiting on a swing: none otherwise
+    /// Share of its recovery it has left: 0 out of recovery
+    pub recovering: f32,
+    /// Its Patience tier, while it is engaged and its recovery runs faster
+    /// waiting on a swing: none otherwise
     pub patience: u32,
 }
 
@@ -78,7 +78,7 @@ pub struct Candidate {
     /// third it stands outside its target's forward faces, where a target
     /// without Grace cannot strike it
     pub behind: f32,
-    /// What a strike on the step there costs, of the stamina it has:
+    /// What a strike on the step there costs, of the endurance it has:
     /// nothing within its target's forward faces of its heading, more the
     /// further round its arc
     pub strike_cost: f32,
@@ -118,9 +118,9 @@ pub fn choose(footing: &Footing, candidates: &[Candidate], under_way: Move, mind
 pub fn weigh(footing: &Footing, candidate: &Candidate, decision: Move, mind: &Mind) -> f32 {
     let considerations: &[Consideration<Ground>] = match decision {
         Move::Hold => return mind.hold,
-        Move::Engage if footing.grace => &[DETOUR, LEASH_LEFT, STAMINA_LEFT, BEHIND, STRIKE_COST, STRIDE_KEPT],
-        Move::Engage => &[DETOUR, LEASH_LEFT, STAMINA_LEFT],
-        Move::KeepAway if footing.patience > 0 => &[TIME_TO_BE_STRUCK, TIME_TO_STRIKE, STAMINA_SPENT, LEASH_LEFT],
+        Move::Engage if footing.grace => &[DETOUR, LEASH_LEFT, READY, BEHIND, STRIKE_COST, STRIDE_KEPT],
+        Move::Engage => &[DETOUR, LEASH_LEFT, READY],
+        Move::KeepAway if footing.patience > 0 => &[TIME_TO_BE_STRUCK, TIME_TO_STRIKE, RECOVERING, LEASH_LEFT],
         Move::KeepAway => return 0.0,
     };
     let ground = Ground { footing: *footing, candidate: *candidate };
@@ -149,26 +149,25 @@ const LEASH_LEFT: Consideration<Ground> = Consideration {
     curve: LEASH_LEFT_CURVE,
 };
 
-/// The stamina it would have left, of its most: a step costs none, so what
-/// it has. One setting with a skill's `stamina_left`
-const STAMINA_LEFT: Consideration<Ground> = Consideration {
-    name: "stamina_left",
-    read: |ground| ground.footing.stamina,
-    bounds: STAMINA_LEFT_BOUNDS,
-    curve: STAMINA_LEFT_CURVE,
+/// How far through its recovery it is: 1 out of it. Weighed only as far
+/// as a mind lowers its floor, holding back from a fight it cannot act in
+const READY: Consideration<Ground> = Consideration {
+    name: "ready",
+    read: |ground| 1.0 - ground.footing.recovering,
+    bounds: (0.0, 0.5),
+    curve: Curve::RISING.floored(1.0),
 };
 
-/// Patience: stamina spent, which it refills faster out of its target's
-/// reach
-const STAMINA_SPENT: Consideration<Ground> = Consideration {
-    name: "stamina_spent",
-    read: |ground| ground.footing.stamina,
+/// Patience: recovery left, which runs faster out of its target's reach
+const RECOVERING: Consideration<Ground> = Consideration {
+    name: "recovering",
+    read: |ground| ground.footing.recovering,
     bounds: (0.0, 1.0),
-    curve: Curve::FALLING,
+    curve: Curve::RISING,
 };
 
 /// Seconds from the tile until its target could strike it: the later, the
-/// safer it refills
+/// safer it recovers
 const TIME_TO_BE_STRUCK: Consideration<Ground> = Consideration {
     name: "time_to_be_struck",
     read: |ground| ground.candidate.time_to_be_struck,
@@ -177,7 +176,7 @@ const TIME_TO_BE_STRUCK: Consideration<Ground> = Consideration {
 };
 
 /// Seconds from the tile until it could strike: kept short, it stays ready
-/// to strike as its stamina comes back
+/// to strike as its recovery runs out
 const TIME_TO_STRIKE: Consideration<Ground> = Consideration {
     name: "time_to_strike",
     read: |ground| ground.candidate.time_to_strike,
@@ -195,7 +194,7 @@ const BEHIND: Consideration<Ground> = Consideration {
     curve: Curve::RISING.floored(0.2),
 };
 
-/// What a strike on the step costs: the dearer, against the stamina it has
+/// What a strike on the step costs: the dearer, against the endurance it has
 /// left, the less the step pays
 const STRIKE_COST: Consideration<Ground> = Consideration {
     name: "strike_cost",
@@ -217,7 +216,7 @@ mod tests {
     use super::*;
 
     fn footing() -> Footing {
-        Footing { grace: false, stamina: 1.0, patience: 0 }
+        Footing { grace: false, recovering: 0.0, patience: 0 }
     }
 
     /// A tile `q` east of the origin, with its target standing further
@@ -247,11 +246,11 @@ mod tests {
         candidates
     }
 
-    /// A mind that keeps its stamina back: it engages only with stamina to
-    /// spend
+    /// A mind that holds back while it recovers: it engages only ready to
+    /// act
     fn keeping() -> Mind {
         let mut minds = crate::behaviour::mind::Minds::default();
-        minds.set("all.stamina_left.floor", "0").unwrap();
+        minds.set("all.ready.floor", "0").unwrap();
         minds.mind(None)
     }
 
@@ -275,10 +274,10 @@ mod tests {
     }
 
     #[test]
-    fn a_mind_keeping_stamina_back_holds_while_spent() {
-        let spent = Footing { stamina: 0.0, ..footing() };
-        assert_eq!(choose(&spent, &around(0, 8), Move::Hold, &Mind::default()).0, Move::Engage);
-        assert_eq!(choose(&spent, &around(0, 8), Move::Hold, &keeping()).0, Move::Hold);
+    fn a_mind_holding_back_holds_while_it_recovers() {
+        let recovering = Footing { recovering: 1.0, ..footing() };
+        assert_eq!(choose(&recovering, &around(0, 8), Move::Hold, &Mind::default()).0, Move::Engage);
+        assert_eq!(choose(&recovering, &around(0, 8), Move::Hold, &keeping()).0, Move::Hold);
     }
 
     #[test]
@@ -301,20 +300,20 @@ mod tests {
     }
 
     #[test]
-    fn patience_keeps_away_out_of_reach_but_ready_and_engages_once_refilled() {
+    fn patience_keeps_away_out_of_reach_but_ready_and_engages_once_recovered() {
         let mind = keeping();
-        let patient = Footing { patience: 3, stamina: 0.0, ..footing() };
+        let patient = Footing { patience: 3, recovering: 1.0, ..footing() };
         let (decision, step) = choose(&patient, &around(6, 8), Move::Hold, &mind);
-        assert_eq!((decision, step.map(|step| step.tile.q)), (Move::KeepAway, Some(5)), "spent in its target's reach, it steps out");
-        let refilled = Footing { stamina: 1.0, ..patient };
-        assert_eq!(choose(&refilled, &around(3, 8), Move::KeepAway, &mind).0, Move::Engage, "refilled, it engages");
+        assert_eq!((decision, step.map(|step| step.tile.q)), (Move::KeepAway, Some(5)), "recovering in its target's reach, it steps out");
+        let recovered = Footing { recovering: 0.0, ..patient };
+        assert_eq!(choose(&recovered, &around(3, 8), Move::KeepAway, &mind).0, Move::Engage, "recovered, it engages");
         let far = choose(&patient, &around(0, 12), Move::Hold, &mind);
         assert_ne!(far.1.map(|step| step.tile.q), Some(-1), "and it gives no ground it need not, out of reach already");
     }
 
     #[test]
     fn without_patience_it_never_keeps_away() {
-        let spent = Footing { stamina: 0.0, ..footing() };
-        assert_eq!(weigh(&spent, &candidate(5, 8), Move::KeepAway, &Mind::default()), 0.0);
+        let recovering = Footing { recovering: 1.0, ..footing() };
+        assert_eq!(weigh(&recovering, &candidate(5, 8), Move::KeepAway, &Mind::default()), 0.0);
     }
 }

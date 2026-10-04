@@ -230,14 +230,14 @@ mod tests {
     }
 
     #[test]
-    fn a_combo_unlocks_late_in_its_recovery_and_flow_brings_it_sooner() {
+    fn a_combo_unlocks_partway_through_its_recovery_and_flow_brings_it_sooner() {
         let tuning = Tuning::DEFAULT;
         let defender = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
         let flowing = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         let own = tuning.recovery(AbilityType::Frenzy);
         let left = |attrs| recovery_after(&tuning, AbilityType::Frenzy, None, attrs, Some(&defender), 0.0).combo.unwrap().unlock_at;
-        assert!(left(&plain) < own / 2.0, "at parity, most of the recovery runs before the combo unlocks");
+        assert!(left(&plain) > 0.0 && left(&plain) < own, "at parity, it unlocks partway through");
         assert!(left(&flowing) > left(&plain), "a Flow advantage unlocks it with more of the recovery left");
     }
 
@@ -251,11 +251,11 @@ mod tests {
     }
 
     #[test]
-    fn a_bites_combo_is_another_bite_a_parry_and_a_feint_offer_each_other_and_no_other_skill_leads_on() {
+    fn a_bites_combo_is_another_bite_a_parrys_is_a_feint_and_no_other_skill_leads_on() {
         use AbilityType::*;
         assert_eq!(Frenzy.combo(), Some(Frenzy));
-        assert_eq!((Parry.combo(), Feint.combo()), (Some(Feint), Some(Parry)));
-        for ability in [AutoAttack, Overpower, Punish, Counter, Leap, PerfectStride] {
+        assert_eq!(Parry.combo(), Some(Feint));
+        for ability in [AutoAttack, Feint, Overpower, Punish, Counter, Leap, PerfectStride] {
             assert_eq!(ability.combo(), None, "{ability:?}");
         }
     }

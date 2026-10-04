@@ -248,7 +248,6 @@ impl AbilityType {
         match self {
             AbilityType::Frenzy => Some(AbilityType::Frenzy),
             AbilityType::Parry => Some(AbilityType::Feint),
-            AbilityType::Feint => Some(AbilityType::Parry),
             _ => None,
         }
     }
@@ -282,7 +281,6 @@ pub enum Component {
     Returning(crate::components::returning::Returning),
     Side(crate::components::behaviour::Side),
     Status(crate::components::status::Status),
-    Stamina(Stamina),
 }
 
 impl Component {
@@ -300,7 +298,6 @@ impl Component {
             Component::Returning(v) => { entity.insert(v); }
             Component::Side(v) => { entity.insert(v); }
             Component::Status(v) => { entity.insert(v); }
-            Component::Stamina(v) => { entity.insert(v); }
             _ => unreachable!("Loc/Heading require special handling"),
         }
     }
