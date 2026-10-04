@@ -28,7 +28,7 @@ pub const MOMENTUM: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "leash_left", "recovery_left", "detour", "time_to_strike", "time_to_be_struck",
+    "leash_left", "recovery_left", "detour", "time_to_be_struck",
     "behind", "strike_cost",
 ];
 
@@ -119,7 +119,7 @@ pub fn weigh(footing: &Footing, candidate: &Candidate, decision: Move, mind: &Mi
         Move::Hold => return mind.hold,
         Move::Engage if footing.grace => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND, STRIKE_COST],
         Move::Engage => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT],
-        Move::KeepAway if footing.patience > 0 => &[TIME_TO_BE_STRUCK, TIME_TO_STRIKE, LEASH_LEFT],
+        Move::KeepAway if footing.patience > 0 => &[TIME_TO_BE_STRUCK, DETOUR, LEASH_LEFT],
         Move::KeepAway => return 0.0,
     };
     let ground = Ground { footing: *footing, candidate: *candidate };
@@ -127,11 +127,12 @@ pub fn weigh(footing: &Footing, candidate: &Candidate, decision: Move, mind: &Mi
 }
 
 /// Seconds more the step costs it on its way to strike than the best one:
-/// the best step answers whole however far it has to go
+/// the best step answers whole however far it has to go, and a step kept
+/// away stays as ready to strike as it can
 const DETOUR: Consideration<Ground> = Consideration {
     name: "detour",
     read: |ground| ground.candidate.detour,
-    bounds: (0.0, 0.5),
+    bounds: (0.0, 1.0),
     curve: Curve::FALLING,
 };
 
@@ -161,15 +162,6 @@ const TIME_TO_BE_STRUCK: Consideration<Ground> = Consideration {
     read: |ground| ground.candidate.time_to_be_struck,
     bounds: (0.0, 0.5),
     curve: Curve::RISING.floored(0.1),
-};
-
-/// Seconds from the tile until it could strike: kept short, it stays ready
-/// to strike as its recovery runs out
-const TIME_TO_STRIKE: Consideration<Ground> = Consideration {
-    name: "time_to_strike",
-    read: |ground| ground.candidate.time_to_strike,
-    bounds: (0.0, 3.0),
-    curve: Curve::FALLING.floored(0.1),
 };
 
 /// Grace: how far round toward its target's back the tile stands, every
@@ -286,7 +278,7 @@ mod tests {
         let (decision, step) = choose(&patient, &around(6, 8), Move::Hold, &mind);
         assert_eq!((decision, step.map(|step| step.tile.q)), (Move::KeepAway, Some(5)), "recovering in its target's reach, it steps out");
         let recovered = Footing { recovery_left: 0.0, ..patient };
-        assert_eq!(choose(&recovered, &around(3, 8), Move::KeepAway, &mind).0, Move::Engage, "recovered, it engages");
+        assert_eq!(choose(&recovered, &around(5, 8), Move::KeepAway, &mind), (Move::Engage, Some(candidate(6, 8))), "recovered where it stepped out to, it steps back in");
         let far = choose(&patient, &around(0, 12), Move::Hold, &mind);
         assert_ne!(far.1.map(|step| step.tile.q), Some(-1), "and it gives no ground it need not, out of reach already");
     }
