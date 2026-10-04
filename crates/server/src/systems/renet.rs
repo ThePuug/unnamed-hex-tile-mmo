@@ -329,6 +329,7 @@ fn route(event: &Event) -> Option<(Entity, Route)> {
         | Event::RespecAttributes { ent, .. }
         | Event::Inventory { ent, .. }
         | Event::CoverChanged { ent, .. }
+        | Event::Den { ent, .. }
         | Event::Loot { ent, .. } => Some((*ent, Route::Owner)),
         Event::ChunkData { ent, .. }
         | Event::EvictChunks { ent, .. }

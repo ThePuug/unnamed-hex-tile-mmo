@@ -102,7 +102,7 @@ impl WorldChanges {
 
 /// A number in `[0, 1)` fixed by slot `k` of tile `(q, r)`: a splitmix of
 /// the three.
-fn roll(q: i32, r: i32, k: usize) -> f64 {
+pub(crate) fn roll(q: i32, r: i32, k: usize) -> f64 {
     let mut x = (q as u32 as u64) << 32 | r as u32 as u64;
     x = x.wrapping_add((k as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -198,6 +198,17 @@ impl Ground<'_, '_> {
             if cache.sent.contains(&chunk) {
                 writer.write(Do { event: Event::CoverChanged { ent: holder, q, r, cover } });
             }
+        }
+    }
+
+    /// Lays `cover` over tile `(q, r)` whether or not it is on the map
+    /// yet: one not yet materialized is built from `generated`, its cover
+    /// as the world made it, with this laid over.
+    pub fn lay(&mut self, writer: &mut MessageWriter<Do>, q: i32, r: i32, cover: common::Cover, generated: common::Cover) {
+        if self.cover(q, r).is_some() {
+            self.set(writer, q, r, cover);
+        } else {
+            self.changes.set(q, r, generated, cover);
         }
     }
 }

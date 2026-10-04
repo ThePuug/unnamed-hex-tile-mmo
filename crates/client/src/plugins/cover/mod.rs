@@ -38,6 +38,9 @@ pub enum Kind {
     SandstonePile,
     LimestonePile,
     BasementPile,
+    /// A den's pieces: the model `common::den::MODELS` holds at this
+    /// index, active or cleared, one variation to each of its meshes
+    Den(u8, bool),
 }
 
 impl From<Content> for Kind {
@@ -100,6 +103,13 @@ const MODELS: &[(Kind, &str)] = &[
     (Kind::LimestonePile, "models/stone-pile-limestone.glb"),
     (Kind::BasementPile, "models/stone-pile-basement.glb"),
 ];
+
+/// Where each den model's GLB is: `models/den-<stem>-<state>.glb`.
+fn den_models() -> impl Iterator<Item = (Kind, String)> {
+    common::den::MODELS.iter().enumerate().flat_map(|(i, model)| {
+        [false, true].map(|cleared| (Kind::Den(i as u8, cleared), format!("models/den-{}-{}.glb", model.stem, if cleared { "cleared" } else { "active" })))
+    })
+}
 
 /// The least a bush stands, as a share of its model.
 pub const BRUSH_SMALL: f32 = 0.6;
@@ -223,7 +233,7 @@ impl Kit {
     /// `common::cover::BOULDER_SMALL` toward `BOULDER_LARGE`.
     pub fn scale(kind: Kind, model_height: f32, growth: f32) -> f32 {
         let growth = growth.clamp(0.0, 1.0);
-        if kind.is_pile() {
+        if kind.is_pile() || matches!(kind, Kind::Den(..)) {
             return 1.0;
         }
         match kind {
@@ -249,12 +259,16 @@ pub struct CoverKit {
 #[derive(Resource)]
 struct Loading(Vec<(Kind, Handle<Gltf>)>);
 
-/// A tree, bush, stump, boulder or pile to draw: where it stands from its region's origin,
-/// its turn, how far it has grown, and which model.
+/// A tree, bush, stump, boulder, pile or den's piece to draw: where it
+/// stands from its region's origin, its turn, how far it has grown, and
+/// which model.
 #[derive(Clone, Copy, Debug)]
 pub struct CoverInstance {
     pub translation: Vec3,
     pub yaw: f32,
+    /// What turns it from upright onto the ground after its turn: a lying
+    /// den's piece's, to the ground's slope; every other's none.
+    pub tilt: Quat,
     pub growth: f32,
     pub kind: Kind,
     pub variation: u32,
@@ -333,7 +347,11 @@ fn dress_far_ground(
 }
 
 fn begin_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let handles = MODELS.iter().map(|(kind, path)| (*kind, asset_server.load::<Gltf>(*path))).collect();
+    let handles = MODELS
+        .iter()
+        .map(|(kind, path)| (*kind, asset_server.load::<Gltf>(*path)))
+        .chain(den_models().map(|(kind, path)| (kind, asset_server.load::<Gltf>(path))))
+        .collect();
     commands.insert_resource(Loading(handles));
 }
 
@@ -373,7 +391,7 @@ fn load_kit(
             .and_then(|e| CardDecl::parse(&e.value))
             .and_then(|d| d.cards(&asset_server))
             .map(Arc::new);
-        if cards.is_none() {
+        if cards.is_none() && !matches!(kind, Kind::Den(..)) {
             info!("model for {kind:?} ships no cards; nothing of it stands past the models' reach");
         }
         for (seed, mesh_handle) in gltf.meshes.iter().enumerate() {
@@ -504,6 +522,7 @@ pub fn place_cover(
                 out.push(CoverInstance {
                     translation: Vec3::new(x, y, z) - mesh_origin,
                     yaw: sway.yaw as f32,
+                    tilt: Quat::IDENTITY,
                     growth: common::cover::tree_growth(cover, q, r, k),
                     kind: slot.into(),
                     variation: sway.variation,
@@ -520,6 +539,7 @@ pub fn place_cover(
                 out.push(CoverInstance {
                     translation: Vec3::new(x, y, z) - mesh_origin,
                     yaw: sway.yaw as f32,
+                    tilt: Quat::IDENTITY,
                     growth: 1.0,
                     kind,
                     variation: sway.variation,
@@ -533,6 +553,7 @@ pub fn place_cover(
                 out.push(CoverInstance {
                     translation: Vec3::new(x, y, z) - mesh_origin,
                     yaw: sway.yaw as f32,
+                    tilt: Quat::IDENTITY,
                     growth: common::cover::boulder_growth(cover, q, r, k),
                     kind: Kind::Boulder,
                     variation: sway.variation,
@@ -585,6 +606,7 @@ pub fn place_crags(
             out.push(CoverInstance {
                 translation: Vec3::new(x, y, z) - mesh_origin,
                 yaw: sway.yaw as f32,
+                tilt: Quat::IDENTITY,
                 growth: sway.growth as f32 * share.sqrt() as f32,
                 kind: Kind::Boulder,
                 variation: sway.variation,
@@ -595,10 +617,52 @@ pub fn place_crags(
     out
 }
 
-/// Stand a region's cover as models: one part per variation present,
-/// each the variation's mesh and every instance drawn with it. None casts
-/// a shadow: the cascades would draw every tree four times over for it.
-pub fn spawn_models(commands: &mut Commands, entity: Entity, cover: &[CoverInstance], kit: &CoverKit) {
+/// The dens a mesh region at level `radius` stands: each piece whose origin
+/// lies in a tile the region's cells cover, on the level's drawn surface at
+/// its origin, from the region's origin, turned with its den; a lying piece
+/// tipped onto that surface's slope there, a standing one upright. A piece
+/// whose ground is not there yet stands nowhere.
+pub fn place_dens(
+    radius: u32,
+    region_key: MeshRegionKey,
+    mesh_origin: Vec3,
+    dens: &HashMap<qrz::Qrz, common_bevy::den::DenLook>,
+    map: &common_bevy::resources::map::Map,
+    height: &dyn Fn(i32, i32) -> Option<i32>,
+) -> Vec<CoverInstance> {
+    let lattice = common_bevy::summary::summary_lattice(radius);
+    let mut surface = common_bevy::summary_mesh::LevelSurface::new(radius, height);
+    let mut out = Vec::new();
+    for (&at, look) in dens {
+        let Some(model) = common::den::MODELS.iter().position(|m| m.stem == look.archetype.den_model()) else { continue };
+        let kind = Kind::Den(model as u8, look.cleared);
+        for (piece, origin, tile) in crate::systems::den::standing(at, *look, map) {
+            if crate::systems::den::region_of(radius, tile) != region_key {
+                continue;
+            }
+            let cell = lattice.cell_id(tile.0, tile.1);
+            let Some((y, normal)) = surface.at(origin).or_else(|| height(cell.0, cell.1).map(|z| (height_y(z as f32), Vec3::Y))) else { continue };
+            out.push(CoverInstance {
+                translation: Vec3::new(origin.x, y, origin.y) - mesh_origin,
+                // The models' turn runs the other way about the vertical
+                // from the GLB's.
+                yaw: -(look.yaw + piece.yaw),
+                tilt: if piece.lies { Quat::from_rotation_arc(Vec3::Y, normal) } else { Quat::IDENTITY },
+                growth: 1.0,
+                kind,
+                variation: piece.mesh as u32,
+                far: false,
+            });
+        }
+    }
+    out
+}
+
+/// A region's cover as models: one part per variation present, each the
+/// variation's mesh and every instance drawn with it, in the band of the
+/// level `band` counts from the tiles; and the furthest any stands up or
+/// out from its foot.
+fn model_parts<'a>(cover: impl Iterator<Item = &'a CoverInstance>, kit: &CoverKit, band: u32) -> (Vec<draw::CoverPart>, f32) {
     let mut parts: HashMap<(Kind, usize), Vec<draw::Instance>> = HashMap::new();
     let mut reach = 0.0f32;
     for t in cover {
@@ -609,8 +673,8 @@ pub fn spawn_models(commands: &mut Commands, entity: Entity, cover: &[CoverInsta
         let k = t.variation as usize % all.len();
         let v = &all[k];
         let scale = kit.kit.drawn_scale(t.kind, k, t.growth);
-        reach = reach.max(v.height * scale);
-        parts.entry((t.kind, k)).or_default().push(draw::Instance::new(t.translation, t.yaw, scale));
+        reach = reach.max(v.height.max(v.width) * scale);
+        parts.entry((t.kind, k)).or_default().push(draw::Instance::model(t.translation, t.yaw, t.tilt, scale, band));
     }
     let parts = parts
         .into_iter()
@@ -621,16 +685,16 @@ pub fn spawn_models(commands: &mut Commands, entity: Entity, cover: &[CoverInsta
             instances,
         })
         .collect();
-    commands.entity(entity).insert(draw::RegionCover::new(parts, reach));
+    (parts, reach)
 }
 
-/// Stand a region's cover as cards: one part per model whose cards
-/// stand here, each the shared quad and every instance drawn from that
-/// model's pictures. A model's variations differ only by which layer of
-/// its texture an instance names, so they go in together. The cards stand
-/// past the ring, far enough that their overlaps do not show, so they
-/// keep the quad's own depth.
-pub fn spawn_cards(commands: &mut Commands, entity: Entity, cover: &[CoverInstance], kit: &CoverKit) {
+/// A region's cover as cards: one part per model whose cards stand here,
+/// each the shared quad and every instance drawn from that model's
+/// pictures. A model's variations differ only by which layer of its
+/// texture an instance names, so they go in together. The cards stand past
+/// the ring, far enough that their overlaps do not show, so they keep the
+/// quad's own depth.
+fn card_parts(cover: &[CoverInstance], kit: &CoverKit) -> (Vec<draw::CoverPart>, f32) {
     let mut parts: HashMap<AssetId<Image>, (Arc<draw::Cards>, Vec<draw::Instance>)> = HashMap::new();
     let mut reach = 0.0f32;
     for t in cover {
@@ -658,7 +722,24 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, cover: &[CoverInstan
             instances,
         })
         .collect();
+    (parts, reach)
+}
+
+/// Stand a region of tiles' cover as models. None casts a shadow: the
+/// cascades would draw every tree four times over for it.
+pub fn spawn_models(commands: &mut Commands, entity: Entity, cover: &[CoverInstance], kit: &CoverKit) {
+    let (parts, reach) = model_parts(cover.iter(), kit, 0);
     commands.entity(entity).insert(draw::RegionCover::new(parts, reach));
+}
+
+/// Stand a summary level's cover as cards, and the dens it stands as
+/// models in the band of the `band`th level from the tiles, since a den
+/// ships no cards and is a landmark seen whole.
+pub fn spawn_cards(commands: &mut Commands, entity: Entity, cover: &[CoverInstance], kit: &CoverKit, band: u32) {
+    let (mut parts, reach) = card_parts(cover, kit);
+    let (dens, den_reach) = model_parts(cover.iter().filter(|t| matches!(t.kind, Kind::Den(..))), kit, band);
+    parts.extend(dens);
+    commands.entity(entity).insert(draw::RegionCover::new(parts, reach.max(den_reach)));
 }
 
 /// Stand the cover of every region within reach of the camera as models
@@ -698,7 +779,8 @@ fn update_cover(
                 state.models_spawned = false;
             }
         } else if !state.cards_spawned {
-            spawn_cards(&mut commands, entity, &state.cover, &kit);
+            let band = crate::systems::den::DRAWN_AT.iter().position(|&r| r == key.r).unwrap_or(0) as u32;
+            spawn_cards(&mut commands, entity, &state.cover, &kit, band);
             state.cards_spawned = true;
         }
     }

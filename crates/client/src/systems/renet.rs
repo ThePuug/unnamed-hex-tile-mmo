@@ -49,6 +49,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Inventory { .. } => "Inventory",
         Event::Gather { .. } => "Gather",
         Event::CoverChanged { .. } => "CoverChanged",
+        Event::Den { .. } => "Den",
         Event::Loot { .. } => "Loot",
         Event::Activity { .. } => "Activity",
         Event::View { .. } => "View",
@@ -172,9 +173,12 @@ pub fn write_do(
                     }
                 }
             }
-            // A tile's cover is about no entity here
+            // A tile's cover, or a den, is about no entity here
             Do { event: Event::CoverChanged { ent: _, q, r, cover } } => {
                 do_writer.write(Do { event: Event::CoverChanged { ent: Entity::PLACEHOLDER, q, r, cover } });
+            }
+            Do { event: Event::Den { ent: _, at, den } } => {
+                do_writer.write(Do { event: Event::Den { ent: Entity::PLACEHOLDER, at, den } });
             }
             Do { event: event @ Event::Pong { .. } } => {
                 do_writer.write(Do { event });

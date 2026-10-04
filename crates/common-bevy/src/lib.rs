@@ -1,5 +1,6 @@
 pub mod chunk;
 pub mod components;
+pub mod den;
 pub mod geometry;
 pub mod message;
 pub mod metrics;

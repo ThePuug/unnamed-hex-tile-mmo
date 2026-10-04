@@ -11,6 +11,22 @@ use crate::{
     components::entity_type::*,
 };
 
+/// A circle a walker goes round, of a den's piece: its centre from the
+/// centre of its den's tile, `anchor`, in world units along the ground, its
+/// radius, and how high what stands in it rises.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Solid {
+    pub anchor: (i32, i32),
+    pub offset: Vec2,
+    pub radius: f32,
+    pub height: f32,
+}
+
+/// How far past a solid's circle a walker standing in a tile may stand
+/// from the tile's centre: the tile's own outer radius and a walker's
+/// half-width, with room to spare.
+const SOLID_REACH: f32 = 1.5;
+
 /// Data stored per tile.
 #[derive(Clone, Copy)]
 pub struct TileRecord {
@@ -38,6 +54,10 @@ pub struct Map {
     /// Chunk-sharded storage for mesh generation and EntityType lookups.
     chunks: Arc<DashMap<ChunkId, HashMap<(i32, i32), TileRecord>>>,
     changed: Arc<AtomicBool>,
+    /// The dens' circles, each under every tile a walker in which may meet
+    /// it, and the tiles each den's are under, by its tile.
+    solids: Arc<DashMap<(i32, i32), Vec<Solid>>>,
+    solid_tiles: Arc<DashMap<(i32, i32), Vec<(i32, i32)>>>,
     /// Geometry-only delegate for coordinate conversion and vertex computation.
     geo: Arc<qrz::Map<()>>,
 }
@@ -69,6 +89,8 @@ impl Map {
             water: Arc::new(DashMap::new()),
             chunks: Arc::new(chunks),
             changed: Arc::new(AtomicBool::new(false)),
+            solids: Arc::new(DashMap::new()),
+            solid_tiles: Arc::new(DashMap::new()),
             geo: Arc::new(geo),
         }
     }
@@ -91,6 +113,47 @@ impl Map {
             None => { self.water.remove(&(q, r)); }
         }
         self.changed.store(true, Ordering::Relaxed);
+    }
+
+    /// Stands the circles of the den on tile `anchor` in place of any it
+    /// stood before, none for a den gone: each its centre from the tile's
+    /// centre, its radius and its height. Each is kept under every tile a
+    /// walker in which may meet it, so a walker reads only its own tile's.
+    pub fn set_solids(&self, anchor: (i32, i32), circles: &[(Vec2, f32, f32)]) {
+        if let Some((_, tiles)) = self.solid_tiles.remove(&anchor) {
+            for tile in tiles {
+                if let Some(mut held) = self.solids.get_mut(&tile) {
+                    held.retain(|s| s.anchor != anchor);
+                }
+                self.solids.remove_if(&tile, |_, held| held.is_empty());
+            }
+        }
+        let home = Qrz { q: anchor.0, r: anchor.1, z: 0 };
+        let mut tiles = Vec::new();
+        for &(offset, radius, height) in circles {
+            let solid = Solid { anchor, offset, radius, height };
+            let reach = radius + SOLID_REACH;
+            let centre = self.convert(Vec3::new(offset.x, 0.0, offset.y));
+            let rings = (reach / (self.radius * 3f32.sqrt())).ceil() as u32 + 1;
+            for tile in (0..=rings).flat_map(|k| centre.ring(k)) {
+                if self.convert(tile).xz().distance(offset) > reach {
+                    continue;
+                }
+                let key = (home.q + tile.q, home.r + tile.r);
+                self.solids.entry(key).or_default().push(solid);
+                tiles.push(key);
+            }
+        }
+        if !tiles.is_empty() {
+            tiles.sort_unstable();
+            tiles.dedup();
+            self.solid_tiles.insert(anchor, tiles);
+        }
+    }
+
+    /// The dens' circles a walker standing in tile `(q, r)` may meet.
+    pub fn solids_at(&self, q: i32, r: i32) -> Vec<Solid> {
+        self.solids.get(&(q, r)).map_or(Vec::new(), |held| held.clone())
     }
 
     /// The surface water stands at over a tile, or None where it is dry.

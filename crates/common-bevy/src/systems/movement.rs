@@ -379,9 +379,15 @@ pub fn solid_extent(cover: common::Cover, q: i32, r: i32, k: usize) -> Option<(f
 /// The footprints a walker goes round in `about` and the six tiles around
 /// it: each solid object taller than the waist, its centre from the centre
 /// of `tile` and the radius the walker keeps from it, as wide as it is
-/// drawn and the walker's own half-width more.
+/// drawn and the walker's own half-width more; and each den's circle
+/// taller than the waist that a walker in `about` may meet.
 fn footprints(tile: Qrz, about: Qrz, map: &Map) -> Vec<(Vec2, f32)> {
     let mut out = Vec::new();
+    for solid in map.solids_at(about.q, about.r).into_iter().filter(|s| s.height > WAIST) {
+        let anchor = Qrz { q: solid.anchor.0, r: solid.anchor.1, z: 0 };
+        let home = map.convert(anchor - Qrz { q: tile.q, r: tile.r, z: 0 }).xz();
+        out.push((home + solid.offset, solid.radius + WALKER_RADIUS));
+    }
     for offset in std::iter::once(Qrz::default()).chain(qrz::DIRECTIONS) {
         let (q, r) = (about.q + offset.q, about.r + offset.r);
         let cover = map.cover_at(q, r);
@@ -764,6 +770,27 @@ mod tests {
             }
             assert!(out.position.offset.distance(whole.position.offset) < 1e-3, "slice {dt}: {:?} vs {:?}", out.position.offset, whole.position.offset);
         }
+    }
+
+    /// A den's circle taller than the waist stands a walk into it at the
+    /// walker's keep, held by another tile's den in that tile's frame; one
+    /// lower is stepped over.
+    #[test]
+    fn a_dens_tall_circle_stands_a_walk_and_a_low_one_is_stepped_over() {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        let nntree = create_test_nntree();
+        let anchor = (1, -2);
+        let home = map.convert(Qrz { q: anchor.0, r: anchor.1, z: 0 }).xz();
+        let centre = Vec2::new(0.0, -3.0);
+        map.set_solids(anchor, &[(centre - home, 0.8, 2.0)]);
+        let out = calculate_movement(walking_from(Vec2::ZERO), 2000, &map, &nntree);
+        let d = out.position.offset.xz().distance(centre);
+        assert!((d - (0.8 + WALKER_RADIUS)).abs() < 1e-3, "stood {d} from the circle's centre");
+
+        map.set_solids(anchor, &[(centre - home, 0.8, WAIST * 0.5)]);
+        let out = calculate_movement(walking_from(Vec2::ZERO), 2000, &map, &nntree);
+        assert!(out.position.offset.z < centre.y - 0.8, "a low circle stood the walker at {:?}", out.position.offset);
     }
 
     /// A stump and a boulder lower than the waist are stepped over.

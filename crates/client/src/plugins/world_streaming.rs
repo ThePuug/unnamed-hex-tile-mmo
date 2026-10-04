@@ -21,10 +21,12 @@ impl Plugin for WorldStreamingPlugin {
         app.init_resource::<crate::resources::EdgeCenters>();
         app.init_resource::<crate::resources::CardBand>();
         app.init_resource::<crate::systems::gathering::CoverChanges>();
+        app.init_resource::<crate::systems::den::Dens>();
 
         app.add_systems(Update, (
             world::do_spawn,
             crate::systems::gathering::apply,
+            crate::systems::den::apply,
             world::dispatch_summary_tasks.after(world::do_spawn),
             world::poll_summary_meshes.after(world::dispatch_summary_tasks),
             world::update_terrain_cut,

@@ -87,6 +87,7 @@ fn main() {
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // Update proximity tracking
         engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // Clean up dead/abandoned engagements
         crate::systems::dens::tend_dens,
+        crate::systems::dens::show_dens.run_if(on_timer(Duration::from_secs(1))),
         world::do_spawn,
         world::try_spawn,
     ));

@@ -116,6 +116,11 @@ pub enum Event {
     /// player holding the tile's chunk. The whole cover, so applying it
     /// twice or after the chunk's own copy leaves the same tile.
     CoverChanged { ent: Entity, q: i32, r: i32, cover: common::Cover },
+    /// Server → Client: the den whose pack stands on tile `at`, as drawn,
+    /// or None where none stands there any more. Sent to `ent`, a player
+    /// within sight of it; the whole den, so applying it twice leaves the
+    /// same.
+    Den { ent: Entity, at: Qrz, den: Option<crate::den::DenLook> },
     /// Server → Client: the loot window `ent` has open, a stack to an
     /// entry, or None where it has none open. Sent to its owner only.
     Loot { ent: Entity, entries: Option<Vec<common::Stack>> },
@@ -180,6 +185,7 @@ impl Event {
             | Event::Inventory { ent, .. }
             | Event::Gather { ent, .. }
             | Event::CoverChanged { ent, .. }
+            | Event::Den { ent, .. }
             | Event::Loot { ent, .. }
             | Event::Take { ent, .. }
             | Event::CloseLoot { ent }

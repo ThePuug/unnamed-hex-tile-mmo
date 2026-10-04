@@ -77,22 +77,27 @@ const DEPTH_ENTRY: &str = "prepass_fragment";
 const COLOUR_ENTRY: &str = "fragment";
 
 /// One instance as the shader reads it: its place in its region's frame and
-/// its scale, then the cosine and sine of its turn; for a card, the first
-/// of its layers in the card texture, its mirror, one or minus one, and
-/// the model's height in world units. The last component of the second
-/// is the slot of its region's frame, which the stand writes.
+/// its scale, then the cosine and sine of its turn and the band of the
+/// level it stands in, counted from the tiles; for a card, the first of its
+/// layers in the card texture, its mirror, one or minus one, and the
+/// model's height in world units. The last component of the second is the
+/// slot of its region's frame, which the stand writes. The third is the
+/// quaternion that tips a model, once turned, onto the ground.
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct Instance {
     pub pos_scale: [f32; 4],
     pub turn: [f32; 4],
+    pub tilt: [f32; 4],
 }
 
 impl Instance {
-    pub fn new(translation: Vec3, yaw: f32, scale: f32) -> Self {
+    /// A model standing in the band of the `band`th level from the tiles.
+    pub fn model(translation: Vec3, yaw: f32, tilt: Quat, scale: f32, band: u32) -> Self {
         Instance {
             pos_scale: [translation.x, translation.y, translation.z, scale],
-            turn: [yaw.cos(), yaw.sin(), 0.0, 0.0],
+            turn: [yaw.cos(), yaw.sin(), band as f32, 0.0],
+            tilt: tilt.to_array(),
         }
     }
 
@@ -107,6 +112,7 @@ impl Instance {
         Instance {
             pos_scale: [translation.x, translation.y, translation.z, scale],
             turn: [layer as f32, mirror, height, 0.0],
+            tilt: Quat::IDENTITY.to_array(),
         }
     }
 }
@@ -498,6 +504,7 @@ trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
             attributes: vec![
                 VertexAttribute { format: VertexFormat::Float32x4, offset: 0, shader_location: 10 },
                 VertexAttribute { format: VertexFormat::Float32x4, offset: VertexFormat::Float32x4.size(), shader_location: 11 },
+                VertexAttribute { format: VertexFormat::Float32x4, offset: 2 * VertexFormat::Float32x4.size(), shader_location: 12 },
             ],
         });
         if let Some(fragment) = descriptor.fragment.as_mut() {

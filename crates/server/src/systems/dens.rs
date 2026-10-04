@@ -13,6 +13,15 @@
 //! is gone, leaving the site as the world made it. A standing den's growth
 //! with age is unbuilt. Dens are held in memory, as every change to the
 //! world is.
+//!
+//! A den is drawn about the tile its pack first stood on, as its
+//! archetype's model, active or cleared, its seed and turn its site's:
+//! its pieces' circles stand on the map for every walker to go round, the
+//! ground it stands on and [`OPEN`] tiles past it is cleared of all that
+//! grew or lay there as long as it stands, thinning back into what the
+//! world made over [`THIN`] more, so the den is seen over the wood round
+//! it, and every player within [`sight`] is told of it as it is
+//! (`show_dens`).
 
 use std::{collections::HashMap, time::Duration};
 
@@ -22,6 +31,8 @@ use qrz::{Qrz, DIRECTIONS};
 use common::den::Habitat;
 use common_bevy::{
     archetype::EnemyArchetype,
+    den::DenLook,
+    message::{Do, Event},
     chunk::{calculate_visible_chunks, loc_to_chunk, ChunkId},
     components::{behaviour::Side, engagement::Engagement, ActorAttributes, Loc},
     haven::HAVEN_LOCATION,
@@ -29,7 +40,10 @@ use common_bevy::{
     tuning::Tuning,
 };
 
-use crate::resources::{event_registry::EventRegistry, Lobby};
+use crate::{
+    resources::{event_registry::EventRegistry, Lobby},
+    systems::gathering::{roll, Ground},
+};
 
 /// How near a player a site gets its den, or a den its pack back, in tiles
 pub const PLACE_RANGE: i32 = 80;
@@ -51,6 +65,14 @@ pub const MARGIN: u32 = 5;
 
 /// How many tiles a den's search for dry ground round its site may look at
 const SEARCH: usize = 400;
+
+/// Tiles past a den's furthest piece its ground stays open: from the
+/// camera's height and pitch, a tree nearer than this to its edge hides it.
+pub const OPEN: u32 = 4;
+
+/// Tiles past the open ground over which the wood thins back to the
+/// world's.
+pub const THIN: u32 = 3;
 
 /// A den site the server has generated, and the den on it, if any.
 #[derive(Clone, Debug)]
@@ -233,6 +255,110 @@ pub fn tend_dens(
     }
 }
 
+/// How far a player sees a den from, in tiles: the outer edge of the
+/// level past the first summary level, the furthest a den is drawn.
+pub fn sight() -> i32 {
+    let edge = common_bevy::summary::threshold_horiz(common_bevy::summary::LOD_LEVELS[2]);
+    (edge / (common::camera::HEX_RADIUS * 3f32.sqrt())).ceil() as i32
+}
+
+/// The den on `site` as drawn, about the tile its pack stands on, once
+/// it has first stood: its seed and turn the site's own, from a slot past
+/// the tile's, so no tree's sway is its.
+pub fn shown(site: &Site) -> Option<(Qrz, DenLook)> {
+    let den = site.den?;
+    let at = den.at?;
+    let sway = common::sway(site.tile.q, site.tile.r, common::TILE_SLOTS as usize);
+    let look = DenLook {
+        archetype: den.archetype,
+        seed: (sway.variation % 256) as u8,
+        yaw: sway.yaw as f32,
+        cleared: den.state == DenState::Cleared,
+    };
+    Some((at, look))
+}
+
+/// Every tile of the ground the den on `at` clears or thins, each with
+/// the ring it lies on round the den's own tile.
+fn cleared_ground(at: Qrz, look: &DenLook) -> impl Iterator<Item = (Qrz, u32)> {
+    let home = Qrz { z: 0, ..at };
+    (0..=look.clearing() + OPEN + THIN).flat_map(move |k| home.ring(k).into_iter().map(move |tile| (tile, k)))
+}
+
+/// What a den leaves of `generated`, tile `(q, r)`'s cover as the world
+/// made it, `ring` tiles out from the den's own where its ground stays
+/// open out to `open`: nothing there, then each growth and boulder kept
+/// by its own roll, the more the further out, all of it past the thinning.
+fn cleared_cover(generated: common::Cover, (q, r): (i32, i32), ring: u32, open: u32) -> common::Cover {
+    let cut = 1.0 - ring.saturating_sub(open) as f64 / (THIN + 1) as f64;
+    let kept = common::Cover::NONE.with_rock(generated.rock());
+    let kept = generated.filled().filter(|&(site, _)| roll(q, r, site) >= cut).fold(kept, |cover, (site, growth)| cover.with(site, growth));
+    let sites = common::SITES.len();
+    generated.boulders().filter(|&k| roll(q, r, sites + k) >= cut).fold(kept, |cover, k| cover.with_boulder(k))
+}
+
+/// Stands every den's circles on the map as it now is, clears the ground
+/// of each that has come to stand and lays back what the world made under
+/// each that is gone, and tells each player of every den within its
+/// [`sight`] it has not been told of as it is, and of each it was told of
+/// that is gone or out of sight.
+#[allow(clippy::too_many_arguments)]
+pub fn show_dens(
+    dens: Res<Dens>,
+    map: Res<Map>,
+    registry: Res<EventRegistry>,
+    mut ground: Ground,
+    lobby: Res<Lobby>,
+    players: Query<&Loc>,
+    mut stood: Local<HashMap<Qrz, DenLook>>,
+    mut told: Local<HashMap<Entity, HashMap<Qrz, DenLook>>>,
+    mut writer: MessageWriter<Do>,
+) {
+    let now: HashMap<Qrz, DenLook> = dens.sites.values().flatten().filter_map(shown).collect();
+    for (&at, look) in &now {
+        if stood.get(&at) != Some(look) {
+            map.set_solids((at.q, at.r), &look.circles());
+        }
+        if !stood.contains_key(&at) {
+            let open = look.clearing() + OPEN;
+            for (tile, ring) in cleared_ground(at, look) {
+                let generated = registry.cover_at(tile.q, tile.r);
+                let cleared = cleared_cover(generated, (tile.q, tile.r), ring, open);
+                if cleared != generated {
+                    ground.lay(&mut writer, tile.q, tile.r, cleared, generated);
+                }
+            }
+        }
+    }
+    for (&at, look) in stood.iter().filter(|(at, _)| !now.contains_key(at)) {
+        map.set_solids((at.q, at.r), &[]);
+        for (tile, _) in cleared_ground(at, look) {
+            let generated = registry.cover_at(tile.q, tile.r);
+            ground.lay(&mut writer, tile.q, tile.r, generated, generated);
+        }
+    }
+    *stood = now;
+
+    let sight = sight();
+    told.retain(|player, _| lobby.get_by_right(player).is_some());
+    for &player in lobby.right_values() {
+        let Ok(loc) = players.get(player) else { continue };
+        let known = told.entry(player).or_default();
+        for (&at, &look) in stood.iter().filter(|(at, _)| at.flat_distance(loc) <= sight) {
+            if known.insert(at, look) != Some(look) {
+                writer.write(Do { event: Event::Den { ent: player, at, den: Some(look) } });
+            }
+        }
+        known.retain(|at, _| {
+            let still = stood.contains_key(at) && at.flat_distance(loc) <= sight;
+            if !still {
+                writer.write(Do { event: Event::Den { ent: player, at: *at, den: None } });
+            }
+            still
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,6 +393,45 @@ mod tests {
         assert_eq!(den(&dens).state, DenState::Cleared);
         assert!(!den(&dens).decayed(killed + DECAY - Duration::from_secs(1)), "cleared, it stands a while");
         assert!(den(&dens).decayed(killed + DECAY), "then it is gone");
+    }
+
+    /// Every piece of every den, at every seed and turn, stands on ground
+    /// its den clears.
+    #[test]
+    fn a_dens_clearing_holds_every_piece() {
+        use qrz::Convert;
+        let map = Map::new(qrz::Map::new(common::camera::HEX_RADIUS, 0.8, qrz::HexOrientation::FlatTop));
+        let at = Qrz { q: 5, r: -3, z: 2 };
+        for archetype in EnemyArchetype::ALL {
+            for seed in 0..3 {
+                for yaw in [0.0, 1.3, 4.0] {
+                    let look = DenLook { archetype, seed, yaw, cleared: false };
+                    let cleared: std::collections::HashSet<(i32, i32)> =
+                        cleared_ground(at, &look).filter(|&(_, ring)| ring <= look.clearing()).map(|(t, _)| (t.q, t.r)).collect();
+                    let centre = map.convert(Qrz { z: 0, ..at });
+                    for piece in look.pieces() {
+                        let [x, z] = piece.placed(yaw);
+                        let tile = map.convert(centre + Vec3::new(x, 0.0, z));
+                        assert!(cleared.contains(&(tile.q, tile.r)), "{archetype:?} {seed} {yaw}: a piece stands outside its clearing");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A den's open ground holds nothing, the wood past its thinning is the
+    /// world's own, and between them it thins out the further it lies.
+    #[test]
+    fn a_dens_ground_opens_then_thins_back_into_the_wood() {
+        let wood = common::Cover::NONE.with(0, common::Content::Pine).with(1, common::Content::Deciduous).with(2, common::Content::Brush).with_rock(common::Rock::Limestone);
+        let open = 6;
+        let kept = |ring: u32| -> usize {
+            (0..400).map(|q| cleared_cover(wood, (q, -q / 2), ring, open).filled().count()).sum()
+        };
+        assert_eq!(cleared_cover(wood, (3, 4), open, open), common::Cover::NONE.with_rock(common::Rock::Limestone));
+        assert_eq!(cleared_cover(wood, (3, 4), open + THIN + 1, open), wood);
+        let thinning: Vec<usize> = (open..=open + THIN + 1).map(kept).collect();
+        assert!(thinning.windows(2).all(|w| w[0] <= w[1]), "{thinning:?}");
     }
 
     #[test]

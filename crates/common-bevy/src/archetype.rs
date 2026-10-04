@@ -58,6 +58,19 @@ impl EnemyArchetype {
     pub fn denning_on(habitat: Habitat) -> Self {
         Self::ALL.into_iter().find(|archetype| archetype.profile().habitat == habitat).unwrap_or_default()
     }
+
+    /// The stem of its den's model, `models/den-<stem>-active.glb` and its
+    /// cleared twin
+    pub fn den_model(self) -> &'static str {
+        match self {
+            Self::Berserker => "berserker",
+            Self::Juggernaut => "juggernaut",
+            Self::Flanker => "flanker",
+            Self::Defender => "defender",
+            Self::Skirmisher => "skirmisher",
+            Self::Ambusher => "ambusher",
+        }
+    }
 }
 
 impl EnemyArchetype {
