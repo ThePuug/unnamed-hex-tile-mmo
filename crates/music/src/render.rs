@@ -70,8 +70,11 @@ pub struct Bank {
 }
 
 impl Bank {
-    /// Where the bank is: `given`, else `$SOUNDFONT`, else
-    /// `~/soundfonts/GeneralUser.sf2` where it exists.
+    /// Where the bank is: `given`, else `$SOUNDFONT`, else the first of
+    /// these that exists: `GeneralUser.sf2` shipped with the program —
+    /// beside the executable, or in the bundle's `Resources` on macOS,
+    /// where the executable sits in `MacOS` — and
+    /// `~/soundfonts/GeneralUser.sf2`.
     pub fn find(given: Option<PathBuf>) -> Option<PathBuf> {
         if let Some(p) = given {
             return Some(p);
@@ -79,9 +82,13 @@ impl Bank {
         if let Some(p) = std::env::var_os("SOUNDFONT") {
             return Some(PathBuf::from(p));
         }
-        let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
-        let p = Path::new(&home).join("soundfonts/GeneralUser.sf2");
-        p.is_file().then_some(p)
+        let shipped = std::env::current_exe().ok().and_then(|exe| {
+            let dir = exe.parent()?;
+            let dir = if cfg!(target_os = "macos") { dir.parent()?.join("Resources") } else { dir.to_path_buf() };
+            Some(dir.join("GeneralUser.sf2"))
+        });
+        let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(|h| Path::new(&h).join("soundfonts/GeneralUser.sf2"));
+        [shipped, home].into_iter().flatten().find(|p| p.is_file())
     }
 
     pub fn load(path: &Path) -> Result<Self, String> {
