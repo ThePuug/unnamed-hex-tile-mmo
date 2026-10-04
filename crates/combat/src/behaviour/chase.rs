@@ -15,7 +15,7 @@ use common_bevy::{
     message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
     resources::map::Map,
-    systems::{movement::speed, targeting::{across, across_share}},
+    systems::{movement::speed, targeting::across_share},
 };
 use common_bevy::message::AbilityType;
 use qrz::{Convert, Qrz};
@@ -85,7 +85,7 @@ pub fn chase(
         &Side,
         Option<&Status>,
         (Option<&Swing>, Option<&mut Move>, Option<&EntityType>, Option<&Sight>, Option<&Bar>),
-        (Option<&common_bevy::components::recovery::GlobalRecovery>, Option<&common_bevy::components::resources::Endurance>),
+        Option<&common_bevy::components::recovery::GlobalRecovery>,
     )>, Query<(Entity, &Heading)>)>,
     q_target: Query<(&Loc, &Health, &Side, Option<&ActorAttributes>, Option<&Status>)>,
     q_home: Query<&Loc, Without<Chase>>,
@@ -99,7 +99,7 @@ pub fn chase(
 ) {
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, (swing, mut under_way, kind, sight, bar), (recovery, endurance)) in actors.p0().iter_mut() {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, (swing, mut under_way, kind, sight, bar), recovery) in actors.p0().iter_mut() {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
@@ -183,8 +183,6 @@ pub fn chase(
             }
         };
         let striding = status.is_some_and(Status::is_striding);
-        let held = endurance.map_or(f32::INFINITY, |endurance| endurance.state.max(f32::EPSILON));
-        let force = attrs.map_or(0.0, |attrs| attrs.force(&tuning));
         let room = |at: Qrz| (chase.leash_distance - at.flat_distance(&home)).max(0) as f32 / chase.leash_distance.max(1) as f32;
         let tiles: Vec<Qrz> = std::iter::once(floor)
             .chain(map.neighbors(floor).into_iter().map(|(neighbor, _)| neighbor).filter(|&neighbor| uncrowded(&nntree, neighbor)))
@@ -193,10 +191,8 @@ pub fn chase(
             let standing = Loc::new(at + Qrz::Z);
             // A strike on the step there: on its heading there, or where it
             // stands, facing its target, free
-            let (strike_cost, breaks_stride) = if at == floor { (0.0, false) } else {
-                let heading = Heading::from_hex(Qrz { z: 0, ..at - floor });
-                let share = if striding { 0.0 } else { across_share(&tuning, &heading, loc, target_loc) };
-                (tuning.off_arc_cost * share * force / held, across(Some(&heading), loc, target_loc) && !striding)
+            let strike_cost = if at == floor || striding { 0.0 } else {
+                across_share(&tuning, &Heading::from_hex(Qrz { z: 0, ..at - floor }), loc, target_loc)
             };
             Candidate {
                 tile: at,
@@ -209,7 +205,6 @@ pub fn chase(
                     heading.turn_toward(bearing).1 as f32 / (HEADING_SLOTS / 2) as f32
                 }),
                 strike_cost,
-                breaks_stride,
             }
         }).collect();
         let soonest = candidates.iter().map(|candidate| candidate.time_to_strike).fold(f32::INFINITY, f32::min);

@@ -263,8 +263,8 @@ kiter = [
     { name = "foe_across.floor", min = 0.0, max = 1.0, start = 0.3 },
     { name = "behind.floor", min = 0.0, max = 1.0, start = 0.2 },
     { name = "behind.to", min = 0.2, max = 1.0, start = 0.5 },
-    { name = "strike_cost.to", min = 0.2, max = 2.0, start = 0.8 },
-    { name = "stride_kept.floor", min = 0.0, max = 1.0, start = 0.6 },
+    { name = "strike_cost.to", min = 0.2, max = 2.0, start = 1.0 },
+    { name = "strike_cost.floor", min = 0.0, max = 1.0, start = 0.6 },
 ]
 defender = [
 ]

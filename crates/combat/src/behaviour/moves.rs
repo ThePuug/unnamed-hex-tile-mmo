@@ -29,7 +29,7 @@ pub const MOMENTUM: f32 = 0.15;
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
     "leash_left", "recovery_left", "recovering", "detour", "time_to_strike", "time_to_be_struck",
-    "behind", "strike_cost", "stride_kept",
+    "behind", "strike_cost",
 ];
 
 /// What a step is for.
@@ -79,13 +79,11 @@ pub struct Candidate {
     /// third it stands outside its target's forward faces, where a target
     /// without Grace cannot strike it
     pub behind: f32,
-    /// What a strike on the step there costs, of the endurance it has:
-    /// nothing within its target's forward faces of its heading, more the
+    /// The share of a strike's cost across its line a strike on the step
+    /// there pays, endurance and a broken stride (`targeting::across_share`):
+    /// nothing within its forward faces or in a Perfect Stride, more the
     /// further round its arc
     pub strike_cost: f32,
-    /// A strike on the step there breaks its stride: across its line, with
-    /// no Perfect Stride up
-    pub breaks_stride: bool,
 }
 
 /// What it weighs a step by: itself and the candidate.
@@ -119,7 +117,7 @@ pub fn choose(footing: &Footing, candidates: &[Candidate], under_way: Move, mind
 pub fn weigh(footing: &Footing, candidate: &Candidate, decision: Move, mind: &Mind) -> f32 {
     let considerations: &[Consideration<Ground>] = match decision {
         Move::Hold => return mind.hold,
-        Move::Engage if footing.grace => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND, STRIKE_COST, STRIDE_KEPT],
+        Move::Engage if footing.grace => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND, STRIKE_COST],
         Move::Engage => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT],
         Move::KeepAway if footing.patience > 0 => &[TIME_TO_BE_STRUCK, TIME_TO_STRIKE, RECOVERING, LEASH_LEFT],
         Move::KeepAway => return 0.0,
@@ -197,21 +195,14 @@ const BEHIND: Consideration<Ground> = Consideration {
     curve: Curve::RISING.floored(0.2),
 };
 
-/// What a strike on the step costs: the dearer, against the endurance it has
-/// left, the less the step pays
+/// What a strike on the step costs: the further round its arc, the more
+/// endurance it spends and the more surely it breaks its stride, and the
+/// less the step pays
 const STRIKE_COST: Consideration<Ground> = Consideration {
     name: "strike_cost",
     read: |ground| ground.candidate.strike_cost,
-    bounds: (0.0, 0.8),
-    curve: Curve::FALLING,
-};
-
-/// A strike on the step that breaks its stride slows it as it goes
-const STRIDE_KEPT: Consideration<Ground> = Consideration {
-    name: "stride_kept",
-    read: |ground| flag(!ground.candidate.breaks_stride),
     bounds: (0.0, 1.0),
-    curve: Curve::RISING.floored(0.6),
+    curve: Curve::FALLING.floored(0.6),
 };
 
 #[cfg(test)]
@@ -234,7 +225,6 @@ mod tests {
             room: 1.0,
             behind: 0.0,
             strike_cost: 0.0,
-            breaks_stride: false,
         }
     }
 
