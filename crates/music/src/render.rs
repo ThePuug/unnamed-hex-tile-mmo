@@ -6,6 +6,11 @@
 //! score's `hall` under the first. Pure arithmetic over a buffer: the
 //! same score and bank give the same samples.
 //!
+//! A bank is several SoundFonts: the default, which plays every
+//! General MIDI program, and the files `voices` names for the programs
+//! another plays better. Each file is its own synthesizer, playing the
+//! channels whose instruments it holds, and their outputs are summed.
+//!
 //! The bank is evened. Its samples are not one loudness across an
 //! instrument's range — a horn steps up three decibels where one sample
 //! hands over to the next — and where a lone player carries a part that
@@ -32,6 +37,7 @@ use crate::hall;
 use crate::perform::{perform, Msg};
 use crate::pieces::{Params, Piece};
 use crate::score::{Instrument, Role, Score};
+use crate::voices;
 
 pub use audio::SAMPLE_RATE;
 const BLOCK: usize = 64;
@@ -63,10 +69,21 @@ const MEASURED_S: f64 = 0.6;
 /// sample the bank does not mean to be played.
 const EVEN_DB: f32 = 6.0;
 
-/// A SoundFont, and the loudness of every tone it has been asked for.
+/// The SoundFonts that play a score — the default first, then every file
+/// `voices` names that sits beside it — and the loudness of every tone
+/// each has been asked for.
 pub struct Bank {
-    font: Arc<SoundFont>,
-    levels: Mutex<HashMap<(u8, u8), f32>>,
+    fonts: Vec<(&'static str, Arc<SoundFont>)>,
+    levels: Mutex<HashMap<(usize, u8, u8, u8), f32>>,
+}
+
+/// Where an instrument is played: the font, and its bank number and
+/// preset there.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Seat {
+    font: usize,
+    bank: u8,
+    preset: u8,
 }
 
 impl Bank {
@@ -91,23 +108,48 @@ impl Bank {
         [shipped, home].into_iter().flatten().find(|p| p.is_file())
     }
 
+    /// The default bank at `path`, and every file `voices` names that sits
+    /// beside it.
     pub fn load(path: &Path) -> Result<Self, String> {
-        let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let sf = SoundFont::new(&mut file).map_err(|e| format!("{}: {e:?}", path.display()))?;
-        Ok(Bank { font: Arc::new(sf), levels: Mutex::new(HashMap::new()) })
+        let open = |path: &Path| -> Result<Arc<SoundFont>, String> {
+            let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            Ok(Arc::new(SoundFont::new(&mut file).map_err(|e| format!("{}: {e:?}", path.display()))?))
+        };
+        let mut fonts = vec![("", open(path)?)];
+        let dir = path.parent().unwrap_or(Path::new("."));
+        for v in voices::VOICES {
+            if fonts.iter().any(|(f, _)| *f == v.file) {
+                continue;
+            }
+            let beside = dir.join(v.file);
+            if beside.is_file() {
+                fonts.push((v.file, open(&beside)?));
+            }
+        }
+        Ok(Bank { fonts, levels: Mutex::new(HashMap::new()) })
     }
 
-    /// The loudness of `program`'s `pitch`, LUFS at its loudest moment:
-    /// one tone at `MEASURED_AT`, dry and centred.
-    fn level(&self, program: u8, pitch: u8) -> f32 {
-        if let Some(l) = self.levels.lock().unwrap().get(&(program, pitch)) {
+    /// Where `inst` is played: on the bank `voices` names for its program
+    /// where that bank was found, else on the default.
+    fn seat(&self, inst: &Instrument) -> Seat {
+        voices::voice(inst.program, inst.role == Role::Percussion)
+            .and_then(|v| self.fonts.iter().position(|(f, _)| *f == v.file).map(|font| Seat { font, bank: v.bank, preset: v.preset }))
+            .unwrap_or(Seat { font: 0, bank: 0, preset: inst.program })
+    }
+
+    /// The loudness of `seat`'s `pitch`, LUFS at its loudest moment: one
+    /// tone at `MEASURED_AT`, dry and centred.
+    fn level(&self, seat: Seat, pitch: u8) -> f32 {
+        let key = (seat.font, seat.bank, seat.preset, pitch);
+        if let Some(l) = self.levels.lock().unwrap().get(&key) {
             return *l;
         }
         let mut settings = SynthesizerSettings::new(SAMPLE_RATE as i32);
         settings.block_size = BLOCK;
         settings.enable_reverb_and_chorus = false;
-        let mut synth = Synthesizer::new(&self.font, &settings).expect("a synthesizer");
-        synth.process_midi_message(0, 0xC0, program as i32, 0);
+        let mut synth = Synthesizer::new(&self.fonts[seat.font].1, &settings).expect("a synthesizer");
+        synth.process_midi_message(0, 0xB0, 0, seat.bank as i32);
+        synth.process_midi_message(0, 0xC0, seat.preset as i32, 0);
         synth.note_on(0, pitch as i32, MEASURED_AT);
         let n = (MEASURED_S * SAMPLE_RATE as f64) as usize / BLOCK;
         let (mut left, mut right) = (vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]);
@@ -117,7 +159,7 @@ impl Bank {
             tone.extend(left.iter().zip(&right).map(|(l, r)| [*l, *r]));
         }
         let l = audio::measure::loudest_moment(&tone);
-        self.levels.lock().unwrap().insert((program, pitch), l);
+        self.levels.lock().unwrap().insert(key, l);
         l
     }
 
@@ -128,7 +170,8 @@ impl Bank {
         if inst.role == Role::Percussion {
             return HashMap::new();
         }
-        let levels: Vec<(u8, f32)> = (inst.low..=inst.high).map(|p| (p, self.level(inst.program, p))).filter(|(_, l)| l.is_finite()).collect();
+        let seat = self.seat(inst);
+        let levels: Vec<(u8, f32)> = (inst.low..=inst.high).map(|p| (p, self.level(seat, p))).filter(|(_, l)| l.is_finite()).collect();
         let mut sorted: Vec<f32> = levels.iter().map(|(_, l)| *l).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let Some(middle) = sorted.get(sorted.len() / 2).copied() else {
@@ -246,21 +289,49 @@ fn mixed(score: &Score, bank: &Bank, period: u32, tail: usize) -> Vec<[f32; 2]> 
 }
 
 /// The score as `played`, then `tail` samples more: dry, or as the
-/// reverb send hears it.
+/// reverb send hears it; each font of the bank playing the channels it
+/// seats, their outputs summed.
 fn through(score: &Score, played: &[crate::perform::Played], bank: &Bank, tail: usize, send: bool) -> Vec<[f32; 2]> {
+    let mut out: Vec<[f32; 2]> = Vec::new();
+    for font in 0..bank.fonts.len() {
+        let seated: Vec<&Instrument> = score.instruments.iter().filter(|i| bank.seat(i).font == font).collect();
+        if seated.is_empty() {
+            continue;
+        }
+        let part = through_font(score, played, bank, font, &seated, tail, send);
+        if out.is_empty() {
+            out = part;
+        } else {
+            for (o, p) in out.iter_mut().zip(part) {
+                o[0] += p[0];
+                o[1] += p[1];
+            }
+        }
+    }
+    out
+}
+
+/// The channels of `seated` as `played`, on `font`.
+#[allow(clippy::too_many_arguments)]
+fn through_font(score: &Score, played: &[crate::perform::Played], bank: &Bank, font: usize, seated: &[&Instrument], tail: usize, send: bool) -> Vec<[f32; 2]> {
     let mut settings = SynthesizerSettings::new(SAMPLE_RATE as i32);
     settings.block_size = BLOCK;
     settings.enable_reverb_and_chorus = false;
-    let mut synth = Synthesizer::new(&bank.font, &settings).expect("a synthesizer");
-    let evening: HashMap<u8, HashMap<u8, f32>> = score.instruments.iter().map(|i| (i.channel, bank.evening(i))).collect();
+    let mut synth = Synthesizer::new(&bank.fonts[font].1, &settings).expect("a synthesizer");
+    let channels: Vec<u8> = seated.iter().map(|i| i.channel).collect();
+    let evening: HashMap<u8, HashMap<u8, f32>> = seated.iter().map(|i| (i.channel, bank.evening(i))).collect();
     // The synthesizer gains a velocity as its square, forty log ten of
     // it in dB.
     let even = |channel: u8, pitch: u8, vel: u8| -> i32 {
         let db = evening.get(&channel).and_then(|e| e.get(&pitch)).copied().unwrap_or(0.0);
         (vel as f32 * 10f32.powf(db / 40.0)).round().clamp(1.0, 127.0) as i32
     };
-    for inst in &score.instruments {
-        synth.process_midi_message(inst.channel as i32, 0xC0, inst.program as i32, 0);
+    for inst in seated {
+        let seat = bank.seat(inst);
+        if seat.font != 0 {
+            synth.process_midi_message(inst.channel as i32, 0xB0, 0, seat.bank as i32);
+        }
+        synth.process_midi_message(inst.channel as i32, 0xC0, seat.preset as i32, 0);
         synth.process_midi_message(inst.channel as i32, 0xB0, 10, 64 + inst.pan as i32);
         // The synthesizer squares volume into gain, so the send's gain
         // is its root on the volume.
@@ -277,6 +348,13 @@ fn through(score: &Score, played: &[crate::perform::Played], bank: &Bank, tail: 
     let mut sample = 0usize;
     while sample < total {
         while next < played.len() && at(played[next].at) as usize <= sample {
+            let channel = match played[next].msg {
+                Msg::On { channel, .. } | Msg::Off { channel, .. } | Msg::Control { channel, .. } | Msg::Bend { channel, .. } => channel,
+            };
+            if !channels.contains(&channel) {
+                next += 1;
+                continue;
+            }
             match played[next].msg {
                 Msg::On { channel, pitch, vel } => synth.note_on(channel as i32, pitch as i32, even(channel, pitch, vel)),
                 Msg::Off { channel, pitch } => synth.note_off(channel as i32, pitch as i32),
