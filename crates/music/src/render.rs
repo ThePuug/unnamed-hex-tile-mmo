@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
@@ -65,6 +65,11 @@ pub fn volume(level: f32) -> u8 {
     (VOLUME * 10f32.powf(level / 40.0)).round().min(127.0) as u8
 }
 
+fn open(path: &Path) -> Result<Arc<SoundFont>, String> {
+    let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Arc::new(SoundFont::new(&mut file).map_err(|e| format!("{}: {e:?}", path.display()))?))
+}
+
 /// The velocity a pitch is measured at, and how long its tone sounds.
 const MEASURED_AT: i32 = 100;
 const MEASURED_S: f64 = 0.6;
@@ -77,17 +82,26 @@ const EVEN_DB: f32 = 6.0;
 /// `voices` names that sits beside it — and the loudness of every tone
 /// each has been asked for.
 pub struct Bank {
-    fonts: Vec<(&'static str, Arc<SoundFont>)>,
+    fonts: Vec<Font>,
     levels: Mutex<HashMap<(usize, u8, u8, u8), f32>>,
 }
 
-/// Where an instrument is played: the font, and its bank number and
-/// preset there.
+/// A SoundFont of the bank, read the first time a score seats a player
+/// on it: the sampled ones run to hundreds of megabytes.
+struct Font {
+    file: &'static str,
+    path: PathBuf,
+    font: OnceLock<Arc<SoundFont>>,
+}
+
+/// Where an instrument is played: the font, its bank number and preset
+/// there, and the voice that put it there, whose key map it plays by.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Seat {
     font: usize,
     bank: u8,
     preset: u8,
+    voice: Option<&'static voices::Voice>,
 }
 
 impl Bank {
@@ -115,30 +129,31 @@ impl Bank {
     /// The default bank at `path`, and every file `voices` names that sits
     /// beside it.
     pub fn load(path: &Path) -> Result<Self, String> {
-        let open = |path: &Path| -> Result<Arc<SoundFont>, String> {
-            let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-            Ok(Arc::new(SoundFont::new(&mut file).map_err(|e| format!("{}: {e:?}", path.display()))?))
-        };
-        let mut fonts = vec![("", open(path)?)];
+        let default = Font { file: "", path: path.to_path_buf(), font: OnceLock::new() };
+        default.font.set(open(path)?).ok();
+        let mut fonts = vec![default];
         let dir = path.parent().unwrap_or(Path::new("."));
         for v in voices::VOICES {
-            if fonts.iter().any(|(f, _)| *f == v.file) {
-                continue;
-            }
             let beside = dir.join(v.file);
-            if beside.is_file() {
-                fonts.push((v.file, open(&beside)?));
+            if !fonts.iter().any(|f| f.file == v.file) && beside.is_file() {
+                fonts.push(Font { file: v.file, path: beside, font: OnceLock::new() });
             }
         }
         Ok(Bank { fonts, levels: Mutex::new(HashMap::new()) })
+    }
+
+    /// The font at `index`, read now if no score has needed it yet.
+    fn font(&self, index: usize) -> Arc<SoundFont> {
+        let f = &self.fonts[index];
+        f.font.get_or_init(|| open(&f.path).unwrap_or_else(|e| panic!("{e}"))).clone()
     }
 
     /// Where `inst` is played: on the bank `voices` names for its program
     /// where that bank was found, else on the default.
     fn seat(&self, inst: &Instrument) -> Seat {
         voices::voice(inst.program, inst.role == Role::Percussion)
-            .and_then(|v| self.fonts.iter().position(|(f, _)| *f == v.file).map(|font| Seat { font, bank: v.bank, preset: v.preset }))
-            .unwrap_or(Seat { font: 0, bank: 0, preset: inst.program })
+            .and_then(|v| self.fonts.iter().position(|f| f.file == v.file).map(|font| Seat { font, bank: v.bank, preset: v.preset, voice: Some(v) }))
+            .unwrap_or(Seat { font: 0, bank: 0, preset: inst.program, voice: None })
     }
 
     /// The loudness of `seat`'s `pitch`, LUFS at its loudest moment: one
@@ -151,7 +166,7 @@ impl Bank {
         let mut settings = SynthesizerSettings::new(SAMPLE_RATE as i32);
         settings.block_size = BLOCK;
         settings.enable_reverb_and_chorus = false;
-        let mut synth = Synthesizer::new(&self.fonts[seat.font].1, &settings).expect("a synthesizer");
+        let mut synth = Synthesizer::new(&self.font(seat.font), &settings).expect("a synthesizer");
         synth.process_midi_message(0, 0xB0, 0, seat.bank as i32);
         synth.process_midi_message(0, 0xC0, seat.preset as i32, 0);
         synth.note_on(0, pitch as i32, MEASURED_AT);
@@ -328,8 +343,18 @@ fn through_font(score: &Score, played: &[crate::perform::Played], bank: &Bank, f
     let mut settings = SynthesizerSettings::new(SAMPLE_RATE as i32);
     settings.block_size = BLOCK;
     settings.enable_reverb_and_chorus = false;
-    let mut synth = Synthesizer::new(&bank.fonts[font].1, &settings).expect("a synthesizer");
-    let channels: Vec<u8> = seated.iter().map(|i| i.channel).collect();
+    let mut synth = Synthesizer::new(&bank.font(font), &settings).expect("a synthesizer");
+    // A kit another bank files as a melodic preset plays on a melodic
+    // channel of its own synthesizer, which holds no other player there.
+    let free = (0..16u8).find(|c| *c != 9 && !seated.iter().any(|i| i.channel == *c)).unwrap_or(15);
+    let route: HashMap<u8, (u8, Seat)> = seated
+        .iter()
+        .map(|i| {
+            let seat = bank.seat(i);
+            let melodic_kit = i.role == Role::Percussion && seat.voice.is_some_and(|v| v.bank < 128);
+            (i.channel, (if melodic_kit { free } else { i.channel }, seat))
+        })
+        .collect();
     let evening: HashMap<u8, HashMap<u8, f32>> = seated.iter().map(|i| (i.channel, bank.evening(i))).collect();
     // The synthesizer gains a velocity as its square, forty log ten of
     // it in dB.
@@ -338,16 +363,17 @@ fn through_font(score: &Score, played: &[crate::perform::Played], bank: &Bank, f
         (vel as f32 * 10f32.powf(db / 40.0)).round().clamp(1.0, 127.0) as i32
     };
     for inst in seated {
-        let seat = bank.seat(inst);
+        let (ch, seat) = route[&inst.channel];
+        let ch = ch as i32;
         if seat.font != 0 {
-            synth.process_midi_message(inst.channel as i32, 0xB0, 0, seat.bank as i32);
+            synth.process_midi_message(ch, 0xB0, 0, seat.bank as i32);
         }
-        synth.process_midi_message(inst.channel as i32, 0xC0, seat.preset as i32, 0);
-        synth.process_midi_message(inst.channel as i32, 0xB0, 10, 64 + inst.pan as i32);
+        synth.process_midi_message(ch, 0xC0, seat.preset as i32, 0);
+        synth.process_midi_message(ch, 0xB0, 10, 64 + inst.pan as i32);
         // The synthesizer squares volume into gain, so the send's gain
         // is its root on the volume.
         let send = if send { (inst.reverb as f32 / 127.0).sqrt() } else { 1.0 };
-        synth.process_midi_message(inst.channel as i32, 0xB0, 7, (volume(inst.level) as f32 * send).round() as i32);
+        synth.process_midi_message(ch, 0xB0, 7, (volume(inst.level) as f32 * send).round() as i32);
     }
 
     let at = |seconds: f64| (seconds * SAMPLE_RATE as f64).round() as u64;
@@ -362,15 +388,16 @@ fn through_font(score: &Score, played: &[crate::perform::Played], bank: &Bank, f
             let channel = match played[next].msg {
                 Msg::On { channel, .. } | Msg::Off { channel, .. } | Msg::Control { channel, .. } | Msg::Bend { channel, .. } => channel,
             };
-            if !channels.contains(&channel) {
+            let Some((ch, seat)) = route.get(&channel) else {
                 next += 1;
                 continue;
-            }
+            };
+            let (ch, key) = (*ch as i32, |pitch: u8| seat.voice.map_or(pitch, |v| voices::key(v, pitch)) as i32);
             match played[next].msg {
-                Msg::On { channel, pitch, vel } => synth.note_on(channel as i32, pitch as i32, even(channel, pitch, vel)),
-                Msg::Off { channel, pitch } => synth.note_off(channel as i32, pitch as i32),
-                Msg::Control { channel, number, value } => synth.process_midi_message(channel as i32, 0xB0, number as i32, value as i32),
-                Msg::Bend { channel, value } => synth.process_midi_message(channel as i32, 0xE0, (value & 0x7F) as i32, (value >> 7) as i32),
+                Msg::On { channel, pitch, vel } => synth.note_on(ch, key(pitch), even(channel, pitch, vel)),
+                Msg::Off { pitch, .. } => synth.note_off(ch, key(pitch)),
+                Msg::Control { number, value, .. } => synth.process_midi_message(ch, 0xB0, number as i32, value as i32),
+                Msg::Bend { value, .. } => synth.process_midi_message(ch, 0xE0, (value & 0x7F) as i32, (value >> 7) as i32),
             }
             next += 1;
         }
