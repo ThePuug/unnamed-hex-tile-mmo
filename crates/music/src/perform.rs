@@ -138,6 +138,10 @@ fn bends_in(program: u8) -> bool {
 /// rises through the mode.
 const BEND_IN_S: f64 = 0.35;
 const BEND_IN_CHANCE: f32 = 0.4;
+/// A tone this long the player all but always bends into: a held peak is
+/// where a lead guitarist bends.
+const BEND_SURE_S: f64 = 1.0;
+const BEND_SURE_CHANCE: f32 = 0.9;
 const BEND_IN_RISE_S: f64 = 0.1;
 const BEND_IN_STEPS: usize = 6;
 
@@ -230,7 +234,8 @@ pub fn perform(score: &Score, period: u32) -> Vec<Played> {
             notes.push((on.max(0.0), off.max(0.0), n.pitch, vel, swells(written_end - written)));
             if inst.role == Role::Melody {
                 let cents = tuning + INTONATION * slip(&mut rng);
-                if bends_in(inst.program) && written_end - written >= BEND_IN_S && rng.chance(BEND_IN_CHANCE) {
+                let held = written_end - written;
+                if bends_in(inst.program) && held >= BEND_IN_S && rng.chance(if held >= BEND_SURE_S { BEND_SURE_CHANCE } else { BEND_IN_CHANCE }) {
                     let under = if score.key.contains(n.pitch.saturating_sub(2)) { 200.0 } else { 100.0 };
                     for k in 0..=BEND_IN_STEPS {
                         let x = k as f32 / BEND_IN_STEPS as f32;

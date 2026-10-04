@@ -50,8 +50,12 @@ const OPEN_HAT: u8 = 46;
 const CRASH: u8 = 49;
 const RIDE: u8 = 51;
 const CRASH_2: u8 = 57;
-/// The toms, high to low.
-const TOMS: [u8; 5] = [50, 48, 47, 45, 43];
+const PEDAL_HAT: u8 = 44;
+const CHINA: u8 = 52;
+const RIDE_BELL: u8 = 53;
+const SPLASH: u8 = 55;
+/// The toms, high to low, the floor's two last.
+const TOMS: [u8; 6] = [50, 48, 47, 45, 43, 41];
 
 const CH_BASS: u8 = 0;
 const CH_CLEAN: u8 = 1;
@@ -129,9 +133,10 @@ const GIVE: f32 = 0.15;
 /// The tune's register; the lead takes it here.
 const TUNE: (u8, u8) = (60, 88);
 /// The guitar's solo's register, over the tune's, up to a 24-fret
-/// guitar's top E; the bass's, from its open E to the top of its neck.
+/// guitar's top E; the bass's, from its open E to the E two octaves up,
+/// where a bass still sounds like one.
 const SOLO: (u8, u8) = (62, 88);
-const BASS_SOLO: (u8, u8) = (40, 67);
+const BASS_SOLO: (u8, u8) = (40, 64);
 /// The sequence a verse's phrase pair takes, in degrees: the theme, a
 /// step up.
 const PAIRS: [i32; 2] = [0, 1];
@@ -395,8 +400,8 @@ enum Fill {
 
 /// A drum solo's motif in a beat of two eighths and of three: sixteenths
 /// struck within the beat, and the tom each falls on.
-const MOTIFS_TWO: [&[(u32, usize)]; 3] = [&[(0, 0), (3, 2)], &[(0, 0), (1, 1), (3, 3)], &[(0, 1), (2, 1), (3, 4)]];
-const MOTIFS_THREE: [&[(u32, usize)]; 3] = [&[(0, 0), (3, 2), (5, 4)], &[(0, 1), (2, 2), (4, 3)], &[(0, 0), (1, 0), (3, 3)]];
+const MOTIFS_TWO: [&[(u32, usize)]; 3] = [&[(0, 0), (3, 2)], &[(0, 0), (1, 1), (3, 3)], &[(0, 1), (2, 1), (3, 5)]];
+const MOTIFS_THREE: [&[(u32, usize)]; 3] = [&[(0, 0), (3, 2), (5, 5)], &[(0, 1), (2, 2), (4, 3)], &[(0, 0), (1, 0), (3, 4)]];
 
 /// What a seed's piece is.
 struct Design {
@@ -447,6 +452,28 @@ fn cadence(bar: u32) -> bool {
     bar % phrase::BARS == phrase::BARS - 1
 }
 
+/// The stages of a melodic solo over its bars: the theme stated, the
+/// theme again woven with sixteenths, a call and answer, the build, one
+/// bar of climax, the release and the landing — the bars each opens on.
+struct Stages {
+    woven: u32,
+    call: u32,
+    build: u32,
+    climax: u32,
+    landing: u32,
+}
+
+fn stages(a: u32, z: u32) -> Stages {
+    let n = z - a;
+    let at = |f: f32| a + ((n as f32 * f).round() as u32).min(n - 1);
+    let woven = at(0.12).max(a + 1);
+    let call = at(0.3).max(woven + 1);
+    let build = at(0.45).max(call + 1);
+    let climax = at(0.62).max(build + 1).min(z - 3);
+    let landing = at(0.85).max(climax + 2).min(z - 1);
+    Stages { woven, call, build, climax, landing }
+}
+
 struct Form {
     bar: u32,
     walk: Walk<Texture, Telling>,
@@ -485,6 +512,12 @@ impl Form {
     /// Whether the part of the song changes at `bar`, from the bar before.
     fn turns_at(&self, bar: u32) -> bool {
         bar > 0 && bar < self.bars() && self.texture_at(bar).section() != self.texture_at(bar - 1).section()
+    }
+    /// Where the band drops out at `bar`, the eighth it falls silent from:
+    /// the last beat before a melodic solo's climax, so the peak lands out
+    /// of silence.
+    fn drop_from(&self, bar: u32, last_beat: u32) -> Option<u32> {
+        (self.design.soloist != Soloist::Drums && self.solos().iter().any(|(a, z)| stages(*a, *z).climax == bar + 1)).then_some(last_beat)
     }
     /// The bars the solo plays, each a run of the walk's.
     fn solos(&self) -> Vec<(u32, u32)> {
@@ -611,8 +644,8 @@ fn compose(params: &Params) -> (Score, Form) {
     pad(&mut score, &form, &mut rng.fork(4));
     kit(&mut score, &form, &mut rng.fork(5));
     match form.design.soloist {
-        Soloist::Guitar => melodic_solo(&mut score, &form, SOLO, 0, &mut rng.fork(6)),
-        Soloist::Bass => melodic_solo(&mut score, &form, BASS_SOLO, 12, &mut rng.fork(6)),
+        Soloist::Guitar => guitar_solo(&mut score, &form, &mut rng.fork(6)),
+        Soloist::Bass => bass_solo(&mut score, &form, &mut rng.fork(6)),
         Soloist::Drums => drum_solo(&mut score, &form, &mut rng.fork(6)),
     }
     let teller = Teller {
@@ -752,7 +785,10 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
             let step = if (td - rd).abs() == 2 { (td + rd) / 2 } else if td > rd { td - 1 } else { td + 1 };
             key.pitch(step, 4).clamp(28, 52)
         });
-        let until = if approach.is_some() { eighths - 1 } else { eighths };
+        let last_beat = eighths - *groove.groups.last().unwrap() as u32;
+        let dropped = form.drop_from(b, last_beat);
+        let approach = approach.filter(|_| dropped.is_none());
+        let until = dropped.unwrap_or(if approach.is_some() { eighths - 1 } else { eighths });
         match mode {
             Bass::Held => {
                 for (k, i) in groove.dum.iter().enumerate() {
@@ -823,13 +859,14 @@ fn guitars(score: &mut Score, form: &Form, rng: &mut Rng) {
             continue;
         }
         let part = form.walk.parts.iter().position(|p| p.a <= b && b < p.b).unwrap_or(0);
+        let dropped = form.drop_from(b, eighths - *form.design.groove.groups.last().unwrap() as u32).unwrap_or(eighths);
         match mode {
             Rhythm::Muted => {
-                let push = !form.last(b) && form.texture_at(b + 1).rhythm != Rhythm::Off && !form.stop_time(b + 1);
+                let push = !form.last(b) && form.texture_at(b + 1).rhythm != Rhythm::Off && !form.stop_time(b + 1) && form.drop_from(b, eighths).is_none();
                 let gallop = texture.kit == Kit::Full;
                 for channel in [CH_LEFT, CH_RIGHT] {
                     let accents = channel == CH_RIGHT && apart[part];
-                    for i in 0..eighths {
+                    for i in 0..dropped {
                         let at = start + i * E;
                         if i == 0 && was_pushed {
                             continue;
@@ -868,8 +905,8 @@ fn guitars(score: &mut Score, form: &Form, rng: &mut Rng) {
                 let inverted = [fifth, top, fifth + 12];
                 for channel in [CH_LEFT, CH_RIGHT] {
                     let voicing = if channel == CH_RIGHT && apart[part] { inverted } else { chord_tones };
-                    for (k, i) in dum.iter().enumerate() {
-                        let to = dum.get(k + 1).copied().unwrap_or(eighths);
+                    for (k, i) in dum.iter().enumerate().filter(|(_, i)| **i < dropped) {
+                        let to = dum.get(k + 1).copied().unwrap_or(eighths).min(dropped);
                         for p in voicing {
                             score.add(Note { start: start + i * E, len: (to - i) * E - E / 8, pitch: p, vel: vel(if *i == 0 { 4 } else { -2 }, rng), channel });
                         }
@@ -956,7 +993,9 @@ fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
         let full = texture.kit == Kit::Full;
         let driving = full && texture.solo == Solo::On && form.design.soloist == Soloist::Guitar;
         let last_beat = eighths - *groove.groups.last().unwrap() as u32;
-        let fill_from = if !form.last(b) && form.turns_at(b + 1) {
+        let fill_from = if let Some(from) = form.drop_from(b, last_beat) {
+            Some(from)
+        } else if !form.last(b) && form.turns_at(b + 1) {
             Some(if rng.chance(0.6) { strong[1] } else { half })
         } else if cadence(b) && rng.chance(0.8) {
             Some(if rng.chance(0.5) { last_beat } else { strong[strong.len().saturating_sub(2)] })
@@ -1029,25 +1068,38 @@ fn fill(score: &mut Score, shape: Fill, start: u32, n: u32, accent: i32, rng: &m
     }
 }
 
+/// One stroke of the kit's solo, `slot` sixteenths into its beat.
+fn stroke(score: &mut Score, beat: u32, slot: u32, pitch: u8, accent: i32, rng: &mut Rng) {
+    score.add(Note { start: beat + slot * E / 2, len: E / 2 - 10, pitch, vel: vel(accent, rng), channel: CH_KIT });
+}
+
 /// The kit's solo over the band's stop-time, built on the seed's motif,
-/// loud from its first bar and louder to its last: every bar opens on
-/// the crash and the kick under the band's stab. Through its first
-/// stretch the motif sounds on every beat, moving down the kit, the
-/// snare filling between its strokes; through its second displaced an
-/// eighth, the kicks doubled in sixteenths under it; then in triplet
-/// sixteenths rolling round the toms; and its last bar is the seed's
-/// fill, the one that opens the choruses, into the band.
+/// loud from its first bar and louder to its last, the whole kit in it:
+/// every bar opens on the crash and the kick under the band's stab.
+/// Through its first stretch the motif sounds on the toms over the ride's
+/// bell, the kick on every beat and the snare on the backbeat. Through
+/// its second each beat is a figure drawn from the kit's vocabulary —
+/// the six toms down, the snare's roll from a flam, a linear run of kick,
+/// snare and toms, the china over the kick and the toms after it, tom
+/// pairs over the kick — each a different figure from the beat before.
+/// Through its third the kicks double in sixteenths under the motif
+/// displaced an eighth, the china or a crash on every beat; then triplet
+/// sixteenths roll round the six toms, the kick every third, the crash
+/// on every beat; and its last bar is the seed's fill, the one that opens
+/// the choruses, into the band.
 fn drum_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
     let strong = score.meter.strong_eighths();
     let eighths = score.meter.eighths();
     let groups = form.design.groove.groups.to_vec();
+    let backbeat = form.design.groove.tek;
     let motif = form.design.motif;
     for (a, z) in form.solos() {
         let n = z - a;
+        let mut last_figure = usize::MAX;
         for b in a..z {
             let start = b * form.bar;
             let x = (b - a) as f32 / n as f32;
-            let base = 2 + (26.0 * x) as i32;
+            let base = 8 + (20.0 * x) as i32;
             // The band's stab: every player strikes on one instant, so each
             // strikes under its full stroke, or the instant is the loop's peak.
             score.add(Note { start, len: 2 * E, pitch: CRASH, vel: vel(28, rng), channel: CH_KIT });
@@ -1060,38 +1112,86 @@ fn drum_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
             for (g, len) in groups.iter().enumerate() {
                 let beat = start + at * E;
                 let slots = *len as u32 * 2;
-                let skip_hit = g == 0;
-                if x < 0.4 {
-                    let shift = g % 2;
-                    for s in 0..slots {
-                        if skip_hit && s < 2 {
-                            continue;
-                        }
-                        match motif.iter().find(|(m, _)| *m == s) {
-                            Some((_, tom)) => score.add(Note { start: beat + s * E / 2, len: E / 2 - 10, pitch: TOMS[(tom + shift).min(TOMS.len() - 1)], vel: vel(base + 4, rng), channel: CH_KIT }),
-                            None => score.add(Note { start: beat + s * E / 2, len: E / 2 - 10, pitch: SNARE, vel: vel(base - 14, rng), channel: CH_KIT }),
+                let first = if g == 0 { 2 } else { 0 };
+                if x < 0.3 {
+                    for s in first..slots {
+                        if s % 2 == 0 {
+                            stroke(score, beat, s, RIDE_BELL, base + 14, rng);
                         }
                     }
-                } else if x < 0.7 {
-                    for s in 0..slots {
-                        score.add(Note { start: beat + s * E / 2, len: E / 2 - 10, pitch: KICK, vel: vel(base - 10, rng), channel: CH_KIT });
+                    if g > 0 {
+                        stroke(score, beat, 0, KICK, base - 4, rng);
+                    }
+                    if backbeat.contains(&at) {
+                        stroke(score, beat, 0, SNARE, base + 8, rng);
+                    }
+                    for (s, tom) in motif.iter().filter(|(s, _)| *s >= first) {
+                        stroke(score, beat, *s, TOMS[*tom], base + 2, rng);
+                    }
+                } else if x < 0.55 {
+                    let mut figure = rng.below(5);
+                    if figure == last_figure {
+                        figure = (figure + 1) % 5;
+                    }
+                    last_figure = figure;
+                    for s in first..slots {
+                        let rise = (10 * s / slots) as i32;
+                        match figure {
+                            0 => stroke(score, beat, s, TOMS[(s as usize * TOMS.len() / slots as usize).min(TOMS.len() - 1)], base + rise, rng),
+                            1 => {
+                                if s == first {
+                                    score.add(Note { start: beat + s * E / 2 - E / 8, len: E / 8, pitch: SNARE, vel: vel(base - 20, rng), channel: CH_KIT });
+                                }
+                                stroke(score, beat, s, SNARE, base - 8 + 2 * rise, rng);
+                            }
+                            2 => stroke(score, beat, s, [KICK, SNARE, TOMS[1], TOMS[4]][s as usize % 4], base + rise, rng),
+                            3 => {
+                                if s == first {
+                                    stroke(score, beat, s, CHINA, base + 20, rng);
+                                    stroke(score, beat, s, KICK, base, rng);
+                                } else {
+                                    stroke(score, beat, s, TOMS[2 + (s as usize % 4)], base + rise, rng);
+                                }
+                            }
+                            _ => {
+                                stroke(score, beat, s, TOMS[(s as usize / 2 + g) % TOMS.len()], base + rise, rng);
+                                if s % 2 == 0 {
+                                    stroke(score, beat, s, KICK, base - 8, rng);
+                                }
+                            }
+                        }
+                    }
+                } else if x < 0.8 {
+                    for s in first..slots {
+                        stroke(score, beat, s, KICK, base - 6, rng);
+                    }
+                    if g > 0 {
+                        stroke(score, beat, 0, if g % 2 == 1 { CHINA } else { CRASH_2 }, base + 18, rng);
                     }
                     for (s, tom) in motif {
-                        let s = (s + 2) % slots;
-                        score.add(Note { start: beat + s * E / 2, len: E / 2 - 10, pitch: TOMS[*tom], vel: vel(base + 6, rng), channel: CH_KIT });
+                        stroke(score, beat, (s + 2) % slots, TOMS[*tom], base + 8, rng);
                     }
-                    if !skip_hit {
-                        score.add(Note { start: beat, len: E - 20, pitch: SNARE, vel: vel(base + 8, rng), channel: CH_KIT });
+                    if backbeat.contains(&at) {
+                        stroke(score, beat, 0, SNARE, base + 12, rng);
+                    }
+                    if g + 1 == groups.len() {
+                        stroke(score, beat, slots - 1, SPLASH, base + 10, rng);
                     }
                 } else {
                     let triplets = *len as u32 * 3;
                     for t in 0..triplets {
-                        if skip_hit && t < 3 {
+                        if g == 0 && t < 3 {
                             continue;
                         }
-                        let pitch = if t % 3 == 2 { KICK } else { TOMS[(t as usize / 3 + g) % TOMS.len()] };
-                        score.add(Note { start: beat + t * E / 3, len: E / 3 - 8, pitch, vel: vel(base + (10 * t / triplets) as i32, rng), channel: CH_KIT });
+                        let pitch = if t % 3 == 2 { KICK } else { TOMS[(t as usize / 3 + 2 * g) % TOMS.len()] };
+                        score.add(Note { start: beat + t * E / 3, len: E / 3 - 8, pitch, vel: vel(base + 4 + (10 * t / triplets) as i32, rng), channel: CH_KIT });
                     }
+                    if g > 0 {
+                        stroke(score, beat, 0, CRASH, base + 20, rng);
+                    }
+                }
+                if x >= 0.3 && g % 2 == 1 {
+                    stroke(score, beat, 0, PEDAL_HAT, base, rng);
                 }
                 at += *len as u32;
             }
@@ -1114,56 +1214,91 @@ fn run_between(from: i32, to: i32, n: u32) -> Vec<i32> {
         .collect()
 }
 
-/// A guitar's solo or the bass's, each in its own register and struck
-/// `lift` over the band's velocity, a fifth of its bars to each stage of
-/// its arc. Its
-/// statement sings the theme in the solo's register, a tone or two a
-/// beat, entering off the beat now and then and resting through the last
-/// beat of every other bar. Its development calls and answers: the
-/// theme's every foot a third higher, the call resting through its last
-/// beat, the answer holding its last tone to the bar line. Its build
-/// climbs in sequences — four sixteenths a beat, each beat a step higher,
-/// or two threes in a beat of three eighths — every beat starting on the
-/// chord. Nothing before the climax touches its peak: the highest root or
-/// fifth of the climax's chord in the register, and two degrees under it
-/// is the ceiling. The climax runs up to the peak and holds it to the bar
-/// line — the player bends into it — or runs a whole bar to land on it at
-/// the last beat; the bars after it fall in sequences, a beat a step
-/// lower, the release before the landing. The landing sings the theme
-/// again where it began, its last tone held to the solo's end, and a
-/// guitar a third over it, a third under where the third over is off the
-/// chord: the harmony held back until now. Every strong beat's tone is bent onto the chord, and
-/// the line repaired as the lead's is, so no leap leaps on.
-fn melodic_solo(score: &mut Score, form: &Form, register: (u8, u8), lift: i32, rng: &mut Rng) {
+/// The solo's register as degrees: its lowest and highest tones on the
+/// mode.
+fn degree_span(key: &Key, (lo, hi): (u8, u8)) -> (i32, i32) {
+    let degree = |p: u8| key.absolute_degree(p).unwrap();
+    (degree((lo..=hi).find(|p| key.contains(*p)).unwrap()), degree((lo..=hi).rev().find(|p| key.contains(*p)).unwrap()))
+}
+
+/// The solo's peak: the highest root or fifth of the climax's chord in
+/// the register.
+fn peak_of(key: &Key, chord: Chord, (lo_d, hi_d): (i32, i32)) -> i32 {
+    (lo_d..=hi_d)
+        .rev()
+        .find(|d| {
+            let c = key.degree_of(key.pitch(*d, 4)).unwrap() as i32;
+            [chord.root, chord.root + 4].iter().any(|r| r.rem_euclid(7) == c)
+        })
+        .unwrap_or(hi_d)
+}
+
+/// `notes` woven: every note of an eighth or longer run on in
+/// sixteenths to the note after it — a step at a time, turning about
+/// where the way is short — so the theme is heard in its own tones on
+/// the beats and a guitarist's run between them.
+fn woven(key: &Key, notes: &[Placed], then: Option<u8>) -> Vec<Placed> {
+    let degree = |p: u8| key.absolute_degree(p).unwrap();
+    let mut out = Vec::new();
+    for (i, (s, l, p)) in notes.iter().enumerate() {
+        let next = notes.get(i + 1).map(|n| n.2).or(then).unwrap_or(*p);
+        if *l < E {
+            out.push((*s, *l, *p));
+            continue;
+        }
+        let slots = l / (E / 2);
+        out.push((*s, E / 2, *p));
+        for (k, d) in run_between(degree(*p), degree(next), slots).into_iter().enumerate() {
+            out.push((s + (k as u32 + 1) * E / 2, E / 2, key.pitch(d, 4)));
+        }
+    }
+    out
+}
+
+/// A beat's figure in the build, steps from its first tone, in
+/// sixteenths: four up, by thirds, an enclosure, a pedal point; in a beat
+/// of three eighths, two threes.
+const FIGURES_TWO: [[i32; 4]; 4] = [[0, 1, 2, 3], [0, 2, 1, 3], [0, -1, 1, 2], [0, -1, 0, 2]];
+const FIGURES_THREE: [[i32; 6]; 4] = [[0, 1, 2, 1, 2, 3], [0, 2, 1, 3, 2, 4], [0, -1, 1, 0, 2, 3], [0, -1, 0, 2, 0, 3]];
+
+/// The guitar's solo, its arc in stages (`stages`), denser as it goes and
+/// louder to its peak. It states the theme as the lead sang it, entering
+/// off the beat now and then and resting through the last beat of every
+/// other bar; plays it again woven, every foot run on in sixteenths to
+/// the next; calls and answers a third higher, the call resting through
+/// its last beat and the answer woven; then builds in sequences, each
+/// beat a figure drawn from the vocabulary a step higher than the last
+/// and starting on the chord, its last bar in sextuplets. The band drops
+/// out for the beat before the climax, and so does the guitar: the peak —
+/// the highest root or fifth of the climax's chord, touched nowhere
+/// before it, two degrees under it the ceiling — lands out of silence,
+/// slid into and held most of the bar while the player bends into it and
+/// shakes it, or reached by a sextuplet run at the bar's last beat. The
+/// release cascades down in sextuplets, a beat a step lower, and the
+/// landing sings the theme again where it began with a second guitar a
+/// third over it, the harmony held back until now.
+fn guitar_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
     let key = score.key;
-    let (lo, hi) = register;
+    let (lo, hi) = SOLO;
     let strong = score.meter.strong_eighths();
     let eighths = score.meter.eighths();
     let degree = |p: u8| key.absolute_degree(p).unwrap();
-    let hi_d = degree((lo..=hi).rev().find(|p| key.contains(*p)).unwrap());
-    let lo_d = degree((lo..=hi).find(|p| key.contains(*p)).unwrap());
+    let span = degree_span(&key, SOLO);
+    let beat_of = |g: usize| strong.get(g + 1).copied().unwrap_or(eighths) - strong[g];
     for (a, z) in form.solos() {
-        let n = z - a;
-        let at = |f: f32| a + ((n as f32 * f).round() as u32).min(n - 1);
-        let (develop, build, climax, landing) = (at(0.2), at(0.4), at(0.65).max(at(0.4) + 1).min(z - 2), at(0.8).max(at(0.65) + 1).min(z - 1));
-        let climax_chord = form.chord(climax);
-        let peak = (lo_d..=hi_d).rev().find(|d| {
-            let p = key.pitch(*d, 4);
-            p <= hi && key.degree_of(p).is_some_and(|c| [climax_chord.root, climax_chord.root + 4].iter().any(|r| r.rem_euclid(7) as usize == c))
-        });
-        let peak = peak.unwrap_or(hi_d);
+        let st = stages(a, z);
+        let peak = peak_of(&key, form.chord(st.climax), span);
         let ceiling = peak - 2;
-        let mut line: Vec<Placed> = Vec::new();
         let capped = |p: u8| if degree(p) > ceiling { key.pitch(degree(p) - 7, 4) } else { p };
+        let last_group = strong[strong.len() - 1];
+        let mut line: Vec<Placed> = Vec::new();
         for b in a..z {
             let bar_start = b * form.bar;
             let chord = form.chord(b);
-            let last_group = strong[strong.len() - 1];
-            if b < develop || b >= landing {
-                // The theme sung, as the lead sings it, in the solo's own
-                // register.
-                let mut notes = form.tune.bar(score, b, lo, hi, true);
-                if b < develop {
+            let theme = |sung: bool| form.tune.bar(score, b, lo, hi, sung).into_iter().map(|(s, l, p)| (s, l, capped(p))).collect::<Vec<Placed>>();
+            if b < st.woven || b >= st.landing {
+                let mut notes = theme(true);
+                if b < st.woven {
                     if (b - a) % 2 == 1 {
                         notes.retain(|n| n.0 < bar_start + last_group * E);
                     }
@@ -1174,87 +1309,231 @@ fn melodic_solo(score: &mut Score, form: &Form, register: (u8, u8), lift: i32, r
                         }
                     }
                 }
-                line.extend(notes.into_iter().map(|(s, l, p)| (s, l, capped(p))));
-            } else if b < build {
-                // Call and answer: the theme's feet a third up.
-                let mut notes: Vec<Placed> = form.tune.bar(score, b, lo, hi, false).into_iter().map(|(s, l, p)| {
-                    let up = key.pitch(degree(p) + 2, 4);
-                    let up = if score.strong(s) && !chord.holds(&key, up) { tune::nearest_chord_tone(&key, chord, up, lo, hi) } else { up };
-                    (s, l, capped(up))
-                }).collect();
-                if (b - develop) % 2 == 0 {
-                    notes.retain(|n| n.0 < bar_start + last_group * E);
-                } else if let Some(last) = notes.last_mut() {
-                    last.1 = bar_start + form.bar - last.0;
-                }
                 line.extend(notes);
-            } else if b < climax {
-                // Sequences climbing, a beat a step higher.
+            } else if b < st.call {
+                let then = form.tune.bar(score, b + 1, lo, hi, false).first().map(|n| capped(n.2));
+                line.extend(woven(&key, &theme(false), then));
+            } else if b < st.build {
+                let up: Vec<Placed> = theme(false)
+                    .into_iter()
+                    .map(|(s, l, p)| {
+                        let up = key.pitch(degree(p) + 2, 4);
+                        let up = if score.strong(s) && !chord.holds(&key, up) { tune::nearest_chord_tone(&key, chord, up, lo, hi) } else { up };
+                        (s, l, capped(up))
+                    })
+                    .collect();
+                if (b - st.call) % 2 == 0 {
+                    line.extend(up.into_iter().filter(|n| n.0 < bar_start + last_group * E));
+                } else {
+                    line.extend(woven(&key, &up, None));
+                }
+            } else if b < st.climax {
                 let mut from = line.last().map_or(degree(tune::home_tonic(&key, lo, hi)), |n| degree(n.2));
+                let bursting = b + 1 == st.climax;
                 for (g, s) in strong.iter().enumerate() {
-                    let span = strong.get(g + 1).copied().unwrap_or(eighths) - s;
-                    let want = (from + 1).min(ceiling - 3);
-                    let first = (want - 2..=want + 2).filter(|d| chord.holds(&key, key.pitch(*d, 4)) && *d <= ceiling - 3).min_by_key(|d| ((d - want).abs(), -d)).unwrap_or(want);
-                    let figure: Vec<i32> = if span == 3 { vec![0, 1, 2, 1, 2, 3] } else { vec![0, 1, 2, 3] };
-                    for (k, step) in figure.iter().enumerate() {
-                        line.push((bar_start + s * E + k as u32 * E / 2, E / 2, key.pitch(first + step, 4)));
+                    if bursting && g + 1 == strong.len() {
+                        break;
+                    }
+                    let want = (from + 1).min(ceiling - 4);
+                    let first = (want - 2..=want + 2).filter(|d| chord.holds(&key, key.pitch(*d, 4)) && *d <= ceiling - 4).min_by_key(|d| ((d - want).abs(), -d)).unwrap_or(want);
+                    let at = bar_start + s * E;
+                    if bursting && beat_of(g) == 2 {
+                        for k in 0..6 {
+                            line.push((at + k * E / 3, E / 3, key.pitch((first + k as i32).min(ceiling), 4)));
+                        }
+                    } else if beat_of(g) == 3 {
+                        for (k, step) in FIGURES_THREE[rng.below(4)].iter().enumerate() {
+                            line.push((at + k as u32 * E / 2, E / 2, key.pitch((first + step).min(ceiling), 4)));
+                        }
+                    } else {
+                        for (k, step) in FIGURES_TWO[rng.below(4)].iter().enumerate() {
+                            line.push((at + k as u32 * E / 2, E / 2, key.pitch((first + step).min(ceiling), 4)));
+                        }
                     }
                     from = first;
                 }
-            } else if b == climax {
-                // The climax: up to the peak and held, or a run that lands
-                // on it at the bar's last beat, never past it.
-                let from = line.last().map_or(peak - 4, |n| degree(n.2));
-                let (run_end, held_from) = if form.design.held_climax { (strong[1], strong[1]) } else { (last_group, last_group) };
-                let slots = run_end * 2;
-                let path: Vec<i32> = std::iter::once(from).chain(run_between(from, peak, slots)).collect();
-                for (k, d) in path.iter().enumerate().skip(1) {
-                    line.push((bar_start + k as u32 * E / 2, E / 2, key.pitch((*d).min(peak), 4)));
+            } else if b == st.climax {
+                if form.design.held_climax {
+                    // Slid into from the degree under it, held, and shaken
+                    // in its last beat.
+                    let held_to = bar_start + last_group * E;
+                    line.push((bar_start - E / 4, E / 4, key.pitch(peak - 1, 4)));
+                    line.push((bar_start, held_to - bar_start, key.pitch(peak, 4)));
+                    for k in 0..beat_of(strong.len() - 1) * 4 {
+                        let d = if k % 2 == 0 { peak } else { peak - 1 };
+                        line.push((held_to + k * E / 4, E / 4, key.pitch(d, 4)));
+                    }
+                } else {
+                    let from = peak - 7;
+                    let run_from = strong[strong.len().saturating_sub(2)];
+                    line.push((bar_start, run_from * E, key.pitch(from.max(span.0), 4)));
+                    let slots = (last_group - run_from) * 3;
+                    for (k, d) in run_between(from, peak, slots).into_iter().enumerate() {
+                        line.push((bar_start + run_from * E + k as u32 * E / 3, E / 3, key.pitch(d.min(peak), 4)));
+                    }
+                    line.push((bar_start + last_group * E, (eighths - last_group) * E, key.pitch(peak, 4)));
                 }
-                line.push((bar_start + held_from * E, form.bar - held_from * E - E / 4, key.pitch(peak, 4)));
             } else {
-                // The release: sequences falling from the peak, a beat a
-                // step lower, toward the landing.
-                let mut from = line.last().map_or(peak, |n| degree(n.2));
+                // The release: sextuplets cascading down, a beat a step lower.
+                let mut from = line.last().map_or(peak, |n| degree(n.2)).min(ceiling);
                 for (g, s) in strong.iter().enumerate() {
-                    let span = strong.get(g + 1).copied().unwrap_or(eighths) - s;
-                    let want = (from - 1).max(lo_d + 3);
-                    let first = (want - 2..=want + 2).filter(|d| chord.holds(&key, key.pitch(*d, 4)) && *d <= ceiling && *d >= lo_d + 3).min_by_key(|d| ((d - want).abs(), *d)).unwrap_or(want);
-                    let figure: Vec<i32> = if span == 3 { vec![0, -1, -2, -1, -2, -3] } else { vec![0, -1, -2, -3] };
-                    for (k, step) in figure.iter().enumerate() {
-                        line.push((bar_start + s * E + k as u32 * E / 2, E / 2, key.pitch(first + step, 4)));
+                    let want = (from - 1).max(span.0 + 6);
+                    let first = (want - 2..=want + 2).filter(|d| chord.holds(&key, key.pitch(*d, 4)) && *d <= ceiling && *d >= span.0 + 6).min_by_key(|d| ((d - want).abs(), *d)).unwrap_or(want);
+                    let unit = beat_of(g) * E / 6;
+                    for (k, step) in [0, -1, -2, -1, -2, -3].iter().enumerate() {
+                        line.push((bar_start + s * E + k as u32 * unit, unit, key.pitch(first + step, 4)));
                     }
                     from = first;
                 }
             }
         }
-        if let Some(last) = line.last_mut() {
-            last.1 = (z * form.bar - E / 2).saturating_sub(last.0).max(last.1);
+        sound(score, form, line, SOLO, (a, z, st.landing), 0, rng);
+    }
+}
+
+/// The bass's solo, a bassist's: the band's bass holds the low root on
+/// every bar's first beat, rung half the bar, so the solo has its floor,
+/// and the solo plays over it between its open E and the E two octaves
+/// up. It states the theme there; grooves a riff — the chord's root,
+/// fifth, octave and fifth on the beats, the mode's steps walking between
+/// — a variant of it answering every other bar, its last beat run on in
+/// sixteenths; gallops up through the chord, an eighth and two sixteenths
+/// on each tone, a beat a step higher; drops out with the band for the
+/// beat before its climax and slides into the peak, held, and runs down
+/// from it in its last beat; walks back down in sixteenths through the
+/// release; and lands on the theme with a guitar a third over it.
+fn bass_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
+    let key = score.key;
+    let (lo, hi) = BASS_SOLO;
+    let strong = score.meter.strong_eighths();
+    let eighths = score.meter.eighths();
+    let degree = |p: u8| key.absolute_degree(p).unwrap();
+    let span = degree_span(&key, BASS_SOLO);
+    let beat_of = |g: usize| strong.get(g + 1).copied().unwrap_or(eighths) - strong[g];
+    let middle = key.absolute_degree(key.snap(52)).unwrap();
+    for (a, z) in form.solos() {
+        let st = stages(a, z);
+        let peak = peak_of(&key, form.chord(st.climax), span);
+        let ceiling = peak - 2;
+        let last_group = strong[strong.len() - 1];
+        let mut line: Vec<Placed> = Vec::new();
+        for b in a..z {
+            let bar_start = b * form.bar;
+            let chord = form.chord(b);
+            let root = at_degree(&key, chord, chord.root, 28, 40, 33);
+            let dropped = b + 1 == st.climax;
+            let pedal = if dropped { last_group * E } else { form.bar / 2 } - E / 8;
+            score.add(Note { start: bar_start, len: pedal, pitch: root, vel: vel(4, rng), channel: CH_BASS });
+            // The chord's root nearest the middle of the solo's register.
+            let base = (middle - 4..=middle + 3).find(|d| key.degree_of(key.pitch(*d, 4)) == Some(chord.root.rem_euclid(7) as usize)).unwrap_or(middle);
+            if b < st.woven || b >= st.landing {
+                line.extend(form.tune.bar(score, b, lo, hi, true));
+            } else if b < st.build {
+                // The riff: chord tones on the beats, the mode walking
+                // between; its variant answering every other bar.
+                let answer = (b - st.woven) % 2 == 1;
+                let skeleton: [i32; 4] = if answer { [0, 2, 4, 7] } else { [0, 4, 7, 4] };
+                let targets: Vec<i32> = (0..=strong.len()).map(|g| base + skeleton[g % 4]).collect();
+                for (g, s) in strong.iter().enumerate() {
+                    let at = bar_start + s * E;
+                    let fills = answer && g + 1 == strong.len();
+                    let unit = if fills { E / 2 } else { E };
+                    let count = beat_of(g) * E / unit;
+                    line.push((at, unit, key.pitch(targets[g].min(ceiling), 4)));
+                    for (k, d) in run_between(targets[g], targets[g + 1], count).into_iter().enumerate() {
+                        line.push((at + (k as u32 + 1) * unit, unit, key.pitch(d.min(ceiling), 4)));
+                    }
+                }
+            } else if b < st.climax {
+                // The gallop, a beat a step higher.
+                let mut from = line.last().map_or(base, |n| degree(n.2));
+                for (g, s) in strong.iter().enumerate() {
+                    if dropped && g + 1 == strong.len() {
+                        break;
+                    }
+                    let want = (from + 1).min(ceiling);
+                    let tone = (want - 2..=want + 2).filter(|d| chord.holds(&key, key.pitch(*d, 4)) && *d <= ceiling).min_by_key(|d| ((d - want).abs(), -d)).unwrap_or(want);
+                    let at = bar_start + s * E;
+                    let pitch = key.pitch(tone, 4);
+                    line.push((at, E, pitch));
+                    line.push((at + E, E / 2, pitch));
+                    line.push((at + 3 * E / 2, E / 2, pitch));
+                    if beat_of(g) == 3 {
+                        line.push((at + 2 * E, E, pitch));
+                    }
+                    from = tone;
+                }
+            } else if b == st.climax {
+                let held_to = bar_start + last_group * E;
+                line.push((bar_start - E / 4, E / 4, key.pitch(peak - 1, 4)));
+                line.push((bar_start, held_to - bar_start, key.pitch(peak, 4)));
+                let slots = beat_of(strong.len() - 1) * 2;
+                for (k, d) in run_between(peak, peak - 4, slots).into_iter().enumerate() {
+                    line.push((held_to + (k as u32 + 1) * E / 2, E / 2, key.pitch(d, 4)));
+                }
+            } else {
+                // Walking back down in sixteenths, a beat a step lower.
+                let mut from = line.last().map_or(peak, |n| degree(n.2)).min(ceiling);
+                for (g, s) in strong.iter().enumerate() {
+                    let want = (from - 1).max(span.0 + 2);
+                    let first = (want - 2..=want + 2).filter(|d| chord.holds(&key, key.pitch(*d, 4)) && *d <= ceiling && *d >= span.0 + 2).min_by_key(|d| ((d - want).abs(), *d)).unwrap_or(want);
+                    let count = beat_of(g) * 2;
+                    let at = bar_start + s * E;
+                    line.push((at, E / 2, key.pitch(first, 4)));
+                    for (k, d) in run_between(first, first - 2, count).into_iter().enumerate() {
+                        line.push((at + (k as u32 + 1) * E / 2, E / 2, key.pitch(d.max(span.0), 4)));
+                    }
+                    from = first;
+                }
+            }
         }
-        on_the_chord(score, form, &mut line, lo, hi);
-        form.tune.repair(score, &mut line, lo, hi);
-        for (start, len, pitch) in &line {
-            let accent = lift + if *len >= 2 * E { 10 } else if score.strong(*start) { 4 } else { -6 };
-            let len = if *len <= E / 2 { E / 2 - 10 } else { len - E / 8 };
-            score.add(Note { start: *start, len, pitch: *pitch, vel: vel(accent, rng), channel: CH_SOLO });
+        sound(score, form, line, BASS_SOLO, (a, z, st.landing), 12, rng);
+    }
+}
+
+/// A melodic solo's `line` played: held to the solo's end at its last
+/// tone, every strong beat's tone bent onto the chord and the line
+/// repaired as the lead's is, so no leap leaps on; struck `lift` over the
+/// band's velocity and growing through the solo; and over its landing a
+/// guitar a third above it, a third under where the third over is off the
+/// chord.
+fn sound(score: &mut Score, form: &Form, mut line: Vec<Placed>, (lo, hi): (u8, u8), (a, z, landing): (u32, u32, u32), lift: i32, rng: &mut Rng) {
+    let key = score.key;
+    let degree = |p: u8| key.absolute_degree(p).unwrap();
+    line.sort_by_key(|n| n.0);
+    if let Some(last) = line.last_mut() {
+        last.1 = (z * form.bar - E / 2).saturating_sub(last.0).max(last.1);
+    }
+    for n in line.iter_mut() {
+        n.2 = n.2.clamp(lo, hi);
+        if !key.contains(n.2) {
+            n.2 = key.snap(n.2).clamp(lo, hi);
         }
-        // The harmony, over the landing alone.
-        let mut over: Vec<Placed> = line
-            .iter()
-            .filter(|n| n.0 >= landing * form.bar)
-            .map(|(s, l, p)| {
-                let chord = form.chord(s / form.bar);
-                let third = key.pitch(degree(*p) + 2, 4);
-                let pitch = if !score.strong(*s) || chord.holds(&key, third) { third } else { key.pitch(degree(*p) - 2, 4) };
-                (*s, *l, pitch)
-            })
-            .collect();
-        on_the_chord(score, form, &mut over, lo, hi + 4);
-        form.tune.repair(score, &mut over, lo, hi + 4);
-        for (start, len, pitch) in over {
-            let len = if len <= E / 2 { E / 2 - 10 } else { len - E / 8 };
-            score.add(Note { start, len, pitch, vel: vel(-6, rng), channel: CH_HARMONY });
-        }
+    }
+    on_the_chord(score, form, &mut line, lo, hi);
+    form.tune.repair(score, &mut line, lo, hi);
+    let span = (z - a) * form.bar;
+    for (start, len, pitch) in &line {
+        let grow = (14 * start.saturating_sub(a * form.bar) / span) as i32 - 4;
+        let accent = lift + grow + if *len >= 2 * E { 10 } else if score.strong(*start) { 4 } else { -6 };
+        let len = if *len <= E / 2 { (*len).saturating_sub(10).max(E / 8) } else { len - E / 8 };
+        score.add(Note { start: *start, len, pitch: *pitch, vel: vel(accent, rng), channel: CH_SOLO });
+    }
+    let mut over: Vec<Placed> = line
+        .iter()
+        .filter(|n| n.0 >= landing * form.bar)
+        .map(|(s, l, p)| {
+            let chord = form.chord(s / form.bar);
+            let third = key.pitch(degree(*p) + 2, 4);
+            let pitch = if !score.strong(*s) || chord.holds(&key, third) { third } else { key.pitch(degree(*p) - 2, 4) };
+            (*s, *l, pitch)
+        })
+        .collect();
+    on_the_chord(score, form, &mut over, lo, hi + 4);
+    form.tune.repair(score, &mut over, lo, hi + 4);
+    for (start, len, pitch) in over {
+        let len = if len <= E / 2 { len.saturating_sub(10).max(E / 8) } else { len - E / 8 };
+        score.add(Note { start, len, pitch, vel: vel(-6, rng), channel: CH_HARMONY });
     }
 }
 
