@@ -21,18 +21,18 @@ pub struct Schema {
 
 use Mode::{Aeolian, Dorian, Hijaz};
 
-/// The modal loops and cadences: the Aeolian's shuttles between i and
-/// ♭VII and its walk down through ♭VI, the Dorian's to its major IV, the
-/// plagal ones every minor mode shares, and the cadences that bring
-/// each home.
-pub const SCHEMATA: [Schema; 8] = [
-    Schema { name: "aeolian shuttle", modes: &[Aeolian], roots: [0, 6, 5, 6], closed: false },
+/// The Balkan loops and cadences, as an arranger sets a tune that is
+/// traditionally only droned: the shuttle between i and ♭VII, the
+/// commonest Bulgarian pattern; the lament down through ♭VI to v; the
+/// plagal ones every minor mode shares; and the closes home through
+/// ♭VII — i–iv–♭VII–i above all. Never ♭VI–♭VII–i, which is rock's and
+/// the ballad's, not the folk's.
+pub const SCHEMATA: [Schema; 6] = [
     Schema { name: "subtonic shuttle", modes: &[Aeolian, Dorian], roots: [0, 6, 0, 6], closed: false },
     Schema { name: "lament", modes: &[Aeolian], roots: [0, 6, 5, 4], closed: false },
     Schema { name: "plagal shuttle", modes: &[Aeolian, Dorian, Hijaz], roots: [0, 3, 0, 3], closed: false },
-    Schema { name: "aeolian cadence", modes: &[Aeolian], roots: [0, 5, 6, 0], closed: true },
     Schema { name: "subtonic close", modes: &[Aeolian, Dorian], roots: [0, 6, 3, 0], closed: true },
-    Schema { name: "dorian close", modes: &[Dorian], roots: [0, 3, 6, 0], closed: true },
+    Schema { name: "folk close", modes: &[Aeolian, Dorian], roots: [0, 3, 6, 0], closed: true },
     Schema { name: "plagal close", modes: &[Aeolian, Dorian, Hijaz], roots: [0, 3, 3, 0], closed: true },
 ];
 
@@ -59,16 +59,17 @@ pub const TWELVE_BAR: [&[Schema]; 3] = [
 ];
 
 /// The fight's progressions, with no drone under them to spare: the
-/// minor's shuttle to its flat sixth and its walk home through the
-/// sixth and seventh; Hijaz's shuttle to its flat second, the Ottoman
-/// and Balkan colour and the minor second a fight turns on, and its
-/// close down through that second to the tonic; and the plagal close
-/// both share.
+/// minor's shuttle to its flat sixth, and its turn through ♭VII to the
+/// iv; Hijaz's shuttle to its flat second, the Ottoman and Balkan
+/// colour and the minor second a fight turns on, and its close down
+/// through that second to the tonic; the Balkan close home through iv
+/// and ♭VII — in Hijaz the minor ♭vii, its standard progression — and
+/// the plagal close.
 pub const FIGHT: [Schema; 6] = [
     Schema { name: "war shuttle", modes: &[Aeolian], roots: [0, 5, 0, 5], closed: false },
-    Schema { name: "descent", modes: &[Aeolian], roots: [0, 6, 5, 6], closed: false },
+    Schema { name: "war turn", modes: &[Aeolian], roots: [0, 6, 0, 3], closed: false },
     Schema { name: "hijaz shuttle", modes: &[Hijaz], roots: [0, 1, 0, 1], closed: false },
-    Schema { name: "war close", modes: &[Aeolian], roots: [0, 5, 6, 0], closed: true },
+    Schema { name: "war close", modes: &[Aeolian, Hijaz], roots: [0, 3, 6, 0], closed: true },
     Schema { name: "phrygian close", modes: &[Hijaz], roots: [0, 3, 1, 0], closed: true },
     Schema { name: "plagal close", modes: &[Aeolian, Hijaz], roots: [0, 3, 3, 0], closed: true },
 ];
@@ -76,7 +77,8 @@ pub const FIGHT: [Schema; 6] = [
 /// The ballad's progressions, in the minor with no drone, by the part
 /// of the song they serve. A verse opens on the tonic and stays on it
 /// longest, swinging slowly to one or two chords and back — i to VI, i
-/// down through VII to VI, i through III and VII to the minor v. A
+/// down through VII to VI, i through III and VII to the minor v — and
+/// comes home through III and VII or holds the tonic till VII. A
 /// chorus moves a chord a bar and opens off the tonic as often as on it,
 /// on the sixth, and comes home by the sixth and seventh, the cadence
 /// hard rock and metal end on. The climax takes a progression of its
@@ -94,7 +96,7 @@ pub const BALLAD: Song = Song {
         Schema { name: "tonic and sixth", modes: &[Aeolian], roots: [0, 0, 5, 5], closed: false },
         Schema { name: "subtonic descent", modes: &[Aeolian], roots: [0, 0, 6, 5], closed: false },
         Schema { name: "relative turn", modes: &[Aeolian], roots: [0, 2, 6, 4], closed: false },
-        Schema { name: "aeolian cadence", modes: &[Aeolian], roots: [0, 5, 6, 0], closed: true },
+        Schema { name: "relative home", modes: &[Aeolian], roots: [0, 2, 6, 0], closed: true },
         Schema { name: "tonic held home", modes: &[Aeolian], roots: [0, 0, 6, 0], closed: true },
     ],
     chorus: &[
@@ -228,6 +230,26 @@ mod tests {
         }
         assert!(BALLAD.verse.iter().all(|s| s.roots[0] == 0));
         assert!(BALLAD.chorus.iter().any(|s| s.roots[0] != 0));
+    }
+
+    /// A progression in a mode belongs to one style: the folk's — the
+    /// overworld's and the fight's, one world — the blues' or the
+    /// ballad's, so no two styles are heard turning the same way.
+    #[test]
+    fn no_progression_crosses_styles() {
+        let folk: Vec<&Schema> = SCHEMATA.iter().chain(FIGHT.iter()).collect();
+        let blues: Vec<&Schema> = TWELVE_BAR.iter().flat_map(|row| row.iter()).collect();
+        let ballad: Vec<&Schema> = [BALLAD.verse, BALLAD.chorus, BALLAD.climax].into_iter().flatten().collect();
+        let styles = [("folk", folk), ("blues", blues), ("ballad", ballad)];
+        for (i, (a, ours)) in styles.iter().enumerate() {
+            for (b, theirs) in &styles[i + 1..] {
+                for s in ours {
+                    for t in theirs.iter().filter(|t| t.roots == s.roots) {
+                        assert!(!s.modes.iter().any(|m| t.modes.contains(m)), "{a}'s {} is {b}'s {}", s.name, t.name);
+                    }
+                }
+            }
+        }
     }
 
     /// Hijaz holds only its I and iv over the drone.
