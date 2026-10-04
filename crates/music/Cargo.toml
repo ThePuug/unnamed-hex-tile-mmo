@@ -1,0 +1,8 @@
+[package]
+name = "music"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+audio = { path = "../audio" }
+rustysynth = "1"

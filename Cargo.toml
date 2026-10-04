@@ -9,6 +9,9 @@ members = [
     "crates/arena",
     "crates/qrz",
     "crates/console",
+    "crates/audio",
+    "crates/music",
+    "crates/music-player",
     "crates/world",
     "crates/world-viewer",
 ]

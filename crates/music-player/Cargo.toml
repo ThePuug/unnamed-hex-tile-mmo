@@ -1,0 +1,9 @@
+[package]
+name = "music-player"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+music = { path = "../music" }
+eframe = "0.31"
+cpal = "0.17"

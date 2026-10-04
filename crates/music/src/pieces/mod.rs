@@ -1,0 +1,222 @@
+//! Every piece, by name. Adding one: a module with
+//! `pub fn build(&Params) -> Score`, an entry in `PIECES`, a row in the
+//! README.
+
+mod city_ambient;
+mod forest_combat;
+mod overworld_ambient;
+mod teaser;
+
+use crate::score::Score;
+
+pub struct Params {
+    pub seed: u64,
+}
+
+pub struct Piece {
+    pub name: &'static str,
+    /// What the piece must read as. The comparison critic judges against it.
+    pub brief: &'static str,
+    /// The pool the client draws it from at intervals, tagged on the file.
+    pub pool: &'static str,
+    /// Files in the asset, one seed each — the first seeds from 0 whose
+    /// stories differ, so a pool needs several and no two of them tell
+    /// one story; a one-shot's differ by their leads.
+    pub variants: u64,
+    /// Integrated loudness the file is set to, LUFS. A bed sits low so the
+    /// game's sounds ride over it; a cue sits where a trailer mixes it.
+    pub lufs: f32,
+    /// How far the loudness may range through the piece, LU, between the
+    /// 10th and 95th percentiles of its short-term loudness. A bed holds
+    /// still and tells its story in what plays; a one-shot's arc is its
+    /// sections' declared levels, and its range is that arc's span.
+    pub range: f32,
+    pub build: fn(&Params) -> Score,
+}
+
+pub const PIECES: &[Piece] = &[
+    Piece {
+    name: "overworld-ambient",
+    brief: "A loop of a Balkan medieval fantasy overworld under Ottoman \
+            rule, for wandering, set on one of the Balkan dances — lesnoto, \
+            râčenica, pajduško, dajčovo, kopanica — with the frame drum and \
+            the plucks playing that dance's own pattern. One theme runs the \
+            whole loop through: a shape on the strong beats — an arch, a \
+            descent to the finalis, a climb, a circling, a leap and its \
+            recovery, a wave — filled by steps, said in four-bar phrases as a \
+            period or a sentence, open and closed by turns, so eight bars are \
+            a question and its answer; it comes back a step up every other \
+            pair and a third up where the bed is fullest. The harmony is a \
+            four-bar schema of the mode — a shuttle or a walk down to open, a \
+            cadence to close — held over a tonic drone. One of six stories the \
+            seed chooses — an arc that climbs to one defiant riff and comes \
+            down; two waves with a hollow between; a slow burn to a long \
+            plateau with no riff; a lament sung through with one swell; a \
+            dance that steps in on the plucks and the drum and takes a \
+            breath; fragments, the tune sung and played by turns — \
+            each told by the bed filling and thinning one layer at a time, a \
+            half-phrase a step, never two layers at once, coming back to the \
+            texture it opened on so the end runs into the head, at a loudness \
+            that barely moves. One player tells the story, the lead — a \
+            flute, a pan flute, a fiddle, a clarinet or an English horn, each \
+            file its own: it sings the theme, breathing at each cadence; plays \
+            it detached as a riff where the story asks, the strings doubling \
+            it in unison and a second player holding a third or a sixth under \
+            it; or holds one chord tone every other bar between the tellings. \
+            It sits a little forward of the band, never over it. A weave of \
+            the theme runs under the \
+            bed where the story thickens — a dulcimer a bar behind, then a \
+            harp a foot late and a third above — in the air before the riff \
+            takes the tune and behind it after; strings in slow chords; the \
+            seed's colours — a low choir, a horn, a shimmer, whichever it \
+            brings — joining and leaving together as one soft layer; and \
+            under it all, the whole loop through, a breathy choir holding the \
+            root and fifth of the chord that stands, far back in the room. \
+            Every other voice sits in the bed. Consonant, no drum \
+            kit, no sung words; the client fades it.",
+    pool: "overworld",
+    variants: 3,
+    lufs: -22.0,
+    range: 5.0,
+    build: overworld_ambient::build,
+    },
+    Piece {
+    name: "city-ambient",
+    brief: "A loop of a bustling city at night, for wandering its streets, on a \
+            minor blues: the twelve-bar in Dorian or Aeolian on sevenths, in the \
+            shuffle or a walking four, the band playing that feel. One theme runs \
+            the whole loop through, a chorus at a time — a shape on the strong \
+            beats filled by steps, in four-bar phrases as a period or a sentence, \
+            open on the tonic's row and the subdominant's, home on the turn — a \
+            third up where the band is fullest. One of five stories the seed \
+            chooses — a stroll that fills to a riff and empties; a late night that \
+            thins to the organ; a rush hour that never quite stops; a corner where \
+            the lead calls and answers itself; after hours, slow, the lead \
+            holding over the organ — each told by the band filling and thinning \
+            one player at a time, a half-phrase a step, coming back to where it \
+            opened so the end runs into the head, at a loudness that barely moves. \
+            One player tells the story, the lead — a harmonica, a tenor or alto \
+            sax or a muted trumpet, each file its own: it sings the theme with a \
+            scoop into its notes, plays it detached as a riff, calls with each \
+            phrase's first half and answers itself with the riff in its second, \
+            or holds one chord tone every other bar, a second horn holding a \
+            third or a sixth under its riff; it sits a little forward of the \
+            band, never over it. The electric piano echoes the theme a bar \
+            behind, an octave under the lead; the \
+            bass in two or walking, with a pickup into every bar, the piano's \
+            shells on the strikes and the guitar's four to the bar, the kit on \
+            brushes, the organ as the wash, and the seed's colours — a second horn \
+            on the third, a shimmer — joining and leaving as one layer. Every \
+            other player sits in the band. No drone; no sung words; the \
+            client fades it.",
+    pool: "city",
+    variants: 3,
+    lufs: -22.0,
+    range: 5.0,
+    build: city_ambient::build,
+    },
+    Piece {
+    name: "forest-combat",
+    brief: "A loop for a fight in the forest of the same Balkan land under \
+            Ottoman rule: the overworld's dances taken at a run — a \
+            râčenica, a pajduško, a kopanica or a karşılama at a hundred and \
+            fifty to a hundred and eighty beats — with bite. The strings \
+            drive an ostinato on every eighth; the davul's low stroke falls \
+            on the bar and the dance's long group — the limp — with a taiko \
+            under it and its thin stick on the other groups, a tom fill into \
+            every part; trombone and tuba stab the strokes and push on the \
+            off-beats; a choir and a string tremolo hold the chords where \
+            the fight thickens, and a pizzicato echoes the tune a bar \
+            behind. No drone: the harmony moves, the minor to its flat sixth \
+            or Hijaz to its flat second, the minor second a fight turns on. \
+            One player tells the tune, the lead — a zurna, a fiddle, a \
+            clarinet or a trumpet, each file its own — mostly as a riff over \
+            the fight, breathing at every half-phrase, calling and answering \
+            itself, singing or holding long tones at the crest, a horn \
+            holding under its riff. One of four stories the seed chooses — a \
+            clash that builds to all of it and lets down; an onslaught in at \
+            full stride; an ambush, the drum alone and then the fight around \
+            it; a storm with a breakdown to the engine alone — each told by \
+            layers joining and leaving a half-phrase at a time, at a \
+            loudness that holds. Driving, tense, never chaotic; no sung \
+            words; the client fades it.",
+    pool: "combat",
+    variants: 3,
+    // A decibel over the beds, not two: the fight's low end — the davul,
+    // the taiko, the bass on every eighth — reads quiet to a loudness
+    // meter for how hard it peaks.
+    lufs: -21.0,
+    // A LU over the beds': the ambush's bare drum, quiet under the fight
+    // it opens into, is the one step a fight's story takes in loudness.
+    range: 7.0,
+    build: forest_combat::build,
+    },
+    Piece {
+    name: "teaser",
+    brief: "A two-minute cue for the game's teaser trailer, cut to \
+            picture, in the overworld's voice: the lesnoto, a tonic drone, \
+            the Aeolian's modal schemata, one storyteller — a flute, a pan \
+            flute, a fiddle, a clarinet or an English horn, each file its \
+            own — a breathy choir, a stone hall. Not a loop: it has a head \
+            and an end, and a loudness and density arc across them. Dawn, \
+            near silence to the drone, the breath and then the lone voice \
+            singing the theme; vistas, the strings, the echo and the bass \
+            joining a layer a part under the tune, the storyteller \
+            breathing while the echo carries it and coming back a step \
+            higher over the whole bed; day into night, the tune a step \
+            lower on the lament as a soft pulse enters and the bed thins \
+            under its answer, then a whole phrase of night: one string, \
+            the drum's heartbeat, a high dulcimer for the moon, the \
+            storyteller holding long tones, quiet; work, on the dance, the \
+            frame drum, the plucks, a taiko striking each bar and the lead \
+            playing the tune detached with the strings on it, all on the \
+            cut, a second joining under it, a crescendo, and then a drop \
+            to the drum's fill alone; the swell, all of it, the tune sung \
+            a third up with the horns holding its skeleton under it, the \
+            timpani joining for its second half, the loudest part; the bed \
+            dropping out for the last bar under the tune, the choir and a \
+            growing timpani roll as the harmony rises to the flat seventh; \
+            and the title, \
+            the tonic struck by everyone and let ring out, falling away. \
+            Each movement starts on a cadence within a couple of seconds \
+            of its cut — 0:00, 0:15, 0:40, 1:00, 1:35, 1:55 — its level \
+            declared against the swell. Consonant, no drum kit but for the \
+            one crash, no sung words.",
+    pool: "teaser",
+    variants: 3,
+    // A cue under a trailer's picture and effects, not a bed under play;
+    // its swell's strokes peak some fifteen dB over its loudness.
+    lufs: -18.0,
+    // Dawn to the swell: the arc a one-shot is for.
+    range: 19.0,
+    build: teaser::build,
+    },
+];
+
+pub fn find(name: &str) -> Option<&'static Piece> {
+    PIECES.iter().find(|p| p.name == name)
+}
+
+impl Piece {
+    /// The seeds of the pool: from 0 up, `variants` of them, skipping
+    /// any whose story a seed already taken tells — the story's name is
+    /// the first section's — or whose lead a seed already taken leads
+    /// with, so each file has its own storyteller. A one-shot tells one
+    /// story, its cue, so its files differ by their leads alone.
+    pub fn pool(&self) -> Vec<u64> {
+        let mut seeds = Vec::new();
+        let mut taken: Vec<(&'static str, Option<u8>)> = Vec::new();
+        let mut seed = 0;
+        while seeds.len() < self.variants as usize {
+            let score = (self.build)(&Params { seed });
+            let story = score.sections[0].name;
+            let lead = score.lead.map(|ch| score.instrument(ch).program);
+            if !taken.iter().any(|(s, l)| (score.loops && *s == story) || (lead.is_some() && *l == lead)) {
+                taken.push((story, lead));
+                seeds.push(seed);
+            }
+            seed += 1;
+        }
+        seeds
+    }
+}

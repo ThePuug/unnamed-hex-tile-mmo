@@ -32,6 +32,7 @@ say in the proposal why neither did.
 cargo build
 cargo run --bin server             # separate processes
 cargo run --bin client
+cargo run --bin music-player       # needs a SoundFont: $SOUNDFONT or ~/soundfonts/GeneralUser.sf2
 cargo run --bin arena               # archetype v archetype balance, headless; keys in arena/src/main.rs
 cargo run --bin arena -- tune screen|balance|minds|settle|loop|show|apply   # searches; bounds in arena/src/tune.toml
 cargo test                         # all tests
@@ -78,6 +79,9 @@ flat-top hex grid. All crates under `crates/`:
 | `world-viewer` | CLI rendering the event stack, or one event's field or index, to an image; its README says what a view may read |
 | `qrz` | Hex grid library — see `crates/qrz/AGENTS.md` |
 | `console` | Server monitoring console |
+| `music` | Music composed from a seed and rendered through a SoundFont — the pieces and their vocabulary; `assets/crates/musicgen` makes the shipped files from it, and its `AGENTS.md` binds the pieces |
+| `music-player` | A window playing fresh variations of the chosen pieces as they are composed, a rest between |
+| `audio` | Seeded draws, BS.1770 loudness and true peak, WAV and OGG writers — what `music` and the assets repo's sound generators stand on |
 
 ## Comments and docs
 
