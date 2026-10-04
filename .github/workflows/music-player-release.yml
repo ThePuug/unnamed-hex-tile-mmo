@@ -1,0 +1,165 @@
+# Builds music-player for Linux, Windows and macOS from the chosen commit
+# and publishes them as the GitHub release `music-player-v<version>`, the
+# version read from crates/music-player/Cargo.toml. A version already
+# released is refused: raise it in Cargo.toml first.
+#
+# The SoundFont is not in the repo. It is fetched from this repo's release
+# $SOUNDFONT_RELEASE, which carries GeneralUser.sf2 and its license, and is
+# checked against $SOUNDFONT_SHA256 so every build plays the same bank.
+name: music-player release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit, branch or tag to release
+        required: true
+        default: main
+
+permissions:
+  contents: write
+
+env:
+  SOUNDFONT_RELEASE: soundfont-generaluser-1.471
+  SOUNDFONT_SHA256: f45b6b4a68b6bf3d792fcbb6d7de24dc701a0f89c5900a21ef3aaece993b839a
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - id: version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/music-player/Cargo.toml | head -n1)
+          tag="music-player-v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::$tag already exists; raise the version in crates/music-player/Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Fetch the SoundFont
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$SOUNDFONT_RELEASE" --repo "$GITHUB_REPOSITORY" --dir soundfont \
+            --pattern GeneralUser.sf2 --pattern GeneralUser-LICENSE.txt
+          echo "$SOUNDFONT_SHA256  soundfont/GeneralUser.sf2" | sha256sum --check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soundfont
+          path: soundfont/
+          retention-days: 1
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            name: linux-x86_64
+          - os: windows-latest
+            name: windows-x86_64
+          - os: macos-14
+            name: macos-universal
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      DIR: music-player-${{ needs.prepare.outputs.version }}-${{ matrix.name }}
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: soundfont
+          path: soundfont
+      - name: Install the toolchain
+        run: |
+          rustup toolchain install --profile minimal
+          if [ "$RUNNER_OS" = macOS ]; then rustup target add aarch64-apple-darwin x86_64-apple-darwin; fi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: music-player-${{ matrix.name }}
+      - name: Install audio and keyboard headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libxkbcommon-dev
+
+      - name: Build
+        if: runner.os != 'macOS'
+        run: cargo build --release --locked --bin music-player
+      - name: Build (both Mac architectures)
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --release --locked --bin music-player --target aarch64-apple-darwin
+          cargo build --release --locked --bin music-player --target x86_64-apple-darwin
+
+      - name: Gather licenses
+        run: |
+          mkdir -p "$DIR/licenses"
+          cp soundfont/GeneralUser-LICENSE.txt crates/music-player/fonts/*-OFL.txt "$DIR/licenses/"
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cp target/release/music-player soundfont/GeneralUser.sf2 "$DIR/"
+          tar czf "$DIR.tar.gz" "$DIR"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cp target/release/music-player.exe soundfont/GeneralUser.sf2 "$DIR/"
+          7z a "$DIR.zip" "$DIR"
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          app="$DIR/Music Player.app/Contents"
+          mkdir -p "$app/MacOS" "$app/Resources"
+          lipo -create -output "$app/MacOS/music-player" \
+            target/aarch64-apple-darwin/release/music-player \
+            target/x86_64-apple-darwin/release/music-player
+          cp soundfont/GeneralUser.sf2 "$app/Resources/"
+          sed "s/@VERSION@/$VERSION/g" crates/music-player/macos/Info.plist > "$app/Info.plist"
+          codesign --force --sign - "$DIR/Music Player.app"
+          ln -s /Applications "$DIR/Applications"
+          hdiutil create -volname "Music Player" -srcfolder "$DIR" -format UDZO "$DIR.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: music-player-${{ matrix.name }}
+          path: ${{ env.DIR }}.*
+          if-no-files-found: error
+
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: music-player-*
+          merge-multiple: true
+          path: dist
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          cat > notes.md <<'EOF'
+          Unpack and run `music-player`; the SoundFont ships beside it.
+
+          **macOS:** the app is not notarized, so macOS refuses it on first open. Drag it to
+          Applications, then either open System Settings → Privacy & Security and press
+          *Open Anyway*, or run `xattr -dr com.apple.quarantine "/Applications/Music Player.app"`.
+
+          **Linux:** needs ALSA (`libasound2`) and an X11 or Wayland session.
+          EOF
+          gh release create "music-player-v$VERSION" dist/* --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" --title "Music Player $VERSION" --notes-file notes.md

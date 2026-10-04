@@ -42,6 +42,12 @@ cargo test -p combat reaction_queue
 cargo build --release --no-default-features -p server -p client   # optimized
 ```
 
+A music-player release is built by request: run the *music-player release*
+workflow in GitHub Actions on a commit. It publishes `music-player-v<version>`
+for Linux, Windows and macOS, the version read from
+`crates/music-player/Cargo.toml`, so raise that first. A release ships
+`GeneralUser.sf2` beside the executable, where `Bank::find` looks for it.
+
 Run binaries with `--bin`, not `-p`. Selecting one package resolves shared
 dependencies (`syn`, `image`, `winit`, …) with a feature set no workspace-wide
 `cargo build` or `cargo test` produces, and a binary's fingerprint records the
