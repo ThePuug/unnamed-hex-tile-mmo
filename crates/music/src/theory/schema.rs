@@ -39,7 +39,9 @@ pub const SCHEMATA: [Schema; 8] = [
 /// The twelve-bar blues as three rows of one chorus, each a choice: the
 /// tonic's row, plain or with the quick change to IV; the
 /// subdominant's, IV falling back to I; and the turn home, V through
-/// IV to I, the V held a bar longer or not. A minor blues, on sevenths:
+/// IV to I, the V held a bar longer or not, or in the Aeolian the
+/// flat sixth's major seventh falling to the v — the minor turn of a
+/// night blues. A minor blues, on sevenths:
 /// in Dorian the tonic and v are minor sevenths and IV is a dominant
 /// seventh, in Aeolian all three are minor, and either is diatonic to
 /// the last tone, so the blue notes are the mode's own.
@@ -52,6 +54,7 @@ pub const TWELVE_BAR: [&[Schema]; 3] = [
     &[
         Schema { name: "turn home", modes: &[Dorian, Aeolian], roots: [4, 3, 0, 0], closed: true },
         Schema { name: "turn home, the dominant held", modes: &[Dorian, Aeolian], roots: [4, 4, 0, 0], closed: true },
+        Schema { name: "minor turn", modes: &[Aeolian], roots: [5, 4, 0, 0], closed: true },
     ],
 ];
 
@@ -163,21 +166,24 @@ mod tests {
         }
     }
 
-    /// The twelve-bar's rows are the blues' three chords, every row
-    /// falling back to the tonic, the first two open and the last
-    /// closed, in both minor modes.
+    /// The twelve-bar's rows are the blues' three chords and the minor
+    /// turn's flat sixth, every row falling back to the tonic, the first
+    /// two open and the last closed, and every row offering both minor
+    /// modes a choice; the flat sixth only where it is a major chord.
     #[test]
     fn the_twelve_bar_is_three_chords_and_a_turn_home() {
         for (r, row) in TWELVE_BAR.iter().enumerate() {
             for s in row.iter() {
-                assert!(s.roots.iter().all(|d| matches!(d, 0 | 3 | 4)), "{}: a chord off the blues", s.name);
+                assert!(s.roots.iter().all(|d| matches!(d, 0 | 3 | 4) || (*d == 5 && !s.modes.contains(&Dorian))), "{}: a chord off the blues", s.name);
                 assert_eq!(s.roots[3], 0, "{}: does not fall back to the tonic", s.name);
                 assert_eq!(s.closed, r == 2, "{}: its end belies its row", s.name);
-                assert!(s.modes.contains(&Dorian) && s.modes.contains(&Aeolian));
+            }
+            for mode in [Dorian, Aeolian] {
+                assert!(row.iter().any(|s| s.modes.contains(&mode)), "row {r} offers {mode:?} nothing");
             }
         }
         assert!(TWELVE_BAR[1].iter().all(|s| s.roots[0] == 3));
-        assert!(TWELVE_BAR[2].iter().all(|s| s.roots[0] == 4));
+        assert!(TWELVE_BAR[2].iter().all(|s| matches!(s.roots[0], 4 | 5)));
     }
 
     /// Every fight schema opens on the tonic and closes as it says,
