@@ -29,7 +29,7 @@ pub struct Profile {
     pub approach: Approach,
     pub resilience: Resilience,
     /// The attribute it is built on, as the sign each pair's axis takes
-    /// (Might-Agility, Vitality-Discipline, Instinct-Resolve): negative the
+    /// (Might-Agility, Physique-Discipline, Instinct-Resolve): negative the
     /// pair's left attribute, positive its right
     pub build: [i8; 3],
     /// The ground it dens on: a den site of this habitat is one of its
@@ -112,7 +112,7 @@ mod tests {
     fn test_berserker_level_0() {
         let attrs = calculate_enemy_attributes(0, EnemyArchetype::Berserker);
         assert_eq!(attrs.might_agility_axis(), 0);
-        assert_eq!(attrs.vitality_discipline_axis(), 0);
+        assert_eq!(attrs.physique_discipline_axis(), 0);
         assert_eq!(attrs.instinct_resolve_axis(), 0);
     }
 
@@ -127,7 +127,7 @@ mod tests {
             (EnemyArchetype::Ambusher, 3),
         ] {
             let attrs = calculate_enemy_attributes(10, archetype);
-            let values = [attrs.might(), attrs.agility(), attrs.vitality(), attrs.discipline(), attrs.instinct(), attrs.resolve()];
+            let values = [attrs.might(), attrs.agility(), attrs.physique(), attrs.discipline(), attrs.instinct(), attrs.resolve()];
             let top = (0..6).max_by_key(|&i| values[i]).unwrap();
             assert_eq!(top, lead, "{archetype:?} should lead with attribute {lead}, got {values:?}");
         }
@@ -144,7 +144,7 @@ mod tests {
         ] {
             let attrs = calculate_enemy_attributes(10, archetype);
             assert_eq!(attrs.might_agility_shift(), 0);
-            assert_eq!(attrs.vitality_discipline_shift(), 0);
+            assert_eq!(attrs.physique_discipline_shift(), 0);
             assert_eq!(attrs.instinct_resolve_shift(), 0);
         }
     }
@@ -166,10 +166,10 @@ mod tests {
         ].map(|a| (l, a))) {
             let attrs = calculate_enemy_attributes(level, archetype);
             let total = attrs.might_agility_axis().unsigned_abs()
-                + attrs.vitality_discipline_axis().unsigned_abs()
+                + attrs.physique_discipline_axis().unsigned_abs()
                 + attrs.instinct_resolve_axis().unsigned_abs()
                 + attrs.might_agility_spectrum().unsigned_abs()
-                + attrs.vitality_discipline_spectrum().unsigned_abs()
+                + attrs.physique_discipline_spectrum().unsigned_abs()
                 + attrs.instinct_resolve_spectrum().unsigned_abs();
             assert_eq!(total, level, "{archetype:?} at level {level}: all points should be allocated");
         }

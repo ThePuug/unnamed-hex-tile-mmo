@@ -182,7 +182,6 @@ pub fn chase(
                 _ => walked,
             }
         };
-        let striding = status.is_some_and(Status::is_striding);
         let room = |at: Qrz| (chase.leash_distance - at.flat_distance(&home)).max(0) as f32 / chase.leash_distance.max(1) as f32;
         let tiles: Vec<Qrz> = std::iter::once(floor)
             .chain(map.neighbors(floor).into_iter().map(|(neighbor, _)| neighbor).filter(|&neighbor| uncrowded(&nntree, neighbor)))
@@ -191,7 +190,7 @@ pub fn chase(
             let standing = Loc::new(at + Qrz::Z);
             // A strike on the step there: on its heading there, or where it
             // stands, facing its target, free
-            let strike_cost = if at == floor || striding { 0.0 } else {
+            let strike_cost = if at == floor { 0.0 } else {
                 across_share(&tuning, &Heading::from_hex(Qrz { z: 0, ..at - floor }), loc, target_loc)
             };
             Candidate {

@@ -64,7 +64,7 @@ pub struct CharacterPanel;
 #[derive(Component)]
 pub enum AttributeTitle {
     MightAgility,
-    VitalityDiscipline,
+    PhysiqueDiscipline,
     InstinctResolve,
 }
 
@@ -72,7 +72,7 @@ pub enum AttributeTitle {
 #[derive(Component)]
 pub enum AttributeCurrent {
     MightAgility,
-    VitalityDiscipline,
+    PhysiqueDiscipline,
     InstinctResolve,
 }
 
@@ -80,7 +80,7 @@ pub enum AttributeCurrent {
 #[derive(Component)]
 pub enum LeftCurrentValue {
     MightAgility,
-    VitalityDiscipline,
+    PhysiqueDiscipline,
     InstinctResolve,
 }
 
@@ -88,7 +88,7 @@ pub enum LeftCurrentValue {
 #[derive(Component)]
 pub enum RightCurrentValue {
     MightAgility,
-    VitalityDiscipline,
+    PhysiqueDiscipline,
     InstinctResolve,
 }
 
@@ -96,7 +96,7 @@ pub enum RightCurrentValue {
 #[derive(Component, Debug)]
 pub enum AttributeBar {
     MightAgility,
-    VitalityDiscipline,
+    PhysiqueDiscipline,
     InstinctResolve,
 }
 
@@ -108,7 +108,7 @@ pub struct SpectrumRange;
 #[derive(Component)]
 pub enum AxisMarker {
     MightAgility,
-    VitalityDiscipline,
+    PhysiqueDiscipline,
     InstinctResolve,
 }
 
@@ -131,7 +131,7 @@ pub enum MetaAttributeStat {
     Toughness,
     Ferocity,
     Grace,
-    Grit,
+    Intimidation,
     Preparation,
     Patience,
     Awareness,
@@ -253,7 +253,7 @@ macro_rules! create_stat_display {
                 MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Crit Resisted:"),
                 MetaAttributeStat::Ferocity => ("Ferocity", Color::srgb(0.9, 0.5, 0.5), "Early Combos:"),
                 MetaAttributeStat::Grace => ("Grace", Color::srgb(0.9, 0.9, 0.5), "Strike Arc:"),
-                MetaAttributeStat::Grit => ("Grit", Color::srgb(0.5, 0.8, 0.5), "Bank per Blow:"),
+                MetaAttributeStat::Intimidation => ("Intimidation", Color::srgb(0.5, 0.8, 0.5), "Fill per Second:"),
                 MetaAttributeStat::Preparation => ("Preparation", Color::srgb(0.5, 0.7, 0.9), "Recovery Reactions:"),
                 MetaAttributeStat::Patience => ("Patience", Color::srgb(0.7, 0.5, 0.9), "Waiting Recovery:"),
                 MetaAttributeStat::Awareness => ("Awareness", Color::srgb(0.9, 0.6, 0.3), "Reaction Span:"),
@@ -596,16 +596,16 @@ pub fn setup(
                         MetaAttributeStat::Ferocity, MetaAttributeStat::Grace);
                 });
 
-                // VITALITY ↔ DISCIPLINE (Toughness = green, Composure = blue)
+                // PHYSIQUE ↔ DISCIPLINE (Toughness = green, Composure = blue)
                 main.spawn(pair_row()).with_children(|pair| {
-                    create_attribute_section!(pair, 1, "VITALITY", "DISCIPLINE",
+                    create_attribute_section!(pair, 1, "PHYSIQUE", "DISCIPLINE",
                         Color::srgb(0.5, 0.8, 0.5), Color::srgb(0.5, 0.7, 0.9),
-                        AttributeTitle::VitalityDiscipline, AttributeCurrent::VitalityDiscipline, AttributeBar::VitalityDiscipline, AxisMarker::VitalityDiscipline,
-                        LeftCurrentValue::VitalityDiscipline, RightCurrentValue::VitalityDiscipline);
+                        AttributeTitle::PhysiqueDiscipline, AttributeCurrent::PhysiqueDiscipline, AttributeBar::PhysiqueDiscipline, AxisMarker::PhysiqueDiscipline,
+                        LeftCurrentValue::PhysiqueDiscipline, RightCurrentValue::PhysiqueDiscipline);
                     create_stat_section!(pair,
                         MetaAttributeStat::Constitution, MetaAttributeStat::Endurance,
                         MetaAttributeStat::Toughness, MetaAttributeStat::Composure,
-                        MetaAttributeStat::Grit, MetaAttributeStat::Preparation);
+                        MetaAttributeStat::Intimidation, MetaAttributeStat::Preparation);
                 });
 
                 // INSTINCT ↔ RESOLVE (Reflex = purple, Focus = orange)
@@ -810,7 +810,7 @@ pub fn update_attributes(
     for (title_entity, attr_type) in &title_query {
         let (left_reach, right_reach) = match attr_type {
             AttributeTitle::MightAgility => (display_attrs.might_reach(), display_attrs.agility_reach()),
-            AttributeTitle::VitalityDiscipline => (display_attrs.vitality_reach(), display_attrs.discipline_reach()),
+            AttributeTitle::PhysiqueDiscipline => (display_attrs.physique_reach(), display_attrs.discipline_reach()),
             AttributeTitle::InstinctResolve => (display_attrs.instinct_reach(), display_attrs.resolve_reach()),
         };
 
@@ -833,7 +833,7 @@ pub fn update_attributes(
     for (left_entity, attr_type) in &left_value_query {
         let left_current = match attr_type {
             LeftCurrentValue::MightAgility => display_attrs.might(),
-            LeftCurrentValue::VitalityDiscipline => display_attrs.vitality(),
+            LeftCurrentValue::PhysiqueDiscipline => display_attrs.physique(),
             LeftCurrentValue::InstinctResolve => display_attrs.instinct(),
         };
 
@@ -846,7 +846,7 @@ pub fn update_attributes(
     for (right_entity, attr_type) in &right_value_query {
         let right_current = match attr_type {
             RightCurrentValue::MightAgility => display_attrs.agility(),
-            RightCurrentValue::VitalityDiscipline => display_attrs.discipline(),
+            RightCurrentValue::PhysiqueDiscipline => display_attrs.discipline(),
             RightCurrentValue::InstinctResolve => display_attrs.resolve(),
         };
 
@@ -864,10 +864,10 @@ pub fn update_attributes(
                 display_attrs.might(),
                 display_attrs.agility(),
             ),
-            AttributeBar::VitalityDiscipline => (
-                display_attrs.vitality_reach(),
+            AttributeBar::PhysiqueDiscipline => (
+                display_attrs.physique_reach(),
                 display_attrs.discipline_reach(),
-                display_attrs.vitality(),
+                display_attrs.physique(),
                 display_attrs.discipline(),
             ),
             AttributeBar::InstinctResolve => (
@@ -904,7 +904,7 @@ pub fn update_attributes(
                 let raw_value = match meta_stat {
                     MetaAttributeStat::Force => display_attrs.might().to_string(),
                     MetaAttributeStat::Tempo => display_attrs.agility().to_string(),
-                    MetaAttributeStat::Constitution => display_attrs.vitality().to_string(),
+                    MetaAttributeStat::Constitution => display_attrs.physique().to_string(),
                     MetaAttributeStat::Endurance => display_attrs.discipline().to_string(),
                     MetaAttributeStat::Intuition => display_attrs.instinct().to_string(),
                     MetaAttributeStat::Concentration => display_attrs.resolve().to_string(),
@@ -916,7 +916,7 @@ pub fn update_attributes(
                     MetaAttributeStat::Toughness => display_attrs.toughness().to_string(),
                     MetaAttributeStat::Ferocity => format!("T{}", display_attrs.ferocity().index()),
                     MetaAttributeStat::Grace => format!("T{}", display_attrs.grace().index()),
-                    MetaAttributeStat::Grit => format!("T{}", display_attrs.grit().index()),
+                    MetaAttributeStat::Intimidation => format!("T{}", display_attrs.intimidation().index()),
                     MetaAttributeStat::Preparation => format!("T{}", display_attrs.preparation().index()),
                     MetaAttributeStat::Patience => format!("T{}", display_attrs.patience().index()),
                     MetaAttributeStat::Awareness => format!("T{}", display_attrs.awareness().index()),
@@ -978,7 +978,7 @@ pub fn update_attributes(
                     // same methods the fight reads.
                     MetaAttributeStat::Ferocity => display_attrs.ferocity().index().to_string(),
                     MetaAttributeStat::Grace => format!("+/-{:.0} deg", display_attrs.arc(&tuning)),
-                    MetaAttributeStat::Grit => display_attrs.grit_fill().to_string(),
+                    MetaAttributeStat::Intimidation => format!("{:.0}", display_attrs.intimidation_fill()),
                     MetaAttributeStat::Preparation => display_attrs.preparation().index().to_string(),
                     MetaAttributeStat::Patience => format!("+{:.0}%", display_attrs.patience_recovery(&tuning) * 100.0),
                     MetaAttributeStat::Awareness => format!("{:.2}s", display_attrs.span(&tuning).as_secs_f32()),
@@ -1016,7 +1016,7 @@ fn update_reach_display(node: &mut Node, left_reach: u16, right_reach: u16, max_
 
     // The bar should show from the leftmost reach to the rightmost reach
 
-    // Left reach is on the negative side (might, vitality, instinct)
+    // Left reach is on the negative side (might, physique, instinct)
     let left_bound = -(left_reach as i16);
     // Right reach is on the positive side (agility, discipline, resolve)
     let right_bound = right_reach as i16;

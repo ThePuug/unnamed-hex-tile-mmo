@@ -6,9 +6,8 @@ use crate::landing;
 
 /// Perfect Stride, the Kiter's skill: for `Tuning::stride_secs` its user
 /// strikes past its forward faces, as far round as its Grace opens, without
-/// breaking stride, runs `Tuning::stride_speed` faster as its Agility line
-/// has it (`ActorAttributes::line_power`), and its auto-attacks land
-/// `Tuning::stride_damage` harder (`auto_attack::swing`). It is a status
+/// breaking stride, and runs `Tuning::stride_speed` faster as its Agility
+/// line has it (`ActorAttributes::line_power`). It is a status
 /// (`Status::perfect_stride`), so every client moves its user at the pace
 /// the server does.
 pub fn take(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {

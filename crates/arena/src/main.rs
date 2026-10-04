@@ -198,9 +198,9 @@ struct Ledger {
     past_faces: f32,
     fatigue: f32,
     /// Its commitments at work: combos fired before they unlocked
-    /// (Ferocity), reactions taken through a recovery (Preparation), Grit
+    /// (Ferocity), reactions taken through a recovery (Preparation), Intimidation
     /// banks released and the seconds their bind held its foes, each foe's
-    /// binds merged so a refresh counts once (Grit), strikes struck across
+    /// binds merged so a refresh counts once (Intimidation), strikes struck across
     /// its own line of all it struck (Grace), and seconds its swing waited
     /// unstruck (Patience)
     early_combos: u32,
@@ -286,7 +286,7 @@ impl Ledger {
 struct Tally {
     sides: HashMap<Entity, Side>,
     ledgers: HashMap<Side, Ledger>,
-    /// Each actor Grit has bound: when its bind ends, and whose Grit bound it
+    /// Each actor Intimidation has bound: when its bind ends, and whose Intimidation bound it
     bound: HashMap<Entity, (Duration, Entity)>,
     /// Each actor's recovery as last sent, whose chain's counts a new one
     /// adds to: a blow's pushback resends it longer, which adds nothing
@@ -353,8 +353,8 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
 
 /// Counts each resolved threat and DoT tick against the side of the actor
 /// that sent it, each threat that lands on an actor out of its queue (a
-/// reflection never stood in one), and each blow that binds, a Grit bank
-/// released into it.
+/// reflection never stood in one), and each blow that binds, an
+/// Intimidation bank released into it, counted as the release's slow.
 fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>, time: Res<Time>, tuning: Res<Tuning>) {
     let (source, ability, damage) = match trigger.event() {
         Try { event: Event::ResolveThreat { ent, threat } } => {
@@ -364,11 +364,11 @@ fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>, time: Res<Time>, t
                     ledger.landed_damage_on += whole(threat);
                 }
             }
-            // A blow Grit's bank struck back binds as it lands, a bind
+            // A blow Intimidation's bank struck back binds as it lands, a bind
             // already running taking the longer of the two
             if threat.bind > 0.0 {
                 let now = time.elapsed();
-                let until = now + Duration::from_secs_f32(tuning.grit_bind_secs);
+                let until = now + Duration::from_secs_f32(tuning.intimidation_slow_secs);
                 let open = tally.bound.get(ent).map_or(now, |&(end, _)| end.max(now));
                 tally.bound.insert(*ent, (until.max(open), threat.source));
                 if let Some(ledger) = tally.of(threat.source) {

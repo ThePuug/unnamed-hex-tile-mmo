@@ -68,8 +68,8 @@ pub struct View {
     pub recovery: Option<GlobalRecovery>,
     /// Its own timed effects
     pub status: Status,
-    /// How full its Grit's bank is, of what it holds full
-    pub grit_filled: f32,
+    /// How full its Intimidation's bank is, of what it holds full
+    pub intimidation_filled: f32,
     /// Its own reach, in tiles
     pub reach: i32,
     /// Tiles a Leap carries it
@@ -134,6 +134,8 @@ pub struct Foe {
     pub in_arc: bool,
     /// Past its forward faces, where a swing breaks its stride
     pub across: bool,
+    /// It stands past the foe's forward faces, flanking it
+    pub flanked: bool,
     /// Seconds since the foe last used a skill, as its clip showed, as
     /// its Approach weighs them ([`super::mind::Mind::just_acted`])
     pub since_skill: Option<f32>,
@@ -247,16 +249,18 @@ fn commitment_considerations(part: Part, attrs: &ActorAttributes) -> Vec<Conside
 enum Effect {
     /// Perfect Stride, on itself
     PerfectStride,
-    /// The bind a full Grit bank releases into a strike, a slow on its foe
+    /// The bind a full Intimidation bank releases into a strike: a slow on
+    /// its foe, or a root on a foe already slowed
     Bind,
 }
 
 impl Effect {
-    /// Seconds a fresh one lasts
-    fn lasts(self, tuning: &Tuning) -> f32 {
+    /// Seconds a fresh one lasts on whoever it lands on
+    fn lasts(self, view: &View) -> f32 {
         match self {
-            Effect::PerfectStride => tuning.stride_secs,
-            Effect::Bind => tuning.grit_bind_secs,
+            Effect::PerfectStride => view.tuning.stride_secs,
+            Effect::Bind if Self::roots(view) => view.tuning.intimidation_root_secs,
+            Effect::Bind => view.tuning.intimidation_slow_secs,
         }
     }
 
@@ -264,19 +268,25 @@ impl Effect {
     fn left(self, view: &View) -> f32 {
         let timed = match self {
             Effect::PerfectStride => view.status.perfect_stride,
+            Effect::Bind if Self::roots(view) => view.foe.and_then(|foe| foe.status.root),
             Effect::Bind => view.foe.and_then(|foe| foe.status.slow),
         };
         timed.map_or(0.0, |timed| timed.remaining.max(0.0))
     }
+
+    /// Whether a bind would root its foe: one already slowed
+    fn roots(view: &View) -> bool {
+        view.foe.is_some_and(|foe| foe.status.is_slowed())
+    }
 }
 
 /// The timed effect `view.ability` would put on someone now: Perfect
-/// Stride's on itself, or the bind of a full Grit bank on whatever a skill
+/// Stride's on itself, or the bind of a full Intimidation bank on whatever a skill
 /// strikes. None for a decision that puts on none.
 fn effect(view: &View) -> Option<Effect> {
     match view.ability {
         AbilityType::PerfectStride => Some(Effect::PerfectStride),
-        ability if strikes(ability, view) && view.grit_filled >= 1.0 => Some(Effect::Bind),
+        ability if strikes(ability, view) && view.intimidation_filled >= 1.0 => Some(Effect::Bind),
         _ => None,
     }
 }
@@ -338,7 +348,7 @@ const RECOVERY_LEFT: Considered = Consideration {
 const EFFECT_ADDED: Considered = Consideration {
     name: "effect_added",
     read: |view| effect(view).map_or(1.0, |effect| {
-        let lasts = effect.lasts(&view.tuning).max(f32::EPSILON);
+        let lasts = effect.lasts(view).max(f32::EPSILON);
         (lasts - effect.left(view)) / lasts
     }),
     bounds: (0.0, 1.0),
@@ -370,9 +380,10 @@ const STRIKE_WORTH: Considered = Consideration {
             return 0.0;
         }
         let tuning = &view.tuning;
-        let release = if view.grit_filled >= 1.0 { 1.0 + tuning.grit_share } else { 1.0 };
+        let release = if view.intimidation_filled >= 1.0 { 1.0 + tuning.intimidation_share } else { 1.0 };
         let punish = if view.ability == AbilityType::Punish { punish::weight(tuning, view.foe_recovering) } else { 1.0 };
-        let dealt = view.attrs.base_potency(tuning) * tuning.damage(view.ability) * view.attrs.line_power(tuning, view.ability) * release * punish;
+        let flank = if foe.flanked { 1.0 + view.attrs.flank(tuning) } else { 1.0 };
+        let dealt = view.attrs.base_potency(tuning) * tuning.damage(view.ability) * view.attrs.line_power(tuning, view.ability) * release * punish * flank;
         dealt / foe.health.max(1.0)
     },
     bounds: (0.0, 0.25),
@@ -447,13 +458,13 @@ mod tests {
             endurance_max: attrs.max_endurance(tuning).max(1000.0),
             recovery: None,
             status: Status::default(),
-            grit_filled: 0.0,
+            intimidation_filled: 0.0,
             reach: 2,
             leap: 9,
             leap_room: 1.0,
             capacity_taken: false,
             queue: Threats::default(),
-            foe: Some(Foe { distance: 1, health: 600.0, in_arc: true, across: false, since_skill: None, status: Status::default() }),
+            foe: Some(Foe { distance: 1, health: 600.0, in_arc: true, across: false, flanked: false, since_skill: None, status: Status::default() }),
             foe_recovering: false,
         }
     }
@@ -561,26 +572,30 @@ mod tests {
     }
 
     #[test]
-    fn a_full_grit_bank_makes_a_strike_worth_more() {
+    fn a_full_bank_makes_a_strike_worth_more() {
         let tuning = Tuning::DEFAULT;
-        let gritty = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
-        let mut empty = view(&tuning, AbilityType::Feint, gritty);
-        let mut full = view(&tuning, AbilityType::Feint, gritty);
-        full.grit_filled = 1.0;
+        let imposing = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
+        let mut empty = view(&tuning, AbilityType::Feint, imposing);
+        let mut full = view(&tuning, AbilityType::Feint, imposing);
+        full.intimidation_filled = 1.0;
         assert!(response(&mut full, "strike_worth", &Mind::default()) > response(&mut empty, "strike_worth", &Mind::default()));
     }
 
     #[test]
     fn a_release_is_not_spent_binding_a_foe_already_bound() {
         let tuning = Tuning::DEFAULT;
-        let gritty = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
-        let mut loose = view(&tuning, AbilityType::Feint, gritty);
-        loose.grit_filled = 1.0;
+        let imposing = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
+        let mut loose = view(&tuning, AbilityType::Feint, imposing);
+        loose.intimidation_filled = 1.0;
+        let slowed = Status { slow: Some(Timed { pace: 0.8, remaining: tuning.intimidation_slow_secs }), ..Status::default() };
+        let mut slowed_foe = loose.clone();
+        slowed_foe.foe = Some(Foe { status: slowed, ..slowed_foe.foe.unwrap() });
         let mut bound = loose.clone();
-        bound.foe = Some(Foe { status: Status { slow: Some(Timed { pace: 0.8, remaining: tuning.grit_bind_secs }), ..Status::default() }, ..bound.foe.unwrap() });
+        bound.foe = Some(Foe { status: Status { root: Some(Timed { pace: 0.0, remaining: tuning.intimidation_root_secs }), ..slowed }, ..bound.foe.unwrap() });
         assert!(scored(&mut loose, "strike") > 0.0);
-        assert_eq!(scored(&mut bound, "strike"), 0.0, "freshly bound, a release would add nothing");
-        let mut unbanked = view(&tuning, AbilityType::Feint, gritty);
+        assert!(scored(&mut slowed_foe, "strike") > 0.0, "slowed, a release would root it");
+        assert_eq!(scored(&mut bound, "strike"), 0.0, "freshly rooted, a release would add nothing");
+        let mut unbanked = view(&tuning, AbilityType::Feint, imposing);
         unbanked.foe = bound.foe;
         assert!(scored(&mut unbanked, "strike") > 0.0, "a strike that releases nothing puts no bind on");
     }
@@ -651,7 +666,7 @@ mod tests {
     #[test]
     fn a_heavier_strike_and_a_weaker_foe_are_worth_more() {
         let tuning = Tuning::DEFAULT;
-        // Committed to Vitality, Overpower's line, so it strikes whole
+        // Committed to Physique, Overpower's line, so it strikes whole
         let vital = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
         let mind = Mind::default();
         let (mut light, mut heavy) = (view(&tuning, AbilityType::Feint, vital), view(&tuning, AbilityType::Overpower, vital));

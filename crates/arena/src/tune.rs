@@ -269,7 +269,7 @@ fn commitment(archetype: EnemyArchetype) -> Attribute {
 
 /// How much `ledger`'s side worked `attribute`'s commitment against the
 /// side `foe`'s ledger keeps, each a share in points but Awareness's:
-/// Ferocity's, of its skills the combos fired early; Grit's, of its foe's
+/// Ferocity's, of its skills the combos fired early; Intimidation's, of its foe's
 /// time alive the time its bind held it; Grace's, of its strikes those
 /// struck across its line; Preparation's, of its reactions those fired
 /// early; Patience's, of the time it recovered the time at Patience's
@@ -281,7 +281,7 @@ fn style_use(ledger: &Ledger, foe: &Ledger, attribute: Attribute) -> f32 {
             let skills: u32 = ledger.used.iter().filter(|&(&ability, _)| ability != AbilityType::AutoAttack).map(|(_, &uses)| uses).sum();
             100.0 * ledger.early_combos as f32 / skills.max(1) as f32
         }
-        Attribute::Vitality => 100.0 * ledger.bind / foe.alive.max(f32::EPSILON),
+        Attribute::Physique => 100.0 * ledger.bind / foe.alive.max(f32::EPSILON),
         Attribute::Agility => 100.0 * ledger.across as f32 / ledger.strikes.max(1) as f32,
         Attribute::Discipline => {
             let reactions: u32 = ledger.used.iter().filter(|&(ability, _)| ability.is_reaction()).map(|(_, &uses)| uses).sum();

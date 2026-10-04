@@ -14,11 +14,13 @@ use serde::{Deserialize, Serialize};
 /// the pace the server does without waiting on word that an effect ended.
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Status {
-    /// Slowed, by a blow Grit's bank struck back: held to `pace` of its
-    /// speed for `remaining` seconds ([`Status::slow`]). The server works
-    /// `pace` out from its tuning and sends it, so a client holds none of
-    /// the tuning.
+    /// Slowed, by Intimidation: held to `pace` of its speed for `remaining`
+    /// seconds ([`Status::slow`]). The server works `pace` out from its
+    /// tuning and sends it, so a client holds none of the tuning.
     pub slow: Option<Timed>,
+    /// Rooted, a slow to nothing: it cannot move, and turns, swings and
+    /// recovers as ever ([`Status::root`])
+    pub root: Option<Timed>,
     /// A strike across the striker's own line, its stride broken
     pub stride: Option<Timed>,
     /// A Perfect Stride under way: its strikes across its own line break no
@@ -55,7 +57,7 @@ impl Status {
     /// The share of its speed the actor moves at under every effect on it
     pub fn pace(&self) -> f32 {
         let burden = if self.burden { BURDENED_PACE } else { 1.0 };
-        Timed::pace(self.slow) * Timed::pace(self.stride) * Timed::pace(self.perfect_stride) * Timed::pace(self.held) * burden
+        Timed::pace(self.slow) * Timed::pace(self.root) * Timed::pace(self.stride) * Timed::pace(self.perfect_stride) * Timed::pace(self.held) * burden
     }
 
     /// The pace of an actor with `status`, whole with none
@@ -87,6 +89,18 @@ impl Status {
         self.held = Some(Timed { pace: 0.0, remaining: seconds.max(left) });
     }
 
+    /// Whether the actor is slowed or rooted now
+    pub fn is_slowed(&self) -> bool {
+        [self.slow, self.root].iter().flatten().any(|timed| timed.remaining > 0.0)
+    }
+
+    /// Roots the actor for `seconds`, or for what a root already on it has
+    /// left where that is longer
+    pub fn root(&mut self, seconds: f32) {
+        let left = self.root.map_or(0.0, |root| root.remaining);
+        self.root = Some(Timed { pace: 0.0, remaining: seconds.max(left) });
+    }
+
     /// Slows the actor to `pace` for `seconds`, keeping what a slow already
     /// on it holds deeper or longer: a light slow never eases a deep one.
     pub fn slow(&mut self, pace: f32, seconds: f32) {
@@ -96,7 +110,7 @@ impl Status {
 
     /// Counts the timed effects down by `dt` seconds, dropping spent ones
     pub fn tick(&mut self, dt: f32) {
-        for slot in [&mut self.slow, &mut self.stride, &mut self.perfect_stride, &mut self.held] {
+        for slot in [&mut self.slow, &mut self.root, &mut self.stride, &mut self.perfect_stride, &mut self.held] {
             if let Some(timed) = slot {
                 timed.remaining -= dt;
                 if timed.remaining <= 0.0 {

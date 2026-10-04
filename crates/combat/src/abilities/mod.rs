@@ -40,7 +40,7 @@ use common_bevy::{
     components::{
         behaviour::Side,
         engagement::{Engagement, EngagementMember},
-        grit::Grit,
+        intimidation::Intimidation,
         heading::Heading,
         reaction_queue::{QueuedThreat, ReactionQueue},
         recovery::GlobalRecovery,
@@ -105,10 +105,10 @@ pub struct LastSkill(pub Duration);
 pub const WHOLE: [(f32, Duration); 1] = [(1.0, Duration::ZERO)];
 
 /// A strike of `damage`, and the share of its target's speed it binds away:
-/// `Tuning::grit_share` harder and `grit_bind` binding with a full Grit
+/// `Tuning::intimidation_share` harder and `intimidation_slow` binding with a full Intimidation
 /// bank `released` into it, as it is without.
 fn released_into(tuning: &Tuning, damage: f32, released: bool) -> (f32, f32) {
-    if released { (damage * (1.0 + tuning.grit_share), tuning.grit_bind) } else { (damage, 0.0) }
+    if released { (damage * (1.0 + tuning.intimidation_share), tuning.intimidation_slow) } else { (damage, 0.0) }
 }
 
 /// What the gate asks of `ability` before it does anything, in order: out
@@ -152,7 +152,7 @@ pub struct Abilities<'w, 's> {
     pub queues: Query<'w, 's, &'static mut ReactionQueue>,
     pub statuses: Query<'w, 's, &'static mut Status>,
     pub swings: Query<'w, 's, &'static mut Swing>,
-    pub grits: Query<'w, 's, &'static mut Grit>,
+    pub intimidations: Query<'w, 's, &'static mut Intimidation>,
     pub targets: Query<'w, 's, (Entity, &'static Target)>,
     pub npcs: Query<'w, 's, (Entity, &'static EntityType, &'static crate::behaviour::Bar), With<Chase>>,
     pub minds: Query<'w, 's, (&'static Skill, &'static mut Sight)>,
@@ -236,12 +236,9 @@ impl Abilities<'_, '_> {
         let foe = cast.target_loc.map(|target_loc| (loc.distance(&target_loc), in_arc(&tuning, heading.as_ref(), Some(&attrs), &loc, &target_loc)));
 
         // A swing struck across the caster's line is a skill's effort: it
-        // costs endurance, the more the further round its arc. A Perfect
-        // Stride waives it
+        // costs endurance, the more the further round its arc
         let across = cast.target_loc.is_some_and(|target_loc| targeting::across(heading.as_ref(), &loc, &target_loc));
-        let share = if self.strides(ent) { 0.0 } else {
-            heading.as_ref().zip(cast.target_loc).map_or(0.0, |(heading, target_loc)| targeting::across_share(&tuning, heading, &loc, &target_loc))
-        };
+        let share = heading.as_ref().zip(cast.target_loc).map_or(0.0, |(heading, target_loc)| targeting::across_share(&tuning, heading, &loc, &target_loc));
         admits(ability, prior.as_ref(), &attrs, reach, foe).map_err(Some)?;
 
         // The recovery runs by how spent the actor is as it uses the ability
@@ -324,14 +321,15 @@ impl Abilities<'_, '_> {
 
     /// Queues a skill's strike on `target` for `damage` in all, in `parts`:
     /// each a share of it, struck its delay after now ([`WHOLE`] for one
-    /// strike made at once). A full Grit bank is released into it
-    /// (`Grit::release`): it lands `Tuning::grit_share` harder, and its last
-    /// part binds its target, slowed out of `Tuning::grit_bind` of its speed
-    /// as it lands. Every skill that strikes deals its damage through here,
+    /// strike made at once). A full Intimidation bank is released into it
+    /// (`Intimidation::release`): it lands `Tuning::intimidation_share`
+    /// harder, and its last part binds its target as it lands, slowing it
+    /// or rooting one already slowed (`resolve_threat`). Every skill that
+    /// strikes deals its damage through here,
     /// and an auto-attack or a reaction's return never does.
     pub fn strike(&mut self, cast: &Cast, target: Entity, damage: f32, ability: AbilityType, parts: &[(f32, Duration)]) {
         let tuning = *self.tuning;
-        let released = self.grits.get_mut(cast.ent).is_ok_and(|mut grit| grit.release(&tuning));
+        let released = self.intimidations.get_mut(cast.ent).is_ok_and(|mut intimidation| intimidation.release(&tuning));
         let (damage, bind) = released_into(&tuning, damage, released);
         for (i, &(share, delay)) in parts.iter().enumerate() {
             let bind = if i + 1 == parts.len() { bind } else { 0.0 };
@@ -721,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn a_swing_across_its_line_costs_endurance_but_ahead_or_in_a_perfect_stride() {
+    fn a_swing_across_its_line_costs_endurance_and_one_ahead_is_free() {
         let tuning = PRICED;
         let graceful = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
         let mut app = arena();
@@ -751,47 +749,47 @@ mod tests {
         assert!(used(&ask(&mut app, striding, AbilityType::PerfectStride, None), AbilityType::PerfectStride));
         let stride = spent(&app, striding);
         assert!(used(&ask(&mut app, striding, AbilityType::AutoAttack, Some(side)), AbilityType::AutoAttack));
-        assert_eq!(spent(&app, striding), stride, "a Perfect Stride waives it");
+        assert!(spent(&app, striding) > stride, "a Perfect Stride keeps its stride, and pays as any swing does");
     }
 
     #[test]
-    fn grit_fills_by_its_tier_and_only_a_full_bank_is_released() {
+    fn a_full_bank_is_released_into_the_next_skill_slowing_its_target_or_rooting_one_slowed() {
         let tuning = PRICED;
         let mut app = arena();
-        let gritty = actor(&mut app, Side::PLAYERS, 0);
+        let imposing = actor(&mut app, Side::PLAYERS, 0);
         let attacker = actor(&mut app, Side::WILD, 1);
-        let attrs = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
-        app.world_mut().entity_mut(gritty).insert(attrs);
+        app.world_mut().entity_mut(imposing).insert(ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0));
         turned_to(&mut app, attacker, -1);
         app.update();
-        let filled = |app: &App| app.world().get::<Grit>(gritty).unwrap().filled;
+        let filled = |app: &App| app.world().get::<Intimidation>(imposing).unwrap().filled;
         let feints = |app: &App| queue(app, attacker).into_iter().filter(|threat| threat.ability == Some(AbilityType::Feint)).collect::<Vec<_>>();
+        let release = |app: &mut App| {
+            app.world_mut().entity_mut(imposing).remove::<GlobalRecovery>();
+            app.world_mut().get_mut::<Intimidation>(imposing).unwrap().filled = Intimidation::size(&tuning);
+            assert!(used(&ask(app, imposing, AbilityType::Feint, Some(attacker)), AbilityType::Feint));
+        };
+        let land = |app: &mut App| {
+            app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: attacker } });
+            app.update();
+        };
+        let status = |app: &App| app.world().get::<Status>(attacker).copied().unwrap_or_default();
 
-        assert!(used(&ask(&mut app, attacker, AbilityType::Frenzy, Some(gritty)), AbilityType::Frenzy));
-        assert_eq!(filled(&app), 0, "a blow still in the queue fills nothing");
-        app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: gritty } });
-        app.update();
-        assert_eq!(filled(&app), attrs.grit_fill(), "let land, it fills the bank by the tier");
+        assert!(used(&ask(&mut app, imposing, AbilityType::Feint, Some(attacker)), AbilityType::Feint));
+        assert_eq!(feints(&app)[0].bind, 0.0, "short of full, a skill releases nothing");
 
-        assert!(used(&ask(&mut app, gritty, AbilityType::Feint, Some(attacker)), AbilityType::Feint));
-        assert_eq!(filled(&app), attrs.grit_fill(), "short of full, a skill leaves it be");
-        let plain = feints(&app)[0];
-        assert_eq!(plain.bind, 0.0);
-
-        app.world_mut().entity_mut(gritty).remove::<GlobalRecovery>();
-        app.world_mut().get_mut::<Grit>(gritty).unwrap().filled = Grit::size(&tuning);
-        assert!(used(&ask(&mut app, gritty, AbilityType::Feint, Some(attacker)), AbilityType::Feint));
-        assert_eq!(filled(&app), 0, "full, the next skill releases it");
+        release(&mut app);
+        assert!(filled(&app) < Intimidation::size(&tuning), "full, the next skill releases it");
         assert!(feints(&app)[1].bind > 0.0, "binding");
-        assert_eq!(released_into(&tuning, 100.0, true), (100.0 * (1.0 + tuning.grit_share), tuning.grit_bind), "and landing harder");
+        assert_eq!(released_into(&tuning, 100.0, true), (100.0 * (1.0 + tuning.intimidation_share), tuning.intimidation_slow), "and landing harder");
         assert_eq!(released_into(&tuning, 100.0, false), (100.0, 0.0));
-        app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: attacker } });
-        app.update();
-        let slowed = |app: &App| app.world().get::<Status>(attacker).is_some_and(|status| status.slow.is_some());
-        assert!(!slowed(&app), "queued, it binds nothing yet");
-        app.world_mut().write_message(Try { event: GameEvent::Dismiss { ent: attacker } });
-        app.update();
-        assert!(slowed(&app), "landed, it slows its target");
+        land(&mut app);
+        assert!(status(&app).slow.is_none(), "queued, it binds nothing yet");
+        land(&mut app);
+        assert!(status(&app).slow.is_some() && status(&app).root.is_none(), "landed on a target fighting it, it slows");
+
+        release(&mut app);
+        land(&mut app);
+        assert!(status(&app).root.is_some(), "landed on a target already slowed, it roots");
     }
 
     #[test]

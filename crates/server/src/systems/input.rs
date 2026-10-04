@@ -360,13 +360,13 @@ mod tests {
             Endurance { state: mighty.max_endurance(&tuning) / 4.0, max: mighty.max_endurance(&tuning) },
         )).id();
 
-        // Every level moved out of Might into Vitality, some of it leant to Discipline
+        // Every level moved out of Might into Physique, some of it leant to Discipline
         let pairs = [Pair::new(0, 0, 0), Pair::new(-5, 5, 3), Pair::new(0, 0, 0)];
         world.write_message(Try { event: Event::RespecAttributes { ent, pairs } });
         world.run_system_once(try_respec_attributes).unwrap();
 
         let (health, endurance) = (*world.get::<Health>(ent).unwrap(), *world.get::<Endurance>(ent).unwrap());
-        assert!(health.max > mighty.max_health(&tuning), "Vitality deepens health at once");
+        assert!(health.max > mighty.max_health(&tuning), "Physique deepens health at once");
         assert!((health.state / health.max - 0.5).abs() < 1e-4, "and it is as full as it was");
         assert!(endurance.max > mighty.max_endurance(&tuning), "Discipline deepens endurance at once");
         assert!((endurance.state / endurance.max - 0.25).abs() < 1e-4, "as full as it was");

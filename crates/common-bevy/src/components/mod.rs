@@ -3,7 +3,7 @@ pub mod behaviour;
 pub mod engagement;
 pub mod entity_type;
 pub mod equipment;
-pub mod grit;
+pub mod intimidation;
 pub mod heading;
 pub mod hex_assignment;
 pub mod keybits;
@@ -207,7 +207,7 @@ impl CommitmentTier {
 pub enum Attribute {
     Might,
     Agility,
-    Vitality,
+    Physique,
     Discipline,
     Instinct,
     Resolve,
@@ -296,15 +296,15 @@ impl Pair {
 }
 
 /// What an actor has put its levels into: three pairs of opposed
-/// attributes, Might and Agility, Vitality and Discipline, Instinct and
+/// attributes, Might and Agility, Physique and Discipline, Instinct and
 /// Resolve. Every value an actor fights with is read from these through
 /// the methods here.
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Serialize)]
-#[require(grit::Grit, Swing)]
+#[require(intimidation::Intimidation, Swing)]
 pub struct ActorAttributes {
     /// Might ↔ Agility
     physique: Pair,
-    /// Vitality ↔ Discipline
+    /// Physique ↔ Discipline
     conditioning: Pair,
     /// Instinct ↔ Resolve
     temperament: Pair,
@@ -316,23 +316,23 @@ pub struct ActorAttributes {
 
 impl ActorAttributes {
     /// An actor's attributes from the levels in each pair: axis, spectrum
-    /// and shift of Might ↔ Agility, of Vitality ↔ Discipline, then of
+    /// and shift of Might ↔ Agility, of Physique ↔ Discipline, then of
     /// Instinct ↔ Resolve. A shift is taken as given, unclamped. Its level
     /// is the levels these put in.
     pub fn new(
         might_agility_axis: i8,
         might_agility_spectrum: i8,
         might_agility_shift: i8,
-        vitality_discipline_axis: i8,
-        vitality_discipline_spectrum: i8,
-        vitality_discipline_shift: i8,
+        physique_discipline_axis: i8,
+        physique_discipline_spectrum: i8,
+        physique_discipline_shift: i8,
         instinct_resolve_axis: i8,
         instinct_resolve_spectrum: i8,
         instinct_resolve_shift: i8,
     ) -> Self {
         let pairs = [
             Pair::new(might_agility_axis, might_agility_spectrum, might_agility_shift),
-            Pair::new(vitality_discipline_axis, vitality_discipline_spectrum, vitality_discipline_shift),
+            Pair::new(physique_discipline_axis, physique_discipline_spectrum, physique_discipline_shift),
             Pair::new(instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift),
         ];
         let [physique, conditioning, temperament] = pairs;
@@ -343,19 +343,19 @@ impl ActorAttributes {
     pub fn might_agility_spectrum(&self) -> i8 { self.physique.spectrum }
     pub fn might_agility_shift(&self) -> i8 { self.physique.shift }
 
-    pub fn vitality_discipline_axis(&self) -> i8 { self.conditioning.axis }
-    pub fn vitality_discipline_spectrum(&self) -> i8 { self.conditioning.spectrum }
-    pub fn vitality_discipline_shift(&self) -> i8 { self.conditioning.shift }
+    pub fn physique_discipline_axis(&self) -> i8 { self.conditioning.axis }
+    pub fn physique_discipline_spectrum(&self) -> i8 { self.conditioning.spectrum }
+    pub fn physique_discipline_shift(&self) -> i8 { self.conditioning.shift }
 
     pub fn instinct_resolve_axis(&self) -> i8 { self.temperament.axis }
     pub fn instinct_resolve_spectrum(&self) -> i8 { self.temperament.spectrum }
     pub fn instinct_resolve_shift(&self) -> i8 { self.temperament.shift }
 
     pub fn set_might_agility_shift(&mut self, shift: i8) { self.physique.set_shift(shift) }
-    pub fn set_vitality_discipline_shift(&mut self, shift: i8) { self.conditioning.set_shift(shift) }
+    pub fn set_physique_discipline_shift(&mut self, shift: i8) { self.conditioning.set_shift(shift) }
     pub fn set_instinct_resolve_shift(&mut self, shift: i8) { self.temperament.set_shift(shift) }
 
-    /// The three pairs: Might ↔ Agility, Vitality ↔ Discipline, Instinct ↔ Resolve
+    /// The three pairs: Might ↔ Agility, Physique ↔ Discipline, Instinct ↔ Resolve
     pub fn pairs(&self) -> [Pair; 3] {
         [self.physique, self.conditioning, self.temperament]
     }
@@ -392,7 +392,7 @@ impl ActorAttributes {
         match attribute {
             Attribute::Might => (self.physique, End::Left),
             Attribute::Agility => (self.physique, End::Right),
-            Attribute::Vitality => (self.conditioning, End::Left),
+            Attribute::Physique => (self.conditioning, End::Left),
             Attribute::Discipline => (self.conditioning, End::Right),
             Attribute::Instinct => (self.temperament, End::Left),
             Attribute::Resolve => (self.temperament, End::Right),
@@ -437,14 +437,14 @@ impl ActorAttributes {
 
     pub fn might(&self) -> u16 { self.value(Attribute::Might) }
     pub fn agility(&self) -> u16 { self.value(Attribute::Agility) }
-    pub fn vitality(&self) -> u16 { self.value(Attribute::Vitality) }
+    pub fn physique(&self) -> u16 { self.value(Attribute::Physique) }
     pub fn discipline(&self) -> u16 { self.value(Attribute::Discipline) }
     pub fn instinct(&self) -> u16 { self.value(Attribute::Instinct) }
     pub fn resolve(&self) -> u16 { self.value(Attribute::Resolve) }
 
     pub fn might_reach(&self) -> u16 { self.reach(Attribute::Might) }
     pub fn agility_reach(&self) -> u16 { self.reach(Attribute::Agility) }
-    pub fn vitality_reach(&self) -> u16 { self.reach(Attribute::Vitality) }
+    pub fn physique_reach(&self) -> u16 { self.reach(Attribute::Physique) }
     pub fn discipline_reach(&self) -> u16 { self.reach(Attribute::Discipline) }
     pub fn instinct_reach(&self) -> u16 { self.reach(Attribute::Instinct) }
     pub fn resolve_reach(&self) -> u16 { self.reach(Attribute::Resolve) }
@@ -458,11 +458,11 @@ impl ActorAttributes {
     /// Endurance, Discipline's: how deep the endurance pool is (`max_endurance`)
     pub fn endurance(&self, tuning: &Tuning) -> f32 { self.potency(tuning, Attribute::Discipline) }
 
-    /// Constitution, Vitality's, which is max health: the health every actor
-    /// has (`Tuning::base_health`) and what each point of Vitality adds
-    /// (`Tuning::health_per_vitality`), scaled by the health level curve.
+    /// Constitution, Physique's, which is max health: the health every actor
+    /// has (`Tuning::base_health`) and what each point of Physique adds
+    /// (`Tuning::health_per_physique`), scaled by the health level curve.
     pub fn constitution(&self, tuning: &Tuning) -> f32 {
-        (tuning.base_health + self.vitality() as f32 * tuning.health_per_vitality) * self.hp_level_multiplier(tuning)
+        (tuning.base_health + self.physique() as f32 * tuning.health_per_physique) * self.hp_level_multiplier(tuning)
     }
 
     pub fn max_health(&self, tuning: &Tuning) -> f32 {
@@ -475,8 +475,8 @@ impl ActorAttributes {
     pub fn impact(&self) -> u16 { self.value(Attribute::Might) }
     /// Flow, Agility: unlocks a combo sooner, against the target's Reflex
     pub fn flow(&self) -> u16 { self.value(Attribute::Agility) }
-    /// Toughness, Vitality: mitigates a blow, against the attacker's Focus
-    pub fn toughness(&self) -> u16 { self.value(Attribute::Vitality) }
+    /// Toughness, Physique: mitigates a blow, against the attacker's Focus
+    pub fn toughness(&self) -> u16 { self.value(Attribute::Physique) }
     /// Composure, Discipline: shortens its own recovery, against the opponent's Impact
     pub fn composure(&self) -> u16 { self.value(Attribute::Discipline) }
     /// Reflex, Instinct: widens a threat's window, against the attacker's Flow
@@ -492,8 +492,9 @@ impl ActorAttributes {
     pub fn ferocity(&self) -> CommitmentTier { self.tier(Attribute::Might) }
     /// Grace, Agility: the arc it strikes within (`arc`)
     pub fn grace(&self) -> CommitmentTier { self.tier(Attribute::Agility) }
-    /// Grit, Vitality: its index is how many of the blows it lets land it banks
-    pub fn grit(&self) -> CommitmentTier { self.tier(Attribute::Vitality) }
+    /// Intimidation, Physique: its index is how much its bank fills each
+    /// second it is engaged (`intimidation_fill`)
+    pub fn intimidation(&self) -> CommitmentTier { self.tier(Attribute::Physique) }
     /// Preparation, Discipline: its index is how many reactions it may fire
     /// early in a chain once a strike taken in its own time stands in it
     /// (`combos::may_use`)
@@ -559,7 +560,7 @@ impl ActorAttributes {
         use crate::message::AbilityType::*;
         match ability {
             Frenzy => Some(Attribute::Might),
-            Overpower => Some(Attribute::Vitality),
+            Overpower => Some(Attribute::Physique),
             PerfectStride => Some(Attribute::Agility),
             Punish => Some(Attribute::Discipline),
             Leap => Some(Attribute::Instinct),
@@ -614,10 +615,18 @@ impl ActorAttributes {
         self.base_potency(tuning) * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(tuning, Attribute::Might))
     }
 
-    /// How much each blow this actor lets land fills its Grit's bank
-    /// (`components::grit::Grit`): its tier's index, 0 to 3.
-    pub fn grit_fill(&self) -> u8 {
-        self.grit().index() as u8
+    /// How much this actor's Intimidation bank fills each second it is
+    /// engaged (`components::intimidation::Intimidation`): its tier's
+    /// index, 0 to 3, twice that while it is ignored.
+    pub fn intimidation_fill(&self) -> f32 {
+        self.intimidation().index() as f32
+    }
+
+    /// The share harder this actor's strikes land from past their target's
+    /// forward faces, a flank: `Tuning::grace_flank_min` at T0 to
+    /// `grace_flank_max` at T3, by its Grace.
+    pub fn flank(&self, tuning: &Tuning) -> f32 {
+        self.grace().between(tuning.grace_flank_min, tuning.grace_flank_max)
     }
 
     /// The share faster this actor's recovery runs while it waits on a
@@ -899,7 +908,7 @@ mod tests {
         // Level 0, no investment: max_health = base HP * multiplier(0) = base * 1.0
         let attrs = ActorAttributes::default();
         assert_eq!(attrs.total_level(), 0);
-        assert_eq!(attrs.max_health(&tuning), tuning.base_health, "Level 0 with no vitality should have the base health");
+        assert_eq!(attrs.max_health(&tuning), tuning.base_health, "Level 0 with no physique should have the base health");
     }
 
     // ===== COMMITMENT TIER TESTS (, Layer 2) =====
@@ -980,24 +989,24 @@ mod tests {
     #[test]
     fn test_commitment_tier_budget_constraints() {
         // T3+T2 takes every level: 6+4 axis at level 10, ceiling 160
-        // might: 96/160 = 60% → T3; vitality: 64/160 = 40% → T2
+        // might: 96/160 = 60% → T3; physique: 64/160 = 40% → T2
         let attrs = ActorAttributes::new(-6, 0, 0, -4, 0, 0, 0, 0, 0);
         assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T3);
-        assert_eq!(attrs.tier(Attribute::Vitality), CommitmentTier::T2);
+        assert_eq!(attrs.tier(Attribute::Physique), CommitmentTier::T2);
 
         // 5+5 axis: 80/160 = 50% each → T2, so two T3s are out of reach
         let split = ActorAttributes::new(-5, 0, 0, -5, 0, 0, 0, 0, 0);
         assert_eq!(split.tier(Attribute::Might), CommitmentTier::T2);
-        assert_eq!(split.tier(Attribute::Vitality), CommitmentTier::T2);
+        assert_eq!(split.tier(Attribute::Physique), CommitmentTier::T2);
     }
 
     #[test]
     fn test_commitment_tier_dual_t2() {
         // 4+4+2 axis at level 10, ceiling 160
-        // might, vitality: 64/160 = 40% → T2; instinct: 32/160 = 20% → T1
+        // might, physique: 64/160 = 40% → T2; instinct: 32/160 = 20% → T1
         let attrs = ActorAttributes::new(-4, 0, 0, -4, 0, 0, -2, 0, 0);
         assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T2);
-        assert_eq!(attrs.tier(Attribute::Vitality), CommitmentTier::T2);
+        assert_eq!(attrs.tier(Attribute::Physique), CommitmentTier::T2);
         assert_eq!(attrs.tier(Attribute::Instinct), CommitmentTier::T1);
     }
 
@@ -1043,16 +1052,16 @@ mod tests {
     }
 
     #[test]
-    fn test_shift_constrained_vitality_discipline() {
-        // Test same constraints for vitality/discipline pair
+    fn test_shift_constrained_physique_discipline() {
+        // Test same constraints for physique/discipline pair
         let mut attrs = ActorAttributes::new(0, 0, 0, 3, 4, 0, 0, 0, 0);
 
         // axis=3 (discipline/right), shift can only go negative
-        attrs.set_vitality_discipline_shift(2);
-        assert_eq!(attrs.vitality_discipline_shift(), 0, "Positive shift should clamp when axis on right");
+        attrs.set_physique_discipline_shift(2);
+        assert_eq!(attrs.physique_discipline_shift(), 0, "Positive shift should clamp when axis on right");
 
-        attrs.set_vitality_discipline_shift(-2);
-        assert_eq!(attrs.vitality_discipline_shift(), -2, "Negative shift should work when axis on right");
+        attrs.set_physique_discipline_shift(-2);
+        assert_eq!(attrs.physique_discipline_shift(), -2, "Negative shift should work when axis on right");
     }
 
     #[test]
@@ -1076,8 +1085,8 @@ mod tests {
         attrs.set_might_agility_shift(0);
         assert_eq!(attrs.might_agility_shift(), 0);
 
-        attrs.set_vitality_discipline_shift(0);
-        assert_eq!(attrs.vitality_discipline_shift(), 0);
+        attrs.set_physique_discipline_shift(0);
+        assert_eq!(attrs.physique_discipline_shift(), 0);
 
         attrs.set_instinct_resolve_shift(0);
         assert_eq!(attrs.instinct_resolve_shift(), 0);

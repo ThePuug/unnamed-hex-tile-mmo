@@ -35,7 +35,7 @@ short = 24.0
 
 # A mind is held to its archetype's style: the commitment its build invests
 # in, used at least `floor`. In points: Ferocity's early combos of its
-# skills (at most three in four), Grit's bind uptime on its foe (about half
+# skills (at most three in four), Intimidation's bind uptime on its foe (about half
 # for a fighter playing to bind), Grace's strikes across its line of its
 # strikes (at most two in three), Preparation's early reactions of its
 # reactions (at most all), Patience's recovery at its faster rate of all
@@ -61,10 +61,10 @@ ambusher = 75.0
 min_moved = 3.0
 
 # The game's numbers searched, each within its bounds. The bounds hold the
-# authored hard constraints: Grit share at least 0.1, Counter's recovery
+# authored hard constraints: Intimidation share at least 0.1, Counter's recovery
 # over 0.5s, Parry's at least 1s. A number that sets how far a style can
 # reach is held out of the search, or its floor ([style]) could fall out of
-# reach: Grit's bind, 3s.
+# reach: Intimidation's bind, 3s.
 
 [[knobs]]
 name = "frenzy_damage"
@@ -187,17 +187,17 @@ min = 0.0
 max = 1.5
 
 [[knobs]]
-name = "health_per_vitality"
+name = "health_per_physique"
 min = 0.5
 max = 1.2
 
 [[knobs]]
-name = "grit_share"
+name = "intimidation_share"
 min = 0.1
 max = 0.5
 
 [[knobs]]
-name = "grit_bind"
+name = "intimidation_slow"
 min = 0.1
 max = 0.6
 
@@ -207,9 +207,9 @@ min = 0.0
 max = 1.0
 
 [[knobs]]
-name = "stride_damage"
+name = "grace_flank_max"
 min = 0.0
-max = 3.0
+max = 1.0
 
 [[knobs]]
 name = "stride_secs"

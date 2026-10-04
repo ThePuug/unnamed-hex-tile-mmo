@@ -26,7 +26,7 @@ pub struct Tuning {
     /// way to its ceiling; every share rises toward the ceiling and never
     /// reaches it
     pub share_bend: f32,
-    /// Health every actor has before Vitality and level
+    /// Health every actor has before Physique and level
     pub base_health: f32,
     /// Endurance an actor holds for each point of its Endurance potency
     pub endurance_pool: f32,
@@ -52,8 +52,8 @@ pub struct Tuning {
     /// The power fatigue rises by as endurance is spent: above 1 it stays
     /// light while the pool holds and bites as it empties
     pub fatigue_bend: f32,
-    /// Health each point of Vitality adds before level
-    pub health_per_vitality: f32,
+    /// Health each point of Physique adds before level
+    pub health_per_physique: f32,
     /// The health level curve, `(1 + level × k)^p`
     pub health_curve_k: f32,
     pub health_curve_p: f32,
@@ -77,15 +77,26 @@ pub struct Tuning {
     /// in degrees, by its Grace
     pub grace_arc_min: f32,
     pub grace_arc_max: f32,
-    /// How much Grit's bank holds, filled by each blow an actor lets land
-    /// as much as its tier's index (`Grit`), rounded to whole units
-    pub grit_bank: f32,
+    /// Share harder a strike lands from past its target's forward faces, a
+    /// flank, by its striker's Grace
+    pub grace_flank_min: f32,
+    pub grace_flank_max: f32,
+    /// How much Intimidation's bank holds, filled each second an actor is
+    /// engaged by its tier's index, twice that while it is ignored
+    /// (`Intimidation`)
+    pub intimidation_bank: f32,
     /// Share harder the skill a full bank releases into lands
-    pub grit_share: f32,
-    /// Share of its target's speed a full bank's release slows away
-    pub grit_bind: f32,
-    /// Seconds that slow holds
-    pub grit_bind_secs: f32,
+    pub intimidation_share: f32,
+    /// Share of its speed Intimidation's slow takes away, the aura's and
+    /// the release's alike
+    pub intimidation_slow: f32,
+    /// Seconds a release slows its target
+    pub intimidation_slow_secs: f32,
+    /// Seconds a release roots a target already slowed
+    pub intimidation_root_secs: f32,
+    /// Seconds the aura's slow lingers on a foe once it stops ignoring the
+    /// actor or leaves its reach
+    pub intimidation_aura_secs: f32,
     /// Share faster an actor's recovery runs while it waits on a swing it
     /// could not strike, by its Patience
     pub patience_recovery_min: f32,
@@ -187,8 +198,6 @@ pub struct Tuning {
     pub counter_line: f32,
     pub stride_line: f32,
     pub leap_line: f32,
-    /// Share harder its user's auto-attacks land in a Perfect Stride
-    pub stride_damage: f32,
 }
 
 impl Tuning {
@@ -209,7 +218,7 @@ impl Tuning {
         fatigue_recovery: 3.545,
         fatigue_window: 0.319,
         fatigue_bend: 3.297,
-        health_per_vitality: 0.649,
+        health_per_physique: 0.649,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
         base_interval: 2.1,
@@ -219,10 +228,14 @@ impl Tuning {
         awareness_span_max: 1.0,
         grace_arc_min: 60.0,
         grace_arc_max: 150.0,
-        grit_bank: 12.0,
-        grit_share: 0.146,
-        grit_bind: 0.213,
-        grit_bind_secs: 3.0,
+        grace_flank_min: 0.0,
+        grace_flank_max: 0.5,
+        intimidation_bank: 36.0,
+        intimidation_share: 0.146,
+        intimidation_slow: 0.213,
+        intimidation_slow_secs: 3.0,
+        intimidation_root_secs: 1.0,
+        intimidation_aura_secs: 1.0,
         patience_recovery_min: 0.0,
         patience_recovery_max: 0.6,
         contest_scale: 800.0,
@@ -273,7 +286,6 @@ impl Tuning {
         leap_line: 0.2,
         stride_secs: 6.19,
         stride_speed: 0.112,
-        stride_damage: 1.111,
     };
 
     /// What `ability` costs, its endurance reckoned from it
@@ -365,10 +377,14 @@ impl Tuning {
             "awareness_span_max" => &mut self.awareness_span_max,
             "grace_arc_min" => &mut self.grace_arc_min,
             "grace_arc_max" => &mut self.grace_arc_max,
-            "grit_bank" => &mut self.grit_bank,
-            "grit_share" => &mut self.grit_share,
-            "grit_bind" => &mut self.grit_bind,
-            "grit_bind_secs" => &mut self.grit_bind_secs,
+            "intimidation_bank" => &mut self.intimidation_bank,
+            "intimidation_share" => &mut self.intimidation_share,
+            "intimidation_slow" => &mut self.intimidation_slow,
+            "intimidation_slow_secs" => &mut self.intimidation_slow_secs,
+            "intimidation_root_secs" => &mut self.intimidation_root_secs,
+            "intimidation_aura_secs" => &mut self.intimidation_aura_secs,
+            "grace_flank_min" => &mut self.grace_flank_min,
+            "grace_flank_max" => &mut self.grace_flank_max,
             "patience_recovery_min" => &mut self.patience_recovery_min,
             "patience_recovery_max" => &mut self.patience_recovery_max,
             "tempo_ceiling" => &mut self.tempo_ceiling,
@@ -387,7 +403,7 @@ impl Tuning {
             "fatigue_recovery" => &mut self.fatigue_recovery,
             "fatigue_window" => &mut self.fatigue_window,
             "fatigue_bend" => &mut self.fatigue_bend,
-            "health_per_vitality" => &mut self.health_per_vitality,
+            "health_per_physique" => &mut self.health_per_physique,
             "health_curve_k" => &mut self.health_curve_k,
             "health_curve_p" => &mut self.health_curve_p,
             "contest_scale" => &mut self.contest_scale,
@@ -436,7 +452,6 @@ impl Tuning {
             "counter_line" => &mut self.counter_line,
             "stride_line" => &mut self.stride_line,
             "leap_line" => &mut self.leap_line,
-            "stride_damage" => &mut self.stride_damage,
             "leap_strike" => &mut self.leap_strike,
             _ => return Err(format!("no tuning knob {name}")),
         })
@@ -458,11 +473,11 @@ mod tests {
         let mut tuning = Tuning::default();
         tuning.set("frenzy_damage", "0.25").unwrap();
         tuning.set("leap_distance", "2").unwrap();
-        tuning.set("grit_share", "0.25").unwrap();
+        tuning.set("intimidation_share", "0.25").unwrap();
         assert_eq!(tuning.frenzy_damage, 0.25);
         assert_eq!(tuning.leap_distance, 2);
-        assert_eq!(tuning.grit_share, 0.25);
-        assert_eq!(tuning.get("grit_share"), Ok(0.25));
+        assert_eq!(tuning.intimidation_share, 0.25);
+        assert_eq!(tuning.get("intimidation_share"), Ok(0.25));
         assert_eq!(tuning.get("leap_distance"), Ok(2.0));
         assert!(tuning.get("no_such_knob").is_err());
         assert!(tuning.set("frenzy_damage", "much").is_err());
