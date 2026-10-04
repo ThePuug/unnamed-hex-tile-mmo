@@ -224,7 +224,7 @@ impl Bed for Texture {
 }
 
 use Layer::{Bass as BassLayer, Colours, Comp as CompLayer, Kit as KitLayer, Organ as OrganLayer, Weave as WeaveLayer};
-use Telling::{Long, Phrases, Riff, RiffAndLong, Trading};
+use Telling::{Phrases, Riff, RiffAndLong, Trading};
 
 const STORIES: [Story<Texture, Telling>; 5] = [
     Story {
@@ -232,7 +232,7 @@ const STORIES: [Story<Texture, Telling>; 5] = [
         weight: 3.0,
         base: Texture { bass: Bass::Two, kit: Kit::Time, ..Texture::BARE },
         ladder: &[CompLayer, BassLayer, OrganLayer, KitLayer, WeaveLayer, Colours, CompLayer],
-        leads: &[Phrases, Phrases, Trading, Trading, Long, RiffAndLong, RiffAndLong, Riff],
+        leads: &[Phrases, Phrases, Trading, Trading, Phrases, RiffAndLong, RiffAndLong, Riff],
         turns: &[turn((7, 7), (1, 1))],
         halves: (1, 1),
         pace: (0.2, 0.8),
@@ -242,7 +242,7 @@ const STORIES: [Story<Texture, Telling>; 5] = [
         weight: 2.0,
         base: Texture { organ: Organ::Thin, ..Texture::BARE },
         ladder: &[BassLayer, CompLayer, WeaveLayer, KitLayer, OrganLayer, BassLayer, Colours],
-        leads: &[Long, Phrases, Phrases, Phrases, Trading, Trading, Long, Riff],
+        leads: &[Phrases, Phrases, Trading, Phrases, Trading, RiffAndLong, Phrases, Riff],
         turns: &[turn((4, 5), (0, 0)), turn((7, 7), (0, 1))],
         halves: (1, 1),
         pace: (0.0, 0.6),
@@ -262,7 +262,7 @@ const STORIES: [Story<Texture, Telling>; 5] = [
         weight: 2.0,
         base: Texture { comp: Comp::Shells, ..Texture::BARE },
         ladder: &[BassLayer, KitLayer, WeaveLayer, OrganLayer, BassLayer, Colours],
-        leads: &[Trading, Trading, Phrases, Trading, Riff, Trading, Long],
+        leads: &[Trading, Trading, Phrases, Trading, Riff, Trading, Phrases],
         turns: &[turn((2, 2), (0, 0)), turn((0, 0), (0, 0)), turn((3, 4), (0, 0)), turn((1, 1), (0, 0)), turn((6, 6), (0, 1))],
         halves: (1, 1),
         pace: (0.2, 1.0),
@@ -272,7 +272,7 @@ const STORIES: [Story<Texture, Telling>; 5] = [
         weight: 1.5,
         base: Texture { organ: Organ::Thin, bass: Bass::Two, ..Texture::BARE },
         ladder: &[CompLayer, WeaveLayer, OrganLayer, KitLayer, BassLayer, Colours],
-        leads: &[Long, Long, Phrases, Phrases, Trading, Long, Phrases],
+        leads: &[Phrases, Phrases, Trading, Phrases, RiffAndLong, Trading, Phrases],
         turns: &[turn((6, 6), (1, 2))],
         halves: (1, 2),
         pace: (0.0, 0.3),
@@ -414,7 +414,7 @@ pub fn build(params: &Params) -> Score {
     let shifts: Vec<i32> = (0..walk.bars()).map(|b| if walk.at(b).rung >= upper { CLIMB } else { 0 }).collect();
     let mut tune = Tune::compose(&design.theme, &score.meter, design.form, &rows, 4, shifts);
     tune.scale = Some(tune::MINOR_PENTATONIC);
-    aab(&mut tune, score.meter.eighths());
+    aab(&mut tune, score.meter.eighths(), |b| walk.bed_at(b).weave != Weave::Off);
     score.harmony = tune.chords.clone();
     let form = Form { bar, walk, tune, design };
 
@@ -463,8 +463,11 @@ fn row(r: usize, mode: Mode, rng: &mut Rng) -> &'static Schema {
 /// is the first's again — bent to the IV where its strong beats meet it
 /// — and the third answers; in every row the lead calls through the
 /// first two bars, holds the row's last tone through the third, and
-/// leaves the fourth to the band, the hole the weave answers in.
-fn aab(tune: &mut Tune, eighths: u32) {
+/// leaves the fourth to the band, the hole the weave answers in. Where
+/// `answered` says no weave plays there, the lead answers itself in the
+/// fourth with the row's first bar, as a player with no band to answer
+/// does, and the hole is never the bass and the organ alone.
+fn aab(tune: &mut Tune, eighths: u32, answered: impl Fn(u32) -> bool) {
     let rows = TWELVE_BAR.len();
     let bars = phrase::BARS as usize;
     for chorus in 0..tune.bars.len() / (rows * bars) {
@@ -477,7 +480,8 @@ fn aab(tune: &mut Tune, eighths: u32) {
             if let Some(end) = tune.bars[row + bars - 1].last().copied() {
                 tune.bars[row + bars - 2] = vec![Tone { onset: 0, len: eighths, degree: end.degree }];
             }
-            tune.bars[row + bars - 1].clear();
+            let last = row + bars - 1;
+            tune.bars[last] = if answered(last as u32) { Vec::new() } else { tune.bars[row].clone() };
         }
     }
 }
@@ -870,8 +874,9 @@ fn scoop(key: &Key, pitch: u8, hi: u8) -> Option<u8> {
     (grace <= hi).then_some(grace)
 }
 
-/// The weave answers the lead in a row's hole, soft, where the band asks
-/// for it, and never while the lead calls: the electric piano plays the
+/// The weave answers the lead in a row's hole, as strong as the lead's
+/// riff, where the band asks for it, and never while the lead calls: a
+/// soft answer is a hole in the loudness. The electric piano plays the
 /// call — the row's first two bars — again in the hole, an octave under
 /// the tune's register, its strong beats bent to the hole's chords; at the
 /// second notch the vibes take the call's skeleton, its strong-beat
@@ -891,7 +896,7 @@ fn weave(score: &mut Score, form: &Form, rng: &mut Rng) {
             let onset = start - call * form.bar;
             let held = if len >= 3 * E { 2 * E } else { len - E / 2 };
             let pitch = if score.meter.strong(onset / E) && !chord.holds(&score.key, pitch) { tune::nearest_chord_tone(&score.key, chord, pitch, lo, hi) } else { pitch };
-            score.add(Note { start: b * form.bar + onset, len: held, pitch, vel: vel(-14, rng), channel: CH_WEAVE });
+            score.add(Note { start: b * form.bar + onset, len: held, pitch, vel: vel(-8, rng), channel: CH_WEAVE });
         }
         if mode != Weave::Two {
             continue;

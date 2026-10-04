@@ -91,19 +91,21 @@ pub const PIECES: &[Piece] = &[
             fall from the fifth to the flat seventh under home, the riff round \
             the tonic — sung AAB, a row's line, the line again over the IV and \
             an answer, each in a row's first two bars, the band answering in \
-            its last two — a third up where the band is fullest. One of five stories the seed \
+            its last two, or where no band answers, the lead answering \
+            itself — a third up where the band is fullest. One of five stories the seed \
             chooses — a stroll that fills to a riff and empties; a late night that \
             thins to the organ; a rush hour that never quite stops; a corner where \
             the lead calls and answers itself; after hours, slow, the lead \
-            holding over the organ — each told by the band filling and thinning \
+            singing over the organ — each told by the band filling and thinning \
             one player at a time, a half-phrase a step, coming back to where it \
             opened so the end runs into the head, at a loudness that barely moves. \
             One player tells the story, the lead — a harmonica, a tenor or alto \
             sax or a muted trumpet, each file its own: it sings the theme with a \
             scoop into its notes, plays it detached as a riff, calls with each \
             phrase's first half and answers itself with the riff in its second, \
-            or holds one chord tone every other bar, a second horn holding a \
-            third or a sixth under its riff; it sits a little forward of the \
+            holding each row's last tone, a second horn holding a \
+            third or a sixth under its riff where the seed brings one; it sits \
+            a little forward of the \
             band, never over it. The electric piano answers the lead's call in \
             the row's last bars, an octave under it; the \
             bass in two or walking, with a pickup into every bar, the piano \
