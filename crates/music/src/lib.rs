@@ -15,6 +15,7 @@ pub mod score;
 pub mod teller;
 pub mod theory;
 pub mod tune;
+pub mod variation;
 pub mod voices;
 
 pub use audio::rng;

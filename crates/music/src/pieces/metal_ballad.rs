@@ -29,6 +29,7 @@ use crate::theory::phrase::{self, Form as PhraseForm, FORMS};
 use crate::theory::schema::{split, Schema, BALLAD as SONG};
 use crate::theory::{Chord, Key, Mode};
 use crate::tune::{self, Placed, Tune};
+use crate::variation::{self, Role as Bar};
 
 /// General MIDI programs, 0-based.
 const PIANO: u8 = 0;
@@ -411,13 +412,11 @@ fn hammer(key: &Key, pitch: u8, _hi: u8) -> Option<u8> {
     Some(key.pitch(key.absolute_degree(pitch).unwrap() - 1, 4))
 }
 
-/// A bar's place in its phrase: its first, the variant on its second, a
-/// plain third, and its cadence.
 fn variant(bar: u32) -> bool {
-    bar % phrase::BARS == 1
+    variation::role(bar) == Bar::Variant
 }
 fn cadence(bar: u32) -> bool {
-    bar % phrase::BARS == phrase::BARS - 1
+    variation::role(bar) == Bar::Cadence
 }
 
 /// The stages of a melodic solo over its bars: the theme stated, the
@@ -753,7 +752,7 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
             score.add(Note { start, len: form.bar - E / 8, pitch: root, vel: vel(0, rng), channel: CH_BASS });
             continue;
         }
-        let next = (!form.last(b) && !form.stop_time(b + 1)).then(|| form.chord(b + 1)).filter(|n| n.root != chord.root);
+        let next = (!form.last(b) && !form.stop_time(b + 1)).then(|| form.chord(b + 1)).filter(|n| n.root != chord.root || cadence(b));
         let approach = next.filter(|_| cadence(b) || rng.chance(0.35)).map(|n| {
             let to = at_degree(&key, n, n.root, 28, 40, root);
             let (rd, td) = (key.absolute_degree(root).unwrap(), key.absolute_degree(to).unwrap());
@@ -766,15 +765,23 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
         let until = dropped.unwrap_or(if approach.is_some() { eighths - 1 } else { eighths });
         match mode {
             Bass::Held => {
+                // On the variant bar the fifth walks into the kick's second
+                // stroke.
+                let passing = groove.dum.get(1).map(|d| d - 1).filter(|_| variant(b));
                 for (k, i) in groove.dum.iter().enumerate() {
                     let to = groove.dum.get(k + 1).copied().unwrap_or(eighths).min(until);
+                    let to = passing.filter(|p| *p > *i && *p < to).unwrap_or(to);
                     if *i < to {
                         score.add(Note { start: start + i * E, len: (to - i) * E - E / 8, pitch: root, vel: vel(-2, rng), channel: CH_BASS });
                     }
                 }
+                if let Some(p) = passing.filter(|p| *p < until) {
+                    let fifth = at_degree(&key, chord, chord.root + 4, root + 1, 52, root + 7);
+                    score.add(Note { start: start + p * E, len: E * 3 / 4, pitch: fifth, vel: vel(-6, rng), channel: CH_BASS });
+                }
             }
             _ => {
-                let push = groove.tek.last().map(|t| t - 1).filter(|_| variant(b) && rng.chance(0.5) && root + 12 <= 52);
+                let push = groove.tek.last().map(|t| t - 1).filter(|_| variant(b) && root + 12 <= 52);
                 for i in 0..until {
                     let pitch = if Some(i) == push { root + 12 } else { root };
                     let accent = if strong.contains(&i) { 0 } else { -10 };
@@ -878,12 +885,28 @@ fn guitars(score: &mut Score, form: &Form, rng: &mut Rng) {
             _ => {
                 let [_, fifth, top] = chord_tones;
                 let inverted = [fifth, top, fifth + 12];
+                let last_beat = eighths - *form.design.groove.groups.last().unwrap() as u32;
+                let pickup = dum.get(1).map(|d| d - 1).filter(|_| variant(b));
+                let driving = (cadence(b) && dropped == eighths).then_some(last_beat);
                 for channel in [CH_LEFT, CH_RIGHT] {
                     let voicing = if channel == CH_RIGHT && apart[part] { inverted } else { chord_tones };
                     for (k, i) in dum.iter().enumerate().filter(|(_, i)| **i < dropped) {
                         let to = dum.get(k + 1).copied().unwrap_or(eighths).min(dropped);
+                        let to = [pickup, driving].into_iter().flatten().filter(|p| *p > *i && *p < to).min().unwrap_or(to);
                         for p in voicing {
                             score.add(Note { start: start + i * E, len: (to - i) * E - E / 8, pitch: p, vel: vel(if *i == 0 { 4 } else { -2 }, rng), channel });
+                        }
+                    }
+                    if let Some(p) = pickup {
+                        for t in voicing {
+                            score.add(Note { start: start + p * E, len: E * 2 / 3, pitch: t, vel: vel(0, rng), channel });
+                        }
+                    }
+                    if let Some(from) = driving {
+                        for i in from..eighths {
+                            for t in &voicing[..2] {
+                                score.add(Note { start: start + i * E, len: E * 2 / 5, pitch: *t, vel: vel(-10 + 4 * (i - from) as i32, rng), channel });
+                            }
                         }
                     }
                 }
@@ -972,7 +995,7 @@ fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
             Some(from)
         } else if !form.last(b) && form.turns_at(b + 1) {
             Some(if rng.chance(0.6) { strong[1] } else { half })
-        } else if cadence(b) && rng.chance(0.8) {
+        } else if cadence(b) {
             Some(if rng.chance(0.5) { last_beat } else { strong[strong.len().saturating_sub(2)] })
         } else {
             None
@@ -1088,7 +1111,9 @@ fn drum_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
                 let beat = start + at * E;
                 let slots = *len as u32 * 2;
                 let first = if g == 0 { 2 } else { 0 };
-                if x < 0.3 {
+                if x < 0.3 && cadence(b) && g + 1 == groups.len() {
+                    fill(score, form.design.fill, beat, slots, base - 4, rng);
+                } else if x < 0.3 {
                     for s in first..slots {
                         if s % 2 == 0 {
                             stroke(score, beat, s, RIDE_BELL, base + 14, rng);
