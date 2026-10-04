@@ -96,7 +96,8 @@ pub fn calls(run: &Run<Telling>, bar: u32) -> bool {
 /// note held to the next, a hair short of it, a grace into the next now
 /// and then, stealing its length from this one where they touch; where
 /// it plays the riff, the tune detached to its feet — a foot held to the
-/// next is not heard as a foot — doubled where the piece doubles it, a
+/// next is not heard as a foot, though a tone filling its bar rings —
+/// doubled where the piece doubles it, a
 /// grace into some strong beats, and under that riff the second holds a
 /// chord tone every other bar; where it holds, one chord tone every
 /// other bar, so the storyteller is heard between the tellings. Where
@@ -134,7 +135,9 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
                     } else {
                         let strong = score.strong(start);
                         let accent = if strong { teller.riff.0 } else { teller.riff.1 };
-                        let held = if len >= 3 * E { 2 * E } else { len - E / 2 };
+                        // A tone that fills its bar is a hold, not a foot,
+                        // and rings in the riff as in the song.
+                        let held = if len >= score.bar() { len - E / 2 } else if len >= 3 * E { 2 * E } else { len - E / 2 };
                         if strong && j > 0 && rng.chance(0.4) {
                             if let Some(grace) = (teller.grace)(&score.key, pitch, hi) {
                                 score.add(Note { start: start - E / 4, len: E / 4, pitch: grace, vel: vel(teller.riff.2, rng), channel: teller.lead });
@@ -234,6 +237,11 @@ fn held(score: &mut Score, teller: &Teller, tune: &Tune, run: &Run<Telling>, run
     let bars = runs.last().map_or(0, |r| r.b);
     let mut b = if run.a == 0 || run.b == bars { run.a } else { run.a + 1 };
     while b < run.b {
+        // The second holds under the riff, never where the tune rests.
+        if channel == teller.second && tune.bars[b as usize].is_empty() {
+            b += 2;
+            continue;
+        }
         let chord = tune.chords[b as usize];
         let all = chord.pitches_within(&score.key, range.0, range.1);
         let mut tones = all.clone();
