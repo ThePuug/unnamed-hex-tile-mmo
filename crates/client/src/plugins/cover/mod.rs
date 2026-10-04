@@ -843,38 +843,63 @@ mod scale_tests {
 }
 
 /// The shared table of tree forms stays what the models are: a model rebuilt
-/// taller or thicker fails here before collision and drawing part.
+/// taller or thicker fails here before collision and drawing part. A stump
+/// is measured where it stands on the ground: under it, its trunk carries
+/// on down its own taper, wider.
 #[cfg(test)]
 mod form_tests {
-    fn positions(model: &str) -> Vec<Vec<([f32; 3], [f32; 3])>> {
+    /// Each mesh's primitives, each its vertices' positions.
+    fn positions(model: &str) -> Vec<Vec<Vec<[f32; 3]>>> {
         let path = format!("{}/../../assets/models/{model}.glb", env!("CARGO_MANIFEST_DIR"));
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
         let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
         let json: serde_json::Value = serde_json::from_slice(&bytes[20..20 + len]).unwrap();
-        let bound = |a: &serde_json::Value, k: &str| -> [f32; 3] {
-            let v: Vec<f32> = a[k].as_array().unwrap().iter().map(|x| x.as_f64().unwrap() as f32).collect();
-            [v[0], v[1], v[2]]
+        // The binary chunk follows the JSON's: its length, type, then data
+        let bin = &bytes[28 + len..];
+        let index = |v: &serde_json::Value| v.as_u64().unwrap_or(0) as usize;
+        let read = |accessor: usize| -> Vec<[f32; 3]> {
+            let a = &json["accessors"][accessor];
+            let view = &json["bufferViews"][index(&a["bufferView"])];
+            let start = index(&view["byteOffset"]) + index(&a["byteOffset"]);
+            let stride = view["byteStride"].as_u64().map_or(12, |s| s as usize);
+            (0..index(&a["count"]))
+                .map(|i| {
+                    let at = |k: usize| f32::from_le_bytes(bin[start + i * stride + 4 * k..][..4].try_into().unwrap());
+                    [at(0), at(1), at(2)]
+                })
+                .collect()
         };
         json["meshes"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|mesh| {
-                mesh["primitives"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|p| {
-                        let a = &json["accessors"][p["attributes"]["POSITION"].as_u64().unwrap() as usize];
-                        (bound(a, "min"), bound(a, "max"))
-                    })
-                    .collect()
-            })
+            .map(|mesh| mesh["primitives"].as_array().unwrap().iter().map(|p| read(index(&p["attributes"]["POSITION"]))).collect())
             .collect()
+    }
+
+    /// How far out along x or z a trunk stands where it meets the ground:
+    /// along each of its sides, from a vertex of its lowest ring to the
+    /// lowest vertex above the ground at the same bearing, where that side
+    /// crosses the ground.
+    fn at_ground(trunk: &[[f32; 3]]) -> f32 {
+        let bearing = |v: &[f32; 3]| v[2].atan2(v[0]);
+        let apart = |a: f32, b: f32| ((a - b + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI).abs();
+        let lowest = trunk.iter().map(|v| v[1]).fold(f32::MAX, f32::min);
+        trunk
+            .iter()
+            .filter(|v| v[1] - lowest < 1e-4)
+            .filter_map(|low| {
+                let high = trunk.iter().filter(|v| v[1] > 0.0 && apart(bearing(v), bearing(low)) < 1e-3).min_by(|a, b| a[1].total_cmp(&b[1]))?;
+                let t = -low[1] / (high[1] - low[1]);
+                let (x, z) = (low[0] + (high[0] - low[0]) * t, low[2] + (high[2] - low[2]) * t);
+                Some(x.abs().max(z.abs()))
+            })
+            .fold(0.0, f32::max)
     }
 
     #[test]
     fn tree_forms_are_the_models() {
+        let top = |prims: &Vec<Vec<[f32; 3]>>| prims.iter().flatten().map(|v| v[1]).fold(0.0, f32::max);
         for (tree, stump, forms) in [
             ("pine-tree", "pine-stump", common::cover::PINE_FORMS),
             ("deciduous-tree", "deciduous-stump", common::cover::DECIDUOUS_FORMS),
@@ -883,10 +908,9 @@ mod form_tests {
             let stumps = positions(stump);
             assert_eq!(trees.len(), forms.len(), "{tree}'s variations");
             for (k, form) in forms.iter().enumerate() {
-                let height = trees[k].iter().map(|(_, max)| max[1]).fold(0.0, f32::max);
-                let (min, max) = stumps[k][0];
-                let trunk = [min[0].abs(), max[0].abs(), min[2].abs(), max[2].abs()].into_iter().fold(0.0, f32::max);
-                let stump_height = stumps[k].iter().map(|(_, max)| max[1]).fold(0.0, f32::max);
+                let height = top(&trees[k]);
+                let trunk = at_ground(&stumps[k][0]);
+                let stump_height = top(&stumps[k]);
                 assert!((height - form.height).abs() < 1e-3, "{tree} {k}: height {height} against {}", form.height);
                 assert!((trunk - form.trunk).abs() < 1e-3, "{stump} {k}: trunk {trunk} against {}", form.trunk);
                 assert!((stump_height - form.stump).abs() < 1e-3, "{stump} {k}: height {stump_height} against {}", form.stump);
