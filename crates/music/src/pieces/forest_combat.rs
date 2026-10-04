@@ -23,6 +23,7 @@ use crate::theory::melody::Theme;
 use crate::theory::phrase::{self, Form as PhraseForm, FORMS};
 use crate::theory::schema::{fight_schemata, Schema};
 use crate::theory::{Chord, Key, Mode};
+use crate::variation::{self, Role as Bar};
 use crate::tune::{self, Tune};
 
 /// General MIDI programs, 0-based.
@@ -443,10 +444,16 @@ fn at_degree(key: &Key, chord: Chord, degree: i32, lo: u8, hi: u8, to: u8) -> u8
 /// each is a stroke; at full, the strings an octave over them through
 /// the chord each group — root, fifth, third — a sixteenth shorter, so
 /// the two sound as one bow, and under the lead's register, where a
-/// figure on its pitches masks it.
+/// figure on its pitches masks it. A phrase's variant bar kicks the low
+/// strings up to the fifth on the eighth into the dance's long group;
+/// its cadence climbs both through the chord across the last group into
+/// the next phrase.
 fn ostinato(score: &mut Score, form: &Form, rng: &mut Rng) {
     let key = score.key;
     let groups = form.design.groove.groups.to_vec();
+    let eighths = score.meter.eighths();
+    let last_group = eighths - *groups.last().unwrap() as u32;
+    let kick = form.design.groove.dum.get(1).map(|d| d - 1).filter(|e| !score.meter.strong(*e));
     for b in 0..form.bars() {
         let mode = form.texture_at(b).ostinato;
         if mode == Ostinato::Off {
@@ -454,15 +461,31 @@ fn ostinato(score: &mut Score, form: &Form, rng: &mut Rng) {
         }
         let chord = form.chord(b);
         let root = at_degree(&key, chord, chord.root, 38, 50, 43);
+        let role = variation::role(b);
+        // The cadence's last group climbs the chord into the next phrase;
+        // the variant kicks up to the fifth into the dance's long group.
+        let climb = chord.pitches_within(&key, root, 55);
+        let fifth = chord.pitches_within(&key, 36, 55).into_iter().filter(|p| key.degree_of(*p) == Some((chord.root + 4).rem_euclid(7) as usize)).min_by_key(|p| (*p as i32 - root as i32 - 7).abs());
+        let sweep = chord.pitches_within(&key, 45, 64);
         let mut at = 0;
         for g in &groups {
             for i in 0..*g as u32 {
-                let start = b * form.bar + (at + i) * E;
+                let e = at + i;
+                let start = b * form.bar + e * E;
                 let accent = if i == 0 { 6 } else { -8 };
-                score.add(Note { start, len: E * 3 / 4, pitch: root, vel: vel(accent, rng), channel: CH_BASS });
+                let pitch = match role {
+                    Bar::Cadence if e >= last_group => climb[((e - last_group) as usize).min(climb.len() - 1)],
+                    Bar::Variant if Some(e) == kick => fifth.unwrap_or(root),
+                    _ => root,
+                };
+                score.add(Note { start, len: E * 3 / 4, pitch, vel: vel(accent, rng), channel: CH_BASS });
                 if mode == Ostinato::Full {
-                    let degree = [chord.root, chord.root + 4, chord.root + 2][(i as usize) % 3];
-                    let pitch = at_degree(&key, chord, degree, 45, 60, 52);
+                    let pitch = if role == Bar::Cadence && e >= last_group {
+                        sweep[((e - last_group) as usize * 2).min(sweep.len() - 1)]
+                    } else {
+                        let degree = [chord.root, chord.root + 4, chord.root + 2][(i as usize) % 3];
+                        at_degree(&key, chord, degree, 45, 60, 52)
+                    };
                     score.add(Note { start, len: E / 2, pitch, vel: vel(accent - 6, rng), channel: CH_FIGURE });
                 }
             }
@@ -477,7 +500,10 @@ fn ostinato(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// first beats, so every group is struck and the limp is heard; at
 /// full, the stick's pickups into the groups, softer, the cymbal on
 /// every phrase's first beat, and a fill down the toms through the last
-/// group of every part, rising in strength, into the next.
+/// group of every phrase, rising in strength, into the next. A phrase's
+/// variant bar adds the stick's pickup into the long group and the
+/// taiko under the stick's first stroke; its cadence rolls the taiko
+/// into the next phrase.
 fn drum(score: &mut Score, form: &Form, rng: &mut Rng) {
     for b in 0..form.bars() {
         let mode = form.texture_at(b).drum;
@@ -494,11 +520,27 @@ fn drum(score: &mut Score, form: &Form, rng: &mut Rng) {
             score.add(Note { start, len: E - 20, pitch: FLOOR_TOM, vel: vel(accent - 14, rng), channel: CH_KIT });
             score.add(Note { start, len: E - 20, pitch: 36, vel: vel(accent - 10, rng), channel: CH_TAIKO });
         }
+        let role = variation::role(b);
+        let last_eighth = groove.eighths() - 1;
         for i in groove.tek {
             let group = score.meter.strong(*i);
             if group || mode == Drum::Full {
                 score.add(Note { start: b * form.bar + i * E, len: E / 2, pitch: SIDE_STICK, vel: vel(if group { -4 } else { -14 }, rng), channel: CH_KIT });
             }
+        }
+        // The variant's stick picks up into the long group; the taiko
+        // answers the stick's first stroke there, and on the cadence rolls
+        // two sixteenths into the next phrase.
+        if role == Bar::Variant {
+            if let Some(e) = groove.dum.get(1).map(|d| d - 1).filter(|e| !groove.tek.contains(e)) {
+                score.add(Note { start: b * form.bar + e * E, len: E / 2, pitch: SIDE_STICK, vel: vel(-12, rng), channel: CH_KIT });
+            }
+            if let Some(i) = groove.tek.first() {
+                score.add(Note { start: b * form.bar + i * E, len: E - 20, pitch: 36, vel: vel(-16, rng), channel: CH_TAIKO });
+            }
+        }
+        if role == Bar::Cadence && b + 1 < form.bars() && !groove.dum.contains(&last_eighth) {
+            variation::roll(score, CH_TAIKO, 36, b * form.bar + last_eighth * E, 2, |x| vel(-14 + (8.0 * x) as i32, rng));
         }
         if mode != Drum::Full {
             continue;
@@ -506,7 +548,7 @@ fn drum(score: &mut Score, form: &Form, rng: &mut Rng) {
         if b % phrase::BARS == 0 {
             score.add(Note { start: b * form.bar, len: 2 * E, pitch: CRASH, vel: vel(-10, rng), channel: CH_KIT });
         }
-        if form.walk.parts.iter().any(|p| p.b == b + 1) {
+        if role == Bar::Cadence || form.walk.parts.iter().any(|p| p.b == b + 1) {
             let groups = groove.groups;
             let last = *groups.last().unwrap() as u32;
             let from = groove.eighths() - last;
@@ -521,7 +563,9 @@ fn drum(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// The low brass: trombone on the chord's root and fifth and tuba on
 /// its root, short, on the dance's strokes, the bar's first the hardest;
 /// at full, the trombones' fifth on the accompaniment's off-beats too,
-/// softer, the push between the blows.
+/// softer, the push between the blows. A phrase's variant bar anticipates
+/// its second stroke by an eighth; its cadence rips up the chord through
+/// the last group, growing, into the next phrase.
 fn brass(score: &mut Score, form: &Form, rng: &mut Rng) {
     let key = score.key;
     for b in 0..form.bars() {
@@ -534,18 +578,35 @@ fn brass(score: &mut Score, form: &Form, rng: &mut Rng) {
         let fifth = at_degree(&key, chord, chord.root + 4, root + 1, 65, root + 7);
         let low = at_degree(&key, chord, chord.root, 28, 40, 34);
         let groove = form.design.groove;
-        for i in groove.dum {
+        let role = variation::role(b);
+        let last_group = groove.eighths() - *groove.groups.last().unwrap() as u32;
+        let rips = role == Bar::Cadence && b + 1 < form.bars();
+        for (k, i) in groove.dum.iter().enumerate() {
+            if rips && *i >= last_group {
+                continue;
+            }
+            // The variant anticipates the second stroke by an eighth.
+            let i = if role == Bar::Variant && k == 1 { i - 1 } else { *i };
             let start = b * form.bar + i * E;
-            let accent = if *i == 0 { 8 } else { -2 };
+            let accent = if i == 0 { 8 } else { -2 };
             for p in [root, fifth] {
                 score.add(Note { start, len: E * 2 / 3, pitch: p, vel: vel(accent, rng), channel: CH_TROMBONE });
             }
             score.add(Note { start, len: E * 2 / 3, pitch: low, vel: vel(accent - 4, rng), channel: CH_TUBA });
         }
+        if rips {
+            // The cadence rips up the chord through its last group.
+            let up = chord.pitches_within(&key, root, 65);
+            for (k, e) in (last_group..groove.eighths()).enumerate() {
+                let pitch = up[(k * 2).min(up.len() - 1)];
+                score.add(Note { start: b * form.bar + e * E, len: E / 2, pitch, vel: vel(-6 + 5 * k as i32, rng), channel: CH_TROMBONE });
+            }
+            score.add(Note { start: b * form.bar + last_group * E, len: E * 2 / 3, pitch: low, vel: vel(-4, rng), channel: CH_TUBA });
+        }
         if mode != Brass::Full {
             continue;
         }
-        for i in groove.chord {
+        for i in groove.chord.iter().filter(|i| !rips || **i < last_group) {
             score.add(Note { start: b * form.bar + i * E, len: E / 2, pitch: fifth, vel: vel(-12, rng), channel: CH_TROMBONE });
         }
     }
