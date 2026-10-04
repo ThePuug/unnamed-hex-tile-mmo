@@ -94,6 +94,18 @@ pub struct CardBand {
 pub const ATTRIBUTE_COARSE_SURFACE: MeshVertexAttribute =
     MeshVertexAttribute::new("Terrain_CoarseSurface", 0x7e88_a1c0, VertexFormat::Float32x4);
 
+/// The canopy's rise a terrain vertex draws, as the weights the three
+/// kinds' heights are read by (`summary_mesh::rise_weights`), read from
+/// [`RISE_LEVEL`]'s canopy.
+pub const ATTRIBUTE_RISE: MeshVertexAttribute =
+    MeshVertexAttribute::new("Terrain_Rise", 0x7e88_a1c1, VertexFormat::Float32x3);
+
+/// The level whose canopy the ground's rise is read from, by every level
+/// that draws one: the third, whose band the rise falls away across. The
+/// rise reaches no level past it, and the levels before it draw one
+/// reading of it, so where two meet they stand at one height.
+pub const RISE_LEVEL: u32 = common_bevy::summary::LOD_LEVELS[2];
+
 /// How a level wears its canopy: each kind's colour, the trees' own, and
 /// how wide a grown crown of it stands; and the crowns' relief, full
 /// where the level begins and gone where it ends, so the level past it
@@ -123,6 +135,8 @@ pub struct CanopyLook {
     /// The ground distances the relief is full at and gone by.
     pub relief_full: f32,
     pub relief_gone: f32,
+    /// The density a canopy reads closed from (`summary_mesh::CANOPY_FULL`).
+    pub full: f32,
 }
 
 /// How a level's shaders read its canopy's parts (`plugins::canopy`): the
@@ -226,6 +240,7 @@ impl MaterialExtension for TerrainExtension {
             Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
             Mesh::ATTRIBUTE_UV_0.at_shader_location(2),
             ATTRIBUTE_COARSE_SURFACE.at_shader_location(3),
+            ATTRIBUTE_RISE.at_shader_location(5),
         ];
         if layout.0.contains(Mesh::ATTRIBUTE_COLOR) {
             attributes.push(Mesh::ATTRIBUTE_COLOR.at_shader_location(4));
@@ -354,7 +369,8 @@ impl TerrainMaterial {
     /// far as the colour itself reaches; the tiles wear neither.
     fn canopy_for(&self, r: u32) -> CanopyLook {
         use common_bevy::summary::{threshold_horiz, LOD_LEVELS};
-        let Some(kinds) = &self.kinds else { return CanopyLook::default() };
+        let full = common_bevy::summary_mesh::CANOPY_FULL;
+        let Some(kinds) = &self.kinds else { return CanopyLook { full, ..default() } };
         let (relief_full, relief_gone) = if LOD_LEVELS[1..LOD_LEVELS.len() - 1].contains(&r) {
             (threshold_horiz(LOD_LEVELS[2]), threshold_horiz(LOD_LEVELS[3]))
         } else {
@@ -369,6 +385,7 @@ impl TerrainMaterial {
             fall: Vec4::ZERO,
             relief_full,
             relief_gone,
+            full,
         }
     }
 
@@ -538,6 +555,7 @@ pub struct SummaryMeshBuildResult {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub coarse: Vec<[f32; 4]>,
+    pub rise: Vec<[f32; 3]>,
     /// The canopy per vertex where the level colours its ground by it,
     /// else empty.
     pub canopy: Vec<[f32; 4]>,
@@ -591,6 +609,37 @@ pub struct RegionData {
     pub cells: HashMap<(i32, i32), common_bevy::summary::SummaryCell>,
 }
 
+/// A cell and the six around it, as lattice offsets.
+const RING: [(i32, i32); 7] = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
+
+/// The regions of the levels finer than [`RISE_LEVEL`] whose vertices
+/// carry the rise read from its cell `cell`: a part of it stands at the fan
+/// corners of the cells around it, and a finer vertex reads the fan it
+/// lies in. The tiles draw no rise.
+fn finer_regions_reading_rise(cell: (i32, i32)) -> HashSet<MeshRegionKey> {
+    use common_bevy::summary::{part_offsets, summary_lattice, LOD_LEVELS};
+    let scale = summary_lattice(RISE_LEVEL).scale;
+    let region_lat = common_bevy::summary::mesh_region_lattice();
+    let mut regions = HashSet::new();
+    for &finer in LOD_LEVELS.iter().filter(|&&l| l > 0 && l < RISE_LEVEL) {
+        let fine = summary_lattice(finer).scale;
+        for (dq, dr) in RING {
+            let (cq, cr) = ((cell.0 + dq) * scale, (cell.1 + dr) * scale);
+            for (oq, or) in part_offsets(RISE_LEVEL) {
+                // A part stands on a centre of the next finer level, and
+                // so on every finer level's lattice.
+                let (q, r) = (cq + oq, cr + or);
+                let (fq, fr) = (q.div_euclid(fine), r.div_euclid(fine));
+                for (eq, er) in RING {
+                    let (mn, mm) = region_lat.cell_id(fq + eq, fr + er);
+                    regions.insert(MeshRegionKey { r: finer, mn, mm });
+                }
+            }
+        }
+    }
+    regions
+}
+
 impl SummaryCache {
     /// Insert region data, merging into any existing entry. Merge keeps the
     /// union of cells (a partial batch can never erase previously received
@@ -603,11 +652,13 @@ impl SummaryCache {
                 let region_lat = common_bevy::summary::mesh_region_lattice();
                 let mut revised = self.revised.lock().expect("the lock is never poisoned");
                 for (&(sq, sr), cell) in &data.cells {
-                    if existing.cells.get(&(sq, sr)).is_some_and(|held| held != cell) {
-                        for (dq, dr) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)] {
-                            let (mn, mm) = region_lat.cell_id(sq + dq, sr + dr);
-                            revised.insert(MeshRegionKey { r: key.r, mn, mm });
-                        }
+                    let Some(held) = existing.cells.get(&(sq, sr)).filter(|held| *held != cell) else { continue };
+                    for (dq, dr) in RING {
+                        let (mn, mm) = region_lat.cell_id(sq + dq, sr + dr);
+                        revised.insert(MeshRegionKey { r: key.r, mn, mm });
+                    }
+                    if key.r == RISE_LEVEL && (held.canopy != cell.canopy || held.wet != cell.wet) {
+                        revised.extend(finer_regions_reading_rise((sq, sr)));
                     }
                 }
                 drop(revised);
@@ -682,5 +733,34 @@ mod tests {
         // The server stalls and its clock falls 1_750 behind the client's
         server.pong(19_900, 10_000 + 20_000 - 1_750, 20_000);
         assert_eq!(server.current_time(20_000), 10_000 + 20_000 - 1_750 + server.smoothed_latency);
+    }
+    /// A revised canopy at the rise's level rebuilds every finer region
+    /// whose vertices carry its rise: built over the summaries with and
+    /// without it, a region whose rise differs is one the revision names.
+    #[test]
+    fn a_revised_canopy_names_every_finer_region_carrying_its_rise() {
+        use common::cover::{Canopy, Content, Cover};
+        use common_bevy::summary::{SummaryCell, PARTS};
+        use common_bevy::summary_mesh::build_summary_mesh_region;
+        let pines = Canopy::of(Cover::NONE.with(0, Content::Pine).with(1, Content::Pine));
+        let revised = (1, -1);
+        let bare = |_: i32, _: i32| Some(SummaryCell::default());
+        let wooded = |q: i32, r: i32| Some(SummaryCell { canopy: if (q, r) == revised { [pines; PARTS] } else { [Canopy::NONE; PARTS] }, ..SummaryCell::default() });
+        let flat = |_: i32, _: i32| Some(5);
+        let named = finer_regions_reading_rise(revised);
+        let mut reading = 0;
+        for mn in -3..=3 {
+            for mm in -3..=3 {
+                let key = MeshRegionKey { r: 1, mn, mm };
+                let build = |cells: &dyn Fn(i32, i32) -> Option<SummaryCell>| {
+                    build_summary_mesh_region(1, key, &flat, Some(&flat), None, Some((RISE_LEVEL, cells))).expect("every cell is there").rise
+                };
+                if build(&bare) != build(&wooded) {
+                    reading += 1;
+                    assert!(named.contains(&key), "{key:?} carries the revised rise");
+                }
+            }
+        }
+        assert!(reading > 0, "some region reads it");
     }
 }

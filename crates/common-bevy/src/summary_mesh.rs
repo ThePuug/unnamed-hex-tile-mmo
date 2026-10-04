@@ -14,7 +14,9 @@
 //! Every vertex also carries the coarser level's surface at its position —
 //! height and normal, as that level draws them — so the renderer can morph
 //! the finer surface onto the coarser one across the transition strip and
-//! the two meet without a step at the cut.
+//! the two meet without a step at the cut. And it carries the canopy's
+//! rise it draws ([`rise_weights`]), read from one level's canopy for
+//! every level that draws a rise, so no two draw it apart.
 
 use std::collections::{HashMap, HashSet};
 
@@ -53,6 +55,10 @@ pub struct SummaryMeshResult {
     /// normal xyz, height w. The vertex's own normal and height at the
     /// coarsest level, which has nothing to morph onto.
     pub coarse: Vec<[f32; 4]>,
+    /// Per vertex, the [`rise_weights`] of the canopy's rise it draws, as
+    /// [`LevelRise`] reads them from the level the build was given; nought
+    /// where it was given none.
+    pub rise: Vec<[f32; 3]>,
     /// Per vertex, the canopy over it as [`canopy_vertex`] states it, a
     /// corner's the mean of the three cells meeting there; empty when the
     /// level was built without one.
@@ -73,6 +79,84 @@ pub fn canopy_vertex(parts: &[Canopy; PARTS]) -> [f32; 4] {
     let share = |kind: Content| parts.iter().map(|p| p.share(kind) as f32).sum::<f32>() / whole;
     let density = parts.iter().map(|p| p.filled().min(common::cover::CANOPY_WHOLE) as f32).sum::<f32>() / whole;
     [density, share(Content::Pine), share(Content::Deciduous), share(Content::Brush)]
+}
+
+/// The density from which a canopy reads closed: its colour lies over the
+/// ground in full and the ground rises its whole height. The terrain
+/// shaders read it from the level's material.
+pub const CANOPY_FULL: f32 = 0.5;
+
+/// The weights a canopy's rise is read by, pine, deciduous and brush: the
+/// ground under it rises by the three kinds' grown heights weighed by
+/// these, as closed as the terrain shaders' `canopy_closed` reads it.
+/// Linear in the heights, so a rise blended across a fan by its vertices'
+/// weights is the rise that level draws there. Nought under water.
+pub fn rise_weights(canopy: Canopy, wet: bool) -> [f32; 3] {
+    if wet {
+        return [0.0; 3];
+    }
+    let whole = common::cover::CANOPY_WHOLE as f32;
+    let density = canopy.filled().min(common::cover::CANOPY_WHOLE) as f32 / whole;
+    let t = (density / CANOPY_FULL).clamp(0.0, 1.0);
+    let closed = t * t * (3.0 - 2.0 * t);
+    let per = closed / density.max(1e-4) / whole;
+    [Content::Pine, Content::Deciduous, Content::Brush].map(|kind| canopy.share(kind) as f32 * per)
+}
+
+/// A level's canopy rise as its vertices carry it, from a lookup of its
+/// cells: the part standing at each vertex, read as the terrain shaders
+/// read a region's parts, and blended across the fan under a point, so a
+/// finer level's vertex lies on the rise this level draws. Vertices are
+/// read once each across a build.
+pub struct LevelRise<'a> {
+    lattice: SummaryLattice,
+    cells: &'a dyn Fn(i32, i32) -> Option<SummaryCell>,
+    vertices: HashMap<(i32, i32), Option<[f32; 3]>>,
+}
+
+impl<'a> LevelRise<'a> {
+    pub fn new(radius: u32, cells: &'a dyn Fn(i32, i32) -> Option<SummaryCell>) -> Self {
+        LevelRise { lattice: summary_lattice(radius), cells, vertices: HashMap::new() }
+    }
+
+    /// The rise weights at world `xz`. None while a cell owning a part at
+    /// one of the fan's vertices is absent.
+    pub fn at(&mut self, xz: Vec2) -> Option<[f32; 3]> {
+        let scale = self.lattice.scale as f32;
+        let cell = self.lattice.cell_at(xz);
+        let (cq, cr) = self.lattice.cell_center(cell);
+        let (wx, wz) = flat_top_tile_center(cq, cr, 1.0);
+        let centre = Vec2::new(wx, wz);
+        let ((i, j), w) = fan_weights(xz, centre, scale);
+        let offsets = corner_offsets(scale);
+        let tiles = summary_lattice(0);
+        let points = [(cq, cr), tiles.cell_at(centre + offsets[i]), tiles.cell_at(centre + offsets[j])];
+        let mut sum = [0.0; 3];
+        for (point, weight) in points.into_iter().zip([w.x, w.y, w.z]) {
+            let at = self.vertex(point)?;
+            for k in 0..3 {
+                sum[k] += at[k] * weight;
+            }
+        }
+        Some(sum)
+    }
+
+    /// The weights of the part standing at a tile of the finer lattice: of
+    /// the one cell whose centre lies a part's offset from it.
+    fn vertex(&mut self, tile: (i32, i32)) -> Option<[f32; 3]> {
+        let (lattice, cells) = (&self.lattice, self.cells);
+        *self.vertices.entry(tile).or_insert_with(|| {
+            let scale = lattice.scale;
+            let (part, (q, r)) = common::summary::part_offsets(lattice.radius)
+                .into_iter()
+                .map(|(oq, or)| (tile.0 - oq, tile.1 - or))
+                .enumerate()
+                .find(|&(_, (q, r))| q.rem_euclid(scale) == 0 && r.rem_euclid(scale) == 0)
+                .expect("every point of the finer lattice is one summary's part");
+            let cell = cells(q / scale, r / scale)?;
+            Some(rise_weights(cell.canopy[part], cell.wet & (1 << part) != 0))
+        })
+    }
 }
 
 /// Cells in a mesh region (radius-9 hex ball).
@@ -173,7 +257,10 @@ impl<'a> LevelSurface<'a> {
 
 /// `canopy`, where given, is the same lookup for the canopy over a cell,
 /// carried per vertex: a level that colours its ground by what stands on
-/// it rather than standing it.
+/// it rather than standing it. `rise`, where given, is the level whose
+/// canopy the ground's rise is read from, this one or a coarser, and the
+/// same lookup of its cells: every vertex carries the rise that level
+/// draws at it ([`LevelRise`]).
 ///
 /// Built only once every cell of the region and of the ring around it has a
 /// height — the ring is what the perimeter corners are made of — and every
@@ -190,6 +277,7 @@ pub fn build_summary_mesh_region(
     height: &dyn Fn(i32, i32) -> Option<i32>,
     coarse: Option<&dyn Fn(i32, i32) -> Option<i32>>,
     canopy: Option<&dyn Fn(i32, i32) -> Option<[Canopy; PARTS]>>,
+    rise: Option<(u32, &dyn Fn(i32, i32) -> Option<SummaryCell>)>,
 ) -> Option<SummaryMeshResult> {
     let lattice = summary_lattice(radius);
     let region_lat = mesh_region_lattice();
@@ -231,20 +319,29 @@ pub fn build_summary_mesh_region(
             None => Some((p.y, n)),
         }
     };
+    let mut level_rise = rise.map(|(reading, cells)| LevelRise::new(reading, cells));
+    let mut rise = |p: Vec3| -> Option<[f32; 3]> {
+        match level_rise.as_mut() {
+            Some(r) => r.at(p.xz()),
+            None => Some([0.0; 3]),
+        }
+    };
 
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut coarse_attr: Vec<[f32; 4]> = Vec::new();
+    let mut rise_attr: Vec<[f32; 3]> = Vec::new();
     let mut canopy_attr: Vec<[f32; 4]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     let mut corner_index: HashMap<(i32, i32), u32> = HashMap::new();
 
-    let mut push = |p: Vec3, n: Vec3, target: (f32, Vec3), canopy: [f32; 4]| -> u32 {
+    let mut push = |p: Vec3, n: Vec3, target: (f32, Vec3), rise: [f32; 3], canopy: [f32; 4]| -> u32 {
         let v = p - mesh_origin;
         let (ty, tn) = target;
         positions.push([v.x, v.y, v.z]);
         normals.push([n.x, n.y, n.z]);
         coarse_attr.push([tn.x, tn.y, tn.z, ty - mesh_origin.y]);
+        rise_attr.push(rise);
         if !canopies.is_empty() {
             canopy_attr.push(canopy);
         }
@@ -259,22 +356,24 @@ pub fn build_summary_mesh_region(
 
         let mut corner_pos = [Vec3::ZERO; 6];
         let mut corner_target = [(0.0, Vec3::Y); 6];
+        let mut corner_rise = [[0.0; 3]; 6];
         let mut corner_idx = [0u32; 6];
         for i in 0..6 {
             let p = Vec3::new(fan.centre.x + offsets[i].x, fan.corner_y[i] - bias, fan.centre.y + offsets[i].y);
             corner_pos[i] = p;
             corner_target[i] = target(p, fan.corner_n[i])?;
+            corner_rise[i] = rise(p)?;
             let id = canonical_vertex_id(cell.0, cell.1, i);
             corner_idx[i] = *corner_index.entry(id).or_insert_with(|| {
                 let [a, b] = CORNER_NEIGHBOURS[i];
                 let (ca, cb) = (canopy_of((cell.0 + a.0, cell.1 + a.1)), canopy_of((cell.0 + b.0, cell.1 + b.1)));
                 let corner_canopy = std::array::from_fn(|c| (centre_canopy[c] + ca[c] + cb[c]) / 3.0);
-                push(p, fan.corner_n[i], corner_target[i], corner_canopy)
+                push(p, fan.corner_n[i], corner_target[i], corner_rise[i], corner_canopy)
             });
         }
 
         let centre_pos = Vec3::new(fan.centre.x, fan.centre_y - bias, fan.centre.y);
-        let ci = push(centre_pos, fan.centre_n, target(centre_pos, fan.centre_n)?, centre_canopy);
+        let ci = push(centre_pos, fan.centre_n, target(centre_pos, fan.centre_n)?, rise(centre_pos)?, centre_canopy);
         for i in 0..6 {
             let j = (i + 1) % 6;
             indices.extend([ci, corner_idx[j], corner_idx[i]]);
@@ -295,10 +394,11 @@ pub fn build_summary_mesh_region(
             let outward = (top1 - top0).normalize_or_zero().cross(Vec3::NEG_Y).normalize_or_zero();
             let n = if outward.length_squared() > 0.5 { outward } else { Vec3::Z };
             let (ty0, ty1) = (corner_target[i].0, corner_target[j].0);
-            let base = push(top0, n, (ty0, n), [0.0; 4]);
-            push(top1, n, (ty1, n), [0.0; 4]);
-            push(bot1, n, (ty1 - CURTAIN_DEPTH_WU, n), [0.0; 4]);
-            push(bot0, n, (ty0 - CURTAIN_DEPTH_WU, n), [0.0; 4]);
+            let (r0, r1) = (corner_rise[i], corner_rise[j]);
+            let base = push(top0, n, (ty0, n), r0, [0.0; 4]);
+            push(top1, n, (ty1, n), r1, [0.0; 4]);
+            push(bot1, n, (ty1 - CURTAIN_DEPTH_WU, n), r1, [0.0; 4]);
+            push(bot0, n, (ty0 - CURTAIN_DEPTH_WU, n), r0, [0.0; 4]);
             indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
         }
     }
@@ -308,6 +408,7 @@ pub fn build_summary_mesh_region(
         positions,
         normals,
         coarse: coarse_attr,
+        rise: rise_attr,
         canopy: canopy_attr,
         indices,
         mesh_origin,
@@ -454,6 +555,7 @@ pub fn build_water_mesh_region(
         positions,
         normals,
         coarse: Vec::new(),
+        rise: Vec::new(),
         canopy: Vec::new(),
         indices,
         mesh_origin,
@@ -724,7 +826,7 @@ mod tests {
 
     #[test]
     fn build_returns_none_when_no_data() {
-        assert!(build_summary_mesh_region(1, REGION, &|_, _| None, None, None).is_none());
+        assert!(build_summary_mesh_region(1, REGION, &|_, _| None, None, None, None).is_none());
     }
 
     /// Water is a flat fan over each flooded cell at its surface, half a
@@ -767,7 +869,7 @@ mod tests {
 
     #[test]
     fn flat_region_is_fans_plus_perimeter_curtains() {
-        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None, None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None, None, None).unwrap();
         assert_eq!(result.tri_count, MESH_REGION_CELLS * 6 + PERIMETER_EDGES * 2);
         let fans = fan_vertices(&result);
         let y = fans[0].0.y;
@@ -777,7 +879,7 @@ mod tests {
 
     #[test]
     fn shared_corners_are_single_vertices() {
-        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None, None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None, None, None).unwrap();
         assert_eq!(fan_vertices(&result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
     }
 
@@ -785,9 +887,9 @@ mod tests {
     fn build_waits_for_every_cell_of_region_and_ring() {
         let region_lat = mesh_region_lattice();
         let hole = |q: i32, r: i32| ((q, r) != (0, 0)).then_some(5);
-        assert!(build_summary_mesh_region(1, REGION, &hole, None, None).is_none(), "built with a cell missing");
+        assert!(build_summary_mesh_region(1, REGION, &hole, None, None, None).is_none(), "built with a cell missing");
         let no_ring = |q: i32, r: i32| (region_lat.cell_id(q, r) == (0, 0)).then_some(5);
-        assert!(build_summary_mesh_region(1, REGION, &no_ring, None, None).is_none(), "built with the ring missing");
+        assert!(build_summary_mesh_region(1, REGION, &no_ring, None, None, None).is_none(), "built with the ring missing");
     }
 
     #[test]
@@ -795,12 +897,12 @@ mod tests {
         let flat = |_: i32, _: i32| Some(5);
         // The coarser cell under the region's centre is absent.
         let hole = |q: i32, r: i32| ((q, r) != (0, 0)).then_some(5);
-        assert!(build_summary_mesh_region(1, REGION, &flat, Some(&hole), None).is_none(), "built with a coarser cell missing");
+        assert!(build_summary_mesh_region(1, REGION, &flat, Some(&hole), None, None).is_none(), "built with a coarser cell missing");
         // A ring cell of the coarser cell at the region's edge is absent: the
         // region's cells reach 9 fine cells out, three coarse cells, whose
         // ring is the fourth.
         let far = |q: i32, _: i32| (q != 4).then_some(5);
-        assert!(build_summary_mesh_region(1, REGION, &flat, Some(&far), None).is_none(), "built with a coarser ring cell missing");
+        assert!(build_summary_mesh_region(1, REGION, &flat, Some(&far), None, None).is_none(), "built with a coarser ring cell missing");
     }
 
     /// Without a coarser level a vertex's target is itself: the morph is a
@@ -808,7 +910,7 @@ mod tests {
     #[test]
     fn coarse_target_is_the_vertex_itself_at_the_coarsest_level() {
         let field = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
-        let result = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &field, None, None, None).unwrap();
         for ((p, n), c) in result.positions.iter().zip(&result.normals).zip(&result.coarse) {
             assert!((c[3] - p[1]).abs() < 1e-5, "target height {} is not the vertex's {}", c[3], p[1]);
             assert!((Vec3::from_array(*n) - Vec3::new(c[0], c[1], c[2])).length() < 1e-5);
@@ -823,7 +925,7 @@ mod tests {
     fn coarse_targets_lie_on_the_coarser_surface() {
         let fine = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
         let flat = |_: i32, _: i32| Some(20);
-        let result = build_summary_mesh_region(1, REGION, &fine, Some(&flat), None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &fine, Some(&flat), None, None).unwrap();
         let want = height_y(20.0) - level_depth_bias(1);
         // Fan vertices only: a curtain keeps its own normal and hangs from
         // its corners' targets.
@@ -834,7 +936,7 @@ mod tests {
         assert!(result.positions.iter().any(|p| (p[1] - want).abs() > 0.5), "the fine relief is flat");
 
         let coarse = |q: i32, r: i32| Some((q * 5 + r * 2).rem_euclid(9));
-        let result = build_summary_mesh_region(1, REGION, &fine, Some(&coarse), None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &fine, Some(&coarse), None, None).unwrap();
         let coarse_lat = summary_lattice(4);
         let mut centres = 0;
         for (p, c) in result.positions.iter().zip(&result.coarse) {
@@ -857,8 +959,8 @@ mod tests {
         // A varying field: every vertex the two regions both place must be
         // at the same height, or the seam between them opens.
         let field = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
-        let a = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
-        let b = build_summary_mesh_region(1, MeshRegionKey { r: 1, mn: 1, mm: 0 }, &field, None, None).unwrap();
+        let a = build_summary_mesh_region(1, REGION, &field, None, None, None).unwrap();
+        let b = build_summary_mesh_region(1, MeshRegionKey { r: 1, mn: 1, mm: 0 }, &field, None, None, None).unwrap();
         let av = fan_vertices(&a);
         let mut shared = 0;
         for (pb, _) in fan_vertices(&b) {
@@ -878,7 +980,7 @@ mod tests {
         // shares its vertices (no vertex duplicated among the fans), and the
         // fan normals at the cliff lean over.
         let field = |q: i32, _r: i32| Some(if q > 0 { 20 } else { 0 });
-        let result = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &field, None, None, None).unwrap();
         assert_eq!(fan_vertices(&result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
         let leaning = fan_vertices(&result).iter().filter(|(_, n)| n.y < 0.7).count();
         assert!(leaning > 0, "a 20-step cliff produced no steep normals");
@@ -924,12 +1026,12 @@ mod tests {
     fn canopy_rides_the_vertices_by_the_corner_rule() {
         use common::cover::{Canopy, Content, Cover};
         let flat = |_: i32, _: i32| Some(5);
-        let bare = build_summary_mesh_region(1, REGION, &flat, None, None).unwrap();
+        let bare = build_summary_mesh_region(1, REGION, &flat, None, None, None).unwrap();
         assert!(bare.canopy.is_empty());
 
         let pines = [Canopy::of(Cover::NONE.with(0, Content::Pine).with(1, Content::Pine)); PARTS];
         let one = |q: i32, r: i32| Some(if (q, r) == (0, 0) { pines } else { [Canopy::NONE; PARTS] });
-        let result = build_summary_mesh_region(1, REGION, &flat, None, Some(&one)).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &flat, None, Some(&one), None).unwrap();
         assert_eq!(result.canopy.len(), result.positions.len());
         let own = canopy_vertex(&pines);
         assert!((own[0] - 2.0 / 3.0).abs() < 1e-6 && own[1] == own[0] && own[2] == 0.0, "density, all of it pine");
@@ -940,5 +1042,63 @@ mod tests {
         assert_eq!(thirds, 6, "each of the cell's six corners averages it with two bare cells");
         let none = result.canopy.iter().filter(|c| **c == [0.0; 4]).count();
         assert_eq!(none, result.canopy.len() - 7, "everything else, curtains included, carries nothing");
+    }
+    /// A vertex carries the rise the level it is read from draws: on that
+    /// level's vertex, the part standing there; between two, the blend the
+    /// rasterizer draws; nothing under water. A finer level read from a
+    /// coarser one lies on the coarser rise, and waits on its cells.
+    #[test]
+    fn the_rise_rides_the_vertices_as_the_level_read_draws_it() {
+        use common::cover::{Canopy, Content, Cover};
+        let pines = Canopy::of(Cover::NONE.with(0, Content::Pine).with(1, Content::Pine));
+        let weights = rise_weights(pines, false);
+        assert!(weights[0] > 0.0 && weights[1] == 0.0 && weights[2] == 0.0, "all of it pine");
+        assert_eq!(rise_weights(pines, true), [0.0; 3]);
+
+        // Bare level-4 summaries but for the part of the one at the origin
+        // standing on its corner at (d, d), d a third of its width.
+        let corner_part = 7;
+        let cells = |q: i32, r: i32| -> Option<SummaryCell> {
+            let mut cell = SummaryCell::default();
+            if (q, r) == (0, 0) {
+                cell.canopy[corner_part] = pines;
+            }
+            Some(cell)
+        };
+        let world = |q: i32, r: i32| {
+            let (x, z) = flat_top_tile_center(q, r, 1.0);
+            Vec2::new(x, z)
+        };
+        let d = 3;
+        let close = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5);
+        let mut rise = LevelRise::new(4, &cells);
+        assert!(close(rise.at(world(d, d)).unwrap(), weights), "on the corner, the part there");
+        assert!(close(rise.at(world(0, 0)).unwrap(), [0.0; 3]), "on the centre, the bare part there");
+        let halfway = rise.at((world(0, 0) + world(d, d)) / 2.0).unwrap();
+        assert!(close(halfway, weights.map(|w| w / 2.0)), "halfway along the edge, half");
+        let wet = |q: i32, r: i32| cells(q, r).map(|cell| SummaryCell { wet: 1 << corner_part, ..cell });
+        assert!(close(LevelRise::new(4, &wet).at(world(d, d)).unwrap(), [0.0; 3]), "under water, none");
+
+        let flat = |_: i32, _: i32| Some(5);
+        let carried = |result: &SummaryMeshResult, at: Vec2| {
+            assert_eq!(result.rise.len(), result.positions.len());
+            let origin = result.mesh_origin.xz();
+            let (_, rise) = result
+                .positions
+                .iter()
+                .zip(&result.rise)
+                .find(|(p, _)| (p[0] + origin.x - at.x).abs() < 1e-3 && (p[2] + origin.y - at.y).abs() < 1e-3)
+                .expect("a vertex there");
+            *rise
+        };
+        // Level 4 read from itself carries its own part at its vertex.
+        let own = build_summary_mesh_region(4, MeshRegionKey { r: 4, mn: 0, mm: 0 }, &flat, Some(&flat), None, Some((4, &cells))).unwrap();
+        assert!(close(carried(&own, world(d, d)), weights));
+        // Level 1 read from level 4 carries the same there, a level-1
+        // centre, and waits on the cells as on heights.
+        let finer = build_summary_mesh_region(1, REGION, &flat, Some(&flat), None, Some((4, &cells))).unwrap();
+        assert!(close(carried(&finer, world(d, d)), weights));
+        let absent = |q: i32, r: i32| if (q, r) == (0, 0) { None } else { cells(q, r) };
+        assert!(build_summary_mesh_region(1, REGION, &flat, Some(&flat), None, Some((4, &absent))).is_none());
     }
 }

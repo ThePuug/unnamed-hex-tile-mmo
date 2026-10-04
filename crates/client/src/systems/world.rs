@@ -1020,6 +1020,7 @@ fn collect_and_build_summary_mesh(
         positions: Vec::new(),
         normals: Vec::new(),
         coarse: Vec::new(),
+        rise: Vec::new(),
         canopy: Vec::new(),
         parts: Vec::new(),
         indices: Vec::new(),
@@ -1074,7 +1075,7 @@ fn collect_and_build_summary_mesh(
     // a summary's is painted on its ground from its parts.
     if radius == 0 {
         let tile_water = |q: i32, r: i32| -> Option<i32> { map.water_at(q, r) };
-        return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse, None)
+        return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse, None, None)
             .as_ref()
             .map_or(empty, |smr| {
                 let mut result = smr_to_result(smr);
@@ -1097,8 +1098,14 @@ fn collect_and_build_summary_mesh(
     let summary_canopy = |sq: i32, sr: i32| -> Option<[common::Canopy; common_bevy::summary::PARTS]> { summary(sq, sr).map(|c| c.canopy) };
     let last = *common_bevy::summary::LOD_LEVELS.last().expect("a ladder");
     let canopied: Option<&dyn Fn(i32, i32) -> Option<[common::Canopy; common_bevy::summary::PARTS]>> = (radius != last).then_some(&summary_canopy);
+    // The canopy's rise is read from one level's cells by every level that
+    // draws one.
+    let reading = crate::resources::RISE_LEVEL;
+    let rise_summary = |sq: i32, sr: i32| cached(reading, sq, sr).or_else(|| sampled(reading, sq, sr));
+    let rise: Option<(u32, &dyn Fn(i32, i32) -> Option<common_bevy::summary::SummaryCell>)> =
+        (radius <= reading).then_some((reading, &rise_summary));
 
-    common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse, canopied)
+    common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse, canopied, rise)
         .as_ref()
         .map_or(empty, |smr| {
             let mut result = smr_to_result(smr);
@@ -1123,6 +1130,7 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
         positions: smr.positions.clone(),
         normals: smr.normals.clone(),
         coarse: smr.coarse.clone(),
+        rise: smr.rise.clone(),
         canopy: smr.canopy.clone(),
         parts: Vec::new(),
         indices: smr.indices.clone(),
@@ -1134,13 +1142,14 @@ fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryM
 }
 
 /// Build a Bevy Mesh from raw geometry buffers. `coarse` is the ground's
-/// morph target per vertex; the water carries none. `canopy` is the
+/// morph target per vertex and the canopy's rise it draws; the water
+/// carries neither. `canopy` is the
 /// canopy per vertex, as the vertex colour, where the level colours its
 /// ground by it.
 fn build_bevy_mesh(
     positions: &[[f32; 3]],
     normals: &[[f32; 3]],
-    coarse: Option<&[[f32; 4]]>,
+    coarse: Option<(&[[f32; 4]], &[[f32; 3]])>,
     canopy: &[[f32; 4]],
     indices: &[u32],
 ) -> Mesh {
@@ -1164,7 +1173,9 @@ fn build_bevy_mesh(
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
     .with_inserted_indices(Indices::U32(indices.to_vec()));
     let mesh = match coarse {
-        Some(coarse) => mesh.with_inserted_attribute(crate::resources::ATTRIBUTE_COARSE_SURFACE, coarse.to_vec()),
+        Some((coarse, rise)) => mesh
+            .with_inserted_attribute(crate::resources::ATTRIBUTE_COARSE_SURFACE, coarse.to_vec())
+            .with_inserted_attribute(crate::resources::ATTRIBUTE_RISE, rise.to_vec()),
         None => mesh,
     };
     if canopy.is_empty() {
@@ -1214,7 +1225,7 @@ pub fn poll_summary_meshes(
     // Upload meshes, spawn/update entities.
     for (key, build) in builds {
 
-        let mesh = build_bevy_mesh(&build.positions, &build.normals, Some(&build.coarse), &build.canopy, &build.indices);
+        let mesh = build_bevy_mesh(&build.positions, &build.normals, Some((&build.coarse, &build.rise)), &build.canopy, &build.indices);
         let mesh_handle = meshes.add(mesh);
 
         let state = summary_meshes.states.get_mut(&key).unwrap();
