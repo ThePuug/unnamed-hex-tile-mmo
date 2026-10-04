@@ -329,42 +329,16 @@ pub fn send_try(
     }
 }
 
-/// Handle Pong response to refine time sync with measured network latency
+/// Handle Pong response: refine the latency estimate and re-set the clock
+/// from the server's game world time it carries
 pub fn handle_pong(
     mut reader: MessageReader<Do>,
     mut server: ResMut<crate::resources::Server>,
     time: Res<Time>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::Pong { client_time } } = message else { continue };
-        let client_time = *client_time;
-        let client_now = time.elapsed().as_millis();
-
-        // Calculate round-trip time (RTT) and one-way latency
-        let rtt = client_now.saturating_sub(client_time);
-        let measured_latency = rtt / 2;
-
-        let old_smoothed = server.smoothed_latency;
-
-        // Update smoothed latency using exponential moving average
-        // alpha = 0.2 means: 20% new measurement, 80% old average
-        // This provides smoothing while still adapting to changes
-        let alpha = 0.2;
-        server.smoothed_latency = ((old_smoothed as f64 * (1.0 - alpha))
-            + (measured_latency as f64 * alpha)) as u128;
-
-        // Adjust server_time_at_init based on the change in latency estimate
-        // This prevents time jumps - we gradually correct for latency changes
-        let latency_delta = server.smoothed_latency as i128 - old_smoothed as i128;
-        if latency_delta != 0 {
-            // Positive delta = latency increased, we're behind, add time
-            // Negative delta = latency decreased, we're ahead, subtract time
-            server.server_time_at_init = if latency_delta > 0 {
-                server.server_time_at_init.saturating_add(latency_delta as u128)
-            } else {
-                server.server_time_at_init.saturating_sub(latency_delta.unsigned_abs())
-            };
-        }
+        let Do { event: Event::Pong { client_time, dt } } = message else { continue };
+        server.pong(*client_time, *dt, time.elapsed().as_millis());
     }
 }
 

@@ -65,8 +65,9 @@ pub enum Event {
     ClearQueue { ent: Entity, clear_type: ClearType },
     /// Client → Server: Measure network latency (client timestamp)
     Ping { client_time: u128 },
-    /// Server → Client: Response to ping (echoes client timestamp)
-    Pong { client_time: u128 },
+    /// Server → Client: Response to ping (echoes client timestamp), with
+    /// the server's game world time as it answered
+    Pong { client_time: u128, dt: u128 },
     /// Client → Server: take the front queue threat now, as it would land
     /// No recovery, no resource cost — queue management, not an ability
     Dismiss { ent: Entity },

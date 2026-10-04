@@ -281,6 +281,20 @@ impl Server {
         self.client_time_at_init = client_now;
     }
 
+    /// Take a Pong, the answer to a ping sent at `client_time` carrying the
+    /// server's game world time `dt`, received at `client_now`: the latency
+    /// estimate moves a fifth of the way to half the round trip, and the
+    /// clock is set from `dt` as Init set it. The server's clock may lose
+    /// time the client's does not, in a frame over `Time<Virtual>`'s cap,
+    /// so only a re-sync bounds how far the two drift apart.
+    pub fn pong(&mut self, client_time: u128, dt: u128, client_now: u128) {
+        let measured_latency = client_now.saturating_sub(client_time) / 2;
+        let alpha = 0.2;
+        self.smoothed_latency = ((self.smoothed_latency as f64 * (1.0 - alpha))
+            + (measured_latency as f64 * alpha)) as u128;
+        self.sync(dt, client_now);
+    }
+
     /// Calculate the current game world time (used for both threats and day/night)
     /// Game world time = server_time_at_init + (client_now - client_at_init)
     pub fn current_time(&self, client_now: u128) -> u128 {
@@ -659,5 +673,14 @@ mod tests {
         let mut server = Server::default();
         server.sync(10_000, 4_000);
         assert_eq!(server.current_time(4_000), 10_000 + server.smoothed_latency);
+    }
+
+    #[test]
+    fn a_pong_takes_back_the_time_the_server_lost() {
+        let mut server = Server::default();
+        server.sync(10_000, 0);
+        // The server stalls and its clock falls 1_750 behind the client's
+        server.pong(19_900, 10_000 + 20_000 - 1_750, 20_000);
+        assert_eq!(server.current_time(20_000), 10_000 + 20_000 - 1_750 + server.smoothed_latency);
     }
 }

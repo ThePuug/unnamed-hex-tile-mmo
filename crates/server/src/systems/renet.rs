@@ -248,6 +248,8 @@ pub fn write_try(
     mut conn: ResMut<ServerNet>,
     lobby: Res<Lobby>,
     characters: Query<(), With<PlayerControlled>>,
+    time: Res<Time>,
+    runtime: Res<RunTime>,
 ) {
     for client_id in conn.clients_id() {
         // What the client controls: its character, never an actor it views
@@ -257,8 +259,9 @@ pub fn write_try(
             match event {
                 Event::Ping { client_time } => {
                     // Immediately respond with Pong (echo client timestamp)
+                    let dt = time.elapsed().as_millis() + runtime.elapsed_offset;
                     let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Pong { client_time }},
+                        Do { event: Event::Pong { client_time, dt }},
                         bincode::config::legacy()).unwrap();
                     conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
                 }
