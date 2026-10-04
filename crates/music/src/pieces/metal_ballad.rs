@@ -103,32 +103,15 @@ const ARPEGGIO: f32 = 4.0;
 /// The velocity every voice strikes at before its own accent.
 const VEL: i32 = 88;
 
-/// What each layer at each notch adds to the band's power, and what
-/// each telling and each solo adds, the lead singing being one: the
-/// pedal takes back `GIVE` of the sum's level over the intro's, so the
-/// band still grows from the arpeggio to the solo, by nearly all of what
-/// it would: a ballad is not afraid of its loud parts.
-/// Powers, not decibels, as the city's are, so a lead over the full band
-/// adds next to nothing. Fitted to the render, every section of thirty
-/// seeds against what played in it: the distorted guitars are most of a
-/// chorus, and the bank's picked strings next to nothing under them.
-const POWER_CLEAN: [f32; 3] = [0.0, 0.3, 0.3];
-const POWER_BASS: [f32; 3] = [0.0, 0.12, 0.12];
-const POWER_KIT: [f32; 3] = [0.0, 0.13, 0.17];
-const POWER_RHYTHM: [f32; 3] = [0.0, 0.98, 1.69];
-const POWER_PAD: [f32; 3] = [0.0, 0.19, 0.59];
-/// The guitar's solo over the band; the kit's over its stop-time and the
-/// bass's over the band's time, each the whole band's power there.
-const POWER_SOLO: [f32; 3] = [1.51, 0.85, 1.0];
-/// By telling, in `Telling`'s order.
-const POWER_LEAD: [f32; 6] = [0.0, 0.51, 1.0, 1.0, 1.0, 0.65];
-/// The power of an intro, the arpeggio under the lead's theme: the pedal
-/// is full there and takes back from the rest.
-const FLOOR: f32 = 1.3;
-/// The share of the band's added loudness the pedal takes back: a
-/// ballad's chorus is heavier than its verse, and a pedal that took it
-/// all would make the band a fader.
-const GIVE: f32 = 0.15;
+/// Where each part of the song sits, LU against the solo, its loudest:
+/// the arpeggio alone it opens and closes on, a verse, a chorus. The arc
+/// is declared and the render meets it, so it holds whatever bank plays
+/// the band — a balance fitted to one bank's samples is wrong on the
+/// next — and a ballad is not afraid of its loud parts.
+const LEVEL_FOOT: f32 = -5.0;
+const LEVEL_VERSE: f32 = -3.5;
+const LEVEL_CHORUS: f32 = -1.5;
+const LEVEL_SOLO: f32 = 0.0;
 
 /// The tune's register; the lead takes it here.
 const TUNE: (u8, u8) = (60, 88);
@@ -261,21 +244,6 @@ impl Texture {
         } else {
             Section::Verse
         }
-    }
-
-    /// The pedal's gain under this texture, `lead` and the seed's
-    /// soloist: `GIVE` of what they lift the loudness by, given back.
-    /// Under the kit's solo and the bass's the band thins, so the solo's
-    /// power is all of it.
-    fn trim(&self, lead: Telling, soloist: Soloist) -> f32 {
-        let power = match (self.solo, soloist) {
-            (Solo::On, Soloist::Drums | Soloist::Bass) => POWER_SOLO[soloist as usize],
-            _ => {
-                let solo = if self.solo == Solo::On { POWER_SOLO[soloist as usize] } else { 0.0 };
-                POWER_CLEAN[self.clean as usize] + POWER_BASS[self.bass as usize] + POWER_KIT[self.kit as usize] + POWER_RHYTHM[self.rhythm as usize] + POWER_PAD[self.pad as usize] + POWER_LEAD[lead as usize] + solo
-            }
-        };
-        ladder::gain(GIVE * 10.0 * (power.max(FLOOR) / FLOOR).log10())
     }
 }
 
@@ -617,8 +585,15 @@ fn compose(params: &Params) -> (Score, Form) {
     score.facets = vec![groove.name, design.soloist.name()];
     let bar = score.bar();
 
-    let soloist = design.soloist;
-    let walk = story.place(&mut skeleton, &mut score, 4, |texture, lead| texture.trim(lead, soloist));
+    let walk = story.place(&mut skeleton, &mut score, 4, |_, _| 1.0);
+    for (section, part) in score.sections.iter_mut().zip(&walk.parts) {
+        section.level = Some(match part.bed.section() {
+            Section::Climax => LEVEL_SOLO,
+            Section::Chorus => LEVEL_CHORUS,
+            Section::Verse if part.rung == 0 => LEVEL_FOOT,
+            Section::Verse => LEVEL_VERSE,
+        });
+    }
 
     // Each phrase on its part's question or answer, by turns; the tune a
     // third up in a chorus, and a verse's pairs stepping up by turns.
