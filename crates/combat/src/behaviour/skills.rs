@@ -38,7 +38,7 @@ pub const COMBO: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "fatigue_after", "recovery_left", "foe_just_acted", "worth_answering",
+    "recovery_left", "foe_just_acted", "worth_answering",
     "leash_left", "strike_worth", "effect_added", "foe_across",
 ];
 
@@ -215,7 +215,7 @@ fn reason(ability: AbilityType, view: &View) -> Option<(&'static str, Vec<Consid
         },
         AbilityType::PerfectStride => ("stride", Part::Effect),
     };
-    let mut considerations = vec![USABLE, ENDURANCE, RECOVERY_LEFT];
+    let mut considerations = vec![USABLE, RECOVERY_LEFT];
     considerations.extend(part_considerations(part));
     considerations.extend(commitment_considerations(part, &view.attrs));
     if effect(view).is_some() {
@@ -317,23 +317,6 @@ const USABLE: Considered = step("usable", |view| {
     let foe = view.foe.map(|foe| (foe.distance, foe.in_arc));
     flag(admits(view.ability, view.recovery.as_ref(), &view.attrs, view.reach, foe).is_ok())
 });
-
-/// The fatigue it would be left with once it paid the skill's endurance:
-/// fatigue bites as the pool empties, lengthening every recovery and
-/// shortening every window against it, so a skill that spends it near
-/// empty must be worth the more
-const ENDURANCE: Considered = Consideration {
-    name: "fatigue_after",
-    read: |view| {
-        let price = match view.ability {
-            ability if ability.is_reaction() => view.attrs.skill_endurance(&view.tuning, ability) + view.attrs.reaction_effort(&view.tuning, view.queue.swept),
-            ability => view.attrs.skill_endurance(&view.tuning, ability),
-        };
-        Endurance { state: (view.endurance - price).max(0.0), max: view.endurance_max }.fatigue(&view.tuning)
-    },
-    bounds: (0.0, 1.0),
-    curve: Curve::FALLING.floored(0.1),
-};
 
 /// Seconds of recovery the skill would leave it in, as its fatigue, a combo
 /// fired early or a reaction through a recovery make them: the time it
@@ -577,20 +560,6 @@ mod tests {
         answering.capacity_taken = true;
         answering.queue = threats(&tuning, &[(150.0, true, 0)], Duration::from_millis(250), Duration::from_millis(1000));
         assert!(scored(&mut answering, "answer") > WAIT, "a reaction takes no slot");
-    }
-
-    #[test]
-    fn a_skill_spent_near_empty_must_be_worth_more_than_one_spent_from_a_full_pool() {
-        let tuning = Tuning::DEFAULT;
-        let mut full = view(&tuning, AbilityType::Feint, ActorAttributes::default());
-        let mut low = view(&tuning, AbilityType::Feint, ActorAttributes::default());
-        let price = low.attrs.skill_endurance(&tuning, AbilityType::Feint);
-        low.endurance = price * 1.5;
-        let mut half = view(&tuning, AbilityType::Feint, ActorAttributes::default());
-        half.endurance = half.endurance_max / 2.0;
-        let (full, half, low) = (scored(&mut full, "strike"), scored(&mut half, "strike"), scored(&mut low, "strike"));
-        assert!(full - half < half - low, "half a pool costs little; the last of it costs much: {full} {half} {low}");
-        assert!(low < WAIT, "near empty, a plain strike is not worth it");
     }
 
     #[test]
