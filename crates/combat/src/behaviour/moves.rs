@@ -29,7 +29,7 @@ pub const MOMENTUM: f32 = 0.15;
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
     "leash_left", "recovery_left", "detour", "time_to_be_struck",
-    "behind", "strike_cost",
+    "behind",
 ];
 
 /// What a step is for.
@@ -48,8 +48,6 @@ pub enum Move {
 /// What an NPC knows of itself as it weighs where to step.
 #[derive(Clone, Copy, Debug)]
 pub struct Footing {
-    /// Its Grace lets it strike past its forward faces
-    pub grace: bool,
     /// Seconds of recovery it is in, with what its chain owes: 0 out of
     /// recovery
     pub recovery_left: f32,
@@ -76,14 +74,8 @@ pub struct Candidate {
     pub room: f32,
     /// How far round toward its target's back the tile stands, off its
     /// target's heading: 0 straight before it, 1 straight behind. Past a
-    /// third it stands outside its target's forward faces, where a target
-    /// without Grace cannot strike it
+    /// third it stands outside its target's forward faces
     pub behind: f32,
-    /// The share of a strike's cost across its line a strike on the step
-    /// there pays, endurance and a broken stride (`targeting::across_share`):
-    /// nothing within its forward faces or in a Perfect Stride, more the
-    /// further round its arc
-    pub strike_cost: f32,
 }
 
 /// What it weighs a step by: itself and the candidate.
@@ -117,8 +109,7 @@ pub fn choose(footing: &Footing, candidates: &[Candidate], under_way: Move, mind
 pub fn weigh(footing: &Footing, candidate: &Candidate, decision: Move, mind: &Mind) -> f32 {
     let considerations: &[Consideration<Ground>] = match decision {
         Move::Hold => return mind.hold,
-        Move::Engage if footing.grace => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND, STRIKE_COST],
-        Move::Engage => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT],
+        Move::Engage => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND],
         Move::KeepAway if footing.patience > 0 => &[TIME_TO_BE_STRUCK, DETOUR, LEASH_LEFT],
         Move::KeepAway => return 0.0,
     };
@@ -165,21 +156,13 @@ const TIME_TO_BE_STRUCK: Consideration<Ground> = Consideration {
 
 /// How far round toward its target's back the tile stands, every step
 /// round worth more until it stands to its target's side, past its forward
-/// faces
+/// faces, where a target cannot strike back without the arc to. Weighed
+/// only as far as a mind lowers its floor
 const BEHIND: Consideration<Ground> = Consideration {
     name: "behind",
     read: |ground| ground.candidate.behind,
     bounds: (0.0, 0.5),
-    curve: Curve::RISING.floored(0.2),
-};
-
-/// What a strike on the step would cost, with every cost it carries, as a
-/// share of the most it could: the dearer, the less the step pays
-const STRIKE_COST: Consideration<Ground> = Consideration {
-    name: "strike_cost",
-    read: |ground| ground.candidate.strike_cost,
-    bounds: (0.0, 1.0),
-    curve: Curve::FALLING.floored(0.6),
+    curve: Curve::RISING.floored(1.0),
 };
 
 #[cfg(test)]
@@ -187,7 +170,7 @@ mod tests {
     use super::*;
 
     fn footing() -> Footing {
-        Footing { grace: false, recovery_left: 0.0, patience: 0 }
+        Footing { recovery_left: 0.0, patience: 0 }
     }
 
     /// A tile `q` east of the origin, with its target standing further
@@ -201,7 +184,6 @@ mod tests {
             time_to_be_struck: (gap - 2).max(0) as f32 * 0.25,
             room: 1.0,
             behind: 0.0,
-            strike_cost: 0.0,
         }
     }
 
@@ -251,22 +233,21 @@ mod tests {
     }
 
     #[test]
-    fn grace_steps_round_toward_its_targets_back_and_stands_once_past_its_faces() {
-        let mind = Mind::default();
-        let graceful = Footing { grace: true, ..footing() };
+    fn a_mind_weighing_its_targets_back_steps_round_and_stands_once_past_its_faces() {
+        let mut minds = crate::behaviour::mind::Minds::default();
+        minds.set("all.behind.floor", "0.2").unwrap();
+        let mind = minds.mind(None);
         let mut candidates = around(6, 8);
         candidates[1].behind = 0.17;
-        let (_, step) = choose(&graceful, &candidates, Move::Engage, &mind);
+        let (_, step) = choose(&footing(), &candidates, Move::Engage, &mind);
         assert_eq!(step.map(|step| step.tile.q), Some(7), "faced, any step round is worth taking");
         candidates[1].behind = 0.5;
         candidates[0].behind = 0.5;
-        let (_, step) = choose(&graceful, &candidates, Move::Engage, &mind);
+        let (_, step) = choose(&footing(), &candidates, Move::Engage, &mind);
         assert_eq!(step.map(|step| step.tile.q), Some(6), "past its faces already, it stands and strikes");
-        let plain = choose(&footing(), &candidates, Move::Engage, &mind).1;
-        assert_eq!(plain.map(|step| step.tile.q), Some(6), "with no Grace a tile past its target's faces is worth no step");
-        candidates[1].strike_cost = 0.6;
         candidates[0].behind = 0.0;
-        assert!(weigh(&graceful, &candidates[1], Move::Engage, &mind) < weigh(&graceful, &Candidate { strike_cost: 0.0, ..candidates[1] }, Move::Engage, &mind), "with each strike dearer it steps round less readily");
+        let plain = choose(&footing(), &candidates, Move::Engage, &Mind::default()).1;
+        assert_eq!(plain.map(|step| step.tile.q), Some(6), "a mind that does not weigh it keeps to its tile");
     }
 
     #[test]

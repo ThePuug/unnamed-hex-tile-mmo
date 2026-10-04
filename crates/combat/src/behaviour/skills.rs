@@ -39,7 +39,7 @@ pub const COMBO: f32 = 0.15;
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
     "recovery_left", "foe_just_acted", "worth_answering",
-    "leash_left", "strike_worth", "effect_added", "foe_across",
+    "leash_left", "strike_worth", "effect_added",
 ];
 
 /// `recovery_left`'s bounds and curve, shared with the movement channel's:
@@ -132,8 +132,6 @@ pub struct Foe {
     pub health: f32,
     /// Within the arc it strikes within
     pub in_arc: bool,
-    /// Past its forward faces, where a swing breaks its stride
-    pub across: bool,
     /// It stands past the foe's forward faces, flanking it
     pub flanked: bool,
     /// Seconds since the foe last used a skill, as its clip showed, as
@@ -219,7 +217,6 @@ fn reason(ability: AbilityType, view: &View) -> Option<(&'static str, Vec<Consid
     };
     let mut considerations = vec![USABLE, RECOVERY_LEFT];
     considerations.extend(part_considerations(part));
-    considerations.extend(commitment_considerations(part, &view.attrs));
     if effect(view).is_some() {
         considerations.push(EFFECT_ADDED);
     }
@@ -234,14 +231,6 @@ fn part_considerations(part: Part) -> Vec<Considered> {
         Part::Dive => vec![CAPACITY, STRIKE_WORTH, LEASH_LEFT],
         Part::Effect => vec![IN_REACH],
     }
-}
-
-fn commitment_considerations(part: Part, attrs: &ActorAttributes) -> Vec<Considered> {
-    let mut considerations = Vec::new();
-    if attrs.grace().index() > 0 && part == Part::Effect {
-        considerations.push(FOE_ACROSS);
-    }
-    considerations
 }
 
 /// A timed effect a decision puts on someone.
@@ -425,16 +414,6 @@ const LEASH_LEFT: Considered = Consideration {
 /// Its foe stands within its reach, where an effect on itself pays
 const IN_REACH: Considered = step("in_reach", |view| flag(view.foe.is_some_and(|foe| foe.distance <= view.reach)));
 
-// --- Commitments ---
-
-/// Its foe stands past its forward faces
-const FOE_ACROSS: Considered = Consideration {
-    name: "foe_across",
-    read: |view| flag(view.foe.is_some_and(|foe| foe.across && foe.in_arc)),
-    bounds: (0.0, 1.0),
-    curve: Curve::RISING.floored(0.3),
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,7 +443,7 @@ mod tests {
             leap_room: 1.0,
             capacity_taken: false,
             queue: Threats::default(),
-            foe: Some(Foe { distance: 1, health: 600.0, in_arc: true, across: false, flanked: false, since_skill: None, status: Status::default() }),
+            foe: Some(Foe { distance: 1, health: 600.0, in_arc: true, flanked: false, since_skill: None, status: Status::default() }),
             foe_recovering: false,
         }
     }
@@ -714,8 +693,7 @@ mod tests {
     fn an_effect_is_put_on_by_how_much_of_it_is_new() {
         let tuning = Tuning::DEFAULT;
         let graceful = built([10, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let mut fresh = view(&tuning, AbilityType::PerfectStride, graceful);
-        fresh.foe = Some(Foe { across: true, ..fresh.foe.unwrap() });
+        let fresh = view(&tuning, AbilityType::PerfectStride, graceful);
         let at = |remaining: f32| {
             let mut v = fresh.clone();
             v.status.perfect_stride = Some(Timed { pace: 1.1, remaining });

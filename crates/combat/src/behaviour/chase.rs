@@ -15,7 +15,7 @@ use common_bevy::{
     message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
     resources::map::Map,
-    systems::{movement::speed, targeting::across_share},
+    systems::movement::speed,
 };
 use common_bevy::message::AbilityType;
 use qrz::{Convert, Qrz};
@@ -188,11 +188,6 @@ pub fn chase(
             .collect();
         let mut candidates: Vec<Candidate> = tiles.iter().map(|&at| {
             let standing = Loc::new(at + Qrz::Z);
-            // A strike on the step there: on its heading there, or where it
-            // stands, facing its target, free
-            let strike_cost = if at == floor { 0.0 } else {
-                across_share(&tuning, &Heading::from_hex(Qrz { z: 0, ..at - floor }), loc, target_loc)
-            };
             Candidate {
                 tile: at,
                 time_to_strike: to_strike(at),
@@ -203,7 +198,6 @@ pub fn chase(
                     let bearing = Heading::from_hex(Qrz { z: 0, ..at - (**target_loc - Qrz::Z) });
                     heading.turn_toward(bearing).1 as f32 / (HEADING_SLOTS / 2) as f32
                 }),
-                strike_cost,
             }
         }).collect();
         let soonest = candidates.iter().map(|candidate| candidate.time_to_strike).fold(f32::INFINITY, f32::min);
@@ -211,7 +205,6 @@ pub fn chase(
             candidate.detour = candidate.time_to_strike - soonest;
         }
         let footing = Footing {
-            grace: attrs.is_some_and(|attrs| attrs.grace().index() > 0),
             recovery_left: recovery.filter(|recovery| recovery.is_active()).map_or(0.0, |recovery| recovery.remaining + recovery.chain.owed),
             // Its Patience pays only while its swing clock runs, engaged
             patience: attrs.filter(|_| swing.is_some_and(|swing| swing.due.is_some()))

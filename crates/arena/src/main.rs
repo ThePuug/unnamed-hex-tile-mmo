@@ -200,14 +200,14 @@ struct Ledger {
     /// Its commitments at work: combos fired before they unlocked
     /// (Ferocity), reactions taken through a recovery (Preparation), Intimidation
     /// banks released and the seconds their bind held its foes, each foe's
-    /// binds merged so a refresh counts once (Intimidation), strikes struck across
+    /// binds merged so a refresh counts once (Intimidation), strikes struck from a flank
     /// its own line of all it struck (Grace), and seconds its swing waited
     /// unstruck (Patience)
     early_combos: u32,
     through: u32,
     releases: u32,
     bind: f32,
-    across: u32,
+    flanked: u32,
     strikes: u32,
     waiting: f32,
     /// Of the seconds it recovered, those at Patience's faster rate, its
@@ -246,7 +246,7 @@ impl Ledger {
         self.through += other.through;
         self.releases += other.releases;
         self.bind += other.bind;
-        self.across += other.across;
+        self.flanked += other.flanked;
         self.strikes += other.strikes;
         self.waiting += other.waiting;
         self.recovering_fast += other.recovering_fast;
@@ -306,7 +306,7 @@ fn whole(threat: &QueuedThreat) -> f32 {
 }
 
 /// Counts each ability an actor uses, auto-attacks included, and each
-/// threat it sends; a strike struck across its user's line; each threat
+/// threat it sends; a strike struck from past its target's forward faces; each threat
 /// queued on an actor and each answer that cleared its span; and of each recovery an
 /// ability starts, a combo fired before it unlocked (it carries what it
 /// skipped, with no reaction through it) or a reaction taken through one.
@@ -314,13 +314,13 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
     for message in reader.read() {
         match &message.event {
             Event::UseAbility { ent, ability, target } => {
-                let across = ability.reach(1).is_some() && target.and_then(|target| places.get(target).ok())
+                let flanked = ability.reach(1).is_some() && target.and_then(|target| places.get(target).ok())
                     .zip(places.get(*ent).ok())
-                    .is_some_and(|((target_loc, _), (loc, heading))| targeting::across(heading, loc, target_loc));
+                    .is_some_and(|((target_loc, target_heading), (loc, _))| target_heading.is_some_and(|&heading| !targeting::is_in_facing_cone(heading, *target_loc, *loc)));
                 if let Some(ledger) = tally.of(*ent) {
                     *ledger.used.entry(*ability).or_default() += 1;
                     ledger.strikes += ability.reach(1).is_some() as u32;
-                    ledger.across += across as u32;
+                    ledger.flanked += flanked as u32;
                 }
             }
             Event::InsertThreat { ent, threat } => {
@@ -870,10 +870,10 @@ fn ledger_line(ledger: &Ledger, runs: f32) -> String {
     let alive = ledger.alive.max(f32::EPSILON);
     let share = |seconds: f32| 100.0 * seconds / alive;
     let each = |count: u32| count as f32 / runs;
-    format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% past faces {:.0}% fatigue {:.0}% || commitments: early combos {:.1} releases {:.1} bind {:.1}s across {:.1} of {:.1} strikes waiting {:.0}% through {:.1} per answer {:.1}",
+    format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% past faces {:.0}% fatigue {:.0}% || commitments: early combos {:.1} releases {:.1} bind {:.1}s flanked {:.1} of {:.1} strikes waiting {:.0}% through {:.1} per answer {:.1}",
         abilities.join(" | "),
         share(ledger.recovering), share(ledger.held), share(ledger.slowed), share(ledger.beyond_reach), share(ledger.past_faces), share(ledger.fatigue),
-        each(ledger.early_combos), each(ledger.releases), ledger.bind / runs, each(ledger.across), each(ledger.strikes), share(ledger.waiting), each(ledger.through), ledger.per_answer())
+        each(ledger.early_combos), each(ledger.releases), ledger.bind / runs, each(ledger.flanked), each(ledger.strikes), share(ledger.waiting), each(ledger.through), ledger.per_answer())
 }
 
 #[cfg(test)]

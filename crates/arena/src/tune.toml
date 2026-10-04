@@ -36,7 +36,7 @@ short = 24.0
 # A mind is held to its archetype's style: the commitment its build invests
 # in, used at least `floor`. In points: Ferocity's early combos of its
 # skills (at most three in four), Intimidation's bind uptime on its foe (about half
-# for a fighter playing to bind), Grace's strikes across its line of its
+# for a fighter playing to bind), Grace's strikes from a flank of its
 # strikes (at most two in three), Preparation's early reactions of its
 # reactions (at most all), Patience's recovery at its faster rate of all
 # its recovery (about half); Awareness's damage answered per clear in
@@ -50,7 +50,7 @@ weight = 0.25
 [style.floor]
 berserker = 56.25
 juggernaut = 25.0
-flanker = 50.0
+flanker = 35.0
 defender = 1.5
 skirmisher = 37.5
 ambusher = 75.0
@@ -242,6 +242,8 @@ common = [
     { name = "effect_added.from", min = 0.0, max = 0.9, start = 0.0 },
     { name = "detour.to", min = 0.1, max = 2.0, start = 1.0 },
     { name = "time_to_be_struck.to", min = 0.1, max = 2.0, start = 0.5 },
+    { name = "behind.to", min = 0.2, max = 1.0, start = 0.5 },
+    { name = "behind.floor", min = 0.0, max = 1.0, start = 1.0 },
 ]
 strike = [
     { name = "foe_just_acted.floor", min = 0.2, max = 1.0, start = 0.6 },
@@ -259,11 +261,6 @@ berserker = [
 juggernaut = [
 ]
 flanker = [
-    { name = "foe_across.floor", min = 0.0, max = 1.0, start = 0.3 },
-    { name = "behind.floor", min = 0.0, max = 1.0, start = 0.2 },
-    { name = "behind.to", min = 0.2, max = 1.0, start = 0.5 },
-    { name = "strike_cost.to", min = 0.2, max = 2.0, start = 1.0 },
-    { name = "strike_cost.floor", min = 0.0, max = 1.0, start = 0.6 },
 ]
 defender = [
 ]
