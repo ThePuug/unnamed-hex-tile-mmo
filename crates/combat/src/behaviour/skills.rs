@@ -318,9 +318,9 @@ const USABLE: Considered = step("usable", |view| {
     flag(admits(view.ability, view.recovery.as_ref(), &view.attrs, view.reach, foe).is_ok())
 });
 
-/// Seconds of recovery the skill would leave it in, as its fatigue, a combo
-/// fired early or a reaction through a recovery make them: the time it
-/// spends. Weighed only as far as a mind lowers its floor
+/// Seconds of recovery the skill would leave it in, with everything that
+/// lengthens or shortens it and what its chain owes: the time it spends.
+/// Weighed only as far as a mind lowers its floor
 const RECOVERY_LEFT: Considered = Consideration {
     name: "recovery_left",
     read: |view| {
@@ -359,12 +359,9 @@ const FOE_JUST_ACTED: Considered = Consideration {
     curve: Curve::RISING.floored(0.6),
 };
 
-/// What a strike deals, as a share of the health its foe has left: how much
-/// nearer it brings the kill, a finishing blow most. More by Grit's share
-/// with a full bank to release into it, and by Punish's bonus on a foe it
-/// takes to be recovering. A leap that falls short of its foe deals
-/// nothing, and is weighed for the ground it closes only as far as the
-/// floor lets it
+/// What a strike would deal, with every modifier it carries, as a share of
+/// the health its foe has left: how much nearer it brings the kill, a
+/// finishing blow most. A strike that cannot land deals nothing
 const STRIKE_WORTH: Considered = Consideration {
     name: "strike_worth",
     read: |view| {
@@ -384,7 +381,8 @@ const STRIKE_WORTH: Considered = Consideration {
 
 // --- Reaction, and a leap clear to dodge ---
 
-/// What it would clear, and what it would return of that, over its health
+/// What it would clear, and what it would return of that, with every
+/// modifier either carries, over its health
 const WORTH_ANSWERING: Considered = Consideration {
     name: "worth_answering",
     read: |view| {
@@ -418,7 +416,7 @@ const IN_REACH: Considered = step("in_reach", |view| flag(view.foe.is_some_and(|
 
 // --- Commitments ---
 
-/// Grace: a foe past its forward faces, struck there only in a stride
+/// Its foe stands past its forward faces
 const FOE_ACROSS: Considered = Consideration {
     name: "foe_across",
     read: |view| flag(view.foe.is_some_and(|foe| foe.across && foe.in_arc)),

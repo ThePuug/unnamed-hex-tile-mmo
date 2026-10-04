@@ -127,8 +127,7 @@ pub fn weigh(footing: &Footing, candidate: &Candidate, decision: Move, mind: &Mi
 }
 
 /// Seconds more the step costs it on its way to strike than the best one:
-/// the best step answers whole however far it has to go, and a step kept
-/// away stays as ready to strike as it can
+/// the best step answers whole however far it has to go
 const DETOUR: Consideration<Ground> = Consideration {
     name: "detour",
     read: |ground| ground.candidate.detour,
@@ -156,7 +155,7 @@ const RECOVERY_LEFT: Consideration<Ground> = Consideration {
 };
 
 /// Seconds from the tile until its target could strike it: the later, the
-/// safer it recovers
+/// safer the tile
 const TIME_TO_BE_STRUCK: Consideration<Ground> = Consideration {
     name: "time_to_be_struck",
     read: |ground| ground.candidate.time_to_be_struck,
@@ -164,9 +163,9 @@ const TIME_TO_BE_STRUCK: Consideration<Ground> = Consideration {
     curve: Curve::RISING.floored(0.1),
 };
 
-/// Grace: how far round toward its target's back the tile stands, every
-/// step round worth more until it stands to its target's side, past its
-/// forward faces
+/// How far round toward its target's back the tile stands, every step
+/// round worth more until it stands to its target's side, past its forward
+/// faces
 const BEHIND: Consideration<Ground> = Consideration {
     name: "behind",
     read: |ground| ground.candidate.behind,
@@ -174,9 +173,8 @@ const BEHIND: Consideration<Ground> = Consideration {
     curve: Curve::RISING.floored(0.2),
 };
 
-/// What a strike on the step costs: the further round its arc, the more
-/// endurance it spends and the more surely it breaks its stride, and the
-/// less the step pays
+/// What a strike on the step would cost, with every cost it carries, as a
+/// share of the most it could: the dearer, the less the step pays
 const STRIKE_COST: Consideration<Ground> = Consideration {
     name: "strike_cost",
     read: |ground| ground.candidate.strike_cost,
