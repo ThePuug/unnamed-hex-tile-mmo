@@ -28,7 +28,7 @@ pub const MOMENTUM: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "leash_left", "recovery_left", "recovering", "detour", "time_to_strike", "time_to_be_struck",
+    "leash_left", "recovery_left", "detour", "time_to_strike", "time_to_be_struck",
     "behind", "strike_cost",
 ];
 
@@ -119,15 +119,11 @@ pub fn weigh(footing: &Footing, candidate: &Candidate, decision: Move, mind: &Mi
         Move::Hold => return mind.hold,
         Move::Engage if footing.grace => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND, STRIKE_COST],
         Move::Engage => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT],
-        Move::KeepAway if footing.patience > 0 => &[TIME_TO_BE_STRUCK, TIME_TO_STRIKE, RECOVERING, LEASH_LEFT],
+        Move::KeepAway if footing.patience > 0 => &[TIME_TO_BE_STRUCK, TIME_TO_STRIKE, LEASH_LEFT],
         Move::KeepAway => return 0.0,
     };
     let ground = Ground { footing: *footing, candidate: *candidate };
     score(1.0, considerations.iter().map(|consideration| mind.shape(consideration).answer(&ground)))
-}
-
-fn flag(on: bool) -> f32 {
-    if on { 1.0 } else { 0.0 }
 }
 
 /// Seconds more the step costs it on its way to strike than the best one:
@@ -156,15 +152,6 @@ const RECOVERY_LEFT: Consideration<Ground> = Consideration {
     read: |ground| ground.footing.recovery_left,
     bounds: RECOVERY_LEFT_BOUNDS,
     curve: RECOVERY_LEFT_CURVE,
-};
-
-/// Patience: seconds of recovery left, which run faster out of its
-/// target's reach
-const RECOVERING: Consideration<Ground> = Consideration {
-    name: "recovering",
-    read: |ground| ground.footing.recovery_left,
-    bounds: (0.0, 4.0),
-    curve: Curve::RISING,
 };
 
 /// Seconds from the tile until its target could strike it: the later, the
