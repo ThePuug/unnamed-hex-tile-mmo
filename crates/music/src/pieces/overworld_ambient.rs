@@ -636,7 +636,8 @@ fn bass_degree(chord: Chord) -> i32 {
 /// the dance's strikes, an octave up. Both sit under the bed's level:
 /// a pluck is a strike, and a strike at the bed's level cuts in; alone
 /// on the accents, with nothing to stand over, the bass is softer
-/// still.
+/// still. The bass's variant bar passes through the mode into its last
+/// beat, and its cadence takes the chord's other tone there.
 fn plucks(score: &mut Score, form: &Form, rng: &mut Rng) {
     let strong = score.meter.strong_eighths();
     let floor = score.key.pitch(0, 3) + 2;
@@ -647,10 +648,22 @@ fn plucks(score: &mut Score, form: &Form, rng: &mut Rng) {
         }
         let chord = form.chord(b);
         let degree = bass_degree(chord);
-        let bass = *chord.pitches_within(&score.key, floor, floor + 12).iter().find(|p| score.key.degree_of(**p) == Some(degree.rem_euclid(7) as usize)).unwrap();
+        let tones = chord.pitches_within(&score.key, floor, floor + 12);
+        let bass = *tones.iter().find(|p| score.key.degree_of(**p) == Some(degree.rem_euclid(7) as usize)).unwrap();
+        // The cadence's last beat takes the chord's other tone that sits
+        // with the drone, root for fifth or fifth for root; the variant
+        // passes through the mode into the bar's last beat.
+        let other = [chord.root, chord.root + 4].iter().map(|d| d.rem_euclid(7)).find(|d| *d != degree.rem_euclid(7)).and_then(|d| tones.iter().copied().find(|p| score.key.degree_of(*p) == Some(d as usize)));
+        let role = variation::role(b);
+        let last = *strong.last().unwrap();
         for i in strong.iter() {
             let start = b * form.bar + i * E;
-            score.add(Note { start, len: E - 40, pitch: bass, vel: vel(if mode == Plucks::Accents { -6 } else { 6 }, rng), channel: CH_PLUCK });
+            let pitch = if role == Bar::Cadence && *i == last { other.unwrap_or(bass) } else { bass };
+            score.add(Note { start, len: E - 40, pitch, vel: vel(if mode == Plucks::Accents { -6 } else { 6 }, rng), channel: CH_PLUCK });
+        }
+        if role == Bar::Variant && last > 0 && !score.meter.strong(last - 1) {
+            let passing = score.key.pitch(score.key.absolute_degree(bass).unwrap() + 1, 4);
+            score.add(Note { start: b * form.bar + (last - 1) * E, len: E - 40, pitch: passing, vel: vel(-8, rng), channel: CH_PLUCK });
         }
         if mode != Plucks::Full {
             continue;
