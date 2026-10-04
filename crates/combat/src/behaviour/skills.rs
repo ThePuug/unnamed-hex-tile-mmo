@@ -343,7 +343,7 @@ const RECOVERY_LEFT: Considered = Consideration {
         let after = recovery_after(&view.tuning, view.ability, view.recovery.as_ref(), &view.attrs, None, fatigue);
         after.remaining + after.chain.owed
     },
-    bounds: (0.0, 6.0),
+    bounds: (0.0, 10.0),
     curve: Curve::FALLING.floored(1.0),
 };
 
