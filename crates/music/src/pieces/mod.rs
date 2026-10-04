@@ -42,8 +42,8 @@ pub const PIECES: &[Piece] = &[
             rule, for wandering, set on one of the Balkan dances — lesnoto, \
             râčenica, pajduško, dajčovo, kopanica — with the frame drum and \
             the plucks playing that dance's own pattern. One theme runs the \
-            whole loop through: a shape on the strong beats — an arch, a \
-            descent to the finalis, a climb, a circling, a leap and its \
+            whole loop through: a shape on the strong beats that comes down \
+            to the finalis — an arch, a descent, a circling, a leap and its \
             recovery, a wave — filled by steps, said in four-bar phrases as a \
             period or a sentence, open and closed by turns, so eight bars are \
             a question and its answer; it comes back a step up every other \
@@ -85,11 +85,13 @@ pub const PIECES: &[Piece] = &[
     name: "city-ambient",
     brief: "A loop of a bustling city at night, for wandering its streets, on a \
             minor blues: the twelve-bar in Dorian or Aeolian on sevenths, in the \
-            shuffle or a walking four, the band playing that feel. One theme runs \
-            the whole loop through, a chorus at a time — a shape on the strong \
-            beats filled by steps, in four-bar phrases as a period or a sentence, \
-            open on the tonic's row and the subdominant's, home on the turn — a \
-            third up where the band is fullest. One of five stories the seed \
+            shuffle or a walking four, the band playing that feel; every chorus \
+            the twelve-bar, its rows drawn afresh between the head and the last. \
+            One theme runs the whole loop through on the minor pentatonic — the \
+            fall from the fifth to the flat seventh under home, the riff round \
+            the tonic — sung AAB, a row's line, the line again over the IV and \
+            an answer, each in a row's first two bars, the band answering in \
+            its last two — a third up where the band is fullest. One of five stories the seed \
             chooses — a stroll that fills to a riff and empties; a late night that \
             thins to the organ; a rush hour that never quite stops; a corner where \
             the lead calls and answers itself; after hours, slow, the lead \
@@ -102,11 +104,12 @@ pub const PIECES: &[Piece] = &[
             phrase's first half and answers itself with the riff in its second, \
             or holds one chord tone every other bar, a second horn holding a \
             third or a sixth under its riff; it sits a little forward of the \
-            band, never over it. The electric piano echoes the theme a bar \
-            behind, an octave under the lead; the \
-            bass in two or walking, with a pickup into every bar, the piano's \
-            shells on the strikes and the guitar's four to the bar, the kit on \
-            brushes, the organ as the wash, and the seed's colours — a second horn \
+            band, never over it. The electric piano answers the lead's call in \
+            the row's last bars, an octave under it; the \
+            bass in two or walking, with a pickup into every bar, the piano \
+            comping a bar's rhythm at a time and the guitar on the beats, the \
+            kit on brushes, filling where a blues fills, every part varying \
+            by the phrase, the organ as the wash, and the seed's colours — a second horn \
             on the third, a shimmer — joining and leaving as one layer. Every \
             other player sits in the band. No drone; no sung words; the \
             client fades it.",

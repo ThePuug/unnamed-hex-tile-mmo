@@ -19,7 +19,7 @@ use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, TICKS_PER_EIGHTH as E};
 use crate::teller::{self, Hold, Teller, Telling};
 use crate::theory::groove::{Groove, FIGHT};
-use crate::theory::melody::Theme;
+use crate::theory::melody::{Theme, FOLK_SHAPES};
 use crate::theory::phrase::{self, Form as PhraseForm, FORMS};
 use crate::theory::schema::{fight_schemata, Schema};
 use crate::theory::{Chord, Key, Mode};
@@ -355,7 +355,7 @@ pub fn build(params: &Params) -> Score {
         bass: [CELLO, CONTRABASS][skeleton.below(2)],
         groove,
         form: FORMS[skeleton.below(FORMS.len())],
-        theme: Theme::draw(groove, &mut skeleton),
+        theme: Theme::draw(groove, &FOLK_SHAPES, &mut skeleton),
         open: open[skeleton.below(open.len())],
         closed: closed[skeleton.below(closed.len())],
     };

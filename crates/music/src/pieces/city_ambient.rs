@@ -29,11 +29,10 @@ use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, TICKS_PER_EIGHTH as E};
 use crate::teller::{self, Hold, Teller, Telling};
 use crate::theory::groove::{Groove, BLUES};
-use crate::theory::melody::Theme;
+use crate::theory::melody::{Theme, Tone, BLUES_SHAPES};
 use crate::theory::phrase::{Form as PhraseForm, FORMS};
 use crate::theory::schema::{Schema, TWELVE_BAR};
 use crate::theory::{interval_class, Chord, Key, Mode};
-use crate::theory::melody::Tone;
 use crate::theory::phrase;
 use crate::tune::{self, Tune};
 use crate::variation::{self, Role as Bar};
@@ -344,7 +343,7 @@ pub fn build(params: &Params) -> Score {
         shimmer: colours & 2 != 0,
         groove,
         form: FORMS[skeleton.below(FORMS.len())],
-        theme: Theme::draw(groove, &mut skeleton),
+        theme: Theme::draw(groove, &BLUES_SHAPES, &mut skeleton),
         rows: [row(0, mode, &mut skeleton), row(1, mode, &mut skeleton), row(2, mode, &mut skeleton)],
     };
     let instruments = vec![
@@ -414,6 +413,7 @@ pub fn build(params: &Params) -> Score {
     // keeps its tune and moves the changes under it.
     let shifts: Vec<i32> = (0..walk.bars()).map(|b| if walk.at(b).rung >= upper { CLIMB } else { 0 }).collect();
     let mut tune = Tune::compose(&design.theme, &score.meter, design.form, &rows, 4, shifts);
+    tune.scale = Some(tune::MINOR_PENTATONIC);
     aab(&mut tune, score.meter.eighths());
     score.harmony = tune.chords.clone();
     let form = Form { bar, walk, tune, design };

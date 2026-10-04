@@ -19,7 +19,15 @@ pub struct Tune {
     pub bars: Vec<Vec<Tone>>,
     /// What each bar's degrees are shifted by, the piece's sequence.
     pub shifts: Vec<i32>,
+    /// The degrees of the mode the line stands on, where a style sings in
+    /// fewer than seven — the blues' pentatonic; a tone off them falls to
+    /// the one under it. Every degree where `None`.
+    pub scale: Option<&'static [i32]>,
 }
+
+/// The minor pentatonic as degrees of a minor mode: the tonic, the
+/// flat third, the fourth, the fifth and the flat seventh.
+pub const MINOR_PENTATONIC: &[i32] = &[0, 2, 3, 4, 6];
 
 /// A note as placed: `(tick, len, pitch)`.
 pub type Placed = (u32, u32, u8);
@@ -60,6 +68,7 @@ impl Tune {
             chords,
             bars,
             shifts,
+            scale: None,
         }
     }
 
@@ -90,7 +99,7 @@ impl Tune {
             .map(|t| key.pitch(home_degree + t.degree + self.shifts[last], 4));
         bar.iter()
             .map(|t| {
-                let mut pitch = key.pitch(home_degree + t.degree + shift, 4);
+                let mut pitch = key.pitch(self.on_scale(home_degree + t.degree + shift), 4);
                 if score.meter.strong(t.onset) && !chord.holds(key, pitch) {
                     pitch = bent_to_chord(key, chord, pitch, prev, lo, hi);
                 }
@@ -140,7 +149,7 @@ impl Tune {
                     *p != line[i].2
                         && *p >= lo
                         && *p <= hi
-                        && key.contains(*p)
+                        && self.sings(key, *p)
                         && (!strong || chord.holds(key, *p))
                 })
                 .filter(|p| (degree(*p) - d0).abs() < counterpoint::LEAP)
@@ -156,7 +165,7 @@ impl Tune {
             let strong = score.strong(start);
             let chord = self.chords[(start / score.bar()) as usize];
             let turned = (pitch.saturating_sub(5)..=pitch.saturating_add(5))
-                .filter(|p| *p >= lo && *p <= hi && key.contains(*p) && (!strong || chord.holds(key, *p)))
+                .filter(|p| *p >= lo && *p <= hi && self.sings(key, *p) && (!strong || chord.holds(key, *p)))
                 .filter(|p| {
                     let next = degree(*p) - d1;
                     next.abs() < counterpoint::LEAP || next.signum() != leap.signum()
@@ -166,6 +175,23 @@ impl Tune {
                 line[i + 1].2 = p;
             }
         }
+    }
+}
+
+impl Tune {
+    /// `degree`, or where the scale leaves it out, the scale's degree
+    /// under it.
+    fn on_scale(&self, degree: i32) -> i32 {
+        match self.scale {
+            Some(scale) => (0..7).map(|k| degree - k).find(|d| scale.contains(&d.rem_euclid(7))).unwrap(),
+            None => degree,
+        }
+    }
+
+    /// Whether the line may stand on `pitch`: in the mode, and on the
+    /// scale where there is one.
+    fn sings(&self, key: &Key, pitch: u8) -> bool {
+        key.absolute_degree(pitch).is_some_and(|d| self.scale.is_none_or(|s| s.contains(&d.rem_euclid(7))))
     }
 }
 

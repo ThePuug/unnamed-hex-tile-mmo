@@ -1,10 +1,12 @@
 //! A theme and what a phrase makes of it. A theme is a skeleton of
 //! degrees on the strong beats of two bars, in one of a few shapes a
-//! listener follows — an arch, a descent to the finalis, a climb, a
-//! circling, a leap and its recovery, a wave — with the feet between
-//! filled by steps toward the next skeleton tone, so a leap is only
-//! ever the shape's own and every leap is answered. Degrees are from
-//! the theme's home; a piece puts them in a register.
+//! listener follows — an arch, a descent to the finalis, a circling, a
+//! leap and its recovery, a wave, and the blues' own, the
+//! fall from the fifth and the riff round the tonic — with the
+//! feet between filled by steps toward the next skeleton tone, so a
+//! leap is only ever the shape's own and every leap is answered. A
+//! piece draws from the shapes its style sings in. Degrees are from the
+//! theme's home; a piece puts them in a register.
 
 use super::groove::Groove;
 use super::phrase::{Form, Slot};
@@ -24,13 +26,24 @@ pub struct Tone {
 pub enum Shape {
     Arch,
     Descent,
-    Climb,
     Circling,
     LeapBack,
     Wave,
+    /// The blues' shout and fall: from the fifth down the pentatonic,
+    /// under the tonic to the flat seventh, and home.
+    Tumble,
+    /// The blues' riff round the tonic: up to the third, back, under to
+    /// the flat seventh, home.
+    Riff,
 }
 
-pub const SHAPES: [Shape; 6] = [Shape::Arch, Shape::Descent, Shape::Climb, Shape::Circling, Shape::LeapBack, Shape::Wave];
+/// The shapes a Balkan tune sings in: each comes down to its finalis at
+/// the bottom of its range, and none climbs to a peak to resolve there,
+/// which is a Western tune's way.
+pub const FOLK_SHAPES: [Shape; 5] = [Shape::Arch, Shape::Descent, Shape::Circling, Shape::LeapBack, Shape::Wave];
+
+/// The shapes a blues sings in, the fall the most often.
+pub const BLUES_SHAPES: [Shape; 5] = [Shape::Tumble, Shape::Riff, Shape::Tumble, Shape::Descent, Shape::Arch];
 
 impl Shape {
     /// The shape over six strong beats; a skeleton of another length
@@ -39,10 +52,11 @@ impl Shape {
         match self {
             Shape::Arch => [0, 2, 4, 4, 2, 0],
             Shape::Descent => [4, 3, 2, 1, 0, 0],
-            Shape::Climb => [0, 1, 2, 3, 4, 4],
             Shape::Circling => [0, 1, 0, -1, 0, 1],
             Shape::LeapBack => [0, 4, 3, 2, 1, 0],
             Shape::Wave => [0, 2, 1, 3, 2, 0],
+            Shape::Tumble => [4, 3, 2, 0, -1, 0],
+            Shape::Riff => [0, 2, 0, -1, 0, 0],
         }
     }
 
@@ -61,8 +75,9 @@ pub struct Theme {
 }
 
 impl Theme {
-    pub fn draw(groove: &Groove, rng: &mut Rng) -> Theme {
-        Theme { shape: SHAPES[rng.below(SHAPES.len())], feet: [groove.feet(rng), groove.feet(rng)] }
+    /// A theme in one of `shapes` on the groove's feet.
+    pub fn draw(groove: &Groove, shapes: &[Shape], rng: &mut Rng) -> Theme {
+        Theme { shape: shapes[rng.below(shapes.len())], feet: [groove.feet(rng), groove.feet(rng)] }
     }
 
     /// The theme's two bars as tones: the skeleton on each group's first
@@ -229,7 +244,7 @@ mod tests {
     /// recovers, and never wanders past a sixth.
     #[test]
     fn shapes_hold_their_span() {
-        for shape in SHAPES {
+        for shape in FOLK_SHAPES.iter().chain(BLUES_SHAPES.iter()) {
             for n in [4, 6, 8, 10] {
                 let s = shape.skeleton(n);
                 assert_eq!(s.len(), n);
@@ -246,7 +261,7 @@ mod tests {
         for groove in groove::all() {
             let meter = groove.meter();
             for seed in 0..24 {
-                let theme = Theme::draw(groove, &mut Rng::new(seed));
+                let theme = Theme::draw(groove, &FOLK_SHAPES, &mut Rng::new(seed));
                 for form in FORMS {
                     // Endings as a piece gives them: the open chord's tone
                     // nearest home, or home.

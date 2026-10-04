@@ -18,7 +18,7 @@ use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
 use crate::teller::{self, Hold, Teller, Telling};
 use crate::theory::groove::{Groove, BALKAN};
-use crate::theory::melody::Theme;
+use crate::theory::melody::{Theme, FOLK_SHAPES};
 use crate::theory::phrase::{self, Form as PhraseForm};
 use crate::theory::schema::{schemata_for, Schema};
 use crate::theory::{clashes, Chord, Key, Mode};
@@ -315,7 +315,7 @@ pub fn build(params: &Params) -> Score {
         // A sentence, never a period: a cue moves on, and a period says
         // its two bars twice.
         form: PhraseForm::Sentence,
-        theme: Theme::draw(groove, &mut skeleton),
+        theme: Theme::draw(groove, &FOLK_SHAPES, &mut skeleton),
         open: open[skeleton.below(open.len())],
         closed: closed[skeleton.below(closed.len())],
     };

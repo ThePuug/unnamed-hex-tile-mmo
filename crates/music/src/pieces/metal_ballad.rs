@@ -24,7 +24,7 @@ use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, TICKS_PER_EIGHTH as E};
 use crate::teller::{self, Hold, Teller, Telling};
 use crate::theory::groove::{Groove, BALLAD};
-use crate::theory::melody::Theme;
+use crate::theory::melody::{Shape, Theme};
 use crate::theory::phrase::{self, Form as PhraseForm, FORMS};
 use crate::theory::schema::{split, Schema, BALLAD as SONG};
 use crate::theory::{Chord, Key, Mode};
@@ -103,6 +103,12 @@ const ARPEGGIO: f32 = 4.0;
 
 /// The velocity every voice strikes at before its own accent.
 const VEL: i32 = 88;
+
+/// The shapes a ballad's tune sings in: the sigh down to home and the
+/// wave a verse sings low, the arch and the leap a chorus sings a third
+/// over it — never the circling or the climb, a folk tune's and a
+/// pre-chorus's.
+const BALLAD_SHAPES: [Shape; 4] = [Shape::Descent, Shape::Wave, Shape::Arch, Shape::LeapBack];
 
 /// Where each part of the song sits, LU against the solo, its loudest:
 /// the arpeggio alone it opens and closes on, a verse, a chorus. The arc
@@ -530,7 +536,7 @@ fn compose(params: &Params) -> (Score, Form) {
         motif: if groove.groups[0] == 3 { MOTIFS_THREE[skeleton.below(MOTIFS_THREE.len())] } else { MOTIFS_TWO[skeleton.below(MOTIFS_TWO.len())] },
         groove,
         form: FORMS[skeleton.below(FORMS.len())],
-        theme: Theme::draw(groove, &mut skeleton),
+        theme: Theme::draw(groove, &BALLAD_SHAPES, &mut skeleton),
         verse: pair(SONG.verse, &mut skeleton),
         chorus: pair(SONG.chorus, &mut skeleton),
         climax: pair(SONG.climax, &mut skeleton),
