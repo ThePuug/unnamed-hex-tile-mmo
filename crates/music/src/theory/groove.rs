@@ -55,9 +55,11 @@ pub const FIGHT: [Groove; 4] = [
 /// accompaniment on the swung third of every beat; and the walking
 /// four, straight eighths, the accompaniment pushing on the and of one
 /// and of three, its tune leaning on the beat, since a group of two
-/// eighths filled is a run of quavers and not a sung line.
+/// eighths filled is a run of quavers and not a sung line. The shuffle
+/// is an after-hours blues, its beat 68 to 78, over the ballad's
+/// twelve-eight, so the two slow feels in three are never one pulse.
 pub const BLUES: [Groove; 2] = [
-    Groove { name: "shuffle", groups: &[3, 3, 3, 3], tempo: (190, 250), dum: &[0, 6], tek: &[3, 9], chord: &[2, 5, 8, 11], busy: 0.4 },
+    Groove { name: "shuffle", groups: &[3, 3, 3, 3], tempo: (204, 234), dum: &[0, 6], tek: &[3, 9], chord: &[2, 5, 8, 11], busy: 0.4 },
     Groove { name: "walking four", groups: &[2, 2, 2, 2], tempo: (170, 220), dum: &[0, 4], tek: &[2, 6], chord: &[1, 5], busy: 0.3 },
 ];
 
@@ -67,10 +69,11 @@ pub const BLUES: [Groove; 2] = [
 /// twelve-eight, four slow beats of three, its kick on one and the last
 /// eighth of two, its snare on two and four, the accompaniment on every
 /// eighth between. Its tune leans on the beat and sings rather than
-/// runs.
+/// runs. The twelve-eight's beat is 50 to 60, under the blues'
+/// shuffle.
 pub const BALLAD: [Groove; 2] = [
     Groove { name: "four", groups: &[2, 2, 2, 2], tempo: (120, 150), dum: &[0, 5], tek: &[2, 6], chord: &[1, 3, 5, 7], busy: 0.3 },
-    Groove { name: "twelve-eight", groups: &[3, 3, 3, 3], tempo: (150, 192), dum: &[0, 5], tek: &[3, 9], chord: &[1, 2, 4, 5, 7, 8, 10, 11], busy: 0.25 },
+    Groove { name: "twelve-eight", groups: &[3, 3, 3, 3], tempo: (150, 180), dum: &[0, 5], tek: &[3, 9], chord: &[1, 2, 4, 5, 7, 8, 10, 11], busy: 0.25 },
 ];
 
 /// Every groove there is.
