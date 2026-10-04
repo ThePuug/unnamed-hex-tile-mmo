@@ -1,0 +1,1344 @@
+//! A metal ballad: a clean guitar's arpeggio that the band builds on a
+//! layer at a time — the bass, the kit, the distorted guitars palm-muted
+//! and then ringing open, the strings — to a solo at its crest, and back
+//! down to the arpeggio it opened on. What the band plays makes the part
+//! of the song: with the guitars open it is a chorus, under the solo the
+//! climax, else a verse; each has its own harmony, the verse holding the
+//! tonic, the chorus opening off it and coming home by the sixth and
+//! seventh, the climax a progression heard nowhere else, and the tune
+//! sits a third higher in a chorus. No part plays one bar over and over:
+//! every four-bar phrase is a bar, its variant and a cadence, and the
+//! kit fills where a phrase or a part turns. The guitars are
+//! double-tracked, one each side; one lead, a guitar or a violin, sings
+//! the theme where a voice would. The solo is the seed's: a guitar that
+//! states the theme, answers itself, climbs in sequences to a peak it
+//! has not touched before and lands on the theme with a second guitar a
+//! third over it; or the kit over the band's stop-time hits, its motif
+//! growing and turning until its signature fill brings the band back.
+//! Every choice is a draw from the seed's stream, one fork per purpose;
+//! the seed picks which shape at every level, never the next note.
+
+use crate::ladder::{self, turn, Bed, Story, Walk};
+use crate::pieces::Params;
+use crate::rng::Rng;
+use crate::score::{Instrument, Note, Role, Score, TICKS_PER_EIGHTH as E};
+use crate::teller::{self, Hold, Teller, Telling};
+use crate::theory::groove::{Groove, BALLAD};
+use crate::theory::melody::Theme;
+use crate::theory::phrase::{self, Form as PhraseForm, FORMS};
+use crate::theory::schema::{split, Schema, BALLAD as SONG};
+use crate::theory::{Chord, Key, Mode};
+use crate::tune::{self, Placed, Tune};
+
+/// General MIDI programs, 0-based.
+const PIANO: u8 = 0;
+const CLEAN_GUITAR: u8 = 27;
+const OVERDRIVEN: u8 = 29;
+const DISTORTION: u8 = 30;
+const FINGER_BASS: u8 = 33;
+const PICK_BASS: u8 = 34;
+const VIOLIN: u8 = 40;
+const SLOW_STRINGS: u8 = 49;
+const CHOIR_AAHS: u8 = 52;
+/// The power kit, the bank's rock kit, and its keys.
+const ROCK_KIT: u8 = 16;
+const KICK: u8 = 36;
+const SIDE_STICK: u8 = 37;
+const SNARE: u8 = 38;
+const HAT: u8 = 42;
+const OPEN_HAT: u8 = 46;
+const CRASH: u8 = 49;
+const RIDE: u8 = 51;
+const CRASH_2: u8 = 57;
+/// The toms, high to low.
+const TOMS: [u8; 5] = [50, 48, 47, 45, 43];
+
+const CH_BASS: u8 = 0;
+const CH_CLEAN: u8 = 1;
+const CH_LEAD: u8 = 2;
+const CH_LEFT: u8 = 3;
+const CH_RIGHT: u8 = 4;
+const CH_SECOND: u8 = 5;
+const CH_PAD: u8 = 6;
+const CH_CHOIR: u8 = 7;
+const CH_SOLO: u8 = 8;
+const CH_KIT: u8 = 9;
+const CH_HARMONY: u8 = 10;
+
+/// How long the room rings: a hall, the ballad's size, under the
+/// overworld's stone.
+const ROOM_S: f32 = 2.2;
+
+/// Who may sing the theme: the lead guitar, overdriven or distorted, or
+/// a violin. The pool's files each have their own.
+const LEADS: [u8; 3] = [OVERDRIVEN, DISTORTION, VIOLIN];
+
+/// Each lead's level, dB, so it sits a little forward of the band
+/// whichever it is.
+fn lead_level(program: u8) -> f32 {
+    match program {
+        VIOLIN => 3.0,
+        _ => 0.0,
+    }
+}
+
+/// The band's level, dB: under the lead together, its own balance kept.
+const BAND: f32 = -2.0;
+
+/// The soloist's level over the lead's, dB: a solo is the song's peak and
+/// stands out of the band; the bass's at the top of its volume, a bass in
+/// its high register being the bank's quietest solo voice.
+const SOLO_LEVEL: f32 = 4.0;
+const BASS_SOLO_LEVEL: f32 = 6.0;
+
+/// The arpeggio's level, dB, over the band's: alone it is the intro and
+/// the outro, and under the distorted guitars the bank's picked strings
+/// are lost by twenty decibels.
+const ARPEGGIO: f32 = 4.0;
+
+/// The velocity every voice strikes at before its own accent.
+const VEL: i32 = 88;
+
+/// What each layer at each notch adds to the band's power, and what
+/// each telling and each solo adds, the lead singing being one: the
+/// pedal takes back `GIVE` of the sum's level over the intro's, so the
+/// band still grows from the arpeggio to the solo, by nearly all of what
+/// it would: a ballad is not afraid of its loud parts.
+/// Powers, not decibels, as the city's are, so a lead over the full band
+/// adds next to nothing. Fitted to the render, every section of thirty
+/// seeds against what played in it: the distorted guitars are most of a
+/// chorus, and the bank's picked strings next to nothing under them.
+const POWER_CLEAN: [f32; 3] = [0.0, 0.3, 0.3];
+const POWER_BASS: [f32; 3] = [0.0, 0.12, 0.12];
+const POWER_KIT: [f32; 3] = [0.0, 0.13, 0.17];
+const POWER_RHYTHM: [f32; 3] = [0.0, 0.98, 1.69];
+const POWER_PAD: [f32; 3] = [0.0, 0.19, 0.59];
+/// The guitar's solo over the band; the kit's over its stop-time and the
+/// bass's over the band's time, each the whole band's power there.
+const POWER_SOLO: [f32; 3] = [1.51, 0.85, 1.0];
+/// By telling, in `Telling`'s order.
+const POWER_LEAD: [f32; 6] = [0.0, 0.51, 1.0, 1.0, 1.0, 0.65];
+/// The power of an intro, the arpeggio under the lead's theme: the pedal
+/// is full there and takes back from the rest.
+const FLOOR: f32 = 1.3;
+/// The share of the band's added loudness the pedal takes back: a
+/// ballad's chorus is heavier than its verse, and a pedal that took it
+/// all would make the band a fader.
+const GIVE: f32 = 0.15;
+
+/// The tune's register; the lead takes it here.
+const TUNE: (u8, u8) = (60, 88);
+/// The guitar's solo's register, over the tune's, up to a 24-fret
+/// guitar's top E; the bass's, from its open E to the top of its neck.
+const SOLO: (u8, u8) = (62, 88);
+const BASS_SOLO: (u8, u8) = (40, 67);
+/// The sequence a verse's phrase pair takes, in degrees: the theme, a
+/// step up.
+const PAIRS: [i32; 2] = [0, 1];
+/// The tune a third up in a chorus: a chorus sits higher than its verse.
+const CLIMB: i32 = 2;
+
+/// A clean guitar's or a piano's picked chord.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Clean {
+    Off,
+    /// A tone on every beat: the root, then up through the chord.
+    Thin,
+    /// A tone on every eighth, in the seed's picking pattern.
+    Full,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Bass {
+    Off,
+    /// The root on the kick's strokes, held to the next.
+    Held,
+    /// The root on every eighth, its octave now and then.
+    Driving,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Kit {
+    Off,
+    /// A verse's time: the closed hat on every eighth, the kick, the
+    /// side stick on the backbeat, ghost strokes on the snare.
+    Time,
+    /// A chorus's: the ride, the snare's backbeat or the half-time's,
+    /// the crash at every part.
+    Full,
+}
+
+/// The distorted guitars, double-tracked, one each side.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Rhythm {
+    Off,
+    /// A verse's: root and fifth palm-muted on the eighths, the next
+    /// chord struck open on the bar's last eighth and rung over the line.
+    Muted,
+    /// A chorus's: power chords struck on the kick and let ring.
+    Open,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Pad {
+    Off,
+    /// The slow strings on root and fifth.
+    Thin,
+    /// The strings on the chord, voice-led, and the choir on root and
+    /// fifth.
+    Full,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Solo {
+    Off,
+    On,
+}
+
+/// Who takes the solo, the seed's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Soloist {
+    Guitar,
+    Drums,
+    Bass,
+}
+
+impl Soloist {
+    fn name(self) -> &'static str {
+        match self {
+            Soloist::Guitar => "guitar solo",
+            Soloist::Drums => "drum solo",
+            Soloist::Bass => "bass solo",
+        }
+    }
+}
+
+/// What part of the song a bar is, by what plays.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Section {
+    Verse,
+    Chorus,
+    Climax,
+}
+
+/// A layer of the band, the thing a rung of the ladder moves.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Layer {
+    Clean,
+    Bass,
+    Kit,
+    Rhythm,
+    Pad,
+    Solo,
+}
+
+/// What the band is: each layer at its notch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Texture {
+    clean: Clean,
+    bass: Bass,
+    kit: Kit,
+    rhythm: Rhythm,
+    pad: Pad,
+    solo: Solo,
+}
+
+impl Texture {
+    const BARE: Texture = Texture { clean: Clean::Off, bass: Bass::Off, kit: Kit::Off, rhythm: Rhythm::Off, pad: Pad::Off, solo: Solo::Off };
+
+    /// The part of the song this band makes: the solo's is the climax,
+    /// the guitars ringing open a chorus, anything less a verse.
+    fn section(&self) -> Section {
+        if self.solo == Solo::On {
+            Section::Climax
+        } else if self.rhythm == Rhythm::Open {
+            Section::Chorus
+        } else {
+            Section::Verse
+        }
+    }
+
+    /// The pedal's gain under this texture, `lead` and the seed's
+    /// soloist: `GIVE` of what they lift the loudness by, given back.
+    /// Under the kit's solo and the bass's the band thins, so the solo's
+    /// power is all of it.
+    fn trim(&self, lead: Telling, soloist: Soloist) -> f32 {
+        let power = match (self.solo, soloist) {
+            (Solo::On, Soloist::Drums | Soloist::Bass) => POWER_SOLO[soloist as usize],
+            _ => {
+                let solo = if self.solo == Solo::On { POWER_SOLO[soloist as usize] } else { 0.0 };
+                POWER_CLEAN[self.clean as usize] + POWER_BASS[self.bass as usize] + POWER_KIT[self.kit as usize] + POWER_RHYTHM[self.rhythm as usize] + POWER_PAD[self.pad as usize] + POWER_LEAD[lead as usize] + solo
+            }
+        };
+        ladder::gain(GIVE * 10.0 * (power.max(FLOOR) / FLOOR).log10())
+    }
+}
+
+impl Bed for Texture {
+    type Layer = Layer;
+
+    fn up(self, layer: Layer) -> Texture {
+        match layer {
+            Layer::Clean => Texture { clean: if self.clean == Clean::Off { Clean::Thin } else { Clean::Full }, ..self },
+            Layer::Bass => Texture { bass: if self.bass == Bass::Off { Bass::Held } else { Bass::Driving }, ..self },
+            Layer::Kit => Texture { kit: if self.kit == Kit::Off { Kit::Time } else { Kit::Full }, ..self },
+            Layer::Rhythm => Texture { rhythm: if self.rhythm == Rhythm::Off { Rhythm::Muted } else { Rhythm::Open }, ..self },
+            Layer::Pad => Texture { pad: if self.pad == Pad::Off { Pad::Thin } else { Pad::Full }, ..self },
+            Layer::Solo => Texture { solo: Solo::On, ..self },
+        }
+    }
+
+    fn step_from(self, from: Texture) -> &'static str {
+        let to = self;
+        let moved = |a: u8, b: u8, names: [&'static str; 4]| match (a, b) {
+            (0, _) => names[0],
+            (_, 0) => names[3],
+            _ if b > a => names[1],
+            _ => names[2],
+        };
+        if from.clean != to.clean {
+            moved(from.clean as u8, to.clean as u8, ["arpeggio in", "arpeggio up", "arpeggio down", "arpeggio out"])
+        } else if from.bass != to.bass {
+            moved(from.bass as u8, to.bass as u8, ["bass in", "bass up", "bass down", "bass out"])
+        } else if from.kit != to.kit {
+            moved(from.kit as u8, to.kit as u8, ["kit in", "kit up", "kit down", "kit out"])
+        } else if from.rhythm != to.rhythm {
+            moved(from.rhythm as u8, to.rhythm as u8, ["guitars in", "chorus", "verse", "guitars out"])
+        } else if from.pad != to.pad {
+            moved(from.pad as u8, to.pad as u8, ["strings in", "strings up", "strings down", "strings out"])
+        } else if from.solo != to.solo {
+            if to.solo == Solo::On { "solo" } else { "solo out" }
+        } else {
+            "held"
+        }
+    }
+}
+
+use Layer::{Bass as BassLayer, Clean as CleanLayer, Kit as KitLayer, Pad as PadLayer, Rhythm as RhythmLayer, Solo as SoloLayer};
+use Telling::{Long, Off, Phrases, RiffAndLong};
+
+/// Every story is told in four-bar parts and climbs to the solo, held
+/// four parts at the crest, sixteen bars, room for a solo's arc. The
+/// guitars open its choruses; the lead states the theme over the
+/// arpeggio it opens on, plays it as a riff over the muted guitars,
+/// holds long tones in the part before a chorus — the breath a
+/// pre-chorus takes — is silent under the solo and sings the chorus
+/// after it.
+const STORIES: [Story<Texture, Telling>; 4] = [
+    // The arpeggio, the band joining under the tune to a first chorus,
+    // back to the verse, and up again to the solo.
+    Story {
+        name: "power ballad",
+        weight: 3.0,
+        base: Texture { clean: Clean::Full, ..Texture::BARE },
+        ladder: &[BassLayer, KitLayer, RhythmLayer, PadLayer, RhythmLayer, KitLayer, SoloLayer],
+        leads: &[Phrases, Phrases, Phrases, RiffAndLong, Long, Phrases, Phrases, Off],
+        turns: &[turn((6, 6), (0, 0)), turn((4, 4), (0, 0)), turn((7, 7), (3, 3))],
+        halves: (2, 2),
+        pace: (0.2, 0.8),
+    },
+    // One long climb from the arpeggio and the strings to the solo, and
+    // down.
+    Story {
+        name: "slow burn",
+        weight: 2.0,
+        base: Texture { clean: Clean::Full, ..Texture::BARE },
+        ladder: &[PadLayer, BassLayer, KitLayer, RhythmLayer, BassLayer, RhythmLayer, KitLayer, SoloLayer],
+        leads: &[Phrases, Phrases, Phrases, Phrases, RiffAndLong, Long, Phrases, Phrases, Off],
+        turns: &[turn((8, 8), (3, 3))],
+        halves: (2, 2),
+        pace: (0.0, 0.5),
+    },
+    // The band in from the first bar under the tune, a chorus, a dip back
+    // to the muted verse, and the strings and choir building it to an
+    // anthem.
+    Story {
+        name: "anthem",
+        weight: 2.0,
+        base: Texture { clean: Clean::Full, bass: Bass::Held, kit: Kit::Time, ..Texture::BARE },
+        ladder: &[RhythmLayer, PadLayer, RhythmLayer, BassLayer, PadLayer, KitLayer, SoloLayer],
+        leads: &[Phrases, RiffAndLong, Long, Phrases, Phrases, Phrases, Phrases, Off],
+        turns: &[turn((5, 5), (0, 0)), turn((2, 2), (0, 0)), turn((7, 7), (3, 3))],
+        halves: (2, 2),
+        pace: (0.4, 1.0),
+    },
+    // Opened on the strings alone under the lead singing the theme, the
+    // arpeggio and the band gathering under it.
+    Story {
+        name: "requiem",
+        weight: 1.0,
+        base: Texture { pad: Pad::Thin, ..Texture::BARE },
+        ladder: &[CleanLayer, BassLayer, KitLayer, RhythmLayer, RhythmLayer, PadLayer, KitLayer, SoloLayer],
+        leads: &[Phrases, Phrases, Phrases, Phrases, RiffAndLong, Phrases, Phrases, Phrases, Off],
+        turns: &[turn((8, 8), (3, 3))],
+        halves: (2, 2),
+        pace: (0.0, 0.6),
+    },
+];
+
+/// The arpeggio's picking patterns, in chord tones counted up from the
+/// root: 0 the root, 1 its third, 2 its fifth, 3 the octave, 4 the
+/// tenth, 5 the twelfth. Its highest step is where a drone takes over.
+const PICKING: [&[usize]; 3] = [&[0, 2, 3, 4, 3, 2], &[0, 2, 3, 2, 4, 2], &[0, 3, 2, 4, 3, 5]];
+
+/// The seed's fill, the one it opens every chorus with and closes the
+/// kit's solo on: the toms down; the snare and then the toms; each drum
+/// twice down the kit; or two toms and the kick by turns, the triplet a
+/// twelve-eight rolls in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Fill {
+    Descent,
+    SnareThenToms,
+    Pairs,
+    HandHandKick,
+}
+
+/// A drum solo's motif in a beat of two eighths and of three: sixteenths
+/// struck within the beat, and the tom each falls on.
+const MOTIFS_TWO: [&[(u32, usize)]; 3] = [&[(0, 0), (3, 2)], &[(0, 0), (1, 1), (3, 3)], &[(0, 1), (2, 1), (3, 4)]];
+const MOTIFS_THREE: [&[(u32, usize)]; 3] = [&[(0, 0), (3, 2), (5, 4)], &[(0, 1), (2, 2), (4, 3)], &[(0, 0), (1, 0), (3, 3)]];
+
+/// What a seed's piece is.
+struct Design {
+    /// The one player who tells the tune, and the one who holds under
+    /// its riff.
+    lead: u8,
+    second: u8,
+    /// The arpeggio's instrument and pattern, and the degree of the key
+    /// its top rings on whatever the chord, where it drones.
+    clean: u8,
+    picking: &'static [usize],
+    drone: Option<i32>,
+    bass: u8,
+    soloist: Soloist,
+    /// Whether the guitar's climax is a held tone, else a run to its peak.
+    held_climax: bool,
+    /// Whether the chorus is in half-time, the snare on the bar's middle.
+    half_time: bool,
+    fill: Fill,
+    motif: &'static [(u32, usize)],
+    groove: &'static Groove,
+    form: PhraseForm,
+    theme: Theme,
+    /// Each part of the song's question and answer.
+    verse: [&'static Schema; 2],
+    chorus: [&'static Schema; 2],
+    climax: [&'static Schema; 2],
+}
+
+/// The band's velocity with an accent and a little jitter so no two
+/// notes strike alike.
+fn vel(accent: i32, rng: &mut Rng) -> u8 {
+    (VEL + accent + rng.range(-4, 4)).clamp(1, 127) as u8
+}
+
+/// The ornament a guitar's line takes into a note: a hammer from the
+/// degree under it.
+fn hammer(key: &Key, pitch: u8, _hi: u8) -> Option<u8> {
+    Some(key.pitch(key.absolute_degree(pitch).unwrap() - 1, 4))
+}
+
+/// A bar's place in its phrase: its first, the variant on its second, a
+/// plain third, and its cadence.
+fn variant(bar: u32) -> bool {
+    bar % phrase::BARS == 1
+}
+fn cadence(bar: u32) -> bool {
+    bar % phrase::BARS == phrase::BARS - 1
+}
+
+struct Form {
+    bar: u32,
+    walk: Walk<Texture, Telling>,
+    tune: Tune,
+    design: Design,
+}
+
+impl Form {
+    fn texture_at(&self, bar: u32) -> Texture {
+        self.walk.bed_at(bar)
+    }
+    fn chord(&self, bar: u32) -> Chord {
+        self.tune.chords[bar as usize]
+    }
+    fn bars(&self) -> u32 {
+        self.walk.bars()
+    }
+    /// Whether `bar` is the loop's last, past which nothing struck rings.
+    fn last(&self, bar: u32) -> bool {
+        bar + 1 == self.bars()
+    }
+    /// Whether the bass solos at `bar`: the band under it keeps out of its
+    /// register.
+    fn bass_solo(&self, bar: u32) -> bool {
+        self.texture_at(bar).solo == Solo::On && self.design.soloist == Soloist::Bass
+    }
+    /// Whether the band plays stop-time at `bar`: under the kit's solo it
+    /// strikes the bar's first beat and leaves the rest to the drums.
+    fn stop_time(&self, bar: u32) -> bool {
+        self.texture_at(bar).solo == Solo::On && self.design.soloist == Soloist::Drums
+    }
+    /// Whether a part begins at `bar`.
+    fn part_starts(&self, bar: u32) -> bool {
+        self.walk.parts.iter().any(|p| p.a == bar)
+    }
+    /// Whether the part of the song changes at `bar`, from the bar before.
+    fn turns_at(&self, bar: u32) -> bool {
+        bar > 0 && bar < self.bars() && self.texture_at(bar).section() != self.texture_at(bar - 1).section()
+    }
+    /// The bars the solo plays, each a run of the walk's.
+    fn solos(&self) -> Vec<(u32, u32)> {
+        let mut out: Vec<(u32, u32)> = Vec::new();
+        for p in self.walk.parts.iter().filter(|p| p.bed.solo == Solo::On) {
+            match out.last_mut() {
+                Some(last) if last.1 == p.a => last.1 = p.b,
+                _ => out.push((p.a, p.b)),
+            }
+        }
+        out
+    }
+}
+
+pub fn build(params: &Params) -> Score {
+    compose(params).0
+}
+
+/// The score, and the form it was written on.
+fn compose(params: &Params) -> (Score, Form) {
+    let rng = Rng::new(params.seed);
+    let mut skeleton = rng.fork(0);
+    let story = ladder::draw(&STORIES, &mut skeleton);
+    let key = Key::new(["E", "A", "D", "B", "G", "C"][skeleton.weighted(&[3.0, 3.0, 2.0, 2.0, 1.0, 1.0])], Mode::Aeolian);
+    let groove = &BALLAD[skeleton.weighted(&[3.0, 2.0])];
+    let tempo = story.tempo(groove.tempo, &mut skeleton);
+    let lead = LEADS[skeleton.below(LEADS.len())];
+    let pair = |schemata: &'static [Schema], rng: &mut Rng| {
+        let (open, closed) = split(schemata);
+        [open[rng.below(open.len())], closed[rng.below(closed.len())]]
+    };
+    let design = Design {
+        lead,
+        second: if lead == OVERDRIVEN { DISTORTION } else { OVERDRIVEN },
+        clean: [CLEAN_GUITAR, PIANO][skeleton.weighted(&[3.0, 1.0])],
+        picking: PICKING[skeleton.below(PICKING.len())],
+        drone: [None, Some(0), Some(4)][skeleton.weighted(&[2.0, 2.0, 1.0])],
+        bass: [FINGER_BASS, PICK_BASS][skeleton.below(2)],
+        soloist: [Soloist::Guitar, Soloist::Drums, Soloist::Bass][skeleton.weighted(&[3.0, 2.0, 2.0])],
+        held_climax: skeleton.chance(0.6),
+        half_time: skeleton.chance(0.35),
+        fill: [Fill::Descent, Fill::SnareThenToms, Fill::Pairs, Fill::HandHandKick][skeleton.weighted(&[2.0, 2.0, 1.0, if groove.groups[0] == 3 { 2.0 } else { 0.5 }])],
+        motif: if groove.groups[0] == 3 { MOTIFS_THREE[skeleton.below(MOTIFS_THREE.len())] } else { MOTIFS_TWO[skeleton.below(MOTIFS_TWO.len())] },
+        groove,
+        form: FORMS[skeleton.below(FORMS.len())],
+        theme: Theme::draw(groove, &mut skeleton),
+        verse: pair(SONG.verse, &mut skeleton),
+        chorus: pair(SONG.chorus, &mut skeleton),
+        climax: pair(SONG.climax, &mut skeleton),
+    };
+    let instruments = vec![
+        Instrument { name: "bass", program: design.bass, channel: CH_BASS, role: Role::Pluck, low: 28, high: 52, reverb: 15, pan: 0, level: BAND },
+        Instrument { name: "arpeggio", program: design.clean, channel: CH_CLEAN, role: Role::Pluck, low: 40, high: 79, reverb: 55, pan: 18, level: ARPEGGIO },
+        Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 55, high: 91, reverb: 45, pan: 0, level: lead_level(design.lead) },
+        Instrument { name: "guitar, left", program: DISTORTION, channel: CH_LEFT, role: Role::Pluck, low: 38, high: 76, reverb: 25, pan: -58, level: BAND },
+        Instrument { name: "guitar, right", program: OVERDRIVEN, channel: CH_RIGHT, role: Role::Pluck, low: 38, high: 76, reverb: 25, pan: 58, level: BAND },
+        Instrument { name: "guitar, the second", program: design.second, channel: CH_SECOND, role: Role::Melody, low: 50, high: 72, reverb: 45, pan: -30, level: BAND },
+        Instrument { name: "strings", program: SLOW_STRINGS, channel: CH_PAD, role: Role::Sustain, low: 52, high: 79, reverb: 75, pan: -20, level: BAND },
+        Instrument { name: "choir", program: CHOIR_AAHS, channel: CH_CHOIR, role: Role::Sustain, low: 52, high: 72, reverb: 85, pan: 26, level: BAND },
+        match design.soloist {
+            Soloist::Bass => Instrument { name: "solo bass", program: design.bass, channel: CH_SOLO, role: Role::Melody, low: BASS_SOLO.0 - 4, high: BASS_SOLO.1, reverb: 35, pan: 0, level: BASS_SOLO_LEVEL },
+            _ => Instrument { name: "solo guitar", program: DISTORTION, channel: CH_SOLO, role: Role::Melody, low: SOLO.0 - 4, high: SOLO.1, reverb: 40, pan: 12, level: lead_level(DISTORTION) + SOLO_LEVEL },
+        },
+        Instrument { name: "kit", program: ROCK_KIT, channel: CH_KIT, role: Role::Percussion, low: KICK, high: CRASH_2, reverb: 30, pan: 0, level: BAND },
+        Instrument { name: "solo, the harmony", program: OVERDRIVEN, channel: CH_HARMONY, role: Role::Melody, low: BASS_SOLO.0, high: SOLO.1 + 4, reverb: 40, pan: -24, level: BAND },
+    ];
+    let mut score = Score::new(key, groove.meter(), tempo, instruments, ROOM_S);
+    score.loops = true;
+    score.lead = Some(CH_LEAD);
+    let name = |program: u8| match program {
+        PIANO => "piano",
+        CLEAN_GUITAR => "clean guitar",
+        OVERDRIVEN => "overdriven guitar",
+        DISTORTION => "distortion guitar",
+        FINGER_BASS => "fingered bass",
+        PICK_BASS => "picked bass",
+        VIOLIN => "violin",
+        _ => "?",
+    };
+    score.summary = format!(
+        "{} on the {}: a {:?} in a {:?}; verse {} and {}, chorus {} and {}, climax {} and {}; {} lead, {} arpeggio, {}, {}",
+        story.name,
+        groove.name,
+        design.theme.shape,
+        design.form,
+        design.verse[0].name,
+        design.verse[1].name,
+        design.chorus[0].name,
+        design.chorus[1].name,
+        design.climax[0].name,
+        design.climax[1].name,
+        name(design.lead),
+        name(design.clean),
+        name(design.bass),
+        design.soloist.name(),
+    );
+    score.facets = vec![groove.name, design.soloist.name()];
+    let bar = score.bar();
+
+    let soloist = design.soloist;
+    let walk = story.place(&mut skeleton, &mut score, 4, |texture, lead| texture.trim(lead, soloist));
+
+    // Each phrase on its part's question or answer, by turns; the tune a
+    // third up in a chorus, and a verse's pairs stepping up by turns.
+    let phrases = walk.bars() / phrase::BARS;
+    let rows: Vec<&Schema> = (0..phrases)
+        .map(|p| {
+            let pair = match walk.bed_at(p * phrase::BARS).section() {
+                Section::Verse => design.verse,
+                Section::Chorus => design.chorus,
+                Section::Climax => design.climax,
+            };
+            pair[(p % 2) as usize]
+        })
+        .collect();
+    let shifts: Vec<i32> = (0..walk.bars()).map(|b| if walk.bed_at(b).section() == Section::Chorus { CLIMB } else { PAIRS[(b / phrase::BARS / 2) as usize % PAIRS.len()] }).collect();
+    let tune = Tune::compose(&design.theme, &score.meter, design.form, &rows, 3, shifts);
+    score.harmony = tune.chords.clone();
+    let form = Form { bar, walk, tune, design };
+
+    arpeggio(&mut score, &form, &mut rng.fork(1));
+    bass(&mut score, &form, &mut rng.fork(2));
+    guitars(&mut score, &form, &mut rng.fork(3));
+    pad(&mut score, &form, &mut rng.fork(4));
+    kit(&mut score, &form, &mut rng.fork(5));
+    match form.design.soloist {
+        Soloist::Guitar => melodic_solo(&mut score, &form, SOLO, 0, &mut rng.fork(6)),
+        Soloist::Bass => melodic_solo(&mut score, &form, BASS_SOLO, 12, &mut rng.fork(6)),
+        Soloist::Drums => drum_solo(&mut score, &form, &mut rng.fork(6)),
+    }
+    let teller = Teller {
+        lead: CH_LEAD,
+        second: CH_SECOND,
+        double: None,
+        echo: CH_CLEAN,
+        register: TUNE,
+        grace: hammer,
+        sung: (-4, -16),
+        riff: (8, -2, -14),
+        long: (64, 79, 0),
+        under: (52, 67, -12),
+        hold: Hold::Ringing,
+        breathes: true,
+        vel,
+    };
+    teller::tell(&mut score, &teller, &form.tune, &form.walk.runs(), &mut rng.fork(7));
+    score.finish();
+    (score, form)
+}
+
+/// The chord's tone at `degree` nearest `to` within `lo..=hi`.
+fn at_degree(key: &Key, chord: Chord, degree: i32, lo: u8, hi: u8, to: u8) -> u8 {
+    *chord.pitches_within(key, lo, hi).iter().filter(|p| key.degree_of(**p) == Some(degree.rem_euclid(7) as usize)).min_by_key(|p| ((**p as i32 - to as i32).abs(), **p)).unwrap()
+}
+
+/// The key's tone at `degree` nearest `to`, in any octave.
+fn nearest_degree(key: &Key, degree: i32, to: u8) -> u8 {
+    (0..10).map(|o| key.pitch(degree.rem_euclid(7), o)).min_by_key(|p| (*p as i32 - to as i32).abs()).unwrap()
+}
+
+/// The arpeggio: on the bar's first beat the chord's root in the low
+/// register, then up through its tones — at thin one a beat, at full one
+/// an eighth in the seed's picking pattern — each let ring to the chord's
+/// change, as a picked chord rings under the fingers. Where the seed
+/// drones, the pattern's top is one tone of the key whatever the chord,
+/// the moving voices clashing and resolving under it; a chord now and
+/// then takes its ninth for its tenth, the add9 a clean chord rings. Its
+/// phrase's variant bar turns the pattern over now and then, and its
+/// cadence either strikes the chord at the bar's middle and holds it,
+/// steps its top to a neighbour, or hammers into the next bar's root. It
+/// rests in a chorus, where the open guitars carry the chord, and under
+/// the solo, which plays in the room it leaves.
+fn arpeggio(score: &mut Score, form: &Form, rng: &mut Rng) {
+    let key = score.key;
+    let strong = score.meter.strong_eighths();
+    let eighths = score.meter.eighths();
+    let half = strong[strong.len() / 2];
+    let top = *form.design.picking.iter().max().unwrap();
+    for b in 0..form.bars() {
+        let mode = form.texture_at(b).clean;
+        if mode == Clean::Off || form.texture_at(b).section() != Section::Verse {
+            continue;
+        }
+        let chord = form.chord(b);
+        let root = at_degree(&key, chord, chord.root, 40, 52, 45);
+        let tones = chord.pitches_within(&key, root, root + 26);
+        let start = b * form.bar;
+        let end = start + form.bar + if form.last(b) { 0 } else { E / 8 };
+        let drone = form.design.drone.map(|d| nearest_degree(&key, d, tones[top.min(tones.len() - 1)]));
+        let ninth = rng.chance(0.3).then(|| key.pitch(key.absolute_degree(root).unwrap() + 8, 4));
+        let turned = variant(b) && rng.chance(0.25);
+        let close = if cadence(b) && mode == Clean::Full { Some(rng.below(3)) } else { None };
+        let onsets: Vec<u32> = match mode {
+            Clean::Thin => strong.clone(),
+            _ => (0..eighths).collect(),
+        };
+        for (k, i) in onsets.iter().enumerate() {
+            let at = start + i * E;
+            let weak = !strong.contains(i);
+            if close == Some(0) && *i >= half {
+                // The cadence's chord, struck at the bar's middle and held.
+                if *i == half {
+                    for t in [0, 2, 3, 4] {
+                        score.add(Note { start: at, len: end - at, pitch: tones[t.min(tones.len() - 1)], vel: vel(-6, rng), channel: CH_CLEAN });
+                    }
+                }
+                continue;
+            }
+            let pattern = form.design.picking;
+            let step = match mode {
+                Clean::Thin => [0, 2, 3, 4][k % 4],
+                _ if turned => pattern[(pattern.len() - k % pattern.len()) % pattern.len()],
+                _ => pattern[k % pattern.len()],
+            };
+            let mut pitch = tones[step.min(tones.len() - 1)];
+            if weak && step == top {
+                pitch = drone.unwrap_or(pitch);
+            }
+            if weak && step == 4 {
+                pitch = ninth.unwrap_or(pitch);
+            }
+            if close == Some(1) && weak && *i + 2 >= eighths {
+                pitch = key.pitch(key.absolute_degree(pitch).unwrap() + if *i + 1 == eighths { 1 } else { -1 }, 4);
+            }
+            let accent = if *i == 0 { -2 } else if !weak { -8 } else if Some(pitch) == drone { -18 } else { -14 };
+            score.add(Note { start: at, len: end - at, pitch, vel: vel(accent, rng), channel: CH_CLEAN });
+        }
+        if close == Some(2) && !form.last(b) {
+            let next = form.chord(b + 1);
+            let to = at_degree(&key, next, next.root, 40, 52, root);
+            let from = key.pitch(key.absolute_degree(to).unwrap() - 1, 4).max(40);
+            score.add(Note { start: start + form.bar - E / 4, len: E / 4, pitch: from, vel: vel(-12, rng), channel: CH_CLEAN });
+        }
+    }
+}
+
+/// The bass on the chord's root, locked to the kick: on its strokes and
+/// held to the next, or on every eighth, the octave over it on the
+/// variant bar's push into the backbeat now and then. Into a new chord it
+/// takes the last eighth on a tone of the key a step from the next root —
+/// the passing tone between where they are a third apart — on a third of
+/// the changes and on every cadence's; under the kit's solo it holds the
+/// root through every bar, the pedal the drums play over.
+fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
+    let key = score.key;
+    let strong = score.meter.strong_eighths();
+    let eighths = score.meter.eighths();
+    let groove = form.design.groove;
+    for b in 0..form.bars() {
+        let mode = form.texture_at(b).bass;
+        if mode == Bass::Off || form.bass_solo(b) {
+            continue;
+        }
+        let chord = form.chord(b);
+        let root = at_degree(&key, chord, chord.root, 28, 40, 36);
+        let start = b * form.bar;
+        if form.stop_time(b) {
+            score.add(Note { start, len: form.bar - E / 8, pitch: root, vel: vel(0, rng), channel: CH_BASS });
+            continue;
+        }
+        let next = (!form.last(b) && !form.stop_time(b + 1)).then(|| form.chord(b + 1)).filter(|n| n.root != chord.root);
+        let approach = next.filter(|_| cadence(b) || rng.chance(0.35)).map(|n| {
+            let to = at_degree(&key, n, n.root, 28, 40, root);
+            let (rd, td) = (key.absolute_degree(root).unwrap(), key.absolute_degree(to).unwrap());
+            let step = if (td - rd).abs() == 2 { (td + rd) / 2 } else if td > rd { td - 1 } else { td + 1 };
+            key.pitch(step, 4).clamp(28, 52)
+        });
+        let until = if approach.is_some() { eighths - 1 } else { eighths };
+        match mode {
+            Bass::Held => {
+                for (k, i) in groove.dum.iter().enumerate() {
+                    let to = groove.dum.get(k + 1).copied().unwrap_or(eighths).min(until);
+                    if *i < to {
+                        score.add(Note { start: start + i * E, len: (to - i) * E - E / 8, pitch: root, vel: vel(-2, rng), channel: CH_BASS });
+                    }
+                }
+            }
+            _ => {
+                let push = groove.tek.last().map(|t| t - 1).filter(|_| variant(b) && rng.chance(0.5) && root + 12 <= 52);
+                for i in 0..until {
+                    let pitch = if Some(i) == push { root + 12 } else { root };
+                    let accent = if strong.contains(&i) { 0 } else { -10 };
+                    score.add(Note { start: start + i * E, len: E * 3 / 4, pitch, vel: vel(accent, rng), channel: CH_BASS });
+                }
+            }
+        }
+        if let Some(p) = approach {
+            score.add(Note { start: start + (eighths - 1) * E, len: E * 3 / 4, pitch: p, vel: vel(-6, rng), channel: CH_BASS });
+        }
+    }
+}
+
+/// The distorted guitars, double-tracked. In a verse, the root and fifth
+/// palm-muted on the eighths and the next chord struck open on the
+/// bar's last eighth, rung over the line — short, short, short, long —
+/// and where the kit is at full, the gallop on each beat; in half the
+/// verses the right side leaves the eighths to the left and plays the
+/// accents alone, the bar's chord rung from its first beat and the push;
+/// in a chorus, power chords — root, fifth and octave — struck on the
+/// kick and let ring, the right side on the chord's inversion — fifth,
+/// octave and the fifth over it, under the lead — in the parts its
+/// verse played accents in; under the kit's solo, the band's stab on
+/// every bar, rung half the bar; under the bass's solo they rest, their
+/// register the bass's.
+fn guitars(score: &mut Score, form: &Form, rng: &mut Rng) {
+    let key = score.key;
+    let dum = form.design.groove.dum;
+    let eighths = score.meter.eighths();
+    let strong = score.meter.strong_eighths();
+    let power = |chord: Chord| {
+        let root = at_degree(&key, chord, chord.root, 40, 52, 45);
+        let fifth = at_degree(&key, chord, chord.root + 4, root + 1, root + 8, root + 7);
+        [root, fifth, root + 12]
+    };
+    let apart: Vec<bool> = form.walk.parts.iter().map(|_| rng.chance(0.5)).collect();
+    let mut pushed = false;
+    for b in 0..form.bars() {
+        let texture = form.texture_at(b);
+        let mode = texture.rhythm;
+        let was_pushed = std::mem::take(&mut pushed);
+        if mode == Rhythm::Off {
+            continue;
+        }
+        let chord = form.chord(b);
+        let chord_tones = power(chord);
+        let start = b * form.bar;
+        if form.stop_time(b) {
+            for channel in [CH_LEFT, CH_RIGHT] {
+                for p in chord_tones {
+                    score.add(Note { start, len: form.bar / 2, pitch: p, vel: vel(2, rng), channel });
+                }
+            }
+            continue;
+        }
+        if form.bass_solo(b) {
+            continue;
+        }
+        let part = form.walk.parts.iter().position(|p| p.a <= b && b < p.b).unwrap_or(0);
+        match mode {
+            Rhythm::Muted => {
+                let push = !form.last(b) && form.texture_at(b + 1).rhythm != Rhythm::Off && !form.stop_time(b + 1);
+                let gallop = texture.kit == Kit::Full;
+                for channel in [CH_LEFT, CH_RIGHT] {
+                    let accents = channel == CH_RIGHT && apart[part];
+                    for i in 0..eighths {
+                        let at = start + i * E;
+                        if i == 0 && was_pushed {
+                            continue;
+                        }
+                        if accents && i == 0 {
+                            for p in chord_tones {
+                                score.add(Note { start: at, len: dum.get(1).copied().unwrap_or(eighths) * E - E / 8, pitch: p, vel: vel(0, rng), channel });
+                            }
+                            continue;
+                        }
+                        if accents && !(push && i + 1 == eighths) {
+                            continue;
+                        }
+                        if push && i + 1 == eighths {
+                            for p in power(form.chord(b + 1)) {
+                                score.add(Note { start: at, len: 2 * E - E / 8, pitch: p, vel: vel(4, rng), channel });
+                            }
+                            continue;
+                        }
+                        let accent = if i == 0 { -4 } else { -14 };
+                        let strokes: &[(u32, u32)] = if gallop && strong.contains(&i) { &[(0, E), (E, E / 2), (3 * E / 2, E / 2)] } else { &[(0, E)] };
+                        if gallop && !strong.contains(&i) && strong.contains(&(i - 1)) {
+                            continue;
+                        }
+                        for (at_off, span) in strokes {
+                            for p in &chord_tones[..2] {
+                                score.add(Note { start: at + at_off, len: span * 2 / 5, pitch: *p, vel: vel(accent, rng), channel });
+                            }
+                        }
+                    }
+                }
+                pushed = push;
+            }
+            _ => {
+                let [_, fifth, top] = chord_tones;
+                let inverted = [fifth, top, fifth + 12];
+                for channel in [CH_LEFT, CH_RIGHT] {
+                    let voicing = if channel == CH_RIGHT && apart[part] { inverted } else { chord_tones };
+                    for (k, i) in dum.iter().enumerate() {
+                        let to = dum.get(k + 1).copied().unwrap_or(eighths);
+                        for p in voicing {
+                            score.add(Note { start: start + i * E, len: (to - i) * E - E / 8, pitch: p, vel: vel(if *i == 0 { 4 } else { -2 }, rng), channel });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The strings on root and fifth a bar at a time, carried across the
+/// bar where the next chord keeps them; at full, on three voices of the
+/// chord, each led to the nearest tone of the next, and the choir on
+/// root and fifth, and at full under the kit's solo and the bass's
+/// whatever their notch.
+fn pad(score: &mut Score, form: &Form, rng: &mut Rng) {
+    let key = score.key;
+    let mut voices: Option<Vec<u8>> = None;
+    for b in 0..form.bars() {
+        // Under the kit's solo and the bass's the strings and choir hold
+        // the whole chord, the floor the soloist plays over.
+        let mode = if form.stop_time(b) || form.bass_solo(b) { Pad::Full } else { form.texture_at(b).pad };
+        if mode == Pad::Off {
+            voices = None;
+            continue;
+        }
+        let chord = form.chord(b);
+        let len = form.bar + E / 8;
+        let root = at_degree(&key, chord, chord.root, 52, 64, 57);
+        let fifth = at_degree(&key, chord, chord.root + 4, root + 1, 71, root + 7);
+        if mode == Pad::Thin {
+            for p in [root, fifth] {
+                score.hold(Note { start: b * form.bar, len, pitch: p, vel: vel(-18, rng), channel: CH_PAD });
+            }
+            voices = None;
+            continue;
+        }
+        let mut candidates = chord.pitches_within(&key, 55, 76);
+        let next: Vec<u8> = match &voices {
+            Some(prev) => prev
+                .iter()
+                .map(|v| {
+                    let (i, p) = candidates.iter().enumerate().min_by_key(|(_, c)| (**c as i32 - *v as i32).abs()).map(|(i, c)| (i, *c)).unwrap();
+                    candidates.remove(i);
+                    p
+                })
+                .collect(),
+            None => candidates.iter().copied().take(3).collect(),
+        };
+        for p in &next {
+            score.hold(Note { start: b * form.bar, len, pitch: *p, vel: vel(-18, rng), channel: CH_PAD });
+        }
+        voices = Some(next);
+        for p in [root, fifth] {
+            score.hold(Note { start: b * form.bar, len, pitch: p, vel: vel(-24, rng), channel: CH_CHOIR });
+        }
+    }
+}
+
+/// The kit. A verse's time: the closed hat on every eighth, the beats
+/// over the eighths between, the kick on the groove's strokes, the side
+/// stick on its backbeat and two or three ghost strokes on the snare's
+/// sixteenths; a chorus's: the ride, the snare on the backbeat or, in
+/// half-time, on the bar's middle alone, the open hat into it, the crash
+/// on every part's first beat and every chorus phrase's. Every phrase's
+/// variant bar opens the hat into the next bar or moves the kick's second
+/// stroke an eighth late; its cadence fills its last beat or two, and a
+/// bar that turns the song into its next part fills its last half or the
+/// whole bar after its first beat, in the seed's fill. Under the guitar's
+/// solo the kick drives every eighth. Cymbals strike near the top of the
+/// velocity and the kick under the band's, since the bank keeps its
+/// cymbals far under its kick. The kit's own solo is `drum_solo`'s.
+fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
+    let groove = form.design.groove;
+    let strong = score.meter.strong_eighths();
+    let eighths = score.meter.eighths();
+    let half = strong[strong.len() / 2];
+    for b in 0..form.bars() {
+        let texture = form.texture_at(b);
+        if texture.kit == Kit::Off || form.stop_time(b) {
+            continue;
+        }
+        let start = b * form.bar;
+        let full = texture.kit == Kit::Full;
+        let driving = full && texture.solo == Solo::On && form.design.soloist == Soloist::Guitar;
+        let last_beat = eighths - *groove.groups.last().unwrap() as u32;
+        let fill_from = if !form.last(b) && form.turns_at(b + 1) {
+            Some(if rng.chance(0.6) { strong[1] } else { half })
+        } else if cadence(b) && rng.chance(0.8) {
+            Some(if rng.chance(0.5) { last_beat } else { strong[strong.len().saturating_sub(2)] })
+        } else {
+            None
+        };
+        let until = fill_from.unwrap_or(eighths);
+        let snare: Vec<u32> = if full && form.design.half_time { vec![half] } else { groove.tek.to_vec() };
+        let opened = variant(b) && rng.chance(0.5);
+        let late_kick = variant(b) && !opened;
+        let kicks: Vec<u32> = groove.dum.iter().enumerate().map(|(k, d)| if late_kick && k > 0 && d + 1 < eighths && !snare.contains(&(d + 1)) { d + 1 } else { *d }).collect();
+        for i in 0..until {
+            let on = strong.contains(&i);
+            let at = start + i * E;
+            let (cymbal, accent) = if opened && i + 1 == eighths {
+                (OPEN_HAT, 16)
+            } else if full {
+                (RIDE, if on { 30 } else { 18 })
+            } else {
+                (HAT, if on { 24 } else { 12 })
+            };
+            score.add(Note { start: at, len: E - 20, pitch: cymbal, vel: vel(accent, rng), channel: CH_KIT });
+            if kicks.contains(&i) || driving {
+                score.add(Note { start: at, len: E - 20, pitch: KICK, vel: vel(if kicks.contains(&i) { -6 } else { -16 }, rng), channel: CH_KIT });
+            }
+            if snare.contains(&i) {
+                let (pitch, accent) = if full { (SNARE, 8) } else { (SIDE_STICK, 0) };
+                score.add(Note { start: at, len: E - 20, pitch, vel: vel(accent, rng), channel: CH_KIT });
+            }
+            if full && snare.contains(&(i + 1)) && !on && !opened {
+                score.add(Note { start: at, len: E - 20, pitch: OPEN_HAT, vel: vel(10, rng), channel: CH_KIT });
+            }
+        }
+        if !full {
+            // Ghost strokes on the snare's sixteenths between the eighths,
+            // clear of the backbeat.
+            let ghosts = rng.range(2, 3) as usize;
+            let mut slots: Vec<u32> = (0..until).filter(|i| !snare.contains(i) && !snare.contains(&(i + 1))).collect();
+            for _ in 0..ghosts.min(slots.len()) {
+                let i = slots.remove(rng.below(slots.len()));
+                score.add(Note { start: start + i * E + E / 2, len: E / 2 - 10, pitch: SNARE, vel: vel(-46, rng), channel: CH_KIT });
+            }
+        }
+        let opens_part = form.part_starts(b) || (texture.section() == Section::Chorus && b % phrase::BARS == 0);
+        if full && opens_part {
+            score.add(Note { start, len: 2 * E, pitch: CRASH, vel: vel(34, rng), channel: CH_KIT });
+            score.add(Note { start, len: E - 20, pitch: KICK, vel: vel(-4, rng), channel: CH_KIT });
+        }
+        if let Some(from) = fill_from {
+            fill(score, form.design.fill, start + from * E, (eighths - from) * 2, -2, rng);
+        }
+    }
+}
+
+/// The seed's fill in `n` sixteenths from `start`, growing in strength
+/// from `accent` to the top of the kit's into the crash the next part
+/// opens on: a roll is the loudest the band plays.
+fn fill(score: &mut Score, shape: Fill, start: u32, n: u32, accent: i32, rng: &mut Rng) {
+    let down = |k: u32, of: u32| TOMS[(k as usize * TOMS.len() / of.max(1) as usize).min(TOMS.len() - 1)];
+    for k in 0..n {
+        let pitch = match shape {
+            Fill::Descent => down(k, n),
+            Fill::SnareThenToms if k < n / 2 => SNARE,
+            Fill::SnareThenToms => down(k - n / 2, n - n / 2),
+            Fill::Pairs => down(k / 2, n.div_ceil(2)),
+            Fill::HandHandKick if k % 3 == 2 => KICK,
+            Fill::HandHandKick => down(k / 3, n.div_ceil(3)),
+        };
+        score.add(Note { start: start + k * E / 2, len: E / 2 - 10, pitch, vel: vel(accent + (36 * k / n.max(1)) as i32, rng), channel: CH_KIT });
+    }
+}
+
+/// The kit's solo over the band's stop-time, built on the seed's motif,
+/// loud from its first bar and louder to its last: every bar opens on
+/// the crash and the kick under the band's stab. Through its first
+/// stretch the motif sounds on every beat, moving down the kit, the
+/// snare filling between its strokes; through its second displaced an
+/// eighth, the kicks doubled in sixteenths under it; then in triplet
+/// sixteenths rolling round the toms; and its last bar is the seed's
+/// fill, the one that opens the choruses, into the band.
+fn drum_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
+    let strong = score.meter.strong_eighths();
+    let eighths = score.meter.eighths();
+    let groups = form.design.groove.groups.to_vec();
+    let motif = form.design.motif;
+    for (a, z) in form.solos() {
+        let n = z - a;
+        for b in a..z {
+            let start = b * form.bar;
+            let x = (b - a) as f32 / n as f32;
+            let base = 2 + (26.0 * x) as i32;
+            // The band's stab: every player strikes on one instant, so each
+            // strikes under its full stroke, or the instant is the loop's peak.
+            score.add(Note { start, len: 2 * E, pitch: CRASH, vel: vel(28, rng), channel: CH_KIT });
+            score.add(Note { start, len: E - 20, pitch: KICK, vel: vel(-6, rng), channel: CH_KIT });
+            if b + 1 == z {
+                fill(score, form.design.fill, start + strong[1] * E, (eighths - strong[1]) * 2, base.max(-6), rng);
+                continue;
+            }
+            let mut at = 0u32;
+            for (g, len) in groups.iter().enumerate() {
+                let beat = start + at * E;
+                let slots = *len as u32 * 2;
+                let skip_hit = g == 0;
+                if x < 0.4 {
+                    let shift = g % 2;
+                    for s in 0..slots {
+                        if skip_hit && s < 2 {
+                            continue;
+                        }
+                        match motif.iter().find(|(m, _)| *m == s) {
+                            Some((_, tom)) => score.add(Note { start: beat + s * E / 2, len: E / 2 - 10, pitch: TOMS[(tom + shift).min(TOMS.len() - 1)], vel: vel(base + 4, rng), channel: CH_KIT }),
+                            None => score.add(Note { start: beat + s * E / 2, len: E / 2 - 10, pitch: SNARE, vel: vel(base - 14, rng), channel: CH_KIT }),
+                        }
+                    }
+                } else if x < 0.7 {
+                    for s in 0..slots {
+                        score.add(Note { start: beat + s * E / 2, len: E / 2 - 10, pitch: KICK, vel: vel(base - 10, rng), channel: CH_KIT });
+                    }
+                    for (s, tom) in motif {
+                        let s = (s + 2) % slots;
+                        score.add(Note { start: beat + s * E / 2, len: E / 2 - 10, pitch: TOMS[*tom], vel: vel(base + 6, rng), channel: CH_KIT });
+                    }
+                    if !skip_hit {
+                        score.add(Note { start: beat, len: E - 20, pitch: SNARE, vel: vel(base + 8, rng), channel: CH_KIT });
+                    }
+                } else {
+                    let triplets = *len as u32 * 3;
+                    for t in 0..triplets {
+                        if skip_hit && t < 3 {
+                            continue;
+                        }
+                        let pitch = if t % 3 == 2 { KICK } else { TOMS[(t as usize / 3 + g) % TOMS.len()] };
+                        score.add(Note { start: beat + t * E / 3, len: E / 3 - 8, pitch, vel: vel(base + (10 * t / triplets) as i32, rng), channel: CH_KIT });
+                    }
+                }
+                at += *len as u32;
+            }
+        }
+    }
+}
+
+/// A degree's place on a line: `from` stepping to `to` over `n` steps,
+/// a step or a third at a time, turning about the way where there are
+/// more steps than the distance needs, so a run never stands still and
+/// never leaps.
+fn run_between(from: i32, to: i32, n: u32) -> Vec<i32> {
+    let delta = to - from;
+    (1..n)
+        .map(|i| {
+            let straight = from + (delta as f32 * i as f32 / n as f32).round() as i32;
+            let turn = if delta.unsigned_abs() * 2 < n { [0, 1, 0, -1][i as usize % 4] } else { 0 };
+            straight + turn
+        })
+        .collect()
+}
+
+/// A guitar's solo or the bass's, each in its own register and struck
+/// `lift` over the band's velocity, a fifth of its bars to each stage of
+/// its arc. Its
+/// statement sings the theme in the solo's register, a tone or two a
+/// beat, entering off the beat now and then and resting through the last
+/// beat of every other bar. Its development calls and answers: the
+/// theme's every foot a third higher, the call resting through its last
+/// beat, the answer holding its last tone to the bar line. Its build
+/// climbs in sequences — four sixteenths a beat, each beat a step higher,
+/// or two threes in a beat of three eighths — every beat starting on the
+/// chord. Nothing before the climax touches its peak: the highest root or
+/// fifth of the climax's chord in the register, and two degrees under it
+/// is the ceiling. The climax runs up to the peak and holds it to the bar
+/// line — the player bends into it — or runs a whole bar to land on it at
+/// the last beat; the bars after it fall in sequences, a beat a step
+/// lower, the release before the landing. The landing sings the theme
+/// again where it began, its last tone held to the solo's end, and a
+/// guitar a third over it, a third under where the third over is off the
+/// chord: the harmony held back until now. Every strong beat's tone is bent onto the chord, and
+/// the line repaired as the lead's is, so no leap leaps on.
+fn melodic_solo(score: &mut Score, form: &Form, register: (u8, u8), lift: i32, rng: &mut Rng) {
+    let key = score.key;
+    let (lo, hi) = register;
+    let strong = score.meter.strong_eighths();
+    let eighths = score.meter.eighths();
+    let degree = |p: u8| key.absolute_degree(p).unwrap();
+    let hi_d = degree((lo..=hi).rev().find(|p| key.contains(*p)).unwrap());
+    let lo_d = degree((lo..=hi).find(|p| key.contains(*p)).unwrap());
+    for (a, z) in form.solos() {
+        let n = z - a;
+        let at = |f: f32| a + ((n as f32 * f).round() as u32).min(n - 1);
+        let (develop, build, climax, landing) = (at(0.2), at(0.4), at(0.65).max(at(0.4) + 1).min(z - 2), at(0.8).max(at(0.65) + 1).min(z - 1));
+        let climax_chord = form.chord(climax);
+        let peak = (lo_d..=hi_d).rev().find(|d| {
+            let p = key.pitch(*d, 4);
+            p <= hi && key.degree_of(p).is_some_and(|c| [climax_chord.root, climax_chord.root + 4].iter().any(|r| r.rem_euclid(7) as usize == c))
+        });
+        let peak = peak.unwrap_or(hi_d);
+        let ceiling = peak - 2;
+        let mut line: Vec<Placed> = Vec::new();
+        let capped = |p: u8| if degree(p) > ceiling { key.pitch(degree(p) - 7, 4) } else { p };
+        for b in a..z {
+            let bar_start = b * form.bar;
+            let chord = form.chord(b);
+            let last_group = strong[strong.len() - 1];
+            if b < develop || b >= landing {
+                // The theme sung, as the lead sings it, in the solo's own
+                // register.
+                let mut notes = form.tune.bar(score, b, lo, hi, true);
+                if b < develop {
+                    if (b - a) % 2 == 1 {
+                        notes.retain(|n| n.0 < bar_start + last_group * E);
+                    }
+                    if rng.chance(0.4) {
+                        if let Some(first) = notes.first_mut().filter(|n| n.1 > E) {
+                            first.0 += E;
+                            first.1 -= E;
+                        }
+                    }
+                }
+                line.extend(notes.into_iter().map(|(s, l, p)| (s, l, capped(p))));
+            } else if b < build {
+                // Call and answer: the theme's feet a third up.
+                let mut notes: Vec<Placed> = form.tune.bar(score, b, lo, hi, false).into_iter().map(|(s, l, p)| {
+                    let up = key.pitch(degree(p) + 2, 4);
+                    let up = if score.strong(s) && !chord.holds(&key, up) { tune::nearest_chord_tone(&key, chord, up, lo, hi) } else { up };
+                    (s, l, capped(up))
+                }).collect();
+                if (b - develop) % 2 == 0 {
+                    notes.retain(|n| n.0 < bar_start + last_group * E);
+                } else if let Some(last) = notes.last_mut() {
+                    last.1 = bar_start + form.bar - last.0;
+                }
+                line.extend(notes);
+            } else if b < climax {
+                // Sequences climbing, a beat a step higher.
+                let mut from = line.last().map_or(degree(tune::home_tonic(&key, lo, hi)), |n| degree(n.2));
+                for (g, s) in strong.iter().enumerate() {
+                    let span = strong.get(g + 1).copied().unwrap_or(eighths) - s;
+                    let want = (from + 1).min(ceiling - 3);
+                    let first = (want - 2..=want + 2).filter(|d| chord.holds(&key, key.pitch(*d, 4)) && *d <= ceiling - 3).min_by_key(|d| ((d - want).abs(), -d)).unwrap_or(want);
+                    let figure: Vec<i32> = if span == 3 { vec![0, 1, 2, 1, 2, 3] } else { vec![0, 1, 2, 3] };
+                    for (k, step) in figure.iter().enumerate() {
+                        line.push((bar_start + s * E + k as u32 * E / 2, E / 2, key.pitch(first + step, 4)));
+                    }
+                    from = first;
+                }
+            } else if b == climax {
+                // The climax: up to the peak and held, or a run that lands
+                // on it at the bar's last beat, never past it.
+                let from = line.last().map_or(peak - 4, |n| degree(n.2));
+                let (run_end, held_from) = if form.design.held_climax { (strong[1], strong[1]) } else { (last_group, last_group) };
+                let slots = run_end * 2;
+                let path: Vec<i32> = std::iter::once(from).chain(run_between(from, peak, slots)).collect();
+                for (k, d) in path.iter().enumerate().skip(1) {
+                    line.push((bar_start + k as u32 * E / 2, E / 2, key.pitch((*d).min(peak), 4)));
+                }
+                line.push((bar_start + held_from * E, form.bar - held_from * E - E / 4, key.pitch(peak, 4)));
+            } else {
+                // The release: sequences falling from the peak, a beat a
+                // step lower, toward the landing.
+                let mut from = line.last().map_or(peak, |n| degree(n.2));
+                for (g, s) in strong.iter().enumerate() {
+                    let span = strong.get(g + 1).copied().unwrap_or(eighths) - s;
+                    let want = (from - 1).max(lo_d + 3);
+                    let first = (want - 2..=want + 2).filter(|d| chord.holds(&key, key.pitch(*d, 4)) && *d <= ceiling && *d >= lo_d + 3).min_by_key(|d| ((d - want).abs(), *d)).unwrap_or(want);
+                    let figure: Vec<i32> = if span == 3 { vec![0, -1, -2, -1, -2, -3] } else { vec![0, -1, -2, -3] };
+                    for (k, step) in figure.iter().enumerate() {
+                        line.push((bar_start + s * E + k as u32 * E / 2, E / 2, key.pitch(first + step, 4)));
+                    }
+                    from = first;
+                }
+            }
+        }
+        if let Some(last) = line.last_mut() {
+            last.1 = (z * form.bar - E / 2).saturating_sub(last.0).max(last.1);
+        }
+        on_the_chord(score, form, &mut line, lo, hi);
+        form.tune.repair(score, &mut line, lo, hi);
+        for (start, len, pitch) in &line {
+            let accent = lift + if *len >= 2 * E { 10 } else if score.strong(*start) { 4 } else { -6 };
+            let len = if *len <= E / 2 { E / 2 - 10 } else { len - E / 8 };
+            score.add(Note { start: *start, len, pitch: *pitch, vel: vel(accent, rng), channel: CH_SOLO });
+        }
+        // The harmony, over the landing alone.
+        let mut over: Vec<Placed> = line
+            .iter()
+            .filter(|n| n.0 >= landing * form.bar)
+            .map(|(s, l, p)| {
+                let chord = form.chord(s / form.bar);
+                let third = key.pitch(degree(*p) + 2, 4);
+                let pitch = if !score.strong(*s) || chord.holds(&key, third) { third } else { key.pitch(degree(*p) - 2, 4) };
+                (*s, *l, pitch)
+            })
+            .collect();
+        on_the_chord(score, form, &mut over, lo, hi + 4);
+        form.tune.repair(score, &mut over, lo, hi + 4);
+        for (start, len, pitch) in over {
+            let len = if len <= E / 2 { E / 2 - 10 } else { len - E / 8 };
+            score.add(Note { start, len, pitch, vel: vel(-6, rng), channel: CH_HARMONY });
+        }
+    }
+}
+
+/// Every tone of `line` on a strong beat bent onto its bar's chord,
+/// toward the tone before it.
+fn on_the_chord(score: &Score, form: &Form, line: &mut [Placed], lo: u8, hi: u8) {
+    let mut prev: Option<u8> = None;
+    for n in line.iter_mut() {
+        let chord = form.chord(n.0 / form.bar);
+        if score.strong(n.0) && !chord.holds(&score.key, n.2) {
+            n.2 = tune::bent_to_chord(&score.key, chord, n.2, prev, lo, hi);
+        }
+        prev = Some(n.2);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every story is a ladder, and every one reaches the solo.
+    #[test]
+    fn every_story_is_a_ladder_to_the_solo() {
+        for story in &STORIES {
+            assert_eq!(story.fault(), None);
+            assert!(matches!(story.ladder.last(), Some(Layer::Solo)), "{}: the solo is not its crest", story.name);
+            assert_eq!(*story.leads.last().unwrap(), Off, "{}: the lead sings over the solo", story.name);
+            assert_eq!(story.base.section(), Section::Verse, "{}: does not open on a verse", story.name);
+            assert!((0..story.ladder.len()).any(|r| story.bed(r).section() == Section::Chorus), "{}: has no chorus", story.name);
+        }
+    }
+
+    /// The piece is a loop of whole question-and-answer pairs, its parts
+    /// whole half-phrases, its harmony opening and closing on the tonic,
+    /// its tune and its solo in their registers; nothing struck ends past
+    /// the end, only what is held, which the loop continues.
+    #[test]
+    fn a_ballad_is_whole_phrases() {
+        for seed in 0..24 {
+            let score = build(&Params { seed });
+            assert!(score.loops);
+            let bars = score.end() / score.bar();
+            assert_eq!(bars % (2 * phrase::BARS), 0, "seed {seed}: {bars} bars");
+            for s in &score.sections {
+                assert_eq!((s.end - s.start) % (phrase::BARS / 2 * score.bar()), 0, "seed {seed}: a part of broken half-phrases");
+            }
+            assert_eq!(score.harmony[0].root, 0);
+            assert_eq!(score.harmony.last().unwrap().root, 0);
+            for n in score.notes.iter().filter(|n| n.channel == CH_LEAD && n.len >= E / 2) {
+                assert!((TUNE.0..=TUNE.1).contains(&n.pitch), "seed {seed}: the tune at {} leaves its register", n.pitch);
+            }
+            let end = score.end();
+            for n in &score.notes {
+                let role = score.instrument(n.channel).role;
+                assert!(n.end() <= end || matches!(role, Role::Drone | Role::Sustain), "seed {seed}: {} past the end", score.instrument(n.channel).name);
+            }
+        }
+    }
+
+    /// No part plays one bar the whole song through: the kit's bars and
+    /// the arpeggio's differ within a phrase somewhere in every seed.
+    #[test]
+    fn no_part_repeats_one_bar() {
+        for seed in 0..12 {
+            let (score, form) = compose(&Params { seed });
+            for ch in [CH_KIT, CH_CLEAN] {
+                let bar_of = |b: u32| -> Vec<(u32, u8)> { score.notes.iter().filter(|n| n.channel == ch && n.start / form.bar == b).map(|n| (n.start % form.bar, n.pitch)).collect() };
+                let varied = (0..form.bars() - 1).any(|b| {
+                    let (x, y) = (bar_of(b), bar_of(b + 1));
+                    !x.is_empty() && !y.is_empty() && form.chord(b) == form.chord(b + 1) && x != y
+                }) || (0..form.bars()).any(|b| cadence(b) && !bar_of(b).is_empty());
+                assert!(varied, "seed {seed}: channel {ch} never varies");
+            }
+        }
+    }
+
+    /// A run steps or skips a third, never leaps, and arrives.
+    #[test]
+    fn a_run_never_leaps() {
+        for (from, to, n) in [(0, 7, 4), (3, 3, 6), (5, 0, 4), (0, 1, 6), (2, -3, 8)] {
+            let line: Vec<i32> = std::iter::once(from).chain(run_between(from, to, n)).chain(std::iter::once(to)).collect();
+            for w in line.windows(2) {
+                assert!((w[1] - w[0]).abs() <= 2, "{from}→{to} over {n}: {line:?}");
+            }
+        }
+    }
+}

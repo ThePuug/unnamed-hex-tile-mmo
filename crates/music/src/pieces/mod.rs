@@ -4,6 +4,7 @@
 
 mod city_ambient;
 mod forest_combat;
+mod metal_ballad;
 mod overworld_ambient;
 mod teaser;
 
@@ -191,32 +192,147 @@ pub const PIECES: &[Piece] = &[
     range: 19.0,
     build: teaser::build,
     },
+    Piece {
+    name: "metal-ballad",
+    brief: "A loop of a metal power ballad in the minor, slow — a four at \
+            sixty to seventy-five or a twelve-eight — that opens on a clean \
+            guitar's picked arpeggio, or a piano's, its top ringing on one \
+            tone of the key as the chords move under it, and builds on it a \
+            layer at a time: the bass locked to the kick, the kit's side stick \
+            and hats and then its ride and snare, the distorted guitars \
+            double-tracked one each side, palm-muted in a verse with the next \
+            chord pushed open on the bar's last eighth — in half the verses \
+            the right side playing the accents alone — ringing open in a \
+            chorus, where the arpeggio rests and the right side takes the \
+            chord's inversion, the slow strings and a choir. What plays makes \
+            the part of the song: a verse holds the tonic and swings slowly to \
+            the sixth or the seventh; a chorus moves a chord a bar, opens on \
+            the sixth as often as the tonic and comes home by the sixth and \
+            seventh, the tune a third higher; the solo's climax has a \
+            progression heard nowhere else. One theme runs the whole loop \
+            through, sung by one lead where a voice would — an overdriven or a \
+            distortion guitar, or a violin, each file its own — in four-bar \
+            phrases that ask and answer, stated over the arpeggio it opens on, \
+            played as a riff over the muted guitars, held in long tones in the \
+            part before a chorus, the breath a pre-chorus takes. No part plays \
+            one bar over and over: each phrase is a bar, its variant — the hat \
+            opened, the kick moved, the arpeggio turned over, the bass's \
+            octave — and a cadence where the kit fills, the bass walks into \
+            the next chord and the arpeggio holds or hammers in, and a bigger \
+            fill, the seed's own, rolls up to the top of the kit into every \
+            new part of the song. Its crest is a solo of sixteen bars, the \
+            seed's, the arpeggio resting to make room for it: a guitar, or the \
+            bass stepping forward over the kit and the strings and choir with \
+            the guitars resting, that sings the theme, answers itself a third \
+            higher with rests between, climbs in sixteenth-note sequences to a \
+            peak it has not touched before, held with a bend or reached by a \
+            run, and lands on the theme with a guitar a third over it, the \
+            harmony held back until then; or the kit, loud from its first bar, \
+            over the band's stop-time stab on every bar, the bass's pedal and \
+            the strings and choir holding the chord, its motif on every beat, \
+            then displaced over doubled kicks, then rolling in triplets, until \
+            the fill that opens the choruses brings the band back. One of four \
+            stories — a power ballad with a chorus before the solo and a verse \
+            between, a slow burn from the arpeggio climbing once, an anthem \
+            with the band in from the start, a requiem opened on the strings — \
+            each the band joining and leaving one layer a part and coming back \
+            to where it opened, so the end runs into the head. The chorus \
+            heavier than the verse, the band growing from the intro by nearly \
+            all of what it adds, not afraid of its loud parts; no sung words; \
+            the client fades it.",
+    pool: "ballad",
+    variants: 3,
+    lufs: -20.0,
+    // A ballad's chorus is heavier than its arpeggio, and its loudness
+    // says so: the pedal gives back only part of what the band adds.
+    range: 8.0,
+    build: metal_ballad::build,
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static Piece> {
     PIECES.iter().find(|p| p.name == name)
 }
 
+/// How far past its first candidate a pool looks for a seed that brings
+/// more of the facets the piece spreads its files across.
+const SEARCH: u64 = 64;
+
 impl Piece {
-    /// The seeds of the pool: from 0 up, `variants` of them, skipping
-    /// any whose story a seed already taken tells — the story's name is
-    /// the first section's — or whose lead a seed already taken leads
-    /// with, so each file has its own storyteller. A one-shot tells one
+    /// The seeds of the pool, `variants` of them, each one whose story no
+    /// seed already taken tells — the story's name is the first
+    /// section's — and whose lead no seed already taken leads with, so
+    /// each file has its own storyteller; of those, the first from 0
+    /// that brings the most of the score's facets the pool lacks, so a
+    /// piece's files spread across what its seeds draw. A piece naming
+    /// no facets takes the first that qualifies. A one-shot tells one
     /// story, its cue, so its files differ by their leads alone.
     pub fn pool(&self) -> Vec<u64> {
-        let mut seeds = Vec::new();
+        let mut seeds: Vec<u64> = Vec::new();
         let mut taken: Vec<(&'static str, Option<u8>)> = Vec::new();
-        let mut seed = 0;
+        let mut spread: Vec<&'static str> = Vec::new();
         while seeds.len() < self.variants as usize {
-            let score = (self.build)(&Params { seed });
-            let story = score.sections[0].name;
-            let lead = score.lead.map(|ch| score.instrument(ch).program);
-            if !taken.iter().any(|(s, l)| (score.loops && *s == story) || (lead.is_some() && *l == lead)) {
-                taken.push((story, lead));
-                seeds.push(seed);
+            let mut best: Option<(u64, usize, (&'static str, Option<u8>), Vec<&'static str>)> = None;
+            let mut first: Option<u64> = None;
+            let mut seed = 0;
+            while first.is_none_or(|f| seed <= f + SEARCH) {
+                if !seeds.contains(&seed) {
+                    let score = (self.build)(&Params { seed });
+                    let story = score.sections[0].name;
+                    let lead = score.lead.map(|ch| score.instrument(ch).program);
+                    if !taken.iter().any(|(s, l)| (score.loops && *s == story) || (lead.is_some() && *l == lead)) {
+                        first.get_or_insert(seed);
+                        let new = score.facets.iter().filter(|f| !spread.contains(f)).count();
+                        if best.as_ref().is_none_or(|b| new > b.1) {
+                            best = Some((seed, new, (story, lead), score.facets.clone()));
+                        }
+                        if new == score.facets.len() {
+                            break;
+                        }
+                    }
+                }
+                seed += 1;
             }
-            seed += 1;
+            let (seed, _, kind, facets) = best.expect("a seed the pool can take");
+            seeds.push(seed);
+            taken.push(kind);
+            spread.extend(facets);
         }
         seeds
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A piece naming no facets takes the first seeds that qualify, one
+    /// story and one lead a file, as the pool always has; one that names
+    /// them spreads its files across every value it can.
+    #[test]
+    fn a_pool_spreads_only_what_a_piece_names() {
+        for piece in PIECES {
+            let pool = piece.pool();
+            let facets: Vec<Vec<&str>> = pool.iter().map(|s| (piece.build)(&Params { seed: *s }).facets).collect();
+            if facets.iter().all(|f| f.is_empty()) {
+                let mut first = Vec::new();
+                let mut taken: Vec<(&str, Option<u8>)> = Vec::new();
+                let mut seed = 0;
+                while first.len() < pool.len() {
+                    let score = (piece.build)(&Params { seed });
+                    let story = score.sections[0].name;
+                    let lead = score.lead.map(|ch| score.instrument(ch).program);
+                    if !taken.iter().any(|(s, l)| (score.loops && *s == story) || (lead.is_some() && *l == lead)) {
+                        taken.push((story, lead));
+                        first.push(seed);
+                    }
+                    seed += 1;
+                }
+                assert_eq!(pool, first, "{}: the pool moved", piece.name);
+            } else {
+                let spread: std::collections::HashSet<&str> = facets.iter().flatten().copied().collect();
+                assert!(spread.len() > facets[0].len(), "{}: its files share every facet", piece.name);
+            }
+        }
     }
 }

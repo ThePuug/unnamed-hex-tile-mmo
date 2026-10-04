@@ -70,6 +70,47 @@ pub const FIGHT: [Schema; 6] = [
     Schema { name: "plagal close", modes: &[Aeolian, Hijaz], roots: [0, 3, 3, 0], closed: true },
 ];
 
+/// The ballad's progressions, in the minor with no drone, by the part
+/// of the song they serve. A verse opens on the tonic and stays on it
+/// longest, swinging slowly to one or two chords and back — i to VI, i
+/// down through VII to VI, i through III and VII to the minor v. A
+/// chorus moves a chord a bar and opens off the tonic as often as on it,
+/// on the sixth, and comes home by the sixth and seventh, the cadence
+/// hard rock and metal end on. The climax takes a progression of its
+/// own, heard nowhere before it: the tonic shuttling with the seventh
+/// and sixth. Every chord a major or minor triad: the minor's second is
+/// diminished and never stands.
+pub struct Song {
+    pub verse: &'static [Schema],
+    pub chorus: &'static [Schema],
+    pub climax: &'static [Schema],
+}
+
+pub const BALLAD: Song = Song {
+    verse: &[
+        Schema { name: "tonic and sixth", modes: &[Aeolian], roots: [0, 0, 5, 5], closed: false },
+        Schema { name: "subtonic descent", modes: &[Aeolian], roots: [0, 0, 6, 5], closed: false },
+        Schema { name: "relative turn", modes: &[Aeolian], roots: [0, 2, 6, 4], closed: false },
+        Schema { name: "aeolian cadence", modes: &[Aeolian], roots: [0, 5, 6, 0], closed: true },
+        Schema { name: "tonic held home", modes: &[Aeolian], roots: [0, 0, 6, 0], closed: true },
+    ],
+    chorus: &[
+        Schema { name: "lift", modes: &[Aeolian], roots: [5, 6, 0, 6], closed: false },
+        Schema { name: "climb", modes: &[Aeolian], roots: [0, 5, 2, 6], closed: false },
+        Schema { name: "lift home", modes: &[Aeolian], roots: [5, 6, 0, 0], closed: true },
+        Schema { name: "subdominant home", modes: &[Aeolian], roots: [3, 5, 6, 0], closed: true },
+    ],
+    climax: &[
+        Schema { name: "outro shuttle", modes: &[Aeolian], roots: [0, 6, 5, 6], closed: false },
+        Schema { name: "outro close", modes: &[Aeolian], roots: [0, 5, 6, 0], closed: true },
+    ],
+};
+
+/// A part of the song's schemata: the open ones and the closed.
+pub fn split(schemata: &'static [Schema]) -> (Vec<&'static Schema>, Vec<&'static Schema>) {
+    (schemata.iter().filter(|s| !s.closed).collect(), schemata.iter().filter(|s| s.closed).collect())
+}
+
 /// The fight's schemata a mode may use: the open ones and the closed.
 pub fn fight_schemata(mode: Mode) -> (Vec<&'static Schema>, Vec<&'static Schema>) {
     let fits: Vec<&Schema> = FIGHT.iter().filter(|s| s.modes.contains(&mode)).collect();
@@ -160,6 +201,27 @@ mod tests {
             let (open, closed) = fight_schemata(mode);
             assert!(!open.is_empty() && !closed.is_empty(), "{mode:?}");
         }
+    }
+
+    /// Every ballad schema closes as it says, every chord a major or
+    /// minor triad; every verse opens on the tonic, some chorus opens off
+    /// it, and every part of the song has a question and an answer.
+    #[test]
+    fn every_part_of_the_ballad_asks_and_answers() {
+        let key = Key::new("E", Aeolian);
+        for part in [BALLAD.verse, BALLAD.chorus, BALLAD.climax] {
+            for s in part {
+                assert_eq!(s.roots[3] == 0, s.closed, "{}", s.name);
+                for r in s.roots {
+                    let tones: Vec<u8> = Chord::triad(r).degrees().iter().map(|d| key.pitch(*d, 4)).collect();
+                    assert!(matches!((tones[1] - tones[0], tones[2] - tones[1]), (3, 4) | (4, 3)), "{}: {r} is no major or minor triad", s.name);
+                }
+            }
+            let (open, closed) = split(part);
+            assert!(!open.is_empty() && !closed.is_empty());
+        }
+        assert!(BALLAD.verse.iter().all(|s| s.roots[0] == 0));
+        assert!(BALLAD.chorus.iter().any(|s| s.roots[0] != 0));
     }
 
     /// Hijaz holds only its I and iv over the drone.

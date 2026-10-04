@@ -123,8 +123,23 @@ const SHORTEST_S: f64 = 0.03;
 /// with vibrato: bowed strings, voices, brass, reeds, pipes, harmonica,
 /// fiddle.
 fn sings(program: u8) -> bool {
-    matches!(program, 22 | 40..=44 | 48..=49 | 52..=54 | 56..=79 | 110)
+    matches!(program, 22 | 29 | 30 | 40..=44 | 48..=49 | 52..=54 | 56..=79 | 110)
 }
+
+/// Whether a General MIDI program's player bends up into a long tone,
+/// as a lead guitarist does: the overdriven and the distorted guitar.
+fn bends_in(program: u8) -> bool {
+    matches!(program, 29 | 30)
+}
+
+/// A bend into a tone: the shortest tone a player bends into, how often
+/// it does, and how long the rise takes. It starts a whole step under
+/// where that is the mode's whole tone, else a semitone, so the bend
+/// rises through the mode.
+const BEND_IN_S: f64 = 0.35;
+const BEND_IN_CHANCE: f32 = 0.4;
+const BEND_IN_RISE_S: f64 = 0.1;
+const BEND_IN_STEPS: usize = 6;
 
 /// A draw near zero with unit spread, bounded at ±2.5: the sum of four
 /// uniforms.
@@ -215,7 +230,16 @@ pub fn perform(score: &Score, period: u32) -> Vec<Played> {
             notes.push((on.max(0.0), off.max(0.0), n.pitch, vel, swells(written_end - written)));
             if inst.role == Role::Melody {
                 let cents = tuning + INTONATION * slip(&mut rng);
-                out.push(Played { at: on.max(0.0), msg: Msg::Bend { channel: ch, value: bend(cents) } });
+                if bends_in(inst.program) && written_end - written >= BEND_IN_S && rng.chance(BEND_IN_CHANCE) {
+                    let under = if score.key.contains(n.pitch.saturating_sub(2)) { 200.0 } else { 100.0 };
+                    for k in 0..=BEND_IN_STEPS {
+                        let x = k as f32 / BEND_IN_STEPS as f32;
+                        let rise = x * x * (3.0 - 2.0 * x);
+                        out.push(Played { at: on.max(0.0) + BEND_IN_RISE_S * x as f64, msg: Msg::Bend { channel: ch, value: bend(cents - under * (1.0 - rise)) } });
+                    }
+                } else {
+                    out.push(Played { at: on.max(0.0), msg: Msg::Bend { channel: ch, value: bend(cents) } });
+                }
             }
         }
         // A pitch's release never lands after its next strike, or the
