@@ -216,7 +216,7 @@ pub enum AbilityType {
     /// The Skirmisher's leap: clear of a target in its reach, or onto one
     /// out of it
     Leap,
-    /// The Kiter's stride: for a while its strikes past the forward faces
+    /// The Flanker's stride: for a while its strikes past the forward faces
     /// break no stride, so Grace strikes on the run
     PerfectStride,
 }

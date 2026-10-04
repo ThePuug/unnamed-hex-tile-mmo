@@ -50,7 +50,7 @@ weight = 0.25
 [style.floor]
 berserker = 56.25
 juggernaut = 25.0
-kiter = 50.0
+flanker = 50.0
 defender = 1.5
 skirmisher = 37.5
 ambusher = 75.0
@@ -258,7 +258,7 @@ berserker = [
 ]
 juggernaut = [
 ]
-kiter = [
+flanker = [
     { name = "foe_across.floor", min = 0.0, max = 1.0, start = 0.3 },
     { name = "behind.floor", min = 0.0, max = 1.0, start = 0.2 },
     { name = "behind.to", min = 0.2, max = 1.0, start = 0.5 },

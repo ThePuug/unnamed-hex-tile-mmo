@@ -197,7 +197,7 @@ pub fn actor_name(typ: EntityType) -> &'static str {
             ActorIdentity::Player => "player",
             ActorIdentity::Npc(archetype) => match archetype {
                 EnemyArchetype::Berserker => "dog",
-                EnemyArchetype::Kiter => "sprite",
+                EnemyArchetype::Flanker => "sprite",
                 EnemyArchetype::Juggernaut => "juggernaut",
                 EnemyArchetype::Skirmisher => "grasshopper",
                 EnemyArchetype::Ambusher => "crocodile",

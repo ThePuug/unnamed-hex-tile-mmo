@@ -101,7 +101,7 @@ pub enum Staging {
 #[cfg(feature = "admin")]
 pub const DENS: [(&str, common_bevy::archetype::EnemyArchetype); 6] = {
     use common_bevy::archetype::EnemyArchetype::*;
-    [("Dog Pack", Berserker), ("Forest Sprites", Kiter), ("Juggernauts", Juggernaut), ("Defenders", Defender), ("Skirmishers", Skirmisher), ("Ambushers", Ambusher)]
+    [("Dog Pack", Berserker), ("Forest Sprites", Flanker), ("Juggernauts", Juggernaut), ("Defenders", Defender), ("Skirmishers", Skirmisher), ("Ambushers", Ambusher)]
 };
 
 impl MenuPath {

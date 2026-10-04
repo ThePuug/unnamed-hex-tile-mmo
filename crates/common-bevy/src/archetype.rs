@@ -14,7 +14,7 @@ pub enum EnemyArchetype {
     #[default]
     Berserker,
     Juggernaut,
-    Kiter,
+    Flanker,
     Defender,
     Skirmisher,
     Ambusher,
@@ -37,7 +37,7 @@ pub struct Profile {
 }
 
 impl EnemyArchetype {
-    pub const ALL: [Self; 6] = [Self::Berserker, Self::Juggernaut, Self::Kiter, Self::Defender, Self::Skirmisher, Self::Ambusher];
+    pub const ALL: [Self; 6] = [Self::Berserker, Self::Juggernaut, Self::Flanker, Self::Defender, Self::Skirmisher, Self::Ambusher];
 
     /// Everything that sets this archetype apart, one row each
     pub const fn profile(self) -> Profile {
@@ -47,7 +47,7 @@ impl EnemyArchetype {
         match self {
             Self::Berserker  => Profile { name: "Wild Dog",      ability: Frenzy,        approach: Direct,    resilience: Primal,   build: [-1, 0, 0], habitat: Habitat::Open },
             Self::Juggernaut => Profile { name: "Juggernaut",    ability: Overpower,     approach: Binding,   resilience: Vital,    build: [0, -1, 0], habitat: Habitat::Rock },
-            Self::Kiter      => Profile { name: "Forest Sprite", ability: PerfectStride, approach: Distant,   resilience: Mental,   build: [1, 0, 0], habitat: Habitat::Woods },
+            Self::Flanker      => Profile { name: "Forest Sprite", ability: PerfectStride, approach: Oblique,   resilience: Mental,   build: [1, 0, 0], habitat: Habitat::Woods },
             Self::Defender   => Profile { name: "Defender",      ability: Counter,       approach: Patient,   resilience: Hardened, build: [0, 0, 1], habitat: Habitat::Range },
             Self::Skirmisher => Profile { name: "Skirmisher",    ability: Leap,          approach: Evasive,   resilience: Shielded, build: [0, 0, -1], habitat: Habitat::Scrub },
             Self::Ambusher   => Profile { name: "Ambusher",      ability: Punish,        approach: Ambushing, resilience: Blessed,  build: [0, 1, 0], habitat: Habitat::River },
@@ -121,7 +121,7 @@ mod tests {
         for (archetype, lead) in [
             (EnemyArchetype::Berserker, 0),
             (EnemyArchetype::Juggernaut, 2),
-            (EnemyArchetype::Kiter, 1),
+            (EnemyArchetype::Flanker, 1),
             (EnemyArchetype::Defender, 5),
             (EnemyArchetype::Skirmisher, 4),
             (EnemyArchetype::Ambusher, 3),
@@ -139,7 +139,7 @@ mod tests {
         for archetype in [
             EnemyArchetype::Berserker,
             EnemyArchetype::Juggernaut,
-            EnemyArchetype::Kiter,
+            EnemyArchetype::Flanker,
             EnemyArchetype::Defender,
         ] {
             let attrs = calculate_enemy_attributes(10, archetype);
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn test_only_the_skirmisher_invests_in_instinct() {
         // Instinct is the Skirmisher's alone, so only it has Reflex
-        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Ambusher] {
+        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Flanker, EnemyArchetype::Defender, EnemyArchetype::Ambusher] {
             assert_eq!(calculate_enemy_attributes(10, archetype).reflex(), 0, "{archetype:?}");
         }
         assert!(calculate_enemy_attributes(10, EnemyArchetype::Skirmisher).reflex() > 0);
@@ -162,7 +162,7 @@ mod tests {
     fn test_all_points_allocated() {
         // Total absolute axis + spectrum values should equal level for every build
         for (level, archetype) in [1, 5, 10, 15, 20].into_iter().flat_map(|l| [
-            EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Kiter, EnemyArchetype::Defender, EnemyArchetype::Skirmisher, EnemyArchetype::Ambusher,
+            EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Flanker, EnemyArchetype::Defender, EnemyArchetype::Skirmisher, EnemyArchetype::Ambusher,
         ].map(|a| (l, a))) {
             let attrs = calculate_enemy_attributes(level, archetype);
             let total = attrs.might_agility_axis().unsigned_abs()

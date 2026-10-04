@@ -87,7 +87,7 @@ use combat::{
 /// One simulated frame. FixedUpdate's 125ms tick runs every second frame.
 const STEP: Duration = Duration::from_micros(62_500);
 
-/// Flat tiles laid out round the origin; wide enough that a fleeing Kiter
+/// Flat tiles laid out round the origin; wide enough that a fleeing fighter
 /// reaches its leash before the edge.
 const ARENA_RADIUS: i32 = 80;
 

@@ -26,7 +26,7 @@ mod tests {
 
     #[test]
     fn an_npc_is_named_for_its_archetype() {
-        assert_eq!(ActorIdentity::Npc(EnemyArchetype::Kiter).display_name(), "Forest Sprite");
+        assert_eq!(ActorIdentity::Npc(EnemyArchetype::Flanker).display_name(), "Forest Sprite");
         assert_eq!(ActorIdentity::Player.display_name(), "Player");
     }
 }
@@ -88,7 +88,7 @@ impl Origin {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub enum Approach {
     Direct, // simple, straightforward, honest
-    Distant, // attacks from safety, indirect, aloof
+    Oblique, // comes from an angle, where its foe is not looking
     Ambushing, // cunning, stealthy, untrustworthy
     Patient, // calculating, immobile, consistent
     Binding, // controlling, dominant, restrictive
@@ -101,7 +101,7 @@ impl Approach {
     pub fn display_name(&self) -> &'static str {
         match self {
             Approach::Direct => "Direct",
-            Approach::Distant => "Distant",
+            Approach::Oblique => "Oblique",
             Approach::Ambushing => "Ambushing",
             Approach::Patient => "Patient",
             Approach::Binding => "Binding",

@@ -365,7 +365,7 @@ mod tests {
                 { "name": "chop", "at": [1, 2], "face": 0, "seconds": 10,
                   "clock": [[0, 14]], "input": [[1.0, "tap", "KeyG"]] },
                 { "name": "fight", "at": [0, 0], "face": 0, "seconds": 45,
-                  "clock": [[0, 12]], "stage": { "west": "Juggernaut", "east": "Kiter", "b_level": 6, "b_size": 2, "view": "east" } }
+                  "clock": [[0, 12]], "stage": { "west": "Juggernaut", "east": "Flanker", "b_level": 6, "b_size": 2, "view": "east" } }
             ] }"#;
         let script: Script = serde_json::from_str(text).expect("parses");
         assert_eq!(script.shots.len(), 3);
@@ -376,7 +376,7 @@ mod tests {
         let stage = script.shots[2].stage.expect("a staged fight");
         assert_eq!((stage.level, stage.size), (10, 1), "a level-10 one by default");
         assert_eq!((stage.b_level, stage.b_size), (Some(6), Some(2)));
-        assert_eq!(stage.party(), (common_bevy::archetype::EnemyArchetype::Kiter, 6, 2), "the viewed team comes first");
+        assert_eq!(stage.party(), (common_bevy::archetype::EnemyArchetype::Flanker, 6, 2), "the viewed team comes first");
         assert_eq!(stage.opposition(), (common_bevy::archetype::EnemyArchetype::Juggernaut, 10, 1));
         assert!(script.shots[0].stage.is_none());
     }
