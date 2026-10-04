@@ -22,6 +22,7 @@ use crate::theory::melody::Theme;
 use crate::theory::phrase::{self, Form as PhraseForm};
 use crate::theory::schema::{schemata_for, Schema};
 use crate::theory::{clashes, Chord, Key, Mode};
+use crate::variation::{self, Role as Bar};
 use crate::tune::{self, Tune};
 
 /// General MIDI programs, 0-based.
@@ -655,8 +656,18 @@ fn plucks(score: &mut Score, form: &Form, rng: &mut Rng) {
         // Where the timpani strikes the root the bass leaves it the beat:
         // four low strokes on one beat are the cue's peak.
         let timpani = form.texture_at(b).timpani;
+        let role = variation::role(b);
+        let last = *strong.last().unwrap();
+        // The cadence's last beat steps to the chord's fifth, and the
+        // variant passes through the mode into the bar's last beat.
+        let fifth = chord.pitches_within(&score.key, low.saturating_sub(12), low + 12).into_iter().filter(|p| score.key.degree_of(*p) == Some((chord.root + 4).rem_euclid(7) as usize)).min_by_key(|p| (*p as i32 - low as i32).abs());
         for i in strong.iter().filter(|i| !(timpani && form.design.groove.dum.contains(i))) {
-            score.add(Note { start: b * form.bar + i * E, len: E - 40, pitch: low, vel: vel(if mode == Plucks::Accents { -6 } else { -2 }, rng), channel: CH_PLUCK });
+            let pitch = if role == Bar::Cadence && *i == last { fifth.unwrap_or(low) } else { low };
+            score.add(Note { start: b * form.bar + i * E, len: E - 40, pitch, vel: vel(if mode == Plucks::Accents { -6 } else { -2 }, rng), channel: CH_PLUCK });
+        }
+        if role == Bar::Variant && last > 0 && !score.meter.strong(last - 1) {
+            let passing = score.key.pitch(score.key.absolute_degree(low).unwrap() + 1, 4);
+            score.add(Note { start: b * form.bar + (last - 1) * E, len: E - 40, pitch: passing, vel: vel(-10, rng), channel: CH_PLUCK });
         }
         if mode != Plucks::Full {
             continue;
@@ -769,6 +780,13 @@ fn drums(score: &mut Score, form: &Form, rng: &mut Rng) {
     let groove = form.design.groove;
     for b in 0..form.bars() {
         let t = form.texture_at(b);
+        let role = variation::role(b);
+        let last_group = score.meter.eighths() - *groove.groups.last().unwrap() as u32;
+        let rolls = role == Bar::Cadence && t.drum == Drum::Full && b + 1 < form.bars() && !t.timpani;
+        if rolls {
+            let n = (score.meter.eighths() - last_group) * 2;
+            variation::roll(score, CH_DRUM, TEK, b * form.bar + last_group * E, n, |x| vel(-24 + (16.0 * x) as i32, rng));
+        }
         if t.drum != Drum::Off {
             for i in groove.dum {
                 let accent = match (t.drum, t.timpani) {
@@ -780,8 +798,13 @@ fn drums(score: &mut Score, form: &Form, rng: &mut Rng) {
             }
         }
         if t.drum == Drum::Full {
-            for i in groove.tek {
+            for i in groove.tek.iter().filter(|i| !rolls || **i < last_group) {
                 score.add(Note { start: b * form.bar + i * E, len: E - 20, pitch: TEK, vel: vel(-14, rng), channel: CH_DRUM });
+            }
+        }
+        if t.drum != Drum::Off && role == Bar::Variant {
+            if let Some(e) = (1..score.meter.eighths()).find(|e| !score.meter.strong(*e) && !groove.dum.contains(e) && !groove.tek.contains(e)) {
+                score.add(Note { start: b * form.bar + e * E, len: E - 20, pitch: TEK, vel: vel(-24, rng), channel: CH_DRUM });
             }
         }
         // Under the timpani the taiko and the dum strike softer:
@@ -790,6 +813,18 @@ fn drums(score: &mut Score, form: &Form, rng: &mut Rng) {
         if t.taiko {
             for i in groove.dum {
                 score.add(Note { start: b * form.bar + i * E, len: E - 20, pitch: 36, vel: vel(if t.timpani { -12 } else { -4 }, rng), channel: CH_TAIKO });
+            }
+            // The taiko's variant strikes the tek's first stroke softly, and
+            // its cadence picks up into the next phrase on the bar's last
+            // eighth.
+            if !t.timpani && role == Bar::Variant {
+                if let Some(i) = groove.tek.first() {
+                    score.add(Note { start: b * form.bar + i * E, len: E - 20, pitch: 36, vel: vel(-18, rng), channel: CH_TAIKO });
+                }
+            }
+            if !t.timpani && role == Bar::Cadence && b + 1 < form.bars() {
+                let e = score.meter.eighths() - 1;
+                score.add(Note { start: b * form.bar + e * E, len: E - 20, pitch: 36, vel: vel(-10, rng), channel: CH_TAIKO });
             }
             if t.timpani {
                 for i in groove.tek {

@@ -26,6 +26,7 @@ use crate::theory::melody::Theme;
 use crate::theory::phrase::{self, Form as PhraseForm, FORMS};
 use crate::theory::schema::{schemata_for, Schema};
 use crate::theory::{clashes, Chord, Key, Mode};
+use crate::variation::{self, Role as Bar};
 use crate::tune::{self, Tune};
 
 /// General MIDI programs, 0-based.
@@ -779,20 +780,38 @@ fn weave(score: &mut Score, form: &Form, rng: &mut Rng) {
 
 /// The frame drum on the dance where the bed asks for it: the dum on
 /// the dance's low strokes, and where the bed asks for the whole hand,
-/// the tek on its high; soft, a hand and not a kit.
+/// the tek on its high; soft, a hand and not a kit. Its phrase's variant
+/// bar slips a ghost tek onto an eighth the dance leaves bare, and its
+/// cadence rolls the fingers through the bar's last group, growing, into
+/// the next phrase's dum.
 fn frame_drum(score: &mut Score, form: &Form, rng: &mut Rng) {
+    let groove = form.design.groove;
+    let eighths = score.meter.eighths();
+    let last_group = eighths - *groove.groups.last().unwrap() as u32;
+    let bare = (1..eighths).find(|e| !score.meter.strong(*e) && !groove.dum.contains(e) && !groove.tek.contains(e));
     for b in 0..form.bars() {
         let mode = form.texture_at(b).drum;
         if mode == Drum::Off {
             continue;
         }
-        for i in form.design.groove.dum {
-            score.add(Note { start: b * form.bar + i * E, len: E - 20, pitch: DUM, vel: vel(0, rng), channel: CH_DRUM });
+        let start = b * form.bar;
+        let role = variation::role(b);
+        let roll_from = (role == Bar::Cadence && b + 1 < form.bars()).then_some(last_group);
+        let before_roll = |i: &u32| roll_from.is_none_or(|r| *i < r);
+        for i in groove.dum.iter().filter(|i| before_roll(i)) {
+            score.add(Note { start: start + i * E, len: E - 20, pitch: DUM, vel: vel(0, rng), channel: CH_DRUM });
         }
         if mode == Drum::Full {
-            for i in form.design.groove.tek {
-                score.add(Note { start: b * form.bar + i * E, len: E - 20, pitch: TEK, vel: vel(-14, rng), channel: CH_DRUM });
+            for i in groove.tek.iter().filter(|i| before_roll(i)) {
+                score.add(Note { start: start + i * E, len: E - 20, pitch: TEK, vel: vel(-14, rng), channel: CH_DRUM });
             }
+        }
+        if let Some(e) = bare.filter(|_| role == Bar::Variant) {
+            score.add(Note { start: start + e * E, len: E - 20, pitch: TEK, vel: vel(-24, rng), channel: CH_DRUM });
+        }
+        if let Some(r) = roll_from {
+            let top = if mode == Drum::Full { -8 } else { -14 };
+            variation::roll(score, CH_DRUM, TEK, start + r * E, (eighths - r) * 2, |x| vel(-26 + ((top + 26) as f32 * x) as i32, rng));
         }
     }
 }
