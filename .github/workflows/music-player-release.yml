@@ -93,9 +93,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: music-player-${{ matrix.name }}
-      - name: Install audio and keyboard headers
+      - name: Install mold, which .cargo/config.toml links with, and the audio and keyboard headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libxkbcommon-dev
+        run: sudo apt-get update && sudo apt-get install -y mold pkg-config libasound2-dev libxkbcommon-dev
 
       - name: Build
         if: runner.os != 'macOS'
