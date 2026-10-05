@@ -144,21 +144,31 @@ pub const PIECES: &[Piece] = &[
             into every part; trombone and tuba stab the strokes and push on \
             the off-beats; the accordion and a held clarinet hold the chords \
             where the dance thickens, a saxophone doubles the riff, and a \
-            guitar echoes the tune a bar behind. No drone: the harmony \
-            moves, the minor to its flat sixth or Hijaz to its flat second. \
-            One player tells the tune, the lead — a zurna, a fiddle, a \
-            clarinet or a trumpet, each file its own — mostly as a riff, \
-            breathing at every half-phrase, calling and answering itself, \
-            singing or holding long tones at the crest, a horn holding under \
-            its riff. One of four stories the seed chooses — a gathering \
-            that builds to all of it; in full swing from the first bar; the \
-            drum first and the band around it; a breather down to the engine \
+            guitar echoes the tune a bar behind. No drone: the harmony moves, the \
+            minor to its flat sixth or Hijaz to its flat second. Its tune is three \
+            or four sections, its kolena, each its own theme on its own question and \
+            answer and each played twice running, as a horo plays its figures, the \
+            round coming again from the second; where the seed gives one, after the \
+            first round the lead takes a turn over a vamp of two chords, \
+            improvising, climbing to a peak and falling back. One player tells the \
+            tune, the lead — a zurna, a fiddle, a clarinet or a trumpet, each file \
+            its own — mostly as a riff, breathing at every half-phrase, calling and \
+            answering itself, singing or holding long tones at the crest, a horn \
+            holding under its riff. One of four stories the seed chooses — a \
+            gathering that builds to all of it; in full swing from the first bar; \
+            the drum first and the band around it; a breather down to the engine \
             alone and up again — each told by layers joining and leaving a \
-            half-phrase at a time. It opens on the tapan alone for a bar, \
-            presses on a phrase at a time through its last quarter as a band \
-            pushes its dancers, and ends at full tilt: the band in one \
-            unison run down to the tonic's neighbour and one hit on the \
-            tonic together. Driving, joyful, never chaotic; no sung words.",
+            half-phrase at a time. It opens as most dances do, straight in, or after \
+            a taksim — the lead alone in free time over the accordion's held chord, \
+            falling to home — or on the tapan alone for a bar. Its tempo moves a \
+            phrase pair at a time: pressing on through the last quarter, a step at \
+            every new section, building from the first pair to the last, or up past \
+            the middle and back. It ends as most dances end, the band stopping on \
+            the cadence of a section the listener knows — the first come back, or \
+            the last played twice — with one stroke on the tonic together; or plays \
+            the last four bars three times before that stroke, or holds the last \
+            tone, or, seldom, runs down together in unison to the tonic's neighbour \
+            and hits the tonic. Driving, joyful, never chaotic; no sung words.",
     pool: "horo",
     variants: 3,
     // A decibel over the beds, not two: the dance's low end — the tapan,
