@@ -106,9 +106,10 @@ jobs:
           cargo build --release --locked --bin music-player --target aarch64-apple-darwin
           cargo build --release --locked --bin music-player --target x86_64-apple-darwin
 
-      - name: Gather licenses
+      - name: Gather the readme and licenses
         run: |
           mkdir -p "$DIR/licenses"
+          cp crates/music-player/README.md "$DIR/"
           cp soundfont/GeneralUser-LICENSE.txt crates/music-player/fonts/*-OFL.txt "$DIR/licenses/"
       - name: Package (Linux)
         if: runner.os == 'Linux'
@@ -149,24 +150,16 @@ jobs:
           pattern: music-player-*
           merge-multiple: true
           path: dist
+      # The notes are the readme every package carries.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          sparse-checkout: crates/music-player/README.md
+          sparse-checkout-cone-mode: false
       - env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
           SHA: ${{ needs.prepare.outputs.sha }}
         run: |
-          cat > notes.md <<'EOF'
-          Unpack and run `music-player`; GeneralUser GS ships beside it and plays every instrument.
-
-          **The sampled banks** (guitars, basses, drum kit, piano, organ, sax, harmonica) are a
-          download of their own: take the `.7z` from the latest
-          [music-banks release](https://github.com/ThePuug/unnamed-hex-tile-mmo/releases?q=music-banks&expanded=true)
-          and drop it onto the player's window.
-
-          **macOS:** the app is not notarized, so macOS refuses it on first open. Drag it to
-          Applications, then either open System Settings → Privacy & Security and press
-          *Open Anyway*, or run `xattr -dr com.apple.quarantine "/Applications/Music Player.app"`.
-
-          **Linux:** needs ALSA (`libasound2`) and an X11 or Wayland session.
-          EOF
           gh release create "music-player-v$VERSION" dist/* --repo "$GITHUB_REPOSITORY" \
-            --target "$SHA" --title "music-player-v$VERSION" --notes-file notes.md
+            --target "$SHA" --title "music-player-v$VERSION" --notes-file crates/music-player/README.md
