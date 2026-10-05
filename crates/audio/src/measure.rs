@@ -208,7 +208,9 @@ fn within(lufs: &[f32], starts: &[f32], spans: &[(f32, f32)]) -> Vec<f32> {
     spans
         .iter()
         .map(|(a, b)| {
-            let blocks: Vec<f32> = lufs.iter().zip(starts).filter(|(_, s)| **s >= *a && **s < *b).map(|(l, _)| *l).collect();
+            // Gated as BS.1770 gates: a ring's last blocks under -70 LUFS
+            // are silence, there in a render and cut from the file.
+            let blocks: Vec<f32> = lufs.iter().zip(starts).filter(|(l, s)| **s >= *a && **s < *b && **l > -70.0).map(|(l, _)| *l).collect();
             if blocks.is_empty() {
                 f32::NEG_INFINITY
             } else {
