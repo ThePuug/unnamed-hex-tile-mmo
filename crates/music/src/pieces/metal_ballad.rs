@@ -120,6 +120,10 @@ const LEVEL_FOOT: f32 = -6.0;
 const LEVEL_VERSE: f32 = -3.5;
 const LEVEL_CHORUS: f32 = -1.5;
 const LEVEL_SOLO: f32 = 0.0;
+/// How far under its last part a solo's first sits, LU: the solo builds
+/// part by part to its loudest, where a level met part by part would
+/// pull each back down and a kit's rising strokes play as a sawtooth.
+const SOLO_RISE: f32 = 3.0;
 
 /// The tune's register; the lead takes it here.
 const TUNE: (u8, u8) = (60, 88);
@@ -628,9 +632,14 @@ fn compose(params: &Params) -> (Score, Form) {
     // A verse grows by every layer that joins it, from the foot to the
     // full band's verse, and falls by every one that leaves.
     let top_verse = walk.parts.iter().filter(|p| p.bed.section() == Section::Verse).map(|p| p.rung).max().unwrap_or(0).max(1);
+    let solo_parts = walk.parts.iter().filter(|p| p.bed.section() == Section::Climax).count();
+    let mut solo_part = 0;
     for (section, part) in score.sections.iter_mut().zip(&walk.parts) {
         section.level = Some(match part.bed.section() {
-            Section::Climax => LEVEL_SOLO,
+            Section::Climax => {
+                solo_part += 1;
+                LEVEL_SOLO - SOLO_RISE * (solo_parts - solo_part) as f32 / (solo_parts - 1).max(1) as f32
+            }
             Section::Chorus => LEVEL_CHORUS,
             Section::Verse => LEVEL_FOOT + (LEVEL_VERSE - LEVEL_FOOT) * part.rung as f32 / top_verse as f32,
         });

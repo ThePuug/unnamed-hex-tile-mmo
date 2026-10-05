@@ -253,7 +253,7 @@ pub const PIECES: &[Piece] = &[
             before it while the soloist breaks alone, held with a bend or \
             reached by a \
             run, and lands on the theme with a guitar a third over it, the \
-            harmony held back until then; or the kit, loud from its first bar, \
+            harmony held back until then; or the kit, loud from its first bar and louder every part, \
             the song's lead, \
             over the band's short stop-time stab on every bar, varied by the \
             phrase, the bass's pedal and \
