@@ -96,6 +96,10 @@ fn lead_level(program: u8) -> f32 {
 /// dynamic for the whole band, since its story is in what plays.
 const VEL: i32 = 85;
 
+/// The kit's level, dB: its ride's, the stroke it plays most, well
+/// under the band, since the brushes keep the time and never lead it.
+const LEVEL_KIT: f32 = -7.5;
+
 /// Where the band's foot sits under its top rung, LU: the night grows a
 /// little as the band fills, by a level the render meets on whatever
 /// bank plays it, and no more — the city is a bed the game plays over.
@@ -356,7 +360,7 @@ pub fn build(params: &Params) -> Score {
         Instrument { name: "horn", program: design.horn, channel: CH_HORN, role: Role::Sustain, low: 50, high: 72, reverb: 75, pan: 29, level: 0.0 },
         Instrument { name: "weave", program: E_PIANO, channel: CH_WEAVE, role: Role::Pluck, low: 40, high: 84, reverb: 70, pan: -47, level: 0.0 },
         Instrument { name: "shimmer", program: VIBES, channel: CH_SHIMMER, role: Role::Pluck, low: 72, high: 91, reverb: 75, pan: 47, level: 0.0 },
-        Instrument { name: "kit", program: BRUSH_KIT, channel: CH_KIT, role: Role::Percussion, low: KICK, high: RIDE, reverb: 35, pan: 0, level: 0.0 },
+        Instrument { name: "kit", program: BRUSH_KIT, channel: CH_KIT, role: Role::Percussion, low: KICK, high: RIDE, reverb: 35, pan: 0, level: LEVEL_KIT },
         Instrument { name: "weave, the vibes", program: VIBES, channel: CH_WEAVE_2, role: Role::Pluck, low: 53, high: 89, reverb: 70, pan: 44, level: 0.0 },
     ];
     let mut score = Score::new(key, groove.meter(), tempo, instruments, ROOM_S);
@@ -1033,9 +1037,10 @@ const CRASH: u8 = 49;
 /// chorus's last bar most often, into its ninth bar less, into its fifth
 /// least, and at time a phrase's variant bar leaves the ride's last
 /// strike for the hat; every other chorus the whole kit opens on the
-/// crash. The cymbals strike at the top of the velocity and the kick
-/// well under the band's, since the bank keeps its cymbals some twenty
-/// decibels under its kick, and a stroke's length changes nothing.
+/// crash. Every drum strikes about the band's velocity, the kit's
+/// level set by its ride, the stroke it plays most; the crash swishes
+/// far under it, since the bank's crash is louder than its kick at one
+/// velocity. A stroke's length changes nothing.
 fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
     let strong = score.meter.strong_eighths();
     let eighths = score.meter.eighths();
@@ -1064,37 +1069,37 @@ fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
         let dropped = (role == Bar::Variant).then(|| ride.iter().copied().max()).flatten();
         for e in &ride {
             if Some(*e) == dropped {
-                stroke(*e, HAT_PEDAL, 30, rng);
+                stroke(*e, HAT_PEDAL, 0, rng);
             } else {
-                stroke(*e, RIDE, if strong.contains(e) { 42 } else { 24 }, rng);
+                stroke(*e, RIDE, if strong.contains(e) { 6 } else { -8 }, rng);
             }
         }
         for e in groove.tek.iter().filter(|e| **e < until) {
-            stroke(*e, HAT_PEDAL, 38, rng);
+            stroke(*e, HAT_PEDAL, 0, rng);
         }
         if mode == Kit::Full {
             for e in groove.dum.iter().filter(|e| **e < until) {
-                stroke(*e, KICK, -14, rng);
+                stroke(*e, KICK, -30, rng);
             }
             for e in groove.tek.iter().filter(|e| **e < until) {
-                stroke(*e, SNARE, 24, rng);
+                stroke(*e, SNARE, -8, rng);
             }
             let open: Vec<u32> = (0..until).filter(|e| !strong.contains(e) && !groove.tek.contains(e)).collect();
             for _ in 0..rng.range(1, 2) {
                 if !open.is_empty() {
                     let e = open[rng.below(open.len())];
-                    stroke(e, SNARE, 4, rng);
+                    stroke(e, SNARE, -20, rng);
                 }
             }
             if in_chorus == 0 && (b / chorus) % 2 == 1 {
-                stroke(0, CRASH, 44, rng);
+                stroke(0, CRASH, -40, rng);
             }
         }
         if fills {
             let n = (eighths - last_beat) * 2;
             for k in 0..n {
                 let pitch = if mode == Kit::Full { TOMS[(k as usize * TOMS.len() / n as usize).min(TOMS.len() - 1)] } else { SNARE };
-                score.add(Note { start: b * form.bar + last_beat * E + k * E / 2, len: E / 2 - 10, pitch, vel: vel(4 + (16 * k / n) as i32, rng), channel: CH_KIT });
+                score.add(Note { start: b * form.bar + last_beat * E + k * E / 2, len: E / 2 - 10, pitch, vel: vel(-18 + (16 * k / n) as i32, rng), channel: CH_KIT });
             }
         }
     }
