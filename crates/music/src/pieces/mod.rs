@@ -2,7 +2,7 @@
 //! `pub fn build(&Params) -> Score`, an entry in `PIECES`, a row in the
 //! README.
 
-mod city_ambient;
+mod minor_blues;
 mod balkan_horo;
 mod metal_ballad;
 mod overworld_ambient;
@@ -89,9 +89,8 @@ pub const PIECES: &[Piece] = &[
     build: overworld_ambient::build,
     },
     Piece {
-    name: "city-ambient",
-    brief: "A piece for a bustling city at night, for wandering its streets, on a \
-            minor blues: the twelve-bar in Dorian or Aeolian on sevenths, in the \
+    name: "minor-blues",
+    brief: "A minor blues as a small band plays it: the twelve-bar in Dorian or Aeolian on sevenths, in the \
             shuffle or a walking four, the band playing that feel; every chorus \
             the twelve-bar, its rows drawn afresh between the head and the last. \
             One theme runs the whole piece through on the minor pentatonic — the \
@@ -125,12 +124,12 @@ pub const PIECES: &[Piece] = &[
             by the phrase, the organ as the wash, and the seed's colours — a second horn \
             on the third, a shimmer — joining and leaving as one layer. Every \
             other player sits in the band. No drone; no sung words.",
-    pool: "city",
+    pool: "blues",
     variants: 3,
     lufs: -22.0,
     range: 5.0,
     one_story: false,
-    build: city_ambient::build,
+    build: minor_blues::build,
     },
     Piece {
     name: "balkan-horo",

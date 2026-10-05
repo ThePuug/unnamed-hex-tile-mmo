@@ -1,9 +1,9 @@
-//! The city's music: a place told on a blues. Every choice
+//! A minor blues as a small band plays it. Every choice
 //! is a draw from the seed's stream, one fork per purpose, and the
 //! first fork decides what kind of piece this is — which story it
 //! tells, in what mode and tonic, on which feel, with which players,
 //! on what theme, in which phrase form, on which rows of the twelve-bar
-//! — so two seeds are two nights in one city. The seed picks which
+//! — so two seeds are two sets by one band. The seed picks which
 //! shape at every level; it never picks the next note.
 //!
 //! A story is a ladder of the bed's layers, walked as `ladder` says,
@@ -100,9 +100,9 @@ const VEL: i32 = 85;
 /// under the band, since the brushes keep the time and never lead it.
 const LEVEL_KIT: f32 = -13.0;
 
-/// Where the band's foot sits under its top rung, LU: the night grows a
+/// Where the band's foot sits under its top rung, LU: the band grows a
 /// little as the band fills, by a level the render meets on whatever
-/// bank plays it, and no more — the city is a bed the game plays over.
+/// bank plays it, and no more — the blues is a bed the game plays over.
 const LEVEL_FOOT: f32 = -2.5;
 
 /// The tune's register; the lead and the second take it here, the weave
@@ -517,7 +517,7 @@ fn intro(score: &mut Score, rng: &mut Rng) {
     }
 }
 
-/// How far the city slows into its last chord, the bars it slows over,
+/// How far the band slows into its last chord, the bars it slows over,
 /// the bars the chord rings, and the ending's level: under the foot by
 /// what a ring falling away puts the hit over its mean.
 const SLOWEST: f32 = 0.85;
