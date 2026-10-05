@@ -160,6 +160,15 @@ impl Bank {
         self.fonts.len() - 1
     }
 
+    /// The files `voices` names that the bank found nowhere, whose
+    /// programs the default plays.
+    pub fn lacking(&self) -> Vec<&'static str> {
+        let mut files: Vec<&'static str> = voices::VOICES.iter().map(|v| v.file).filter(|f| !self.fonts.iter().any(|font| font.file == *f)).collect();
+        files.sort();
+        files.dedup();
+        files
+    }
+
     /// The font at `index`, read now if nothing holds it.
     fn font(&self, index: usize) -> Arc<SoundFont> {
         let f = &self.fonts[index];
@@ -265,7 +274,7 @@ impl Bank {
 /// floor, seconds.
 const RING_KEPT_S: f32 = 0.5;
 
-/// `piece` at `seed` as its file sounds: composed, its sections set to
+/// `piece` at `seed` as it plays: composed, its sections set to
 /// their levels, rendered, set to the piece's loudness and limited under
 /// its ceiling, and cut `RING_KEPT_S` past the last sample over the
 /// silence floor — the room's ring under that is no sound anyone hears.

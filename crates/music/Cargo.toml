@@ -6,3 +6,7 @@ edition = "2021"
 [dependencies]
 audio = { path = "../audio" }
 rustysynth = "1"
+sevenz-rust2 = { version = "0.23", default-features = false }
+
+[dev-dependencies]
+sevenz-rust2 = { version = "0.23", default-features = false, features = ["compress", "util"] }

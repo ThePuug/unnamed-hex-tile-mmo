@@ -1,51 +1,63 @@
 //! Music, a pool to a stage: in play the overworld's pieces, on character
 //! select the teaser's cues. A piece plays once, from its head to its own
-//! ending; a rest of silence follows, then a different piece of the pool.
+//! ending; a rest of silence follows, then another piece of the pool.
 //! Leaving the stage fades whatever is playing out at once, and a stage
 //! arrived on rests before its first piece.
 //!
-//! A file declares its pool in its Vorbis comments — `POOL` — so a pool is
-//! whatever `music/` holds that says so, never a list of names here. A piece plays at
-//! the level it was rendered at, scaled by the player's music volume: the
-//! loudness the generator set is the mix.
+//! Nothing is recorded. A pool is the pieces of `music::pieces::PIECES`
+//! that name it, and the client composes each play as the music player
+//! does: a piece at a seed of its own, rendered on a thread of its own
+//! while the last one rests. GeneralUser GS ships in the game's assets;
+//! the sampled banks are fetched on the first run that lacks them
+//! (`fetch`).
+//! A play waits for its rest and for its render, whichever is longer, so
+//! the rest is never cut short. A piece plays at the loudness its render
+//! sets, scaled by the player's music volume: the loudness the piece
+//! declares is the mix.
 //!
-//! The folder is listed and its OGGs loaded one by one, not through
-//! `load_folder`: that fails the whole folder over one file no loader
-//! claims, and the MIDIs ship beside the OGGs.
+//! No GeneralUser, no music: the client says so once and stays silent.
 
-mod ogg;
+mod fetch;
+mod take;
 
 use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
-    time::Duration,
+    sync::{
+        mpsc::{self, Receiver, Sender, TryRecvError},
+        Mutex,
+    },
+    time::{Duration, Instant},
 };
 
 use bevy::{
-    asset::io::AssetSourceId,
-    audio::Volume,
+    audio::{AddAudioSource, Volume},
     prelude::*,
-    tasks::{block_on, futures_lite::StreamExt, poll_once, IoTaskPool, Task},
+};
+use music::{
+    banks,
+    pieces::PIECES,
+    render::{self, Bank, SAMPLE_RATE},
+    SEEDS,
 };
 use rand::Rng;
 
 use crate::plugins::{settings::AudioSettings, shell::Stage};
+use take::Take;
 
 pub struct MusicPlugin;
 
 impl Plugin for MusicPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Music>();
-        app.add_systems(Startup, list);
+        app.add_audio_source::<Take>();
+        app.insert_resource(Music { composer: Some(Composer::spawn()), next: None, phase: Phase::default() });
         app.add_systems(Update, (gather, play).chain());
     }
 }
 
-const FOLDER: &str = "music";
-
 /// A pool and how it plays on its stage.
 struct Kind {
-    /// What its files name in `POOL`.
+    /// What its pieces name as their `pool`.
     pool: &'static str,
     stage: Stage,
     /// Silence from arriving on the stage to the first piece.
@@ -70,24 +82,23 @@ const KINDS: [Kind; 2] = [
     },
 ];
 
+/// GeneralUser GS, in the game's assets.
+const DEFAULT_BANK: &str = "soundfonts/GeneralUser.sf2";
+
 /// How quickly a piece leaves when its stage is left under it.
 const FADE_LEAVING: f32 = 2.0;
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 struct Music {
-    listing: Option<Task<Result<Vec<PathBuf>, String>>>,
-    /// Every OGG in the folder, held until all have loaded or failed; then
-    /// each pool keeps its own and the rest are dropped.
-    loading: Vec<Handle<AudioSource>>,
-    /// Each of [`KINDS`]' pools, in its order.
-    pools: [Vec<Piece>; KINDS.len()],
-    /// The piece of each pool played last.
-    last: [Option<usize>; KINDS.len()],
+    /// Gone once it has no bank to play.
+    composer: Option<Composer>,
+    /// The next piece, of the kind at its index: composing, or composed.
+    next: Option<(usize, Option<Composed>)>,
     phase: Phase,
 }
 
-struct Piece {
-    source: Handle<AudioSource>,
+struct Composed {
+    take: Handle<Take>,
     length: Duration,
 }
 
@@ -104,52 +115,125 @@ impl Default for Phase {
     }
 }
 
-fn list(mut music: ResMut<Music>, server: Res<AssetServer>) {
-    let server = server.clone();
-    music.listing = Some(IoTaskPool::get().spawn(async move {
-        let source = server.get_source(AssetSourceId::Default).map_err(|e| e.to_string())?;
-        let mut paths = source.reader().read_directory(Path::new(FOLDER)).await.map_err(|e| e.to_string())?;
-        let mut oggs = Vec::new();
-        while let Some(path) = paths.next().await {
-            if path.extension().is_some_and(|e| e == "ogg") {
-                oggs.push(path);
-            }
-        }
-        Ok(oggs)
-    }));
+/// The thread that composes, one piece at a time, each as it is asked
+/// for. It reads the bank first; a render runs for seconds and holds the
+/// sampled banks its score seats while it does. Where the bank lacks a
+/// sampled bank `voices` names, a second thread fetches them, and the
+/// pieces composed meanwhile play those programs on GeneralUser GS.
+struct Composer {
+    asks: Sender<(usize, u64)>,
+    /// Behind a lock only because a resource is shared between threads.
+    done: Mutex<Receiver<Result<Vec<[f32; 2]>, String>>>,
 }
 
-/// Loads what the listing found, then reads each file once all are in:
-/// every file tagged with a pool joins it.
-fn gather(mut music: ResMut<Music>, server: Res<AssetServer>, sources: Res<Assets<AudioSource>>) {
-    if let Some(task) = &mut music.listing {
-        let Some(listed) = block_on(poll_once(task)) else { return };
-        music.listing = None;
-        match listed {
-            Ok(paths) => music.loading = paths.into_iter().map(|p| server.load(p)).collect(),
-            Err(error) => warn!("music: {FOLDER}/ could not be listed, so none plays: {error}"),
+impl Composer {
+    fn spawn() -> Self {
+        let (asks, asked) = mpsc::channel::<(usize, u64)>();
+        let (tell, done) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("music".into())
+            .spawn(move || {
+                let mut bank = match banks::open(Some(Path::new(crate::ASSETS).join(DEFAULT_BANK))) {
+                    Ok(bank) => bank,
+                    Err(error) => {
+                        let _ = tell.send(Err(error));
+                        return;
+                    }
+                };
+                info!("music: GeneralUser GS and {} sampled banks", bank.sampled());
+                let fetched = fetch_lacking(&bank);
+                for (piece, seed) in asked {
+                    if let Some(folder) = fetched.as_ref().and_then(|f| f.try_recv().ok()) {
+                        bank = bank.with_banks(&folder);
+                        info!("music: GeneralUser GS and {} sampled banks", bank.sampled());
+                    }
+                    let started = Instant::now();
+                    let taken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::take(&PIECES[piece], seed, &bank).1))
+                        .map_err(|_| format!("{} at seed {seed} panicked as it composed", PIECES[piece].name));
+                    if taken.is_ok() {
+                        info!("music: composed {} at seed {seed} in {:.1} s", PIECES[piece].name, started.elapsed().as_secs_f32());
+                    }
+                    if tell.send(taken).is_err() {
+                        return;
+                    }
+                }
+            })
+            .expect("a thread to compose on");
+        Composer { asks, done: Mutex::new(done) }
+    }
+}
+
+/// Where `bank` lacks a file `voices` names, fetches the banks on a thread
+/// of their own; the folder they went into arrives once they are in.
+fn fetch_lacking(bank: &Bank) -> Option<Receiver<PathBuf>> {
+    let lacking = bank.lacking();
+    if lacking.is_empty() {
+        return None;
+    }
+    let Some(folder) = banks::folder() else {
+        warn!("music: no data folder to fetch the banks into; {} play on GeneralUser GS", lacking.join(", "));
+        return None;
+    };
+    info!("music: fetching {} into {}, lacking {}", banks::RELEASE, folder.display(), lacking.join(", "));
+    let (tell, fetched) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("music banks".into())
+        .spawn(move || match fetch::fetch(&folder) {
+            Ok(()) => {
+                let _ = tell.send(folder);
+            }
+            Err(error) => warn!("music: the banks could not be fetched: {error}"),
+        })
+        .expect("a thread to fetch on");
+    Some(fetched)
+}
+
+/// Takes what the composer finished, and while resting asks it for the
+/// stage's next piece where none is composing or composed for it: one
+/// render is held at a time, a minute or more of samples. A piece composed
+/// for a stage since left is dropped.
+fn gather(mut music: ResMut<Music>, mut takes: ResMut<Assets<Take>>, stage: Res<State<Stage>>) {
+    let music = &mut *music;
+    let Some(composer) = &music.composer else { return };
+    let done = composer.done.lock().unwrap().try_recv();
+    match done {
+        Ok(Ok(audio)) => {
+            if let Some((_, composed @ None)) = &mut music.next {
+                let length = Duration::from_secs_f64(audio.len() as f64 / SAMPLE_RATE as f64);
+                *composed = Some(Composed { take: takes.add(Take::new(audio)), length });
+            }
         }
+        // A bank that failed to load ends the thread after this; a piece
+        // that failed is asked for again at another seed.
+        Ok(Err(error)) => {
+            warn!("music: {error}");
+            music.next = None;
+        }
+        Err(TryRecvError::Empty) => {}
+        Err(TryRecvError::Disconnected) => {
+            music.composer = None;
+            return;
+        }
+    }
+    if matches!(music.phase, Phase::Playing { .. }) {
         return;
     }
-    if music.loading.is_empty()
-        || music.loading.iter().any(|h| !server.is_loaded(h) && !server.load_state(h).is_failed())
-    {
+    let Some(kind) = KINDS.iter().position(|k| k.stage == *stage.get()) else { return };
+    match &music.next {
+        Some((_, None)) => return,
+        Some((k, Some(_))) if *k == kind => return,
+        _ => {}
+    }
+    let pool: Vec<usize> = (0..PIECES.len()).filter(|&p| PIECES[p].pool == KINDS[kind].pool).collect();
+    if pool.is_empty() {
         return;
     }
-    for source in std::mem::take(&mut music.loading) {
-        let Some(bytes) = sources.get(&source).map(|s| s.bytes.clone()) else { continue };
-        let tags = ogg::comments(&bytes).unwrap_or_default();
-        let tag = |key: &str| tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
-        let Some(kind) = KINDS.iter().position(|k| tag("POOL") == Some(k.pool)) else { continue };
-        let Some(length) = ogg::length(&bytes) else {
-            warn!("music: {:?} has no length to read", source.path());
-            continue;
-        };
-        music.pools[kind].push(Piece { source, length });
-    }
-    for (kind, pool) in KINDS.iter().zip(&music.pools) {
-        let lengths: Vec<String> = pool.iter().map(|p| format!("{:.1} s", p.length.as_secs_f32())).collect();
-        info!("music: {} pieces in the {} pool ({})", pool.len(), kind.pool, lengths.join(", "));
+    let mut rng = rand::rng();
+    let piece = pool[rng.random_range(0..pool.len())];
+    let seed = rng.random_range(0..SEEDS);
+    info!("music: composing {} at seed {seed}", PIECES[piece].name);
+    if composer.asks.send((piece, seed)).is_ok() {
+        music.next = Some((kind, None));
     }
 }
 
@@ -174,26 +258,16 @@ fn play(
                 *counted = Some(stage);
                 *until = (*until).max(now + KINDS[k].first_rest);
             }
-            let pool = &music.pools[k];
-            if now < *until || pool.is_empty() {
+            if now < *until || !matches!(music.next, Some((kind, Some(_))) if kind == k) {
                 return;
             }
-            let mut rng = rand::rng();
-            let index = match music.last[k] {
-                Some(last) if pool.len() > 1 => {
-                    let drawn = rng.random_range(0..pool.len() - 1);
-                    if drawn >= last { drawn + 1 } else { drawn }
-                }
-                _ => rng.random_range(0..pool.len()),
-            };
-            let chosen = &pool[index];
-            let entity = commands.spawn((AudioPlayer(chosen.source.clone()), PlaybackSettings::ONCE.with_volume(Volume::SILENT))).id();
-            music.last[k] = Some(index);
+            let Some((_, Some(next))) = music.next.take() else { return };
+            let entity = commands.spawn((AudioPlayer(next.take), PlaybackSettings::ONCE.with_volume(Volume::SILENT))).id();
             music.phase = Phase::Playing {
                 entity,
                 kind: k,
                 started: now,
-                ends: now + chosen.length,
+                ends: now + next.length,
                 fade_in: 0.0,
                 fade_out: 0.0,
             };
@@ -276,6 +350,14 @@ mod tests {
     fn a_stage_has_one_pool() {
         for (i, a) in KINDS.iter().enumerate() {
             assert!(KINDS[i + 1..].iter().all(|b| b.stage != a.stage), "{} shares its stage", a.pool);
+        }
+    }
+
+    /// Every pool a stage plays has a piece to compose.
+    #[test]
+    fn every_pool_has_a_piece() {
+        for kind in &KINDS {
+            assert!(PIECES.iter().any(|p| p.pool == kind.pool), "no piece names the {} pool", kind.pool);
         }
     }
 }

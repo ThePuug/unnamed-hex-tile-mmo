@@ -8,10 +8,12 @@ use eframe::egui::text::LayoutJob;
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CursorIcon, FontFamily, FontId, Layout, Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind};
 use music::pieces::PIECES;
 use music::render::SAMPLE_RATE;
+use music::SEEDS;
 
-use crate::banks::{self, Install};
+use crate::banks::Install;
+use music::banks::folder;
 use crate::midi::{self, Port};
-use crate::player::{pools, Player, Popover, Take, SEEDS};
+use crate::player::{pools, Player, Popover, Take};
 use crate::sheet::LANES;
 use crate::theme::*;
 
@@ -262,7 +264,7 @@ impl Player {
             p.circle_filled(face.center() + d, 1.0, PARCHMENT);
         }
         if dice.clicked() {
-            self.seed = self.rng.below(SEEDS).to_string();
+            self.seed = self.rng.below(SEEDS as usize).to_string();
         }
 
         // Play now, and add to the queue, at the panel's foot.
@@ -437,7 +439,7 @@ impl Player {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let small = |text: String, color: Color32| RichText::new(text).font(mono(11.0)).color(color);
                 if let Some((text, color)) = self.banks_state() {
-                    let folder = banks::folder().map_or_else(|| "none".to_string(), |f| f.display().to_string());
+                    let folder = folder().map_or_else(|| "none".to_string(), |f| f.display().to_string());
                     ui.label(small(text, color)).on_hover_text(format!("Drop a music-banks .7z on this window, or unpack it into\n{folder}\nand start the player again."));
                 }
                 if let Some(e) = &self.output_error {

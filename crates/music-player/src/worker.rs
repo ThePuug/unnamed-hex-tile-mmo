@@ -6,9 +6,9 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 
 use music::pieces::PIECES;
+use music::banks;
 use music::render::{self, Bank};
 
-use crate::banks;
 use crate::midi;
 use crate::player::{Job, Take};
 use crate::sheet::Sheet;
@@ -67,13 +67,7 @@ pub fn spawn_worker(wanted: Arc<Wanted>, busy: Arc<Mutex<Option<Job>>>) -> Recei
 /// GeneralUser GS, and every sampled bank beside it or installed, told to
 /// the player either way.
 fn load(tx: &mpsc::Sender<Done>) -> Option<Bank> {
-    let loaded = Bank::find(None)
-        .ok_or_else(|| "no SoundFont found; set SOUNDFONT".to_string())
-        .and_then(|p| Bank::load(&p))
-        .map(|b| match banks::folder() {
-            Some(dir) => b.with_banks(&dir),
-            None => b,
-        });
+    let loaded = banks::open(None);
     let _ = tx.send(Done::Bank(loaded.as_ref().map(Bank::sampled).map_err(Clone::clone)));
     loaded.ok()
 }

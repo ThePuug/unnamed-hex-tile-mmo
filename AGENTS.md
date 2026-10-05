@@ -90,7 +90,7 @@ flat-top hex grid. All crates under `crates/`:
 | `world-viewer` | CLI rendering the event stack, or one event's field or index, to an image; its README says what a view may read |
 | `qrz` | Hex grid library — see `crates/qrz/AGENTS.md` |
 | `console` | Server monitoring console |
-| `music` | Music composed from a seed and rendered through a SoundFont — the pieces and their vocabulary; `assets/crates/musicgen` makes the shipped files from it, and its `AGENTS.md` binds the pieces |
+| `music` | Music composed from a seed and rendered through a SoundFont — the pieces and their vocabulary; the client composes from it as it plays, `assets/crates/musicgen` checks and proofs it, and its `AGENTS.md` binds the pieces |
 | `music-player` | A window playing fresh variations of the chosen pieces as they are composed, a rest between |
 | `audio` | Seeded draws, BS.1770 loudness and true peak, WAV and OGG writers — what `music` and the assets repo's sound generators stand on |
 

@@ -7,8 +7,4 @@ edition = "2021"
 music = { path = "../music" }
 eframe = "0.31"
 cpal = "0.17"
-sevenz-rust2 = { version = "0.23", default-features = false }
 midir = "0.11.0"
-
-[dev-dependencies]
-sevenz-rust2 = { version = "0.23", default-features = false, features = ["compress", "util"] }

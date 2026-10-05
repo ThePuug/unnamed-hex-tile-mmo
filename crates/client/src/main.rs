@@ -37,6 +37,10 @@ use crate::{
 #[cfg(feature = "admin")]
 use crate::plugins::recorder;
 
+/// The game's assets, the assets repo's checkout: what the asset server
+/// reads, and the music's bank.
+pub const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
+
 fn setup(
     mut config_store: ResMut<GizmoConfigStore>,
 ) {
@@ -50,16 +54,18 @@ fn main() {
     app.add_plugins((DefaultPlugins
         .set(hiding::gltf_plugin())
         .set(AssetPlugin {
-            file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets").to_string(),
+            file_path: ASSETS.to_string(),
             ..default()
         })
         .set(LogPlugin {
             level: bevy::log::Level::TRACE,
             // world=warn keeps the terrain pipeline's per-tile tracing spans
-            // disabled — at debug they cost real time on the hot path.
+            // disabled — at debug they cost real time on the hot path. ureq
+            // and rustls trace every chunk of the music banks' download.
             filter:
                 "wgpu=error,naga=warn,polling=warn,winit=warn,offset_allocator=warn,gilrs=warn,\
-                 cosmic_text=warn,renetcode=warn,renet=warn,egui=warn,epaint=warn,client=trace,world=warn,bevy=warn".to_string(),
+                 cosmic_text=warn,renetcode=warn,renet=warn,egui=warn,epaint=warn,client=trace,world=warn,bevy=warn,\
+                 ureq=warn,ureq_proto=warn,rustls=warn".to_string(),
             custom_layer: |_| None,
             ..default()
         }),

@@ -13,9 +13,11 @@ use music::render::SAMPLE_RATE;
 use music::rng::Rng;
 use music::perform::Event;
 use music::score::Score;
+use music::SEEDS;
 
 use crate::audio::{open_output, Deck};
 use crate::banks::{self, Install};
+use music::banks::folder;
 use crate::midi::{self, Port};
 use crate::sheet::Sheet;
 use crate::theme::{ALERT, DOT, LAMP, READY};
@@ -23,10 +25,6 @@ use crate::worker::{spawn_worker, Done, Wanted};
 
 /// The silence between one variation's end and the next one's start.
 pub const REST: Duration = Duration::from_secs(4);
-
-/// Seeds are drawn under this so they can be read and noted; a piece
-/// keys nothing to a seed's value, so the range costs no variety.
-pub const SEEDS: usize = 1_000_000;
 
 /// Back past this far into a variation, "previous" starts it again
 /// instead of going back one.
@@ -330,7 +328,7 @@ impl Player {
         if self.install.as_ref().is_some_and(|i| matches!(*i.lock().unwrap(), Install::Unpacking { .. })) {
             return;
         }
-        self.install = Some(match banks::folder() {
+        self.install = Some(match folder() {
             Some(folder) => banks::spawn_install(archive, folder),
             None => Arc::new(Mutex::new(Install::Failed("no data folder to install banks into".to_string()))),
         });
@@ -371,7 +369,7 @@ pub fn draw(rng: &mut Rng, chosen: &[bool]) -> Option<Variation> {
     if pieces.is_empty() {
         return None;
     }
-    Some(Variation::new(*rng.pick(&pieces), rng.below(SEEDS) as u64, Source::Composed))
+    Some(Variation::new(*rng.pick(&pieces), rng.below(SEEDS as usize) as u64, Source::Composed))
 }
 
 /// The pools in the order the pieces are listed, each with its pieces.
