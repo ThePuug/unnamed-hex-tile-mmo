@@ -955,8 +955,7 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// verses the right side leaves the eighths to the left and plays the
 /// accents alone, the bar's chord rung from its first beat and the push;
 /// in a chorus, power chords — root, fifth and octave — struck on the
-/// kick where it falls on a beat, or in a simple meter on its push, and
-/// let ring, the right side on the chord's inversion — fifth,
+/// kick where it falls on a beat and let ring, the right side on the chord's inversion — fifth,
 /// octave and the fifth over it, under the lead — in the parts its
 /// verse played accents in; under the kit's solo, the band's stab on
 /// every bar, a two-eighth hit that leaves the bar to the kit, again at
@@ -1054,11 +1053,10 @@ fn guitars(score: &mut Score, form: &Form, rng: &mut Rng) {
                 let [_, fifth, top] = chord_tones;
                 let inverted = [fifth, top, fifth + 12];
                 let last_beat = eighths - *form.design.groove.groups.last().unwrap() as u32;
-                // A ringing chord is struck again on a kick that falls on
-                // a beat, or in a simple meter on its push: in three, a
-                // stroke off the beat inside a held chord is a stumble.
-                let simple = score.meter.groups.iter().all(|g| *g == 2);
-                let struck: Vec<u32> = dum.iter().copied().filter(|i| *i == 0 || simple || strong.contains(i)).collect();
+                // A ringing chord is struck again only on a kick that falls
+                // on a beat: a stroke off the beat inside a held chord is a
+                // stumble, in four as in three.
+                let struck: Vec<u32> = dum.iter().copied().filter(|i| *i == 0 || strong.contains(i)).collect();
                 let pickup = struck.get(1).map(|d| d - 1).filter(|_| variant(b));
                 let driving = (cadence(b) && dropped == eighths).then_some(last_beat);
                 for channel in [CH_LEFT, CH_RIGHT] {
