@@ -32,7 +32,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       sha: ${{ steps.version.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
       - id: version
@@ -52,7 +52,7 @@ jobs:
           gh release download "$SOUNDFONT_RELEASE" --repo "$GITHUB_REPOSITORY" --dir soundfont \
             --pattern GeneralUser.sf2 --pattern GeneralUser-LICENSE.txt
           echo "$SOUNDFONT_SHA256  soundfont/GeneralUser.sf2" | sha256sum --check
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: soundfont
           path: soundfont/
@@ -79,10 +79,10 @@ jobs:
       DIR: music-player-${{ needs.prepare.outputs.version }}-${{ matrix.name }}
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: soundfont
           path: soundfont
@@ -135,7 +135,7 @@ jobs:
           ln -s /Applications "$DIR/Applications"
           hdiutil create -volname "Music Player" -srcfolder "$DIR" -format UDZO "$DIR.dmg"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: music-player-${{ matrix.name }}
           path: ${{ env.DIR }}.*
@@ -145,13 +145,13 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: music-player-*
           merge-multiple: true
           path: dist
       # The notes are the readme every package carries.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           sparse-checkout: crates/music-player/README.md
