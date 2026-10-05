@@ -95,6 +95,10 @@ const SECONDS: [u8; 4] = [FIDDLE, CLARINET, ACCORDION, ENGLISH_HORN];
 /// set the cue's peak.
 const HORN_LEVEL: f32 = -4.0;
 
+/// The frame drum's level, dB: its most struck stroke's, under the
+/// band by what holds it where the bed's balance has it.
+const DRUM_LEVEL: f32 = -8.0;
+
 /// The velocity every voice strikes at before its own accent and its
 /// movement's dynamic.
 const VEL: i32 = 85;
@@ -336,7 +340,7 @@ pub fn build(params: &Params) -> Score {
         Instrument { name: "horn", program: FRENCH_HORN, channel: CH_HORN, role: Role::Sustain, low: 48, high: 67, reverb: 55, pan: -39, level: HORN_LEVEL },
         Instrument { name: "strings, the riff", program: STRINGS_2, channel: CH_DOUBLE, role: Role::Doubling, low: 55, high: 88, reverb: 60, pan: -34, level: 0.0 },
         Instrument { name: "taiko", program: TAIKO, channel: CH_TAIKO, role: Role::Percussion, low: 36, high: 36, reverb: 45, pan: -12, level: 0.0 },
-        Instrument { name: "frame drum", program: 0, channel: CH_DRUM, role: Role::Percussion, low: KICK, high: DUM, reverb: 30, pan: -8, level: 0.0 },
+        Instrument { name: "frame drum", program: 0, channel: CH_DRUM, role: Role::Percussion, low: KICK, high: DUM, reverb: 30, pan: -8, level: DRUM_LEVEL },
         Instrument { name: "pluck 2", program: design.pluck_2, channel: CH_PLUCK_2, role: Role::Pluck, low: 55, high: 72, reverb: 30, pan: -44, level: 0.0 },
         Instrument { name: "weave", program: DULCIMER, channel: CH_WEAVE, role: Role::Pluck, low: 50, high: 91, reverb: 50, pan: -52, level: 0.0 },
         Instrument { name: "timpani", program: TIMPANI, channel: CH_TIMPANI, role: Role::Pluck, low: 40, high: 55, reverb: 60, pan: 14, level: 0.0 },

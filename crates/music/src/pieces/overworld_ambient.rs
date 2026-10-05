@@ -98,6 +98,10 @@ const SECONDS: [u8; 4] = [FIDDLE, CLARINET, ACCORDION, ENGLISH_HORN];
 /// dynamic for the whole bed, since its story is in what plays.
 const VEL: i32 = 85;
 
+/// The frame drum's level, dB: its most struck stroke's, under the
+/// band by what holds it where the bed's balance has it.
+const DRUM_LEVEL: f32 = -3.0;
+
 /// What each layer at each notch lifts the bed's loudness by, LU, and
 /// what each lead does, which the pedal takes back through the part
 /// so a full bed is no louder than a thin one. Fitted to the render,
@@ -379,7 +383,7 @@ pub fn build(params: &Params) -> Score {
         Instrument { name: "horn", program: FRENCH_HORN, channel: CH_HORN, role: Role::Sustain, low: 48, high: 67, reverb: 55, pan: -39, level: 0.0 },
         Instrument { name: "strings, the riff", program: STRINGS_2, channel: CH_DOUBLE, role: Role::Doubling, low: 55, high: 88, reverb: 60, pan: -34, level: 0.0 },
         Instrument { name: "shimmer", program: DULCIMER, channel: CH_SHIMMER, role: Role::Pluck, low: 62, high: 91, reverb: 50, pan: 49, level: 0.0 },
-        Instrument { name: "frame drum", program: 0, channel: CH_DRUM, role: Role::Percussion, low: 60, high: 64, reverb: 30, pan: -8, level: 0.0 },
+        Instrument { name: "frame drum", program: 0, channel: CH_DRUM, role: Role::Percussion, low: 60, high: 64, reverb: 30, pan: -8, level: DRUM_LEVEL },
         Instrument { name: "pluck 2", program: design.pluck_2, channel: CH_PLUCK_2, role: Role::Pluck, low: 55, high: 72, reverb: 30, pan: -44, level: 0.0 },
         Instrument { name: "weave", program: DULCIMER, channel: CH_WEAVE, role: Role::Pluck, low: 50, high: 81, reverb: 35, pan: -52, level: 0.0 },
         Instrument { name: "weave, the harp", program: HARP, channel: CH_WEAVE_2, role: Role::Pluck, low: 55, high: 88, reverb: 40, pan: 55, level: 0.0 },

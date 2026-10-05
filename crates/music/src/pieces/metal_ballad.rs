@@ -93,6 +93,10 @@ const LEAD: f32 = 3.0;
 /// The band's level, dB: under the lead together, its own balance kept.
 const BAND: f32 = -2.0;
 
+/// The kit's level, dB: its most struck drum's, under the band's by
+/// what holds the kit where the band's balance has it.
+const KIT: f32 = BAND - 1.5;
+
 /// The rhythm guitars' level, dB: two of them chugging every beat
 /// outweigh a kit striking its strokes, so the pair sits with the kit.
 const GUITARS: f32 = BAND - 6.0;
@@ -601,7 +605,7 @@ fn compose(params: &Params) -> (Score, Form) {
             Soloist::Bass => Instrument { name: "solo bass", program: SOLO_BASS, channel: CH_SOLO, role: Role::Melody, low: SOLO_BASS_LOW, high: BASS_SOLO.1, reverb: 35, pan: 0, level: SOLO_LEVEL },
             _ => Instrument { name: "solo guitar", program: DISTORTION, channel: CH_SOLO, role: Role::Melody, low: SOLO.0 - 4, high: SOLO.1, reverb: 40, pan: 12, level: SOLO_LEVEL },
         },
-        Instrument { name: "kit", program: ROCK_KIT, channel: CH_KIT, role: Role::Percussion, low: KICK, high: CRASH_2, reverb: 30, pan: 0, level: BAND },
+        Instrument { name: "kit", program: ROCK_KIT, channel: CH_KIT, role: Role::Percussion, low: KICK, high: CRASH_2, reverb: 30, pan: 0, level: KIT },
         Instrument { name: "solo, the harmony", program: OVERDRIVEN, channel: CH_HARMONY, role: Role::Melody, low: BASS_SOLO.0, high: SOLO.1 + 4, reverb: 40, pan: -24, level: BAND },
     ];
     let mut score = Score::new(key, groove.meter(), tempo, instruments, ROOM_S);

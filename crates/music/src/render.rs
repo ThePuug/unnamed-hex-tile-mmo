@@ -220,16 +220,19 @@ impl Bank {
     }
 
     /// The level of each key `inst` plays in `score`, and the middle of
-    /// them, LUFS: every pitch of a melodic player's range; the drums a
-    /// kit strikes, each a different instrument.
+    /// them, LUFS: every pitch of a melodic player's range, each once;
+    /// the drums a kit strikes, each a different instrument, counted
+    /// once a stroke, so the middle is the drum that keeps the time
+    /// whichever others a seed adds.
     fn levels(&self, score: &Score, inst: &Instrument) -> (Vec<(u8, f32)>, Option<f32>) {
         let seat = self.seat(inst);
         let drums = inst.role == Role::Percussion;
-        let mut keys: Vec<u8> = if drums { score.notes.iter().filter(|n| n.channel == inst.channel).map(|n| n.pitch).collect() } else { (inst.low..=inst.high).collect() };
+        let counted: Vec<u8> = if drums { score.notes.iter().filter(|n| n.channel == inst.channel).map(|n| n.pitch).collect() } else { (inst.low..=inst.high).collect() };
+        let mut keys = counted.clone();
         keys.sort();
         keys.dedup();
         let levels: Vec<(u8, f32)> = keys.into_iter().map(|p| (p, self.level(seat, drums, p))).filter(|(_, l)| l.is_finite()).collect();
-        let mut sorted: Vec<f32> = levels.iter().map(|(_, l)| *l).collect();
+        let mut sorted: Vec<f32> = counted.iter().filter_map(|p| levels.iter().find(|(k, _)| k == p).map(|(_, l)| *l)).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let middle = sorted.get(sorted.len() / 2).copied();
         (levels, middle)
