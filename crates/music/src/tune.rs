@@ -82,12 +82,12 @@ impl Tune {
             self.bars[b as usize].clone()
         };
         // The tone before the bar, as the shape has it, for the first
-        // bend to lead from.
-        let bars = self.len();
-        let last = ((b + bars - 1) % bars) as usize;
-        let mut prev = self.bars[last]
-            .last()
-            .map(|t| score.key_at(last as u32 * score.bar()).pitch(home_degree + self.on_scale(t.degree) + self.shifts[last], 4));
+        // bend to lead from; none before the first bar.
+        let mut prev = b.checked_sub(1).map(|last| last as usize).and_then(|last| {
+            self.bars[last]
+                .last()
+                .map(|t| score.key_at(last as u32 * score.bar()).pitch(home_degree + self.on_scale(t.degree) + self.shifts[last], 4))
+        });
         bar.iter()
             .map(|t| {
                 let mut pitch = key.pitch(home_degree + self.on_scale(t.degree) + shift, 4);

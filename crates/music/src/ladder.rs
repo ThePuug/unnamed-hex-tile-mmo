@@ -1,12 +1,11 @@
 //! A story is a ladder: the layers of a bed in the order they join,
 //! each a notch at a time, and who leads at every rung. A seed walks it
-//! one rung a part, up to where the story turns and back, so a part
-//! boundary is always one layer moving one notch, and the walk ends
-//! where it began so a loop's seam is a hold. A part is whole
+//! one rung a part to each of the story's turns in order, so a part
+//! boundary is always one layer moving one notch, and the walk ends at
+//! its last turn, where the piece's ending takes over. A part is whole
 //! half-phrases, so every boundary is a cadence, and a walk is whole
-//! harmonic cycles, so the loop closes on an answer. What the layers
-//! are and what each plays at each notch is the piece's; this is the
-//! walk.
+//! harmonic cycles, so it closes on an answer. What the layers are and
+//! what each plays at each notch is the piece's; this is the walk.
 
 use crate::rng::Rng;
 use crate::score::{Score, Section};
@@ -47,8 +46,8 @@ pub struct Story<B: Bed + 'static, L: 'static> {
     pub ladder: &'static [B::Layer],
     /// Who leads at each rung, the foot first: one more than the ladder.
     pub leads: &'static [L],
-    /// The walk's turns, in order; it opens at the foot and comes back
-    /// to it.
+    /// The walk's turns, in order; it opens at the foot and ends at the
+    /// last.
     pub turns: &'static [Turn],
     /// Half-phrases a part lasts: a layer moves at a cadence, the
     /// question's or the answer's.
@@ -104,9 +103,7 @@ impl<B: Bed, L: Copy> Story<B, L> {
     }
 
     /// The rungs of one walk, the foot first: to each turn one rung a
-    /// part, held as the turn says, then back down to the foot, so the
-    /// tail's part and the head's are one bed and the loop's seam is a
-    /// hold.
+    /// part, held as the turn says, ending at the last.
     pub fn walk(&self, rng: &mut Rng) -> Vec<usize> {
         let mut rungs = vec![0usize];
         for t in self.turns {
@@ -119,17 +116,14 @@ impl<B: Bed, L: Copy> Story<B, L> {
                 rungs.push(target);
             }
         }
-        while *rungs.last().unwrap() > 0 {
-            rungs.push(rungs.last().unwrap() - 1);
-        }
         rungs
     }
 
     /// A walk placed on the score, part by part: each a draw of
     /// half-phrases long, then stretched so the whole is whole cycles
     /// of `cycle` half-phrases — a half at a time to the highest part,
-    /// where a longer stay is the crest, and to the last, where it is
-    /// the foot the loop rests on, by turns; each part a section, named
+    /// where a longer stay is the crest, and to the last, where the piece
+    /// ends, by turns; each part a section, named
     /// for the step that made it — the first for the story — and
     /// trimmed by `trim` of its bed and lead.
     pub fn place(
@@ -140,6 +134,7 @@ impl<B: Bed, L: Copy> Story<B, L> {
         trim: impl Fn(B, L) -> f32,
     ) -> Walk<B, L> {
         let bar = score.bar();
+        score.story = self.name;
         let walk = self.walk(rng);
         let mut lengths: Vec<u32> = walk
             .iter()
@@ -276,14 +271,14 @@ mod tests {
     };
 
     /// Every walk opens at the foot, moves one rung a part at most,
-    /// reaches every turn, and ends at the foot, so the seam is a hold.
+    /// reaches every turn, and ends at the last.
     #[test]
-    fn every_walk_moves_a_rung_at_a_time_and_closes() {
+    fn every_walk_moves_a_rung_at_a_time_and_ends_at_its_last_turn() {
         assert_eq!(STORY.fault(), None);
         for seed in 0..64 {
             let walk = STORY.walk(&mut Rng::new(seed));
             assert_eq!(walk[0], 0);
-            assert_eq!(*walk.last().unwrap(), 0);
+            assert_eq!(*walk.last().unwrap(), 1);
             for w in walk.windows(2) {
                 assert!(w[0].abs_diff(w[1]) <= 1, "{walk:?}");
             }

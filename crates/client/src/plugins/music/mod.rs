@@ -1,13 +1,11 @@
-//! Music, a pool to a stage. In play the overworld's loops play: one fades
-//! in, plays through once or twice, and fades out to nothing on its seam.
-//! On character select the teaser's cues play: one plays from its head to
-//! its own ending. A rest of silence follows either, then a different piece
-//! of the pool. Leaving the stage fades whatever is playing out at once,
-//! and a stage arrived on rests before its first piece.
+//! Music, a pool to a stage: in play the overworld's pieces, on character
+//! select the teaser's cues. A piece plays once, from its head to its own
+//! ending; a rest of silence follows, then a different piece of the pool.
+//! Leaving the stage fades whatever is playing out at once, and a stage
+//! arrived on rests before its first piece.
 //!
-//! A file declares itself in its Vorbis comments — `POOL` names its pool and
-//! `LOOP` says whether its end runs into its head — so a pool is whatever
-//! `music/` holds that says so, never a list of names here. A piece plays at
+//! A file declares its pool in its Vorbis comments — `POOL` — so a pool is
+//! whatever `music/` holds that says so, never a list of names here. A piece plays at
 //! the level it was rendered at: the loudness the generator set is the mix.
 //!
 //! The folder is listed and its OGGs loaded one by one, not through
@@ -49,41 +47,25 @@ struct Kind {
     /// What its files name in `POOL`.
     pool: &'static str,
     stage: Stage,
-    /// Whether its files are loops, as their `LOOP` says.
-    loops: bool,
     /// Silence from arriving on the stage to the first piece.
     first_rest: Duration,
     /// Silence between two pieces, in seconds, drawn evenly.
     rest: RangeInclusive<f32>,
-    /// Times through a piece before it ends.
-    passes: RangeInclusive<u32>,
-    fade_in: f32,
-    fade_out: f32,
 }
 
+// A piece has a head and an ending of its own, so it plays whole.
 const KINDS: [Kind; 2] = [
-    // A loop's fade out ends on the seam, so it leaves on the hold its end
-    // and head share.
     Kind {
         pool: "overworld",
         stage: Stage::Playing,
-        loops: true,
         first_rest: Duration::from_secs(5),
         rest: 60.0..=180.0,
-        passes: 1..=2,
-        fade_in: 3.0,
-        fade_out: 10.0,
     },
-    // A cue has a head and an ending of its own, so it plays whole.
     Kind {
         pool: "teaser",
         stage: Stage::CharacterSelect,
-        loops: false,
         first_rest: Duration::from_secs(1),
         rest: 60.0..=120.0,
-        passes: 1..=1,
-        fade_in: 0.0,
-        fade_out: 0.0,
     },
 ];
 
@@ -137,8 +119,7 @@ fn list(mut music: ResMut<Music>, server: Res<AssetServer>) {
 }
 
 /// Loads what the listing found, then reads each file once all are in:
-/// every file tagged with a pool, and looping as the pool's files do,
-/// joins it.
+/// every file tagged with a pool joins it.
 fn gather(mut music: ResMut<Music>, server: Res<AssetServer>, sources: Res<Assets<AudioSource>>) {
     if let Some(task) = &mut music.listing {
         let Some(listed) = block_on(poll_once(task)) else { return };
@@ -158,8 +139,7 @@ fn gather(mut music: ResMut<Music>, server: Res<AssetServer>, sources: Res<Asset
         let Some(bytes) = sources.get(&source).map(|s| s.bytes.clone()) else { continue };
         let tags = ogg::comments(&bytes).unwrap_or_default();
         let tag = |key: &str| tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
-        let loops = tag("LOOP") == Some("true");
-        let Some(kind) = KINDS.iter().position(|k| tag("POOL") == Some(k.pool) && k.loops == loops) else { continue };
+        let Some(kind) = KINDS.iter().position(|k| tag("POOL") == Some(k.pool)) else { continue };
         let Some(length) = ogg::length(&bytes) else {
             warn!("music: {:?} has no length to read", source.path());
             continue;
@@ -204,18 +184,16 @@ fn play(
                 }
                 _ => rng.random_range(0..pool.len()),
             };
-            let kind = &KINDS[k];
             let chosen = &pool[index];
-            let settings = if kind.loops { PlaybackSettings::LOOP } else { PlaybackSettings::ONCE };
-            let entity = commands.spawn((AudioPlayer(chosen.source.clone()), settings.with_volume(Volume::SILENT))).id();
+            let entity = commands.spawn((AudioPlayer(chosen.source.clone()), PlaybackSettings::ONCE.with_volume(Volume::SILENT))).id();
             music.last[k] = Some(index);
             music.phase = Phase::Playing {
                 entity,
                 kind: k,
                 started: now,
-                ends: now + chosen.length * rng.random_range(kind.passes.clone()),
-                fade_in: kind.fade_in,
-                fade_out: kind.fade_out,
+                ends: now + chosen.length,
+                fade_in: 0.0,
+                fade_out: 0.0,
             };
         }
         Phase::Playing { entity, kind, started, ends, fade_in, fade_out } => {

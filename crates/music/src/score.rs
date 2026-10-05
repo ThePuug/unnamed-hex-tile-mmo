@@ -85,12 +85,29 @@ pub struct Section {
 /// How far a ringing section's pedal falls by its end, dB.
 pub const RING_DB: f32 = 40.0;
 
+/// A place in a piece a player of it may need: where it may be left
+/// cleanly, and where its ending begins. The composer knows them
+/// exactly; a file carries them beside it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    /// A phrase begins: the bar line a piece may be left at, or jumped
+    /// from to its coda, and land on its feet.
+    Phrase,
+    /// The piece's ending begins: the coda, played through to the last
+    /// tone.
+    Coda,
+}
+
 #[derive(Clone, Debug)]
 pub struct Score {
     pub key: Key,
     pub meter: Meter,
-    /// Eighth notes per minute.
+    /// Eighth notes per minute: the piece's tempo, where it opens.
     pub eighth_bpm: f32,
+    /// Where the tempo moves: from each tick on, eighths a minute, in
+    /// order. A ritardando or a dance pressing on is a run of steps; empty
+    /// where the piece holds its tempo throughout.
+    pub tempo: Vec<(u32, f32)>,
     pub instruments: Vec<Instrument>,
     pub sections: Vec<Section>,
     /// The chord of each bar.
@@ -99,10 +116,6 @@ pub struct Score {
     /// What the piece drew, in its module's words: the story, the dance,
     /// the theme, the form, the schemata, the players.
     pub summary: String,
-    /// Whether the score is a loop: its last tick runs into its first,
-    /// so nothing in it fades and a held tone that reaches the end is
-    /// the same tone that opens it.
-    pub loops: bool,
     /// Seconds the room takes to fall 60 dB after a low tone stops.
     pub room: f32,
     /// The channel of the one player who tells the tune, where one does.
@@ -111,11 +124,17 @@ pub struct Score {
     /// spreads its files across — the ballad's feel and its soloist —
     /// each a value of its own kind.
     pub facets: Vec<&'static str>,
+    /// The places a player of the piece may need, in order: every
+    /// phrase's first bar and where the coda begins.
+    pub marks: Vec<(Mark, u32)>,
+    /// The story the piece tells, as its ladder names it; empty where it
+    /// tells none.
+    pub story: &'static str,
 }
 
 impl Score {
     pub fn new(key: Key, meter: Meter, eighth_bpm: f32, instruments: Vec<Instrument>, room: f32) -> Self {
-        Score { key, meter, eighth_bpm, instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), loops: false, room, lead: None, facets: Vec::new() }
+        Score { key, meter, eighth_bpm, tempo: Vec::new(), instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), room, lead: None, facets: Vec::new(), marks: Vec::new(), story: "" }
     }
 
     pub fn chord_at(&self, tick: u32) -> Chord {
@@ -142,8 +161,86 @@ impl Score {
         self.meter.eighths() * TICKS_PER_EIGHTH
     }
 
+    /// Where `ticks` falls in time, through every tempo step before it.
     pub fn seconds(&self, ticks: u32) -> f64 {
-        ticks as f64 / TICKS_PER_EIGHTH as f64 * 60.0 / self.eighth_bpm as f64
+        let span = |from: u32, to: u32, bpm: f32| (to - from) as f64 / TICKS_PER_EIGHTH as f64 * 60.0 / bpm as f64;
+        let (mut at, mut bpm, mut s) = (0u32, self.eighth_bpm, 0.0);
+        for (from, next) in self.tempo.iter().take_while(|(from, _)| *from < ticks) {
+            s += span(at, *from, bpm);
+            (at, bpm) = (*from, *next);
+        }
+        s + span(at, ticks, bpm)
+    }
+
+    /// The tick at `seconds`, the inverse of `seconds`.
+    pub fn tick_at(&self, seconds: f64) -> u32 {
+        let per_s = |bpm: f32| bpm as f64 / 60.0 * TICKS_PER_EIGHTH as f64;
+        let (mut at, mut bpm, mut s) = (0u32, self.eighth_bpm, 0.0);
+        for (from, next) in &self.tempo {
+            let reach = s + (*from - at) as f64 / per_s(bpm);
+            if reach > seconds {
+                break;
+            }
+            (at, bpm, s) = (*from, *next, reach);
+        }
+        at + ((seconds - s) * per_s(bpm)) as u32
+    }
+
+    /// The tempo at `tick`, eighths a minute.
+    pub fn bpm_at(&self, tick: u32) -> f32 {
+        self.tempo.iter().take_while(|(from, _)| *from <= tick).last().map_or(self.eighth_bpm, |(_, bpm)| *bpm)
+    }
+
+    /// Moves the whole score later by the bars of `opening`, whose chords
+    /// head the harmony: an opening written after its body, in front of
+    /// it. Notes, sections, marks and tempo steps all move.
+    pub fn delay(&mut self, opening: &[Chord]) {
+        let by = opening.len() as u32 * self.bar();
+        for n in &mut self.notes {
+            n.start += by;
+        }
+        for s in &mut self.sections {
+            s.start += by;
+            s.end += by;
+        }
+        for (_, at) in &mut self.marks {
+            *at += by;
+        }
+        for (at, _) in &mut self.tempo {
+            *at += by;
+        }
+        self.harmony.splice(0..0, opening.iter().copied());
+    }
+
+    /// Slows the tempo from tick `from` to tick `to` a beat at a time, down
+    /// to `slowest` of what it was there: little at first and more to the
+    /// end, as a player slows into a last chord rather than evenly.
+    pub fn ritardando(&mut self, from: u32, to: u32, slowest: f32) {
+        let base = self.bpm_at(from);
+        let beats: Vec<u32> = (from..to).filter(|t| self.strong(*t)).collect();
+        let n = beats.len().max(1) as f32;
+        for (k, at) in beats.into_iter().enumerate() {
+            let x = (k + 1) as f32 / n;
+            self.tempo.push((at, base * (1.0 - (1.0 - slowest) * x * x)));
+        }
+        self.tempo.sort_by_key(|(t, _)| *t);
+    }
+
+    /// Marks the first bar of every phrase from bar `from` up to bar `to`
+    /// as a place the piece may be left at.
+    pub fn mark_phrases(&mut self, from: u32, to: u32) {
+        let bar = self.bar();
+        self.marks.extend((from..to).step_by(crate::theory::phrase::BARS as usize).map(|b| (Mark::Phrase, b * bar)));
+    }
+
+    /// Marks bar `at` as where the coda begins.
+    pub fn mark_coda(&mut self, at: u32) {
+        self.marks.push((Mark::Coda, at * self.bar()));
+    }
+
+    /// The ticks a mark of `kind` stands at, in order.
+    pub fn marked(&self, kind: Mark) -> impl Iterator<Item = u32> + '_ {
+        self.marks.iter().filter(move |(k, _)| *k == kind).map(|(_, at)| *at)
     }
 
     /// Where the last section ends.
@@ -163,7 +260,7 @@ impl Score {
     /// one's over the quarter bar before it begins, so a part's first
     /// stroke plays at the part's own level — a trim arriving after it
     /// lets the stroke that opens a fuller part through at the thinner
-    /// part's gain, the loop's peak; falling away through a section that
+    /// part's gain, the piece's peak; falling away through a section that
     /// rings; full outside any section.
     pub fn trim_at(&self, tick: u32) -> f32 {
         let Some(i) = self.sections.iter().position(|s| s.start <= tick && tick < s.end) else {
@@ -205,31 +302,6 @@ impl Score {
         self.notes.iter().filter(move |n| n.start <= tick && tick < n.end())
     }
 
-    /// The score played `times` in a row, as a loop is rendered: the
-    /// sections, harmony and notes again at every pass, and a held voice
-    /// that reaches a seam continued into the next pass rather than
-    /// struck again, so the drone is one tone throughout.
-    pub fn unrolled(&self, times: u32) -> Score {
-        let period = self.end();
-        let mut out = self.clone();
-        for k in 1..times {
-            let shift = k * period;
-            for s in &self.sections {
-                out.sections.push(Section { start: s.start + shift, end: s.end + shift, ..s.clone() });
-            }
-            out.harmony.extend(self.harmony.iter().copied());
-            for n in &self.notes {
-                let n = Note { start: n.start + shift, ..*n };
-                match self.instrument(n.channel).role {
-                    Role::Drone | Role::Sustain => out.hold(n),
-                    _ => out.add(n),
-                }
-            }
-        }
-        out.finish();
-        out
-    }
-
     /// Puts the notes in a fixed order, so two scores composed alike are
     /// equal note for note whatever order their voices were written in.
     pub fn finish(&mut self) {
@@ -260,19 +332,21 @@ mod tests {
         s
     }
 
+    /// Time runs through every tempo step: a bar at half the tempo lasts
+    /// twice as long, and `tick_at` turns the seconds back into ticks.
     #[test]
-    fn unrolling_continues_the_drone_and_repeats_the_rest() {
-        let s = score();
-        let twice = s.unrolled(2);
-        let period = s.end();
-        assert_eq!(twice.end(), 2 * period);
-        assert_eq!(twice.sections.len(), 4);
-        assert_eq!(twice.harmony.len(), 8);
-        let drones: Vec<&Note> = twice.notes.iter().filter(|n| n.channel == 0).collect();
-        assert_eq!(drones.len(), 1, "the drone is struck once");
-        assert_eq!(drones[0].len, 2 * period);
-        assert_eq!(twice.notes.iter().filter(|n| n.channel == 3).count(), 4);
-        assert!(twice.notes.iter().any(|n| n.channel == 3 && n.start == period));
+    fn time_runs_through_the_tempo_steps() {
+        let mut s = score();
+        let bar = s.bar();
+        let plain = s.seconds(bar);
+        s.tempo = vec![(bar, s.eighth_bpm / 2.0)];
+        assert!((s.seconds(bar) - plain).abs() < 1e-9);
+        assert!((s.seconds(2 * bar) - 3.0 * plain).abs() < 1e-9);
+        assert_eq!(s.bpm_at(bar - 1), s.eighth_bpm);
+        assert_eq!(s.bpm_at(bar), s.eighth_bpm / 2.0);
+        for tick in [0, bar / 3, bar, bar + bar / 2, 3 * bar] {
+            assert!(s.tick_at(s.seconds(tick)).abs_diff(tick) <= 1, "{tick}");
+        }
     }
 
     #[test]

@@ -68,14 +68,14 @@ pub const TWELVE_BAR: [&[Schema]; 3] = [
     ],
 ];
 
-/// The fight's progressions, with no drone under them to spare: the
+/// The horo's progressions, with no drone under them to spare: the
 /// minor's shuttle to its flat sixth, and its turn through ♭VII to the
 /// iv; Hijaz's shuttle to its flat second, the Ottoman and Balkan
-/// colour and the minor second a fight turns on, and its close down
+/// colour and the minor second a horo turns on, and its close down
 /// through that second to the tonic; the Balkan close home through iv
 /// and ♭VII — in Hijaz the minor ♭vii, its standard progression — and
 /// the plagal close.
-pub const FIGHT: [Schema; 6] = [
+pub const HORO: [Schema; 6] = [
     Schema { name: "war shuttle", modes: &[Aeolian], roots: [0, 5, 0, 5], closed: false, alters: [DIATONIC; 4] },
     Schema { name: "war turn", modes: &[Aeolian], roots: [0, 6, 0, 3], closed: false, alters: [DIATONIC; 4] },
     Schema { name: "hijaz shuttle", modes: &[Hijaz], roots: [0, 1, 0, 1], closed: false, alters: [DIATONIC; 4] },
@@ -135,9 +135,9 @@ pub fn split(schemata: &'static [Schema]) -> (Vec<&'static Schema>, Vec<&'static
     (schemata.iter().filter(|s| !s.closed).collect(), schemata.iter().filter(|s| s.closed).collect())
 }
 
-/// The fight's schemata a mode may use: the open ones and the closed.
-pub fn fight_schemata(mode: Mode) -> (Vec<&'static Schema>, Vec<&'static Schema>) {
-    let fits: Vec<&Schema> = FIGHT.iter().filter(|s| s.modes.contains(&mode)).collect();
+/// The horo's schemata a mode may use: the open ones and the closed.
+pub fn horo_schemata(mode: Mode) -> (Vec<&'static Schema>, Vec<&'static Schema>) {
+    let fits: Vec<&Schema> = HORO.iter().filter(|s| s.modes.contains(&mode)).collect();
     (fits.iter().copied().filter(|s| !s.closed).collect(), fits.iter().copied().filter(|s| s.closed).collect())
 }
 
@@ -207,12 +207,12 @@ mod tests {
         assert!(TWELVE_BAR[2].iter().all(|s| matches!(s.roots[0], 4 | 5)));
     }
 
-    /// Every fight schema opens on the tonic and closes as it says,
+    /// Every horo schema opens on the tonic and closes as it says,
     /// every chord in it a triad with no tritone and not augmented, and
-    /// each of the fight's modes has a question and an answer.
+    /// each of the horo's modes has a question and an answer.
     #[test]
-    fn every_fight_has_a_question_and_an_answer() {
-        for s in &FIGHT {
+    fn every_horo_has_a_question_and_an_answer() {
+        for s in &HORO {
             assert_eq!(s.roots[0], 0, "{}", s.name);
             assert_eq!(s.roots[3] == 0, s.closed, "{}", s.name);
             for mode in s.modes {
@@ -225,7 +225,7 @@ mod tests {
             }
         }
         for mode in [Aeolian, Hijaz] {
-            let (open, closed) = fight_schemata(mode);
+            let (open, closed) = horo_schemata(mode);
             assert!(!open.is_empty() && !closed.is_empty(), "{mode:?}");
         }
     }
@@ -258,13 +258,13 @@ mod tests {
     }
 
     /// A progression in a mode belongs to one style: the folk's — the
-    /// overworld's and the fight's, one world — the blues' or the
+    /// overworld's and the horo's, one world — the blues' or the
     /// ballad's, so no two styles are heard turning the same way; a
     /// progression is its chords as they sound, so the Andalusian's major
     /// V is not the lament's minor v.
     #[test]
     fn no_progression_crosses_styles() {
-        let folk: Vec<&Schema> = SCHEMATA.iter().chain(FIGHT.iter()).collect();
+        let folk: Vec<&Schema> = SCHEMATA.iter().chain(HORO.iter()).collect();
         let blues: Vec<&Schema> = TWELVE_BAR.iter().flat_map(|row| row.iter()).collect();
         let ballad: Vec<&Schema> = [BALLAD.verse, BALLAD.chorus, BALLAD.climax].into_iter().flatten().collect();
         let styles = [("folk", folk), ("blues", blues), ("ballad", ballad)];

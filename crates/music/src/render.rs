@@ -21,11 +21,7 @@
 //! The summed band goes through the mix bus (`master`) before it is
 //! kept.
 //!
-//! A loop is played through twice and the second pass kept, so its head
-//! already carries the tail's reverb and held tones; its last blocks are
-//! blended into the first pass's last blocks, which the head follows
-//! sample for sample, so the seam is no sharper than the render itself.
-//! A one-shot is played once and rings on for its room's time. Where its
+//! A piece is played once and rings on for its room's time. Where its
 //! sections declare levels, `set_levels` sets their trims from the
 //! render before the render that ships.
 
@@ -53,10 +49,6 @@ const WET: f32 = 0.25;
 /// A player's channel volume at level 0: under the top, so a quiet
 /// sample can be raised some six dB before the volume reaches 127.
 const VOLUME: f32 = 90.0;
-
-/// The seam's blend, in samples: long enough that the two passes' phases
-/// meet without a click, short enough that neither pass is heard twice.
-const SEAM: usize = SAMPLE_RATE as usize * 4 / 100;
 
 /// The channel volume a player's `level` is sent as: the synthesizer
 /// squares volume into gain, so a gain in dB is a quarter of it in
@@ -234,15 +226,14 @@ impl Bank {
     }
 }
 
-/// How long a one-shot runs on past the last sample over the silence
+/// How long a piece runs on past the last sample over the silence
 /// floor, seconds.
 const RING_KEPT_S: f32 = 0.5;
 
 /// `piece` at `seed` as its file sounds: composed, its sections set to
 /// their levels, rendered, set to the piece's loudness and limited under
-/// its ceiling, and a one-shot
-/// cut `RING_KEPT_S` past the last sample over the silence floor — the
-/// room's ring under that is no sound anyone hears.
+/// its ceiling, and cut `RING_KEPT_S` past the last sample over the
+/// silence floor — the room's ring under that is no sound anyone hears.
 pub fn take(piece: &Piece, seed: u64, bank: &Bank) -> (Score, Vec<[f32; 2]>) {
     let mut score = (piece.build)(&Params { seed });
     let _held = bank.hold(&score);
@@ -250,12 +241,10 @@ pub fn take(piece: &Piece, seed: u64, bank: &Bank) -> (Score, Vec<[f32; 2]>) {
     let mut audio = render(&score, bank);
     audio::encode::set_loudness(&mut audio, piece.lufs);
     master::limit(&mut audio);
-    if !score.loops {
-        let (_, tail) = audio::measure::silence(&audio);
-        if tail > RING_KEPT_S {
-            let cut = ((tail - RING_KEPT_S) * SAMPLE_RATE as f32) as usize;
-            audio.truncate(audio.len() - cut);
-        }
+    let (_, tail) = audio::measure::silence(&audio);
+    if tail > RING_KEPT_S {
+        let cut = ((tail - RING_KEPT_S) * SAMPLE_RATE as f32) as usize;
+        audio.truncate(audio.len() - cut);
     }
     (score, audio)
 }
@@ -300,48 +289,18 @@ pub fn set_levels(score: &mut Score, bank: &Bank) {
     }
 }
 
-/// The block that carries `tick`'s events: the first that starts at or
-/// after its sample.
-fn block_at(score: &Score, tick: u32) -> usize {
-    ((score.seconds(tick) * SAMPLE_RATE as f64).round() as usize).div_ceil(BLOCK) * BLOCK
-}
-
-/// Interleaved stereo f32 at `SAMPLE_RATE`: the score once with its
-/// tail, or, for a loop, exactly one pass whose end runs into its head.
+/// Interleaved stereo f32 at `SAMPLE_RATE`: the score once, then on
+/// for the room's time, the fall of 60 dB, past which is silence.
 pub fn render(score: &Score, bank: &Bank) -> Vec<[f32; 2]> {
     let _held = bank.hold(score);
-    // A one-shot rings on past its last section for the room's time, the
-    // fall of 60 dB, past which is silence; a loop's tails ring into its
-    // head.
-    if !score.loops {
-        let mut once = mixed(score, bank, score.end(), (score.room as f64 * SAMPLE_RATE as f64) as usize);
-        master::master(&mut once);
-        return once;
-    }
-    let twice = score.unrolled(2);
-    let mut all = mixed(&twice, bank, score.end(), BLOCK);
-    // Through the bus before the pass is kept, so the compressor arrives
-    // at the seam already settled.
-    master::master(&mut all);
-    let (a, b) = (block_at(score, score.end()), block_at(&twice, twice.end()));
-    let mut out = all[a..b].to_vec();
-    let n = SEAM.min(a).min(out.len());
-    let into = &all[a - n..a];
-    let len = out.len();
-    for i in 0..n {
-        let theta = (i + 1) as f32 / n as f32 * std::f32::consts::FRAC_PI_2;
-        let (keep, take) = (theta.cos(), theta.sin());
-        for ch in 0..2 {
-            out[len - n + i][ch] = out[len - n + i][ch] * keep + into[i][ch] * take;
-        }
-    }
-    out
+    let mut once = mixed(score, bank, (score.room as f64 * SAMPLE_RATE as f64) as usize);
+    master::master(&mut once);
+    once
 }
 
-/// The score once in its room, then `tail` samples more; its playing
-/// repeats every `period` ticks.
-fn mixed(score: &Score, bank: &Bank, period: u32, tail: usize) -> Vec<[f32; 2]> {
-    let played = perform(score, period);
+/// The score once in its room, then `tail` samples more.
+fn mixed(score: &Score, bank: &Bank, tail: usize) -> Vec<[f32; 2]> {
+    let played = perform(score);
     let mut out = through(score, &played, bank, tail, false);
     let room = hall::ring(&through(score, &played, bank, tail, true), score.room);
     for (o, r) in out.iter_mut().zip(room) {

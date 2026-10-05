@@ -133,7 +133,7 @@ mod tests {
     fn comments_join_a_packet_split_across_pages() {
         let first = ident(48_000);
         let vendor = "v".repeat(600);
-        let second = comment_header(&vendor, &["pool=overworld", "LOOP=true", "TITLE=a=b"]);
+        let second = comment_header(&vendor, &["pool=overworld", "KEY=D minor", "TITLE=a=b"]);
         let lacing = laced(second.len());
         // Split after two full segments, so the packet runs on into page two.
         let (head, tail) = lacing.split_at(2);
@@ -144,7 +144,7 @@ mod tests {
         let tags = comments(&bytes).unwrap();
         assert_eq!(tags, vec![
             ("POOL".to_string(), "overworld".to_string()),
-            ("LOOP".to_string(), "true".to_string()),
+            ("KEY".to_string(), "D minor".to_string()),
             ("TITLE".to_string(), "a=b".to_string()),
         ]);
     }

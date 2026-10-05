@@ -103,7 +103,7 @@ impl Player {
             }
             (Some(t), _) => {
                 let s = &t.score;
-                let facts = [s.sections[0].name.to_string(), s.key.name(), s.meter.label(), format!("{:.0} bpm", s.eighth_bpm / 2.0), (if s.loops { "loop" } else { "one-shot" }).to_string()];
+                let facts = [s.story.to_string(), s.key.name(), s.meter.label(), format!("{:.0} bpm", s.eighth_bpm / 2.0)];
                 let mut job = LayoutJob::default();
                 for (i, fact) in facts.iter().enumerate() {
                     if i > 0 {
@@ -174,7 +174,7 @@ impl Player {
         let score = &take.score;
         let last = score.sections.len() - 1;
         for (i, section) in score.sections.iter().enumerate() {
-            // A one-shot rings on past its last section; the ring is the
+            // A piece rings on past its last section; the ring is the
             // last section's.
             let (start, end) = (score.seconds(section.start), if i == last { total } else { score.seconds(section.end) });
             let color = if end <= at {

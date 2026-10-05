@@ -1,4 +1,4 @@
-//! The overworld's music: a place told in a loop, on a dance, from a
+//! The overworld's music: a place told on a dance, from a
 //! drone. Every choice is a draw from the seed's stream, one fork per
 //! purpose, and the first fork decides what kind of piece this is —
 //! which story it tells, in what mode and tonic, on which dance, with
@@ -19,7 +19,7 @@
 use crate::ladder::{self, turn, Bed, Story, Walk};
 use crate::pieces::Params;
 use crate::rng::Rng;
-use crate::score::{Instrument, Note, Role, Score, TICKS_PER_EIGHTH as E};
+use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
 use crate::teller::{self, Hold, Teller, Telling};
 use crate::theory::groove::{Groove, BALKAN};
 use crate::theory::melody::{Theme, FOLK_SHAPES};
@@ -237,7 +237,7 @@ const STORIES: [Story<Texture, Telling>; 6] = [
         base: Texture::BARE,
         ladder: &[PadLayer, DrumLayer, PadLayer, PlucksLayer, WeaveLayer, Colours, PlucksLayer],
         leads: &[Phrases, Phrases, Phrases, Long, Long, RiffAndLong, RiffAndLong, Riff],
-        turns: &[turn((7, 7), (1, 1))],
+        turns: &[turn((7, 7), (1, 1)), turn((0, 0), (0, 0))],
         halves: (1, 1),
         pace: (0.0, 1.0),
     },
@@ -247,7 +247,7 @@ const STORIES: [Story<Texture, Telling>; 6] = [
         base: Texture::BARE,
         ladder: &[PadLayer, DrumLayer, PlucksLayer, WeaveLayer, PadLayer, Colours],
         leads: &[Phrases, Phrases, Phrases, Long, Long, RiffAndLong, Riff],
-        turns: &[turn((3, 3), (0, 0)), turn((1, 1), (0, 0)), turn((6, 6), (1, 1))],
+        turns: &[turn((3, 3), (0, 0)), turn((1, 1), (0, 0)), turn((6, 6), (1, 1)), turn((0, 0), (0, 0))],
         halves: (1, 1),
         pace: (0.0, 1.0),
     },
@@ -257,7 +257,7 @@ const STORIES: [Story<Texture, Telling>; 6] = [
         base: Texture::BARE,
         ladder: &[PadLayer, DrumLayer, PadLayer, WeaveLayer, PlucksLayer, Colours],
         leads: &[Phrases, Phrases, Phrases, Phrases, Long, Long, Phrases],
-        turns: &[turn((6, 6), (2, 2))],
+        turns: &[turn((6, 6), (2, 2)), turn((0, 0), (0, 0))],
         halves: (1, 2),
         pace: (0.0, 1.0),
     },
@@ -267,7 +267,7 @@ const STORIES: [Story<Texture, Telling>; 6] = [
         base: Texture::BARE,
         ladder: &[PadLayer, PlucksLayer, PadLayer, WeaveLayer, Colours],
         leads: &[Phrases, Phrases, Phrases, Phrases, Long, Long],
-        turns: &[turn((5, 5), (1, 1))],
+        turns: &[turn((5, 5), (1, 1)), turn((0, 0), (0, 0))],
         halves: (2, 2),
         pace: (0.0, 1.0),
     },
@@ -277,7 +277,7 @@ const STORIES: [Story<Texture, Telling>; 6] = [
         base: Texture { pad: Pad::Off, plucks: Plucks::Full, drum: Drum::Accents, colours: false, weave: Weave::Off },
         ladder: &[PadLayer, WeaveLayer, PadLayer, DrumLayer, Colours],
         leads: &[Off, Phrases, Phrases, RiffAndLong, RiffAndLong, Riff],
-        turns: &[turn((5, 5), (1, 1)), turn((1, 1), (0, 0)), turn((4, 5), (1, 1))],
+        turns: &[turn((5, 5), (1, 1)), turn((1, 1), (0, 0)), turn((4, 5), (1, 1)), turn((0, 0), (0, 0))],
         halves: (1, 1),
         pace: (0.0, 1.0),
     },
@@ -287,7 +287,7 @@ const STORIES: [Story<Texture, Telling>; 6] = [
         base: Texture { pad: Pad::Thin, plucks: Plucks::Off, drum: Drum::Off, colours: false, weave: Weave::Off },
         ladder: &[PlucksLayer, WeaveLayer, PlucksLayer, PadLayer, Colours],
         leads: &[Phrases, Riff, Phrases, Riff, Phrases, Long],
-        turns: &[turn((1, 1), (0, 0)), turn((0, 0), (0, 0)), turn((1, 1), (0, 0)), turn((2, 3), (0, 0)), turn((1, 1), (0, 0)), turn((4, 5), (0, 1))],
+        turns: &[turn((1, 1), (0, 0)), turn((0, 0), (0, 0)), turn((1, 1), (0, 0)), turn((2, 3), (0, 0)), turn((1, 1), (0, 0)), turn((4, 5), (0, 1)), turn((0, 0), (0, 0))],
         halves: (1, 1),
         pace: (0.0, 1.0),
     },
@@ -388,7 +388,6 @@ pub fn build(params: &Params) -> Score {
         Instrument { name: "breath, the air", program: HALO_PAD, channel: CH_BREATH_AIR, role: Role::Sustain, low: 48, high: 67, reverb: 120, pan: 42, level: 0.0 },
     ];
     let mut score = Score::new(key, groove.meter(), tempo, instruments, ROOM_S);
-    score.loops = true;
     score.lead = Some(CH_LEAD);
     let name = |program: u8| match program {
         CELLO => "cello",
@@ -426,7 +425,7 @@ pub fn build(params: &Params) -> Score {
     let bar = score.bar();
 
     // The walk, in half-phrases, and whole question-and-answer pairs
-    // of them, so the loop closes on an answer.
+    // of them, so it closes on an answer.
     let walk = story.place(&mut skeleton, &mut score, 4, |texture, lead| texture.trim(lead));
 
     // The tune's degrees shifted: the climb at the ladder's top, else
@@ -469,15 +468,69 @@ pub fn build(params: &Params) -> Score {
     teller::tell(&mut score, &teller, &form.tune, &form.walk.runs(), &mut rng.fork(8));
     frame_drum(&mut score, &form, &mut rng.fork(10));
     linger(&mut score);
+    score.mark_phrases(0, form.bars());
+    ending(&mut score, &form, &mut rng.fork(12));
+    intro(&mut score, &mut rng.fork(13));
     score.finish();
     score
+}
+
+/// The bars of the opening call over the drone, and the bars the drone
+/// rings on alone after the last stroke.
+const INTRO_BARS: u32 = 2;
+const RING_BARS: u32 = 3;
+
+/// The opening, short, so the dance comes soon: the drone alone, and over
+/// it the lead's call down from the fifth to the tonic — the descent a
+/// Balkan player's prelude ends on, a held tone and its steps home —
+/// before the dance's first beat.
+fn intro(score: &mut Score, rng: &mut Rng) {
+    let bar = score.bar();
+    score.delay(&[Chord::triad(0); INTRO_BARS as usize]);
+    let opening = INTRO_BARS * bar;
+    let trim = score.sections.first().map_or(1.0, |s| s.trim);
+    score.sections.insert(0, Section { name: "call", start: 0, end: opening, trim, level: None, rings: false });
+    for n in score.notes.iter_mut().filter(|n| n.channel == CH_DRONE && n.start == opening) {
+        n.start = 0;
+        n.len += opening;
+    }
+    let key = score.key;
+    let home = key.absolute_degree(tune::home_tonic(&key, TUNE.0, TUNE.1)).unwrap();
+    // The chord's tones on the strong eighths, the steps between on the
+    // weak eighth before them, whatever the dance's grouping.
+    let n = score.meter.eighths();
+    let second = score.meter.strong_eighths()[1];
+    let call = [(0, n - 1, 4), (n - 1, 1, 3), (n, second - 1, 2), (n + second - 1, 1, 1), (n + second, INTRO_BARS * n - n - second - 1, 0)];
+    for (at, len, degree) in call {
+        score.add(Note { start: at * E, len: len * E - E / 8, pitch: key.pitch(home + degree, 4), vel: vel(if degree == 4 { -6 } else { -12 }, rng), channel: CH_LEAD });
+    }
+}
+
+/// The ending, after the walk's last part: on the last downbeat the
+/// frame drum's one low stroke and the plucks' tonic, the lead holding
+/// its home tonic over the drone, and the drone ringing on alone as the
+/// room takes it.
+fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
+    let bar = form.bar;
+    let hit = form.bars() * bar;
+    score.mark_coda(form.bars());
+    let trim = score.sections.last().map_or(1.0, |s| s.trim);
+    score.sections.push(Section { name: "end", start: hit, end: hit + RING_BARS * bar, trim, level: None, rings: true });
+    score.harmony.extend((0..RING_BARS).map(|_| Chord::triad(0)));
+    for n in score.notes.iter_mut().filter(|n| n.channel == CH_DRONE && n.end() == hit) {
+        n.len += RING_BARS * bar;
+    }
+    let key = score.key;
+    score.add(Note { start: hit, len: 2 * E, pitch: DUM, vel: vel(0, rng), channel: CH_DRUM });
+    score.add(Note { start: hit, len: 2 * E, pitch: key.pitch(0, 3), vel: vel(-6, rng), channel: CH_PLUCK });
+    score.add(Note { start: hit, len: 2 * bar - E, pitch: tune::home_tonic(&key, TUNE.0, TUNE.1), vel: vel(-10, rng), channel: CH_LEAD });
 }
 
 /// The tonic in two octaves under everything, one note each for the whole
 /// piece: a retrigger would restart the sample. The tonic alone, not the
 /// fifth: a fifth held under the minor's VI and iv rubs a semitone
-/// against their flat sixth. Held to the end, where the loop continues
-/// it. Its level is the bed's floor, what a rest of every other voice
+/// against their flat sixth. Held to the end, where the ending rings
+/// it on alone. Its level is the bed's floor, what a rest of every other voice
 /// leaves; it sits where that rest is a lull and not a hole.
 fn drone(score: &mut Score, form: &Form) {
     let end = form.bars() * form.bar;
@@ -597,9 +650,8 @@ const LINGER: u32 = 2 * E;
 /// chord `LINGER` into it, unless it would rub a held voice sounding
 /// there — a semitone, a tritone, a low whole tone — as a tone stepping
 /// a semitone into the next chord does against its own successor; a
-/// held clash is heard however soft it is. The loop's last chord keeps
-/// its half eighth: the head's chord is the next, and the loop
-/// continues what reaches it.
+/// held clash is heard however soft it is. The walk's last chord keeps
+/// its half eighth: the ending strikes its own chord there.
 fn linger(score: &mut Score) {
     let bar = score.bar();
     let end = score.end();
@@ -841,18 +893,17 @@ mod tests {
         }
     }
 
-    /// The piece is a loop of whole question-and-answer pairs, its parts
-    /// whole half-phrases, its harmony the schemata's, its tune in its
-    /// register; nothing struck ends past the end, only what is held,
-    /// which the loop continues.
+    /// The piece is whole question-and-answer pairs, its parts
+    /// whole half-phrases between its call and its ending, its harmony
+    /// the schemata's, its tune in its register; nothing struck ends past
+    /// the end, only what is held.
     #[test]
     fn a_piece_is_whole_phrases_on_its_schemata() {
         for seed in 0..24 {
             let score = build(&Params { seed });
-            assert!(score.loops);
-            let bars = score.end() / score.bar();
+            let bars = score.end() / score.bar() - INTRO_BARS - RING_BARS;
             assert_eq!(bars % (2 * phrase::BARS), 0, "seed {seed}: {bars} bars");
-            for s in &score.sections {
+            for s in &score.sections[1..score.sections.len() - 1] {
                 assert_eq!((s.end - s.start) % (phrase::BARS / 2 * score.bar()), 0, "seed {seed}: a part of broken half-phrases");
             }
             assert_eq!(score.harmony[0].root, 0);

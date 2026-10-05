@@ -1,4 +1,4 @@
-//! The city's music: a place told in a loop, on a blues. Every choice
+//! The city's music: a place told on a blues. Every choice
 //! is a draw from the seed's stream, one fork per purpose, and the
 //! first fork decides what kind of piece this is — which story it
 //! tells, in what mode and tonic, on which feel, with which players,
@@ -26,13 +26,13 @@
 use crate::ladder::{self, turn, Bed, Story, Walk};
 use crate::pieces::Params;
 use crate::rng::Rng;
-use crate::score::{Instrument, Note, Role, Score, TICKS_PER_EIGHTH as E};
+use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
 use crate::teller::{self, Hold, Teller, Telling};
 use crate::theory::groove::{Groove, BLUES};
 use crate::theory::melody::{Theme, Tone, BLUES_SHAPES};
 use crate::theory::phrase::{Form as PhraseForm, FORMS};
 use crate::theory::schema::{Schema, TWELVE_BAR};
-use crate::theory::{interval_class, Chord, Key, Mode};
+use crate::theory::{interval_class, Chord, Key, Mode, DIATONIC, MAJOR};
 use crate::theory::phrase;
 use crate::tune::{self, Tune};
 use crate::variation::{self, Role as Bar};
@@ -233,7 +233,7 @@ const STORIES: [Story<Texture, Telling>; 5] = [
         base: Texture { bass: Bass::Two, kit: Kit::Time, ..Texture::BARE },
         ladder: &[CompLayer, BassLayer, OrganLayer, KitLayer, WeaveLayer, Colours, CompLayer],
         leads: &[Phrases, Phrases, Trading, Trading, Phrases, RiffAndLong, RiffAndLong, Riff],
-        turns: &[turn((7, 7), (1, 1))],
+        turns: &[turn((7, 7), (1, 1)), turn((0, 0), (0, 0))],
         halves: (1, 1),
         pace: (0.2, 0.8),
     },
@@ -243,7 +243,7 @@ const STORIES: [Story<Texture, Telling>; 5] = [
         base: Texture { organ: Organ::Thin, ..Texture::BARE },
         ladder: &[BassLayer, CompLayer, WeaveLayer, KitLayer, OrganLayer, BassLayer, Colours],
         leads: &[Phrases, Phrases, Trading, Phrases, Trading, RiffAndLong, Phrases, Riff],
-        turns: &[turn((4, 5), (0, 0)), turn((7, 7), (0, 1))],
+        turns: &[turn((4, 5), (0, 0)), turn((7, 7), (0, 1)), turn((0, 0), (0, 0))],
         halves: (1, 1),
         pace: (0.0, 0.6),
     },
@@ -253,7 +253,7 @@ const STORIES: [Story<Texture, Telling>; 5] = [
         base: Texture { bass: Bass::Walking, comp: Comp::Shells, kit: Kit::Time, ..Texture::BARE },
         ladder: &[KitLayer, OrganLayer, WeaveLayer, CompLayer, Colours, WeaveLayer],
         leads: &[Riff, Trading, Trading, RiffAndLong, RiffAndLong, Riff, Trading],
-        turns: &[turn((3, 3), (0, 0)), turn((1, 1), (0, 0)), turn((6, 6), (1, 1))],
+        turns: &[turn((3, 3), (0, 0)), turn((1, 1), (0, 0)), turn((6, 6), (1, 1)), turn((0, 0), (0, 0))],
         halves: (1, 1),
         pace: (0.6, 1.0),
     },
@@ -263,7 +263,7 @@ const STORIES: [Story<Texture, Telling>; 5] = [
         base: Texture { comp: Comp::Shells, ..Texture::BARE },
         ladder: &[BassLayer, KitLayer, WeaveLayer, OrganLayer, BassLayer, Colours],
         leads: &[Trading, Trading, Phrases, Trading, Riff, Trading, Phrases],
-        turns: &[turn((2, 2), (0, 0)), turn((0, 0), (0, 0)), turn((3, 4), (0, 0)), turn((1, 1), (0, 0)), turn((6, 6), (0, 1))],
+        turns: &[turn((2, 2), (0, 0)), turn((0, 0), (0, 0)), turn((3, 4), (0, 0)), turn((1, 1), (0, 0)), turn((6, 6), (0, 1)), turn((0, 0), (0, 0))],
         halves: (1, 1),
         pace: (0.2, 1.0),
     },
@@ -273,7 +273,7 @@ const STORIES: [Story<Texture, Telling>; 5] = [
         base: Texture { organ: Organ::Thin, bass: Bass::Two, ..Texture::BARE },
         ladder: &[CompLayer, WeaveLayer, OrganLayer, KitLayer, BassLayer, Colours],
         leads: &[Phrases, Phrases, Trading, Phrases, RiffAndLong, Trading, Phrases],
-        turns: &[turn((6, 6), (1, 2))],
+        turns: &[turn((6, 6), (1, 2)), turn((0, 0), (0, 0))],
         halves: (1, 2),
         pace: (0.0, 0.3),
     },
@@ -360,7 +360,6 @@ pub fn build(params: &Params) -> Score {
         Instrument { name: "weave, the vibes", program: VIBES, channel: CH_WEAVE_2, role: Role::Pluck, low: 53, high: 89, reverb: 70, pan: 44, level: 0.0 },
     ];
     let mut score = Score::new(key, groove.meter(), tempo, instruments, ROOM_S);
-    score.loops = true;
     score.lead = Some(CH_LEAD);
     let name = |program: u8| match program {
         PIANO => "piano",
@@ -391,8 +390,8 @@ pub fn build(params: &Params) -> Score {
     );
     let bar = score.bar();
 
-    // The walk, in half-phrases, and whole choruses of them, so the
-    // loop closes on the turn home.
+    // The walk, in half-phrases, and whole choruses of them, so it
+    // closes on the turn home.
     let walk = story.place(&mut skeleton, &mut score, 2 * TWELVE_BAR.len() as u32, |_, _| 1.0);
     let upper = story.ladder.len().max(1);
     for (section, part) in score.sections.iter_mut().zip(&walk.parts) {
@@ -449,8 +448,112 @@ pub fn build(params: &Params) -> Score {
     };
     teller::tell(&mut score, &teller, &form.tune, &form.walk.runs(), &mut rng.fork(8));
     kit(&mut score, &form, &mut rng.fork(10));
+    score.mark_phrases(0, form.bars());
+    ending(&mut score, &form, &mut rng.fork(12));
+    intro(&mut score, &mut rng.fork(13));
     score.finish();
     score
+}
+
+/// The intro's chords, four bars from the V: the twelve-bar's last row,
+/// the V a dominant seventh — its third raised, the leading tone the head
+/// is pulled home by — then the iv, the i, and the V again into the head.
+fn intro_chords() -> [Chord; 4] {
+    let seventh = |root: i32, alter: [i8; 4]| Chord { root, size: 4, alter };
+    [seventh(4, MAJOR), seventh(3, DIATONIC), seventh(0, DIATONIC), seventh(4, MAJOR)]
+}
+
+/// Four bars from the V before the head, as a blues band opens: the bass
+/// walking up through each chord a beat a tone, the piano's shell on the
+/// beat and held to the push, the organ holding the chord under them, the
+/// brushes' ride on the beats and the hat's pedal on the backbeat, a
+/// snare pickup into the head; the lead waits for its head.
+fn intro(score: &mut Score, rng: &mut Rng) {
+    let chords = intro_chords();
+    score.delay(&chords);
+    let bar = score.bar();
+    let strong = score.meter.strong_eighths();
+    let eighths = score.meter.eighths();
+    let groups = score.meter.groups.clone();
+    score.sections.insert(0, Section { name: "intro", start: 0, end: chords.len() as u32 * bar, trim: 1.0, level: Some(LEVEL_FOOT), rings: false });
+    for (b, chord) in chords.iter().enumerate() {
+        let b = b as u32;
+        let key = score.key_at(b * bar);
+        let start = b * bar;
+        let tones = chord.pitches_within(&key, 33, 57);
+        let root = nearest(&at_degree(&key, *chord, chord.root, 33, 57), 43);
+        let from = tones.iter().position(|t| *t == root).unwrap_or(0);
+        for (g, at) in strong.iter().enumerate() {
+            let pitch = tones[(from + g).min(tones.len() - 1)];
+            score.add(Note { start: start + at * E, len: groups[g] as u32 * E - 40, pitch, vel: vel(if g == 0 { -16 } else { -24 }, rng), channel: CH_BASS });
+        }
+        let shell: Vec<u8> = [chord.root + 2, chord.root + 6].iter().flat_map(|d| at_degree(&key, *chord, *d, 52, 67)).take(2).collect();
+        let push = strong[1] + 1;
+        for (at, to) in [(0, push), (push, eighths)] {
+            for p in &shell {
+                score.add(Note { start: start + at * E, len: (to - at) * E - 40, pitch: *p, vel: vel(-20, rng), channel: CH_PIANO });
+            }
+        }
+        for d in [chord.root, chord.root + 4] {
+            if let Some(p) = at_degree(&key, *chord, d, 52, 69).first() {
+                score.add(Note { start, len: bar - E / 4, pitch: *p, vel: vel(-26, rng), channel: CH_ORGAN });
+            }
+        }
+        for (g, at) in strong.iter().enumerate() {
+            score.add(Note { start: start + at * E, len: E, pitch: RIDE, vel: vel(-14, rng), channel: CH_KIT });
+            if g % 2 == 1 {
+                score.add(Note { start: start + at * E, len: E, pitch: HAT_PEDAL, vel: vel(-20, rng), channel: CH_KIT });
+            }
+        }
+        if b + 1 == chords.len() as u32 {
+            for k in 0..3 {
+                score.add(Note { start: start + (eighths - 3 + k) * E, len: E / 2, pitch: SNARE, vel: vel(-20 + 6 * k as i32, rng), channel: CH_KIT });
+            }
+        }
+    }
+}
+
+/// How far the city slows into its last chord, the bars it slows over,
+/// the bars the chord rings, and the ending's level: under the foot by
+/// what a ring falling away puts the hit over its mean.
+const SLOWEST: f32 = 0.85;
+const SLOWING_BARS: u32 = 2;
+const RING_BARS: u32 = 3;
+const LEVEL_END: f32 = LEVEL_FOOT - 4.0;
+
+/// The ending, after the last chorus's turn home: the band slows through
+/// the chorus's last two bars and lands together on the tonic, a minor
+/// ninth — the bass's low root, the piano's chord spread up from its
+/// third, the organ's root and fifth, the lead on its home tonic, the
+/// brushes rolling on the ride and swelling — and the room rings.
+fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
+    let bar = form.bar;
+    let at = form.bars();
+    let hit = at * bar;
+    score.ritardando((at - SLOWING_BARS) * bar, hit, SLOWEST);
+    score.mark_coda(at);
+    let ninth = Chord { root: 0, size: 5, alter: DIATONIC };
+    score.sections.push(Section { name: "end", start: hit, end: hit + RING_BARS * bar, trim: 1.0, level: Some(LEVEL_END), rings: true });
+    score.harmony.extend((0..RING_BARS).map(|_| ninth));
+    let key = score.key;
+    let len = RING_BARS * bar - E;
+    let low = nearest(&at_degree(&key, ninth, 0, 28, 40), 33);
+    score.add(Note { start: hit, len, pitch: low, vel: vel(-10, rng), channel: CH_BASS });
+    for p in ninth.pitches_within(&key, 55, 74).into_iter().skip(1).take(4) {
+        score.add(Note { start: hit, len, pitch: p, vel: vel(-16, rng), channel: CH_PIANO });
+    }
+    for d in [0, 4] {
+        if let Some(p) = at_degree(&key, ninth, d, 52, 69).first() {
+            score.add(Note { start: hit, len, pitch: *p, vel: vel(-24, rng), channel: CH_ORGAN });
+        }
+    }
+    score.add(Note { start: hit, len: 2 * bar, pitch: tune::home_tonic(&key, TUNE.0, TUNE.1), vel: vel(-10, rng), channel: CH_LEAD });
+    score.add(Note { start: hit, len: E, pitch: KICK, vel: vel(-16, rng), channel: CH_KIT });
+    let eighths = score.meter.eighths();
+    for k in 0..eighths * 2 {
+        let x = k as f32 / (eighths * 2) as f32;
+        score.add(Note { start: hit + k * E / 2, len: E / 2, pitch: RIDE, vel: vel(-34 + (24.0 * x) as i32, rng), channel: CH_KIT });
+    }
 }
 
 /// One of row `r`'s schemata the mode can take.
@@ -568,8 +671,8 @@ fn led(candidates: &[u8], voices: &[u8]) -> Vec<u8> {
 /// beat from a step of the mode off it.
 /// Either way, on the last eighth a pickup one step of the mode toward
 /// the next bar's root, from the side the line comes from, so a change
-/// is walked into and not jumped at, and the loop's head has a pickup
-/// into it like every other bar. Well under the band's level: the
+/// is walked into and not jumped at, and the ending's tonic has a
+/// pickup into it like every other bar. Well under the band's level: the
 /// upright's low end weighs on the loudness far past what the ear
 /// gives it, and the pedal would cut the band around it.
 fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
@@ -654,7 +757,8 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
             }
             Bass::Off => unreachable!(),
         }
-        let next = form.chord((b + 1) % form.bars());
+        // The last bar walks into the ending's chord, the tonic.
+        let next = if b + 1 < form.bars() { form.chord(b + 1) } else { Chord { root: 0, size: 4, alter: DIATONIC } };
         let next_root = nearest(&at_degree(&key, next, next.root, lo, hi), if mode == Bass::Two { root } else { p });
         let degree = key.absolute_degree(next_root).unwrap();
         let pickup = key.pitch(degree + if p > next_root { 1 } else { -1 }, 4);
@@ -1009,26 +1113,30 @@ mod tests {
         }
     }
 
-    /// The piece is a loop of whole choruses, its parts whole
-    /// half-phrases, its harmony the twelve-bar's, its tune in its
-    /// register; nothing struck ends past the end, only what is held,
-    /// which the loop continues.
+    /// The piece is whole choruses between its intro and its ending, its
+    /// parts whole half-phrases, its harmony the twelve-bar's, its tune
+    /// in its register; nothing struck ends past the end, only what is
+    /// held.
     #[test]
     fn a_piece_is_whole_choruses() {
+        let intro = intro_chords().len();
         for seed in 0..24 {
             let score = build(&Params { seed });
-            assert!(score.loops);
             let bars = score.end() / score.bar();
-            assert_eq!(bars % (3 * phrase::BARS), 0, "seed {seed}: {bars} bars");
-            for s in &score.sections {
+            let choruses = bars - intro as u32 - RING_BARS;
+            assert_eq!(choruses % (3 * phrase::BARS), 0, "seed {seed}: {bars} bars");
+            for s in score.sections.iter().filter(|s| !s.rings) {
                 assert_eq!((s.end - s.start) % (phrase::BARS / 2 * score.bar()), 0, "seed {seed}: a part of broken half-phrases");
             }
-            for (i, chord) in score.harmony.iter().enumerate() {
+            let body = &score.harmony[intro..intro + choruses as usize];
+            for (i, chord) in body.iter().enumerate() {
                 assert_eq!(chord.size, 4);
                 assert!(matches!(chord.root, 0 | 3 | 4) || (chord.root == 5 && score.key.mode == Mode::Aeolian), "seed {seed}: bar {i} on {}", chord.root);
             }
-            assert_eq!(score.harmony[0].root, 0);
-            assert!(matches!(score.harmony[8].root, 4 | 5));
+            assert_eq!(body[0].root, 0);
+            assert!(matches!(body[8].root, 4 | 5));
+            assert_eq!(score.harmony[intro - 1].root, 4, "seed {seed}: the intro does not end on the V");
+            assert_eq!(score.harmony.last().unwrap().root, 0, "seed {seed}: the ending is not the tonic");
             for n in score.notes.iter().filter(|n| matches!(n.channel, CH_LEAD | CH_SECOND) && n.len >= E / 2) {
                 assert!((TUNE.0..=TUNE.1).contains(&n.pitch), "seed {seed}: the tune at {} leaves its register", n.pitch);
             }

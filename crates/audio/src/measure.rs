@@ -90,18 +90,6 @@ pub fn loudness_range(audio: &[[f32; 2]]) -> f32 {
     at(0.95) - at(0.10)
 }
 
-/// How sharp the step from the last sample to the first is, as a
-/// multiple of the sharpest step between neighbours anywhere inside:
-/// under 1, a loop's seam is no more abrupt than the audio itself.
-pub fn seam(audio: &[[f32; 2]]) -> f32 {
-    if audio.len() < 2 {
-        return 0.0;
-    }
-    let step = |a: &[f32; 2], b: &[f32; 2]| (a[0] - b[0]).abs().max((a[1] - b[1]).abs());
-    let sharpest = audio.windows(2).map(|w| step(&w[0], &w[1])).fold(0.0f32, f32::max);
-    step(audio.last().unwrap(), audio.first().unwrap()) / sharpest.max(1e-9)
-}
-
 fn mean_power(lufs: &[f32]) -> f32 {
     10.0 * (lufs.iter().map(|l| 10f32.powf(l / 10.0)).sum::<f32>() / lufs.len() as f32).log10()
 }
@@ -232,8 +220,6 @@ pub struct Report {
     pub peak_at: f32,
     /// Loudness range, LU.
     pub lra: f32,
-    /// The step across the ends, as a multiple of the sharpest inside.
-    pub seam: f32,
     /// Mean momentary loudness of each section, in order.
     pub sections: Vec<(String, f32)>,
 }
@@ -256,7 +242,6 @@ pub fn report(audio: &[[f32; 2]], sections: &[(String, f32, f32)]) -> Report {
         lufs_peak,
         peak_at,
         lra: loudness_range(audio),
-        seam: seam(audio),
         sections,
     }
 }
@@ -265,8 +250,8 @@ impl Report {
     pub fn json(&self) -> String {
         let sections: Vec<String> = self.sections.iter().map(|(n, l)| format!("    {{ \"name\": \"{n}\", \"lufs\": {l:.2} }}")).collect();
         format!(
-            "{{\n  \"duration_s\": {:.3},\n  \"lufs\": {:.2},\n  \"peak_dbtp\": {:.2},\n  \"silence_head_s\": {:.3},\n  \"silence_tail_s\": {:.3},\n  \"lufs_head\": {:.2},\n  \"lufs_tail\": {:.2},\n  \"lufs_peak\": {:.2},\n  \"peak_at\": {:.2},\n  \"lra\": {:.2},\n  \"seam\": {:.3},\n  \"sections\": [\n{}\n  ]\n}}\n",
-            self.duration_s, self.lufs, self.peak_dbtp, self.silence_head_s, self.silence_tail_s, self.lufs_head, self.lufs_tail, self.lufs_peak, self.peak_at, self.lra, self.seam,
+            "{{\n  \"duration_s\": {:.3},\n  \"lufs\": {:.2},\n  \"peak_dbtp\": {:.2},\n  \"silence_head_s\": {:.3},\n  \"silence_tail_s\": {:.3},\n  \"lufs_head\": {:.2},\n  \"lufs_tail\": {:.2},\n  \"lufs_peak\": {:.2},\n  \"peak_at\": {:.2},\n  \"lra\": {:.2},\n  \"sections\": [\n{}\n  ]\n}}\n",
+            self.duration_s, self.lufs, self.peak_dbtp, self.silence_head_s, self.silence_tail_s, self.lufs_head, self.lufs_tail, self.lufs_peak, self.peak_at, self.lra,
             sections.join(",\n")
         )
     }
@@ -299,17 +284,5 @@ mod tests {
         let stepped: Vec<[f32; 2]> = (0..n).map(|i| [gain(i) * tone(i), gain(i) * tone(i)]).collect();
         let lra = loudness_range(&stepped);
         assert!((lra - 20.0 * 3f32.log10()).abs() < 1.0, "{lra}");
-    }
-
-    /// A whole number of cycles seams cleanly; a quarter cycle over
-    /// steps from the crest to zero, sharper than any step inside.
-    #[test]
-    fn seam_reads_a_loop_against_a_cut() {
-        let cycle = SAMPLE_RATE as usize / 100;
-        let tone = |i: usize| (2.0 * std::f32::consts::PI * i as f32 / cycle as f32).sin();
-        let whole: Vec<[f32; 2]> = (0..cycle * 10).map(|i| [tone(i), tone(i)]).collect();
-        assert!(seam(&whole) < 1.0);
-        let cut: Vec<[f32; 2]> = (0..cycle * 10 + cycle / 4).map(|i| [tone(i), tone(i)]).collect();
-        assert!(seam(&cut) > 1.0);
     }
 }

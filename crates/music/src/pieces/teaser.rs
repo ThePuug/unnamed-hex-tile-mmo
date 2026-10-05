@@ -5,7 +5,7 @@
 //! start where the picture cuts (`cue`), a density that fills, turns,
 //! thins to night, drives and swells, a loudness arc each movement
 //! declares and the render meets, and a close that lands on the tonic
-//! and rings out. Not a loop: it has a head and an end.
+//! and rings out.
 //!
 //! Every choice is a draw from the seed's stream, one fork per purpose;
 //! the seed picks the key, the storyteller, the theme and the players,
@@ -21,7 +21,7 @@ use crate::theory::groove::{Groove, BALKAN};
 use crate::theory::melody::{Theme, FOLK_SHAPES};
 use crate::theory::phrase::{self, Form as PhraseForm};
 use crate::theory::schema::{schemata_for, Schema};
-use crate::theory::{clashes, Chord, Key, Mode, DIATONIC};
+use crate::theory::{clashes, counterpoint, Chord, Key, Mode, DIATONIC};
 use crate::variation::{self, Role as Bar};
 use crate::tune::{self, Tune};
 
@@ -456,7 +456,6 @@ pub fn build(params: &Params) -> Score {
     teller::tell(&mut score, &teller, &form.tune, &form.walk.runs(), &mut rng.fork(8));
     horns(&mut score, &form);
     drums(&mut score, &form, &mut rng.fork(10));
-    title(&mut score, &form, &mut rng.fork(13));
     linger(&mut score);
     // The drops before the arrivals: before the swell the band stops after
     // the bar's first group but for the drum's fill; before the title
@@ -468,6 +467,9 @@ pub fn build(params: &Params) -> Score {
     fill(&mut score, &form, first_group, &mut rng.fork(14));
     hush(&mut score, form.bars() - 1, 0, &[CH_DRONE, CH_BREATH, CH_BREATH_AIR, CH_LEAD, CH_TIMPANI]);
     suspend(&mut score, form.bars() - 1);
+    // The title after the drop is shaped, so its lead lands from the tone
+    // the drop holds.
+    title(&mut score, &form, &mut rng.fork(13));
     dynamics(&mut score, &form);
     score.finish();
     score
@@ -885,7 +887,8 @@ fn fill(score: &mut Score, form: &Form, from: u32, rng: &mut Rng) {
 }
 
 /// The title: the tonic struck by everyone on its first beat and let
-/// ring — the lead home, the horns under it, the strings, the choir and
+/// ring — the lead on the tonic its line turns back to, after a leap the
+/// octave the other way, else the nearest, the horns under home, the strings, the choir and
 /// the horn on the chord, the plucks, the drums and the timpani once —
 /// the struck tones ringing out on their own and the held ones to the
 /// end under a pedal that falls away as the section rings, where the
@@ -897,7 +900,21 @@ fn title(score: &mut Score, form: &Form, rng: &mut Rng) {
     let end = at + TITLE_BARS * bar;
     let chord = Chord::triad(0);
     let home = tune::home_tonic(&key, TUNE.0, TUNE.1);
-    score.add(Note { start: at, len: end - at - E, pitch: home, vel: vel(0, rng), channel: CH_LEAD });
+    let mut line: Vec<&Note> = score.notes.iter().filter(|n| n.channel == CH_LEAD && n.start < at && n.len >= E / 2).collect();
+    line.sort_by_key(|n| n.start);
+    // Any tonic the lead can play: the theme keeps to its register, the
+    // title's held tone only to the instrument's.
+    let lead = score.instrument(CH_LEAD);
+    let tonics: Vec<u8> = (lead.low..=lead.high).filter(|p| p % 12 == key.tonic).collect();
+    let landing = match line.as_slice() {
+        [.., a, b] => {
+            let leap = key.standing_degree(b.pitch) - key.standing_degree(a.pitch);
+            let back = |t: &&u8| leap.abs() < counterpoint::LEAP || (**t as i32 - b.pitch as i32).signum() != leap.signum();
+            tonics.iter().filter(back).min_by_key(|t| (**t as i32 - b.pitch as i32).abs()).copied().unwrap_or(home)
+        }
+        _ => home,
+    };
+    score.add(Note { start: at, len: end - at - E, pitch: landing, vel: vel(0, rng), channel: CH_LEAD });
     score.add(Note { start: at, len: end - at - E, pitch: home - 12, vel: vel(-4, rng), channel: CH_HORNS });
     for p in chord.pitches_within(&key, 55, 72).into_iter().take(3) {
         score.hold(Note { start: at, len: end - at - E / 2, pitch: p, vel: vel(-10, rng), channel: CH_PAD });
@@ -942,7 +959,6 @@ mod tests {
     fn a_cue_is_its_movements_at_their_cuts() {
         for seed in 0..12 {
             let score = build(&Params { seed });
-            assert!(!score.loops);
             let names: Vec<&str> = score.sections.iter().map(|s| s.name).collect();
             assert_eq!(names, ["dawn", "vistas", "day into night", "work", "swell", "title"]);
             let half = phrase::BARS / 2 * score.bar();

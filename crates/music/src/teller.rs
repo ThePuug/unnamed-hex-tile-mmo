@@ -116,7 +116,7 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
                 // Where the lead sings next, its last held tone leads in:
                 // the tone nearest the one the tune will open on.
                 let goal = runs.get(r + 1).filter(|next| matches!(next.lead, Telling::Phrases | Telling::Trading)).map(|next| tune.bar(score, next.a, lo, hi, true)[0].2);
-                last = held(score, teller, tune, run, runs, teller.long, teller.lead, last, goal, rng);
+                last = held(score, teller, tune, run, teller.long, teller.lead, last, goal, rng);
             }
             Telling::Phrases | Telling::Trading | Telling::Riff | Telling::RiffAndLong => {
                 let notes = &told[r];
@@ -156,7 +156,7 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
                 }
                 last = notes.last().map(|(n, _)| n.2);
                 if run.lead == Telling::RiffAndLong {
-                    second = held(score, teller, tune, run, runs, teller.under, teller.second, second, None, rng);
+                    second = held(score, teller, tune, run, teller.under, teller.second, second, None, rng);
                 }
             }
         }
@@ -245,9 +245,7 @@ fn told(score: &Score, tune: &Tune, runs: &[Run<Telling>], lo: u8, hi: u8, breat
 
 /// One chord tone every other bar of `run` on `channel`, from the bar
 /// line — a bar in, a breath after the tune, but from the first bar
-/// where the run opens or closes the loop, so the tones fall every
-/// other bar straight through the seam and neither side of it is a bar
-/// thinner than the other — held as the piece's `hold` says, within
+/// where the run opens the piece — held as the piece's `hold` says, within
 /// `range.0..=range.1` at accent `range.2`: a third or a sixth against
 /// the tone the lead and the echo each play on the bar line, never a
 /// perfect interval, so the lines stay apart — the lead's first where
@@ -257,11 +255,10 @@ fn told(score: &Score, tune: &Tune, runs: &[Run<Telling>], lo: u8, hi: u8, breat
 /// where one is and the nearest it, the first from home. Returns the
 /// last tone held.
 #[allow(clippy::too_many_arguments)]
-fn held(score: &mut Score, teller: &Teller, tune: &Tune, run: &Run<Telling>, runs: &[Run<Telling>], range: (u8, u8, i32), channel: u8, mut last: Option<u8>, goal: Option<u8>, rng: &mut Rng) -> Option<u8> {
+fn held(score: &mut Score, teller: &Teller, tune: &Tune, run: &Run<Telling>, range: (u8, u8, i32), channel: u8, mut last: Option<u8>, goal: Option<u8>, rng: &mut Rng) -> Option<u8> {
     let (lo, hi) = teller.register;
     let bar = score.bar();
-    let bars = runs.last().map_or(0, |r| r.b);
-    let mut b = if run.a == 0 || run.b == bars { run.a } else { run.a + 1 };
+    let mut b = if run.a == 0 { run.a } else { run.a + 1 };
     while b < run.b {
         // The second holds under the riff, never where the tune rests.
         if channel == teller.second && tune.bars[b as usize].is_empty() {

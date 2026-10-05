@@ -96,7 +96,7 @@ impl Sheet {
         let mut lanes: [Vec<Stretch>; LANES] = Default::default();
         let last = score.sections.len().saturating_sub(1);
         for (i, section) in score.sections.iter().enumerate() {
-            // A one-shot rings on past its last section; the ring is the
+            // A piece rings on past its last section; the ring is the
             // last section's.
             let to = if i == last { end } else { section.end };
             let (a, b) = ((section.start / step) as usize, ((to / step) as usize).min(steps));

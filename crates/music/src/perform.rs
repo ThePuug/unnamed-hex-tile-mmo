@@ -8,11 +8,9 @@
 //! through every tone joined to it; a sung or bowed tone grows a
 //! vibrato once it settles.
 //!
-//! Every draw is keyed on the note's place in the period — its channel,
-//! pitch and tick modulo `period` — and every slow curve has a whole
-//! number of cycles in it, so a loop unrolled for rendering plays each
-//! pass the same and its seam holds. The checks judge the written score;
-//! this is what is heard.
+//! Every draw is keyed on the note — its channel, pitch and tick — so a
+//! score is played the same every time it is rendered. The checks judge
+//! the written score; this is what is heard.
 
 use audio::rng::Rng;
 
@@ -152,23 +150,20 @@ fn slip(rng: &mut Rng) -> f32 {
     ((s - 2.0) * 3f32.sqrt()).clamp(-2.5, 2.5)
 }
 
-/// A player's slow breath: two sines with a whole number of cycles in
-/// the period, one about 24 s and one about 9 s long, in -1..1.
+/// A player's slow breath: two sines, one 24 s and one 9 s long, in -1..1.
 struct Breath {
-    cycles: [f64; 2],
     phase: [f64; 2],
-    period_s: f64,
 }
 
 impl Breath {
-    fn new(rng: &mut Rng, period_s: f64) -> Self {
-        let cycles = [(period_s / 24.0).round().max(1.0), (period_s / 9.0).round().max(2.0)];
-        let phase = [rng.f32() as f64 * std::f64::consts::TAU, rng.f32() as f64 * std::f64::consts::TAU];
-        Breath { cycles, phase, period_s }
+    const PERIODS_S: [f64; 2] = [24.0, 9.0];
+
+    fn new(rng: &mut Rng) -> Self {
+        Breath { phase: [rng.f32() as f64 * std::f64::consts::TAU, rng.f32() as f64 * std::f64::consts::TAU] }
     }
 
     fn at(&self, t: f64) -> f32 {
-        let w = |k: usize| (std::f64::consts::TAU * self.cycles[k] * t / self.period_s + self.phase[k]).sin();
+        let w = |k: usize| (std::f64::consts::TAU * t / Self::PERIODS_S[k] + self.phase[k]).sin();
         (0.6 * w(0) + 0.4 * w(1)) as f32
     }
 }
@@ -187,13 +182,9 @@ fn bend(cents: f32) -> u16 {
     (8192.0 + cents * 8192.0 / 200.0).round().clamp(0.0, 16383.0) as u16
 }
 
-/// The score as played, in time order. `period` is the tick at which
-/// the performance repeats: the score's end, or, for a loop unrolled to
-/// render, one pass's.
-pub fn perform(score: &Score, period: u32) -> Vec<Played> {
-    let period_s = score.seconds(period);
-    let tick_s = score.seconds(1);
-    let salt = Rng::new(period as u64 ^ (score.eighth_bpm.to_bits() as u64) << 32);
+/// The score as played, in time order.
+pub fn perform(score: &Score) -> Vec<Played> {
+    let salt = Rng::new(score.end() as u64 ^ (score.eighth_bpm.to_bits() as u64) << 32);
     let mut out = Vec::new();
 
     for inst in &score.instruments {
@@ -201,8 +192,8 @@ pub fn perform(score: &Score, period: u32) -> Vec<Played> {
         let f = feel(inst.role);
         let mut player = salt.fork(ch as u64 + 1);
         let lean = f.lean.0 + (f.lean.1 - f.lean.0) * player.f32();
-        let breath = Breath::new(&mut player, period_s);
-        let time = Breath::new(&mut player, period_s);
+        let breath = Breath::new(&mut player);
+        let time = Breath::new(&mut player);
         let depth = VIBRATO.0 + (VIBRATO.1 - VIBRATO.0) * player.f32();
         let percussion = inst.role == Role::Percussion;
         let tuning = if percussion { 0.0 } else { (slip(&mut player) * TUNING).clamp(-TUNING_MAX, TUNING_MAX) };
@@ -220,7 +211,7 @@ pub fn perform(score: &Score, period: u32) -> Vec<Played> {
         // (on, off, pitch, vel, whether it swells)
         let mut notes: Vec<(f64, f64, u8, u8, bool)> = Vec::new();
         for n in score.notes.iter().filter(|n| n.channel == ch) {
-            let mut rng = salt.fork(((ch as u64) << 40) ^ ((n.pitch as u64) << 32) ^ (n.start % period) as u64);
+            let mut rng = salt.fork(((ch as u64) << 40) ^ ((n.pitch as u64) << 32) ^ n.start as u64);
             let written = score.seconds(n.start);
             let written_end = score.seconds(n.end());
             let off_beat = (lean + f.drift * time.at(written)) / 1000.0;
@@ -298,7 +289,7 @@ pub fn perform(score: &Score, period: u32) -> Vec<Played> {
             }
             let held = entry.filter(|&(_, off)| t < off).map_or(0.0, |(on, _)| swell(t - on));
             let db = held + BREATH_DB * (breath.at(t) - 1.0) / 2.0;
-            let tick = ((t / tick_s) as u32).min(score.end().saturating_sub(1));
+            let tick = score.tick_at(t).min(score.end().saturating_sub(1));
             let gain = score.trim_at(tick).clamp(0.0, 1.0) * 10f32.powf(db / 20.0);
             // The synthesizer squares the pedal into gain.
             let value = (127.0 * gain.sqrt()).round() as u8;
@@ -322,13 +313,5 @@ mod tests {
         assert!(swell(SWELL_S / 2.0) < swell(SWELL_S));
         assert!(swell(SWELL_S) > swell(SWELL_S + 10.0));
         assert!(swell(1000.0) > swell(0.0));
-    }
-
-    #[test]
-    fn a_breath_repeats_with_its_period() {
-        let b = Breath::new(&mut Rng::new(3), 111.3);
-        for t in [0.0, 7.5, 40.2] {
-            assert!((b.at(t) - b.at(t + 111.3)).abs() < 1e-4);
-        }
     }
 }

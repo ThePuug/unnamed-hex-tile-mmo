@@ -36,18 +36,18 @@ pub const BALKAN: [Groove; 5] = [
     Groove { name: "kopanica", groups: &[2, 2, 3, 2, 2], tempo: (160, 200), dum: &[0, 4], tek: &[2, 7, 9], chord: &[1, 3, 5, 6, 8, 10], busy: 0.55 },
 ];
 
-/// The Balkan dances taken at a run, as a fight is: the quick ones'
+/// The Balkan dances taken at a run, as a horo is danced: the quick ones'
 /// groupings at a hundred and fifty to a hundred and eighty beats, the
 /// davul's low stroke on the bar's first beat and on its long group —
 /// the limp the ear counts the dance by — its thin stick on every other
 /// group's first beat and on the pickup into a group, and the tune
 /// running more than it holds. A stroke on every eighth is a stream
 /// that hides the grouping.
-pub const FIGHT: [Groove; 4] = [
+pub const HORO: [Groove; 4] = [
     Groove { name: "râčenica", groups: &[2, 2, 3], tempo: (300, 360), dum: &[0, 4], tek: &[2, 6], chord: &[1, 3, 5, 6], busy: 0.7 },
     Groove { name: "pajduško", groups: &[2, 3], tempo: (280, 340), dum: &[0, 2], tek: &[1, 4], chord: &[1, 3, 4], busy: 0.6 },
     Groove { name: "kopanica", groups: &[2, 2, 3, 2, 2], tempo: (300, 360), dum: &[0, 4], tek: &[2, 6, 7, 9], chord: &[1, 3, 5, 6, 8, 10], busy: 0.65 },
-    Groove { name: "karşılama", groups: &[2, 2, 2, 3], tempo: (280, 340), dum: &[0, 6], tek: &[2, 4, 8], chord: &[1, 3, 5, 7, 8], busy: 0.6 },
+    Groove { name: "dajčovo", groups: &[2, 2, 2, 3], tempo: (280, 340), dum: &[0, 6], tek: &[2, 4, 8], chord: &[1, 3, 5, 7, 8], busy: 0.6 },
 ];
 
 /// The blues feels: the shuffle, four beats of three eighths with the
@@ -78,7 +78,7 @@ pub const BALLAD: [Groove; 2] = [
 
 /// Every groove there is.
 pub fn all() -> impl Iterator<Item = &'static Groove> {
-    BALKAN.iter().chain(BLUES.iter()).chain(FIGHT.iter()).chain(BALLAD.iter())
+    BALKAN.iter().chain(BLUES.iter()).chain(HORO.iter()).chain(BALLAD.iter())
 }
 
 impl Groove {

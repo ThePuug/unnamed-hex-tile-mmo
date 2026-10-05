@@ -21,7 +21,7 @@ pub enum Role {
     Cadence,
 }
 
-/// Bar `bar`'s role in its phrase; phrases start at the loop's first bar.
+/// Bar `bar`'s role in its phrase; phrases start at the walk's first bar.
 pub fn role(bar: u32) -> Role {
     match bar % phrase::BARS {
         0 => Role::First,
