@@ -10,6 +10,7 @@ use music::pieces::PIECES;
 use music::render::SAMPLE_RATE;
 
 use crate::banks::{self, Install};
+use crate::midi::{self, Port};
 use crate::player::{pools, Player, Popover, Take, SEEDS};
 use crate::sheet::LANES;
 use crate::theme::*;
@@ -19,6 +20,9 @@ use crate::theme::*;
 const PANEL_W: f32 = 360.0;
 const LIST_H: f32 = 320.0;
 const PANEL_CHROME_H: f32 = 52.0 + 34.0 + 4.0;
+
+/// The MIDI popover's width.
+const MIDI_W: f32 = 340.0;
 
 /// The sheet: its height, how fast it scrolls, and where the playhead
 /// stands in it.
@@ -123,11 +127,22 @@ impl Player {
 
     /// The right half of the top: previous, play or pause, next; the
     /// section playing and the clock; the time bar.
-    pub fn controls(&mut self, ui: &mut egui::Ui) {
+    pub fn controls(&mut self, ui: &mut egui::Ui) -> Rect {
         let width = ui.available_width();
         let (row, _) = ui.allocate_exact_size(vec2(width, 60.0), Sense::hover());
         let c = row.center();
         let side = |dir: f32| Rect::from_center_size(pos2(c.x + dir * (30.0 + 20.0 + 22.0), c.y), vec2(44.0, 44.0));
+        let far = |dir: f32| Rect::from_center_size(pos2(c.x + dir * (30.0 + 20.0 + 44.0 + 20.0 + 22.0), c.y), vec2(44.0, 44.0));
+        let midi_on = self.midi.link.lock().unwrap().port != Port::Off;
+        let midi = far(1.0);
+        if round_button(ui, midi, "midi", Glyph::Midi, midi_on).on_hover_text("MIDI out").clicked() {
+            if self.popover == Some(Popover::Midi) {
+                self.popover = None;
+            } else {
+                self.ports = midi::ports();
+                self.popover = Some(Popover::Midi);
+            }
+        }
         if round_button(ui, side(-1.0), "previous", Glyph::Previous, false).clicked() {
             self.previous();
         }
@@ -155,6 +170,7 @@ impl Player {
         p.text(line.right_center(), Align2::RIGHT_CENTER, format!("{} / {}", clock(at), clock(total)), mono(11.0), MUTED);
         ui.add_space(6.0);
         self.timeline(ui, take.as_deref(), total, at);
+        midi
     }
 
     /// The time bar: one segment a section, the ones played lit, the one
@@ -510,11 +526,12 @@ impl Player {
     /// The open popover, if any: the composer's pieces opening up from
     /// its button, or the track list hung under its field. A press
     /// outside it or Escape closes it.
-    pub fn popover(&mut self, ctx: &egui::Context, pieces_anchor: Rect, track_anchor: Rect) {
+    pub fn popover(&mut self, ctx: &egui::Context, pieces_anchor: Rect, track_anchor: Rect, midi_anchor: Rect) {
         let Some(open) = self.popover else { return };
         let anchor = match open {
             Popover::Pieces => pieces_anchor,
             Popover::Track => track_anchor,
+            Popover::Midi => midi_anchor,
         };
         let area = match open {
             Popover::Pieces => {
@@ -526,6 +543,7 @@ impl Player {
                 let width = anchor.width();
                 egui::Area::new(egui::Id::new("track")).order(egui::Order::Foreground).fixed_pos(pos2(anchor.left(), anchor.bottom() + 6.0)).show(ctx, |ui| self.track_list(ui, width, list_h))
             }
+            Popover::Midi => egui::Area::new(egui::Id::new("midi")).order(egui::Order::Foreground).pivot(Align2::RIGHT_TOP).fixed_pos(pos2(anchor.right(), anchor.bottom() + 8.0)).show(ctx, |ui| self.midi_list(ui)),
         };
         let outside = ctx.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !area.response.rect.contains(p) && !anchor.contains(p)));
         if outside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -611,6 +629,58 @@ impl Player {
         }
     }
 
+    /// MIDI out's ports as listed when the popover opened, the open one
+    /// marked; what MIDI out does, and why a port did not open.
+    pub fn midi_list(&mut self, ui: &mut egui::Ui) {
+        let (open, error) = {
+            let link = self.midi.link.lock().unwrap();
+            (link.port.clone(), link.error.clone())
+        };
+        let mut picked = None;
+        egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0_f32, EDGE)).corner_radius(8.0).show(ui, |ui| {
+            ui.set_width(MIDI_W - 2.0);
+            ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+            pool_heading(ui, "midi out");
+            for port in &self.ports {
+                let on = *port == open;
+                let (rect, row) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+                let row = row.on_hover_cursor(CursorIcon::PointingHand);
+                let p = ui.painter();
+                if row.hovered() {
+                    p.rect_filled(rect, 0.0, RULE);
+                } else if on {
+                    p.rect_filled(rect, 0.0, ROW_ON);
+                }
+                let dot = pos2(rect.left() + 22.0, rect.center().y);
+                p.circle_stroke(dot, 7.0, Stroke::new(1.0_f32, if on { LAMP } else { EDGE }));
+                if on {
+                    p.circle_filled(dot, 3.5, LAMP);
+                }
+                p.text(pos2(rect.left() + 40.0, rect.center().y), Align2::LEFT_CENTER, port.label(), mono(12.0), if on { PARCHMENT } else { MUTED });
+                if row.clicked() {
+                    picked = Some(port.clone());
+                }
+            }
+            ui.add_space(6.0);
+            rule(ui);
+            egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                if let Some(e) = &error {
+                    ui.add(egui::Label::new(RichText::new(e).font(mono(11.0)).color(ALERT)).wrap());
+                }
+                let mut note = "While a port is open the player is silent: the notes and a MIDI clock go to the port, and the program on it plays them.".to_string();
+                if cfg!(windows) {
+                    note += " Windows gives a program no port of its own: to reach a DAW here, make one with loopMIDI and pick it.";
+                }
+                ui.add(egui::Label::new(RichText::new(note).font(mono(11.0)).color(MUTED).line_height(Some(17.0))).wrap());
+            });
+        });
+        if let Some(port) = picked {
+            self.midi.choose(port);
+            self.popover = None;
+        }
+    }
+
     /// Every piece under its pool, one to pick for the play-a-seed panel.
     pub fn track_list(&mut self, ui: &mut egui::Ui, width: f32, list_h: f32) {
         let mut picked = None;
@@ -652,13 +722,14 @@ impl eframe::App for Player {
         self.poll();
         ctx.request_repaint_after(Duration::from_millis(33));
         let side = |top: i8, bottom: i8| egui::Margin { left: 20, right: 20, top, bottom };
+        let mut midi_anchor = Rect::NOTHING;
         egui::TopBottomPanel::top("now").resizable(false).min_height(176.0).frame(egui::Frame::new().fill(INK).inner_margin(side(20, 16))).show(ctx, |ui| {
             ui.spacing_mut().item_spacing.x = 32.0;
             ui.columns(2, |halves| {
                 halves[0].spacing_mut().item_spacing = vec2(12.0, 6.0);
                 self.now_playing(&mut halves[0]);
                 halves[1].spacing_mut().item_spacing = vec2(12.0, 0.0);
-                self.controls(&mut halves[1]);
+                midi_anchor = self.controls(&mut halves[1]);
             });
         });
         egui::TopBottomPanel::bottom("sheet").frame(egui::Frame::new().fill(INK).inner_margin(side(14, 18))).show(ctx, |ui| self.sheet(ui));
@@ -674,7 +745,7 @@ impl eframe::App for Player {
                 (track, pieces)
             })
             .inner;
-        self.popover(ctx, pieces_anchor, track_anchor);
+        self.popover(ctx, pieces_anchor, track_anchor, midi_anchor);
         self.drop_banks(ctx);
     }
 }

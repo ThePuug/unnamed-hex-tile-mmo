@@ -11,10 +11,12 @@ use eframe::egui::Color32;
 use music::pieces::PIECES;
 use music::render::SAMPLE_RATE;
 use music::rng::Rng;
+use music::perform::Event;
 use music::score::Score;
 
 use crate::audio::{open_output, Deck};
 use crate::banks::{self, Install};
+use crate::midi::{self, Port};
 use crate::sheet::Sheet;
 use crate::theme::{ALERT, DOT, LAMP, READY};
 use crate::worker::{spawn_worker, Done, Wanted};
@@ -72,6 +74,8 @@ impl Variation {
 pub struct Take {
     pub score: Score,
     pub audio: Arc<Vec<[f32; 2]>>,
+    /// The score as MIDI, for MIDI out.
+    pub midi: Arc<Vec<Event>>,
     pub sheet: Sheet,
 }
 
@@ -82,6 +86,7 @@ pub type Job = (usize, u64);
 pub enum Popover {
     Pieces,
     Track,
+    Midi,
 }
 
 pub struct Player {
@@ -114,6 +119,9 @@ pub struct Player {
     /// A banks archive being installed, or why the last install failed.
     pub install: Option<Arc<Mutex<Install>>>,
     pub output_error: Option<String>,
+    pub midi: midi::Out,
+    /// The MIDI ports as listed when the MIDI popover last opened.
+    pub ports: Vec<Port>,
     pub rng: Rng,
 }
 
@@ -127,6 +135,7 @@ impl Player {
         let wanted = Arc::new(Wanted::default());
         let busy = Arc::new(Mutex::new(None));
         let done = spawn_worker(wanted.clone(), busy.clone());
+        let midi = midi::spawn(deck.clone());
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
         let mut rng = Rng::new(nanos);
         let chosen = vec![true; PIECES.len()];
@@ -152,6 +161,8 @@ impl Player {
             bank: None,
             install: None,
             output_error,
+            midi,
+            ports: Vec::new(),
             rng,
         }
     }
@@ -194,6 +205,7 @@ impl Player {
         if let Some(t) = &current.take {
             if !deck.audio.as_ref().is_some_and(|a| Arc::ptr_eq(a, &t.audio)) {
                 deck.audio = Some(t.audio.clone());
+                deck.midi = Some(t.midi.clone());
                 deck.at = 0.0;
             }
         }
@@ -281,6 +293,7 @@ impl Player {
         }
         let mut deck = self.deck.lock().unwrap();
         deck.audio = None;
+        deck.midi = None;
         deck.at = 0.0;
     }
 

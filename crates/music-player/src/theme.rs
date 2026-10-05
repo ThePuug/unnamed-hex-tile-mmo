@@ -50,6 +50,8 @@ pub enum Glyph {
     Play,
     Pause,
     Next,
+    /// A MIDI socket: five pins in an arc.
+    Midi,
 }
 
 pub fn paint_glyph(p: &egui::Painter, c: Pos2, glyph: Glyph, color: Color32) {
@@ -69,6 +71,14 @@ pub fn paint_glyph(p: &egui::Painter, c: Pos2, glyph: Glyph, color: Color32) {
         Glyph::Play => {
             let tri = vec![pos2(c.x - 4.0, c.y - 8.0), pos2(c.x + 8.0, c.y), pos2(c.x - 4.0, c.y + 8.0)];
             p.add(Shape::convex_polygon(tri, color, Stroke::NONE));
+        }
+        Glyph::Midi => {
+            p.circle_stroke(c, 8.0, Stroke::new(1.6_f32, color));
+            for k in 0..5 {
+                let a = std::f32::consts::PI * (1.0 + k as f32 / 4.0);
+                p.circle_filled(c + vec2(a.cos(), a.sin()) * 4.6, 1.3, color);
+            }
+            p.rect_filled(Rect::from_center_size(c + vec2(0.0, 6.6), vec2(3.0, 2.0)), 0.0, color);
         }
     }
 }

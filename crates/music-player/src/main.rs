@@ -14,6 +14,7 @@
 
 mod audio;
 mod banks;
+mod midi;
 mod player;
 mod sheet;
 mod theme;

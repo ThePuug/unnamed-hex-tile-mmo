@@ -49,6 +49,30 @@ work (Linux under Wayland), hover the banks note under the sheet: it
 names the folder to unpack the archive into, then start the player
 again.
 
+## MIDI out
+
+The socket right of the transport sends the playing variation to
+another program as MIDI — a DAW such as Ableton Live, Logic or Reaper,
+or a hardware or software synthesizer — which plays it on its own
+instruments. Pick a port from its list; while one is open the player
+itself is silent. Each instrument keeps its own channel, drums on
+channel 10, with its General MIDI program, pan, reverb send and volume
+sent first.
+
+A MIDI clock runs with the notes through every change of tempo, so a
+DAW set to follow external MIDI clock keeps the piece's time and bars;
+seeking sends the song position. The notes lean ahead of and behind the
+beat as the composer's players do, so they sit near the grid, not on
+it.
+
+- **macOS and Linux** — pick *Music Player (its own port)*; it appears
+  in the DAW as a MIDI input named *Music Player*.
+- **Windows** — Windows gives a program no port of its own: install a
+  loopback driver such as [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html),
+  make a port in it, pick that port here, and choose the same port as
+  the DAW's MIDI input. *Microsoft GS Wavetable Synth* plays through
+  Windows' built-in General MIDI sounds.
+
 ## Licences
 
 GeneralUser GS is by S. Christian Collins; its licence is in
