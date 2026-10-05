@@ -133,6 +133,10 @@ impl Player {
         let c = row.center();
         let side = |dir: f32| Rect::from_center_size(pos2(c.x + dir * (30.0 + 20.0 + 22.0), c.y), vec2(44.0, 44.0));
         let far = |dir: f32| Rect::from_center_size(pos2(c.x + dir * (30.0 + 20.0 + 44.0 + 20.0 + 22.0), c.y), vec2(44.0, 44.0));
+        let repeat = if self.repeat { "Repeat: on. This variation plays again after its rest." } else { "Repeat: off" };
+        if round_button(ui, far(-1.0), "repeat", Glyph::Repeat, self.repeat).on_hover_text(repeat).clicked() {
+            self.repeat = !self.repeat;
+        }
         let midi_on = self.midi.link.lock().unwrap().port != Port::Off;
         let midi = far(1.0);
         if round_button(ui, midi, "midi", Glyph::Midi, midi_on).on_hover_text("MIDI out").clicked() {

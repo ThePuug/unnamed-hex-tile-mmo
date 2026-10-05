@@ -49,6 +49,12 @@ work (Linux under Wayland), hover the banks note under the sheet: it
 names the folder to unpack the archive into, then start the player
 again.
 
+## Repeat
+
+The loop arrows left of the transport play the current variation again
+after its rest, in place of what comes next, until they are pressed
+again. **Next** still moves on.
+
 ## MIDI out
 
 The socket right of the transport sends the playing variation to

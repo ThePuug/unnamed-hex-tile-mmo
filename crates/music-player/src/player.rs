@@ -107,6 +107,9 @@ pub struct Player {
     /// Whether the listener wants sound: the deck plays when this is set
     /// and the current variation has arrived.
     pub playing: bool,
+    /// Whether the current variation plays again after its rest, in place
+    /// of what follows.
+    pub repeat: bool,
     /// When the rest after the current variation ends.
     pub rest_until: Option<Instant>,
     pub deck: Arc<Mutex<Deck>>,
@@ -152,6 +155,7 @@ impl Player {
             popover: None,
             filter: String::new(),
             playing: true,
+            repeat: false,
             rest_until: None,
             deck,
             _stream: stream,
@@ -218,7 +222,11 @@ impl Player {
         } else if ended && self.playing {
             let until = *self.rest_until.get_or_insert_with(|| Instant::now() + REST);
             if Instant::now() >= until {
-                self.next();
+                if self.repeat {
+                    self.seek(0.0);
+                } else {
+                    self.next();
+                }
             }
         }
 
