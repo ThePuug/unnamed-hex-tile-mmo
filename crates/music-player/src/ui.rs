@@ -11,6 +11,7 @@ use music::render::SAMPLE_RATE;
 
 use crate::banks::{self, Install};
 use crate::player::{pools, Player, Popover, Take, SEEDS};
+use crate::sheet::LANES;
 use crate::theme::*;
 
 /// A popover's width, the most its list grows before it scrolls, and
@@ -24,6 +25,11 @@ const PANEL_CHROME_H: f32 = 52.0 + 34.0 + 4.0;
 const SHEET_H: f32 = 150.0;
 const SHEET_PX_PER_S: f32 = 48.0;
 const PLAYHEAD_X: f32 = 240.0;
+
+/// The sheet's margin above its first lane and under its last, and the
+/// band at a lane's top its voice is named in.
+const LANE_PAD: f32 = 6.0;
+const LABEL_H: f32 = 14.0;
 
 /// The play-a-seed and queue panels' footer: the composer's two rows.
 const COMPOSER_H: f32 = 10.0 + 32.0 + 8.0 + 16.0;
@@ -384,22 +390,24 @@ impl Player {
         anchor
     }
 
-    /// The sheet: the playing piece's three most present voices scrolling
-    /// past the playhead, what has played dimmed; a key of the voices
-    /// over it, and at its right the banks and anything wrong with the
-    /// sound.
+    /// The sheet: each section's three most present voices scrolling past
+    /// the playhead, one to a lane and each lane spanning its voice's
+    /// pitches, what has played dimmed; the voice named where a section
+    /// changes who is in its lane. Over it, the voices in the lanes at
+    /// the playhead, and at its right the banks and anything wrong with
+    /// the sound.
     pub fn sheet(&self, ui: &mut egui::Ui) {
         let take = self.current().take.clone();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 16.0;
             ui.label(caps("SHEET", 10.0));
             if let Some(t) = &take {
-                for (v, name) in t.sheet.voices.iter().enumerate() {
+                for (lane, v) in t.sheet.at(self.position()).iter().enumerate().filter_map(|(lane, v)| v.map(|v| (lane, v))) {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         let (swatch, _) = ui.allocate_exact_size(vec2(10.0, 4.0), Sense::hover());
-                        ui.painter().rect_filled(swatch, 1.0, VOICE_INKS[v]);
-                        ui.label(RichText::new(*name).font(mono(11.0)).color(PARCHMENT));
+                        ui.painter().rect_filled(swatch, 1.0, VOICE_INKS[lane]);
+                        ui.label(RichText::new(t.sheet.voices[v].name).font(mono(11.0)).color(PARCHMENT));
                     });
                 }
             }
@@ -438,15 +446,28 @@ impl Player {
                 b += sheet.bar_s;
             }
         }
-        let span = (sheet.hi - sheet.lo) as f32;
-        let y = |pitch: u8| rect.top() + 8.0 + (sheet.hi - pitch) as f32 / span * (rect.height() - 16.0);
-        for (start, end, pitch, voice) in sheet.notes.iter().filter(|n| n.1 >= from && n.0 <= to) {
-            let ink = if *end < at { VOICE_INKS[*voice].gamma_multiply(0.35) } else { VOICE_INKS[*voice] };
-            let (a, b) = (x(*start), x(*end).max(x(*start) + 3.0));
-            p.rect_filled(Rect::from_min_max(pos2(a, y(*pitch) - 2.5), pos2(b - 1.0, y(*pitch) + 2.5)), 1.0, ink);
+        let lane_h = (rect.height() - 2.0 * LANE_PAD) / LANES as f32;
+        for lane in 1..LANES {
+            let ly = rect.top() + LANE_PAD + lane as f32 * lane_h;
+            p.line_segment([pos2(rect.left(), ly), pos2(rect.right(), ly)], Stroke::new(1.0_f32, BAR_LINE));
         }
-        for c in (sheet.lo..=sheet.hi).filter(|p| p % 12 == 0) {
-            p.text(pos2(rect.left() + 8.0, y(c)), Align2::LEFT_CENTER, format!("C{}", c as i32 / 12 - 1), mono(10.0), DOT);
+        for (lane, stretches) in sheet.lanes.iter().enumerate() {
+            let top = rect.top() + LANE_PAD + lane as f32 * lane_h;
+            let ink = VOICE_INKS[lane];
+            for stretch in stretches.iter().filter(|s| s.to >= from && s.from <= to) {
+                let cell = Rect::from_min_max(pos2(x(stretch.from).max(rect.left()), top), pos2(x(stretch.to).min(rect.right()), top + lane_h)).intersect(rect);
+                let p = p.with_clip_rect(cell);
+                let voice = &sheet.voices[stretch.voice];
+                // The voice's pitches fill the lane under its name.
+                let (low, high) = (top + lane_h - 4.0, top + LABEL_H);
+                let y = |pitch: u8| low - (pitch - voice.lo) as f32 / (voice.hi - voice.lo) as f32 * (low - high);
+                for (start, end, pitch) in voice.notes.iter().filter(|n| n.1 >= from && n.0 <= to && n.0 >= stretch.from && n.0 < stretch.to) {
+                    let ink = if *end < at { ink.gamma_multiply(0.35) } else { ink };
+                    let (a, b) = (x(*start), x(*end).max(x(*start) + 3.0));
+                    p.rect_filled(Rect::from_min_max(pos2(a, y(*pitch) - 2.0), pos2(b - 1.0, y(*pitch) + 2.0)), 1.0, ink);
+                }
+                p.text(pos2(cell.left() + 6.0, top + 2.0), Align2::LEFT_TOP, voice.name, mono(10.0), ink.gamma_multiply(0.75));
+            }
         }
         let head = rect.left() + PLAYHEAD_X;
         p.line_segment([pos2(head, rect.top()), pos2(head, rect.bottom())], Stroke::new(2.0_f32, PARCHMENT.gamma_multiply(0.85)));
