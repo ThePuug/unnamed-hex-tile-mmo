@@ -16,7 +16,7 @@ use music::score::Score;
 use crate::audio::{open_output, Deck};
 use crate::banks::{self, Install};
 use crate::sheet::Sheet;
-use crate::theme::{ALERT, LAMP, READY};
+use crate::theme::{ALERT, DOT, LAMP, READY};
 use crate::worker::{spawn_worker, Done, Wanted};
 
 /// The silence between one variation's end and the next one's start.
@@ -67,14 +67,6 @@ impl Variation {
         (self.piece, self.seed)
     }
 
-    /// Where its render stands, as a dot's colour and a word.
-    pub fn state(&self) -> (Color32, &'static str) {
-        match (&self.take, &self.failed) {
-            (_, Some(_)) => (ALERT, "failed"),
-            (Some(_), _) => (READY, "ready"),
-            (None, None) => (LAMP, "composing…"),
-        }
-    }
 }
 
 pub struct Take {
@@ -331,6 +323,18 @@ impl Player {
         for v in self.history.iter_mut().skip(self.at + 1).chain(self.queue.first_mut()).chain(self.composed.as_mut()) {
             v.take = None;
             v.failed = None;
+        }
+    }
+
+    /// Where `v`'s render stands, as a dot's colour and a word: composing
+    /// only while the worker renders it — it renders one at a time, and
+    /// finishes one skipped before taking the next — else waiting.
+    pub fn state(&self, v: &Variation) -> (Color32, &'static str) {
+        match (&v.take, &v.failed) {
+            (_, Some(_)) => (ALERT, "failed"),
+            (Some(_), _) => (READY, "ready"),
+            (None, None) if *self.busy.lock().unwrap() == Some(v.job()) => (LAMP, "composing…"),
+            (None, None) => (DOT, "waiting"),
         }
     }
 

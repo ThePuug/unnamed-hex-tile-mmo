@@ -116,7 +116,7 @@ impl Player {
                 ui.add(egui::Label::new(RichText::new(&s.summary).font(mono(12.0)).color(MUTED).line_height(Some(19.0))).wrap());
             }
             (None, None) => {
-                ui.label(RichText::new("composing…").font(mono(12.0)).color(MUTED));
+                ui.label(RichText::new(self.state(v).1).font(mono(12.0)).color(MUTED));
             }
         }
     }
@@ -148,7 +148,7 @@ impl Player {
         let (where_, ink) = match (&take, self.rest_until) {
             (_, Some(until)) => (format!("rest {:.0} s", until.saturating_duration_since(Instant::now()).as_secs_f32().ceil()), MUTED),
             (Some(t), None) => (t.score.sections.iter().rev().find(|s| t.score.seconds(s.start) <= at).map_or("", |s| s.name).to_string(), PARCHMENT),
-            (None, None) => ("composing…".to_string(), MUTED),
+            (None, None) => (self.state(self.current()).1.to_string(), MUTED),
         };
         let p = ui.painter();
         p.text(line.left_center(), Align2::LEFT_CENTER, where_, mono(11.0), ink);
@@ -303,7 +303,7 @@ impl Player {
         } else {
             let mut moves: Vec<(usize, isize)> = Vec::new();
             let mut drops: Vec<usize> = Vec::new();
-            let rows = self.queue.iter().map(|v| (v.piece, v.seed, v.state())).collect::<Vec<_>>();
+            let rows = self.queue.iter().map(|v| (v.piece, v.seed, self.state(v))).collect::<Vec<_>>();
             ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
                 egui::ScrollArea::vertical().max_height(list.height()).auto_shrink([false, false]).show(ui, |ui| {
                     for (i, (piece, seed, (dot, state))) in rows.iter().enumerate() {
@@ -373,7 +373,7 @@ impl Player {
             Some(v) => {
                 let name = format!("{} · seed {}", PIECES[v.piece].name, v.seed);
                 if self.queue.is_empty() {
-                    let (dot, state) = v.state();
+                    let (dot, state) = self.state(v);
                     (dot, name, state, PARCHMENT)
                 } else {
                     (DOT, name, "waits for the queue", MUTED)
@@ -430,7 +430,7 @@ impl Player {
         let p = ui.painter().with_clip_rect(rect);
         p.rect_filled(rect, 6.0, SHEET_INK);
         let Some(take) = take else {
-            p.text(rect.center(), Align2::CENTER_CENTER, "composing…", mono(12.0), MUTED);
+            p.text(rect.center(), Align2::CENTER_CENTER, self.state(self.current()).1, mono(12.0), MUTED);
             p.rect_stroke(rect, 6.0, Stroke::new(1.0_f32, RULE), StrokeKind::Inside);
             return;
         };
