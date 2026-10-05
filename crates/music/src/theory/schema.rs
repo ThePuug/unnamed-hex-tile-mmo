@@ -6,7 +6,7 @@
 //! tonic drone only some chords can be held at all, and every schema
 //! is filtered by that before a droned piece may draw it.
 
-use super::{interval_class, Chord, Key, Mode};
+use super::{interval_class, Chord, Key, Mode, DIATONIC};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Schema {
@@ -17,6 +17,16 @@ pub struct Schema {
     /// Whether the phrase on it closes: the tune comes home at its end,
     /// else rests on a tone of the last chord.
     pub closed: bool,
+    /// How each bar's chord moves its tones off the mode (`Chord::alter`):
+    /// a borrowed chord, the major V of a minor key.
+    pub alters: [[i8; 4]; 4],
+}
+
+impl Schema {
+    /// The chord of bar `k`, of `size` tones.
+    pub fn chord(&self, k: usize, size: u8) -> Chord {
+        Chord { root: self.roots[k], size, alter: self.alters[k] }
+    }
 }
 
 use Mode::{Aeolian, Dorian, Hijaz};
@@ -28,12 +38,12 @@ use Mode::{Aeolian, Dorian, Hijaz};
 /// ♭VII — i–iv–♭VII–i above all. Never ♭VI–♭VII–i, which is rock's and
 /// the ballad's, not the folk's.
 pub const SCHEMATA: [Schema; 6] = [
-    Schema { name: "subtonic shuttle", modes: &[Aeolian, Dorian], roots: [0, 6, 0, 6], closed: false },
-    Schema { name: "lament", modes: &[Aeolian], roots: [0, 6, 5, 4], closed: false },
-    Schema { name: "plagal shuttle", modes: &[Aeolian, Dorian, Hijaz], roots: [0, 3, 0, 3], closed: false },
-    Schema { name: "subtonic close", modes: &[Aeolian, Dorian], roots: [0, 6, 3, 0], closed: true },
-    Schema { name: "folk close", modes: &[Aeolian, Dorian], roots: [0, 3, 6, 0], closed: true },
-    Schema { name: "plagal close", modes: &[Aeolian, Dorian, Hijaz], roots: [0, 3, 3, 0], closed: true },
+    Schema { name: "subtonic shuttle", modes: &[Aeolian, Dorian], roots: [0, 6, 0, 6], closed: false, alters: [DIATONIC; 4] },
+    Schema { name: "lament", modes: &[Aeolian], roots: [0, 6, 5, 4], closed: false, alters: [DIATONIC; 4] },
+    Schema { name: "plagal shuttle", modes: &[Aeolian, Dorian, Hijaz], roots: [0, 3, 0, 3], closed: false, alters: [DIATONIC; 4] },
+    Schema { name: "subtonic close", modes: &[Aeolian, Dorian], roots: [0, 6, 3, 0], closed: true, alters: [DIATONIC; 4] },
+    Schema { name: "folk close", modes: &[Aeolian, Dorian], roots: [0, 3, 6, 0], closed: true, alters: [DIATONIC; 4] },
+    Schema { name: "plagal close", modes: &[Aeolian, Dorian, Hijaz], roots: [0, 3, 3, 0], closed: true, alters: [DIATONIC; 4] },
 ];
 
 /// The twelve-bar blues as three rows of one chorus, each a choice: the
@@ -47,14 +57,14 @@ pub const SCHEMATA: [Schema; 6] = [
 /// the last tone, so the blue notes are the mode's own.
 pub const TWELVE_BAR: [&[Schema]; 3] = [
     &[
-        Schema { name: "tonic row", modes: &[Dorian, Aeolian], roots: [0, 0, 0, 0], closed: false },
-        Schema { name: "quick change", modes: &[Dorian, Aeolian], roots: [0, 3, 0, 0], closed: false },
+        Schema { name: "tonic row", modes: &[Dorian, Aeolian], roots: [0, 0, 0, 0], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "quick change", modes: &[Dorian, Aeolian], roots: [0, 3, 0, 0], closed: false, alters: [DIATONIC; 4] },
     ],
-    &[Schema { name: "subdominant row", modes: &[Dorian, Aeolian], roots: [3, 3, 0, 0], closed: false }],
+    &[Schema { name: "subdominant row", modes: &[Dorian, Aeolian], roots: [3, 3, 0, 0], closed: false, alters: [DIATONIC; 4] }],
     &[
-        Schema { name: "turn home", modes: &[Dorian, Aeolian], roots: [4, 3, 0, 0], closed: true },
-        Schema { name: "turn home, the dominant held", modes: &[Dorian, Aeolian], roots: [4, 4, 0, 0], closed: true },
-        Schema { name: "minor turn", modes: &[Aeolian], roots: [5, 4, 0, 0], closed: true },
+        Schema { name: "turn home", modes: &[Dorian, Aeolian], roots: [4, 3, 0, 0], closed: true, alters: [DIATONIC; 4] },
+        Schema { name: "turn home, the dominant held", modes: &[Dorian, Aeolian], roots: [4, 4, 0, 0], closed: true, alters: [DIATONIC; 4] },
+        Schema { name: "minor turn", modes: &[Aeolian], roots: [5, 4, 0, 0], closed: true, alters: [DIATONIC; 4] },
     ],
 ];
 
@@ -66,12 +76,12 @@ pub const TWELVE_BAR: [&[Schema]; 3] = [
 /// and ♭VII — in Hijaz the minor ♭vii, its standard progression — and
 /// the plagal close.
 pub const FIGHT: [Schema; 6] = [
-    Schema { name: "war shuttle", modes: &[Aeolian], roots: [0, 5, 0, 5], closed: false },
-    Schema { name: "war turn", modes: &[Aeolian], roots: [0, 6, 0, 3], closed: false },
-    Schema { name: "hijaz shuttle", modes: &[Hijaz], roots: [0, 1, 0, 1], closed: false },
-    Schema { name: "war close", modes: &[Aeolian, Hijaz], roots: [0, 3, 6, 0], closed: true },
-    Schema { name: "phrygian close", modes: &[Hijaz], roots: [0, 3, 1, 0], closed: true },
-    Schema { name: "plagal close", modes: &[Aeolian, Hijaz], roots: [0, 3, 3, 0], closed: true },
+    Schema { name: "war shuttle", modes: &[Aeolian], roots: [0, 5, 0, 5], closed: false, alters: [DIATONIC; 4] },
+    Schema { name: "war turn", modes: &[Aeolian], roots: [0, 6, 0, 3], closed: false, alters: [DIATONIC; 4] },
+    Schema { name: "hijaz shuttle", modes: &[Hijaz], roots: [0, 1, 0, 1], closed: false, alters: [DIATONIC; 4] },
+    Schema { name: "war close", modes: &[Aeolian, Hijaz], roots: [0, 3, 6, 0], closed: true, alters: [DIATONIC; 4] },
+    Schema { name: "phrygian close", modes: &[Hijaz], roots: [0, 3, 1, 0], closed: true, alters: [DIATONIC; 4] },
+    Schema { name: "plagal close", modes: &[Aeolian, Hijaz], roots: [0, 3, 3, 0], closed: true, alters: [DIATONIC; 4] },
 ];
 
 /// The ballad's progressions, in the minor with no drone, by the part
@@ -93,21 +103,21 @@ pub struct Song {
 
 pub const BALLAD: Song = Song {
     verse: &[
-        Schema { name: "tonic and sixth", modes: &[Aeolian], roots: [0, 0, 5, 5], closed: false },
-        Schema { name: "subtonic descent", modes: &[Aeolian], roots: [0, 0, 6, 5], closed: false },
-        Schema { name: "relative turn", modes: &[Aeolian], roots: [0, 2, 6, 4], closed: false },
-        Schema { name: "relative home", modes: &[Aeolian], roots: [0, 2, 6, 0], closed: true },
-        Schema { name: "tonic held home", modes: &[Aeolian], roots: [0, 0, 6, 0], closed: true },
+        Schema { name: "tonic and sixth", modes: &[Aeolian], roots: [0, 0, 5, 5], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "subtonic descent", modes: &[Aeolian], roots: [0, 0, 6, 5], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "relative turn", modes: &[Aeolian], roots: [0, 2, 6, 4], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "relative home", modes: &[Aeolian], roots: [0, 2, 6, 0], closed: true, alters: [DIATONIC; 4] },
+        Schema { name: "tonic held home", modes: &[Aeolian], roots: [0, 0, 6, 0], closed: true, alters: [DIATONIC; 4] },
     ],
     chorus: &[
-        Schema { name: "lift", modes: &[Aeolian], roots: [5, 6, 0, 6], closed: false },
-        Schema { name: "climb", modes: &[Aeolian], roots: [0, 5, 2, 6], closed: false },
-        Schema { name: "lift home", modes: &[Aeolian], roots: [5, 6, 0, 0], closed: true },
-        Schema { name: "subdominant home", modes: &[Aeolian], roots: [3, 5, 6, 0], closed: true },
+        Schema { name: "lift", modes: &[Aeolian], roots: [5, 6, 0, 6], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "climb", modes: &[Aeolian], roots: [0, 5, 2, 6], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "lift home", modes: &[Aeolian], roots: [5, 6, 0, 0], closed: true, alters: [DIATONIC; 4] },
+        Schema { name: "subdominant home", modes: &[Aeolian], roots: [3, 5, 6, 0], closed: true, alters: [DIATONIC; 4] },
     ],
     climax: &[
-        Schema { name: "outro shuttle", modes: &[Aeolian], roots: [0, 6, 5, 6], closed: false },
-        Schema { name: "outro close", modes: &[Aeolian], roots: [0, 5, 6, 0], closed: true },
+        Schema { name: "outro shuttle", modes: &[Aeolian], roots: [0, 6, 5, 6], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "outro close", modes: &[Aeolian], roots: [0, 5, 6, 0], closed: true, alters: [DIATONIC; 4] },
     ],
 };
 
@@ -220,9 +230,11 @@ mod tests {
         for part in [BALLAD.verse, BALLAD.chorus, BALLAD.climax] {
             for s in part {
                 assert_eq!(s.roots[3] == 0, s.closed, "{}", s.name);
-                for r in s.roots {
-                    let tones: Vec<u8> = Chord::triad(r).degrees().iter().map(|d| key.pitch(*d, 4)).collect();
-                    assert!(matches!((tones[1] - tones[0], tones[2] - tones[1]), (3, 4) | (4, 3)), "{}: {r} is no major or minor triad", s.name);
+                for k in 0..4 {
+                    let chord = s.chord(k, 3);
+                    let under = key.under(chord);
+                    let tones: Vec<u8> = chord.degrees().iter().map(|d| under.pitch(*d, 4)).collect();
+                    assert!(matches!((tones[1] - tones[0], tones[2] - tones[1]), (3, 4) | (4, 3)), "{}: {} is no major or minor triad", s.name, chord.root);
                 }
             }
             let (open, closed) = split(part);
@@ -234,7 +246,9 @@ mod tests {
 
     /// A progression in a mode belongs to one style: the folk's — the
     /// overworld's and the fight's, one world — the blues' or the
-    /// ballad's, so no two styles are heard turning the same way.
+    /// ballad's, so no two styles are heard turning the same way; a
+    /// progression is its chords as they sound, so the Andalusian's major
+    /// V is not the lament's minor v.
     #[test]
     fn no_progression_crosses_styles() {
         let folk: Vec<&Schema> = SCHEMATA.iter().chain(FIGHT.iter()).collect();
@@ -244,7 +258,7 @@ mod tests {
         for (i, (a, ours)) in styles.iter().enumerate() {
             for (b, theirs) in &styles[i + 1..] {
                 for s in ours {
-                    for t in theirs.iter().filter(|t| t.roots == s.roots) {
+                    for t in theirs.iter().filter(|t| t.roots == s.roots && t.alters == s.alters) {
                         assert!(!s.modes.iter().any(|m| t.modes.contains(m)), "{a}'s {} is {b}'s {}", s.name, t.name);
                     }
                 }

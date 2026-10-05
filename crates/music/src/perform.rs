@@ -236,7 +236,7 @@ pub fn perform(score: &Score, period: u32) -> Vec<Played> {
                 let cents = tuning + INTONATION * slip(&mut rng);
                 let held = written_end - written;
                 if bends_in(inst.program) && held >= BEND_IN_S && rng.chance(if held >= BEND_SURE_S { BEND_SURE_CHANCE } else { BEND_IN_CHANCE }) {
-                    let under = if score.key.contains(n.pitch.saturating_sub(2)) { 200.0 } else { 100.0 };
+                    let under = if score.key_at(n.start).contains(n.pitch.saturating_sub(2)) { 200.0 } else { 100.0 };
                     for k in 0..=BEND_IN_STEPS {
                         let x = k as f32 / BEND_IN_STEPS as f32;
                         let rise = x * x * (3.0 - 2.0 * x);

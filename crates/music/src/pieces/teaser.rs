@@ -21,7 +21,7 @@ use crate::theory::groove::{Groove, BALKAN};
 use crate::theory::melody::{Theme, FOLK_SHAPES};
 use crate::theory::phrase::{self, Form as PhraseForm};
 use crate::theory::schema::{schemata_for, Schema};
-use crate::theory::{clashes, Chord, Key, Mode};
+use crate::theory::{clashes, Chord, Key, Mode, DIATONIC};
 use crate::variation::{self, Role as Bar};
 use crate::tune::{self, Tune};
 
@@ -245,15 +245,15 @@ const TITLE_DYNAMIC: i32 = 4;
 const TITLE_LEVEL: f32 = -4.0;
 
 /// The dawn's row: the tonic held, the drone's.
-const TONIC: Schema = Schema { name: "tonic", modes: &[Mode::Aeolian], roots: [0, 0, 0, 0], closed: false };
+const TONIC: Schema = Schema { name: "tonic", modes: &[Mode::Aeolian], roots: [0, 0, 0, 0], closed: false, alters: [DIATONIC; 4] };
 /// The night's turn, down the lament to the minor fifth, and its close
 /// through the minor fourth.
-const LAMENT: Schema = Schema { name: "lament", modes: &[Mode::Aeolian], roots: [0, 6, 5, 4], closed: false };
-const PLAGAL: Schema = Schema { name: "plagal close", modes: &[Mode::Aeolian], roots: [0, 3, 3, 0], closed: true };
+const LAMENT: Schema = Schema { name: "lament", modes: &[Mode::Aeolian], roots: [0, 6, 5, 4], closed: false, alters: [DIATONIC; 4] };
+const PLAGAL: Schema = Schema { name: "plagal close", modes: &[Mode::Aeolian], roots: [0, 3, 3, 0], closed: true, alters: [DIATONIC; 4] };
 /// The swell's last row, up through the minor fourth to the flat
 /// seventh and held there, open, so the title's tonic is its answer:
 /// the folk's way home from ♭VII, never the ballad's through ♭VI.
-const RISE: Schema = Schema { name: "rise", modes: &[Mode::Aeolian], roots: [0, 3, 6, 6], closed: false };
+const RISE: Schema = Schema { name: "rise", modes: &[Mode::Aeolian], roots: [0, 3, 6, 6], closed: false, alters: [DIATONIC; 4] };
 
 struct Design {
     drone: u8,
@@ -931,7 +931,7 @@ mod tests {
     fn the_cue_turns_as_the_folk_does() {
         let ballad = [crate::theory::schema::BALLAD.verse, crate::theory::schema::BALLAD.chorus, crate::theory::schema::BALLAD.climax];
         for row in [&TONIC, &LAMENT, &PLAGAL, &RISE] {
-            assert!(ballad.iter().copied().flatten().all(|s| s.roots != row.roots), "the cue's {} is the ballad's", row.name);
+            assert!(ballad.iter().copied().flatten().all(|s| s.roots != row.roots || s.alters != row.alters), "the cue's {} is the ballad's", row.name);
         }
     }
 

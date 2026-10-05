@@ -50,19 +50,9 @@ impl Tune {
         let mut bars = Vec::new();
         for p in 0..shifts.len() / phrase::BARS as usize {
             let schema = rows[p % rows.len()];
-            chords.extend(schema.roots.iter().map(|r| Chord { root: *r, size }));
-            let mid = open_tone(Chord {
-                root: schema.roots[1],
-                size,
-            });
-            let end = if schema.closed {
-                0
-            } else {
-                open_tone(Chord {
-                    root: schema.roots[3],
-                    size,
-                })
-            };
+            chords.extend((0..4).map(|k| schema.chord(k, size)));
+            let mid = open_tone(schema.chord(1, size));
+            let end = if schema.closed { 0 } else { open_tone(schema.chord(3, size)) };
             bars.extend(melody::phrase(theme, meter, form, mid, end));
         }
         Tune {
@@ -82,8 +72,8 @@ impl Tune {
     /// toward the tone before; `sung` as a singer takes it, else every
     /// foot.
     pub fn bar(&self, score: &Score, b: u32, lo: u8, hi: u8, sung: bool) -> Vec<Placed> {
-        let key = &score.key;
-        let home_degree = key.absolute_degree(home_tonic(key, lo, hi)).unwrap();
+        let key = &score.key_at(b * score.bar());
+        let home_degree = score.key.absolute_degree(home_tonic(&score.key, lo, hi)).unwrap();
         let shift = self.shifts[b as usize];
         let chord = self.chords[b as usize];
         let bar = if sung {
@@ -97,7 +87,7 @@ impl Tune {
         let last = ((b + bars - 1) % bars) as usize;
         let mut prev = self.bars[last]
             .last()
-            .map(|t| key.pitch(home_degree + self.on_scale(t.degree) + self.shifts[last], 4));
+            .map(|t| score.key_at(last as u32 * score.bar()).pitch(home_degree + self.on_scale(t.degree) + self.shifts[last], 4));
         bar.iter()
             .map(|t| {
                 let mut pitch = key.pitch(home_degree + self.on_scale(t.degree) + shift, 4);
@@ -127,13 +117,15 @@ impl Tune {
     /// `line`'s voice leading repaired in place, as `run` repairs a run:
     /// for a line pieced from several, where the joins are leaps too.
     pub fn repair(&self, score: &Score, line: &mut [Placed], lo: u8, hi: u8) {
-        let key = &score.key;
-        let degree = |p: u8| key.absolute_degree(p).unwrap();
+        // Every tone is a degree of the key its bar is heard in, so a
+        // borrowed tone counts as the degree it stands for.
+        let degree = |tick: u32, p: u8| score.key_at(tick).absolute_degree(p).unwrap();
         for i in 1..line.len().saturating_sub(1) {
+            let key = &score.key_at(line[i].0);
             let (d0, d1, d2) = (
-                degree(line[i - 1].2),
-                degree(line[i].2),
-                degree(line[i + 1].2),
+                degree(line[i - 1].0, line[i - 1].2),
+                degree(line[i].0, line[i].2),
+                degree(line[i + 1].0, line[i + 1].2),
             );
             let (leap, next) = (d1 - d0, d2 - d1);
             if leap.abs() < counterpoint::LEAP
@@ -153,7 +145,7 @@ impl Tune {
                         && self.sings(key, *p)
                         && (!strong || chord.holds(key, *p))
                 })
-                .filter(|p| (degree(*p) - d0).abs() < counterpoint::LEAP)
+                .filter(|p| (degree(line[i].0, *p) - d0).abs() < counterpoint::LEAP)
                 .min_by_key(|p| (*p as i32 - target as i32).abs());
             if let Some(p) = fixed {
                 line[i].2 = p;
@@ -163,12 +155,13 @@ impl Tune {
             // tone a step from where the leap began — the tone after it
             // steps or turns back instead of leaping on.
             let (start, pitch) = (line[i + 1].0, line[i + 1].2);
+            let key = &score.key_at(start);
             let strong = score.strong(start);
             let chord = self.chords[(start / score.bar()) as usize];
             let turned = (pitch.saturating_sub(5)..=pitch.saturating_add(5))
                 .filter(|p| *p >= lo && *p <= hi && self.sings(key, *p) && (!strong || chord.holds(key, *p)))
                 .filter(|p| {
-                    let next = degree(*p) - d1;
+                    let next = degree(start, *p) - d1;
                     next.abs() < counterpoint::LEAP || next.signum() != leap.signum()
                 })
                 .min_by_key(|p| ((*p as i32 - pitch as i32).abs(), *p));

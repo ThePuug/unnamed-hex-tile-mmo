@@ -124,7 +124,7 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
                     let ((start, len, pitch), is_sung) = notes[j];
                     if is_sung {
                         let mut len = len - E / 8;
-                        let grace = notes.get(j + 1).filter(|(n, _)| n.2 != pitch).and_then(|(n, _)| (teller.grace)(&score.key, n.2, hi).map(|g| (n.0, g))).filter(|_| rng.chance(0.35));
+                        let grace = notes.get(j + 1).filter(|(n, _)| n.2 != pitch).and_then(|(n, _)| (teller.grace)(&grace_key(score, n.0, n.2), n.2, hi).map(|g| (n.0, g))).filter(|_| rng.chance(0.35));
                         if let Some((next_start, _)) = grace {
                             len = len.min(next_start - E / 4 - start);
                         }
@@ -139,7 +139,7 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
                         // and rings in the riff as in the song.
                         let held = if len >= score.bar() { len - E / 2 } else if len >= 3 * E { 2 * E } else { len - E / 2 };
                         if strong && j > 0 && rng.chance(0.4) {
-                            if let Some(grace) = (teller.grace)(&score.key, pitch, hi) {
+                            if let Some(grace) = (teller.grace)(&grace_key(score, start, pitch), pitch, hi) {
                                 score.add(Note { start: start - E / 4, len: E / 4, pitch: grace, vel: vel(teller.riff.2, rng), channel: teller.lead });
                             }
                         }
@@ -156,6 +156,15 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
             }
         }
     }
+}
+
+/// The key a grace into `pitch` at `tick` is drawn in: the bar's it
+/// sounds in, a sixteenth before, so a grace from under a borrowed
+/// chord is that chord's — or `pitch`'s own where the grace's bar
+/// leaves `pitch` out.
+fn grace_key(score: &Score, tick: u32, pitch: u8) -> Key {
+    let under = score.key_at(tick.saturating_sub(E / 4));
+    if under.contains(pitch) { under } else { score.key_at(tick) }
 }
 
 /// The tune each run tells, its notes and whether each is sung: the

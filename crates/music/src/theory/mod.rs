@@ -1,7 +1,10 @@
 //! Pitch, mode, chord and meter: the arithmetic a piece is written in.
 //! Pitches are MIDI numbers; degrees are steps of the mode from its
 //! tonic, any integer, so a degree of 7 is the tonic an octave up and -1
-//! the leading tone below. The vocabularies a piece composes from —
+//! the leading tone below. A chord may borrow from outside the mode —
+//! its third raised for the major V of a minor key — and the key a bar
+//! is heard in is the mode with its chord's tones in it (`Key::under`):
+//! over that V the melody's seventh is raised too. The vocabularies a piece composes from —
 //! the dances, the harmonic schemata, the phrase forms, the melodic
 //! shapes and the rules between lines — are the modules beside this.
 
@@ -56,36 +59,54 @@ pub struct Key {
     /// Pitch class of the tonic, 0 = C.
     pub tonic: u8,
     pub mode: Mode,
+    /// Semitones each degree is moved from the mode's, by the chord the
+    /// key is under; none in the piece's own key.
+    pub alter: [i8; 7],
 }
 
 impl Key {
     pub fn new(tonic: &str, mode: Mode) -> Self {
         let tonic = NOTE_NAMES.iter().position(|n| *n == tonic).expect("a note name") as u8;
-        Key { tonic, mode }
+        Key { tonic, mode, alter: [0; 7] }
+    }
+
+    /// The key a bar on `chord` is heard in: the mode, with each of the
+    /// chord's tones as the chord has it. The piece's key under any
+    /// chord, however often it is taken.
+    pub fn under(&self, chord: Chord) -> Key {
+        let mut alter = [0; 7];
+        for (i, a) in chord.alter.iter().enumerate().take(chord.size as usize) {
+            alter[(chord.root + 2 * i as i32).rem_euclid(7) as usize] = *a;
+        }
+        Key { alter, ..*self }
+    }
+
+    /// Semitones from the tonic to each degree.
+    fn steps(&self) -> [i32; 7] {
+        let mode = self.mode.steps();
+        std::array::from_fn(|d| mode[d] as i32 + self.alter[d] as i32)
     }
 
     /// The pitch at `degree` of the mode, with degree 0 in `octave`
     /// (MIDI octaves: 4 holds middle C, 60).
     pub fn pitch(&self, degree: i32, octave: i32) -> u8 {
-        let steps = self.mode.steps();
         let oct = octave + degree.div_euclid(7);
         let d = degree.rem_euclid(7) as usize;
-        (12 * (oct + 1) + self.tonic as i32 + steps[d] as i32) as u8
+        (12 * (oct + 1) + self.tonic as i32 + self.steps()[d]) as u8
     }
 
     /// The degree of `pitch` counted from the tonic of octave 4, the
     /// inverse of `pitch(d, 4)`; None off the mode.
     pub fn absolute_degree(&self, pitch: u8) -> Option<i32> {
         let d = self.degree_of(pitch)?;
-        let step = self.mode.steps()[d] as i32;
-        let octave = (pitch as i32 - self.tonic as i32 - step) / 12 - 1;
+        let octave = (pitch as i32 - self.tonic as i32 - self.steps()[d]).div_euclid(12) - 1;
         Some(d as i32 + 7 * (octave - 4))
     }
 
     /// The degree of a pitch in the mode, or None off it.
     pub fn degree_of(&self, pitch: u8) -> Option<usize> {
-        let pc = (pitch as i32 - self.tonic as i32).rem_euclid(12) as u8;
-        self.mode.steps().iter().position(|s| *s == pc)
+        let pc = (pitch as i32 - self.tonic as i32).rem_euclid(12);
+        self.steps().iter().position(|s| s.rem_euclid(12) == pc)
     }
 
     pub fn contains(&self, pitch: u8) -> bool {
@@ -105,18 +126,27 @@ impl Key {
     }
 }
 
-/// A diatonic chord by its root degree; its tones are stacked thirds of
+/// A chord by its root degree; its tones are stacked thirds of the
+/// mode, each moved by its `alter`, so a chord may borrow from outside
 /// the mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Chord {
     pub root: i32,
     /// 3 for a triad, 4 for a seventh.
     pub size: u8,
+    /// Semitones each tone, root first, is moved from the mode's: the
+    /// major V of a minor key raises its third.
+    pub alter: [i8; 4],
 }
+
+/// No tone moved: the mode's own chord.
+pub const DIATONIC: [i8; 4] = [0; 4];
+/// The third raised: a major chord where the mode has a minor one.
+pub const MAJOR: [i8; 4] = [0, 1, 0, 0];
 
 impl Chord {
     pub fn triad(root: i32) -> Self {
-        Chord { root, size: 3 }
+        Chord { root, size: 3, alter: DIATONIC }
     }
 
     /// The chord's degrees, root first.
@@ -124,9 +154,10 @@ impl Chord {
         (0..self.size as i32).map(|i| self.root + 2 * i).collect()
     }
 
-    /// Whether `pitch` is one of the chord's tones in any octave.
+    /// Whether `pitch` is one of the chord's tones in any octave, as the
+    /// chord has them.
     pub fn holds(&self, key: &Key, pitch: u8) -> bool {
-        let Some(d) = key.degree_of(pitch) else { return false };
+        let Some(d) = key.under(*self).degree_of(pitch) else { return false };
         self.degrees().iter().any(|cd| cd.rem_euclid(7) as usize == d)
     }
 
@@ -223,6 +254,24 @@ mod tests {
         assert!(!k.contains(71));
         assert_eq!(k.snap(71), 70);
         assert_eq!(k.snap(61), 60);
+    }
+
+    /// The major V of A minor holds G sharp and not G, and the key under
+    /// it raises the seventh for every line over it; taken twice, or
+    /// from another chord's key, it is the same key.
+    #[test]
+    fn a_borrowed_chord_brings_its_tones() {
+        let k = Key::new("A", Mode::Aeolian);
+        let v = Chord { root: 4, size: 3, alter: MAJOR };
+        assert!(v.holds(&k, 68) && v.holds(&k, 64) && v.holds(&k, 71));
+        assert!(!v.holds(&k, 67));
+        let under = k.under(v);
+        assert_eq!(under.pitch(-1, 4), 68);
+        assert!(!under.contains(67));
+        assert_eq!(under.absolute_degree(68), Some(-1));
+        assert_eq!(under.under(v).pitch(-1, 4), 68);
+        assert_eq!(under.under(Chord::triad(0)).pitch(-1, 4), 67);
+        assert!(Chord::triad(4).holds(&k, 67));
     }
 
     #[test]

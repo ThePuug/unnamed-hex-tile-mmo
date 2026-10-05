@@ -122,6 +122,16 @@ impl Score {
         self.harmony[((tick / self.bar()) as usize).min(self.harmony.len() - 1)]
     }
 
+    /// The key `tick` is heard in: the piece's, under the bar's chord,
+    /// so a borrowed chord's tones are the bar's own. The piece's key
+    /// where there is no harmony.
+    pub fn key_at(&self, tick: u32) -> Key {
+        if self.harmony.is_empty() {
+            return self.key;
+        }
+        self.key.under(self.chord_at(tick))
+    }
+
     /// Whether `tick` opens a group of the bar.
     pub fn strong(&self, tick: u32) -> bool {
         tick % TICKS_PER_EIGHTH == 0 && self.meter.strong((tick / TICKS_PER_EIGHTH) % self.meter.eighths())
