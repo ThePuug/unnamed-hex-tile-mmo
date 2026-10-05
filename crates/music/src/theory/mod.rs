@@ -103,6 +103,17 @@ impl Key {
         Some(d as i32 + 7 * (octave - 4))
     }
 
+    /// The degree `pitch` stands for: its own on the mode, or where a
+    /// borrowed chord raised it a semitone off, the degree it was raised
+    /// from, else lowered from — so a line read in the piece's key counts
+    /// the major V's leading tone as the seventh it is.
+    pub fn standing_degree(&self, pitch: u8) -> i32 {
+        self.absolute_degree(pitch)
+            .or_else(|| self.absolute_degree(pitch.saturating_sub(1)))
+            .or_else(|| self.absolute_degree(pitch.saturating_add(1)))
+            .expect("every pitch is within a semitone of the mode")
+    }
+
     /// The degree of a pitch in the mode, or None off it.
     pub fn degree_of(&self, pitch: u8) -> Option<usize> {
         let pc = (pitch as i32 - self.tonic as i32).rem_euclid(12);
@@ -269,6 +280,8 @@ mod tests {
         assert_eq!(under.pitch(-1, 4), 68);
         assert!(!under.contains(67));
         assert_eq!(under.absolute_degree(68), Some(-1));
+        assert_eq!(k.standing_degree(68), -1);
+        assert_eq!(k.standing_degree(67), -1);
         assert_eq!(under.under(v).pitch(-1, 4), 68);
         assert_eq!(under.under(Chord::triad(0)).pitch(-1, 4), 67);
         assert!(Chord::triad(4).holds(&k, 67));
