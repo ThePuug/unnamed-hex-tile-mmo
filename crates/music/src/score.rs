@@ -121,10 +121,6 @@ pub struct Score {
     pub room: f32,
     /// The channel of the one player who tells the tune, where one does.
     pub lead: Option<u8>,
-    /// What the seed drew, beyond its story and its lead, that a pool
-    /// spreads its files across — the ballad's feel and its soloist —
-    /// each a value of its own kind.
-    pub facets: Vec<&'static str>,
     /// The places a player of the piece may need, in order: every
     /// phrase's first bar and where the coda begins.
     pub marks: Vec<(Mark, u32)>,
@@ -139,7 +135,7 @@ pub struct Score {
 
 impl Score {
     pub fn new(key: Key, meter: Meter, eighth_bpm: f32, instruments: Vec<Instrument>, room: f32) -> Self {
-        Score { key, meter, eighth_bpm, tempo: Vec::new(), instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), room, lead: None, facets: Vec::new(), marks: Vec::new(), story: "", lifts: Vec::new() }
+        Score { key, meter, eighth_bpm, tempo: Vec::new(), instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), room, lead: None, marks: Vec::new(), story: "", lifts: Vec::new() }
     }
 
     pub fn chord_at(&self, tick: u32) -> Chord {

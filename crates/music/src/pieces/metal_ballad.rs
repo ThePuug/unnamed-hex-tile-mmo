@@ -87,7 +87,7 @@ const CH_HARMONY: u8 = 10;
 const ROOM_S: f32 = 2.2;
 
 /// Who may sing the theme: the lead guitar, overdriven or distorted, or
-/// a violin. The pool's files each have their own.
+/// a violin. Each seed draws one.
 const LEADS: [u8; 3] = [OVERDRIVEN, DISTORTION, VIOLIN];
 
 /// The lead's level, dB, forward of the band whichever it is: a guitar
@@ -780,7 +780,6 @@ fn compose(params: &Params) -> (Score, Form) {
         design.song.name(),
         design.ending.name(),
     );
-    score.facets = vec![groove.name, design.soloist.name(), design.song.name(), design.ending.name()];
     let bar = score.bar();
 
     let solo = story.ladder.len() as i32;

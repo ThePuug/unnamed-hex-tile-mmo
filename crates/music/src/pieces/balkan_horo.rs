@@ -75,12 +75,12 @@ const CH_PAD: u8 = 12;
 const ROOM_S: f32 = 1.6;
 
 /// Who may lead: the players that cut through a band, the zurna first
-/// among them. The pool's files each have their own.
+/// among them. Each seed draws one.
 const LEADS: [u8; 4] = [SHANAI, FIDDLE, CLARINET, TRUMPET];
 
 /// Each lead's level, dB, so that wherever it plays it sits three dB
 /// under the band: the bank's samples of them are not one
-/// loudness. Measured against the band on the pool's seeds.
+/// loudness. Measured against the band over the piece's seeds.
 fn lead_level(program: u8) -> f32 {
     match program {
         SHANAI => 2.0,
@@ -577,7 +577,6 @@ fn compose(params: &Params) -> (Score, Form) {
         design.pace.name(),
         design.ending.name(),
     );
-    score.facets = vec![design.opening.name(), design.pace.name(), design.ending.name(), if soloed { "solo" } else { "no solo" }];
 
     // A phrase pair's themes and rows: the kolyano's, or the vamp's under
     // the lead's turn. The tune comes back the same each time a kolyano

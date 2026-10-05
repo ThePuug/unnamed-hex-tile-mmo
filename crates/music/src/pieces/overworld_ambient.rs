@@ -74,12 +74,12 @@ const CH_BREATH_AIR: u8 = 15;
 /// its sound.
 const ROOM_S: f32 = 3.2;
 
-/// Who may lead: the players that can hold a line and shape it. The
-/// pool's files each have their own.
+/// Who may lead: the players that can hold a line and shape it. Each
+/// seed draws one.
 const LEADS: [u8; 5] = [FLUTE, PAN_FLUTE, FIDDLE, CLARINET, ENGLISH_HORN];
 /// Each lead's level, dB, so that wherever it plays it sits 1.5 dB
 /// under the band: the bank's samples of them are not one loudness.
-/// Measured against the band on the pool's seeds.
+/// Measured against the band over the piece's seeds.
 fn lead_level(program: u8) -> f32 {
     match program {
         FLUTE => -0.6,

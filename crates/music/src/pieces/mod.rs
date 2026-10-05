@@ -18,13 +18,9 @@ pub struct Piece {
     pub name: &'static str,
     /// What the piece must read as. The comparison critic judges against it.
     pub brief: &'static str,
-    /// The pool the client draws it from at intervals, tagged on the file.
+    /// The pool the client draws it from at intervals.
     pub pool: &'static str,
-    /// Files in the asset, one seed each — the first seeds from 0 whose
-    /// stories differ, so a pool needs several and no two of them tell
-    /// one story; a one-shot's differ by their leads.
-    pub variants: u64,
-    /// Integrated loudness the file is set to, LUFS. A bed sits low so the
+    /// Integrated loudness a take is set to, LUFS. A bed sits low so the
     /// game's sounds ride over it; a cue sits where a trailer mixes it.
     pub lufs: f32,
     /// How far the loudness may range through the piece, LU, between the
@@ -32,9 +28,6 @@ pub struct Piece {
     /// still and tells its story in what plays; a one-shot's arc is its
     /// sections' declared levels, and its range is that arc's span.
     pub range: f32,
-    /// Whether every seed tells the same story — a cue's movements, cut
-    /// to its picture — so its files differ by their leads alone.
-    pub one_story: bool,
     pub build: fn(&Params) -> Score,
 }
 
@@ -82,10 +75,8 @@ pub const PIECES: &[Piece] = &[
             Every other voice sits in the bed. Consonant, no drum \
             kit, no sung words.",
     pool: "overworld",
-    variants: 3,
     lufs: -22.0,
     range: 5.0,
-    one_story: false,
     build: overworld_ambient::build,
     },
     Piece {
@@ -125,10 +116,8 @@ pub const PIECES: &[Piece] = &[
             on the third, a shimmer — joining and leaving as one layer. Every \
             other player sits in the band. No drone; no sung words.",
     pool: "blues",
-    variants: 3,
     lufs: -22.0,
     range: 5.0,
-    one_story: false,
     build: minor_blues::build,
     },
     Piece {
@@ -169,7 +158,6 @@ pub const PIECES: &[Piece] = &[
             tone, or, seldom, runs down together in unison to the tonic's neighbour \
             and hits the tonic. Driving, joyful, never chaotic; no sung words.",
     pool: "horo",
-    variants: 3,
     // A decibel over the beds, not two: the dance's low end — the tapan,
     // the bass on every eighth — reads quiet to a loudness meter for how
     // hard it peaks.
@@ -177,7 +165,6 @@ pub const PIECES: &[Piece] = &[
     // A LU over the beds': the bare drum of a story that starts on it, and
     // the hit's ring at the end.
     range: 8.0,
-    one_story: false,
     build: balkan_horo::build,
     },
     Piece {
@@ -212,13 +199,11 @@ pub const PIECES: &[Piece] = &[
             declared against the swell. Consonant, no drum kit but for the \
             one crash, no sung words.",
     pool: "teaser",
-    variants: 3,
     // A cue under a trailer's picture and effects, not a bed under play;
     // its swell's strokes peak some fifteen dB over its loudness.
     lufs: -18.0,
     // Dawn to the swell: the arc a one-shot is for.
     range: 19.0,
-    one_story: true,
     build: teaser::build,
     },
     Piece {
@@ -289,98 +274,14 @@ pub const PIECES: &[Piece] = &[
             heavier than the verse, the band growing as each layer joins, \
             not afraid of its loud parts; no sung words.",
     pool: "ballad",
-    variants: 3,
     lufs: -20.0,
     // A ballad's chorus is heavier than its arpeggio, and its loudness
     // says so: the pedal gives back only part of what the band adds.
     range: 8.0,
-    one_story: false,
     build: metal_ballad::build,
     },
 ];
 
 pub fn find(name: &str) -> Option<&'static Piece> {
     PIECES.iter().find(|p| p.name == name)
-}
-
-/// How far past its first candidate a pool looks for a seed that brings
-/// more of the facets the piece spreads its files across.
-const SEARCH: u64 = 64;
-
-impl Piece {
-    /// The seeds of the pool, `variants` of them, each one whose story no
-    /// seed already taken tells and whose lead no seed already taken leads with, so
-    /// each file has its own storyteller; of those, the first from 0
-    /// that brings the most of the score's facets the pool lacks, so a
-    /// piece's files spread across what its seeds draw. A piece naming
-    /// no facets takes the first that qualifies. A piece that tells one
-    /// story, a cue, has files that differ by their leads alone.
-    pub fn pool(&self) -> Vec<u64> {
-        let mut seeds: Vec<u64> = Vec::new();
-        let mut taken: Vec<(&'static str, Option<u8>)> = Vec::new();
-        let mut spread: Vec<&'static str> = Vec::new();
-        while seeds.len() < self.variants as usize {
-            let mut best: Option<(u64, usize, (&'static str, Option<u8>), Vec<&'static str>)> = None;
-            let mut first: Option<u64> = None;
-            let mut seed = 0;
-            while first.is_none_or(|f| seed <= f + SEARCH) {
-                if !seeds.contains(&seed) {
-                    let score = (self.build)(&Params { seed });
-                    let story = score.story;
-                    let lead = score.lead.map(|ch| score.instrument(ch).program);
-                    if !taken.iter().any(|(s, l)| (!self.one_story && *s == story) || (lead.is_some() && *l == lead)) {
-                        first.get_or_insert(seed);
-                        let new = score.facets.iter().filter(|f| !spread.contains(f)).count();
-                        if best.as_ref().is_none_or(|b| new > b.1) {
-                            best = Some((seed, new, (story, lead), score.facets.clone()));
-                        }
-                        if new == score.facets.len() {
-                            break;
-                        }
-                    }
-                }
-                seed += 1;
-            }
-            let (seed, _, kind, facets) = best.expect("a seed the pool can take");
-            seeds.push(seed);
-            taken.push(kind);
-            spread.extend(facets);
-        }
-        seeds
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A piece naming no facets takes the first seeds that qualify, one
-    /// story and one lead a file, as the pool always has; one that names
-    /// them spreads its files across every value it can.
-    #[test]
-    fn a_pool_spreads_only_what_a_piece_names() {
-        for piece in PIECES {
-            let pool = piece.pool();
-            let facets: Vec<Vec<&str>> = pool.iter().map(|s| (piece.build)(&Params { seed: *s }).facets).collect();
-            if facets.iter().all(|f| f.is_empty()) {
-                let mut first = Vec::new();
-                let mut taken: Vec<(&str, Option<u8>)> = Vec::new();
-                let mut seed = 0;
-                while first.len() < pool.len() {
-                    let score = (piece.build)(&Params { seed });
-                    let story = score.story;
-                    let lead = score.lead.map(|ch| score.instrument(ch).program);
-                    if !taken.iter().any(|(s, l)| (!piece.one_story && *s == story) || (lead.is_some() && *l == lead)) {
-                        taken.push((story, lead));
-                        first.push(seed);
-                    }
-                    seed += 1;
-                }
-                assert_eq!(pool, first, "{}: the pool moved", piece.name);
-            } else {
-                let spread: std::collections::HashSet<&str> = facets.iter().flatten().copied().collect();
-                assert!(spread.len() > facets[0].len(), "{}: its files share every facet", piece.name);
-            }
-        }
-    }
 }

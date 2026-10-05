@@ -73,7 +73,7 @@ const CH_WEAVE_2: u8 = 10;
 const ROOM_S: f32 = 1.6;
 
 /// Who may lead: the band's singers, the ones that hold a line and
-/// shape it. The pool's files each have their own.
+/// shape it. Each seed draws one.
 const LEADS: [u8; 4] = [HARMONICA, MUTED_TRUMPET, TENOR_SAX, ALTO_SAX];
 /// Who may hold tones under the lead's riff: a horn that is neither
 /// the lead nor the colours' horn.
@@ -81,7 +81,7 @@ const SECONDS: [u8; 3] = [TENOR_SAX, ALTO_SAX, MUTED_TRUMPET];
 
 /// Each lead's level, dB, so that wherever it plays it sits 1.5 dB
 /// under the band: the bank's samples of them are not one
-/// loudness. Measured against the band on the pool's seeds.
+/// loudness. Measured against the band over the piece's seeds.
 fn lead_level(program: u8) -> f32 {
     match program {
         HARMONICA => 0.4,
