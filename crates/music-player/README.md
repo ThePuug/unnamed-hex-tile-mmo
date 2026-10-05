@@ -40,11 +40,11 @@ Wayland session.
 
 ## The sampled banks
 
-The guitars, basses, drum kit, piano, organ, saxophone and harmonica
+The guitars, basses, drum kits, piano, organ, saxophone and harmonica
 sound as the game's music does on the sampled banks: the `.7z` of the
 latest [music-banks release](https://github.com/ThePuug/unnamed-hex-tile-mmo/releases?q=music-banks&expanded=true).
 Drop it onto the player's window; it unpacks into your own data folder
-(about 1.9 GB) and the next piece plays on them. Where dropping does not
+(about 2 GB) and the next piece plays on them. Where dropping does not
 work (Linux under Wayland), hover the banks note under the sheet: it
 names the folder to unpack the archive into, then start the player
 again.
