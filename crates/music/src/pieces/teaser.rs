@@ -402,7 +402,7 @@ pub fn build(params: &Params) -> Score {
         shifts.extend([list[opened[m].min(list.len() - 1)]; phrase::BARS as usize]);
         opened[m] += 1;
     }
-    let tune = Tune::compose(&design.theme, &score.meter, design.form, &rows, 3, shifts);
+    let tune = Tune::compose(&[&design.theme], &score.meter, design.form, &rows, 3, shifts);
     score.harmony = tune.chords.clone();
     score.harmony.extend(std::iter::repeat_n(Chord::triad(0), TITLE_BARS as usize));
 

@@ -1,8 +1,10 @@
 //! A story is a ladder: the layers of a bed in the order they join,
 //! each a notch at a time, and who leads at every rung. A seed walks it
-//! one rung a part to each of the story's turns in order, so a part
-//! boundary is always one layer moving one notch, and the walk ends at
-//! its last turn, where the piece's ending takes over. A part is whole
+//! one rung a part to each of the story's turns in order, then to each
+//! the piece adds, so a part boundary is one layer moving one notch —
+//! but at a turn that leaps, where the band drops to its rung at once,
+//! a breakdown, or comes back in at once — and the walk ends at its last
+//! turn, where the piece's ending takes over. A part is whole
 //! half-phrases, so every boundary is a cadence, and a walk is whole
 //! harmonic cycles, so it closes on an answer. What the layers are and
 //! what each plays at each notch is the piece's; this is the walk.
@@ -25,15 +27,25 @@ pub trait Bed: Copy + Eq {
     fn step_from(self, from: Self) -> &'static str;
 }
 
-/// Where a walk turns: the rung it climbs or falls to, and how many
-/// parts it stays there beyond the one that arrives.
+/// Where a walk turns: the rung it climbs or falls to, how many parts
+/// it stays there beyond the one that arrives, and whether it arrives in
+/// one part rather than a rung at a time.
+#[derive(Clone, Copy)]
 pub struct Turn {
     pub rung: (i32, i32),
     pub hold: (i32, i32),
+    pub leaps: bool,
 }
 
+/// A turn the walk climbs or falls to a rung a part.
 pub const fn turn(rung: (i32, i32), hold: (i32, i32)) -> Turn {
-    Turn { rung, hold }
+    Turn { rung, hold, leaps: false }
+}
+
+/// A turn the walk lands on in one part: the band dropping to a few
+/// players, or all of it coming back in.
+pub const fn leap(rung: (i32, i32), hold: (i32, i32)) -> Turn {
+    Turn { rung, hold, leaps: true }
 }
 
 pub struct Story<B: Bed + 'static, L: 'static> {
@@ -102,15 +114,16 @@ impl<B: Bed, L: Copy> Story<B, L> {
         self.ladder[..rung].iter().fold(self.base, |t, l| t.up(*l))
     }
 
-    /// The rungs of one walk, the foot first: to each turn one rung a
-    /// part, held as the turn says, ending at the last.
-    pub fn walk(&self, rng: &mut Rng) -> Vec<usize> {
+    /// The rungs of one walk, the foot first: to each of the story's
+    /// turns and then each of `then`, one rung a part or in one where the
+    /// turn leaps, held as the turn says, ending at the last.
+    pub fn walk(&self, then: &[Turn], rng: &mut Rng) -> Vec<usize> {
         let mut rungs = vec![0usize];
-        for t in self.turns {
+        for t in self.turns.iter().chain(then) {
             let target = rng.range(t.rung.0, t.rung.1) as usize;
             while *rungs.last().unwrap() != target {
                 let last = *rungs.last().unwrap();
-                rungs.push(if target > last { last + 1 } else { last - 1 });
+                rungs.push(if t.leaps { target } else if target > last { last + 1 } else { last - 1 });
             }
             for _ in 0..rng.range(t.hold.0, t.hold.1) {
                 rungs.push(target);
@@ -119,23 +132,25 @@ impl<B: Bed, L: Copy> Story<B, L> {
         rungs
     }
 
-    /// A walk placed on the score, part by part: each a draw of
+    /// A walk placed on the score, the story's turns and then `then`,
+    /// part by part: each a draw of
     /// half-phrases long, then stretched so the whole is whole cycles
     /// of `cycle` half-phrases — a half at a time to the highest part,
     /// where a longer stay is the crest, and to the last, where the piece
     /// ends, by turns; each part a section, named
-    /// for the step that made it — the first for the story — and
-    /// trimmed by `trim` of its bed and lead.
+    /// for the step that made it — the first for the story, a leap for
+    /// the way it went — and trimmed by `trim` of its bed and lead.
     pub fn place(
         &self,
         rng: &mut Rng,
         score: &mut Score,
         cycle: u32,
+        then: &[Turn],
         trim: impl Fn(B, L) -> f32,
     ) -> Walk<B, L> {
         let bar = score.bar();
         score.story = self.name;
-        let walk = self.walk(rng);
+        let walk = self.walk(then, rng);
         let mut lengths: Vec<u32> = walk
             .iter()
             .map(|_| rng.range(self.halves.0, self.halves.1) as u32)
@@ -153,6 +168,8 @@ impl<B: Bed, L: Copy> Story<B, L> {
             let bed = self.bed(rung);
             let name = match parts.last() {
                 None => self.name,
+                Some(prev) if prev.rung > rung + 1 => "breakdown",
+                Some(prev) if rung > prev.rung + 1 => "all in",
                 Some(prev) => bed.step_from(prev.bed),
             };
             let lead = self.leads[rung];
@@ -276,13 +293,25 @@ mod tests {
     fn every_walk_moves_a_rung_at_a_time_and_ends_at_its_last_turn() {
         assert_eq!(STORY.fault(), None);
         for seed in 0..64 {
-            let walk = STORY.walk(&mut Rng::new(seed));
+            let walk = STORY.walk(&[], &mut Rng::new(seed));
             assert_eq!(walk[0], 0);
             assert_eq!(*walk.last().unwrap(), 1);
             for w in walk.windows(2) {
                 assert!(w[0].abs_diff(w[1]) <= 1, "{walk:?}");
             }
             assert_eq!(*walk.iter().max().unwrap(), 3);
+        }
+    }
+
+    /// A turn that leaps lands in one part, from wherever the walk is,
+    /// and the piece's turns follow the story's.
+    #[test]
+    fn a_leap_lands_in_one_part() {
+        const THEN: [Turn; 2] = [leap((0, 0), (0, 0)), leap((3, 3), (1, 1))];
+        for seed in 0..16 {
+            let walk = STORY.walk(&THEN, &mut Rng::new(seed));
+            let n = walk.len();
+            assert_eq!(&walk[n - 4..], &[1, 0, 3, 3], "{walk:?}");
         }
     }
 

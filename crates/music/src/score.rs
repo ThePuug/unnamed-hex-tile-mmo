@@ -131,25 +131,31 @@ pub struct Score {
     /// The story the piece tells, as its ladder names it; empty where it
     /// tells none.
     pub story: &'static str,
+    /// Where the key rises: from each tick on, the semitones the key
+    /// stands over the one the piece opens in, in order. Empty where the
+    /// piece keeps its key.
+    pub lifts: Vec<(u32, i8)>,
 }
 
 impl Score {
     pub fn new(key: Key, meter: Meter, eighth_bpm: f32, instruments: Vec<Instrument>, room: f32) -> Self {
-        Score { key, meter, eighth_bpm, tempo: Vec::new(), instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), room, lead: None, facets: Vec::new(), marks: Vec::new(), story: "" }
+        Score { key, meter, eighth_bpm, tempo: Vec::new(), instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), room, lead: None, facets: Vec::new(), marks: Vec::new(), story: "", lifts: Vec::new() }
     }
 
     pub fn chord_at(&self, tick: u32) -> Chord {
         self.harmony[((tick / self.bar()) as usize).min(self.harmony.len() - 1)]
     }
 
-    /// The key `tick` is heard in: the piece's, under the bar's chord,
-    /// so a borrowed chord's tones are the bar's own. The piece's key
-    /// where there is no harmony.
+    /// The key `tick` is heard in: the piece's, risen as far as it has
+    /// by then, under the bar's chord, so a borrowed chord's tones are the
+    /// bar's own. The risen key alone where there is no harmony.
     pub fn key_at(&self, tick: u32) -> Key {
+        let by = self.lifts.iter().take_while(|(from, _)| *from <= tick).last().map_or(0, |(_, by)| *by);
+        let key = Key { tonic: (self.key.tonic as i32 + by as i32) as u8, ..self.key };
         if self.harmony.is_empty() {
-            return self.key;
+            return key;
         }
-        self.key.under(self.chord_at(tick))
+        key.under(self.chord_at(tick))
     }
 
     /// Whether `tick` opens a group of the bar.
@@ -210,6 +216,9 @@ impl Score {
         for (at, _) in &mut self.tempo {
             *at += by;
         }
+        for (at, _) in &mut self.lifts {
+            *at += by;
+        }
         self.harmony.splice(0..0, opening.iter().copied());
     }
 
@@ -225,6 +234,56 @@ impl Score {
             self.tempo.push((at, base * (1.0 - (1.0 - slowest) * x * x)));
         }
         self.tempo.sort_by_key(|(t, _)| *t);
+    }
+
+    /// Raises the key `by` semitones from tick `from` on: every pitched
+    /// note struck there or after goes up with it, so a piece writes its
+    /// music in the key it opens in and modulates once it is written. A
+    /// held note sounding across `from` is struck again there, raised:
+    /// left as it was, a chord tone held on would sound against the key.
+    pub fn modulate(&mut self, from: u32, by: i8) {
+        let pitched: Vec<u8> = self.instruments.iter().filter(|i| i.role != Role::Percussion).map(|i| i.channel).collect();
+        let held: Vec<Note> = self.notes.iter().filter(|n| n.start < from && n.end() > from + TICKS_PER_EIGHTH / 4 && pitched.contains(&n.channel)).copied().collect();
+        for n in self.notes.iter_mut().filter(|n| n.start < from && n.end() > from + TICKS_PER_EIGHTH / 4 && pitched.contains(&n.channel)) {
+            n.len = from - n.start;
+        }
+        self.notes.extend(held.into_iter().map(|n| Note { start: from, len: n.end() - from, ..n }));
+        for n in self.notes.iter_mut().filter(|n| n.start >= from && pitched.contains(&n.channel)) {
+            n.pitch = (n.pitch as i32 + by as i32) as u8;
+        }
+        let was = self.lifts.last().map_or(0, |(_, l)| *l);
+        self.lifts.push((from, was + by));
+    }
+
+    /// Plays bars `from..to` again after the last bar of the harmony, as
+    /// they were played — every note sounding there clipped to them, a
+    /// hair of legato from the bar before no note of them, a held note
+    /// carried on where it already sounds — with their chords; returns
+    /// the bar the repeat begins at.
+    pub fn again(&mut self, from: u32, to: u32) -> u32 {
+        let bar = self.bar();
+        let at = self.harmony.len() as u32;
+        let (a, z) = (from * bar, to * bar);
+        let by = (at - from) * bar;
+        let notes: Vec<Note> = self
+            .notes
+            .iter()
+            .filter(|n| n.start < z && n.end() > a + TICKS_PER_EIGHTH / 4)
+            .map(|n| {
+                let start = n.start.max(a);
+                Note { start: start + by, len: n.end().min(z) - start, ..*n }
+            })
+            .collect();
+        for n in notes {
+            if self.instrument(n.channel).role == Role::Sustain {
+                self.hold(n);
+            } else {
+                self.add(n);
+            }
+        }
+        let chords: Vec<Chord> = self.harmony[from as usize..to as usize].to_vec();
+        self.harmony.extend(chords);
+        at
     }
 
     /// Marks the first bar of every phrase from bar `from` up to bar `to`
@@ -358,6 +417,41 @@ mod tests {
         assert_eq!(s.trim_at(2 * bar), 0.5);
         assert!(s.trim_at(3 * bar) < 0.5 && s.trim_at(4 * bar - 1) < s.trim_at(3 * bar));
         assert!((s.trim_at(4 * bar - 1) / 0.5 - 10f32.powf(-RING_DB / 20.0)).abs() < 0.01);
+    }
+
+    /// A modulation raises every pitched note from its tick and the key
+    /// heard there with them, strikes again what is held across it, and
+    /// leaves what came before.
+    #[test]
+    fn a_modulation_raises_the_key_and_the_notes_after_it() {
+        let mut s = score();
+        let bar = s.bar();
+        s.modulate(2 * bar, 2);
+        assert_eq!(s.notes[1].pitch, 50);
+        assert_eq!(s.notes[2].pitch, 52);
+        assert_eq!(s.notes[0].end(), 2 * bar, "the drone held across is cut there");
+        assert!(s.notes.iter().any(|n| n.channel == 0 && n.start == 2 * bar && n.pitch == 40), "and struck again raised");
+        assert_eq!(s.key_at(bar).tonic, s.key.tonic);
+        assert_eq!(s.key_at(3 * bar).tonic % 12, (s.key.tonic + 2) % 12);
+        assert_eq!(s.key_at(3 * bar).absolute_degree(52), s.key_at(bar).absolute_degree(50), "a risen key counts its degrees on");
+        assert!(s.key_at(3 * bar).contains(54) && !s.key_at(bar).contains(54));
+    }
+
+    /// A stretch played again lands after the harmony with its chords,
+    /// and a hair of legato into it is no note of it.
+    #[test]
+    fn a_stretch_played_again_follows_the_harmony() {
+        let mut s = score();
+        let bar = s.bar();
+        s.add(Note { start: bar, len: bar + 10, pitch: 57, vel: 80, channel: 3 });
+        s.harmony[3] = Chord::triad(4);
+        let at = s.again(2, 4);
+        assert_eq!(at, 4);
+        assert_eq!(s.harmony.len(), 6);
+        assert_eq!(s.harmony[5].root, 4);
+        let copied: Vec<&Note> = s.notes.iter().filter(|n| n.start >= 4 * bar).collect();
+        assert_eq!(copied.iter().filter(|n| n.channel == 3).count(), 1);
+        assert_eq!(copied.iter().find(|n| n.channel == 3).unwrap().start, 5 * bar);
     }
 
     #[test]

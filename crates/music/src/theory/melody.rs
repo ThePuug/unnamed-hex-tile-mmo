@@ -235,6 +235,21 @@ pub fn phrase(theme: &Theme, meter: &Meter, form: Form, mid: i32, end: i32) -> V
     out
 }
 
+/// A degree's place on a line: `from` stepping to `to` over `n` steps,
+/// a step or a third at a time, turning about the way where there are
+/// more steps than the distance needs, so a run never stands still and
+/// never leaps.
+pub fn run_between(from: i32, to: i32, n: u32) -> Vec<i32> {
+    let delta = to - from;
+    (1..n)
+        .map(|i| {
+            let straight = from + (delta as f32 * i as f32 / n as f32).round() as i32;
+            let turn = if delta.unsigned_abs() * 2 < n { [0, 1, 0, -1][i as usize % 4] } else { 0 };
+            straight + turn
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::counterpoint::unrecovered_leap;
@@ -281,6 +296,17 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// A run steps or skips a third, never leaps, and arrives.
+    #[test]
+    fn a_run_never_leaps() {
+        for (from, to, n) in [(0, 7, 4), (3, 3, 6), (5, 0, 4), (0, 1, 6), (2, -3, 8)] {
+            let line: Vec<i32> = std::iter::once(from).chain(run_between(from, to, n)).chain(std::iter::once(to)).collect();
+            for w in line.windows(2) {
+                assert!((w[1] - w[0]).abs() <= 2, "{from}→{to} over {n}: {line:?}");
             }
         }
     }

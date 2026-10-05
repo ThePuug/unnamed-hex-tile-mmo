@@ -430,13 +430,13 @@ pub fn build(params: &Params) -> Score {
 
     // The walk, in half-phrases, and whole question-and-answer pairs
     // of them, so it closes on an answer.
-    let walk = story.place(&mut skeleton, &mut score, 4, |texture, lead| texture.trim(lead));
+    let walk = story.place(&mut skeleton, &mut score, 4, &[], |texture, lead| texture.trim(lead));
 
     // The tune's degrees shifted: the climb at the ladder's top, else
     // the phrase pair's sequence.
     let upper = story.ladder.len().max(1);
     let shifts: Vec<i32> = (0..walk.bars()).map(|b| if walk.at(b).rung >= upper { CLIMB } else { PAIRS[(b / phrase::BARS / 2) as usize % PAIRS.len()] }).collect();
-    let tune = Tune::compose(&design.theme, &score.meter, design.form, &[design.open, design.closed], 3, shifts);
+    let tune = Tune::compose(&[&design.theme], &score.meter, design.form, &[design.open, design.closed], 3, shifts);
     score.harmony = tune.chords.clone();
     let form = Form { bar, walk, tune, design };
 

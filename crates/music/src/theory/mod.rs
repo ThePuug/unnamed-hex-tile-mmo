@@ -56,7 +56,9 @@ impl Mode {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Key {
-    /// Pitch class of the tonic, 0 = C.
+    /// Pitch class of the tonic, 0 = C; past 11 in a key risen from one
+    /// near the top of the octave, so its degrees count on from the key
+    /// it rose from rather than an octave apart.
     pub tonic: u8,
     pub mode: Mode,
     /// Semitones each degree is moved from the mode's, by the chord the
@@ -133,7 +135,7 @@ impl Key {
     }
 
     pub fn name(&self) -> String {
-        format!("{} {}", NOTE_NAMES[self.tonic as usize], self.mode.label())
+        format!("{} {}", NOTE_NAMES[self.tonic as usize % 12], self.mode.label())
     }
 }
 

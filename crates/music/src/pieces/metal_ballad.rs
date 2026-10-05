@@ -27,7 +27,7 @@ use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section as ScoreSection, TICKS_PER_EIGHTH as E};
 use crate::teller::{self, Hold, Teller, Telling};
 use crate::theory::groove::{Groove, BALLAD};
-use crate::theory::melody::{Shape, Theme};
+use crate::theory::melody::{run_between, Shape, Theme};
 use crate::theory::phrase::{self, Form as PhraseForm, FORMS};
 use crate::theory::schema::{split, Schema, BALLAD as SONG};
 use crate::theory::{Chord, Key, Mode};
@@ -637,7 +637,7 @@ fn compose(params: &Params) -> (Score, Form) {
     score.facets = vec![groove.name, design.soloist.name()];
     let bar = score.bar();
 
-    let walk = story.place(&mut skeleton, &mut score, 4, |_, _| 1.0);
+    let walk = story.place(&mut skeleton, &mut score, 4, &[], |_, _| 1.0);
     // A verse grows by every layer that joins it, from the foot to the
     // full band's verse, and falls by every one that leaves.
     let top_verse = walk.parts.iter().filter(|p| p.bed.section() == Section::Verse).map(|p| p.rung).max().unwrap_or(0).max(1);
@@ -668,7 +668,7 @@ fn compose(params: &Params) -> (Score, Form) {
         })
         .collect();
     let shifts: Vec<i32> = (0..walk.bars()).map(|b| if walk.bed_at(b).section() == Section::Chorus { CLIMB } else { PAIRS[(b / phrase::BARS / 2) as usize % PAIRS.len()] }).collect();
-    let tune = Tune::compose(&design.theme, &score.meter, design.form, &rows, 3, shifts);
+    let tune = Tune::compose(&[&design.theme], &score.meter, design.form, &rows, 3, shifts);
     score.harmony = tune.chords.clone();
     let form = Form { bar, walk, tune, design };
 
@@ -1390,21 +1390,6 @@ fn drum_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
     }
 }
 
-/// A degree's place on a line: `from` stepping to `to` over `n` steps,
-/// a step or a third at a time, turning about the way where there are
-/// more steps than the distance needs, so a run never stands still and
-/// never leaps.
-fn run_between(from: i32, to: i32, n: u32) -> Vec<i32> {
-    let delta = to - from;
-    (1..n)
-        .map(|i| {
-            let straight = from + (delta as f32 * i as f32 / n as f32).round() as i32;
-            let turn = if delta.unsigned_abs() * 2 < n { [0, 1, 0, -1][i as usize % 4] } else { 0 };
-            straight + turn
-        })
-        .collect()
-}
-
 /// The solo's register as degrees: its lowest and highest tones on the
 /// mode.
 fn degree_span(key: &Key, (lo, hi): (u8, u8)) -> (i32, i32) {
@@ -1816,17 +1801,6 @@ mod tests {
                     !x.is_empty() && !y.is_empty() && form.chord(b) == form.chord(b + 1) && x != y
                 }) || (0..form.bars()).any(|b| cadence(b) && !bar_of(b).is_empty());
                 assert!(varied, "seed {seed}: channel {ch} never varies");
-            }
-        }
-    }
-
-    /// A run steps or skips a third, never leaps, and arrives.
-    #[test]
-    fn a_run_never_leaps() {
-        for (from, to, n) in [(0, 7, 4), (3, 3, 6), (5, 0, 4), (0, 1, 6), (2, -3, 8)] {
-            let line: Vec<i32> = std::iter::once(from).chain(run_between(from, to, n)).chain(std::iter::once(to)).collect();
-            for w in line.windows(2) {
-                assert!((w[1] - w[0]).abs() <= 2, "{from}→{to} over {n}: {line:?}");
             }
         }
     }

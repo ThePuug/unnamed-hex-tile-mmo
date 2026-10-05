@@ -1,6 +1,8 @@
 //! A tune put in a register on a harmony. The harmony is a cycle of
-//! schemata, four bars a row; the tune is one theme in its phrase form
-//! on every row, ending on the row's own tones. A voice takes it bar
+//! schemata, four bars a row; the tune is a theme in its phrase form on
+//! every row — one theme the piece through, or a theme a section where
+//! a piece's sections each have their own — ending on the row's own
+//! tones. A voice takes it bar
 //! by bar in a register from its home: every tone shifted as the piece
 //! says, each strong beat bent to the chord that stands, and the
 //! voice leading repaired where the line would leap on after a leap.
@@ -35,11 +37,11 @@ pub type Placed = (u32, u32, u8);
 
 impl Tune {
     /// One bar per shift: the cycle's rows in turn, each row's chords
-    /// of `size` tones, and the theme in `form` on each row, its open
-    /// ending on the tone of the row's last chord nearest home, its
-    /// closed ending home.
+    /// of `size` tones, and the cycle's themes in turn, one a row, each in
+    /// `form`, its open ending on the tone of the row's last chord nearest
+    /// home, its closed ending home.
     pub fn compose(
-        theme: &Theme,
+        themes: &[&Theme],
         meter: &Meter,
         form: Form,
         rows: &[&Schema],
@@ -50,6 +52,7 @@ impl Tune {
         let mut bars = Vec::new();
         for p in 0..shifts.len() / phrase::BARS as usize {
             let schema = rows[p % rows.len()];
+            let theme = themes[p % themes.len()];
             chords.extend((0..4).map(|k| schema.chord(k, size)));
             let mid = open_tone(schema.chord(1, size));
             let end = if schema.closed { 0 } else { open_tone(schema.chord(3, size)) };
@@ -135,7 +138,7 @@ impl Tune {
                 continue;
             }
             let strong = score.strong(line[i].0);
-            let chord = self.chords[(line[i].0 / score.bar()) as usize];
+            let chord = score.chord_at(line[i].0);
             let target = key.pitch(d0 + 2 * leap.signum(), 4);
             let fixed = (target.saturating_sub(4)..=target.saturating_add(4))
                 .filter(|p| {
@@ -157,7 +160,7 @@ impl Tune {
             let (start, pitch) = (line[i + 1].0, line[i + 1].2);
             let key = &score.key_at(start);
             let strong = score.strong(start);
-            let chord = self.chords[(start / score.bar()) as usize];
+            let chord = score.chord_at(start);
             let turned = (pitch.saturating_sub(5)..=pitch.saturating_add(5))
                 .filter(|p| *p >= lo && *p <= hi && self.sings(key, *p) && (!strong || chord.holds(key, *p)))
                 .filter(|p| {
@@ -253,7 +256,7 @@ pub fn home_tonic(key: &Key, lo: u8, hi: u8) -> u8 {
     let seat = (lo + hi) / 2 - 5;
     let nearest = |lo: u8, hi: u8| {
         (lo..=hi)
-            .filter(|p| p % 12 == key.tonic)
+            .filter(|p| p % 12 == key.tonic % 12)
             .min_by_key(|p| (*p as i32 - seat as i32).abs() * 2 + (*p > seat) as i32)
     };
     nearest(lo + 4, hi - 12)

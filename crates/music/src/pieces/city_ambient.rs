@@ -396,7 +396,7 @@ pub fn build(params: &Params) -> Score {
 
     // The walk, in half-phrases, and whole choruses of them, so it
     // closes on the turn home.
-    let walk = story.place(&mut skeleton, &mut score, 2 * TWELVE_BAR.len() as u32, |_, _| 1.0);
+    let walk = story.place(&mut skeleton, &mut score, 2 * TWELVE_BAR.len() as u32, &[], |_, _| 1.0);
     let upper = story.ladder.len().max(1);
     for (section, part) in score.sections.iter_mut().zip(&walk.parts) {
         section.level = Some(LEVEL_FOOT * (1.0 - part.rung as f32 / upper as f32));
@@ -415,7 +415,7 @@ pub fn build(params: &Params) -> Score {
     // The tune a third up on the ladder's top, else as written: a blues
     // keeps its tune and moves the changes under it.
     let shifts: Vec<i32> = (0..walk.bars()).map(|b| if walk.at(b).rung >= upper { CLIMB } else { 0 }).collect();
-    let mut tune = Tune::compose(&design.theme, &score.meter, design.form, &rows, 4, shifts);
+    let mut tune = Tune::compose(&[&design.theme], &score.meter, design.form, &rows, 4, shifts);
     tune.scale = Some(tune::MINOR_PENTATONIC);
     aab(&mut tune, score.meter.eighths(), |b| walk.bed_at(b).weave != Weave::Off);
     score.harmony = tune.chords.clone();
