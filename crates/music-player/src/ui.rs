@@ -9,6 +9,7 @@ use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CursorIcon, FontFam
 use music::pieces::PIECES;
 use music::render::SAMPLE_RATE;
 
+use crate::banks::{self, Install};
 use crate::player::{pools, Player, Popover, Take, SEEDS};
 use crate::theme::*;
 
@@ -385,7 +386,8 @@ impl Player {
 
     /// The sheet: the playing piece's three most present voices scrolling
     /// past the playhead, what has played dimmed; a key of the voices
-    /// over it, and anything wrong with the sound at its right.
+    /// over it, and at its right the banks and anything wrong with the
+    /// sound.
     pub fn sheet(&self, ui: &mut egui::Ui) {
         let take = self.current().take.clone();
         ui.horizontal(|ui| {
@@ -402,12 +404,16 @@ impl Player {
                 }
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let small = |text: String| RichText::new(text).font(mono(11.0)).color(ALERT);
+                let small = |text: String, color: Color32| RichText::new(text).font(mono(11.0)).color(color);
+                if let Some((text, color)) = self.banks_state() {
+                    let folder = banks::folder().map_or_else(|| "none".to_string(), |f| f.display().to_string());
+                    ui.label(small(text, color)).on_hover_text(format!("Drop a music-banks .7z on this window, or unpack it into\n{folder}\nand start the player again."));
+                }
                 if let Some(e) = &self.output_error {
-                    ui.label(small(format!("audio output: {e}")));
+                    ui.label(small(format!("audio output: {e}"), ALERT));
                 }
                 if let Some(Err(e)) = &self.bank {
-                    ui.label(small(format!("SoundFont: {e}")));
+                    ui.label(small(format!("SoundFont: {e}"), ALERT));
                 }
             });
         });
@@ -445,6 +451,39 @@ impl Player {
         let head = rect.left() + PLAYHEAD_X;
         p.line_segment([pos2(head, rect.top()), pos2(head, rect.bottom())], Stroke::new(2.0_f32, PARCHMENT.gamma_multiply(0.85)));
         p.rect_stroke(rect, 6.0, Stroke::new(1.0_f32, RULE), StrokeKind::Inside);
+    }
+
+    /// What the banks are doing, as a word and its colour: an install's
+    /// progress or failure, else how many sampled banks play.
+    fn banks_state(&self) -> Option<(String, Color32)> {
+        if let Some(install) = &self.install {
+            return Some(match &*install.lock().unwrap() {
+                Install::Unpacking { done, total } => (format!("unpacking banks {}%", done * 100 / (*total).max(1)), LAMP),
+                Install::Failed(e) => (format!("banks: {e}"), ALERT),
+                Install::Installed => ("loading banks…".to_string(), MUTED),
+            });
+        }
+        match self.bank {
+            Some(Ok(0)) => Some(("GeneralUser only · drop music-banks .7z here".to_string(), MUTED)),
+            Some(Ok(n)) => Some((format!("{n} sampled banks"), MUTED)),
+            Some(Err(_)) => None,
+            None => Some(("loading banks…".to_string(), MUTED)),
+        }
+    }
+
+    /// While files are carried over the window, a sign that dropping one
+    /// installs it; a file dropped is installed as a banks archive.
+    fn drop_banks(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| !i.raw.hovered_files.is_empty()) {
+            let screen = ctx.screen_rect();
+            let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop")));
+            p.rect_filled(screen, 0.0, INK.gamma_multiply(0.9));
+            dashed(&p, screen.shrink(16.0), LAMP);
+            p.text(screen.center(), Align2::CENTER_CENTER, "Drop the music-banks .7z to install it", mono(14.0), PARCHMENT);
+        }
+        if let Some(archive) = ctx.input(|i| i.raw.dropped_files.iter().find_map(|f| f.path.clone())) {
+            self.install(archive);
+        }
     }
 
     /// The open popover, if any: the composer's pieces opening up from
@@ -615,6 +654,7 @@ impl eframe::App for Player {
             })
             .inner;
         self.popover(ctx, pieces_anchor, track_anchor);
+        self.drop_banks(ctx);
     }
 }
 

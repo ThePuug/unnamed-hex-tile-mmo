@@ -1,12 +1,14 @@
 //! The work done off the window's thread: rendering one variation at a
 //! time.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 
 use music::pieces::PIECES;
 use music::render::{self, Bank};
 
+use crate::banks;
 use crate::player::{Job, Take};
 use crate::sheet::Sheet;
 
@@ -17,26 +19,21 @@ use crate::sheet::Sheet;
 pub struct Wanted {
     pub job: Mutex<Option<Job>>,
     pub posted: Condvar,
+    /// Set when banks were installed: the worker loads the bank again
+    /// before its next render.
+    pub banks_changed: AtomicBool,
 }
 
 pub enum Done {
-    Bank(Result<(), String>),
+    /// The bank loaded, and how many sampled banks it plays from.
+    Bank(Result<usize, String>),
     Take(Job, Result<Take, String>),
 }
 
 pub fn spawn_worker(wanted: Arc<Wanted>, busy: Arc<Mutex<Option<Job>>>) -> Receiver<Done> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let bank = match Bank::find(None).ok_or_else(|| "no SoundFont found; set SOUNDFONT".to_string()).and_then(|p| Bank::load(&p)) {
-            Ok(b) => {
-                let _ = tx.send(Done::Bank(Ok(())));
-                b
-            }
-            Err(e) => {
-                let _ = tx.send(Done::Bank(Err(e)));
-                return;
-            }
-        };
+        let Some(mut bank) = load(&tx) else { return };
         loop {
             let job = {
                 let mut slot = wanted.job.lock().unwrap();
@@ -47,6 +44,12 @@ pub fn spawn_worker(wanted: Arc<Wanted>, busy: Arc<Mutex<Option<Job>>>) -> Recei
                 *busy.lock().unwrap() = Some(job);
                 job
             };
+            if wanted.banks_changed.swap(false, Ordering::Relaxed) {
+                match load(&tx) {
+                    Some(b) => bank = b,
+                    None => return,
+                }
+            }
             let (piece, seed) = job;
             let taken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::take(&PIECES[piece], seed, &bank)))
                 .map(|(score, audio)| Take { sheet: Sheet::of(&score), score, audio: Arc::new(audio) })
@@ -58,4 +61,18 @@ pub fn spawn_worker(wanted: Arc<Wanted>, busy: Arc<Mutex<Option<Job>>>) -> Recei
         }
     });
     rx
+}
+
+/// GeneralUser GS, and every sampled bank beside it or installed, told to
+/// the player either way.
+fn load(tx: &mpsc::Sender<Done>) -> Option<Bank> {
+    let loaded = Bank::find(None)
+        .ok_or_else(|| "no SoundFont found; set SOUNDFONT".to_string())
+        .and_then(|p| Bank::load(&p))
+        .map(|b| match banks::folder() {
+            Some(dir) => b.with_banks(&dir),
+            None => b,
+        });
+    let _ = tx.send(Done::Bank(loaded.as_ref().map(Bank::sampled).map_err(Clone::clone)));
+    loaded.ok()
 }

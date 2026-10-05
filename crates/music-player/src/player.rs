@@ -1,6 +1,8 @@
 //! What plays: the history gone through, the queue the listener filled,
 //! and the composer's next draw, played only when the queue is empty.
 
+use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -12,6 +14,7 @@ use music::rng::Rng;
 use music::score::Score;
 
 use crate::audio::{open_output, Deck};
+use crate::banks::{self, Install};
 use crate::sheet::Sheet;
 use crate::theme::{ALERT, LAMP, READY};
 use crate::worker::{spawn_worker, Done, Wanted};
@@ -114,7 +117,10 @@ pub struct Player {
     pub wanted: Arc<Wanted>,
     pub busy: Arc<Mutex<Option<Job>>>,
     pub done: Receiver<Done>,
-    pub bank: Option<Result<(), String>>,
+    /// The bank as loaded: how many sampled banks it plays from.
+    pub bank: Option<Result<usize, String>>,
+    /// A banks archive being installed, or why the last install failed.
+    pub install: Option<Arc<Mutex<Install>>>,
     pub output_error: Option<String>,
     pub rng: Rng,
 }
@@ -152,6 +158,7 @@ impl Player {
             busy,
             done,
             bank: None,
+            install: None,
             output_error,
             rng,
         }
@@ -179,6 +186,10 @@ impl Player {
                     }
                 }
             }
+        }
+        if self.install.as_ref().is_some_and(|i| matches!(*i.lock().unwrap(), Install::Installed)) {
+            self.install = None;
+            self.installed();
         }
         // Only the queue's head is rendered ahead: a variation runs to tens
         // of megabytes, and one moved back behind it renders again.
@@ -298,6 +309,28 @@ impl Player {
         }
         if !self.composed.as_ref().is_some_and(|v| self.chosen[v.piece]) {
             self.composed = draw(&mut self.rng, &self.chosen);
+        }
+    }
+
+    /// Installs the banks archive at `archive`, unless an install runs.
+    pub fn install(&mut self, archive: PathBuf) {
+        if self.install.as_ref().is_some_and(|i| matches!(*i.lock().unwrap(), Install::Unpacking { .. })) {
+            return;
+        }
+        self.install = Some(match banks::folder() {
+            Some(folder) => banks::spawn_install(archive, folder),
+            None => Arc::new(Mutex::new(Install::Failed("no data folder to install banks into".to_string()))),
+        });
+    }
+
+    /// Banks were installed: the worker loads them before its next
+    /// render, and what was rendered ahead on the old ones renders again.
+    fn installed(&mut self) {
+        self.wanted.banks_changed.store(true, Ordering::Relaxed);
+        self.bank = None;
+        for v in self.history.iter_mut().skip(self.at + 1).chain(self.queue.first_mut()).chain(self.composed.as_mut()) {
+            v.take = None;
+            v.failed = None;
         }
     }
 
