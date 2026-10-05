@@ -36,6 +36,7 @@ use crate::hall;
 use crate::master;
 use crate::perform::{perform, Msg};
 use crate::pieces::{Params, Piece};
+use crate::rng::Rng;
 use crate::score::{Instrument, Role, Score};
 use crate::voices;
 
@@ -192,7 +193,7 @@ impl Bank {
     /// tone at `MEASURED_AT`, dry and centred, on the key the seat strikes
     /// for it. A kit the default bank plays is on the drum channel.
     fn level(&self, seat: Seat, drums: bool, pitch: u8) -> f32 {
-        let struck = seat.voice.map_or(pitch, |v| voices::key(v, pitch));
+        let struck = seat.voice.map_or(pitch, |v| voices::key(v, pitch, 0));
         let key = (seat.font, seat.bank, seat.preset, struck);
         if let Some(l) = self.levels.lock().unwrap().get(&key) {
             return *l;
@@ -414,6 +415,10 @@ fn through_font(score: &Score, played: &[crate::perform::Played], bank: &Bank, f
     let mut right = vec![0.0f32; BLOCK];
     let mut next = 0;
     let mut sample = 0usize;
+    // Each drum's last recording and the key it was struck on: a stroke
+    // takes any other, drawn by when it lands, so the dry pass and the
+    // send draw alike; its release goes to the key it struck.
+    let mut struck: HashMap<(u8, u8), (u8, i32)> = HashMap::new();
     while sample < total {
         while next < played.len() && at(played[next].at) as usize <= sample {
             let channel = match played[next].msg {
@@ -423,10 +428,26 @@ fn through_font(score: &Score, played: &[crate::perform::Played], bank: &Bank, f
                 next += 1;
                 continue;
             };
-            let (ch, key) = (*ch as i32, |pitch: u8| seat.voice.map_or(pitch, |v| voices::key(v, pitch)) as i32);
+            let ch = *ch as i32;
             match played[next].msg {
-                Msg::On { channel, pitch, vel } => synth.note_on(ch, key(pitch), even(channel, pitch, vel)),
-                Msg::Off { pitch, .. } => synth.note_off(ch, key(pitch)),
+                Msg::On { channel, pitch, vel } => {
+                    let key = match seat.voice {
+                        Some(v) if v.variations > 1 => {
+                            let last = struck.get(&(channel, pitch)).map_or(0, |(n, _)| *n);
+                            let n = (last + 1 + Rng::new(sample as u64).below(v.variations as usize - 1) as u8) % v.variations;
+                            let key = voices::key(v, pitch, n) as i32;
+                            struck.insert((channel, pitch), (n, key));
+                            key
+                        }
+                        Some(v) => voices::key(v, pitch, 0) as i32,
+                        None => pitch as i32,
+                    };
+                    synth.note_on(ch, key, even(channel, pitch, vel))
+                }
+                Msg::Off { channel, pitch } => {
+                    let key = struck.get(&(channel, pitch)).map_or_else(|| seat.voice.map_or(pitch, |v| voices::key(v, pitch, 0)) as i32, |(_, k)| *k);
+                    synth.note_off(ch, key)
+                }
                 Msg::Control { number, value, .. } => synth.process_midi_message(ch, 0xB0, number as i32, value as i32),
                 Msg::Bend { value, .. } => synth.process_midi_message(ch, 0xE0, (value & 0x7F) as i32, (value >> 7) as i32),
             }

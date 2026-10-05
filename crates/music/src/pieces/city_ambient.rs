@@ -98,7 +98,7 @@ const VEL: i32 = 85;
 
 /// The kit's level, dB: its ride's, the stroke it plays most, well
 /// under the band, since the brushes keep the time and never lead it.
-const LEVEL_KIT: f32 = -7.5;
+const LEVEL_KIT: f32 = -13.0;
 
 /// Where the band's foot sits under its top rung, LU: the night grows a
 /// little as the band fills, by a level the render meets on whatever
@@ -1038,9 +1038,8 @@ const CRASH: u8 = 49;
 /// least, and at time a phrase's variant bar leaves the ride's last
 /// strike for the hat; every other chorus the whole kit opens on the
 /// crash. Every drum strikes about the band's velocity, the kit's
-/// level set by its ride, the stroke it plays most; the crash swishes
-/// far under it, since the bank's crash is louder than its kick at one
-/// velocity. A stroke's length changes nothing.
+/// level set by its ride, the stroke it plays most, and the crash
+/// marks a chorus a little over it. A stroke's length changes nothing.
 fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
     let strong = score.meter.strong_eighths();
     let eighths = score.meter.eighths();
@@ -1092,7 +1091,7 @@ fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
                 }
             }
             if in_chorus == 0 && (b / chorus) % 2 == 1 {
-                stroke(0, CRASH, -40, rng);
+                stroke(0, CRASH, 10, rng);
             }
         }
         if fills {
