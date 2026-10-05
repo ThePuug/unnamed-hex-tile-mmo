@@ -6,6 +6,8 @@
 # The SoundFont is not in the repo. It is fetched from this repo's release
 # $SOUNDFONT_RELEASE, which carries GeneralUser.sf2 and its license, and is
 # checked against $SOUNDFONT_SHA256 so every build plays the same bank.
+# A build input is a draft release: only the repo's writers and this
+# workflow's token see it, so it never lists among the public releases.
 name: music-player release
 
 on:
@@ -20,7 +22,7 @@ permissions:
   contents: write
 
 env:
-  SOUNDFONT_RELEASE: soundfont-generaluser-2.0.3
+  SOUNDFONT_RELEASE: soundfont-generaluser-v2.0.3
   SOUNDFONT_SHA256: 9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe
 
 jobs:
@@ -167,4 +169,4 @@ jobs:
           **Linux:** needs ALSA (`libasound2`) and an X11 or Wayland session.
           EOF
           gh release create "music-player-v$VERSION" dist/* --repo "$GITHUB_REPOSITORY" \
-            --target "$SHA" --title "Music Player $VERSION" --notes-file notes.md
+            --target "$SHA" --title "music-player-v$VERSION" --notes-file notes.md
