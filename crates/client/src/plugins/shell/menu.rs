@@ -16,7 +16,7 @@ use crate::{
     network::Link,
     plugins::{
         console::DevConsole,
-        settings::{self, SettingsPanel, VideoSettings},
+        settings::{self, AudioSettings, SettingsPanel, VideoSettings},
     },
     systems::character_panel::{self, CharacterPanel, CharacterPanelState},
 };
@@ -84,6 +84,7 @@ pub fn route_keys(
     mut menu: ResMut<GameMenu>,
     mut panel: ResMut<SettingsPanel>,
     mut video: ResMut<VideoSettings>,
+    mut audio: ResMut<AudioSettings>,
     mut character: ResMut<CharacterPanelState>,
     mut character_view: Query<&mut Visibility, With<CharacterPanel>>,
     mut writer: MessageWriter<Try>,
@@ -97,7 +98,7 @@ pub fn route_keys(
         return;
     }
     if panel.open {
-        settings::navigate(&mut panel, &mut video, &mut keys);
+        settings::navigate(&mut panel, &mut video, &mut audio, &mut keys);
         return;
     }
     let stage = *stage.get();

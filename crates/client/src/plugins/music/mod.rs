@@ -6,7 +6,8 @@
 //!
 //! A file declares its pool in its Vorbis comments — `POOL` — so a pool is
 //! whatever `music/` holds that says so, never a list of names here. A piece plays at
-//! the level it was rendered at: the loudness the generator set is the mix.
+//! the level it was rendered at, scaled by the player's music volume: the
+//! loudness the generator set is the mix.
 //!
 //! The folder is listed and its OGGs loaded one by one, not through
 //! `load_folder`: that fails the whole folder over one file no loader
@@ -28,7 +29,7 @@ use bevy::{
 };
 use rand::Rng;
 
-use crate::plugins::shell::Stage;
+use crate::plugins::{settings::AudioSettings, shell::Stage};
 
 pub struct MusicPlugin;
 
@@ -158,6 +159,7 @@ fn play(
     mut sinks: Query<&mut AudioSink>,
     stage: Res<State<Stage>>,
     time: Res<Time<Real>>,
+    audio: Res<AudioSettings>,
 ) {
     let now = time.elapsed();
     let stage = *stage.get();
@@ -212,7 +214,7 @@ fn play(
             // player is silent by its settings.
             if let Ok(mut sink) = sinks.get_mut(*entity) {
                 let gain = envelope((now - *started).as_secs_f32(), (*ends - *started).as_secs_f32(), *fade_in, *fade_out);
-                sink.set_volume(Volume::Linear(gain));
+                sink.set_volume(Volume::Linear(gain * audio.music.gain()));
             }
         }
     }

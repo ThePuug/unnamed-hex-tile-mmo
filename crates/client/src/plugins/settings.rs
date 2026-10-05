@@ -1,5 +1,5 @@
-//! The player's video settings and the one panel that changes them, opened
-//! from the character screen and from the in-game menu alike.
+//! The player's video and audio settings and the one panel that changes
+//! them, opened from the character screen and from the in-game menu alike.
 //!
 //! The panel is driven by keys alone: Up and Down pick a row, Left and
 //! Right change it, Enter or Esc closes it. Whoever opens it routes the keys
@@ -18,6 +18,7 @@ pub struct SettingsPlugin;
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VideoSettings>();
+        app.init_resource::<AudioSettings>();
         app.init_resource::<SettingsPanel>();
         app.add_systems(Startup, setup);
         app.add_systems(Update, (apply, draw));
@@ -140,6 +141,41 @@ impl Shadows {
     }
 }
 
+/// What is heard. The music plugin reads it as it plays, so a change is
+/// heard at once.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AudioSettings {
+    pub music: Level,
+}
+
+/// A volume in tenths, from silent to the level a piece was rendered at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Level(u8);
+
+impl Default for Level {
+    fn default() -> Self {
+        Level(10)
+    }
+}
+
+impl Level {
+    /// Stops at either end: a volume wrapping from silent to full would
+    /// jump out at the listener.
+    fn step(self, by: i32) -> Self {
+        Level((self.0 as i32 + by).clamp(0, 10) as u8)
+    }
+
+    pub fn label(self) -> String {
+        format!("{}%", self.0 * 10)
+    }
+
+    /// The linear gain to play at. Squared, so each step moves evenly to
+    /// the ear rather than crowding the change near silent.
+    pub fn gain(self) -> f32 {
+        (self.0 as f32 / 10.0).powi(2)
+    }
+}
+
 /// The value `by` steps along `all` from `at`, wrapping at either end.
 fn step<T: Copy + PartialEq>(all: &[T], at: T, by: i32) -> T {
     let i = all.iter().position(|&v| v == at).unwrap_or(0) as i32;
@@ -153,10 +189,19 @@ enum Row {
     Vsync,
     Samples,
     Shadows,
+    Music,
 }
 
 impl Row {
-    const ALL: [Row; 4] = [Row::Display, Row::Vsync, Row::Samples, Row::Shadows];
+    const ALL: [Row; 5] = [Row::Display, Row::Vsync, Row::Samples, Row::Shadows, Row::Music];
+
+    /// The heading it is listed under; rows of one section are adjacent.
+    fn section(self) -> &'static str {
+        match self {
+            Row::Display | Row::Vsync | Row::Samples | Row::Shadows => "Video",
+            Row::Music => "Audio",
+        }
+    }
 
     fn name(self) -> &'static str {
         match self {
@@ -164,27 +209,30 @@ impl Row {
             Row::Vsync => "VSync",
             Row::Samples => "Anti-aliasing",
             Row::Shadows => "Shadows",
+            Row::Music => "Music",
         }
     }
 
-    fn value(self, video: &VideoSettings) -> &'static str {
+    fn value(self, video: &VideoSettings, audio: &AudioSettings) -> String {
         match self {
-            Row::Display => video.display.label(),
-            Row::Vsync => video.vsync.label(),
-            Row::Samples => video.samples.label(),
-            Row::Shadows => video.shadows.label(),
+            Row::Display => video.display.label().into(),
+            Row::Vsync => video.vsync.label().into(),
+            Row::Samples => video.samples.label().into(),
+            Row::Shadows => video.shadows.label().into(),
+            Row::Music => audio.music.label(),
         }
     }
 
-    fn change(self, video: &VideoSettings, by: i32) -> VideoSettings {
-        let mut next = *video;
+    fn change(self, video: &VideoSettings, audio: &AudioSettings, by: i32) -> (VideoSettings, AudioSettings) {
+        let (mut video, mut audio) = (*video, *audio);
         match self {
-            Row::Display => next.display = video.display.step(by),
-            Row::Vsync => next.vsync = video.vsync.step(by),
-            Row::Samples => next.samples = video.samples.step(by),
-            Row::Shadows => next.shadows = video.shadows.step(by),
+            Row::Display => video.display = video.display.step(by),
+            Row::Vsync => video.vsync = video.vsync.step(by),
+            Row::Samples => video.samples = video.samples.step(by),
+            Row::Shadows => video.shadows = video.shadows.step(by),
+            Row::Music => audio.music = audio.music.step(by),
         }
-        next
+        (video, audio)
     }
 }
 
@@ -207,6 +255,7 @@ impl SettingsPanel {
 pub fn navigate(
     panel: &mut ResMut<SettingsPanel>,
     video: &mut ResMut<VideoSettings>,
+    audio: &mut ResMut<AudioSettings>,
     keys: &mut crate::systems::help::Keys,
 ) {
     const BACK: &str = "Close the settings";
@@ -230,7 +279,9 @@ pub fn navigate(
     };
     if by != 0 {
         let row = Row::ALL[panel.row];
-        video.set_if_neq(row.change(video, by));
+        let (next_video, next_audio) = row.change(video, audio, by);
+        video.set_if_neq(next_video);
+        audio.set_if_neq(next_audio);
     }
 }
 
@@ -343,10 +394,11 @@ fn draw(
     mut commands: Commands,
     panel: Res<SettingsPanel>,
     video: Res<VideoSettings>,
+    audio: Res<AudioSettings>,
     mut root: Query<&mut Visibility, With<PanelRoot>>,
     rows: Query<Entity, With<PanelRows>>,
 ) {
-    if !panel.is_changed() && !video.is_changed() {
+    if !panel.is_changed() && !video.is_changed() && !audio.is_changed() {
         return;
     }
     if let Ok(mut visibility) = root.single_mut() {
@@ -355,11 +407,18 @@ fn draw(
     let Ok(rows) = rows.single() else { return };
     commands.entity(rows).despawn_related::<Children>().with_children(|parent| {
         for (i, row) in Row::ALL.iter().enumerate() {
+            if i == 0 || Row::ALL[i - 1].section() != row.section() {
+                parent.spawn((
+                    Text::new(row.section()),
+                    TextFont { font_size: FontSize::Px(15.0), ..default() },
+                    TextColor(TITLE),
+                ));
+            }
             let picked = i == panel.row;
             let text = if picked {
-                format!("> {:<16}< {} >", row.name(), row.value(&video))
+                format!("> {:<16}< {} >", row.name(), row.value(&video, &audio))
             } else {
-                format!("  {:<16}  {}", row.name(), row.value(&video))
+                format!("  {:<16}  {}", row.name(), row.value(&video, &audio))
             };
             parent.spawn((
                 Text::new(text),
@@ -368,4 +427,23 @@ fn draw(
             ));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_level_stops_at_either_end() {
+        assert_eq!(Level::default().step(1), Level::default());
+        assert_eq!(Level(0).step(-1), Level(0));
+    }
+
+    #[test]
+    fn a_level_runs_from_silent_to_full_rising() {
+        let gains: Vec<f32> = (0..=10).map(|n| Level(n).gain()).collect();
+        assert_eq!(gains[0], 0.0);
+        assert_eq!(gains[10], 1.0);
+        assert!(gains.windows(2).all(|w| w[0] < w[1]));
+    }
 }
