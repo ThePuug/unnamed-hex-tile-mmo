@@ -250,9 +250,10 @@ const TONIC: Schema = Schema { name: "tonic", modes: &[Mode::Aeolian], roots: [0
 /// through the minor fourth.
 const LAMENT: Schema = Schema { name: "lament", modes: &[Mode::Aeolian], roots: [0, 6, 5, 4], closed: false };
 const PLAGAL: Schema = Schema { name: "plagal close", modes: &[Mode::Aeolian], roots: [0, 3, 3, 0], closed: true };
-/// The swell's last row, up through the flat sixth to the flat seventh
-/// and held there, open, so the title's tonic is its answer.
-const RISE: Schema = Schema { name: "rise", modes: &[Mode::Aeolian], roots: [0, 5, 6, 6], closed: false };
+/// The swell's last row, up through the minor fourth to the flat
+/// seventh and held there, open, so the title's tonic is its answer:
+/// the folk's way home from ♭VII, never the ballad's through ♭VI.
+const RISE: Schema = Schema { name: "rise", modes: &[Mode::Aeolian], roots: [0, 3, 6, 6], closed: false };
 
 struct Design {
     drone: u8,
@@ -299,7 +300,7 @@ impl Form {
 pub fn build(params: &Params) -> Score {
     let rng = Rng::new(params.seed);
     let mut skeleton = rng.fork(0);
-    // The epic minor: the rise to the title is its flat sixth and seventh.
+    // The Aeolian: the rise to the title is its flat seventh.
     let key = Key::new(["D", "E", "G", "A", "C"][skeleton.weighted(&[3.0, 2.0, 2.0, 2.0, 1.0])], Mode::Aeolian);
     // The lesnoto, the overworld's own dance.
     let groove = &BALKAN[0];
@@ -924,6 +925,15 @@ fn title(score: &mut Score, form: &Form, rng: &mut Rng) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The cue's own rows are the folk's: none turns as the ballad does.
+    #[test]
+    fn the_cue_turns_as_the_folk_does() {
+        let ballad = [crate::theory::schema::BALLAD.verse, crate::theory::schema::BALLAD.chorus, crate::theory::schema::BALLAD.climax];
+        for row in [&TONIC, &LAMENT, &PLAGAL, &RISE] {
+            assert!(ballad.iter().copied().flatten().all(|s| s.roots != row.roots), "the cue's {} is the ballad's", row.name);
+        }
+    }
 
     /// The cue is its movements in order at their cuts, whole
     /// half-phrases each, the tune whole phrases ending on the rise, the
