@@ -5,8 +5,11 @@
 //! of the song: with the guitars open it is a chorus, under the solo the
 //! climax, else a verse; each has its own harmony, the verse holding the
 //! tonic, the chorus opening off it and coming home by the sixth and
-//! seventh, the climax a progression heard nowhere else, and the tune
-//! sits a third higher in a chorus. No part plays one bar over and over:
+//! seventh or through the major V, borrowed from the harmonic minor, the
+//! climax a progression heard nowhere else, and the tune sits a third
+//! higher in a chorus. Every part reads its bar's key, so over the major
+//! V the arpeggio, the bass's approach and the lead take the raised
+//! seventh. No part plays one bar over and over:
 //! every four-bar phrase is a bar, its variant and a cadence, and the
 //! kit fills where a phrase or a part turns. The guitars are
 //! double-tracked, one each side; one lead, a guitar or a violin, sings
@@ -671,12 +674,12 @@ fn nearest_degree(key: &Key, degree: i32, to: u8) -> u8 {
 /// rests in a chorus, where the open guitars carry the chord, and under
 /// the solo, which plays in the room it leaves.
 fn arpeggio(score: &mut Score, form: &Form, rng: &mut Rng) {
-    let key = score.key;
     let strong = score.meter.strong_eighths();
     let eighths = score.meter.eighths();
     let half = strong[strong.len() / 2];
     let top = *form.design.picking.iter().max().unwrap();
     for b in 0..form.bars() {
+        let key = score.key_at(b * form.bar);
         let mode = form.texture_at(b).clean;
         if mode == Clean::Off || form.texture_at(b).section() != Section::Verse {
             continue;
@@ -744,11 +747,11 @@ fn arpeggio(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// at the variant bar's middle and stepping into the next root on the
 /// cadence.
 fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
-    let key = score.key;
     let strong = score.meter.strong_eighths();
     let eighths = score.meter.eighths();
     let groove = form.design.groove;
     for b in 0..form.bars() {
+        let key = score.key_at(b * form.bar);
         let mode = form.texture_at(b).bass;
         if mode == Bass::Off || form.bass_solo(b) {
             continue;
@@ -948,9 +951,9 @@ fn guitars(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// root and fifth, and at full under the kit's solo and the bass's
 /// whatever their notch.
 fn pad(score: &mut Score, form: &Form, rng: &mut Rng) {
-    let key = score.key;
     let mut voices: Option<Vec<u8>> = None;
     for b in 0..form.bars() {
+        let key = score.key_at(b * form.bar);
         // Under the kit's solo and the bass's the strings and choir hold
         // the whole chord, the floor the soloist plays over.
         let mode = if form.stop_time(b) || form.bass_solo(b) { Pad::Full } else { form.texture_at(b).pad };
@@ -1320,6 +1323,7 @@ fn guitar_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
         let last_group = strong[strong.len() - 1];
         let mut line: Vec<Placed> = Vec::new();
         for b in a..z {
+            let key = score.key_at(b * form.bar);
             let bar_start = b * form.bar;
             let chord = form.chord(b);
             let theme = |sung: bool| form.tune.bar(score, b, lo, hi, sung).into_iter().map(|(s, l, p)| (s, l, capped(p))).collect::<Vec<Placed>>();
@@ -1445,6 +1449,7 @@ fn bass_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
         let last_group = strong[strong.len() - 1];
         let mut line: Vec<Placed> = Vec::new();
         for b in a..z {
+            let key = score.key_at(b * form.bar);
             let bar_start = b * form.bar;
             let chord = form.chord(b);
             let root = at_degree(&key, chord, chord.root, 28, 40, 33);
@@ -1538,16 +1543,17 @@ fn bass_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// guitar a third above it, a third under where the third over is off the
 /// chord.
 fn sound(score: &mut Score, form: &Form, mut line: Vec<Placed>, (lo, hi): (u8, u8), (a, z, landing): (u32, u32, u32), lift: i32, rng: &mut Rng) {
-    let key = score.key;
-    let degree = |p: u8| key.absolute_degree(p).unwrap();
+    let (key, harmony, bar) = (score.key, score.harmony.clone(), score.bar());
+    let key_at = move |tick: u32| key.under(harmony[((tick / bar) as usize).min(harmony.len() - 1)]);
+    let degree = |tick: u32, p: u8| key_at(tick).absolute_degree(p).unwrap();
     line.sort_by_key(|n| n.0);
     if let Some(last) = line.last_mut() {
         last.1 = (z * form.bar - E / 2).saturating_sub(last.0).max(last.1);
     }
     for n in line.iter_mut() {
         n.2 = n.2.clamp(lo, hi);
-        if !key.contains(n.2) {
-            n.2 = key.snap(n.2).clamp(lo, hi);
+        if !key_at(n.0).contains(n.2) {
+            n.2 = key_at(n.0).snap(n.2).clamp(lo, hi);
         }
     }
     on_the_chord(score, form, &mut line, lo, hi);
@@ -1564,8 +1570,9 @@ fn sound(score: &mut Score, form: &Form, mut line: Vec<Placed>, (lo, hi): (u8, u
         .filter(|n| n.0 >= landing * form.bar)
         .map(|(s, l, p)| {
             let chord = form.chord(s / form.bar);
-            let third = key.pitch(degree(*p) + 2, 4);
-            let pitch = if !score.strong(*s) || chord.holds(&key, third) { third } else { key.pitch(degree(*p) - 2, 4) };
+            let key = key_at(*s);
+            let third = key.pitch(degree(*s, *p) + 2, 4);
+            let pitch = if !score.strong(*s) || chord.holds(&key, third) { third } else { key.pitch(degree(*s, *p) - 2, 4) };
             (*s, *l, pitch)
         })
         .collect();

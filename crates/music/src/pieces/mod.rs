@@ -211,9 +211,11 @@ pub const PIECES: &[Piece] = &[
             chorus, where the arpeggio rests and the right side takes the \
             chord's inversion, the slow strings and a choir. What plays makes \
             the part of the song: a verse holds the tonic and swings slowly to \
-            the sixth or the seventh; a chorus moves a chord a bar, opens on \
-            the sixth as often as the tonic and comes home by the sixth and \
-            seventh, the tune a third higher; the solo's climax has a \
+            the sixth or the seventh, or falls through the sixth to the major \
+            V; a chorus moves a chord a bar, opens on the sixth as often as \
+            the tonic, walks down to the major V and comes home by the sixth \
+            and seventh or through iv and the major V, its leading tone the \
+            harmonic minor's, the tune a third higher; the solo's climax has a \
             progression heard nowhere else. One theme runs the whole loop \
             through, sung by one lead where a voice would — an overdriven or a \
             distortion guitar, or a violin, each file its own — in four-bar \

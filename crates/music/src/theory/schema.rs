@@ -6,7 +6,7 @@
 //! tonic drone only some chords can be held at all, and every schema
 //! is filtered by that before a droned piece may draw it.
 
-use super::{interval_class, Chord, Key, Mode, DIATONIC};
+use super::{interval_class, Chord, Key, Mode, DIATONIC, MAJOR};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Schema {
@@ -87,14 +87,19 @@ pub const FIGHT: [Schema; 6] = [
 /// The ballad's progressions, in the minor with no drone, by the part
 /// of the song they serve. A verse opens on the tonic and stays on it
 /// longest, swinging slowly to one or two chords and back — i to VI, i
-/// down through VII to VI, i through III and VII to the minor v — and
-/// comes home through III and VII or holds the tonic till VII. A
-/// chorus moves a chord a bar and opens off the tonic as often as on it,
-/// on the sixth, and comes home by the sixth and seventh, the cadence
-/// hard rock and metal end on. The climax takes a progression of its
-/// own, heard nowhere before it: the tonic shuttling with the seventh
-/// and sixth. Every chord a major or minor triad: the minor's second is
-/// diminished and never stands.
+/// down through VII to VI, i through III and VII to the minor v, the
+/// tonic held as the bass falls to VI and the major V — and comes home
+/// through III and VII, holds the tonic till VII, or falls through VI
+/// to the major V. A chorus moves a chord a bar and opens off the tonic
+/// as often as on it, on the sixth; it walks down i, VII, VI to the
+/// major V, the Andalusian cadence, and comes home by the sixth and
+/// seventh, the cadence hard rock and metal end on, or through iv and
+/// the major V. The major V borrows its third from the harmonic minor,
+/// the leading tone a metal ballad turns on and a folk tune never
+/// has. The climax takes a progression of its own, heard nowhere before
+/// it: the tonic shuttling with the seventh and sixth. Every chord a
+/// major or minor triad: the minor's second is diminished and never
+/// stands.
 pub struct Song {
     pub verse: &'static [Schema],
     pub chorus: &'static [Schema],
@@ -106,14 +111,18 @@ pub const BALLAD: Song = Song {
         Schema { name: "tonic and sixth", modes: &[Aeolian], roots: [0, 0, 5, 5], closed: false, alters: [DIATONIC; 4] },
         Schema { name: "subtonic descent", modes: &[Aeolian], roots: [0, 0, 6, 5], closed: false, alters: [DIATONIC; 4] },
         Schema { name: "relative turn", modes: &[Aeolian], roots: [0, 2, 6, 4], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "falling to the dominant", modes: &[Aeolian], roots: [0, 0, 5, 4], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
         Schema { name: "relative home", modes: &[Aeolian], roots: [0, 2, 6, 0], closed: true, alters: [DIATONIC; 4] },
         Schema { name: "tonic held home", modes: &[Aeolian], roots: [0, 0, 6, 0], closed: true, alters: [DIATONIC; 4] },
+        Schema { name: "home through the dominant", modes: &[Aeolian], roots: [0, 5, 4, 0], closed: true, alters: [DIATONIC, DIATONIC, MAJOR, DIATONIC] },
     ],
     chorus: &[
         Schema { name: "lift", modes: &[Aeolian], roots: [5, 6, 0, 6], closed: false, alters: [DIATONIC; 4] },
         Schema { name: "climb", modes: &[Aeolian], roots: [0, 5, 2, 6], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "andalusian", modes: &[Aeolian], roots: [0, 6, 5, 4], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
         Schema { name: "lift home", modes: &[Aeolian], roots: [5, 6, 0, 0], closed: true, alters: [DIATONIC; 4] },
         Schema { name: "subdominant home", modes: &[Aeolian], roots: [3, 5, 6, 0], closed: true, alters: [DIATONIC; 4] },
+        Schema { name: "dominant home", modes: &[Aeolian], roots: [0, 3, 4, 0], closed: true, alters: [DIATONIC, DIATONIC, MAJOR, DIATONIC] },
     ],
     climax: &[
         Schema { name: "outro shuttle", modes: &[Aeolian], roots: [0, 6, 5, 6], closed: false, alters: [DIATONIC; 4] },
@@ -242,6 +251,10 @@ mod tests {
         }
         assert!(BALLAD.verse.iter().all(|s| s.roots[0] == 0));
         assert!(BALLAD.chorus.iter().any(|s| s.roots[0] != 0));
+        // The major V, in a verse and in a chorus.
+        for part in [BALLAD.verse, BALLAD.chorus] {
+            assert!(part.iter().any(|s| (0..4).any(|k| s.roots[k] == 4 && s.alters[k] == MAJOR)));
+        }
     }
 
     /// A progression in a mode belongs to one style: the folk's — the
