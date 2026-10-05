@@ -145,17 +145,18 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: music-player-*
-          merge-multiple: true
-          path: dist
-      # The notes are the readme every package carries.
+      # The notes are the readme every package carries. Checked out before
+      # the packages arrive: a checkout empties the workspace first.
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           sparse-checkout: crates/music-player/README.md
           sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: music-player-*
+          merge-multiple: true
+          path: dist
       - env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
