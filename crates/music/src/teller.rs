@@ -113,9 +113,13 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
         match run.lead {
             Telling::Off => {}
             Telling::Long => {
-                // Where the lead sings next, its last held tone leads in:
-                // the tone nearest the one the tune will open on.
-                let goal = runs.get(r + 1).filter(|next| matches!(next.lead, Telling::Phrases | Telling::Trading)).map(|next| tune.bar(score, next.a, lo, hi, true)[0].2);
+                // Where the lead tells the tune next, its last held tone
+                // leads in: the tone nearest the one the tune will open on,
+                // sung or riffed as it will be.
+                let goal = runs.get(r + 1).filter(|next| next.lead != Telling::Off && next.lead != Telling::Long).and_then(|next| {
+                    let sung = matches!(next.lead, Telling::Phrases | Telling::Trading);
+                    tune.bar(score, next.a, lo, hi, sung).first().map(|n| n.2)
+                });
                 last = held(score, teller, tune, run, teller.long, teller.lead, last, goal, rng);
             }
             Telling::Phrases | Telling::Trading | Telling::Riff | Telling::RiffAndLong => {
