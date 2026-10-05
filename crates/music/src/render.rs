@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, Weak};
 
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
@@ -80,18 +80,22 @@ const EVEN_DB: f32 = 6.0;
 
 /// The SoundFonts that play a score — the default first, then every file
 /// `voices` names that sits beside it — and the loudness of every tone
-/// each has been asked for.
+/// each has been asked for. The default stays read; the others are read
+/// when a render needs them and let go when none holds them.
 pub struct Bank {
     fonts: Vec<Font>,
+    /// The default, held for the bank's life so it is never read again.
+    _default: Arc<SoundFont>,
     levels: Mutex<HashMap<(usize, u8, u8, u8), f32>>,
 }
 
-/// A SoundFont of the bank, read the first time a score seats a player
-/// on it: the sampled ones run to hundreds of megabytes.
+/// A SoundFont of the bank, held only while a render holds it: the
+/// sampled ones run to hundreds of megabytes each, and a player playing
+/// piece after piece would otherwise keep every bank it ever seated.
 struct Font {
     file: &'static str,
     path: PathBuf,
-    font: OnceLock<Arc<SoundFont>>,
+    font: Mutex<Weak<SoundFont>>,
 }
 
 /// Where an instrument is played: the font, its bank number and preset
@@ -129,23 +133,37 @@ impl Bank {
     /// The default bank at `path`, and every file `voices` names that sits
     /// beside it.
     pub fn load(path: &Path) -> Result<Self, String> {
-        let default = Font { file: "", path: path.to_path_buf(), font: OnceLock::new() };
-        default.font.set(open(path)?).ok();
-        let mut fonts = vec![default];
+        let read = open(path)?;
+        let mut fonts = vec![Font { file: "", path: path.to_path_buf(), font: Mutex::new(Arc::downgrade(&read)) }];
         let dir = path.parent().unwrap_or(Path::new("."));
         for v in voices::VOICES {
             let beside = dir.join(v.file);
             if !fonts.iter().any(|f| f.file == v.file) && beside.is_file() {
-                fonts.push(Font { file: v.file, path: beside, font: OnceLock::new() });
+                fonts.push(Font { file: v.file, path: beside, font: Mutex::new(Weak::new()) });
             }
         }
-        Ok(Bank { fonts, levels: Mutex::new(HashMap::new()) })
+        Ok(Bank { fonts, _default: read, levels: Mutex::new(HashMap::new()) })
     }
 
-    /// The font at `index`, read now if no score has needed it yet.
+    /// The font at `index`, read now if nothing holds it.
     fn font(&self, index: usize) -> Arc<SoundFont> {
         let f = &self.fonts[index];
-        f.font.get_or_init(|| open(&f.path).unwrap_or_else(|e| panic!("{e}"))).clone()
+        let mut held = f.font.lock().unwrap();
+        held.upgrade().unwrap_or_else(|| {
+            let read = open(&f.path).unwrap_or_else(|e| panic!("{e}"));
+            *held = Arc::downgrade(&read);
+            read
+        })
+    }
+
+    /// Every font `score` seats a player on, read and held for as long
+    /// as the returned fonts are: a render holds them through its every
+    /// pass, so none is read twice in one.
+    fn hold(&self, score: &Score) -> Vec<Arc<SoundFont>> {
+        let mut seated: Vec<usize> = score.instruments.iter().map(|i| self.seat(i).font).collect();
+        seated.sort();
+        seated.dedup();
+        seated.into_iter().map(|i| self.font(i)).collect()
     }
 
     /// Where `inst` is played: on the bank `voices` names for its program
@@ -211,6 +229,7 @@ const RING_KEPT_S: f32 = 0.5;
 /// room's ring under that is no sound anyone hears.
 pub fn take(piece: &Piece, seed: u64, bank: &Bank) -> (Score, Vec<[f32; 2]>) {
     let mut score = (piece.build)(&Params { seed });
+    let _held = bank.hold(&score);
     set_levels(&mut score, bank);
     let mut audio = render(&score, bank);
     audio::encode::set_loudness(&mut audio, piece.lufs);
@@ -244,6 +263,7 @@ pub fn set_levels(score: &mut Score, bank: &Bank) {
     let Some(&crest) = levelled.iter().max_by(|a, b| score.sections[**a].level.partial_cmp(&score.sections[**b].level).unwrap()) else {
         return;
     };
+    let _held = bank.hold(score);
     for _ in 0..LEVEL_PASSES {
         let audio = render(score, bank);
         let spans: Vec<(f32, f32)> = levelled.iter().map(|i| (score.seconds(score.sections[*i].start) as f32, score.seconds(score.sections[*i].end) as f32)).collect();
@@ -273,6 +293,7 @@ fn block_at(score: &Score, tick: u32) -> usize {
 /// Interleaved stereo f32 at `SAMPLE_RATE`: the score once with its
 /// tail, or, for a loop, exactly one pass whose end runs into its head.
 pub fn render(score: &Score, bank: &Bank) -> Vec<[f32; 2]> {
+    let _held = bank.hold(score);
     // A one-shot rings on past its last section for the room's time, the
     // fall of 60 dB, past which is silence; a loop's tails ring into its
     // head.
