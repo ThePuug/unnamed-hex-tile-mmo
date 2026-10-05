@@ -36,8 +36,8 @@ pub struct Teller {
     /// The lead's channel, and the second's.
     pub lead: u8,
     pub second: u8,
-    /// A channel that doubles the lead's riff in unison, and its accent
-    /// under the riff's.
+    /// A channel that doubles the lead's riff in unison, an octave down
+    /// where unison leaves its range, and its accent under the riff's.
     pub double: Option<(u8, i32)>,
     /// A channel echoing the tune, whose bar-line tones the held tones
     /// keep off a perfect interval as they do the lead's.
@@ -147,6 +147,9 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
                         }
                         score.add(Note { start, len: held, pitch, vel: vel(accent, rng), channel: teller.lead });
                         if let Some((channel, under)) = teller.double {
+                            // An octave down where unison leaves its range.
+                            let high = score.instrument(channel).high;
+                            let pitch = if pitch > high { pitch - 12 } else { pitch };
                             score.add(Note { start, len: held + E / 8, pitch, vel: vel(accent + under, rng), channel });
                         }
                     }
