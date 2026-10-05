@@ -14,6 +14,7 @@
 
 use audio::rng::Rng;
 
+use crate::render::volume;
 use crate::score::{Role, Score};
 
 /// A message to the synthesizer at `at` seconds. At one instant a
@@ -303,9 +304,62 @@ pub fn perform(score: &Score) -> Vec<Played> {
     out
 }
 
+/// A message of a score as MIDI: when, in seconds, and its bytes — two
+/// for a program change, three for the rest.
+#[derive(Clone, Debug)]
+pub struct Event {
+    pub at: f64,
+    pub bytes: Vec<u8>,
+}
+
+/// The score as `perform` plays it, as MIDI any synthesizer takes: each
+/// player's program, reverb send, pan and volume first, then every
+/// message played, in `perform`'s order.
+pub fn midi(score: &Score) -> Vec<Event> {
+    let mut out = Vec::new();
+    for inst in &score.instruments {
+        let ch = inst.channel;
+        out.push(Event { at: 0.0, bytes: vec![0xC0 | ch, inst.program] });
+        out.push(Event { at: 0.0, bytes: vec![0xB0 | ch, 91, inst.reverb] });
+        out.push(Event { at: 0.0, bytes: vec![0xB0 | ch, 10, (64 + inst.pan as i32) as u8] });
+        out.push(Event { at: 0.0, bytes: vec![0xB0 | ch, 7, volume(inst.level)] });
+    }
+    out.extend(perform(score).into_iter().map(|p| Event {
+        at: p.at,
+        bytes: match p.msg {
+            Msg::On { channel, pitch, vel } => vec![0x90 | channel, pitch, vel],
+            Msg::Off { channel, pitch } => vec![0x80 | channel, pitch, 0],
+            Msg::Control { channel, number, value } => vec![0xB0 | channel, number, value],
+            Msg::Bend { channel, value } => vec![0xE0 | channel, (value & 0x7F) as u8, (value >> 7) as u8],
+        },
+    }));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn midi_sets_every_player_up_first_and_turns_every_note_off() {
+        for piece in crate::pieces::PIECES {
+            let score = (piece.build)(&crate::pieces::Params { seed: 0 });
+            let events = midi(&score);
+            let setup = 4 * score.instruments.len();
+            assert!(events[..setup].iter().all(|e| e.at == 0.0 && e.bytes[0] & 0xF0 != 0x90), "{}", piece.name);
+            assert!(events[setup..].windows(2).all(|w| w[0].at <= w[1].at), "{}", piece.name);
+            let mut sounding = std::collections::HashMap::new();
+            for e in &events[setup..] {
+                let key = (e.bytes[0] & 0x0F, e.bytes[1]);
+                match e.bytes[0] & 0xF0 {
+                    0x90 => *sounding.entry(key).or_insert(0) += 1,
+                    0x80 => *sounding.entry(key).or_insert(0) -= 1,
+                    _ => {}
+                }
+            }
+            assert!(sounding.values().all(|n| *n <= 0), "{}: a note is left on", piece.name);
+        }
+    }
 
     #[test]
     fn a_swell_rises_to_full_and_eases_back_part_way() {
