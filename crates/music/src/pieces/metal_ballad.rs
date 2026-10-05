@@ -39,8 +39,12 @@ const PIANO: u8 = 0;
 const CLEAN_GUITAR: u8 = 27;
 const OVERDRIVEN: u8 = 29;
 const DISTORTION: u8 = 30;
-const FINGER_BASS: u8 = 33;
-const PICK_BASS: u8 = 34;
+/// The band's bass, fingered: the picked bass's recordings start over
+/// the low E. The bass's solo is picked, which cuts where the fingered
+/// thins, and stays over its lowest recording, the C sharp at 37.
+const BASS: u8 = 33;
+const SOLO_BASS: u8 = 34;
+const SOLO_BASS_LOW: u8 = 37;
 const VIOLIN: u8 = 40;
 const SLOW_STRINGS: u8 = 49;
 const CHOIR_AAHS: u8 = 52;
@@ -133,8 +137,8 @@ const SOLO_RISE: f32 = 3.0;
 /// The tune's register; the lead takes it here.
 const TUNE: (u8, u8) = (60, 88);
 /// The guitar's solo's register, over the tune's, up to a 24-fret
-/// guitar's top E; the bass's, from its open E to the E two octaves up,
-/// where a bass still sounds like one.
+/// guitar's top E; the bass's, the two octaves over the band's bass
+/// from E2, where a bass still sounds like one.
 const SOLO: (u8, u8) = (62, 88);
 const BASS_SOLO: (u8, u8) = (40, 64);
 /// The sequence a verse's phrase pair takes, in degrees: the theme, a
@@ -404,7 +408,6 @@ struct Design {
     clean: u8,
     picking: &'static [usize],
     drone: Option<i32>,
-    bass: u8,
     soloist: Soloist,
     /// Whether the guitar's climax is a held tone, else a run to its peak.
     held_climax: bool,
@@ -571,7 +574,6 @@ fn compose(params: &Params) -> (Score, Form) {
         clean: [CLEAN_GUITAR, PIANO][skeleton.weighted(&[3.0, 1.0])],
         picking: PICKING[skeleton.below(PICKING.len())],
         drone: [None, Some(0), Some(4)][skeleton.weighted(&[2.0, 2.0, 1.0])],
-        bass: [FINGER_BASS, PICK_BASS][skeleton.below(2)],
         soloist: [Soloist::Guitar, Soloist::Drums, Soloist::Bass][skeleton.weighted(&[3.0, 2.0, 2.0])],
         held_climax: skeleton.chance(0.6),
         half_time: skeleton.chance(0.35),
@@ -586,7 +588,7 @@ fn compose(params: &Params) -> (Score, Form) {
         ending: [Ending::Big, Ending::Arpeggio][skeleton.weighted(&[3.0, 2.0])],
     };
     let instruments = vec![
-        Instrument { name: "bass", program: design.bass, channel: CH_BASS, role: Role::Pluck, low: 28, high: 52, reverb: 15, pan: 0, level: BAND },
+        Instrument { name: "bass", program: BASS, channel: CH_BASS, role: Role::Pluck, low: 28, high: 52, reverb: 15, pan: 0, level: BAND },
         Instrument { name: "arpeggio", program: design.clean, channel: CH_CLEAN, role: Role::Pluck, low: 40, high: 79, reverb: 55, pan: 18, level: ARPEGGIO },
         Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 55, high: 91, reverb: 45, pan: 0, level: LEAD },
         Instrument { name: "guitar, left", program: DISTORTION, channel: CH_LEFT, role: Role::Pluck, low: 38, high: 76, reverb: 25, pan: -58, level: BAND },
@@ -595,7 +597,7 @@ fn compose(params: &Params) -> (Score, Form) {
         Instrument { name: "strings", program: SLOW_STRINGS, channel: CH_PAD, role: Role::Sustain, low: 52, high: 79, reverb: 75, pan: -20, level: BAND },
         Instrument { name: "choir", program: CHOIR_AAHS, channel: CH_CHOIR, role: Role::Sustain, low: 52, high: 72, reverb: 85, pan: 26, level: BAND },
         match design.soloist {
-            Soloist::Bass => Instrument { name: "solo bass", program: design.bass, channel: CH_SOLO, role: Role::Melody, low: BASS_SOLO.0 - 4, high: BASS_SOLO.1, reverb: 35, pan: 0, level: BASS_SOLO_LEVEL },
+            Soloist::Bass => Instrument { name: "solo bass", program: SOLO_BASS, channel: CH_SOLO, role: Role::Melody, low: SOLO_BASS_LOW, high: BASS_SOLO.1, reverb: 35, pan: 0, level: BASS_SOLO_LEVEL },
             _ => Instrument { name: "solo guitar", program: DISTORTION, channel: CH_SOLO, role: Role::Melody, low: SOLO.0 - 4, high: SOLO.1, reverb: 40, pan: 12, level: SOLO_LEVEL },
         },
         Instrument { name: "kit", program: ROCK_KIT, channel: CH_KIT, role: Role::Percussion, low: KICK, high: CRASH_2, reverb: 30, pan: 0, level: BAND },
@@ -608,13 +610,11 @@ fn compose(params: &Params) -> (Score, Form) {
         CLEAN_GUITAR => "clean guitar",
         OVERDRIVEN => "overdriven guitar",
         DISTORTION => "distortion guitar",
-        FINGER_BASS => "fingered bass",
-        PICK_BASS => "picked bass",
         VIOLIN => "violin",
         _ => "?",
     };
     score.summary = format!(
-        "{} on the {}: a {:?} in a {:?}; verse {} and {}, chorus {} and {}, climax {} and {}; {} lead, {} arpeggio, {}, {}",
+        "{} on the {}: a {:?} in a {:?}; verse {} and {}, chorus {} and {}, climax {} and {}; {} lead, {} arpeggio, {}",
         story.name,
         groove.name,
         design.theme.shape,
@@ -627,7 +627,6 @@ fn compose(params: &Params) -> (Score, Form) {
         design.climax[1].name,
         name(design.lead),
         name(design.clean),
-        name(design.bass),
         design.soloist.name(),
     );
     score.facets = vec![groove.name, design.soloist.name()];
