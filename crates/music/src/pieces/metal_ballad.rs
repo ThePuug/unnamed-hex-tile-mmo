@@ -93,15 +93,16 @@ const LEAD: f32 = 3.0;
 /// The band's level, dB: under the lead together, its own balance kept.
 const BAND: f32 = -2.0;
 
+/// The rhythm guitars' level, dB: two of them chugging every beat
+/// outweigh a kit striking its strokes, so the pair sits with the kit.
+const GUITARS: f32 = BAND - 6.0;
+
 /// The soloist's level, dB: a solo is the song's peak and stands out of
-/// the band; the bass's at the top of its volume, a bass in its high
-/// register being the bank's quietest solo voice.
+/// the band.
 const SOLO_LEVEL: f32 = 4.0;
-const BASS_SOLO_LEVEL: f32 = 6.0;
 
 /// The arpeggio's level, dB, over the band's: alone it is the intro and
-/// the outro, and under the distorted guitars the bank's picked strings
-/// are lost by twenty decibels.
+/// the outro, and under the guitars' chug a picked chord is lost.
 const ARPEGGIO: f32 = 4.0;
 
 /// The velocity every voice strikes at before its own accent.
@@ -591,13 +592,13 @@ fn compose(params: &Params) -> (Score, Form) {
         Instrument { name: "bass", program: BASS, channel: CH_BASS, role: Role::Pluck, low: 28, high: 52, reverb: 15, pan: 0, level: BAND },
         Instrument { name: "arpeggio", program: design.clean, channel: CH_CLEAN, role: Role::Pluck, low: 40, high: 79, reverb: 55, pan: 18, level: ARPEGGIO },
         Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 55, high: 91, reverb: 45, pan: 0, level: LEAD },
-        Instrument { name: "guitar, left", program: DISTORTION, channel: CH_LEFT, role: Role::Pluck, low: 38, high: 76, reverb: 25, pan: -58, level: BAND },
-        Instrument { name: "guitar, right", program: OVERDRIVEN, channel: CH_RIGHT, role: Role::Pluck, low: 38, high: 76, reverb: 25, pan: 58, level: BAND },
+        Instrument { name: "guitar, left", program: DISTORTION, channel: CH_LEFT, role: Role::Pluck, low: 38, high: 76, reverb: 25, pan: -58, level: GUITARS },
+        Instrument { name: "guitar, right", program: OVERDRIVEN, channel: CH_RIGHT, role: Role::Pluck, low: 38, high: 76, reverb: 25, pan: 58, level: GUITARS },
         Instrument { name: "guitar, the second", program: design.second, channel: CH_SECOND, role: Role::Melody, low: 50, high: 72, reverb: 45, pan: -30, level: BAND },
         Instrument { name: "strings", program: SLOW_STRINGS, channel: CH_PAD, role: Role::Sustain, low: 52, high: 79, reverb: 75, pan: -20, level: BAND },
         Instrument { name: "choir", program: CHOIR_AAHS, channel: CH_CHOIR, role: Role::Sustain, low: 52, high: 72, reverb: 85, pan: 26, level: BAND },
         match design.soloist {
-            Soloist::Bass => Instrument { name: "solo bass", program: SOLO_BASS, channel: CH_SOLO, role: Role::Melody, low: SOLO_BASS_LOW, high: BASS_SOLO.1, reverb: 35, pan: 0, level: BASS_SOLO_LEVEL },
+            Soloist::Bass => Instrument { name: "solo bass", program: SOLO_BASS, channel: CH_SOLO, role: Role::Melody, low: SOLO_BASS_LOW, high: BASS_SOLO.1, reverb: 35, pan: 0, level: SOLO_LEVEL },
             _ => Instrument { name: "solo guitar", program: DISTORTION, channel: CH_SOLO, role: Role::Melody, low: SOLO.0 - 4, high: SOLO.1, reverb: 40, pan: 12, level: SOLO_LEVEL },
         },
         Instrument { name: "kit", program: ROCK_KIT, channel: CH_KIT, role: Role::Percussion, low: KICK, high: CRASH_2, reverb: 30, pan: 0, level: BAND },
