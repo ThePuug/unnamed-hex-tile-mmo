@@ -46,13 +46,15 @@ const BLOCK: usize = 64;
 /// The room's level under the dry pass, for a send of 127.
 const WET: f32 = 0.25;
 
-/// A player's channel volume at level 0: under the top, so a quiet
-/// sample can be raised some six dB before the volume reaches 127.
+/// A player's channel volume at level 0 in a MIDI file, which plays on
+/// a bank nobody has measured: under the top, so a quiet sample can be
+/// raised some six dB before the volume reaches 127.
 const VOLUME: f32 = 90.0;
 
-/// The channel volume a player's `level` is sent as: the synthesizer
-/// squares volume into gain, so a gain in dB is a quarter of it in
-/// forty on the volume.
+/// The channel volume a player's `level` is written as in a MIDI file:
+/// the synthesizer squares volume into gain, so a gain in dB is a
+/// quarter of it in forty on the volume. A render measures the bank
+/// instead (`Bank::volumes`).
 pub fn volume(level: f32) -> u8 {
     (VOLUME * 10f32.powf(level / 40.0)).round().min(127.0) as u8
 }
@@ -69,6 +71,10 @@ const MEASURED_S: f64 = 0.6;
 /// The most a note is evened by, dB either way: past it a pitch is a
 /// sample the bank does not mean to be played.
 const EVEN_DB: f32 = 6.0;
+
+/// The loudness a player is taken to have where none of its keys sounds
+/// on its own, LUFS: a General MIDI program's middling tone.
+const MEASURED_FLOOR: f32 = -35.0;
 
 /// The SoundFonts that play a score — the default first, then every file
 /// `voices` names that sits beside it — and the loudness of every tone
@@ -183,9 +189,11 @@ impl Bank {
     }
 
     /// The loudness of `seat`'s `pitch`, LUFS at its loudest moment: one
-    /// tone at `MEASURED_AT`, dry and centred.
-    fn level(&self, seat: Seat, pitch: u8) -> f32 {
-        let key = (seat.font, seat.bank, seat.preset, pitch);
+    /// tone at `MEASURED_AT`, dry and centred, on the key the seat strikes
+    /// for it. A kit the default bank plays is on the drum channel.
+    fn level(&self, seat: Seat, drums: bool, pitch: u8) -> f32 {
+        let struck = seat.voice.map_or(pitch, |v| voices::key(v, pitch));
+        let key = (seat.font, seat.bank, seat.preset, struck);
         if let Some(l) = self.levels.lock().unwrap().get(&key) {
             return *l;
         }
@@ -193,9 +201,12 @@ impl Bank {
         settings.block_size = BLOCK;
         settings.enable_reverb_and_chorus = false;
         let mut synth = Synthesizer::new(&self.font(seat.font), &settings).expect("a synthesizer");
-        synth.process_midi_message(0, 0xB0, 0, seat.bank as i32);
-        synth.process_midi_message(0, 0xC0, seat.preset as i32, 0);
-        synth.note_on(0, pitch as i32, MEASURED_AT);
+        let ch = if drums && seat.voice.is_none() { 9 } else { 0 };
+        if ch == 0 {
+            synth.process_midi_message(ch, 0xB0, 0, seat.bank as i32);
+        }
+        synth.process_midi_message(ch, 0xC0, seat.preset as i32, 0);
+        synth.note_on(ch, struck as i32, MEASURED_AT);
         let n = (MEASURED_S * SAMPLE_RATE as f64) as usize / BLOCK;
         let (mut left, mut right) = (vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]);
         let mut tone = Vec::with_capacity(n * BLOCK);
@@ -208,21 +219,41 @@ impl Bank {
         l
     }
 
+    /// The level of each key `inst` plays in `score`, and the middle of
+    /// them, LUFS: every pitch of a melodic player's range; the drums a
+    /// kit strikes, each a different instrument.
+    fn levels(&self, score: &Score, inst: &Instrument) -> (Vec<(u8, f32)>, Option<f32>) {
+        let seat = self.seat(inst);
+        let drums = inst.role == Role::Percussion;
+        let mut keys: Vec<u8> = if drums { score.notes.iter().filter(|n| n.channel == inst.channel).map(|n| n.pitch).collect() } else { (inst.low..=inst.high).collect() };
+        keys.sort();
+        keys.dedup();
+        let levels: Vec<(u8, f32)> = keys.into_iter().map(|p| (p, self.level(seat, drums, p))).filter(|(_, l)| l.is_finite()).collect();
+        let mut sorted: Vec<f32> = levels.iter().map(|(_, l)| *l).collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let middle = sorted.get(sorted.len() / 2).copied();
+        (levels, middle)
+    }
+
     /// For each pitch in `inst`'s range, the dB that brings it to the
     /// middle of the range's levels, within `EVEN_DB`; none for a drum
     /// kit, whose keys are different drums.
-    fn evening(&self, inst: &Instrument) -> HashMap<u8, f32> {
-        if inst.role == Role::Percussion {
-            return HashMap::new();
+    fn evening(&self, score: &Score, inst: &Instrument) -> HashMap<u8, f32> {
+        let (levels, middle) = self.levels(score, inst);
+        match middle {
+            Some(middle) if inst.role != Role::Percussion => levels.into_iter().map(|(p, l)| (p, (middle - l).clamp(-EVEN_DB, EVEN_DB))).collect(),
+            _ => HashMap::new(),
         }
-        let seat = self.seat(inst);
-        let levels: Vec<(u8, f32)> = (inst.low..=inst.high).map(|p| (p, self.level(seat, p))).filter(|(_, l)| l.is_finite()).collect();
-        let mut sorted: Vec<f32> = levels.iter().map(|(_, l)| *l).collect();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let Some(middle) = sorted.get(sorted.len() / 2).copied() else {
-            return HashMap::new();
-        };
-        levels.into_iter().map(|(p, l)| (p, (middle - l).clamp(-EVEN_DB, EVEN_DB))).collect()
+    }
+
+    /// Each player's channel volume: its `level` over what the bank's
+    /// samples give it on their own, so a level is a loudness against the
+    /// others' whatever bank plays them. The player furthest over its
+    /// samples is at the top of the volume and every other under it.
+    fn volumes(&self, score: &Score) -> HashMap<u8, u8> {
+        let gains: Vec<(u8, f32)> = score.instruments.iter().map(|i| (i.channel, i.level - self.levels(score, i).1.unwrap_or(MEASURED_FLOOR))).collect();
+        let top = gains.iter().map(|(_, g)| *g).fold(f32::NEG_INFINITY, f32::max);
+        gains.into_iter().map(|(ch, g)| (ch, (127.0 * 10f32.powf((g - top) / 40.0)).round().max(1.0) as u8)).collect()
     }
 }
 
@@ -351,7 +382,8 @@ fn through_font(score: &Score, played: &[crate::perform::Played], bank: &Bank, f
             (i.channel, (if melodic_kit { free } else { i.channel }, seat))
         })
         .collect();
-    let evening: HashMap<u8, HashMap<u8, f32>> = seated.iter().map(|i| (i.channel, bank.evening(i))).collect();
+    let evening: HashMap<u8, HashMap<u8, f32>> = seated.iter().map(|i| (i.channel, bank.evening(score, i))).collect();
+    let volumes = bank.volumes(score);
     // The synthesizer gains a velocity as its square, forty log ten of
     // it in dB.
     let even = |channel: u8, pitch: u8, vel: u8| -> i32 {
@@ -369,7 +401,7 @@ fn through_font(score: &Score, played: &[crate::perform::Played], bank: &Bank, f
         // The synthesizer squares volume into gain, so the send's gain
         // is its root on the volume.
         let send = if send { (inst.reverb as f32 / 127.0).sqrt() } else { 1.0 };
-        synth.process_midi_message(ch, 0xB0, 7, (volume(inst.level) as f32 * send).round() as i32);
+        synth.process_midi_message(ch, 0xB0, 7, (volumes[&inst.channel] as f32 * send).round() as i32);
     }
 
     let at = |seconds: f64| (seconds * SAMPLE_RATE as f64).round() as u64;

@@ -40,8 +40,9 @@ pub struct Instrument {
     /// Where the player sits across the stage, -63 hard left to 63 hard
     /// right; sent as MIDI pan, 64 + this.
     pub pan: i8,
-    /// The player's level against the others', dB, sent as channel
-    /// volume: at most about +6, where the volume reaches its top.
+    /// The player's loudness against the others', dB: the render takes
+    /// off what the bank's own samples give the player, so a level holds
+    /// on any bank.
     pub level: f32,
 }
 
