@@ -103,6 +103,11 @@ const ARPEGGIO: f32 = 4.0;
 /// The velocity every voice strikes at before its own accent.
 const VEL: i32 = 88;
 
+/// The guitars' stab under the kit's solo, against `VEL`: two distorted
+/// guitars struck at the band's stroke outweigh the whole kit, which is
+/// the song's lead there.
+const STAB: i32 = -34;
+
 /// The shapes a ballad's tune sings in: the sigh down to home and the
 /// wave a verse sings low, the arch and the leap a chorus sings a third
 /// over it — never the circling or the climb, a folk tune's and a
@@ -994,10 +999,10 @@ fn guitars(score: &mut Score, form: &Form, rng: &mut Rng) {
             // variant stabs again at the bar's middle, the cadence pushes
             // into the next bar on its last eighth.
             let middle = strong[strong.len() / 2];
-            let mut stabs = vec![(0, 2 * E, 2)];
+            let mut stabs = vec![(0, 2 * E, STAB)];
             match variation::role(b) {
-                Bar::Variant => stabs.push((middle, E, -6)),
-                Bar::Cadence if !form.last(b) => stabs.push((eighths - 1, E - E / 8, -2)),
+                Bar::Variant => stabs.push((middle, E, STAB - 8)),
+                Bar::Cadence if !form.last(b) => stabs.push((eighths - 1, E - E / 8, STAB - 4)),
                 _ => {}
             }
             for (at, len, accent) in stabs {
@@ -1094,18 +1099,15 @@ fn guitars(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// The strings on root and fifth a bar at a time, carried across the
 /// bar where the next chord keeps them; at full, on three voices of the
 /// chord, each led to the nearest tone of the next, and the choir on
-/// root and fifth; at full under the bass's solo whatever their notch,
-/// and thin under the kit's, which is the song's lead there.
+/// root and fifth; thin under a solo of the bass's or the kit's, whatever
+/// their notch, so the soloist is the song's lead there.
 fn pad(score: &mut Score, form: &Form, rng: &mut Rng) {
     let mut voices: Option<Vec<u8>> = None;
     for b in 0..form.bars() {
         let key = score.key_at(b * form.bar);
-        // Under the bass's solo the strings and choir hold the whole
-        // chord, the floor it plays over; under the kit's the strings hold
-        // its root and fifth alone, so the kit is the song's lead.
-        let mode = if form.bass_solo(b) {
-            Pad::Full
-        } else if form.stop_time(b) {
+        // A bass or a kit has no register over the band's to sing from:
+        // the whole chord held covers it.
+        let mode = if form.bass_solo(b) || form.stop_time(b) {
             Pad::Thin
         } else {
             form.texture_at(b).pad
@@ -1157,9 +1159,11 @@ fn pad(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// stroke an eighth late; its cadence fills its last beat or two, and a
 /// bar that turns the song into its next part fills its last half or the
 /// whole bar after its first beat, in the seed's fill. Under the guitar's
-/// solo the kick drives every eighth. Cymbals strike near the top of the
-/// velocity and the kick under the band's, since the bank keeps its
-/// cymbals far under its kick. The kit's own solo is `drum_solo`'s.
+/// solo the kick drives every eighth; under the bass's it keeps a verse's
+/// time, light under a lead in its own register. Cymbals strike near the
+/// top of the velocity and the kick under the band's, since the bank
+/// keeps its cymbals far under its kick. The kit's own solo is
+/// `drum_solo`'s.
 fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
     let groove = form.design.groove;
     let strong = score.meter.strong_eighths();
@@ -1171,7 +1175,7 @@ fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
             continue;
         }
         let start = b * form.bar;
-        let full = texture.kit == Kit::Full;
+        let full = texture.kit == Kit::Full && !form.bass_solo(b);
         let driving = full && texture.solo == Solo::On && form.design.soloist == Soloist::Guitar;
         let last_beat = eighths - *groove.groups.last().unwrap() as u32;
         let fill_from = if let Some(from) = form.drop_from(b, last_beat) {
@@ -1585,10 +1589,9 @@ fn guitar_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
     }
 }
 
-/// The bass's solo, a bassist's: the band's bass holds the low root on
-/// every bar's first beat, rung half the bar, so the solo has its floor,
-/// and the solo plays over it between its open E and the E two octaves
-/// up. It states the theme there; grooves a riff — the chord's root,
+/// The bass's solo, a bassist's: the band's one bass, so the band's bass
+/// part rests under it, and it plays in the two octaves from E2. It
+/// states the theme there; grooves a riff — the chord's root,
 /// fifth, octave and fifth on the beats, the mode's steps walking between
 /// — a variant of it answering every other bar, its last beat run on in
 /// sixteenths; gallops up through the chord, an eighth and two sixteenths
@@ -1616,23 +1619,7 @@ fn bass_solo(score: &mut Score, form: &Form, rng: &mut Rng) {
             let key = score.key_at(b * form.bar);
             let bar_start = b * form.bar;
             let chord = form.chord(b);
-            let root = at_degree(&key, chord, chord.root, 28, 40, 33);
             let dropped = b + 1 == st.climax;
-            let pedal = if dropped { last_group * E } else { form.bar / 2 } - E / 8;
-            score.add(Note { start: bar_start, len: pedal, pitch: root, vel: vel(4, rng), channel: CH_BASS });
-            // The pedal strikes again at the bar's middle on the variant,
-            // and walks into the next bar's root on the cadence.
-            let middle_beat = strong[strong.len() / 2];
-            match variation::role(b) {
-                Bar::Variant if !dropped => score.add(Note { start: bar_start + middle_beat * E, len: E * 2, pitch: root, vel: vel(-4, rng), channel: CH_BASS }),
-                Bar::Cadence if b + 1 < z && !dropped => {
-                    let next = form.chord(b + 1);
-                    let to = at_degree(&key, next, next.root, 28, 40, root);
-                    let from = key.pitch(key.absolute_degree(to).unwrap() + if to > root { -1 } else { 1 }, 4).clamp(28, 52);
-                    score.add(Note { start: bar_start + (eighths - 1) * E, len: E * 3 / 4, pitch: from, vel: vel(-6, rng), channel: CH_BASS });
-                }
-                _ => {}
-            }
             // The chord's root nearest the middle of the solo's register.
             let base = (middle - 4..=middle + 3).find(|d| key.degree_of(key.pitch(*d, 4)) == Some(chord.root.rem_euclid(7) as usize)).unwrap_or(middle);
             if b < st.woven || b >= st.landing {
