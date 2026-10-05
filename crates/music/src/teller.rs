@@ -124,7 +124,9 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
                     let ((start, len, pitch), is_sung) = notes[j];
                     if is_sung {
                         let mut len = len - E / 8;
-                        let grace = notes.get(j + 1).filter(|(n, _)| n.2 != pitch).and_then(|(n, _)| (teller.grace)(&grace_key(score, n.0, n.2), n.2, hi).map(|g| (n.0, g))).filter(|_| rng.chance(0.35));
+                        // A grace on the tone the line holds is that tone,
+                        // carried into the next, never struck again.
+                        let grace = notes.get(j + 1).filter(|(n, _)| n.2 != pitch).and_then(|(n, _)| (teller.grace)(&grace_key(score, n.0, n.2), n.2, hi).map(|g| (n.0, g))).filter(|_| rng.chance(0.35)).filter(|(_, g)| *g != pitch);
                         if let Some((next_start, _)) = grace {
                             len = len.min(next_start - E / 4 - start);
                         }
@@ -139,7 +141,7 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
                         // and rings in the riff as in the song.
                         let held = if len >= score.bar() { len - E / 2 } else if len >= 3 * E { 2 * E } else { len - E / 2 };
                         if strong && j > 0 && rng.chance(0.4) {
-                            if let Some(grace) = (teller.grace)(&grace_key(score, start, pitch), pitch, hi) {
+                            if let Some(grace) = (teller.grace)(&grace_key(score, start, pitch), pitch, hi).filter(|g| *g != notes[j - 1].0.2) {
                                 score.add(Note { start: start - E / 4, len: E / 4, pitch: grace, vel: vel(teller.riff.2, rng), channel: teller.lead });
                             }
                         }
@@ -168,8 +170,9 @@ fn grace_key(score: &Score, tick: u32, pitch: u8) -> Key {
 }
 
 /// The tune each run tells, its notes and whether each is sung: the
-/// sung reduction where the lead sings or calls, the whole line where it
-/// riffs or answers; empty where it holds or rests; a breathing riff
+/// sung reduction where the lead sings or calls, a tone tied to the one
+/// before where it repeats its pitch, the whole line where it riffs or
+/// answers; empty where it holds or rests; a breathing riff
 /// keeps only its first tone of each half-phrase's last bar. Runs that
 /// follow one another with the tune running on are one line, and every
 /// line is repaired as it is played, so neither a join nor a breath
@@ -188,6 +191,17 @@ fn told(score: &Score, tune: &Tune, runs: &[Run<Telling>], lo: u8, hi: u8, breat
             notes.extend(tune.run(score, run.a, run.b, lo, hi, true).into_iter().filter(|n| sung(n.0 / bar)).map(|n| (n, true)));
             notes.extend(tune.run(score, run.a, run.b, lo, hi, false).into_iter().filter(|n| !sung(n.0 / bar)).map(|n| (n, false)));
             notes.sort_by_key(|(n, _)| n.0);
+            // A sung tone on the pitch of the one it follows straight on is
+            // held, not struck again: a singer ties it. Tied before the
+            // line is repaired, so the repair hears the line as sung.
+            let mut tied: Vec<(Placed, bool)> = Vec::with_capacity(notes.len());
+            for (n, sung) in notes {
+                match tied.last_mut() {
+                    Some((m, true)) if sung && m.2 == n.2 && m.0 + m.1 >= n.0 => m.1 = n.0 + n.1 - m.0,
+                    _ => tied.push((n, sung)),
+                }
+            }
+            let mut notes = tied;
             if breathes {
                 let half = phrase::BARS / 2;
                 let mut kept_in: Option<u32> = None;
