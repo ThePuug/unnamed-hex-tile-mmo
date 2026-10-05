@@ -34,6 +34,9 @@ const PLAYHEAD_X: f32 = 240.0;
 /// band at a lane's top its voice is named in.
 const LANE_PAD: f32 = 6.0;
 const LABEL_H: f32 = 14.0;
+/// How wide a note's head is drawn where it is struck, under a
+/// sixteenth at the sheet's slowest.
+const HEAD_W: f32 = 4.0;
 
 /// The play-a-seed and queue panels' footer: the composer's two rows.
 const COMPOSER_H: f32 = 10.0 + 32.0 + 8.0 + 16.0;
@@ -481,10 +484,19 @@ impl Player {
                 // The voice's pitches fill the lane under its name.
                 let (low, high) = (top + lane_h - 4.0, top + LABEL_H);
                 let y = |pitch: u8| low - (pitch - voice.lo) as f32 / (voice.hi - voice.lo) as f32 * (low - high);
-                for (start, end, pitch) in voice.notes.iter().filter(|n| n.1 >= from && n.0 <= to && n.0 >= stretch.from && n.0 < stretch.to) {
-                    let ink = if *end < at { ink.gamma_multiply(0.35) } else { ink };
-                    let (a, b) = (x(*start), x(*end).max(x(*start) + 3.0));
-                    p.rect_filled(Rect::from_min_max(pos2(a, y(*pitch) - 2.0), pos2(b - 1.0, y(*pitch) + 2.0)), 1.0, ink);
+                // A note is a head where it is struck and a hairline while
+                // it carries, the heads over every line, so a tone ringing
+                // on under the next ones leaves them in sight.
+                let shown = || voice.notes.iter().filter(|n| n.1 >= from && n.0 <= to && n.0 >= stretch.from && n.0 < stretch.to);
+                let ink_at = |end: f64| if end < at { ink.gamma_multiply(0.35) } else { ink };
+                for (start, end, pitch) in shown() {
+                    let line = [pos2(x(*start), y(*pitch)), pos2(x(*end) - 1.0, y(*pitch))];
+                    p.line_segment(line, Stroke::new(1.0_f32, ink_at(*end).gamma_multiply(0.6)));
+                }
+                for (start, end, pitch) in shown() {
+                    let a = x(*start);
+                    let head = Rect::from_min_max(pos2(a, y(*pitch) - 2.0), pos2((a + HEAD_W).min(x(*end) - 1.0).max(a + 2.0), y(*pitch) + 2.0));
+                    p.rect_filled(head, 1.0, ink_at(*end));
                 }
                 p.text(pos2(cell.left() + 6.0, top + 2.0), Align2::LEFT_TOP, voice.name, mono(10.0), ink.gamma_multiply(0.75));
             }
