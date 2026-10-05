@@ -134,15 +134,31 @@ impl Bank {
     /// beside it.
     pub fn load(path: &Path) -> Result<Self, String> {
         let read = open(path)?;
-        let mut fonts = vec![Font { file: "", path: path.to_path_buf(), font: Mutex::new(Arc::downgrade(&read)) }];
-        let dir = path.parent().unwrap_or(Path::new("."));
+        let fonts = vec![Font { file: "", path: path.to_path_buf(), font: Mutex::new(Arc::downgrade(&read)) }];
+        let bank = Bank { fonts, _default: read, levels: Mutex::new(HashMap::new()) };
+        Ok(bank.with_banks(path.parent().unwrap_or(Path::new("."))))
+    }
+
+    /// The bank playing every file `voices` names that sits in `dir` from
+    /// there, in place of where it was found before.
+    pub fn with_banks(mut self, dir: &Path) -> Self {
         for v in voices::VOICES {
-            let beside = dir.join(v.file);
-            if !fonts.iter().any(|f| f.file == v.file) && beside.is_file() {
-                fonts.push(Font { file: v.file, path: beside, font: Mutex::new(Weak::new()) });
+            let found = dir.join(v.file);
+            if !found.is_file() {
+                continue;
+            }
+            match self.fonts.iter_mut().find(|f| f.file == v.file) {
+                Some(f) => *f = Font { file: v.file, path: found, font: Mutex::new(Weak::new()) },
+                None => self.fonts.push(Font { file: v.file, path: found, font: Mutex::new(Weak::new()) }),
             }
         }
-        Ok(Bank { fonts, _default: read, levels: Mutex::new(HashMap::new()) })
+        self.levels.get_mut().unwrap().clear();
+        self
+    }
+
+    /// How many of the files `voices` names the bank plays from.
+    pub fn sampled(&self) -> usize {
+        self.fonts.len() - 1
     }
 
     /// The font at `index`, read now if nothing holds it.
