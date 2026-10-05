@@ -70,14 +70,15 @@ const MULDJORD: &[(u8, u8)] = &[
 ];
 
 /// Every program another bank plays: FreePats' Fender guitars sampled
-/// clean, jazz and through two amps; its tenor sax, upright piano and
-/// drawbar organ; Lars Muldjord's rock kit (CC BY 4.0: the music must
-/// credit him); a harmonica built from VCSL's Hohner Special 20s
-/// (`banks/harmonica.py`); and Karoryfer's basses built from their SFZ
-/// mappings (`banks/sfz.py`). The two distorted guitars are different
-/// amps, so a double-tracked pair is two guitars. The fingered bass
-/// reaches the bass's low E and under; the picked starts at the C♯ over
-/// it, so it suits a part that sits high.
+/// clean, jazz and through two amps; its fingered bass, tenor sax,
+/// upright piano and drawbar organ; Lars Muldjord's rock kit (CC BY 4.0:
+/// the music must credit him); a harmonica built from VCSL's Hohner
+/// Special 20s (`banks/harmonica.py`); and Karoryfer's Pastabass, picked,
+/// built from its SFZ mapping (`banks/sfz.py`). The two distorted guitars
+/// are different amps, so a double-tracked pair is two guitars. The
+/// fingered bass is a round floor from the low D to the A over the low
+/// E, a line over it folded down; the picked starts at the C♯ over the
+/// low E and reaches high, so it suits a part that sits high, a solo.
 pub const VOICES: &[Voice] = &[
     melodic(0, "upright-piano-kw.sf2", (21, 108)),
     melodic(16, "drawbar-organ.sf2", (33, 98)),
@@ -86,7 +87,7 @@ pub const VOICES: &[Voice] = &[
     melodic(27, "fsbs-clean.sf2", (35, 86)),
     melodic(29, "fsbs-dist2.sf2", (35, 86)),
     melodic(30, "fsbs-dist1.sf2", (35, 86)),
-    Voice { program: 33, percussion: false, file: "fashion-bass.sf2", bank: 0, preset: 33, keys: &[], range: (18, 69) },
+    melodic(33, "yr-finger-bass.sf2", (26, 45)),
     Voice { program: 34, percussion: false, file: "pasta-bass.sf2", bank: 0, preset: 34, keys: &[], range: (37, 85) },
     melodic(66, "tenor-sax.sf2", (43, 89)),
     Voice { program: 16, percussion: true, file: "muldjord-kit.sf2", bank: 0, preset: 0, keys: MULDJORD, range: (0, 127) },
