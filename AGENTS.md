@@ -47,6 +47,11 @@ workflow in GitHub Actions on a commit. It publishes `music-player-v<version>`
 for Linux, Windows and macOS, the version read from
 `crates/music-player/Cargo.toml`, so raise that first. A release ships
 `GeneralUser.sf2` beside the executable, where `Bank::find` looks for it.
+The sampled banks are a release of their own, `music-banks-<n>`: a `.7z`
+the player installs into the user's data folder when it is dropped on the
+window (`music-player/src/banks.rs`). It must hold every file
+`music::voices` names; the assets repo's `banks/README.md` says how one is
+packed.
 
 Run binaries with `--bin`, not `-p`. Selecting one package resolves shared
 dependencies (`syn`, `image`, `winit`, …) with a feature set no workspace-wide

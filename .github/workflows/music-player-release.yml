@@ -153,7 +153,12 @@ jobs:
           SHA: ${{ needs.prepare.outputs.sha }}
         run: |
           cat > notes.md <<'EOF'
-          Unpack and run `music-player`; the SoundFont ships beside it.
+          Unpack and run `music-player`; GeneralUser GS ships beside it and plays every instrument.
+
+          **The sampled banks** (guitars, basses, drum kit, piano, organ, sax, harmonica) are a
+          download of their own: take the `.7z` from the latest
+          [music-banks release](https://github.com/ThePuug/unnamed-hex-tile-mmo/releases?q=music-banks&expanded=true)
+          and drop it onto the player's window.
 
           **macOS:** the app is not notarized, so macOS refuses it on first open. Drag it to
           Applications, then either open System Settings → Privacy & Security and press
