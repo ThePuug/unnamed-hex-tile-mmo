@@ -244,7 +244,7 @@ pub const PIECES: &[Piece] = &[
             octave — and a cadence where the kit fills, the bass walks into \
             the next chord and the arpeggio holds or hammers in, and a bigger \
             fill, the seed's own, rolls up to the top of the kit into every \
-            new part of the song. Its crest is a solo of eight bars, the \
+            new part of the song. Its crest is a solo of six to twelve bars, the \
             seed's, the arpeggio resting to make room for it: a guitar, or the \
             bass stepping forward over the kit and the strings and choir with \
             the guitars resting, that sings the theme, answers itself a third \
@@ -263,12 +263,20 @@ pub const PIECES: &[Piece] = &[
             stories — a power ballad with a chorus before the solo and a verse \
             between, a slow burn from the arpeggio climbing once, an anthem \
             with the band in from the start, a requiem opened on the strings — \
-            each the band joining and leaving one layer a part. It opens on \
-            the arpeggio alone, four bars, the lead stating the theme over \
-            it; after the solo comes the final chorus, and out of it the \
-            ending: the band slowing into one hit on the tonic held under a \
-            cymbal's swell and cut with a last crash, or the arpeggio alone \
-            over the tonic, slowing, its last chord left to ring. The chorus \
+            each the band joining and leaving one layer a part, but where it drops \
+            at once to a quiet verse or comes back in at once. It opens on the \
+            arpeggio alone, the lead stating the theme over it. What follows the \
+            solo is the seed's, as often as power ballads do it: the final chorus, \
+            longer than the first as often as not; a verse dropped to the intro's \
+            players and the lead, quiet, before the final chorus; the guitar's solo, long, \
+            playing the song out; or a final chorus between two guitar solos. So is \
+            the ending: the band leaving a layer a part to its last few, who strike \
+            the tonic and let it ring, where a record would fade; one guitar alone \
+            walking up into the tonic's chord, rolled and let ring; the intro come \
+            back alone, four to eight bars, slowing into its tonic; the final chorus \
+            a step up and its last line sung again once or twice, the last time \
+            slowing into the band's tonic, held; or, seldom, one hit on the tonic \
+            held under a cymbal's swell and cut with a last crash. The chorus \
             heavier than the verse, the band growing as each layer joins, \
             not afraid of its loud parts; no sung words.",
     pool: "ballad",

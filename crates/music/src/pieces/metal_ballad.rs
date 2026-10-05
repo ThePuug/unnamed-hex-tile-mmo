@@ -1,7 +1,12 @@
 //! A metal ballad: a clean guitar's arpeggio that the band builds on a
 //! layer at a time — the bass, the kit, the distorted guitars palm-muted
-//! and then ringing open, the strings — to a solo at its crest, and back
-//! down to the arpeggio it opened on. What the band plays makes the part
+//! and then ringing open, the strings — to a solo at its crest. What
+//! follows the solo and how the song ends are drawn as often as power
+//! ballads do them, from surveys of their tabs: a last chorus, a quiet
+//! verse before it, or the solo playing the song out; the band leaving a
+//! layer at a time where a record would fade, a lone guitar's chord, the
+//! intro come back, the last line tagged out of a chorus a step up, or
+//! seldom the big hit. What the band plays makes the part
 //! of the song: with the guitars open it is a chorus, under the solo the
 //! climax, else a verse; each has its own harmony, the verse holding the
 //! tonic, the chorus opening off it and coming home by the sixth and
@@ -21,7 +26,7 @@
 //! Every choice is a draw from the seed's stream, one fork per purpose;
 //! the seed picks which shape at every level, never the next note.
 
-use crate::ladder::{self, turn, Bed, Story, Walk};
+use crate::ladder::{self, leap, turn, Bed, Story, Turn, Walk};
 use crate::pieces::Params;
 use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section as ScoreSection, TICKS_PER_EIGHTH as E};
@@ -317,12 +322,16 @@ use Layer::{Bass as BassLayer, Clean as CleanLayer, Kit as KitLayer, Pad as PadL
 use Telling::{Long, Off, Phrases, Riff};
 
 /// Every story is told in two-bar parts, a layer moving at every
-/// half-phrase's cadence, so the song is dense rather than long. It
-/// opens on its foot two parts, four bars, the lead stating the theme
-/// over the arpeggio; climbs to the solo, held four parts at the crest,
-/// eight bars, a solo's arc without its outstaying the song; and comes
-/// down a rung to the chorus, held two parts, the final chorus the
-/// ending lands out of. The
+/// half-phrase's cadence, so the song is dense rather than long. A story
+/// is the song's head: it opens on its foot, the lead stating the theme
+/// over the arpeggio, and climbs toward the solo, through a first chorus
+/// and back to a verse of a phrase or more, or in one long climb; how
+/// long it stays at each turn is the seed's, so the solo comes at its own
+/// place. Every story's chorus is three rungs deep or more — the guitars
+/// open, the strings full, the kit's ride — so a chorus moves a layer a
+/// part and more than one layer. What comes of
+/// the solo is the seed's `SongForm`, and the walk the ending needs its
+/// `Ending`'s. The
 /// guitars open its choruses; the lead states the theme over the
 /// arpeggio it opens on, plays it as a riff over the muted guitars,
 /// holds long tones in the part before a chorus — the breath a
@@ -335,21 +344,21 @@ const STORIES: [Story<Texture, Telling>; 4] = [
         name: "power ballad",
         weight: 3.0,
         base: Texture { clean: Clean::Full, ..Texture::BARE },
-        ladder: &[BassLayer, KitLayer, RhythmLayer, PadLayer, RhythmLayer, KitLayer, SoloLayer],
-        leads: &[Phrases, Phrases, Phrases, Riff, Long, Phrases, Phrases, Off],
-        turns: &[turn((0, 0), (1, 1)), turn((6, 6), (0, 0)), turn((4, 4), (0, 0)), turn((7, 7), (3, 3)), turn((6, 6), (1, 1))],
+        ladder: &[BassLayer, KitLayer, RhythmLayer, PadLayer, RhythmLayer, PadLayer, KitLayer, SoloLayer],
+        leads: &[Phrases, Phrases, Phrases, Riff, Long, Phrases, Phrases, Phrases, Off],
+        turns: &[turn((0, 0), (1, 2)), turn((7, 7), (0, 0)), turn((2, 3), (0, 0))],
         halves: (1, 1),
         pace: (0.2, 0.8),
     },
-    // One long climb from the arpeggio and the strings to the solo, and
-    // down.
+    // A slow climb from the arpeggio and the strings to a chorus, back to
+    // the verse, and up again to the solo.
     Story {
         name: "slow burn",
         weight: 2.0,
         base: Texture { clean: Clean::Full, ..Texture::BARE },
-        ladder: &[PadLayer, BassLayer, KitLayer, RhythmLayer, BassLayer, RhythmLayer, KitLayer, SoloLayer],
-        leads: &[Phrases, Phrases, Phrases, Phrases, Riff, Long, Phrases, Phrases, Off],
-        turns: &[turn((0, 0), (1, 1)), turn((8, 8), (3, 3)), turn((7, 7), (1, 1))],
+        ladder: &[PadLayer, BassLayer, KitLayer, RhythmLayer, BassLayer, RhythmLayer, PadLayer, KitLayer, SoloLayer],
+        leads: &[Phrases, Phrases, Phrases, Phrases, Riff, Long, Phrases, Phrases, Phrases, Off],
+        turns: &[turn((0, 0), (1, 2)), turn((8, 8), (0, 0)), turn((3, 4), (0, 0))],
         halves: (1, 1),
         pace: (0.0, 0.5),
     },
@@ -362,7 +371,7 @@ const STORIES: [Story<Texture, Telling>; 4] = [
         base: Texture { clean: Clean::Full, bass: Bass::Held, kit: Kit::Time, ..Texture::BARE },
         ladder: &[RhythmLayer, PadLayer, RhythmLayer, BassLayer, PadLayer, KitLayer, SoloLayer],
         leads: &[Phrases, Riff, Long, Phrases, Phrases, Phrases, Phrases, Off],
-        turns: &[turn((0, 0), (1, 1)), turn((5, 5), (0, 0)), turn((2, 2), (0, 0)), turn((7, 7), (3, 3)), turn((6, 6), (1, 1))],
+        turns: &[turn((0, 0), (0, 1)), turn((6, 6), (0, 0)), turn((1, 1), (0, 0))],
         halves: (1, 1),
         pace: (0.4, 1.0),
     },
@@ -374,11 +383,67 @@ const STORIES: [Story<Texture, Telling>; 4] = [
         base: Texture { pad: Pad::Thin, ..Texture::BARE },
         ladder: &[CleanLayer, BassLayer, KitLayer, RhythmLayer, RhythmLayer, PadLayer, KitLayer, SoloLayer],
         leads: &[Phrases, Phrases, Phrases, Phrases, Riff, Phrases, Phrases, Phrases, Off],
-        turns: &[turn((0, 0), (1, 1)), turn((8, 8), (3, 3)), turn((7, 7), (1, 1))],
+        turns: &[turn((0, 0), (1, 2))],
         halves: (1, 1),
         pace: (0.0, 0.6),
     },
 ];
+
+/// What comes of the solo, as often as power ballads do it — a survey of
+/// fifty-four with solos, their tabs' section marks: the final chorus,
+/// half of them, held longer than an earlier one as often as not; a verse
+/// back on the intro's quiet players and then the final chorus, a fifth;
+/// the song ending on the solo, long, an eighth; or a final chorus between
+/// two solos, the second playing the song out, a sixth. The solos
+/// surveyed are guitars', so the kit's and the bass's come back to a
+/// chorus.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SongForm {
+    LastChorus,
+    QuietVerse,
+    SoloOut,
+    TwoSolos,
+}
+
+impl SongForm {
+    fn draw(soloist: Soloist, rng: &mut Rng) -> SongForm {
+        let outro = if soloist == Soloist::Guitar { 1.0 } else { 0.0 };
+        [SongForm::LastChorus, SongForm::QuietVerse, SongForm::SoloOut, SongForm::TwoSolos][rng.weighted(&[50.0, 20.0, 13.0 * outro, 17.0 * outro])]
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            SongForm::LastChorus => "solo to the last chorus",
+            SongForm::QuietVerse => "solo to a quiet verse",
+            SongForm::SoloOut => "solo out",
+            SongForm::TwoSolos => "two solos",
+        }
+    }
+
+    /// The walk from the story's head through the solo, on the rung `solo`,
+    /// the chorus the rung under it: a solo of six or eight bars, and the
+    /// walk's closing halves where it is the walk's height; a long one
+    /// where it ends the song. A chorus out of it moves a layer at every
+    /// part, down a rung or two and back, and again as often as the seed
+    /// draws, so it is as long as the first or longer and more than one
+    /// layer moves. The quiet verse drops to the foot and takes a layer
+    /// back, a phrase, before the band comes back in.
+    fn turns(self, solo: i32) -> Vec<Turn> {
+        let chorus = solo - 1;
+        let out_of_it = [turn((chorus, chorus), (0, 0)), turn((chorus - 2, chorus - 1), (0, 0)), turn((chorus, chorus), (0, 0)), turn((chorus - 1, chorus), (0, 0)), turn((chorus, chorus), (0, 0))];
+        match self {
+            SongForm::LastChorus => [turn((solo, solo), (2, 3))].into_iter().chain(out_of_it).collect(),
+            SongForm::QuietVerse => vec![turn((solo, solo), (2, 3)), leap((0, 0), (0, 0)), turn((1, 1), (0, 0)), leap((chorus, chorus), (0, 0)), turn((chorus - 2, chorus - 1), (0, 0)), turn((chorus, chorus), (0, 0))],
+            SongForm::SoloOut => vec![turn((solo, solo), (5, 7))],
+            SongForm::TwoSolos => [turn((solo, solo), (2, 3))].into_iter().chain(out_of_it.into_iter().take(3)).chain([turn((solo, solo), (3, 5))]).collect(),
+        }
+    }
+
+    /// Whether the song ends on its final chorus, not a solo.
+    fn ends_on_chorus(self) -> bool {
+        matches!(self, SongForm::LastChorus | SongForm::QuietVerse)
+    }
+}
 
 /// The arpeggio's picking patterns, in chord tones counted up from the
 /// root: 0 the root, 1 its third, 2 its fifth, 3 the octave, 4 the
@@ -427,30 +492,79 @@ struct Design {
     verse: [&'static Schema; 2],
     chorus: [&'static Schema; 2],
     climax: [&'static Schema; 2],
+    song: SongForm,
     ending: Ending,
+    /// How many times more the tag sings the last line.
+    tag: u32,
+    /// The semitones the final chorus is lifted by; none where it keeps
+    /// the key.
+    lift: i8,
 }
 
-/// How the song ends, out of its final chorus.
+/// How the song ends, as often as power ballads do — a survey of
+/// thirty-two, their transcriptions' endings. Studio ballads fade most,
+/// and a song played once has no fade, so the band leaves a layer a part
+/// down to its last few players: the fade composed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Ending {
+    /// The band leaving a layer a part to its last few, who strike the
+    /// tonic and let it ring.
+    Subtraction,
+    /// After the band's last bar one guitar walks up alone from the fifth
+    /// under the tonic into its chord, rolled and let ring.
+    LoneChord,
+    /// The intro come back alone, the lead singing the theme over it again,
+    /// four to six bars of it, slowing into its tonic, left to ring.
+    Bookend,
+    /// The last line sung again, once or twice, the last time slowing into
+    /// the band's tonic, held and let ring; most often out of a final
+    /// chorus a step up.
+    Tag,
     /// The band slows into one hit on the tonic, held under a cymbal's
-    /// swell and cut with a last crash, the room ringing after.
+    /// swell and cut with a last crash, the room ringing after: a live
+    /// show's ending, seldom a studio ballad's.
     Big,
-    /// The band falls away to the clean arpeggio alone, slowing over the
-    /// tonic, its last chord left to ring.
-    Arpeggio,
 }
+
+impl Ending {
+    fn draw(song: SongForm, rng: &mut Rng) -> Ending {
+        let chorus = if song.ends_on_chorus() { 1.0 } else { 0.0 };
+        [Ending::Subtraction, Ending::LoneChord, Ending::Bookend, Ending::Tag, Ending::Big][rng.weighted(&[30.0 * chorus, 21.0, 21.0, 18.0 * chorus, 3.0])]
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Ending::Subtraction => "the band leaving",
+            Ending::LoneChord => "a lone guitar's chord",
+            Ending::Bookend => "the intro again",
+            Ending::Tag => "a tag",
+            Ending::Big => "a big ending",
+        }
+    }
+
+    /// The walk's own last turns: the fade's down to its last few, the
+    /// bookend's back to the intro at once.
+    fn turns(self) -> Vec<Turn> {
+        match self {
+            Ending::Subtraction => vec![turn((1, 2), (0, 0))],
+            Ending::Bookend => vec![leap((0, 0), (1, 1))],
+            _ => vec![],
+        }
+    }
+}
+
+/// The bars of the line a tag sings again.
+const TAG_BARS: u32 = 2;
 
 /// The ending's level against the solo, over its hit and its ring: a
 /// ring falling away through the section puts the hit some four LU over
 /// its mean, so the hit lands at the chorus's height.
 const LEVEL_END: f32 = LEVEL_CHORUS - 4.0;
 
-/// The bars the ending's hit is held before the cut, the bars the room
-/// rings after it, and the arpeggio coda's bars before its last chord.
+/// The bars the ending's hit is held before the cut, and the bars the
+/// room rings after it, or after a last chord.
 const HELD_BARS: u32 = 1;
 const RING_BARS: u32 = 2;
-const CODA_BARS: u32 = 2;
 
 /// How far the song slows into its last chord: the tempo there, against
 /// the song's.
@@ -508,16 +622,21 @@ impl Form {
     fn texture_at(&self, bar: u32) -> Texture {
         self.walk.bed_at(bar)
     }
+    /// The chord of `bar`; past the walk, where a tag sings its last
+    /// line again, the line's.
     fn chord(&self, bar: u32) -> Chord {
+        let at = self.bars();
+        let bar = if bar >= at && self.design.ending == Ending::Tag { at - TAG_BARS + (bar - at) % TAG_BARS } else { bar };
         self.tune.chords[bar as usize]
     }
     fn bars(&self) -> u32 {
         self.walk.bars()
     }
     /// Whether `bar` is the walk's last, after which the ending strikes
-    /// its own chord, so nothing struck there leans into the next bar.
+    /// its own chord, so nothing struck there leans into the next bar —
+    /// but where a tag turns the last line round into itself.
     fn last(&self, bar: u32) -> bool {
-        bar + 1 == self.bars()
+        bar + 1 == self.bars() && self.design.ending != Ending::Tag
     }
     /// Whether the bass solos at `bar`: the band under it keeps out of its
     /// register.
@@ -543,6 +662,16 @@ impl Form {
     fn drop_from(&self, bar: u32, last_beat: u32) -> Option<u32> {
         (self.design.soloist != Soloist::Drums && self.solos().iter().any(|(a, z)| stages(*a, *z).climax == bar + 1)).then_some(last_beat)
     }
+    /// The bar the final chorus's first whole phrase opens on, where a
+    /// key change lifts it: none where it reaches no phrase's start.
+    fn final_chorus(&self) -> Option<u32> {
+        let parts = &self.walk.parts;
+        let last = parts.iter().rposition(|p| p.bed.section() == Section::Chorus)?;
+        let first = (0..=last).rev().take_while(|i| parts[*i].bed.section() == Section::Chorus).last()?;
+        let at = parts[first].a.next_multiple_of(phrase::BARS);
+        (at < parts[last].b).then_some(at)
+    }
+
     /// The bars the solo plays, each a run of the walk's.
     fn solos(&self) -> Vec<(u32, u32)> {
         let mut out: Vec<(u32, u32)> = Vec::new();
@@ -573,13 +702,24 @@ fn compose(params: &Params) -> (Score, Form) {
         let (open, closed) = split(schemata);
         [open[rng.below(open.len())], closed[rng.below(closed.len())]]
     };
+    let soloist = [Soloist::Guitar, Soloist::Drums, Soloist::Bass][skeleton.weighted(&[3.0, 2.0, 2.0])];
+    let song = SongForm::draw(soloist, &mut skeleton);
+    let close = Ending::draw(song, &mut skeleton);
+    // A key change comes before a tag in most of the songs surveyed, and
+    // before some fades; a whole step as often as not.
+    let lifted = match close {
+        Ending::Tag => skeleton.chance(0.7),
+        Ending::Subtraction => skeleton.chance(0.25),
+        _ => false,
+    };
+    let lift = if lifted { [2, 1][skeleton.weighted(&[2.0, 1.0])] } else { 0 };
     let design = Design {
         lead,
         second: if lead == OVERDRIVEN { DISTORTION } else { OVERDRIVEN },
         clean: [CLEAN_GUITAR, PIANO][skeleton.weighted(&[3.0, 1.0])],
         picking: PICKING[skeleton.below(PICKING.len())],
         drone: [None, Some(0), Some(4)][skeleton.weighted(&[2.0, 2.0, 1.0])],
-        soloist: [Soloist::Guitar, Soloist::Drums, Soloist::Bass][skeleton.weighted(&[3.0, 2.0, 2.0])],
+        soloist,
         held_climax: skeleton.chance(0.6),
         half_time: skeleton.chance(0.35),
         fill: [Fill::Descent, Fill::SnareThenToms, Fill::Pairs, Fill::HandHandKick][skeleton.weighted(&[2.0, 2.0, 1.0, if groove.groups[0] == 3 { 2.0 } else { 0.5 }])],
@@ -590,17 +730,21 @@ fn compose(params: &Params) -> (Score, Form) {
         verse: pair(SONG.verse, &mut skeleton),
         chorus: pair(SONG.chorus, &mut skeleton),
         climax: pair(SONG.climax, &mut skeleton),
-        ending: [Ending::Big, Ending::Arpeggio][skeleton.weighted(&[3.0, 2.0])],
+        song,
+        ending: close,
+        // The tag twice more often than three times.
+        tag: [1, 2][skeleton.weighted(&[2.0, 1.0])],
+        lift,
     };
     let instruments = vec![
-        Instrument { name: "bass", program: BASS, channel: CH_BASS, role: Role::Pluck, low: 28, high: 52, reverb: 15, pan: 0, level: BAND },
-        Instrument { name: "arpeggio", program: design.clean, channel: CH_CLEAN, role: Role::Pluck, low: 40, high: 79, reverb: 55, pan: 18, level: ARPEGGIO },
+        Instrument { name: "bass", program: BASS, channel: CH_BASS, role: Role::Pluck, low: 28, high: 55, reverb: 15, pan: 0, level: BAND },
+        Instrument { name: "arpeggio", program: design.clean, channel: CH_CLEAN, role: Role::Pluck, low: 40, high: 81, reverb: 55, pan: 18, level: ARPEGGIO },
         Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 55, high: 91, reverb: 45, pan: 0, level: LEAD },
         Instrument { name: "guitar, left", program: DISTORTION, channel: CH_LEFT, role: Role::Pluck, low: 38, high: 76, reverb: 25, pan: -58, level: GUITARS },
         Instrument { name: "guitar, right", program: OVERDRIVEN, channel: CH_RIGHT, role: Role::Pluck, low: 38, high: 76, reverb: 25, pan: 58, level: GUITARS },
         Instrument { name: "guitar, the second", program: design.second, channel: CH_SECOND, role: Role::Melody, low: 50, high: 72, reverb: 45, pan: -30, level: BAND },
         Instrument { name: "strings", program: SLOW_STRINGS, channel: CH_PAD, role: Role::Sustain, low: 52, high: 79, reverb: 75, pan: -20, level: BAND },
-        Instrument { name: "choir", program: CHOIR_AAHS, channel: CH_CHOIR, role: Role::Sustain, low: 52, high: 72, reverb: 85, pan: 26, level: BAND },
+        Instrument { name: "choir", program: CHOIR_AAHS, channel: CH_CHOIR, role: Role::Sustain, low: 52, high: 74, reverb: 85, pan: 26, level: BAND },
         match design.soloist {
             Soloist::Bass => Instrument { name: "solo bass", program: SOLO_BASS, channel: CH_SOLO, role: Role::Melody, low: SOLO_BASS_LOW, high: BASS_SOLO.1, reverb: 35, pan: 0, level: SOLO_LEVEL },
             _ => Instrument { name: "solo guitar", program: DISTORTION, channel: CH_SOLO, role: Role::Melody, low: SOLO.0 - 4, high: SOLO.1, reverb: 40, pan: 12, level: SOLO_LEVEL },
@@ -619,7 +763,7 @@ fn compose(params: &Params) -> (Score, Form) {
         _ => "?",
     };
     score.summary = format!(
-        "{} on the {}: a {:?} in a {:?}; verse {} and {}, chorus {} and {}, climax {} and {}; {} lead, {} arpeggio, {}",
+        "{} on the {}: a {:?} in a {:?}; verse {} and {}, chorus {} and {}, climax {} and {}; {} lead, {} arpeggio, {}, {}, ending on {}",
         story.name,
         groove.name,
         design.theme.shape,
@@ -633,11 +777,15 @@ fn compose(params: &Params) -> (Score, Form) {
         name(design.lead),
         name(design.clean),
         design.soloist.name(),
+        design.song.name(),
+        design.ending.name(),
     );
-    score.facets = vec![groove.name, design.soloist.name()];
+    score.facets = vec![groove.name, design.soloist.name(), design.song.name(), design.ending.name()];
     let bar = score.bar();
 
-    let walk = story.place(&mut skeleton, &mut score, 4, &[], |_, _| 1.0);
+    let solo = story.ladder.len() as i32;
+    let tail: Vec<Turn> = design.song.turns(solo).into_iter().chain(design.ending.turns()).collect();
+    let walk = story.place(&mut skeleton, &mut score, 4, &tail, |_, _| 1.0);
     // A verse grows by every layer that joins it, from the foot to the
     // full band's verse, and falls by every one that leaves.
     let top_verse = walk.parts.iter().filter(|p| p.bed.section() == Section::Verse).map(|p| p.rung).max().unwrap_or(0).max(1);
@@ -700,18 +848,25 @@ fn compose(params: &Params) -> (Score, Form) {
     teller::tell(&mut score, &teller, &form.tune, &form.walk.runs(), &mut rng.fork(7));
     score.mark_phrases(0, form.bars());
     ending(&mut score, &form, &mut rng.fork(8));
+    if let Some(at) = form.final_chorus().filter(|_| form.design.lift != 0) {
+        score.modulate(at * form.bar, form.design.lift);
+        score.summary.push_str(if form.design.lift == 2 { "; the last chorus a whole step up" } else { "; the last chorus a half step up" });
+    }
     score.finish();
     (score, form)
 }
 
-/// The song's ending, after its final chorus. The big ending slows over
-/// the chorus's last two bars into one hit on the tonic: the guitars'
-/// power chord and the bass's low root held, the strings and choir on the
-/// chord, the lead on its home tonic, the kit's crash and kick on it and
-/// a roll on the cymbal swelling to the cut, a last crash and kick, where
-/// everything stops and the room rings. The arpeggio coda leaves the
-/// clean arpeggio alone over the tonic for two bars, slowing, and its last
-/// chord struck low to high and left to ring.
+/// The song's ending, out of the walk's last part, as its `Ending` has
+/// it. The big ending slows over the last two bars into the band's hit
+/// on the tonic (`hit`), a roll on the cymbal's edge swelling to the cut,
+/// a last crash and kick, where everything stops and the room rings. The
+/// tag sings the last line again, two bars, once or twice, the last time
+/// its first bar slowing into the hit, held and let ring. The lone guitar
+/// takes the bar after the band's last alone, its low tonic held and a
+/// walk up from the fifth under it into the tonic, rolled low to high and
+/// let ring. The bookend's and the band leaving's walks end on the
+/// intro's players or the fade's last few, who strike the tonic and let
+/// it ring (`last_chord`), the bookend slowing into it.
 fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
     let key = score.key;
     let bar = form.bar;
@@ -730,32 +885,18 @@ fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
             // One section from the hit, ringing: the pedal falls slowly at
             // first, so the hit, the swell and the cut stand, and the room
             // rings on after. A ring alone is too quiet to set a level by.
-            let ring_at = at + HELD_BARS;
             section(score, "end", at, HELD_BARS + RING_BARS, LEVEL_END, true);
-            let (hit, cut) = (at * bar, ring_at * bar);
+            let (hit_at, cut) = (at * bar, (at + HELD_BARS) * bar);
+            hit(score, hit_at, cut, rng);
             let root = at_degree(&key, tonic, 0, 40, 52, 45);
             for channel in [CH_LEFT, CH_RIGHT] {
                 for p in [root, root + 7, root + 12] {
-                    score.add(Note { start: hit, len: cut - hit - E / 8, pitch: p, vel: vel(0, rng), channel });
                     score.add(Note { start: cut, len: E, pitch: p, vel: vel(-6, rng), channel });
                 }
             }
-            let low = at_degree(&key, tonic, 0, 28, 40, 33);
-            score.add(Note { start: hit, len: cut - hit - E / 8, pitch: low, vel: vel(4, rng), channel: CH_BASS });
-            score.add(Note { start: cut, len: E, pitch: low, vel: vel(4, rng), channel: CH_BASS });
-            for p in tonic.pitches_within(&key, 55, 72).into_iter().take(3) {
-                score.add(Note { start: hit, len: cut - hit, pitch: p, vel: vel(-6, rng), channel: CH_PAD });
-            }
-            for degree in [0, 4] {
-                let p = at_degree(&key, tonic, degree, 52, 72, 62);
-                score.add(Note { start: hit, len: cut - hit, pitch: p, vel: vel(-8, rng), channel: CH_CHOIR });
-            }
-            let home = tune::home_tonic(&key, TUNE.0, TUNE.1);
-            score.add(Note { start: hit, len: cut - hit - E / 8, pitch: home, vel: vel(4, rng), channel: CH_LEAD });
-            // Struck under the band's full stroke: on one instant every
-            // player's hit is the song's peak.
-            for (t, pitch, accent) in [(hit, CRASH, 2), (hit, KICK, 0), (cut, CRASH, -4), (cut, KICK, -6)] {
-                score.add(Note { start: t, len: 2 * E, pitch, vel: vel(accent, rng), channel: CH_KIT });
+            score.add(Note { start: cut, len: E, pitch: at_degree(&key, tonic, 0, 28, 40, 33), vel: vel(4, rng), channel: CH_BASS });
+            for (pitch, accent) in [(CRASH, -4), (KICK, -6)] {
+                score.add(Note { start: cut, len: 2 * E, pitch, vel: vel(accent, rng), channel: CH_KIT });
             }
             // The swell: sixteenths on the ride's edge from the bar's
             // middle, rising to the cut.
@@ -763,28 +904,125 @@ fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
             let slots = (eighths - from) * 2;
             for k in 0..slots {
                 let x = k as f32 / slots as f32;
-                score.add(Note { start: hit + from * E + k * E / 2, len: E / 2, pitch: CRASH_2, vel: vel(-34 + (28.0 * x) as i32, rng), channel: CH_KIT });
+                score.add(Note { start: hit_at + from * E + k * E / 2, len: E / 2, pitch: CRASH_2, vel: vel(-34 + (28.0 * x) as i32, rng), channel: CH_KIT });
             }
         }
-        Ending::Arpeggio => {
-            let last = at + CODA_BARS;
-            score.ritardando(at * bar, last * bar, SLOWEST);
-            section(score, "coda", at, CODA_BARS, LEVEL_FOOT, false);
-            section(score, "ring", last, RING_BARS, LEVEL_FOOT - 4.0, true);
-            let tones = tonic.pitches_within(&key, 40, 76);
-            let pattern = form.design.picking;
-            for b in at..last {
-                for i in 0..eighths {
-                    let pitch = tones[pattern[i as usize % pattern.len()].min(tones.len() - 1)];
-                    let start = b * bar + i * E;
-                    score.add(Note { start, len: last * bar - start, pitch, vel: vel(if strong.contains(&i) { -8 } else { -16 }, rng), channel: CH_CLEAN });
-                }
+        Ending::Tag => {
+            // The line as the band played it, turned round into itself, the
+            // last time its first bar alone.
+            let line = at - TAG_BARS;
+            let times = form.design.tag;
+            for k in 0..times {
+                let to = if k + 1 == times { line + 1 } else { at };
+                let start = score.again(line, to);
+                score.sections.push(ScoreSection { name: "tag", start: start * bar, end: (start + to - line) * bar, trim: 1.0, level: Some(LEVEL_CHORUS), rings: false });
             }
-            for (k, p) in tones.iter().take(6).enumerate() {
-                let start = last * bar + k as u32 * E / 4;
-                score.add(Note { start, len: RING_BARS * bar - k as u32 * E / 4, pitch: *p, vel: vel(-6, rng), channel: CH_CLEAN });
-            }
+            let hit_bar = score.harmony.len() as u32;
+            score.ritardando((hit_bar - 1) * bar, hit_bar * bar, SLOWEST);
+            section(score, "end", hit_bar, HELD_BARS + RING_BARS, LEVEL_END, true);
+            hit(score, hit_bar * bar, (hit_bar + HELD_BARS + RING_BARS) * bar, rng);
         }
+        Ending::LoneChord => {
+            score.ritardando(at * bar, (at + 1) * bar, SLOWEST);
+            section(score, "lone guitar", at, 1, LEVEL_FOOT, false);
+            section(score, "ring", at + 1, RING_BARS, LEVEL_FOOT - 4.0, true);
+            // The low tonic held to the bar's last group, then the walk up
+            // from the fifth under it, three even strokes, into the chord.
+            let low = at_degree(&key, tonic, 0, 45, 56, 50);
+            let home = key.absolute_degree(low).unwrap();
+            let group = *form.design.groove.groups.last().unwrap() as u32;
+            let walk_at = at * bar + (eighths - group) * E;
+            score.add(Note { start: at * bar, len: walk_at - at * bar - E / 8, pitch: low, vel: vel(-6, rng), channel: CH_CLEAN });
+            let unit = group * E / 3;
+            for (k, step) in [-3, -2, -1].into_iter().enumerate() {
+                score.add(Note { start: walk_at + k as u32 * unit, len: unit - E / 8, pitch: key.pitch(home + step, 4), vel: vel(-10 + 2 * k as i32, rng), channel: CH_CLEAN });
+            }
+            let sus = rng.chance(0.4);
+            roll(score, (at + 1) * bar, RING_BARS * bar, sus, rng);
+        }
+        Ending::Bookend => {
+            score.ritardando((at - 2) * bar, at * bar, SLOWEST);
+            section(score, "ring", at, RING_BARS, LEVEL_FOOT - 4.0, true);
+            last_chord(score, form.texture_at(at - 1), at * bar, rng);
+        }
+        Ending::Subtraction => {
+            section(score, "ring", at, RING_BARS, LEVEL_FOOT - 4.0, true);
+            last_chord(score, form.texture_at(at - 1), at * bar, rng);
+        }
+    }
+}
+
+/// The band's hit on the tonic at `from`, held to `to`: the guitars'
+/// power chord and the bass's low root, the strings and choir on the
+/// chord, the lead on its home tonic, the crash and the kick, each struck
+/// under its full stroke, since on one instant every player's hit is the
+/// song's peak.
+fn hit(score: &mut Score, from: u32, to: u32, rng: &mut Rng) {
+    let key = score.key;
+    let tonic = Chord::triad(0);
+    let root = at_degree(&key, tonic, 0, 40, 52, 45);
+    for channel in [CH_LEFT, CH_RIGHT] {
+        for p in [root, root + 7, root + 12] {
+            score.add(Note { start: from, len: to - from - E / 8, pitch: p, vel: vel(0, rng), channel });
+        }
+    }
+    let low = at_degree(&key, tonic, 0, 28, 40, 33);
+    score.add(Note { start: from, len: to - from - E / 8, pitch: low, vel: vel(4, rng), channel: CH_BASS });
+    for p in tonic.pitches_within(&key, 55, 72).into_iter().take(3) {
+        score.add(Note { start: from, len: to - from, pitch: p, vel: vel(-6, rng), channel: CH_PAD });
+    }
+    for degree in [0, 4] {
+        let p = at_degree(&key, tonic, degree, 52, 72, 62);
+        score.add(Note { start: from, len: to - from, pitch: p, vel: vel(-8, rng), channel: CH_CHOIR });
+    }
+    let home = tune::home_tonic(&key, TUNE.0, TUNE.1);
+    score.add(Note { start: from, len: to - from - E / 8, pitch: home, vel: vel(4, rng), channel: CH_LEAD });
+    for (pitch, accent) in [(CRASH, 2), (KICK, 0)] {
+        score.add(Note { start: from, len: 2 * E, pitch, vel: vel(accent, rng), channel: CH_KIT });
+    }
+}
+
+/// The tonic struck at `at` by whoever of the band `texture` still has,
+/// and let ring through the ending's ring: the arpeggio's chord rolled,
+/// the bass's root, the strings on the chord and the choir on its root
+/// and fifth where the strings were full.
+fn last_chord(score: &mut Score, texture: Texture, at: u32, rng: &mut Rng) {
+    let key = score.key;
+    let tonic = Chord::triad(0);
+    let ring = RING_BARS * score.bar();
+    if texture.clean != Clean::Off {
+        roll(score, at, ring, false, rng);
+    }
+    if texture.bass != Bass::Off {
+        score.add(Note { start: at, len: ring - E / 8, pitch: at_degree(&key, tonic, 0, 28, 40, 33), vel: vel(-2, rng), channel: CH_BASS });
+    }
+    if texture.pad != Pad::Off {
+        for p in tonic.pitches_within(&key, 55, 72).into_iter().take(3) {
+            score.add(Note { start: at, len: ring, pitch: p, vel: vel(-18, rng), channel: CH_PAD });
+        }
+    }
+    if texture.pad == Pad::Full {
+        for degree in [0, 4] {
+            score.add(Note { start: at, len: ring, pitch: at_degree(&key, tonic, degree, 52, 72, 62), vel: vel(-24, rng), channel: CH_CHOIR });
+        }
+    }
+}
+
+/// The tonic struck on the arpeggio's guitar or piano low to high from its
+/// lowest root, a thirty-second apart, and let ring for `ring`; its top
+/// third a step down where `sus`, the suspended second a clean chord
+/// rings.
+fn roll(score: &mut Score, at: u32, ring: u32, sus: bool, rng: &mut Rng) {
+    let key = score.key;
+    let tonic = Chord::triad(0);
+    let root = at_degree(&key, tonic, 0, 40, 52, 40);
+    let mut tones: Vec<u8> = tonic.pitches_within(&key, root, 79).into_iter().take(6).collect();
+    if let Some(third) = tones.iter_mut().rev().find(|p| key.degree_of(**p) == Some(2)).filter(|_| sus) {
+        *third = key.pitch(key.absolute_degree(*third).unwrap() - 1, 4);
+    }
+    for (k, p) in tones.into_iter().enumerate() {
+        let start = at + k as u32 * E / 4;
+        score.add(Note { start, len: ring - k as u32 * E / 4, pitch: p, vel: vel(-6, rng), channel: CH_CLEAN });
     }
 }
 
@@ -878,8 +1116,9 @@ fn arpeggio(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// held to the next, or on every eighth, the octave over it on the
 /// variant bar's push into the backbeat now and then. Into a new chord it
 /// takes the last eighth on a tone of the key a step from the next root —
-/// the passing tone between where they are a third apart — on a third of
-/// the changes and on every cadence's; under the kit's solo it holds the
+/// the passing tone between where they are a third apart, the far side
+/// of it where they are a step apart, since the near side is the root it
+/// leaves — on a third of the changes and on every cadence's; under the kit's solo it holds the
 /// root through every bar, the pedal the drums play over, struck again
 /// at the variant bar's middle and stepping into the next root on the
 /// cadence.
@@ -903,7 +1142,7 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
             let into = (variation::role(b) == Bar::Cadence && !form.last(b)).then(|| {
                 let next = form.chord(b + 1);
                 let to = at_degree(&key, next, next.root, 28, 40, root);
-                key.pitch(key.absolute_degree(to).unwrap() + if to > root { -1 } else { 1 }, 4).clamp(28, 52)
+                approach(&key, root, to)
             });
             let held = match variation::role(b) {
                 Bar::Variant => middle,
@@ -922,9 +1161,7 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
         let next = (!form.last(b) && !form.stop_time(b + 1)).then(|| form.chord(b + 1)).filter(|n| n.root != chord.root || cadence(b));
         let approach = next.filter(|_| cadence(b) || rng.chance(0.35)).map(|n| {
             let to = at_degree(&key, n, n.root, 28, 40, root);
-            let (rd, td) = (key.absolute_degree(root).unwrap(), key.absolute_degree(to).unwrap());
-            let step = if (td - rd).abs() == 2 { (td + rd) / 2 } else if td > rd { td - 1 } else { td + 1 };
-            key.pitch(step, 4).clamp(28, 52)
+            approach(&key, root, to)
         });
         let last_beat = eighths - *groove.groups.last().unwrap() as u32;
         let dropped = form.drop_from(b, last_beat);
@@ -959,6 +1196,25 @@ fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
         if let Some(p) = approach {
             score.add(Note { start: start + (eighths - 1) * E, len: E * 3 / 4, pitch: p, vel: vel(-6, rng), channel: CH_BASS });
         }
+    }
+}
+
+/// The tone a bass on `from` takes into `to`, in the bass's register: a
+/// step from `to`, the passing tone where they are a third apart, else on
+/// the near side, but the far side where they are a step apart, since the
+/// near side is `from` itself — unless the far side leaves the register.
+fn approach(key: &Key, from: u8, to: u8) -> u8 {
+    let (f, t) = (key.absolute_degree(from).unwrap(), key.absolute_degree(to).unwrap());
+    let near = match t - f {
+        2 | -2 => (f + t) / 2,
+        d if d > 0 => t - 1,
+        _ => t + 1,
+    };
+    let far = key.pitch(t + (t - f), 4);
+    if (t - f).abs() == 1 && (28..=55).contains(&far) {
+        far
+    } else {
+        key.pitch(near, 4).clamp(28, 55)
     }
 }
 
@@ -1414,7 +1670,9 @@ fn peak_of(key: &Key, chord: Chord, (lo_d, hi_d): (i32, i32)) -> i32 {
 /// where the way is short — so the theme is heard in its own tones on
 /// the beats and a guitarist's run between them.
 fn woven(key: &Key, notes: &[Placed], then: Option<u8>) -> Vec<Placed> {
-    let degree = |p: u8| key.absolute_degree(p).unwrap();
+    // The note after may be the next bar's, under a borrowed chord: it
+    // counts as the degree it stands for.
+    let degree = |p: u8| key.standing_degree(p);
     let mut out = Vec::new();
     for (i, (s, l, p)) in notes.iter().enumerate() {
         let next = notes.get(i + 1).map(|n| n.2).or(then).unwrap_or(*p);
@@ -1719,7 +1977,11 @@ fn sound(score: &mut Score, form: &Form, mut line: Vec<Placed>, (lo, hi): (u8, u
             let chord = form.chord(s / form.bar);
             let key = key_at(*s);
             let third = key.pitch(degree(*s, *p) + 2, 4);
-            let pitch = if !score.strong(*s) || chord.holds(&key, third) { third } else { key.pitch(degree(*s, *p) - 2, 4) };
+            // A third under is a sixth over where the register has no room
+            // under the solo.
+            let under = key.pitch(degree(*s, *p) - 2, 4);
+            let under = if under < lo { key.pitch(degree(*s, *p) + 5, 4) } else { under };
+            let pitch = if !score.strong(*s) || chord.holds(&key, third) { third } else { under };
             (*s, *l, pitch)
         })
         .collect();
@@ -1748,7 +2010,8 @@ fn on_the_chord(score: &Score, form: &Form, line: &mut [Placed], lo: u8, hi: u8)
 mod tests {
     use super::*;
 
-    /// Every story is a ladder, and every one reaches the solo.
+    /// Every story is a ladder, every one reaches the solo, and every
+    /// one's chorus is three rungs deep under it, so a chorus can move.
     #[test]
     fn every_story_is_a_ladder_to_the_solo() {
         for story in &STORIES {
@@ -1756,7 +2019,8 @@ mod tests {
             assert!(matches!(story.ladder.last(), Some(Layer::Solo)), "{}: the solo is not its crest", story.name);
             assert_eq!(*story.leads.last().unwrap(), Off, "{}: the lead sings over the solo", story.name);
             assert_eq!(story.base.section(), Section::Verse, "{}: does not open on a verse", story.name);
-            assert!((0..story.ladder.len()).any(|r| story.bed(r).section() == Section::Chorus), "{}: has no chorus", story.name);
+            let top = story.ladder.len() - 1;
+            assert!((top - 2..=top).all(|r| story.bed(r).section() == Section::Chorus), "{}: a chorus under three rungs deep", story.name);
         }
     }
 
@@ -1777,8 +2041,9 @@ mod tests {
             assert!(score.sections.last().unwrap().rings, "seed {seed}: the ending does not ring");
             assert_eq!(score.harmony[0].root, 0);
             assert_eq!(score.harmony.last().unwrap().root, 0);
+            let lift = score.lifts.last().map_or(0, |(_, by)| *by) as u8;
             for n in score.notes.iter().filter(|n| n.channel == CH_LEAD && n.len >= E / 2) {
-                assert!((TUNE.0..=TUNE.1).contains(&n.pitch), "seed {seed}: the tune at {} leaves its register", n.pitch);
+                assert!((TUNE.0..=TUNE.1 + lift).contains(&n.pitch), "seed {seed}: the tune at {} leaves its register", n.pitch);
             }
             let end = score.end();
             for n in &score.notes {
@@ -1786,6 +2051,48 @@ mod tests {
                 assert!(n.end() <= end || matches!(role, Role::Drone | Role::Sustain), "seed {seed}: {} past the end", score.instrument(n.channel).name);
             }
         }
+    }
+
+    /// Every song form and every ending comes up, the solo starts at many
+    /// places in the song, and each form keeps its shape: the song ends on
+    /// a solo only where the form says so, a quiet verse falls to the
+    /// foot after the solo, a bookend comes back to it at the end, and a
+    /// lift raises the key only from the final chorus on.
+    #[test]
+    fn the_songs_vary_in_their_forms_and_endings() {
+        let (mut songs, mut endings, mut starts) = (Vec::new(), Vec::new(), Vec::new());
+        for seed in 0..160 {
+            let (score, form) = compose(&Params { seed });
+            let (song, close) = (form.design.song, form.design.ending);
+            songs.push(song);
+            endings.push(close);
+            let parts = &form.walk.parts;
+            let last = parts.last().unwrap();
+            let solos = form.solos();
+            starts.push(solos[0].0 * 20 / form.bars());
+            assert_eq!(solos.last().unwrap().1 == form.bars(), !song.ends_on_chorus() && close != Ending::Bookend, "seed {seed}: {song:?} {close:?}");
+            assert_eq!(solos.len(), if song == SongForm::TwoSolos { 2 } else { 1 }, "seed {seed}");
+            if song == SongForm::QuietVerse {
+                assert!(parts.iter().any(|p| p.a >= solos[0].1 && p.rung == 0), "seed {seed}: no quiet verse after the solo");
+            }
+            if close == Ending::Bookend {
+                assert_eq!(last.rung, 0, "seed {seed}: the bookend ends off the foot");
+            }
+            if let Some((at, _)) = score.lifts.first() {
+                let chorus = form.final_chorus().unwrap() * form.bar;
+                assert_eq!(*at, chorus, "seed {seed}");
+                assert!(score.notes.iter().filter(|n| n.start >= chorus && n.channel != CH_KIT).all(|n| score.key_at(n.start).contains(n.pitch) || n.len < E), "seed {seed}");
+            }
+        }
+        for song in [SongForm::LastChorus, SongForm::QuietVerse, SongForm::SoloOut, SongForm::TwoSolos] {
+            assert!(songs.contains(&song), "{song:?} never drawn");
+        }
+        for close in [Ending::Subtraction, Ending::LoneChord, Ending::Bookend, Ending::Tag, Ending::Big] {
+            assert!(endings.contains(&close), "{close:?} never drawn");
+        }
+        starts.sort();
+        starts.dedup();
+        assert!(starts.len() >= 5, "the solo starts in only {starts:?} twentieths of the song");
     }
 
     /// No part plays one bar the whole song through: the kit's bars and
