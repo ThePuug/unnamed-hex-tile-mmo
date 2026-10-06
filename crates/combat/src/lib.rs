@@ -229,7 +229,8 @@ pub fn track_engagement(
         if !state.in_combat {
             intimidation.filled = 0.0;
         }
-        let waiting = swing.due.is_some_and(|due| due < now && last_skill.is_none_or(|last| last.0 < due));
+        // A skill used as the swing came due, a Leap clear's, counts before it
+        let waiting = swing.due.is_some_and(|due| due < now && last_skill.is_none_or(|last| last.0 <= due));
         if statuses.get(ent).map_or(false, |status| status.waiting) != waiting {
             landing::update(ent, &mut statuses, &mut commands, &mut writer, |status| status.waiting = waiting);
         }

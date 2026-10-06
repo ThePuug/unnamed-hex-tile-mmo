@@ -675,6 +675,8 @@ mod tests {
         assert!(used(&ask(&mut app, leaper, AbilityType::Leap, Some(near)), AbilityType::Leap));
         app.update();
         assert!(distance(&app) > reach, "it leaps out of reach");
+        let now = app.world().resource::<Time>().elapsed();
+        assert!(app.world().get::<Swing>(leaper).unwrap().due.is_some_and(|due| due <= now), "with a swing due at once, out of reach");
         assert!(queue(&app, leaper).iter().all(|threat| threat.ability != Some(AbilityType::Frenzy)), "and the blow misses");
         assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "a leap clear strikes nothing");
 
