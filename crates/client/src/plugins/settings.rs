@@ -5,6 +5,8 @@
 //! Right change it, Enter or Esc closes it. Whoever opens it routes the keys
 //! to `navigate` while it is open, so one system decides what they close.
 
+use std::time::{Duration, Instant};
+
 use bevy::{
     light::ShadowFilteringMethod,
     prelude::*,
@@ -22,6 +24,7 @@ impl Plugin for SettingsPlugin {
         app.init_resource::<SettingsPanel>();
         app.add_systems(Startup, setup);
         app.add_systems(Update, (apply, draw));
+        app.add_systems(Last, pace);
     }
 }
 
@@ -30,6 +33,7 @@ impl Plugin for SettingsPlugin {
 pub struct VideoSettings {
     pub display: Display,
     pub vsync: Vsync,
+    pub rate: Rate,
     pub samples: Samples,
     pub shadows: Shadows,
 }
@@ -77,6 +81,46 @@ impl Vsync {
             Vsync::On => "On",
             Vsync::Off => "Off",
         }
+    }
+}
+
+/// The most frames a second the client draws. A frame drawn faster than
+/// the cap waits out the rest of its interval, so the GPU idles instead
+/// of drawing frames no one needs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rate {
+    #[default]
+    Sixty,
+    Ninety,
+    OneTwenty,
+    Unlimited,
+}
+
+impl Rate {
+    const ALL: [Rate; 4] = [Rate::Sixty, Rate::Ninety, Rate::OneTwenty, Rate::Unlimited];
+
+    fn step(self, by: i32) -> Self {
+        step(&Self::ALL, self, by)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Rate::Sixty => "60",
+            Rate::Ninety => "90",
+            Rate::OneTwenty => "120",
+            Rate::Unlimited => "Unlimited",
+        }
+    }
+
+    /// The shortest a frame may take, or `None` when uncapped.
+    fn interval(self) -> Option<Duration> {
+        let fps = match self {
+            Rate::Sixty => 60.0,
+            Rate::Ninety => 90.0,
+            Rate::OneTwenty => 120.0,
+            Rate::Unlimited => return None,
+        };
+        Some(Duration::from_secs_f64(1.0 / fps))
     }
 }
 
@@ -187,18 +231,19 @@ fn step<T: Copy + PartialEq>(all: &[T], at: T, by: i32) -> T {
 enum Row {
     Display,
     Vsync,
+    Rate,
     Samples,
     Shadows,
     Music,
 }
 
 impl Row {
-    const ALL: [Row; 5] = [Row::Display, Row::Vsync, Row::Samples, Row::Shadows, Row::Music];
+    const ALL: [Row; 6] = [Row::Display, Row::Vsync, Row::Rate, Row::Samples, Row::Shadows, Row::Music];
 
     /// The heading it is listed under; rows of one section are adjacent.
     fn section(self) -> &'static str {
         match self {
-            Row::Display | Row::Vsync | Row::Samples | Row::Shadows => "Video",
+            Row::Display | Row::Vsync | Row::Rate | Row::Samples | Row::Shadows => "Video",
             Row::Music => "Audio",
         }
     }
@@ -207,6 +252,7 @@ impl Row {
         match self {
             Row::Display => "Display",
             Row::Vsync => "VSync",
+            Row::Rate => "Frame rate",
             Row::Samples => "Anti-aliasing",
             Row::Shadows => "Shadows",
             Row::Music => "Music",
@@ -217,6 +263,7 @@ impl Row {
         match self {
             Row::Display => video.display.label().into(),
             Row::Vsync => video.vsync.label().into(),
+            Row::Rate => video.rate.label().into(),
             Row::Samples => video.samples.label().into(),
             Row::Shadows => video.shadows.label().into(),
             Row::Music => audio.music.label(),
@@ -228,6 +275,7 @@ impl Row {
         match self {
             Row::Display => video.display = video.display.step(by),
             Row::Vsync => video.vsync = video.vsync.step(by),
+            Row::Rate => video.rate = video.rate.step(by),
             Row::Samples => video.samples = video.samples.step(by),
             Row::Shadows => video.shadows = video.shadows.step(by),
             Row::Music => audio.music = audio.music.step(by),
@@ -332,6 +380,25 @@ pub fn apply(
             light.shadow_maps_enabled = video.shadows != Shadows::Off;
         }
     }
+}
+
+/// Holds each frame to the cap by sleeping until an interval has passed
+/// since the last one ended. The deadlines step by the interval, so the
+/// rate holds without drifting; a frame that overruns starts the count
+/// again from its own end rather than rushing the next to catch up.
+/// Pipelined rendering keeps the render thread one frame behind the main
+/// one, so it is held to the same rate.
+fn pace(video: Res<VideoSettings>, mut last: Local<Option<Instant>>) {
+    let Some(interval) = video.rate.interval() else {
+        *last = None;
+        return;
+    };
+    let now = Instant::now();
+    let due = last.map(|at| at + interval).filter(|&due| due > now);
+    if let Some(due) = due {
+        std::thread::sleep(due - now);
+    }
+    *last = Some(due.unwrap_or(now));
 }
 
 #[derive(Component)]
