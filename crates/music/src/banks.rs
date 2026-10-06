@@ -14,8 +14,8 @@ use sevenz_rust2::{ArchiveReader, Password};
 /// The release whose archive holds every file `voices` names, and the
 /// SHA-256 of that archive. A voice added or a bank changed is a new
 /// release, named here.
-pub const RELEASE: &str = "music-banks-v3";
-pub const RELEASE_SHA256: &str = "c2bf8a5930129f2959606233ccd5c77a453ed18dd4e545d497bbb97904f7b57d";
+pub const RELEASE: &str = "music-banks-v4";
+pub const RELEASE_SHA256: &str = "c4ededbbe1471953b37bec89e102d42aa10cf569f38d10298cda3eb55ef1987f";
 
 /// Where `RELEASE`'s archive is published.
 pub fn release_url() -> String {
