@@ -85,6 +85,7 @@ pub enum Popover {
     Pieces,
     Track,
     Midi,
+    Credits,
 }
 
 pub struct Player {

@@ -6,6 +6,7 @@
 
 pub mod amp;
 pub mod banks;
+pub mod credits;
 pub mod cue;
 pub mod hall;
 pub mod ladder;

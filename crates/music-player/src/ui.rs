@@ -1,6 +1,6 @@
 //! The window's panels: what plays and its transport at the top, the
 //! play-a-seed panel and the queue beside it, the sheet at the foot, and
-//! the popovers.
+//! the popovers, the credits among them.
 
 use std::time::{Duration, Instant};
 
@@ -25,6 +25,14 @@ const PANEL_CHROME_H: f32 = 52.0 + 34.0 + 4.0;
 
 /// The MIDI popover's width.
 const MIDI_W: f32 = 340.0;
+
+/// The credits popover's width.
+const CREDITS_W: f32 = 420.0;
+
+/// The type the window is set in and its maker, each under the SIL Open
+/// Font License, its text beside each font in `fonts/`.
+const TYPE: &[(&str, &str)] = &[("IBM Plex Mono", "IBM"), ("Cormorant Garamond", "Christian Thalmann")];
+const OFL: &str = "https://openfontlicense.org/";
 
 /// The sheet: its height, how fast it scrolls, and where the playhead
 /// stands in it.
@@ -419,9 +427,11 @@ impl Player {
     /// the playhead, one to a lane and each lane spanning its voice's
     /// pitches, what has played dimmed; the voice named where a section
     /// changes who is in its lane. Over it, the voices in the lanes at
-    /// the playhead, and at its right the banks and anything wrong with
-    /// the sound.
-    pub fn sheet(&self, ui: &mut egui::Ui) {
+    /// the playhead, and at its right the credits, the banks and anything
+    /// wrong with the sound. Returns the credits' rect, where their popover
+    /// stands.
+    pub fn sheet(&mut self, ui: &mut egui::Ui) -> Rect {
+        let mut credits = Rect::NOTHING;
         let take = self.current().take.clone();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 16.0;
@@ -438,6 +448,12 @@ impl Player {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let small = |text: String, color: Color32| RichText::new(text).font(mono(11.0)).color(color);
+                let open = self.popover == Some(Popover::Credits);
+                let link = ui.add(egui::Label::new(small("credits".to_string(), if open { PARCHMENT } else { MUTED }).underline()).sense(Sense::click())).on_hover_cursor(CursorIcon::PointingHand);
+                if link.clicked() {
+                    self.popover = if open { None } else { Some(Popover::Credits) };
+                }
+                credits = link.rect;
                 if let Some((text, color)) = self.banks_state() {
                     let folder = folder().map_or_else(|| "none".to_string(), |f| f.display().to_string());
                     ui.label(small(text, color)).on_hover_text(format!("Drop a music-banks .7z on this window, or unpack it into\n{folder}\nand start the player again."));
@@ -457,7 +473,7 @@ impl Player {
         let Some(take) = take else {
             p.text(rect.center(), Align2::CENTER_CENTER, self.state(self.current()).1, mono(12.0), MUTED);
             p.rect_stroke(rect, 6.0, Stroke::new(1.0_f32, RULE), StrokeKind::Inside);
-            return;
+            return credits;
         };
         let sheet = &take.sheet;
         let at = self.position();
@@ -506,6 +522,7 @@ impl Player {
         let head = rect.left() + PLAYHEAD_X;
         p.line_segment([pos2(head, rect.top()), pos2(head, rect.bottom())], Stroke::new(2.0_f32, PARCHMENT.gamma_multiply(0.85)));
         p.rect_stroke(rect, 6.0, Stroke::new(1.0_f32, RULE), StrokeKind::Inside);
+        credits
     }
 
     /// What the banks are doing, as a word and its colour: an install's
@@ -542,14 +559,16 @@ impl Player {
     }
 
     /// The open popover, if any: the composer's pieces opening up from
-    /// its button, or the track list hung under its field. A press
-    /// outside it or Escape closes it.
-    pub fn popover(&mut self, ctx: &egui::Context, pieces_anchor: Rect, track_anchor: Rect, midi_anchor: Rect) {
+    /// its button, the track list hung under its field, MIDI out under
+    /// its button, the credits over theirs. A press outside it or Escape
+    /// closes it.
+    pub fn popover(&mut self, ctx: &egui::Context, pieces_anchor: Rect, track_anchor: Rect, midi_anchor: Rect, credits_anchor: Rect) {
         let Some(open) = self.popover else { return };
         let anchor = match open {
             Popover::Pieces => pieces_anchor,
             Popover::Track => track_anchor,
             Popover::Midi => midi_anchor,
+            Popover::Credits => credits_anchor,
         };
         let area = match open {
             Popover::Pieces => {
@@ -562,6 +581,10 @@ impl Player {
                 egui::Area::new(egui::Id::new("track")).order(egui::Order::Foreground).fixed_pos(pos2(anchor.left(), anchor.bottom() + 6.0)).show(ctx, |ui| self.track_list(ui, width, list_h))
             }
             Popover::Midi => egui::Area::new(egui::Id::new("midi")).order(egui::Order::Foreground).pivot(Align2::RIGHT_TOP).fixed_pos(pos2(anchor.right(), anchor.bottom() + 8.0)).show(ctx, |ui| self.midi_list(ui)),
+            Popover::Credits => {
+                let list_h = (anchor.top() - 8.0 - 24.0).max(120.0);
+                egui::Area::new(egui::Id::new("credits")).order(egui::Order::Foreground).pivot(Align2::RIGHT_BOTTOM).fixed_pos(pos2(anchor.right(), anchor.top() - 8.0)).show(ctx, |ui| credits_list(ui, list_h))
+            }
         };
         let outside = ctx.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !area.response.rect.contains(p) && !anchor.contains(p)));
         if outside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -735,6 +758,48 @@ impl Player {
     }
 }
 
+/// Whose recordings the music is made with and whose type the window is
+/// set in, each with its licence, as the licences ask they be named;
+/// scrolling past `list_h`.
+fn credits_list(ui: &mut egui::Ui, list_h: f32) {
+    egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0_f32, EDGE)).corner_radius(8.0).show(ui, |ui| {
+        ui.set_width(CREDITS_W - 2.0);
+        egui::ScrollArea::vertical().max_height(list_h).show(ui, credits_entries);
+    });
+}
+
+/// The credits, a heading over each kind.
+fn credits_entries(ui: &mut egui::Ui) {
+    ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+    let entry = |ui: &mut egui::Ui, what: &str, work: &str, licence: &str, link: &str| {
+        egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 6)).show(ui, |ui| {
+            ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
+            ui.label(RichText::new(what).font(mono(12.0)).color(PARCHMENT));
+            ui.horizontal_wrapped(|ui| {
+                ui.add(egui::Label::new(RichText::new(format!("{work} ·")).font(mono(11.0)).color(MUTED)).wrap());
+                ui.hyperlink_to(RichText::new(licence).font(mono(11.0)).color(LAMP), link);
+            });
+        });
+    };
+    pool_heading(ui, "made with");
+    for (tool, by, link) in music::credits::MADE_WITH {
+        entry(ui, tool, by, link.trim_start_matches("https://"), link);
+    }
+    pool_heading(ui, "sounds");
+    for c in music::credits::SOUNDS {
+        entry(ui, c.what, c.work, c.licence, c.licence_link);
+    }
+    pool_heading(ui, "type");
+    for (font, by) in TYPE {
+        entry(ui, font, by, "SIL OFL 1.1", OFL);
+    }
+    ui.add_space(6.0);
+    rule(ui);
+    egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
+        ui.add(egui::Label::new(RichText::new("The music is composed here as it plays; these are the recordings and type it is made with.").font(mono(11.0)).color(MUTED).line_height(Some(17.0))).wrap());
+    });
+}
+
 impl eframe::App for Player {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
@@ -750,7 +815,7 @@ impl eframe::App for Player {
                 midi_anchor = self.controls(&mut halves[1]);
             });
         });
-        egui::TopBottomPanel::bottom("sheet").frame(egui::Frame::new().fill(INK).inner_margin(side(14, 18))).show(ctx, |ui| self.sheet(ui));
+        let credits_anchor = egui::TopBottomPanel::bottom("sheet").frame(egui::Frame::new().fill(INK).inner_margin(side(14, 18))).show(ctx, |ui| self.sheet(ui)).inner;
         let (track_anchor, pieces_anchor) = egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(INK).inner_margin(side(16, 18)))
             .show(ctx, |ui| {
@@ -763,7 +828,7 @@ impl eframe::App for Player {
                 (track, pieces)
             })
             .inner;
-        self.popover(ctx, pieces_anchor, track_anchor, midi_anchor);
+        self.popover(ctx, pieces_anchor, track_anchor, midi_anchor, credits_anchor);
         self.drop_banks(ctx);
     }
 }

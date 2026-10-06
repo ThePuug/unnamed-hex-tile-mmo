@@ -1,5 +1,6 @@
 //! Everything around the world: connecting to the server, the character
-//! screen, the loading screen, and the menu Esc opens over the world.
+//! screen and its credits, the loading screen, and the menu Esc opens
+//! over the world.
 //!
 //! The client runs through `Stage`s. It connects, retrying on its own with
 //! a growing wait, and waits at the character screen; Play asks the server
@@ -8,6 +9,7 @@
 //! by the menu or by losing the server, takes everything the world put on
 //! the client down again, so the next entry starts from nothing.
 
+mod credits;
 pub mod menu;
 mod screens;
 pub mod view;
@@ -116,6 +118,7 @@ impl Plugin for ShellPlugin {
         app.init_state::<Stage>();
         app.add_computed_state::<InWorld>();
         app.init_resource::<menu::GameMenu>();
+        app.init_resource::<credits::CreditsPanel>();
         app.init_resource::<Loading>();
         app.init_resource::<Entered>();
         app.init_resource::<screens::RttSamples>();
@@ -123,8 +126,8 @@ impl Plugin for ShellPlugin {
         app.init_resource::<view::Rejoin>();
         app.add_systems(Update, (view::do_view, view::end_when_gone).chain().run_if(in_state(InWorld)));
         app.add_systems(Update, view::rejoin.run_if(in_state(Stage::CharacterSelect)));
-        app.add_systems(Startup, (menu::setup, screens::setup));
-        app.add_systems(Update, (follow_link, menu::route_keys, menu::draw, screens::draw, screens::show_rtt));
+        app.add_systems(Startup, (menu::setup, screens::setup, credits::setup));
+        app.add_systems(Update, (follow_link, menu::route_keys, menu::draw, credits::draw, screens::draw, screens::show_rtt));
         app.add_systems(Update, track_loading.run_if(in_state(Stage::Loading)));
         app.add_systems(OnEnter(Stage::Loading), start_loading);
         app.add_systems(OnEnter(Stage::CharacterSelect), dress_preview);

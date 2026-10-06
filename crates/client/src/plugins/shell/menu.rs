@@ -1,8 +1,8 @@
 //! The choices the shell offers, and the one system that routes the keys
 //! among them. The connecting and character screens list theirs at all
 //! times; in the world, Esc opens the menu over it. Esc closes whatever is
-//! on top: the settings panel over the menu, the menu over the character
-//! panel, the character panel over the world.
+//! on top: the settings panel or the credits over the menu, the menu over
+//! the character panel, the character panel over the world.
 //!
 //! Every screen is worked from the keyboard alone: Up and Down pick,
 //! Enter chooses.
@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use common_bevy::message::Try;
 
-use super::Stage;
+use super::{credits::CreditsPanel, Stage};
 use crate::{
     network::Link,
     plugins::{
@@ -28,6 +28,7 @@ enum Choice {
     Play,
     Resume,
     Settings,
+    Credits,
     CharacterSelect,
     Quit,
 }
@@ -39,6 +40,7 @@ impl Choice {
             Choice::Play => "Play",
             Choice::Resume => "Resume",
             Choice::Settings => "Settings",
+            Choice::Credits => "Credits",
             Choice::CharacterSelect => "Disconnect",
             Choice::Quit => "Quit",
         }
@@ -48,7 +50,7 @@ impl Choice {
     fn offered(stage: Stage) -> &'static [Choice] {
         match stage {
             Stage::Connecting => &[Choice::RetryNow, Choice::Settings, Choice::Quit],
-            Stage::CharacterSelect => &[Choice::Play, Choice::Settings, Choice::Quit],
+            Stage::CharacterSelect => &[Choice::Play, Choice::Settings, Choice::Credits, Choice::Quit],
             Stage::Loading => &[],
             Stage::Playing => &[Choice::Resume, Choice::Settings, Choice::CharacterSelect],
         }
@@ -71,8 +73,8 @@ impl GameMenu {
     }
 }
 
-/// Routes this frame's keys to whichever of the menu and the settings
-/// panel is on top. The console's own keys come first: while it shows, it
+/// Routes this frame's keys to whichever of the menu, the settings panel
+/// and the credits is on top. The console's own keys come first: while it shows, it
 /// has them.
 #[allow(clippy::too_many_arguments)]
 pub fn route_keys(
@@ -83,6 +85,7 @@ pub fn route_keys(
     mut link: ResMut<Link>,
     mut menu: ResMut<GameMenu>,
     mut panel: ResMut<SettingsPanel>,
+    mut credits: ResMut<CreditsPanel>,
     mut video: ResMut<VideoSettings>,
     mut audio: ResMut<AudioSettings>,
     mut character: ResMut<CharacterPanelState>,
@@ -99,6 +102,13 @@ pub fn route_keys(
     }
     if panel.open {
         settings::navigate(&mut panel, &mut video, &mut audio, &mut keys);
+        return;
+    }
+    if credits.open {
+        const BACK: &str = "Close the credits";
+        if keys.pressed(KeyCode::Escape, BACK) | entered_choice(&mut keys, BACK) {
+            credits.open = false;
+        }
         return;
     }
     let stage = *stage.get();
@@ -147,6 +157,7 @@ pub fn route_keys(
             Choice::Play => super::play(&mut writer, &mut next, &mut entered),
             Choice::Resume => menu.close(),
             Choice::Settings => panel.open(),
+            Choice::Credits => credits.open = true,
             Choice::CharacterSelect => {
                 menu.confirming = true;
                 menu.cancel_picked = true;
@@ -207,25 +218,25 @@ pub fn setup(mut commands: Commands) {
 
 /// Shows the choices where the stage wants them — beside the figure on the
 /// character screen, under the status while connecting, in the middle of
-/// the world — unless
-/// the settings panel is over them, and redraws them when anything they
-/// show changes.
+/// the world — unless the settings panel or the credits are over them, and
+/// redraws them when anything they show changes.
 pub fn draw(
     mut commands: Commands,
     stage: Res<State<Stage>>,
     menu: Res<GameMenu>,
     panel: Res<SettingsPanel>,
+    credits: Res<CreditsPanel>,
     mut root: Query<(&mut Visibility, &mut Node), With<MenuRoot>>,
     mut title: Query<&mut Text, With<MenuTitle>>,
     rows: Query<Entity, With<MenuRows>>,
 ) {
-    if !stage.is_changed() && !menu.is_changed() && !panel.is_changed() {
+    if !stage.is_changed() && !menu.is_changed() && !panel.is_changed() && !credits.is_changed() {
         return;
     }
     let stage = *stage.get();
     let in_world = stage == Stage::Playing;
     if let Ok((mut visibility, mut node)) = root.single_mut() {
-        let shown = !panel.open && !Choice::offered(stage).is_empty() && (menu.open || !in_world);
+        let shown = !panel.open && !credits.open && !Choice::offered(stage).is_empty() && (menu.open || !in_world);
         visibility.set_if_neq(if shown { Visibility::Visible } else { Visibility::Hidden });
         let (left, top, margin_left) = match stage {
             Stage::CharacterSelect => (64.0, 45.0, 0.0),
