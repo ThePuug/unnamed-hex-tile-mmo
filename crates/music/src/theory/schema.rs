@@ -130,6 +130,60 @@ pub const BALLAD: Song = Song {
     ],
 };
 
+/// Speed metal's progressions as Helloween wrote them in 1985–88, in
+/// the minor, by the part of the song they serve; power chords, so a
+/// chord's third is the lead's to choose. A verse is Aeolian: the tonic
+/// held and swinging to the seventh, rocking with the relative major,
+/// or turning through the sixth and seventh to the major V. A
+/// pre-chorus lifts: the relative major's V and I rocked, the sixth and
+/// seventh climbed two bars each, or the sixth, third and seventh to the
+/// major V. A chorus is the minor's — the tonic held into the sixth and
+/// seventh, Halloween's turn through the seventh and third, Starlight's
+/// way home through iv and the sixth, How Many Tears' sixth and seventh
+/// to the major V and home — or bright, on the relative major: its I, V,
+/// vi and iii, the Pachelbel turn of Guardians and Eagle Fly Free, home
+/// through its IV, I and V to the minor tonic. Under the solos the other
+/// guitar holds a pedal on one root or two. The major V is a cadence's
+/// colour, never the riff's mode.
+pub struct Speed {
+    pub verse: &'static [Schema],
+    pub pre: &'static [Schema],
+    pub chorus: &'static [Schema],
+    pub bright: &'static [Schema],
+    pub solo: &'static [Schema],
+}
+
+pub const SPEED: Speed = Speed {
+    verse: &[
+        Schema { name: "subtonic pedal", modes: &[Aeolian], roots: [0, 0, 6, 6], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "relative swing", modes: &[Aeolian], roots: [0, 2, 0, 5], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "relative rock", modes: &[Aeolian], roots: [0, 6, 2, 6], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "turn to the dominant", modes: &[Aeolian], roots: [0, 5, 6, 4], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
+        Schema { name: "relative home", modes: &[Aeolian], roots: [0, 6, 2, 0], closed: true, alters: [DIATONIC; 4] },
+        Schema { name: "subtonic home", modes: &[Aeolian], roots: [0, 6, 6, 0], closed: true, alters: [DIATONIC; 4] },
+    ],
+    pre: &[
+        Schema { name: "relative shuttle", modes: &[Aeolian], roots: [6, 2, 6, 2], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "the climb", modes: &[Aeolian], roots: [5, 5, 6, 6], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "climb to the dominant", modes: &[Aeolian], roots: [5, 2, 6, 4], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
+    ],
+    chorus: &[
+        Schema { name: "the drive", modes: &[Aeolian], roots: [0, 0, 5, 6], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "halloween turn", modes: &[Aeolian], roots: [6, 2, 0, 4], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "starlight home", modes: &[Aeolian], roots: [0, 3, 5, 0], closed: true, alters: [DIATONIC; 4] },
+        Schema { name: "tears home", modes: &[Aeolian], roots: [5, 6, 4, 0], closed: true, alters: [DIATONIC, DIATONIC, MAJOR, DIATONIC] },
+    ],
+    bright: &[
+        Schema { name: "pachelbel", modes: &[Aeolian], roots: [2, 6, 0, 4], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "relative lift", modes: &[Aeolian], roots: [5, 2, 6, 2], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "relative close", modes: &[Aeolian], roots: [5, 2, 6, 0], closed: true, alters: [DIATONIC; 4] },
+    ],
+    solo: &[
+        Schema { name: "solo pedal", modes: &[Aeolian], roots: [0, 5, 0, 6], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "solo close", modes: &[Aeolian], roots: [5, 5, 6, 0], closed: true, alters: [DIATONIC; 4] },
+    ],
+};
+
 /// A part of the song's schemata: the open ones and the closed.
 pub fn split(schemata: &'static [Schema]) -> (Vec<&'static Schema>, Vec<&'static Schema>) {
     (schemata.iter().filter(|s| !s.closed).collect(), schemata.iter().filter(|s| s.closed).collect())
@@ -257,6 +311,28 @@ mod tests {
         }
     }
 
+    /// Every speed metal schema closes as it says and every chord stands a
+    /// power chord, its fifth perfect in the bar's key; a pre-chorus never
+    /// closes, it lifts into the chorus; every other part asks and answers.
+    #[test]
+    fn every_part_of_speed_metal_asks_and_answers() {
+        let key = Key::new("E", Aeolian);
+        for part in [SPEED.verse, SPEED.pre, SPEED.chorus, SPEED.bright, SPEED.solo] {
+            for s in part {
+                assert_eq!(s.roots[3] == 0, s.closed, "{}", s.name);
+                for k in 0..4 {
+                    let under = key.under(s.chord(k, 3));
+                    assert_eq!(under.pitch(s.roots[k] + 4, 4) - under.pitch(s.roots[k], 4), 7, "{}: no power chord on {}", s.name, s.roots[k]);
+                }
+            }
+        }
+        assert!(SPEED.pre.iter().all(|s| !s.closed));
+        for part in [SPEED.verse, SPEED.chorus, SPEED.bright, SPEED.solo] {
+            let (open, closed) = split(part);
+            assert!(!open.is_empty() && !closed.is_empty());
+        }
+    }
+
     /// A progression in a mode belongs to one style: the folk's — the
     /// overworld's and the horo's, one world — the blues' or the
     /// ballad's, so no two styles are heard turning the same way; a
@@ -267,7 +343,8 @@ mod tests {
         let folk: Vec<&Schema> = SCHEMATA.iter().chain(HORO.iter()).collect();
         let blues: Vec<&Schema> = TWELVE_BAR.iter().flat_map(|row| row.iter()).collect();
         let ballad: Vec<&Schema> = [BALLAD.verse, BALLAD.chorus, BALLAD.climax].into_iter().flatten().collect();
-        let styles = [("folk", folk), ("blues", blues), ("ballad", ballad)];
+        let speed: Vec<&Schema> = [SPEED.verse, SPEED.pre, SPEED.chorus, SPEED.bright, SPEED.solo].into_iter().flatten().collect();
+        let styles = [("folk", folk), ("blues", blues), ("ballad", ballad), ("speed", speed)];
         for (i, (a, ours)) in styles.iter().enumerate() {
             for (b, theirs) in &styles[i + 1..] {
                 for s in ours {

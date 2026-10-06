@@ -133,3 +133,29 @@ impl Delay {
         old
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sound in the middle comes back from the room on both sides apart:
+    /// the tail's two sides are nearly uncorrelated, or the room is one
+    /// speaker's worth wide.
+    #[test]
+    fn the_room_rings_wide() {
+        let n = SAMPLE_RATE as usize * 3;
+        let mut send = vec![[0.0f32; 2]; n];
+        let mut seed = 1u32;
+        for s in send.iter_mut().take(SAMPLE_RATE as usize / 10) {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            let v = (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5;
+            *s = [v, v];
+        }
+        let out = ring(&send, 2.0);
+        let tail = &out[SAMPLE_RATE as usize / 2..];
+        let (lr, ll, rr) = tail.iter().fold((0.0f64, 0.0f64, 0.0f64), |(a, b, c), s| (a + (s[0] * s[1]) as f64, b + (s[0] * s[0]) as f64, c + (s[1] * s[1]) as f64));
+        let r = lr / (ll * rr).sqrt();
+        eprintln!("tail correlation {r:.3}");
+        assert!(r.abs() < 0.3, "the tail's sides correlate at {r:.2}");
+    }
+}

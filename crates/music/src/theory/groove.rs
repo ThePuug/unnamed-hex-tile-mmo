@@ -76,9 +76,21 @@ pub const BALLAD: [Groove; 2] = [
     Groove { name: "twelve-eight", groups: &[3, 3, 3, 3], tempo: (150, 180), dum: &[0, 5], tek: &[3, 9], chord: &[1, 2, 4, 5, 7, 8, 10, 11], busy: 0.25 },
 ];
 
+/// Speed metal's beats as Helloween took them in 1985–88, at a hundred
+/// and forty-four to a hundred and sixty-four beats, counted one snare
+/// a beat: the skank, the kick on the beats and the snare on every
+/// off-beat eighth, the cymbal on every eighth; and the rock backbeat,
+/// the snare on two and four and the kick on one, the and of two and
+/// three — ten verses of seventeen skank, seven run the backbeat. Its
+/// tune runs more than a ballad's and less than a horo's.
+pub const SPEED: [Groove; 2] = [
+    Groove { name: "skank", groups: &[2, 2, 2, 2], tempo: (288, 328), dum: &[0, 2, 4, 6], tek: &[1, 3, 5, 7], chord: &[1, 3, 5, 7], busy: 0.45 },
+    Groove { name: "backbeat", groups: &[2, 2, 2, 2], tempo: (288, 328), dum: &[0, 3, 4], tek: &[2, 6], chord: &[1, 3, 5, 7], busy: 0.45 },
+];
+
 /// Every groove there is.
 pub fn all() -> impl Iterator<Item = &'static Groove> {
-    BALKAN.iter().chain(BLUES.iter()).chain(HORO.iter()).chain(BALLAD.iter())
+    BALKAN.iter().chain(BLUES.iter()).chain(HORO.iter()).chain(BALLAD.iter()).chain(SPEED.iter())
 }
 
 impl Groove {

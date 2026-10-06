@@ -35,6 +35,12 @@ pub enum Shape {
     /// The blues' riff round the tonic: up to the third, back, under to
     /// the flat seventh, home.
     Riff,
+    /// An anthem's rise: up by steps to the fifth, a turn, and the fifth
+    /// held, the open ending a speed metal chorus asks on.
+    Rise,
+    /// A hook's fall in thirds by steps: from the fifth down, a step back
+    /// up between, to home.
+    Call,
 }
 
 /// The shapes a Balkan tune sings in: each comes down to its finalis at
@@ -46,6 +52,11 @@ pub const FOLK_SHAPES: [Shape; 5] = [Shape::Arch, Shape::Descent, Shape::Circlin
 /// the pentatonic's steps, each keeps within the fifth over home, the
 /// core a blues line moves in.
 pub const BLUES_SHAPES: [Shape; 4] = [Shape::Tumble, Shape::Riff, Shape::Tumble, Shape::Wave];
+
+/// The shapes a speed metal tune sings in, as Helloween's choruses do:
+/// mostly by step, an octave wide at most, rising to its height or
+/// falling from it in a sequence.
+pub const SPEED_SHAPES: [Shape; 2] = [Shape::Rise, Shape::Call];
 
 impl Shape {
     /// The shape over six strong beats; a skeleton of another length
@@ -59,6 +70,8 @@ impl Shape {
             Shape::Wave => [0, 2, 1, 3, 2, 0],
             Shape::Tumble => [3, 2, 1, 0, -1, 0],
             Shape::Riff => [0, 2, 0, -1, 0, 0],
+            Shape::Rise => [0, 1, 2, 4, 3, 4],
+            Shape::Call => [4, 2, 3, 1, 2, 0],
         }
     }
 
@@ -261,7 +274,7 @@ mod tests {
     /// recovers, and never wanders past a sixth.
     #[test]
     fn shapes_hold_their_span() {
-        for shape in FOLK_SHAPES.iter().chain(BLUES_SHAPES.iter()) {
+        for shape in FOLK_SHAPES.iter().chain(BLUES_SHAPES.iter()).chain(SPEED_SHAPES.iter()) {
             for n in [4, 6, 8, 10] {
                 let s = shape.skeleton(n);
                 assert_eq!(s.len(), n);

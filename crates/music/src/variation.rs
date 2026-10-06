@@ -31,6 +31,13 @@ pub fn role(bar: u32) -> Role {
     }
 }
 
+/// Whether `bar` closes a pair of phrases, a question and its answer:
+/// the cadence a part turns round hardest on — in the riffs surveyed the
+/// eighth bar changes more than the fourth.
+pub fn closes_pair(bar: u32) -> bool {
+    bar % (2 * phrase::BARS) == 2 * phrase::BARS - 1
+}
+
 /// A roll of `count` strokes on `pitch`, sixteenths from `start`, each
 /// struck at the velocity `vel` gives its place — 0 the first, 1 the last
 /// — so it grows into the bar it leads to.

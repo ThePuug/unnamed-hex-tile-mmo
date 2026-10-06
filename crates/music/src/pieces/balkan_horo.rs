@@ -621,6 +621,9 @@ fn compose(params: &Params) -> (Score, Form) {
         hold: Hold::Breathing,
         breathes: true,
         vel,
+        fills: 0.0,
+        soars: 0.0,
+        pushes: 0.0,
     };
     teller::tell(&mut score, &teller, &form.tune, &form.runs(), &mut rng.fork(6));
     improvise(&mut score, &form, &mut rng.fork(9));

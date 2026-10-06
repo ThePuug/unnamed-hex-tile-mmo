@@ -456,6 +456,9 @@ pub fn build(params: &Params) -> Score {
         hold: Hold::Breathing,
         breathes: false,
         vel,
+        fills: 0.0,
+        soars: 0.0,
+        pushes: 0.0,
     };
     teller::tell(&mut score, &teller, &form.tune, &form.walk.runs(), &mut rng.fork(8));
     horns(&mut score, &form);

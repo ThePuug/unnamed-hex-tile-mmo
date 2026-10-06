@@ -29,6 +29,7 @@
 use crate::ladder::{self, leap, turn, Bed, Story, Turn, Walk};
 use crate::pieces::Params;
 use crate::rng::Rng;
+use crate::rock::{self, Band, Ritual};
 use crate::score::{Instrument, Note, Role, Score, Section as ScoreSection, TICKS_PER_EIGHTH as E};
 use crate::teller::{self, Hold, Teller, Telling};
 use crate::theory::groove::{Groove, BALLAD};
@@ -843,6 +844,9 @@ fn compose(params: &Params) -> (Score, Form) {
         hold: Hold::Ringing,
         breathes: true,
         vel,
+        fills: 0.0,
+        soars: 0.0,
+        pushes: 0.0,
     };
     teller::tell(&mut score, &teller, &form.tune, &form.walk.runs(), &mut rng.fork(7));
     score.mark_phrases(0, form.bars());
@@ -871,7 +875,6 @@ fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
     let bar = form.bar;
     let at = form.bars();
     let tonic = Chord::triad(0);
-    let strong = score.meter.strong_eighths();
     let eighths = score.meter.eighths();
     score.mark_coda(at);
     let section = |score: &mut Score, name: &'static str, from: u32, bars: u32, level: f32, rings: bool| {
@@ -882,29 +885,16 @@ fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
         Ending::Big => {
             score.ritardando((at - 2) * bar, at * bar, SLOWEST);
             // One section from the hit, ringing: the pedal falls slowly at
-            // first, so the hit, the swell and the cut stand, and the room
-            // rings on after. A ring alone is too quiet to set a level by.
+            // first, so the hit, the wash and the last hit stand, and the
+            // room rings on after. A ring alone is too quiet to set a level by.
             section(score, "end", at, HELD_BARS + RING_BARS, LEVEL_END, true);
             let (hit_at, cut) = (at * bar, (at + HELD_BARS) * bar);
-            hit(score, hit_at, cut, rng);
+            // The band's ritual, the strings, the choir and the lead held
+            // over it to the last hit.
             let root = at_degree(&key, tonic, 0, 40, 52, 45);
-            for channel in [CH_LEFT, CH_RIGHT] {
-                for p in [root, root + 7, root + 12] {
-                    score.add(Note { start: cut, len: E, pitch: p, vel: vel(-6, rng), channel });
-                }
-            }
-            score.add(Note { start: cut, len: E, pitch: at_degree(&key, tonic, 0, 28, 40, 33), vel: vel(4, rng), channel: CH_BASS });
-            for (pitch, accent) in [(CRASH, -4), (KICK, -6)] {
-                score.add(Note { start: cut, len: 2 * E, pitch, vel: vel(accent, rng), channel: CH_KIT });
-            }
-            // The swell: sixteenths on the ride's edge from the bar's
-            // middle, rising to the cut.
-            let from = strong[strong.len() / 2];
-            let slots = (eighths - from) * 2;
-            for k in 0..slots {
-                let x = k as f32 / slots as f32;
-                score.add(Note { start: hit_at + from * E + k * E / 2, len: E / 2, pitch: CRASH_2, vel: vel(-34 + (28.0 * x) as i32, rng), channel: CH_KIT });
-            }
+            let band = Band { guitars: &[CH_LEFT, CH_RIGHT], bass: CH_BASS, kit: CH_KIT, chord: [root, root + 7, root + 12], root: at_degree(&key, tonic, 0, 28, 40, 33), vel };
+            rock::ritual(score, &band, hit_at, Ritual { hold: HELD_BARS, early: false, kick_runs: false, ring: E }, rng);
+            held_voices(score, hit_at, cut, rng);
         }
         Ending::Tag => {
             // The line as the band played it, turned round into itself, the
@@ -952,10 +942,9 @@ fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
 }
 
 /// The band's hit on the tonic at `from`, held to `to`: the guitars'
-/// power chord and the bass's low root, the strings and choir on the
-/// chord, the lead on its home tonic, the crash and the kick, each struck
-/// under its full stroke, since on one instant every player's hit is the
-/// song's peak.
+/// power chord and the bass's low root, the crash and the kick, and over
+/// them `held_voices`, each struck under its full stroke, since on one
+/// instant every player's hit is the song's peak.
 fn hit(score: &mut Score, from: u32, to: u32, rng: &mut Rng) {
     let key = score.key;
     let tonic = Chord::triad(0);
@@ -967,6 +956,17 @@ fn hit(score: &mut Score, from: u32, to: u32, rng: &mut Rng) {
     }
     let low = at_degree(&key, tonic, 0, 28, 40, 33);
     score.add(Note { start: from, len: to - from - E / 8, pitch: low, vel: vel(4, rng), channel: CH_BASS });
+    for (pitch, accent) in [(CRASH, 2), (KICK, 0)] {
+        score.add(Note { start: from, len: 2 * E, pitch, vel: vel(accent, rng), channel: CH_KIT });
+    }
+    held_voices(score, from, to, rng);
+}
+
+/// The strings and choir on the tonic chord and the lead on its home
+/// tonic, held from `from` to `to` over the band's last chord.
+fn held_voices(score: &mut Score, from: u32, to: u32, rng: &mut Rng) {
+    let key = score.key;
+    let tonic = Chord::triad(0);
     for p in tonic.pitches_within(&key, 55, 72).into_iter().take(3) {
         score.add(Note { start: from, len: to - from, pitch: p, vel: vel(-6, rng), channel: CH_PAD });
     }
@@ -976,9 +976,6 @@ fn hit(score: &mut Score, from: u32, to: u32, rng: &mut Rng) {
     }
     let home = tune::home_tonic(&key, TUNE.0, TUNE.1);
     score.add(Note { start: from, len: to - from - E / 8, pitch: home, vel: vel(4, rng), channel: CH_LEAD });
-    for (pitch, accent) in [(CRASH, 2), (KICK, 0)] {
-        score.add(Note { start: from, len: 2 * E, pitch, vel: vel(accent, rng), channel: CH_KIT });
-    }
 }
 
 /// The tonic struck at `at` by whoever of the band `texture` still has,

@@ -6,6 +6,7 @@ mod minor_blues;
 mod balkan_horo;
 mod metal_ballad;
 mod overworld_ambient;
+mod speed_metal;
 mod teaser;
 
 use crate::score::Score;
@@ -273,12 +274,78 @@ pub const PIECES: &[Piece] = &[
             held under a cymbal's swell and cut with a last crash. The chorus \
             heavier than the verse, the band growing as each layer joins, \
             not afraid of its loud parts; no sung words.",
-    pool: "ballad",
+    pool: "metal",
     lufs: -20.0,
     // A ballad's chorus is heavier than its arpeggio, and its loudness
     // says so: the pedal gives back only part of what the band adds.
     range: 8.0,
     build: metal_ballad::build,
+    },
+    Piece {
+    name: "speed-metal",
+    brief: "Speed metal as Helloween played it on Walls of Jericho and the \
+            Keepers, 1985 to 1988, at a hundred and forty-four to a \
+            hundred and sixty-four beats in the minor, every seed its own \
+            song of one album: its groove's family drawn first — the skank \
+            with the kick doubled or single, the gallop, the backbeat or a \
+            half-speed feel — then its intro, its chorus's mood, its \
+            form's lengths, how its two guitars split, which soloist goes \
+            first, how it ends, and one signature event no other seed \
+            shares: the guitars out over bass and drums before the last \
+            chorus, a dead bar, the second verse in another feel, a \
+            half-time chorus, the drums alone into the solos, or the last \
+            chorus up a step. Verse, most often a pre-chorus, and chorus \
+            twice, a solo block, and the way back to a last chorus, \
+            doubled three times in four, every section whole phrases of \
+            four bars. The pre-chorus doubles the kick, the chorus moves \
+            the cymbal to the ride, the solos do both; fills a beat or two \
+            every few bars and into every section, a crash after. The \
+            rhythm guitars are two players, two amps, one hard each side: \
+            most bars one part, palm-muted in the verse and open in the \
+            chorus, but how much they split is the song's — the pre-chorus \
+            most — the riff harmonised in thirds, one holding chords while \
+            the other chugs, a pedal over the riff, another voicing or an \
+            octave up; their riff answers itself in its second bar, turns \
+            round in its fourth and harder in its eighth, and a later \
+            verse answers its own way; the bass on the root in unison. One \
+            theme runs the song through, sung by one lead guitar that \
+            dances: every foot of it in the verse, legato, half its tones \
+            off the beat; held tones climbing the pre-chorus to its peak; \
+            a third higher in the chorus, held bars and moving bars by \
+            turns, a twin guitar a diatonic third over it, plain; a \
+            half-phrase restated an octave up now and then, a tone pushed \
+            ahead of the beat when it sings a phrase again, a lick in a \
+            few of its gaps from the second verse on, and at the end of \
+            the last chorus a climb to the song's highest tone, held over \
+            the ending; bent into, slid into, shaken with vibrato, its \
+            phrase ends let go a different way each time. The chorus's \
+            hook is the twin melody the song opens on — the twins alone, \
+            the band's hits, the drums alone, held chords, the riff, or \
+            one guitar alone — and comes back after the first chorus where \
+            the seed brings it. The solo block is two players, a shredder \
+            of long runs, leaps, repeated cells and odd groupings and a \
+            singer of short bent phrases round a pedal, in one of the \
+            surveyed layouts — two turns and a twin break of the theme in \
+            thirds before, between or after them, or the turns trading \
+            eight bars and then four — each turn opening on a bend, a \
+            flurry, a held tone or a short lick, its density arching, \
+            rising, falling or flat, its register climbing to a peak, \
+            closing held or running on, every turn answering the one \
+            before by contrast; the rhythm guitars on a palm-muted pedal \
+            under it. It ends as Helloween end, on the chorus's home \
+            chord: the ritual — the chord held a bar to four under a \
+            cymbal's wash and the toms, sometimes slowing, a separate last \
+            hit, now and then on the and of four — a figure of the band's \
+            hits and one stroke, the riff into one stab, a false ending, \
+            the lead alone into the stab, or, seldom, a chord left to \
+            ring. A record's stereo: the rhythm pair wide, the kit spread \
+            across the stage, the lead left of the middle and the twin \
+            right. Loud, driving, alive, bright even in the minor; no sung \
+            words.",
+    pool: "metal",
+    lufs: -20.0,
+    range: 7.0,
+    build: speed_metal::build,
     },
 ];
 

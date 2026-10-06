@@ -28,6 +28,9 @@ pub enum Telling {
     Riff,
     /// The riff over the second's held tones.
     RiffAndLong,
+    /// The tune's every foot, sung legato and never thinned: a verse's
+    /// patter, a repeated tone struck again rather than tied.
+    Patter,
 }
 
 /// A piece's storyteller: who plays where, and in what idiom. Accents
@@ -64,6 +67,16 @@ pub struct Teller {
     pub breathes: bool,
     /// The piece's velocity: its one dynamic, `accent` and a jitter.
     pub vel: fn(i32, &mut Rng) -> u8,
+    /// How often a gap of two beats or more after a sung phrase holds a
+    /// lick, from the second run the lead tells on: a singer's band leaves
+    /// most gaps to the riff.
+    pub fills: f32,
+    /// How likely each run the lead sings is to restate one half-phrase an
+    /// octave up, where its instrument reaches.
+    pub soars: f32,
+    /// How often a sung tone on a beat is pushed an eighth ahead of it, so
+    /// a phrase sung again keeps its tune and changes its delivery.
+    pub pushes: f32,
 }
 
 /// How long a held tone rings.
@@ -122,8 +135,9 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
                 });
                 last = held(score, teller, tune, run, teller.long, teller.lead, last, goal, rng);
             }
-            Telling::Phrases | Telling::Trading | Telling::Riff | Telling::RiffAndLong => {
-                let notes = &told[r];
+            Telling::Phrases | Telling::Patter | Telling::Trading | Telling::Riff | Telling::RiffAndLong => {
+                let notes = delivered(score, teller, &told[r], r > 0 && runs[..r].iter().any(|p| p.lead == run.lead), rng);
+                let notes = &notes;
                 for j in 0..notes.len() {
                     let ((start, len, pitch), is_sung) = notes[j];
                     if is_sung {
@@ -159,9 +173,78 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
                     }
                 }
                 last = notes.last().map(|(n, _)| n.2);
+                if r > 0 && runs[..r].iter().any(|p| p.lead == run.lead) && matches!(run.lead, Telling::Phrases | Telling::Patter) {
+                    fills(score, teller, notes, rng);
+                }
                 if run.lead == Telling::RiffAndLong {
                     second = held(score, teller, tune, run, teller.under, teller.second, second, None, rng);
                 }
+            }
+        }
+    }
+}
+
+/// A run's notes as delivered this time: where it is told again, some
+/// tones on a beat pushed an eighth ahead, the tone before giving up the
+/// time; and, now and then, one half-phrase restated an octave up where
+/// the lead reaches.
+fn delivered(score: &Score, teller: &Teller, notes: &[(Placed, bool)], again: bool, rng: &mut Rng) -> Vec<(Placed, bool)> {
+    let mut out = notes.to_vec();
+    if again && teller.pushes > 0.0 {
+        for j in 1..out.len() {
+            let ((start, len, pitch), sung) = out[j];
+            let room = start - out[j - 1].0 .0;
+            if sung && score.strong(start) && room > E && out[j - 1].0 .1 > E && score.key_at(start - E).contains(pitch) && rng.chance(teller.pushes) {
+                out[j] = ((start - E, len + E, pitch), sung);
+                out[j - 1].0 .1 -= E;
+            }
+        }
+    }
+    let high = score.instrument(teller.lead).high;
+    if teller.soars > 0.0 && rng.chance(teller.soars) && !out.is_empty() {
+        let bar = score.bar();
+        let half = phrase::BARS / 2;
+        let first = out[0].0 .0 / bar / half;
+        let last = out[out.len() - 1].0 .0 / bar / half;
+        let pick = first + rng.below((last - first + 1) as usize) as u32;
+        let inside = |n: &(Placed, bool)| n.0 .0 / bar / half == pick;
+        if out.iter().filter(|n| inside(n)).all(|n| n.0 .2 + 12 <= high) {
+            for n in out.iter_mut().filter(|n| inside(n)) {
+                n.0 .2 += 12;
+            }
+        }
+    }
+    out
+}
+
+/// Licks in the gaps the lead leaves: where two beats or more pass
+/// between one sung tone's end and the next's start, now and then a run
+/// of sixteenths fills the last of the gap, from a step off the tone the
+/// phrase ended on to a step off the tone the next opens on.
+fn fills(score: &mut Score, teller: &Teller, notes: &[(Placed, bool)], rng: &mut Rng) {
+    let (lo, hi) = teller.register;
+    let beat = score.bar() / score.meter.groups.len() as u32;
+    for w in notes.windows(2) {
+        let ((s0, l0, p0), _) = w[0];
+        let ((s1, _, p1), _) = w[1];
+        let gap = s1.saturating_sub(s0 + l0);
+        if gap < 2 * beat || !rng.chance(teller.fills) {
+            continue;
+        }
+        let beats = (gap / beat).min(rng.range(1, 2) as u32);
+        let count = beats * beat / (E / 2);
+        let from = s1 - count * (E / 2);
+        let key = score.key_at(from);
+        let (Some(a), Some(b)) = (key.absolute_degree(key.snap(p0)), key.absolute_degree(key.snap(p1))) else { continue };
+        let line = crate::theory::melody::run_between(a + 1, b + if a < b { -1 } else { 1 }, count + 1);
+        for (k, d) in line.into_iter().enumerate() {
+            let at = from + k as u32 * (E / 2);
+            let p = key.pitch(d, 4).clamp(lo, hi);
+            // A tone on a strong beat stands on the chord.
+            let chord = score.chord_at(at);
+            let p = if score.strong(at) && !chord.holds(&key, p) { tune::nearest_chord_tone(&key, chord, p, lo, hi) } else { p };
+            if key.contains(p) {
+                score.add(Note { start: at, len: E / 2 - 10, pitch: p, vel: (teller.vel)(teller.riff.1, rng), channel: teller.lead });
             }
         }
     }
@@ -186,7 +269,7 @@ fn grace_key(score: &Score, tick: u32, pitch: u8) -> Key {
 /// leaves a leap on after a leap.
 fn told(score: &Score, tune: &Tune, runs: &[Run<Telling>], lo: u8, hi: u8, breathes: bool) -> Vec<Vec<(Placed, bool)>> {
     let bar = score.bar();
-    let tells = |t: Telling| matches!(t, Telling::Phrases | Telling::Trading | Telling::Riff | Telling::RiffAndLong);
+    let tells = |t: Telling| matches!(t, Telling::Phrases | Telling::Patter | Telling::Trading | Telling::Riff | Telling::RiffAndLong);
     let mut told: Vec<Vec<(Placed, bool)>> = runs
         .iter()
         .map(|run| {
@@ -195,6 +278,10 @@ fn told(score: &Score, tune: &Tune, runs: &[Run<Telling>], lo: u8, hi: u8, breat
             }
             let sung = |b: u32| run.lead == Telling::Phrases || (run.lead == Telling::Trading && calls(run, b));
             let mut notes: Vec<(Placed, bool)> = Vec::new();
+            if run.lead == Telling::Patter {
+                notes.extend(tune.run(score, run.a, run.b, lo, hi, false).into_iter().map(|n| (n, true)));
+                return notes;
+            }
             notes.extend(tune.run(score, run.a, run.b, lo, hi, true).into_iter().filter(|n| sung(n.0 / bar)).map(|n| (n, true)));
             notes.extend(tune.run(score, run.a, run.b, lo, hi, false).into_iter().filter(|n| !sung(n.0 / bar)).map(|n| (n, false)));
             notes.sort_by_key(|(n, _)| n.0);
