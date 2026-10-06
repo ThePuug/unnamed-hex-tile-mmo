@@ -262,7 +262,7 @@ impl Tuning {
         overpower_recovery: 6.0,
         overpower_damage: 1.773,
         punish_cost: 15.0,
-        punish_recovery: 2.886,
+        punish_recovery: 6.0,
         punish_damage: 1.515,
         punish_bonus: 0.603,
         parry_cost: 35.0,
