@@ -1,15 +1,22 @@
 //! A score to samples through a SoundFont, as `perform` plays it. Events
 //! land on the block they fall in — a block is a couple of milliseconds.
-//! The synthesizer's own
-//! effects are off: the score is played twice, once dry and once with
-//! each channel at its reverb send, and the second pass rings the
-//! score's `hall` under the first. Pure arithmetic over a buffer: the
-//! same score and bank give the same samples.
+//! Every player is a synthesizer of its own, its stem placed across the
+//! stage here rather than by the synthesizer's pan, and a kit's drums
+//! each where they sit (`Stem`). The synthesizer's own effects are off:
+//! each stem goes to the dry mix and, at its reverb send, to the send
+//! that rings the score's `hall` under it. Pure arithmetic over a
+//! buffer: the same score and bank give the same samples.
 //!
 //! A bank is several SoundFonts: the default, which plays every
 //! General MIDI program, and the files `voices` names for the programs
-//! another plays better. Each file is its own synthesizer, playing the
-//! channels whose instruments it holds, and their outputs are summed.
+//! another plays better; a player's synthesizer is on the file that
+//! seats it, a slurred note on the file's legato preset beside it.
+//!
+//! An instrument recorded at the jack sounds through its part's rig
+//! (`rigs`, `amp`): the stem is gathered as the jack hears it, played
+//! through the rig whole, and only then given its volume and pedal, so
+//! how hard a note is struck drives the amp and a fade fades it. The
+//! rig's sound is made once a take, however often the take renders.
 //!
 //! The bank is evened. Its samples are not one loudness across an
 //! instrument's range — a horn steps up three decibels where one sample
@@ -32,12 +39,14 @@ use std::sync::{Arc, Mutex, Weak};
 
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
+use crate::amp;
 use crate::hall;
 use crate::master;
 use crate::perform::{perform, Msg};
 use crate::pieces::{Params, Piece};
+use crate::rigs::Rig;
 use crate::rng::Rng;
-use crate::score::{Instrument, Role, Score};
+use crate::score::{Instrument, Role, Score, TICKS_PER_EIGHTH};
 use crate::voices;
 
 pub use audio::SAMPLE_RATE;
@@ -65,9 +74,11 @@ fn open(path: &Path) -> Result<Arc<SoundFont>, String> {
     Ok(Arc::new(SoundFont::new(&mut file).map_err(|e| format!("{}: {e:?}", path.display()))?))
 }
 
-/// The velocity a pitch is measured at, and how long its tone sounds.
+/// The velocity a pitch is measured at, and how long its tone sounds;
+/// and the eighth note a rig's delay is timed by there.
 const MEASURED_AT: i32 = 100;
 const MEASURED_S: f64 = 0.6;
+const MEASURED_EIGHTH_S: f64 = 0.2;
 
 /// The most a note is evened by, dB either way: past it a pitch is a
 /// sample the bank does not mean to be played.
@@ -85,8 +96,12 @@ pub struct Bank {
     fonts: Vec<Font>,
     /// The default, held for the bank's life so it is never read again.
     _default: Arc<SoundFont>,
-    levels: Mutex<HashMap<(usize, u8, u8, u8), f32>>,
+    levels: Mutex<HashMap<Measured, f32>>,
 }
+
+/// A tone measured: its font, bank, preset and key, and the rig it
+/// sounded through, by name.
+type Measured = (usize, u8, u8, u8, &'static str);
 
 /// A SoundFont of the bank, held only while a render holds it: the
 /// sampled ones run to hundreds of megabytes each, and a player playing
@@ -198,12 +213,19 @@ impl Bank {
             .unwrap_or(Seat { font: 0, bank: 0, preset: inst.program, voice: None })
     }
 
+    /// The rig `inst` plays through in `score`, where its seat's
+    /// instrument was recorded at the jack.
+    fn rig(&self, score: &Score, inst: &Instrument) -> Option<&'static Rig> {
+        self.seat(inst).voice.filter(|v| v.direct).map(|_| score.rig(inst.channel))
+    }
+
     /// The loudness of `seat`'s `pitch`, LUFS at its loudest moment: one
     /// tone at `MEASURED_AT`, dry and centred, on the key the seat strikes
-    /// for it. A kit the default bank plays is on the drum channel.
-    fn level(&self, seat: Seat, drums: bool, pitch: u8) -> f32 {
+    /// for it, through `rig` where there is one, driven as a stem drives
+    /// it. A kit the default bank plays is on the drum channel.
+    fn level(&self, seat: Seat, drums: bool, pitch: u8, rig: Option<&'static Rig>) -> f32 {
         let struck = seat.voice.map_or(pitch, |v| voices::key(v, pitch, 0));
-        let key = (seat.font, seat.bank, seat.preset, struck);
+        let key = (seat.font, seat.bank, seat.preset, struck, rig.map_or("", |r| r.name));
         if let Some(l) = self.levels.lock().unwrap().get(&key) {
             return *l;
         }
@@ -216,6 +238,9 @@ impl Bank {
             synth.process_midi_message(ch, 0xB0, 0, seat.bank as i32);
         }
         synth.process_midi_message(ch, 0xC0, seat.preset as i32, 0);
+        if rig.is_some() {
+            synth.process_midi_message(ch, 0xB0, 7, 127);
+        }
         synth.note_on(ch, struck as i32, MEASURED_AT);
         let n = (MEASURED_S * SAMPLE_RATE as f64) as usize / BLOCK;
         let (mut left, mut right) = (vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]);
@@ -223,6 +248,10 @@ impl Bank {
         for _ in 0..n {
             synth.render(&mut left, &mut right);
             tone.extend(left.iter().zip(&right).map(|(l, r)| [*l, *r]));
+        }
+        if let Some(rig) = rig {
+            let jack: Vec<f32> = tone.iter().map(|[l, r]| (l + r) / 2.0).collect();
+            tone = amp::play(rig, &jack, MEASURED_EIGHTH_S).into_iter().map(|(m, s)| [m + s, m - s]).collect();
         }
         let l = audio::measure::loudest_moment(&tone);
         self.levels.lock().unwrap().insert(key, l);
@@ -236,12 +265,13 @@ impl Bank {
     /// whichever others a seed adds.
     fn levels(&self, score: &Score, inst: &Instrument) -> (Vec<(u8, f32)>, Option<f32>) {
         let seat = self.seat(inst);
+        let rig = self.rig(score, inst);
         let drums = inst.role == Role::Percussion;
         let counted: Vec<u8> = if drums { score.notes.iter().filter(|n| n.channel == inst.channel).map(|n| n.pitch).collect() } else { (inst.low..=inst.high).collect() };
         let mut keys = counted.clone();
         keys.sort();
         keys.dedup();
-        let levels: Vec<(u8, f32)> = keys.into_iter().map(|p| (p, self.level(seat, drums, p))).filter(|(_, l)| l.is_finite()).collect();
+        let levels: Vec<(u8, f32)> = keys.into_iter().map(|p| (p, self.level(seat, drums, p, rig))).filter(|(_, l)| l.is_finite()).collect();
         let mut sorted: Vec<f32> = counted.iter().filter_map(|p| levels.iter().find(|(k, _)| k == p).map(|(_, l)| *l)).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let middle = sorted.get(sorted.len() / 2).copied();
@@ -281,8 +311,9 @@ const RING_KEPT_S: f32 = 0.5;
 pub fn take(piece: &Piece, seed: u64, bank: &Bank) -> (Score, Vec<[f32; 2]>) {
     let mut score = (piece.build)(&Params { seed });
     let _held = bank.hold(&score);
-    set_levels(&mut score, bank);
-    let mut audio = render(&score, bank);
+    let mut amped = Amped::default();
+    levelled(&mut score, bank, &mut amped);
+    let mut audio = rendered(&score, bank, &mut amped);
     audio::encode::set_loudness(&mut audio, piece.lufs);
     master::limit(&mut audio);
     let (_, tail) = audio::measure::silence(&audio);
@@ -308,13 +339,17 @@ const LEVEL_PASSES: usize = 6;
 /// arc holds whatever the seed brings. Nothing moves where no section
 /// declares a level.
 pub fn set_levels(score: &mut Score, bank: &Bank) {
+    levelled(score, bank, &mut Amped::default());
+}
+
+fn levelled(score: &mut Score, bank: &Bank, amped: &mut Amped) {
     let levelled: Vec<usize> = (0..score.sections.len()).filter(|i| score.sections[*i].level.is_some()).collect();
     let Some(&crest) = levelled.iter().max_by(|a, b| score.sections[**a].level.partial_cmp(&score.sections[**b].level).unwrap()) else {
         return;
     };
     let _held = bank.hold(score);
     for _ in 0..LEVEL_PASSES {
-        let audio = render(score, bank);
+        let audio = rendered(score, bank, amped);
         let spans: Vec<(f32, f32)> = levelled.iter().map(|i| (score.seconds(score.sections[*i].start) as f32, score.seconds(score.sections[*i].end) as f32)).collect();
         let measured = audio::measure::spans(&audio, &spans);
         let at_crest = measured[levelled.iter().position(|i| *i == crest).unwrap()];
@@ -336,17 +371,39 @@ pub fn set_levels(score: &mut Score, bank: &Bank) {
 /// Interleaved stereo f32 at `SAMPLE_RATE`: the score once, then on
 /// for the room's time, the fall of 60 dB, past which is silence.
 pub fn render(score: &Score, bank: &Bank) -> Vec<[f32; 2]> {
+    rendered(score, bank, &mut Amped::default())
+}
+
+fn rendered(score: &Score, bank: &Bank, amped: &mut Amped) -> Vec<[f32; 2]> {
     let _held = bank.hold(score);
-    let mut once = mixed(score, bank, (score.room as f64 * SAMPLE_RATE as f64) as usize);
+    let mut once = mixed(score, bank, (score.room as f64 * SAMPLE_RATE as f64) as usize, amped);
     master::master(&mut once);
     once
 }
 
+/// What each rig made of what reached it, by a hash of that and the rig
+/// and the tempo, kept through one take's renders: a rigged stem's
+/// volume and pedal act after its rig, so setting the sections' levels
+/// changes nothing the rig hears, and its sound is made once.
+#[derive(Default)]
+struct Amped(HashMap<u64, Vec<(f32, f32)>>);
+
+impl Amped {
+    fn play(&mut self, rig: &'static Rig, jack: &[f32], eighth_s: f64) -> &[(f32, f32)] {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        rig.name.hash(&mut h);
+        eighth_s.to_bits().hash(&mut h);
+        jack.iter().for_each(|v| v.to_bits().hash(&mut h));
+        self.0.entry(h.finish()).or_insert_with(|| amp::play(rig, jack, eighth_s))
+    }
+}
+
 /// The score once in its room, then `tail` samples more.
-fn mixed(score: &Score, bank: &Bank, tail: usize) -> Vec<[f32; 2]> {
+fn mixed(score: &Score, bank: &Bank, tail: usize, amped: &mut Amped) -> Vec<[f32; 2]> {
     let played = perform(score);
-    let mut out = through(score, &played, bank, tail, false);
-    let room = hall::ring(&through(score, &played, bank, tail, true), score.room);
+    let (mut out, send) = through(score, &played, bank, tail, amped);
+    let room = hall::ring(&send, score.room);
     for (o, r) in out.iter_mut().zip(room) {
         o[0] += WET * r[0];
         o[1] += WET * r[1];
@@ -354,120 +411,269 @@ fn mixed(score: &Score, bank: &Bank, tail: usize) -> Vec<[f32; 2]> {
     out
 }
 
-/// The score as `played`, then `tail` samples more: dry, or as the
-/// reverb send hears it; each font of the bank playing the channels it
-/// seats, their outputs summed.
-fn through(score: &Score, played: &[crate::perform::Played], bank: &Bank, tail: usize, send: bool) -> Vec<[f32; 2]> {
-    let mut out: Vec<[f32; 2]> = Vec::new();
-    for font in 0..bank.fonts.len() {
-        let seated: Vec<&Instrument> = score.instruments.iter().filter(|i| bank.seat(i).font == font).collect();
-        if seated.is_empty() {
-            continue;
-        }
-        let part = through_font(score, played, bank, font, &seated, tail, send);
-        if out.is_empty() {
-            out = part;
-        } else {
-            for (o, p) in out.iter_mut().zip(part) {
-                o[0] += p[0];
-                o[1] += p[1];
-            }
-        }
-    }
-    out
+/// Where a kit's drums sit across the stage, against the kit's own seat,
+/// as `Instrument::pan` counts: from the drummer's stool, the hats on the
+/// left, the toms from the high on the left to the floor on the right,
+/// a crash either side, the ride and the china on the right; the kick,
+/// the snare and every drum not named in the middle. A kit seated whole
+/// on one point is one drum the size of the stage.
+const DRUM_SEATS: &[(u8, i8)] = &[(42, -22), (44, -22), (46, -22), (50, -28), (48, -16), (47, -6), (45, 8), (43, 22), (41, 34), (49, -34), (55, -20), (57, 34), (51, 26), (53, 26), (59, 26), (52, 42)];
+
+/// Where `inst`'s note on `pitch` sits across the stage, -1 hard left to 1
+/// hard right: the player's seat, and a kit's drum its own.
+fn seat_of(inst: &Instrument, pitch: u8) -> f32 {
+    let drum = if inst.role == Role::Percussion { DRUM_SEATS.iter().find(|(k, _)| *k == pitch).map_or(0, |(_, s)| *s) } else { 0 };
+    ((inst.pan as i32 + drum as i32) as f32 / 63.0).clamp(-1.0, 1.0)
 }
 
-/// The channels of `seated` as `played`, on `font`.
-#[allow(clippy::too_many_arguments)]
-fn through_font(score: &Score, played: &[crate::perform::Played], bank: &Bank, font: usize, seated: &[&Instrument], tail: usize, send: bool) -> Vec<[f32; 2]> {
-    let mut settings = SynthesizerSettings::new(SAMPLE_RATE as i32);
-    settings.block_size = BLOCK;
-    settings.enable_reverb_and_chorus = false;
-    let mut synth = Synthesizer::new(&bank.font(font), &settings).expect("a synthesizer");
-    // A kit another bank files as a melodic preset plays on a melodic
-    // channel of its own synthesizer, which holds no other player there.
-    let free = (0..16u8).find(|c| *c != 9 && !seated.iter().any(|i| i.channel == *c)).unwrap_or(15);
-    let route: HashMap<u8, (u8, Seat)> = seated
-        .iter()
-        .map(|i| {
-            let seat = bank.seat(i);
-            let melodic_kit = i.role == Role::Percussion && seat.voice.is_some_and(|v| v.bank < 128);
-            (i.channel, (if melodic_kit { free } else { i.channel }, seat))
-        })
-        .collect();
-    let evening: HashMap<u8, HashMap<u8, f32>> = seated.iter().map(|i| (i.channel, bank.evening(score, i))).collect();
+/// A player as the synthesizer sounds it, a stereo stem — or one drum of
+/// a kit, or the drums sharing a seat — placed across the stage: its
+/// middle panned at constant power, its width narrowed as it nears a
+/// side, so a stem in the middle is as the bank recorded it and one at a
+/// side is all there. A bank's stereo sample panned by the synthesizer
+/// leaves its far side near the middle, and a guitar meant for one side
+/// sounds from both.
+struct Stem {
+    synth: Synthesizer,
+    /// The synthesizer's channel the player is on: the drum channel for a
+    /// kit the default bank plays, else the first.
+    channel: i32,
+    /// The channel after it, on the instrument's legato preset, where it
+    /// has one: a slurred note is struck there, every controller and bend
+    /// reaching both.
+    legato: Option<i32>,
+    /// The gains on the stem's middle, left and right, and on its side.
+    mid: (f32, f32),
+    side: f32,
+    /// The reverb send, as a gain.
+    send: f32,
+    /// Where the player's instrument sounds through a rig: what reaches
+    /// it, and the stem's volume and pedal, which act after it.
+    rigged: Option<Rigged>,
+}
+
+/// A stem played through a rig. The amp hears the player's hands: how
+/// hard a note is struck drives it, and the channel's volume and pedal
+/// come after it, as a fader and a volume pedal do — a fade is the amp
+/// fading, not the guitar played softer into it.
+struct Rigged {
+    rig: &'static Rig,
+    /// The stem's middle at the jack, every block.
+    jack: Vec<f32>,
+    /// The volume and pedal, controller values, and the gain they make
+    /// at each block's end.
+    volume: u8,
+    pedal: u8,
+    gains: Vec<f32>,
+}
+
+impl Rigged {
+    /// The synthesizer's gain for its volume and pedal: each a share of
+    /// its 14-bit top, their product squared.
+    fn gain(&self) -> f32 {
+        let share = |v: u8| (v as f32 * 128.0) / 16383.0;
+        (share(self.volume) * share(self.pedal)).powi(2)
+    }
+}
+
+impl Stem {
+    fn new(font: &Arc<SoundFont>, seat: Seat, drums: bool, place: f32, volume: u8, reverb: u8, rig: Option<&'static Rig>) -> Stem {
+        let mut settings = SynthesizerSettings::new(SAMPLE_RATE as i32);
+        settings.block_size = BLOCK;
+        settings.enable_reverb_and_chorus = false;
+        let mut synth = Synthesizer::new(font, &settings).expect("a synthesizer");
+        let channel = if drums && seat.voice.is_none() { 9 } else { 0 };
+        if channel != 9 {
+            synth.process_midi_message(channel, 0xB0, 0, seat.bank as i32);
+        }
+        synth.process_midi_message(channel, 0xC0, seat.preset as i32, 0);
+        synth.process_midi_message(channel, 0xB0, 7, if rig.is_some() { 127 } else { volume as i32 });
+        let legato = seat.voice.and_then(|v| v.legato).filter(|_| channel != 9).map(|preset| {
+            let ch = channel + 1;
+            synth.process_midi_message(ch, 0xB0, 0, seat.bank as i32);
+            synth.process_midi_message(ch, 0xC0, preset as i32, 0);
+            synth.process_midi_message(ch, 0xB0, 7, if rig.is_some() { 127 } else { volume as i32 });
+            ch
+        });
+        let angle = (place + 1.0) * std::f32::consts::FRAC_PI_4;
+        Stem {
+            synth,
+            channel,
+            legato,
+            mid: (std::f32::consts::SQRT_2 * angle.cos(), std::f32::consts::SQRT_2 * angle.sin()),
+            side: 1.0 - place.abs(),
+            send: reverb as f32 / 127.0,
+            rigged: rig.map(|rig| Rigged { rig, jack: Vec::new(), volume, pedal: 127, gains: Vec::new() }),
+        }
+    }
+}
+
+/// The score as `played`, then `tail` samples more, dry and as the
+/// reverb send hears it: every player on a synthesizer of its own, on
+/// the font that seats it, each stem placed and summed.
+fn through(score: &Score, played: &[crate::perform::Played], bank: &Bank, tail: usize, amped: &mut Amped) -> (Vec<[f32; 2]>, Vec<[f32; 2]>) {
     let volumes = bank.volumes(score);
+    let mut stems: Vec<Stem> = Vec::new();
+    // Each channel's stems, by the key each note sounds on: a kit's drums
+    // sharing a seat share a stem, so a hat's foot still closes its open
+    // stroke.
+    let mut route: HashMap<u8, (Seat, Vec<(u8, usize)>)> = HashMap::new();
+    let mut evening: HashMap<u8, HashMap<u8, f32>> = HashMap::new();
+    for inst in &score.instruments {
+        let seat = bank.seat(inst);
+        let rig = bank.rig(score, inst);
+        let drums = inst.role == Role::Percussion;
+        let font = bank.font(seat.font);
+        let mut keys: Vec<u8> = score.notes.iter().filter(|n| n.channel == inst.channel).map(|n| n.pitch).collect();
+        keys.sort();
+        keys.dedup();
+        let mut seats: Vec<(f32, usize)> = Vec::new();
+        let mut by_key = Vec::new();
+        for key in keys {
+            let place = if drums { seat_of(inst, key) } else { seat_of(inst, 0) };
+            let stem = match seats.iter().find(|(p, _)| *p == place) {
+                Some((_, s)) => *s,
+                None => {
+                    stems.push(Stem::new(&font, seat, drums, place, volumes[&inst.channel], inst.reverb, rig));
+                    seats.push((place, stems.len() - 1));
+                    stems.len() - 1
+                }
+            };
+            by_key.push((key, stem));
+        }
+        route.insert(inst.channel, (seat, by_key));
+        evening.insert(inst.channel, bank.evening(score, inst));
+    }
     // The synthesizer gains a velocity as its square, forty log ten of
     // it in dB.
     let even = |channel: u8, pitch: u8, vel: u8| -> i32 {
         let db = evening.get(&channel).and_then(|e| e.get(&pitch)).copied().unwrap_or(0.0);
         (vel as f32 * 10f32.powf(db / 40.0)).round().clamp(1.0, 127.0) as i32
     };
-    for inst in seated {
-        let (ch, seat) = route[&inst.channel];
-        let ch = ch as i32;
-        if seat.font != 0 {
-            synth.process_midi_message(ch, 0xB0, 0, seat.bank as i32);
-        }
-        synth.process_midi_message(ch, 0xC0, seat.preset as i32, 0);
-        synth.process_midi_message(ch, 0xB0, 10, 64 + inst.pan as i32);
-        // The synthesizer squares volume into gain, so the send's gain
-        // is its root on the volume.
-        let send = if send { (inst.reverb as f32 / 127.0).sqrt() } else { 1.0 };
-        synth.process_midi_message(ch, 0xB0, 7, (volumes[&inst.channel] as f32 * send).round() as i32);
-    }
 
     let at = |seconds: f64| (seconds * SAMPLE_RATE as f64).round() as u64;
     let total = at(score.seconds(score.end())) as usize + tail;
-    let mut out = Vec::with_capacity(total);
+    let mut dry = Vec::with_capacity(total);
+    let mut wet = Vec::with_capacity(total);
     let mut left = vec![0.0f32; BLOCK];
     let mut right = vec![0.0f32; BLOCK];
     let mut next = 0;
     let mut sample = 0usize;
-    // Each drum's last recording and the key it was struck on: a stroke
-    // takes any other, drawn by when it lands, so the dry pass and the
-    // send draw alike; its release goes to the key it struck.
+    // Each note's last recording and the key it was struck on: a stroke
+    // takes any other, drawn by when it lands and whose it is, so two
+    // players striking together strike two takes; its release goes to the
+    // key it struck.
     let mut struck: HashMap<(u8, u8), (u8, i32)> = HashMap::new();
     while sample < total {
         while next < played.len() && at(played[next].at) as usize <= sample {
             let channel = match played[next].msg {
                 Msg::On { channel, .. } | Msg::Off { channel, .. } | Msg::Control { channel, .. } | Msg::Bend { channel, .. } => channel,
             };
-            let Some((ch, seat)) = route.get(&channel) else {
+            let Some((seat, by_key)) = route.get(&channel) else {
                 next += 1;
                 continue;
             };
-            let ch = *ch as i32;
+            let stem_of = |pitch: u8| by_key.iter().find(|(k, _)| *k == pitch).map(|(_, s)| *s);
             match played[next].msg {
-                Msg::On { channel, pitch, vel } => {
-                    let key = match seat.voice {
-                        Some(v) if v.variations > 1 => {
+                Msg::On { channel, pitch, vel, legato } => {
+                    let vel = even(channel, pitch, vel);
+                    let (key, vel) = match seat.voice {
+                        Some(v) if v.takes.count() > 1 => {
+                            let takes = v.takes.count();
                             let last = struck.get(&(channel, pitch)).map_or(0, |(n, _)| *n);
-                            let n = (last + 1 + Rng::new(sample as u64).below(v.variations as usize - 1) as u8) % v.variations;
+                            let n = (last + 1 + Rng::new(sample as u64 ^ (channel as u64) << 48 ^ (pitch as u64) << 40).below(takes as usize - 1) as u8) % takes;
                             let key = voices::key(v, pitch, n) as i32;
                             struck.insert((channel, pitch), (n, key));
-                            key
+                            (key, voices::velocity(v, vel as u8, n) as i32)
                         }
-                        Some(v) => voices::key(v, pitch, 0) as i32,
-                        None => pitch as i32,
+                        Some(v) => (voices::key(v, pitch, 0) as i32, vel),
+                        None => (pitch as i32, vel),
                     };
-                    synth.note_on(ch, key, even(channel, pitch, vel))
+                    if let Some(s) = stem_of(pitch) {
+                        let stem = &mut stems[s];
+                        let on = if legato { stem.legato.unwrap_or(stem.channel) } else { stem.channel };
+                        stem.synth.note_on(on, key, vel);
+                    }
                 }
                 Msg::Off { channel, pitch } => {
                     let key = struck.get(&(channel, pitch)).map_or_else(|| seat.voice.map_or(pitch, |v| voices::key(v, pitch, 0)) as i32, |(_, k)| *k);
-                    synth.note_off(ch, key)
+                    if let Some(s) = stem_of(pitch) {
+                        let stem = &mut stems[s];
+                        for ch in std::iter::once(stem.channel).chain(stem.legato) {
+                            stem.synth.note_off(ch, key);
+                        }
+                    }
                 }
-                Msg::Control { number, value, .. } => synth.process_midi_message(ch, 0xB0, number as i32, value as i32),
-                Msg::Bend { value, .. } => synth.process_midi_message(ch, 0xE0, (value & 0x7F) as i32, (value >> 7) as i32),
+                // A controller reaches every stem of the player; a rigged
+                // stem's volume and pedal wait for its rig.
+                Msg::Control { number, value, .. } => {
+                    for (_, s) in by_key {
+                        let stem = &mut stems[*s];
+                        match (&mut stem.rigged, number) {
+                            (Some(r), 7) => r.volume = value,
+                            (Some(r), 11) => r.pedal = value,
+                            _ => {
+                                for ch in std::iter::once(stem.channel).chain(stem.legato) {
+                                    stem.synth.process_midi_message(ch, 0xB0, number as i32, value as i32);
+                                }
+                            }
+                        }
+                    }
+                }
+                Msg::Bend { value, .. } => {
+                    for (_, s) in by_key {
+                        let stem = &mut stems[*s];
+                        for ch in std::iter::once(stem.channel).chain(stem.legato) {
+                            stem.synth.process_midi_message(ch, 0xE0, (value & 0x7F) as i32, (value >> 7) as i32);
+                        }
+                    }
+                }
             }
             next += 1;
         }
-        synth.render(&mut left, &mut right);
-        for i in 0..BLOCK {
-            out.push([left[i], right[i]]);
+        let from = dry.len();
+        dry.resize(from + BLOCK, [0.0f32; 2]);
+        wet.resize(from + BLOCK, [0.0f32; 2]);
+        for stem in &mut stems {
+            stem.synth.render(&mut left, &mut right);
+            if let Some(r) = &mut stem.rigged {
+                r.jack.extend(left.iter().zip(&right).map(|(l, r)| (l + r) / 2.0));
+                let gain = r.gain();
+                r.gains.push(gain);
+                continue;
+            }
+            for i in 0..BLOCK {
+                let (m, s) = ((left[i] + right[i]) / 2.0, (left[i] - right[i]) / 2.0);
+                let (l, r) = (stem.mid.0 * m + stem.side * s, stem.mid.1 * m - stem.side * s);
+                dry[from + i][0] += l;
+                dry[from + i][1] += r;
+                wet[from + i][0] += stem.send * l;
+                wet[from + i][1] += stem.send * r;
+            }
         }
         sample += BLOCK;
     }
-    out.truncate(total);
-    out
+    // Each rigged stem through its rig, then its volume and pedal, eased
+    // across each block as the synthesizer eases its own, then placed.
+    let eighth_s = score.seconds(TICKS_PER_EIGHTH) - score.seconds(0);
+    for stem in &stems {
+        let Some(r) = &stem.rigged else { continue };
+        let out = amped.play(r.rig, &r.jack, eighth_s);
+        for (b, gain) in r.gains.iter().enumerate() {
+            let before = if b == 0 { *gain } else { r.gains[b - 1] };
+            for i in 0..BLOCK {
+                let at = b * BLOCK + i;
+                let g = before + (gain - before) * (i + 1) as f32 / BLOCK as f32;
+                let (m, s) = (g * out[at].0, g * out[at].1);
+                let (l, r) = (stem.mid.0 * m + stem.side * s, stem.mid.1 * m - stem.side * s);
+                dry[at][0] += l;
+                dry[at][1] += r;
+                wet[at][0] += stem.send * l;
+                wet[at][1] += stem.send * r;
+            }
+        }
+    }
+    dry.truncate(total);
+    wet.truncate(total);
+    (dry, wet)
 }

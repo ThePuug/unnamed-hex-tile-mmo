@@ -35,16 +35,51 @@ pub struct Voice {
     /// them is struck the fewest octaves in, so no note falls silent and
     /// none leaves its chord; a part written past them is heard folded.
     pub range: (u8, u8),
-    /// How many recordings of each drum a kit holds, the n-th
-    /// `VARIATION_KEYS` × n over the first; one for any other voice.
-    pub variations: u8,
+    /// The recordings the file holds of each note, and how one is
+    /// chosen.
+    pub takes: Takes,
+    /// Whether it was recorded at the jack, before any amp: it sounds
+    /// through its part's rig (`rigs`).
+    pub direct: bool,
+    /// The preset playing each note entered past its attack, the string
+    /// already ringing — a hammer-on, a pull-off, a slide's arrival —
+    /// where the file has one.
+    pub legato: Option<u8>,
+}
+
+/// How many recordings of each note a file holds, and how the
+/// synthesizer is asked for one: a struck note takes a different one from
+/// the last, as a hand never strikes the same note twice alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Takes {
+    One,
+    /// The n-th on the key `TAKE_KEYS` × n over the first, as a kit lays
+    /// them out.
+    Keys(u8),
+    /// The n-th where the velocity is n modulo `count`, within each of
+    /// the file's dynamic `layers`, the velocities each one over the first
+    /// starts at: FSBS's guitars, recorded four times at each of two
+    /// dynamics.
+    Velocities { count: u8, layers: &'static [u8] },
+}
+
+impl Takes {
+    pub fn count(self) -> u8 {
+        match self {
+            Takes::One => 1,
+            Takes::Keys(n) | Takes::Velocities { count: n, .. } => n,
+        }
+    }
 }
 
 /// How far apart a kit lays the recordings of one drum, keys.
-pub const VARIATION_KEYS: u8 = 24;
+pub const TAKE_KEYS: u8 = 24;
+
+/// The FSBS guitars' takes: four of each note, soft under 93 below G4.
+const FSBS: Takes = Takes::Velocities { count: 4, layers: &[93] };
 
 const fn melodic(program: u8, file: &'static str, range: (u8, u8)) -> Voice {
-    Voice { program, percussion: false, file, bank: 0, preset: 0, keys: &[], range, variations: 1 }
+    Voice { program, percussion: false, file, bank: 0, preset: 0, keys: &[], range, takes: Takes::One, direct: false, legato: None }
 }
 
 /// MuldjordKit's drums on General MIDI's keys: its two kicks, its snare
@@ -80,7 +115,9 @@ const MULDJORD: &[(u8, u8)] = &[
 const SWIRLY: &[(u8, u8)] = &[(50, 48)];
 
 /// Every program another bank plays: FreePats' Fender guitars sampled
-/// clean, jazz and through two amps; its fingered bass, tenor sax,
+/// clean and jazz, and recorded at the jack for the overdriven and the
+/// distorted guitar, which sound through their parts' rigs, entered past
+/// the pick for legato (`banks/fsbs.py`); its fingered bass, tenor sax,
 /// upright piano and drawbar organ; Lars Muldjord's rock kit (CC BY 4.0:
 /// the music must credit him); Karoryfer's Swirly Drums for the brush
 /// kit, its drums struck with brushes and its cymbals as well, four
@@ -88,24 +125,23 @@ const SWIRLY: &[(u8, u8)] = &[(50, 48)];
 /// piece plays: the kick, the snare's centre, the hat's foot, the crash,
 /// the ride and the toms; a harmonica built from VCSL's Hohner
 /// Special 20s (`banks/harmonica.py`); and Karoryfer's Pastabass, picked,
-/// built from its SFZ mapping (`banks/sfz.py`). The two distorted guitars
-/// are different amps, so a double-tracked pair is two guitars. The
+/// built from its SFZ mapping (`banks/sfz.py`). The
 /// fingered bass is a round floor from the low D to the A over the low
 /// E, a line over it folded down; the picked starts at the C♯ over the
 /// low E and reaches high, so it suits a part that sits high, a solo.
 pub const VOICES: &[Voice] = &[
     melodic(0, "upright-piano-kw.sf2", (21, 108)),
     melodic(16, "drawbar-organ.sf2", (33, 98)),
-    Voice { program: 22, percussion: false, file: "harmonica.sf2", bank: 0, preset: 22, keys: &[], range: (0, 127), variations: 1 },
-    melodic(26, "fsbs-jazz.sf2", (35, 86)),
-    melodic(27, "fsbs-clean.sf2", (35, 86)),
-    melodic(29, "fsbs-dist2.sf2", (35, 86)),
-    melodic(30, "fsbs-dist1.sf2", (35, 86)),
+    Voice { program: 22, percussion: false, file: "harmonica.sf2", bank: 0, preset: 22, keys: &[], range: (0, 127), takes: Takes::One, direct: false, legato: None },
+    Voice { takes: FSBS, ..melodic(26, "fsbs-jazz.sf2", (35, 86)) },
+    Voice { takes: FSBS, ..melodic(27, "fsbs-clean.sf2", (35, 86)) },
+    Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(29, "guitar-di.sf2", (35, 86)) },
+    Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(30, "guitar-di.sf2", (35, 86)) },
     melodic(33, "yr-finger-bass.sf2", (26, 45)),
-    Voice { program: 34, percussion: false, file: "pasta-bass.sf2", bank: 0, preset: 34, keys: &[], range: (37, 85), variations: 1 },
+    Voice { program: 34, percussion: false, file: "pasta-bass.sf2", bank: 0, preset: 34, keys: &[], range: (37, 85), takes: Takes::One, direct: false, legato: None },
     melodic(66, "tenor-sax.sf2", (43, 89)),
-    Voice { program: 16, percussion: true, file: "muldjord-kit.sf2", bank: 0, preset: 0, keys: MULDJORD, range: (0, 127), variations: 1 },
-    Voice { program: 40, percussion: true, file: "swirly-kit.sf2", bank: 0, preset: 0, keys: SWIRLY, range: (0, 127), variations: 4 },
+    Voice { program: 16, percussion: true, file: "muldjord-kit.sf2", bank: 0, preset: 0, keys: MULDJORD, range: (0, 127), takes: Takes::One, direct: false, legato: None },
+    Voice { program: 40, percussion: true, file: "swirly-kit.sf2", bank: 0, preset: 0, keys: SWIRLY, range: (0, 127), takes: Takes::Keys(4), direct: false, legato: None },
 ];
 
 /// The voice for `program`, where another bank plays it.
@@ -114,12 +150,16 @@ pub fn voice(program: u8, percussion: bool) -> Option<&'static Voice> {
 }
 
 /// The key `voice` strikes for General MIDI's `key`: a kit's own key for
-/// the drum, its `variation`-th recording of it, a melodic note folded by
-/// octaves into the voice's range.
-pub fn key(voice: &Voice, key: u8, variation: u8) -> u8 {
+/// the drum, a melodic note folded by octaves into the voice's range, and
+/// on it the `take`-th recording where the voice lays its takes on keys.
+pub fn key(voice: &Voice, key: u8, take: u8) -> u8 {
+    let lift = match voice.takes {
+        Takes::Keys(n) => take % n * TAKE_KEYS,
+        _ => 0,
+    };
     if voice.percussion {
         let drum = voice.keys.iter().find(|(gm, _)| *gm == key).map_or(key, |(_, k)| *k);
-        return drum + variation % voice.variations * VARIATION_KEYS;
+        return drum + lift;
     }
     let (lo, hi) = voice.range;
     let mut k = key;
@@ -129,7 +169,20 @@ pub fn key(voice: &Voice, key: u8, variation: u8) -> u8 {
     while k > hi && k >= lo + 12 {
         k -= 12;
     }
-    k
+    k + lift
+}
+
+/// The velocity that strikes `voice`'s `take`-th recording at about
+/// `vel`: the nearest of its dynamic layer's velocities that names the
+/// take, where the voice chooses its takes by velocity; `vel` itself
+/// otherwise. A nudge of a step or two is a fraction of a decibel.
+pub fn velocity(voice: &Voice, vel: u8, take: u8) -> u8 {
+    let Takes::Velocities { count, layers } = voice.takes else {
+        return vel;
+    };
+    let lo = layers.iter().copied().filter(|l| *l <= vel).max().unwrap_or(1);
+    let hi = layers.iter().copied().filter(|l| *l > vel).min().map_or(127, |l| l - 1);
+    (lo..=hi).filter(|v| v % count == take % count).min_by_key(|v| ((*v as i32 - vel as i32).abs(), *v)).unwrap_or(vel)
 }
 
 #[cfg(test)]
@@ -153,6 +206,21 @@ mod tests {
     }
 
     #[test]
+    fn a_take_by_velocity_stays_in_its_layer_and_near() {
+        let guitar = voice(30, false).unwrap();
+        for vel in 1..=127u8 {
+            let struck: Vec<u8> = (0..4).map(|n| velocity(guitar, vel, n)).collect();
+            let mut takes: Vec<u8> = struck.iter().map(|v| v % 4).collect();
+            takes.sort();
+            takes.dedup();
+            assert_eq!(takes.len(), 4, "{vel}: {struck:?}");
+            assert!(struck.iter().all(|v| (*v >= 93) == (vel >= 93) && (*v as i32 - vel as i32).abs() <= 3 && *v >= 1), "{vel}: {struck:?}");
+        }
+        let bass = voice(34, false).unwrap();
+        assert_eq!(velocity(bass, 90, 3), 90);
+    }
+
+    #[test]
     fn a_kit_strikes_its_own_keys() {
         let kit = voice(16, true).unwrap();
         assert_eq!(key(kit, 36, 0), 48);
@@ -162,12 +230,12 @@ mod tests {
     #[test]
     fn a_drum_s_recordings_lie_on_keys_of_their_own() {
         let kit = voice(40, true).unwrap();
-        let mut struck: Vec<u8> = [36, 38, 41, 44, 45, 47, 49, 50, 51].iter().flat_map(|k| (0..kit.variations).map(|n| key(kit, *k, n))).collect();
+        let mut struck: Vec<u8> = [36, 38, 41, 44, 45, 47, 49, 50, 51].iter().flat_map(|k| (0..kit.takes.count()).map(|n| key(kit, *k, n))).collect();
         let all = struck.len();
         struck.sort();
         struck.dedup();
         assert_eq!(struck.len(), all);
         assert!(struck.iter().all(|k| *k <= 127));
-        assert_eq!(key(kit, 51, kit.variations), key(kit, 51, 0));
+        assert_eq!(key(kit, 51, kit.takes.count()), key(kit, 51, 0));
     }
 }

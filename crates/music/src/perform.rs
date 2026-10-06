@@ -6,7 +6,10 @@
 //! off. Over those, each player's intensity rises and falls on its own
 //! slow breath; a held tone swells as the player enters and carries
 //! through every tone joined to it; a sung or bowed tone grows a
-//! vibrato once it settles.
+//! vibrato once it settles. A lead guitarist ornaments as one plays
+//! (`players::Guitar`): bends into a tone, slides, a vibrato of the bend,
+//! a phrase's end let go a different way each time. How far each habit
+//! goes is the player's (`players`); this is how a habit plays.
 //!
 //! Every draw is keyed on the note — its channel, pitch and tick — so a
 //! score is played the same every time it is rendered. The checks judge
@@ -15,7 +18,8 @@
 use audio::rng::Rng;
 
 use crate::render::volume;
-use crate::score::{Role, Score};
+use crate::players::Guitar;
+use crate::score::{Role, Score, TICKS_PER_EIGHTH};
 
 /// A message to the synthesizer at `at` seconds. At one instant a
 /// controller goes before a note-off, and a note-off before a note-on,
@@ -32,7 +36,9 @@ pub enum Msg {
     /// 14-bit pitch bend, 8192 in tune, over General MIDI's two semitones.
     Bend { channel: u8, value: u16 },
     Off { channel: u8, pitch: u8 },
-    On { channel: u8, pitch: u8, vel: u8 },
+    /// A note struck; a `legato` one is entered with its string already
+    /// ringing, slurred from the note before.
+    On { channel: u8, pitch: u8, vel: u8, legato: bool },
 }
 
 impl Msg {
@@ -42,31 +48,6 @@ impl Msg {
             Msg::Off { .. } => 1,
             Msg::On { .. } => 2,
         }
-    }
-}
-
-/// How a role plays, milliseconds and velocity steps. `lean` is the
-/// range a player's habitual place against the beat is drawn from;
-/// `drift` how far the player's time wanders over the slow breath;
-/// `slip` the spread of one note's error about both.
-struct Feel {
-    lean: (f32, f32),
-    drift: f32,
-    slip: f32,
-    touch: f32,
-}
-
-fn feel(role: Role) -> Feel {
-    match role {
-        // The drum keeps the time the others lean against.
-        Role::Percussion => Feel { lean: (-4.0, 4.0), drift: 4.0, slip: 5.0, touch: 8.0 },
-        Role::Pluck => Feel { lean: (-5.0, 10.0), drift: 6.0, slip: 8.0, touch: 7.0 },
-        Role::Melody => Feel { lean: (0.0, 18.0), drift: 10.0, slip: 14.0, touch: 6.0 },
-        Role::Doubling => Feel { lean: (0.0, 20.0), drift: 10.0, slip: 14.0, touch: 5.0 },
-        // A section's entries spread; a slow attack hides it.
-        Role::Sustain => Feel { lean: (0.0, 25.0), drift: 12.0, slip: 22.0, touch: 4.0 },
-        // The drone is struck once and held; it has nothing to place.
-        Role::Drone => Feel { lean: (0.0, 0.0), drift: 0.0, slip: 0.0, touch: 0.0 },
     }
 }
 
@@ -93,27 +74,16 @@ const EASE: f32 = 0.4;
 const EASE_S: f64 = 4.0;
 const JOIN_S: f64 = 0.1;
 
-/// A melody's tone swells only if it is written this long.
-const SWELL_MELODY_S: f64 = 1.0;
-
 /// How often the expression pedal moves, seconds: fine enough that a
 /// swell is a curve, not steps.
 const PEDAL_S: f64 = 0.04;
 
-/// Vibrato: the mod wheel's depth range a player's is drawn from (127
-/// is ±50 cents on this synthesizer), when it starts after the attack,
-/// how long it takes to reach depth, and the shortest tone that gets it.
-const VIBRATO: (f32, f32) = (22.0, 36.0);
-const VIBRATO_FROM_S: f64 = 0.18;
-const VIBRATO_RAMP_S: f64 = 0.42;
-const VIBRATO_MIN_S: f64 = 0.4;
+/// How many steps a mod-wheel vibrato takes to reach its depth.
 const VIBRATO_STEPS: usize = 6;
 
-/// A player's tuning, cents: the spread it is drawn from and its bound;
-/// a melody's every note is pitched with a spread of its own besides.
-const TUNING: f32 = 2.5;
-const TUNING_MAX: f32 = 5.0;
-const INTONATION: f32 = 3.0;
+/// How far a player's tuning may stand off, as a share of the spread it
+/// is drawn from.
+const TUNING_BOUND: f32 = 2.0;
 
 /// The shortest a played note is, seconds.
 const SHORTEST_S: f64 = 0.03;
@@ -124,25 +94,6 @@ const SHORTEST_S: f64 = 0.03;
 fn sings(program: u8) -> bool {
     matches!(program, 22 | 29 | 30 | 40..=44 | 48..=49 | 52..=54 | 56..=79 | 110)
 }
-
-/// Whether a General MIDI program's player bends up into a long tone,
-/// as a lead guitarist does: the overdriven and the distorted guitar.
-fn bends_in(program: u8) -> bool {
-    matches!(program, 29 | 30)
-}
-
-/// A bend into a tone: the shortest tone a player bends into, how often
-/// it does, and how long the rise takes. It starts a whole step under
-/// where that is the mode's whole tone, else a semitone, so the bend
-/// rises through the mode.
-const BEND_IN_S: f64 = 0.35;
-const BEND_IN_CHANCE: f32 = 0.4;
-/// A tone this long the player all but always bends into: a held peak is
-/// where a lead guitarist bends.
-const BEND_SURE_S: f64 = 1.0;
-const BEND_SURE_CHANCE: f32 = 0.9;
-const BEND_IN_RISE_S: f64 = 0.1;
-const BEND_IN_STEPS: usize = 6;
 
 /// A draw near zero with unit spread, bounded at ±2.5: the sum of four
 /// uniforms.
@@ -179,8 +130,10 @@ fn swell(d: f64) -> f32 {
     }
 }
 
-fn bend(cents: f32) -> u16 {
-    (8192.0 + cents * 8192.0 / 200.0).round().clamp(0.0, 16383.0) as u16
+/// The pitch-bend value for `cents` on a channel bent over `range`
+/// semitones either way.
+fn bend_on(cents: f32, range: f32) -> u16 {
+    (8192.0 + cents * 8192.0 / (100.0 * range)).round().clamp(0.0, 16383.0) as u16
 }
 
 /// The score as played, in time order.
@@ -190,33 +143,55 @@ pub fn perform(score: &Score) -> Vec<Played> {
 
     for inst in &score.instruments {
         let ch = inst.channel;
-        let f = feel(inst.role);
+        let f = score.player(ch);
         let mut player = salt.fork(ch as u64 + 1);
         let lean = f.lean.0 + (f.lean.1 - f.lean.0) * player.f32();
         let breath = Breath::new(&mut player);
         let time = Breath::new(&mut player);
-        let depth = VIBRATO.0 + (VIBRATO.1 - VIBRATO.0) * player.f32();
+        let reach = player.f32();
         let percussion = inst.role == Role::Percussion;
-        let tuning = if percussion { 0.0 } else { (slip(&mut player) * TUNING).clamp(-TUNING_MAX, TUNING_MAX) };
-        let vibrato = inst.role != Role::Sustain && inst.role != Role::Drone && sings(inst.program);
-        let swells = |len_s: f64| match inst.role {
-            Role::Sustain | Role::Drone => true,
-            Role::Melody | Role::Doubling => len_s >= SWELL_MELODY_S,
-            _ => false,
-        };
+        let tuning = if percussion { 0.0 } else { (slip(&mut player) * f.tuning).clamp(-TUNING_BOUND * f.tuning, TUNING_BOUND * f.tuning) };
+        let guitar = f.ornaments;
+        let wheel = f.vibrato.filter(|_| sings(inst.program));
+        let depth = wheel.map_or(0.0, |w| w.depth.0 + (w.depth.1 - w.depth.0) * reach);
+        let swells = |len_s: f64| f.swell.is_some_and(|shortest| len_s >= shortest);
 
-        if !percussion {
-            out.push(Played { at: 0.0, msg: Msg::Bend { channel: ch, value: bend(tuning) } });
+        if let Some(g) = &guitar {
+            // The bend range by registered parameter 0, then the parameter
+            // closed.
+            for (number, value) in [(101, 0), (100, 0), (6, g.range as u8), (38, 0), (101, 127), (100, 127)] {
+                out.push(Played { at: 0.0, msg: Msg::Control { channel: ch, number, value } });
+            }
         }
+        let range = guitar.map_or(2.0, |g| g.range);
+        if !percussion {
+            out.push(Played { at: 0.0, msg: Msg::Bend { channel: ch, value: bend_on(tuning, range) } });
+        }
+        // How soon each note's next on the channel is struck, for a run's
+        // timing to tighten to.
+        let mut starts: Vec<u32> = score.notes.iter().filter(|n| n.channel == ch).map(|n| n.start).collect();
+        starts.sort();
+        starts.dedup();
+        let interval = |start: u32| -> f64 { starts.iter().find(|s| **s > start).map_or(1.0, |s| score.seconds(*s) - score.seconds(start)) };
+        // The ticks another lead guitar strikes on: a tone in harmony with
+        // one is played plain, its vibrato alone, so the thirds stay thirds.
+        let others: Vec<u32> = score.notes.iter().filter(|n| n.channel != ch && score.player(n.channel).ornaments.is_some()).map(|n| n.start).collect();
 
         // (on, off, pitch, vel, whether it swells)
         let mut notes: Vec<(f64, f64, u8, u8, bool)> = Vec::new();
+        // A guitar's notes as played, with each one's tuning, cents,
+        // whether it is in harmony with another's, and its written tick.
+        let mut played: Vec<(f64, f64, u8, f32, bool, u32)> = Vec::new();
         for n in score.notes.iter().filter(|n| n.channel == ch) {
             let mut rng = salt.fork(((ch as u64) << 40) ^ ((n.pitch as u64) << 32) ^ n.start as u64);
             let written = score.seconds(n.start);
             let written_end = score.seconds(n.end());
             let off_beat = (lean + f.drift * time.at(written)) / 1000.0;
-            let on = written + (off_beat + f.slip * slip(&mut rng) / 1000.0) as f64;
+            // In a fast run a player's hand errs by a few hundredths of
+            // the time between notes, with no lean behind the beat.
+            let slip_ms = f.run.map_or(f.slip, |run| f.slip.min((run * 1000.0) * interval(n.start) as f32));
+            let off_beat = if f.run.is_some() { off_beat.min(slip_ms / 1000.0) } else { off_beat };
+            let on = written + (off_beat + slip_ms * slip(&mut rng) / 1000.0) as f64;
             let off = written_end + (off_beat + 0.4 * f.slip * slip(&mut rng) / 1000.0) as f64;
             // A long tone settles to the player's dynamic: the hand's slip
             // is heard in a stroke, not held for bars.
@@ -224,19 +199,11 @@ pub fn perform(score: &Score) -> Vec<Played> {
             let vel = if f.touch > 0.0 { n.vel as f32 + BREATH_TOUCH * breath.at(written) + settle * f.touch * slip(&mut rng) } else { n.vel as f32 };
             let vel = vel.round().clamp(1.0, 127.0) as u8;
             notes.push((on.max(0.0), off.max(0.0), n.pitch, vel, swells(written_end - written)));
-            if inst.role == Role::Melody {
-                let cents = tuning + INTONATION * slip(&mut rng);
-                let held = written_end - written;
-                if bends_in(inst.program) && held >= BEND_IN_S && rng.chance(if held >= BEND_SURE_S { BEND_SURE_CHANCE } else { BEND_IN_CHANCE }) {
-                    let under = if score.key_at(n.start).contains(n.pitch.saturating_sub(2)) { 200.0 } else { 100.0 };
-                    for k in 0..=BEND_IN_STEPS {
-                        let x = k as f32 / BEND_IN_STEPS as f32;
-                        let rise = x * x * (3.0 - 2.0 * x);
-                        out.push(Played { at: on.max(0.0) + BEND_IN_RISE_S * x as f64, msg: Msg::Bend { channel: ch, value: bend(cents - under * (1.0 - rise)) } });
-                    }
-                } else {
-                    out.push(Played { at: on.max(0.0), msg: Msg::Bend { channel: ch, value: bend(cents) } });
-                }
+            if guitar.is_some() {
+                played.push((on.max(0.0), off.max(0.0), n.pitch, tuning + f.intonation * slip(&mut rng), others.contains(&n.start), n.start));
+            } else if f.intonation > 0.0 {
+                let cents = tuning + f.intonation * slip(&mut rng);
+                out.push(Played { at: on.max(0.0), msg: Msg::Bend { channel: ch, value: bend_on(cents, range) } });
             }
         }
         // A pitch's release never lands after its next strike, or the
@@ -251,15 +218,56 @@ pub fn perform(score: &Score) -> Vec<Played> {
             n.1 = n.1.max(n.0 + SHORTEST_S);
         }
         notes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let mut fades: Vec<(f64, f64)> = Vec::new();
+        // The notes slurred from the one before, by start and pitch.
+        let mut slurred: Vec<(f64, u8)> = Vec::new();
+        if let Some(g) = &guitar {
+            played.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            // Each note's release as it was settled, by its start and pitch.
+            let ends: Vec<(f64, u8, f64)> = notes.iter().map(|n| (n.0, n.2, n.1)).collect();
+            let mut in_row = 0u8;
+            for i in 0..played.len() {
+                let (on, _, pitch, cents, plain, tick) = played[i];
+                let off = ends.iter().find(|e| e.0 == on && e.1 == pitch).map_or(played[i].1, |e| e.2);
+                let prev = i.checked_sub(1).map(|j| (played[j].0, played[j].1, played[j].2));
+                let next = played.get(i + 1).map(|n| (n.0, n.1, n.2));
+                let mut rng = salt.fork(((ch as u64) << 40) ^ ((pitch as u64) << 32) ^ (on * 1000.0) as u64 ^ 0x6775_6974);
+                let whole = score.key_at(score.tick_at(on)).contains(pitch.saturating_sub(2));
+                let slid = ornament(&mut out, &mut fades, g, ch, (on, off, pitch, cents), prev, next, whole && !plain, plain, &mut rng);
+                let slurs = f.legato.zip(prev).is_some_and(|(l, p)| {
+                    let step = pitch.abs_diff(p.2);
+                    let mut rng = salt.fork(((ch as u64) << 40) ^ ((pitch as u64) << 32) ^ tick as u64 ^ 0x6c65_6761);
+                    !plain && on - p.1 < l.gap_s && (1..=l.reach).contains(&step) && tick % (2 * TICKS_PER_EIGHTH) != 0 && in_row < l.run && rng.chance(l.share)
+                });
+                if slurs || slid {
+                    slurred.push((on, pitch));
+                    in_row += 1;
+                } else {
+                    in_row = 0;
+                }
+            }
+        }
+        // A slurred note sounds softer, and the note before it rings on
+        // into it, the string never let go.
+        if let Some(l) = &f.legato {
+            for i in 1..notes.len() {
+                if slurred.contains(&(notes[i].0, notes[i].2)) {
+                    notes[i].3 = notes[i].3.saturating_sub(l.softer).max(1);
+                    let on = notes[i].0;
+                    notes[i - 1].1 = notes[i - 1].1.max(on);
+                }
+            }
+        }
 
         for &(on, off, pitch, vel, _) in &notes {
-            out.push(Played { at: on, msg: Msg::On { channel: ch, pitch, vel } });
+            let legato = slurred.contains(&(on, pitch));
+            out.push(Played { at: on, msg: Msg::On { channel: ch, pitch, vel, legato } });
             out.push(Played { at: off, msg: Msg::Off { channel: ch, pitch } });
-            if vibrato && off - on >= VIBRATO_MIN_S {
+            if let Some(w) = wheel.filter(|w| off - on >= w.min_s) {
                 out.push(Played { at: on, msg: Msg::Control { channel: ch, number: 1, value: 0 } });
                 for k in 1..=VIBRATO_STEPS {
                     let x = k as f64 / VIBRATO_STEPS as f64;
-                    let at = on + VIBRATO_FROM_S + VIBRATO_RAMP_S * x;
+                    let at = on + w.from_s + w.ramp_s * x;
                     if at < off {
                         out.push(Played { at, msg: Msg::Control { channel: ch, number: 1, value: (depth * x as f32).round() as u8 } });
                     }
@@ -289,7 +297,9 @@ pub fn perform(score: &Score) -> Vec<Played> {
                 next += 1;
             }
             let held = entry.filter(|&(_, off)| t < off).map_or(0.0, |(on, _)| swell(t - on));
-            let db = held + BREATH_DB * (breath.at(t) - 1.0) / 2.0;
+            // A slide off a phrase's end fades with its fall.
+            let fade = fades.iter().find(|(a, b)| t >= *a && t < *b).map_or(0.0, |(a, b)| -24.0 * ((t - a) / (b - a)) as f32);
+            let db = held + BREATH_DB * (breath.at(t) - 1.0) / 2.0 + fade;
             let tick = score.tick_at(t).min(score.end().saturating_sub(1));
             let gain = score.trim_at(tick).clamp(0.0, 1.0) * 10f32.powf(db / 20.0);
             // The synthesizer squares the pedal into gain.
@@ -302,6 +312,113 @@ pub fn perform(score: &Score) -> Vec<Played> {
     }
     out.sort_by(|a, b| (a.at, a.msg.order()).partial_cmp(&(b.at, b.msg.order())).unwrap());
     out
+}
+
+/// A guitar note's ornaments as pitch bends on `ch`, around its tuning
+/// `cents`: bent or slid into where it arrives, its vibrato where it is
+/// held, let go its own way where it ends a phrase. `whole` is whether a
+/// whole step under it is in the key, so a bend rises through the mode.
+/// A fall off a phrase's end is a fade in `fades` as well. A `plain` tone
+/// takes its vibrato alone. Whether it slid in from the note before, the
+/// string never picked.
+#[allow(clippy::too_many_arguments)]
+fn ornament(out: &mut Vec<Played>, fades: &mut Vec<(f64, f64)>, g: &Guitar, ch: u8, (on, off, pitch, cents): (f64, f64, u8, f32), prev: Option<(f64, f64, u8)>, next: Option<(f64, f64, u8)>, whole: bool, plain: bool, rng: &mut Rng) -> bool {
+    let at = |t: f64, c: f32, out: &mut Vec<Played>| out.push(Played { at: t, msg: Msg::Bend { channel: ch, value: bend_on(c, g.range) } });
+    let span = |r: (f64, f64), rng: &mut Rng| r.0 + (r.1 - r.0) * rng.f32() as f64;
+    let len = off - on;
+    let ends_phrase = next.is_none_or(|n| n.0 - off > g.phrase_gap_s);
+    let arrives = len >= g.arrival_s && !plain;
+    // Where a bend lands: a few cents off, sharp more often than flat.
+    let landing = cents + 4.0 + 6.0 * slip(rng);
+    let mut bent = false;
+    let mut from_prev = false;
+    let mut settled = on;
+    if arrives && rng.chance(g.bend) {
+        let under = if whole && rng.chance(0.73) { 200.0 } else { 100.0 };
+        let rise = span(g.rise_s, rng).min(len / 3.0);
+        for k in 0..=6 {
+            let x = k as f32 / 6.0;
+            let curve = x * x * (3.0 - 2.0 * x);
+            at(on + rise * x as f64, landing - under * (1.0 - curve), out);
+        }
+        bent = true;
+        settled = on + rise;
+        if len >= 2.0 * g.vibrato_min_s && rng.chance(g.release) {
+            // Let back down to the fretted tone over the last of the note.
+            let from = off - (len / 4.0).min(0.25);
+            for k in 1..=4 {
+                let x = k as f32 / 4.0;
+                at(from + (off - from) * x as f64, landing - under * x, out);
+            }
+            return false;
+        }
+    } else if arrives && rng.chance(g.slide / (1.0 - g.bend)) {
+        // From the note before where it is a few frets under, else two to
+        // five frets under, a fret at a time.
+        let frets = match prev {
+            Some(p) if p.2 < pitch && pitch - p.2 <= 5 && on - p.1 < 0.1 => {
+                from_prev = true;
+                (pitch - p.2) as i32
+            }
+            _ => rng.range(2, 5),
+        };
+        let step = span(g.slide_step_s, rng).min(len / (2.0 * frets as f64));
+        for k in 0..=frets {
+            at(on + step * k as f64, cents - 100.0 * (frets - k) as f32, out);
+        }
+        settled = on + step * frets as f64;
+    } else {
+        at(on, cents, out);
+    }
+    let base = if bent { landing } else { cents };
+    // A phrase's end: its vibrato most often; bent up a step, or slid off
+    // and fading, one time in seven each.
+    let end = if ends_phrase && !plain { rng.weighted(&[5.0, 1.0, 1.0]) } else { 0 };
+    let shake_until = match end {
+        1 if !bent && arrives => {
+            let from = off - (len / 3.0).min(0.2);
+            for k in 1..=5 {
+                let x = k as f32 / 5.0;
+                at(from + (off - from) * x as f64, base + 200.0 * x * x * (3.0 - 2.0 * x), out);
+            }
+            from
+        }
+        2 => {
+            let from = (off - g.fall_s).max(settled);
+            let fall = rng.range(g.fall.0, g.fall.1);
+            for k in 1..=fall {
+                at(from + (off - from) * k as f64 / fall as f64, base - 100.0 * k as f32, out);
+            }
+            fades.push((from, off));
+            from
+        }
+        _ => off,
+    };
+    // The vibrato, once the tone settles: arcs from where it is, up from a
+    // fretted tone and down from a bent one.
+    let from = settled.max(on + span(g.vibrato_from_s, rng));
+    if shake_until - from >= g.vibrato_min_s / 2.0 && len >= g.vibrato_min_s {
+        let wide = len >= g.wide_s && rng.chance(0.5);
+        let depth = if wide { g.wide.0 + (g.wide.1 - g.wide.0) * rng.f32() } else { g.narrow.0 + (g.narrow.1 - g.narrow.0) * rng.f32() };
+        let rate = g.rate_hz.0 + (g.rate_hz.1 - g.rate_hz.0) * rng.f32();
+        let way = if bent { -1.0 } else { 1.0 };
+        let mut t = from;
+        while t < shake_until {
+            let cycle = 1.0 / (rate * (0.9 + 0.2 * rng.f32())) as f64;
+            let d = depth * (0.8 + 0.4 * rng.f32());
+            for k in 1..=6 {
+                let x = k as f32 / 6.0;
+                let when = t + cycle * x as f64;
+                if when >= shake_until {
+                    break;
+                }
+                at(when, base + way * d * (std::f32::consts::PI * x).sin(), out);
+            }
+            t += cycle;
+        }
+        at(shake_until.min(off), base, out);
+    }
+    from_prev
 }
 
 /// A message of a score as MIDI: when, in seconds, and its bytes — two
@@ -327,7 +444,7 @@ pub fn midi(score: &Score) -> Vec<Event> {
     out.extend(perform(score).into_iter().map(|p| Event {
         at: p.at,
         bytes: match p.msg {
-            Msg::On { channel, pitch, vel } => vec![0x90 | channel, pitch, vel],
+            Msg::On { channel, pitch, vel, .. } => vec![0x90 | channel, pitch, vel],
             Msg::Off { channel, pitch } => vec![0x80 | channel, pitch, 0],
             Msg::Control { channel, number, value } => vec![0xB0 | channel, number, value],
             Msg::Bend { channel, value } => vec![0xE0 | channel, (value & 0x7F) as u8, (value >> 7) as u8],

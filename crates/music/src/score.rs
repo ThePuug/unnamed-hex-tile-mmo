@@ -2,6 +2,8 @@
 //! eighth note so a bar in any meter is whole; the tempo turns ticks
 //! into seconds at render.
 
+use crate::players::{self, Player};
+use crate::rigs::{self, Rig};
 use crate::theory::{Chord, Key, Meter};
 
 pub const TICKS_PER_EIGHTH: u32 = 240;
@@ -38,7 +40,8 @@ pub struct Instrument {
     /// sits. General MIDI opens a channel at 40.
     pub reverb: u8,
     /// Where the player sits across the stage, -63 hard left to 63 hard
-    /// right; sent as MIDI pan, 64 + this.
+    /// right: the render places its stem there, and a MIDI file sends it
+    /// as pan, 64 + this.
     pub pan: i8,
     /// The player's loudness against the others', dB: the render takes
     /// off what the bank's own samples give the player, so a level holds
@@ -131,11 +134,17 @@ pub struct Score {
     /// stands over the one the piece opens in, in order. Empty where the
     /// piece keeps its key.
     pub lifts: Vec<(u32, i8)>,
+    /// The players cast for parts, by channel, in place of the one each
+    /// part's role and instrument call for (`players::of`).
+    pub cast: Vec<(u8, &'static Player)>,
+    /// The rigs fitted for parts, by channel, in place of the one each
+    /// part's role and instrument call for (`rigs::of`).
+    pub rigs: Vec<(u8, &'static Rig)>,
 }
 
 impl Score {
     pub fn new(key: Key, meter: Meter, eighth_bpm: f32, instruments: Vec<Instrument>, room: f32) -> Self {
-        Score { key, meter, eighth_bpm, tempo: Vec::new(), instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), room, lead: None, marks: Vec::new(), story: "", lifts: Vec::new() }
+        Score { key, meter, eighth_bpm, tempo: Vec::new(), instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), room, lead: None, marks: Vec::new(), story: "", lifts: Vec::new(), cast: Vec::new(), rigs: Vec::new() }
     }
 
     pub fn chord_at(&self, tick: u32) -> Chord {
@@ -306,6 +315,37 @@ impl Score {
 
     pub fn instrument(&self, channel: u8) -> &Instrument {
         self.instruments.iter().find(|i| i.channel == channel).expect("a channel's instrument")
+    }
+
+    /// Casts `player` for the part on `channel`, in place of whoever was.
+    pub fn cast(&mut self, channel: u8, player: &'static Player) {
+        self.cast.retain(|(c, _)| *c != channel);
+        self.cast.push((channel, player));
+    }
+
+    /// Who plays the part on `channel`: the player cast for it, else the
+    /// one its role and instrument call for.
+    pub fn player(&self, channel: u8) -> &'static Player {
+        self.cast.iter().find(|(c, _)| *c == channel).map_or_else(|| {
+            let inst = self.instrument(channel);
+            players::of(inst.role, inst.program)
+        }, |(_, p)| *p)
+    }
+
+    /// Fits `rig` for the part on `channel`, in place of whichever was.
+    pub fn rig_up(&mut self, channel: u8, rig: &'static Rig) {
+        self.rigs.retain(|(c, _)| *c != channel);
+        self.rigs.push((channel, rig));
+    }
+
+    /// What the part on `channel` plays through where its instrument is
+    /// recorded at the jack: the rig fitted for it, else the one its role
+    /// and instrument call for.
+    pub fn rig(&self, channel: u8) -> &'static Rig {
+        self.rigs.iter().find(|(c, _)| *c == channel).map_or_else(|| {
+            let inst = self.instrument(channel);
+            rigs::of(inst.role, inst.program)
+        }, |(_, r)| *r)
     }
 
     pub fn section_at(&self, tick: u32) -> Option<&Section> {

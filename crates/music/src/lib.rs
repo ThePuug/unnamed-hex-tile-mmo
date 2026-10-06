@@ -4,6 +4,7 @@
 //! client and the music player do, and nothing rendered ships. The assets
 //! repo's musicgen proofs and checks the pieces.
 
+pub mod amp;
 pub mod banks;
 pub mod cue;
 pub mod hall;
@@ -11,7 +12,9 @@ pub mod ladder;
 pub mod master;
 pub mod perform;
 pub mod pieces;
+pub mod players;
 pub mod render;
+pub mod rigs;
 pub mod rock;
 pub mod score;
 pub mod solo;
