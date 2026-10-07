@@ -271,9 +271,10 @@ fn commitment(archetype: EnemyArchetype) -> Attribute {
 /// side `foe`'s ledger keeps, each a share in points but Awareness's:
 /// Ferocity's, of its skills the combos fired early; Intimidation's, of its foe's
 /// time alive the time its bind held it; Grace's, of its strikes those
-/// struck from past their target's forward faces; Preparation's, of its reactions those fired
-/// early; Patience's, of the time it recovered the time at Patience's
-/// faster rate; Awareness's, the damage each clear answered in
+/// struck from past their target's forward faces; Preparation's, of its
+/// answers, a reaction's or a Leap clear's, those fired early; Patience's,
+/// the stacks of Overcommitted its skills struck into, ten points a stack;
+/// Awareness's, the damage each clear answered in
 /// threats' worth, a threat's worth the mean damage of those queued on it.
 fn style_use(ledger: &Ledger, foe: &Ledger, attribute: Attribute) -> f32 {
     match attribute {
@@ -283,11 +284,8 @@ fn style_use(ledger: &Ledger, foe: &Ledger, attribute: Attribute) -> f32 {
         }
         Attribute::Physique => 100.0 * ledger.bind / foe.alive.max(f32::EPSILON),
         Attribute::Agility => 100.0 * ledger.flanked as f32 / ledger.strikes.max(1) as f32,
-        Attribute::Discipline => {
-            let reactions: u32 = ledger.used.iter().filter(|&(ability, _)| ability.is_reaction()).map(|(_, &uses)| uses).sum();
-            100.0 * ledger.through as f32 / reactions.max(1) as f32
-        }
-        Attribute::Instinct => 100.0 * ledger.recovering_fast / ledger.recovering.max(f32::EPSILON),
+        Attribute::Discipline => 100.0 * ledger.through as f32 / ledger.clears.max(1) as f32,
+        Attribute::Instinct => 10.0 * ledger.patient_stacks as f32 / ledger.skill_strikes.max(1) as f32,
         Attribute::Resolve => {
             let answered = (ledger.queued_damage_on - ledger.landed_damage_on - ledger.pending_damage_on).max(0.0);
             let threat = ledger.queued_damage_on / ledger.queued_on.max(1) as f32;

@@ -97,12 +97,13 @@ impl Abilities<'_, '_> {
     fn foe_of(&self, ent: Entity, target: Option<Entity>) -> Option<Foe> {
         let tuning = *self.tuning;
         let (&loc, attrs, _, heading, ..) = self.actors.get(ent).ok()?;
-        let (&target_loc, _, target_health, target_heading, ..) = self.actors.get(target?).ok()?;
+        let (&target_loc, target_attrs, target_health, target_heading, ..) = self.actors.get(target?).ok()?;
         Some(Foe {
             distance: loc.distance(&target_loc),
             health: target_health.state,
             in_arc: in_arc(&tuning, heading, Some(attrs), &loc, &target_loc),
             flanked: target_heading.is_some_and(|&target_heading| !targeting::is_in_facing_cone(target_heading, target_loc, loc)),
+            patient: target_attrs.patience_crit(&tuning),
             since_skill: self.last_skills.get(target?).ok()
                 .map(|last| self.time.elapsed().saturating_sub(last.0).as_secs_f32()),
             status: self.statuses.get(target?).ok().copied().unwrap_or_default(),
@@ -171,7 +172,6 @@ impl Abilities<'_, '_> {
             capacity_taken: self.capacity_taken(ent, target),
             queue: Threats::reading(&queue, attrs.span(&tuning), game_now),
             foe,
-            foe_recovering: false,
         })
     }
 }

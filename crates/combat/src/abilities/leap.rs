@@ -10,12 +10,12 @@ use crate::leap::{away, slide, toward, LEAP_MS};
 ///
 /// In its user's reach, it leaps clear of the target, and the threats in
 /// its user's span miss, paid for as a reaction's clearing is
-/// ([`Abilities::answer_span`]). A swing comes due as it lands, so out of
-/// reach its user waits on it at once and its Patience runs from there.
+/// ([`Abilities::answer_span`]). A clear is a reaction, so Preparation
+/// fires it early (`abilities::reacts`).
 ///
 /// Out of reach, it leaps toward the target and stops beside it, and one
 /// that lands in reach strikes it for `Tuning::leap_strike` of base
-/// potency as its Instinct line has it (`ActorAttributes::line_power`).
+/// potency as its Discipline line has it (`ActorAttributes::line_power`).
 /// One that falls short strikes nothing.
 ///
 /// An NPC's leap stops at its leash (`Abilities::leash`). With nowhere to
@@ -35,9 +35,6 @@ pub fn leap(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, Ab
     slide(cast.ent, landing, LEAP_MS, None, &mut abilities.commands, &mut abilities.writer);
     if clear {
         abilities.answer_span(cast);
-        if let Ok(mut swing) = abilities.swings.get_mut(cast.ent) {
-            swing.due = Some(abilities.time.elapsed());
-        }
     } else if Loc::new(landing).distance(&target_loc) <= cast.reach {
         let damage = cast.attrs.base_potency(&tuning) * tuning.leap_strike * cast.attrs.line_power(&tuning, AbilityType::Leap);
         abilities.strike(cast, target, damage, AbilityType::Leap, &WHOLE);

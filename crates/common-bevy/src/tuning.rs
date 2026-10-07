@@ -97,10 +97,12 @@ pub struct Tuning {
     /// Seconds the aura's slow lingers on a foe once it stops ignoring the
     /// actor or leaves its reach
     pub intimidation_aura_secs: f32,
-    /// Share faster an actor's recovery runs while it waits on a swing it
-    /// could not strike, by its Patience
-    pub patience_recovery_min: f32,
-    pub patience_recovery_max: f32,
+    /// Share likelier each stack of Overcommitted on a foe makes it take a
+    /// crit from a skill of an actor with Patience, by that actor's tier
+    pub patience_crit_min: f32,
+    pub patience_crit_max: f32,
+    /// Seconds each stack of Overcommitted lasts, each on its own
+    pub overcommit_secs: f32,
 
     // --- Contest: what a relative advantage wins ---
     /// Advantage in points that wins half of an effect's ceiling; every
@@ -156,8 +158,9 @@ pub struct Tuning {
     pub punish_recovery: f32,
     /// Share of Intuition a Punish strikes for
     pub punish_damage: f32,
-    /// Share harder a Punish lands on a target still in recovery
-    pub punish_bonus: f32,
+    /// Share of its full strength a Punish gains for each stack of
+    /// Overcommitted on its target, over the half it strikes for with none
+    pub punish_per_stack: f32,
     /// Share of Intuition a Feint strikes for
     pub feint_damage: f32,
     pub parry_cost: f32,
@@ -236,8 +239,9 @@ impl Tuning {
         intimidation_slow_secs: 3.0,
         intimidation_root_secs: 1.0,
         intimidation_aura_secs: 1.0,
-        patience_recovery_min: 0.0,
-        patience_recovery_max: 0.832,
+        patience_crit_min: 0.0,
+        patience_crit_max: 0.09,
+        overcommit_secs: 5.0,
         contest_scale: 800.0,
         contest_per_level: 15.0,
         pushback_share: 0.5,
@@ -264,7 +268,7 @@ impl Tuning {
         punish_cost: 15.0,
         punish_recovery: 6.0,
         punish_damage: 1.515,
-        punish_bonus: 0.603,
+        punish_per_stack: 0.1667,
         parry_cost: 35.0,
         parry_recovery: 6.53,
         reaction_effort: 0.0,
@@ -385,8 +389,9 @@ impl Tuning {
             "intimidation_aura_secs" => &mut self.intimidation_aura_secs,
             "grace_flank_min" => &mut self.grace_flank_min,
             "grace_flank_max" => &mut self.grace_flank_max,
-            "patience_recovery_min" => &mut self.patience_recovery_min,
-            "patience_recovery_max" => &mut self.patience_recovery_max,
+            "patience_crit_min" => &mut self.patience_crit_min,
+            "patience_crit_max" => &mut self.patience_crit_max,
+            "overcommit_secs" => &mut self.overcommit_secs,
             "tempo_ceiling" => &mut self.tempo_ceiling,
             "potency_base" => &mut self.potency_base,
             "potency_per_point" => &mut self.potency_per_point,
@@ -432,7 +437,7 @@ impl Tuning {
             "punish_cost" => &mut self.punish_cost,
             "punish_recovery" => &mut self.punish_recovery,
             "punish_damage" => &mut self.punish_damage,
-            "punish_bonus" => &mut self.punish_bonus,
+            "punish_per_stack" => &mut self.punish_per_stack,
             "parry_cost" => &mut self.parry_cost,
             "parry_recovery" => &mut self.parry_recovery,
             "reaction_effort" => &mut self.reaction_effort,

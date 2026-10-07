@@ -89,10 +89,10 @@ impl Origin {
 pub enum Approach {
     Direct, // simple, straightforward, honest
     Oblique, // comes from an angle, where its foe is not looking
-    Ambushing, // cunning, stealthy, untrustworthy
-    Patient, // calculating, immobile, consistent
+    Opportunistic, // seizes the opening a foe gives away
+    Vigilant, // watchful, gives no opening
     Binding, // controlling, dominant, restrictive
-    Evasive, // reactive, slippery, indecisive
+    Fluid, // keeps the fight moving, never lets it settle
     Overwhelming, // relentless, unstoppable, inescapable
 }
 
@@ -102,10 +102,10 @@ impl Approach {
         match self {
             Approach::Direct => "Direct",
             Approach::Oblique => "Oblique",
-            Approach::Ambushing => "Ambushing",
-            Approach::Patient => "Patient",
+            Approach::Opportunistic => "Opportunistic",
+            Approach::Vigilant => "Vigilant",
             Approach::Binding => "Binding",
-            Approach::Evasive => "Evasive",
+            Approach::Fluid => "Fluid",
             Approach::Overwhelming => "Overwhelming",
         }
     }

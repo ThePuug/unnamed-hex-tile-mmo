@@ -39,7 +39,7 @@ pub const COMBO: f32 = 0.15;
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
     "recovery_left", "foe_just_acted", "worth_answering",
-    "leash_left", "strike_worth", "effect_added",
+    "leash_left", "strike_worth", "effect_added", "exposure",
 ];
 
 /// `recovery_left`'s bounds and curve, shared with the movement channel's:
@@ -83,10 +83,6 @@ pub struct View {
     pub capacity_taken: bool,
     pub queue: Threats,
     pub foe: Option<Foe>,
-    /// Its foe's last skill falls inside the window its mind counts a skill
-    /// as just used, how long it takes a foe to be recovering
-    /// ([`weigh`] sets it)
-    pub foe_recovering: bool,
 }
 
 /// Its queue, as a reaction would meet it.
@@ -134,6 +130,9 @@ pub struct Foe {
     pub in_arc: bool,
     /// It stands past the foe's forward faces, flanking it
     pub flanked: bool,
+    /// The share likelier the foe's skills would crit it for each stack of
+    /// Overcommitted it carries: none for a foe without Patience
+    pub patient: f32,
     /// Seconds since the foe last used a skill, as its clip showed, as
     /// its Approach weighs them ([`super::mind::Mind::just_acted`])
     pub since_skill: Option<f32>,
@@ -168,8 +167,6 @@ pub fn choose(view: &mut View, bar: &[AbilityType], mind: &Mind, mut stray: impl
 
 /// Every decision `bar` brings, scored as `mind` shapes it.
 pub fn weigh(view: &mut View, bar: &[AbilityType], mind: &Mind) -> Vec<Decision> {
-    let window = mind.shape(&FOE_JUST_ACTED).bounds.0;
-    view.foe_recovering = view.foe.and_then(|foe| foe.since_skill).is_some_and(|since| since < window);
     let mut decisions = Vec::new();
     for &ability in bar {
         view.ability = ability;
@@ -225,10 +222,10 @@ fn reason(ability: AbilityType, view: &View) -> Option<(&'static str, Vec<Consid
 
 fn part_considerations(part: Part) -> Vec<Considered> {
     match part {
-        Part::Strike => vec![FOE_JUST_ACTED, CAPACITY, STRIKE_WORTH],
+        Part::Strike => vec![FOE_JUST_ACTED, CAPACITY, STRIKE_WORTH, EXPOSURE],
         Part::Reaction => vec![SPAN_CLOSED, WORTH_ANSWERING],
         Part::Clear => vec![SPAN_CLOSED, WORTH_ANSWERING, LEASH_LEFT],
-        Part::Dive => vec![CAPACITY, STRIKE_WORTH, LEASH_LEFT],
+        Part::Dive => vec![CAPACITY, STRIKE_WORTH, LEASH_LEFT, EXPOSURE],
         Part::Effect => vec![IN_REACH],
     }
 }
@@ -286,6 +283,12 @@ fn strikes(ability: AbilityType, view: &View) -> bool {
     ability.reach(view.reach).is_some() || (ability == AbilityType::Leap && view.foe.is_some_and(|foe| foe.distance > view.reach))
 }
 
+/// Whether `view.ability` would be a reaction used now: a Leap with its
+/// foe in reach leaps clear
+fn reacting(view: &View) -> bool {
+    view.ability.reacts(view.foe.is_some_and(|foe| foe.distance <= view.reach))
+}
+
 const fn step(name: &'static str, read: fn(&View) -> f32) -> Considered {
     Consideration { name, read, bounds: (1.0, 1.0), curve: Curve::RISING }
 }
@@ -314,7 +317,7 @@ fn health(view: &View) -> f32 {
 /// foe within its reach and arc for one that strikes
 const USABLE: Considered = step("usable", |view| {
     let foe = view.foe.map(|foe| (foe.distance, foe.in_arc));
-    flag(admits(view.ability, view.recovery.as_ref(), &view.attrs, view.reach, foe).is_ok())
+    flag(admits(view.ability, reacting(view), view.recovery.as_ref(), &view.attrs, view.reach, foe).is_ok())
 });
 
 /// Seconds of recovery the skill would leave it in, with everything that
@@ -324,7 +327,7 @@ const RECOVERY_LEFT: Considered = Consideration {
     name: "recovery_left",
     read: |view| {
         let fatigue = Endurance { state: view.endurance, max: view.endurance_max }.fatigue(&view.tuning);
-        let after = recovery_after(&view.tuning, view.ability, view.recovery.as_ref(), &view.attrs, None, fatigue);
+        let after = recovery_after(&view.tuning, view.ability, reacting(view), view.recovery.as_ref(), &view.attrs, None, fatigue);
         after.remaining + after.chain.owed
     },
     bounds: RECOVERY_LEFT_BOUNDS,
@@ -370,13 +373,25 @@ const STRIKE_WORTH: Considered = Consideration {
         }
         let tuning = &view.tuning;
         let release = if view.intimidation_filled >= 1.0 { 1.0 + tuning.intimidation_share } else { 1.0 };
-        let punish = if view.ability == AbilityType::Punish { punish::weight(tuning, view.foe_recovering) } else { 1.0 };
+        let stacks = foe.status.overcommits();
+        let punish = if view.ability == AbilityType::Punish { punish::weight(tuning, stacks) } else { 1.0 };
         let flank = if foe.flanked { 1.0 + view.attrs.flank(tuning) } else { 1.0 };
-        let dealt = view.attrs.base_potency(tuning) * tuning.damage(view.ability) * view.attrs.line_power(tuning, view.ability) * release * punish * flank;
+        let patient = 1.0 + (tuning.crit_power - 1.0) * (view.attrs.patience_crit(tuning) * stacks as f32).min(1.0);
+        let dealt = view.attrs.base_potency(tuning) * tuning.damage(view.ability) * view.attrs.line_power(tuning, view.ability) * release * punish * flank * patient;
         dealt / foe.health.max(1.0)
     },
     bounds: (0.0, 0.25),
     curve: Curve::RISING.floored(0.3),
+};
+
+/// How much likelier a patient foe's skills would crit it once the strike
+/// overcommits it a stack more: the dearer, the less the strike pays.
+/// Weighed only as far as a mind lowers its floor
+const EXPOSURE: Considered = Consideration {
+    name: "exposure",
+    read: |view| view.foe.map_or(0.0, |foe| foe.patient * (view.status.overcommits() + 1) as f32),
+    bounds: (0.0, 0.9),
+    curve: Curve::FALLING.floored(1.0),
 };
 
 // --- Reaction, and a leap clear to dodge ---
@@ -443,8 +458,7 @@ mod tests {
             leap_room: 1.0,
             capacity_taken: false,
             queue: Threats::default(),
-            foe: Some(Foe { distance: 1, health: 600.0, in_arc: true, flanked: false, since_skill: None, status: Status::default() }),
-            foe_recovering: false,
+            foe: Some(Foe { distance: 1, health: 600.0, in_arc: true, flanked: false, patient: 0.0, since_skill: None, status: Status::default() }),
         }
     }
 
@@ -583,7 +597,7 @@ mod tests {
     fn the_combo_its_recovery_offers_beats_waiting_where_it_would_not_alone() {
         let tuning = Tuning::DEFAULT;
         let mut offered = view(&tuning, AbilityType::Feint, ActorAttributes::default());
-        offered.recovery = Some(recovery_after(&tuning, AbilityType::Parry, None, &offered.attrs, None, 0.0));
+        offered.recovery = Some(recovery_after(&tuning, AbilityType::Parry, true, None, &offered.attrs, None, 0.0));
         let combo = offered.recovery.unwrap().combo.unwrap();
         assert_eq!(combo.ability, AbilityType::Feint);
         offered.recovery.as_mut().unwrap().remaining = combo.unlock_at;
@@ -625,21 +639,42 @@ mod tests {
     }
 
     #[test]
-    fn a_punish_is_worth_more_on_a_foe_its_mind_takes_to_be_recovering() {
+    fn a_punish_is_worth_more_for_each_stack_its_foe_is_overcommitted() {
         let tuning = Tuning::DEFAULT;
-        let mut fresh = view(&tuning, AbilityType::Punish, ActorAttributes::default());
-        let mut opened = fresh.clone();
-        opened.foe = Some(Foe { since_skill: Some(0.2), ..opened.foe.unwrap() });
         let mind = Mind::default();
-        assert!(response(&mut opened, "strike_worth", &mind) > response(&mut fresh, "strike_worth", &mind));
-        let mut feint = view(&tuning, AbilityType::Feint, ActorAttributes::default());
-        feint.foe = opened.foe;
-        let mut plain = view(&tuning, AbilityType::Feint, ActorAttributes::default());
-        assert_eq!(response(&mut feint, "strike_worth", &mind), response(&mut plain, "strike_worth", &mind), "only Punish pays for the opening");
+        let overcommitted = |view: &mut View, stacks: usize| {
+            let mut foe = view.foe.unwrap();
+            (0..stacks).for_each(|_| foe.status.overcommit(tuning.overcommit_secs));
+            view.foe = Some(foe);
+        };
+        let worth = |ability, attrs, stacks| {
+            let mut struck = view(&tuning, ability, attrs);
+            overcommitted(&mut struck, stacks);
+            response(&mut struck, "strike_worth", &mind)
+        };
+        let plain = ActorAttributes::default();
+        assert!(worth(AbilityType::Punish, plain, 1) > worth(AbilityType::Punish, plain, 0));
+        assert!(worth(AbilityType::Punish, plain, 4) > worth(AbilityType::Punish, plain, 1));
+        assert_eq!(worth(AbilityType::Feint, plain, 4), worth(AbilityType::Feint, plain, 0), "without Patience, only Punish pays for the stacks");
+        let patient = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
+        assert!(worth(AbilityType::Feint, patient, 4) > worth(AbilityType::Feint, patient, 0), "a patient striker's skills crit them likelier");
+    }
+
+    #[test]
+    fn a_strike_into_a_patient_foe_is_dearer_the_more_it_is_overcommitted() {
+        let tuning = Tuning::DEFAULT;
         let mut minds = crate::behaviour::mind::Minds::default();
-        minds.set("all.foe_just_acted.from", "0.1").unwrap();
-        let brief = minds.mind(None);
-        assert_eq!(response(&mut opened, "strike_worth", &brief), response(&mut fresh, "strike_worth", &brief), "past the window its mind counts, no opening");
+        minds.set("all.exposure.floor", "0.0").unwrap();
+        let mind = minds.mind(None);
+        let mut calm = view(&tuning, AbilityType::Feint, ActorAttributes::default());
+        calm.foe = Some(Foe { patient: 0.09, ..calm.foe.unwrap() });
+        let mut pressed = calm.clone();
+        (0..5).for_each(|_| pressed.status.overcommit(tuning.overcommit_secs));
+        assert!(response(&mut pressed, "exposure", &mind) < response(&mut calm, "exposure", &mind));
+        let mut idle = calm.clone();
+        idle.foe = Some(Foe { patient: 0.0, ..idle.foe.unwrap() });
+        assert_eq!(response(&mut idle, "exposure", &mind), 1.0, "a foe without Patience exposes it to nothing");
+        assert_eq!(response(&mut pressed, "exposure", &Mind::default()), 1.0, "weighed only as far as its mind lowers the floor");
     }
 
     #[test]

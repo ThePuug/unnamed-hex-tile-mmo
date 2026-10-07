@@ -3,14 +3,11 @@
 //!
 //! Every candidate tile is scored for each thing a step may be for, as a
 //! skill's decision is ([`super::utility`]): to engage its target, from
-//! where it strikes it soonest, and, with its Patience under way, to keep
-//! away from it while its recovery runs down, out of its target's reach
-//! but ready to strike. The best pair is taken where it beats holding, which
-//! scores [`HOLD`]; the decision under way scores [`MOMENTUM`] more, so two
-//! scoring alike do not trade places every tick. Every reading is the
-//! candidate's own: the seconds from it to striking and to being struck,
-//! the leash left there, how far round toward its target's back it
-//! stands, and what a strike on the step there costs. How a step is walked
+//! where it strikes it soonest. The best is taken where it beats holding,
+//! which scores [`HOLD`]; the decision under way scores [`MOMENTUM`] more,
+//! so two scoring alike do not trade places every tick. Every reading is
+//! the candidate's own: the seconds from it to striking, the leash left
+//! there and how far round toward its target's back it stands. How a step is walked
 //! is its pursuit's ([`super::chase`]).
 
 use bevy::prelude::*;
@@ -28,8 +25,7 @@ pub const MOMENTUM: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "leash_left", "recovery_left", "detour", "time_to_be_struck",
-    "behind",
+    "leash_left", "recovery_left", "detour", "behind",
 ];
 
 /// What a step is for.
@@ -40,9 +36,6 @@ pub enum Move {
     Hold,
     /// It steps to where it strikes its target soonest
     Engage,
-    /// It steps out of its target's reach while its recovery runs down,
-    /// staying ready to strike: Patience's
-    KeepAway,
 }
 
 /// What an NPC knows of itself as it weighs where to step.
@@ -51,9 +44,6 @@ pub struct Footing {
     /// Seconds of recovery it is in, with what its chain owes: 0 out of
     /// recovery
     pub recovery_left: f32,
-    /// Its Patience tier, while it is engaged and its recovery runs faster
-    /// waiting on a swing: none otherwise
-    pub patience: u32,
 }
 
 /// One tile it may step to, as it would find it there.
@@ -66,10 +56,6 @@ pub struct Candidate {
     pub time_to_strike: f32,
     /// Of that, how many seconds more than from the best of the candidates
     pub detour: f32,
-    /// Seconds from the tile until its target could strike it there, at
-    /// the pace it sees its target move, from the reach it has seen it
-    /// strike from
-    pub time_to_be_struck: f32,
     /// Share of its leash it would have left there: 1 with none
     pub room: f32,
     /// How far round toward its target's back the tile stands, off its
@@ -93,7 +79,7 @@ pub fn choose(footing: &Footing, candidates: &[Candidate], under_way: Move, mind
     let threshold = mind.hold + if under_way == Move::Hold { mind.momentum } else { 0.0 };
     let mut best: Option<(Move, Candidate, f32)> = None;
     for &candidate in candidates {
-        for decision in [Move::Engage, Move::KeepAway] {
+        for decision in [Move::Engage] {
             let momentum = if decision == under_way { mind.momentum } else { 0.0 };
             let scored = weigh(footing, &candidate, decision, mind) + momentum;
             if scored > threshold && best.is_none_or(|(.., top)| scored > top) {
@@ -110,8 +96,6 @@ pub fn weigh(footing: &Footing, candidate: &Candidate, decision: Move, mind: &Mi
     let considerations: &[Consideration<Ground>] = match decision {
         Move::Hold => return mind.hold,
         Move::Engage => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND],
-        Move::KeepAway if footing.patience > 0 => &[TIME_TO_BE_STRUCK, DETOUR, LEASH_LEFT],
-        Move::KeepAway => return 0.0,
     };
     let ground = Ground { footing: *footing, candidate: *candidate };
     score(1.0, considerations.iter().map(|consideration| mind.shape(consideration).answer(&ground)))
@@ -145,15 +129,6 @@ const RECOVERY_LEFT: Consideration<Ground> = Consideration {
     curve: RECOVERY_LEFT_CURVE,
 };
 
-/// Seconds from the tile until its target could strike it: the later, the
-/// safer the tile
-const TIME_TO_BE_STRUCK: Consideration<Ground> = Consideration {
-    name: "time_to_be_struck",
-    read: |ground| ground.candidate.time_to_be_struck,
-    bounds: (0.0, 0.5),
-    curve: Curve::RISING.floored(0.1),
-};
-
 /// How far round toward its target's back the tile stands, every step
 /// round worth more until it stands to its target's side, past its forward
 /// faces, where a target cannot strike back without the arc to. Weighed
@@ -170,18 +145,17 @@ mod tests {
     use super::*;
 
     fn footing() -> Footing {
-        Footing { recovery_left: 0.0, patience: 0 }
+        Footing { recovery_left: 0.0 }
     }
 
     /// A tile `q` east of the origin, with its target standing further
-    /// east: struck from in two tiles, struck at in two
+    /// east: struck from in two tiles
     fn candidate(q: i32, target: i32) -> Candidate {
         let gap = (target - q).abs();
         Candidate {
             tile: Qrz { q, r: 0, z: 0 },
             time_to_strike: (gap - 2).max(0) as f32 * 0.25,
             detour: 0.0,
-            time_to_be_struck: (gap - 2).max(0) as f32 * 0.25,
             room: 1.0,
             behind: 0.0,
         }
@@ -250,21 +224,4 @@ mod tests {
         assert_eq!(plain.map(|step| step.tile.q), Some(6), "a mind that does not weigh it keeps to its tile");
     }
 
-    #[test]
-    fn patience_keeps_away_out_of_reach_but_ready_and_engages_once_recovered() {
-        let mind = keeping();
-        let patient = Footing { patience: 3, recovery_left: 10.0, ..footing() };
-        let (decision, step) = choose(&patient, &around(6, 8), Move::Hold, &mind);
-        assert_eq!((decision, step.map(|step| step.tile.q)), (Move::KeepAway, Some(5)), "recovering in its target's reach, it steps out");
-        let recovered = Footing { recovery_left: 0.0, ..patient };
-        assert_eq!(choose(&recovered, &around(5, 8), Move::KeepAway, &mind), (Move::Engage, Some(candidate(6, 8))), "recovered where it stepped out to, it steps back in");
-        let far = choose(&patient, &around(0, 12), Move::Hold, &mind);
-        assert_ne!(far.1.map(|step| step.tile.q), Some(-1), "and it gives no ground it need not, out of reach already");
-    }
-
-    #[test]
-    fn without_patience_it_never_keeps_away() {
-        let recovering = Footing { recovery_left: 10.0, ..footing() };
-        assert_eq!(weigh(&recovering, &candidate(5, 8), Move::KeepAway, &Mind::default()), 0.0);
-    }
 }

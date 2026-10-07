@@ -255,7 +255,7 @@ macro_rules! create_stat_display {
                 MetaAttributeStat::Grace => ("Grace", Color::srgb(0.9, 0.9, 0.5), "Strike Arc:"),
                 MetaAttributeStat::Intimidation => ("Intimidation", Color::srgb(0.5, 0.8, 0.5), "Fill per Second:"),
                 MetaAttributeStat::Preparation => ("Preparation", Color::srgb(0.5, 0.7, 0.9), "Recovery Reactions:"),
-                MetaAttributeStat::Patience => ("Patience", Color::srgb(0.7, 0.5, 0.9), "Waiting Recovery:"),
+                MetaAttributeStat::Patience => ("Patience", Color::srgb(0.7, 0.5, 0.9), "Crit per Stack:"),
                 MetaAttributeStat::Awareness => ("Awareness", Color::srgb(0.9, 0.6, 0.3), "Reaction Span:"),
             };
 
@@ -980,7 +980,7 @@ pub fn update_attributes(
                     MetaAttributeStat::Grace => format!("+/-{:.0} deg", display_attrs.arc(&tuning)),
                     MetaAttributeStat::Intimidation => format!("{:.0}", display_attrs.intimidation_fill()),
                     MetaAttributeStat::Preparation => display_attrs.preparation().index().to_string(),
-                    MetaAttributeStat::Patience => format!("+{:.0}%", display_attrs.patience_recovery(&tuning) * 100.0),
+                    MetaAttributeStat::Patience => format!("+{:.0}%", display_attrs.patience_crit(&tuning) * 100.0),
                     MetaAttributeStat::Awareness => format!("{:.2}s", display_attrs.span(&tuning).as_secs_f32()),
                 };
             }

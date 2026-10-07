@@ -235,6 +235,13 @@ impl AbilityType {
         matches!(self, AbilityType::Parry | AbilityType::Counter)
     }
 
+    /// Whether using it now is a reaction: one always, and a Leap with its
+    /// target `in_reach`, which leaps clear and answers its span as a
+    /// reaction does
+    pub fn reacts(self, in_reach: bool) -> bool {
+        self.is_reaction() || (self == AbilityType::Leap && in_reach)
+    }
+
     /// How near and how far, in tiles, `ability` strikes a target from an
     /// actor whose own reach is `own`: as far as the actor reaches. None
     /// for one the gate checks no target for: a reaction, a Leap, which

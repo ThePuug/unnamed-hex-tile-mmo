@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 
 use crate::components::recovery::GlobalRecovery;
-use crate::components::status::Status;
 use crate::components::ActorAttributes;
 use crate::tuning::Tuning;
 
@@ -25,18 +24,16 @@ pub fn calculate_composure_reduction(
 
 /// Counts every recovery down and ends it when it runs out, its combo and
 /// its burst with it: faster by its actor's Composure, contested by the
-/// opponent's Impact with the level gap weighing in, and faster again by
-/// its Patience while it waits on a swing it could not strike
-/// (`Status::waiting`).
+/// opponent's Impact with the level gap weighing in.
 pub fn global_recovery_system(
     tuning: Res<Tuning>,
     time: Res<Time>,
     mut commands: Commands,
-    mut query: Query<(Entity, &mut GlobalRecovery, &ActorAttributes, Option<&Status>)>,
+    mut query: Query<(Entity, &mut GlobalRecovery, &ActorAttributes)>,
 ) {
     let delta = time.delta_secs();
 
-    for (entity, mut recovery, attrs, status) in query.iter_mut() {
+    for (entity, mut recovery, attrs) in query.iter_mut() {
         if recovery.is_active() {
             let composure = attrs.composure();
             let reduction_pct = calculate_composure_reduction(
@@ -46,8 +43,7 @@ pub fn global_recovery_system(
                 recovery.target_level.map_or(0.0, |target| crate::systems::combat::damage::level_edge(&tuning, attrs.total_level(), target)),
             );
 
-            let patience = if status.is_some_and(|status| status.waiting) { attrs.patience_recovery(&tuning) } else { 0.0 };
-            let speed_multiplier = (1.0 + patience) / (1.0 - reduction_pct);
+            let speed_multiplier = 1.0 / (1.0 - reduction_pct);
 
             let effective_delta = delta * speed_multiplier;
 

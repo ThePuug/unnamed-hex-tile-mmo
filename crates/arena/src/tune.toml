@@ -37,9 +37,9 @@ short = 24.0
 # in, used at least `floor`. In points: Ferocity's early combos of its
 # skills (at most three in four), Intimidation's bind uptime on its foe (about half
 # for a fighter playing to bind), Grace's strikes from a flank of its
-# strikes (at most two in three), Preparation's early reactions of its
-# reactions (at most all), Patience's recovery at its faster rate of all
-# its recovery (about half); Awareness's damage answered per clear in
+# strikes (at most two in three), Preparation's early answers of its
+# answers, a reaction's or a Leap clear's (at most all), Patience's stacks
+# of Overcommitted its skills strike into, ten points a stack; Awareness's damage answered per clear in
 # threats' worth (about two one on one). Each floor is three quarters of
 # what the style reaches. Below it
 # the mind's score loses `weight` of a hundred points for each share of the
@@ -53,7 +53,7 @@ juggernaut = 25.0
 flanker = 35.0
 defender = 1.5
 skirmisher = 37.5
-ambusher = 75.0
+ambusher = 50.0
 
 [screen]
 # A knob whose sweep across its bounds moves no pairing's edge by this many
@@ -82,9 +82,9 @@ min = 0.5
 max = 2.0
 
 [[knobs]]
-name = "punish_bonus"
-min = 0.2
-max = 2.0
+name = "punish_per_stack"
+min = 0.05
+max = 0.4
 
 [[knobs]]
 name = "counter_reflect"
@@ -182,9 +182,9 @@ min = 2.0
 max = 10.0
 
 [[knobs]]
-name = "patience_recovery_max"
+name = "patience_crit_max"
 min = 0.0
-max = 1.5
+max = 0.15
 
 [[knobs]]
 name = "health_per_physique"
@@ -241,7 +241,8 @@ common = [
     { name = "leash_left.to", min = 0.05, max = 0.6, start = 0.3 },
     { name = "effect_added.from", min = 0.0, max = 0.9, start = 0.0 },
     { name = "detour.to", min = 0.1, max = 2.0, start = 1.0 },
-    { name = "time_to_be_struck.to", min = 0.1, max = 2.0, start = 0.5 },
+    { name = "exposure.to", min = 0.2, max = 1.0, start = 0.9 },
+    { name = "exposure.floor", min = 0.0, max = 1.0, start = 1.0 },
     { name = "behind.to", min = 0.2, max = 1.0, start = 0.5 },
     { name = "behind.floor", min = 0.0, max = 1.0, start = 1.0 },
 ]

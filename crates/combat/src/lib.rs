@@ -36,8 +36,10 @@ pub struct RunTime {
 }
 
 /// System to process DealDamage events (Phase 1: Outgoing damage calculation)
-/// Lands a strike from past its target's forward faces, a flank, harder by
-/// its striker's Grace (`ActorAttributes::flank`), rolls the attack's
+/// An attack made at a target with Patience overcommits its source
+/// (`Status::overcommit`). Lands a strike from past its target's forward
+/// faces, a flank, harder by its striker's Grace (`ActorAttributes::flank`),
+/// rolls the attack's
 /// damage within its range (`Tuning::damage_spread`, one roll for its blow
 /// and its DoT), rolls its blow's crit, and inserts
 /// it into the reaction queue, its window starting as the strike is made:
@@ -45,7 +47,8 @@ pub struct RunTime {
 pub fn process_deal_damage(
     trigger: On<Try>,
     tuning: Res<Tuning>,
-    _commands: Commands,
+    mut commands: Commands,
+    mut statuses: Query<&mut common_bevy::components::status::Status>,
     mut target_query: Query<(&mut ReactionQueue, &ActorAttributes, &Health, Option<&Endurance>, Option<&mut common_bevy::components::recovery::GlobalRecovery>)>,
     mut combat_query: Query<&mut CombatState>,
     all_attrs: Query<&ActorAttributes>,
@@ -74,13 +77,21 @@ pub fn process_deal_damage(
             return;
         }
 
+        if attrs.patience().index() > 0 && source != target {
+            landing::update(*source, &mut statuses, &mut commands, &mut writer, |status| status.overcommit(tuning.overcommit_secs));
+        }
+
         let flanked = places.get(*source).ok().zip(places.get(*target).ok()).is_some_and(|((&from, _), (&at, heading))| {
             heading.is_some_and(|&heading| !common_bevy::systems::targeting::is_in_facing_cone(heading, at, from))
         });
         let base_damage = if flanked { base_damage * (1.0 + source_attrs.flank(&tuning)) } else { *base_damage };
         let draw = dice.draw(&mut rolls, ("spread", *source)).signed();
         let outgoing = damage_calc::spread(base_damage, tuning.damage_spread, draw);
-        let outgoing = damage_calc::crit(&tuning, outgoing, source_attrs, attrs, dice.draw(&mut rolls, ("crit", *source)).share());
+        // A skill crits an overcommitted foe likelier by its striker's Patience
+        let patient = if *ability == Some(common_bevy::message::AbilityType::AutoAttack) { 0.0 } else {
+            source_attrs.patience_crit(&tuning) * statuses.get(*target).map_or(0, |status| status.overcommits()) as f32
+        };
+        let outgoing = damage_calc::crit(&tuning, outgoing, source_attrs, attrs, patient, dice.draw(&mut rolls, ("crit", *source)).share());
         let dot = damage_calc::spread(*dot, tuning.damage_spread, draw);
 
         // Use game world time (server uptime + offset) for consistent time base
@@ -199,22 +210,15 @@ pub fn resolve_dot_tick(
 /// is engaged: in combat, or with a living hostile within the range a fight
 /// is taken up at (`behaviour::ACQUISITION_RANGE`), first contact or not.
 /// As it is engaged its clock starts, a swing due at once; disengaged, no
-/// swing waits. A swing that has come due and gone unstruck leaves it
-/// waiting (`Status::waiting`), and Patience runs its recovery faster,
-/// until it swings or uses a skill. The fight's end empties Intimidation's
-/// bank.
+/// swing waits. The fight's end empties Intimidation's bank.
 #[allow(clippy::too_many_arguments)]
 pub fn track_engagement(
-    mut commands: Commands,
-    mut writer: MessageWriter<Do>,
-    mut query: Query<(Entity, &CombatState, &Loc, Option<&common_bevy::components::behaviour::Side>, &mut common_bevy::components::Swing, &mut common_bevy::components::intimidation::Intimidation, Option<&crate::abilities::LastSkill>)>,
+    mut query: Query<(Entity, &CombatState, &Loc, Option<&common_bevy::components::behaviour::Side>, &mut common_bevy::components::Swing, &mut common_bevy::components::intimidation::Intimidation)>,
     others: Query<(&common_bevy::components::behaviour::Side, &Health)>,
-    mut statuses: Query<&mut common_bevy::components::status::Status>,
     nntree: Res<common_bevy::plugins::nntree::NNTree>,
     time: Res<Time>,
 ) {
-    let now = time.elapsed();
-    for (ent, state, &loc, side, mut swing, mut intimidation, last_skill) in &mut query {
+    for (ent, state, &loc, side, mut swing, mut intimidation) in &mut query {
         let hostile_near = side.is_some_and(|&side| {
             crate::behaviour::spotted(&nntree, loc, crate::behaviour::ACQUISITION_RANGE)
                 .filter(|&other| other != ent)
@@ -228,11 +232,6 @@ pub fn track_engagement(
         }
         if !state.in_combat {
             intimidation.filled = 0.0;
-        }
-        // A skill used as the swing came due, a Leap clear's, counts before it
-        let waiting = swing.due.is_some_and(|due| due < now && last_skill.is_none_or(|last| last.0 <= due));
-        if statuses.get(ent).map_or(false, |status| status.waiting) != waiting {
-            landing::update(ent, &mut statuses, &mut commands, &mut writer, |status| status.waiting = waiting);
         }
     }
 }
@@ -323,15 +322,6 @@ mod tests {
         app.update();
         engaging(app.world_mut());
         assert!(app.world().get::<Swing>(waiting).unwrap().due.is_some(), "a hostile within range starts its clock, out of combat");
-
-        let waits = |app: &App| app.world().get::<common_bevy::components::status::Status>(waiting).is_some_and(|status| status.waiting);
-        app.world_mut().resource_mut::<Time>().advance_by(Duration::from_secs(1));
-        engaging(app.world_mut());
-        assert!(waits(&app), "its swing come due and unstruck, it waits");
-        let now = app.world().resource::<Time>().elapsed();
-        app.world_mut().entity_mut(waiting).insert(crate::abilities::LastSkill(now));
-        engaging(app.world_mut());
-        assert!(!waits(&app), "a skill used ends it");
     }
 
     #[test]

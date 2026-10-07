@@ -16,8 +16,8 @@ use common_bevy::{components::entity_type::actor::Approach, archetype::EnemyArch
 
 /// Every Approach a foe may show, for naming one in a setting
 const APPROACHES: [Approach; 7] = [
-    Approach::Direct, Approach::Oblique, Approach::Ambushing, Approach::Patient,
-    Approach::Binding, Approach::Evasive, Approach::Overwhelming,
+    Approach::Direct, Approach::Oblique, Approach::Opportunistic, Approach::Vigilant,
+    Approach::Binding, Approach::Fluid, Approach::Overwhelming,
 ];
 
 use super::{moves, skills, utility::{Consideration, Curve}};
@@ -90,44 +90,44 @@ pub const TUNED: &[(&str, f32)] = &[
     ("ambusher.combo", 0.199), ("ambusher.detour.to", 1.188), ("ambusher.effect_added.from", 0.24),
     ("ambusher.foe_just_acted.floor", 0.824), ("ambusher.foe_just_acted.from", 2.46), ("ambusher.hold", 0.429),
     ("ambusher.just_acted.binding", 2.291), ("ambusher.just_acted.direct", 1.548), ("ambusher.just_acted.oblique", 1.97),
-    ("ambusher.just_acted.evasive", 1.16), ("ambusher.just_acted.patient", 2.326), ("ambusher.leash_left.to", 0.158),
+    ("ambusher.just_acted.fluid", 1.16), ("ambusher.just_acted.vigilant", 2.326), ("ambusher.leash_left.to", 0.158),
     ("ambusher.momentum", 0.077), ("ambusher.recovery_left.floor", 0.775), ("ambusher.recovery_left.to", 9.578),
-    ("ambusher.strike_worth.floor", 0.336), ("ambusher.strike_worth.to", 0.652), ("ambusher.time_to_be_struck.to", 0.77),
+    ("ambusher.strike_worth.floor", 0.336), ("ambusher.strike_worth.to", 0.652), 
     ("ambusher.wait", 0.069), ("ambusher.worth_answering.to", 0.351), ("berserker.combo", 0.147),
     ("berserker.detour.to", 0.673), ("berserker.effect_added.from", 0.435), ("berserker.foe_just_acted.floor", 0.758),
-    ("berserker.foe_just_acted.from", 2.464), ("berserker.hold", 0.239), ("berserker.just_acted.ambushing", 1.671),
-    ("berserker.just_acted.binding", 2.38), ("berserker.just_acted.oblique", 2.137), ("berserker.just_acted.evasive", 1.582),
-    ("berserker.just_acted.patient", 1.037), ("berserker.leash_left.to", 0.259), ("berserker.momentum", 0.153),
+    ("berserker.foe_just_acted.from", 2.464), ("berserker.hold", 0.239), ("berserker.just_acted.opportunistic", 1.671),
+    ("berserker.just_acted.binding", 2.38), ("berserker.just_acted.oblique", 2.137), ("berserker.just_acted.fluid", 1.582),
+    ("berserker.just_acted.vigilant", 1.037), ("berserker.leash_left.to", 0.259), ("berserker.momentum", 0.153),
     ("berserker.recovery_left.floor", 0.62), ("berserker.recovery_left.to", 5.799), ("berserker.strike_worth.floor", 0.495),
-    ("berserker.strike_worth.to", 0.173), ("berserker.time_to_be_struck.to", 1.066), ("berserker.wait", 0.233),
+    ("berserker.strike_worth.to", 0.173), ("berserker.wait", 0.233),
     ("berserker.worth_answering.to", 0.05), ("defender.combo", 0.205), ("defender.detour.to", 0.938),
     ("defender.effect_added.from", 0.19), ("defender.foe_just_acted.floor", 0.703), ("defender.foe_just_acted.from", 3.049),
-    ("defender.hold", 0.462), ("defender.just_acted.ambushing", 1.846), ("defender.just_acted.binding", 2.095),
-    ("defender.just_acted.direct", 1.402), ("defender.just_acted.oblique", 1.262), ("defender.just_acted.evasive", 0.596),
+    ("defender.hold", 0.462), ("defender.just_acted.opportunistic", 1.846), ("defender.just_acted.binding", 2.095),
+    ("defender.just_acted.direct", 1.402), ("defender.just_acted.oblique", 1.262), ("defender.just_acted.fluid", 0.596),
     ("defender.leash_left.to", 0.129), ("defender.momentum", 0.194), ("defender.recovery_left.floor", 0.942),
     ("defender.recovery_left.to", 7.572), ("defender.strike_worth.floor", 0.56), ("defender.strike_worth.to", 0.305),
-    ("defender.time_to_be_struck.to", 0.201), ("defender.wait", 0.121), ("defender.worth_answering.to", 0.221),
+    ("defender.wait", 0.121), ("defender.worth_answering.to", 0.221),
     ("juggernaut.combo", 0.153), ("juggernaut.detour.to", 1.335), ("juggernaut.effect_added.from", 0.673),
     ("juggernaut.foe_just_acted.floor", 0.615), ("juggernaut.foe_just_acted.from", 0.825), ("juggernaut.hold", 0.263),
-    ("juggernaut.just_acted.ambushing", 2.553), ("juggernaut.just_acted.direct", 0.573), ("juggernaut.just_acted.oblique", 1.85),
-    ("juggernaut.just_acted.evasive", 2.265), ("juggernaut.just_acted.patient", 0.707), ("juggernaut.leash_left.to", 0.238),
+    ("juggernaut.just_acted.opportunistic", 2.553), ("juggernaut.just_acted.direct", 0.573), ("juggernaut.just_acted.oblique", 1.85),
+    ("juggernaut.just_acted.fluid", 2.265), ("juggernaut.just_acted.vigilant", 0.707), ("juggernaut.leash_left.to", 0.238),
     ("juggernaut.momentum", 0.086), ("juggernaut.recovery_left.floor", 0.755), ("juggernaut.recovery_left.to", 2.71),
-    ("juggernaut.strike_worth.floor", 0.394), ("juggernaut.strike_worth.to", 0.369), ("juggernaut.time_to_be_struck.to", 0.991),
+    ("juggernaut.strike_worth.floor", 0.394), ("juggernaut.strike_worth.to", 0.369), 
     ("juggernaut.wait", 0.266), ("juggernaut.worth_answering.to", 0.431), 
     ("flanker.combo", 0.004), ("flanker.detour.to", 2.0),
     ("flanker.behind.floor", 0.376), ("flanker.behind.to", 0.927), ("flanker.effect_added.from", 0.372), ("flanker.foe_just_acted.floor", 0.602),
-    ("flanker.foe_just_acted.from", 2.07), ("flanker.hold", 0.326), ("flanker.just_acted.ambushing", 1.935),
-    ("flanker.just_acted.binding", 0.916), ("flanker.just_acted.direct", 2.132), ("flanker.just_acted.evasive", 2.347),
-    ("flanker.just_acted.patient", 1.056), ("flanker.leash_left.to", 0.27), ("flanker.momentum", 0.069),
+    ("flanker.foe_just_acted.from", 2.07), ("flanker.hold", 0.326), ("flanker.just_acted.opportunistic", 1.935),
+    ("flanker.just_acted.binding", 0.916), ("flanker.just_acted.direct", 2.132), ("flanker.just_acted.fluid", 2.347),
+    ("flanker.just_acted.vigilant", 1.056), ("flanker.leash_left.to", 0.27), ("flanker.momentum", 0.069),
     ("flanker.recovery_left.floor", 0.685), ("flanker.recovery_left.to", 9.452), 
     ("flanker.strike_worth.floor", 0.671), ("flanker.strike_worth.to", 0.579),
-    ("flanker.time_to_be_struck.to", 0.681), ("flanker.wait", 0.192), ("flanker.worth_answering.to", 0.05),
+    ("flanker.wait", 0.192), ("flanker.worth_answering.to", 0.05),
     ("skirmisher.combo", 0.14), ("skirmisher.detour.to", 0.833), ("skirmisher.effect_added.from", 0.33),
     ("skirmisher.foe_just_acted.floor", 0.666), ("skirmisher.foe_just_acted.from", 1.753), ("skirmisher.hold", 0.475),
-    ("skirmisher.just_acted.ambushing", 1.571), ("skirmisher.just_acted.binding", 1.678), ("skirmisher.just_acted.direct", 0.654),
-    ("skirmisher.just_acted.oblique", 2.284), ("skirmisher.just_acted.patient", 2.55), ("skirmisher.leash_left.to", 0.252),
+    ("skirmisher.just_acted.opportunistic", 1.571), ("skirmisher.just_acted.binding", 1.678), ("skirmisher.just_acted.direct", 0.654),
+    ("skirmisher.just_acted.oblique", 2.284), ("skirmisher.just_acted.vigilant", 2.55), ("skirmisher.leash_left.to", 0.252),
     ("skirmisher.momentum", 0.258), ("skirmisher.recovery_left.floor", 0.811), ("skirmisher.recovery_left.to", 5.437),
-    ("skirmisher.strike_worth.floor", 0.116), ("skirmisher.strike_worth.to", 0.613), ("skirmisher.time_to_be_struck.to", 0.66),
+    ("skirmisher.strike_worth.floor", 0.116), ("skirmisher.strike_worth.to", 0.613), 
     ("skirmisher.wait", 0.61), ("skirmisher.worth_answering.to", 0.05),
 ];
 
@@ -244,10 +244,10 @@ mod tests {
     #[test]
     fn a_foes_approach_weighs_how_long_its_last_skill_counts() {
         let mut minds = Minds::default();
-        minds.set("berserker.just_acted.ambushing", "0.4").unwrap();
+        minds.set("berserker.just_acted.opportunistic", "0.4").unwrap();
         let berserker = minds.mind(Some(EnemyArchetype::Berserker));
-        assert_eq!(berserker.just_acted(Some(Approach::Ambushing)), 0.4);
-        assert_eq!(berserker.just_acted(Some(Approach::Patient)), 1.0, "an Approach not set counts as it is");
+        assert_eq!(berserker.just_acted(Some(Approach::Opportunistic)), 0.4);
+        assert_eq!(berserker.just_acted(Some(Approach::Vigilant)), 1.0, "an Approach not set counts as it is");
         assert_eq!(berserker.just_acted(None), 1.0);
         assert!(minds.set("berserker.just_acted.sneaky", "1").is_err());
     }

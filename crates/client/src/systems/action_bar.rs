@@ -295,7 +295,7 @@ pub fn update(
     let recovery_active = recovery_opt.map_or(false, |r| r.is_active());
     let own_attrs = attrs.copied().unwrap_or_default();
     let early_reaction = |ability: AbilityType| matches!(
-        common_bevy::systems::combat::combos::timing(ability, recovery_opt, &own_attrs),
+        common_bevy::systems::combat::combos::timing(ability, ability.is_reaction(), recovery_opt, &own_attrs),
         Some(common_bevy::systems::combat::combos::Timing::Early(common_bevy::systems::combat::combos::Early::Preparation))
     );
     let offered = recovery_opt.and_then(|r| r.combo);

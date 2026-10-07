@@ -6,8 +6,8 @@ use common_bevy::{
     components::{
         entity_type::{actor::ActorIdentity, EntityType},
         heading::{Heading, HEADING_SLOTS},
-        AttackRange, Loc, resources::Health,
-        behaviour::Side, status::Status, ActorAttributes, Swing, target::Target,
+        Loc, resources::Health,
+        behaviour::Side, status::Status, ActorAttributes, target::Target,
         returning::Returning,
         hex_assignment::AssignedHex,
         engagement::EngagementMember,
@@ -20,7 +20,7 @@ use common_bevy::{
 use common_bevy::message::AbilityType;
 use qrz::{Convert, Qrz};
 
-use super::{mind::Minds, moves::{self, Candidate, Footing, Move}, perception::Sight, Bar, Body};
+use super::{mind::Minds, moves::{self, Candidate, Footing, Move}, Bar, Body};
 use crate::leap::LEAP_MS;
 use common_bevy::tuning::Tuning;
 
@@ -84,7 +84,7 @@ pub fn chase(
         Option<&AssignedHex>,
         &Side,
         Option<&Status>,
-        (Option<&Swing>, Option<&mut Move>, Option<&EntityType>, Option<&Sight>, Option<&Bar>),
+        (Option<&mut Move>, Option<&EntityType>, Option<&Bar>),
         Option<&common_bevy::components::recovery::GlobalRecovery>,
     )>, Query<(Entity, &Heading)>)>,
     q_target: Query<(&Loc, &Health, &Side, Option<&ActorAttributes>, Option<&Status>)>,
@@ -99,7 +99,7 @@ pub fn chase(
 ) {
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, (swing, mut under_way, kind, sight, bar), recovery) in actors.p0().iter_mut() {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, (mut under_way, kind, bar), recovery) in actors.p0().iter_mut() {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
@@ -144,7 +144,7 @@ pub fn chase(
             target.entity = held;
             target.last_target = held.or(target.last_target);
         }
-        let Some((held, (target_loc, _, _, target_attrs, target_status))) = held.and_then(|held| Some((held, q_target.get(held).ok()?))) else {
+        let Some((held, (target_loc, ..))) = held.and_then(|held| Some((held, q_target.get(held).ok()?))) else {
             continue;
         };
         let target_heading = headings.get(&held);
@@ -159,18 +159,14 @@ pub fn chase(
         };
         let mind = minds.mind(archetype);
         let Some(floor) = floor else { continue };
-        // How fast it and its target cover ground, in tiles a second; it
-        // closes by a Leap where its bar holds one
+        // How fast it covers ground, in tiles a second; it closes by a Leap
+        // where its bar holds one
         let tile = (map.convert(Qrz { q: 1, r: 0, z: 0 }) - map.convert(Qrz::default())).xz().length().max(f32::EPSILON);
         let per_second = |speed: f32| speed * 1000.0 / tile;
         let own_pace = per_second(speed);
-        let target_pace = per_second(common_bevy::systems::movement::speed(target_attrs.map_or(0.005, |a| a.movement_speed()), target_status));
         let leap = bar.filter(|bar| bar.0.contains(&AbilityType::Leap))
             .and_then(|_| attrs)
             .map(|attrs| attrs.leap_tiles(&tuning) as i32);
-        // It knows how far its target strikes from by having been struck,
-        // and before that takes it for a melee swing's
-        let target_reach = sight.map_or(0, Sight::reach).max(AttackRange::default().0);
         let to_strike = |at: Qrz| -> f32 {
             if let Some(hex) = assigned {
                 return seconds(at.flat_distance(&hex.0), own_pace);
@@ -187,12 +183,10 @@ pub fn chase(
             .chain(map.neighbors(floor).into_iter().map(|(neighbor, _)| neighbor).filter(|&neighbor| uncrowded(&nntree, neighbor)))
             .collect();
         let mut candidates: Vec<Candidate> = tiles.iter().map(|&at| {
-            let standing = Loc::new(at + Qrz::Z);
             Candidate {
                 tile: at,
                 time_to_strike: to_strike(at),
                 detour: 0.0,
-                time_to_be_struck: seconds(standing.distance(target_loc) - target_reach, target_pace),
                 room: room(at),
                 behind: target_heading.filter(|_| at != **target_loc - Qrz::Z).map_or(0.0, |&heading| {
                     let bearing = Heading::from_hex(Qrz { z: 0, ..at - (**target_loc - Qrz::Z) });
@@ -206,9 +200,6 @@ pub fn chase(
         }
         let footing = Footing {
             recovery_left: recovery.filter(|recovery| recovery.is_active()).map_or(0.0, |recovery| recovery.remaining + recovery.chain.owed),
-            // Its Patience pays only while its swing clock runs, engaged
-            patience: attrs.filter(|_| swing.is_some_and(|swing| swing.due.is_some()))
-                .map_or(0, |attrs| attrs.patience().index() as u32),
         };
         let (chosen, step) = moves::choose(&footing, &candidates, under_way.as_deref().copied().unwrap_or_default(), &mind);
         if let Some(under_way) = under_way.as_mut().filter(|under_way| ***under_way != chosen) {

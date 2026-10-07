@@ -48,9 +48,9 @@ impl EnemyArchetype {
             Self::Berserker  => Profile { name: "Wild Dog",      ability: Frenzy,        approach: Direct,    resilience: Primal,   build: [-1, 0, 0], habitat: Habitat::Open },
             Self::Juggernaut => Profile { name: "Juggernaut",    ability: Overpower,     approach: Binding,   resilience: Vital,    build: [0, -1, 0], habitat: Habitat::Rock },
             Self::Flanker      => Profile { name: "Forest Sprite", ability: PerfectStride, approach: Oblique,   resilience: Mental,   build: [1, 0, 0], habitat: Habitat::Woods },
-            Self::Defender   => Profile { name: "Defender",      ability: Counter,       approach: Patient,   resilience: Hardened, build: [0, 0, 1], habitat: Habitat::Range },
-            Self::Skirmisher => Profile { name: "Skirmisher",    ability: Leap,          approach: Evasive,   resilience: Shielded, build: [0, 0, -1], habitat: Habitat::Scrub },
-            Self::Ambusher   => Profile { name: "Ambusher",      ability: Punish,        approach: Ambushing, resilience: Blessed,  build: [0, 1, 0], habitat: Habitat::River },
+            Self::Defender   => Profile { name: "Defender",      ability: Counter,       approach: Vigilant,  resilience: Hardened, build: [0, 0, 1], habitat: Habitat::Range },
+            Self::Skirmisher => Profile { name: "Skirmisher",    ability: Leap,          approach: Fluid,     resilience: Shielded, build: [0, 1, 0], habitat: Habitat::Scrub },
+            Self::Ambusher   => Profile { name: "Ambusher",      ability: Punish,        approach: Opportunistic, resilience: Blessed,  build: [0, 0, -1], habitat: Habitat::River },
         }
     }
 
@@ -136,8 +136,8 @@ mod tests {
             (EnemyArchetype::Juggernaut, 2),
             (EnemyArchetype::Flanker, 1),
             (EnemyArchetype::Defender, 5),
-            (EnemyArchetype::Skirmisher, 4),
-            (EnemyArchetype::Ambusher, 3),
+            (EnemyArchetype::Skirmisher, 3),
+            (EnemyArchetype::Ambusher, 4),
         ] {
             let attrs = calculate_enemy_attributes(10, archetype);
             let values = [attrs.might(), attrs.agility(), attrs.physique(), attrs.discipline(), attrs.instinct(), attrs.resolve()];
@@ -163,12 +163,12 @@ mod tests {
     }
 
     #[test]
-    fn test_only_the_skirmisher_invests_in_instinct() {
-        // Instinct is the Skirmisher's alone, so only it has Reflex
-        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Flanker, EnemyArchetype::Defender, EnemyArchetype::Ambusher] {
+    fn test_only_the_ambusher_invests_in_instinct() {
+        // Instinct is the Ambusher's alone, so only it has Reflex
+        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Flanker, EnemyArchetype::Defender, EnemyArchetype::Skirmisher] {
             assert_eq!(calculate_enemy_attributes(10, archetype).reflex(), 0, "{archetype:?}");
         }
-        assert!(calculate_enemy_attributes(10, EnemyArchetype::Skirmisher).reflex() > 0);
+        assert!(calculate_enemy_attributes(10, EnemyArchetype::Ambusher).reflex() > 0);
     }
 
     #[test]

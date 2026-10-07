@@ -499,7 +499,8 @@ impl ActorAttributes {
     /// early in a chain once a strike taken in its own time stands in it
     /// (`combos::may_use`)
     pub fn preparation(&self) -> CommitmentTier { self.tier(Attribute::Discipline) }
-    /// Patience, Instinct: recovery runs faster waiting on a swing it could not strike (`patience_recovery`)
+    /// Patience, Instinct: each attack at it overcommits its attacker, and its
+    /// skills crit an overcommitted foe likelier (`patience_crit`)
     pub fn patience(&self) -> CommitmentTier { self.tier(Attribute::Instinct) }
     /// Awareness, Resolve: how far behind the front threat its reactions reach (`span`)
     pub fn awareness(&self) -> CommitmentTier { self.tier(Attribute::Resolve) }
@@ -562,8 +563,8 @@ impl ActorAttributes {
             Frenzy => Some(Attribute::Might),
             Overpower => Some(Attribute::Physique),
             PerfectStride => Some(Attribute::Agility),
-            Punish => Some(Attribute::Discipline),
-            Leap => Some(Attribute::Instinct),
+            Punish => Some(Attribute::Instinct),
+            Leap => Some(Attribute::Discipline),
             Counter => Some(Attribute::Resolve),
             AutoAttack | Feint | Parry => None,
         }
@@ -584,7 +585,7 @@ impl ActorAttributes {
     }
 
     /// Tiles this actor's Leap carries it: `Tuning::leap_distance` as its
-    /// Instinct line has it, never less than one
+    /// Discipline line has it, never less than one
     pub fn leap_tiles(&self, tuning: &Tuning) -> usize {
         let tiles = tuning.leap_distance as f32 * self.line_power(tuning, crate::message::AbilityType::Leap);
         tiles.round().max(1.0) as usize
@@ -629,11 +630,11 @@ impl ActorAttributes {
         self.grace().between(tuning.grace_flank_min, tuning.grace_flank_max)
     }
 
-    /// The share faster this actor's recovery runs while it waits on a
-    /// swing it could not strike (`Status::waiting`): `Tuning::patience_recovery_min`
-    /// at T0 to `patience_recovery_max` at T3.
-    pub fn patience_recovery(&self, tuning: &Tuning) -> f32 {
-        self.patience().between(tuning.patience_recovery_min, tuning.patience_recovery_max)
+    /// The share likelier this actor's skills crit a foe for each stack of
+    /// Overcommitted on it (`Status::overcommitted`): `Tuning::patience_crit_min`
+    /// at T0 to `patience_crit_max` at T3.
+    pub fn patience_crit(&self, tuning: &Tuning) -> f32 {
+        self.patience().between(tuning.patience_crit_min, tuning.patience_crit_max)
     }
 
     /// How far behind the front threat this actor's reactions reach, from
@@ -669,10 +670,9 @@ pub struct Moon();
 
 /// When an actor's next auto-attack comes due, as the server counts it:
 /// an interval after its last, or the moment its fight found it not yet
-/// swinging. A due swing waits for a target it can strike, and while it
-/// waits Patience runs the actor's recovery faster
-/// (`ActorAttributes::patience_recovery`). None disengaged: a swing is due,
-/// and nothing waits until an engagement starts the clock.
+/// swinging. A due swing waits for a target it can strike. None
+/// disengaged: a swing is due, and nothing waits until an engagement
+/// starts the clock.
 #[derive(Clone, Component, Copy, Debug, Default)]
 pub struct Swing {
     pub due: Option<std::time::Duration>,
@@ -764,7 +764,7 @@ mod tests {
         assert_eq!(mighty.line_power(&tuning, Frenzy), 1.0, "full commitment to Might bites whole");
         assert_eq!(instinctive.line_power(&tuning, Frenzy), tuning.line(Frenzy), "with none, its floor");
         assert!(instinctive.line_power(&tuning, Frenzy) < 1.0, "a skill out of its line is weak");
-        assert!(instinctive.leap_tiles(&tuning) > mighty.leap_tiles(&tuning), "Instinct leaps further");
+        assert!(ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0).leap_tiles(&tuning) > mighty.leap_tiles(&tuning), "Discipline leaps further");
         for shared in [Feint, Parry, AutoAttack] {
             assert_eq!(mighty.line_power(&tuning, shared), 1.0, "{shared:?} belongs to no line");
             assert_eq!(instinctive.line_power(&tuning, shared), 1.0, "{shared:?} belongs to no line");
@@ -812,12 +812,12 @@ mod tests {
     }
 
     #[test]
-    fn patience_runs_recovery_faster_by_its_tier() {
+    fn patience_crits_an_overcommitted_foe_likelier_by_its_tier() {
         let tuning = Tuning::DEFAULT;
         let patient = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
-        assert_eq!(ActorAttributes::default().patience_recovery(&tuning), tuning.patience_recovery_min, "without Patience, no faster");
-        assert_eq!(patient.patience_recovery(&tuning), patient.patience().between(tuning.patience_recovery_min, tuning.patience_recovery_max));
-        assert!(patient.patience_recovery(&tuning) > ActorAttributes::default().patience_recovery(&tuning));
+        assert_eq!(ActorAttributes::default().patience_crit(&tuning), tuning.patience_crit_min, "without Patience, nothing");
+        assert_eq!(patient.patience_crit(&tuning), patient.patience().between(tuning.patience_crit_min, tuning.patience_crit_max));
+        assert!(patient.patience_crit(&tuning) > ActorAttributes::default().patience_crit(&tuning));
     }
 
     #[test]

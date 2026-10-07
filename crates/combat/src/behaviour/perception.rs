@@ -132,7 +132,7 @@ mod tests {
     const DICE: Dice = Dice::seeded(0);
 
     fn foe(distance: i32) -> Foe {
-        Foe { distance, health: 600.0, in_arc: true, flanked: false, since_skill: None, status: Default::default() }
+        Foe { distance, health: 600.0, in_arc: true, flanked: false, patient: 0.0, since_skill: None, status: Default::default() }
     }
 
     fn ms(millis: u64) -> Duration {

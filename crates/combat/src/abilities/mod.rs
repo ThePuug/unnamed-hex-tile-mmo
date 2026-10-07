@@ -111,14 +111,15 @@ fn released_into(tuning: &Tuning, damage: f32, released: bool) -> (f32, f32) {
     if released { (damage * (1.0 + tuning.intimidation_share), tuning.intimidation_slow) } else { (damage, 0.0) }
 }
 
-/// What the gate asks of `ability` before it does anything, in order: out
+/// What the gate asks of `ability` before it does anything, `reacting`
+/// where this use is a reaction (`AbilityType::reacts`), in order: out
 /// of `prior`, the recovery its caster is in, or let through it (an
 /// auto-attack's own clock is asked apart); for one with a reach out of
 /// `reach`, a target at `foe`'s distance and inside its arc, None for no
 /// target. An NPC's skills channel asks the
 /// same of what it perceives, so it never weighs a skill the gate refuses.
-pub fn admits(ability: AbilityType, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool)>) -> Result<(), AbilityFailReason> {
-    if ability != AbilityType::AutoAttack && !may_use(ability, prior, attrs) {
+pub fn admits(ability: AbilityType, reacting: bool, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool)>) -> Result<(), AbilityFailReason> {
+    if ability != AbilityType::AutoAttack && !may_use(ability, reacting, prior, attrs) {
         return Err(AbilityFailReason::OnCooldown);
     }
     if let Some(within) = ability.reach(reach) {
@@ -239,7 +240,10 @@ impl Abilities<'_, '_> {
         // costs endurance, the more the further round its arc
         let across = cast.target_loc.is_some_and(|target_loc| targeting::across(heading.as_ref(), &loc, &target_loc));
         let share = heading.as_ref().zip(cast.target_loc).map_or(0.0, |(heading, target_loc)| targeting::across_share(&tuning, heading, &loc, &target_loc));
-        admits(ability, prior.as_ref(), &attrs, reach, foe).map_err(Some)?;
+        // A Leap with its target in reach leaps clear, a reaction
+        let reacting = ability.reacts(ability == AbilityType::Leap
+            && self.foe(&cast).is_ok_and(|(_, target_loc)| loc.distance(&target_loc) <= reach));
+        admits(ability, reacting, prior.as_ref(), &attrs, reach, foe).map_err(Some)?;
 
         // The recovery runs by how spent the actor is as it uses the ability
         let fatigue = self.endurance.get(ent).map_or(0.0, |endurance| endurance.fatigue(&tuning));
@@ -277,7 +281,7 @@ impl Abilities<'_, '_> {
         if ability != AbilityType::AutoAttack {
             self.commands.entity(ent).try_insert(LastSkill(self.time.elapsed()));
             let against = opponent.and_then(|opponent| self.actors.get(opponent).ok()).map(|(_, attrs, ..)| *attrs);
-            landing::recover(ent, recovery_after(&tuning, ability, prior.as_ref(), &attrs, against.as_ref(), fatigue), &mut self.commands, &mut self.writer);
+            landing::recover(ent, recovery_after(&tuning, ability, reacting, prior.as_ref(), &attrs, against.as_ref(), fatigue), &mut self.commands, &mut self.writer);
         }
         Ok(())
     }
@@ -675,8 +679,6 @@ mod tests {
         assert!(used(&ask(&mut app, leaper, AbilityType::Leap, Some(near)), AbilityType::Leap));
         app.update();
         assert!(distance(&app) > reach, "it leaps out of reach");
-        let now = app.world().resource::<Time>().elapsed();
-        assert!(app.world().get::<Swing>(leaper).unwrap().due.is_some_and(|due| due <= now), "with a swing due at once, out of reach");
         assert!(queue(&app, leaper).iter().all(|threat| threat.ability != Some(AbilityType::Frenzy)), "and the blow misses");
         assert!(queue(&app, near).iter().all(|threat| threat.ability != Some(AbilityType::Leap)), "a leap clear strikes nothing");
 

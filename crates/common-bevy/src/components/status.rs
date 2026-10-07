@@ -21,6 +21,10 @@ pub struct Status {
     /// Rooted, a slow to nothing: it cannot move, and turns, swings and
     /// recovers as ever ([`Status::root`])
     pub root: Option<Timed>,
+    /// Overcommitted: the seconds each stack has left, a stack put on by
+    /// every attack the actor made at a foe with Patience; 0 is no stack
+    /// ([`Status::overcommit`])
+    pub overcommitted: [f32; OVERCOMMIT_STACKS],
     /// A strike across the striker's own line, its stride broken
     pub stride: Option<Timed>,
     /// A Perfect Stride under way: its strikes across its own line break no
@@ -30,11 +34,10 @@ pub struct Status {
     pub held: Option<Timed>,
     /// Carrying past the bag's burden limit
     pub burden: bool,
-    /// Waiting on a swing it could not strike, and nothing struck or used
-    /// since: Patience runs its recovery faster
-    /// (`ActorAttributes::patience_recovery`). The server decides and sends it.
-    pub waiting: bool,
 }
+
+/// The most stacks of Overcommitted an actor carries
+pub const OVERCOMMIT_STACKS: usize = 10;
 
 /// An effect that lasts `remaining` seconds at `pace` of the actor's speed.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -89,6 +92,19 @@ impl Status {
         self.held = Some(Timed { pace: 0.0, remaining: seconds.max(left) });
     }
 
+    /// How many stacks of Overcommitted the actor carries now
+    pub fn overcommits(&self) -> usize {
+        self.overcommitted.iter().filter(|&&left| left > 0.0).count()
+    }
+
+    /// Puts a stack of Overcommitted lasting `seconds` on the actor, on its
+    /// own: in an empty place, or in place of the stack with least left
+    pub fn overcommit(&mut self, seconds: f32) {
+        if let Some(place) = self.overcommitted.iter_mut().min_by(|a, b| a.total_cmp(b)) {
+            *place = place.max(seconds);
+        }
+    }
+
     /// Whether the actor is slowed or rooted now
     pub fn is_slowed(&self) -> bool {
         [self.slow, self.root].iter().flatten().any(|timed| timed.remaining > 0.0)
@@ -110,6 +126,9 @@ impl Status {
 
     /// Counts the timed effects down by `dt` seconds, dropping spent ones
     pub fn tick(&mut self, dt: f32) {
+        for left in &mut self.overcommitted {
+            *left = (*left - dt).max(0.0);
+        }
         for slot in [&mut self.slow, &mut self.root, &mut self.stride, &mut self.perfect_stride, &mut self.held] {
             if let Some(timed) = slot {
                 timed.remaining -= dt;
@@ -189,6 +208,21 @@ mod tests {
         status.tick(0.6);
         assert!(!status.is_held());
         assert_eq!(status.pace(), 1.0);
+    }
+
+    #[test]
+    fn each_stack_of_overcommitted_runs_out_on_its_own_and_ten_is_the_most() {
+        let mut status = Status::default();
+        status.overcommit(5.0);
+        status.tick(2.0);
+        status.overcommit(5.0);
+        assert_eq!(status.overcommits(), 2);
+        status.tick(3.0);
+        assert_eq!(status.overcommits(), 1, "the first runs out, and the second was never refreshed by it");
+        (0..OVERCOMMIT_STACKS + 3).for_each(|_| status.overcommit(5.0));
+        assert_eq!(status.overcommits(), OVERCOMMIT_STACKS);
+        status.tick(5.0);
+        assert_eq!(status.overcommits(), 0);
     }
 
     #[test]
