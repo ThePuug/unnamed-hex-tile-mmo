@@ -4,9 +4,9 @@
 //! once through. What plays next is, in order, the play after the current
 //! one where the listener went back, the queue the listener filled — a
 //! band, a track, a setting and a seed each, played now or added — and
-//! only when that is empty a fresh seed by the chosen band in the chosen
-//! setting, of the chosen track or, shuffled, of any track made for the
-//! setting. A play is rendered whole into
+//! only when that is empty, with autoplay on, a fresh play that keeps what
+//! the listener locked of band, style, track, setting and seed; with it
+//! off the player stops. A play is rendered whole into
 //! memory before it plays, so the time bar can seek anywhere; the next is
 //! rendered while the current plays.
 

@@ -133,7 +133,7 @@ impl Player {
     }
 
     /// The right half of the top: repeat, previous, play or pause, next,
-    /// shuffle and MIDI out; the section playing and the clock; the time
+    /// autoplay and MIDI out; the section playing and the clock; the time
     /// bar.
     pub fn controls(&mut self, ui: &mut egui::Ui) -> Rect {
         let width = ui.available_width();
@@ -145,7 +145,7 @@ impl Player {
             x += w + gap;
             r
         };
-        let (repeat_r, previous_r, play_r, next_r, shuffle_r, midi) = (next_rect(small), next_rect(small), next_rect(big), next_rect(small), next_rect(small), next_rect(small));
+        let (repeat_r, previous_r, play_r, next_r, autoplay_r, midi) = (next_rect(small), next_rect(small), next_rect(big), next_rect(small), next_rect(small), next_rect(small));
         let repeat = if self.repeat { "Repeat: on. This play again after its rest." } else { "Repeat: off" };
         if round_button(ui, repeat_r, "repeat", Glyph::Repeat, self.repeat).on_hover_text(repeat).clicked() {
             self.repeat = !self.repeat;
@@ -161,10 +161,9 @@ impl Player {
         if round_button(ui, next_r, "next", Glyph::Next, false).clicked() {
             self.next();
         }
-        let shuffle = if self.shuffle { "Shuffle: on. When the queue runs out, any track made for the setting." } else { "Shuffle: off. When the queue runs out, fresh seeds of the track." };
-        if round_button(ui, shuffle_r, "shuffle", Glyph::Shuffle, self.shuffle).on_hover_text(shuffle).clicked() {
-            self.shuffle = !self.shuffle;
-            self.selected();
+        let autoplay = if self.autoplay { "Autoplay: on. When the queue runs out, a fresh play, changing what is not locked." } else { "Autoplay: off. When the queue runs out, the player stops." };
+        if round_button(ui, autoplay_r, "autoplay", Glyph::Autoplay, self.autoplay).on_hover_text(autoplay).clicked() {
+            self.autoplay = !self.autoplay;
         }
         let midi_on = self.midi.link.lock().unwrap().port != Port::Off;
         if round_button(ui, midi, "midi", Glyph::Midi, midi_on).on_hover_text("MIDI out").clicked() {
@@ -237,7 +236,7 @@ impl Player {
     }
 
     /// What to play, a field a row — the band, the style, the track, the
-    /// setting, the seed — each with its lock, what shuffle keeps; play
+    /// setting, the seed — each with its lock, what autoplay keeps; play
     /// now and add to the queue under them. Returns the band, style, track
     /// and setting fields' rects, where their lists hang.
     pub fn selection(&mut self, ui: &mut egui::Ui) -> [Rect; 4] {
@@ -274,7 +273,7 @@ impl Player {
         let (seed_cell, seed_lock) = row(4.0, "seed");
         let mut locks = self.locks;
         for (rect, id, what, on) in [(band_lock, "lock band", "band", &mut locks.band), (style_lock, "lock style", "style", &mut locks.style), (track_lock, "lock track", "track", &mut locks.track), (setting_lock, "lock setting", "setting", &mut locks.setting), (seed_lock, "lock seed", "seed", &mut locks.seed)] {
-            let tip = if *on { format!("Locked: shuffle keeps the {what}") } else { format!("Unlocked: shuffle may change the {what}") };
+            let tip = if *on { format!("Locked: autoplay keeps the {what}") } else { format!("Unlocked: autoplay may change the {what}") };
             if lock_button(ui, rect, id, *on).on_hover_text(tip).clicked() {
                 *on = !*on;
             }
@@ -366,10 +365,11 @@ impl Player {
         let mut drops: Vec<usize> = Vec::new();
         let rows = self.queue.iter().map(|v| (v.piece, format!(" · {} · {} · seed {}", v.band.name, v.setting.name(), v.seed), self.state(v))).collect::<Vec<_>>();
         let then = match &self.composed {
-            Some(v) => format!("then {} · {} · {} · seed {}", title(TRACKS[v.piece].name), v.band.name, v.setting.name(), v.seed),
-            None => String::new(),
+            Some(v) if self.autoplay => format!("then {} · {} · {} · seed {}", title(TRACKS[v.piece].name), v.band.name, v.setting.name(), v.seed),
+            _ => "then stop".to_string(),
         };
         let then_state = match &self.composed {
+            _ if !self.autoplay => (DOT, "autoplay off"),
             Some(v) if self.queue.is_empty() => self.state(v),
             _ => (DOT, "waits for the queue"),
         };
@@ -405,7 +405,8 @@ impl Player {
                     }
                     ui.add_space(4.0);
                 }
-                // What the composer plays when the queue runs out.
+                // What the composer plays when the queue runs out, or that
+                // the player stops.
                 let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), QUEUE_ROW_H), Sense::hover());
                 let p = ui.painter();
                 dashed(p, row, EDGE);

@@ -53,8 +53,8 @@ pub enum Glyph {
     Repeat,
     /// A MIDI socket: five pins in an arc.
     Midi,
-    /// Two paths crossing, each to an arrow.
-    Shuffle,
+    /// A play arrow over a loop: the music goes on.
+    Autoplay,
 }
 
 pub fn paint_glyph(p: &egui::Painter, c: Pos2, glyph: Glyph, color: Color32) {
@@ -83,12 +83,17 @@ pub fn paint_glyph(p: &egui::Painter, c: Pos2, glyph: Glyph, color: Color32) {
             p.add(Shape::convex_polygon(vec![c + vec2(3.0, -7.0), c + vec2(7.5, -4.0), c + vec2(3.0, -1.0)], color, Stroke::NONE));
             p.add(Shape::convex_polygon(vec![c + vec2(-3.0, 1.0), c + vec2(-7.5, 4.0), c + vec2(-3.0, 7.0)], color, Stroke::NONE));
         }
-        Glyph::Shuffle => {
+        Glyph::Autoplay => {
+            // Three quarters of a circle ending in an arrowhead, round a
+            // small play arrow.
             let line = Stroke::new(1.6_f32, color);
-            p.add(Shape::line(vec![c + vec2(-7.0, -4.0), c + vec2(-3.0, -4.0), c + vec2(3.0, 4.0), c + vec2(7.0, 4.0)], line));
-            p.add(Shape::line(vec![c + vec2(-7.0, 4.0), c + vec2(-3.0, 4.0), c + vec2(3.0, -4.0), c + vec2(7.0, -4.0)], line));
-            p.add(Shape::convex_polygon(vec![c + vec2(5.0, -7.0), c + vec2(8.5, -4.0), c + vec2(5.0, -1.0)], color, Stroke::NONE));
-            p.add(Shape::convex_polygon(vec![c + vec2(5.0, 1.0), c + vec2(8.5, 4.0), c + vec2(5.0, 7.0)], color, Stroke::NONE));
+            let arc: Vec<Pos2> = (0..=18).map(|k| {
+                let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * 1.5 * k as f32 / 18.0;
+                c + vec2(a.cos(), a.sin()) * 8.0
+            }).collect();
+            p.add(Shape::line(arc, line));
+            p.add(Shape::convex_polygon(vec![c + vec2(-11.0, 1.0), c + vec2(-8.0, -3.5), c + vec2(-5.0, 1.0)], color, Stroke::NONE));
+            p.add(Shape::convex_polygon(vec![c + vec2(-2.5, -4.0), c + vec2(4.0, 0.0), c + vec2(-2.5, 4.0)], color, Stroke::NONE));
         }
         Glyph::Midi => {
             p.circle_stroke(c, 8.0, Stroke::new(1.6_f32, color));
