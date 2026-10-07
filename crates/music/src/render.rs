@@ -29,8 +29,8 @@
 //! kept.
 //!
 //! A piece is played once and rings on for its room's time. Where its
-//! sections declare levels, `set_levels` sets their trims from the
-//! render before the render that ships.
+//! sections declare levels, `take` sets their trims from the render
+//! before the render that ships.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -43,7 +43,7 @@ use crate::amp;
 use crate::hall;
 use crate::master;
 use crate::perform::{perform, Msg};
-use crate::pieces::{Params, Piece};
+use crate::pieces::{Params, Track};
 use crate::rigs::Rig;
 use crate::rng::Rng;
 use crate::score::{Instrument, Role, Score, TICKS_PER_EIGHTH};
@@ -304,17 +304,18 @@ impl Bank {
 /// floor, seconds.
 const RING_KEPT_S: f32 = 0.5;
 
-/// `piece` at `seed` as it plays: composed, its sections set to
-/// their levels, rendered, set to the piece's loudness and limited under
+/// `piece` as `params` compose it, as it plays: composed, its sections set to
+/// their levels, rendered, set to its loudness in the setting and limited under
 /// its ceiling, and cut `RING_KEPT_S` past the last sample over the
 /// silence floor — the room's ring under that is no sound anyone hears.
-pub fn take(piece: &Piece, seed: u64, bank: &Bank) -> (Score, Vec<[f32; 2]>) {
-    let mut score = (piece.build)(&Params { seed });
+pub fn take(piece: &Track, params: &Params, bank: &Bank) -> (Score, Vec<[f32; 2]>) {
+    let mut score = (piece.build)(params);
     let _held = bank.hold(&score);
     let mut amped = Amped::default();
-    levelled(&mut score, bank, &mut amped);
+    let lufs = piece.lufs_in(params.setting);
+    levelled(&mut score, bank, &mut amped, lufs);
     let mut audio = rendered(&score, bank, &mut amped);
-    audio::encode::set_loudness(&mut audio, piece.lufs);
+    audio::encode::set_loudness(&mut audio, lufs);
     master::limit(&mut audio);
     let (_, tail) = audio::measure::silence(&audio);
     if tail > RING_KEPT_S {
@@ -330,26 +331,26 @@ const LEVEL_LU: f32 = 0.25;
 const LEVEL_PASSES: usize = 6;
 
 /// Sets the trim of every section that declares a level so the render
-/// meets it: renders, measures each levelled section's mean momentary
-/// loudness against the section declaring the highest level, moves each
-/// trim by what it misses, and renders again, until every one is within
-/// `LEVEL_LU` or the passes run out; the levelled trims are then scaled
-/// together so the highest is the full pedal. What plays sets how the
+/// meets it: renders, brings the render to `lufs`, the loudness it ships
+/// at, measures each levelled section's mean momentary loudness against
+/// the section declaring the highest level, moves each trim by what it
+/// misses, and renders again, until every one is within `LEVEL_LU` or the
+/// passes run out; the levelled trims are then scaled together so the
+/// highest is the full pedal. Measured at another loudness, a ring's
+/// tail falls under the silence gate here and over it in the take, and
+/// the take's ending sits under its level. What plays sets how the
 /// loudness moves within a section; its level sets where it sits, so an
 /// arc holds whatever the seed brings. Nothing moves where no section
 /// declares a level.
-pub fn set_levels(score: &mut Score, bank: &Bank) {
-    levelled(score, bank, &mut Amped::default());
-}
-
-fn levelled(score: &mut Score, bank: &Bank, amped: &mut Amped) {
+fn levelled(score: &mut Score, bank: &Bank, amped: &mut Amped, lufs: f32) {
     let levelled: Vec<usize> = (0..score.sections.len()).filter(|i| score.sections[*i].level.is_some()).collect();
     let Some(&crest) = levelled.iter().max_by(|a, b| score.sections[**a].level.partial_cmp(&score.sections[**b].level).unwrap()) else {
         return;
     };
     let _held = bank.hold(score);
     for _ in 0..LEVEL_PASSES {
-        let audio = rendered(score, bank, amped);
+        let mut audio = rendered(score, bank, amped);
+        audio::encode::set_loudness(&mut audio, lufs);
         let spans: Vec<(f32, f32)> = levelled.iter().map(|i| (score.seconds(score.sections[*i].start) as f32, score.seconds(score.sections[*i].end) as f32)).collect();
         let measured = audio::measure::spans(&audio, &spans);
         let at_crest = measured[levelled.iter().position(|i| *i == crest).unwrap()];

@@ -4,13 +4,15 @@
 //! between the tellings — and a second player holds tones under its
 //! riff. Nothing else carries the tune but an echo. A piece says how
 //! the lead tells each run of its walk and gives its idiom: the
-//! ornament into a note, the accents, the registers the tones are held
-//! in.
+//! accents, the registers the tones are held in. The ornaments into a
+//! note are its player's (`players::Ornaments`), never written here: a
+//! grace written as a note and a grace played as a bend into it are one
+//! grace struck twice.
 
 use crate::ladder::Run;
 use crate::rng::Rng;
 use crate::score::{Note, Score, TICKS_PER_EIGHTH as E};
-use crate::theory::{counterpoint, phrase, Key};
+use crate::theory::{counterpoint, phrase};
 use crate::tune::{self, Placed, Tune};
 
 /// How the lead tells a run.
@@ -47,14 +49,10 @@ pub struct Teller {
     pub echo: u8,
     /// The tune's register.
     pub register: (u8, u8),
-    /// The piece's ornament: the grace into `pitch`, None where it
-    /// would leave the register's top.
-    pub grace: fn(&Key, u8, u8) -> Option<u8>,
-    /// A sung note's accent, and its grace's.
-    pub sung: (i32, i32),
-    /// A riff note's accent on a strong beat and off one, and its
-    /// grace's.
-    pub riff: (i32, i32, i32),
+    /// A sung note's accent.
+    pub sung: i32,
+    /// A riff note's accent on a strong beat and off one.
+    pub riff: (i32, i32),
     /// Where the lead holds between the tellings, and its accent.
     pub long: (u8, u8, i32),
     /// Where the second holds under the riff, and its accent.
@@ -89,13 +87,6 @@ pub enum Hold {
     Ringing,
 }
 
-/// The ornament a Balkan line takes into a note: the degree above it;
-/// None above the register.
-pub fn above(key: &Key, pitch: u8, hi: u8) -> Option<u8> {
-    let grace = key.pitch(key.absolute_degree(pitch).unwrap() + 1, 4);
-    (grace <= hi).then_some(grace)
-}
-
 /// Whether the lead calls at `bar` where it trades through `run`: the
 /// run's half-phrases by turns, the first the call; a run of one
 /// half-phrase trades by the bar, so every call has its answer.
@@ -106,12 +97,10 @@ pub fn calls(run: &Run<Telling>, bar: u32) -> bool {
 
 /// The lead, run by run over `runs`: where it sings, the tune as a
 /// singer takes it — the skeleton held, a passing tone a group — each
-/// note held to the next, a hair short of it, a grace into the next now
-/// and then, stealing its length from this one where they touch; where
+/// note held to the next, a hair short of it; where
 /// it plays the riff, the tune detached to its feet — a foot held to the
 /// next is not heard as a foot, though a tone filling its bar rings —
-/// doubled where the piece doubles it, a
-/// grace into some strong beats, and under that riff the second holds a
+/// doubled where the piece doubles it, and under that riff the second holds a
 /// chord tone every other bar; where it holds, one chord tone every
 /// other bar, so the storyteller is heard between the tellings. Where
 /// it last was carries run to run, so a held tone leads on from the
@@ -138,31 +127,15 @@ pub fn tell(score: &mut Score, teller: &Teller, tune: &Tune, runs: &[Run<Telling
             Telling::Phrases | Telling::Patter | Telling::Trading | Telling::Riff | Telling::RiffAndLong => {
                 let notes = delivered(score, teller, &told[r], r > 0 && runs[..r].iter().any(|p| p.lead == run.lead), rng);
                 let notes = &notes;
-                for j in 0..notes.len() {
-                    let ((start, len, pitch), is_sung) = notes[j];
+                for &((start, len, pitch), is_sung) in notes {
                     if is_sung {
-                        let mut len = len - E / 8;
-                        // A grace on the tone the line holds is that tone,
-                        // carried into the next, never struck again.
-                        let grace = notes.get(j + 1).filter(|(n, _)| n.2 != pitch).and_then(|(n, _)| (teller.grace)(&grace_key(score, n.0, n.2), n.2, hi).map(|g| (n.0, g))).filter(|_| rng.chance(0.35)).filter(|(_, g)| *g != pitch);
-                        if let Some((next_start, _)) = grace {
-                            len = len.min(next_start - E / 4 - start);
-                        }
-                        score.add(Note { start, len, pitch, vel: vel(teller.sung.0, rng), channel: teller.lead });
-                        if let Some((next_start, grace)) = grace {
-                            score.add(Note { start: next_start - E / 4, len: E / 4, pitch: grace, vel: vel(teller.sung.1, rng), channel: teller.lead });
-                        }
+                        score.add(Note { start, len: len - E / 8, pitch, vel: vel(teller.sung, rng), channel: teller.lead });
                     } else {
                         let strong = score.strong(start);
                         let accent = if strong { teller.riff.0 } else { teller.riff.1 };
                         // A tone that fills its bar is a hold, not a foot,
                         // and rings in the riff as in the song.
                         let held = if len >= score.bar() { len - E / 2 } else if len >= 3 * E { 2 * E } else { len - E / 2 };
-                        if strong && j > 0 && rng.chance(0.4) {
-                            if let Some(grace) = (teller.grace)(&grace_key(score, start, pitch), pitch, hi).filter(|g| *g != notes[j - 1].0.2) {
-                                score.add(Note { start: start - E / 4, len: E / 4, pitch: grace, vel: vel(teller.riff.2, rng), channel: teller.lead });
-                            }
-                        }
                         score.add(Note { start, len: held, pitch, vel: vel(accent, rng), channel: teller.lead });
                         if let Some((channel, under)) = teller.double {
                             // An octave down where unison leaves its range.
@@ -248,15 +221,6 @@ fn fills(score: &mut Score, teller: &Teller, notes: &[(Placed, bool)], rng: &mut
             }
         }
     }
-}
-
-/// The key a grace into `pitch` at `tick` is drawn in: the bar's it
-/// sounds in, a sixteenth before, so a grace from under a borrowed
-/// chord is that chord's — or `pitch`'s own where the grace's bar
-/// leaves `pitch` out.
-fn grace_key(score: &Score, tick: u32, pitch: u8) -> Key {
-    let under = score.key_at(tick.saturating_sub(E / 4));
-    if under.contains(pitch) { under } else { score.key_at(tick) }
 }
 
 /// The tune each run tells, its notes and whether each is sung: the

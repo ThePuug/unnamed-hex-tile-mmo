@@ -5,6 +5,7 @@
 //! repo's musicgen proofs and checks the pieces.
 
 pub mod amp;
+pub mod band;
 pub mod banks;
 pub mod credits;
 pub mod cue;

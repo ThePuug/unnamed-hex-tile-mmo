@@ -2,6 +2,7 @@
 //! eighth note so a bar in any meter is whole; the tempo turns ticks
 //! into seconds at render.
 
+use crate::band::{Band, Part, Style};
 use crate::players::{self, Player};
 use crate::rigs::{self, Rig};
 use crate::theory::{Chord, Key, Meter};
@@ -136,7 +137,12 @@ pub struct Score {
     pub lifts: Vec<(u32, i8)>,
     /// The players cast for parts, by channel, in place of the one each
     /// part's role and instrument call for (`players::of`).
-    pub cast: Vec<(u8, &'static Player)>,
+    pub cast: Vec<(u8, Player)>,
+    /// The band playing, whose members play the parts, by channel, no one
+    /// is cast for; and the channels whose part the band leaves silent.
+    pub band: Option<&'static Band>,
+    pub parts: Vec<(u8, Part)>,
+    pub silent: Vec<u8>,
     /// The rigs fitted for parts, by channel, in place of the one each
     /// part's role and instrument call for (`rigs::of`).
     pub rigs: Vec<(u8, &'static Rig)>,
@@ -144,7 +150,7 @@ pub struct Score {
 
 impl Score {
     pub fn new(key: Key, meter: Meter, eighth_bpm: f32, instruments: Vec<Instrument>, room: f32) -> Self {
-        Score { key, meter, eighth_bpm, tempo: Vec::new(), instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), room, lead: None, marks: Vec::new(), story: "", lifts: Vec::new(), cast: Vec::new(), rigs: Vec::new() }
+        Score { key, meter, eighth_bpm, tempo: Vec::new(), instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), room, lead: None, marks: Vec::new(), story: "", lifts: Vec::new(), cast: Vec::new(), band: None, parts: Vec::new(), silent: Vec::new(), rigs: Vec::new() }
     }
 
     pub fn chord_at(&self, tick: u32) -> Chord {
@@ -261,8 +267,9 @@ impl Score {
     }
 
     /// Plays bars `from..to` again after the last bar of the harmony, as
-    /// they were played — every note sounding there clipped to them, a
-    /// hair of legato from the bar before no note of them, a held note
+    /// they were played — every note sounding there clipped to them, the
+    /// half eighth a held chord lingers into the next no note of them, a
+    /// held note
     /// carried on where it already sounds — with their chords; returns
     /// the bar the repeat begins at.
     pub fn again(&mut self, from: u32, to: u32) -> u32 {
@@ -273,7 +280,7 @@ impl Score {
         let notes: Vec<Note> = self
             .notes
             .iter()
-            .filter(|n| n.start < z && n.end() > a + TICKS_PER_EIGHTH / 4)
+            .filter(|n| n.start < z && n.end() > a + TICKS_PER_EIGHTH / 2)
             .map(|n| {
                 let start = n.start.max(a);
                 Note { start: start + by, len: n.end().min(z) - start, ..*n }
@@ -318,18 +325,33 @@ impl Score {
     }
 
     /// Casts `player` for the part on `channel`, in place of whoever was.
-    pub fn cast(&mut self, channel: u8, player: &'static Player) {
+    pub fn cast(&mut self, channel: u8, player: Player) {
         self.cast.retain(|(c, _)| *c != channel);
         self.cast.push((channel, player));
     }
 
+    /// `band` plays `parts`, by channel, in a track of `style`: each part
+    /// by its member, and a part no member of a band of the style plays
+    /// left silent, its notes dropped as the score finishes.
+    pub fn played_by(&mut self, band: &'static Band, style: Style, parts: &[(u8, Part)]) {
+        self.band = Some(band);
+        self.parts = parts.to_vec();
+        self.silent = parts.iter().filter(|(_, p)| !band.plays(*p, style)).map(|(c, _)| *c).collect();
+    }
+
     /// Who plays the part on `channel`: the player cast for it, else the
-    /// one its role and instrument call for.
-    pub fn player(&self, channel: u8) -> &'static Player {
-        self.cast.iter().find(|(c, _)| *c == channel).map_or_else(|| {
-            let inst = self.instrument(channel);
-            players::of(inst.role, inst.program)
-        }, |(_, p)| *p)
+    /// band's member for its part, else the one its role and instrument
+    /// call for.
+    pub fn player(&self, channel: u8) -> Player {
+        if let Some((_, p)) = self.cast.iter().find(|(c, _)| *c == channel) {
+            return *p;
+        }
+        let inst = self.instrument(channel);
+        let part = self.parts.iter().find(|(c, _)| *c == channel).map(|(_, p)| *p);
+        match (self.band, part) {
+            (Some(band), Some(part)) => band.player(part, inst.program).unwrap_or(*players::of(inst.role, inst.program, self.lead == Some(channel))),
+            _ => *players::of(inst.role, inst.program, self.lead == Some(channel)),
+        }
     }
 
     /// Fits `rig` for the part on `channel`, in place of whichever was.
@@ -398,9 +420,13 @@ impl Score {
         self.notes.iter().filter(move |n| n.start <= tick && tick < n.end())
     }
 
-    /// Puts the notes in a fixed order, so two scores composed alike are
-    /// equal note for note whatever order their voices were written in.
+    /// Drops a silent part's notes, and puts the rest in a fixed order, so
+    /// two scores composed alike are equal note for note whatever order
+    /// their voices were written in.
     pub fn finish(&mut self) {
+        let silent = std::mem::take(&mut self.silent);
+        self.notes.retain(|n| !silent.contains(&n.channel));
+        self.silent = silent;
         self.notes.sort_by_key(|n| (n.start, n.channel, n.pitch, n.len));
     }
 }

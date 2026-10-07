@@ -50,17 +50,19 @@ pub const HORO: [Groove; 4] = [
     Groove { name: "dajčovo", groups: &[2, 2, 2, 3], tempo: (280, 340), dum: &[0, 6], tek: &[2, 4, 8], chord: &[1, 3, 5, 7, 8], busy: 0.6 },
 ];
 
-/// The blues feels: the shuffle, four beats of three eighths with the
-/// kick on one and three, the backbeat on two and four and the
-/// accompaniment on the swung third of every beat; and the walking
-/// four, straight eighths, the accompaniment pushing on the and of one
-/// and of three, its tune leaning on the beat, since a group of two
-/// eighths filled is a run of quavers and not a sung line. The shuffle
-/// is an after-hours blues, its beat 68 to 78, over the ballad's
-/// twelve-eight, so the two slow feels in three are never one pulse.
-pub const BLUES: [Groove; 2] = [
-    Groove { name: "shuffle", groups: &[3, 3, 3, 3], tempo: (204, 234), dum: &[0, 6], tek: &[3, 9], chord: &[2, 5, 8, 11], busy: 0.4 },
-    Groove { name: "walking four", groups: &[2, 2, 2, 2], tempo: (170, 220), dum: &[0, 4], tek: &[2, 6], chord: &[1, 5], busy: 0.3 },
+/// A minor blues's feels, as the recordings surveyed take them
+/// (`proofs/research/blues-findings.md`): the slow twelve-eight, four
+/// beats of three at sixty to eighty, the kick on one and three and the
+/// backbeat on two and four; the rumba, straight eighths at a hundred and
+/// four to a hundred and twenty-eight, the kick on one, the and of two
+/// and three, the comp off the beat; the walking four, swung at a hundred
+/// and twenty to a hundred and sixty; and the six-eight, two beats of
+/// three, the Latin blues's lilt.
+pub const BLUES: [Groove; 4] = [
+    Groove { name: "slow twelve-eight", groups: &[3, 3, 3, 3], tempo: (180, 240), dum: &[0, 6], tek: &[3, 9], chord: &[2, 5, 8, 11], busy: 0.4 },
+    Groove { name: "rumba", groups: &[2, 2, 2, 2], tempo: (208, 256), dum: &[0, 3, 4], tek: &[2, 6], chord: &[1, 3, 5, 7], busy: 0.35 },
+    Groove { name: "walking four", groups: &[2, 2, 2, 2], tempo: (240, 320), dum: &[0, 4], tek: &[2, 6], chord: &[1, 5], busy: 0.3 },
+    Groove { name: "six-eight", groups: &[3, 3], tempo: (220, 280), dum: &[0], tek: &[3], chord: &[2, 5], busy: 0.4 },
 ];
 
 /// The ballad's feels, slow enough that every beat is a weight: the

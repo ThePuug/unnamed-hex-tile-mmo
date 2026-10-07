@@ -144,6 +144,22 @@ pub const VOICES: &[Voice] = &[
     Voice { program: 40, percussion: true, file: "swirly-kit.sf2", bank: 0, preset: 0, keys: SWIRLY, range: (0, 127), takes: Takes::Keys(4), direct: false, legato: None },
 ];
 
+/// Whether `program` sustains a tone a player shapes — bends, scoops,
+/// vibrato: bowed strings, voices, brass, reeds, pipes, the harmonica,
+/// the overdriven and the distorted guitar; a struck or plucked tone is
+/// not shaped once it sounds.
+pub fn sings(program: u8) -> bool {
+    matches!(program, 22 | 29 | 30 | 40..=44 | 48..=49 | 52..=54 | 56..=79 | 110 | 111)
+}
+
+/// Whether the bank's samples of `program` carry a vibrato recorded in
+/// them — the flute's, the violin's and the fiddle's, the strings' and
+/// the choir's on GeneralUser (`proofs/research/ornaments-findings.md`)
+/// — so a player adds none: a second one beats against it.
+pub fn vibrato_recorded(program: u8) -> bool {
+    matches!(program, 40 | 48 | 49 | 52 | 73 | 110)
+}
+
 /// The voice for `program`, where another bank plays it.
 pub fn voice(program: u8, percussion: bool) -> Option<&'static Voice> {
     VOICES.iter().find(|v| v.program == program && v.percussion == percussion)

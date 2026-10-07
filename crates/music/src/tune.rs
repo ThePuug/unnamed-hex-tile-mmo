@@ -161,7 +161,9 @@ impl Tune {
             let key = &score.key_at(start);
             let strong = score.strong(start);
             let chord = score.chord_at(start);
-            let turned = (pitch.saturating_sub(5)..=pitch.saturating_add(5))
+            // The nearest such tone, as far as an octave away: a tone after
+            // a wide leap may have none near it that steps or turns back.
+            let turned = (pitch.saturating_sub(12)..=pitch.saturating_add(12))
                 .filter(|p| *p >= lo && *p <= hi && self.sings(key, *p) && (!strong || chord.holds(key, *p)))
                 .filter(|p| {
                     let next = degree(start, *p) - d1;
@@ -238,6 +240,20 @@ pub fn bent_to_chord(key: &Key, chord: Chord, pitch: u8, prev: Option<u8>, lo: u
             .unwrap(),
         (true, _) => nearest_chord_tone(key, chord, pitch, lo, hi),
     }
+}
+
+/// A run's tone bent to the chord as `bent_to_chord` bends it, but onto
+/// another of the chord's tones within a fourth where that one is the
+/// tone before or after it: a run struck twice on one tone stutters.
+pub fn bent_apart(key: &Key, chord: Chord, pitch: u8, prev: Option<u8>, next: Option<u8>, lo: u8, hi: u8) -> u8 {
+    let bent = bent_to_chord(key, chord, pitch, prev, lo, hi);
+    if Some(bent) != prev && Some(bent) != next {
+        return bent;
+    }
+    (pitch.saturating_sub(5).max(lo)..=pitch.saturating_add(5).min(hi))
+        .filter(|p| chord.holds(key, *p) && Some(*p) != prev && Some(*p) != next)
+        .min_by_key(|p| ((*p as i32 - pitch as i32).abs(), *p))
+        .unwrap_or(bent)
 }
 
 /// The chord tone nearest `pitch` within `lo..=hi`, ties downward.

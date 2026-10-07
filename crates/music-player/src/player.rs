@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui::Color32;
-use music::pieces::PIECES;
+use music::band::{Band, BANDS};
+use music::pieces::{Setting, Style, TRACKS};
 use music::render::SAMPLE_RATE;
 use music::rng::Rng;
 use music::perform::Event;
@@ -49,9 +50,12 @@ impl Source {
     }
 }
 
-/// A variation: a piece and a seed, its render once it arrives.
+/// A play: a track, the band playing it, the setting it is played in and
+/// the play's seed, its render once it arrives.
 pub struct Variation {
     pub piece: usize,
+    pub band: &'static Band,
+    pub setting: Setting,
     pub seed: u64,
     pub source: Source,
     pub take: Option<Arc<Take>>,
@@ -59,12 +63,12 @@ pub struct Variation {
 }
 
 impl Variation {
-    pub fn new(piece: usize, seed: u64, source: Source) -> Self {
-        Variation { piece, seed, source, take: None, failed: None }
+    pub fn new(piece: usize, band: &'static Band, setting: Setting, seed: u64, source: Source) -> Self {
+        Variation { piece, band, setting, seed, source, take: None, failed: None }
     }
 
     pub fn job(&self) -> Job {
-        (self.piece, self.seed)
+        (self.piece, self.band, self.setting, self.seed)
     }
 
 }
@@ -77,32 +81,36 @@ pub struct Take {
     pub sheet: Sheet,
 }
 
-pub type Job = (usize, u64);
+pub type Job = (usize, &'static Band, Setting, u64);
 
 /// Which popover is open, if any.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Popover {
-    Pieces,
+    Style,
     Track,
+    Setting,
+    Band,
     Midi,
     Credits,
 }
 
 pub struct Player {
-    /// The pieces the composer draws from.
-    pub chosen: Vec<bool>,
+    /// What plays: `band` plays `track`, of its style, in `setting`, at
+    /// the seed as typed, now or queued; and what the composer draws from
+    /// when the queue runs out (`draw`), keeping what is locked.
+    pub band: &'static Band,
+    pub track: usize,
+    pub setting: Setting,
+    pub seed: String,
+    pub locks: Locks,
+    pub shuffle: bool,
     pub history: Vec<Variation>,
     pub at: usize,
     /// What the listener asked for next, in order.
     pub queue: Vec<Variation>,
-    /// The composer's next draw, played when the queue is empty; none
-    /// while no piece is chosen.
+    /// The composer's next draw, played when the queue is empty.
     pub composed: Option<Variation>,
-    /// The play-a-seed panel: its piece and the seed as typed.
-    pub track: usize,
-    pub seed: String,
     pub popover: Option<Popover>,
-    pub filter: String,
     /// Whether the listener wants sound: the deck plays when this is set
     /// and the current variation has arrived.
     pub playing: bool,
@@ -140,19 +148,25 @@ impl Player {
         let midi = midi::spawn(deck.clone());
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
         let mut rng = Rng::new(nanos);
-        let chosen = vec![true; PIECES.len()];
-        let first = draw(&mut rng, &chosen).expect("a piece is chosen");
-        let composed = draw(&mut rng, &chosen);
+        let band = *rng.pick(BANDS.iter().collect::<Vec<_>>().as_slice());
+        let tracks: Vec<usize> = (0..TRACKS.len()).filter(|i| TRACKS[*i].style == band.style).collect();
+        let track = *rng.pick(&tracks);
+        let setting = TRACKS[track].settings.first().copied().unwrap_or(Setting::None);
+        let picked = Picked { band, style: band.style, track, setting, seed: None };
+        let first = draw(&mut rng, picked, Locks::default(), true);
+        let composed = Some(draw(&mut rng, picked, Locks::default(), true));
         Player {
-            chosen,
+            band,
+            track,
+            setting,
+            seed: "0".to_string(),
+            locks: Locks::default(),
+            shuffle: true,
             history: vec![first],
             at: 0,
             queue: Vec::new(),
             composed,
-            track: 0,
-            seed: "0".to_string(),
             popover: None,
-            filter: String::new(),
             playing: true,
             repeat: false,
             rest_until: None,
@@ -248,13 +262,12 @@ impl Player {
         self.history.get(self.at + 1).or(self.queue.first()).or(self.composed.as_ref())
     }
 
-    /// Moves on to what follows; with nothing queued, nothing chosen and
-    /// no history ahead, the current variation stays.
+    /// Moves on to what follows.
     pub fn next(&mut self) {
         if self.at + 1 == self.history.len() {
             let up = if self.queue.is_empty() {
-                let fresh = draw(&mut self.rng, &self.chosen);
-                std::mem::replace(&mut self.composed, fresh)
+                let fresh = self.draw();
+                std::mem::replace(&mut self.composed, Some(fresh))
             } else {
                 Some(self.queue.remove(0))
             };
@@ -274,17 +287,39 @@ impl Player {
         }
     }
 
-    /// Plays `piece` at `seed` now, after the current variation in the
-    /// history, so "previous" comes back to what was playing.
-    pub fn play_now(&mut self, piece: usize, seed: u64) {
-        self.history.insert(self.at + 1, Variation::new(piece, seed, Source::Chosen));
+    /// Plays `piece` at `seed` by `band` in `setting` now, after the
+    /// current variation in the history, so "previous" comes back to what
+    /// was playing.
+    pub fn play_now(&mut self, piece: usize, band: &'static Band, setting: Setting, seed: u64) {
+        self.history.insert(self.at + 1, Variation::new(piece, band, setting, seed, Source::Chosen));
         self.go(self.at + 1);
         self.playing = true;
     }
 
-    /// Adds `piece` at `seed` to the queue's end.
-    pub fn enqueue(&mut self, piece: usize, seed: u64) {
-        self.queue.push(Variation::new(piece, seed, Source::Queued));
+    /// Adds `piece` at `seed` by `band` in `setting` to the queue's end.
+    pub fn enqueue(&mut self, piece: usize, band: &'static Band, setting: Setting, seed: u64) {
+        self.queue.push(Variation::new(piece, band, setting, seed, Source::Queued));
+    }
+
+    /// The selection changed: the composer's waiting draw is drawn again
+    /// from it.
+    pub fn selected(&mut self) {
+        self.composed = Some(self.draw());
+    }
+
+    /// A fresh draw of the composer's from the selection.
+    fn draw(&mut self) -> Variation {
+        let picked = Picked { band: self.band, style: TRACKS[self.track].style, track: self.track, setting: self.chosen_setting(), seed: self.typed_seed() };
+        draw(&mut self.rng, picked, self.locks, self.shuffle)
+    }
+
+    /// `style` chosen: the track stays where it is of the style, else
+    /// becomes the style's first.
+    pub fn choose_style(&mut self, style: Style) {
+        if TRACKS[self.track].style != style {
+            self.track = (0..TRACKS.len()).find(|i| TRACKS[*i].style == style).expect("every style has a track");
+        }
+        self.selected();
     }
 
     /// Makes history entry `i` current, and lets go of every render but
@@ -311,17 +346,6 @@ impl Player {
 
     pub fn position(&self) -> f64 {
         self.deck.lock().unwrap().at / SAMPLE_RATE as f64
-    }
-
-    /// A change of the chosen pieces redraws the composer's draw where
-    /// its piece is no longer among them, or draws one where none was.
-    pub fn choose(&mut self, pieces: &[usize], on: bool) {
-        for i in pieces {
-            self.chosen[*i] = on;
-        }
-        if !self.composed.as_ref().is_some_and(|v| self.chosen[v.piece]) {
-            self.composed = draw(&mut self.rng, &self.chosen);
-        }
     }
 
     /// Installs the banks archive at `archive`, unless an install runs.
@@ -362,26 +386,119 @@ impl Player {
     pub fn typed_seed(&self) -> Option<u64> {
         self.seed.parse().ok()
     }
-}
 
-/// A seed of one of the chosen pieces, where any is.
-pub fn draw(rng: &mut Rng, chosen: &[bool]) -> Option<Variation> {
-    let pieces: Vec<usize> = (0..PIECES.len()).filter(|i| chosen[*i]).collect();
-    if pieces.is_empty() {
-        return None;
+    /// The setting chosen, where the track is made for it, else none.
+    pub fn chosen_setting(&self) -> Setting {
+        if TRACKS[self.track].plays_in(self.setting) { self.setting } else { Setting::None }
     }
-    Some(Variation::new(*rng.pick(&pieces), rng.below(SEEDS as usize) as u64, Source::Composed))
 }
 
-/// The pools in the order the pieces are listed, each with its pieces.
-pub fn pools() -> Vec<(&'static str, Vec<usize>)> {
-    let mut out: Vec<(&'static str, Vec<usize>)> = Vec::new();
-    for (i, p) in PIECES.iter().enumerate() {
-        match out.iter_mut().find(|(pool, _)| *pool == p.pool) {
-            Some((_, members)) => members.push(i),
-            None => out.push((p.pool, vec![i])),
+/// Which of the selection the composer keeps when it draws.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct Locks {
+    pub band: bool,
+    pub style: bool,
+    pub track: bool,
+    pub setting: bool,
+    pub seed: bool,
+}
+
+/// The selection a draw starts from.
+#[derive(Clone, Copy)]
+pub struct Picked {
+    pub band: &'static Band,
+    pub style: Style,
+    pub track: usize,
+    pub setting: Setting,
+    pub seed: Option<u64>,
+}
+
+/// The composer's next play from `picked`. With `shuffle`, the band, the
+/// style, the track and the setting are each drawn afresh where not
+/// locked; without, they stay. The seed is drawn afresh where not locked,
+/// or typed. A track is of the style; a track drawn is one made for the
+/// setting where the setting is kept; a setting drawn is one the track is
+/// made for. The one rule the listener does not see: a band drawn is of
+/// the style, and a style drawn is a locked band's, unless the listener
+/// locked them apart.
+pub fn draw(rng: &mut Rng, picked: Picked, locks: Locks, shuffle: bool) -> Variation {
+    let free = |locked: bool| shuffle && !locked;
+    let made_for = |i: &usize| free(locks.setting) || TRACKS[*i].plays_in(picked.setting);
+    let style = if !free(locks.track) {
+        TRACKS[picked.track].style
+    } else if !free(locks.style) {
+        picked.style
+    } else if !free(locks.band) {
+        picked.band.style
+    } else {
+        let styles: Vec<Style> = Style::ALL.iter().copied().filter(|s| (0..TRACKS.len()).any(|i| TRACKS[i].style == *s && made_for(&i))).collect();
+        *rng.pick(if styles.is_empty() { &Style::ALL[..] } else { &styles })
+    };
+    let track = if free(locks.track) {
+        let of_style: Vec<usize> = (0..TRACKS.len()).filter(|i| TRACKS[*i].style == style).collect();
+        let made: Vec<usize> = of_style.iter().copied().filter(made_for).collect();
+        *rng.pick(if made.is_empty() { &of_style } else { &made })
+    } else {
+        picked.track
+    };
+    let setting = if free(locks.setting) {
+        match TRACKS[track].settings {
+            [] => Setting::None,
+            made => *rng.pick(made),
+        }
+    } else if TRACKS[track].plays_in(picked.setting) {
+        picked.setting
+    } else {
+        Setting::None
+    };
+    let band = if free(locks.band) {
+        let roster: Vec<&'static Band> = music::band::of_style(style).collect();
+        *rng.pick(&roster)
+    } else {
+        picked.band
+    };
+    let seed = match (locks.seed, picked.seed) {
+        (true, Some(seed)) => seed,
+        _ => rng.below(SEEDS as usize) as u64,
+    };
+    Variation::new(track, band, setting, seed, Source::Composed)
+}
+
+/// The styles in their order, each with its tracks.
+pub fn styles() -> Vec<(Style, Vec<usize>)> {
+    Style::ALL.iter().map(|s| (*s, (0..TRACKS.len()).filter(|i| TRACKS[*i].style == *s).collect())).collect()
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use music::band;
+
+    fn track(name: &str) -> usize {
+        TRACKS.iter().position(|t| t.name == name).unwrap()
+    }
+
+    /// Shuffle with nothing locked keeps a band and its track in one
+    /// style and a track in a setting it is made for; what is locked
+    /// stays, a band and a track locked apart among it; without shuffle
+    /// only the seed moves, and a locked seed holds.
+    #[test]
+    fn shuffle_keeps_what_is_locked() {
+        let mut rng = Rng::new(7);
+        let blues = band::of_style(Style::Blues).next().unwrap();
+        let picked = Picked { band: blues, style: Style::Metal, track: track("speed-metal"), setting: Setting::Combat, seed: Some(42) };
+        for _ in 0..200 {
+            let v = draw(&mut rng, picked, Locks::default(), true);
+            assert_eq!(v.band.style, TRACKS[v.piece].style);
+            assert!(TRACKS[v.piece].plays_in(v.setting));
+            let apart = Locks { band: true, track: true, ..Locks::default() };
+            let v = draw(&mut rng, picked, apart, true);
+            assert_eq!((v.band.name, v.piece), (blues.name, picked.track));
+            let v = draw(&mut rng, picked, Locks { setting: true, ..Locks::default() }, true);
+            assert!(TRACKS[v.piece].plays_in(Setting::Combat) && v.setting == Setting::Combat);
+            let v = draw(&mut rng, picked, Locks { seed: true, ..Locks::default() }, false);
+            assert_eq!((v.piece, v.band.name, v.setting, v.seed), (picked.track, blues.name, Setting::Combat, 42));
         }
     }
-    out
 }
-

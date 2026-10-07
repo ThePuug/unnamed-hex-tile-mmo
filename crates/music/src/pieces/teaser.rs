@@ -13,6 +13,7 @@
 
 use crate::cue::{self, Cut};
 use crate::ladder::{Part, Walk};
+use crate::band::{self, Style};
 use crate::pieces::Params;
 use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
@@ -309,13 +310,16 @@ pub fn build(params: &Params) -> Score {
     // The lesnoto, the overworld's own dance.
     let groove = &BALKAN[0];
     let (open, closed) = schemata_for(&key);
-    let lead = LEADS[skeleton.below(LEADS.len())];
+    // The band, as the overworld's: its drone, its lead and second, its
+    // plucks and its drum; the cue's orchestra is the cue's own.
+    let band = params.band;
+    let lead = band.program(band::Part::Lead, &LEADS, LEADS[0]);
     let design = Design {
-        drone: [CELLO, CONTRABASS][skeleton.below(2)],
+        drone: band.program(band::Part::Drone, &[], CONTRABASS),
         lead,
-        second: *skeleton.pick(&SECONDS.iter().copied().filter(|p| *p != lead).collect::<Vec<u8>>()),
-        pluck: [NYLON_GUITAR, PIZZICATO][skeleton.below(2)],
-        pluck_2: [NYLON_GUITAR, NYLON_GUITAR, DULCIMER][skeleton.below(3)],
+        second: band.programs(band::Part::Second).into_iter().chain(SECONDS).find(|p| *p != lead && SECONDS.contains(p)).unwrap_or(SECONDS[0]),
+        pluck: band.program(band::Part::Pluck, &[], NYLON_GUITAR),
+        pluck_2: band.program(band::Part::Pluck2, &[], NYLON_GUITAR),
         groove,
         // A sentence, never a period: a cue moves on, and a period says
         // its two bars twice.
@@ -340,7 +344,7 @@ pub fn build(params: &Params) -> Score {
         Instrument { name: "horn", program: FRENCH_HORN, channel: CH_HORN, role: Role::Sustain, low: 48, high: 67, reverb: 55, pan: -39, level: HORN_LEVEL },
         Instrument { name: "strings, the riff", program: STRINGS_2, channel: CH_DOUBLE, role: Role::Doubling, low: 55, high: 88, reverb: 60, pan: -34, level: 0.0 },
         Instrument { name: "taiko", program: TAIKO, channel: CH_TAIKO, role: Role::Percussion, low: 36, high: 36, reverb: 45, pan: -12, level: 0.0 },
-        Instrument { name: "frame drum", program: 0, channel: CH_DRUM, role: Role::Percussion, low: KICK, high: DUM, reverb: 30, pan: -8, level: DRUM_LEVEL },
+        Instrument { name: "frame drum", program: band.program(band::Part::Drums, &[], 0), channel: CH_DRUM, role: Role::Percussion, low: KICK, high: DUM, reverb: 30, pan: -8, level: DRUM_LEVEL },
         Instrument { name: "pluck 2", program: design.pluck_2, channel: CH_PLUCK_2, role: Role::Pluck, low: 55, high: 72, reverb: 30, pan: -44, level: 0.0 },
         Instrument { name: "weave", program: DULCIMER, channel: CH_WEAVE, role: Role::Pluck, low: 50, high: 91, reverb: 50, pan: -52, level: 0.0 },
         Instrument { name: "timpani", program: TIMPANI, channel: CH_TIMPANI, role: Role::Pluck, low: 40, high: 55, reverb: 60, pan: 14, level: 0.0 },
@@ -350,6 +354,11 @@ pub fn build(params: &Params) -> Score {
     ];
     let mut score = Score::new(key, groove.meter(), tempo, instruments, ROOM_S);
     score.lead = Some(CH_LEAD);
+    score.played_by(
+        band,
+        Style::Bulgarian,
+        &[(CH_DRONE, band::Part::Drone), (CH_LEAD, band::Part::Lead), (CH_PLUCK, band::Part::Pluck), (CH_SECOND, band::Part::Second), (CH_DRUM, band::Part::Drums), (CH_PLUCK_2, band::Part::Pluck2)],
+    );
     let bar = score.bar();
     let bars_a_half = phrase::BARS / 2;
 
@@ -448,9 +457,8 @@ pub fn build(params: &Params) -> Score {
         double: Some((CH_DOUBLE, -20)),
         echo: CH_WEAVE,
         register: TUNE,
-        grace: teller::above,
-        sung: (-10, -20),
-        riff: (4, -4, -18),
+        sung: -10,
+        riff: (4, -4),
         long: (72, 84, -18),
         under: (62, 76, -18),
         hold: Hold::Breathing,
@@ -965,7 +973,7 @@ mod tests {
     #[test]
     fn a_cue_is_its_movements_at_their_cuts() {
         for seed in 0..12 {
-            let score = build(&Params { seed });
+            let score = build(&Params::of(crate::pieces::find("teaser").unwrap(), seed));
             let names: Vec<&str> = score.sections.iter().map(|s| s.name).collect();
             assert_eq!(names, ["dawn", "vistas", "day into night", "work", "swell", "title"]);
             let half = phrase::BARS / 2 * score.bar();

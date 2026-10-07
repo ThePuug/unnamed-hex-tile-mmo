@@ -14,7 +14,9 @@ pub const LANES: usize = VOICE_INKS.len();
 pub struct Sheet {
     pub voices: Vec<Voice>,
     pub lanes: [Vec<Stretch>; LANES],
-    pub bar_s: f64,
+    /// Where each bar line falls, seconds, as the score's tempo moves:
+    /// bar `n` as a musician counts, from one, starts at `bars[n - 1]`.
+    pub bars: Vec<f64>,
 }
 
 /// A voice: its name, the pitches its lane spans, and its notes as a
@@ -110,7 +112,14 @@ impl Sheet {
                 }
             }
         }
-        Sheet { voices, lanes, bar_s: score.seconds(score.bar()) }
+        let bars = (0..=score.end() / score.bar()).map(|b| score.seconds(b * score.bar())).collect();
+        Sheet { voices, lanes, bars }
+    }
+
+    /// The bar playing at `at` seconds, counted from one; none before the
+    /// first.
+    pub fn bar_at(&self, at: f64) -> Option<usize> {
+        self.bars.iter().rposition(|b| *b <= at).map(|i| i + 1)
     }
 
     /// The voice in each lane at `at` seconds, none where the lane is

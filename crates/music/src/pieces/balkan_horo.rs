@@ -18,11 +18,17 @@
 //! from the seed's stream,
 //! one fork per purpose; the seed picks which shape at every level,
 //! never the next note.
+//!
+//! A setting leans the dance's draws and bounds its walk (`lean`): in a
+//! fight the band is at full stride from its first bar and holds it; as
+//! it is, the dance is as the records play it.
 
-use crate::ladder::{self, turn, Bed, Run, Story, Walk};
-use crate::pieces::Params;
+use crate::ladder::{self, turn, Bed, Bounds, Run, Story, Walk};
+use crate::band::{Part, Style};
+use crate::pieces::{Params, Setting};
 use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
+use crate::solo;
 use crate::teller::{self, Hold, Teller, Telling};
 use crate::theory::groove::{Groove, HORO};
 use crate::theory::melody::{run_between, Theme, FOLK_SHAPES};
@@ -77,6 +83,8 @@ const ROOM_S: f32 = 1.6;
 /// Who may lead: the players that cut through a band, the zurna first
 /// among them. Each seed draws one.
 const LEADS: [u8; 4] = [SHANAI, FIDDLE, CLARINET, TRUMPET];
+/// Who may hold tones under the lead and take a phrase it hands over.
+const SECONDS: [u8; 5] = [FRENCH_HORN, ACCORDION, FIDDLE, CLARINET, TRUMPET];
 
 /// Each lead's level, dB, so that wherever it plays it sits three dB
 /// under the band: the bank's samples of them are not one
@@ -357,12 +365,14 @@ impl Opening {
 }
 
 /// How the tempo moves, a phrase pair at a time and never smoothly, so
-/// the meter holds — the shapes a horo's tempo is written down taking:
+/// the meter holds: most often not at all, as Bulgarian dance records hold
+/// theirs; else — the shapes a horo's tempo is written down taking:
 /// pressing on through the last quarter, as a band pushes its dancers; a
 /// step faster at every new section; building from the first pair to the
 /// last; or faster to past the middle and back, giving the dancers a rest.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Pace {
+    Steady,
     Press,
     Steps,
     Build,
@@ -372,6 +382,7 @@ enum Pace {
 impl Pace {
     fn name(self) -> &'static str {
         match self {
+            Pace::Steady => "one tempo",
             Pace::Press => "pressing on",
             Pace::Steps => "a step a section",
             Pace::Build => "building",
@@ -403,6 +414,45 @@ impl Ending {
             Ending::Run => "a unison run",
         }
     }
+}
+
+/// How a setting leans the dance (`proofs/research/settings-findings.md`,
+/// §7): each draw's weights multiplied, the walk bounded. In a fight the
+/// band is at full stride from the first bar and holds it: the râčenica
+/// and the kopanica most, the five-eight never, full swing twice as
+/// often, never under most of the band, the quick third of the dance's
+/// tempo held from the first bar to the last, straight in or off the
+/// tapan — no taksim, no free time before a fight — and out on a stop, a
+/// tag or a run, never a held tone. As it is, the dance as the records
+/// play it.
+struct Lean {
+    grooves: [f32; 4],
+    stories: [f32; 4],
+    openings: [f32; 3],
+    paces: [f32; 5],
+    endings: [f32; 4],
+    bounds: Bounds,
+}
+
+const AS_RECORDED: Lean = Lean { grooves: [1.0; 4], stories: [1.0; 4], openings: [1.0; 3], paces: [1.0; 5], endings: [1.0; 4], bounds: ladder::UNBOUNDED };
+
+fn lean(setting: Setting) -> Lean {
+    match setting {
+        Setting::Combat => Lean {
+            grooves: [1.0, 0.0, 1.0, 0.5],
+            stories: [1.0, 2.0, 1.0, 1.0],
+            openings: [1.0, 0.0, 1.0],
+            paces: [1.0, 0.0, 0.0, 0.0, 0.0],
+            endings: [1.0, 1.0, 0.0, 1.0],
+            bounds: Bounds { texture: (0.6, 1.0), tempo: (2.0 / 3.0, 1.0) },
+        },
+        Setting::Ambient | Setting::City | Setting::None => AS_RECORDED,
+    }
+}
+
+/// `weights` leaned by `by`.
+fn leaned<const N: usize>(weights: [f32; N], by: [f32; N]) -> [f32; N] {
+    std::array::from_fn(|i| weights[i] * by[i])
 }
 
 /// What a seed's piece is.
@@ -506,14 +556,19 @@ pub fn build(params: &Params) -> Score {
 fn compose(params: &Params) -> (Score, Form) {
     let rng = Rng::new(params.seed);
     let mut skeleton = rng.fork(0);
-    let story = ladder::draw(&STORIES, &mut skeleton);
+    // The band: its members.
+    let band = params.band;
+    let lean = lean(params.setting);
+    let stories: Vec<f32> = STORIES.iter().zip(lean.stories).map(|(s, by)| s.weight * by * band.lean(s.name)).collect();
+    let story = &STORIES[skeleton.weighted(&stories)];
     let mode = [Mode::Aeolian, Mode::Hijaz][skeleton.weighted(&[3.0, 3.0])];
     let key = Key::new(["D", "E", "G", "A", "C"][skeleton.weighted(&[3.0, 3.0, 2.0, 2.0, 1.0])], mode);
     // The five-eight least: at a run its bar is under a second.
-    let groove = &HORO[skeleton.weighted(&[3.0, 1.0, 2.0, 2.0])];
-    let tempo = story.tempo(groove.tempo, &mut skeleton);
+    let groove = &HORO[skeleton.weighted(&leaned(leaned([3.0, 1.0, 2.0, 2.0], lean.grooves), std::array::from_fn(|i| band.lean(HORO[i].name))))];
+    let tempo = story.tempo(groove.tempo, &lean.bounds.within(band.prefs.tempo), &mut skeleton);
     let (open, closed) = horo_schemata(mode);
-    let lead = LEADS[skeleton.below(LEADS.len())];
+    // The band's first lead the horo has a voice for.
+    let lead = band.program(Part::Lead, &LEADS, LEADS[0]);
     let form = FORMS[skeleton.below(FORMS.len())];
     // Each kolyano its own theme and, as far as the mode has them, its own
     // question and answer, so two running never share their chords.
@@ -530,26 +585,46 @@ fn compose(params: &Params) -> (Score, Form) {
         solo: vamp.is_some() && skeleton.chance(0.6),
         vamp,
         returns: skeleton.chance(0.6),
-        opening: [Opening::Straight, Opening::Taksim, Opening::Tapan][skeleton.weighted(&[3.0, 2.0, 1.0])],
-        pace: [Pace::Press, Pace::Steps, Pace::Build, Pace::Arch][skeleton.below(4)],
-        ending: [Ending::Stop, Ending::Tag, Ending::Held, Ending::Run][skeleton.weighted(&[11.0, 3.0, 3.0, 2.0])],
+        opening: [Opening::Straight, Opening::Taksim, Opening::Tapan][skeleton.weighted(&leaned([3.0, 2.0, 1.0], lean.openings))],
+        // Bulgarian dance records hold one tempo, fifteen in seventeen; the
+        // rest press on, most from about halfway.
+        pace: [Pace::Steady, Pace::Press, Pace::Steps, Pace::Build, Pace::Arch][skeleton.weighted(&leaned([15.0, 1.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0], lean.paces))],
+        ending: [Ending::Stop, Ending::Tag, Ending::Held, Ending::Run][skeleton.weighted(&leaned([11.0, 3.0, 3.0, 2.0], lean.endings))],
     };
     let instruments = vec![
-        Instrument { name: "bass", program: FINGER_BASS, channel: CH_BASS, role: Role::Pluck, low: 36, high: 60, reverb: 20, pan: 0, level: BAND },
-        Instrument { name: "tambura", program: STEEL_GUITAR, channel: CH_FIGURE, role: Role::Pluck, low: 45, high: 64, reverb: 35, pan: -26, level: BAND },
+        Instrument { name: "bass", program: band.program(Part::Bass, &[], FINGER_BASS), channel: CH_BASS, role: Role::Pluck, low: 36, high: 60, reverb: 20, pan: 0, level: BAND },
+        Instrument { name: "tambura", program: band.program(Part::Figure, &[], STEEL_GUITAR), channel: CH_FIGURE, role: Role::Pluck, low: 45, high: 64, reverb: 35, pan: -26, level: BAND },
         Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 58, high: 92, reverb: 30, pan: 0, level: lead_level(design.lead) },
-        Instrument { name: "trombone", program: TROMBONE, channel: CH_TROMBONE, role: Role::Pluck, low: 45, high: 70, reverb: 30, pan: 22, level: BAND },
-        Instrument { name: "horn, the second", program: FRENCH_HORN, channel: CH_SECOND, role: Role::Melody, low: 53, high: 76, reverb: 45, pan: -30, level: BAND },
-        Instrument { name: "tuba", program: TUBA, channel: CH_TUBA, role: Role::Pluck, low: 28, high: 45, reverb: 20, pan: 8, level: BAND },
-        Instrument { name: "accordion", program: ACCORDION, channel: CH_CHOIR, role: Role::Sustain, low: 52, high: 71, reverb: 70, pan: 30, level: BAND },
-        Instrument { name: "sax, the riff", program: TENOR_SAX, channel: CH_DOUBLE, role: Role::Doubling, low: 58, high: 92, reverb: 40, pan: -36, level: BAND },
-        Instrument { name: "tapan", program: KIT, channel: CH_KIT, role: Role::Percussion, low: BASS_DRUM, high: 50, reverb: 25, pan: 0, level: BAND },
-        Instrument { name: "echo", program: NYLON_GUITAR, channel: CH_WEAVE, role: Role::Pluck, low: 46, high: 80, reverb: 35, pan: 40, level: BAND },
-        Instrument { name: "horn", program: FRENCH_HORN, channel: CH_HORN, role: Role::Sustain, low: 53, high: 65, reverb: 50, pan: -42, level: BAND },
-        Instrument { name: "clarinet, held", program: CLARINET, channel: CH_PAD, role: Role::Sustain, low: 57, high: 74, reverb: 60, pan: -18, level: BAND },
+        Instrument { name: "trombone", program: band.program(Part::Trombone, &[], TROMBONE), channel: CH_TROMBONE, role: Role::Pluck, low: 45, high: 70, reverb: 30, pan: 22, level: BAND },
+        Instrument { name: "horn, the second", program: band.programs(Part::Second).into_iter().find(|p| *p != lead && SECONDS.contains(p)).unwrap_or(FRENCH_HORN), channel: CH_SECOND, role: Role::Melody, low: 53, high: 76, reverb: 45, pan: -30, level: BAND },
+        Instrument { name: "tuba", program: band.program(Part::Tuba, &[], TUBA), channel: CH_TUBA, role: Role::Pluck, low: 28, high: 45, reverb: 20, pan: 8, level: BAND },
+        Instrument { name: "accordion", program: band.program(Part::Accordion, &[], ACCORDION), channel: CH_CHOIR, role: Role::Sustain, low: 52, high: 71, reverb: 70, pan: 30, level: BAND },
+        Instrument { name: "sax, the riff", program: band.program(Part::Doubler, &[], TENOR_SAX), channel: CH_DOUBLE, role: Role::Doubling, low: 58, high: 92, reverb: 40, pan: -36, level: BAND },
+        Instrument { name: "tapan", program: band.program(Part::Drums, &[], KIT), channel: CH_KIT, role: Role::Percussion, low: BASS_DRUM, high: 50, reverb: 25, pan: 0, level: BAND },
+        Instrument { name: "echo", program: band.program(Part::Echo, &[], NYLON_GUITAR), channel: CH_WEAVE, role: Role::Pluck, low: 46, high: 80, reverb: 35, pan: 40, level: BAND },
+        Instrument { name: "horn", program: band.program(Part::Horn, &[], FRENCH_HORN), channel: CH_HORN, role: Role::Sustain, low: 53, high: 65, reverb: 50, pan: -42, level: BAND },
+        Instrument { name: "clarinet, held", program: band.program(Part::HeldReed, &[], CLARINET), channel: CH_PAD, role: Role::Sustain, low: 57, high: 74, reverb: 60, pan: -18, level: BAND },
     ];
     let mut score = Score::new(key, groove.meter(), tempo, instruments, ROOM_S);
     score.lead = Some(CH_LEAD);
+    score.played_by(
+        band,
+        Style::Bulgarian,
+        &[
+            (CH_BASS, Part::Bass),
+            (CH_FIGURE, Part::Figure),
+            (CH_LEAD, Part::Lead),
+            (CH_TROMBONE, Part::Trombone),
+            (CH_SECOND, Part::Second),
+            (CH_TUBA, Part::Tuba),
+            (CH_CHOIR, Part::Accordion),
+            (CH_DOUBLE, Part::Doubler),
+            (CH_KIT, Part::Drums),
+            (CH_WEAVE, Part::Echo),
+            (CH_HORN, Part::Horn),
+            (CH_PAD, Part::HeldReed),
+        ],
+    );
     let name = |program: u8| match program {
         SHANAI => "zurna",
         FIDDLE => "fiddle",
@@ -561,7 +636,7 @@ fn compose(params: &Params) -> (Score, Form) {
 
     // The walk, in half-phrases, and whole question-and-answer pairs
     // of them, so it closes on an answer.
-    let walk = story.place(&mut skeleton, &mut score, 4, &[], |texture, lead| texture.trim(lead));
+    let walk = story.place(&mut skeleton, &mut score, 4, &[], &lean.bounds, |texture, lead| texture.trim(lead));
     let order = order((walk.bars() / PAIR_BARS) as usize, design.kolena.len(), design.solo, design.returns);
     let kolena = order.iter().filter_map(|p| if let Pair::Kolyano(k) = p { Some(*k) } else { None }).max().unwrap_or(0) + 1;
     let soloed = order.contains(&Pair::Solo);
@@ -613,9 +688,8 @@ fn compose(params: &Params) -> (Score, Form) {
         double: Some((CH_DOUBLE, -18)),
         echo: CH_WEAVE,
         register: TUNE,
-        grace: teller::above,
-        sung: (-6, -16),
-        riff: (10, 0, -12),
+        sung: -6,
+        riff: (10, 0),
         long: (72, 84, -6),
         under: (55, 67, -14),
         hold: Hold::Breathing,
@@ -659,6 +733,7 @@ fn pace(score: &mut Score, form: &Form) {
     let base = score.eighth_bpm;
     let pairs = form.order.len();
     let steps: Vec<(u32, f32)> = match form.design.pace {
+        Pace::Steady => Vec::new(),
         Pace::Press => (0..bars).step_by(phrase::BARS as usize).filter(|b| *b >= bars * 3 / 4).enumerate().map(|(k, b)| (b, PRESS * (k + 1) as f32)).collect(),
         Pace::Steps => {
             let changes = (1..pairs).filter(|p| form.order[*p] != form.order[p - 1]);
@@ -724,14 +799,16 @@ fn taksim(score: &mut Score, form: &Form, rng: &mut Rng) {
     score.tempo.sort_by_key(|(t, _)| *t);
 }
 
-/// The lead's turn over the vamp, as a wedding band's soloist takes his:
-/// a line from home climbing to a peak two thirds through and falling to
-/// land on the chord's tone nearest home, its every group opening on a
-/// tone of the bar's chord and running on by steps to the next — in
-/// eighths, and through its middle often in sixteenths — holding its
-/// group's tone through every phrase's last group, where a player
-/// breathes.
+/// The lead's turn over the vamp, as a wedding band's soloist takes it
+/// (`solo::BALKAN`): sixteenths regrouped against the limp, turns and
+/// trills about a tone, cells sequenced, phrases of two or four bars each
+/// closed on a held tone, faster as it goes; every strong beat's tone on
+/// the bar's chord and the line repaired as the tune is, and the line a
+/// listener follows through a run, its tones longer than a sixteenth,
+/// too. A second turn answers the first.
 fn improvise(score: &mut Score, form: &Form, rng: &mut Rng) {
+    let player = &solo::BALKAN;
+    let mut answered: Option<solo::Shape> = None;
     let mut b = 0;
     while b < form.bars() {
         if !form.solo(b) {
@@ -742,13 +819,30 @@ fn improvise(score: &mut Score, form: &Form, rng: &mut Rng) {
         while b < form.bars() && form.solo(b) {
             b += 1;
         }
-        let key = score.key;
-        let home = key.absolute_degree(tune::home_tonic(&key, TUNE.0, TUNE.1)).unwrap();
-        let peak = key.absolute_degree(key.snap(TUNE.1 - 4)).unwrap().min(home + 7);
-        let arch = |x: f32| home + ((peak - home) as f32 * if x < 0.65 { x / 0.65 } else { (1.0 - x) / 0.35 }).round() as i32;
-        let mut line = phrased(score, (a, b), arch, 0.6, 0.0, rng);
+        let shape = match answered {
+            Some(to) => solo::Shape::answer(&to, player, rng),
+            None => solo::Shape::draw(player, rng),
+        };
+        let mut line = solo::turn(score, a, b, TUNE, player, &shape, rng);
+        for i in 0..line.len() {
+            let n = line[i];
+            let key = score.key_at(n.0);
+            let chord = score.chord_at(n.0);
+            if score.strong(n.0) && !chord.holds(&key, n.2) {
+                let prev = i.checked_sub(1).map(|j| line[j].2);
+                let next = line.get(i + 1).map(|m| m.2);
+                line[i].2 = tune::bent_apart(&key, chord, n.2, prev, next, TUNE.0, TUNE.1);
+            }
+        }
         form.tune.repair(score, &mut line, TUNE.0, TUNE.1);
+        let heard: Vec<usize> = (0..line.len()).filter(|i| line[*i].1 > E / 2).collect();
+        let mut skeleton: Vec<Placed> = heard.iter().map(|i| line[*i]).collect();
+        form.tune.repair(score, &mut skeleton, TUNE.0, TUNE.1);
+        for (k, i) in heard.iter().enumerate() {
+            line[*i].2 = skeleton[k].2;
+        }
         sound(score, &line, rng);
+        answered = Some(shape);
     }
 }
 
@@ -1184,6 +1278,30 @@ mod tests {
         }
     }
 
+    /// A play of the horo as it is, unbounded.
+    fn as_it_is(seed: u64) -> Params {
+        Params { setting: Setting::None, ..Params::of(crate::pieces::find("balkan-horo").unwrap(), seed) }
+    }
+
+    /// In a fight the dance holds one tempo, opens with no taksim, ends on
+    /// no held tone, and never falls under most of the band.
+    #[test]
+    fn a_fight_holds_the_dance_at_full_stride() {
+        for seed in 0..48 {
+            let (score, form) = compose(&Params { setting: Setting::Combat, ..as_it_is(seed) });
+            assert_eq!(form.design.pace, Pace::Steady, "seed {seed}");
+            assert_ne!(form.design.opening, Opening::Taksim, "seed {seed}");
+            assert_ne!(form.design.ending, Ending::Held, "seed {seed}");
+            let floor = (0.6 * score_ladder(&score) as f32).ceil() as usize;
+            assert!(form.walk.parts.iter().all(|p| p.rung >= floor), "seed {seed}: under the floor");
+        }
+    }
+
+    /// The rungs of the story `score` tells.
+    fn score_ladder(score: &Score) -> usize {
+        STORIES.iter().find(|s| s.name == score.story).unwrap().ladder.len()
+    }
+
     /// The dance is whole question-and-answer pairs between its opening
     /// and its ending, its parts whole half-phrases, its harmony opening
     /// and closing on the tonic and its tune in its register; it never
@@ -1192,7 +1310,7 @@ mod tests {
     #[test]
     fn a_horo_is_whole_phrases_between_its_opening_and_its_ending() {
         for seed in 0..24 {
-            let (score, form) = compose(&Params { seed });
+            let (score, form) = compose(&as_it_is(seed));
             let bars = form.bars();
             assert_eq!(bars % PAIR_BARS, 0, "seed {seed}: {bars} bars");
             let (from, to) = (form.design.opening.bars() * score.bar(), (form.design.opening.bars() + bars) * score.bar());
@@ -1241,7 +1359,7 @@ mod tests {
     fn the_dances_vary_in_how_they_open_move_and_end() {
         let (mut openings, mut paces, mut endings, mut solos) = (Vec::new(), Vec::new(), Vec::new(), 0);
         for seed in 0..120 {
-            let (score, form) = compose(&Params { seed });
+            let (score, form) = compose(&as_it_is(seed));
             openings.push(form.design.opening);
             paces.push(form.design.pace);
             endings.push(form.design.ending);
@@ -1255,9 +1373,8 @@ mod tests {
         for o in [Opening::Straight, Opening::Taksim, Opening::Tapan] {
             assert!(openings.contains(&o), "{o:?} never drawn");
         }
-        for p in [Pace::Press, Pace::Steps, Pace::Build, Pace::Arch] {
-            assert!(paces.contains(&p), "{p:?} never drawn");
-        }
+        assert!(paces.contains(&Pace::Steady), "never steady");
+        assert!(paces.iter().any(|p| *p != Pace::Steady), "never pressing on");
         for e in [Ending::Stop, Ending::Tag, Ending::Held, Ending::Run] {
             assert!(endings.contains(&e), "{e:?} never drawn");
         }

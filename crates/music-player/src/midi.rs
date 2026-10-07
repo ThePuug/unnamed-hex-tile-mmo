@@ -266,7 +266,7 @@ impl Follow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use music::pieces::{Params, PIECES};
+    use music::pieces::{Params, TRACKS};
 
     /// A deck at `at` seconds playing `events`, its render as long as the
     /// last of them.
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn the_clock_starts_stops_and_takes_up_where_the_playhead_is() {
-        let score = (PIECES[0].build)(&Params { seed: 0 });
+        let score = (TRACKS[0].build)(&Params::of(&TRACKS[0], 0));
         let events = Arc::new(stream(&score));
         let mut follow = Follow::default();
         let mut step = |at: f64, playing: bool| {
@@ -309,8 +309,8 @@ mod tests {
 
     #[test]
     fn a_stream_sets_up_first_and_ticks_through_every_tempo() {
-        for piece in PIECES {
-            let score = (piece.build)(&Params { seed: 0 });
+        for piece in TRACKS {
+            let score = (piece.build)(&Params::of(piece, 0));
             let events = stream(&score);
             let setup = 4 * score.instruments.len();
             assert!(events[..setup].iter().all(|e| e.bytes[0] != CLOCK && e.bytes[0] & 0xF0 != 0x90), "{}", piece.name);

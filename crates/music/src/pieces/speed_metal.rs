@@ -61,10 +61,11 @@
 //! Every choice is a draw from the seed's stream, one fork per purpose;
 //! the seed picks which shape at every level, never the next note.
 
-use crate::ladder::{leap, turn, Bed, Run, Story, Turn, Walk};
+use crate::ladder::{self, leap, turn, Bed, Run, Story, Turn, Walk};
+use crate::band::{Part, Style};
 use crate::pieces::Params;
 use crate::rng::Rng;
-use crate::rock::{self, Band, Figure, Ritual};
+use crate::rock::{self, Band, Figure, Ritual, Fill};
 use crate::score::{Instrument, Note, Role, Score, Section as ScoreSection, TICKS_PER_EIGHTH as E};
 use crate::solo::{self, Part as SoloPart, Shape as SoloShape, SHREDDER, SINGER};
 use crate::teller::{self, Hold, Teller, Telling};
@@ -278,6 +279,19 @@ enum Family {
     HalfSpeed,
 }
 
+impl Family {
+    /// The family's name, as a band's preferences name it.
+    fn name(self) -> &'static str {
+        match self {
+            Family::Doubled => "doubled",
+            Family::Single => "single",
+            Family::Gallop => "gallop",
+            Family::Backbeat => "backbeat",
+            Family::HalfSpeed => "half-speed",
+        }
+    }
+}
+
 /// The song's one signature event, as half the songs surveyed have one
 /// and no two of an album share it; most fall before the last chorus.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -409,15 +423,6 @@ enum Voice {
 /// The degrees each stab of the pedal-and-stab riff stands on against
 /// the bar's root; the first and the last on the beat, so on the root.
 const STABS: [[i32; 5]; 3] = [[0, -1, 0, 2, 0], [0, 2, 3, 2, 0], [0, -2, -1, 0, 0]];
-
-/// The fill: the toms down; the snare and then the toms; the snare's
-/// roll alone.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Fill {
-    Descent,
-    SnareThenToms,
-    Roll,
-}
 
 /// What a seed's song is: its identity first, then its parts.
 struct Design {
@@ -606,21 +611,20 @@ fn vel(accent: i32, rng: &mut Rng) -> u8 {
     (VEL + accent + rng.range(-4, 4)).clamp(1, 127) as u8
 }
 
-/// A guitar's ornament into a note: a hammer from the degree under it;
-/// none under the lead's lowest tone.
-fn hammer(key: &Key, pitch: u8, _hi: u8) -> Option<u8> {
-    Some(key.pitch(key.standing_degree(pitch) - 1, 4)).filter(|g| *g >= TUNE.0 - 2)
-}
-
 fn compose(params: &Params) -> (Score, Form) {
     let rng = Rng::new(params.seed);
     let mut skeleton = rng.fork(0);
+    // The band: its members, and its habits.
+    let band = params.band;
+    let lineup = band.metal();
     // The song's identity, before anything else.
-    let family = [Family::Doubled, Family::Single, Family::Gallop, Family::Backbeat, Family::HalfSpeed][skeleton.weighted(&[30.0, 20.0, 15.0, 25.0, 10.0])];
+    let families = [Family::Doubled, Family::Single, Family::Gallop, Family::Backbeat, Family::HalfSpeed];
+    let weights: Vec<f32> = families.iter().zip([30.0, 20.0, 15.0, 25.0, 10.0]).map(|(f, w)| w * band.lean(f.name())).collect();
+    let family = families[skeleton.weighted(&weights)];
     let event = [Event::Break, Event::DeadBar, Event::FeelSwitch, Event::HalfTime, Event::DrumBars, Event::Lift][skeleton.weighted(&[20.0, 15.0, 15.0, 10.0, 10.0, 10.0])];
     let key = Key::new(["E", "A", "D", "F#", "B", "G"][skeleton.weighted(&[4.0, 2.0, 2.0, 2.0, 2.0, 1.0])], Mode::Aeolian);
     let groove = &SPEED[if family == Family::Backbeat { 1 } else { 0 }];
-    let tempo = STORY.tempo(groove.tempo, &mut skeleton);
+    let tempo = STORY.tempo(groove.tempo, &ladder::UNBOUNDED.within(band.prefs.tempo), &mut skeleton);
     let pair = |schemata: &'static [Schema], rng: &mut Rng| {
         let (open, closed) = split(schemata);
         [open[rng.below(open.len())], closed[rng.below(closed.len())]]
@@ -647,8 +651,8 @@ fn compose(params: &Params) -> (Score, Form) {
         riff
     };
     let bright = skeleton.chance(0.35);
-    let lead = [DISTORTION, OVERDRIVEN][skeleton.below(2)];
-    let shredder_leads = skeleton.chance(0.5);
+    let lead = band.program(Part::Lead, &[OVERDRIVEN, DISTORTION], DISTORTION);
+    let shredder_leads = lineup.shredder_leads;
     let split_device = Some([Device::Harmony, Device::Sustain, Device::Pedal, Device::Voicing, Device::Octave][skeleton.weighted(&[12.0, 6.0, 6.0, 6.0, 2.0])]);
     let share = [0.0, 0.1, 0.25, 0.4, 0.6, 0.85][skeleton.weighted(&[2.0, 2.0, 3.0, 2.0, 1.0, 1.0])];
     let pre_len = if skeleton.chance(0.8) { Some([1, 2][skeleton.weighted(&[1.0, 3.0])]) } else { None };
@@ -676,7 +680,7 @@ fn compose(params: &Params) -> (Score, Form) {
         family,
         event,
         lead,
-        twin: if lead == DISTORTION { OVERDRIVEN } else { DISTORTION },
+        twin: band.program(Part::Second, &[OVERDRIVEN, DISTORTION], if lead == DISTORTION { OVERDRIVEN } else { DISTORTION }),
         soloists: if shredder_leads { [&SHREDDER, &SINGER] } else { [&SINGER, &SHREDDER] },
         riff,
         riff2,
@@ -684,9 +688,9 @@ fn compose(params: &Params) -> (Score, Form) {
         split: split_device,
         share,
         double_chorus: skeleton.chance(0.25),
-        bass_sixteenths: skeleton.chance(0.6),
-        fill_every: [4, 8, 16][skeleton.weighted(&[1.0, 2.0, 1.0])],
-        fill: [Fill::Descent, Fill::SnareThenToms, Fill::Roll][skeleton.weighted(&[2.0, 2.0, 1.0])],
+        bass_sixteenths: lineup.bass_sixteenths,
+        fill_every: lineup.fill_every,
+        fill: lineup.fill,
         strings: skeleton.chance(if bright { 0.5 } else { 0.2 }),
         stabs: STABS[skeleton.below(STABS.len())],
         form: FORMS[skeleton.below(FORMS.len())],
@@ -707,19 +711,24 @@ fn compose(params: &Params) -> (Score, Form) {
         layout: solo::layout(solo_bars, &mut skeleton),
     };
     let instruments = vec![
-        Instrument { name: "bass", program: BASS, channel: CH_BASS, role: Role::Pluck, low: 28, high: 52, reverb: 10, pan: 0, level: BAND },
-        Instrument { name: "guitar, left", program: DISTORTION, channel: CH_LEFT, role: Role::Pluck, low: 38, high: 79, reverb: 18, pan: -63, level: GUITARS },
-        Instrument { name: "guitar, right", program: OVERDRIVEN, channel: CH_RIGHT, role: Role::Pluck, low: 38, high: 79, reverb: 18, pan: 63, level: GUITARS },
+        Instrument { name: "bass", program: band.program(Part::Bass, &[], BASS), channel: CH_BASS, role: Role::Pluck, low: 28, high: 52, reverb: 10, pan: 0, level: BAND },
+        Instrument { name: "guitar, left", program: band.program(Part::RhythmLeft, &[], DISTORTION), channel: CH_LEFT, role: Role::Pluck, low: 38, high: 79, reverb: 18, pan: -63, level: GUITARS },
+        Instrument { name: "guitar, right", program: band.program(Part::RhythmRight, &[], OVERDRIVEN), channel: CH_RIGHT, role: Role::Pluck, low: 38, high: 79, reverb: 18, pan: 63, level: GUITARS },
         Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: TUNE.0 - 2, high: SOLO.1, reverb: 40, pan: -14, level: LEAD },
         Instrument { name: "twin", program: design.twin, channel: CH_TWIN, role: Role::Melody, low: TUNE.0 - 2, high: SOLO.1, reverb: 40, pan: 24, level: TWIN },
-        Instrument { name: "strings", program: STRINGS, channel: CH_STRINGS, role: Role::Sustain, low: 52, high: 79, reverb: 70, pan: 0, level: STRINGS_LEVEL },
-        Instrument { name: "kit", program: ROCK_KIT, channel: CH_KIT, role: Role::Percussion, low: KICK, high: CRASH_2, reverb: 28, pan: 0, level: KIT },
+        Instrument { name: "strings", program: band.program(Part::Pad, &[], STRINGS), channel: CH_STRINGS, role: Role::Sustain, low: 52, high: 79, reverb: 70, pan: 0, level: STRINGS_LEVEL },
+        Instrument { name: "kit", program: band.program(Part::Drums, &[], ROCK_KIT), channel: CH_KIT, role: Role::Percussion, low: KICK, high: CRASH_2, reverb: 28, pan: 0, level: KIT },
     ];
     let mut score = Score::new(key, groove.meter(), tempo, instruments, ROOM_S);
     score.lead = Some(CH_LEAD);
+    score.played_by(
+        band,
+        Style::Metal,
+        &[(CH_BASS, Part::Bass), (CH_LEFT, Part::RhythmLeft), (CH_RIGHT, Part::RhythmRight), (CH_LEAD, Part::Lead), (CH_TWIN, Part::Second), (CH_STRINGS, Part::Pad), (CH_KIT, Part::Drums)],
+    );
     let bar = score.bar();
 
-    let walk = STORY.place(&mut skeleton, &mut score, 2, &walk_of(&design), |_, _| 1.0);
+    let walk = STORY.place(&mut skeleton, &mut score, 2, &walk_of(&design), &ladder::UNBOUNDED, |_, _| 1.0);
     let mut sections: Vec<Section> = walk.parts.iter().map(|p| p.bed.section()).collect();
     let mut leads: Vec<Lead> = walk.parts.iter().map(|p| p.lead).collect();
     // The interlude takes the first part after the first chorus; the
@@ -869,9 +878,8 @@ fn compose(params: &Params) -> (Score, Form) {
         double: None,
         echo: CH_TWIN,
         register: TUNE,
-        grace: hammer,
-        sung: (-2, -14),
-        riff: (4, -6, -14),
+        sung: -2,
+        riff: (4, -6),
         long: (62, 76, 0),
         under: (55, 69, -10),
         hold: Hold::Ringing,
@@ -1448,25 +1456,7 @@ fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
         }
         if let Some(from) = fill_from {
             let shape = if turning && from == 8 && rng.chance(0.4) { Fill::Roll } else { form.design.fill };
-            fill(score, shape, start + from * S, 16 - from, -4, rng);
-        }
-    }
-}
-
-/// The fill in `n` sixteenths from `start`, growing in strength from
-/// `accent` into the crash the next part opens on.
-fn fill(score: &mut Score, shape: Fill, start: u32, n: u32, accent: i32, rng: &mut Rng) {
-    let down = |k: u32, of: u32| TOMS[(k as usize * TOMS.len() / of.max(1) as usize).min(TOMS.len() - 1)];
-    for k in 0..n {
-        let pitch = match shape {
-            Fill::Descent => down(k, n),
-            Fill::SnareThenToms if k < n / 2 => SNARE,
-            Fill::SnareThenToms => down(k - n / 2, n - n / 2),
-            Fill::Roll => SNARE,
-        };
-        score.add(Note { start: start + k * S, len: S - 10, pitch, vel: vel(accent + (30 * k / n.max(1)) as i32, rng), channel: CH_KIT });
-        if k % 4 == 0 {
-            score.add(Note { start: start + k * S, len: S - 10, pitch: KICK, vel: vel(accent - 6, rng), channel: CH_KIT });
+            rock::fill(score, CH_KIT, shape, start + from * S, 16 - from, (-4, 30), Some(4), vel, rng);
         }
     }
 }
@@ -1865,7 +1855,7 @@ fn intro(score: &mut Score, form: &Form, rng: &mut Rng) {
                         }
                         score.add(Note { start, len: 2 * S, pitch: CRASH, vel: vel(30, rng), channel: CH_KIT });
                     } else {
-                        fill(score, form.design.fill, start, 16, -10, rng);
+                        rock::fill(score, CH_KIT, form.design.fill, start, 16, (-10, 30), Some(4), vel, rng);
                     }
                 }
                 3 => {
@@ -1879,13 +1869,13 @@ fn intro(score: &mut Score, form: &Form, rng: &mut Rng) {
                     score.add(Note { start, len: 2 * S, pitch: CRASH, vel: vel(30, rng), channel: CH_KIT });
                     score.add(Note { start, len: S, pitch: KICK, vel: vel(-2, rng), channel: CH_KIT });
                     if into_song {
-                        fill(score, form.design.fill, start + 8 * S, 8, -6, rng);
+                        rock::fill(score, CH_KIT, form.design.fill, start + 8 * S, 8, (-6, 30), Some(4), vel, rng);
                     }
                 }
                 5 => {
                     riff_bar(score, CH_LEFT, start, chord, form.design.riff, place, Voice::Root, &form.design, rng);
                     if k + 1 == *n {
-                        fill(score, form.design.fill, start + 12 * S, 4, -8, rng);
+                        rock::fill(score, CH_KIT, form.design.fill, start + 12 * S, 4, (-8, 30), Some(4), vel, rng);
                     }
                 }
                 _ => {
@@ -1901,7 +1891,7 @@ fn intro(score: &mut Score, form: &Form, rng: &mut Rng) {
                         score.add(Note { start, len: 2 * S, pitch: CRASH, vel: vel(32, rng), channel: CH_KIT });
                     }
                     if role == Bar::Cadence {
-                        fill(score, form.design.fill, start + 12 * S, 4, -4, rng);
+                        rock::fill(score, CH_KIT, form.design.fill, start + 12 * S, 4, (-4, 30), Some(4), vel, rng);
                     }
                 }
             }
@@ -2032,7 +2022,7 @@ mod tests {
     #[test]
     fn a_song_is_whole_phrases_with_its_solos_and_an_ending() {
         for seed in 0..32 {
-            let (score, form) = compose(&Params { seed });
+            let (score, form) = compose(&Params::of(crate::pieces::find("speed-metal").unwrap(), seed));
             assert_eq!(form.bars() % phrase::BARS, 0, "seed {seed}");
             let choruses: Vec<u32> = form
                 .walk
@@ -2071,7 +2061,7 @@ mod tests {
     #[test]
     fn every_song_splits_its_guitars_somewhere() {
         for seed in 0..32 {
-            let (score, form) = compose(&Params { seed });
+            let (score, form) = compose(&Params::of(crate::pieces::find("speed-metal").unwrap(), seed));
             assert!(form.splits.iter().any(|s| *s), "seed {seed}: never splits");
             let side = |ch: u8| -> Vec<(u32, u8)> { score.notes.iter().filter(|n| n.channel == ch).map(|n| (n.start, n.pitch)).collect() };
             let (l, r) = (side(CH_LEFT), side(CH_RIGHT));
@@ -2085,7 +2075,7 @@ mod tests {
     fn the_songs_are_their_own() {
         let (mut families, mut events, mut intros, mut endings) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for seed in 0..160 {
-            let (_, form) = compose(&Params { seed });
+            let (_, form) = compose(&Params::of(crate::pieces::find("speed-metal").unwrap(), seed));
             families.push(form.design.family);
             events.push(form.design.event);
             intros.push(form.design.intro);

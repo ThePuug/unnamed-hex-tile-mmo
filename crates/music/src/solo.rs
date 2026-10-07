@@ -23,6 +23,14 @@
 //! Weikath's. A turn that answers another flips at least two of how it
 //! opens, its main note value, its density's course and its top.
 //!
+//! Other idioms are other players. A power ballad's soloist bends and
+//! holds more and opens held; a blues player breathes — phrases of six or
+//! seven beats with rests between, most entering off the beat or pushed
+//! ahead of it, one in three restating an earlier one, on the minor
+//! pentatonic in eighths; a wedding band's soloist runs sixteenths
+//! regrouped against the dance's limp, turns about a tone, sequences cells,
+//! and closes every two or four bars on a held tone.
+//!
 //! A turn is pitch and time in the score's key; the piece holds every
 //! strong beat to the chord and repairs the line, as it does a tune.
 
@@ -38,7 +46,7 @@ pub struct Player {
     pub fast: f32,
     /// The most beats one fast gesture runs.
     pub run: u32,
-    /// The register a turn spans, in degrees.
+    /// The register a turn spans, in the steps of its scale.
     pub span: i32,
     /// The share of fast beats on a pedal, on a turn about a neighbour,
     /// and that leap inside the beat.
@@ -51,16 +59,124 @@ pub struct Player {
     pub odd: f32,
     /// How likely the turn's highest tone falls in its middle third.
     pub peaks_mid: f32,
+    /// Whether it breaks a beat into threes, fives, sevens and
+    /// thirty-seconds as a shredder does; else its fast beats are sixteenths
+    /// and eighths alone.
+    pub tuplets: bool,
+    /// Whether it strikes a tone again inside a run — a tone hammered
+    /// through a beat, a scale with every tone picked twice — as a
+    /// picking guitarist does and a wind or a horn does not.
+    pub picks: bool,
+    /// How often a turn opens on a bend, a flurry, a held tone and a
+    /// lick; ends held and runs on; and is densest in its middle, evenly,
+    /// at its start and at its end.
+    pub opens: [f32; 4],
+    pub ends: [f32; 2],
+    pub density: [f32; 4],
+    /// How often its main fast value is eighths, sixteenths, sextuplets,
+    /// or mixed.
+    pub values: [f32; 4],
+    /// How it breathes; one unbroken line where it does not.
+    pub phrasing: Option<Phrasing>,
+    /// The degrees of the mode it stands on, where it plays fewer than
+    /// seven, its every step one of them; every degree where none.
+    pub scale: Option<&'static [i32]>,
+}
+
+/// How a player breathes: phrases of `len` beats — bars where `in_bars` —
+/// with rests of `rest` beats between; a phrase entering an eighth ahead
+/// of its beat `pickup` of the time and an eighth after it `late`, else
+/// on it; restating an earlier phrase `again` of the time. A phrase not
+/// the turn's last closes on a held tone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Phrasing {
+    pub len: (u32, u32),
+    pub in_bars: bool,
+    pub rest: (u32, u32),
+    pub pickup: f32,
+    pub late: f32,
+    pub again: f32,
 }
 
 /// Hansen's way: four beats in five fast, runs of seven beats, thirty-one
 /// semitones, leaps, cells in two turns of three, odd groupings in half.
-pub const SHREDDER: Player = Player { name: "shredder", fast: 0.79, run: 7, span: 18, pedal: 0.14, turn: 0.03, leap: 0.17, cells: 0.68, odd: 0.53, peaks_mid: 0.37 };
+pub const SHREDDER: Player = Player { name: "shredder", fast: 0.79, run: 7, span: 18, pedal: 0.14, turn: 0.03, leap: 0.17, cells: 0.68, odd: 0.53, peaks_mid: 0.37, tuplets: true, picks: true, opens: METAL_OPENS, ends: METAL_ENDS, density: [1.0; 4], values: [0.0, 5.0, 1.5, 2.0 + 4.0 * 0.53], phrasing: None, scale: None };
 
 /// Weikath's way: half the beats fast, runs of two or three beats,
 /// twenty-four semitones, short bent phrases round a pedal or a
 /// neighbour, the peak in the middle in two turns of three.
-pub const SINGER: Player = Player { name: "singer", fast: 0.52, run: 3, span: 14, pedal: 0.21, turn: 0.12, leap: 0.07, cells: 0.31, odd: 0.31, peaks_mid: 0.69 };
+pub const SINGER: Player = Player { name: "singer", fast: 0.52, run: 3, span: 14, pedal: 0.21, turn: 0.12, leap: 0.07, cells: 0.31, odd: 0.31, peaks_mid: 0.69, tuplets: true, picks: true, opens: METAL_OPENS, ends: METAL_ENDS, density: [1.0; 4], values: [0.0, 5.0, 1.5, 2.0 + 4.0 * 0.31], phrasing: None, scale: None };
+
+/// How the speed-metal turns surveyed open and end.
+const METAL_OPENS: [f32; 4] = [21.0, 11.0, 7.0, 6.0];
+const METAL_ENDS: [f32; 2] = [30.0, 12.0];
+
+/// A power ballad's soloist, from forty-seven turns
+/// (`proofs/research/ballad-guitars-findings.md`): slower than a speed
+/// metal turn, bent twice as often, a tone held about every bar; opening
+/// held more than bent, ending held about half the time; its peak in the
+/// middle half the time and its fastest playing most often in its last
+/// third, after the peak.
+pub const BALLADEER: Player = Player { name: "balladeer", fast: 0.5, run: 3, span: 14, pedal: 0.18, turn: 0.1, leap: 0.06, cells: 0.2, odd: 0.15, peaks_mid: 0.51, tuplets: true, picks: true, opens: [32.0, 19.0, 38.0, 11.0], ends: [53.0, 47.0], density: [20.0, 20.0, 20.0, 40.0], values: [0.0, 5.0, 1.5, 2.6], phrasing: None, scale: None };
+
+/// A blues soloist, from ninety-seven blues solos of the Weimar Jazz
+/// Database and the recordings' transcriptions
+/// (`proofs/research/blues-findings.md`): phrases of six or seven beats
+/// with a beat or two of rest between, five or six a chorus; one in five
+/// pushed in ahead of its beat, almost none on it; one in three
+/// restating an earlier one; steps and thirds of the minor pentatonic,
+/// walked in its own steps, in eighths — a beat of sixteenths now and
+/// then, a turn mostly of them seldom — long tones only where a phrase
+/// ends; denser as it goes, its peak in its second half.
+pub const BLUESMAN: Player = Player {
+    name: "bluesman",
+    fast: 0.7,
+    run: 2,
+    span: 8,
+    pedal: 0.12,
+    turn: 0.15,
+    leap: 0.05,
+    cells: 0.35,
+    odd: 0.0,
+    peaks_mid: 0.3,
+    tuplets: false,
+    picks: false,
+    opens: [30.0, 10.0, 20.0, 40.0],
+    ends: [70.0, 30.0],
+    density: [20.0, 15.0, 10.0, 55.0],
+    values: [9.0, 1.0, 0.0, 0.0],
+    phrasing: Some(Phrasing { len: (4, 10), in_bars: false, rest: (1, 2), pickup: 0.22, late: 0.71, again: 0.34 }),
+    scale: Some(crate::tune::MINOR_PENTATONIC),
+};
+
+/// A village band's soloist over a horo's vamp
+/// (`proofs/research/ornaments-findings.md`): sixteenths and eighths,
+/// never a shredder's tuplets, regrouped against the limp by the dance's
+/// own uneven groups; turns about a tone and trills
+/// on it far more than a guitarist's, cells sequenced, few leaps; phrases
+/// of two or four bars, each closed on a held tone, re-entering on the
+/// beat with hardly a breath; faster as it goes, as everything at a
+/// wedding is.
+pub const BALKAN: Player = Player {
+    name: "village soloist",
+    fast: 0.7,
+    run: 8,
+    span: 13,
+    pedal: 0.1,
+    turn: 0.25,
+    leap: 0.08,
+    cells: 0.5,
+    odd: 0.0,
+    peaks_mid: 0.3,
+    tuplets: false,
+    picks: false,
+    opens: [0.0, 35.0, 40.0, 25.0],
+    ends: [70.0, 30.0],
+    density: [1.0, 1.0, 1.0, 2.0],
+    values: [2.0, 6.0, 0.0, 0.0],
+    phrasing: Some(Phrasing { len: (2, 4), in_bars: true, rest: (0, 1), pickup: 0.0, late: 0.0, again: 0.3 }),
+    scale: None,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Opening {
@@ -94,6 +210,8 @@ pub enum Density {
 /// A turn's main fast value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Value {
+    /// Eighths, now and then a beat of sixteenths: a blues line's.
+    Eighths,
     Sixteenths,
     Sextuplets,
     /// Sixteenths, sextuplets and odd groupings by turns.
@@ -116,10 +234,10 @@ pub struct Shape {
 impl Shape {
     pub fn draw(player: &Player, rng: &mut Rng) -> Shape {
         Shape {
-            opening: [Opening::Bend, Opening::Flurry, Opening::Held, Opening::Lick][rng.weighted(&[21.0, 11.0, 7.0, 6.0])],
-            close: [Close::Held, Close::RunOn][rng.weighted(&[30.0, 12.0])],
-            density: [Density::Arch, Density::Flat, Density::Fall, Density::Rise][rng.below(4)],
-            value: [Value::Sixteenths, Value::Sextuplets, Value::Mixed][rng.weighted(&[5.0, 1.5, 2.0 + 4.0 * player.odd])],
+            opening: [Opening::Bend, Opening::Flurry, Opening::Held, Opening::Lick][rng.weighted(&player.opens)],
+            close: [Close::Held, Close::RunOn][rng.weighted(&player.ends)],
+            density: [Density::Arch, Density::Flat, Density::Fall, Density::Rise][rng.weighted(&player.density)],
+            value: [Value::Eighths, Value::Sixteenths, Value::Sextuplets, Value::Mixed][rng.weighted(&player.values)],
             peaks_mid: rng.chance(player.peaks_mid),
             top: rng.range(0, 3),
         }
@@ -182,6 +300,35 @@ struct Walk {
     floor: i32,
     top: i32,
     last: Option<(Contour, i32)>,
+    scale: Option<&'static [i32]>,
+}
+
+/// The mode degree a walk's step `s` stands on: the step itself, or the
+/// `s`th step of `scale` counted up the octaves.
+fn degree_of(scale: Option<&[i32]>, s: i32) -> i32 {
+    match scale {
+        None => s,
+        Some(sc) => {
+            let n = sc.len() as i32;
+            7 * s.div_euclid(n) + sc[s.rem_euclid(n) as usize]
+        }
+    }
+}
+
+/// The step of `scale` at or under mode degree `d`.
+fn step_of(scale: Option<&[i32]>, d: i32) -> i32 {
+    match scale {
+        None => d,
+        Some(sc) => {
+            let r = d.rem_euclid(7);
+            d.div_euclid(7) * sc.len() as i32 + sc.iter().rposition(|x| *x <= r).unwrap_or(0) as i32
+        }
+    }
+}
+
+/// Step `s` as a pitch in the key of the bar at `at`.
+fn tone_at(score: &Score, scale: Option<&[i32]>, at: u32, s: i32) -> u8 {
+    score.key_at(at).pitch(degree_of(scale, s), 4)
 }
 
 /// A fast beat's contour, by how often each comes.
@@ -203,7 +350,8 @@ impl Contour {
     fn draw(player: &Player, rng: &mut Rng) -> Contour {
         use Contour::*;
         let all = [Zigzag, Pedal, Leap, Trill, ScaleDown, Turn, Repeat, Pairs, ScaleUp, Arpeggio];
-        let weights = [0.21, player.pedal, player.leap, 0.12, 0.08, player.turn, 0.06, 0.04, 0.04, 0.02];
+        let picked = if player.picks { 1.0 } else { 0.0 };
+        let weights = [0.21, player.pedal, player.leap, 0.12, 0.08, player.turn, 0.06 * picked, 0.04 * picked, 0.04, 0.02];
         all[rng.weighted(&weights)]
     }
 
@@ -229,11 +377,20 @@ impl Contour {
 
 /// How many notes a fast beat of `eighths` holds in `value`, switching to
 /// another about one beat in five where the value is mixed.
-fn division(value: Value, eighths: u32, odd: bool, rng: &mut Rng) -> u32 {
+fn division(value: Value, eighths: u32, odd: bool, tuplets: bool, rng: &mut Rng) -> u32 {
     let sixteenths = 2 * eighths;
+    if !tuplets {
+        return match value {
+            Value::Eighths if rng.chance(0.2) => sixteenths,
+            Value::Eighths => eighths,
+            _ => sixteenths,
+        };
+    }
     let sextuplets = 3 * eighths;
     let quintuplets = if eighths == 2 { 5 } else { 7 };
     match value {
+        Value::Eighths if rng.chance(0.2) => sixteenths,
+        Value::Eighths => eighths,
         Value::Sixteenths if rng.chance(0.2) => if odd && rng.chance(0.5) { quintuplets } else { sextuplets },
         Value::Sixteenths => sixteenths,
         Value::Sextuplets if rng.chance(0.2) => sixteenths,
@@ -244,8 +401,8 @@ fn division(value: Value, eighths: u32, odd: bool, rng: &mut Rng) -> u32 {
 
 /// A turn on bars `a..z` of `score` in `lo..=hi`, by `player`, shaped as
 /// `shape`: the notes as placed, in the bars' keys, before the piece
-/// holds its strong beats to the chords. `entry` is how far from the bar
-/// line it comes in: none, a pickup in the bar before, or late.
+/// holds its strong beats to the chords. A player that breathes leaves
+/// rests between its phrases, and may end before `z`.
 pub fn turn(score: &Score, a: u32, z: u32, (lo, hi): (u8, u8), player: &Player, shape: &Shape, rng: &mut Rng) -> Vec<Placed> {
     let bar = score.bar();
     let groups: Vec<u32> = score.meter.groups.iter().map(|g| *g as u32).collect();
@@ -259,11 +416,12 @@ pub fn turn(score: &Score, a: u32, z: u32, (lo, hi): (u8, u8), player: &Player, 
     }
     let n = beats.len();
     let key = score.key;
-    let degree = |p: u8| key.absolute_degree(key.snap(p)).unwrap();
+    let scale = player.scale;
+    let degree = |p: u8| step_of(scale, key.absolute_degree(key.snap(p)).unwrap());
     let floor = degree(lo + 2);
     let top = (floor + player.span - shape.top).min(degree(hi.saturating_sub(2))).max(floor + 5);
-    let mut walk = Walk { now: floor + (top - floor) * 2 / 5, floor, top, last: None };
-    let tone = |at: u32, d: i32| score.key_at(at).pitch(d, 4);
+    let mut walk = Walk { now: floor + (top - floor) * 2 / 5, floor, top, last: None, scale };
+    let tone = |at: u32, d: i32| tone_at(score, scale, at, d);
     // The ceiling over the walk at `x` of the turn: rising to the top in
     // its last third, or arching to it in its middle.
     let ceiling = |x: f32| -> i32 {
@@ -284,65 +442,120 @@ pub fn turn(score: &Score, a: u32, z: u32, (lo, hi): (u8, u8), player: &Player, 
     };
     let odd = rng.chance(player.odd);
     let cells = rng.chance(player.cells);
+    let spans = match &player.phrasing {
+        Some(p) => phrases(n, groups.len(), p, rng),
+        None => vec![(0, n)],
+    };
     let mut line: Vec<Placed> = Vec::new();
-    let mut i = 0usize;
-    // The opening.
-    let open_len = match shape.opening {
-        Opening::Bend | Opening::Held => rng.range(2, 3) as usize,
-        Opening::Lick => 2,
-        Opening::Flurry => rng.range(2, 4) as usize,
-    }
-    .min(n);
-    match shape.opening {
-        Opening::Bend | Opening::Held => {
-            let d = chord_tone(score, beats[0].at, walk.now + 1);
-            held(&mut line, &beats[..open_len], tone(beats[0].at, d));
-            walk.now = d;
+    let mut said: Vec<(usize, Vec<Placed>)> = Vec::new();
+    for (k, &(from, to)) in spans.iter().enumerate() {
+        let last = k + 1 == spans.len();
+        let mut part: Vec<Placed> = Vec::new();
+        // An earlier phrase restated from this one's first beat, re-keyed,
+        // as far as this one runs.
+        if k > 0 && player.phrasing.is_some_and(|p| rng.chance(p.again)) {
+            let (at, notes) = &said[rng.below(said.len())];
+            let shift = beats[from].at as i64 - beats[*at].at as i64;
+            let end = beats[to - 1].at + beats[to - 1].eighths * E;
+            for (s, l, p) in notes {
+                let s = (*s as i64 + shift).max(0) as u32;
+                if s + l <= end {
+                    part.push((s, *l, tone(s, step_of(scale, score.key_at(s).standing_degree(*p)))));
+                }
+            }
         }
-        Opening::Lick => {
-            // Two eighths stepping up into a tone held the next beat.
-            let d = chord_tone(score, beats[0].at, walk.now);
-            let half = beats[0].eighths * E / 2;
-            line.push((beats[0].at, half, tone(beats[0].at, d - 2)));
-            line.push((beats[0].at + half, beats[0].eighths * E - half, tone(beats[0].at, d - 1)));
-            held(&mut line, &beats[1..open_len], tone(beats[1.min(n - 1)].at, d));
-            walk.now = d;
+        if part.is_empty() {
+            let mut i = from;
+            if k == 0 {
+                let open_len = match shape.opening {
+                    Opening::Bend | Opening::Held => rng.range(2, 3) as usize,
+                    Opening::Lick => 2,
+                    Opening::Flurry => rng.range(2, 4) as usize,
+                }
+                .min(to - from);
+                match shape.opening {
+                    Opening::Bend | Opening::Held => {
+                        let d = chord_tone(score, scale, beats[from].at, walk.now + 1);
+                        held(&mut part, &beats[from..from + open_len], tone(beats[from].at, d));
+                        walk.now = d;
+                    }
+                    Opening::Lick => {
+                        // Two eighths stepping up into a tone held the next
+                        // beat.
+                        let d = chord_tone(score, scale, beats[from].at, walk.now);
+                        let half = beats[from].eighths * E / 2;
+                        part.push((beats[from].at, half, tone(beats[from].at, d - 2)));
+                        part.push((beats[from].at + half, beats[from].eighths * E - half, tone(beats[from].at, d - 1)));
+                        held(&mut part, &beats[(from + 1).min(to - 1)..from + open_len], tone(beats[(from + 1).min(to - 1)].at, d));
+                        walk.now = d;
+                    }
+                    Opening::Flurry => {
+                        fast(score, &mut part, &beats[from..from + open_len], &mut walk, player, shape.value, odd, cells, ceiling(from as f32 / n as f32), rng);
+                    }
+                }
+                i += open_len;
+            }
+            // The close: the turn's at its end, held or running on; a
+            // phrase's before it, its last beat held.
+            let close_len = match (last, shape.close, player.phrasing.is_some()) {
+                (true, Close::Held, _) => rng.range(2, 4) as usize,
+                (true, Close::RunOn, _) => 0,
+                (false, _, true) => 1,
+                (false, _, false) => 0,
+            };
+            let body_end = to.saturating_sub(close_len).max(i);
+            while i < body_end {
+                let x = i as f32 / n as f32;
+                let ceil = ceiling(x);
+                if rng.chance(fast_at(x)) {
+                    let len = (rng.range(1, player.run as i32) as usize).min(body_end - i);
+                    fast(score, &mut part, &beats[i..i + len], &mut walk, player, shape.value, odd, cells, ceil, rng);
+                    i += len;
+                } else {
+                    let len = (rng.range(1, 3) as usize).min(body_end - i);
+                    slow(score, &mut part, &beats[i..i + len], &mut walk, ceil, rng);
+                    i += len;
+                }
+            }
+            if i < to {
+                if last {
+                    // Held at the peak where the turn climbs to its end, else
+                    // where the walk is, a step or two of run-up into it.
+                    let goal = if shape.peaks_mid { walk.now } else { walk.top };
+                    let d = chord_tone(score, scale, beats[i].at, goal);
+                    let at = beats[i].at;
+                    let step = beats[i].eighths * E / 4;
+                    for k in 0..2 {
+                        part.push((at + k * step, step, tone(at, d - 2 + k as i32)));
+                    }
+                    let start = at + 2 * step;
+                    let end = beats[to - 1].at + beats[to - 1].eighths * E;
+                    part.push((start, end - start, tone(at, d)));
+                } else {
+                    let d = chord_tone(score, scale, beats[i].at, walk.now);
+                    held(&mut part, &beats[i..to], tone(beats[i].at, d));
+                    walk.now = d;
+                    walk.last = None;
+                }
+            }
         }
-        Opening::Flurry => {
-            fast(score, &mut line, &beats[..open_len], &mut walk, player, shape.value, odd, cells, ceiling(0.0), rng);
+        part.sort_by_key(|n| n.0);
+        // Where it enters: pushed an eighth ahead into the rest before, or
+        // an eighth after the beat.
+        if let (Some(p), Some(first)) = (&player.phrasing, part.first().copied()) {
+            let room = k > 0 && from > spans[k - 1].1;
+            if room && rng.chance(p.pickup) {
+                part[0] = (first.0 - E, first.1 + E, first.2);
+            } else if rng.chance(p.late / (1.0 - p.pickup).max(0.01)) {
+                if first.1 > E {
+                    part[0] = (first.0 + E, first.1 - E, first.2);
+                } else {
+                    part.retain(|n| n.0 >= first.0 + E);
+                }
+            }
         }
-    }
-    i += open_len;
-    // The close: its beats at the end, held or running on.
-    let close_len = if shape.close == Close::Held { rng.range(2, 4) as usize } else { 0 };
-    let body_end = n.saturating_sub(close_len).max(i);
-    while i < body_end {
-        let x = i as f32 / n as f32;
-        let ceil = ceiling(x);
-        if rng.chance(fast_at(x)) {
-            let len = (rng.range(1, player.run as i32) as usize).min(body_end - i);
-            fast(score, &mut line, &beats[i..i + len], &mut walk, player, shape.value, odd, cells, ceil, rng);
-            i += len;
-        } else {
-            let len = (rng.range(1, 3) as usize).min(body_end - i);
-            slow(score, &mut line, &beats[i..i + len], &mut walk, ceil, rng);
-            i += len;
-        }
-    }
-    if close_len > 0 && i < n {
-        // Held at the peak where the turn climbs to its end, else where
-        // the walk is.
-        let goal = if shape.peaks_mid { walk.now } else { walk.top };
-        let d = chord_tone(score, beats[i].at, goal);
-        // A step or two of run-up into it.
-        let at = beats[i].at;
-        let step = beats[i].eighths * E / 4;
-        for k in 0..2 {
-            line.push((at + k * step, step, tone(at, d - 2 + k as i32)));
-        }
-        let start = at + 2 * step;
-        let end = beats[n - 1].at + beats[n - 1].eighths * E;
-        line.push((start, end - start, tone(at, d)));
+        said.push((from, part.clone()));
+        line.extend(part);
     }
     // Into the register by octaves, where a chord tone sought near a
     // bound fell past it.
@@ -354,14 +567,46 @@ pub fn turn(score: &Score, a: u32, z: u32, (lo, hi): (u8, u8), player: &Player, 
             n.2 -= 12;
         }
     }
+    line.sort_by_key(|n| n.0);
+    // A wind or a horn holds a tone it arrives on rather than striking it
+    // again: a short tone and the same tone straight after it are one.
+    if !player.picks {
+        let mut held: Vec<Placed> = Vec::with_capacity(line.len());
+        for n in line {
+            match held.last_mut() {
+                Some(m) if m.2 == n.2 && m.1 <= E && m.0 + m.1 == n.0 => m.1 += n.1,
+                _ => held.push(n),
+            }
+        }
+        line = held;
+    }
     line
 }
 
-/// The chord tone of the bar at `at` nearest degree `d`.
-fn chord_tone(score: &Score, at: u32, d: i32) -> i32 {
+/// A turn of `n` beats, `per_bar` to a bar, as `p` breathes it: the beats
+/// each phrase spans, the rests between. A phrase too short to say
+/// anything joins the one before.
+fn phrases(n: usize, per_bar: usize, p: &Phrasing, rng: &mut Rng) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let len = rng.range(p.len.0 as i32, p.len.1 as i32) as usize * if p.in_bars { per_bar } else { 1 };
+        let to = (i + len).min(n);
+        match out.last_mut() {
+            Some(last) if to - i < 2 => last.1 = to,
+            _ => out.push((i, to)),
+        }
+        i = to + rng.range(p.rest.0 as i32, p.rest.1 as i32) as usize;
+    }
+    out
+}
+
+/// The step of `scale` nearest step `d` that is a tone of the chord of
+/// the bar at `at`.
+fn chord_tone(score: &Score, scale: Option<&[i32]>, at: u32, d: i32) -> i32 {
     let key = score.key_at(at);
     let chord = score.chord_at(at);
-    (d - 3..=d + 3).filter(|c| chord.holds(&key, key.pitch(*c, 4))).min_by_key(|c| ((c - d).abs(), -c)).unwrap_or(d)
+    (d - 3..=d + 3).filter(|c| chord.holds(&key, tone_at(score, scale, at, *c))).min_by_key(|c| ((c - d).abs(), -c)).unwrap_or(d)
 }
 
 /// One tone held across `beats`.
@@ -374,17 +619,18 @@ fn held(line: &mut Vec<Placed>, beats: &[Beat], pitch: u8) {
 /// A slow gesture over `beats`: a held tone bent into or shaken, a bent
 /// melody in eighths and quarters, or a short motif played twice.
 fn slow(score: &Score, line: &mut Vec<Placed>, beats: &[Beat], walk: &mut Walk, ceil: i32, rng: &mut Rng) {
-    let tone = |at: u32, d: i32| score.key_at(at).pitch(d, 4);
+    let scale = walk.scale;
+    let tone = |at: u32, d: i32| tone_at(score, scale, at, d);
     match rng.weighted(&[33.0, 34.0, 22.0, 14.0]) {
         0 | 1 => {
-            let d = chord_tone(score, beats[0].at, (walk.now + if rng.chance(0.5) { 1 } else { -1 }).clamp(walk.floor, ceil));
+            let d = chord_tone(score, scale, beats[0].at, (walk.now + if rng.chance(0.5) { 1 } else { -1 }).clamp(walk.floor, ceil));
             held(line, beats, tone(beats[0].at, d));
             walk.now = d;
         }
         2 => {
             // A bent melody: a quarter, two eighths, stepping.
             for b in beats {
-                let d = chord_tone(score, b.at, (walk.now + rng.range(-1, 1)).clamp(walk.floor, ceil));
+                let d = chord_tone(score, scale, b.at, (walk.now + rng.range(-1, 1)).clamp(walk.floor, ceil));
                 let half = b.eighths * E / 2;
                 line.push((b.at, half, tone(b.at, d)));
                 line.push((b.at + half, b.eighths * E - half, tone(b.at, d + if rng.chance(0.5) { 1 } else { -1 })));
@@ -393,7 +639,7 @@ fn slow(score: &Score, line: &mut Vec<Placed>, beats: &[Beat], walk: &mut Walk, 
         }
         _ => {
             // A motif of a beat, played again.
-            let d = chord_tone(score, beats[0].at, walk.now);
+            let d = chord_tone(score, scale, beats[0].at, walk.now);
             let cell = [0, -1, 1][rng.below(3)];
             for b in beats {
                 let third = b.eighths * E / 3;
@@ -414,13 +660,12 @@ fn slow(score: &Score, line: &mut Vec<Placed>, beats: &[Beat], walk: &mut Walk, 
 /// an arpeggio swept up and down the chord.
 #[allow(clippy::too_many_arguments)]
 fn fast(score: &Score, line: &mut Vec<Placed>, beats: &[Beat], walk: &mut Walk, player: &Player, value: Value, odd: bool, cells: bool, ceil: i32, rng: &mut Rng) {
-    let kind = rng.weighted(&[25.0, 14.0, 12.0, if cells { 12.0 } else { 2.0 }, 8.0, 6.0, 4.0, 2.0]);
+    let kind = rng.weighted(&[25.0, 14.0, 12.0, if cells { 12.0 } else { 2.0 }, 8.0, 6.0, if player.picks { 4.0 } else { 0.0 }, 2.0]);
     let pedal_tone = walk.now;
     let mut seq_shape: Option<Contour> = None;
     for (k, b) in beats.iter().enumerate() {
-        let n = division(value, b.eighths, odd, rng) as usize;
+        let n = division(value, b.eighths, odd, player.tuplets, rng) as usize;
         let unit = b.eighths * E / n as u32;
-        let key = score.key_at(b.at);
         // Where the beat starts, run on from the beat before.
         let link = rng.weighted(&[51.0, 36.0, 7.0, 6.0]);
         let (contour, start) = match (kind, walk.last) {
@@ -443,13 +688,35 @@ fn fast(score: &Score, line: &mut Vec<Placed>, beats: &[Beat], walk: &mut Walk, 
             _ => (Contour::Arpeggio, walk.now - 2),
         };
         // Turn about at the bounds.
-        let start = chord_tone(score, b.at, start.clamp(walk.floor + 2, (ceil - 2).max(walk.floor + 2)));
-        let steps = contour.steps(n);
-        for (j, s) in steps.iter().enumerate() {
-            let d = (start + s).clamp(walk.floor, ceil + 1);
-            line.push((b.at + j as u32 * unit, unit, key.pitch(d, 4)));
+        let want = start.clamp(walk.floor + 2, (ceil - 2).max(walk.floor + 2));
+        let mut start = chord_tone(score, walk.scale, b.at, want);
+        // A beat opening on the tone the last one ended on strikes it
+        // again; the chord's next tone the way the run was going instead.
+        if !player.picks && line.last().is_some_and(|n| n.2 == tone_at(score, walk.scale, b.at, start)) {
+            let way = if want >= walk.now { 1 } else { -1 };
+            let key = score.key_at(b.at);
+            let chord = score.chord_at(b.at);
+            if let Some(next) = (1..=3).map(|k| start + way * k).find(|c| chord.holds(&key, tone_at(score, walk.scale, b.at, *c))) {
+                start = next;
+            }
         }
-        let end = start + steps.last().copied().unwrap_or(0);
+        let steps = contour.steps(n);
+        // A run that reaches a bound turns back from it, as a hand does,
+        // rather than striking the bound again.
+        let bounce = |d: i32| {
+            let hi = ceil + 1;
+            if d < walk.floor {
+                (2 * walk.floor - d).min(hi)
+            } else if d > hi {
+                (2 * hi - d).max(walk.floor)
+            } else {
+                d
+            }
+        };
+        for (j, s) in steps.iter().enumerate() {
+            line.push((b.at + j as u32 * unit, unit, tone_at(score, walk.scale, b.at, bounce(start + s))));
+        }
+        let end = bounce(start + steps.last().copied().unwrap_or(0));
         walk.now = end.clamp(walk.floor, ceil);
         walk.last = Some((contour, start));
     }
@@ -476,7 +743,7 @@ mod tests {
         let s = score();
         for seed in 0..40 {
             let mut rng = Rng::new(seed);
-            let player = if seed % 2 == 0 { &SHREDDER } else { &SINGER };
+            let player = [&SHREDDER, &SINGER, &BALLADEER][seed as usize % 3];
             let shape = Shape::draw(player, &mut rng);
             let line = turn(&s, 0, 8, (59, 88), player, &shape, &mut rng);
             assert!(!line.is_empty());
@@ -503,6 +770,30 @@ mod tests {
             sing += turn(&s, 0, 8, (59, 88), &SINGER, &b, &mut rng).len();
         }
         assert!(shred > sing, "{shred} against {sing}");
+    }
+
+    /// A player that breathes leaves rests between its phrases, ends
+    /// inside its bars and in its register, and the bluesman stands on the
+    /// pentatonic.
+    #[test]
+    fn a_breathing_player_rests_between_phrases() {
+        let s = score();
+        for seed in 0..40 {
+            let mut rng = Rng::new(seed);
+            let player = if seed % 2 == 0 { &BLUESMAN } else { &BALKAN };
+            let shape = Shape::draw(player, &mut rng);
+            let line = turn(&s, 0, 8, (59, 88), player, &shape, &mut rng);
+            assert!(!line.is_empty());
+            assert!(line.iter().all(|n| n.0 + n.1 <= 8 * s.bar() && (59..=88).contains(&n.2)), "seed {seed}");
+            let rests = line.windows(2).filter(|w| w[1].0 >= w[0].0 + w[0].1 + E).count();
+            if player == &BLUESMAN {
+                assert!(rests >= 2, "seed {seed}: {rests} rests in eight bars");
+                for n in &line {
+                    let d = s.key_at(n.0).standing_degree(n.2).rem_euclid(7);
+                    assert!(crate::tune::MINOR_PENTATONIC.contains(&d), "seed {seed}: degree {d} off the pentatonic");
+                }
+            }
+        }
     }
 
     /// Every layout fills its bars, whole bars of two, with a turn for

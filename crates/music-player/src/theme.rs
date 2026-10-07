@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use eframe::egui::text::{LayoutJob, TextFormat};
-use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, FontFamily, FontId, Pos2, Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind};
+use eframe::egui::text::{LayoutJob, TextFormat, TextWrapping};
+use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, FontFamily, FontId, Galley, Pos2, Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind};
 
 pub const INK: Color32 = Color32::from_rgb(0x15, 0x17, 0x1B);
 pub const SHEET_INK: Color32 = Color32::from_rgb(0x11, 0x13, 0x17);
@@ -53,6 +53,8 @@ pub enum Glyph {
     Repeat,
     /// A MIDI socket: five pins in an arc.
     Midi,
+    /// Two paths crossing, each to an arrow.
+    Shuffle,
 }
 
 pub fn paint_glyph(p: &egui::Painter, c: Pos2, glyph: Glyph, color: Color32) {
@@ -81,6 +83,13 @@ pub fn paint_glyph(p: &egui::Painter, c: Pos2, glyph: Glyph, color: Color32) {
             p.add(Shape::convex_polygon(vec![c + vec2(3.0, -7.0), c + vec2(7.5, -4.0), c + vec2(3.0, -1.0)], color, Stroke::NONE));
             p.add(Shape::convex_polygon(vec![c + vec2(-3.0, 1.0), c + vec2(-7.5, 4.0), c + vec2(-3.0, 7.0)], color, Stroke::NONE));
         }
+        Glyph::Shuffle => {
+            let line = Stroke::new(1.6_f32, color);
+            p.add(Shape::line(vec![c + vec2(-7.0, -4.0), c + vec2(-3.0, -4.0), c + vec2(3.0, 4.0), c + vec2(7.0, 4.0)], line));
+            p.add(Shape::line(vec![c + vec2(-7.0, 4.0), c + vec2(-3.0, 4.0), c + vec2(3.0, -4.0), c + vec2(7.0, -4.0)], line));
+            p.add(Shape::convex_polygon(vec![c + vec2(5.0, -7.0), c + vec2(8.5, -4.0), c + vec2(5.0, -1.0)], color, Stroke::NONE));
+            p.add(Shape::convex_polygon(vec![c + vec2(5.0, 1.0), c + vec2(8.5, 4.0), c + vec2(5.0, 7.0)], color, Stroke::NONE));
+        }
         Glyph::Midi => {
             p.circle_stroke(c, 8.0, Stroke::new(1.6_f32, color));
             for k in 0..5 {
@@ -106,17 +115,6 @@ pub fn round_button(ui: &mut egui::Ui, rect: Rect, id: &str, glyph: Glyph, lit: 
         paint_glyph(p, c, glyph, PARCHMENT);
     }
     response
-}
-
-pub fn check_box(p: &egui::Painter, at: Pos2, on: bool) {
-    let rect = Rect::from_min_size(at, vec2(16.0, 16.0));
-    if on {
-        p.rect_filled(rect, 3.0, LAMP);
-        let mark = vec![at + vec2(4.0, 8.2), at + vec2(6.8, 11.0), at + vec2(12.0, 5.2)];
-        p.add(Shape::line(mark, Stroke::new(1.8_f32, INK)));
-    } else {
-        p.rect_stroke(rect, 3.0, Stroke::new(1.0_f32, EDGE), StrokeKind::Inside);
-    }
 }
 
 pub fn flat_button(ui: &mut egui::Ui, label: &str) -> Response {
@@ -149,6 +147,46 @@ pub fn cross(p: &egui::Painter, c: Pos2, color: Color32) {
     let s = Stroke::new(1.6_f32, color);
     p.line_segment([c + vec2(-3.0, -3.0), c + vec2(3.0, 3.0)], s);
     p.line_segment([c + vec2(3.0, -3.0), c + vec2(-3.0, 3.0)], s);
+}
+
+/// `job` on one line, cut with an ellipsis where it runs past `width`.
+pub fn fit(p: &egui::Painter, mut job: LayoutJob, width: f32) -> Arc<Galley> {
+    job.wrap = TextWrapping { max_width: width.max(1.0), max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
+    p.layout_job(job)
+}
+
+/// A field that opens a list under it: its text, cut to fit, and a
+/// chevron; lit while its list is open.
+pub fn select_field(ui: &mut egui::Ui, rect: Rect, id: &str, text: &str, open: bool) -> Response {
+    let response = hit(ui, rect, id);
+    let p = ui.painter();
+    p.rect_filled(rect, 6.0, PANEL);
+    p.rect_stroke(rect, 6.0, Stroke::new(1.0_f32, if open { LAMP } else if response.hovered() { MUTED } else { EDGE }), StrokeKind::Inside);
+    let mut job = LayoutJob::default();
+    run(&mut job, text, 12.0, PARCHMENT);
+    let text = fit(p, job, rect.width() - 12.0 - 28.0);
+    p.galley(pos2(rect.left() + 12.0, rect.center().y - text.size().y / 2.0), text, PARCHMENT);
+    chevron(p, rect.right_center() - vec2(16.0, 0.0), false, MUTED);
+    response
+}
+
+/// A padlock button: shut and lamp-lit while `locked`, its shackle
+/// lifted open while not.
+pub fn lock_button(ui: &mut egui::Ui, rect: Rect, id: &str, locked: bool) -> Response {
+    let response = hit(ui, rect, id);
+    let p = ui.painter();
+    if response.hovered() {
+        p.rect_filled(rect, 6.0, RULE);
+    }
+    let ink = if locked { LAMP } else if response.hovered() { PARCHMENT } else { MUTED };
+    let c = rect.center();
+    let body = Rect::from_center_size(c + vec2(0.0, 2.5), vec2(11.0, 8.0));
+    p.rect_filled(body, 1.5, ink);
+    let line = Stroke::new(1.6_f32, ink);
+    let lift = if locked { 0.0 } else { 2.5 };
+    let (l, r, top) = (c.x - 3.5, c.x + 3.5, c.y - 5.5 - lift);
+    p.add(Shape::line(vec![pos2(l, body.top()), pos2(l, top + 2.0), pos2(l + 2.0, top), pos2(r - 2.0, top), pos2(r, top + 2.0), pos2(r, if locked { body.top() } else { top + 4.0 })], line));
+    response
 }
 
 /// A full-width hairline between a popover's parts.

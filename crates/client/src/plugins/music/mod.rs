@@ -1,12 +1,14 @@
-//! Music, a pool to a stage: in play the overworld's pieces, on character
-//! select the teaser's cues. A piece plays once, from its head to its own
-//! ending; a rest of silence follows, then another piece of the pool.
-//! Leaving the stage fades whatever is playing out at once, and a stage
-//! arrived on rests before its first piece.
+//! Music, a style and a setting to a stage: in play the Bulgarian tracks
+//! the overworld's wandering is played in, on character select the
+//! teaser as it is. A track plays once, from its head to its own
+//! ending; a rest of silence follows, then another play. Leaving the
+//! stage fades whatever is playing out at once, and a stage arrived on
+//! rests before its first play.
 //!
-//! Nothing is recorded. A pool is the pieces of `music::pieces::PIECES`
-//! that name it, and the client composes each play as the music player
-//! does: a piece at a seed of its own, rendered on a thread of its own
+//! Nothing is recorded. A stage plays the tracks of its style that are
+//! played in its setting (`music::pieces::TRACKS`), by one of the
+//! style's bands (`music::band::BANDS`) for the session, and the client composes each play as the music
+//! player does: a track at a seed of its own, rendered on a thread of its own
 //! while the last one rests. GeneralUser GS ships in the game's assets;
 //! the sampled banks are fetched on the first run that lacks them
 //! (`fetch`).
@@ -35,8 +37,9 @@ use bevy::{
     prelude::*,
 };
 use music::{
+    band::{self, Band},
     banks,
-    pieces::PIECES,
+    pieces::{Params, Setting, Style, TRACKS},
     render::{self, Bank, SAMPLE_RATE},
     SEEDS,
 };
@@ -50,15 +53,25 @@ pub struct MusicPlugin;
 impl Plugin for MusicPlugin {
     fn build(&self, app: &mut App) {
         app.add_audio_source::<Take>();
-        app.insert_resource(Music { composer: Some(Composer::spawn()), next: None, phase: Phase::default() });
+        let mut rng = rand::rng();
+        let bands = Style::ALL
+            .iter()
+            .map(|style| {
+                let roster: Vec<&'static Band> = band::of_style(*style).collect();
+                roster[rng.random_range(0..roster.len())]
+            })
+            .collect();
+        app.insert_resource(Music { composer: Some(Composer::spawn()), next: None, phase: Phase::default(), bands });
         app.add_systems(Update, (gather, play).chain());
     }
 }
 
-/// A pool and how it plays on its stage.
+/// What a stage plays and how: the tracks of `style` played in
+/// `setting`, or the one `track` where the stage names one.
 struct Kind {
-    /// What its pieces name as their `pool`.
-    pool: &'static str,
+    style: Style,
+    setting: Setting,
+    track: Option<&'static str>,
     stage: Stage,
     /// Silence from arriving on the stage to the first piece.
     first_rest: Duration,
@@ -69,13 +82,18 @@ struct Kind {
 // A piece has a head and an ending of its own, so it plays whole.
 const KINDS: [Kind; 2] = [
     Kind {
-        pool: "overworld",
+        style: Style::Bulgarian,
+        setting: Setting::Ambient,
+        track: None,
         stage: Stage::Playing,
         first_rest: Duration::from_secs(5),
         rest: 60.0..=180.0,
     },
     Kind {
-        pool: "teaser",
+        style: Style::Bulgarian,
+        // The teaser as it is, its cue cut to picture.
+        setting: Setting::None,
+        track: Some("teaser"),
         stage: Stage::CharacterSelect,
         first_rest: Duration::from_secs(1),
         rest: 60.0..=120.0,
@@ -95,6 +113,9 @@ struct Music {
     /// The next piece, of the kind at its index: composing, or composed.
     next: Option<(usize, Option<Composed>)>,
     phase: Phase,
+    /// Each style's band for the session, one of its roster: its plays
+    /// differ, the band does not.
+    bands: Vec<&'static Band>,
 }
 
 struct Composed {
@@ -121,14 +142,14 @@ impl Default for Phase {
 /// sampled bank `voices` names, a second thread fetches them, and the
 /// pieces composed meanwhile play those programs on GeneralUser GS.
 struct Composer {
-    asks: Sender<(usize, u64)>,
+    asks: Sender<(usize, Params)>,
     /// Behind a lock only because a resource is shared between threads.
     done: Mutex<Receiver<Result<Vec<[f32; 2]>, String>>>,
 }
 
 impl Composer {
     fn spawn() -> Self {
-        let (asks, asked) = mpsc::channel::<(usize, u64)>();
+        let (asks, asked) = mpsc::channel::<(usize, Params)>();
         let (tell, done) = mpsc::channel();
         std::thread::Builder::new()
             .name("music".into())
@@ -142,16 +163,17 @@ impl Composer {
                 };
                 info!("music: GeneralUser GS and {} sampled banks", bank.sampled());
                 let fetched = fetch_lacking(&bank);
-                for (piece, seed) in asked {
+                for (piece, params) in asked {
+                    let seed = params.seed;
                     if let Some(folder) = fetched.as_ref().and_then(|f| f.try_recv().ok()) {
                         bank = bank.with_banks(&folder);
                         info!("music: GeneralUser GS and {} sampled banks", bank.sampled());
                     }
                     let started = Instant::now();
-                    let taken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::take(&PIECES[piece], seed, &bank).1))
-                        .map_err(|_| format!("{} at seed {seed} panicked as it composed", PIECES[piece].name));
+                    let taken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::take(&TRACKS[piece], &params, &bank).1))
+                        .map_err(|_| format!("{} at seed {seed} panicked as it composed", TRACKS[piece].name));
                     if taken.is_ok() {
-                        info!("music: composed {} at seed {seed} in {:.1} s", PIECES[piece].name, started.elapsed().as_secs_f32());
+                        info!("music: composed {} at seed {seed} in {:.1} s", TRACKS[piece].name, started.elapsed().as_secs_f32());
                     }
                     if tell.send(taken).is_err() {
                         return;
@@ -224,15 +246,17 @@ fn gather(mut music: ResMut<Music>, mut takes: ResMut<Assets<Take>>, stage: Res<
         Some((k, Some(_))) if *k == kind => return,
         _ => {}
     }
-    let pool: Vec<usize> = (0..PIECES.len()).filter(|&p| PIECES[p].pool == KINDS[kind].pool).collect();
+    let Kind { style, setting, track, .. } = KINDS[kind];
+    let pool: Vec<usize> = (0..TRACKS.len()).filter(|&p| TRACKS[p].style == style && TRACKS[p].plays_in(setting) && track.is_none_or(|t| TRACKS[p].name == t)).collect();
     if pool.is_empty() {
         return;
     }
     let mut rng = rand::rng();
     let piece = pool[rng.random_range(0..pool.len())];
     let seed = rng.random_range(0..SEEDS);
-    info!("music: composing {} at seed {seed}", PIECES[piece].name);
-    if composer.asks.send((piece, seed)).is_ok() {
+    let band = *music.bands.iter().find(|b| b.style == style).unwrap();
+    info!("music: composing {} in {} at seed {seed} by {}", TRACKS[piece].name, setting.name(), band.name);
+    if composer.asks.send((piece, Params { seed, band, setting })).is_ok() {
         music.next = Some((kind, None));
     }
 }
@@ -345,19 +369,20 @@ mod tests {
         assert_eq!(envelope(120.0, 120.0, 0.0, FADE_LEAVING), 0.0);
     }
 
-    /// Every stage has at most one pool.
+    /// Every stage plays one kind of music.
     #[test]
-    fn a_stage_has_one_pool() {
+    fn a_stage_has_one_kind() {
         for (i, a) in KINDS.iter().enumerate() {
-            assert!(KINDS[i + 1..].iter().all(|b| b.stage != a.stage), "{} shares its stage", a.pool);
+            assert!(KINDS[i + 1..].iter().all(|b| b.stage != a.stage), "{} in {} shares its stage", a.style.name(), a.setting.name());
         }
     }
 
-    /// Every pool a stage plays has a piece to compose.
+    /// Every stage has a track to compose: one of its style played in its
+    /// setting.
     #[test]
-    fn every_pool_has_a_piece() {
+    fn every_stage_has_a_track() {
         for kind in &KINDS {
-            assert!(PIECES.iter().any(|p| p.pool == kind.pool), "no piece names the {} pool", kind.pool);
+            assert!(TRACKS.iter().any(|t| t.style == kind.style && t.plays_in(kind.setting) && kind.track.is_none_or(|n| t.name == n)), "no {} track is played in {}", kind.style.name(), kind.setting.name());
         }
     }
 }

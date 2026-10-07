@@ -8,6 +8,12 @@
 //! and stops; a stab is one stroke, short or let ring, its guitars
 //! sliding off it now and then. A piece draws which, and how, and adds
 //! what its own players do over them.
+//!
+//! A metal band is one band whatever it plays: its lineup — its lead
+//! guitar, which of its two soloists takes the first turn, how its
+//! drummer fills and how often, how its bassist runs — is drawn from the
+//! band's seed alone, so its ballads and its speed metal are one band's
+//! (`Lineup`). What each form does with those players is the form's.
 
 use crate::rng::Rng;
 use crate::score::{Note, Score, TICKS_PER_EIGHTH as E};
@@ -21,6 +27,60 @@ const TOMS: [u8; 6] = [50, 48, 47, 45, 43, 41];
 
 /// A sixteenth, in ticks.
 const S: u32 = E / 2;
+
+/// A drummer's fill: the toms down; the snare and then the toms; each tom
+/// twice down the kit; two toms and the kick by turns, the triplet a
+/// twelve-eight rolls in; or the snare's roll alone.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fill {
+    Descent,
+    SnareThenToms,
+    Pairs,
+    HandHandKick,
+    Roll,
+}
+
+/// A metal band's habits, the same through every song of theirs, a
+/// ballad or speed metal: whether its shredder takes the first solo turn
+/// or its singer; the drummer's fill and how many bars apart they fill
+/// where the form leaves it to them; whether the bassist runs sixteenths
+/// under a riff that does; the share of its ballads its violinist leads;
+/// how much of the singer's gaps its guitarist licks in, and how often a
+/// phrase is pushed ahead of the beat.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Habits {
+    pub shredder_leads: bool,
+    pub fill: Fill,
+    pub fill_every: u32,
+    pub bass_sixteenths: bool,
+    pub violin: f32,
+    pub fills: f32,
+    pub pushes: f32,
+}
+
+/// `shape` in `n` sixteenths from `start` on the `kit` channel, growing
+/// from `accent` by `grow` into the crash the next part opens on, the
+/// kick under it every `kick` sixteenths where the style keeps the kick
+/// going through a fill.
+#[allow(clippy::too_many_arguments)]
+pub fn fill(score: &mut Score, kit: u8, shape: Fill, start: u32, n: u32, (accent, grow): (i32, i32), kick: Option<u32>, vel: fn(i32, &mut Rng) -> u8, rng: &mut Rng) {
+    let down = |k: u32, of: u32| TOMS[(k as usize * TOMS.len() / of.max(1) as usize).min(TOMS.len() - 1)];
+    for k in 0..n {
+        let pitch = match shape {
+            Fill::Descent => down(k, n),
+            Fill::SnareThenToms if k < n / 2 => SNARE,
+            Fill::SnareThenToms => down(k - n / 2, n - n / 2),
+            Fill::Pairs => down(k / 2, n.div_ceil(2)),
+            Fill::HandHandKick if k % 3 == 2 => KICK,
+            Fill::HandHandKick => down(k / 3, n.div_ceil(3)),
+            Fill::Roll => SNARE,
+        };
+        score.add(Note { start: start + k * S, len: S - 10, pitch, vel: vel(accent + grow * k as i32 / n.max(1) as i32, rng), channel: kit });
+        if kick.is_some_and(|every| k % every == 0) && pitch != KICK {
+            score.add(Note { start: start + k * S, len: S - 10, pitch: KICK, vel: vel(accent - 6, rng), channel: kit });
+        }
+    }
+}
 
 /// The players an ending strikes with: the guitars' channels, the bass's
 /// and the kit's; the guitars' chord and the bass's tone; and the

@@ -28,22 +28,23 @@ const RELEASE_MS: f32 = 250.0;
 const DETECT_MS: f32 = 10.0;
 const UNDER_LOUD_DB: f32 = 6.0;
 
-/// The limiter's ceiling on a sample, dBFS, under the -1 dBTP a file may
-/// peak at by the half decibel a true peak rises over its samples; how
-/// far ahead it looks, and how fast it takes hold and lets go.
-const CEILING_DB: f32 = -1.6;
+/// The limiter's ceiling on the true peak, dBTP, under the -1 a file may
+/// peak at by what the gain moving between samples bends the waveform
+/// between them; how far ahead it looks, and how fast it takes hold and
+/// lets go.
+const CEILING_DB: f32 = -1.2;
 const LOOKAHEAD_MS: f32 = 5.0;
 const LIMIT_ATTACK_MS: f32 = 1.0;
 const LIMIT_RELEASE_MS: f32 = 80.0;
 
-/// The last stage, after the loudness is set: every sample held under the
-/// ceiling, the gain eased down over the few milliseconds before a peak
+/// The last stage, after the loudness is set: every sample's true peak
+/// held under the ceiling, the gain eased down over the few milliseconds before a peak
 /// that would pass it and back up after, so a rare stroke over it is
 /// turned down rather than clipped.
 pub fn limit(audio: &mut [[f32; 2]]) {
     let fs = SAMPLE_RATE as f32;
     let ceiling = 10f32.powf(CEILING_DB / 20.0);
-    let need: Vec<f32> = audio.iter().map(|s| (ceiling / s[0].abs().max(s[1].abs()).max(1e-9)).min(1.0)).collect();
+    let need: Vec<f32> = ::audio::measure::true_peaks(audio).into_iter().map(|p| (ceiling / p.max(1e-9)).min(1.0)).collect();
     let look = (LOOKAHEAD_MS * 0.001 * fs) as usize;
     // The least gain any sample from here to `look` ahead needs: a
     // sliding minimum, run back from the end.

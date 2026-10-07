@@ -5,8 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 
-use music::pieces::PIECES;
+use music::pieces::TRACKS;
 use music::banks;
+use music::pieces::Params;
 use music::render::{self, Bank};
 
 use crate::midi;
@@ -51,10 +52,10 @@ pub fn spawn_worker(wanted: Arc<Wanted>, busy: Arc<Mutex<Option<Job>>>) -> Recei
                     None => return,
                 }
             }
-            let (piece, seed) = job;
-            let taken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::take(&PIECES[piece], seed, &bank)))
+            let (piece, band, setting, seed) = job;
+            let taken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render::take(&TRACKS[piece], &Params { seed, band, setting }, &bank)))
                 .map(|(score, audio)| Take { sheet: Sheet::of(&score), midi: Arc::new(midi::stream(&score)), score, audio: Arc::new(audio) })
-                .map_err(|_| format!("{} seed {seed} panicked as it composed", PIECES[piece].name));
+                .map_err(|_| format!("{} seed {seed} panicked as it composed", TRACKS[piece].name));
             *busy.lock().unwrap() = None;
             if tx.send(Done::Take(job, taken)).is_err() {
                 return;

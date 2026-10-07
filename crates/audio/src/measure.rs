@@ -127,14 +127,22 @@ pub fn integrated(audio: &[[f32; 2]]) -> f32 {
 
 /// Peak after 4x oversampling with a windowed-sinc interpolator, dBTP.
 pub fn true_peak(audio: &[[f32; 2]]) -> f32 {
+    20.0 * true_peaks(audio).into_iter().fold(0.0f32, f32::max).max(1e-9).log10()
+}
+
+/// Each sample's true peak, linear: the loudest of either channel at it
+/// and at the three points 4x oversampling puts between it and the next,
+/// by a windowed-sinc interpolator. A sample within the interpolator's
+/// reach of either end is its own peak.
+pub fn true_peaks(audio: &[[f32; 2]]) -> Vec<f32> {
     const TAPS: usize = 12;
-    let mut peak = 0.0f32;
-    for phase in 0..4 {
+    let mut peaks: Vec<f32> = audio.iter().map(|s| s[0].abs().max(s[1].abs())).collect();
+    for phase in 1..4 {
         let frac = phase as f32 / 4.0;
         let taps: Vec<f32> = (0..2 * TAPS)
             .map(|k| {
                 let t = k as f32 - TAPS as f32 + 1.0 - frac;
-                let sinc = if t == 0.0 { 1.0 } else { (std::f32::consts::PI * t).sin() / (std::f32::consts::PI * t) };
+                let sinc = (std::f32::consts::PI * t).sin() / (std::f32::consts::PI * t);
                 let w = 0.5 + 0.5 * (std::f32::consts::PI * t / TAPS as f32).cos();
                 sinc * w
             })
@@ -142,11 +150,11 @@ pub fn true_peak(audio: &[[f32; 2]]) -> f32 {
         for ch in 0..2 {
             for i in TAPS..audio.len().saturating_sub(TAPS) {
                 let v: f32 = taps.iter().enumerate().map(|(k, t)| t * audio[i + k - TAPS + 1][ch]).sum();
-                peak = peak.max(v.abs());
+                peaks[i] = peaks[i].max(v.abs());
             }
         }
     }
-    20.0 * peak.max(1e-9).log10()
+    peaks
 }
 
 /// Seconds under -60 dBFS at the head and at the tail.
