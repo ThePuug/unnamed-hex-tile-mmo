@@ -4,9 +4,10 @@
 //! so what the overlay shows is what a reader gets.
 //!
 //! Each topic goes as its own packet, and a field is named `topic/field`:
-//! `frame`, `process`, `world`, `terrain`, `cover`, `census`, `network`,
-//! `diag` (every Bevy diagnostic still being measured, by its path) and
-//! `timings` (each timer's p95 and count since the last publication).
+//! `frame`, `process`, `heap` (debug builds only, see `heap`), `world`,
+//! `terrain`, `cover`, `census`, `network`, `diag` (every Bevy diagnostic
+//! still being measured, by its path) and `timings` (each timer's p95 and
+//! count since the last publication).
 
 use std::{borrow::Cow, collections::VecDeque, time::Duration};
 
@@ -108,6 +109,8 @@ pub fn publish(
     ];
     let memory = metrics::memory();
     topics.push(("process", Cadence::Snapshot, vec![field("memory_mb", memory.working_set as f64 / MB), field("committed_mb", memory.committed as f64 / MB)]));
+    #[cfg(debug_assertions)]
+    topics.push(("heap", Cadence::Snapshot, super::heap::report()));
 
     let mut world = vec![field("tiles", map.len() as f64)];
     if let Ok(transform) = player.single() {

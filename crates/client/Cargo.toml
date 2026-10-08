@@ -31,6 +31,7 @@ renet_netcode = "2"
 bimap = "0"
 rand = "0.9"
 dashmap = "6"
+backtrace = "0.3"
 bincode = { version = "2", default-features = false, features = ["std", "serde"] }
 chrono = "0"
 renet = "2"

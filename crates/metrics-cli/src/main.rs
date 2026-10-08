@@ -248,7 +248,8 @@ impl Recorder {
 /// order it draws them.
 const PAGES: &[(&str, &[&str])] = &[
     ("frame", &["client/frame/*", "client/diag/frame_time", "client/process/memory_mb"]),
-    ("memory", &["client/process/*", "client/world/tiles", "client/diag/entity_count", "client/cover/models", "client/cover/cards", "client/census/total/triangles"]),
+    ("memory", &["client/process/*", "client/heap/rust_mb", "client/heap/large_mb", "client/world/tiles", "client/diag/entity_count", "client/cover/models", "client/cover/cards", "client/census/total/triangles"]),
+    ("heap", &["client/process/committed_mb", "client/heap/rust_mb", "client/heap/large_mb", "client/heap/site/*"]),
     ("terrain", &["client/world/*", "client/terrain/*"]),
     ("render", &["client/cover/*", "client/census/*", "client/diag/entity_count"]),
     ("passes", &["client/diag/render/*/elapsed_cpu", "client/diag/render/*/elapsed_gpu"]),

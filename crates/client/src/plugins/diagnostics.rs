@@ -1,6 +1,8 @@
 pub mod census;
 mod config;
 mod feed;
+#[cfg(debug_assertions)]
+mod heap;
 pub mod grid;
 pub mod metrics_overlay;
 mod milestones;
