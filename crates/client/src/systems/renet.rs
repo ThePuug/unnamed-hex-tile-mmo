@@ -74,7 +74,7 @@ pub fn write_do(
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
     let Some(mut conn) = conn else { return };
-    let _t = client_timers.0.scope("write_do");
+    let _t = client_timers.scope("write_do");
     // Out of the world every message is about a world the client has left,
     // or not yet entered: what was in flight when it left is drained unread.
     let in_world = entered.0;

@@ -123,9 +123,9 @@ pub fn update_console_menu(
                     ));
 
                     // Toggles after
-                    let metrics_key = if cfg!(feature = "admin") { "3" } else { "2" };
+                    #[cfg(feature = "admin")]
                     parent.spawn((
-                        Text::new(format!("{}. Toggle Metrics Overlay    [{}]", metrics_key, on_off(diagnostics_state.metrics_overlay_visible))),
+                        Text::new(format!("3. Toggle Metrics Overlay    [{}]", on_off(diagnostics_state.metrics_overlay_visible))),
                         TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(diagnostics_state.metrics_overlay_visible)),
                     ));

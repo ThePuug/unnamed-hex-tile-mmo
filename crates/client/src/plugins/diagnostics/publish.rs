@@ -130,9 +130,7 @@ pub fn publish(
     let mut terrain = vec![
         field("tris", lod.total_tris as f64),
         field("chunks", lod.mesh_count),
-        field("async_tile", lod.async_tile),
         field("async_mesh", lod.async_mesh),
-        field("async_cz", lod.async_cz),
     ];
     for (&r, &(tris, chunks)) in &lod.per_band {
         terrain.push(field(format!("band/{r}/tris"), tris as f64));
@@ -174,7 +172,7 @@ pub fn publish(
     topics.push(("diag", Cadence::Snapshot, measured));
 
     let mut timings = Vec::new();
-    for (name, p95, count) in timers.0.drain() {
+    for (name, p95, count) in timers.drain() {
         timings.push(field(format!("{name}.p95"), p95));
         timings.push(field(format!("{name}.n"), count));
     }

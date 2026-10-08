@@ -25,6 +25,7 @@ pub enum DevConsoleAction {
     ToggleCanopyParts,
 
     // Top-level toggles
+    #[cfg(feature = "admin")]
     ToggleMetricsOverlay,
 
     // Admin actions
@@ -153,6 +154,7 @@ pub fn execute_console_actions(
                 diagnostics_state.canopy_parts_off = !diagnostics_state.canopy_parts_off;
                 info!("Canopy: {}", if diagnostics_state.canopy_parts_off { "vertices" } else { "parts" });
             }
+            #[cfg(feature = "admin")]
             DevConsoleAction::ToggleMetricsOverlay => {
                 diagnostics_state.metrics_overlay_visible = !diagnostics_state.metrics_overlay_visible;
                 info!("Metrics overlay: {}", if diagnostics_state.metrics_overlay_visible { "ON" } else { "OFF" });

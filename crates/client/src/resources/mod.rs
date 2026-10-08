@@ -462,10 +462,8 @@ pub struct LodTriangleStats {
     pub mesh_count: u32,
     /// Per-band breakdown: r → (tris, mesh_count).
     pub per_band: std::collections::BTreeMap<u32, (u64, u32)>,
-    /// In-flight async task counts.
-    pub async_cz: u32,
+    /// Summary mesh tasks in flight.
     pub async_mesh: u32,
-    pub async_tile: u32,
 }
 
 /// Tracks which chunks have been received on the client
@@ -694,15 +692,51 @@ impl SummaryCache {
     }
 }
 
-/// Client-side system timers. Wraps `common::timers::SystemTimers`.
-/// No transport — data accumulates locally. Can be drained for diagnostics.
-/// Shared, because a frame is main-thread work and render-thread work and
-/// the render app holds a clone of the same accumulator.
+/// Client-side system timers. Wraps `common::timers::SystemTimers`, which
+/// keeps every sample until drained; only admin builds publish the metrics
+/// that drain it, so elsewhere a timer records nothing. Shared, because a
+/// frame is main-thread work and render-thread work and the render app
+/// holds a clone of the same accumulator.
 #[derive(Resource, Clone)]
-pub struct ClientTimers(pub Arc<common::timers::SystemTimers>);
+pub struct ClientTimers {
+    #[cfg(feature = "admin")]
+    timers: Arc<common::timers::SystemTimers>,
+}
 
 impl Default for ClientTimers {
-    fn default() -> Self { Self(Arc::new(common::timers::SystemTimers::new())) }
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "admin")]
+            timers: Arc::new(common::timers::SystemTimers::new()),
+        }
+    }
+}
+
+impl ClientTimers {
+    /// Times `name` until the guard drops.
+    pub fn scope(&self, name: &'static str) -> Option<common::timers::ScopeTimer<'_>> {
+        #[cfg(feature = "admin")]
+        return Some(self.timers.scope(name));
+        #[cfg(not(feature = "admin"))]
+        {
+            let _ = name;
+            None
+        }
+    }
+
+    /// Records `ms` against `name`.
+    pub fn record(&self, name: &'static str, ms: f32) {
+        #[cfg(feature = "admin")]
+        self.timers.record(name, ms);
+        #[cfg(not(feature = "admin"))]
+        let _ = (name, ms);
+    }
+
+    /// Each timer's p95 and count since the last drain.
+    #[cfg(feature = "admin")]
+    pub fn drain(&self) -> Vec<(&'static str, f32, f32)> {
+        self.timers.drain()
+    }
 }
 
 #[cfg(test)]

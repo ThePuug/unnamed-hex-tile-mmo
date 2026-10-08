@@ -294,7 +294,7 @@ pub fn evict_data(
     }
 
     if all_evicted.is_empty() { return; }
-    let _t = client_timers.0.scope("evict");
+    let _t = client_timers.scope("evict");
 
     // Despawn actors on evicted chunks
     for (entity, loc, entity_type) in actor_query.iter() {
@@ -347,7 +347,7 @@ pub fn do_spawn(
     changes: Res<crate::systems::gathering::CoverChanges>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
-    let _t = client_timers.0.scope("do_spawn");
+    let _t = client_timers.scope("do_spawn");
     for message in reader.read() {
         let Do { event: Event::Spawn { typ: EntityType::Decorator(decorator), qrz, .. } } = message else { continue };
         map.insert(*qrz, changes.laid_over(*qrz, EntityType::Decorator(*decorator)));
@@ -553,7 +553,7 @@ pub fn dispatch_summary_tasks(
         *last_eval_pos = Some(pos);
     }
     *last_eval_edges = edges.0.clone();
-    let _t = client_timers.0.scope("sum_disp");
+    let _t = client_timers.scope("sum_disp");
 
     // Local-data boundary: the largest circle inside guaranteed chunk
     // coverage (the hexagonal chunk set's APOTHEM — the circumradius
@@ -1208,7 +1208,7 @@ pub fn poll_summary_meshes(
     mut canopy_parts: ResMut<crate::plugins::canopy::CanopyParts>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    let _t = client_timers.0.scope("sum_poll");
+    let _t = client_timers.scope("sum_poll");
 
     // A layer outlives its region by a frame at most: the regions gone
     // since the last run give theirs back before any is claimed.

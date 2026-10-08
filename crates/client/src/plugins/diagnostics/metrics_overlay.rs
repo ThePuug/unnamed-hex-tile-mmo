@@ -443,9 +443,7 @@ pub fn update_metrics_overlay(
                         const ASYNC_CT: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
                             s.half(&format!("{:>7}", "async"), COLOR_DIM);
-                            s.half(&format!("{:>4}til", ASYNC_CT.fmt(feed.latest("terrain/async_tile"))), COLOR_DIM);
                             s.half(&format!("{:>4}msh", ASYNC_CT.fmt(feed.latest("terrain/async_mesh"))), COLOR_DIM);
-                            s.half(&format!("{:>4}cz ", ASYNC_CT.fmt(feed.latest("terrain/async_cz"))), COLOR_DIM);
                         });
                         // Hex-native LoD stats: per-tier breakdown
                         const LOD_TRIS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };

@@ -81,10 +81,12 @@ impl NetworkMetrics {
         self.messages_received_per_type.clear();
     }
 
+    #[cfg(feature = "admin")]
     pub fn displayed_bytes_per_sec(&self) -> f32 {
         self.displayed_bytes_per_sec
     }
 
+    #[cfg(feature = "admin")]
     pub fn displayed_messages_per_sec(&self) -> f32 {
         self.displayed_messages_per_sec
     }

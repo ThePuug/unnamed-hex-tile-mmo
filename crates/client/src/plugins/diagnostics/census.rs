@@ -95,7 +95,7 @@ pub fn take_census(
         return;
     }
     *due = EVERY;
-    let _t = timers.0.scope("census");
+    let _t = timers.scope("census");
 
     let mut next = RenderCensus::default();
     for (entity, mesh, visible, summary) in &drawn {

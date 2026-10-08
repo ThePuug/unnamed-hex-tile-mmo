@@ -5,6 +5,7 @@ use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS, SEASON_MS, WEEK_MS, YEAR_
 /// above them whatever is picked; the rest come one at a time, chosen
 /// from the strip under the view, because together they outgrew the
 /// window.
+#[cfg(feature = "admin")]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum MetricsTab {
     Terrain,
@@ -15,6 +16,7 @@ pub enum MetricsTab {
     Timings,
 }
 
+#[cfg(feature = "admin")]
 impl MetricsTab {
     /// Every tab, in the order the strip lays them out.
     pub const ALL: [MetricsTab; 5] = [Self::Terrain, Self::Render, Self::Passes, Self::Network, Self::Timings];
@@ -40,8 +42,10 @@ impl MetricsTab {
 pub struct DiagnosticsState {
     pub grid_visible: bool,
     pub lighting: LightingClock,
+    #[cfg(feature = "admin")]
     pub metrics_overlay_visible: bool,
     /// Which set of numbers the overlay's panel shows.
+    #[cfg(feature = "admin")]
     pub metrics_tab: MetricsTab,
     /// Every terrain mesh is hidden.
     pub terrain_hidden: bool,
@@ -66,7 +70,9 @@ impl Default for DiagnosticsState {
         Self {
             grid_visible: false,
             lighting: LightingClock::default(),
+            #[cfg(feature = "admin")]
             metrics_overlay_visible: false,
+            #[cfg(feature = "admin")]
             metrics_tab: MetricsTab::default(),
             terrain_hidden: false,
             cover_hidden: false,

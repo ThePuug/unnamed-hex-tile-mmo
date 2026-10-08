@@ -317,7 +317,7 @@ pub fn update_stands(
     render_device: Res<RenderDevice>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
-    let _t = timers.0.scope("stands");
+    let _t = timers.scope("stands");
     let stands = stands.into_inner();
     for entity in gone.read() {
         if regions.contains(entity) {
@@ -700,7 +700,7 @@ fn queue_stands<S: Stand, P: BatchPipeline, D: 'static, I: BatchPhase>(
     mesh_allocator: Res<MeshAllocator>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
-    let _t = timers.0.scope(if I::DEPTH_ONLY { S::DEPTH_TIMER } else { S::TIMER });
+    let _t = timers.scope(if I::DEPTH_ONLY { S::DEPTH_TIMER } else { S::TIMER });
     let draw_function = draw_functions.read().id::<D>();
     for (visible, view) in &views {
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else { continue };
@@ -788,7 +788,7 @@ fn prepare_cover_buffers(
     buffers: ResMut<CoverBuffers>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
-    let _t = timers.0.scope("regions");
+    let _t = timers.scope("regions");
     let buffers = buffers.into_inner();
     let (ring, far_in, far_out) = band.map_or((Vec4::ZERO, Vec4::ZERO, Vec4::ZERO), |b| {
         (Vec4::new(b.center.x, b.center.y, b.inner, b.overlap), b.far_in, b.far_out)
@@ -818,7 +818,7 @@ fn prepare_cover_bind_groups(
     cards: Query<&CardStand>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
-    let _t = timers.0.scope("bgroups");
+    let _t = timers.scope("bgroups");
     let CoverBuffers { cover, frames, models, cards: groups, .. } = buffers.into_inner();
     let (Some(cover), Some(frames)) = (cover.binding(), frames.binding()) else { return };
     if models.is_none() {
@@ -898,7 +898,7 @@ fn prepare_stand_draws(
     mesh_allocator: Res<MeshAllocator>,
     timers: Res<crate::resources::ClientTimers>,
 ) {
-    let _t = timers.0.scope("stand_draws");
+    let _t = timers.scope("stand_draws");
     let draws = draws.into_inner();
     draws.args.clear();
     draws.at.clear();

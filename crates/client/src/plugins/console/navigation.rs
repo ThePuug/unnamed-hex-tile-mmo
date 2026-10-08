@@ -96,7 +96,8 @@ pub fn handle_console_input(
 fn handle_root_menu(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
-    action_writer: &mut MessageWriter<DevConsoleAction>,
+    // Every root action is an admin's.
+    #[cfg_attr(not(feature = "admin"), allow(unused_variables))] action_writer: &mut MessageWriter<DevConsoleAction>,
 ) {
     let mut consumed = None;
 
@@ -115,10 +116,10 @@ fn handle_root_menu(
     }
 
     // Toggles after submenus
-    let toggle_key = if cfg!(feature = "admin") { KeyCode::Numpad3 } else { KeyCode::Numpad2 };
-    if consumed.is_none() && keyboard.just_pressed(toggle_key) {
+    #[cfg(feature = "admin")]
+    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad3) {
         action_writer.write(DevConsoleAction::ToggleMetricsOverlay);
-        consumed = Some(toggle_key);
+        consumed = Some(KeyCode::Numpad3);
     }
 
     #[cfg(feature = "admin")]
