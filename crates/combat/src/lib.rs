@@ -99,12 +99,12 @@ pub fn process_deal_damage(
         let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64) + *delay;
 
         // A blow pushes its target's recovery back, by the attacker's Impact
-        // over the target's Composure with the level gap weighing in
+        // over the target's Efficiency with the level gap weighing in
         if let Some(mut recovery) = recovery_opt {
             let pushback_pct = damage_calc::calculate_recovery_pushback(
                 &tuning,
                 source_attrs.impact(),
-                attrs.composure(),
+                attrs.efficiency(),
                 damage_calc::level_edge(&tuning, source_attrs.total_level(), attrs.total_level()),
             );
             recovery.apply_pushback(pushback_pct);

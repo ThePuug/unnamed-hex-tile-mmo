@@ -26,7 +26,7 @@ pub fn level_edge(tuning: &Tuning, level: u32, opposing_level: u32) -> f32 {
 /// - Past it, `lead / (lead + contest_scale)`, so no lead at any level
 ///   wins the whole of an effect
 
-/// Used by: mitigation, pushback, healing reduction, combo unlock, recovery speed.
+/// Used by: pushback, combo unlock, recovery speed, crit chance, auto-attack pace.
 /// `edge` is the level gap's contest points on the advantage side ([`level_edge`]).
 pub fn contest_factor(tuning: &Tuning, advantage_stat: u16, counter_stat: u16, edge: f32) -> f32 {
     let delta = advantage_stat as f32 - counter_stat as f32 + edge;
@@ -65,12 +65,12 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
 /// The chance a blow `attacker` strikes on `defender` crits.
 
 /// Pattern 1 (Nullifying): `Tuning::crit_chance` × contest_factor(the
-/// attacker's Focus, the defender's Toughness), with the level gap's edge
+/// attacker's Focus, the defender's Fitness), with the level gap's edge
 /// on the attacker's side: none at or below parity, and never the whole
 /// of the ceiling.
 pub fn crit_chance(tuning: &Tuning, attacker: &ActorAttributes, defender: &ActorAttributes) -> f32 {
     let edge = level_edge(tuning, attacker.total_level(), defender.total_level());
-    tuning.crit_chance * contest_factor(tuning, attacker.focus(), defender.toughness(), edge)
+    tuning.crit_chance * contest_factor(tuning, attacker.focus(), defender.fitness(), edge)
 }
 
 /// A blow's damage after its crit roll: `Tuning::crit_power` times
@@ -90,17 +90,15 @@ pub fn crit(tuning: &Tuning, damage: f32, attacker: &ActorAttributes, defender: 
 /// Calculate recovery pushback percentage: Impact's, alone.
 
 /// Pattern 1 (Nullifying): `Tuning::pushback_share` × contest_factor(Impact,
-/// Composure), with the level gap's `edge` on the attacker's side. No ceiling: the recovery itself
+/// Efficiency), with the level gap's `edge` on the attacker's side. No ceiling: the recovery itself
 /// never stretches past twice its length.
-
-/// Applied to effective_recovery_base (after composure, before the combo).
 pub fn calculate_recovery_pushback(
     tuning: &Tuning,
     attacker_impact: u16,
-    defender_composure: u16,
+    defender_efficiency: u16,
     edge: f32,
 ) -> f32 {
-    tuning.pushback_share * contest_factor(tuning, attacker_impact, defender_composure, edge)
+    tuning.pushback_share * contest_factor(tuning, attacker_impact, defender_efficiency, edge)
 }
 
 #[cfg(test)]
@@ -129,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_over_toughness_decides_whether_a_blow_crits_and_never_how_hard() {
+    fn focus_over_fitness_decides_whether_a_blow_crits_and_never_how_hard() {
         let tuning = Tuning::DEFAULT;
         let focused = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
         let keen = ActorAttributes::new(0, 0, 0, 0, 0, 0, 5, 0, 0);
@@ -138,7 +136,7 @@ mod tests {
         assert!(crit(&tuning, 100.0, &focused, &plain, 0.0, 0.0) > 100.0, "a draw under the chance crits");
         assert_eq!(crit(&tuning, 100.0, &focused, &plain, 0.0, 0.999), 100.0, "a draw over it does not");
         assert_eq!(crit(&tuning, 100.0, &plain, &plain, 0.0, 0.0), 100.0, "without a Focus lead nothing crits");
-        assert_eq!(crit_chance(&tuning, &focused, &tough), 0.0, "Toughness that matches it nullifies it");
+        assert_eq!(crit_chance(&tuning, &focused, &tough), 0.0, "Fitness that matches it nullifies it");
         assert!(crit_chance(&tuning, &focused, &plain) > crit_chance(&tuning, &keen, &plain), "a wider lead crits more often");
         assert_eq!(crit(&tuning, 100.0, &focused, &plain, 0.0, 0.0), crit(&tuning, 100.0, &keen, &plain, 0.0, 0.0), "and no harder");
         assert!(crit(&tuning, 100.0, &plain, &plain, 0.5, 0.25) > 100.0, "what Patience adds beside the contest crits too");

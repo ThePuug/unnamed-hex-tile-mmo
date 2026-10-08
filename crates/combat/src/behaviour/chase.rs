@@ -20,7 +20,7 @@ use common_bevy::{
 use common_bevy::message::AbilityType;
 use qrz::{Convert, Qrz};
 
-use super::{mind::Minds, moves::{self, Candidate, Footing, Move}, Bar, Body};
+use super::{mind::Minds, moves::{self, Candidate, Footing, Move}, perception::Sight, Bar, Body};
 use crate::leap::LEAP_MS;
 use common_bevy::tuning::Tuning;
 
@@ -32,6 +32,10 @@ const HOME: i32 = 2;
 /// and steps to the tile its movement channel chooses of its own and its
 /// uncrowded neighbours ([`moves`]). Its `Target` is this system's alone to
 /// set (`targeting::update_targets` leaves every `Chase` be).
+///
+/// It steps by where it perceives its target to stand and face, as late
+/// as its [`Sight`] sees it, and stands while it has yet to see it; one
+/// without a `Sight` sees it at once.
 ///
 /// It strikes from its assigned hex where it has one (`AssignedHex`), else
 /// from wherever its target is within `attack_range`. A step that gives
@@ -84,7 +88,7 @@ pub fn chase(
         Option<&AssignedHex>,
         &Side,
         Option<&Status>,
-        (Option<&mut Move>, Option<&EntityType>, Option<&Bar>),
+        (Option<&mut Move>, Option<&EntityType>, Option<&Bar>, Option<&Sight>),
         Option<&common_bevy::components::recovery::GlobalRecovery>,
     )>, Query<(Entity, &Heading)>)>,
     q_target: Query<(&Loc, &Health, &Side, Option<&ActorAttributes>, Option<&Status>)>,
@@ -99,7 +103,7 @@ pub fn chase(
 ) {
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, (mut under_way, kind, bar), recovery) in actors.p0().iter_mut() {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, (mut under_way, kind, bar, sight), recovery) in actors.p0().iter_mut() {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
@@ -144,10 +148,17 @@ pub fn chase(
             target.entity = held;
             target.last_target = held.or(target.last_target);
         }
-        let Some((held, (target_loc, ..))) = held.and_then(|held| Some((held, q_target.get(held).ok()?))) else {
-            continue;
+        let Some(held) = held else { continue };
+        let (target_loc, target_heading) = match sight {
+            Some(sight) => match sight.seen(held) {
+                Some(foe) => (foe.at, foe.heading),
+                None => continue,
+            },
+            None => match q_target.get(held) {
+                Ok((&loc, ..)) => (loc, headings.get(&held).copied()),
+                Err(_) => continue,
+            },
         };
-        let target_heading = headings.get(&held);
 
         // Its movement channel chooses its step; the step is walked here
         let archetype = match kind {
@@ -171,7 +182,7 @@ pub fn chase(
             if let Some(hex) = assigned {
                 return seconds(at.flat_distance(&hex.0), own_pace);
             }
-            let gap = Loc::new(at + Qrz::Z).distance(target_loc) - chase.attack_range;
+            let gap = Loc::new(at + Qrz::Z).distance(&target_loc) - chase.attack_range;
             let walked = seconds(gap, own_pace);
             match leap {
                 Some(tiles) if gap > 0 => walked.min(LEAP_MS as f32 / 1000.0 + seconds(gap - tiles, own_pace)),
@@ -188,8 +199,8 @@ pub fn chase(
                 time_to_strike: to_strike(at),
                 detour: 0.0,
                 room: room(at),
-                behind: target_heading.filter(|_| at != **target_loc - Qrz::Z).map_or(0.0, |&heading| {
-                    let bearing = Heading::from_hex(Qrz { z: 0, ..at - (**target_loc - Qrz::Z) });
+                behind: target_heading.filter(|_| at != *target_loc - Qrz::Z).map_or(0.0, |heading| {
+                    let bearing = Heading::from_hex(Qrz { z: 0, ..at - (*target_loc - Qrz::Z) });
                     heading.turn_toward(bearing).1 as f32 / (HEADING_SLOTS / 2) as f32
                 }),
             }
@@ -209,13 +220,13 @@ pub fn chase(
             **under_way = chosen;
         }
         let Some(next) = step.map(|step| step.tile).filter(|&next| next != floor) else {
-            body.face(loc, **target_loc, dt_ms, &map, &nntree);
+            body.face(loc, *target_loc, dt_ms, &map, &nntree);
             continue;
         };
         // A step that gives ground it takes backing away, facing its
         // target, so it never turns its back or costs it a swing
-        if next.flat_distance(target_loc) > floor.flat_distance(target_loc) {
-            body.back_toward(loc, floor, next, **target_loc, speed, dt_ms, &map, &nntree);
+        if next.flat_distance(&target_loc) > floor.flat_distance(&target_loc) {
+            body.back_toward(loc, floor, next, *target_loc, speed, dt_ms, &map, &nntree);
         } else {
             body.step_toward(loc, floor, next, speed, dt_ms, &map, &nntree);
         }

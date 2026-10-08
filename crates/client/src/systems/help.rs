@@ -2,11 +2,13 @@
 //! [`Keys`], with what it does. While [`KEYCODE_HELP`] is held a press acts
 //! on nothing; what each reader would have done with it shows beside the
 //! cap that names the key, or at one shared spot where none does. The
-//! admin console reads its keys as it always has, and has no help.
+//! admin console reads its keys as it always has, and has no help. The
+//! same tooltip shows what a [`Describes`] node says while the pointer
+//! rests on it and no key is asked about.
 
 use std::collections::HashSet;
 
-use bevy::{diagnostic::FrameCount, ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
+use bevy::{diagnostic::FrameCount, ecs::system::SystemParam, picking::{hover::HoverMap, pointer::PointerId}, prelude::*, window::PrimaryWindow};
 
 use crate::systems::keycap::Names;
 
@@ -99,6 +101,11 @@ impl Keys<'_> {
     }
 }
 
+/// What a node is, shown over it while the pointer rests on it: its owner
+/// keeps it current
+#[derive(Component, Default)]
+pub struct Describes(pub String);
+
 /// The tooltip help shows.
 #[derive(Component)]
 pub struct Tooltip;
@@ -130,12 +137,15 @@ pub fn setup(mut commands: Commands) {
 }
 
 /// Shows what the key last asked about does while help is held, over the
-/// first cap on screen that names it, else at the shared spot; and frees a
+/// first cap on screen that names it, else at the shared spot; with none
+/// asked, what the node the pointer rests on describes, over it. Frees a
 /// spent key once it is let go.
 pub fn show(
     mut help: ResMut<Help>,
     input: Res<ButtonInput<KeyCode>>,
     caps: Query<(&Names, &ComputedNode, &UiGlobalTransform, &InheritedVisibility)>,
+    described: Query<(&Describes, &ComputedNode, &UiGlobalTransform, &InheritedVisibility)>,
+    hover: Res<HoverMap>,
     mut tip: Query<(&mut Node, &mut Visibility, &ComputedNode), With<Tooltip>>,
     mut text: Query<&mut Text, With<TooltipText>>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -145,22 +155,30 @@ pub fn show(
         help.asked = None;
     }
     let (Ok((mut node, mut visibility, size)), Ok(mut text)) = (tip.single_mut(), text.single_mut()) else { return };
-    let Some((key, _, said)) = &help.asked else {
-        visibility.set_if_neq(Visibility::Hidden);
-        return;
+    let rested = || hover.get(&PointerId::Mouse).and_then(|hits| hits.keys().find_map(|&hit| {
+        described.get(hit).ok().filter(|(_, node, _, shown)| shown.get() && node.size().x > 0.0)
+    }));
+    let (now, over) = match &help.asked {
+        Some((key, _, said)) => (said.join("\n"), caps
+            .iter()
+            .find(|(names, cap, _, shown)| shown.get() && cap.size().x > 0.0 && names.0.contains(key))
+            .map(|(_, cap, transform, _)| (cap, transform))),
+        None => match rested() {
+            Some((describes, node, transform, _)) => (describes.0.clone(), Some((node, transform))),
+            None => {
+                visibility.set_if_neq(Visibility::Hidden);
+                return;
+            }
+        },
     };
     let Ok(window) = window.single() else { return };
     let screen = Vec2::new(window.width(), window.height());
     let wide = size.size().x * size.inverse_scale_factor();
-    let now = said.join("\n");
     if text.0 != now {
         text.0 = now;
     }
-    let cap = caps
-        .iter()
-        .find(|(names, cap, _, shown)| shown.get() && cap.size().x > 0.0 && names.0.contains(key));
-    let (left, bottom) = match cap {
-        Some((_, cap, transform, _)) => {
+    let (left, bottom) = match over {
+        Some((cap, transform)) => {
             let scale = cap.inverse_scale_factor();
             let centre = transform.affine().translation * scale;
             let top = centre.y - cap.size().y * scale / 2.0;

@@ -200,7 +200,7 @@ impl CommitmentTier {
 
 /// The six attributes, two to a pair. Each is read three ways, by one rule
 /// apiece: its value, which contests weigh ([`ActorAttributes::value`]);
-/// its potency, which grows with level ([`ActorAttributes::potency`]); and
+/// its pair's potency, which grows with level ([`ActorAttributes::potency`]); and
 /// its commitment tier ([`ActorAttributes::tier`]). The stat each reading
 /// goes by has a method of its name there.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -412,11 +412,20 @@ impl ActorAttributes {
         pair.reach(end)
     }
 
-    /// `attribute`'s absolute stat, a potency that grows with level:
-    /// `Tuning::potency_base` and `potency_per_point` more for each point of
-    /// the attribute, scaled by the damage level curve.
+    /// The points `attribute`'s pair holds, its own and its partner's
+    /// together: what the pair's absolute reads, wherever the build leans
+    /// within it
+    pub fn pair_points(&self, attribute: Attribute) -> u16 {
+        let (pair, _) = self.pair(attribute);
+        pair.value(End::Left) + pair.value(End::Right)
+    }
+
+    /// The absolute stat of `attribute`'s pair, a potency that grows with
+    /// level: `Tuning::potency_base` and `potency_per_point` more for each
+    /// of the pair's points ([`Self::pair_points`]), scaled by the damage
+    /// level curve.
     pub fn potency(&self, tuning: &Tuning, attribute: Attribute) -> f32 {
-        (tuning.potency_base + self.value(attribute) as f32 * tuning.potency_per_point) * self.damage_level_multiplier(tuning)
+        (tuning.potency_base + self.pair_points(attribute) as f32 * tuning.potency_per_point) * self.damage_level_multiplier(tuning)
     }
 
     /// `attribute`'s commitment tier: its value as a share of the most any
@@ -451,18 +460,26 @@ impl ActorAttributes {
 
     // Absolute: an attribute's potency, by the name its stat goes by
 
-    /// Force, Might's: what its share adds to an auto-attack (`auto_damage`)
+    /// Force, Might and Agility's: what their share adds to an auto-attack
+    /// (`auto_damage`)
     pub fn force(&self, tuning: &Tuning) -> f32 { self.potency(tuning, Attribute::Might) }
-    /// Tempo, Agility's: how fast its auto-attacks come (`cadence_interval`)
-    pub fn tempo(&self, tuning: &Tuning) -> f32 { self.potency(tuning, Attribute::Agility) }
-    /// Endurance, Discipline's: how deep the endurance pool is (`max_endurance`)
-    pub fn endurance(&self, tuning: &Tuning) -> f32 { self.potency(tuning, Attribute::Discipline) }
+    /// Endurance, Instinct and Resolve's: how deep the endurance pool is
+    /// (`max_endurance`). Base potency, deeper by `Tuning::endurance_depth`
+    /// for a pair holding as much as one attribute can at its level
+    /// (`ceiling`): it reads what a build puts into the pair against its
+    /// level, so a build's pool holds the same count of its skills at any
+    /// level.
+    pub fn endurance(&self, tuning: &Tuning) -> f32 {
+        let invested = if self.ceiling() == 0 { 0.0 } else { self.pair_points(Attribute::Instinct) as f32 / self.ceiling() as f32 };
+        self.base_potency(tuning) * (1.0 + tuning.endurance_depth * invested)
+    }
 
-    /// Constitution, Physique's, which is max health: the health every actor
-    /// has (`Tuning::base_health`) and what each point of Physique adds
-    /// (`Tuning::health_per_physique`), scaled by the health level curve.
+    /// Constitution, Physique and Discipline's, which is max health: the
+    /// health every actor has (`Tuning::base_health`) and what each of the
+    /// pair's points adds (`Tuning::health_per_point`), scaled by the health
+    /// level curve.
     pub fn constitution(&self, tuning: &Tuning) -> f32 {
-        (tuning.base_health + self.physique() as f32 * tuning.health_per_physique) * self.hp_level_multiplier(tuning)
+        (tuning.base_health + self.pair_points(Attribute::Physique) as f32 * tuning.health_per_point) * self.hp_level_multiplier(tuning)
     }
 
     pub fn max_health(&self, tuning: &Tuning) -> f32 {
@@ -471,18 +488,21 @@ impl ActorAttributes {
 
     // Relative: the value a contest weighs, by the name it goes by there
 
-    /// Impact, Might: pushes a target's recovery back, against its Composure
+    /// Impact, Might: pushes a target's recovery back, against its Efficiency
     pub fn impact(&self) -> u16 { self.value(Attribute::Might) }
-    /// Flow, Agility: unlocks a combo sooner, against the target's Reflex
-    pub fn flow(&self) -> u16 { self.value(Attribute::Agility) }
-    /// Toughness, Physique: mitigates a blow, against the attacker's Focus
-    pub fn toughness(&self) -> u16 { self.value(Attribute::Physique) }
-    /// Composure, Discipline: shortens its own recovery, against the opponent's Impact
-    pub fn composure(&self) -> u16 { self.value(Attribute::Discipline) }
-    /// Reflex, Instinct: widens a threat's window, against the attacker's Flow
+    /// Efficiency, Discipline: unlocks its combos sooner, against the
+    /// target's Impact (`combos::recovery_after`)
+    pub fn efficiency(&self) -> u16 { self.value(Attribute::Discipline) }
+    /// Tempo, Agility: brings its auto-attacks sooner, against the target's
+    /// Reflex (`cadence_interval`)
+    pub fn tempo(&self) -> u16 { self.value(Attribute::Agility) }
+    /// Reflex, Instinct: widens a threat's window, against the attacker's Tempo
     pub fn reflex(&self) -> u16 { self.value(Attribute::Instinct) }
-    /// Focus, Resolve: decides whether a blow crits and meets a defender's
-    /// mitigation, against their Toughness (`damage::crit_chance`)
+    /// Fitness, Physique: runs its own recovery faster, against the
+    /// opponent's Focus
+    pub fn fitness(&self) -> u16 { self.value(Attribute::Physique) }
+    /// Focus, Resolve: decides whether a blow crits, against the defender's
+    /// Fitness (`damage::crit_chance`)
     pub fn focus(&self) -> u16 { self.value(Attribute::Resolve) }
 
     // Commitment: an attribute's tier, by the name it goes by
@@ -542,18 +562,16 @@ impl ActorAttributes {
     /// toward 1 with diminishing returns, the same at every level. Each
     /// absolute's passive effect is its ceiling times this share.
     pub fn share(&self, tuning: &Tuning, attribute: Attribute) -> f32 {
-        let points = self.value(attribute) as f32;
+        let points = self.pair_points(attribute) as f32;
         points / (points + tuning.share_bend)
     }
 
     /// The endurance pool: `Tuning::endurance_pool` for each point of
-    /// Endurance, so it deepens with level and with Discipline
+    /// Endurance, so it deepens with level and with Instinct and Resolve
     pub fn max_endurance(&self, tuning: &Tuning) -> f32 {
         tuning.endurance_pool * self.endurance(tuning)
     }
 
-    /// The attribute `ability` reads: Resolve for a reaction, Instinct for
-    /// any other skill, an action.
     /// The attribute line `ability` belongs to, whose points raise it: none
     /// for the auto-attack and the skills every fighter holds alike, Feint
     /// and Parry.
@@ -593,25 +611,16 @@ impl ActorAttributes {
 
     /// The endurance `ability`, a skill, costs this actor:
     /// `Tuning::endurance_cost` of base potency for each point of its cost
-    /// (`Tuning::cost`). It grows with level as the
-    /// pool does, so a pool with no Discipline in it holds the same count of
-    /// a build's skills at any level. A reaction pays besides for what it
-    /// clears (`reaction_effort`).
+    /// (`Tuning::cost`). It grows with level as the pool does, so a build's
+    /// pool holds the same count of its skills at any level. A reaction
+    /// pays it whatever it clears.
     pub fn skill_endurance(&self, tuning: &Tuning, ability: crate::message::AbilityType) -> f32 {
         tuning.endurance_cost * tuning.cost(ability) * self.base_potency(tuning)
     }
 
-    /// The endurance it costs this actor's reaction to clear a threat of
-    /// `damage`, beside the reaction's flat cost: `Tuning::reaction_per_threat`
-    /// of base potency for the threat itself and `Tuning::reaction_effort`
-    /// for each point of its damage. A threat costs something however
-    /// light, so a stream of small ones is not cleared free.
-    pub fn reaction_effort(&self, tuning: &Tuning, damage: f32) -> f32 {
-        tuning.reaction_per_threat * self.base_potency(tuning) + damage * tuning.reaction_effort
-    }
-
     /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
-    /// `Tuning::force_auto` at the ceiling of Force's share
+    /// `Tuning::force_auto` at the ceiling of Force's share, Might's and
+    /// Agility's points together
     pub fn auto_damage(&self, tuning: &Tuning) -> f32 {
         self.base_potency(tuning) * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(tuning, Attribute::Might))
     }
@@ -654,11 +663,16 @@ impl ActorAttributes {
         self.grace().between(tuning.grace_arc_min, tuning.grace_arc_max)
     }
 
-    /// Seconds between auto-attacks: `Tuning::base_interval`, the one pace
-    /// every actor starts from, quickened by `Tuning::tempo_ceiling` at the
-    /// ceiling of Tempo's share. No actor swings slower than the base.
-    pub fn cadence_interval(&self, tuning: &Tuning) -> std::time::Duration {
-        std::time::Duration::from_secs_f32(tuning.base_interval / (1.0 + tuning.tempo_ceiling * self.share(tuning, Attribute::Agility)))
+    /// Seconds between auto-attacks at `against`: `Tuning::base_interval`,
+    /// the one pace every actor starts from, quickened toward
+    /// `Tuning::tempo_ceiling` by its Tempo over its target's Reflex, the
+    /// level gap weighing in; with no target, over none. No actor swings
+    /// slower than the base.
+    pub fn cadence_interval(&self, tuning: &Tuning, against: Option<&ActorAttributes>) -> std::time::Duration {
+        use crate::systems::combat::damage::{contest_factor, level_edge};
+        let (reflex, edge) = against.map_or((0, 0.0), |foe| (foe.reflex(), level_edge(tuning, self.total_level(), foe.total_level())));
+        let contest = contest_factor(tuning, self.tempo(), reflex, edge);
+        std::time::Duration::from_secs_f32(tuning.base_interval / (1.0 + tuning.tempo_ceiling * contest))
     }
 }
 
@@ -737,15 +751,19 @@ mod tests {
     #[test]
     fn endurance_deepens_its_own_pool_and_a_skill_costs_by_its_own_cost() {
         let tuning = Tuning { endurance_cost: 0.04, ..Tuning::DEFAULT };
-        let disciplined = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
+        let disciplined = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
-        assert!(disciplined.max_endurance(&tuning) > mighty.max_endurance(&tuning), "Discipline deepens it");
+        assert!(disciplined.max_endurance(&tuning) > mighty.max_endurance(&tuning), "Instinct and Resolve deepen it");
+        assert_eq!(disciplined.max_endurance(&tuning), ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0).max_endurance(&tuning), "either of the pair, alike");
         assert!(mighty.max_endurance(&tuning) > plain.max_endurance(&tuning), "and so does level");
         use crate::message::AbilityType::{Counter, Frenzy};
         assert_eq!(disciplined.skill_endurance(&tuning, Frenzy), mighty.skill_endurance(&tuning, Frenzy), "a skill costs the same at a level where neither reads its stat");
         let skills = |attrs: &ActorAttributes| attrs.max_endurance(&tuning) / attrs.skill_endurance(&tuning, Frenzy);
-        assert!((skills(&mighty) - skills(&plain)).abs() < 1e-3, "with no Discipline a pool holds as many skills at any level");
+        assert!((skills(&mighty) - skills(&plain)).abs() < 1e-3, "with nothing in Instinct and Resolve a pool holds as many skills at any level");
+        let deeper = ActorAttributes::new(0, 0, 0, 0, 0, 0, 20, 0, 0);
+        assert!((skills(&disciplined) - skills(&deeper)).abs() < 1e-3, "and so does a build that puts the same into them");
+        assert!(skills(&disciplined) > skills(&mighty), "which holds more");
 
         let (instinctive, resolute) = (ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0), ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0));
         assert_eq!(instinctive.skill_endurance(&tuning, Frenzy), mighty.skill_endurance(&tuning, Frenzy), "a skill costs what its cost does, whatever the build");
@@ -756,7 +774,7 @@ mod tests {
 
     #[test]
     fn a_skill_is_raised_by_its_line_and_the_shared_ones_by_none() {
-        let tuning = Tuning { reaction_effort: 1.0, reaction_per_threat: 0.2, ..Tuning::DEFAULT };
+        let tuning = Tuning::DEFAULT;
         use crate::message::AbilityType::*;
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let instinctive = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
@@ -772,18 +790,18 @@ mod tests {
         let half = ActorAttributes::new(-5, 0, 0, -5, 0, 0, 0, 0, 0);
         assert!(half.line_power(&tuning, Frenzy) > instinctive.line_power(&tuning, Frenzy) && half.line_power(&tuning, Frenzy) < 1.0, "between, by how much it has invested");
         assert_eq!(plain.line_power(&tuning, Frenzy), tuning.line(Frenzy), "a build of no level has invested nothing");
-        assert_eq!(mighty.reaction_effort(&tuning, 10.0), instinctive.reaction_effort(&tuning, 10.0), "a reaction's price reads no attribute");
-        assert!(plain.reaction_effort(&tuning, 20.0) > plain.reaction_effort(&tuning, 10.0), "more by the damage it clears");
     }
 
     #[test]
     fn tempo_quickens_the_swing_and_no_one_is_slower_than_the_base() {
         let tuning = Tuning::DEFAULT;
         let base = std::time::Duration::from_secs_f32(tuning.base_interval);
-        let quick = |points: i8| ActorAttributes::new(points, 0, 0, 0, 0, 0, 0, 0, 0).cadence_interval(&tuning);
-        assert_eq!(ActorAttributes::default().cadence_interval(&tuning), base);
-        assert_eq!(ActorAttributes::new(-10, 0, 0, -10, 0, 0, 0, 0, 0).cadence_interval(&tuning), base, "no other attribute changes the pace");
+        let quick = |points: i8| ActorAttributes::new(points, 0, 0, 0, 0, 0, 0, 0, 0).cadence_interval(&tuning, None);
+        assert_eq!(ActorAttributes::default().cadence_interval(&tuning, None), base);
+        assert_eq!(ActorAttributes::new(-10, 0, 0, -10, 0, 0, 0, 0, 0).cadence_interval(&tuning, None), base, "no other attribute changes the pace");
         assert!(quick(5) < base && quick(10) < quick(5), "more Agility, a faster swing");
+        let reading = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
+        assert_eq!(ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0).cadence_interval(&tuning, Some(&reading)), base, "a foe's Reflex that matches it nullifies it");
     }
 
     #[test]
@@ -827,6 +845,7 @@ mod tests {
         let vital = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
         assert!(might.auto_damage(&tuning) > vital.auto_damage(&tuning));
         assert_eq!(vital.auto_damage(&tuning), vital.base_potency(&tuning) * tuning.auto_damage);
+        assert_eq!(ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0).auto_damage(&tuning), might.auto_damage(&tuning), "Agility's points count as Might's");
     }
 
     #[test]

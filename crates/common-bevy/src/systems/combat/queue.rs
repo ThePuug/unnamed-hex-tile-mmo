@@ -13,14 +13,14 @@ use crate::tuning::Tuning;
 ///
 /// `Tuning::reaction_window`, the same for every threat between any two
 /// actors, extended by the reaction contest: the defender's Reflex against
-/// the attacker's Flow, with the level gap's edge on the defender's side.
+/// the attacker's Tempo, with the level gap's edge on the defender's side.
 /// The defender's `fatigue`, 0 to 1 (`Endurance::fatigue`), shortens it by
 /// `Tuning::fatigue_window` of it.
 pub fn threat_window(tuning: &Tuning, target_attrs: &ActorAttributes, source_attrs: &ActorAttributes, fatigue: f32) -> Duration {
     use crate::systems::combat::damage::{level_edge, reaction_contest_factor};
 
     let edge = level_edge(tuning, target_attrs.total_level(), source_attrs.total_level());
-    let multiplier = reaction_contest_factor(tuning, target_attrs.reflex(), source_attrs.flow(), edge);
+    let multiplier = reaction_contest_factor(tuning, target_attrs.reflex(), source_attrs.tempo(), edge);
     Duration::from_secs_f32(tuning.reaction_window * multiplier * (1.0 - tuning.fatigue_window * fatigue))
 }
 

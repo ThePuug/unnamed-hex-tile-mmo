@@ -87,52 +87,52 @@ struct Overrides {
 /// search left them against the others: `<archetype>.<setting>` and value.
 /// An archetype or setting not named keeps the consideration's own.
 pub const TUNED: &[(&str, f32)] = &[
-    ("ambusher.behind.floor", 0.76), ("ambusher.behind.to", 0.62), ("ambusher.combo", 0.091),
-    ("ambusher.detour.to", 0.532), ("ambusher.effect_added.from", 0.171), ("ambusher.exposure.floor", 0.659),
-    ("ambusher.exposure.to", 0.886), ("ambusher.foe_just_acted.floor", 0.794), ("ambusher.foe_just_acted.from", 3.135),
-    ("ambusher.hold", 0.411), ("ambusher.just_acted.binding", 1.679), ("ambusher.just_acted.direct", 1.936),
-    ("ambusher.just_acted.fluid", 1.939), ("ambusher.just_acted.oblique", 2.143), ("ambusher.just_acted.vigilant", 1.199),
-    ("ambusher.leash_left.to", 0.311), ("ambusher.momentum", 0.058), ("ambusher.recovery_left.floor", 0.84),
-    ("ambusher.recovery_left.to", 11.807), ("ambusher.strike_worth.floor", 0.291), ("ambusher.strike_worth.to", 0.398),
-    ("ambusher.wait", 0.435), ("ambusher.worth_answering.to", 0.686), ("berserker.behind.floor", 0.711),
-    ("berserker.behind.to", 0.414), ("berserker.combo", 0.107), ("berserker.detour.to", 0.357),
-    ("berserker.effect_added.from", 0.423), ("berserker.exposure.floor", 0.715), ("berserker.exposure.to", 0.633),
-    ("berserker.foe_just_acted.floor", 0.322), ("berserker.foe_just_acted.from", 2.339), ("berserker.hold", 0.267),
-    ("berserker.just_acted.binding", 2.543), ("berserker.just_acted.fluid", 2.073), ("berserker.just_acted.oblique", 2.124),
-    ("berserker.just_acted.opportunistic", 1.566), ("berserker.just_acted.vigilant", 1.111), ("berserker.leash_left.to", 0.381),
-    ("berserker.momentum", 0.075), ("berserker.recovery_left.floor", 0.727), ("berserker.recovery_left.to", 11.15),
-    ("berserker.strike_worth.floor", 0.453), ("berserker.strike_worth.to", 0.542), ("berserker.wait", 0.336),
-    ("berserker.worth_answering.to", 0.64), ("defender.behind.floor", 0.953), ("defender.behind.to", 0.406),
-    ("defender.combo", 0.045), ("defender.detour.to", 0.96), ("defender.effect_added.from", 0.572),
-    ("defender.exposure.floor", 0.327), ("defender.exposure.to", 0.57), ("defender.foe_just_acted.floor", 0.459),
-    ("defender.foe_just_acted.from", 1.782), ("defender.hold", 0.406), ("defender.just_acted.binding", 1.899),
-    ("defender.just_acted.direct", 1.216), ("defender.just_acted.fluid", 1.178), ("defender.just_acted.oblique", 1.656),
-    ("defender.just_acted.opportunistic", 1.458), ("defender.leash_left.to", 0.336), ("defender.momentum", 0.206),
-    ("defender.recovery_left.floor", 0.646), ("defender.recovery_left.to", 1.816), ("defender.strike_worth.floor", 0.055),
-    ("defender.strike_worth.to", 0.562), ("defender.wait", 0.48), ("defender.worth_answering.to", 0.244),
-    ("flanker.behind.floor", 0.006), ("flanker.behind.to", 1.0), ("flanker.combo", 0.162),
-    ("flanker.detour.to", 1.89), ("flanker.effect_added.from", 0.426), ("flanker.exposure.floor", 0.799),
-    ("flanker.exposure.to", 0.955), ("flanker.foe_just_acted.floor", 0.552), ("flanker.foe_just_acted.from", 2.176),
-    ("flanker.hold", 0.101), ("flanker.just_acted.binding", 0.2), ("flanker.just_acted.direct", 0.763),
-    ("flanker.just_acted.fluid", 1.465), ("flanker.just_acted.opportunistic", 1.373), ("flanker.just_acted.vigilant", 0.2),
-    ("flanker.leash_left.to", 0.208), ("flanker.momentum", 0.128), ("flanker.recovery_left.floor", 0.676),
-    ("flanker.recovery_left.to", 8.622), ("flanker.strike_worth.floor", 0.697), ("flanker.strike_worth.to", 0.19),
-    ("flanker.wait", 0.315), ("flanker.worth_answering.to", 0.05), ("juggernaut.behind.floor", 0.837),
-    ("juggernaut.behind.to", 0.56), ("juggernaut.combo", 0.071), ("juggernaut.detour.to", 0.742),
-    ("juggernaut.effect_added.from", 0.66), ("juggernaut.exposure.floor", 0.404), ("juggernaut.exposure.to", 0.399),
-    ("juggernaut.foe_just_acted.floor", 0.371), ("juggernaut.foe_just_acted.from", 3.283), ("juggernaut.hold", 0.186),
-    ("juggernaut.just_acted.direct", 0.397), ("juggernaut.just_acted.fluid", 2.867), ("juggernaut.just_acted.oblique", 2.533),
-    ("juggernaut.just_acted.opportunistic", 2.326), ("juggernaut.just_acted.vigilant", 1.558), ("juggernaut.leash_left.to", 0.142),
-    ("juggernaut.momentum", 0.153), ("juggernaut.recovery_left.floor", 0.81), ("juggernaut.recovery_left.to", 5.821),
-    ("juggernaut.strike_worth.floor", 0.471), ("juggernaut.strike_worth.to", 0.387), ("juggernaut.wait", 0.42),
-    ("juggernaut.worth_answering.to", 0.62), ("skirmisher.behind.floor", 0.735), ("skirmisher.behind.to", 0.317),
-    ("skirmisher.combo", 0.196), ("skirmisher.detour.to", 0.673), ("skirmisher.effect_added.from", 0.329),
-    ("skirmisher.exposure.floor", 0.646), ("skirmisher.exposure.to", 0.702), ("skirmisher.foe_just_acted.floor", 0.726),
-    ("skirmisher.foe_just_acted.from", 2.106), ("skirmisher.hold", 0.206), ("skirmisher.just_acted.binding", 0.739),
-    ("skirmisher.just_acted.direct", 1.026), ("skirmisher.just_acted.oblique", 2.421), ("skirmisher.just_acted.opportunistic", 0.766),
-    ("skirmisher.just_acted.vigilant", 1.96), ("skirmisher.leash_left.to", 0.27), ("skirmisher.momentum", 0.084),
-    ("skirmisher.recovery_left.floor", 0.786), ("skirmisher.recovery_left.to", 9.309), ("skirmisher.strike_worth.floor", 0.027),
-    ("skirmisher.strike_worth.to", 0.33), ("skirmisher.wait", 0.181), ("skirmisher.worth_answering.to", 0.149),
+    ("ambusher.behind.floor", 0.834), ("ambusher.behind.to", 0.872), ("ambusher.combo", 0.188),
+    ("ambusher.detour.to", 0.739), ("ambusher.effect_added.from", 0.29), ("ambusher.exposure.floor", 0.522),
+    ("ambusher.exposure.to", 0.88), ("ambusher.foe_just_acted.floor", 0.831), ("ambusher.foe_just_acted.from", 3.171),
+    ("ambusher.hold", 0.403), ("ambusher.just_acted.binding", 2.074), ("ambusher.just_acted.direct", 0.848),
+    ("ambusher.just_acted.fluid", 1.49), ("ambusher.just_acted.oblique", 1.625), ("ambusher.just_acted.vigilant", 1.469),
+    ("ambusher.leash_left.to", 0.458), ("ambusher.momentum", 0.041), ("ambusher.recovery_left.floor", 0.894),
+    ("ambusher.recovery_left.to", 7.319),
+    ("ambusher.wait", 0.414), ("ambusher.worth_answering.to", 0.709), ("berserker.behind.floor", 0.781),
+    ("berserker.behind.to", 0.403), ("berserker.combo", 0.061), ("berserker.detour.to", 0.312),
+    ("berserker.effect_added.from", 0.702), ("berserker.exposure.floor", 0.636), ("berserker.exposure.to", 0.691),
+    ("berserker.foe_just_acted.floor", 0.248), ("berserker.foe_just_acted.from", 3.047), ("berserker.hold", 0.333),
+    ("berserker.just_acted.binding", 1.671), ("berserker.just_acted.fluid", 1.882), ("berserker.just_acted.oblique", 1.872),
+    ("berserker.just_acted.opportunistic", 2.507), ("berserker.just_acted.vigilant", 1.675), ("berserker.leash_left.to", 0.165),
+    ("berserker.momentum", 0.039), ("berserker.recovery_left.floor", 0.897), ("berserker.recovery_left.to", 10.191),
+    ("berserker.wait", 0.351),
+    ("berserker.worth_answering.to", 0.724), ("defender.behind.floor", 0.882), ("defender.behind.to", 0.282),
+    ("defender.combo", 0.046), ("defender.detour.to", 0.53), ("defender.effect_added.from", 0.592),
+    ("defender.exposure.floor", 0.391), ("defender.exposure.to", 0.478), ("defender.foe_just_acted.floor", 0.421),
+    ("defender.foe_just_acted.from", 1.484), ("defender.hold", 0.268), ("defender.just_acted.binding", 2.146),
+    ("defender.just_acted.direct", 1.281), ("defender.just_acted.fluid", 1.229), ("defender.just_acted.oblique", 1.537),
+    ("defender.just_acted.opportunistic", 0.96), ("defender.leash_left.to", 0.386), ("defender.momentum", 0.233),
+    ("defender.recovery_left.floor", 0.919), ("defender.recovery_left.to", 5.324),
+    ("defender.wait", 0.323), ("defender.worth_answering.to", 0.231),
+    ("flanker.behind.floor", 0.052), ("flanker.behind.to", 0.98), ("flanker.combo", 0.228),
+    ("flanker.detour.to", 1.914), ("flanker.effect_added.from", 0.779), ("flanker.exposure.floor", 0.718),
+    ("flanker.exposure.to", 0.833), ("flanker.foe_just_acted.floor", 0.804), ("flanker.foe_just_acted.from", 3.303),
+    ("flanker.hold", 0.116), ("flanker.just_acted.binding", 0.89), ("flanker.just_acted.direct", 1.897),
+    ("flanker.just_acted.fluid", 0.711), ("flanker.just_acted.opportunistic", 1.131), ("flanker.just_acted.vigilant", 1.173),
+    ("flanker.leash_left.to", 0.153), ("flanker.momentum", 0.1), ("flanker.recovery_left.floor", 0.594),
+    ("flanker.recovery_left.to", 11.409),
+    ("flanker.wait", 0.63), ("flanker.worth_answering.to", 0.05), ("juggernaut.behind.floor", 0.815),
+    ("juggernaut.behind.to", 0.601), ("juggernaut.combo", 0.133), ("juggernaut.detour.to", 0.423),
+    ("juggernaut.effect_added.from", 0.253), ("juggernaut.exposure.floor", 0.782), ("juggernaut.exposure.to", 0.326),
+    ("juggernaut.foe_just_acted.floor", 0.244), ("juggernaut.foe_just_acted.from", 3.257), ("juggernaut.hold", 0.141),
+    ("juggernaut.just_acted.direct", 1.126), ("juggernaut.just_acted.fluid", 2.865), ("juggernaut.just_acted.oblique", 2.21),
+    ("juggernaut.just_acted.opportunistic", 1.583), ("juggernaut.just_acted.vigilant", 1.18), ("juggernaut.leash_left.to", 0.152),
+    ("juggernaut.momentum", 0.149), ("juggernaut.recovery_left.floor", 0.873), ("juggernaut.recovery_left.to", 4.362),
+    ("juggernaut.wait", 0.359),
+    ("juggernaut.worth_answering.to", 0.792), ("skirmisher.behind.floor", 0.75), ("skirmisher.behind.to", 0.509),
+    ("skirmisher.combo", 0.208), ("skirmisher.detour.to", 0.582), ("skirmisher.effect_added.from", 0.464),
+    ("skirmisher.exposure.floor", 0.747), ("skirmisher.exposure.to", 0.627), ("skirmisher.foe_just_acted.floor", 0.89),
+    ("skirmisher.foe_just_acted.from", 2.402), ("skirmisher.hold", 0.175), ("skirmisher.just_acted.binding", 1.89),
+    ("skirmisher.just_acted.direct", 1.458), ("skirmisher.just_acted.oblique", 1.985), ("skirmisher.just_acted.opportunistic", 0.83),
+    ("skirmisher.just_acted.vigilant", 2.079), ("skirmisher.leash_left.to", 0.289), ("skirmisher.momentum", 0.246),
+    ("skirmisher.recovery_left.floor", 0.685), ("skirmisher.recovery_left.to", 10.019),
+    ("skirmisher.wait", 0.288), ("skirmisher.worth_answering.to", 0.158),
 ];
 
 /// Every mind setting: those for all archetypes, and each archetype's on
@@ -229,14 +229,14 @@ mod tests {
         minds.set("all.wait", "0.5").unwrap();
         minds.set("all.worth_answering.to", "0.4").unwrap();
         minds.set("defender.worth_answering.to", "0.2").unwrap();
-        minds.set("defender.strike_worth.floor", "0.3").unwrap();
+        minds.set("defender.exposure.floor", "0.3").unwrap();
         let defender = minds.mind(Some(EnemyArchetype::Defender));
         let flanker = minds.mind(Some(EnemyArchetype::Flanker));
         assert_eq!((defender.wait, flanker.wait), (0.5, 0.5));
         assert_eq!(defender.adjusts["worth_answering"].to, Some(0.2));
         assert_eq!(flanker.adjusts["worth_answering"].to, Some(0.4));
-        assert_eq!(defender.adjusts["strike_worth"].floor, Some(0.3));
-        assert!(!flanker.adjusts.contains_key("strike_worth"));
+        assert_eq!(defender.adjusts["exposure"].floor, Some(0.3));
+        assert!(!flanker.adjusts.contains_key("exposure"));
     }
 
     #[test]
@@ -264,6 +264,8 @@ mod tests {
         assert!(minds.set("all.worth_answering.slope", "1").is_err());
         assert!(minds.set("all.wait", "high").is_err());
         assert!(minds.set("all.usable.floor", "0.5").is_err(), "a condition is not tuned");
+        assert!(minds.set("all.strike_worth.to", "0.5").is_err(), "nor what a skill is worth");
+        assert!(minds.set("all.endurance_left.floor", "0.5").is_err(), "nor what it costs");
     }
 
     #[test]

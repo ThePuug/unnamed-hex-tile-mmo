@@ -6,7 +6,9 @@
 //! and from the commitments its user holds. A commitment's considerations
 //! read its own state, so an NPC that scores them plays the way its
 //! commitment pays: no style is written down. Every skill's worth is
-//! weighed against its cost, the recovery it leaves, and no decision is weighed that the gate would refuse
+//! weighed against its cost, the endurance it spends, through curves no
+//! mind sets, or a search would shape them to even out how often skills
+//! are used; and no decision is weighed that the gate would refuse
 //! ([`admits`]). The channel's do-nothing decision, waiting, scores
 //! [`WAIT`], and a skill is used only where it scores higher; the combo its
 //! recovery offers scores [`COMBO`] more, so a chain carries on rather than
@@ -18,9 +20,8 @@
 use std::time::Duration;
 
 use common_bevy::{
-    components::{reaction_queue::QueuedThreat, recovery::GlobalRecovery, resources::Endurance, status::Status, ActorAttributes},
+    components::{heading::Heading, reaction_queue::QueuedThreat, recovery::GlobalRecovery, status::Status, ActorAttributes, Loc},
     message::AbilityType,
-    systems::combat::combos::recovery_after,
 };
 
 use super::{mind::Mind, utility::{score, Consideration, Curve, Shape}};
@@ -38,14 +39,8 @@ pub const COMBO: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "recovery_left", "foe_just_acted", "worth_answering",
-    "leash_left", "strike_worth", "effect_added", "exposure",
+    "foe_just_acted", "worth_answering", "leash_left", "effect_added", "exposure",
 ];
-
-/// `recovery_left`'s bounds and curve, shared with the movement channel's:
-/// one setting shapes both
-pub const RECOVERY_LEFT_BOUNDS: (f32, f32) = (0.0, 10.0);
-pub const RECOVERY_LEFT_CURVE: Curve = Curve::FALLING.floored(1.0);
 
 /// `leash_left`'s bounds and curve, shared with the movement channel's
 pub const LEASH_LEFT_BOUNDS: (f32, f32) = (0.0, 0.3);
@@ -123,6 +118,9 @@ impl Threats {
 /// Its target, as it sees it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Foe {
+    /// Where it stands and which way it faces, which its movement steps by
+    pub at: Loc,
+    pub heading: Option<Heading>,
     pub distance: i32,
     /// The health it has left, as its target frame shows it
     pub health: f32,
@@ -212,7 +210,7 @@ fn reason(ability: AbilityType, view: &View) -> Option<(&'static str, Vec<Consid
         },
         AbilityType::PerfectStride => ("stride", Part::Effect),
     };
-    let mut considerations = vec![USABLE, RECOVERY_LEFT];
+    let mut considerations = vec![USABLE, ENDURANCE_LEFT];
     considerations.extend(part_considerations(part));
     if effect(view).is_some() {
         considerations.push(EFFECT_ADDED);
@@ -320,18 +318,18 @@ const USABLE: Considered = step("usable", |view| {
     flag(admits(view.ability, reacting(view), view.recovery.as_ref(), &view.attrs, view.reach, foe).is_ok())
 });
 
-/// Seconds of recovery the skill would leave it in, with everything that
-/// lengthens or shortens it and what its chain owes: the time it spends.
-/// Weighed only as far as a mind lowers its floor
-const RECOVERY_LEFT: Considered = Consideration {
-    name: "recovery_left",
+/// The share of its pool it would have left once the skill is paid for:
+/// what spending it now leaves the rest of the fight, a dearer skill and an
+/// emptier pool weighing more. Authored and no mind's to set, or a search
+/// would shape it to even out how often skills are used
+const ENDURANCE_LEFT: Considered = Consideration {
+    name: "endurance_left",
     read: |view| {
-        let fatigue = Endurance { state: view.endurance, max: view.endurance_max }.fatigue(&view.tuning);
-        let after = recovery_after(&view.tuning, view.ability, reacting(view), view.recovery.as_ref(), &view.attrs, None, fatigue);
-        after.remaining + after.chain.owed
+        let price = view.attrs.skill_endurance(&view.tuning, view.ability);
+        (view.endurance - price).max(0.0) / view.endurance_max.max(f32::EPSILON)
     },
-    bounds: RECOVERY_LEFT_BOUNDS,
-    curve: RECOVERY_LEFT_CURVE,
+    bounds: (0.0, 1.0),
+    curve: Curve::RISING.floored(0.2),
 };
 
 /// How much of the timed effect it would put on someone is new: what a
@@ -363,7 +361,9 @@ const FOE_JUST_ACTED: Considered = Consideration {
 
 /// What a strike would deal, with every modifier it carries, as a share of
 /// the health its foe has left: how much nearer it brings the kill, a
-/// finishing blow most. A strike that cannot land deals nothing
+/// finishing blow most. A strike that cannot land deals nothing. Authored
+/// and no mind's to set, or a search would flatten it until a heavy blow
+/// counted no more than a light one
 const STRIKE_WORTH: Considered = Consideration {
     name: "strike_worth",
     read: |view| {
@@ -458,7 +458,7 @@ mod tests {
             leap_room: 1.0,
             capacity_taken: false,
             queue: Threats::default(),
-            foe: Some(Foe { distance: 1, health: 600.0, in_arc: true, flanked: false, patient: 0.0, since_skill: None, status: Status::default() }),
+            foe: Some(Foe { at: Loc::default(), heading: None, distance: 1, health: 600.0, in_arc: true, flanked: false, patient: 0.0, since_skill: None, status: Status::default() }),
         }
     }
 
@@ -597,7 +597,7 @@ mod tests {
     fn the_combo_its_recovery_offers_beats_waiting_where_it_would_not_alone() {
         let tuning = Tuning::DEFAULT;
         let mut offered = view(&tuning, AbilityType::Feint, ActorAttributes::default());
-        offered.recovery = Some(recovery_after(&tuning, AbilityType::Parry, true, None, &offered.attrs, None, 0.0));
+        offered.recovery = Some(common_bevy::systems::combat::combos::recovery_after(&tuning, AbilityType::Parry, true, None, &offered.attrs, None, 0.0));
         let combo = offered.recovery.unwrap().combo.unwrap();
         assert_eq!(combo.ability, AbilityType::Feint);
         offered.recovery.as_mut().unwrap().remaining = combo.unlock_at;
@@ -608,21 +608,6 @@ mod tests {
         assert!(chosen.is_some_and(|decision| decision.ability == AbilityType::Feint), "carried on past a wait it would not beat alone");
         let mut fresh = view(&tuning, AbilityType::Feint, ActorAttributes::default());
         assert!(choose(&mut fresh, &[AbilityType::Feint], &mind, |_| 0.0).is_none(), "and out of recovery the same strike waits");
-    }
-
-    #[test]
-    fn a_mind_weighing_time_marks_a_long_recovery_down() {
-        let tuning = Tuning::DEFAULT;
-        let mut minds = crate::behaviour::mind::Minds::default();
-        minds.set("all.recovery_left.floor", "0").unwrap();
-        let mind = minds.mind(None);
-        let (quick, slow) = if tuning.recovery(AbilityType::Feint) < tuning.recovery(AbilityType::Overpower) {
-            (AbilityType::Feint, AbilityType::Overpower)
-        } else {
-            (AbilityType::Overpower, AbilityType::Feint)
-        };
-        let at = |ability| response(&mut view(&tuning, ability, ActorAttributes::default()), "recovery_left", &mind);
-        assert!(at(slow) < at(quick));
     }
 
     #[test]
@@ -685,6 +670,7 @@ mod tests {
         let mind = Mind::default();
         let (mut light, mut heavy) = (view(&tuning, AbilityType::Feint, vital), view(&tuning, AbilityType::Overpower, vital));
         assert!(response(&mut heavy, "strike_worth", &mind) > response(&mut light, "strike_worth", &mind));
+        assert!(scored(&mut heavy, "strike") > scored(&mut light, "strike"), "and outweighs what it costs more");
         let mut finishing = view(&tuning, AbilityType::Feint, vital);
         finishing.foe = Some(Foe { health: 20.0, ..finishing.foe.unwrap() });
         assert!(scored(&mut finishing, "strike") > scored(&mut light, "strike"), "a blow that nears the kill");
@@ -705,9 +691,6 @@ mod tests {
         let mut short = landing.clone();
         short.foe = Some(Foe { distance: short.leap + short.reach + 1, ..short.foe.unwrap() });
         assert!(scored(&mut short, "dive") < scored(&mut landing, "dive"), "a dive that falls short strikes nothing");
-        let mut minds = crate::behaviour::mind::Minds::default();
-        minds.set("all.strike_worth.floor", "0").unwrap();
-        assert_eq!(scored_by(&mut short, "dive", &minds.mind(None)), 0.0, "and a mind that wants a blow from it never takes one");
         let mut plain = view(&tuning, AbilityType::Leap, ActorAttributes::default());
         assert!(choose(&mut plain, &[AbilityType::Leap], &Mind::default(), |_| 0.0).is_none(), "in reach with nothing queued, it stays");
     }

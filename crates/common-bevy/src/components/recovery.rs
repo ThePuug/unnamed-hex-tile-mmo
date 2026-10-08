@@ -20,9 +20,9 @@ pub struct GlobalRecovery {
     pub remaining: f32,
     /// Seconds the whole recovery runs
     pub duration: f32,
-    /// Impact of the opponent, which contests Composure
-    pub target_impact: u16,
-    /// Level of the opponent, for the level edge in Composure's contest;
+    /// Focus of the opponent, which contests Fitness
+    pub target_focus: u16,
+    /// Level of the opponent, for the level edge in Fitness's contest;
     /// None with no opponent, which gives no edge
     pub target_level: Option<u32>,
     /// The combo this recovery offers, none where the ability leads on to
@@ -54,19 +54,19 @@ impl GlobalRecovery {
         Self {
             remaining: duration,
             duration,
-            target_impact: 0,
+            target_focus: 0,
             target_level: None,
             combo: None,
             chain: Chain::default(),
         }
     }
 
-    /// Contests this recovery's Composure against `opponent`'s Impact and
+    /// Contests this recovery's Fitness against `opponent`'s Focus and
     /// level: whoever it was used against, or whoever imposed it. With no
-    /// opponent it runs uncontested, the whole Composure against none.
+    /// opponent it runs uncontested, the whole Fitness against none.
     pub fn against(mut self, opponent: Option<&crate::components::ActorAttributes>) -> Self {
         if let Some(opponent) = opponent {
-            self.target_impact = opponent.impact();
+            self.target_focus = opponent.focus();
             self.target_level = Some(opponent.total_level());
         }
         self

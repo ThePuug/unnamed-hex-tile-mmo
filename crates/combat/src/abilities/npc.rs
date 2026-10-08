@@ -99,6 +99,8 @@ impl Abilities<'_, '_> {
         let (&loc, attrs, _, heading, ..) = self.actors.get(ent).ok()?;
         let (&target_loc, target_attrs, target_health, target_heading, ..) = self.actors.get(target?).ok()?;
         Some(Foe {
+            at: target_loc,
+            heading: target_heading.copied(),
             distance: loc.distance(&target_loc),
             health: target_health.state,
             in_arc: in_arc(&tuning, heading, Some(attrs), &loc, &target_loc),

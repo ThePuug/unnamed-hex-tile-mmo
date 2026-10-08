@@ -264,8 +264,7 @@ impl Abilities<'_, '_> {
 
         // Endurance is spent and refuses nothing: a
         // skill's, or for a swing struck across the caster's line a share
-        // of the Force it strikes with, the more the further round its arc.
-        // A reaction has paid besides for what it cleared (`react`)
+        // of the Force it strikes with, the more the further round its arc
         self.tire(ent, match ability {
             AbilityType::AutoAttack if across => tuning.off_arc_cost * share * attrs.force(&tuning),
             AbilityType::AutoAttack => 0.0,
@@ -352,10 +351,7 @@ impl Abilities<'_, '_> {
 
     /// The threats a reaction by `cast` clears, taken out of its user's
     /// queue: the front one and those landing within its span behind it.
-    /// Each is paid for in endurance (`ActorAttributes::reaction_effort`),
-    /// which refuses nothing: a user without the endurance clears them all
-    /// the same and is spent, its fatigue the price. Errs with nothing
-    /// queued.
+    /// Errs with nothing queued.
     pub fn react(&mut self, cast: &Cast) -> Result<Vec<QueuedThreat>, AbilityFailReason> {
         let cleared = self.answer_span(cast);
         if cleared.is_empty() {
@@ -365,15 +361,11 @@ impl Abilities<'_, '_> {
     }
 
     /// Takes the threats in `cast`'s user's span out of its queue, the
-    /// front one and those landing within its span behind it, and pays
-    /// endurance for each (`ActorAttributes::reaction_effort`): what a
+    /// front one and those landing within its span behind it: what a
     /// reaction clears, and a Leap clear of its target
     pub fn answer_span(&mut self, cast: &Cast) -> Vec<QueuedThreat> {
-        let tuning = *self.tuning;
-        let cleared = self.clear(cast.ent, ClearType::Span(cast.attrs.span(&tuning)));
-        let price: f32 = cleared.iter().map(|threat| cast.attrs.reaction_effort(&tuning, threat.damage)).sum();
-        self.tire(cast.ent, price);
-        cleared
+        let span = cast.attrs.span(&self.tuning);
+        self.clear(cast.ent, ClearType::Span(span))
     }
 
     /// Takes the threats `clear_type` names out of `ent`'s queue, tells its
@@ -419,7 +411,7 @@ mod tests {
 
     /// The numbers the game plays by, with every endurance price set, so
     /// what endurance does is seen whatever the live prices stand at
-    const PRICED: Tuning = Tuning { endurance_cost: 0.04, reaction_effort: 1.2, reaction_per_threat: 0.23, off_arc_cost: 0.25, ..Tuning::DEFAULT };
+    const PRICED: Tuning = Tuning { endurance_cost: 0.04, off_arc_cost: 0.25, ..Tuning::DEFAULT };
 
     fn arena() -> App {
         let mut app = App::new();
@@ -600,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reaction_pays_endurance_for_what_it_clears_and_without_it_is_spent_not_refused() {
+    fn a_reaction_pays_its_flat_cost_whatever_it_clears_and_without_it_is_spent_not_refused() {
         let tuning = PRICED;
         use common_bevy::systems::combat::queue::{create_threat, insert_threat};
         let mut app = arena();
@@ -610,25 +602,33 @@ mod tests {
 
         let plain = ActorAttributes::default();
         let endurance = |app: &App| app.world().get::<Endurance>(defender).unwrap().state;
-        let pool = endurance(&app);
         let queued = |app: &mut App, damage: f32, millis: u64| {
             let at = Duration::from_millis(millis);
             let threat = create_threat(&tuning, attacker, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
             insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat, at);
         };
         let flat = plain.skill_endurance(&tuning, AbilityType::Parry);
+        let before = endurance(&app);
         queued(&mut app, 10.0, 0);
         assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry));
-        let paid = pool - endurance(&app);
-        assert!((paid - flat - plain.reaction_effort(&tuning, 10.0)).abs() < 1e-3, "its flat cost as any skill, and a price for what it cleared: {paid}");
+        let one = before - endurance(&app);
+        assert!((one - flat).abs() < 1e-3, "its flat cost as any skill: {one}");
 
-        // More than the pool holds, in one span: all of it is cleared, and its user spent
+        // Three heavy blows in one span cost what one light one did
         app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
+        let before = endurance(&app);
         for millis in [0, 50, 100] {
-            queued(&mut app, pool * 10.0, millis);
+            queued(&mut app, 100.0, millis);
         }
-        assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry), "endurance refuses no reaction");
+        assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry));
         assert!(queue(&app, defender).is_empty(), "it clears its whole span");
+        assert!((before - endurance(&app) - flat).abs() < 1e-3, "and what it clears costs nothing more");
+
+        // Short of its price, it is used all the same and its user spent
+        app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
+        app.world_mut().get_mut::<Endurance>(defender).unwrap().state = flat / 2.0;
+        queued(&mut app, 10.0, 200);
+        assert!(used(&ask(&mut app, defender, AbilityType::Parry, None), AbilityType::Parry), "endurance refuses no reaction");
         assert_eq!(endurance(&app), 0.0, "and leaves its user spent");
 
         app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();

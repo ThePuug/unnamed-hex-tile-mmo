@@ -69,9 +69,9 @@ pub fn may_use(ability: AbilityType, reacting: bool, recovery: Option<&GlobalRec
 ///
 /// It offers the ability's combo (`AbilityType::combo`), unlocking through
 /// the ability's own seconds: earlier by a floor every actor has
-/// (`Tuning::combo_floor`), and more by the user's Flow over the Reflex of
-/// a strike's target, the level gap weighing in; a reaction's is contested
-/// by no one.
+/// (`Tuning::combo_floor`), and more by the user's Efficiency over the
+/// Impact of a strike's target, the level gap weighing in; a reaction's is
+/// contested by no one.
 pub fn recovery_after(tuning: &Tuning, ability: AbilityType, reacting: bool, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, against: Option<&ActorAttributes>, fatigue: f32) -> GlobalRecovery {
     let prior = prior.filter(|prior| prior.is_active());
     let own = tuning.recovery(ability) * (1.0 + tuning.fatigue_recovery * fatigue);
@@ -80,7 +80,7 @@ pub fn recovery_after(tuning: &Tuning, ability: AbilityType, reacting: bool, pri
     recovery.combo = ability.combo().and_then(|next| {
         let defender = against.filter(|_| !reacting).unwrap_or(attrs);
         let edge = damage_calc::level_edge(tuning, attrs.total_level(), defender.total_level());
-        let contest = damage_calc::contest_factor(tuning, attrs.flow(), defender.reflex(), edge);
+        let contest = damage_calc::contest_factor(tuning, attrs.efficiency(), defender.impact(), edge);
         let reduction = tuning.combo_floor + tuning.combo_share * contest;
         (reduction >= f32::EPSILON).then(|| Combo { ability: next, unlock_at: (own * reduction).min(own) })
     });
@@ -233,15 +233,15 @@ mod tests {
     }
 
     #[test]
-    fn a_combo_unlocks_partway_through_its_recovery_and_flow_brings_it_sooner() {
+    fn a_combo_unlocks_partway_through_its_recovery_and_efficiency_brings_it_sooner() {
         let tuning = Tuning::DEFAULT;
-        let defender = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
-        let plain = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
-        let flowing = ActorAttributes::new(10, 0, 0, 0, 0, 0, 0, 0, 0);
+        let defender = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
+        let plain = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
+        let flowing = ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0);
         let own = tuning.recovery(AbilityType::Frenzy);
         let left = |attrs| recovery_after(&tuning, AbilityType::Frenzy, AbilityType::Frenzy.is_reaction(), None, attrs, Some(&defender), 0.0).combo.unwrap().unlock_at;
         assert!(left(&plain) > 0.0 && left(&plain) < own, "at parity, it unlocks partway through");
-        assert!(left(&flowing) > left(&plain), "a Flow advantage unlocks it with more of the recovery left");
+        assert!(left(&flowing) > left(&plain), "an Efficiency advantage unlocks it with more of the recovery left");
     }
 
     #[test]

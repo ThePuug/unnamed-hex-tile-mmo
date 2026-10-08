@@ -10,15 +10,15 @@ check_runs = 40
 population = 2.0
 skill = "sharp"
 
-# Held in every scenario: endurance has no effect for now, in the fights or
-# in the minds
+# The game's numbers searched by `screen` and `balance`, each a
+# `[[knobs]]` table of `name`, `min` and `max`: none. The game's numbers
+# are tuned by hand, in `Tuning`'s defaults, and only the minds are
+# searched; a balance search cuts each archetype's signature until every
+# pairing is even and no style is left
+knobs = []
+
+# Held in every scenario, over the game's own numbers
 [fixed]
-endurance_cost = 0.0
-reaction_effort = 0.0
-reaction_per_threat = 0.0
-off_arc_cost = 0.0
-fatigue_recovery = 0.0
-fatigue_window = 0.0
 
 # Balance lessens each pairing's edge and its fights run to the cap, each a
 # hundred points off fair, both at `edge` a point, what its median fight
@@ -60,162 +60,6 @@ ambusher = 50.0
 # points is left out of the balance search
 min_moved = 3.0
 
-# The game's numbers searched, each within its bounds. The bounds hold the
-# authored hard constraints: Intimidation share at least 0.1, Counter's recovery
-# over 0.5s, Parry's at least 1s. A number that sets how far a style can
-# reach is held out of the search, or its floor ([style]) could fall out of
-# reach: Intimidation's bind, 3s.
-
-[[knobs]]
-name = "frenzy_damage"
-min = 1.2
-max = 3.0
-
-[[knobs]]
-name = "overpower_damage"
-min = 1.2
-max = 3.5
-
-[[knobs]]
-name = "punish_damage"
-min = 0.5
-max = 2.0
-
-[[knobs]]
-name = "punish_per_stack"
-min = 0.05
-max = 0.4
-
-[[knobs]]
-name = "counter_reflect"
-min = 0.3
-max = 1.0
-
-[[knobs]]
-name = "counter_cost"
-min = 20.0
-max = 100.0
-
-[[knobs]]
-name = "counter_recovery"
-min = 2.0
-max = 10.0
-
-[[knobs]]
-name = "parry_cost"
-min = 5.0
-max = 40.0
-
-[[knobs]]
-name = "parry_recovery"
-min = 2.0
-max = 10.0
-
-[[knobs]]
-name = "frenzy_cost"
-min = 5.0
-max = 60.0
-
-[[knobs]]
-name = "frenzy_recovery"
-min = 2.0
-max = 10.0
-
-[[knobs]]
-name = "feint_cost"
-min = 2.0
-max = 40.0
-
-[[knobs]]
-name = "feint_recovery"
-min = 2.0
-max = 10.0
-
-[[knobs]]
-name = "overpower_cost"
-min = 10.0
-max = 80.0
-
-[[knobs]]
-name = "overpower_recovery"
-min = 2.0
-max = 10.0
-
-[[knobs]]
-name = "punish_cost"
-min = 5.0
-max = 60.0
-
-[[knobs]]
-name = "punish_recovery"
-min = 2.0
-max = 10.0
-
-[[knobs]]
-name = "leap_cost"
-min = 5.0
-max = 60.0
-
-[[knobs]]
-name = "leap_recovery"
-min = 2.0
-max = 10.0
-
-[[knobs]]
-name = "leap_distance"
-min = 3.0
-max = 15.0
-
-[[knobs]]
-name = "leap_strike"
-min = 0.3
-max = 3.0
-
-[[knobs]]
-name = "stride_cost"
-min = 5.0
-max = 60.0
-
-[[knobs]]
-name = "stride_recovery"
-min = 2.0
-max = 10.0
-
-[[knobs]]
-name = "patience_crit_max"
-min = 0.0
-max = 0.15
-
-[[knobs]]
-name = "health_per_physique"
-min = 0.5
-max = 1.2
-
-[[knobs]]
-name = "intimidation_share"
-min = 0.1
-max = 0.5
-
-[[knobs]]
-name = "intimidation_slow"
-min = 0.1
-max = 0.6
-
-[[knobs]]
-name = "stride_speed"
-min = 0.0
-max = 1.0
-
-[[knobs]]
-name = "grace_flank_max"
-min = 0.0
-max = 1.0
-
-[[knobs]]
-name = "stride_secs"
-min = 2.0
-max = 8.0
-
 # Each archetype's mind: every one tunes `common`, `strike` and `reaction`
 # (every bar holds a Feint and a Parry), how much each foe Approach's last
 # skill counts (`just_acted`), and its own. A setting not yet in
@@ -249,8 +93,6 @@ common = [
 strike = [
     { name = "foe_just_acted.floor", min = 0.2, max = 1.0, start = 0.6 },
     { name = "foe_just_acted.from", min = 0.5, max = 4.0, start = 2.0 },
-    { name = "strike_worth.to", min = 0.05, max = 1.0, start = 0.25 },
-    { name = "strike_worth.floor", min = 0.0, max = 1.0, start = 0.3 },
 ]
 reaction = [
     { name = "worth_answering.to", min = 0.05, max = 0.8, start = 0.3 },

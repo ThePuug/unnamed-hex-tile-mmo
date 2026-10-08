@@ -123,6 +123,12 @@ impl Sight {
         self.seen.drain(..newest);
         self.seen.front().map(|&(_, _, foe)| foe)
     }
+
+    /// How it last perceived `target`, as [`Sight::look`] returned it;
+    /// nothing while `target` is unseen
+    pub fn seen(&self, target: Entity) -> Option<Foe> {
+        self.seen.front().filter(|&&(_, seen, _)| seen == target).map(|&(_, _, foe)| foe)
+    }
 }
 
 #[cfg(test)]
@@ -132,7 +138,7 @@ mod tests {
     const DICE: Dice = Dice::seeded(0);
 
     fn foe(distance: i32) -> Foe {
-        Foe { distance, health: 600.0, in_arc: true, flanked: false, patient: 0.0, since_skill: None, status: Default::default() }
+        Foe { at: Default::default(), heading: None, distance, health: 600.0, in_arc: true, flanked: false, patient: 0.0, since_skill: None, status: Default::default() }
     }
 
     fn ms(millis: u64) -> Duration {

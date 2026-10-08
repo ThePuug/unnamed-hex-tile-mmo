@@ -13,7 +13,7 @@
 use bevy::prelude::*;
 use qrz::Qrz;
 
-use super::{mind::Mind, skills::{LEASH_LEFT_BOUNDS, LEASH_LEFT_CURVE, RECOVERY_LEFT_BOUNDS, RECOVERY_LEFT_CURVE}, utility::{score, Consideration, Curve}};
+use super::{mind::Mind, skills::{LEASH_LEFT_BOUNDS, LEASH_LEFT_CURVE}, utility::{score, Consideration, Curve}};
 
 /// What holding scores unless a mind sets it: the threshold every step must
 /// beat.
@@ -120,13 +120,13 @@ const LEASH_LEFT: Consideration<Ground> = Consideration {
 };
 
 /// The seconds of recovery it would be left in: a step costs none, so what
-/// it is in. One setting with a skill's `recovery_left`, weighed only as far
-/// as a mind lowers its floor, holding back from a fight it cannot act in
+/// it is in. Weighed only as far as a mind lowers its floor, holding back
+/// from a fight it cannot act in
 const RECOVERY_LEFT: Consideration<Ground> = Consideration {
     name: "recovery_left",
     read: |ground| ground.footing.recovery_left,
-    bounds: RECOVERY_LEFT_BOUNDS,
-    curve: RECOVERY_LEFT_CURVE,
+    bounds: (0.0, 10.0),
+    curve: Curve::FALLING.floored(1.0),
 };
 
 /// How far round toward its target's back the tile stands, every step

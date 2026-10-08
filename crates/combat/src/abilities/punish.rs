@@ -32,6 +32,7 @@ mod tests {
         let tuning = Tuning::DEFAULT;
         assert_eq!(weight(&tuning, 0), 0.5);
         assert!(weight(&tuning, 3) > weight(&tuning, 2) && weight(&tuning, 2) > weight(&tuning, 0), "the more stacks, the harder");
-        assert!((weight(&tuning, 3) - 1.0).abs() < 0.01, "at par from three");
+        let step = |stacks| weight(&tuning, stacks + 1) - weight(&tuning, stacks);
+        assert!((step(2) - step(0)).abs() < 1e-5, "each stack adds the same");
     }
 }

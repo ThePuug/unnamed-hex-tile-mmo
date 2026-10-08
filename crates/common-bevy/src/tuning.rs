@@ -30,6 +30,9 @@ pub struct Tuning {
     pub base_health: f32,
     /// Endurance an actor holds for each point of its Endurance potency
     pub endurance_pool: f32,
+    /// Share deeper Endurance runs than base potency for an Instinct and
+    /// Resolve pair holding as much as one attribute can at its level
+    pub endurance_depth: f32,
     /// Endurance a skill costs for each point of its cost, as a share of
     /// the potency its kind reads
     pub endurance_cost: f32,
@@ -53,7 +56,7 @@ pub struct Tuning {
     /// light while the pool holds and bites as it empties
     pub fatigue_bend: f32,
     /// Health each point of Physique adds before level
-    pub health_per_physique: f32,
+    pub health_per_point: f32,
     /// The health level curve, `(1 + level × k)^p`
     pub health_curve_k: f32,
     pub health_curve_p: f32,
@@ -61,10 +64,6 @@ pub struct Tuning {
     // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`).
     // A tuned value is two knobs, `_min` at T0 and `_max` at T3, the tiers between evenly spaced
     // (`CommitmentTier::between`) ---
-    /// Seconds between auto-attacks at the one pace every actor starts from
-    pub base_interval: f32,
-    /// Share faster auto-attacks come at the ceiling of Tempo's share
-    pub tempo_ceiling: f32,
     /// Share of the time a skill fired early skipped that its chain owes,
     /// paid once the chain ends (`combos::recovery_after`). Authored, never
     /// searched: it sets how far Ferocity and Preparation reach
@@ -110,14 +109,18 @@ pub struct Tuning {
     pub contest_scale: f32,
     /// Contest points each level of gap is worth to the higher level
     pub contest_per_level: f32,
+    /// Seconds between auto-attacks at the one pace every actor starts from
+    pub base_interval: f32,
+    /// Most faster a Tempo advantage brings auto-attacks
+    pub tempo_ceiling: f32,
     /// Most of a recovery an Impact advantage pushes it back by
     pub pushback_share: f32,
-    /// Most of a recovery a Composure advantage takes off it; below 1, so
+    /// Most of a recovery a Fitness advantage takes off it; below 1, so
     /// no recovery ever runs out at once
-    pub composure_share: f32,
+    pub fitness_share: f32,
     /// Share of a recovery its combo unlocks through, at parity
     pub combo_floor: f32,
-    /// Most more a Flow advantage unlocks it through
+    /// Most more an Efficiency advantage unlocks it through
     pub combo_share: f32,
     /// Seconds every threat's window starts from
     pub reaction_window: f32,
@@ -135,7 +138,7 @@ pub struct Tuning {
     /// Share of an attack's damage its roll lands either side of it
     pub damage_spread: f32,
     /// Most often a blow crits, by its striker's Focus over its target's
-    /// Toughness, approached and never reached
+    /// Fitness, approached and never reached
     pub crit_chance: f32,
     /// What a crit multiplies its blow by
     pub crit_power: f32,
@@ -165,17 +168,11 @@ pub struct Tuning {
     pub feint_damage: f32,
     pub parry_cost: f32,
     pub parry_recovery: f32,
-    /// Endurance a reaction pays for each point of damage it clears, beside
-    /// its flat cost, with no Resolve; less by its user's Concentration over
-    /// base potency
-    pub reaction_effort: f32,
-    /// Endurance a reaction pays for each threat it clears, as a share of
-    /// base potency, whatever the damage; less by Concentration as above
-    pub reaction_per_threat: f32,
     pub counter_cost: f32,
     pub counter_recovery: f32,
     /// Share of each countered threat's damage sent back by a counterer
-    /// with no Resolve; more by its Concentration over base potency
+    /// whose Resolve line holds as much as its level allows; less by its
+    /// line (`ActorAttributes::line_power`), `counter_line` of it with none
     pub counter_reflect: f32,
     pub leap_cost: f32,
     pub leap_recovery: f32,
@@ -213,15 +210,16 @@ impl Tuning {
         share_bend: 800.0,
         base_health: 588.0,
         endurance_pool: 7.551,
-        endurance_cost: 0.0,
+        endurance_depth: 0.5,
+        endurance_cost: 0.018,
         endurance_regen: 0.01,
-        off_arc_cost: 0.0,
+        off_arc_cost: 0.25,
         off_arc_share_min: 1.0 / 3.0,
         off_arc_share_max: 1.0,
-        fatigue_recovery: 3.545,
+        fatigue_recovery: 1.0,
         fatigue_window: 0.319,
-        fatigue_bend: 3.297,
-        health_per_physique: 0.695,
+        fatigue_bend: 2.0,
+        health_per_point: 0.672,
         health_curve_k: 0.10,
         health_curve_p: 2.0,
         base_interval: 2.1,
@@ -232,64 +230,62 @@ impl Tuning {
         grace_arc_min: 60.0,
         grace_arc_max: 150.0,
         grace_flank_min: 0.0,
-        grace_flank_max: 0.783,
+        grace_flank_max: 0.4,
         intimidation_bank: 36.0,
-        intimidation_share: 0.164,
+        intimidation_share: 0.221,
         intimidation_slow: 0.213,
         intimidation_slow_secs: 3.0,
         intimidation_root_secs: 1.0,
         intimidation_aura_secs: 1.0,
         patience_crit_min: 0.0,
-        patience_crit_max: 0.061,
+        patience_crit_max: 0.09,
         overcommit_secs: 5.0,
         contest_scale: 800.0,
         contest_per_level: 15.0,
         pushback_share: 0.5,
-        composure_share: 0.231,
+        fitness_share: 0.231,
         combo_floor: 0.5,
         combo_share: 0.4,
         reaction_window: 3.0,
-        window_bonus: 0.35,
+        window_bonus: 1.0,
         auto_damage: 1.029,
         force_auto: 1.0,
         stride_pace: 0.7,
         damage_spread: 0.05,
         crit_chance: 0.35,
         crit_power: 1.5,
-        frenzy_cost: 40.0,
-        frenzy_recovery: 8.489,
-        frenzy_damage: 1.296,
-        feint_cost: 15.0,
-        feint_recovery: 9.197,
-        feint_damage: 0.5,
-        overpower_cost: 45.0,
-        overpower_recovery: 7.983,
-        overpower_damage: 1.578,
-        punish_cost: 15.0,
-        punish_recovery: 6.098,
-        punish_damage: 1.491,
-        punish_per_stack: 0.165,
-        parry_cost: 35.0,
-        parry_recovery: 5.356,
-        reaction_effort: 0.0,
-        reaction_per_threat: 0.0,
+        frenzy_cost: 20.0,
+        frenzy_recovery: 3.0,
+        frenzy_damage: 1.5,
+        feint_cost: 7.5,
+        feint_recovery: 1.0,
+        feint_damage: 0.15,
+        overpower_cost: 22.5,
+        overpower_recovery: 2.0,
+        overpower_damage: 1.757,
+        punish_cost: 7.5,
+        punish_recovery: 2.0,
+        punish_damage: 1.257,
+        punish_per_stack: 0.1667,
+        parry_cost: 60.0,
+        parry_recovery: 1.0,
         counter_cost: 75.0,
-        counter_recovery: 7.644,
-        counter_reflect: 0.872,
-        leap_cost: 5.0,
-        leap_recovery: 5.462,
+        counter_recovery: 2.0,
+        counter_reflect: 0.5,
+        leap_cost: 2.5,
+        leap_recovery: 3.0,
         leap_distance: 12,
-        leap_strike: 2.154,
-        stride_cost: 45.0,
-        stride_recovery: 4.722,
+        leap_strike: 1.469,
+        stride_cost: 22.5,
+        stride_recovery: 1.0,
         frenzy_line: 0.2,
         overpower_line: 0.2,
         punish_line: 0.2,
         counter_line: 0.2,
         stride_line: 0.2,
         leap_line: 0.2,
-        stride_secs: 6.542,
-        stride_speed: 0.215,
+        stride_secs: 5.849,
+        stride_speed: 0.401,
     };
 
     /// What `ability` costs, its endurance reckoned from it
@@ -336,7 +332,8 @@ impl Tuning {
     }
 
     /// Seconds of recovery `ability` leaves its user in; an auto-attack
-    /// runs on its own timer instead.
+    /// runs on its own timer instead. Authored, never searched, and never
+    /// longer than `reaction_window`: endurance is a fight's throttle.
     pub fn recovery(&self, ability: AbilityType) -> f32 {
         match ability {
             AbilityType::AutoAttack => 0.0,
@@ -400,6 +397,7 @@ impl Tuning {
             "share_bend" => &mut self.share_bend,
             "base_health" => &mut self.base_health,
             "endurance_pool" => &mut self.endurance_pool,
+            "endurance_depth" => &mut self.endurance_depth,
             "endurance_cost" => &mut self.endurance_cost,
             "endurance_regen" => &mut self.endurance_regen,
             "off_arc_cost" => &mut self.off_arc_cost,
@@ -408,13 +406,13 @@ impl Tuning {
             "fatigue_recovery" => &mut self.fatigue_recovery,
             "fatigue_window" => &mut self.fatigue_window,
             "fatigue_bend" => &mut self.fatigue_bend,
-            "health_per_physique" => &mut self.health_per_physique,
+            "health_per_point" => &mut self.health_per_point,
             "health_curve_k" => &mut self.health_curve_k,
             "health_curve_p" => &mut self.health_curve_p,
             "contest_scale" => &mut self.contest_scale,
             "contest_per_level" => &mut self.contest_per_level,
             "pushback_share" => &mut self.pushback_share,
-            "composure_share" => &mut self.composure_share,
+            "fitness_share" => &mut self.fitness_share,
             "combo_floor" => &mut self.combo_floor,
             "combo_share" => &mut self.combo_share,
             "reaction_window" => &mut self.reaction_window,
@@ -440,8 +438,6 @@ impl Tuning {
             "punish_per_stack" => &mut self.punish_per_stack,
             "parry_cost" => &mut self.parry_cost,
             "parry_recovery" => &mut self.parry_recovery,
-            "reaction_effort" => &mut self.reaction_effort,
-            "reaction_per_threat" => &mut self.reaction_per_threat,
             "counter_cost" => &mut self.counter_cost,
             "counter_recovery" => &mut self.counter_recovery,
             "counter_reflect" => &mut self.counter_reflect,
@@ -487,5 +483,16 @@ mod tests {
         assert!(tuning.get("no_such_knob").is_err());
         assert!(tuning.set("frenzy_damage", "much").is_err());
         assert!(tuning.set("no_such_knob", "1").is_err());
+    }
+
+    #[test]
+    fn no_skill_recovers_longer_than_a_reaction_window() {
+        let tuning = Tuning::DEFAULT;
+        for ability in [
+            AbilityType::Frenzy, AbilityType::Feint, AbilityType::Overpower, AbilityType::Punish,
+            AbilityType::Parry, AbilityType::Counter, AbilityType::Leap, AbilityType::PerfectStride,
+        ] {
+            assert!(tuning.recovery(ability) <= tuning.reaction_window, "{ability:?}");
+        }
     }
 }

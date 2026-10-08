@@ -626,9 +626,15 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
 /// Prints where every actor stands and what it is doing.
 fn timeline(world: &mut World, elapsed: Duration) {
     use common_bevy::components::{Loc, hex_assignment::AssignedHex, resources::CombatState, returning::Returning, status::Status, target::Target};
+    let mut facings = world.query::<(Entity, &Loc, &Heading)>();
+    let facing: HashMap<Entity, (Loc, Heading)> = facings.iter(world).map(|(e, loc, heading)| (e, (*loc, *heading))).collect();
     let mut actors = world.query::<(Entity, &Side, &Loc, &Health, &CombatState, Option<&Target>, Option<&Returning>, Option<&AssignedHex>, Option<&Status>, &common_bevy::components::position::Position)>();
     let lines: Vec<_> = actors.iter(world).map(|(e, side, loc, hp, combat, target, returning, assigned, status, pos)| {
-        format!("{}#{} {:?} pos {:?}+({:.2},{:.2}) hp {:.0}{}{}{}{} ->{:?}", side.0, e.index(), (loc.q, loc.r, loc.z), (pos.tile.q, pos.tile.r), pos.offset.x, pos.offset.z, hp.state,
+        // Whether it stands past its target's forward faces, as a strike it lands would count a flank
+        let flanking = target.and_then(|t| t.entity).and_then(|t| facing.get(&t)).is_some_and(|&(at, heading)| !common_bevy::systems::targeting::is_in_facing_cone(heading, at, *loc));
+        format!("{}#{} {:?} face {:?}{} pos {:?}+({:.2},{:.2}) hp {:.0}{}{}{}{} ->{:?}", side.0, e.index(), (loc.q, loc.r, loc.z),
+            facing.get(&e).map(|(_, heading)| *heading), if flanking { " FLANKING" } else { "" },
+            (pos.tile.q, pos.tile.r), pos.offset.x, pos.offset.z, hp.state,
             if combat.in_combat { " fighting" } else { "" },
             if returning.is_some() { " RETURNING" } else { "" },
             assigned.map_or(String::new(), |a| format!(" hex {:?}", (a.0.q, a.0.r, a.0.z))),

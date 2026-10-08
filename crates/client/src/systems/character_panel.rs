@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{Actor, ActorAttributes, Pair},
+    components::{Actor, ActorAttributes, Attribute, Pair},
     systems::combat::damage::contest_factor,
 };
 
@@ -112,23 +112,19 @@ pub enum AxisMarker {
     InstinctResolve,
 }
 
-/// Marker component for meta-attribute stat display, a header with what the
-/// stat is worth and a line for what that gives: the six absolutes, the six
-/// contest stats and the six commitments.
-#[derive(Component, Clone)]
-pub enum MetaAttributeStat {
+/// A stat a pair's attributes give: its absolute, which both share, and
+/// each attribute's contest and commitment
+#[derive(Clone, Copy)]
+pub enum Stat {
     Force,
-    Tempo,
     Constitution,
     Endurance,
-    Intuition,
-    Concentration,
     Impact,
-    Composure,
-    Flow,
+    Tempo,
+    Fitness,
+    Efficiency,
     Reflex,
     Focus,
-    Toughness,
     Ferocity,
     Grace,
     Intimidation,
@@ -137,9 +133,36 @@ pub enum MetaAttributeStat {
     Awareness,
 }
 
-/// Marker for raw stat value display (e.g., "(150)", or a commitment's "(T2)")
+impl Stat {
+    pub fn name(self) -> &'static str {
+        match self {
+            Stat::Force => "Force",
+            Stat::Constitution => "Constitution",
+            Stat::Endurance => "Endurance",
+            Stat::Impact => "Impact",
+            Stat::Tempo => "Tempo",
+            Stat::Fitness => "Fitness",
+            Stat::Efficiency => "Efficiency",
+            Stat::Reflex => "Reflex",
+            Stat::Focus => "Focus",
+            Stat::Ferocity => "Ferocity",
+            Stat::Grace => "Grace",
+            Stat::Intimidation => "Intimidation",
+            Stat::Preparation => "Preparation",
+            Stat::Patience => "Patience",
+            Stat::Awareness => "Awareness",
+        }
+    }
+}
+
+/// A stat's cell beside its pair's sliders, which says what the stat gives
+/// while the pointer rests on it (`help::Describes`)
 #[derive(Component)]
-pub struct RawStatValue;
+pub struct StatCell(pub Stat);
+
+/// The value shown in a stat's cell
+#[derive(Component)]
+pub struct StatValue(pub Stat);
 
 /// A pair's section of the attributes tab, by the pair's place in a respec.
 #[derive(Component)]
@@ -175,13 +198,16 @@ impl CharacterPanelState {
 
 pub const KEYCODE_CHARACTER_PANEL: KeyCode = KeyCode::KeyC;
 
-/// Groups a pair's absolute, relative and commitment stat rows into one container
+/// A pair's stats beside its sliders: a column to each attribute, its name
+/// over the three stats it gives, absolute, contest and commitment; each
+/// cell its stat's name and value, and what it gives while the pointer
+/// rests on it
 macro_rules! create_stat_section {
-    ($parent:expr, $left_abs:expr, $right_abs:expr, $left_rel:expr, $right_rel:expr, $left_com:expr, $right_com:expr) => {
+    ($parent:expr, $(($name:expr, $color:expr, [$($stat:expr),+])),+) => {
         $parent.spawn((
             Node {
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(5.),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(16.),
                 width: Val::Px(375.),
                 padding: UiRect::all(Val::Px(10.)),
                 border_radius: BorderRadius::all(Val::Px(4.)),
@@ -190,136 +216,52 @@ macro_rules! create_stat_section {
             BackgroundColor(Color::srgba(0.15, 0.15, 0.15, 0.8)),
         ))
         .with_children(|section| {
-            // Absolute row (label + value + effect)
-            section.spawn((
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    justify_content: JustifyContent::SpaceBetween,
-                    column_gap: Val::Px(10.),
-                    ..default()
-                },
-            ))
-            .with_children(|row| {
-                create_stat_display!(row, $left_abs);
-                create_stat_display!(row, $right_abs);
-            });
-
-            // Relative row (label + value + effect)
-            section.spawn((
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    justify_content: JustifyContent::SpaceBetween,
-                    column_gap: Val::Px(10.),
-                    ..default()
-                },
-            ))
-            .with_children(|row| {
-                create_stat_display!(row, $left_rel);
-                create_stat_display!(row, $right_rel);
-            });
-
-            // Commitment row (label + tier + what the tier gives)
-            section.spawn((
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    justify_content: JustifyContent::SpaceBetween,
-                    column_gap: Val::Px(10.),
-                    ..default()
-                },
-            ))
-            .with_children(|row| {
-                create_stat_display!(row, $left_com);
-                create_stat_display!(row, $right_com);
-            });
+            $(
+                section.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(4.), flex_grow: 1.0, flex_basis: Val::Px(0.), ..default() })
+                    .with_children(|column| {
+                        column.spawn((
+                            Text::new($name),
+                            TextFont { font_size: FontSize::Px(14.0), ..default() },
+                            TextColor($color),
+                            Node { margin: UiRect::bottom(Val::Px(2.)), ..default() },
+                        ));
+                        $(create_stat_cell!(column, $stat, $color);)+
+                    });
+            )+
         });
     };
 }
 
-macro_rules! create_stat_display {
-    ($parent:expr, $stat:expr) => {
-        {
-            let (name, color, effect_label) = match $stat {
-                MetaAttributeStat::Force => ("Force", Color::srgb(0.9, 0.5, 0.5), "Auto-Attack Damage:"),
-                MetaAttributeStat::Tempo => ("Tempo", Color::srgb(0.9, 0.9, 0.5), "Auto-Attack Speed:"),
-                MetaAttributeStat::Constitution => ("Constitution", Color::srgb(0.5, 0.8, 0.5), "Health:"),
-                MetaAttributeStat::Endurance => ("Endurance", Color::srgb(0.5, 0.7, 0.9), "Endurance Pool:"),
-                MetaAttributeStat::Intuition => ("Leap", Color::srgb(0.7, 0.5, 0.9), "Distance:"),
-                MetaAttributeStat::Concentration => ("Counter", Color::srgb(0.9, 0.6, 0.3), "Reflection:"),
-                MetaAttributeStat::Impact => ("Impact", Color::srgb(0.9, 0.5, 0.5), "Recovery Pushback:"),
-                MetaAttributeStat::Composure => ("Composure", Color::srgb(0.5, 0.7, 0.9), "Recovery Reduction:"),
-                MetaAttributeStat::Flow => ("Flow", Color::srgb(0.9, 0.9, 0.5), "Combo Unlock:"),
-                MetaAttributeStat::Reflex => ("Reflex", Color::srgb(0.7, 0.5, 0.9), "Reaction Window:"),
-                MetaAttributeStat::Focus => ("Focus", Color::srgb(0.9, 0.6, 0.3), "Crit Chance:"),
-                MetaAttributeStat::Toughness => ("Toughness", Color::srgb(0.5, 0.8, 0.5), "Crit Resisted:"),
-                MetaAttributeStat::Ferocity => ("Ferocity", Color::srgb(0.9, 0.5, 0.5), "Early Combos:"),
-                MetaAttributeStat::Grace => ("Grace", Color::srgb(0.9, 0.9, 0.5), "Strike Arc:"),
-                MetaAttributeStat::Intimidation => ("Intimidation", Color::srgb(0.5, 0.8, 0.5), "Fill per Second:"),
-                MetaAttributeStat::Preparation => ("Preparation", Color::srgb(0.5, 0.7, 0.9), "Recovery Reactions:"),
-                MetaAttributeStat::Patience => ("Patience", Color::srgb(0.7, 0.5, 0.9), "Crit per Stack:"),
-                MetaAttributeStat::Awareness => ("Awareness", Color::srgb(0.9, 0.6, 0.3), "Reaction Span:"),
-            };
-
-            $parent.spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(3.),
-                    flex_grow: 1.0,
-                    flex_basis: Val::Px(0.),
-                    ..default()
-                },
-            ))
-            .with_children(|stat_col| {
-                // Header row: stat name left, raw value right
-                stat_col.spawn((
-                    Node {
-                        flex_direction: FlexDirection::Row,
-                        justify_content: JustifyContent::SpaceBetween,
-                        column_gap: Val::Px(4.),
-                        ..default()
-                    },
-                ))
-                .with_children(|header| {
-                    // Stat name (colored)
-                    header.spawn((
-                        Text::new(name),
-                        TextFont { font_size: FontSize::Px(11.0), ..default() },
-                        TextColor(color),
-                    ));
-                    // Raw stat value
-                    header.spawn((
-                        $stat.clone(),
-                        RawStatValue,
-                        Text::new("(0)"),
-                        TextFont { font_size: FontSize::Px(11.0), ..default() },
-                        TextColor(Color::srgb(0.7, 0.7, 0.7)),
-                    ));
-                });
-
-                // Effect row: label + calculated value (right-aligned)
-                stat_col.spawn((
-                    Node {
-                        flex_direction: FlexDirection::Row,
-                        justify_content: JustifyContent::SpaceBetween,
-                        ..default()
-                    },
-                ))
-                .with_children(|effect_row| {
-                    // Effect label
-                    effect_row.spawn((
-                        Text::new(effect_label),
-                        TextFont { font_size: FontSize::Px(10.0), ..default() },
-                        TextColor(Color::srgb(0.8, 0.8, 0.8)),
-                    ));
-                    // Calculated value (marker for updates)
-                    effect_row.spawn((
-                        $stat,
-                        Text::new("0"),
-                        TextFont { font_size: FontSize::Px(11.0), ..default() },
-                        TextColor(Color::srgb(1.0, 1.0, 1.0)),
-                    ));
-                });
-            });
-        }
+macro_rules! create_stat_cell {
+    ($parent:expr, $stat:expr, $color:expr) => {
+        $parent.spawn((
+            StatCell($stat),
+            crate::systems::help::Describes::default(),
+            Node {
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceBetween,
+                flex_grow: 1.0,
+                flex_basis: Val::Px(0.),
+                padding: UiRect::axes(Val::Px(4.), Val::Px(2.)),
+                ..default()
+            },
+        ))
+        .with_children(|cell| {
+            // The cell takes the pointer, not its text
+            cell.spawn((
+                Text::new($stat.name()),
+                TextFont { font_size: FontSize::Px(12.0), ..default() },
+                TextColor($color),
+                Pickable::IGNORE,
+            ));
+            cell.spawn((
+                StatValue($stat),
+                Text::new("0"),
+                TextFont { font_size: FontSize::Px(12.0), ..default() },
+                TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                Pickable::IGNORE,
+            ));
+        });
     };
 }
 
@@ -572,8 +514,9 @@ pub fn setup(
     commands
         .entity(attributes)
         .with_children(|parent| {
-            // One row to a pair: its sliders, and the stats its two attributes
-            // give, so the two stay level however tall the stats grow.
+            // One row to a pair: its sliders, and the stats its two
+            // attributes give, each saying what it gives while the pointer
+            // rests on it.
             parent.spawn((
                 Node {
                     flex_direction: FlexDirection::Column,
@@ -584,40 +527,37 @@ pub fn setup(
             .with_children(|main| {
                 let pair_row = || Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(20.), ..default() };
 
-                // MIGHT ↔ AGILITY (Impact = red, Flow = yellow)
+                // MIGHT ↔ AGILITY
                 main.spawn(pair_row()).with_children(|pair| {
                     create_attribute_section!(pair, 0, "MIGHT", "AGILITY",
                         Color::srgb(0.9, 0.5, 0.5), Color::srgb(0.9, 0.9, 0.5),
                         AttributeTitle::MightAgility, AttributeCurrent::MightAgility, AttributeBar::MightAgility, AxisMarker::MightAgility,
                         LeftCurrentValue::MightAgility, RightCurrentValue::MightAgility);
                     create_stat_section!(pair,
-                        MetaAttributeStat::Force, MetaAttributeStat::Tempo,
-                        MetaAttributeStat::Impact, MetaAttributeStat::Flow,
-                        MetaAttributeStat::Ferocity, MetaAttributeStat::Grace);
+                        ("Might", Color::srgb(0.9, 0.5, 0.5), [Stat::Force, Stat::Impact, Stat::Ferocity]),
+                        ("Agility", Color::srgb(0.9, 0.9, 0.5), [Stat::Force, Stat::Tempo, Stat::Grace]));
                 });
 
-                // PHYSIQUE ↔ DISCIPLINE (Toughness = green, Composure = blue)
+                // PHYSIQUE ↔ DISCIPLINE
                 main.spawn(pair_row()).with_children(|pair| {
                     create_attribute_section!(pair, 1, "PHYSIQUE", "DISCIPLINE",
                         Color::srgb(0.5, 0.8, 0.5), Color::srgb(0.5, 0.7, 0.9),
                         AttributeTitle::PhysiqueDiscipline, AttributeCurrent::PhysiqueDiscipline, AttributeBar::PhysiqueDiscipline, AxisMarker::PhysiqueDiscipline,
                         LeftCurrentValue::PhysiqueDiscipline, RightCurrentValue::PhysiqueDiscipline);
                     create_stat_section!(pair,
-                        MetaAttributeStat::Constitution, MetaAttributeStat::Endurance,
-                        MetaAttributeStat::Toughness, MetaAttributeStat::Composure,
-                        MetaAttributeStat::Intimidation, MetaAttributeStat::Preparation);
+                        ("Physique", Color::srgb(0.5, 0.8, 0.5), [Stat::Constitution, Stat::Fitness, Stat::Intimidation]),
+                        ("Discipline", Color::srgb(0.5, 0.7, 0.9), [Stat::Constitution, Stat::Efficiency, Stat::Preparation]));
                 });
 
-                // INSTINCT ↔ RESOLVE (Reflex = purple, Focus = orange)
+                // INSTINCT ↔ RESOLVE
                 main.spawn(pair_row()).with_children(|pair| {
                     create_attribute_section!(pair, 2, "INSTINCT", "RESOLVE",
                         Color::srgb(0.7, 0.5, 0.9), Color::srgb(0.9, 0.6, 0.3),
                         AttributeTitle::InstinctResolve, AttributeCurrent::InstinctResolve, AttributeBar::InstinctResolve, AxisMarker::InstinctResolve,
                         LeftCurrentValue::InstinctResolve, RightCurrentValue::InstinctResolve);
                     create_stat_section!(pair,
-                        MetaAttributeStat::Intuition, MetaAttributeStat::Concentration,
-                        MetaAttributeStat::Reflex, MetaAttributeStat::Focus,
-                        MetaAttributeStat::Patience, MetaAttributeStat::Awareness);
+                        ("Instinct", Color::srgb(0.7, 0.5, 0.9), [Stat::Endurance, Stat::Reflex, Stat::Patience]),
+                        ("Resolve", Color::srgb(0.9, 0.6, 0.3), [Stat::Endurance, Stat::Focus, Stat::Awareness]));
                 });
             });
 
@@ -777,7 +717,8 @@ pub fn update_attributes(
     left_value_query: Query<(Entity, &LeftCurrentValue)>,
     right_value_query: Query<(Entity, &RightCurrentValue)>,
     bar_query: Query<(Entity, &AttributeBar)>,
-    meta_query: Query<(&MetaAttributeStat, Entity)>,
+    mut cells: Query<(&StatCell, &mut crate::systems::help::Describes)>,
+    values: Query<(Entity, &StatValue)>,
     mut spectrum_query: Query<&mut Node, (With<SpectrumRange>, Without<AxisMarker>)>,
     mut axis_query: Query<(&AxisMarker, &mut Node), Without<SpectrumRange>>,
     mut text_query: Query<&mut Text>,
@@ -893,104 +834,69 @@ pub fn update_attributes(
         }
     }
 
-    // Update meta-attribute raw values and calculated effects
-    for (meta_stat, entity) in &meta_query {
+    for (cell, mut describes) in &mut cells {
+        let now = describe(display_attrs, cell.0, &tuning);
+        if describes.0 != now {
+            describes.0 = now;
+        }
+    }
+    for (entity, value) in &values {
         if let Ok(mut text) = text_query.get_mut(entity) {
-            // Check if this is a raw value display (starts with '(')
-            let is_raw = text.0.starts_with('(');
-
-            if is_raw {
-                // Update raw stat value in parentheses
-                let raw_value = match meta_stat {
-                    MetaAttributeStat::Force => display_attrs.might().to_string(),
-                    MetaAttributeStat::Tempo => display_attrs.agility().to_string(),
-                    MetaAttributeStat::Constitution => display_attrs.physique().to_string(),
-                    MetaAttributeStat::Endurance => display_attrs.discipline().to_string(),
-                    MetaAttributeStat::Intuition => display_attrs.instinct().to_string(),
-                    MetaAttributeStat::Concentration => display_attrs.resolve().to_string(),
-                    MetaAttributeStat::Impact => display_attrs.impact().to_string(),
-                    MetaAttributeStat::Composure => display_attrs.composure().to_string(),
-                    MetaAttributeStat::Flow => display_attrs.flow().to_string(),
-                    MetaAttributeStat::Reflex => display_attrs.reflex().to_string(),
-                    MetaAttributeStat::Focus => display_attrs.focus().to_string(),
-                    MetaAttributeStat::Toughness => display_attrs.toughness().to_string(),
-                    MetaAttributeStat::Ferocity => format!("T{}", display_attrs.ferocity().index()),
-                    MetaAttributeStat::Grace => format!("T{}", display_attrs.grace().index()),
-                    MetaAttributeStat::Intimidation => format!("T{}", display_attrs.intimidation().index()),
-                    MetaAttributeStat::Preparation => format!("T{}", display_attrs.preparation().index()),
-                    MetaAttributeStat::Patience => format!("T{}", display_attrs.patience().index()),
-                    MetaAttributeStat::Awareness => format!("T{}", display_attrs.awareness().index()),
-                };
-                **text = format!("({})", raw_value);
-            } else {
-                // Update calculated effect value (uncontested display)
-                **text = match meta_stat {
-                    // An absolute's effect is how much more its points make
-                    // what the fight reads it as than an actor of its level
-                    // with none
-                    MetaAttributeStat::Force => increase(display_attrs.auto_damage(&tuning), display_attrs.base_potency(&tuning) * tuning.auto_damage),
-                    MetaAttributeStat::Tempo => increase(tuning.base_interval, display_attrs.cadence_interval(&tuning).as_secs_f32()),
-                    MetaAttributeStat::Constitution => increase(display_attrs.constitution(&tuning), tuning.base_health * display_attrs.hp_level_multiplier(&tuning)),
-                    MetaAttributeStat::Endurance => increase(display_attrs.endurance(&tuning), display_attrs.base_potency(&tuning)),
-                    // Instinct's and Resolve's own: the skill each line raises
-                    MetaAttributeStat::Intuition => increase(display_attrs.line_power(&tuning, common_bevy::message::AbilityType::Leap), 1.0),
-                    MetaAttributeStat::Concentration => increase(display_attrs.line_power(&tuning, common_bevy::message::AbilityType::Counter), 1.0),
-                    MetaAttributeStat::Impact => {
-                        // Recovery pushback: 0.50 × gap × contest_factor
-                        let impact = display_attrs.impact();
-                        let contest = contest_factor(&tuning, impact, 0, 0.0);  // vs 0 composure
-                        let pushback_pct = (0.50 * contest) * 100.0;
-                        format!("+{:.0}%", pushback_pct)
-                    },
-                    MetaAttributeStat::Composure => {
-                        // Recovery time reduction: 0.33 × gap × contest_factor
-                        let composure = display_attrs.composure();
-                        let contest = contest_factor(&tuning, composure, 0, 0.0);  // vs 0 impact
-                        let reduction_pct = (0.33 * contest) * 100.0;
-                        format!("-{:.0}%", reduction_pct)
-                    },
-                    MetaAttributeStat::Flow => {
-                        // Combo unlock: 0.66 × gap × contest_factor
-                        let flow = display_attrs.flow();
-                        let contest = contest_factor(&tuning, flow, 0, 0.0);  // vs 0 reflex
-                        let reduction_pct = (0.66 * contest) * 100.0;
-                        format!("-{:.0}%", reduction_pct)
-                    },
-                    MetaAttributeStat::Reflex => {
-                        // Reaction window: 3.0s × (1.0 + 0.5 × contest_factor)
-                        // Display raw time value (different pattern from other stats)
-                        let reflex = display_attrs.reflex();
-                        let contest = contest_factor(&tuning, reflex, 0, 0.0);  // vs 0 flow
-                        let multiplier = 1.0 + 0.5 * contest;
-                        let window_seconds = 3.0 * multiplier;
-                        format!("{:.1}s", window_seconds)
-                    },
-                    MetaAttributeStat::Focus => {
-                        // Crit chance on a target of its level with no Toughness
-                        let contest = contest_factor(&tuning, display_attrs.focus(), 0, 0.0);
-                        format!("{:.0}%", tuning.crit_chance * contest * 100.0)
-                    },
-                    MetaAttributeStat::Toughness => {
-                        // The Focus it cancels: an attacker crits it only with more
-                        display_attrs.toughness().to_string()
-                    },
-                    // A commitment's effect is what its tier gives, from the
-                    // same methods the fight reads.
-                    MetaAttributeStat::Ferocity => display_attrs.ferocity().index().to_string(),
-                    MetaAttributeStat::Grace => format!("+/-{:.0} deg", display_attrs.arc(&tuning)),
-                    MetaAttributeStat::Intimidation => format!("{:.0}", display_attrs.intimidation_fill()),
-                    MetaAttributeStat::Preparation => display_attrs.preparation().index().to_string(),
-                    MetaAttributeStat::Patience => format!("+{:.0}%", display_attrs.patience_crit(&tuning) * 100.0),
-                    MetaAttributeStat::Awareness => format!("{:.2}s", display_attrs.span(&tuning).as_secs_f32()),
-                };
+            let now = shown(display_attrs, value.0);
+            if text.0 != now {
+                text.0 = now;
             }
         }
     }
 }
 
-/// How much more `value` is than `base`, as a percentage
-fn increase(value: f32, base: f32) -> String {
-    format!("+{:.0}%", (value / base - 1.0) * 100.0)
+/// What `stat` shows in its cell: the pair's points for its absolute, the
+/// attribute's value for a contest, a commitment's tier
+fn shown(attrs: &ActorAttributes, stat: Stat) -> String {
+    use Stat::*;
+    match stat {
+        Force => attrs.pair_points(Attribute::Might).to_string(),
+        Constitution => attrs.pair_points(Attribute::Physique).to_string(),
+        Endurance => attrs.pair_points(Attribute::Instinct).to_string(),
+        Impact => attrs.might().to_string(),
+        Tempo => attrs.agility().to_string(),
+        Fitness => attrs.physique().to_string(),
+        Efficiency => attrs.discipline().to_string(),
+        Reflex => attrs.instinct().to_string(),
+        Focus => attrs.resolve().to_string(),
+        Ferocity => format!("T{}", attrs.ferocity().index()),
+        Grace => format!("T{}", attrs.grace().index()),
+        Intimidation => format!("T{}", attrs.intimidation().index()),
+        Preparation => format!("T{}", attrs.preparation().index()),
+        Patience => format!("T{}", attrs.patience().index()),
+        Awareness => format!("T{}", attrs.awareness().index()),
+    }
+}
+
+/// What `stat` gives an actor with `attrs`, by the numbers the fight
+/// reads; a contest as it stands against a foe of its level with none of
+/// what contests it
+fn describe(attrs: &ActorAttributes, stat: Stat, tuning: &Tuning) -> String {
+    let percent = |share: f32| format!("{:.0}%", share * 100.0);
+    let contest = |stat: u16| contest_factor(tuning, stat, 0, 0.0);
+    let against = "\nAgainst a foe of its level with none of what contests it.";
+    match stat {
+        Stat::Force => format!("Force, the absolute of Might and Agility together: its auto-attacks strike {} harder.", percent(attrs.auto_damage(tuning) / (attrs.base_potency(tuning) * tuning.auto_damage) - 1.0)),
+        Stat::Constitution => format!("Constitution, the absolute of Physique and Discipline together: {} more health.", percent(attrs.constitution(tuning) / (tuning.base_health * attrs.hp_level_multiplier(tuning)) - 1.0)),
+        Stat::Endurance => format!("Endurance, the absolute of Instinct and Resolve together: an endurance pool {} deeper.", percent(attrs.endurance(tuning) / attrs.base_potency(tuning) - 1.0)),
+        Stat::Impact => format!("Impact, Might's contest, against a foe's Efficiency: each blow pushes its recovery back {}.{against}", percent(tuning.pushback_share * contest(attrs.impact()))),
+        Stat::Tempo => format!("Tempo, Agility's contest, against a foe's Reflex: its auto-attacks come {} sooner.{against}", percent(1.0 - attrs.cadence_interval(tuning, None).as_secs_f32() / tuning.base_interval)),
+        Stat::Fitness => format!("Fitness, Physique's contest, against a foe's Focus: its recovery runs {} shorter, and a foe's Focus crits it less.{against}", percent(tuning.fitness_share * contest(attrs.fitness()))),
+        Stat::Efficiency => format!("Efficiency, Discipline's contest, against a foe's Impact: its combos unlock {} sooner.{against}", percent(tuning.combo_share * contest(attrs.efficiency()))),
+        Stat::Reflex => format!("Reflex, Instinct's contest, against a foe's Tempo: a threat on it waits {:.1}s to land, time to act and answer in.{against}", tuning.reaction_window * (1.0 + tuning.window_bonus * contest(attrs.reflex()))),
+        Stat::Focus => format!("Focus, Resolve's contest, against a foe's Fitness: its blows crit {} of the time.{against}", percent(tuning.crit_chance * contest(attrs.focus()))),
+        Stat::Ferocity => format!("Ferocity, Might's commitment: up to {} combos in a chain fire before they unlock, the chain paying half the time skipped.", attrs.ferocity().index()),
+        Stat::Grace => format!("Grace, Agility's commitment: it strikes within {:.0} degrees either side of its heading, {} harder from a foe's flank.", attrs.arc(tuning), percent(attrs.flank(tuning))),
+        Stat::Intimidation => format!("Intimidation, Physique's commitment: it slows foes near it who look away, and fills its bank {:.0} a second, released into a strike that lands harder and binds.", attrs.intimidation_fill()),
+        Stat::Preparation => format!("Preparation, Discipline's commitment: up to {} reactions in a chain fire early after a strike, a Leap clear among them, the chain paying half the time skipped.", attrs.preparation().index()),
+        Stat::Patience => format!("Patience, Instinct's commitment: each attack made at it overcommits its attacker, and its skills crit {} likelier for each stack a foe carries.", percent(attrs.patience_crit(tuning))),
+        Stat::Awareness => format!("Awareness, Resolve's commitment: a reaction takes every threat landing within {:.2}s behind the front one.", attrs.span(tuning).as_secs_f32()),
+    }
 }
 
 /// Convert attribute value to percentage position on bar
