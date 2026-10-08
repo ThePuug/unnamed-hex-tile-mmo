@@ -75,9 +75,12 @@ impl ChunkTaskQueue {
         }
     }
 
-    /// Everyone waiting on `chunk_id`, released to be sent it.
-    fn release(&mut self, chunk_id: ChunkId) -> Vec<Entity> {
-        self.waiters.remove(&chunk_id).unwrap_or_default()
+    /// Everyone waiting on `chunk_id` who `holds` it still, released to be
+    /// sent it. One whose sent set lost the chunk while it was queued has
+    /// left its range and been told to evict it: sent it now, it would keep
+    /// a chunk the server never evicts again (INV-005).
+    fn release(&mut self, chunk_id: ChunkId, holds: impl Fn(Entity) -> bool) -> Vec<Entity> {
+        self.waiters.remove(&chunk_id).unwrap_or_default().into_iter().filter(|&ent| holds(ent)).collect()
     }
 
     /// Chunks waiting on a task slot. What the queue is behind by: the
@@ -260,6 +263,7 @@ pub fn try_discover_chunk(
     mut task_queue: ResMut<ChunkTaskQueue>,
     locs: Query<&Loc>,
     changes: Res<WorldChanges>,
+    holders: Query<&VisibleChunkCache>,
 ) {
     for message in reader.read() {
         // Passthrough: EvictChunks Try → Do (server-authoritative eviction)
@@ -302,7 +306,7 @@ pub fn try_discover_chunk(
 
             // Generated for another request while queued: send now.
             if world_cache.chunks.contains_key(&chunk_id) {
-                let waiting = task_queue.release(chunk_id);
+                let waiting = task_queue.release(chunk_id, |ent| holders.get(ent).is_ok_and(|held| held.sent.contains(&chunk_id)));
                 send_cached_chunk(&waiting, chunk_id, &mut world_cache, &*map, &changes, &mut writer);
                 continue;
             }
@@ -352,6 +356,7 @@ pub fn poll_chunk_tasks(
     timings: Res<SystemTimings>,
     changes: Res<WorldChanges>,
     mut den_sites: ResMut<Dens>,
+    holders: Query<&VisibleChunkCache>,
 ) {
     let mut _t = None;
     let mut pending = Vec::new();
@@ -376,7 +381,7 @@ pub fn poll_chunk_tasks(
             }
 
             let wire_tiles = merge_and_pack(&chunk, &map, &changes);
-            for ent in task_queue.release(chunk_id) {
+            for ent in task_queue.release(chunk_id, |ent| holders.get(ent).is_ok_and(|held| held.sent.contains(&chunk_id))) {
                 writer.write(Do {
                     event: Event::ChunkData { ent, chunk_id, tiles: wire_tiles.clone() }
                 });
@@ -450,8 +455,8 @@ mod chunk_queue_tests {
         assert!(!queue.enqueue(chunk, a));
         assert_eq!(queue.pending, vec![chunk]);
 
-        assert_eq!(queue.release(chunk), vec![a, b]);
-        assert!(queue.release(chunk).is_empty());
+        assert_eq!(queue.release(chunk, |_| true), vec![a, b]);
+        assert!(queue.release(chunk, |_| true).is_empty());
     }
 
     #[test]
@@ -466,6 +471,21 @@ mod chunk_queue_tests {
         queue.in_flight.insert(chunk);
         assert!(!queue.enqueue(chunk, b));
         assert!(queue.pending.is_empty());
-        assert_eq!(queue.release(chunk), vec![a, b]);
+        assert_eq!(queue.release(chunk, |_| true), vec![a, b]);
+    }
+
+    /// A player that left a chunk's range while it was queued is not sent
+    /// it as it lands; the one still holding it is.
+    #[test]
+    fn a_chunk_lands_only_with_those_still_holding_it() {
+        let mut world = World::new();
+        let (left, stayed) = (world.spawn_empty().id(), world.spawn_empty().id());
+        let mut queue = ChunkTaskQueue::default();
+        let chunk = ChunkId(5, 1);
+
+        queue.enqueue(chunk, left);
+        queue.enqueue(chunk, stayed);
+        assert_eq!(queue.release(chunk, |ent| ent == stayed), vec![stayed]);
+        assert!(queue.release(chunk, |_| true).is_empty(), "the one who left is not held over for later");
     }
 }
