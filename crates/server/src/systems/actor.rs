@@ -252,7 +252,8 @@ fn merge_and_pack(chunk: &TerrainChunk, map: &Map, changes: &WorldChanges) -> ti
 }
 
 /// Dispatch chunk generation: cache hits → immediate Do, cache misses →
-/// pending queue, drained nearest-first under MAX_CHUNK_TASKS async tasks.
+/// pending queue, drained nearest-first under MAX_CHUNK_TASKS async tasks;
+/// a chunk whose kept changes are not yet recalled waits in the queue.
 /// EvictChunks passthrough is handled here too.
 pub fn try_discover_chunk(
     mut reader: MessageReader<Try>,
@@ -262,7 +263,7 @@ pub fn try_discover_chunk(
     map: ResMut<Map>,
     mut task_queue: ResMut<ChunkTaskQueue>,
     locs: Query<&Loc>,
-    changes: Res<WorldChanges>,
+    mut changes: ResMut<WorldChanges>,
     holders: Query<&VisibleChunkCache>,
 ) {
     for message in reader.read() {
@@ -301,6 +302,7 @@ pub fn try_discover_chunk(
             std::cmp::Reverse(dist)
         });
 
+        let mut unrecalled = Vec::new();
         while task_queue.in_flight.len() < MAX_CHUNK_TASKS {
             let Some(chunk_id) = pending.pop() else { break };
 
@@ -308,6 +310,13 @@ pub fn try_discover_chunk(
             if world_cache.chunks.contains_key(&chunk_id) {
                 let waiting = task_queue.release(chunk_id, |ent| holders.get(ent).is_ok_and(|held| held.sent.contains(&chunk_id)));
                 send_cached_chunk(&waiting, chunk_id, &mut world_cache, &*map, &changes, &mut writer);
+                continue;
+            }
+
+            // Built before its kept changes are laid, a tile would go out
+            // as generated where players changed it.
+            if !changes.holds(chunk_id) {
+                unrecalled.push(chunk_id);
                 continue;
             }
 
@@ -322,6 +331,7 @@ pub fn try_discover_chunk(
             task_queue.tasks.push((chunk_id, task));
         }
 
+        pending.extend(unrecalled);
         task_queue.pending = pending;
     }
 }

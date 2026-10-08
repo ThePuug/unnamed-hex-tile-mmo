@@ -1,0 +1,55 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT q, r, cover FROM tile_cover WHERE q BETWEEN $1 AND $2 AND r BETWEEN $3 AND $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "q",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "tile_cover",
+            "name": "q"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "r",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "tile_cover",
+            "name": "r"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "cover",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "tile_cover",
+            "name": "cover"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int4",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "83410852d18db5c1b64f4d7e860f204a4ac9697f8001c0203906b6b2574abb98"
+}

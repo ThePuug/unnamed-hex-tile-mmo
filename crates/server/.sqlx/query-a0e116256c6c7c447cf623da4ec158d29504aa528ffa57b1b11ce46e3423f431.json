@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO chunk_owner (chunk, epoch, holder)\n             SELECT chunk, 1, $2 FROM UNNEST($1::BIGINT[]) AS t(chunk)\n             ON CONFLICT (chunk) DO UPDATE SET epoch = chunk_owner.epoch + 1, holder = EXCLUDED.holder\n             RETURNING chunk, epoch",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "chunk",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "chunk_owner",
+            "name": "chunk"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "epoch",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "chunk_owner",
+            "name": "epoch"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "a0e116256c6c7c447cf623da4ec158d29504aa528ffa57b1b11ce46e3423f431"
+}

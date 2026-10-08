@@ -81,7 +81,9 @@ impl Stackable {
     }
 }
 
-/// A count of one stackable kind.
+/// A count of one stackable kind. The server's store keeps a pile's stacks
+/// as JSON by these names, so renaming a kind needs a migration of what it
+/// keeps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Stack {
     pub kind: Stackable,

@@ -24,6 +24,11 @@ chrono = "0"
 rand = "0.9"
 renet = "2"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The smol runtime is the reactor Bevy's task pools run on, so a query is an
+# ordinary task. The build checks queries against `.sqlx/`, never a live
+# database (`SQLX_OFFLINE` in `.cargo/config.toml`).
+sqlx = { version = "0.9", default-features = false, features = ["runtime-smol", "tls-rustls", "postgres", "macros", "migrate", "json"] }
 tinyvec = { version = "1", features = ["serde"] }
 
 [dependencies.qrz]

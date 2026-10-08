@@ -132,7 +132,7 @@ pub fn pass_summary_regions(
 pub fn dispatch_summary_tasks(
     mut query: Query<(Entity, &mut VisibleSummaryCache)>,
     registry: Res<EventRegistry>,
-    changes: Res<WorldChanges>,
+    mut changes: ResMut<WorldChanges>,
     mut task_queue: ResMut<SummaryTaskQueue>,
     timings: Res<crate::plugins::metrics::SystemTimings>,
     snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
@@ -154,6 +154,10 @@ pub fn dispatch_summary_tasks(
             }
             budget -= 1;
             task_queue.waiting.insert(rk, vec![*ent]);
+            // Changes kept under the region arrive after the task sets out
+            // and move its summaries as any change does.
+            let (min, max) = reach(&rk);
+            changes.seek(min, max);
             let generated = registry.clone();
             let laid = changes.over(registry.clone());
             let task = AsyncComputeTaskPool::get().spawn(async move {
@@ -295,6 +299,19 @@ fn region_center(key: &MeshRegionKey) -> (f32, f32) {
     flat_top_tile_center(cq, cr, 1.0)
 }
 
+/// The box of tiles, as `(q, r)` corners, holding every tile a summary of
+/// `key` reads. A tile's [`ladder`] climbs through finer centres, each at
+/// most a scale of its level from the last, so the steps sum to under two
+/// scales of the region's level past its outermost centre.
+fn reach(key: &MeshRegionKey) -> ((i32, i32), (i32, i32)) {
+    let lattice = summary_lattice(key.r);
+    let pad = 2 * lattice.scale;
+    mesh_region_lattice().tiles_in_cell((key.mn, key.mm)).map(|id| lattice.cell_center(id)).fold(
+        ((i32::MAX, i32::MAX), (i32::MIN, i32::MIN)),
+        |((q0, r0), (q1, r1)), (q, r)| ((q0.min(q - pad), r0.min(r - pad)), (q1.max(q + pad), r1.max(r + pad))),
+    )
+}
+
 /// Squared world-space distance from a mesh region's center to a point.
 fn region_distance_sq(key: &MeshRegionKey, px: f32, pz: f32) -> f32 {
     let (wx, wz) = region_center(key);
@@ -333,5 +350,28 @@ mod tests {
         let sector = common::camera::STREAM_SECTOR_HALF_ANGLE / std::f32::consts::PI;
         println!("context {near} regions; far {far_kept} of {far} kept ({share:.2}) for a sector of {sector:.2}");
         assert!(share > sector * 0.8 && share < sector * 1.6, "kept {far_kept} of {far} far regions ({share:.2}) for a sector of {sector:.2}; {near} near");
+    }
+
+    /// Every tile whose summary at a region's level lies in the region
+    /// lies inside the region's reach.
+    #[test]
+    fn a_regions_reach_holds_every_tile_its_summaries_read() {
+        for r in [4, 13] {
+            let level = LOD_LEVELS.iter().position(|&l| l == r).expect("a level") - 1;
+            let key = MeshRegionKey { r, mn: 1, mm: -1 };
+            let ((q0, r0), (q1, r1)) = reach(&key);
+            let slack = summary_lattice(r).scale;
+            let mut found = 0;
+            for q in q0 - slack..=q1 + slack {
+                for rr in r0 - slack..=r1 + slack {
+                    let (_, sq, sr, _) = ladder(q, rr)[level];
+                    if mesh_region_lattice().cell_id(sq, sr) == (key.mn, key.mm) {
+                        found += 1;
+                        assert!((q0..=q1).contains(&q) && (r0..=r1).contains(&rr), "level {r}: ({q}, {rr}) lies outside the reach");
+                    }
+                }
+            }
+            assert!(found > 0, "level {r}: the region holds tiles");
+        }
     }
 }

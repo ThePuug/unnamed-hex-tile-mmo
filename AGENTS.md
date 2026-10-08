@@ -43,6 +43,13 @@ cargo test -p combat reaction_queue
 cargo build --release --no-default-features -p server -p client   # optimized
 ```
 
+The server keeps the changed world in the PostgreSQL at `DATABASE_URL`
+(`server::plugins::persistence`); unset, it keeps nothing past a run. Builds
+never connect: sqlx checks queries against `crates/server/.sqlx/`, which
+`cargo sqlx prepare` (from `crates/server`, `DATABASE_URL` set) rewrites after
+a query or migration changes. The store's own tests are `#[ignore]`d; run
+them with `DATABASE_URL` set and `cargo test -p server -- --ignored store`.
+
 A music-player release is built by request: run the *music-player release*
 workflow in GitHub Actions on a commit. It publishes `music-player-v<version>`
 for Linux, Windows and macOS, the version read from
@@ -178,8 +185,10 @@ builds a tile for the map or the wire takes it through `laid_over`:
 `server::systems::gathering::WorldChanges` in `actor::merge_and_pack`,
 `client::systems::gathering::CoverChanges` in `world::do_spawn`. A
 summary reads its samples through `WorldChanges::over`, in
-`summary::dispatch_summary_tasks` and `summary::revise_summaries`. A path
-that skips it serves the tree a player felled.
+`summary::dispatch_summary_tasks` and `summary::revise_summaries`. Where
+changes are kept, a chunk is built only once `WorldChanges::holds` it,
+its kept changes recalled. A path that skips either serves the tree a
+player felled.
 
 **INV-009 — The world's stack is opaque.** Outside
 `crates/world/src/events`, the world is read through `Composite::tile_at` and

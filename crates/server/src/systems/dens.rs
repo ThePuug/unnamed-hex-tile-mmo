@@ -11,8 +11,8 @@
 //! abandoned unwatched comes back whole when a player returns. Killing the
 //! pack leaves the den cleared, a change that stands for [`DECAY`] and then
 //! is gone, leaving the site as the world made it. A standing den's growth
-//! with age is unbuilt. Dens are held in memory, as every change to the
-//! world is.
+//! with age is unbuilt. Dens are held in memory and not kept past the
+//! server: the ground a den clears is laid again when it next stands.
 //!
 //! A den is drawn about the tile its pack first stood on, as its
 //! archetype's model, active or cleared, its seed and turn its site's:

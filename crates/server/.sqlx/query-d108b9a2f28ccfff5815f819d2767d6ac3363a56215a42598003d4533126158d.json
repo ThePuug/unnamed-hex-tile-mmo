@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO pile (chunk, q, r, slot, stacks)\n             SELECT chunk, q, r, slot, stacks::JSONB\n             FROM UNNEST($1::BIGINT[], $2::INT[], $3::INT[], $4::SMALLINT[], $5::TEXT[]) AS t(chunk, q, r, slot, stacks)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int4Array",
+        "Int4Array",
+        "Int2Array",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d108b9a2f28ccfff5815f819d2767d6ac3363a56215a42598003d4533126158d"
+}

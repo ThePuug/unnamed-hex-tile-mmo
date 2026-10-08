@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM pile p USING UNNEST($1::BIGINT[], $2::INT[], $3::INT[]) AS t(chunk, q, r)\n             WHERE p.chunk = t.chunk AND p.q = t.q AND p.r = t.r",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int4Array",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "742c120c2fa991a78c2c61b4838f82988502ca9814847ecddc9ef20db3b41bfb"
+}

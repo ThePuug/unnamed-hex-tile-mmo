@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT q, r, slot, stacks AS \"stacks: Json<Vec<Stack>>\" FROM pile WHERE chunk = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "q",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "pile",
+            "name": "q"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "r",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "pile",
+            "name": "r"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "slot",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "pile",
+            "name": "slot"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "stacks: Json<Vec<Stack>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "pile",
+            "name": "stacks"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f0b4eca1723e56fb2aea434a9150e8fc123163b5ac70e6b675de0f348c56bd0b"
+}

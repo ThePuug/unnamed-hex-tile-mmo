@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT o.chunk AS \"chunk!\" FROM chunk_owner o, UNNEST($1::BIGINT[], $2::BIGINT[]) AS h(chunk, epoch)\n             WHERE o.chunk = h.chunk AND o.epoch = h.epoch AND o.holder = $3\n             FOR SHARE OF o",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "chunk!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "chunk_owner",
+            "name": "chunk"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8Array",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "192befc76dba5798cfe1fbd3226794dcd06475bd6094c10b3b2c5017f15dc846"
+}

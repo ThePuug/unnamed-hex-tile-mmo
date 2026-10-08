@@ -251,7 +251,9 @@ fn mix(q: i32, r: i32, k: usize, channel: u64) -> u64 {
 /// What stands on a tile, in one `u32` so it crosses the wire as one:
 /// each of the seven slots' [`Content`] in [`CONTENT_BITS`], slot `k` from
 /// bit `k * CONTENT_BITS` in [`SLOT_TOWARD`] order; and the boulders' rock
-/// in the two bits past those, read only where a boulder stands.
+/// in the two bits past those, read only where a boulder stands. The
+/// server's store keeps a changed tile as these bits, so changing the
+/// layout needs a migration of what it keeps.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Cover(u32);
 

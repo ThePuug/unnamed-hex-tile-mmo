@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT q, r, cover FROM tile_cover WHERE chunk = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "q",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "tile_cover",
+            "name": "q"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "r",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "tile_cover",
+            "name": "r"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "cover",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "tile_cover",
+            "name": "cover"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e85173f0e9778017db4757662effa7b07f08a25f68951dba0ce0782de3295806"
+}

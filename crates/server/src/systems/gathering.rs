@@ -4,12 +4,15 @@
 //! leaves the rest to anyone. Every tile changed keeps the change, and every client
 //! holding the tile learns it.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use bevy::{ecs::system::SystemParam, prelude::*};
 use common::summary::{SummarySource, TileSample};
 use common_bevy::{
-    chunk::loc_to_chunk,
+    chunk::{loc_to_chunk, ChunkId},
     components::{
         entity_type::{decorator::Decorator, EntityType},
         equipment::{Equipment, Inventory},
@@ -29,6 +32,10 @@ use crate::systems::actor::VisibleChunkCache;
 /// generated cover with its change laid over: whatever builds a tile for
 /// the map or the wire takes it through [`WorldChanges::laid_over`], and a
 /// summary reads its samples through [`WorldChanges::over`].
+///
+/// Where changes outlive the server, a chunk's arrive when it is recalled:
+/// a chunk is built only once [`WorldChanges::holds`] it, and a summary
+/// [`WorldChanges::seek`]s the changes under it, which arrive fresh.
 #[derive(Resource, Default)]
 pub struct WorldChanges {
     /// Shared with the summary tasks in flight, each reading the changes
@@ -36,6 +43,15 @@ pub struct WorldChanges {
     tiles: Arc<HashMap<(i32, i32), common::Cover>>,
     /// Changes made since the summaries were last revised.
     fresh: Vec<Change>,
+    /// The chunks whose kept changes are laid here, where changes are kept;
+    /// none where every change was made in this run, and every chunk's are.
+    recalled: Option<HashSet<ChunkId>>,
+    /// Chunks asked after and not yet recalled.
+    wanted: HashSet<ChunkId>,
+    /// Chunks first asked after since the wanted were last taken.
+    newly_wanted: Vec<ChunkId>,
+    /// Boxes of tiles asked after, as `(q, r)` corners, not yet read.
+    sought: Vec<((i32, i32), (i32, i32))>,
 }
 
 /// A tile players changed: its cover before the change and after it.
@@ -65,6 +81,66 @@ impl WorldChanges {
     /// The changes made since the last call, in the order they were made.
     pub fn take_fresh(&mut self) -> Vec<Change> {
         std::mem::take(&mut self.fresh)
+    }
+
+    /// The cover players left on tile `(q, r)`, where they changed it.
+    pub fn get(&self, q: i32, r: i32) -> Option<common::Cover> {
+        self.tiles.get(&(q, r)).copied()
+    }
+
+    /// Whether every change kept on `chunk` is laid here. One that is not
+    /// is asked after, and held once recalled.
+    pub fn holds(&mut self, chunk: ChunkId) -> bool {
+        let held = self.recalled.as_ref().is_none_or(|recalled| recalled.contains(&chunk));
+        if !held && self.wanted.insert(chunk) {
+            self.newly_wanted.push(chunk);
+        }
+        held
+    }
+
+    /// Asks after every change kept on a tile with `min.0 <= q <= max.0`
+    /// and `min.1 <= r <= max.1`, where changes are kept. Each arrives as a
+    /// fresh change, but on a chunk held here, whose changes are newer.
+    pub fn seek(&mut self, min: (i32, i32), max: (i32, i32)) {
+        if self.recalled.is_some() {
+            self.sought.push((min, max));
+        }
+    }
+
+    /// From now on a chunk's changes are here only once recalled: changes
+    /// outlive the server. Changes already made stay.
+    pub fn keep(&mut self) {
+        self.recalled.get_or_insert_default();
+    }
+
+    /// The chunks first asked after since the last call. Each is asked
+    /// after once, however often [`WorldChanges::holds`] is asked of it.
+    pub fn take_wanted(&mut self) -> Vec<ChunkId> {
+        std::mem::take(&mut self.newly_wanted)
+    }
+
+    /// The boxes of tiles asked after since the last call.
+    pub fn take_sought(&mut self) -> Vec<((i32, i32), (i32, i32))> {
+        std::mem::take(&mut self.sought)
+    }
+
+    /// Lays each kept cover in `kept` over its tile, as a fresh change from
+    /// the tile as it stands here, `generated` where it is unchanged; but
+    /// none on a chunk held here, whose changes are newer than any kept.
+    pub fn recall(&mut self, kept: impl IntoIterator<Item = (i32, i32, common::Cover)>, generated: impl Fn(i32, i32) -> common::Cover) {
+        for (q, r, cover) in kept {
+            let held = self.recalled.as_ref().is_some_and(|recalled| recalled.contains(&loc_to_chunk(Qrz { q, r, z: 0 })));
+            let before = self.get(q, r).unwrap_or_else(|| generated(q, r));
+            if !held && before != cover {
+                self.set(q, r, before, cover);
+            }
+        }
+    }
+
+    /// Notes every change kept on `chunk` as laid here.
+    pub fn recalled(&mut self, chunk: ChunkId) {
+        self.wanted.remove(&chunk);
+        self.recalled.get_or_insert_default().insert(chunk);
     }
 
     /// Every tree felled and every boulder mined within `radius` tiles of
@@ -140,6 +216,27 @@ pub struct Pile {
 #[derive(Resource, Default)]
 pub struct Piles(HashMap<(i32, i32, usize), Pile>);
 
+impl Piles {
+    /// What the pile at `key` holds, where one lies.
+    pub fn stacks(&self, key: (i32, i32, usize)) -> Option<&[common::Stack]> {
+        self.0.get(&key).map(|pile| pile.stacks.as_slice())
+    }
+
+    /// Lays a kept pile holding `stacks` at `key`, open to anyone, where
+    /// none lies already.
+    pub fn recall(&mut self, key: (i32, i32, usize), stacks: Vec<common::Stack>) {
+        self.0.entry(key).or_insert(Pile { stacks, locked_to: None });
+    }
+}
+
+/// Players changed tile `(q, r)`: what stands on it, or what a pile on it
+/// holds.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct TileChanged {
+    pub q: i32,
+    pub r: i32,
+}
+
 /// The pile a player has its loot window open on, and where it stood and
 /// faced as the window opened. The pile is locked to it while the window
 /// is open; the window closes the moment the player moves or turns.
@@ -173,12 +270,14 @@ fn in_reach(here: Qrz, heading: Heading, q: i32, r: i32) -> bool {
 
 /// The ground as players change it: each change goes to the map, to the
 /// changes every later tile is built with, and to every player holding the
-/// tile's chunk.
+/// tile's chunk. A change a player makes is announced as [`TileChanged`];
+/// one the world lays, as a den's clearing, is not.
 #[derive(SystemParam)]
 pub struct Ground<'w, 's> {
     map: Res<'w, Map>,
     changes: ResMut<'w, WorldChanges>,
     holders: Query<'w, 's, (Entity, &'static VisibleChunkCache)>,
+    changed: MessageWriter<'w, TileChanged>,
 }
 
 impl Ground<'_, '_> {
@@ -189,7 +288,19 @@ impl Ground<'_, '_> {
         }
     }
 
+    /// A player's change to tile `(q, r)`, which the map holds.
     fn set(&mut self, writer: &mut MessageWriter<Do>, q: i32, r: i32, cover: common::Cover) {
+        self.put(writer, q, r, cover);
+        self.changed.write(TileChanged { q, r });
+    }
+
+    /// A player's change to what a pile on tile `(q, r)` holds, which left
+    /// the tile's cover as it was.
+    fn piled(&mut self, q: i32, r: i32) {
+        self.changed.write(TileChanged { q, r });
+    }
+
+    fn put(&mut self, writer: &mut MessageWriter<Do>, q: i32, r: i32, cover: common::Cover) {
         let Some((qrz, EntityType::Decorator(decorator))) = self.map.get_by_qr(q, r) else { return };
         self.map.insert(qrz, EntityType::Decorator(Decorator { cover, ..decorator }));
         self.changes.set(q, r, decorator.cover, cover);
@@ -206,7 +317,7 @@ impl Ground<'_, '_> {
     /// as the world made it, with this laid over.
     pub fn lay(&mut self, writer: &mut MessageWriter<Do>, q: i32, r: i32, cover: common::Cover, generated: common::Cover) {
         if self.cover(q, r).is_some() {
-            self.set(writer, q, r, cover);
+            self.put(writer, q, r, cover);
         } else {
             self.changes.set(q, r, generated, cover);
         }
@@ -425,6 +536,7 @@ pub fn try_take(
         let left = pile.stacks.clone();
         writer.write(Do { event: Event::Inventory { ent, bag: bag.clone() } });
         if !left.is_empty() {
+            ground.piled(key.0, key.1);
             writer.write(Do { event: Event::Loot { ent, entries: Some(left) } });
             continue;
         }
@@ -534,7 +646,9 @@ pub fn try_drop(
         if looting.is_some_and(|l| l.key() == key) {
             writer.write(Do { event: Event::Loot { ent, entries: Some(pile.stacks.clone()) } });
         }
-        if !onto {
+        if onto {
+            ground.piled(q, r);
+        } else {
             let common::Stackable::Material(material) = kind;
             ground.set(&mut writer, q, r, common::gathering::left(cover, slot, material));
         }
@@ -583,6 +697,49 @@ mod tests {
         assert_eq!(fresh.iter().map(|c| (c.q, c.r)).collect::<Vec<_>>(), vec![(1, 1), (dq, dr)]);
         assert!(fresh.iter().all(|c| c.before == pine && c.after == Cover::NONE));
         assert!(changes.take_fresh().is_empty());
+    }
+
+    /// Where changes are kept, a chunk is held only once recalled, and is
+    /// asked after once however often it is asked; where they are not,
+    /// every chunk is held from the start.
+    #[test]
+    fn a_kept_chunk_is_held_once_recalled_and_asked_after_once() {
+        let chunk = ChunkId(3, -1);
+        let mut changes = WorldChanges::default();
+        assert!(changes.holds(chunk), "nothing kept, every chunk held");
+        assert!(changes.take_wanted().is_empty());
+
+        changes.keep();
+        assert!(!changes.holds(chunk) && !changes.holds(chunk));
+        assert_eq!(changes.take_wanted(), vec![chunk]);
+        assert!(!changes.holds(chunk));
+        assert!(changes.take_wanted().is_empty(), "asked after once while the recall is out");
+        changes.recalled(chunk);
+        assert!(changes.holds(chunk));
+    }
+
+    /// A recalled cover is laid as a fresh change from the tile as it
+    /// stands, once however often it arrives, and never over a chunk held
+    /// here, whose own changes are newer.
+    #[test]
+    fn a_recalled_change_is_laid_once_and_never_over_a_held_chunk() {
+        let pine = Cover::NONE.with(0, Content::Pine);
+        let stump = common::gathering::harvest(pine, common::SITE_SLOTS[0][0]).expect("a pine is felled").cover;
+        let generated = |_, _| pine;
+        let mut changes = WorldChanges::default();
+        changes.keep();
+
+        changes.recall([(5, 5, stump)], generated);
+        changes.recall([(5, 5, stump)], generated);
+        assert_eq!(changes.take_fresh(), vec![Change { q: 5, r: 5, before: pine, after: stump }]);
+
+        let held = loc_to_chunk(Qrz { q: 40, r: 40, z: 0 });
+        changes.recalled(held);
+        changes.set(40, 40, pine, Cover::NONE);
+        changes.take_fresh();
+        changes.recall([(40, 40, stump)], generated);
+        assert!(changes.take_fresh().is_empty());
+        assert_eq!(changes.get(40, 40), Some(Cover::NONE), "the held chunk keeps its own");
     }
 
     /// A drop goes onto a pile of its kind that lets it on, or else to the

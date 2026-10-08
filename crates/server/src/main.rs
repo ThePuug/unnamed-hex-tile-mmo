@@ -28,7 +28,7 @@ fn main() {
             level: bevy::log::Level::TRACE,
             // world=warn keeps the terrain pipeline's per-tile tracing spans
             // disabled — at debug they cost real time on the hot path.
-            filter:  "wgpu=error,bevy=warn,renetcode=warn,renet=warn,".to_owned()
+            filter:  "wgpu=error,bevy=warn,renetcode=warn,renet=warn,sqlx=warn,polling=warn,async_io=warn,".to_owned()
                     +"server=trace,world=warn,"
                     ,
             custom_layer: |_| None,
@@ -42,6 +42,10 @@ fn main() {
         combat::CombatPlugin,
         crate::plugins::metrics::MetricsPlugin::default(),
         crate::plugins::world_streaming::WorldStreamingPlugin,
+        crate::plugins::persistence::PersistencePlugin,
+        // Ctrl-C stops the server through `AppExit`, so what it holds is
+        // written before it goes.
+        bevy::app::TerminalCtrlCHandlerPlugin,
     ));
 
 
@@ -140,6 +144,7 @@ fn main() {
     app.init_resource::<engagement_spawner::Parties>();
     app.init_resource::<crate::systems::dens::Dens>();
     app.add_message::<crate::systems::dens::EngagementEnded>();
+    app.add_message::<crate::systems::gathering::TileChanged>();
 
     app.run();
 }
