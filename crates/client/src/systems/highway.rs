@@ -165,6 +165,18 @@ pub fn scale(d: f32) -> f32 {
     1.0 / (1.0 + DEPTH * d)
 }
 
+/// A note's label is drawn once at the font size of its largest note and
+/// scaled from there: Bevy keeps a glyph atlas for every font size it is
+/// asked for and frees none, so a label whose font size moved with its
+/// note made an atlas each frame it moved.
+const LABEL_FONT: f32 = NOTE * 0.36;
+
+/// The scale of a label on a note `size` across, which never shows
+/// smaller than an 8 px font.
+fn label_scale(size: f32) -> Vec2 {
+    Vec2::splat((size * 0.36).max(8.0) / LABEL_FONT)
+}
+
 /// Height above the hit line at depth `d`
 pub fn rise(d: f32) -> f32 {
     RISE * (1.0 - scale(d)) / (1.0 - scale(1.0))
@@ -287,7 +299,7 @@ pub fn update(
     mut highway_query: Query<(Entity, &mut Visibility, &MaterialNode<HighwayMaterial>), With<Highway>>,
     mut materials: ResMut<Assets<HighwayMaterial>>,
     mut note_query: Query<(Entity, &mut Note, &mut Node, &mut BackgroundColor, &mut BorderColor, &Children), Without<Highway>>,
-    mut label_query: Query<(&mut Text, &mut TextFont, &mut TextColor), With<NoteLabel>>,
+    mut label_query: Query<(&mut Text, &mut UiTransform, &mut TextColor), With<NoteLabel>>,
     mut landings: ResMut<Landings>,
     time: Res<Time>,
     server: Res<crate::resources::Server>,
@@ -366,11 +378,11 @@ pub fn update(
         note.color = fill;
 
         for child in children.iter() {
-            if let Ok((mut text, mut font, mut color)) = label_query.get_mut(child) {
+            if let Ok((mut text, mut transform, mut color)) = label_query.get_mut(child) {
                 if **text != label {
                     **text = label.clone();
                 }
-                font.font_size = FontSize::Px((size * 0.36).max(8.0));
+                transform.scale = label_scale(size);
                 color.0 = Color::srgba(1.0, 1.0, 1.0, alpha);
             }
         }
@@ -403,7 +415,8 @@ pub fn update(
                 .with_children(|parent| {
                     parent.spawn((
                         Text::new(label),
-                        TextFont { font_size: FontSize::Px((size * 0.36).max(8.0)), ..default() },
+                        TextFont { font_size: FontSize::Px(LABEL_FONT), ..default() },
+                        UiTransform { scale: label_scale(size), ..default() },
                         TextColor(Color::srgba(1.0, 1.0, 1.0, fade(d))),
                         NoteLabel,
                     ));
