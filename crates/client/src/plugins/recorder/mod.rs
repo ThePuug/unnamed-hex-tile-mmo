@@ -47,7 +47,7 @@ use common_bevy::{
 use crate::{
     components::{ViewHud, Viewed},
     plugins::{
-        diagnostics::{metrics_overlay::OverlayCameraEntity, DiagnosticsState},
+        diagnostics::DiagnosticsState,
         shell::{self, Entered, Stage},
     },
     resources::{LoadedChunks, RenderOrigin, SummaryMeshes},
@@ -258,16 +258,13 @@ fn enter(
 }
 
 /// Points every UI root at a camera that never draws — but for the viewed
-/// fighter's, while a shot views one — stops the overlay's camera, and
-/// turns gizmos off.
+/// fighter's, while a shot views one — and turns gizmos off.
 #[allow(clippy::too_many_arguments)]
 fn hide_hud(
     mut recorder: ResMut<Recorder>,
     mut commands: Commands,
     roots: Query<(Entity, Option<&UiTargetCamera>, Has<ViewHud>), (With<Node>, Without<ChildOf>)>,
     ui_camera: Query<Entity, With<IsDefaultUiCamera>>,
-    overlay: Option<Res<OverlayCameraEntity>>,
-    mut cameras: Query<&mut Camera>,
     mut gizmos: ResMut<GizmoConfigStore>,
 ) {
     let sink = *recorder.sink.get_or_insert_with(|| {
@@ -279,9 +276,6 @@ fn hide_hud(
         if target.is_none_or(|t| t.0 != to) {
             commands.entity(entity).insert(UiTargetCamera(to));
         }
-    }
-    if let Some(mut camera) = overlay.and_then(|o| cameras.get_mut(o.0).ok()) {
-        camera.is_active = false;
     }
     gizmos.config_mut::<DefaultGizmoConfigGroup>().0.enabled = false;
 }

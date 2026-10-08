@@ -35,7 +35,7 @@ cargo run --bin client
 cargo run --bin music-player       # needs a SoundFont: $SOUNDFONT or ~/soundfonts/GeneralUser.sf2
 cargo run --bin arena               # archetype v archetype balance, headless; keys in arena/src/main.rs
 cargo run --bin arena -- tune screen|balance|minds|settle|loop|show|apply   # searches; bounds in arena/src/tune.toml
-cargo run --bin metrics -- serve   # records the client's published metrics; then `metrics page|stats|snapshot|list|subscribe`
+cargo run --bin metrics -- serve   # records the server's and client's published metrics; then `metrics page|stats|snapshot|list|subscribe`
 cargo test                         # all tests
 cargo test -p common-bevy physics  # specific module
 cargo test -p combat reaction_queue
@@ -97,7 +97,7 @@ flat-top hex grid. All crates under `crates/`:
 | `world` | World event system + terrain generation, no Bevy |
 | `world-viewer` | CLI rendering the event stack, or one event's field or index, to an image; its README says what a view may read |
 | `qrz` | Hex grid library — see `crates/qrz/AGENTS.md` |
-| `console` | Server monitoring console |
+| `console` | Monitoring console: a page for each process publishing to its multicast group (`common::metrics`) — server, client (admin builds) |
 | `metrics-cli` | `metrics`: records what the game's processes publish to their multicast groups (`common::metrics`) and reads it back — snapshots, stats over a window, pages |
 | `music` | Music composed from a seed and rendered through a SoundFont — the pieces and their vocabulary; the client composes from it as it plays, `assets/crates/musicgen` checks and proofs it, and its `AGENTS.md` binds the pieces |
 | `music-player` | A window playing fresh variations of the chosen pieces as they are composed, a rest between |
@@ -248,8 +248,8 @@ into `VisualPosition` and `Heading`. Remote entities run the same physics in
 **Keys.** Every key a player presses is read through
 `client::systems::help::Keys`, which takes what the key does: held Right
 Alt turns a press into that statement beside the cap naming the key
-(`keycap::Names`). Only the admin console and the metrics overlay read
-raw `ButtonInput`, and have no help.
+(`keycap::Names`). Only the admin console reads raw `ButtonInput`, and
+has no help.
 
 **Network events.** `Try` (client→server) → server validates → `Do`
 (server→client broadcast). Never write `Do` directly.

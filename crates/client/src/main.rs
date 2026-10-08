@@ -64,7 +64,7 @@ fn main() {
             // and rustls trace every chunk of the music banks' download.
             filter:
                 "wgpu=error,naga=warn,polling=warn,winit=warn,offset_allocator=warn,gilrs=warn,\
-                 cosmic_text=warn,renetcode=warn,renet=warn,egui=warn,epaint=warn,client=trace,world=warn,bevy=warn,\
+                 cosmic_text=warn,renetcode=warn,renet=warn,client=trace,world=warn,bevy=warn,\
                  ureq=warn,ureq_proto=warn,rustls=warn".to_string(),
             custom_layer: |_| None,
             ..default()

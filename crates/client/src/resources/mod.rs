@@ -725,11 +725,9 @@ impl ClientTimers {
     }
 
     /// Records `ms` against `name`.
+    #[cfg(feature = "admin")]
     pub fn record(&self, name: &'static str, ms: f32) {
-        #[cfg(feature = "admin")]
         self.timers.record(name, ms);
-        #[cfg(not(feature = "admin"))]
-        let _ = (name, ms);
     }
 
     /// Each timer's p95 and count since the last drain.

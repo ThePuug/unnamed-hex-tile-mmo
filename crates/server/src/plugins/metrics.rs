@@ -1,45 +1,21 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::SocketAddrV4;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
-use common::metrics::{Aggregator, Cadence, MetricsPacket};
+use common::metrics::{self, Aggregator, Cadence, MetricsPacket};
 use common_bevy::resources::map::Map;
 use crate::resources::Lobby;
 
-const DEFAULT_METRICS_PORT: u16 = 5100;
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(2);
 
-// ── Transport (shared UDP socket) ──
-
-#[derive(Clone)]
-struct Transport {
-    socket: Arc<UdpSocket>,
-    target: SocketAddr,
-}
-
-impl Transport {
-    fn new(port: u16) -> Self {
-        let socket = UdpSocket::bind("0.0.0.0:0").expect("failed to bind metrics UDP socket");
-        socket
-            .set_nonblocking(true)
-            .expect("failed to set metrics socket non-blocking");
-        Self {
-            socket: Arc::new(socket),
-            target: SocketAddr::from(([127, 0, 0, 1], port)),
-        }
-    }
-
-    fn send_packet(&self, packet: &MetricsPacket) {
-        if let Some(buf) = packet.encode() {
-            let _ = self.socket.send_to(&buf, self.target);
-        }
-    }
-}
+/// The socket every packet goes out on, to the group the console and the
+/// `metrics` CLI read.
+type Transport = Arc<metrics::Publisher>;
 
 // ── MetricSnapshot ──
 
@@ -142,7 +118,7 @@ impl MetricSnapshot {
             timestamp_secs,
             fields,
         };
-        self.transport.send_packet(&packet);
+        self.transport.send(&packet);
 
         // Reset Peak and Sum fields after flush
         for f in state.fields.iter_mut() {
@@ -192,7 +168,7 @@ impl SystemTimings {
             fields.push((Cow::Owned(format!("{name}.n")), count));
         }
 
-        self.transport.send_packet(&MetricsPacket {
+        self.transport.send(&MetricsPacket {
             group: Cow::Borrowed("timings"),
             cadence: Cadence::Event,
             timestamp_secs,
@@ -214,14 +190,14 @@ fn maybe_flush_timings(timings: Res<SystemTimings>, time: Res<Time>) {
 // ── Plugin ──
 
 pub struct MetricsPlugin {
-    pub port: u16,
+    pub group: SocketAddrV4,
     pub interval: Duration,
 }
 
 impl Default for MetricsPlugin {
     fn default() -> Self {
         Self {
-            port: DEFAULT_METRICS_PORT,
+            group: metrics::SERVER_GROUP,
             interval: DEFAULT_INTERVAL,
         }
     }
@@ -229,7 +205,7 @@ impl Default for MetricsPlugin {
 
 impl Plugin for MetricsPlugin {
     fn build(&self, app: &mut App) {
-        let transport = Transport::new(self.port);
+        let transport: Transport = Arc::new(metrics::publisher(self.group).unwrap_or_else(|e| panic!("no metrics publisher on {}: {e}", self.group)));
 
         // ── Snapshot: server gauges ──
         let mut snapshot = MetricSnapshot::new("server", transport.clone(), self.interval);

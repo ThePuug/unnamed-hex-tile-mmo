@@ -22,6 +22,9 @@ pub const METRICS_VERSION: u16 = 10;
 /// The group the client publishes to.
 pub const CLIENT_GROUP: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(239, 255, 51, 1), 5101);
 
+/// The group the server publishes to.
+pub const SERVER_GROUP: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(239, 255, 51, 2), 5100);
+
 /// How a snapshot field combines multiple `record()` calls between flushes.
 #[derive(Clone, Copy, Debug)]
 pub enum Aggregator {

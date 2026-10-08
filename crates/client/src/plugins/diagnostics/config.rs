@@ -1,52 +1,10 @@
 use bevy::prelude::*;
 use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS, SEASON_MS, WEEK_MS, YEAR_MS};
 
-/// Which set of numbers the overlay shows. The frame's own line stands
-/// above them whatever is picked; the rest come one at a time, chosen
-/// from the strip under the view, because together they outgrew the
-/// window.
-#[cfg(feature = "admin")]
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum MetricsTab {
-    Terrain,
-    #[default]
-    Render,
-    Passes,
-    Network,
-    Timings,
-}
-
-#[cfg(feature = "admin")]
-impl MetricsTab {
-    /// Every tab, in the order the strip lays them out.
-    pub const ALL: [MetricsTab; 5] = [Self::Terrain, Self::Render, Self::Passes, Self::Network, Self::Timings];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Terrain => "TERRAIN",
-            Self::Render => "RENDER",
-            Self::Passes => "PASSES",
-            Self::Network => "NETWORK",
-            Self::Timings => "TIMINGS",
-        }
-    }
-
-    /// The tab `steps` along the strip, wrapping at either end.
-    pub fn step(self, steps: i32) -> Self {
-        let at = Self::ALL.iter().position(|&tab| tab == self).unwrap_or(0) as i32;
-        Self::ALL[(at + steps).rem_euclid(Self::ALL.len() as i32) as usize]
-    }
-}
-
 #[derive(Resource)]
 pub struct DiagnosticsState {
     pub grid_visible: bool,
     pub lighting: LightingClock,
-    #[cfg(feature = "admin")]
-    pub metrics_overlay_visible: bool,
-    /// Which set of numbers the overlay's panel shows.
-    #[cfg(feature = "admin")]
-    pub metrics_tab: MetricsTab,
     /// Every terrain mesh is hidden.
     pub terrain_hidden: bool,
     /// Every stand of models and cards is hidden. The batches hang under
@@ -70,10 +28,6 @@ impl Default for DiagnosticsState {
         Self {
             grid_visible: false,
             lighting: LightingClock::default(),
-            #[cfg(feature = "admin")]
-            metrics_overlay_visible: false,
-            #[cfg(feature = "admin")]
-            metrics_tab: MetricsTab::default(),
             terrain_hidden: false,
             cover_hidden: false,
             camera_closeup: false,

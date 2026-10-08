@@ -24,10 +24,6 @@ pub enum DevConsoleAction {
     ToggleCameraCloseup,
     ToggleCanopyParts,
 
-    // Top-level toggles
-    #[cfg(feature = "admin")]
-    ToggleMetricsOverlay,
-
     // Admin actions
     #[cfg(feature = "admin")]
     GotoWorldUnits(f64, f64),
@@ -153,11 +149,6 @@ pub fn execute_console_actions(
             DevConsoleAction::ToggleCanopyParts => {
                 diagnostics_state.canopy_parts_off = !diagnostics_state.canopy_parts_off;
                 info!("Canopy: {}", if diagnostics_state.canopy_parts_off { "vertices" } else { "parts" });
-            }
-            #[cfg(feature = "admin")]
-            DevConsoleAction::ToggleMetricsOverlay => {
-                diagnostics_state.metrics_overlay_visible = !diagnostics_state.metrics_overlay_visible;
-                info!("Metrics overlay: {}", if diagnostics_state.metrics_overlay_visible { "ON" } else { "OFF" });
             }
 
             #[cfg(feature = "admin")]

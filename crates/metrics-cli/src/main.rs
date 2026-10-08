@@ -3,18 +3,17 @@
 //!
 //! `metrics serve` runs the recorder: it joins every source's multicast
 //! group and keeps the last `KEEP_SECS` of every field it hears, named
-//! `source/topic/field`. Every other command asks the running recorder
+//! `source/topic/field`. Processes of one kind share a group and are told
+//! apart by the address each sends from: the first heard is `client`, the
+//! next `client#2`, and so on for as long as the recorder runs. Every other command asks the running recorder
 //! over `CONTROL` and prints its answer. The subscriptions say which fields
 //! `snapshot` and `stats` report; with none, or with `--all`, they report
 //! every field. The recorder holds them for as long as it runs.
-//!
-//! Only the client publishes to a group so far; the server still sends to
-//! the console alone.
 
 use std::{
     collections::{BTreeMap, VecDeque},
     io::{BufRead, BufReader, ErrorKind, Read, Write},
-    net::{SocketAddrV4, TcpListener, TcpStream},
+    net::{SocketAddr, SocketAddrV4, TcpListener, TcpStream},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -23,7 +22,7 @@ use clap::{Parser, Subcommand};
 use common::metrics::{self, MetricsPacket};
 
 /// Every source the recorder joins, by the name its fields go under.
-const SOURCES: [(&str, SocketAddrV4); 1] = [("client", metrics::CLIENT_GROUP)];
+const SOURCES: [(&str, SocketAddrV4); 2] = [("server", metrics::SERVER_GROUP), ("client", metrics::CLIENT_GROUP)];
 
 /// Where the recorder takes commands.
 const CONTROL: &str = "127.0.0.1:5110";
@@ -121,15 +120,31 @@ struct Sample {
 #[derive(Default)]
 struct Recorder {
     subscriptions: Vec<String>,
+    /// Each process heard, by its kind and the address it sends from, and
+    /// the name its fields go under.
+    names: Vec<((&'static str, SocketAddr), String)>,
     fields: BTreeMap<String, VecDeque<Sample>>,
     /// When each publication of each source arrived, by the publisher's
     /// timestamp, oldest first.
-    publications: BTreeMap<&'static str, VecDeque<(f64, f64)>>,
+    publications: BTreeMap<String, VecDeque<(f64, f64)>>,
 }
 
 impl Recorder {
-    fn hear(&mut self, source: &'static str, packet: MetricsPacket, at: f64) {
-        let publications = self.publications.entry(source).or_default();
+    /// The name `kind`'s process at `sender` goes under: the kind for the
+    /// first heard, `kind#n` for the nth.
+    fn name(&mut self, kind: &'static str, sender: SocketAddr) -> String {
+        if let Some((_, name)) = self.names.iter().find(|(key, _)| *key == (kind, sender)) {
+            return name.clone();
+        }
+        let n = self.names.iter().filter(|((k, _), _)| *k == kind).count() + 1;
+        let name = if n == 1 { kind.to_string() } else { format!("{kind}#{n}") };
+        self.names.push(((kind, sender), name.clone()));
+        name
+    }
+
+    fn hear(&mut self, kind: &'static str, sender: SocketAddr, packet: MetricsPacket, at: f64) {
+        let source = self.name(kind, sender);
+        let publications = self.publications.entry(source.clone()).or_default();
         if publications.back().is_none_or(|&(ts, _)| ts != packet.timestamp_secs) {
             publications.push_back((packet.timestamp_secs, at));
         }
@@ -247,14 +262,16 @@ impl Recorder {
 /// The pages: each a name and the patterns of the fields it draws, in the
 /// order it draws them.
 const PAGES: &[(&str, &[&str])] = &[
-    ("frame", &["client/frame/*", "client/diag/frame_time", "client/process/memory_mb"]),
-    ("memory", &["client/process/*", "client/heap/rust_mb", "client/heap/large_mb", "client/world/tiles", "client/diag/entity_count", "client/cover/models", "client/cover/cards", "client/census/total/triangles"]),
-    ("heap", &["client/process/committed_mb", "client/heap/rust_mb", "client/heap/large_mb", "client/heap/site/*"]),
-    ("terrain", &["client/world/*", "client/terrain/*"]),
-    ("render", &["client/cover/*", "client/census/*", "client/diag/entity_count"]),
-    ("passes", &["client/diag/render/*/elapsed_cpu", "client/diag/render/*/elapsed_gpu"]),
-    ("network", &["client/network/*"]),
-    ("timings", &["client/timings/*.p95"]),
+    ("frame", &["client*/frame/*", "client*/diag/frame_time", "client*/process/memory_mb"]),
+    ("memory", &["client*/process/*", "client*/heap/rust_mb", "client*/heap/large_mb", "client*/world/tiles", "client*/diag/entity_count", "client*/cover/models", "client*/cover/cards", "client*/census/total/triangles"]),
+    ("heap", &["client*/process/committed_mb", "client*/heap/rust_mb", "client*/heap/large_mb", "client*/heap/site/*"]),
+    ("terrain", &["client*/world/*", "client*/terrain/*"]),
+    ("render", &["client*/cover/*", "client*/census/*", "client*/diag/entity_count"]),
+    ("passes", &["client*/diag/render/*/elapsed_cpu", "client*/diag/render/*/elapsed_gpu"]),
+    ("network", &["client*/network/*"]),
+    ("timings", &["client*/timings/*.p95"]),
+    ("server", &["server*/server/frame_peak_ms", "server*/server/tick_peak_ms", "server*/server/memory_mb", "server*/server/memory_map_mb", "server*/server/loaded_hexes", "server*/server/npc_count", "server*/server/chunk.*", "server*/server/summary.*", "server*/server/net_*"]),
+    ("server-timings", &["server*/timings/*.p95"]),
 ];
 
 /// How many characters a page's line takes.
@@ -324,8 +341,8 @@ fn serve() {
         std::thread::spawn(move || {
             let mut buf = [0u8; 65536];
             loop {
-                let n = match socket.recv(&mut buf) {
-                    Ok(n) => n,
+                let (n, sender) = match socket.recv_from(&mut buf) {
+                    Ok(received) => received,
                     Err(e) if e.kind() == ErrorKind::Interrupted => continue,
                     // Windows reports some send failures on the next
                     // receive; the socket is still joined.
@@ -335,7 +352,7 @@ fn serve() {
                     }
                 };
                 if let Some(packet) = MetricsPacket::decode(&buf[..n]) {
-                    recorder.lock().unwrap().hear(source, packet, started.elapsed().as_secs_f64());
+                    recorder.lock().unwrap().hear(source, sender, packet, started.elapsed().as_secs_f64());
                 }
             }
         });
@@ -419,6 +436,18 @@ fn table(header: &[String], rows: &[Vec<String>]) -> String {
 mod tests {
     use super::*;
 
+    /// Two processes of one kind go under names of their own, each kept
+    /// however often it is heard.
+    #[test]
+    fn each_process_of_a_kind_goes_under_its_own_name() {
+        let mut recorder = Recorder::default();
+        let (a, b): (SocketAddr, SocketAddr) = ("127.0.0.1:50000".parse().unwrap(), "127.0.0.1:50001".parse().unwrap());
+        assert_eq!(recorder.name("client", a), "client");
+        assert_eq!(recorder.name("client", b), "client#2");
+        assert_eq!(recorder.name("server", b), "server");
+        assert_eq!(recorder.name("client", a), "client");
+    }
+
     #[test]
     fn a_glob_matches_the_whole_name() {
         assert!(glob("client/frame/*", "client/frame/p95_ms"));
@@ -441,10 +470,11 @@ mod tests {
             fields: vec![("x".into(), v)],
         };
         let mut recorder = Recorder::default();
+        let sender: SocketAddr = "127.0.0.1:50000".parse().unwrap();
         for (i, ts) in [1.0, 1.5, 2.0].into_iter().enumerate() {
             let at = i as f64 * 0.5;
-            recorder.hear("client", packet("a", ts, i as f32), at);
-            recorder.hear("client", packet("b", ts, 10.0 + i as f32), at + 0.001);
+            recorder.hear("client", sender, packet("a", ts, i as f32), at);
+            recorder.hear("client", sender, packet("b", ts, 10.0 + i as f32), at + 0.001);
         }
         assert_eq!(recorder.publications["client"].len(), 3);
         let shown = recorder.snapshot(2, 1, false, 1.0);

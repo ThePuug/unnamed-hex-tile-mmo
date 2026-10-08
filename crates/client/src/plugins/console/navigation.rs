@@ -76,9 +76,9 @@ pub fn handle_console_input(
     match console.current_menu {
         MenuPath::Root => {
             #[cfg(feature = "admin")]
-            handle_root_menu(&mut keyboard, &mut console, &mut action_writer);
+            handle_root_menu(&mut keyboard, &mut console);
             #[cfg(not(feature = "admin"))]
-            handle_root_menu(&mut keyboard, &mut console, &mut action_writer);
+            handle_root_menu(&mut keyboard, &mut console);
         }
         MenuPath::Terrain => handle_terrain_menu(&mut keyboard, &mut console, &mut action_writer),
         MenuPath::LightingTime => handle_lighting_time(&mut keyboard, &mut console, &mut action_writer, time.delta_secs()),
@@ -96,8 +96,6 @@ pub fn handle_console_input(
 fn handle_root_menu(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
-    // Every root action is an admin's.
-    #[cfg_attr(not(feature = "admin"), allow(unused_variables))] action_writer: &mut MessageWriter<DevConsoleAction>,
 ) {
     let mut consumed = None;
 
@@ -113,13 +111,6 @@ fn handle_root_menu(
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::GotoSelect;
         consumed = Some(KeyCode::Numpad2);
-    }
-
-    // Toggles after submenus
-    #[cfg(feature = "admin")]
-    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad3) {
-        action_writer.write(DevConsoleAction::ToggleMetricsOverlay);
-        consumed = Some(KeyCode::Numpad3);
     }
 
     #[cfg(feature = "admin")]

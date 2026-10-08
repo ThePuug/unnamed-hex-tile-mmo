@@ -356,7 +356,7 @@ pub fn setup(
         Transform::default(),
         Actor,
         // Every UI node is drawn by the world's camera: the closeup's draws
-        // into a texture and the overlay's is egui's.
+        // into a texture.
         IsDefaultUiCamera,
         VignetteSettings::default(),
         haze(),

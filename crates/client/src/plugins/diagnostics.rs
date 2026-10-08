@@ -1,18 +1,13 @@
 //! The grid, the lighting clock and the milestones in every build; in
-//! admin builds, the metrics too. Publishing them joins a multicast group
-//! the overlay reads back, and listening on a port prompts a player's
-//! firewall, so a player's build has no metrics at all.
+//! admin builds, the metrics too, published for the console to read
+//! (`publish`). A player's build measures nothing for no one.
 
 #[cfg(feature = "admin")]
 pub mod census;
 mod config;
-#[cfg(feature = "admin")]
-mod feed;
 #[cfg(all(feature = "admin", debug_assertions))]
 mod heap;
 pub mod grid;
-#[cfg(feature = "admin")]
-pub mod metrics_overlay;
 mod milestones;
 pub mod network_ui;
 #[cfg(feature = "admin")]
@@ -55,13 +50,12 @@ impl Plugin for DiagnosticsPlugin {
     }
 }
 
-/// What the metrics are measured from, their publication, and the overlay
-/// that reads them back.
+/// What the metrics are measured from, and their publication.
 #[cfg(feature = "admin")]
 fn metrics(app: &mut App) {
     use bevy::diagnostic::{EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
 
-    app.add_plugins((FrameTimeDiagnosticsPlugin::default(), EntityCountDiagnosticsPlugin::default(), bevy_egui::EguiPlugin::default()));
+    app.add_plugins((FrameTimeDiagnosticsPlugin::default(), EntityCountDiagnosticsPlugin::default()));
     // trace_tracy auto-registers RenderDiagnosticsPlugin; skip when active.
     #[cfg(not(feature = "trace"))]
     app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
@@ -69,20 +63,7 @@ fn metrics(app: &mut App) {
 
     app.init_resource::<RenderCensus>();
     app.init_resource::<publish::Publication>();
-    app.init_resource::<feed::Feed>();
-    app.add_systems(Update, (census::take_census, publish::publish, feed::receive).chain());
-
-    app.add_systems(
-        Startup,
-        (
-            metrics_overlay::setup_overlay_camera,
-            metrics_overlay::setup_overlay_font.after(metrics_overlay::setup_overlay_camera),
-        ),
-    );
-    // Egui builds its UI inside its context's own pass, never in
-    // Update: a pass run outside it leaves an output nothing applies,
-    // and the textures it made are dropped with it.
-    app.add_systems(bevy_egui::EguiPrimaryContextPass, metrics_overlay::update_metrics_overlay);
+    app.add_systems(Update, (census::take_census, publish::publish).chain());
 }
 
 /// When the render thread took up this frame, and when it last passed

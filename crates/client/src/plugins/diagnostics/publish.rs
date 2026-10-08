@@ -1,7 +1,6 @@
 //! Every metric the client keeps, published to `common::metrics::CLIENT_GROUP`
-//! twice a second, whether or not anything is listening. The overlay reads
-//! them back from there (`feed`), as any other reader on this machine does,
-//! so what the overlay shows is what a reader gets.
+//! twice a second, whether or not anything is listening: the console's
+//! client page and the `metrics` CLI read them there.
 //!
 //! Each topic goes as its own packet, and a field is named `topic/field`:
 //! `frame`, `process`, `heap` (debug builds only, see `heap`), `world`,

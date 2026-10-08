@@ -122,14 +122,6 @@ pub fn update_console_menu(
                         TextFont { font_size: FontSize::Px(8.0), ..default() },
                     ));
 
-                    // Toggles after
-                    #[cfg(feature = "admin")]
-                    parent.spawn((
-                        Text::new(format!("3. Toggle Metrics Overlay    [{}]", on_off(diagnostics_state.metrics_overlay_visible))),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(state_color(diagnostics_state.metrics_overlay_visible)),
-                    ));
-
                     #[cfg(feature = "admin")]
                     parent.spawn((
                         Text::new("5. Spawn Den"),
