@@ -7,8 +7,8 @@
 //! Every note shows its damage. A band across the lanes marks the span a
 //! reaction reaches, from the front threat back, and every note in it,
 //! what a reaction takes, carries a white rim. A cleared note shatters
-//! where it stands; a landed one shatters on the line with a flash down
-//! its lane.
+//! where it stands, broken; a landed one pulses on the line in its lane's
+//! colour with a flash down its lane.
 //!
 //! [`scale`] and [`rise`] are the one projection: the notes here and the
 //! lanes the shader draws (`shaders/highway.wgsl`) are placed by it.
@@ -23,8 +23,10 @@ use bevy::shader::ShaderRef;
 use common_bevy::components::reaction_queue::{Lane, QueuedThreat, ReactionQueue};
 use common_bevy::components::resources::{CombatState, Health};
 use common_bevy::components::ActorAttributes;
+use common_bevy::message::{Do, Event as GameEvent};
 
 use crate::components::{ResolvedThreatsContainer, ViewHud, Viewed};
+use crate::resources::EntityMap;
 use crate::systems::threat_icons::{estimate, severity, severity_rgb, DOT_COLOR};
 use common_bevy::tuning::Tuning;
 
@@ -51,8 +53,12 @@ const ACROSS: f32 = 28.0;
 /// with longer to wait holds at the far end.
 const SPAN: Duration = Duration::from_millis(4500);
 
-/// A threat gone this close to its landing landed; one gone sooner was cleared.
-const LANDED_WITHIN: Duration = Duration::from_millis(250);
+/// How long a note whose threat has gone with no damage seen waits for
+/// it before it is taken as cleared: the damage and the clearing that end
+/// a threat arrive together, but may be read a frame apart.
+pub(crate) const UNSURE: f32 = 0.15;
+/// How long a landing is kept for the note it ends
+const LANDING_KEPT: f32 = 1.0;
 
 /// The shader's parameters; every length is the node's, in pixels.
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
@@ -87,19 +93,62 @@ impl UiMaterial for HighwayMaterial {
 #[derive(Component)]
 pub struct Highway;
 
-/// A threat's note: which threat, and where and how it was last drawn, so
-/// it can shatter there when the threat goes.
+/// A threat's note: which threat, where and how it was last drawn, so it
+/// can go there when the threat does, and when its threat went with no
+/// damage seen, if it has.
 #[derive(Component)]
 pub struct Note {
     key: (Entity, Duration, Lane),
-    lands_at: Duration,
     centre: Vec2,
     size: f32,
     color: Color,
+    unsure: Option<f32>,
+}
+
+/// The blows that landed lately, each as who it landed on, the server's id
+/// of its source (as a threat names it) and when: a threat gone with one
+/// landed, however early — a dismissal lands at once — and gone without
+/// one, cleared.
+#[derive(Resource, Default)]
+pub struct Landings(Vec<(Entity, Entity, f32)>);
+
+impl Landings {
+    /// Takes the landing on `struck` from `source`, if one came
+    pub fn take(&mut self, struck: Entity, source: Entity) -> bool {
+        let Some(i) = self.0.iter().position(|&(on, from, _)| on == struck && from == source) else { return false };
+        self.0.swap_remove(i);
+        true
+    }
+}
+
+/// Keeps each blow that lands, and lets go of those no note took
+pub fn record_landings(
+    mut reader: MessageReader<Do>,
+    mut landings: ResMut<Landings>,
+    l2r: Res<EntityMap>,
+    time: Res<Time>,
+) {
+    let now = time.elapsed_secs();
+    landings.0.retain(|&(_, _, at)| now - at < LANDING_KEPT);
+    for message in reader.read() {
+        let GameEvent::ApplyDamage { ent, source, dot: false, .. } = message.event else { continue };
+        // A source gone here keeps the server's id
+        let source = l2r.get_by_left(&source).copied().unwrap_or(source);
+        landings.0.push((ent, source, now));
+    }
 }
 
 #[derive(Component)]
 pub struct NoteLabel;
+
+/// A landed note, spreading from where it landed as it fades
+#[derive(Component)]
+pub struct Pulse {
+    at: Vec2,
+    born: f32,
+    size: f32,
+    color: Color,
+}
 
 /// A fragment of a shattered note, flying out from where it broke
 #[derive(Component)]
@@ -107,7 +156,6 @@ pub struct Shard {
     from: Vec2,
     velocity: Vec2,
     born: f32,
-    life: f32,
     size: f32,
     color: Color,
 }
@@ -230,23 +278,24 @@ pub fn setup(
         });
 }
 
-/// Place a note for every threat in the viewed actor's queue, and shatter
-/// the notes of threats gone from it.
+/// Place a note for every threat in the viewed actor's queue; pulse the
+/// note of a threat gone from it that landed, and shatter one cleared.
 pub fn update(
     tuning: Res<Tuning>,
     mut commands: Commands,
-    player_query: Query<(&ReactionQueue, &ActorAttributes, &Health, Option<&CombatState>), With<Viewed>>,
+    player_query: Query<(Entity, &ReactionQueue, &ActorAttributes, &Health, Option<&CombatState>), With<Viewed>>,
     mut highway_query: Query<(Entity, &mut Visibility, &MaterialNode<HighwayMaterial>), With<Highway>>,
     mut materials: ResMut<Assets<HighwayMaterial>>,
     mut note_query: Query<(Entity, &mut Note, &mut Node, &mut BackgroundColor, &mut BorderColor, &Children), Without<Highway>>,
     mut label_query: Query<(&mut Text, &mut TextFont, &mut TextColor), With<NoteLabel>>,
+    mut landings: ResMut<Landings>,
     time: Res<Time>,
     server: Res<crate::resources::Server>,
 ) {
     let Ok((highway, mut visibility, material)) = highway_query.single_mut() else {
         return;
     };
-    let Some((queue, attrs, health, combat)) = player_query.iter().next() else {
+    let Some((viewed, queue, attrs, health, combat)) = player_query.iter().next() else {
         visibility.set_if_neq(Visibility::Hidden);
         for (entity, ..) in &note_query {
             commands.entity(entity).despawn();
@@ -276,8 +325,8 @@ pub fn update(
 
     for (entity, mut note, mut node, mut background, mut border, children) in &mut note_query {
         let Some(threat) = queue.threats.iter().find(|t| key(t) == note.key) else {
-            let landed = now + LANDED_WITHIN >= note.lands_at;
-            if landed {
+            let at = time.elapsed_secs();
+            if landings.take(viewed, note.key.0) {
                 let lane = note.key.2;
                 if let Some(mut lit) = materials.get_mut(&material.0) {
                     let flash = &mut lit.highway.flash;
@@ -287,10 +336,11 @@ pub fn update(
                         Lane::AutoAttack => flash.z = 1.0,
                     }
                 }
-                // Landed, it takes its lane's colour
-                shatter(&mut commands, highway, centre(lane, 0.0), NOTE, lane_color(lane), 12, 1.6, time.elapsed_secs());
+                pulse(&mut commands, highway, note.centre, note.size, lane_color(lane), at);
+            } else if at - *note.unsure.get_or_insert(at) >= UNSURE {
+                shatter(&mut commands, highway, note.centre, note.size, note.color, at);
             } else {
-                shatter(&mut commands, highway, note.centre, note.size, note.color, 7, 1.0, time.elapsed_secs());
+                continue;
             }
             commands.entity(entity).despawn();
             continue;
@@ -348,7 +398,7 @@ pub fn update(
                     },
                     BackgroundColor(with_alpha(fill, fade(d))),
                     BorderColor::all(with_alpha(rim, fade(d))),
-                    Note { key: key(threat), lands_at: threat.lands_at(), centre: at, size, color: fill },
+                    Note { key: key(threat), centre: at, size, color: fill, unsure: None },
                 ))
                 .with_children(|parent| {
                     parent.spawn((
@@ -365,21 +415,49 @@ pub fn update(
 /// A note's fill, rim and label: its colour says how hard it hits, its lane
 /// what kind it is, and its label its damage. One a reaction would take is
 /// `taken`, and rimmed white.
-fn look(threat: &QueuedThreat, attrs: &ActorAttributes, health: &Health, taken: bool) -> (Color, Color, String) {
+pub(crate) fn look(threat: &QueuedThreat, attrs: &ActorAttributes, health: &Health, taken: bool) -> (Color, Color, String) {
     let rim = if taken { Color::WHITE } else { Color::srgba(0.1, 0.08, 0.06, 0.9) };
     let (r, g, b) = severity_rgb(severity(threat, attrs, health));
     (Color::srgb(r, g, b), rim, format!("{:.0}", estimate(threat, attrs)))
 }
 
-/// Break a note into `count` shards flying out from `from`; `force` scales
-/// how far and how big, a landing's above a clearing's.
-fn shatter(commands: &mut Commands, highway: Entity, from: Vec2, size: f32, color: Color, count: usize, force: f32, now: f32) {
-    commands.entity(highway).with_children(|parent| {
-        for i in 0..count {
-            let angle = std::f32::consts::TAU * (i as f32 + 0.5) / count as f32;
-            let velocity = Vec2::new(angle.cos(), angle.sin()) * (110.0 + 40.0 * (i % 3) as f32) * force;
-            let shard = size * 0.22 * force.sqrt();
-            parent.spawn((
+/// How long a landed note's pulse spreads, and how wide it ends, as a
+/// share of the note's width
+const PULSE: f32 = 0.35;
+const PULSE_SPREAD: f32 = 2.2;
+/// How many shards a cleared note breaks into, and how long they fly
+const SHARDS: usize = 7;
+pub(crate) const SHARDS_FLY: f32 = 0.45;
+
+/// A landed note, of width `size`, pulses: a disc in `color` spreading
+/// from `at` in `parent`'s box as it fades.
+pub(crate) fn pulse(commands: &mut Commands, parent: Entity, at: Vec2, size: f32, color: Color, now: f32) {
+    commands.entity(parent).with_children(|children| {
+        children.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Px(size),
+                height: Val::Px(size),
+                left: Val::Px(at.x - size / 2.0),
+                bottom: Val::Px(at.y - size / 2.0),
+                border_radius: BorderRadius::all(Val::Percent(50.)),
+                ..default()
+            },
+            BackgroundColor(color),
+            Pulse { at, born: now, size, color },
+        ));
+    });
+}
+
+/// A cleared note, of width `size`, breaks: shards in its `color`, children
+/// of `parent`, flying out from `from` in its box.
+pub(crate) fn shatter(commands: &mut Commands, parent: Entity, from: Vec2, size: f32, color: Color, now: f32) {
+    commands.entity(parent).with_children(|children| {
+        for i in 0..SHARDS {
+            let angle = std::f32::consts::TAU * (i as f32 + 0.5) / SHARDS as f32;
+            let velocity = Vec2::new(angle.cos(), angle.sin()) * (110.0 + 40.0 * (i % 3) as f32);
+            let shard = size * 0.22;
+            children.spawn((
                 Node {
                     position_type: PositionType::Absolute,
                     width: Val::Px(shard),
@@ -389,10 +467,33 @@ fn shatter(commands: &mut Commands, highway: Entity, from: Vec2, size: f32, colo
                     ..default()
                 },
                 BackgroundColor(color),
-                Shard { from, velocity, born: now, life: 0.3 + 0.15 * force, size: shard, color },
+                Shard { from, velocity, born: now, size: shard, color },
             ));
         }
     });
+}
+
+/// Spread each landed note's pulse and fade it
+pub fn update_pulses(
+    mut commands: Commands,
+    mut pulse_query: Query<(Entity, &Pulse, &mut Node, &mut BackgroundColor)>,
+    time: Res<Time>,
+) {
+    let now = time.elapsed_secs();
+    for (entity, pulse, mut node, mut background) in &mut pulse_query {
+        let k = (now - pulse.born) / PULSE;
+        if k >= 1.0 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        let spread = 1.0 - (1.0 - k).powi(2);
+        let size = pulse.size * (1.0 + (PULSE_SPREAD - 1.0) * spread);
+        node.width = Val::Px(size);
+        node.height = Val::Px(size);
+        node.left = Val::Px(pulse.at.x - size / 2.0);
+        node.bottom = Val::Px(pulse.at.y - size / 2.0);
+        background.0 = with_alpha(pulse.color, 0.9 * (1.0 - k));
+    }
 }
 
 /// Fly shards out and fade them, and fade each lane's landing flash
@@ -406,11 +507,11 @@ pub fn update_shards(
     let now = time.elapsed_secs();
     for (entity, shard, mut node, mut background) in &mut shard_query {
         let t = now - shard.born;
-        if t >= shard.life {
+        if t >= SHARDS_FLY {
             commands.entity(entity).despawn();
             continue;
         }
-        let k = t / shard.life;
+        let k = t / SHARDS_FLY;
         let at = shard.from + shard.velocity * t * (1.0 - 0.5 * k);
         let size = shard.size * (1.0 - 0.6 * k);
         node.width = Val::Px(size);
@@ -435,6 +536,32 @@ pub fn update_shards(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_threat_landed_however_early_is_told_by_its_damage() {
+        let mut app = App::new();
+        app.add_message::<Do>();
+        app.init_resource::<Time>();
+        app.init_resource::<EntityMap>();
+        app.init_resource::<Landings>();
+        app.add_systems(Update, record_landings);
+
+        let player = app.world_mut().spawn_empty().id();
+        let foe = app.world_mut().spawn_empty().id();
+        let [foe_there, gone_there] = [9_000, 9_001].map(|id| Entity::from_raw_u32(id).unwrap());
+        app.world_mut().resource_mut::<EntityMap>().insert(foe, foe_there);
+        // A source gone here arrives by the server's id
+        for (source, dot) in [(foe, false), (gone_there, false), (foe, true)] {
+            app.world_mut().write_message(Do { event: GameEvent::ApplyDamage { ent: player, damage: 10.0, source, dot } });
+        }
+        app.update();
+
+        let mut landings = app.world_mut().resource_mut::<Landings>();
+        assert!(landings.take(player, foe_there), "a landing names its source as the threat does");
+        assert!(landings.take(player, gone_there), "and one whose source is gone, too");
+        assert!(!landings.take(player, foe_there), "each lands one note; a wound's tick lands none");
+        assert!(!landings.take(foe, foe_there), "and only on what it landed on");
+    }
 
     #[test]
     fn a_note_lands_on_the_hit_line_at_full_size() {

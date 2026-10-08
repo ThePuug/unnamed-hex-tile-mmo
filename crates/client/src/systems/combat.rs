@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use common_bevy::{
-    components::{reaction_queue::*, resources::*},
+    components::reaction_queue::*,
     message::{Do, Event as GameEvent},
     systems::combat::queue as queue_utils,
 };
@@ -25,62 +25,6 @@ pub fn handle_insert_threat(
                 // Insert always succeeds (unbounded queue)
                 queue_utils::insert_threat(&mut queue, threat, server_now);
             }
-        }
-    }
-}
-
-/// Client system to handle ApplyDamage events
-/// Removes the corresponding threat from the queue and spawns floating damage numbers
-/// NOTE: Does NOT update health - server sends authoritative health via Incremental{Health}
-/// Only spawns damage numbers over NPCs (outgoing damage), not over player (incoming damage shown in resolved threats)
-pub fn handle_apply_damage(
-    mut commands: Commands,
-    mut reader: MessageReader<Do>,
-    _health_query: Query<&mut Health>,
-    _queue_query: Query<&ReactionQueue>,
-    viewed: Query<Entity, With<crate::components::Viewed>>,
-    transform_query: Query<&Transform>,
-    time: Res<Time>,
-) {
-    // What lands on the actor the client sees as shows in its resolved stack
-    let player_entity = viewed.single().ok();
-
-    for event in reader.read() {
-        if let GameEvent::ApplyDamage { ent, damage, dot, .. } = event.event {
-            // Don't remove from queue - ClearQueue event already did that!
-            // This was causing double-removal and queue desync
-            // (ApplyDamage is for damage display only, not queue management)
-
-            // Skip player incoming damage - shown via resolved threats stack
-            let is_player_target = player_entity.map_or(false, |p| p == ent);
-            if is_player_target {
-                continue;
-            }
-
-            // Spawn floating damage number over the NPC
-            // Entity stays alive for 3s in death pose, so Transform is available
-            let Ok(transform) = transform_query.get(ent) else { continue; };
-            let world_pos = transform.translation + Vec3::new(0.0, 2.5, 0.0);
-
-            commands.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    ..default()
-                },
-                Text::new(format!("{:.0}", damage)),
-                TextFont {
-                    font_size: FontSize::Px(32.0),
-                    ..default()
-                },
-                TextColor(if dot { crate::systems::threat_icons::DOT_COLOR } else { Color::WHITE }),
-                TextLayout::justify(Justify::Center),
-                crate::components::FloatingText {
-                    spawn_time: time.elapsed(),
-                    world_position: world_pos,
-                    lifetime: 1.5,
-                    velocity: 1.0,
-                },
-            ));
         }
     }
 }

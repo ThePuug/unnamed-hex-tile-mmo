@@ -10,7 +10,7 @@ use crate::{
 /// screen. The camera gives the window's pixels; a node's are the UI's,
 /// which `UiScale` scales, so a node placed by the window's lands short of
 /// its mark in a window smaller than the monitor.
-fn node_at(camera: &Camera, camera_transform: &GlobalTransform, scale: &UiScale, world: Vec3) -> Option<Vec2> {
+pub(crate) fn node_at(camera: &Camera, camera_transform: &GlobalTransform, scale: &UiScale, world: Vec3) -> Option<Vec2> {
     camera.world_to_viewport(camera_transform, world).ok().map(|at| at / scale.0)
 }
 

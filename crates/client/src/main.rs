@@ -32,7 +32,7 @@ use crate::{
         water::WaterPlugin,
     },
     resources::*,
-    systems::{actor, actor_dead_visibility, animator, camera, combat, equipment, gathering, hiding, input, movement, renet, targeting, world}
+    systems::{actor, actor_dead_visibility, animator, camera, combat, equipment, gathering, hiding, input, movement, renet, struck, targeting, world}
 };
 #[cfg(feature = "admin")]
 use crate::plugins::recorder;
@@ -164,7 +164,7 @@ fn main() {
 
     app.add_systems(Update, (
         combat::handle_insert_threat,
-        combat::handle_apply_damage,
+        (struck::on_contact, struck::on_landing, struck::update_marks, struck::flash).chain(),
         combat::handle_clear_queue,
         common_bevy::systems::world::try_incremental,
         common_bevy::systems::world::do_incremental,

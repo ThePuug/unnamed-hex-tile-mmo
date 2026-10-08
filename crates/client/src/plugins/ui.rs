@@ -75,7 +75,8 @@ impl Plugin for UiPlugin {
         app.add_systems(Update, (bag_panel::handle_numpad, (drop_panel::handle_keys, drop_panel::update).chain()));
 
         app.add_plugins(UiMaterialPlugin::<highway::HighwayMaterial>::default());
-        app.add_systems(Update, (highway::update, highway::update_shards));
+        app.init_resource::<highway::Landings>();
+        app.add_systems(Update, (highway::record_landings, highway::update, highway::update_pulses, highway::update_shards));
 
         // Combat UI feedback systems (floating damage numbers, health bars, recovery bars, threat dots)
         app.add_systems(
