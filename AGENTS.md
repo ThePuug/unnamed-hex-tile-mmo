@@ -35,6 +35,7 @@ cargo run --bin client
 cargo run --bin music-player       # needs a SoundFont: $SOUNDFONT or ~/soundfonts/GeneralUser.sf2
 cargo run --bin arena               # archetype v archetype balance, headless; keys in arena/src/main.rs
 cargo run --bin arena -- tune screen|balance|minds|settle|loop|show|apply   # searches; bounds in arena/src/tune.toml
+cargo run --bin metrics -- serve   # records the client's published metrics; then `metrics page|stats|snapshot|list|subscribe`
 cargo test                         # all tests
 cargo test -p common-bevy physics  # specific module
 cargo test -p combat reaction_queue
@@ -90,6 +91,7 @@ flat-top hex grid. All crates under `crates/`:
 | `world-viewer` | CLI rendering the event stack, or one event's field or index, to an image; its README says what a view may read |
 | `qrz` | Hex grid library — see `crates/qrz/AGENTS.md` |
 | `console` | Server monitoring console |
+| `metrics-cli` | `metrics`: records what the game's processes publish to their multicast groups (`common::metrics`) and reads it back — snapshots, stats over a window, pages |
 | `music` | Music composed from a seed and rendered through a SoundFont — the pieces and their vocabulary; the client composes from it as it plays, `assets/crates/musicgen` checks and proofs it, and its `AGENTS.md` binds the pieces |
 | `music-player` | A window playing fresh variations of the chosen pieces as they are composed, a rest between |
 | `audio` | Seeded draws, BS.1770 loudness and true peak, WAV and OGG writers — what `music` and the assets repo's sound generators stand on |

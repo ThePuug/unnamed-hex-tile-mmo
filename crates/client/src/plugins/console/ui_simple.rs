@@ -79,7 +79,6 @@ pub fn update_console_visibility(
 pub fn update_console_menu(
     console: Res<DevConsole>,
     diagnostics_state: Res<DiagnosticsState>,
-    metrics_dump: Res<crate::plugins::diagnostics::MetricsDump>,
     server: Res<crate::resources::Server>,
     time: Res<Time>,
     mut breadcrumb_query: Query<&mut Text, (With<BreadcrumbText>, Without<MenuItemsContainer>)>,
@@ -129,17 +128,6 @@ pub fn update_console_menu(
                         Text::new(format!("{}. Toggle Metrics Overlay    [{}]", metrics_key, on_off(diagnostics_state.metrics_overlay_visible))),
                         TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(state_color(diagnostics_state.metrics_overlay_visible)),
-                    ));
-
-                    let dump_key = if cfg!(feature = "admin") { "4" } else { "3" };
-                    parent.spawn((
-                        Text::new(format!(
-                            "{}. Write Metrics Snapshot{}",
-                            dump_key,
-                            if metrics_dump.on { "  [also logging]" } else { "" }
-                        )),
-                        TextFont { font_size: FontSize::Px(16.0), ..default() },
-                        TextColor(state_color(true)),
                     ));
 
                     #[cfg(feature = "admin")]

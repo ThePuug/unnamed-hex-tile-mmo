@@ -9,6 +9,7 @@ members = [
     "crates/arena",
     "crates/qrz",
     "crates/console",
+    "crates/metrics-cli",
     "crates/audio",
     "crates/music",
     "crates/music-player",

@@ -121,12 +121,6 @@ fn handle_root_menu(
         consumed = Some(toggle_key);
     }
 
-    let dump_key = if cfg!(feature = "admin") { KeyCode::Numpad4 } else { KeyCode::Numpad3 };
-    if consumed.is_none() && keyboard.just_pressed(dump_key) {
-        action_writer.write(DevConsoleAction::WriteMetricsSnapshot);
-        consumed = Some(dump_key);
-    }
-
     #[cfg(feature = "admin")]
     if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad6) {
         console.history.push(console.current_menu.clone());

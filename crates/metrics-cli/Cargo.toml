@@ -1,0 +1,12 @@
+[package]
+name = "metrics-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "metrics"
+path = "src/main.rs"
+
+[dependencies]
+common = { path = "../common" }
+clap = { version = "4", features = ["derive"] }

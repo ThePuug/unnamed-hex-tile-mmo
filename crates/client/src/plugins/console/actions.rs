@@ -26,7 +26,6 @@ pub enum DevConsoleAction {
 
     // Top-level toggles
     ToggleMetricsOverlay,
-    WriteMetricsSnapshot,
 
     // Admin actions
     #[cfg(feature = "admin")]
@@ -52,7 +51,6 @@ pub enum DevConsoleAction {
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Switches<'w> {
     state: ResMut<'w, DiagnosticsState>,
-    dump: ResMut<'w, crate::plugins::diagnostics::MetricsDump>,
 }
 
 pub fn execute_console_actions(
@@ -81,7 +79,6 @@ pub fn execute_console_actions(
 ) {
     let game = server.current_time(time.elapsed().as_millis());
     let diagnostics_state = &mut *switches.state;
-    let metrics_dump = &mut *switches.dump;
     for action in reader.read() {
         match action {
             DevConsoleAction::ToggleGrid => {
@@ -155,10 +152,6 @@ pub fn execute_console_actions(
             DevConsoleAction::ToggleCanopyParts => {
                 diagnostics_state.canopy_parts_off = !diagnostics_state.canopy_parts_off;
                 info!("Canopy: {}", if diagnostics_state.canopy_parts_off { "vertices" } else { "parts" });
-            }
-            DevConsoleAction::WriteMetricsSnapshot => {
-                metrics_dump.asked = true;
-                info!("Metrics: a snapshot appended to proofs/client/metrics.log");
             }
             DevConsoleAction::ToggleMetricsOverlay => {
                 diagnostics_state.metrics_overlay_visible = !diagnostics_state.metrics_overlay_visible;

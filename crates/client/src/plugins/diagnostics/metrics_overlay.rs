@@ -1,18 +1,10 @@
-use std::collections::VecDeque;
-
-use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use crate::systems::closeup::CloseupCamera;
 use bevy_camera::Viewport;
 use bevy_egui::{egui, EguiContexts};
 
 use super::config::{DiagnosticsState, MetricsTab};
-use super::network_ui::NetworkMetrics;
-use common_bevy::{
-    components::{behaviour::PlayerControlled, Actor, Loc},
-    resources::map::Map,
-};
-use qrz::Convert;
+use super::feed::Feed;
 
 
 // ── Layout constants (match server console) ──
@@ -62,172 +54,6 @@ fn colored_mono(text: &str, color: egui::Color32) -> egui::text::LayoutJob {
 
 
 use common::numfmt;
-
-// ── History (rolling window — matches server console) ──
-
-const HISTORY_LEN: usize = 120;
-/// Seconds between samples pushed into history.
-const SAMPLE_INTERVAL: f32 = 0.5;
-
-struct History(VecDeque<f64>);
-
-impl History {
-    fn new() -> Self {
-        Self(VecDeque::with_capacity(HISTORY_LEN))
-    }
-    fn push(&mut self, val: f64) {
-        if self.0.len() >= HISTORY_LEN {
-            self.0.pop_front();
-        }
-        self.0.push_back(val);
-    }
-    fn as_f32(&self) -> Vec<f32> {
-        self.0.iter().map(|&v| v as f32).collect()
-    }
-    fn visible_max(&self, n: usize) -> f64 {
-        let start = self.0.len().saturating_sub(n);
-        self.0.range(start..).copied().fold(0.0_f64, f64::max)
-    }
-}
-
-/// Rolling window of raw frame times for p95 computation.
-/// Time-based eviction keeps exactly the last `window_secs` of observations.
-struct FrameTimeWindow {
-    timestamps: VecDeque<f64>,
-    values: VecDeque<f64>,
-    window_secs: f64,
-}
-
-impl FrameTimeWindow {
-    fn new(window_secs: f64) -> Self {
-        Self {
-            timestamps: VecDeque::new(),
-            values: VecDeque::new(),
-            window_secs,
-        }
-    }
-
-    fn push(&mut self, time_secs: f64, val: f64) {
-        let cutoff = time_secs - self.window_secs;
-        while self.timestamps.front().map_or(false, |&t| t < cutoff) {
-            self.timestamps.pop_front();
-            self.values.pop_front();
-        }
-        self.timestamps.push_back(time_secs);
-        self.values.push_back(val);
-    }
-
-    fn p95(&self) -> f64 {
-        if self.values.is_empty() {
-            return 0.0;
-        }
-        let mut sorted: Vec<f64> = self.values.iter().copied().collect();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let rank = (sorted.len() as f64 * 0.95).ceil() as usize;
-        sorted[rank.saturating_sub(1)]
-    }
-}
-
-/// Per-system timing entry (drained from ClientTimers).
-pub(super) struct TimingEntry {
-    hist_p95: History,
-    cached_p95: Vec<f32>,
-}
-
-impl TimingEntry {
-    fn new() -> Self { Self { hist_p95: History::new(), cached_p95: Vec::new() } }
-
-    /// The newest sample, for a reader that wants the number rather than
-    /// the shape of it.
-    pub(super) fn latest(&self) -> f32 { self.cached_p95.last().copied().unwrap_or(0.0) }
-}
-
-/// Accumulated metric histories, sampled at SAMPLE_INTERVAL.
-#[derive(Resource)]
-pub struct MetricsHistory {
-    timer: f32,
-    /// Raw frame times — pushed every frame, p95 computed over 2s window.
-    frame_window: FrameTimeWindow,
-    /// Sparkline history of p95 frame times (sampled at SAMPLE_INTERVAL).
-    frame_ms: History,
-    /// Cached p95 frame time (ms), updated at SAMPLE_INTERVAL to avoid flicker.
-    frame_p95: f64,
-    /// Cached FPS (inverse of frame_p95), updated at SAMPLE_INTERVAL.
-    fps_p95: f64,
-    bw: History,
-    msg: History,
-    /// Per-system timing histories (drained from ClientTimers).
-    pub(super) timings: std::collections::HashMap<&'static str, TimingEntry>,
-    cached_frame: Vec<f32>,
-    cached_bw: Vec<f32>,
-    cached_msg: Vec<f32>,
-}
-
-impl Default for MetricsHistory {
-    fn default() -> Self {
-        Self {
-            timer: 0.0,
-            frame_window: FrameTimeWindow::new(2.0),
-            frame_ms: History::new(),
-            frame_p95: 0.0,
-            fps_p95: 0.0,
-            bw: History::new(),
-            msg: History::new(),
-            timings: std::collections::HashMap::new(),
-            cached_frame: Vec::new(),
-            cached_bw: Vec::new(),
-            cached_msg: Vec::new(),
-        }
-    }
-}
-
-/// Samples current metric values into rolling histories.
-/// Raw frame time is pushed every frame; sparkline histories at SAMPLE_INTERVAL.
-pub fn sample_metrics(
-    time: Res<Time>,
-    diagnostics: Res<DiagnosticsStore>,
-    network: Res<NetworkMetrics>,
-    mut history: ResMut<MetricsHistory>,
-    client_timers: Res<crate::resources::ClientTimers>,
-) {
-    let _t = client_timers.0.scope("metrics");
-    // Every frame: push raw frame time into the 2s p95 window
-    let elapsed = time.elapsed_secs_f64();
-    if let Some(ft) = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
-        .and_then(|d| d.value())
-    {
-        history.frame_window.push(elapsed, ft);
-    }
-
-    // Periodic: push to sparkline histories
-    history.timer += time.delta_secs();
-    if history.timer < SAMPLE_INTERVAL {
-        return;
-    }
-    history.timer -= SAMPLE_INTERVAL;
-
-    let p95 = history.frame_window.p95();
-    history.frame_p95 = p95;
-    history.fps_p95 = if p95 > 0.0 { 1000.0 / p95 } else { 0.0 };
-    history.frame_ms.push(p95);
-    history.bw.push(network.displayed_bytes_per_sec() as f64);
-    history.msg.push(network.displayed_messages_per_sec() as f64);
-
-    history.cached_frame = history.frame_ms.as_f32();
-    history.cached_bw = history.bw.as_f32();
-    history.cached_msg = history.msg.as_f32();
-    // Drain system timers into per-system histories
-    for (name, p95, _count) in client_timers.0.drain() {
-        history.timings.entry(name)
-            .or_insert_with(TimingEntry::new)
-            .hist_p95.push(p95 as f64);
-    }
-
-    for entry in history.timings.values_mut() {
-        entry.cached_p95 = entry.hist_p95.as_f32();
-    }
-}
 
 // ── Alarm bands (match server console pattern) ──
 
@@ -494,18 +320,7 @@ pub fn update_metrics_overlay(
     overlay: Res<OverlayCameraEntity>,
     mut camera_q: Query<&mut Camera, (With<Camera3d>, Without<OverlayCamera>, Without<CloseupCamera>)>,
     windows: Query<&Window>,
-    diagnostics: Res<DiagnosticsStore>,
-    map: Res<Map>,
-    network: Res<NetworkMetrics>,
-    history: Res<MetricsHistory>,
-    player_q: Query<
-        (&Transform, Option<&Loc>),
-        (With<Actor>, With<PlayerControlled>, Without<Camera3d>),
-    >,
-    tri_stats: Res<crate::resources::LodTriangleStats>,
-    origin: Res<crate::resources::RenderOrigin>,
-    cover: Res<crate::plugins::cover::CoverDraws>,
-    census: Res<super::RenderCensus>,
+    feed: Res<Feed>,
 ) {
     if !state.metrics_overlay_visible {
         if let Ok(mut camera) = camera_q.single_mut() {
@@ -568,40 +383,8 @@ pub fn update_metrics_overlay(
 
     // ── Collect data ──
 
-    let world_pos: Option<Vec3> = player_q.single().ok().map(|(t, _)| origin.world(t.translation));
-
-    let _player_loc = player_q.single().ok().and_then(|(_, loc)| loc.copied());
-
-    let tile_data = world_pos.map(|pos| {
-        let qrz: qrz::Qrz = map.convert(pos);
-        let z = map
-            .get_by_qr(qrz.q, qrz.r)
-            .map(|(real, _)| real.z)
-            .unwrap_or(qrz.z);
-        let qf = qrz.q as f64;
-        let rf = qrz.r as f64;
-        let wx = qf + rf * 0.5;
-        let wy = rf * 1.7320508075688772 / 2.0;
-        (qrz, z, wx, wy)
-    });
-
-
-    let total_tris = tri_stats.total_tris;
-    let mesh_count = tri_stats.mesh_count;
-
-
-    let frame_p95 = history.frame_p95;
-    let fps_p95 = history.fps_p95;
-    let entities = diagnostics
-        .get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT)
-        .and_then(|d| d.smoothed())
-        .unwrap_or(0.0);
-    let bps = network.displayed_bytes_per_sec() as f64;
-    let mps = network.displayed_messages_per_sec() as f64;
-
-    let hist_frame = &history.cached_frame;
-    let hist_bw = &history.cached_bw;
-    let hist_msg = &history.cached_msg;
+    let frame_p95 = feed.latest("frame/p95_ms");
+    let fps_p95 = feed.latest("frame/fps");
 
     use numfmt::{NumFmt, Precision, Overflow};
 
@@ -628,14 +411,14 @@ pub fn update_metrics_overlay(
                     draw_section(ui, "FRAME", content_width, |ui| {
                         const FRAME_MS: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
                         const FPS: NumFmt = NumFmt { width: 3, precision: Precision::Integer, overflow: Overflow::Clamp };
-                        let frame_peak = history.frame_ms.visible_max(bar_count);
+                        let frame_peak = feed.peak("frame/p95_ms", bar_count);
                         let peak_v = FRAME_MS.fmt(frame_peak);
                         let fps_v = FPS.fmt(fps_p95);
                         let fps_color = ALARM_FPS.color(fps_p95);
                         seg_row(ui, cw, |s| {
                             s.half(&format!("{:>7}", "FRAME"), COLOR_DIM);
                             s.half(&format!("{:>5}{:<2}", FRAME_MS.fmt(frame_p95), "ms"), COLOR_DIM);
-                            s.spark(&hist_frame, SparkScale::Fixed(33.0), &ALARM_FRAME, rh);
+                            s.spark(feed.history("frame/p95_ms"), SparkScale::Fixed(33.0), &ALARM_FRAME, rh);
                             s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, peak_v), COLOR_DIM);
                             s.half(&format!("ƒ{:<6}", fps_v), fps_color);
                         });
@@ -645,9 +428,7 @@ pub fn update_metrics_overlay(
 
                     // ── TERRAIN ──
                     tab_section(ui, tab, MetricsTab::Terrain, content_width, |ui| {
-                        let (q, r, z, wx, wy) = tile_data
-                            .map(|(qrz, z, wx, wy)| (qrz.q as f64, qrz.r as f64, z as f64, wx, wy))
-                            .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
+                        let [q, r, z, wx, wy] = ["q", "r", "z", "wx", "wy"].map(|f| feed.latest(&format!("world/{f}")));
                         const COORD: NumFmt = NumFmt { width: 7, precision: Precision::Integer, overflow: Overflow::Clamp };
                         seg_row(ui, cw, |s| {
                             s.quarter(&format!(" {:<2}", GLYPH_HEX), COLOR_DIM);
@@ -662,9 +443,9 @@ pub fn update_metrics_overlay(
                         const ASYNC_CT: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
                             s.half(&format!("{:>7}", "async"), COLOR_DIM);
-                            s.half(&format!("{:>4}til", ASYNC_CT.fmt(tri_stats.async_tile as f64)), COLOR_DIM);
-                            s.half(&format!("{:>4}msh", ASYNC_CT.fmt(tri_stats.async_mesh as f64)), COLOR_DIM);
-                            s.half(&format!("{:>4}cz ", ASYNC_CT.fmt(tri_stats.async_cz as f64)), COLOR_DIM);
+                            s.half(&format!("{:>4}til", ASYNC_CT.fmt(feed.latest("terrain/async_tile"))), COLOR_DIM);
+                            s.half(&format!("{:>4}msh", ASYNC_CT.fmt(feed.latest("terrain/async_mesh"))), COLOR_DIM);
+                            s.half(&format!("{:>4}cz ", ASYNC_CT.fmt(feed.latest("terrain/async_cz"))), COLOR_DIM);
                         });
                         // Hex-native LoD stats: per-tier breakdown
                         const LOD_TRIS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
@@ -672,15 +453,19 @@ pub fn update_metrics_overlay(
                         // Total row
                         seg_row(ui, cw, |s| {
                             s.half(&format!("{:>7}", "LoD"), COLOR_DIM);
-                            s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(total_tris as f64)), COLOR_DIM);
-                            s.half(&format!("{:>4}chk", LOD_CT.fmt(mesh_count as f64)), COLOR_DIM);
+                            s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(feed.latest("terrain/tris"))), COLOR_DIM);
+                            s.half(&format!("{:>4}chk", LOD_CT.fmt(feed.latest("terrain/chunks"))), COLOR_DIM);
                         });
                         // Per-band rows
-                        for (&r, &(band_tris, band_count)) in &tri_stats.per_band {
+                        let mut bands: Vec<u32> = feed.under("terrain/band/").filter_map(|(_, rest)| rest.strip_suffix("/tris")?.parse().ok()).collect();
+                        bands.sort();
+                        for r in bands {
+                            let band_tris = feed.latest(&format!("terrain/band/{r}/tris"));
+                            let band_count = feed.latest(&format!("terrain/band/{r}/chunks"));
                             seg_row(ui, cw, |s| {
                                 s.half(&format!("  r={:<3}", r), COLOR_DIM);
-                                s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(band_tris as f64)), COLOR_DIM);
-                                s.half(&format!("{:>4}chk", LOD_CT.fmt(band_count as f64)), COLOR_DIM);
+                                s.half(&format!("{:<2}{:<5}", GLYPH_TRIANGLES, LOD_TRIS.fmt(band_tris)), COLOR_DIM);
+                                s.half(&format!("{:>4}chk", LOD_CT.fmt(band_count)), COLOR_DIM);
                             });
                         }
                     });
@@ -692,38 +477,42 @@ pub fn update_metrics_overlay(
                         const TILES: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
                             s.half(&format!("{:>7}", "ENTS"), COLOR_DIM);
-                            s.half(&format!("{:>5}  ", ENTS.fmt(entities)), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", ENTS.fmt(feed.latest("diag/entity_count"))), COLOR_DIM);
                             s.half(&format!("{:>7}", "TILES"), COLOR_DIM);
-                            s.half(&format!("{:>5}  ", TILES.fmt(map.len() as f64)), COLOR_DIM);
+                            s.half(&format!("{:>5}  ", TILES.fmt(feed.latest("world/tiles"))), COLOR_DIM);
+                        });
+                        seg_row(ui, cw, |s| {
+                            s.half(&format!("{:>7}", "MEM"), COLOR_DIM);
+                            s.half(&format!("{:>5}MB", TILES.fmt(feed.latest("process/memory_mb"))), COLOR_DIM);
                         });
                         // The cover: what it draws, and what it draws in one
                         // go. A draw costs the thread that encodes it; an
                         // instance in it costs nothing more.
                         for (what, draws, instances) in [
-                            ("MODELS", cover.models, cover.model_instances),
-                            ("CARDS", cover.cards, cover.card_instances),
+                            ("MODELS", feed.latest("cover/model_draws"), feed.latest("cover/models")),
+                            ("CARDS", feed.latest("cover/card_draws"), feed.latest("cover/cards")),
                         ] {
                             seg_row(ui, cw, |s| {
                                 s.half(&format!("{what:>7}"), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", ENTS.fmt(instances as f64)), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", ENTS.fmt(instances)), COLOR_DIM);
                                 s.half(&format!("{:>7}", "DRAWS"), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", ENTS.fmt(draws as f64)), ALARM_DRAWS.color(draws as f64));
+                                s.half(&format!("{:>5}  ", ENTS.fmt(draws)), ALARM_DRAWS.color(draws));
                             });
                         }
                         // What each group hands the rasteriser. The
                         // triangles are what a pass is paid in; the draws
                         // beside them say whether they came in one go.
                         for (what, group) in [
-                            ("GROUND", &census.terrain),
-                            ("COVER", &census.cover),
-                            ("ACTORS", &census.actors),
-                            ("OTHER", &census.other),
+                            ("GROUND", "terrain"),
+                            ("COVER", "cover"),
+                            ("ACTORS", "actors"),
+                            ("OTHER", "other"),
                         ] {
                             seg_row(ui, cw, |s| {
                                 s.half(&format!("{what:>7}"), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", ENTS.fmt(group.triangles as f64)), COLOR_DIM);
+                                s.half(&format!("{:>5}  ", ENTS.fmt(feed.latest(&format!("census/{group}/triangles")))), COLOR_DIM);
                                 s.half(&format!("{:>7}", "DRAWS"), COLOR_DIM);
-                                s.half(&format!("{:>5}  ", ENTS.fmt(group.draws as f64)), ALARM_DRAWS.color(group.draws as f64));
+                                s.half(&format!("{:>5}  ", ENTS.fmt(feed.latest(&format!("census/{group}/draws")))), ALARM_DRAWS.color(feed.latest(&format!("census/{group}/draws"))));
                             });
                         }
                     });
@@ -738,9 +527,8 @@ pub fn update_metrics_overlay(
                     tab_section(ui, tab, MetricsTab::Passes, content_width, |ui| {
                         const PASS_MS: NumFmt = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
                         let mut timed: std::collections::HashMap<&str, (f64, f64)> = Default::default();
-                        for d in diagnostics.iter() {
-                            let Some(rest) = d.path().as_str().strip_prefix("render/") else { continue };
-                            let Some(ms) = d.smoothed() else { continue };
+                        for (name, rest) in feed.under("diag/render/") {
+                            let ms = feed.latest(name);
                             if let Some(name) = rest.strip_suffix("/elapsed_cpu") {
                                 timed.entry(name).or_default().0 = ms;
                             } else if let Some(name) = rest.strip_suffix("/elapsed_gpu") {
@@ -775,24 +563,26 @@ pub fn update_metrics_overlay(
                         const NET_BPS: NumFmt = NumFmt { width: 4, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
                             s.half(&format!("{:<2}NET  ", GLYPH_NET_DOWN), COLOR_DIM);
-                            s.half(&format!("{:>4}{:<3}", NET_BPS.fmt(bps), "B/s"), COLOR_DIM);
-                            s.spark(&hist_bw, SparkScale::Fixed(40960.0), &ALARM_BW, rh);
-                            let pv = NET_BPS.fmt(history.bw.visible_max(bar_count));
+                            s.half(&format!("{:>4}{:<3}", NET_BPS.fmt(feed.latest("network/bytes_per_sec")), "B/s"), COLOR_DIM);
+                            s.spark(feed.history("network/bytes_per_sec"), SparkScale::Fixed(40960.0), &ALARM_BW, rh);
+                            let pv = NET_BPS.fmt(feed.peak("network/bytes_per_sec", bar_count));
                             s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
                         const NET_MPS: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
                         seg_row(ui, cw, |s| {
                             s.half(&format!("{:<2}MSG  ", GLYPH_NET_DOWN), COLOR_DIM);
-                            s.half(&format!("{:>5}{:<2}", NET_MPS.fmt(mps), "/s"), COLOR_DIM);
-                            s.spark(&hist_msg, SparkScale::Fixed(40.0), &ALARM_MSG, rh);
-                            let pv = NET_MPS.fmt(history.msg.visible_max(bar_count));
+                            s.half(&format!("{:>5}{:<2}", NET_MPS.fmt(feed.latest("network/messages_per_sec")), "/s"), COLOR_DIM);
+                            s.spark(feed.history("network/messages_per_sec"), SparkScale::Fixed(40.0), &ALARM_MSG, rh);
+                            let pv = NET_MPS.fmt(feed.peak("network/messages_per_sec", bar_count));
                             s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, pv), COLOR_DIM);
                         });
                     });
 
 
                     // ── TIMINGS ──
-                    if tab == MetricsTab::Timings && !history.timings.is_empty() {
+                    let mut timed: Vec<&str> = feed.under("timings/").filter_map(|(_, rest)| rest.strip_suffix(".p95")).collect();
+                    timed.sort();
+                    if tab == MetricsTab::Timings && !timed.is_empty() {
                         const ALARM_TIMING: Alarm = Alarm { bands: &[
                             (16.667, COLOR_NORMAL),
                             (33.333, COLOR_WARN),
@@ -806,25 +596,23 @@ pub fn update_metrics_overlay(
                         const OVERRUN: NumFmt = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Clamp };
 
                         draw_section(ui, "TIMINGS", content_width, |ui| {
-                            let mut names: Vec<&&str> = history.timings.keys().collect();
-                            names.sort();
-                            for &&name in &names {
-                                let entry = &history.timings[name];
+                            for &name in &timed {
+                                let history = feed.history(&format!("timings/{name}.p95"));
                                 seg_row(ui, cw, |s| {
                                     // Label (7ch)
                                     let display = if name.len() > 7 { &name[..7] } else { name };
                                     s.half(&format!("{:>7}", display), COLOR_DIM);
                                     // Value (7ch): p95 + unit
-                                    let p95_val = entry.hist_p95.0.back().copied().unwrap_or(0.0);
+                                    let p95_val = history.last().copied().unwrap_or(0.0) as f64;
                                     s.half(&format!("{:>5}{:<2}", TIME5.fmt(p95_val), "ms"), COLOR_DIM);
                                     // Sparkline (15ch)
-                                    s.spark(&entry.cached_p95, SparkScale::Fixed(33.0), &ALARM_TIMING, rh);
+                                    s.spark(history, SparkScale::Fixed(33.0), &ALARM_TIMING, rh);
                                     // Peak (7ch)
-                                    let peak = entry.hist_p95.visible_max(bar_count);
+                                    let peak = feed.peak(&format!("timings/{name}.p95"), bar_count);
                                     s.half(&format!("{:<2}{:<5}", GLYPH_PEAK, TIME5.fmt(peak)), COLOR_DIM);
                                     // Overruns: count of p95 > 16.667ms in visible window (7ch)
-                                    let start = entry.hist_p95.0.len().saturating_sub(bar_count);
-                                    let ov_val = entry.hist_p95.0.range(start..).filter(|&&v| v > 16.667).count() as f64;
+                                    let start = history.len().saturating_sub(bar_count);
+                                    let ov_val = history[start..].iter().filter(|&&v| v > 16.667).count() as f64;
                                     s.half(&format!("{:>5}{:<2}", OVERRUN.fmt(ov_val), GLYPH_OVERRUN), ALARM_OVERRUN.color(ov_val));
                                 });
                             }
@@ -945,28 +733,4 @@ mod tests {
         assert_eq!(PANEL_CHARS, 3 * 15 + 2 * 1);
         assert_eq!(PANEL_CHARS, 47);
     }
-
-    #[test]
-    fn history_rolling_window() {
-        let mut h = History::new();
-        for i in 0..150 {
-            h.push(i as f64);
-        }
-        assert_eq!(h.0.len(), HISTORY_LEN);
-        assert_eq!(*h.0.back().unwrap(), 149.0);
-        assert_eq!(*h.0.front().unwrap(), 30.0);
-    }
-
-    #[test]
-    fn history_visible_max() {
-        let mut h = History::new();
-        for v in [1.0, 5.0, 3.0, 8.0, 2.0] {
-            h.push(v);
-        }
-        assert_eq!(h.visible_max(3), 8.0); // last 3: 3.0, 8.0, 2.0
-        assert_eq!(h.visible_max(5), 8.0);
-        assert_eq!(h.visible_max(1), 2.0);
-    }
-
-
 }

@@ -1,10 +1,11 @@
 pub mod census;
 mod config;
-pub mod dump;
+mod feed;
 pub mod grid;
 pub mod metrics_overlay;
 mod milestones;
 pub mod network_ui;
+mod publish;
 
 use std::time::Instant;
 
@@ -18,7 +19,6 @@ use bevy::render::diagnostic::*;
 use bevy_egui::EguiPlugin;
 
 pub use census::RenderCensus;
-pub use dump::MetricsDump;
 pub use config::{DateField, DiagnosticsState, LightingClock};
 
 pub struct DiagnosticsPlugin;
@@ -39,13 +39,13 @@ impl Plugin for DiagnosticsPlugin {
 
         app.init_resource::<DiagnosticsState>();
         app.init_resource::<RenderCensus>();
-        app.insert_resource(MetricsDump::from_args());
-        app.add_systems(Update, (census::take_census, dump::dump_metrics).chain());
+        app.init_resource::<publish::Publication>();
+        app.init_resource::<feed::Feed>();
+        app.add_systems(Update, (census::take_census, publish::publish, feed::receive).chain());
         app.add_systems(PostStartup, milestones::log_started);
         app.add_systems(Update, (milestones::log_stage, milestones::log_video));
         app.init_resource::<network_ui::NetworkMetrics>();
         app.init_resource::<grid::PendingGridMesh>();
-        app.init_resource::<metrics_overlay::MetricsHistory>();
 
         app.add_systems(
             Startup,
@@ -63,7 +63,6 @@ impl Plugin for DiagnosticsPlugin {
                 grid::spawn_grid_mesh_task,
                 grid::poll_grid_mesh_task,
                 network_ui::update_network_metrics,
-                metrics_overlay::sample_metrics,
             ),
         );
 

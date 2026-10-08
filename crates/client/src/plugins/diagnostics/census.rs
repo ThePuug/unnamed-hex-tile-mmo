@@ -20,8 +20,9 @@ use crate::plugins::cover::draw::{CardStand, Stand, Stands, ModelStand};
 use crate::resources::SummaryMesh;
 use common_bevy::components::Actor;
 
-/// How often the census is retaken. Walking every visible mesh costs
-/// real time, and the numbers are read by eye.
+/// How often the census is retaken: as often as the metrics are
+/// published. Walking every visible mesh costs real time, timed as
+/// `census`.
 const EVERY: Duration = Duration::from_millis(500);
 
 /// One group's share of the scene.
@@ -76,8 +77,7 @@ fn triangles_of(mesh: &Mesh) -> u64 {
 #[allow(clippy::type_complexity)]
 pub fn take_census(
     mut census: ResMut<RenderCensus>,
-    state: Res<super::DiagnosticsState>,
-    dump: Res<super::dump::MetricsDump>,
+    timers: Res<crate::resources::ClientTimers>,
     time: Res<Time>,
     mut due: Local<Duration>,
     meshes: Res<Assets<Mesh>>,
@@ -90,14 +90,12 @@ pub fn take_census(
     frames: Query<&GlobalTransform>,
     camera: Query<&Frustum, (With<Camera3d>, With<IsDefaultUiCamera>)>,
 ) {
-    if !state.metrics_overlay_visible && !dump.on {
-        return;
-    }
     *due = due.saturating_sub(time.delta());
     if !due.is_zero() {
         return;
     }
     *due = EVERY;
+    let _t = timers.0.scope("census");
 
     let mut next = RenderCensus::default();
     for (entity, mesh, visible, summary) in &drawn {

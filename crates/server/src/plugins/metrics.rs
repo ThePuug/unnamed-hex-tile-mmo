@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
-use common_bevy::metrics::{Aggregator, Cadence, MetricsPacket, METRICS_MAGIC, METRICS_VERSION};
+use common::metrics::{Aggregator, Cadence, MetricsPacket};
 use common_bevy::resources::map::Map;
 use crate::resources::Lobby;
 
@@ -35,14 +35,9 @@ impl Transport {
     }
 
     fn send_packet(&self, packet: &MetricsPacket) {
-        let Ok(bytes) = bincode::serde::encode_to_vec(packet, bincode::config::legacy()) else {
-            return;
-        };
-        let mut buf = Vec::with_capacity(6 + bytes.len());
-        buf.extend_from_slice(&METRICS_MAGIC);
-        buf.extend_from_slice(&METRICS_VERSION.to_le_bytes());
-        buf.extend_from_slice(&bytes);
-        let _ = self.socket.send_to(&buf, self.target);
+        if let Some(buf) = packet.encode() {
+            let _ = self.socket.send_to(&buf, self.target);
+        }
     }
 }
 
@@ -371,7 +366,7 @@ fn refresh_metric_gauges(
         ("loaded_hexes", map.len() as f32),
         ("connected_players", lobby.len() as f32),
         ("npc_count", npc_query.iter().count() as f32),
-        ("memory_mb", process_working_set_bytes() as f32 / 1_048_576.0),
+        ("memory_mb", common::metrics::memory().working_set as f32 / 1_048_576.0),
         ("memory_map_mb", map.heap_size_estimate() as f32 / 1_048_576.0),
         ("chunk.in_flight", chunk_tasks.in_flight.len() as f32),
         ("chunk.pending", chunk_tasks.pending_len() as f32),
@@ -411,44 +406,3 @@ fn maybe_flush_snapshot(snapshot: Res<MetricSnapshot>, time: Res<Time>) {
     }
 }
 
-#[cfg(windows)]
-fn process_working_set_bytes() -> u64 {
-    #[repr(C)]
-    #[allow(non_snake_case)]
-    struct ProcessMemoryCounters {
-        cb: u32,
-        PageFaultCount: u32,
-        PeakWorkingSetSize: usize,
-        WorkingSetSize: usize,
-        QuotaPeakPagedPoolUsage: usize,
-        QuotaPagedPoolUsage: usize,
-        QuotaPeakNonPagedPoolUsage: usize,
-        QuotaNonPagedPoolUsage: usize,
-        PagefileUsage: usize,
-        PeakPagefileUsage: usize,
-    }
-
-    unsafe extern "system" {
-        fn GetCurrentProcess() -> isize;
-        fn K32GetProcessMemoryInfo(
-            process: isize,
-            counters: *mut ProcessMemoryCounters,
-            cb: u32,
-        ) -> i32;
-    }
-
-    unsafe {
-        let mut pmc = std::mem::zeroed::<ProcessMemoryCounters>();
-        pmc.cb = std::mem::size_of::<ProcessMemoryCounters>() as u32;
-        if K32GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc, pmc.cb) != 0 {
-            pmc.WorkingSetSize as u64
-        } else {
-            0
-        }
-    }
-}
-
-#[cfg(not(windows))]
-fn process_working_set_bytes() -> u64 {
-    0
-}

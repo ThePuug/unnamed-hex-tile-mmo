@@ -5,6 +5,7 @@ pub mod gathering;
 pub mod glyphs;
 pub mod hex_lattice;
 pub mod hex_spatial_grid;
+pub mod metrics;
 pub mod network;
 pub mod numfmt;
 pub mod plate_tags;
