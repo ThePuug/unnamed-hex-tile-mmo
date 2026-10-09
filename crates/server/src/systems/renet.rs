@@ -322,6 +322,7 @@ fn route(event: &Event) -> Option<(Entity, Route)> {
         | Event::InsertThreat { ent, .. }
         | Event::ApplyDamage { ent, .. }
         | Event::ClearQueue { ent, .. }
+        | Event::Respawn { ent, .. }
         | Event::UseAbility { ent, .. } => Some((*ent, Route::Seen)),
         Event::Confirm { ent, .. }
         | Event::RespecAttributes { ent, .. }

@@ -11,6 +11,11 @@ use crate::{
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Event {
     Despawn { ent: Entity },
+    /// Server → Client: a dead actor stands again at `qrz`, its pools
+    /// following. A client that kept its body moves it there unseen,
+    /// stands it, and shows it once it is alive; one that did not asks for
+    /// it as for any actor it has not spawned.
+    Respawn { ent: Entity, qrz: qrz::Qrz },
     /// Server-side only: request to discover a chunk and send ChunkData to client
     DiscoverChunk { ent: Entity, chunk_id: ChunkId },
     /// Server → Client: chunk data (hex chunk, radius 9, up to 271 tiles).
@@ -163,6 +168,7 @@ impl Event {
     pub fn ent_mut(&mut self) -> Option<&mut Entity> {
         match self {
             Event::Despawn { ent }
+            | Event::Respawn { ent, .. }
             | Event::DiscoverChunk { ent, .. }
             | Event::ChunkData { ent, .. }
             | Event::Init { ent, .. }

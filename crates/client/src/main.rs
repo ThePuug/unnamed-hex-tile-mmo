@@ -144,6 +144,7 @@ fn main() {
         actor::update,
         actor_dead_visibility::update_dead_visibility,
         actor_dead_visibility::cleanup_dead_entities,
+        actor_dead_visibility::respawn,
         animator::play_abilities,
         animator::play_held,
         animator::update,

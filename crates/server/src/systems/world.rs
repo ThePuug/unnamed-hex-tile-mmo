@@ -115,8 +115,8 @@ pub fn try_spawn(
     for message in reader.read() {
         let Try { event: Event::Spawn { ent, .. }} = message else { continue };
         let ent = *ent;
-        // Skip dead players (those with RespawnTimer) - they shouldn't be discovered/spawned
-        // until process_respawn sends an official Spawn event after the 5-second timer
+        // A dead player is spawned for no one until it respawns
+        // (`resources::process_respawn`)
         let Ok((loc, typ, attrs, player_controlled, side, heading, health, endurance, mana, combat_state, equipment)) = query.get(ent) else { continue; };
 
         // Send Spawn + all available actor components using shared helper

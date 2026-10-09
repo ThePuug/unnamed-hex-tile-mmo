@@ -1,11 +1,14 @@
 use bevy::prelude::*;
-use common_bevy::components::{Actor, reaction_queue::ReactionQueue, resources::{CombatState, Health}};
+use common_bevy::components::{
+    Actor, Loc, position::{Position, VisualPosition}, reaction_queue::ReactionQueue,
+    resources::{CombatState, Health}, status::Status,
+};
+use common_bevy::message::{Do, Event};
 use crate::components::{DeathMarker, Viewed};
 
-/// Restore visibility for actors that were hidden (e.g. after respawn)
-/// Dead actors now get a death pose via DeathMarker instead of being hidden
+/// Shows an actor hidden by its respawn ([`respawn`]) once it is alive
 pub fn update_dead_visibility(
-    mut query: Query<(&Health, &mut Visibility), With<Actor>>,
+    mut query: Query<(&Health, &mut Visibility), (With<Actor>, Without<DeathMarker>)>,
 ) {
     for (health, mut visibility) in &mut query {
         if health.state > 0.0 && *visibility == Visibility::Hidden {
@@ -14,27 +17,43 @@ pub fn update_dead_visibility(
     }
 }
 
+/// Stands a body the client kept, the local player's, again where the
+/// server respawned it: hidden, it moves there and stands, its status
+/// gone with its death, and [`update_dead_visibility`] shows it once its
+/// health says it is alive. It never stands where it fell.
+pub fn respawn(
+    mut commands: Commands,
+    mut reader: MessageReader<Do>,
+    mut bodies: Query<&mut Transform, With<DeathMarker>>,
+    map: Res<common_bevy::resources::map::Map>,
+    origin: Res<crate::resources::RenderOrigin>,
+) {
+    for message in reader.read() {
+        let Do { event: Event::Respawn { ent, qrz } } = message else { continue };
+        let Ok(mut transform) = bodies.get_mut(*ent) else { continue };
+        let at = origin.render_tile(&map, *qrz);
+        transform.translation = at;
+        transform.rotation = Quat::IDENTITY;
+        commands.entity(*ent)
+            .remove::<(DeathMarker, Status)>()
+            .insert((Visibility::Hidden, Loc::new(*qrz), Position::at_tile(*qrz), VisualPosition::at(at)));
+    }
+}
+
 /// Apply death pose to newly dead entities and despawn after 3 seconds, but
 /// the one the client sees as: its body stays until the view ends. As it
 /// falls it leaves the fight: the threats it held go and it is out of
-/// combat, the dead taking no more part. The player's own character, which
-/// the server respawns, stands again once its health returns.
+/// combat, the dead taking no more part. The player's own character lies
+/// until the server respawns it ([`respawn`]).
 pub fn cleanup_dead_entities(
     mut commands: Commands,
-    mut query: Query<(Entity, &DeathMarker, &mut Transform, Option<&mut ReactionQueue>, Option<&mut CombatState>, Has<Viewed>, Option<&Health>)>,
+    mut query: Query<(Entity, &DeathMarker, &mut Transform, Option<&mut ReactionQueue>, Option<&mut CombatState>, Has<Viewed>)>,
     time: Res<Time>,
 ) {
     const DEATH_LINGER_SECS: f32 = 3.0;
 
-    for (entity, marker, mut transform, queue, combat, viewed, health) in &mut query {
+    for (entity, marker, mut transform, queue, combat, viewed) in &mut query {
         let elapsed = (time.elapsed() - marker.death_time).as_secs_f32();
-        // Respawned, which the server does at full health: the marker goes
-        // and the actor's pose follows its heading again
-        if elapsed > 0.01 && health.is_some_and(|health| health.max > 0.0 && health.state >= health.max) {
-            commands.entity(entity).remove::<DeathMarker>();
-            continue;
-        }
-
         if elapsed <= 0.01 {
             // First frame: tip over 90 degrees to lay on side
             transform.rotation *= Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
@@ -125,19 +144,34 @@ mod tests {
     }
 
     #[test]
-    fn the_player_stands_again_once_respawned_whole() {
-        let mut world = World::new();
-        let mut time = Time::<()>::default();
-        time.advance_by(std::time::Duration::from_secs(10));
-        world.insert_resource(time);
-        let fell = || DeathMarker { death_time: std::time::Duration::from_secs(9) };
-        let lying = world.spawn((fell(), Transform::default(), Viewed, Health { max: 100.0, state: 40.0 })).id();
-        let risen = world.spawn((fell(), Transform::default(), Viewed, Health { max: 100.0, state: 100.0 })).id();
+    fn the_player_stands_again_only_where_it_respawns_and_shows_once_alive() {
+        use qrz::Qrz;
+        let mut app = App::new();
+        app.add_message::<Do>();
+        app.init_resource::<Time>();
+        app.insert_resource(crate::resources::world_map());
+        app.init_resource::<crate::resources::RenderOrigin>();
+        app.add_systems(Update, (cleanup_dead_entities, respawn, update_dead_visibility));
+        let fell = DeathMarker { death_time: std::time::Duration::ZERO };
+        let player = app.world_mut().spawn((
+            Actor, fell, Transform::default(), Visibility::Visible, Viewed,
+            Health { max: 100.0, state: 100.0 }, Status::default(), Loc::new(Qrz { q: 9, r: 9, z: 0 }),
+        )).id();
+        app.update();
+        assert!(app.world().get::<DeathMarker>(player).is_some(), "whole health alone leaves it lying where it fell");
 
-        world.run_system_once(cleanup_dead_entities).unwrap();
+        let spawn_point = Qrz { q: 0, r: 0, z: 0 };
+        app.world_mut().get_mut::<Health>(player).unwrap().state = 0.0;
+        app.world_mut().write_message(Do { event: Event::Respawn { ent: player, qrz: spawn_point } });
+        app.update();
+        assert!(app.world().get::<DeathMarker>(player).is_none(), "respawned, it stands");
+        assert_eq!(**app.world().get::<Loc>(player).unwrap(), spawn_point, "at the spawn point");
+        assert!(app.world().get::<Status>(player).is_none(), "its status gone with its death");
+        assert_eq!(*app.world().get::<Visibility>(player).unwrap(), Visibility::Hidden, "unseen until it is alive");
 
-        assert!(world.get::<DeathMarker>(lying).is_some(), "a health not yet whole leaves it down");
-        assert!(world.get::<DeathMarker>(risen).is_none(), "respawned whole, it stands");
+        app.world_mut().get_mut::<Health>(player).unwrap().state = 100.0;
+        app.update();
+        assert_eq!(*app.world().get::<Visibility>(player).unwrap(), Visibility::Visible);
     }
 
     #[test]

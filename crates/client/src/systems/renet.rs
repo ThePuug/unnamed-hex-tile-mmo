@@ -22,6 +22,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Spawn { .. } => "Spawn",
         Event::Confirm { .. } => "Confirm",
         Event::Despawn { .. } => "Despawn",
+        Event::Respawn { .. } => "Respawn",
         Event::Incremental { component, .. } => match component {
             Component::Loc(_) => "Inc:Loc",
             Component::Heading(_) => "Inc:Heading",
@@ -188,6 +189,7 @@ pub fn write_do(
             // arrives on ReliableUnordered, handled below.
             Do { event: mut event @ (
                 Event::Confirm { .. }
+                | Event::Respawn { .. }
                 | Event::Incremental { .. }
                 | Event::Inventory { .. }
                 | Event::Loot { .. }

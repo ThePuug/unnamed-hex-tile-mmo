@@ -125,10 +125,13 @@ impl Status {
         self.slow = Some(Timed { pace: pace.min(held), remaining: seconds.max(left) });
     }
 
-    /// Counts the timed effects down by `dt` seconds, dropping spent ones
-    pub fn tick(&mut self, dt: f32) {
-        for left in &mut self.overcommitted {
+    /// Counts the timed effects and Overcommitted stacks down by `dt`
+    /// seconds, dropping spent ones. Returns whether any was counting.
+    pub fn tick(&mut self, dt: f32) -> bool {
+        let mut counted = false;
+        for left in self.overcommitted.iter_mut().filter(|left| **left > 0.0) {
             *left = (*left - dt).max(0.0);
+            counted = true;
         }
         for slot in [&mut self.slow, &mut self.root, &mut self.stride, &mut self.perfect_stride, &mut self.held] {
             if let Some(timed) = slot {
@@ -136,8 +139,10 @@ impl Status {
                 if timed.remaining <= 0.0 {
                     *slot = None;
                 }
+                counted = true;
             }
         }
+        counted
     }
 }
 
@@ -146,8 +151,10 @@ impl Status {
 pub fn tick_status(mut query: Query<&mut Status>, time: Res<Time>) {
     let dt = time.delta_secs();
     for mut status in &mut query {
-        if status.slow.is_some() || status.stride.is_some() || status.perfect_stride.is_some() || status.held.is_some() {
-            status.tick(dt);
+        // An idle status is left unchanged, so what waits on a change to
+        // one is not woken every tick
+        if status.bypass_change_detection().tick(dt) {
+            status.set_changed();
         }
     }
 }
@@ -155,6 +162,25 @@ pub fn tick_status(mut query: Query<&mut Status>, time: Res<Time>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_effect_wears_off_on_its_own() {
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.add_systems(Update, tick_status);
+        let mut alone = Status::default();
+        alone.root(1.0);
+        let rooted = app.world_mut().spawn(alone).id();
+        let mut stacked = Status::default();
+        stacked.overcommitted[0] = 1.0;
+        let overcommitted = app.world_mut().spawn(stacked).id();
+        for _ in 0..3 {
+            app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(1));
+            app.update();
+        }
+        assert!(app.world().get::<Status>(rooted).unwrap().root.is_none(), "a root with nothing beside it");
+        assert_eq!(app.world().get::<Status>(overcommitted).unwrap().overcommits(), 0, "and a stack");
+    }
 
     #[test]
     fn a_slow_holds_the_deeper_and_the_longer_of_two() {

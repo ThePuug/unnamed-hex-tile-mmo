@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use crate::{
-    components::{ActorAttributes, Loc, position::Position, resources::*, entity_type::EntityType},
+    components::{ActorAttributes, Loc, position::Position, resources::*},
     message::{Component as MessageComponent, Event, *},
 };
 use crate::tuning::Tuning;
@@ -104,6 +104,8 @@ pub fn check_death(
             // Set resources to 0 to prevent "zombie" state
             health.state = 0.0;
             mana.state = 0.0;
+            // Death ends every status effect: a body stands again with none
+            commands.entity(ent).remove::<crate::components::status::Status>();
 
             if is_player {
                 // Player death: add respawn timer (5 seconds) and despawn from client view
@@ -126,9 +128,9 @@ pub fn process_respawn(
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
     spawn_point: Res<SpawnPoint>,
-    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Mana, Option<&mut Endurance>, &mut Loc, &mut Position, &ActorAttributes, &EntityType, Option<&crate::components::behaviour::PlayerControlled>)>,
+    mut query: Query<(Entity, &RespawnTimer, &mut Health, &mut Mana, Option<&mut Endurance>, &mut Loc, &mut Position, Option<&crate::components::behaviour::PlayerControlled>)>,
 ) {
-    for (ent, timer, mut health, mut mana, endurance, mut loc, mut position, attrs, entity_type, player_controlled) in &mut query {
+    for (ent, timer, mut health, mut mana, endurance, mut loc, mut position, player_controlled) in &mut query {
         if timer.should_respawn(time.elapsed()) {
             let spawn_qrz = spawn_point.0;
             *loc = Loc::new(spawn_qrz);
@@ -144,18 +146,12 @@ pub fn process_respawn(
             // Remove respawn timer
             commands.entity(ent).remove::<RespawnTimer>();
 
-            // Re-spawn the player on client (was despawned on death)
-            // Send Spawn event to re-create client entity with original actor type
-            writer.write(Do {
-                event: Event::Spawn {
-                    ent,
-                    typ: *entity_type,  // Use actual entity type (preserves Triumvirate, etc.)
-                    qrz: spawn_qrz,
-                    attrs: Some(*attrs),
-                },
-            });
+            // Clients stand it again at the spawn point, before its pools
+            // say it is alive
+            writer.write(Do { event: Event::Respawn { ent, qrz: spawn_qrz } });
 
-            // Broadcast resource updates (sent after Spawn so client entity exists)
+            // Broadcast resource updates (sent after Respawn so the client
+            // has placed it)
             writer.write(Do {
                 event: Event::Incremental {
                     ent,
