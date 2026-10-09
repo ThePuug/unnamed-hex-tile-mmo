@@ -39,7 +39,8 @@ pub struct RunTime {
 /// An attack made at a target with Patience overcommits its source
 /// (`Status::overcommit`). Lands a strike from past its target's forward
 /// faces, a flank, harder by its striker's Grace (`ActorAttributes::flank`),
-/// rolls the attack's
+/// weighs its blow and DoT by the level gap (`damage::level_factor`), rolls
+/// the attack's
 /// damage within its range (`Tuning::damage_spread`, one roll for its blow
 /// and its DoT), rolls its blow's crit, and inserts
 /// it into the reaction queue, its window starting as the strike is made:
@@ -85,6 +86,8 @@ pub fn process_deal_damage(
             heading.is_some_and(|&heading| !common_bevy::systems::targeting::is_in_facing_cone(heading, at, from))
         });
         let base_damage = if flanked { base_damage * (1.0 + source_attrs.flank(&tuning)) } else { *base_damage };
+        let gap = damage_calc::level_factor(&tuning, source_attrs.total_level(), attrs.total_level());
+        let base_damage = base_damage * gap;
         let draw = dice.draw(&mut rolls, ("spread", *source)).signed();
         let outgoing = damage_calc::spread(base_damage, tuning.damage_spread, draw);
         // A skill crits an overcommitted foe likelier by its striker's Patience
@@ -92,7 +95,7 @@ pub fn process_deal_damage(
             source_attrs.patience_crit(&tuning) * statuses.get(*target).map_or(0, |status| status.overcommits()) as f32
         };
         let outgoing = damage_calc::crit(&tuning, outgoing, source_attrs, attrs, patient, dice.draw(&mut rolls, ("crit", *source)).share());
-        let dot = damage_calc::spread(*dot, tuning.damage_spread, draw);
+        let dot = damage_calc::spread(*dot * gap, tuning.damage_spread, draw);
 
         // Use game world time (server uptime + offset) for consistent time base
         let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;

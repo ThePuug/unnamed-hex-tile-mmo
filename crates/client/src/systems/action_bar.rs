@@ -22,12 +22,6 @@ pub struct AbilitySlot {
 #[derive(Component)]
 pub struct AbilitySlots;
 
-/// The slot under the compass that dismisses the front threat: no
-/// ability's, and never refused, so it is lit while there is a threat to
-/// take.
-#[derive(Component)]
-pub struct DismissSlot;
-
 /// Marker for ability slot icon
 #[derive(Component)]
 pub struct SlotIcon;
@@ -51,13 +45,10 @@ const SLOT_BORDER_PX: f32 = 3.;
 
 /// Setup action bar UI, hung below the resource bars' line
 /// Creates the ability slots, four to a row, and beside them the compass
-/// over the dismiss slot
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, With<IsDefaultUiCamera>>,
-    asset_server: Res<AssetServer>,
 ) {
-    let icons: Handle<Font> = asset_server.load(ICON_FONT);
     let camera = query.single().expect("query did not return exactly one result");
 
     commands.spawn((
@@ -99,12 +90,7 @@ pub fn setup(
                 AbilitySlots,
             ));
 
-            parent
-                .spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(10.), ..default() })
-                .with_children(|column| {
-                    crate::systems::ui::spawn_compass(column, SLOT_PX, SLOT_BORDER_PX);
-                    slot_frame(column, &icons, crate::systems::input::KEYCODE_DISMISS, DISMISS_ICON).insert(DismissSlot);
-                });
+            crate::systems::ui::spawn_compass(parent, SLOT_PX, SLOT_BORDER_PX);
         });  // Close .with_children from line 73 (action bar children)
     });  // Close outer .with_children
 }
@@ -128,7 +114,7 @@ pub fn tells(ability: AbilityType) -> &'static str {
         AbilityType::Frenzy => "Frenzy: a bite on the target in reach; its combo is another bite",
         AbilityType::Feint => "Feint: a light strike on the target in reach",
         AbilityType::Overpower => "Overpower: one heavy blow on the target in reach",
-        AbilityType::Punish => "Punish: a strike on the target in reach, harder on one still in recovery",
+        AbilityType::Punish => "Punish: a light strike on the target in reach, harder for each stack of Overcommitted on it",
         AbilityType::Parry => "Parry: clear the span, sending nothing back",
         AbilityType::Counter => "Counter: clear the span, and send a share of each threat back to its source at any range",
         AbilityType::Leap => "Leap: clear of the target in reach, or onto the one out of it",
@@ -182,8 +168,6 @@ pub fn sync_loadout(
 /// glyphs stand for the skills until they have icons of their own.
 const ICON_FONT: &str = "fonts/IosevkaNerdFont-Regular.ttf";
 
-/// The dismiss slot's icon, a glyph in `ICON_FONT`: md-skip_next.
-const DISMISS_ICON: &str = "\u{F04AD}";
 
 const READY: Color = Color::srgb(0.3, 0.8, 0.3);
 const EMPTY: Color = Color::srgb(0.2, 0.2, 0.2);
@@ -380,17 +364,6 @@ pub fn update(
             }
         }
     }
-}
-
-/// Lights the dismiss slot while the actor the client sees as has a
-/// threat queued to take.
-pub fn update_dismiss(
-    mut slot: Query<&mut BorderColor, With<DismissSlot>>,
-    viewed: Query<&common_bevy::components::reaction_queue::ReactionQueue, With<crate::components::Viewed>>,
-) {
-    let Ok(mut border) = slot.single_mut() else { return };
-    let lit = viewed.single().is_ok_and(|queue| !queue.is_empty());
-    border.set_if_neq(BorderColor::all(if lit { READY } else { EMPTY }));
 }
 
 /// Ability states for UI feedback

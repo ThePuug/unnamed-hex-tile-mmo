@@ -22,7 +22,6 @@ pub const KEYCODE_UP: KeyCode = KeyCode::ArrowUp;
 pub const KEYCODE_DOWN: KeyCode = KeyCode::ArrowDown;
 pub const KEYCODE_LEFT: KeyCode = KeyCode::ArrowLeft;
 pub const KEYCODE_RIGHT: KeyCode = KeyCode::ArrowRight;
-pub const KEYCODE_DISMISS: KeyCode = KeyCode::KeyZ;
 
 /// Milliseconds an input stays open before a new one is opened for the same
 /// keys, so the server confirms at least this often.
@@ -40,6 +39,7 @@ pub fn update_keybits(
     mut writer: MessageWriter<Try>,
     mut buffers: ResMut<InputQueues>,
     dt: Res<Time>,
+    server: Res<crate::resources::Server>,
 ) {
     // The menu and the console's lighting panel, whose arrows scrub the
     // clock, are modal: while one is open every gameplay key reads as
@@ -55,15 +55,14 @@ pub fn update_keybits(
 
     let mut keybits = KeyBits::default();
     if !modal {
-        // The player's kit: each key's ability, used on the hostile it faces
+        // The player's kit: each key's ability, used on the hostile it
+        // faces, stamped with the game time it was pressed at, where the
+        // server judges a reaction's band
+        let at = std::time::Duration::from_millis(server.current_time(dt.elapsed().as_millis()).min(u64::MAX as u128) as u64);
         for (key, ability) in crate::systems::action_bar::KEYS.into_iter().zip(crate::systems::action_bar::PLAYER) {
             if keys.pressed(key, crate::systems::action_bar::tells(ability)) {
-                writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity }});
+                writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity, at, arrived: Default::default() }});
             }
-        }
-
-        if keys.pressed(KEYCODE_DISMISS, "Dismiss: take the front threat now, as it would land") {
-            writer.write(Try { event: Event::Dismiss { ent }});
         }
 
         keybits.set_pressed([KB_JUMP], focus.is_empty() && keys.pressed(KEYCODE_JUMP, "Jump"));

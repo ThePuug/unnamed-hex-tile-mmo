@@ -80,6 +80,9 @@ pub enum MenuPath {
     GotoInput,
     #[cfg(feature = "admin")]
     View,
+    /// Latency added to the client's own traffic
+    #[cfg(feature = "admin")]
+    Latency,
     /// Pick a party's archetype
     #[cfg(feature = "admin")]
     Stage(Staging),
@@ -116,6 +119,8 @@ impl MenuPath {
             MenuPath::GotoInput => "Goto — Enter Coordinates",
             #[cfg(feature = "admin")]
             MenuPath::View => "View",
+            #[cfg(feature = "admin")]
+            MenuPath::Latency => "Added Latency",
             #[cfg(feature = "admin")]
             MenuPath::Stage(Staging::Den) => "Spawn Den",
             #[cfg(feature = "admin")]

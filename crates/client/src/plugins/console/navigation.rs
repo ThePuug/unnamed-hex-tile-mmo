@@ -89,6 +89,8 @@ pub fn handle_console_input(
         #[cfg(feature = "admin")]
         MenuPath::View => handle_view_menu(&mut keyboard, &mut action_writer),
         #[cfg(feature = "admin")]
+        MenuPath::Latency => handle_latency_menu(&mut keyboard, &mut action_writer),
+        #[cfg(feature = "admin")]
         MenuPath::Stage(staging) => handle_stage_menu(&mut keyboard, &mut action_writer, staging),
     }
 }
@@ -111,6 +113,13 @@ fn handle_root_menu(
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::GotoSelect;
         consumed = Some(KeyCode::Numpad2);
+    }
+
+    #[cfg(feature = "admin")]
+    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad3) {
+        console.history.push(console.current_menu.clone());
+        console.current_menu = MenuPath::Latency;
+        consumed = Some(KeyCode::Numpad3);
     }
 
     #[cfg(feature = "admin")]
@@ -279,6 +288,24 @@ fn handle_view_menu(
     for (key, action) in [(KeyCode::Numpad1, DevConsoleAction::ViewTarget), (KeyCode::Numpad2, DevConsoleAction::StopViewing)] {
         if keyboard.just_pressed(key) {
             action_writer.write(action);
+            keyboard.clear_just_pressed(key);
+        }
+    }
+}
+
+/// How far one press moves the added latency
+#[cfg(feature = "admin")]
+pub const LATENCY_STEP_MS: i64 = 25;
+
+#[cfg(feature = "admin")]
+fn handle_latency_menu(
+    keyboard: &mut ButtonInput<KeyCode>,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
+) {
+    let most = crate::network::AddedLatency::MOST.as_millis() as i64;
+    for (key, ms) in [(KeyCode::Numpad1, LATENCY_STEP_MS), (KeyCode::Numpad2, -LATENCY_STEP_MS), (KeyCode::Numpad3, -most)] {
+        if keyboard.just_pressed(key) {
+            action_writer.write(DevConsoleAction::AddLatency(ms));
             keyboard.clear_just_pressed(key);
         }
     }

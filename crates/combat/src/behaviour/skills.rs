@@ -81,37 +81,38 @@ pub struct View {
 }
 
 /// Its queue, as a reaction would meet it.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct Threats {
-    /// Damage a reaction would take now: the front threat and its span
+    /// Damage a reaction pressed now would take: what it judges landing in
+    /// its band
     pub swept: f32,
     /// Of that, what the blows deal on landing, apart from what their
     /// DoTs have left: what a reflection returns a share of
     pub swept_direct: f32,
-    /// How long ago the front threat was queued, against its user's span:
-    /// a threat queued after the span closes lands past it
-    pub span_closed: f32,
+    /// How far into its band the soonest threat in it stands, its time
+    /// left as a share of the span: 1 at the band's far end, and with
+    /// nothing in it
+    pub soonest_left: f32,
+}
+
+impl Default for Threats {
+    fn default() -> Self {
+        Self { swept: 0.0, swept_direct: 0.0, soonest_left: 1.0 }
+    }
 }
 
 impl Threats {
-    /// What a reaction reaching `span` behind the front of `queue`, a
-    /// queue's threats in order, would take at `now`, the game's clock.
-    pub fn reading(queue: &[QueuedThreat], span: Duration, now: Duration) -> Self {
-        let Some(front) = queue.first() else { return Self::default() };
-        let (first, last) = (front.lands_at(), front.lands_at() + span);
-        let swept = queue.iter().filter(|threat| (first..=last).contains(&threat.lands_at()));
-        let (mut damage, mut direct) = (0.0, 0.0);
-        for threat in swept {
-            let blow = threat.damage + threat.dot_left();
-            damage += blow;
-            direct += threat.damage;
+    /// What a reaction pressed at `now`, the game's clock, reaching `span`
+    /// would take of `queue`, each threat beside when it is judged to land.
+    pub fn reading(queue: &[(Duration, QueuedThreat)], span: Duration, now: Duration) -> Self {
+        let mut read = Self::default();
+        for (lands, threat) in queue.iter().filter(|(lands, _)| (now..=now + span).contains(lands)) {
+            read.swept += threat.damage + threat.dot_left();
+            read.swept_direct += threat.damage;
+            let left = if span.is_zero() { 0.0 } else { (*lands - now).as_secs_f32() / span.as_secs_f32() };
+            read.soonest_left = read.soonest_left.min(left);
         }
-        let since = now.saturating_sub(front.inserted_at).as_secs_f32();
-        Self {
-            swept: damage,
-            swept_direct: direct,
-            span_closed: if span.is_zero() { 1.0 } else { since / span.as_secs_f32() },
-        }
+        read
     }
 }
 
@@ -221,8 +222,8 @@ fn reason(ability: AbilityType, view: &View) -> Option<(&'static str, Vec<Consid
 fn part_considerations(part: Part) -> Vec<Considered> {
     match part {
         Part::Strike => vec![FOE_JUST_ACTED, CAPACITY, STRIKE_WORTH, EXPOSURE],
-        Part::Reaction => vec![SPAN_CLOSED, WORTH_ANSWERING],
-        Part::Clear => vec![SPAN_CLOSED, WORTH_ANSWERING, LEASH_LEFT],
+        Part::Reaction => vec![MID_BAND, WORTH_ANSWERING],
+        Part::Clear => vec![MID_BAND, WORTH_ANSWERING, LEASH_LEFT],
         Part::Dive => vec![CAPACITY, STRIKE_WORTH, LEASH_LEFT, EXPOSURE],
         Part::Effect => vec![IN_REACH],
     }
@@ -374,10 +375,13 @@ const STRIKE_WORTH: Considered = Consideration {
         let tuning = &view.tuning;
         let release = if view.intimidation_filled >= 1.0 { 1.0 + tuning.intimidation_share } else { 1.0 };
         let stacks = foe.status.overcommits();
-        let punish = if view.ability == AbilityType::Punish { punish::weight(tuning, stacks) } else { 1.0 };
         let flank = if foe.flanked { 1.0 + view.attrs.flank(tuning) } else { 1.0 };
         let patient = 1.0 + (tuning.crit_power - 1.0) * (view.attrs.patience_crit(tuning) * stacks as f32).min(1.0);
-        let dealt = view.attrs.base_potency(tuning) * tuning.damage(view.ability) * view.attrs.line_power(tuning, view.ability) * release * punish * flank * patient;
+        let share = match view.ability {
+            AbilityType::Punish => punish::share(tuning, &view.attrs, stacks),
+            ability => tuning.damage(ability) * view.attrs.line_power(tuning, ability),
+        };
+        let dealt = view.attrs.base_potency(tuning) * share * release * flank * patient;
         dealt / foe.health.max(1.0)
     },
     bounds: (0.0, 0.25),
@@ -408,11 +412,11 @@ const WORTH_ANSWERING: Considered = Consideration {
     curve: Curve { shape: Shape::Logistic { mid: 0.4, steep: 8.0 }, falling: false, floor: 0.0 },
 };
 
-/// Its span has closed: a threat queued after it lands past it, so no
-/// threat still to come can join the answer. Every threat's window outlasts
-/// the widest span and the slowest reaction delay, so waiting for it never
-/// lets the front threat land
-const SPAN_CLOSED: Considered = step("span_closed", |view| flag(view.queue.span_closed >= 1.0));
+/// The soonest threat in its band has reached the band's middle, where a
+/// press misjudged by up to half its span either way still takes it. Every
+/// threat's window outlasts the widest span and the slowest reaction
+/// delay, so it is seen before it reaches the band
+const MID_BAND: Considered = step("mid_band", |view| flag(view.queue.soonest_left <= 0.5));
 
 // --- Leap ---
 
@@ -433,7 +437,7 @@ const IN_REACH: Considered = step("in_reach", |view| flag(view.foe.is_some_and(|
 mod tests {
     use super::*;
     use bevy::prelude::Entity;
-    use common_bevy::{components::status::Timed, systems::combat::queue::create_threat};
+    use common_bevy::{components::status::Timed, systems::combat::queue::{create_threat, threat_window}};
 
     /// An actor built from its three pairs' axis, spectrum and shift
     fn built(points: [i8; 9]) -> ActorAttributes {
@@ -462,12 +466,17 @@ mod tests {
         }
     }
 
-    fn threats(tuning: &Tuning, blows: &[(f32, bool, u64)], span: Duration, now: Duration) -> Threats {
+    /// A queue read with `span`: each blow its damage, whether it is a
+    /// skill's, and how many milliseconds it has left, judged right
+    fn threats(tuning: &Tuning, blows: &[(f32, bool, u64)], span: Duration) -> Threats {
         let plain = ActorAttributes::default();
         let source = Entity::from_raw_u32(9).unwrap();
-        let queue: Vec<QueuedThreat> = blows.iter().map(|&(damage, ability, queued)| {
+        let now = Duration::from_secs(10);
+        let window = threat_window(tuning, &plain, &plain, 0.0);
+        let queue: Vec<(Duration, QueuedThreat)> = blows.iter().map(|&(damage, ability, left)| {
             let ability = Some(if ability { AbilityType::Frenzy } else { AbilityType::AutoAttack });
-            create_threat(tuning, source, &plain, &plain, damage, ability, Duration::from_millis(queued), 0.0, 0.0)
+            let threat = create_threat(tuning, source, &plain, &plain, damage, ability, now + Duration::from_millis(left) - window, 0.0, 0.0);
+            (threat.lands_at(), threat)
         }).collect();
         Threats::reading(&queue, span, now)
     }
@@ -497,32 +506,34 @@ mod tests {
     fn a_heavy_blow_is_answered_and_a_light_one_let_land() {
         let tuning = Tuning::DEFAULT;
         let span = Duration::from_millis(250);
-        let now = Duration::from_millis(1000);
         let mut heavy = view(&tuning, AbilityType::Counter, ActorAttributes::default());
-        heavy.queue = threats(&tuning, &[(150.0, true, 0)], span, now);
+        heavy.queue = threats(&tuning, &[(150.0, true, 100)], span);
         let mut light = view(&tuning, AbilityType::Counter, ActorAttributes::default());
-        light.queue = threats(&tuning, &[(40.0, false, 0)], span, now);
+        light.queue = threats(&tuning, &[(40.0, false, 100)], span);
         assert!(scored(&mut heavy, "answer") > WAIT, "a blow of a quarter of its health is answered");
         assert!(scored(&mut light, "answer") < WAIT, "one light blow is let land");
     }
 
     #[test]
-    fn a_reaction_waits_for_its_span_to_close() {
+    fn a_reaction_waits_for_the_middle_of_its_band() {
         let tuning = Tuning::DEFAULT;
         let span = Duration::from_millis(1000);
-        let mut fresh = view(&tuning, AbilityType::Counter, ActorAttributes::default());
-        fresh.queue = threats(&tuning, &[(150.0, true, 0)], span, Duration::from_millis(900));
-        let mut closed = view(&tuning, AbilityType::Counter, ActorAttributes::default());
-        closed.queue = threats(&tuning, &[(150.0, true, 0)], span, Duration::from_millis(1100));
-        assert_eq!(scored(&mut fresh, "answer"), 0.0, "a blow just queued waits for what may join it");
-        assert!(scored(&mut closed, "answer") > WAIT);
+        let mut entering = view(&tuning, AbilityType::Counter, ActorAttributes::default());
+        entering.queue = threats(&tuning, &[(150.0, true, 900)], span);
+        let mut middle = view(&tuning, AbilityType::Counter, ActorAttributes::default());
+        middle.queue = threats(&tuning, &[(150.0, true, 400)], span);
+        let mut far = view(&tuning, AbilityType::Counter, ActorAttributes::default());
+        far.queue = threats(&tuning, &[(150.0, true, 2000)], span);
+        assert_eq!(scored(&mut entering, "answer"), 0.0, "a blow just in its band waits for the middle");
+        assert!(scored(&mut middle, "answer") > WAIT);
+        assert_eq!(scored(&mut far, "answer"), 0.0, "one short of its band has nothing to answer");
         let mut dodge = view(&tuning, AbilityType::Leap, ActorAttributes::default());
-        dodge.queue = fresh.queue;
+        dodge.queue = entering.queue;
         assert_eq!(scored(&mut dodge, "dodge"), 0.0, "and so does a leap clear");
     }
 
     #[test]
-    fn every_window_outlasts_the_widest_span_and_the_slowest_reaction() {
+    fn a_threat_is_seen_before_it_reaches_the_widest_band() {
         let tuning = Tuning::DEFAULT;
         let shortest = tuning.reaction_window * (1.0 - tuning.fatigue_window);
         let slowest = crate::behaviour::perception::Skill::SLOPPY.slowest.as_secs_f32();
@@ -560,7 +571,7 @@ mod tests {
         assert_eq!(scored(&mut full, "strike"), 0.0);
         let mut answering = view(&tuning, AbilityType::Counter, ActorAttributes::default());
         answering.capacity_taken = true;
-        answering.queue = threats(&tuning, &[(150.0, true, 0)], Duration::from_millis(250), Duration::from_millis(1000));
+        answering.queue = threats(&tuning, &[(150.0, true, 100)], Duration::from_millis(250));
         assert!(scored(&mut answering, "answer") > WAIT, "a reaction takes no slot");
     }
 
@@ -613,9 +624,7 @@ mod tests {
     #[test]
     fn a_counter_is_worth_more_than_a_parry_by_what_it_returns() {
         let tuning = Tuning::DEFAULT;
-        let span = Duration::from_millis(250);
-        let now = Duration::from_millis(1000);
-        let queue = threats(&tuning, &[(60.0, true, 0)], span, now);
+        let queue = threats(&tuning, &[(60.0, true, 100)], Duration::from_millis(250));
         let mut parry = view(&tuning, AbilityType::Parry, ActorAttributes::default());
         parry.queue = queue;
         let mut counter = view(&tuning, AbilityType::Counter, ActorAttributes::default());

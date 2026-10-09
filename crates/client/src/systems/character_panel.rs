@@ -882,20 +882,20 @@ fn describe(attrs: &ActorAttributes, stat: Stat, tuning: &Tuning) -> String {
     let against = "\nAgainst a foe of its level with none of what contests it.";
     match stat {
         Stat::Force => format!("Force, the absolute of Might and Agility together: its auto-attacks strike {} harder.", percent(attrs.auto_damage(tuning) / (attrs.base_potency(tuning) * tuning.auto_damage) - 1.0)),
-        Stat::Constitution => format!("Constitution, the absolute of Physique and Discipline together: {} more health.", percent(attrs.constitution(tuning) / (tuning.base_health * attrs.hp_level_multiplier(tuning)) - 1.0)),
-        Stat::Endurance => format!("Endurance, the absolute of Instinct and Resolve together: an endurance pool {} deeper.", percent(attrs.endurance(tuning) / attrs.base_potency(tuning) - 1.0)),
+        Stat::Constitution => format!("Constitution, the absolute of Physique and Discipline together: {} more health.", percent(attrs.constitution(tuning) / tuning.base_health - 1.0)),
+        Stat::Endurance => format!("Endurance, the absolute of Instinct and Resolve together: an endurance pool {} deeper.", percent(attrs.endurance(tuning) - 1.0)),
         Stat::Impact => format!("Impact, Might's contest, against a foe's Efficiency: each blow pushes its recovery back {}.{against}", percent(tuning.pushback_share * contest(attrs.impact()))),
         Stat::Tempo => format!("Tempo, Agility's contest, against a foe's Reflex: its auto-attacks come {} sooner.{against}", percent(1.0 - attrs.cadence_interval(tuning, None).as_secs_f32() / tuning.base_interval)),
         Stat::Fitness => format!("Fitness, Physique's contest, against a foe's Focus: its recovery runs {} shorter, and a foe's Focus crits it less.{against}", percent(tuning.fitness_share * contest(attrs.fitness()))),
         Stat::Efficiency => format!("Efficiency, Discipline's contest, against a foe's Impact: its combos unlock {} sooner.{against}", percent(tuning.combo_share * contest(attrs.efficiency()))),
         Stat::Reflex => format!("Reflex, Instinct's contest, against a foe's Tempo: a threat on it waits {:.1}s to land, time to act and answer in.{against}", tuning.reaction_window * (1.0 + tuning.window_bonus * contest(attrs.reflex()))),
         Stat::Focus => format!("Focus, Resolve's contest, against a foe's Fitness: its blows crit {} of the time.{against}", percent(tuning.crit_chance * contest(attrs.focus()))),
-        Stat::Ferocity => format!("Ferocity, Might's commitment: up to {} combos in a chain fire before they unlock, the chain paying half the time skipped.", attrs.ferocity().index()),
+        Stat::Ferocity => format!("Ferocity, Might's commitment: up to {} combos in a chain fire before they unlock, the chain paying half the time skipped.", attrs.ferocity().count()),
         Stat::Grace => format!("Grace, Agility's commitment: it strikes within {:.0} degrees either side of its heading, {} harder from a foe's flank.", attrs.arc(tuning), percent(attrs.flank(tuning))),
         Stat::Intimidation => format!("Intimidation, Physique's commitment: it slows foes near it who look away, and fills its bank {:.0} a second, released into a strike that lands harder and binds.", attrs.intimidation_fill()),
-        Stat::Preparation => format!("Preparation, Discipline's commitment: up to {} reactions in a chain fire early after a strike, a Leap clear among them, the chain paying half the time skipped.", attrs.preparation().index()),
+        Stat::Preparation => format!("Preparation, Discipline's commitment: up to {} reactions in a chain fire early after a strike, a Leap clear among them, the chain paying half the time skipped.", attrs.preparation().count()),
         Stat::Patience => format!("Patience, Instinct's commitment: each attack made at it overcommits its attacker, and its skills crit {} likelier for each stack a foe carries.", percent(attrs.patience_crit(tuning))),
-        Stat::Awareness => format!("Awareness, Resolve's commitment: a reaction takes every threat landing within {:.2}s behind the front one.", attrs.span(tuning).as_secs_f32()),
+        Stat::Awareness => format!("Awareness, Resolve's commitment: a reaction takes every threat landing within {:.2}s of its press.", attrs.span(tuning).as_secs_f32()),
     }
 }
 
@@ -952,7 +952,7 @@ fn update_axis_bar(node: &mut Node, left_current: u16, right_current: u16, max_a
     node.width = Val::Percent(width_percent);
 }
 
-/// Writes the apply label's budget counter, and colours it red while levels
+/// Writes the apply label's budget counter, and colours it red while steps
 /// are left to put in, which Enter will not apply without.
 pub fn update_apply_label(
     state: Res<CharacterPanelState>,
@@ -976,12 +976,12 @@ pub fn update_apply_label(
         return;
     };
 
-    let unallocated = attrs.total_level().saturating_sub(ActorAttributes::invested(draft));
+    let unallocated = ActorAttributes::held(attrs.total_level()).saturating_sub(ActorAttributes::invested(draft));
 
     for child in children.iter() {
         if let Ok(mut text) = text_query.get_mut(child) {
             if unallocated > 0 {
-                **text = format!("Apply ({} points left)", unallocated);
+                **text = format!("Apply ({} steps left)", unallocated);
                 *bg_color = BackgroundColor(Color::srgb(0.6, 0.3, 0.3));
             } else {
                 **text = "Apply Changes".to_string();

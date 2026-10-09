@@ -1,12 +1,12 @@
 //! The highway: the local player's reaction queue as a rhythm game's lanes,
 //! seen in perspective from above the hit line at the bottom of the screen.
 //!
-//! Three lanes, left to right in the order reactions reach them: blows,
-//! wounds, auto-attacks ([`Lane`]). A note stands at its time left, at one
-//! speed, so it reaches the hit line as it lands, and grows as it nears it.
-//! Every note shows its damage. A band across the lanes marks the span a
-//! reaction reaches, from the front threat back, and every note in it,
-//! what a reaction takes, carries a white rim. A cleared note shatters
+//! Three lanes by kind, left to right: blows, wounds, auto-attacks
+//! ([`Lane`]). A note stands at its time left, at one speed, so it reaches
+//! the hit line as it lands, and grows as it nears it. Every note shows its
+//! damage. A band across the lanes at the hit line, as deep as the span,
+//! marks what a reaction pressed now takes, and every note in it carries a
+//! white rim. A cleared note shatters
 //! where it stands, broken; a landed one pulses on the line in its lane's
 //! colour with a flash down its lane.
 //!
@@ -23,10 +23,8 @@ use bevy::shader::ShaderRef;
 use common_bevy::components::reaction_queue::{Lane, QueuedThreat, ReactionQueue};
 use common_bevy::components::resources::{CombatState, Health};
 use common_bevy::components::ActorAttributes;
-use common_bevy::message::{Do, Event as GameEvent};
 
 use crate::components::{ResolvedThreatsContainer, ViewHud, Viewed};
-use crate::resources::EntityMap;
 use crate::systems::threat_icons::{estimate, severity, severity_rgb, DOT_COLOR};
 use common_bevy::tuning::Tuning;
 
@@ -53,12 +51,9 @@ const ACROSS: f32 = 28.0;
 /// with longer to wait holds at the far end.
 const SPAN: Duration = Duration::from_millis(4500);
 
-/// How long a note whose threat has gone with no damage seen waits for
-/// it before it is taken as cleared: the damage and the clearing that end
-/// a threat arrive together, but may be read a frame apart.
+/// How long a note whose threat has gone with nothing known of how waits
+/// before it shatters: one that left the view with its actor, never told.
 pub(crate) const UNSURE: f32 = 0.15;
-/// How long a landing is kept for the note it ends
-const LANDING_KEPT: f32 = 1.0;
 
 /// The shader's parameters; every length is the node's, in pixels.
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
@@ -67,8 +62,8 @@ pub struct HighwayUniform {
     pub span: f32,
     pub base: f32,
     pub unused: f32,
-    /// The span a reaction reaches, as seconds from landing: from x, the
-    /// front threat's, to y. No band where y is not past x.
+    /// The band a reaction takes from, as seconds from landing: from x, the
+    /// hit line, to y, the span. No band where y is not past x.
     pub band: Vec4,
     /// Each lane's landing flash, left to right in x, y and z, fading from 1
     pub flash: Vec4,
@@ -103,39 +98,6 @@ pub struct Note {
     size: f32,
     color: Color,
     unsure: Option<f32>,
-}
-
-/// The blows that landed lately, each as who it landed on, the server's id
-/// of its source (as a threat names it) and when: a threat gone with one
-/// landed, however early — a dismissal lands at once — and gone without
-/// one, cleared.
-#[derive(Resource, Default)]
-pub struct Landings(Vec<(Entity, Entity, f32)>);
-
-impl Landings {
-    /// Takes the landing on `struck` from `source`, if one came
-    pub fn take(&mut self, struck: Entity, source: Entity) -> bool {
-        let Some(i) = self.0.iter().position(|&(on, from, _)| on == struck && from == source) else { return false };
-        self.0.swap_remove(i);
-        true
-    }
-}
-
-/// Keeps each blow that lands, and lets go of those no note took
-pub fn record_landings(
-    mut reader: MessageReader<Do>,
-    mut landings: ResMut<Landings>,
-    l2r: Res<EntityMap>,
-    time: Res<Time>,
-) {
-    let now = time.elapsed_secs();
-    landings.0.retain(|&(_, _, at)| now - at < LANDING_KEPT);
-    for message in reader.read() {
-        let GameEvent::ApplyDamage { ent, source, dot: false, .. } = message.event else { continue };
-        // A source gone here keeps the server's id
-        let source = l2r.get_by_left(&source).copied().unwrap_or(source);
-        landings.0.push((ent, source, now));
-    }
 }
 
 #[derive(Component)]
@@ -300,7 +262,7 @@ pub fn update(
     mut materials: ResMut<Assets<HighwayMaterial>>,
     mut note_query: Query<(Entity, &mut Note, &mut Node, &mut BackgroundColor, &mut BorderColor, &Children), Without<Highway>>,
     mut label_query: Query<(&mut Text, &mut UiTransform, &mut TextColor), With<NoteLabel>>,
-    mut landings: ResMut<Landings>,
+    gone: Res<crate::systems::combat::Gone>,
     time: Res<Time>,
     server: Res<crate::resources::Server>,
 ) {
@@ -323,12 +285,9 @@ pub fn update(
     let key = |t: &QueuedThreat| (t.source, t.inserted_at, t.lane());
     let mut drawn = Vec::with_capacity(queue.threats.len());
 
-    // The span a reaction reaches, anchored on the front threat
+    // The band a reaction pressed now takes from, at the hit line
     let span = attrs.span(&tuning);
-    let band = queue.threats.front().map_or(Vec4::ZERO, |front| {
-        let near = front.lands_at().saturating_sub(now).as_secs_f32();
-        Vec4::new(near, near + span.as_secs_f32(), 0.0, 0.0)
-    });
+    let band = Vec4::new(0.0, span.as_secs_f32(), 0.0, 0.0);
     if materials.get(&material.0).is_some_and(|lit| lit.highway.band != band) {
         if let Some(mut lit) = materials.get_mut(&material.0) {
             lit.highway.band = band;
@@ -338,7 +297,8 @@ pub fn update(
     for (entity, mut note, mut node, mut background, mut border, children) in &mut note_query {
         let Some(threat) = queue.threats.iter().find(|t| key(t) == note.key) else {
             let at = time.elapsed_secs();
-            if landings.take(viewed, note.key.0) {
+            let landed = gone.landed(viewed, note.key.0, note.key.1);
+            if landed == Some(true) {
                 let lane = note.key.2;
                 if let Some(mut lit) = materials.get_mut(&material.0) {
                     let flash = &mut lit.highway.flash;
@@ -349,7 +309,7 @@ pub fn update(
                     }
                 }
                 pulse(&mut commands, highway, note.centre, note.size, lane_color(lane), at);
-            } else if at - *note.unsure.get_or_insert(at) >= UNSURE {
+            } else if landed == Some(false) || at - *note.unsure.get_or_insert(at) >= UNSURE {
                 shatter(&mut commands, highway, note.centre, note.size, note.color, at);
             } else {
                 continue;
@@ -360,7 +320,7 @@ pub fn update(
         drawn.push(note.key);
 
         let d = depth(threat.lands_at().saturating_sub(now));
-        let taken = queue.sweeps(threat, span);
+        let taken = threat.in_band(now, span);
         let (fill, rim, label) = look(threat, attrs, health, taken);
         let alpha = fade(d);
         let size = NOTE * scale(d);
@@ -549,32 +509,6 @@ pub fn update_shards(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_threat_landed_however_early_is_told_by_its_damage() {
-        let mut app = App::new();
-        app.add_message::<Do>();
-        app.init_resource::<Time>();
-        app.init_resource::<EntityMap>();
-        app.init_resource::<Landings>();
-        app.add_systems(Update, record_landings);
-
-        let player = app.world_mut().spawn_empty().id();
-        let foe = app.world_mut().spawn_empty().id();
-        let [foe_there, gone_there] = [9_000, 9_001].map(|id| Entity::from_raw_u32(id).unwrap());
-        app.world_mut().resource_mut::<EntityMap>().insert(foe, foe_there);
-        // A source gone here arrives by the server's id
-        for (source, dot) in [(foe, false), (gone_there, false), (foe, true)] {
-            app.world_mut().write_message(Do { event: GameEvent::ApplyDamage { ent: player, damage: 10.0, source, dot } });
-        }
-        app.update();
-
-        let mut landings = app.world_mut().resource_mut::<Landings>();
-        assert!(landings.take(player, foe_there), "a landing names its source as the threat does");
-        assert!(landings.take(player, gone_there), "and one whose source is gone, too");
-        assert!(!landings.take(player, foe_there), "each lands one note; a wound's tick lands none");
-        assert!(!landings.take(foe, foe_there), "and only on what it landed on");
-    }
 
     #[test]
     fn a_note_lands_on_the_hit_line_at_full_size() {

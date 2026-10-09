@@ -312,20 +312,21 @@ pub fn broadcast_movement_intent(
     }
 }
 
-/// Takes the respec a client asks for where it places every level the actor
-/// has (`ActorAttributes::is_complete`), and says so to its client. The pools the
-/// attributes set, health and endurance, are resized with it at once, each
-/// as full as it was, so a respec neither heals nor wounds.
+/// Takes the respec a client asks for out of combat where it places every
+/// step the actor holds (`ActorAttributes::is_complete`), and says so to its
+/// client. The pools the attributes set, health and endurance, are resized
+/// with it at once, each as full as it was, so a respec neither heals nor
+/// wounds. Unbuilt: a respec at a haven only.
 pub fn try_respec_attributes(
     tuning: Res<Tuning>,
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
-    mut attrs_query: Query<(&mut ActorAttributes, &mut Health, Option<&mut Endurance>)>,
+    mut attrs_query: Query<(&mut ActorAttributes, &mut Health, Option<&mut Endurance>, Option<&common_bevy::components::resources::CombatState>)>,
 ) {
     for message in reader.read() {
         let Try { event: Event::RespecAttributes { ent, pairs } } = message else { continue };
-        let Ok((mut attrs, mut health, endurance)) = attrs_query.get_mut(*ent) else { continue };
-        if !ActorAttributes::is_complete(pairs, attrs.total_level()) {
+        let Ok((mut attrs, mut health, endurance, combat)) = attrs_query.get_mut(*ent) else { continue };
+        if combat.is_some_and(|combat| combat.in_combat) || !ActorAttributes::is_complete(pairs, attrs.total_level()) {
             continue;
         }
         attrs.apply_respec(*pairs);
@@ -371,6 +372,24 @@ mod tests {
         assert!((health.state / health.max - 0.5).abs() < 1e-4, "and it is as full as it was");
         assert!(endurance.max > mighty.max_endurance(&tuning), "Instinct and Resolve deepen endurance at once");
         assert!((endurance.state / endurance.max - 0.25).abs() < 1e-4, "as full as it was");
+    }
+
+    #[test]
+    fn a_respec_waits_for_the_fight_to_end() {
+        use bevy::ecs::system::RunSystemOnce;
+        use common_bevy::components::Pair;
+        let tuning = Tuning::DEFAULT;
+        let mut world = World::new();
+        world.init_resource::<Messages<Try>>();
+        world.init_resource::<Messages<Do>>();
+        world.init_resource::<Tuning>();
+        let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
+        let fighting = common_bevy::components::resources::CombatState { in_combat: true, last_action: std::time::Duration::ZERO };
+        let ent = world.spawn((mighty, Health::full(mighty.max_health(&tuning)), fighting)).id();
+        let pairs = [Pair::new(0, 0, 0), Pair::new(-10, 0, 0), Pair::new(0, 0, 0)];
+        world.write_message(Try { event: Event::RespecAttributes { ent, pairs } });
+        world.run_system_once(try_respec_attributes).unwrap();
+        assert_eq!(world.get::<ActorAttributes>(ent).unwrap().pairs(), mighty.pairs(), "refused in a fight");
     }
 
     fn moving() -> KeyBits {

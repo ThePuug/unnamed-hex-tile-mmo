@@ -79,13 +79,14 @@ pub fn update_console_visibility(
 pub fn update_console_menu(
     console: Res<DevConsole>,
     diagnostics_state: Res<DiagnosticsState>,
+    added: Res<crate::network::AddedLatency>,
     server: Res<crate::resources::Server>,
     time: Res<Time>,
     mut breadcrumb_query: Query<&mut Text, (With<BreadcrumbText>, Without<MenuItemsContainer>)>,
     menu_query: Query<(Entity, Option<&Children>), With<MenuItemsContainer>>,
     mut commands: Commands,
 ) {
-    if !console.is_changed() && !diagnostics_state.is_changed() {
+    if !console.is_changed() && !diagnostics_state.is_changed() && !added.is_changed() {
         return;
     }
 
@@ -115,6 +116,13 @@ pub fn update_console_menu(
                         Text::new("2. Goto Coordinates"),
                         TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::WHITE),
+                    ));
+
+                    #[cfg(feature = "admin")]
+                    parent.spawn((
+                        Text::new(format!("3. Added Latency      [{}ms]", added.0.as_millis())),
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                        TextColor(state_color(!added.0.is_zero())),
                     ));
 
                     parent.spawn((
@@ -287,6 +295,40 @@ pub fn update_console_menu(
                     for (i, (label, _)) in super::state::DENS.iter().enumerate() {
                         parent.spawn((
                             Text::new(format!("{}. {label}", i + 1)),
+                            TextFont { font_size: FontSize::Px(16.0), ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    }
+
+                    parent.spawn((
+                        Text::new(""),
+                        TextFont { font_size: FontSize::Px(8.0), ..default() },
+                    ));
+
+                    parent.spawn((
+                        Text::new("0. Back"),
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                        TextColor(Color::srgb(0.8, 0.3, 0.3)),
+                    ));
+                }
+                #[cfg(feature = "admin")]
+                MenuPath::Latency => {
+                    parent.spawn((
+                        Text::new(format!("Round trip added: {}ms, each way half, a tenth either side", added.0.as_millis())),
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                        TextColor(state_color(!added.0.is_zero())),
+                    ));
+
+                    parent.spawn((
+                        Text::new(""),
+                        TextFont { font_size: FontSize::Px(8.0), ..default() },
+                    ));
+
+                    let step = super::navigation::LATENCY_STEP_MS;
+                    let most = crate::network::AddedLatency::MOST.as_millis();
+                    for line in [format!("1. More (+{step}ms, up to {most}ms)"), format!("2. Less (-{step}ms)"), "3. None".to_string()] {
+                        parent.spawn((
+                            Text::new(line),
                             TextFont { font_size: FontSize::Px(16.0), ..default() },
                             TextColor(Color::WHITE),
                         ));

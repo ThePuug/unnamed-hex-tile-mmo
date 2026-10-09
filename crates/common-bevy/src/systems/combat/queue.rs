@@ -67,30 +67,25 @@ pub fn create_threat(
     }
 }
 
-/// Insert a threat into the queue (unbounded, no overflow eviction)
-/// A threat goes in its [`Lane`](crate::components::reaction_queue::Lane),
-/// every blow ahead of every wound and every wound ahead of every
-/// auto-attack, and within its lane ahead of every threat landing later, so
-/// a reaction takes what lands soonest in the first lane holding any. Server
-/// and client both insert through here, so their queues hold the same order.
+/// Insert a threat into the queue (unbounded, no overflow eviction), ahead
+/// of every threat landing later. Server and client both insert through
+/// here, so their queues hold the same order.
 pub fn insert_threat(
     queue: &mut ReactionQueue,
     threat: crate::components::reaction_queue::QueuedThreat,
     _now: Duration,
 ) {
-    let key = (threat.lane(), threat.lands_at());
-    let at = queue.threats.partition_point(|t| (t.lane(), t.lands_at()) <= key);
+    let at = queue.threats.partition_point(|t| t.lands_at() <= threat.lands_at());
     queue.threats.insert(at, threat);
 }
 
-/// Check for expired threats in the queue
-/// Returns a vector of threats that have expired (timer reached zero)
-/// Does NOT remove threats from queue - caller decides when to remove
+/// The threats in the queue whose time has run by `now`. Does not remove
+/// them; the caller does.
 pub fn check_expired_threats(queue: &ReactionQueue, now: Duration) -> Vec<QueuedThreat> {
     queue
         .threats
         .iter()
-        .filter(|threat| now >= threat.inserted_at + threat.timer_duration)
+        .filter(|threat| now >= threat.lands_at())
         .cloned()
         .collect()
 }
@@ -98,13 +93,8 @@ pub fn check_expired_threats(queue: &ReactionQueue, now: Duration) -> Vec<Queued
 /// Takes the threats `clear_type` names out of the queue and returns them.
 pub fn clear_threats(queue: &mut ReactionQueue, clear_type: ClearType) -> Vec<QueuedThreat> {
     match clear_type {
-        ClearType::First(n) => {
-            // Drain first N threats (oldest)
-            let count = n.min(queue.threats.len());
-            queue.threats.drain(..count).collect()
-        }
-        ClearType::Span(span) => {
-            let (taken, kept): (Vec<_>, Vec<_>) = queue.threats.iter().copied().partition(|threat| queue.sweeps(threat, span));
+        ClearType::Span { at, span } => {
+            let (taken, kept): (Vec<_>, Vec<_>) = queue.threats.iter().copied().partition(|threat| threat.in_band(at, span));
             queue.threats = kept.into();
             taken
         }
@@ -166,27 +156,24 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_threat_puts_abilities_ahead_of_auto_attacks() {
-        use crate::message::AbilityType::{AutoAttack, Frenzy, Feint};
+    fn every_threat_stands_by_when_it_lands_whatever_its_kind() {
+        use crate::message::AbilityType::{AutoAttack, Frenzy};
         let mut queue = ReactionQueue::default();
-        let entity = Entity::from_raw_u32(0).unwrap();
-        let make_threat = |ability, secs: u64| QueuedThreat {
-            source: entity,
+        let make = |ability, dot: f32, secs: u64| QueuedThreat {
+            source: Entity::from_raw_u32(0).unwrap(),
             damage: 10.0,
             inserted_at: Duration::from_secs(secs),
             timer_duration: Duration::from_secs(1),
             ability: Some(ability),
-            dot: 0.0,
+            dot,
             ticked: 0,
             bind: 0.0,
         };
-
-        for (ability, secs) in [(AutoAttack, 0), (Frenzy, 1), (AutoAttack, 2), (Feint, 3)] {
-            insert_threat(&mut queue, make_threat(ability, secs), Duration::from_secs(secs));
+        for (ability, dot, secs) in [(Frenzy, 0.0, 2), (AutoAttack, 0.0, 0), (Frenzy, 5.0, 1), (AutoAttack, 0.0, 3)] {
+            insert_threat(&mut queue, make(ability, dot, secs), Duration::ZERO);
         }
-
-        let order: Vec<_> = queue.threats.iter().map(|t| (t.ability.unwrap(), t.inserted_at.as_secs())).collect();
-        assert_eq!(order, vec![(Frenzy, 1), (Feint, 3), (AutoAttack, 0), (AutoAttack, 2)]);
+        let order: Vec<_> = queue.threats.iter().map(|t| t.inserted_at.as_secs()).collect();
+        assert_eq!(order, vec![0, 1, 2, 3]);
     }
 
     #[test]
@@ -233,7 +220,7 @@ mod tests {
 
         queue.threats.push_back(threat.clone());
 
-        // Check at 1.0s - threat should be expired
+        assert!(check_expired_threats(&queue, Duration::from_millis(999)).is_empty(), "its time still runs");
         let expired = check_expired_threats(&queue, Duration::from_secs(1));
         assert_eq!(expired.len(), 1);
         assert_eq!(expired[0].damage, 10.0);
@@ -274,43 +261,14 @@ mod tests {
         queue.threats.push_back(threat1);
         queue.threats.push_back(threat2);
 
-        // Check at 1.0s - only threat1 expired
+        // Only threat1 has landed
         let expired = check_expired_threats(&queue, Duration::from_secs(1));
         assert_eq!(expired.len(), 1);
         assert_eq!(expired[0].damage, 10.0);
 
-        // Check at 1.5s - both expired
+        // Both have
         let expired = check_expired_threats(&queue, Duration::from_millis(1500));
         assert_eq!(expired.len(), 2);
-    }
-
-    #[test]
-    fn test_clear_threats_first_n() {
-        let mut queue = ReactionQueue::default();
-        let entity = Entity::from_raw_u32(0).unwrap();
-
-        // Add 3 threats
-        for i in 0..3 {
-            queue.threats.push_back(QueuedThreat {
-                source: entity,
-                damage: (i + 1) as f32 * 10.0,
-                inserted_at: Duration::from_secs(i as u64),
-                timer_duration: Duration::from_secs(1),
-            ability: None,
-            dot: 0.0,
-            ticked: 0,
-            bind: 0.0,
-    
-            });
-        }
-
-        // Clear first 2
-        let cleared = clear_threats(&mut queue, ClearType::First(2));
-        assert_eq!(cleared.len(), 2);
-        assert_eq!(cleared[0].damage, 10.0); // First threat
-        assert_eq!(cleared[1].damage, 20.0); // Second threat
-        assert_eq!(queue.threats.len(), 1);
-        assert_eq!(queue.threats[0].damage, 30.0); // Third threat remains
     }
 
     #[test]
@@ -342,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn clearing_a_span_takes_what_a_reaction_sweeps_and_leaves_the_rest_in_order() {
+    fn clearing_a_band_takes_what_lands_in_it_and_leaves_the_rest_in_order() {
         let mut queue = ReactionQueue::default();
         let make = |secs: u64, window: u64| QueuedThreat {
             source: Entity::from_raw_u32(0).unwrap(),
@@ -357,38 +315,15 @@ mod tests {
         for threat in [make(0, 3), make(1, 3), make(4, 3)] {
             insert_threat(&mut queue, threat, Duration::ZERO);
         }
-        let cleared = clear_threats(&mut queue, ClearType::Span(Duration::from_secs(1)));
-        assert_eq!(cleared.iter().map(|t| t.damage).collect::<Vec<_>>(), vec![0.0, 1.0], "the front and the one landing a second behind it");
-        assert_eq!(queue.threats.iter().map(|t| t.damage).collect::<Vec<_>>(), vec![4.0]);
-        assert!(clear_threats(&mut ReactionQueue::default(), ClearType::Span(Duration::from_secs(1))).is_empty());
+        let band = ClearType::Span { at: Duration::from_millis(3500), span: Duration::from_secs(1) };
+        let cleared = clear_threats(&mut queue, band);
+        assert_eq!(cleared.iter().map(|t| t.damage).collect::<Vec<_>>(), vec![1.0], "the one landing in the band");
+        assert_eq!(queue.threats.iter().map(|t| t.damage).collect::<Vec<_>>(), vec![0.0, 4.0]);
+        assert!(clear_threats(&mut ReactionQueue::default(), band).is_empty());
     }
 
     #[test]
-    fn wounds_queue_behind_blows_and_ahead_of_auto_attacks() {
-        let mut queue = ReactionQueue::default();
-        let source = Entity::from_raw_u32(0).unwrap();
-        let make = |ability, dot: f32, secs| QueuedThreat {
-            source,
-            damage: 10.0,
-            inserted_at: Duration::from_secs(secs),
-            timer_duration: Duration::from_secs(3),
-            ability,
-            dot,
-            ticked: 0,
-            bind: 0.0,
-        };
-        use crate::message::AbilityType::{AutoAttack, Frenzy};
-        insert_threat(&mut queue, make(Some(AutoAttack), 0.0, 0), Duration::ZERO);
-        insert_threat(&mut queue, make(Some(Frenzy), 5.0, 1), Duration::ZERO);
-        insert_threat(&mut queue, make(Some(Frenzy), 0.0, 2), Duration::ZERO);
-        insert_threat(&mut queue, make(Some(Frenzy), 5.0, 3), Duration::ZERO);
-        insert_threat(&mut queue, make(Some(Frenzy), 0.0, 4), Duration::ZERO);
-        let order: Vec<_> = queue.threats.iter().map(|t| t.inserted_at.as_secs()).collect();
-        assert_eq!(order, vec![2, 4, 1, 3, 0], "blows, then wounds, then auto-attacks, each oldest first");
-    }
-
-    #[test]
-    fn within_a_lane_what_lands_soonest_stands_first() {
+    fn what_lands_soonest_stands_first() {
         let mut queue = ReactionQueue::default();
         let make = |secs, window| QueuedThreat {
             source: Entity::from_raw_u32(0).unwrap(),

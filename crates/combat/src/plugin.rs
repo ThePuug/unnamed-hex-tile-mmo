@@ -32,7 +32,6 @@ impl Plugin for CombatPlugin {
             common_bevy::systems::combat::resources::regenerate_resources, // Handles all resource regen including leash health regen (100 HP/sec for Returning NPCs)
             common_bevy::systems::combat::state::update_combat_state,
             common_bevy::systems::combat::recovery::global_recovery_system, // Count every recovery down
-            reaction_queue::process_expired_threats,
             reaction_queue::tick_dots,
             combat::track_engagement,
             combat::intimidate,
@@ -40,8 +39,9 @@ impl Plugin for CombatPlugin {
 
         app.add_systems(Update, (
             targeting::update_targets, // Update targets every frame (detects when targets move)
-            combat::abilities::use_abilities, // Every ability, through the one gate
-            reaction_queue::process_dismiss, // Dismiss front queue threat (no recovery)
+            // Every ability, through the one gate, then what lands: a press
+            // come due this frame takes its band before any of it lands
+            (combat::abilities::use_abilities, reaction_queue::process_expired_threats).chain(),
             common_bevy::systems::combat::resources::check_death, // Check for death from ANY source
             common_bevy::systems::combat::resources::process_respawn,
         ));

@@ -3,9 +3,11 @@
 //! An NPC sees what a player in its place is shown and nothing more, and
 //! each change reaches its decisions a reaction delay after it happens,
 //! drawn afresh for each change from its [`Skill`]. Its own state it knows
-//! at once, as a player knows their own bars. A change's delay is the
-//! [`Dice`] roll for the change itself, so a threat seen once stays seen
-//! and no draw needs keeping.
+//! at once, as a player knows their own bars. A threat it sees it judges
+//! landing a little off when it does, as a player times a note by eye. A
+//! change's delay and a threat's misjudgement are [`Dice`] rolls for the
+//! change itself, so a threat seen once stays seen and judged alike, and
+//! no draw needs keeping.
 
 use std::{collections::VecDeque, hash::Hash, time::Duration};
 
@@ -16,13 +18,15 @@ use super::skills::Foe;
 use crate::dice::Dice;
 
 /// How well an NPC carries out its decisions: how late each change
-/// reaches it, and how far its judgement strays, a random spread on every
-/// score as a share of it.
+/// reaches it, how far its judgement strays, a random spread on every
+/// score as a share of it, and how far either way it misjudges when a
+/// threat lands.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Skill {
     pub fastest: Duration,
     pub slowest: Duration,
     pub error: f32,
+    pub misjudge: Duration,
 }
 
 impl Skill {
@@ -31,6 +35,7 @@ impl Skill {
         fastest: Duration::from_millis(170),
         slowest: Duration::from_millis(270),
         error: 0.05,
+        misjudge: Duration::from_millis(50),
     };
 
     /// A steady player's reactions, often a little off
@@ -38,6 +43,7 @@ impl Skill {
         fastest: Duration::from_millis(300),
         slowest: Duration::from_millis(450),
         error: 0.15,
+        misjudge: Duration::from_millis(120),
     };
 
     /// A slow, careless one
@@ -45,10 +51,12 @@ impl Skill {
         fastest: Duration::from_millis(500),
         slowest: Duration::from_millis(800),
         error: 0.3,
+        misjudge: Duration::from_millis(250),
     };
 
     /// The skill `text` names: `sharp`, `steady` or `sloppy`, or
-    /// `fastest-slowest/error` in milliseconds and a share
+    /// `fastest-slowest/error/misjudge`, milliseconds, a share and
+    /// milliseconds
     pub fn named(text: &str) -> Result<Skill, String> {
         match text {
             "sharp" => return Ok(Self::SHARP),
@@ -56,11 +64,12 @@ impl Skill {
             "sloppy" => return Ok(Self::SLOPPY),
             _ => {}
         }
-        let wrong = || format!("a skill is sharp, steady, sloppy or fastest-slowest/error, not {text}");
-        let (delays, error) = text.split_once('/').ok_or_else(wrong)?;
+        let wrong = || format!("a skill is sharp, steady, sloppy or fastest-slowest/error/misjudge, not {text}");
+        let (delays, rest) = text.split_once('/').ok_or_else(wrong)?;
+        let (error, misjudge) = rest.split_once('/').ok_or_else(wrong)?;
         let (fastest, slowest) = delays.split_once('-').ok_or_else(wrong)?;
         let millis = |ms: &str| ms.parse::<u64>().map(Duration::from_millis).map_err(|_| wrong());
-        Ok(Skill { fastest: millis(fastest)?, slowest: millis(slowest)?, error: error.parse().map_err(|_| wrong())? })
+        Ok(Skill { fastest: millis(fastest)?, slowest: millis(slowest)?, error: error.parse().map_err(|_| wrong())?, misjudge: millis(misjudge)? })
     }
 
     /// The delay the change `key` reaches it after
@@ -72,6 +81,13 @@ impl Skill {
     /// `now`, the game's clock
     pub fn sees(&self, dice: &Dice, ent: Entity, threat: &QueuedThreat, now: Duration) -> bool {
         threat.inserted_at + self.delay(dice, (ent, threat.source, threat.inserted_at)) <= now
+    }
+
+    /// When the NPC `ent` judges `threat`, in its queue, lands: off by up
+    /// to its `misjudge` either way
+    pub fn judged(&self, dice: &Dice, ent: Entity, threat: &QueuedThreat) -> Duration {
+        let off = self.misjudge.mul_f32(dice.roll(("misjudge", ent, threat.source, threat.inserted_at)).share() * 2.0);
+        (threat.lands_at() + off).saturating_sub(self.misjudge)
     }
 }
 
@@ -148,8 +164,8 @@ mod tests {
     #[test]
     fn a_skill_is_named_or_spelled_out() {
         assert_eq!(Skill::named("steady").unwrap().error, Skill::STEADY.error);
-        let spelled = Skill::named("200-300/0.1").unwrap();
-        assert_eq!((spelled.fastest, spelled.slowest, spelled.error), (ms(200), ms(300), 0.1));
+        let spelled = Skill::named("200-300/0.1/80").unwrap();
+        assert_eq!((spelled.fastest, spelled.slowest, spelled.error, spelled.misjudge), (ms(200), ms(300), 0.1, ms(80)));
         assert!(Skill::named("quick").is_err());
     }
 
@@ -172,6 +188,28 @@ mod tests {
             let delay = skill.delay(&DICE, key);
             assert!(delay >= skill.fastest && delay <= skill.slowest);
         }
+    }
+
+    #[test]
+    fn a_landing_is_misjudged_within_its_skill_either_way() {
+        let ent = Entity::from_raw_u32(1).unwrap();
+        let skill = Skill::STEADY;
+        let judged: Vec<i64> = (0..500u64).map(|key| {
+            let threat = QueuedThreat {
+                source: Entity::from_raw_u32(2).unwrap(),
+                damage: 10.0,
+                inserted_at: ms(key * 10),
+                timer_duration: ms(3000),
+                ability: None,
+                dot: 0.0,
+                ticked: 0,
+                bind: 0.0,
+            };
+            skill.judged(&DICE, ent, &threat).as_millis() as i64 - threat.lands_at().as_millis() as i64
+        }).collect();
+        let reach = skill.misjudge.as_millis() as i64;
+        assert!(judged.iter().all(|off| off.abs() <= reach));
+        assert!(judged.iter().any(|&off| off < 0) && judged.iter().any(|&off| off > 0), "early and late both");
     }
 
     #[test]

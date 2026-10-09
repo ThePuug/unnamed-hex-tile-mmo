@@ -1,7 +1,8 @@
 //! Every number combat is balanced by, in one set: the early kit's
 //! skills, and how each attribute's stats scale in its three modes —
-//! absolute (a potency that grows with level), commitment (a tier's effect)
-//! and contest (a share won by a relative advantage).
+//! absolute (what a build holds, the same at every level), commitment (a
+//! tier's effect) and contest (a share won by a relative advantage). Level
+//! counts where a blow lands (`level_gap`) and in contests.
 //!
 //! Each world holds one set as a resource, [`Tuning::DEFAULT`] on the live
 //! client and server, so they agree on every number; the balance arena
@@ -14,39 +15,27 @@ use crate::message::AbilityType;
 
 #[derive(Clone, Copy, Debug, Resource)]
 pub struct Tuning {
-    // --- Absolute: potency, level curves, health ---
-    /// Potency every actor has before any attribute
+    // --- Absolute: potency, health, and level where a blow lands ---
+    /// Potency every actor has, the same at every level: what a skill's and
+    /// an auto-attack's damage are shares of
     pub potency_base: f32,
-    /// Potency each point of the attribute adds, the same for every attribute
-    pub potency_per_point: f32,
-    /// The damage level curve, `(1 + level × k)^p`, every potency scales by
-    pub damage_curve_k: f32,
-    pub damage_curve_p: f32,
-    /// Points of an attribute that carry its absolute's passive effect half
-    /// way to its ceiling; every share rises toward the ceiling and never
-    /// reaches it
-    pub share_bend: f32,
-    /// Health every actor has before Physique and level
+    /// What a blow is multiplied by for each level its striker stands above
+    /// its target, and divided by for each below (`damage::level_factor`)
+    pub level_gap: f32,
+    /// Health of a build with nothing of Physique and Discipline, the same
+    /// at every level
     pub base_health: f32,
-    /// Endurance an actor holds for each point of its Endurance potency
+    /// Share more health a Physique and Discipline pair holding the whole
+    /// build gives
+    pub health_depth: f32,
+    /// The endurance pool of a build with nothing of Instinct and Resolve:
+    /// the points every skill's price is counted in, the same at every level
     pub endurance_pool: f32,
-    /// Share deeper Endurance runs than base potency for an Instinct and
-    /// Resolve pair holding as much as one attribute can at its level
+    /// Share deeper the pool runs for an Instinct and Resolve pair holding
+    /// as much as one attribute can
     pub endurance_depth: f32,
-    /// Endurance a skill costs for each point of its cost, as a share of
-    /// the potency its kind reads
-    pub endurance_cost: f32,
     /// Share of its endurance an actor regains each second, in combat or out
     pub endurance_regen: f32,
-    /// Endurance an auto-attack struck past the forward faces costs for each
-    /// point of the Force it strikes with; one struck within them is free
-    pub off_arc_cost: f32,
-    /// Share of that cost a swing pays in the first band past the
-    /// forward faces, out to the first Grace tier's arc
-    pub off_arc_share_min: f32,
-    /// Share it pays in the last band, out to the third tier's arc; the
-    /// band between pays evenly between
-    pub off_arc_share_max: f32,
     /// Share longer an actor's recoveries run with its endurance spent
     pub fatigue_recovery: f32,
     /// Share shorter the windows of threats against an actor run with its
@@ -55,20 +44,15 @@ pub struct Tuning {
     /// The power fatigue rises by as endurance is spent: above 1 it stays
     /// light while the pool holds and bites as it empties
     pub fatigue_bend: f32,
-    /// Health each point of Physique adds before level
-    pub health_per_point: f32,
-    /// The health level curve, `(1 + level × k)^p`
-    pub health_curve_k: f32,
-    pub health_curve_p: f32,
 
     // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`).
-    // A tuned value is two knobs, `_min` at T0 and `_max` at T3, the tiers between evenly spaced
-    // (`CommitmentTier::between`) ---
+    // A tuned value is two knobs, `_min` at T0 and `_max` at T8, the tiers between on the curve
+    // that gives the first tiers the most (`CommitmentTier::between`) ---
     /// Share of the time a skill fired early skipped that its chain owes,
     /// paid once the chain ends (`combos::recovery_after`). Authored, never
     /// searched: it sets how far Ferocity and Preparation reach
     pub early_owed: f32,
-    /// Seconds behind the front threat a reaction reaches, by its user's
+    /// Seconds wide the band a reaction takes from is, by its user's
     /// Awareness; every actor has the least
     pub awareness_span_min: f32,
     pub awareness_span_max: f32,
@@ -81,7 +65,7 @@ pub struct Tuning {
     pub grace_flank_min: f32,
     pub grace_flank_max: f32,
     /// How much Intimidation's bank holds, filled each second an actor is
-    /// engaged by its tier's index, twice that while it is ignored
+    /// engaged by its tier's count, twice that while it is ignored
     /// (`Intimidation`)
     pub intimidation_bank: f32,
     /// Share harder the skill a full bank releases into lands
@@ -130,7 +114,8 @@ pub struct Tuning {
     // --- Every swing and blow ---
     /// Share of base potency an auto-attack strikes for without Force
     pub auto_damage: f32,
-    /// Share more an auto-attack strikes for at the ceiling of Force's share
+    /// Share more an auto-attack strikes for from a Might and Agility pair
+    /// holding the whole build, evenly less for less
     pub force_auto: f32,
     /// Share of its speed an actor keeps for a base interval after
     /// a strike across its line breaks its stride
@@ -159,10 +144,11 @@ pub struct Tuning {
     pub overpower_damage: f32,
     pub punish_cost: f32,
     pub punish_recovery: f32,
-    /// Share of Intuition a Punish strikes for
-    pub punish_damage: f32,
-    /// Share of its full strength a Punish gains for each stack of
-    /// Overcommitted on its target, over the half it strikes for with none
+    /// Share of base potency a Punish strikes for on a target with no
+    /// Overcommitted, whatever the build
+    pub punish_base: f32,
+    /// Share of base potency each stack of Overcommitted on its target adds
+    /// to a Punish, at full commitment to its Instinct line
     pub punish_per_stack: f32,
     /// Share of Intuition a Feint strikes for
     pub feint_damage: f32,
@@ -203,25 +189,16 @@ pub struct Tuning {
 impl Tuning {
     /// The numbers the game plays by.
     pub const DEFAULT: Tuning = Tuning {
-        potency_base: 19.208,
-        potency_per_point: 0.2058,
-        damage_curve_k: 0.15,
-        damage_curve_p: 1.75,
-        share_bend: 800.0,
-        base_health: 588.0,
-        endurance_pool: 7.551,
+        potency_base: 40.0,
+        level_gap: 1.2,
+        base_health: 1000.0,
+        health_depth: 0.5,
+        endurance_pool: 100.0,
         endurance_depth: 0.5,
-        endurance_cost: 0.018,
         endurance_regen: 0.01,
-        off_arc_cost: 0.25,
-        off_arc_share_min: 1.0 / 3.0,
-        off_arc_share_max: 1.0,
         fatigue_recovery: 1.0,
         fatigue_window: 0.319,
         fatigue_bend: 2.0,
-        health_per_point: 0.672,
-        health_curve_k: 0.10,
-        health_curve_p: 2.0,
         base_interval: 2.1,
         tempo_ceiling: 0.5,
         early_owed: 0.5,
@@ -240,8 +217,8 @@ impl Tuning {
         patience_crit_min: 0.0,
         patience_crit_max: 0.09,
         overcommit_secs: 5.0,
-        contest_scale: 800.0,
-        contest_per_level: 15.0,
+        contest_scale: 400.0,
+        contest_per_level: 7.5,
         pushback_share: 0.5,
         fitness_share: 0.231,
         combo_floor: 0.5,
@@ -249,34 +226,34 @@ impl Tuning {
         reaction_window: 3.0,
         window_bonus: 1.0,
         auto_damage: 1.029,
-        force_auto: 1.0,
+        force_auto: 0.42,
         stride_pace: 0.7,
         damage_spread: 0.05,
         crit_chance: 0.35,
         crit_power: 1.5,
-        frenzy_cost: 20.0,
+        frenzy_cost: 4.0,
         frenzy_recovery: 3.0,
         frenzy_damage: 1.5,
-        feint_cost: 7.5,
+        feint_cost: 2.0,
         feint_recovery: 1.0,
         feint_damage: 0.15,
-        overpower_cost: 22.5,
+        overpower_cost: 6.0,
         overpower_recovery: 2.0,
         overpower_damage: 1.757,
-        punish_cost: 7.5,
+        punish_cost: 2.0,
         punish_recovery: 2.0,
-        punish_damage: 1.257,
-        punish_per_stack: 0.1667,
-        parry_cost: 60.0,
+        punish_base: 0.4,
+        punish_per_stack: 0.21,
+        parry_cost: 10.0,
         parry_recovery: 1.0,
-        counter_cost: 75.0,
+        counter_cost: 15.0,
         counter_recovery: 2.0,
         counter_reflect: 0.5,
-        leap_cost: 2.5,
+        leap_cost: 10.0,
         leap_recovery: 3.0,
         leap_distance: 12,
         leap_strike: 1.469,
-        stride_cost: 22.5,
+        stride_cost: 10.0,
         stride_recovery: 1.0,
         frenzy_line: 0.2,
         overpower_line: 0.2,
@@ -288,8 +265,8 @@ impl Tuning {
         stride_speed: 0.401,
     };
 
-    /// What `ability` costs, its endurance reckoned from it
-    /// (`ActorAttributes::skill_endurance`); an auto-attack is free.
+    /// The endurance `ability` costs, in points of the pool
+    /// (`endurance_pool`); an auto-attack is free.
     pub fn cost(&self, ability: AbilityType) -> f32 {
         match ability {
             AbilityType::AutoAttack => 0.0,
@@ -311,7 +288,7 @@ impl Tuning {
             AbilityType::Frenzy => self.frenzy_damage,
             AbilityType::Feint => self.feint_damage,
             AbilityType::Overpower => self.overpower_damage,
-            AbilityType::Punish => self.punish_damage,
+            AbilityType::Punish => self.punish_base,
             AbilityType::Leap => self.leap_strike,
             AbilityType::AutoAttack | AbilityType::Parry | AbilityType::Counter | AbilityType::PerfectStride => 0.0,
         }
@@ -391,24 +368,15 @@ impl Tuning {
             "overcommit_secs" => &mut self.overcommit_secs,
             "tempo_ceiling" => &mut self.tempo_ceiling,
             "potency_base" => &mut self.potency_base,
-            "potency_per_point" => &mut self.potency_per_point,
-            "damage_curve_k" => &mut self.damage_curve_k,
-            "damage_curve_p" => &mut self.damage_curve_p,
-            "share_bend" => &mut self.share_bend,
+            "level_gap" => &mut self.level_gap,
             "base_health" => &mut self.base_health,
             "endurance_pool" => &mut self.endurance_pool,
             "endurance_depth" => &mut self.endurance_depth,
-            "endurance_cost" => &mut self.endurance_cost,
             "endurance_regen" => &mut self.endurance_regen,
-            "off_arc_cost" => &mut self.off_arc_cost,
-            "off_arc_share_min" => &mut self.off_arc_share_min,
-            "off_arc_share_max" => &mut self.off_arc_share_max,
             "fatigue_recovery" => &mut self.fatigue_recovery,
             "fatigue_window" => &mut self.fatigue_window,
             "fatigue_bend" => &mut self.fatigue_bend,
-            "health_per_point" => &mut self.health_per_point,
-            "health_curve_k" => &mut self.health_curve_k,
-            "health_curve_p" => &mut self.health_curve_p,
+            "health_depth" => &mut self.health_depth,
             "contest_scale" => &mut self.contest_scale,
             "contest_per_level" => &mut self.contest_per_level,
             "pushback_share" => &mut self.pushback_share,
@@ -434,7 +402,7 @@ impl Tuning {
             "overpower_damage" => &mut self.overpower_damage,
             "punish_cost" => &mut self.punish_cost,
             "punish_recovery" => &mut self.punish_recovery,
-            "punish_damage" => &mut self.punish_damage,
+            "punish_base" => &mut self.punish_base,
             "punish_per_stack" => &mut self.punish_per_stack,
             "parry_cost" => &mut self.parry_cost,
             "parry_recovery" => &mut self.parry_recovery,

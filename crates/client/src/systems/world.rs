@@ -325,7 +325,6 @@ pub fn evict_data(
 
 pub fn do_init(
     mut reader: MessageReader<Do>,
-    mut try_writer: MessageWriter<Try>,
     mut server: ResMut<Server>,
     time: Res<Time>,
 ) {
@@ -334,10 +333,7 @@ pub fn do_init(
         let dt = *dt;
         let client_now = time.elapsed().as_millis();
         server.sync(dt, client_now);
-        server.last_ping_time = client_now; // Track when we sent initial ping
-
-        // Send initial Ping to measure actual network latency
-        try_writer.write(Try { event: Event::Ping { client_time: client_now } });
+        server.last_ping_time = client_now;
     }
 }
 

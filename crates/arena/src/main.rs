@@ -7,8 +7,8 @@
 //! fast as the CPU allows. No networking, terrain or players.
 //!
 //! Keys: `level` (10), `size` NPCs per side (1), `skill` its NPCs fight
-//! with (`sharp`, `steady`, `sloppy`, or `fastest-slowest/error` in
-//! milliseconds and a share; sharp), `b_level`, `b_size` and `b_skill` to
+//! with (`sharp`, `steady`, `sloppy`, or `fastest-slowest/error/misjudge`
+//! in milliseconds, a share and milliseconds; sharp), `b_level`, `b_size` and `b_skill` to
 //! set the second archetype's side apart (the same by default), `runs` per
 //! matchup (20), `cap` seconds after which a fight with both sides standing
 //! is lost on both (120), `only` a comma
@@ -23,7 +23,9 @@
 //! fights the same fights. Any `Tuning` knob may be set by name too
 //! (`frenzy_damage=2`), so a value is tried without a rebuild; `bar` a comma
 //! list of the skills every fighter weighs in place of its archetype's own
-//! (`bar=parry,feint`); and any mind
+//! (`bar=parry,feint`); `build` and `b_build` nine comma steps, axis,
+//! spectrum and shift of each pair in turn, that each side's fighters hold in
+//! place of their archetype's build, at their level (`build=-6,4,4,-3,4,4,-3,4,4`); and any mind
 //! setting as `mind.<all|archetype>.<setting>` (`combat::behaviour::mind`), so a
 //! search tunes each archetype's fighter the same way.
 //!
@@ -64,6 +66,7 @@ use common_bevy::{
         reaction_queue::{QueuedThreat, ReactionQueue},
         recovery::GlobalRecovery,
         resources::{Endurance, Health, SpawnPoint},
+        ActorAttributes,
         status::Status,
         target::Target,
         AttackRange, Loc,
@@ -99,6 +102,8 @@ struct Team {
     level: u8,
     size: u8,
     skill: Skill,
+    /// The steps its fighters hold in place of their archetype's build
+    build: Option<[i8; 9]>,
 }
 
 struct Settings {
@@ -108,6 +113,8 @@ struct Settings {
     b_size: Option<u8>,
     skill: Skill,
     b_skill: Option<Skill>,
+    build: Option<[i8; 9]>,
+    b_build: Option<[i8; 9]>,
     bar: Option<Vec<AbilityType>>,
     mirror: bool,
     ordered: bool,
@@ -127,7 +134,7 @@ struct Settings {
 
 impl Settings {
     fn parse(args: &[String]) -> Self {
-        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, bar: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(120), only: EnemyArchetype::ALL.to_vec(), focus: None, trace: 0, ledger: false, seed: rand::random(), tuning: Tuning::default(), minds: Minds::tuned() };
+        let mut settings = Settings { level: 10, size: 1, b_level: None, b_size: None, skill: Skill::SHARP, b_skill: None, build: None, b_build: None, bar: None, mirror: false, ordered: false, runs: 20, cap: Duration::from_secs(120), only: EnemyArchetype::ALL.to_vec(), focus: None, trace: 0, ledger: false, seed: rand::random(), tuning: Tuning::default(), minds: Minds::tuned() };
         for arg in args {
             let (key, value) = arg.split_once('=').unwrap_or_else(|| panic!("arena takes key=value, not {arg}"));
             match key {
@@ -138,6 +145,8 @@ impl Settings {
                 "skill" => settings.skill = Skill::named(value).unwrap_or_else(|error| panic!("arena: {error}")),
                 "b_skill" => settings.b_skill = Some(Skill::named(value).unwrap_or_else(|error| panic!("arena: {error}"))),
                 "bar" => settings.bar = Some(value.split(',').map(ability_named).collect()),
+                "build" => settings.build = Some(build_named(value)),
+                "b_build" => settings.b_build = Some(build_named(value)),
                 "mirror" => settings.mirror = value == "1",
                 "ordered" => settings.ordered = value == "1",
                 "runs" => settings.runs = value.parse().expect("runs is a whole number"),
@@ -154,12 +163,18 @@ impl Settings {
     }
 
     fn team_a(&self, archetype: EnemyArchetype) -> Team {
-        Team { archetype, level: self.level, size: self.size, skill: self.skill }
+        Team { archetype, level: self.level, size: self.size, skill: self.skill, build: self.build }
     }
 
     fn team_b(&self, archetype: EnemyArchetype) -> Team {
-        Team { archetype, level: self.b_level.unwrap_or(self.level), size: self.b_size.unwrap_or(self.size), skill: self.b_skill.unwrap_or(self.skill) }
+        Team { archetype, level: self.b_level.unwrap_or(self.level), size: self.b_size.unwrap_or(self.size), skill: self.b_skill.unwrap_or(self.skill), build: self.b_build }
     }
+}
+
+/// Nine comma steps, axis, spectrum and shift of each pair in turn
+fn build_named(value: &str) -> [i8; 9] {
+    let steps: Vec<i8> = value.split(',').map(|step| step.parse().expect("a build is nine whole numbers")).collect();
+    steps.try_into().unwrap_or_else(|_| panic!("a build is nine steps, not {value}"))
 }
 
 fn ability_named(name: &str) -> AbilityType {
@@ -312,7 +327,7 @@ fn whole(threat: &QueuedThreat) -> f32 {
 fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Query<(&Loc, Option<&Heading>)>, statuses: Query<&Status>) {
     for message in reader.read() {
         match &message.event {
-            Event::UseAbility { ent, ability, target } => {
+            Event::UseAbility { ent, ability, target, .. } => {
                 let flanked = ability.reach(1).is_some() && target.and_then(|target| places.get(target).ok())
                     .zip(places.get(*ent).ok())
                     .is_some_and(|((target_loc, target_heading), (loc, _))| target_heading.is_some_and(|&heading| !targeting::is_in_facing_cone(heading, *target_loc, *loc)));
@@ -335,9 +350,9 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
                     ledger.queued_damage_on += whole(threat);
                 }
             }
-            // A threat landing clears it too; only a span cleared is an
+            // A threat landing clears it too; only a band cleared is an
             // answer, a reaction's or a leap clear's
-            Event::ClearQueue { ent, clear_type: ClearType::Span(_) } => if let Some(ledger) = tally.of(*ent) {
+            Event::ClearQueue { ent, clear_type: ClearType::Span { .. } } => if let Some(ledger) = tally.of(*ent) {
                 ledger.clears += 1;
             },
             Event::Incremental { ent, component: MessageComponent::Recovery(recovery) } => {
@@ -524,6 +539,14 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     let mut skills = world.query::<(&Side, &mut Skill)>();
     for (side, mut skill) in skills.iter_mut(world) {
         *skill = if *side == WEST { west.skill } else { east.skill };
+    }
+    let mut builds = world.query::<(&Side, &mut ActorAttributes, &mut Health, &mut Endurance)>();
+    for (side, mut attrs, mut health, mut endurance) in builds.iter_mut(world) {
+        let team = if *side == WEST { west } else { east };
+        let Some([a, b, c, d, e, f, g, h, i]) = team.build else { continue };
+        *attrs = ActorAttributes::new(a, b, c, d, e, f, g, h, i).at_level(team.level as u32);
+        *health = Health::full(attrs.max_health(&settings.tuning));
+        *endurance = Endurance::full(attrs.max_endurance(&settings.tuning));
     }
     if let Some(bar) = &settings.bar {
         let mut bars = world.query::<&mut Bar>();

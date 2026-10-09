@@ -60,17 +60,20 @@ pub enum Event {
     /// Client → Server (Try): Request to use an ability
     /// Server → Client (Do): Ability was used successfully
     /// target: the actor it is used on, a player's choice the server checks
-    UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity> },
+    /// at: the moment it was used on the game clock, a player's key press
+    /// as its client stamped it
+    /// arrived: in a Do, the server's clock as the press reached it, which
+    /// tells the client how far ahead its press came; a Try's is unread.
+    /// The server holds a press until the later of the two and judges a
+    /// reaction's band there (`abilities::Press`)
+    UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity>, at: std::time::Duration, arrived: std::time::Duration },
     /// Server → Client: Clear threats from queue
     ClearQueue { ent: Entity, clear_type: ClearType },
-    /// Client → Server: Measure network latency (client timestamp)
-    Ping { client_time: u128 },
-    /// Server → Client: Response to ping (echoes client timestamp), with
-    /// the server's game world time as it answered
-    Pong { client_time: u128, dt: u128 },
-    /// Client → Server: take the front queue threat now, as it would land
-    /// No recovery, no resource cost — queue management, not an ability
-    Dismiss { ent: Entity },
+    /// Client → Server: ask for the server's game world time
+    Ping,
+    /// Server → Client: the answer to a Ping, the server's game world time
+    /// as it answered
+    Pong { dt: u128 },
     /// Server → Client: the state a remote entity is simulated from. Sent
     /// when any of it changes and at every tile crossing while moving.
     MovementIntent { ent: Entity, position: Position, heading: Heading, moving: bool, back: bool, airtime: Option<i16>, burdened: bool },
@@ -174,7 +177,6 @@ impl Event {
             | Event::ResolveThreat { ent, .. }
             | Event::UseAbility { ent, .. }
             | Event::ClearQueue { ent, .. }
-            | Event::Dismiss { ent }
             | Event::MovementIntent { ent, .. }
             | Event::Displace { ent, .. }
             | Event::Teleport { ent, .. }
@@ -269,11 +271,9 @@ impl AbilityType {
 /// Types of queue clears for reaction abilities
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ClearType {
-    /// Clear the first N threats: a dismissal takes the front one
-    First(usize),
-    /// Clear the front threat and every threat landing within this long
-    /// after it (`ReactionQueue::swept`): what a reaction takes
-    Span(std::time::Duration),
+    /// Clear every threat landing at `at` or within `span` after it
+    /// (`ReactionQueue::swept`): what a reaction takes
+    Span { at: std::time::Duration, span: std::time::Duration },
     /// Clear the one threat `source` inserted at `inserted_at`, wherever it
     /// stands: an expiry, since threats from different sources expire out of
     /// queue order.

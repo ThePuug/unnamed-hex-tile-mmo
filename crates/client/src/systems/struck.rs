@@ -1,8 +1,8 @@
 //! What a strike shows on what it struck. A strike of the viewed actor's
 //! stands as a note over its target from the moment its threat is queued,
 //! in the highway's look (`highway::look`), until it goes as a highway
-//! note goes: landed, it pulses in its lane's colour; cleared, it shatters,
-//! broken. Whatever
+//! note goes (`combat::Gone`): landed, it pulses in its lane's colour;
+//! cleared, it shatters, broken. Whatever
 //! lands, on whomever, flashes the body it lands on, and its damage rises
 //! from it unless that body is the viewed actor's, whose resolved stack
 //! shows it.
@@ -165,8 +165,8 @@ pub fn on_landing(
 
 /// Stands each note over its target, in a row ordered by when each lands,
 /// and colours it as the highway would; as its threat goes, pulses it if
-/// it landed and shatters it if not (`highway::Landings`), and takes it
-/// down once it has.
+/// it landed and shatters it if not (`combat::Gone`), and takes it down
+/// once it has.
 #[allow(clippy::too_many_arguments)]
 pub fn update_marks(
     mut commands: Commands,
@@ -175,7 +175,7 @@ pub fn update_marks(
     targets: Query<(&ReactionQueue, &Health, Option<&ActorAttributes>, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
     scale: Res<UiScale>,
-    mut landings: ResMut<highway::Landings>,
+    gone: Res<crate::systems::combat::Gone>,
     time: Res<Time>,
 ) {
     let Ok((camera, camera_transform)) = camera_query.single() else {
@@ -227,12 +227,13 @@ pub fn update_marks(
                     }
                 }
             }
-            None if landings.take(mark.struck, mark.key.0) => {
+            None if gone.landed(mark.struck, mark.key.0, mark.key.1) == Some(true) => {
                 mark.gone = Some(now_secs);
                 highway::pulse(&mut commands, note, Vec2::splat(NOTE / 2.0), NOTE, highway::lane_color(mark.key.2), now_secs);
                 continue;
             }
-            None if now_secs - *mark.unsure.get_or_insert(now_secs) >= highway::UNSURE => {
+            None if gone.landed(mark.struck, mark.key.0, mark.key.1) == Some(false)
+                || now_secs - *mark.unsure.get_or_insert(now_secs) >= highway::UNSURE => {
                 mark.gone = Some(now_secs);
                 highway::shatter(&mut commands, note, Vec2::splat(NOTE / 2.0), NOTE, mark.color, now_secs);
                 continue;

@@ -9,6 +9,16 @@
 use crate::components::ActorAttributes;
 use crate::tuning::Tuning;
 
+/// What a blow from a striker of `striker_level` on a target of
+/// `target_level` is multiplied by: `Tuning::level_gap` for each level the
+/// striker stands above, divided by it for each below, 1 between equals.
+/// It reads only the gap, so ten levels weigh the same at any height. Every
+/// blow takes it once, where it is queued (`process_deal_damage`), or where
+/// it is returned (Counter).
+pub fn level_factor(tuning: &Tuning, striker_level: u32, target_level: u32) -> f32 {
+    tuning.level_gap.powi(striker_level as i32 - target_level as i32)
+}
+
 /// The contest points the level gap gives an actor of `level` against one
 /// of `opposing_level`: `Tuning::contest_per_level` a level, positive for
 /// the higher, negative for the lower, nothing between equals. It weighs in

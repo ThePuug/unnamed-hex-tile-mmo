@@ -37,9 +37,9 @@ pub fn timing(ability: AbilityType, reacting: bool, recovery: Option<&GlobalReco
         return Some(Timing::OnTime);
     }
     let chain = recovery.chain;
-    if offered.is_some() && (chain.early_combos as usize) < attrs.ferocity().index() {
+    if offered.is_some() && (chain.early_combos as usize) < attrs.ferocity().count() {
         Some(Timing::Early(Early::Ferocity))
-    } else if reacting && chain.struck && (chain.early_reactions as usize) < attrs.preparation().index() {
+    } else if reacting && chain.struck && (chain.early_reactions as usize) < attrs.preparation().count() {
         Some(Timing::Early(Early::Preparation))
     } else {
         None
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn ferocity_fires_the_offered_combo_early_up_to_its_tier_in_a_chain() {
         let fierce = fierce();
-        let steps = fierce.ferocity().index();
+        let steps = fierce.ferocity().count();
         assert!(steps > 0, "all of it in Might reaches a Ferocity tier");
         let recovery = offering(2.0, AbilityType::Frenzy, 1.5);
         assert_eq!(timing(AbilityType::Frenzy, AbilityType::Frenzy.is_reaction(), Some(&recovery), &fierce), Some(Timing::Early(Early::Ferocity)));
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn preparation_fires_any_reaction_early_once_a_strike_stands_in_the_chain() {
         let prepared = prepared();
-        let steps = prepared.preparation().index();
+        let steps = prepared.preparation().count();
         assert!(steps > 0, "all of it in Discipline reaches a Preparation tier");
         let struck = GlobalRecovery { chain: Chain { struck: true, ..Chain::default() }, ..GlobalRecovery::new(2.0) };
         assert_eq!(timing(AbilityType::Counter, AbilityType::Counter.is_reaction(), Some(&struck), &prepared), Some(Timing::Early(Early::Preparation)));
@@ -204,7 +204,7 @@ mod tests {
         let prepared = prepared();
         let struck = GlobalRecovery { chain: Chain { struck: true, ..Chain::default() }, ..GlobalRecovery::new(2.0) };
         let first = recovery_after(&tuning, AbilityType::Counter, AbilityType::Counter.is_reaction(), Some(&struck), &prepared, None, 0.0);
-        if prepared.preparation().index() > 1 {
+        if prepared.preparation().count() > 1 {
             let second = recovery_after(&tuning, AbilityType::Parry, AbilityType::Parry.is_reaction(), Some(&first), &prepared, None, 0.0);
             let skipped = 2.0 + first.remaining;
             assert!((second.chain.owed - tuning.early_owed * skipped).abs() < 1e-5, "each pays half its own skip, summed");

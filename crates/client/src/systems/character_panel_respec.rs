@@ -1,5 +1,6 @@
 //! The attributes tab's respec: a draft of the three pairs, changed from the
-//! numpad one pair at a time and sent to the server when every level is in.
+//! numpad one pair at a time a step at a time, and sent to the server out of
+//! combat when every step the character holds is in.
 
 use bevy::prelude::*;
 
@@ -39,8 +40,8 @@ const KEYCODE_NEXT_PAIR: KeyCode = KeyCode::NumpadDecimal;
 const KEYCODE_APPLY: KeyCode = KeyCode::NumpadEnter;
 
 /// `draft` with `change` made to its pair `at`: the shift is kept to what the
-/// pair allows, and a change that puts in more levels than `level` is
-/// refused, leaving the draft as it was.
+/// pair allows, and a change that puts in more steps than a character of
+/// `level` holds is refused, leaving the draft as it was.
 pub fn step(mut draft: [Pair; 3], at: usize, change: Change, level: u32) -> [Pair; 3] {
     let before = draft;
     let pair = &mut draft[at];
@@ -56,19 +57,20 @@ pub fn step(mut draft: [Pair; 3], at: usize, change: Change, level: u32) -> [Pai
 
 /// While the attributes tab has the numpad: `.` moves the cursor to the next
 /// pair, wrapping to the first; the keys of [`KEYS`] change the pair under it
-/// in the draft; Enter sends the draft once it has put in every level.
+/// in the draft; Enter sends the draft once it has put in every step, out of
+/// combat.
 pub fn handle_numpad(
     mut keys: crate::systems::help::Keys,
     console: Res<DevConsole>,
     focus: Res<NumpadFocus>,
     mut state: ResMut<CharacterPanelState>,
-    player: Query<(Entity, &ActorAttributes), With<Actor>>,
+    player: Query<(Entity, &ActorAttributes, Option<&common_bevy::components::resources::CombatState>), With<Actor>>,
     mut writer: MessageWriter<Try>,
 ) {
     if !focus.has(Panel::Character) || console.visible || state.tab != PanelTab::Attributes {
         return;
     }
-    let Ok((ent, attrs)) = player.single() else { return };
+    let Ok((ent, attrs, combat)) = player.single() else { return };
     let level = attrs.total_level();
     if keys.take(KEYCODE_NEXT_PAIR, "Move to the next pair") {
         state.pair = (state.pair + 1) % 3;
@@ -80,8 +82,9 @@ pub fn handle_numpad(
             state.pending_respec = (draft != own).then_some(draft);
         }
     }
-    if keys.take(KEYCODE_APPLY, "Apply the respec once every level is put in") {
-        if let Some(draft) = state.pending_respec.filter(|draft| ActorAttributes::is_complete(draft, level)) {
+    if keys.take(KEYCODE_APPLY, "Apply the respec once every step is put in, out of combat") {
+        let fighting = combat.is_some_and(|combat| combat.in_combat);
+        if let Some(draft) = state.pending_respec.filter(|draft| !fighting && ActorAttributes::is_complete(draft, level)) {
             // The draft stays until the server confirms it.
             writer.write(Try { event: GameEvent::RespecAttributes { ent, pairs: draft } });
         }

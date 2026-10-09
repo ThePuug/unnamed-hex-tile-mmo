@@ -140,67 +140,66 @@ impl Default for Turn {
 #[derive(Clone, Component, Copy, Default)]
 pub struct Actor;
 
-/// Discrete commitment tier: T0 (<20%), T1 (≥20%), T2 (≥40%), T3 (≥60%).
-///
-/// The percentage is against the most a single attribute could reach
-/// (`ActorAttributes::ceiling`), not against the summed budget. A summed
-/// denominator inflates with spread, so a spectrum build would tier lower than
-/// an axis build holding identical points.
+/// A commitment tier, T0 to T8: a tier for every 12% of the whole build
+/// an attribute holds (`ActorAttributes::ceiling`). 12% is the least share
+/// both an axis step (4%) and a spectrum step (3%) land on, so neither kind
+/// of build overshoots a tier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum CommitmentTier {
-    /// No commitment identity — baseline only
-    T0,
-    /// Identity unlocked — noticeable specialization (≥20%)
-    T1,
-    /// Identity deepened — significant commitment (≥40%)
-    T2,
-    /// Identity defining — dominant aspect of build (≥60%)
-    T3,
-}
+pub struct CommitmentTier(u8);
 
 impl CommitmentTier {
-    /// Calculate commitment tier from a derived attribute value and total budget.
+    pub const T0: Self = Self(0);
+    pub const T1: Self = Self(1);
+    pub const T2: Self = Self(2);
+    pub const T3: Self = Self(3);
+    pub const T4: Self = Self(4);
+    pub const T5: Self = Self(5);
+    pub const T6: Self = Self(6);
+    pub const T7: Self = Self(7);
+    pub const T8: Self = Self(8);
+    /// The highest tier: 96% of the whole build
+    pub const TOP: u8 = 8;
 
-    /// This is a pure function — it does not know which attribute produced the value
-    /// or how it was derived from A/S/S. It only cares about the percentage.
-    pub fn calculate(derived_value: u16, total_budget: u32) -> Self {
-        if total_budget == 0 {
+    /// The tier `value` holds out of `whole`: one for every 12%, none with
+    /// no whole. Where the tiers fall is fixed; only what each gives is tuned.
+    pub fn calculate(value: u16, whole: u32) -> Self {
+        if whole == 0 {
             return Self::T0;
         }
-        // Where the tiers fall is fixed; only what each gives is tuned
-        let share = derived_value as f32 / total_budget as f32;
-        if share >= 0.6 {
-            Self::T3
-        } else if share >= 0.4 {
-            Self::T2
-        } else if share >= 0.2 {
-            Self::T1
-        } else {
-            Self::T0
-        }
+        Self(((value as u32 * 100) / (whole * 12)).min(Self::TOP as u32) as u8)
     }
 
-    /// What a commitment gives at this tier, where it gives `min` at T0 and
-    /// `max` at T3: the tiers between are evenly spaced, so every tuned
-    /// value a commitment gives is those two numbers.
+    /// How much of the whole commitment this tier gives, 0 at T0 to 1 at
+    /// T8: `t / (t + 2)`, scaled so T8 is whole, so each tier adds less than
+    /// the one before and the first tiers give the most.
+    pub fn curve(self) -> f32 {
+        let at = |tier: f32| tier / (tier + 2.0);
+        at(self.0 as f32) / at(Self::TOP as f32)
+    }
+
+    /// What a commitment gives at this tier, `min` at T0 and `max` at T8,
+    /// on the [`Self::curve`] between, so every tuned value a commitment
+    /// gives is those two numbers.
     pub fn between(self, min: f32, max: f32) -> f32 {
-        min + (max - min) * self.index() as f32 / 3.0
+        min + (max - min) * self.curve()
     }
 
-    /// The tier's place, 0 to 3, as `Tuning`'s tier arrays list their effects
+    /// The tier's place, 0 to 8
     pub fn index(self) -> usize {
-        match self {
-            Self::T0 => 0,
-            Self::T1 => 1,
-            Self::T2 => 2,
-            Self::T3 => 3,
-        }
+        self.0 as usize
+    }
+
+    /// A count the commitment gives (early combos, early reactions): one
+    /// for each quarter of the whole its [`Self::curve`] has crossed, so the
+    /// first comes by T1 and the fourth at T8
+    pub fn count(self) -> usize {
+        (self.curve() * 4.0 + 1e-4).floor() as usize
     }
 }
 
 /// The six attributes, two to a pair. Each is read three ways, by one rule
 /// apiece: its value, which contests weigh ([`ActorAttributes::value`]);
-/// its pair's potency, which grows with level ([`ActorAttributes::potency`]); and
+/// its pair's share, which the pair's absolute reads ([`ActorAttributes::share`]); and
 /// its commitment tier ([`ActorAttributes::tier`]). The stat each reading
 /// goes by has a method of its name there.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -213,8 +212,8 @@ pub enum Attribute {
     Resolve,
 }
 
-/// One pair of opposed attributes, as the levels put into it. `axis`
-/// commits to one of the two: negative the left, positive the right.
+/// One pair of opposed attributes, as the steps of the build put into it.
+/// `axis` commits to one of the two: negative the left, positive the right.
 /// `spectrum` reaches both. `shift` leans the spectrum from the side the
 /// axis committed to toward the other, as far as the spectrum goes; a pair
 /// with no axis has no side to lean from, so it never shifts.
@@ -234,20 +233,21 @@ enum End {
 }
 
 impl Pair {
-    /// What a level of axis gives the attribute it commits to
-    const AXIS: i16 = 16;
-    /// What a level of spectrum gives the committed attribute, and what a
-    /// level of shift moves from it to the other
-    const SPECTRUM: i16 = 12;
-    /// What a level of spectrum gives each attribute of a pair with no axis
-    const BALANCED: i16 = 6;
+    /// What a step of axis gives the attribute it commits to, in halves of
+    /// a percent of the whole build: 4%
+    const AXIS: i16 = 8;
+    /// What a step of spectrum gives the committed attribute, and what a
+    /// step of shift moves from it to the other: 3%
+    const SPECTRUM: i16 = 6;
+    /// What a step of spectrum gives each attribute of a pair with no axis: 1.5%
+    const BALANCED: i16 = 3;
 
     pub fn new(axis: i8, spectrum: i8, shift: i8) -> Self {
         Self { axis, spectrum: spectrum.max(0), shift }
     }
 
-    /// The levels put into the pair
-    pub fn levels(self) -> u32 {
+    /// The steps put into the pair; a shift costs none
+    pub fn steps(self) -> u32 {
         self.axis.unsigned_abs() as u32 + self.spectrum.max(0) as u32
     }
 
@@ -295,10 +295,11 @@ impl Pair {
     }
 }
 
-/// What an actor has put its levels into: three pairs of opposed
+/// What an actor has put its build's steps into: three pairs of opposed
 /// attributes, Might and Agility, Physique and Discipline, Instinct and
 /// Resolve. Every value an actor fights with is read from these through
-/// the methods here.
+/// the methods here, each a share of the whole build ([`Self::ceiling`]),
+/// never of the level.
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Serialize)]
 #[require(intimidation::Intimidation, Swing)]
 pub struct ActorAttributes {
@@ -308,17 +309,20 @@ pub struct ActorAttributes {
     conditioning: Pair,
     /// Instinct ↔ Resolve
     temperament: Pair,
-    /// The levels the actor has, which a respec spends again and never
-    /// changes: a draft that has not placed them all is still an actor of
-    /// this level
+    /// The actor's level, which a respec never changes: it holds a step of
+    /// the build for each, up to [`Self::STEPS`]
     level: u32,
 }
 
 impl ActorAttributes {
-    /// An actor's attributes from the levels in each pair: axis, spectrum
+    /// The steps a whole build holds: a character gains one a level up to
+    /// it, and from then on a level leaves every share as it was
+    pub const STEPS: u32 = 25;
+
+    /// An actor's attributes from the steps in each pair: axis, spectrum
     /// and shift of Might ↔ Agility, of Physique ↔ Discipline, then of
     /// Instinct ↔ Resolve. A shift is taken as given, unclamped. Its level
-    /// is the levels these put in.
+    /// is the steps these put in ([`Self::at_level`] for a higher one).
     pub fn new(
         might_agility_axis: i8,
         might_agility_spectrum: i8,
@@ -337,6 +341,16 @@ impl ActorAttributes {
         ];
         let [physique, conditioning, temperament] = pairs;
         Self { physique, conditioning, temperament, level: Self::invested(&pairs) }
+    }
+
+    /// The same build at `level`, never below the steps it places
+    pub fn at_level(self, level: u32) -> Self {
+        Self { level: level.max(Self::invested(&self.pairs())), ..self }
+    }
+
+    /// The steps an actor of `level` holds: one a level, up to [`Self::STEPS`]
+    pub fn held(level: u32) -> u32 {
+        level.min(Self::STEPS)
     }
 
     pub fn might_agility_axis(&self) -> i8 { self.physique.axis }
@@ -360,22 +374,22 @@ impl ActorAttributes {
         [self.physique, self.conditioning, self.temperament]
     }
 
-    /// The levels `pairs` put in
+    /// The steps `pairs` put in
     pub fn invested(pairs: &[Pair; 3]) -> u32 {
-        pairs.iter().map(|pair| pair.levels()).sum()
+        pairs.iter().map(|pair| pair.steps()).sum()
     }
 
     /// Whether `pairs` is a draft an actor of `level` may hold: no more
-    /// levels than it has, and no spectrum below nothing. A respec it takes
-    /// has placed every one (`is_complete`).
+    /// steps than it holds ([`Self::held`]), and no spectrum below nothing.
+    /// A respec it takes has placed every one (`is_complete`).
     pub fn fits(pairs: &[Pair; 3], level: u32) -> bool {
-        pairs.iter().all(|pair| pair.spectrum >= 0) && Self::invested(pairs) <= level
+        pairs.iter().all(|pair| pair.spectrum >= 0) && Self::invested(pairs) <= Self::held(level)
     }
 
     /// Whether `pairs` is a respec an actor of `level` may take: a draft
-    /// that `fits` and places every level.
+    /// that `fits` and places every step it holds.
     pub fn is_complete(pairs: &[Pair; 3], level: u32) -> bool {
-        Self::fits(pairs, level) && Self::invested(pairs) == level
+        Self::fits(pairs, level) && Self::invested(pairs) == Self::held(level)
     }
 
     /// Takes a whole respec, or lays a draft over a copy to show it: each
@@ -420,26 +434,16 @@ impl ActorAttributes {
         pair.value(End::Left) + pair.value(End::Right)
     }
 
-    /// The absolute stat of `attribute`'s pair, a potency that grows with
-    /// level: `Tuning::potency_base` and `potency_per_point` more for each
-    /// of the pair's points ([`Self::pair_points`]), scaled by the damage
-    /// level curve.
-    pub fn potency(&self, tuning: &Tuning, attribute: Attribute) -> f32 {
-        (tuning.potency_base + self.pair_points(attribute) as f32 * tuning.potency_per_point) * self.damage_level_multiplier(tuning)
-    }
-
-    /// `attribute`'s commitment tier: its value as a share of the most any
-    /// one attribute could reach at the actor's level (`ceiling`). The summed
-    /// budget would tier a spectrum build below an axis build holding the
-    /// same points.
+    /// `attribute`'s commitment tier: its value as a share of the whole
+    /// build (`ceiling`)
     pub fn tier(&self, attribute: Attribute) -> CommitmentTier {
         CommitmentTier::calculate(self.value(attribute), self.ceiling())
     }
 
-    /// The most any one attribute can be worth at the actor's level: every
-    /// level in one axis.
+    /// The whole build, every step in one axis: what every share is out of,
+    /// the same at every level
     pub fn ceiling(&self) -> u32 {
-        self.total_level() * Pair::AXIS as u32
+        Self::STEPS * Pair::AXIS as u32
     }
 
     // Each attribute by name, and the most any shift could make it
@@ -458,28 +462,22 @@ impl ActorAttributes {
     pub fn instinct_reach(&self) -> u16 { self.reach(Attribute::Instinct) }
     pub fn resolve_reach(&self) -> u16 { self.reach(Attribute::Resolve) }
 
-    // Absolute: an attribute's potency, by the name its stat goes by
+    // Absolute, by the name its stat goes by; Force is Might and Agility's
+    // share (`auto_damage`)
 
-    /// Force, Might and Agility's: what their share adds to an auto-attack
-    /// (`auto_damage`)
-    pub fn force(&self, tuning: &Tuning) -> f32 { self.potency(tuning, Attribute::Might) }
-    /// Endurance, Instinct and Resolve's: how deep the endurance pool is
-    /// (`max_endurance`). Base potency, deeper by `Tuning::endurance_depth`
-    /// for a pair holding as much as one attribute can at its level
-    /// (`ceiling`): it reads what a build puts into the pair against its
-    /// level, so a build's pool holds the same count of its skills at any
-    /// level.
+    /// Endurance, Instinct and Resolve's: how many times deeper than an
+    /// uninvested one its pool runs (`max_endurance`), up to
+    /// `Tuning::endurance_depth` more for a pair holding the whole build
+    /// (`ceiling`)
     pub fn endurance(&self, tuning: &Tuning) -> f32 {
-        let invested = if self.ceiling() == 0 { 0.0 } else { self.pair_points(Attribute::Instinct) as f32 / self.ceiling() as f32 };
-        self.base_potency(tuning) * (1.0 + tuning.endurance_depth * invested)
+        1.0 + tuning.endurance_depth * self.pair_share(Attribute::Instinct)
     }
 
-    /// Constitution, Physique and Discipline's, which is max health: the
-    /// health every actor has (`Tuning::base_health`) and what each of the
-    /// pair's points adds (`Tuning::health_per_point`), scaled by the health
-    /// level curve.
+    /// Constitution, Physique and Discipline's, which is max health:
+    /// `Tuning::base_health`, up to `Tuning::health_depth` more for a pair
+    /// holding the whole build, the same at every level
     pub fn constitution(&self, tuning: &Tuning) -> f32 {
-        (tuning.base_health + self.pair_points(Attribute::Physique) as f32 * tuning.health_per_point) * self.hp_level_multiplier(tuning)
+        tuning.base_health * (1.0 + tuning.health_depth * self.pair_share(Attribute::Physique))
     }
 
     pub fn max_health(&self, tuning: &Tuning) -> f32 {
@@ -507,15 +505,15 @@ impl ActorAttributes {
 
     // Commitment: an attribute's tier, by the name it goes by
 
-    /// Ferocity, Might: its index is how many combos it may fire early in a
+    /// Ferocity, Might: its count is how many combos it may fire early in a
     /// chain (`combos::may_use`)
     pub fn ferocity(&self) -> CommitmentTier { self.tier(Attribute::Might) }
     /// Grace, Agility: the arc it strikes within (`arc`)
     pub fn grace(&self) -> CommitmentTier { self.tier(Attribute::Agility) }
-    /// Intimidation, Physique: its index is how much its bank fills each
+    /// Intimidation, Physique: its count is how much its bank fills each
     /// second it is engaged (`intimidation_fill`)
     pub fn intimidation(&self) -> CommitmentTier { self.tier(Attribute::Physique) }
-    /// Preparation, Discipline: its index is how many reactions it may fire
+    /// Preparation, Discipline: its count is how many reactions it may fire
     /// early in a chain once a strike taken in its own time stands in it
     /// (`combos::may_use`)
     pub fn preparation(&self) -> CommitmentTier { self.tier(Attribute::Discipline) }
@@ -525,25 +523,10 @@ impl ActorAttributes {
     /// Awareness, Resolve: how far behind the front threat its reactions reach (`span`)
     pub fn awareness(&self) -> CommitmentTier { self.tier(Attribute::Resolve) }
 
-    /// The actor's level: the levels it has, whether or not a draft laid
-    /// over it has placed them all
+    /// The actor's level, whether or not a draft laid over it has placed
+    /// every step it holds
     pub fn total_level(&self) -> u32 {
         self.level
-    }
-
-    /// A level curve, `(1 + level × k)^p`: 1 at level 0
-    pub fn level_multiplier(level: u32, k: f32, p: f32) -> f32 {
-        (1.0 + level as f32 * k).powf(p)
-    }
-
-    /// The health level curve at the actor's level
-    pub fn hp_level_multiplier(&self, tuning: &Tuning) -> f32 {
-        Self::level_multiplier(self.total_level(), tuning.health_curve_k, tuning.health_curve_p)
-    }
-
-    /// The damage level curve at the actor's level, which every potency scales by
-    pub fn damage_level_multiplier(&self, tuning: &Tuning) -> f32 {
-        Self::level_multiplier(self.total_level(), tuning.damage_curve_k, tuning.damage_curve_p)
     }
 
     /// Movement speed: the same for every actor, no attribute governing it
@@ -551,23 +534,21 @@ impl ActorAttributes {
         crate::systems::movement::MOVEMENT_SPEED
     }
 
-    /// The potency every actor has before any attribute, scaled by level: what
-    /// each absolute stat starts from.
+    /// The potency every actor has, the same at every level: what a skill's
+    /// and an auto-attack's damage are shares of. Level counts where a blow
+    /// lands (`damage::level_factor`).
     pub fn base_potency(&self, tuning: &Tuning) -> f32 {
-        tuning.potency_base * self.damage_level_multiplier(tuning)
+        tuning.potency_base
     }
 
-    /// How far its points have carried `attribute`'s absolute stat toward
-    /// its ceiling: 0 with none, half at `Tuning::share_bend` points, rising
-    /// toward 1 with diminishing returns, the same at every level. Each
-    /// absolute's passive effect is its ceiling times this share.
-    pub fn share(&self, tuning: &Tuning, attribute: Attribute) -> f32 {
-        let points = self.pair_points(attribute) as f32;
-        points / (points + tuning.share_bend)
+    /// `attribute`'s pair's share of the whole build (`ceiling`), both its
+    /// attributes together: what each absolute reads, evenly, so every step
+    /// into a pair adds as much as the one before
+    pub fn pair_share(&self, attribute: Attribute) -> f32 {
+        self.pair_points(attribute) as f32 / self.ceiling() as f32
     }
 
-    /// The endurance pool: `Tuning::endurance_pool` for each point of
-    /// Endurance, so it deepens with level and with Instinct and Resolve
+    /// The endurance pool: `Tuning::endurance_pool`, deeper by Endurance
     pub fn max_endurance(&self, tuning: &Tuning) -> f32 {
         tuning.endurance_pool * self.endurance(tuning)
     }
@@ -589,10 +570,10 @@ impl ActorAttributes {
     }
 
     /// The share of its own numbers `ability` has for this actor: whole for
-    /// a skill of no line; for one of a line, `Tuning::line` with no points
-    /// in its attribute, rising evenly to whole as the attribute nears the
-    /// most it can be worth at the actor's level (`ceiling`), so a skill is
-    /// weak in a build that has not invested in it. What it scales is the
+    /// a skill of no line; for one of a line, `Tuning::line` with no share
+    /// in its attribute, rising evenly to whole as the attribute's share of
+    /// the whole build (`ceiling`) nears whole, so a skill is weak in a
+    /// build that has not invested in it. What it scales is the
     /// skill's own: a strike's damage, Counter's reflection, Perfect
     /// Stride's speed and a Leap's distance.
     pub fn line_power(&self, tuning: &Tuning, ability: crate::message::AbilityType) -> f32 {
@@ -609,54 +590,52 @@ impl ActorAttributes {
         tiles.round().max(1.0) as usize
     }
 
-    /// The endurance `ability`, a skill, costs this actor:
-    /// `Tuning::endurance_cost` of base potency for each point of its cost
-    /// (`Tuning::cost`). It grows with level as the pool does, so a build's
-    /// pool holds the same count of its skills at any level. A reaction
-    /// pays it whatever it clears.
+    /// The endurance `ability`, a skill, costs this actor: its flat price
+    /// (`Tuning::cost`), whatever the build and level. A reaction pays it
+    /// whatever it clears.
     pub fn skill_endurance(&self, tuning: &Tuning, ability: crate::message::AbilityType) -> f32 {
-        tuning.endurance_cost * tuning.cost(ability) * self.base_potency(tuning)
+        tuning.cost(ability)
     }
 
     /// An auto-attack's damage: `Tuning::auto_damage` of base potency, more by
-    /// `Tuning::force_auto` at the ceiling of Force's share, Might's and
-    /// Agility's points together
+    /// `Tuning::force_auto` of Force, Might and Agility's share
     pub fn auto_damage(&self, tuning: &Tuning) -> f32 {
-        self.base_potency(tuning) * tuning.auto_damage * (1.0 + tuning.force_auto * self.share(tuning, Attribute::Might))
+        self.base_potency(tuning) * tuning.auto_damage * (1.0 + tuning.force_auto * self.pair_share(Attribute::Might))
     }
 
     /// How much this actor's Intimidation bank fills each second it is
     /// engaged (`components::intimidation::Intimidation`): its tier's
-    /// index, 0 to 3, twice that while it is ignored.
+    /// count, 0 to 4, twice that while it is ignored.
     pub fn intimidation_fill(&self) -> f32 {
-        self.intimidation().index() as f32
+        self.intimidation().count() as f32
     }
 
     /// The share harder this actor's strikes land from past their target's
     /// forward faces, a flank: `Tuning::grace_flank_min` at T0 to
-    /// `grace_flank_max` at T3, by its Grace.
+    /// `grace_flank_max` at T8, by its Grace.
     pub fn flank(&self, tuning: &Tuning) -> f32 {
         self.grace().between(tuning.grace_flank_min, tuning.grace_flank_max)
     }
 
     /// The share likelier this actor's skills crit a foe for each stack of
     /// Overcommitted on it (`Status::overcommitted`): `Tuning::patience_crit_min`
-    /// at T0 to `patience_crit_max` at T3.
+    /// at T0 to `patience_crit_max` at T8.
     pub fn patience_crit(&self, tuning: &Tuning) -> f32 {
         self.patience().between(tuning.patience_crit_min, tuning.patience_crit_max)
     }
 
-    /// How far behind the front threat this actor's reactions reach, from
-    /// Awareness: `Tuning::awareness_span_min`, which every actor has, to
-    /// `awareness_span_max`. A reaction takes the front threat and every
-    /// threat landing within this long after it (`ReactionQueue::swept`).
+    /// How wide this actor's band is, from Awareness:
+    /// `Tuning::awareness_span_min`, which every actor has, to
+    /// `awareness_span_max`. A reaction takes every threat landing within
+    /// this long after it is pressed (`QueuedThreat::in_band`), so a wider
+    /// band makes a reaction easier to time.
     pub fn span(&self, tuning: &Tuning) -> std::time::Duration {
         std::time::Duration::from_secs_f32(self.awareness().between(tuning.awareness_span_min, tuning.awareness_span_max))
     }
 
     /// The half-angle either side of its heading this actor strikes within:
     /// `Tuning::grace_arc_min`, the three forward faces, with no Grace, and
-    /// each tier wider to `grace_arc_max`, which leaves only what stands
+    /// each tier wider to `grace_arc_max` at T8, which leaves only what stands
     /// straight behind it out of reach. A strike past the forward faces
     /// breaks its stride (`targeting::across`).
     pub fn arc(&self, tuning: &Tuning) -> f32 {
@@ -726,44 +705,26 @@ mod tests {
     // Property tests only — no specific formula values, survives balance tuning
 
     #[test]
-    fn an_attributes_potency_follows_its_own_points() {
-        let tuning = Tuning::DEFAULT;
-        let resolve = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
-        let might = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
-        assert!(resolve.potency(&tuning, Attribute::Resolve) > might.potency(&tuning, Attribute::Resolve));
-        assert!(might.force(&tuning) > resolve.force(&tuning));
-        assert_eq!(might.potency(&tuning, Attribute::Resolve), resolve.force(&tuning));
-    }
-
-    #[test]
-    fn a_share_rises_with_investment_and_diminishes() {
-        let tuning = Tuning::DEFAULT;
-        let share = |points: i8| {
-            let attrs = ActorAttributes::new(-points, 0, 0, 0, 0, 0, 0, 0, 0);
-            attrs.share(&tuning, Attribute::Might)
-        };
-        assert_eq!(share(0), 0.0, "none invested, none of the ceiling");
-        assert!(share(5) > 0.0 && share(10) > share(5), "more invested, more of it");
-        assert!(share(10) - share(5) < share(5) - share(0), "each point gives less");
-        assert!(share(100) < 1.0, "never the whole ceiling");
+    fn a_pair_share_rises_evenly_to_whole() {
+        let share = |steps: i8| ActorAttributes::new(-steps, 0, 0, 0, 0, 0, 0, 0, 0).pair_share(Attribute::Might);
+        assert_eq!(share(0), 0.0, "none invested, none of the build");
+        assert_eq!(share(10) - share(5), share(5) - share(0), "each step adds as much as the last");
+        assert_eq!(share(ActorAttributes::STEPS as i8), 1.0, "the whole build in the pair is whole");
     }
 
     #[test]
     fn endurance_deepens_its_own_pool_and_a_skill_costs_by_its_own_cost() {
-        let tuning = Tuning { endurance_cost: 0.04, ..Tuning::DEFAULT };
+        let tuning = Tuning::DEFAULT;
         let disciplined = ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0);
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
         assert!(disciplined.max_endurance(&tuning) > mighty.max_endurance(&tuning), "Instinct and Resolve deepen it");
         assert_eq!(disciplined.max_endurance(&tuning), ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0).max_endurance(&tuning), "either of the pair, alike");
-        assert!(mighty.max_endurance(&tuning) > plain.max_endurance(&tuning), "and so does level");
+        assert_eq!(mighty.max_endurance(&tuning), plain.max_endurance(&tuning), "and level does not");
+        assert_eq!(plain.max_endurance(&tuning), tuning.endurance_pool);
         use crate::message::AbilityType::{Counter, Frenzy};
-        assert_eq!(disciplined.skill_endurance(&tuning, Frenzy), mighty.skill_endurance(&tuning, Frenzy), "a skill costs the same at a level where neither reads its stat");
-        let skills = |attrs: &ActorAttributes| attrs.max_endurance(&tuning) / attrs.skill_endurance(&tuning, Frenzy);
-        assert!((skills(&mighty) - skills(&plain)).abs() < 1e-3, "with nothing in Instinct and Resolve a pool holds as many skills at any level");
-        let deeper = ActorAttributes::new(0, 0, 0, 0, 0, 0, 20, 0, 0);
-        assert!((skills(&disciplined) - skills(&deeper)).abs() < 1e-3, "and so does a build that puts the same into them");
-        assert!(skills(&disciplined) > skills(&mighty), "which holds more");
+        assert_eq!(disciplined.skill_endurance(&tuning, Frenzy), mighty.skill_endurance(&tuning, Frenzy), "a skill costs the same in any build");
+        assert_eq!(mighty.skill_endurance(&tuning, Frenzy), plain.skill_endurance(&tuning, Frenzy), "and at any level");
 
         let (instinctive, resolute) = (ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0), ActorAttributes::new(0, 0, 0, 0, 0, 0, 10, 0, 0));
         assert_eq!(instinctive.skill_endurance(&tuning, Frenzy), mighty.skill_endurance(&tuning, Frenzy), "a skill costs what its cost does, whatever the build");
@@ -776,10 +737,10 @@ mod tests {
     fn a_skill_is_raised_by_its_line_and_the_shared_ones_by_none() {
         let tuning = Tuning::DEFAULT;
         use crate::message::AbilityType::*;
-        let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
+        let mighty = ActorAttributes::new(-25, 0, 0, 0, 0, 0, 0, 0, 0);
         let instinctive = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
         let plain = ActorAttributes::default();
-        assert_eq!(mighty.line_power(&tuning, Frenzy), 1.0, "full commitment to Might bites whole");
+        assert_eq!(mighty.line_power(&tuning, Frenzy), 1.0, "a whole build in Might bites whole");
         assert_eq!(instinctive.line_power(&tuning, Frenzy), tuning.line(Frenzy), "with none, its floor");
         assert!(instinctive.line_power(&tuning, Frenzy) < 1.0, "a skill out of its line is weak");
         assert!(ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0).leap_tiles(&tuning) > mighty.leap_tiles(&tuning), "Discipline leaps further");
@@ -823,13 +784,6 @@ mod tests {
     }
 
     #[test]
-    fn a_tier_gives_its_value_evenly_between_the_two_ends() {
-        use CommitmentTier::*;
-        assert_eq!([T0, T1, T2, T3].map(|tier| tier.between(60.0, 150.0)), [60.0, 90.0, 120.0, 150.0]);
-        assert_eq!(T2.between(1.0, 1.0), 1.0, "a value the same at both ends is the same at every tier");
-    }
-
-    #[test]
     fn patience_crits_an_overcommitted_foe_likelier_by_its_tier() {
         let tuning = Tuning::DEFAULT;
         let patient = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
@@ -849,184 +803,86 @@ mod tests {
     }
 
     #[test]
-    fn test_level_multiplier_identity_at_zero() {
-        // Level 0 must always return 1.0 regardless of k/p
-        assert_eq!(ActorAttributes::level_multiplier(0, 0.10, 1.5), 1.0);
-        assert_eq!(ActorAttributes::level_multiplier(0, 0.15, 2.0), 1.0);
-        assert_eq!(ActorAttributes::level_multiplier(0, 0.10, 1.2), 1.0);
-        assert_eq!(ActorAttributes::level_multiplier(0, 0.99, 5.0), 1.0);
+    fn health_grows_with_physique_and_discipline_never_with_level() {
+        let tuning = Tuning::DEFAULT;
+        let plain = ActorAttributes::default();
+        assert_eq!(plain.max_health(&tuning), tuning.base_health, "nothing invested, the base");
+        let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
+        assert_eq!(mighty.max_health(&tuning), plain.max_health(&tuning), "level alone adds none");
+        let vital = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
+        assert!(vital.max_health(&tuning) > plain.max_health(&tuning));
+        assert_eq!(vital.max_health(&tuning), ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0).max_health(&tuning), "either of the pair, alike");
     }
 
     #[test]
-    fn test_level_multiplier_monotonically_increasing() {
-        // Higher level must always produce higher multiplier (same k/p)
-        for level in 0..20u32 {
-            let lower = ActorAttributes::level_multiplier(level, 0.10, 1.5);
-            let higher = ActorAttributes::level_multiplier(level + 1, 0.10, 1.5);
-            assert!(
-                higher > lower,
-                "Multiplier must increase with level: level {} ({}) >= level {} ({})",
-                level + 1, higher, level, lower
-            );
+    fn base_potency_is_the_same_at_every_level() {
+        let tuning = Tuning::DEFAULT;
+        assert_eq!(ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0).base_potency(&tuning), ActorAttributes::default().base_potency(&tuning));
+    }
+
+    // ===== COMMITMENT TIER TESTS =====
+
+    #[test]
+    fn a_tier_comes_every_twelve_percent_of_the_whole_build() {
+        let whole = 200;
+        assert_eq!(CommitmentTier::calculate(0, whole), CommitmentTier::T0);
+        assert_eq!(CommitmentTier::calculate(23, whole), CommitmentTier::T0, "just short of 12%");
+        assert_eq!(CommitmentTier::calculate(24, whole), CommitmentTier::T1);
+        assert_eq!(CommitmentTier::calculate(120, whole), CommitmentTier::T5, "60%");
+        assert_eq!(CommitmentTier::calculate(192, whole), CommitmentTier::T8, "96%");
+        assert_eq!(CommitmentTier::calculate(200, whole), CommitmentTier::T8, "and no higher");
+        assert_eq!(CommitmentTier::calculate(50, 0), CommitmentTier::T0, "no whole, no tier");
+    }
+
+    #[test]
+    fn an_axis_and_a_spectrum_both_land_on_every_tier() {
+        // An axis reaches a tier in 3 steps, a spectrum with its axis set in 4
+        for tier in 1..=6u8 {
+            let axis = ActorAttributes::new(-(3 * tier as i8), 0, 0, 0, 0, 0, 0, 0, 0);
+            assert_eq!(axis.tier(Attribute::Might).index(), tier as usize, "axis to T{tier}");
+            let spectrum = ActorAttributes::new(-1, 4 * tier as i8, 0, 0, 0, 0, 0, 0, 0);
+            let without = ActorAttributes::new(-1, 0, 0, 0, 0, 0, 0, 0, 0);
+            assert_eq!(spectrum.might() - without.might(), 24 * tier as u16, "spectrum lands T{tier}'s share exactly");
         }
     }
 
     #[test]
-    fn test_level_multiplier_super_linear_growth() {
-        // The gap between consecutive levels should increase (super-linear, not linear)
-        // gap(level N→N+1) < gap(level N+1→N+2) for p > 1
-        let gap_low = ActorAttributes::level_multiplier(2, 0.10, 1.5)
-            - ActorAttributes::level_multiplier(1, 0.10, 1.5);
-        let gap_high = ActorAttributes::level_multiplier(9, 0.10, 1.5)
-            - ActorAttributes::level_multiplier(8, 0.10, 1.5);
-        assert!(
-            gap_high > gap_low,
-            "Growth rate should accelerate: gap at high levels ({}) > gap at low levels ({})",
-            gap_high, gap_low
-        );
+    fn a_commitment_gives_the_most_at_its_first_tiers() {
+        let tiers: Vec<f32> = (0..=CommitmentTier::TOP).map(|t| CommitmentTier::calculate(24 * t as u16, 200).curve()).collect();
+        assert_eq!(tiers[0], 0.0);
+        assert!((tiers[8] - 1.0).abs() < 1e-6, "T8 is the whole");
+        assert!(tiers.windows(3).all(|w| w[2] - w[1] < w[1] - w[0]), "each tier adds less than the one before");
+        assert_eq!(CommitmentTier::T5.between(60.0, 150.0), 60.0 + 90.0 * CommitmentTier::T5.curve());
+        assert_eq!(CommitmentTier::T2.between(1.0, 1.0), 1.0, "a value the same at both ends is the same at every tier");
+        assert_eq!([0u8, 1, 2, 3, 8].map(|t| CommitmentTier::calculate(24 * t as u16, 200).count()), [0, 1, 2, 3, 4], "the first count by T1, the last at T8");
     }
 
     #[test]
-    fn test_damage_multiplier_exceeds_hp_multiplier() {
-        let tuning = Tuning::DEFAULT;
-        // Damage scales more aggressively than HP at all positive levels
-        for level in 1..=20u32 {
-            let attrs = ActorAttributes::new(
-                -(level as i8).min(127), 0, 0,  // some might investment
-                0, 0, 0,
-                0, 0, 0,
-            );
-            assert!(
-                attrs.damage_level_multiplier(&tuning) >= attrs.hp_level_multiplier(&tuning),
-                "Damage multiplier should >= HP multiplier at level {}",
-                level
-            );
+    fn a_build_holds_eight_tiers_through_axes_and_seven_spread_over_all_six() {
+        let tiers = |attrs: ActorAttributes| [Attribute::Might, Attribute::Agility, Attribute::Physique, Attribute::Discipline, Attribute::Instinct, Attribute::Resolve]
+            .map(|attribute| attrs.tier(attribute).index()).iter().sum::<usize>();
+        let pure = ActorAttributes::new(-24, 0, 0, 0, 0, 0, 0, 0, 0);
+        assert_eq!(pure.tier(Attribute::Might), CommitmentTier::T8);
+        assert_eq!(tiers(ActorAttributes::new(-12, 0, 0, -12, 0, 0, 0, 0, 0)), 8, "T4 + T4");
+        // Every attribute: T2 + T1 in one pair, T1 + T1 in the others, 24 steps
+        let spread = ActorAttributes::new(-6, 4, 4, -3, 4, 4, -3, 4, 4);
+        assert_eq!(ActorAttributes::invested(&spread.pairs()), 24);
+        assert_eq!(tiers(spread), 7);
+        for attribute in [Attribute::Agility, Attribute::Discipline, Attribute::Resolve] {
+            assert_eq!(spread.tier(attribute), CommitmentTier::T1, "{attribute:?}");
         }
     }
 
     #[test]
-    fn test_max_health_increases_with_level() {
-        let tuning = Tuning::DEFAULT;
-        let level_0 = ActorAttributes::default();
-        let level_5 = ActorAttributes::new(-3, -2, 0, 0, 0, 0, 0, 0, 0); // 5 points invested
-        let level_10 = ActorAttributes::new(-5, -3, 0, -1, -1, 0, 0, 0, 0); // 10 points invested
-
-        assert!(
-            level_5.max_health(&tuning) > level_0.max_health(&tuning),
-            "Level 5 should have more HP than level 0"
-        );
-        assert!(
-            level_10.max_health(&tuning) > level_5.max_health(&tuning),
-            "Level 10 should have more HP than level 5"
-        );
-    }
-
-    #[test]
-    fn test_default_attrs_max_health_is_base() {
-        let tuning = Tuning::DEFAULT;
-        // Level 0, no investment: max_health = base HP * multiplier(0) = base * 1.0
-        let attrs = ActorAttributes::default();
-        assert_eq!(attrs.total_level(), 0);
-        assert_eq!(attrs.max_health(&tuning), tuning.base_health, "Level 0 with no physique should have the base health");
-    }
-
-    // ===== COMMITMENT TIER TESTS (, Layer 2) =====
-
-    #[test]
-    fn test_commitment_tier_thresholds() {
-        // T0: below 20%
-        assert_eq!(CommitmentTier::calculate(19, 100), CommitmentTier::T0);
-        assert_eq!(CommitmentTier::calculate(0, 100), CommitmentTier::T0);
-
-        // T1: 20% and above
-        assert_eq!(CommitmentTier::calculate(20, 100), CommitmentTier::T1);
-        assert_eq!(CommitmentTier::calculate(39, 100), CommitmentTier::T1);
-
-        // T2: 40% and above
-        assert_eq!(CommitmentTier::calculate(40, 100), CommitmentTier::T2);
-        assert_eq!(CommitmentTier::calculate(59, 100), CommitmentTier::T2);
-
-        // T3: 60% and above
-        assert_eq!(CommitmentTier::calculate(60, 100), CommitmentTier::T3);
-        assert_eq!(CommitmentTier::calculate(100, 100), CommitmentTier::T3);
-    }
-
-    #[test]
-    fn test_commitment_tier_zero_budget() {
-        // Zero total budget always returns T0
-        assert_eq!(CommitmentTier::calculate(0, 0), CommitmentTier::T0);
-        assert_eq!(CommitmentTier::calculate(50, 0), CommitmentTier::T0);
-    }
-
-    #[test]
-    fn test_commitment_tier_ordering() {
-        // Tiers are ordered T0 < T1 < T2 < T3
-        assert!(CommitmentTier::T0 < CommitmentTier::T1);
-        assert!(CommitmentTier::T1 < CommitmentTier::T2);
-        assert!(CommitmentTier::T2 < CommitmentTier::T3);
-    }
-
-    #[test]
-    fn test_commitment_tier_non_round_budget() {
-        // Verify with non-round total budget values
-        // 30 out of 73 = 41.1% → T2 (≥40%)
-        assert_eq!(CommitmentTier::calculate(30, 73), CommitmentTier::T2);
-        // 14 out of 73 = 19.2% → T0 (<20%)
-        assert_eq!(CommitmentTier::calculate(14, 73), CommitmentTier::T0);
-        // 15 out of 73 = 20.5% → T1 (≥20%)
-        assert_eq!(CommitmentTier::calculate(15, 73), CommitmentTier::T1);
-        // 44 out of 73 = 60.3% → T3 (≥60%)
-        assert_eq!(CommitmentTier::calculate(44, 73), CommitmentTier::T3);
-    }
-
-    // ===== COMMITMENT_TIER_FOR TESTS (Layer 2) =====
-
-    #[test]
-    fn test_tier_of_convenience() {
-        // Specialist build: heavy investment in one attribute
-        // axis=-5, spectrum=0 → might=80, agility=0, ceiling=80
-        // might commitment: 80/80 = 100% → T3
-        let attrs = ActorAttributes::new(-5, 0, 0, 0, 0, 0, 0, 0, 0);
-        assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T3);
-        assert_eq!(attrs.tier(Attribute::Agility), CommitmentTier::T0);
-    }
-
-    #[test]
-    fn test_tier_of_balanced_build() {
-        // A balanced spectrum pays 6 a level to each side, against a ceiling
-        // of 16 a level: every level in one pair is 54/144 = 37.5% → T1 both
-        let committed = ActorAttributes::new(0, 9, 0, 0, 0, 0, 0, 0, 0);
-        assert_eq!(committed.tier(Attribute::Might), CommitmentTier::T1);
-        assert_eq!(committed.tier(Attribute::Agility), CommitmentTier::T1);
-
-        // Spread evenly over all three pairs: 18/144 = 12.5% → T0 everywhere
-        let spread = ActorAttributes::new(0, 3, 0, 0, 3, 0, 0, 3, 0);
-        assert_eq!(spread.tier(Attribute::Might), CommitmentTier::T0);
-        assert_eq!(spread.tier(Attribute::Resolve), CommitmentTier::T0);
-    }
-
-    #[test]
-    fn test_commitment_tier_budget_constraints() {
-        // T3+T2 takes every level: 6+4 axis at level 10, ceiling 160
-        // might: 96/160 = 60% → T3; physique: 64/160 = 40% → T2
-        let attrs = ActorAttributes::new(-6, 0, 0, -4, 0, 0, 0, 0, 0);
-        assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T3);
-        assert_eq!(attrs.tier(Attribute::Physique), CommitmentTier::T2);
-
-        // 5+5 axis: 80/160 = 50% each → T2, so two T3s are out of reach
-        let split = ActorAttributes::new(-5, 0, 0, -5, 0, 0, 0, 0, 0);
-        assert_eq!(split.tier(Attribute::Might), CommitmentTier::T2);
-        assert_eq!(split.tier(Attribute::Physique), CommitmentTier::T2);
-    }
-
-    #[test]
-    fn test_commitment_tier_dual_t2() {
-        // 4+4+2 axis at level 10, ceiling 160
-        // might, physique: 64/160 = 40% → T2; instinct: 32/160 = 20% → T1
-        let attrs = ActorAttributes::new(-4, 0, 0, -4, 0, 0, -2, 0, 0);
-        assert_eq!(attrs.tier(Attribute::Might), CommitmentTier::T2);
-        assert_eq!(attrs.tier(Attribute::Physique), CommitmentTier::T2);
-        assert_eq!(attrs.tier(Attribute::Instinct), CommitmentTier::T1);
+    fn a_character_holds_a_step_a_level_up_to_a_whole_build() {
+        assert_eq!(ActorAttributes::held(10), 10);
+        assert_eq!(ActorAttributes::held(30), ActorAttributes::STEPS);
+        let pure = |level: u32| crate::archetype::calculate_enemy_attributes(level as u8, crate::archetype::EnemyArchetype::Berserker);
+        assert_eq!(pure(10).tier(Attribute::Might), CommitmentTier::T3, "a level-10 archetype holds 40%");
+        assert_eq!(pure(24).tier(Attribute::Might), CommitmentTier::T8);
+        assert_eq!(pure(30).might(), pure(25).might(), "past 25 a level leaves every share as it was");
+        assert_eq!(pure(30).total_level(), 30);
+        assert!(ActorAttributes::is_complete(&pure(30).pairs(), 30), "a whole build is all a level-30 places");
     }
 
     // ===== SHIFT CONSTRAINT TESTS =====
@@ -1130,12 +986,10 @@ mod tests {
 
     #[test]
     fn a_draft_keeps_the_level_so_its_tiers_answer_only_to_their_own_pair() {
-        let tuning = Tuning::DEFAULT;
         let attrs = ActorAttributes::new(-3, 0, 0, 7, 0, 0, 0, 0, 0);
         let mut draft = attrs;
         draft.apply_respec([Pair::new(-3, 0, 0), Pair::new(2, 0, 0), Pair::default()]);
         assert_eq!(draft.total_level(), attrs.total_level(), "levels taken out of one pair are still the actor's");
         assert_eq!(draft.ferocity(), attrs.ferocity(), "Might untouched, its tier holds");
-        assert_eq!(draft.damage_level_multiplier(&tuning), attrs.damage_level_multiplier(&tuning));
     }
 }

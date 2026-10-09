@@ -1,5 +1,6 @@
+use std::collections::VecDeque;
 use std::net::UdpSocket;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use bevy::prelude::*;
 use ::renet::{ConnectionConfig, DefaultChannel, RenetClient};
@@ -12,6 +13,63 @@ use common::network::*;
 const BACKOFF_FIRST: Duration = Duration::from_secs(1);
 const BACKOFF_CAP: Duration = Duration::from_secs(30);
 
+// ── Added latency ──
+
+/// Latency the client adds to its own traffic, as a round trip, for
+/// playing as a far player would (the dev console's Latency menu): each
+/// message waits half of it each way, a tenth more or less at random, and
+/// never overtakes one sent before it on its channel. Zero adds none.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct AddedLatency(pub Duration);
+
+impl AddedLatency {
+    /// The most that may be added
+    pub const MOST: Duration = Duration::from_millis(250);
+
+    /// How long one message waits on its way
+    fn one_way(self) -> Duration {
+        (self.0 / 2).mul_f64(rand::random_range(0.9..1.1))
+    }
+}
+
+/// Messages held back by [`AddedLatency`] until their time, in the order
+/// they came: one queue a direction a channel.
+struct Held<T>(VecDeque<(Duration, T)>);
+
+impl<T> Default for Held<T> {
+    fn default() -> Self {
+        Self(VecDeque::new())
+    }
+}
+
+impl<T> Held<T> {
+    /// Holds `item`, come at `now`, for `wait`, and never past one held
+    /// before it
+    fn push(&mut self, now: Duration, wait: Duration, item: T) {
+        let after = self.0.back().map_or(Duration::ZERO, |&(at, _)| at);
+        self.0.push_back(((now + wait).max(after), item));
+    }
+
+    /// The first item held, once its time has come by `now`
+    fn pop(&mut self, now: Duration) -> Option<T> {
+        if self.0.front()?.0 > now {
+            return None;
+        }
+        self.0.pop_front().map(|(_, item)| item)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// A channel's place among the held queues
+fn lane(channel: u8) -> usize {
+    channel as usize % CHANNELS
+}
+
+const CHANNELS: usize = 3;
+
 // ── Wrapper resource ──
 
 /// Owns the renet client and transport. Game systems access this, never renet
@@ -22,6 +80,12 @@ pub struct ClientNet {
     client: RenetClient,
     transport: NetcodeClientTransport,
     send_timer: f32,
+    added: AddedLatency,
+    opened: Instant,
+    /// What the client sent, held by `added`, with its channel
+    sending: Held<(u8, Vec<u8>)>,
+    /// What came from the server, held by `added`, a queue a channel
+    arriving: [Held<::renet::Bytes>; CHANNELS],
 }
 
 /// Tells the server the client is leaving. Without it the server learns
@@ -54,25 +118,68 @@ impl ClientNet {
         config.server_channels_config[CH_RELIABLE_UNORDERED as usize].max_memory_usage_bytes = RELIABLE_UNORDERED_MAX_MEMORY;
         let client = RenetClient::new(config);
 
-        Ok(Self { client, transport, send_timer: 0.0 })
+        Ok(Self {
+            client,
+            transport,
+            send_timer: 0.0,
+            added: AddedLatency::default(),
+            opened: Instant::now(),
+            sending: Held::default(),
+            arriving: Default::default(),
+        })
     }
 
     // ── Send ──
 
     /// Queue a reliable message to the server.
     pub fn send_reliable(&mut self, channel: DefaultChannel, message: Vec<u8>) {
-        self.client.send_message(channel, message);
+        self.send(channel.into(), message);
     }
 
     /// Send an unreliable message. Never budget-gated.
     pub fn send_unreliable(&mut self, message: Vec<u8>) {
-        self.client.send_message(DefaultChannel::Unreliable, message);
+        self.send(DefaultChannel::Unreliable.into(), message);
+    }
+
+    fn send(&mut self, channel: u8, message: Vec<u8>) {
+        if self.added.0.is_zero() && self.sending.is_empty() {
+            self.client.send_message(channel, message);
+        } else {
+            self.sending.push(self.opened.elapsed(), self.added.one_way(), (channel, message));
+        }
+    }
+
+    /// Hands renet what the added latency has held long enough
+    fn release_sends(&mut self) {
+        let now = self.opened.elapsed();
+        while let Some((channel, message)) = self.sending.pop(now) {
+            self.client.send_message(channel, message);
+        }
     }
 
     // ── Receive ──
 
     pub fn receive_message(&mut self, channel: DefaultChannel) -> Option<::renet::Bytes> {
-        self.client.receive_message(channel)
+        let channel = u8::from(channel);
+        let held = &mut self.arriving[lane(channel)];
+        if held.is_empty() {
+            self.client.receive_message(channel)
+        } else {
+            held.pop(self.opened.elapsed())
+        }
+    }
+
+    /// Holds what has come from the server for the added latency
+    fn hold_arrivals(&mut self) {
+        if self.added.0.is_zero() {
+            return;
+        }
+        let now = self.opened.elapsed();
+        for channel in [DefaultChannel::ReliableOrdered, DefaultChannel::ReliableUnordered, DefaultChannel::Unreliable].map(u8::from) {
+            while let Some(message) = self.client.receive_message(channel) {
+                self.arriving[lane(channel)].push(now, self.added.one_way(), message);
+            }
+        }
     }
 
     // ── Connection state ──
@@ -81,9 +188,10 @@ impl ClientNet {
         self.client.is_connected()
     }
 
-    /// The round trip to the server as renet measures it.
+    /// The round trip to the server as renet measures it, and the
+    /// latency the client adds to its own traffic.
     pub fn rtt(&self) -> Duration {
-        Duration::from_secs_f64(self.client.rtt())
+        Duration::from_secs_f64(self.client.rtt()) + self.added.0
     }
 }
 
@@ -142,6 +250,7 @@ pub struct NetworkPlugin;
 impl Plugin for NetworkPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Link>();
+        app.init_resource::<AddedLatency>();
         app.add_systems(PreUpdate, (connect, net_receive).chain());
         app.add_systems(PostUpdate, net_send);
     }
@@ -168,10 +277,12 @@ fn net_receive(
     mut commands: Commands,
     net: Option<ResMut<ClientNet>>,
     mut link: ResMut<Link>,
+    added: Res<AddedLatency>,
     time: Res<Time>,
     real: Res<Time<Real>>,
 ) {
     let Some(mut net) = net else { return };
+    net.added = *added;
     let ClientNet { ref mut client, ref mut transport, .. } = *net;
     let failure = match transport.update(time.delta(), client) {
         Err(e) => Some(e.to_string()),
@@ -184,15 +295,18 @@ fn net_receive(
         info!("Connection to server lost: {reason}");
         commands.remove_resource::<ClientNet>();
         *link = link.failed(reason, real.elapsed());
+        return;
     } else if client.is_connected() && !link.is_connected() {
         info!("Connected to server");
         *link = Link::Connected;
     }
+    net.hold_arrivals();
 }
 
 /// Rate-limited flush of outgoing packets.
 fn net_send(net: Option<ResMut<ClientNet>>, time: Res<Time>) {
     let Some(mut net) = net else { return };
+    net.release_sends();
     let send_interval = 1.0 / SEND_RATE;
     net.send_timer += time.delta_secs();
     if net.send_timer < send_interval {
@@ -234,6 +348,28 @@ mod tests {
         let Link::Waiting { failures, retry_at, .. } = second else { panic!() };
         assert_eq!(failures, 2);
         assert_eq!(retry_at, BACKOFF_FIRST * 2);
+    }
+
+    #[test]
+    fn held_messages_wait_their_time_and_keep_their_order() {
+        let ms = Duration::from_millis;
+        let mut held = Held::default();
+        held.push(ms(0), ms(100), 'a');
+        held.push(ms(10), ms(50), 'b');
+        assert_eq!(held.pop(ms(99)), None, "nothing before its time");
+        assert_eq!(held.pop(ms(100)), Some('a'));
+        assert_eq!(held.pop(ms(100)), Some('b'), "one sent after waits for the one before");
+        assert_eq!(held.pop(ms(500)), None);
+    }
+
+    #[test]
+    fn a_message_waits_half_the_round_trip_give_or_take_a_tenth() {
+        let added = AddedLatency(Duration::from_millis(200));
+        for _ in 0..100 {
+            let wait = added.one_way().as_secs_f64();
+            assert!((0.09..=0.11).contains(&wait), "{wait}");
+        }
+        assert!(AddedLatency::default().one_way().is_zero());
     }
 
     #[test]

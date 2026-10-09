@@ -9,8 +9,8 @@ use crate::leap::{away, slide, toward, LEAP_MS};
 /// target, a living hostile, stands.
 ///
 /// In its user's reach, it leaps clear of the target, and the threats in
-/// its user's span miss, paid for as a reaction's clearing is
-/// ([`Abilities::answer_span`]). A clear is a reaction, so Preparation
+/// its user's band miss, paid for as a reaction's clearing is
+/// ([`Abilities::answer`]). A clear is a reaction, so Preparation
 /// fires it early (`abilities::reacts`).
 ///
 /// Out of reach, it leaps toward the target and stops beside it, and one
@@ -34,7 +34,7 @@ pub fn leap(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, Ab
     let landing = landing.ok_or(AbilityFailReason::OutOfRange)?;
     slide(cast.ent, landing, LEAP_MS, None, &mut abilities.commands, &mut abilities.writer);
     if clear {
-        abilities.answer_span(cast);
+        abilities.answer(cast);
     } else if Loc::new(landing).distance(&target_loc) <= cast.reach {
         let damage = cast.attrs.base_potency(&tuning) * tuning.leap_strike * cast.attrs.line_power(&tuning, AbilityType::Leap);
         abilities.strike(cast, target, damage, AbilityType::Leap, &WHOLE);

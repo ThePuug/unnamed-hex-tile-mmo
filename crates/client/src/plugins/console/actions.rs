@@ -35,6 +35,10 @@ pub enum DevConsoleAction {
     /// Stop viewing: back as a fresh character.
     #[cfg(feature = "admin")]
     StopViewing,
+    /// Add this many ms to the latency the client adds to its traffic,
+    /// held between none and `AddedLatency::MOST`.
+    #[cfg(feature = "admin")]
+    AddLatency(i64),
     /// Stage a party of this archetype ahead of the actor the client sees
     /// as: a den, a party out of its reach, or one engaging it.
     #[cfg(feature = "admin")]
@@ -48,6 +52,7 @@ pub enum DevConsoleAction {
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Switches<'w> {
     state: ResMut<'w, DiagnosticsState>,
+    added: ResMut<'w, crate::network::AddedLatency>,
 }
 
 pub fn execute_console_actions(
@@ -159,6 +164,13 @@ pub fn execute_console_actions(
             DevConsoleAction::ViewTarget | DevConsoleAction::StopViewing => {}
             #[cfg(feature = "admin")]
             DevConsoleAction::SpawnParty { .. } => {}
+            #[cfg(feature = "admin")]
+            DevConsoleAction::AddLatency(ms) => {
+                let most = crate::network::AddedLatency::MOST.as_millis() as i64;
+                let added = (switches.added.0.as_millis() as i64 + ms).clamp(0, most);
+                switches.added.0 = std::time::Duration::from_millis(added as u64);
+                info!("Added latency: {added}ms round trip");
+            }
         }
     }
 }

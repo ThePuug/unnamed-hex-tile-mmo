@@ -38,9 +38,9 @@ pub struct QueuedThreat {
     pub bind: f32,
 }
 
-/// The lane a threat runs in, in the order the queue keeps them: every
-/// blow ahead of every wound, every wound ahead of every auto-attack.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+/// The lane a threat shows in on the highway, by its kind. Lanes are for
+/// reading; a reaction takes what is in its band whatever lane it runs in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Lane {
     Blow,
     Wound,
@@ -56,8 +56,7 @@ impl QueuedThreat {
         Self { bind, ..self }
     }
 
-    /// A wound: its DoT ticks while it stands, queued behind every blow and
-    /// ahead of every auto-attack, and shown in the window like a blow.
+    /// A wound: its DoT ticks while it stands.
     pub fn is_wound(&self) -> bool {
         self.dot > 0.0
     }
@@ -82,7 +81,7 @@ impl QueuedThreat {
         self.dot * self.tick_count().saturating_sub(self.ticked) as f32
     }
 
-    /// An auto-attack: steady pressure, queued behind every ability threat.
+    /// An auto-attack: steady pressure.
     pub fn is_pressure(&self) -> bool {
         self.ability == Some(crate::message::AbilityType::AutoAttack)
     }
@@ -101,12 +100,18 @@ impl QueuedThreat {
     pub fn lands_at(&self) -> Duration {
         self.inserted_at + self.timer_duration
     }
+
+    /// Whether a reaction at `at` reaching `span` takes this threat: it
+    /// lands at `at` or within `span` after it. The band sits at the hit
+    /// line, so a reaction is timed to what is about to land.
+    pub fn in_band(&self, at: Duration, span: Duration) -> bool {
+        (at..=at + span).contains(&self.lands_at())
+    }
 }
 
-/// The threats on their way to an actor, none yet landed: in the order of
-/// their [`Lane`], and within a lane the soonest to land first. Only
-/// `queue::insert_threat` keeps that order. It holds any number, and the
-/// actor sees every one.
+/// The threats on their way to an actor, none yet landed, the soonest to
+/// land first. Only `queue::insert_threat` keeps that order. It holds any
+/// number, and the actor sees every one.
 #[derive(Clone, Component, Debug, Default, Deserialize, Serialize)]
 pub struct ReactionQueue {
     pub threats: VecDeque<QueuedThreat>,
@@ -117,21 +122,10 @@ impl ReactionQueue {
         self.threats.is_empty()
     }
 
-    /// Whether a reaction reaching `span` behind the front threat takes
-    /// `threat`: the front one, and every threat in any lane that lands
-    /// within `span` after it does. One landing sooner than the front, an
-    /// auto-attack ahead of a blow, is left, so a reaction reaches
-    /// auto-attacks only as overflow.
-    pub fn sweeps(&self, threat: &QueuedThreat, span: Duration) -> bool {
-        self.threats.front().is_some_and(|front| {
-            let (first, at) = (front.lands_at(), threat.lands_at());
-            at >= first && at <= first + span
-        })
-    }
-
-    /// The threats a reaction reaching `span` takes ([`ReactionQueue::sweeps`])
-    pub fn swept(&self, span: Duration) -> impl Iterator<Item = &QueuedThreat> {
-        self.threats.iter().filter(move |threat| self.sweeps(threat, span))
+    /// The threats a reaction at `at` reaching `span` takes
+    /// ([`QueuedThreat::in_band`])
+    pub fn swept(&self, at: Duration, span: Duration) -> impl Iterator<Item = &QueuedThreat> {
+        self.threats.iter().filter(move |threat| threat.in_band(at, span))
     }
 }
 
@@ -153,28 +147,20 @@ mod tests {
     }
 
     #[test]
-    fn a_reaction_takes_the_front_and_what_lands_within_its_span_behind_it() {
+    fn a_reaction_takes_what_lands_within_its_band_whatever_its_lane() {
         use crate::message::AbilityType::{AutoAttack, Frenzy};
-        let landing = |ability, secs: u64, millis: u64| QueuedThreat {
-            timer_duration: Duration::from_secs(secs) + Duration::from_millis(millis),
+        let landing = |ability, millis: u64| QueuedThreat {
+            timer_duration: Duration::from_millis(millis),
             ..threat(Some(ability), 0.0)
         };
-        // In queue order: the blows, then the auto-attacks
         let queue = ReactionQueue {
-            threats: [landing(Frenzy, 3, 0), landing(Frenzy, 5, 0), landing(AutoAttack, 2, 0), landing(AutoAttack, 3, 200)].into(),
+            threats: [landing(AutoAttack, 2000), landing(Frenzy, 2100), landing(AutoAttack, 2300), landing(Frenzy, 3000)].into(),
         };
-        let taken = |span: u64| queue.swept(Duration::from_millis(span)).map(|t| t.timer_duration.as_millis()).collect::<Vec<_>>();
-        assert_eq!(taken(0), vec![3000], "the front alone");
-        assert_eq!(taken(250), vec![3000, 3200], "and an auto-attack landing just behind it, whatever its lane");
-        assert_eq!(taken(2000), vec![3000, 5000, 3200], "a longer span reaches the next blow; the auto-attack landing sooner is left");
-        assert_eq!(ReactionQueue::default().swept(Duration::from_secs(9)).count(), 0, "nothing queued, nothing taken");
-    }
-
-    #[test]
-    fn lanes_order_blows_then_wounds_then_auto_attacks() {
-        let blow = threat(Some(crate::message::AbilityType::Frenzy), 0.0);
-        let wound = threat(Some(crate::message::AbilityType::Frenzy), 5.0);
-        let auto = threat(Some(crate::message::AbilityType::AutoAttack), 0.0);
-        assert!(blow.lane() < wound.lane() && wound.lane() < auto.lane());
+        let taken = |at: u64, span: u64| queue.swept(Duration::from_millis(at), Duration::from_millis(span)).map(|t| t.timer_duration.as_millis()).collect::<Vec<_>>();
+        assert_eq!(taken(1900, 250), vec![2000, 2100], "an auto-attack as much as a blow");
+        assert_eq!(taken(2050, 250), vec![2100, 2300], "what has landed is past the band");
+        assert_eq!(taken(2050, 1000), vec![2100, 2300, 3000], "a wider band takes more");
+        assert!(taken(1000, 250).is_empty(), "pressed early, it takes nothing");
+        assert_eq!(ReactionQueue::default().swept(Duration::ZERO, Duration::from_secs(9)).count(), 0, "nothing queued, nothing taken");
     }
 }

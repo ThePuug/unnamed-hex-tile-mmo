@@ -272,8 +272,15 @@ pub struct Server {
     pub client_time_at_init: u128,
     /// Last time we sent a ping (for periodic pings)
     pub last_ping_time: u128,
-    /// Smoothed network latency estimate (exponential moving average)
-    pub smoothed_latency: u128,
+    /// The trip to the server, half the round trip the transport measures
+    pub latency: u128,
+    /// How far past `latency` the clock leads, in ms, held by how early
+    /// the server says presses arrive ([`Server::arrived`])
+    pub margin: f64,
+    /// How early a press arrives, smoothed
+    pub early: f64,
+    /// How far an arrival strays from `early`, smoothed
+    pub spread: f64,
 }
 
 impl Default for Server {
@@ -282,7 +289,10 @@ impl Default for Server {
             server_time_at_init: 0,
             client_time_at_init: 0,
             last_ping_time: 0,
-            smoothed_latency: 50, // Initial estimate: 50ms
+            latency: 50,
+            margin: 40.0,
+            early: 40.0,
+            spread: 10.0,
         }
     }
 }
@@ -292,29 +302,37 @@ impl Server {
     /// Init, received at `client_now`: the server has run on by the trip
     /// here since, and by nothing else, however long the client ran before.
     pub fn sync(&mut self, dt: u128, client_now: u128) {
-        self.server_time_at_init = dt.saturating_add(self.smoothed_latency);
+        self.server_time_at_init = dt.saturating_add(self.latency);
         self.client_time_at_init = client_now;
     }
 
-    /// Take a Pong, the answer to a ping sent at `client_time` carrying the
-    /// server's game world time `dt`, received at `client_now`: the latency
-    /// estimate moves a fifth of the way to half the round trip, and the
-    /// clock is set from `dt` as Init set it. The server's clock may lose
-    /// time the client's does not, in a frame over `Time<Virtual>`'s cap,
-    /// so only a re-sync bounds how far the two drift apart.
-    pub fn pong(&mut self, client_time: u128, dt: u128, client_now: u128) {
-        let measured_latency = client_now.saturating_sub(client_time) / 2;
-        let alpha = 0.2;
-        self.smoothed_latency = ((self.smoothed_latency as f64 * (1.0 - alpha))
-            + (measured_latency as f64 * alpha)) as u128;
-        self.sync(dt, client_now);
-    }
-
-    /// Calculate the current game world time (used for both threats and day/night)
-    /// Game world time = server_time_at_init + (client_now - client_at_init)
+    /// The game clock as this client lives it, at `client_now`: the
+    /// server's, ahead by [`Server::lead`]. What the client does at a moment
+    /// reaches the server before the server's clock gets there, so the
+    /// server judges a press at the moment it was made and never takes a
+    /// client's word for a moment already past (`abilities::Press`); a
+    /// threat, timed 2 seconds and more ahead, shows that much later.
     pub fn current_time(&self, client_now: u128) -> u128 {
         let time_since_init = client_now.saturating_sub(self.client_time_at_init);
-        self.server_time_at_init.saturating_add(time_since_init)
+        self.server_time_at_init.saturating_add(time_since_init).saturating_add(self.lead())
+    }
+
+    /// How far the clock leads the server's: a trip there, and the margin
+    /// past it that arrivals hold ([`Server::arrived`]).
+    pub fn lead(&self) -> u128 {
+        (self.latency as f64 + self.margin).max(0.0) as u128
+    }
+
+    /// Take an arrival: a press reached the server `early` ms before its
+    /// moment, negative when it came after. The margin moves an eighth of
+    /// the way toward where arrivals stand four times their spread early,
+    /// what a retransmission timer allows a trip (RFC 6298), so a press
+    /// made on time is late only in a spike. The clock moves with it.
+    pub fn arrived(&mut self, early: i64) {
+        let early = early as f64;
+        self.spread = self.spread * 0.75 + (early - self.early).abs() * 0.25;
+        self.early = self.early * 0.875 + early * 0.125;
+        self.margin += (4.0 * self.spread - early) / 8.0;
     }
 }
 
@@ -752,10 +770,49 @@ mod tests {
     }
 
     #[test]
-    fn the_clock_starts_a_trip_past_what_the_server_sent() {
+    fn the_clock_starts_a_trip_past_what_the_server_sent_and_leads_it() {
         let mut server = Server::default();
         server.sync(10_000, 4_000);
-        assert_eq!(server.current_time(4_000), 10_000 + server.smoothed_latency);
+        assert_eq!(server.current_time(4_000), 10_000 + server.latency + server.lead());
+    }
+
+    /// Presses over a link whose trips run through `trips` in turn, the
+    /// transport's measure of it `latency`: each arrives as early as the
+    /// lead outruns its trip. Returns the server and the last round's
+    /// arrivals.
+    fn presses(latency: u128, trips: &[i64]) -> (Server, Vec<i64>) {
+        let mut server = Server { latency, ..Server::default() };
+        let mut last = Vec::new();
+        for round in 0..100 {
+            last.clear();
+            for &trip in trips {
+                let early = server.lead() as i64 - trip;
+                server.arrived(early);
+                if round == 99 {
+                    last.push(early);
+                }
+            }
+        }
+        (server, last)
+    }
+
+    #[test]
+    fn the_lead_holds_presses_early_by_their_spread() {
+        let (steady, _) = presses(50, &[60, 62, 58, 60]);
+        let (jittery, arrivals) = presses(50, &[20, 100, 40, 80]);
+        assert!(jittery.lead() > steady.lead(), "a link that strays leads further");
+        assert!(arrivals.iter().all(|&early| early > 0), "and its presses arrive ahead of their moments: {arrivals:?}");
+
+        let (short, _) = presses(10, &[60, 62, 58, 60]);
+        assert!(short.lead().abs_diff(steady.lead()) <= 2, "a trip the transport misjudges is made up: {} {}", short.lead(), steady.lead());
+    }
+
+    #[test]
+    fn a_late_press_pushes_the_lead_out() {
+        let mut server = Server::default();
+        let before = server.lead();
+        server.arrived(-30);
+        assert!(server.lead() > before);
     }
 
     #[test]
@@ -763,8 +820,8 @@ mod tests {
         let mut server = Server::default();
         server.sync(10_000, 0);
         // The server stalls and its clock falls 1_750 behind the client's
-        server.pong(19_900, 10_000 + 20_000 - 1_750, 20_000);
-        assert_eq!(server.current_time(20_000), 10_000 + 20_000 - 1_750 + server.smoothed_latency);
+        server.sync(10_000 + 20_000 - 1_750, 20_000);
+        assert_eq!(server.current_time(20_000), 10_000 + 20_000 - 1_750 + server.latency + server.lead());
     }
     /// A revised canopy at the rise's level rebuilds every finer region
     /// whose vertices carry its rise: built over the summaries with and

@@ -166,6 +166,8 @@ fn main() {
         combat::handle_insert_threat,
         (struck::on_contact, struck::on_landing, struck::update_marks, struck::flash).chain(),
         combat::handle_clear_queue,
+        combat::land_own,
+        combat::answer_own,
         common_bevy::systems::world::try_incremental,
         common_bevy::systems::world::do_incremental,
         // A Loc that arrives with a slide must see the Displacing marker the
@@ -184,6 +186,8 @@ fn main() {
         ).chain(),
         renet::handle_pong,
         renet::periodic_ping,
+        renet::track_latency,
+        renet::handle_arrived,
         world::update,
     ));
 
@@ -206,6 +210,7 @@ fn main() {
     app.insert_resource(crate::resources::world_map());
 
     app.init_resource::<InputQueues>();
+    app.init_resource::<combat::Gone>();
     app.init_resource::<common_bevy::tuning::Tuning>();
     app.init_resource::<crate::resources::RenderOrigin>();
     app.init_resource::<gathering::LootWindow>();

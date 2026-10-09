@@ -155,7 +155,10 @@ impl Abilities<'_, '_> {
         }
         let game_now = self.game_now();
         let queue: Vec<_> = self.queues.get(ent)
-            .map(|queue| queue.threats.iter().filter(|threat| skill.sees(&self.dice, ent, threat, game_now)).copied().collect())
+            .map(|queue| queue.threats.iter()
+                .filter(|threat| skill.sees(&self.dice, ent, threat, game_now))
+                .map(|threat| (skill.judged(&self.dice, ent, threat), *threat))
+                .collect())
             .unwrap_or_default();
         let reach = range.copied().unwrap_or_default().0;
         Some(View {

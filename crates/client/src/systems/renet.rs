@@ -304,7 +304,7 @@ pub fn send_try(
         let mut event = message.event.clone();
         match event {
             // A spawn is asked for by the server's own id, and these are about no entity
-            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping { .. } => {}
+            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping => {}
             Event::Input { .. }
             | Event::UseAbility { .. }
             | Event::View { .. }
@@ -313,7 +313,6 @@ pub fn send_try(
             | Event::CloseLoot { .. }
             | Event::Drop { .. }
             | Event::Wear { .. }
-            | Event::Dismiss { .. }
             | Event::Teleport { .. }
             | Event::SpawnParty { .. }
             | Event::RespecAttributes { .. } => {
@@ -332,16 +331,15 @@ pub fn send_try(
     }
 }
 
-/// Handle Pong response: refine the latency estimate and re-set the clock
-/// from the server's game world time it carries
+/// Re-sets the clock from the server's game world time a Pong carries
 pub fn handle_pong(
     mut reader: MessageReader<Do>,
     mut server: ResMut<crate::resources::Server>,
     time: Res<Time>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::Pong { client_time, dt } } = message else { continue };
-        server.pong(*client_time, *dt, time.elapsed().as_millis());
+        let Do { event: Event::Pong { dt } } = message else { continue };
+        server.sync(*dt, time.elapsed().as_millis());
     }
 }
 
@@ -359,6 +357,65 @@ pub fn periodic_ping(
     // Check if it's time to send another ping
     if client_now.saturating_sub(server.last_ping_time) >= PING_INTERVAL_MS {
         server.last_ping_time = client_now;
-        try_writer.write(Try { event: Event::Ping { client_time: client_now } });
+        try_writer.write(Try { event: Event::Ping });
+    }
+}
+
+/// Takes the trip to the server, half the round trip renet measures on
+/// every packet, once it has measured one
+pub fn track_latency(conn: Option<Res<ClientNet>>, mut server: ResMut<crate::resources::Server>) {
+    let Some(conn) = conn else { return };
+    let rtt = conn.rtt();
+    if !rtt.is_zero() {
+        server.latency = rtt.as_millis() / 2;
+    }
+}
+
+/// Holds the clock's lead by how far ahead of its moment the server says
+/// each of the local player's presses arrived. An auto-attack is no press:
+/// it comes due on the server's clock, which stamps it as it arrives
+/// whatever the lead, and counted it would push the lead out without end.
+pub fn handle_arrived(
+    mut reader: MessageReader<Do>,
+    mut server: ResMut<crate::resources::Server>,
+    own: Query<(), With<common_bevy::components::Actor>>,
+) {
+    for message in reader.read() {
+        let Do { event: Event::UseAbility { ent, ability, at, arrived, .. } } = message else { continue };
+        if own.contains(*ent) && *ability != AbilityType::AutoAttack {
+            server.arrived(at.as_millis() as i64 - arrived.as_millis() as i64);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn only_the_players_own_presses_hold_the_lead() {
+        let mut app = App::new();
+        app.add_message::<Do>();
+        app.insert_resource(crate::resources::Server::default());
+        app.add_systems(Update, handle_arrived);
+        let player = app.world_mut().spawn(common_bevy::components::Actor).id();
+        let other = app.world_mut().spawn_empty().id();
+        let used = |ent, ability, early: u64| Do { event: Event::UseAbility {
+            ent, ability, target: None, at: Duration::from_millis(1_000 + early), arrived: Duration::from_millis(1_000),
+        }};
+        let margin = |app: &App| app.world().resource::<crate::resources::Server>().margin;
+
+        let before = margin(&app);
+        for _ in 0..20 {
+            app.world_mut().write_message(used(player, AbilityType::AutoAttack, 0));
+            app.world_mut().write_message(used(other, AbilityType::Parry, 0));
+            app.update();
+        }
+        assert_eq!(margin(&app), before, "an auto-attack, or another's press, moves nothing");
+
+        app.world_mut().write_message(used(player, AbilityType::Parry, 0));
+        app.update();
+        assert_ne!(margin(&app), before, "the player's own press does");
     }
 }

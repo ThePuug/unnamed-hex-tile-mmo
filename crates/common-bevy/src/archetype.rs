@@ -82,16 +82,16 @@ impl EnemyArchetype {
     }
 }
 
-/// The attributes of an NPC of `archetype` at `level`: every point of its
-/// level in the one attribute the archetype is built on, none in a spectrum
-/// and none shifted.
+/// The attributes of an NPC of `archetype` at `level`: every step it holds
+/// in the one attribute the archetype is built on, none in a spectrum and
+/// none shifted.
 pub fn calculate_enemy_attributes(
     level: u8,
     archetype: EnemyArchetype,
 ) -> ActorAttributes {
-    let points = level.min(i8::MAX as u8) as i8;
-    let [physique, conditioning, temperament] = archetype.profile().build.map(|sign| sign * points);
-    ActorAttributes::new(physique, 0, 0, conditioning, 0, 0, temperament, 0, 0)
+    let steps = ActorAttributes::held(level as u32) as i8;
+    let [physique, conditioning, temperament] = archetype.profile().build.map(|sign| sign * steps);
+    ActorAttributes::new(physique, 0, 0, conditioning, 0, 0, temperament, 0, 0).at_level(level as u32)
 }
 
 #[cfg(test)]

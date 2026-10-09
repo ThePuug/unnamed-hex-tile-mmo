@@ -5,9 +5,9 @@ use common_bevy::{
     systems::combat::queue as queue_utils,
 };
 
-/// Server system to process expired threats in reaction queues
-/// Runs in FixedUpdate schedule (125ms ticks)
-/// Checks all entities with ReactionQueue and removes expired threats
+/// Lands every threat whose time has run (`queue::check_expired_threats`).
+/// Runs each frame after `abilities::use_abilities`, so a press come due
+/// this frame takes what lands in its band before any of it lands.
 pub fn process_expired_threats(
     mut commands: Commands,
     time: Res<Time>,
@@ -70,30 +70,5 @@ pub fn tick_dots(
                 });
             }
         }
-    }
-}
-
-/// Server system to process Dismiss events: the front threat lands at
-/// once exactly as it would when its time ran out
-/// (`combat::resolve_threat`), mitigated the same. No recovery, no resource
-/// cost.
-pub fn process_dismiss(
-    mut commands: Commands,
-    mut reader: MessageReader<Try>,
-    mut query: Query<&mut ReactionQueue>,
-    mut writer: MessageWriter<Do>,
-) {
-    for event in reader.read() {
-        let GameEvent::Dismiss { ent } = event.event else {
-            continue;
-        };
-        let Ok(mut queue) = query.get_mut(ent) else {
-            continue;
-        };
-        let Some(threat) = queue_utils::clear_threats(&mut queue, ClearType::First(1)).pop() else {
-            continue;
-        };
-        writer.write(Do { event: GameEvent::ClearQueue { ent, clear_type: ClearType::First(1) } });
-        commands.trigger(Try { event: GameEvent::ResolveThreat { ent, threat } });
     }
 }

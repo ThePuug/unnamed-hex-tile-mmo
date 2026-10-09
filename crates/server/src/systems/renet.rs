@@ -256,11 +256,10 @@ pub fn write_try(
         while let Some(serialized) = conn.receive_message(client_id, DefaultChannel::ReliableOrdered) {
             let (Try { mut event }, _): (Try, _) = bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
             match event {
-                Event::Ping { client_time } => {
-                    // Immediately respond with Pong (echo client timestamp)
+                Event::Ping => {
                     let dt = time.elapsed().as_millis() + runtime.elapsed_offset;
                     let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Pong { client_time, dt }},
+                        Do { event: Event::Pong { dt }},
                         bincode::config::legacy()).unwrap();
                     conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
                 }
@@ -283,7 +282,6 @@ pub fn write_try(
                 | Event::CloseLoot { .. }
                 | Event::Drop { .. }
                 | Event::UseAbility { .. }
-                | Event::Dismiss { .. }
                 | Event::RespecAttributes { .. }
                 | Event::Wear { .. }
                 | Event::Teleport { .. } => {
@@ -401,7 +399,7 @@ mod tests {
     fn what_only_its_owner_should_know_goes_to_its_owner_alone() {
         let ent = Entity::from_raw_u32(7).unwrap();
         assert_eq!(route(&Event::Loot { ent, entries: None }), Some((ent, Route::Owner)));
-        assert_eq!(route(&Event::UseAbility { ent, ability: AbilityType::Frenzy, target: None }), Some((ent, Route::Seen)));
+        assert_eq!(route(&Event::UseAbility { ent, ability: AbilityType::Frenzy, target: None, at: Default::default(), arrived: Default::default() }), Some((ent, Route::Seen)));
         assert_eq!(route(&Event::Despawn { ent }), Some((ent, Route::Seen)));
         assert_eq!(route(&Event::Displace { ent, destination: Qrz::default(), duration_ms: 0, around: None }), Some((ent, Route::Moving)));
     }

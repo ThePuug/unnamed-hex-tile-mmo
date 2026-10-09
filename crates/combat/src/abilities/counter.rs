@@ -1,24 +1,24 @@
 use bevy::prelude::*;
 use common_bevy::{
     message::{AbilityType, Event as GameEvent, Try},
-    systems::combat::queue::create_threat,
+    systems::combat::{damage::level_factor, queue::create_threat},
 };
 
 use super::{Abilities, AbilityFailReason, Cast};
 
 /// Counter, the Defender's skill: a reaction that clears the threats in its
-/// user's span, as far as its endurance pays for them ([`Abilities::react`]),
-/// so Awareness answers more with one. Each cleared threat goes back to its living
+/// user's band ([`Abilities::answer`]), which Awareness widens. Each cleared threat goes back to its living
 /// source wherever it stands, at `Tuning::counter_reflect` of the threat's
 /// own damage raised by the counterer's Resolve line
-/// (`ActorAttributes::line_power`)
+/// (`ActorAttributes::line_power`), weighed by the counterer's level
+/// against its source's (`damage::level_factor`)
 /// and nothing more, so a Counter returns what comes in, and lands at
 /// once: a reflection never enters the source's queue, so it
 /// cannot be countered. Its recovery is contested by the source of the
 /// first threat it answers.
 pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let tuning = *abilities.tuning;
-    let answered = abilities.react(cast)?;
+    let answered = abilities.answer(cast);
 
     let now = abilities.game_now();
     let weight = cast.attrs.line_power(&tuning, AbilityType::Counter);
@@ -34,7 +34,7 @@ pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
             cast.ent,
             source_attrs,
             &cast.attrs,
-            threat.damage * tuning.counter_reflect * weight,
+            threat.damage * tuning.counter_reflect * weight * level_factor(&tuning, cast.attrs.total_level(), source_attrs.total_level()),
             Some(AbilityType::Counter),
             now,
             0.0,
