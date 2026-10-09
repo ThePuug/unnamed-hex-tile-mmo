@@ -47,14 +47,6 @@ pub const MOVEMENT_SPEED: f32 = 0.0075;
 /// so fleeing what it faces costs the turn to run from it.
 pub const BACK_PACE: f32 = 0.35;
 
-/// The speed an entity moves at: its own, times the pace its status
-/// effects leave it. Every caller of the physics takes its speed through
-/// here, so the server, the owner's prediction and every remote simulation
-/// agree.
-pub fn speed(own: f32, status: Option<&Status>) -> f32 {
-    own * Status::pace_of(status)
-}
-
 /// Keeps the burden effect on every entity whose bag weighs past the limit:
 /// on the server for every player, on the client for its own, whose bag it
 /// holds. A remote entity's comes with its intent.
@@ -72,10 +64,24 @@ pub fn update_burden(
     }
 }
 
-/// Milliseconds of input time between steps of a held turn key, and the
-/// least time between any two steps: a tap after a rest turns at once, and a
-/// hammered key turns no faster than a held one.
+/// Milliseconds of input time between steps of a held turn key at whole
+/// pace, and the least time between any two steps: a tap after a rest turns
+/// at once, and a hammered key turns no faster than a held one. A pace
+/// scales it ([`turn_interval_ms`]).
 pub const TURN_REPEAT_MS: u16 = 80;
+
+/// Milliseconds between steps of a held turn at `pace`, the share of its
+/// speed an actor's status effects leave it ([`Status::pace`]): a slowed
+/// actor turns as much slower as it walks. None at no pace, a root or a
+/// hold, which leave it no turning. Never longer than [`TURN_RESTED_MS`].
+pub fn turn_interval_ms(pace: f32) -> Option<u16> {
+    (pace > 0.0).then(|| (TURN_REPEAT_MS as f32 / pace).round().clamp(1.0, TURN_RESTED_MS as f32) as u16)
+}
+
+/// The turn clock of an actor long at rest, and the most it counts to: past
+/// every interval, so a tap after a rest steps at once at any pace, though
+/// the slow landed during the rest. The longest `dt` the physics takes.
+pub const TURN_RESTED_MS: u16 = i16::MAX as u16;
 
 /// Ledge grab threshold in world units
 /// Set to 0.0 to disable ledge grabbing
@@ -177,12 +183,19 @@ pub struct MovementInput {
     /// clockwise.
     pub turn: i8,
     /// Milliseconds since the heading last stepped, at most
-    /// [`TURN_REPEAT_MS`].
+    /// [`TURN_RESTED_MS`]: it counts on at any pace, a root's included, so
+    /// the first turn after a rest at least the interval at its pace
+    /// ([`turn_interval_ms`]) steps at once.
     pub since_step_ms: u16,
     /// Some(positive) = ascending, Some(negative or zero) = falling, None = grounded
     pub airtime: Option<i16>,
-    /// World units per millisecond
+    /// Its own speed, in world units per millisecond, before its pace
     pub movement_speed: f32,
+    /// The share of its speed its status effects leave it
+    /// ([`Status::pace_of`]). It scales the walk and the turn clock alike,
+    /// so the server, the owner's prediction and every remote simulation
+    /// agree on both.
+    pub pace: f32,
     /// Whether the walker is a player's pill, which goes round the
     /// footprints of what stands in a tile; anything else walks through
     /// them, and only a tile's own rules stop it.
@@ -535,15 +548,16 @@ pub fn calculate_movement(
     let mut airtime = input.airtime;
     let mut heading = input.heading;
     let mut since_step_ms = input.since_step_ms;
+    let interval = turn_interval_ms(input.pace);
 
     while dt0 > 0 {
         let mut dt = dt0.min(PHYSICS_TIMESTEP_MS);
-        if input.turn != 0 {
-            if since_step_ms >= TURN_REPEAT_MS {
+        if let (true, Some(interval)) = (input.turn != 0, interval) {
+            if since_step_ms >= interval {
                 heading = heading.turned(input.turn as i32);
                 since_step_ms = 0;
             }
-            dt = dt.min((TURN_REPEAT_MS - since_step_ms) as i16);
+            dt = dt.min((interval - since_step_ms) as i16);
         }
         dt0 -= dt;
         let (dir, pace) = if input.back { (heading.reversed(), BACK_PACE) } else { (heading, 1.0) };
@@ -588,11 +602,11 @@ pub fn calculate_movement(
         }
 
         // After the apex split, which may have shortened the sub-step.
-        since_step_ms = (since_step_ms + dt as u16).min(TURN_REPEAT_MS);
+        since_step_ms = since_step_ms.saturating_add(dt as u16).min(TURN_RESTED_MS);
 
         if input.moving {
             let moved = walk(
-                tile, offset.xz(), dir, input.movement_speed * pace * dt as f32,
+                tile, offset.xz(), dir, input.movement_speed * input.pace * pace * dt as f32,
                 here, floor, offset.y, airtime, input.collides, map, nntree,
             );
             offset.x += moved.x;
@@ -646,9 +660,10 @@ mod tests {
             moving,
             back: false,
             turn: 0,
-            since_step_ms: TURN_REPEAT_MS,
+            since_step_ms: TURN_RESTED_MS,
             airtime: None,
             movement_speed: MOVEMENT_SPEED,
+            pace: 1.0,
             collides: true,
         }
     }
@@ -660,7 +675,7 @@ mod tests {
         flat_ground(&map, 3);
         let nntree = create_test_nntree();
         let free = calculate_movement(walking(Heading::NORTH, true), 200, &map, &nntree);
-        let slow = MovementInput { movement_speed: speed(MOVEMENT_SPEED, Some(&Status { burden: true, ..default() })), ..walking(Heading::NORTH, true) };
+        let slow = MovementInput { pace: Status { burden: true, ..default() }.pace(), ..walking(Heading::NORTH, true) };
         let slow = calculate_movement(slow, 200, &map, &nntree);
         let (free, slow) = (free.position.offset.xz(), slow.position.offset.xz());
         assert!(slow.length() > 0.0 && slow.length() < free.length());
@@ -861,6 +876,66 @@ mod tests {
             let mut sliced = input;
             let mut out = whole;
             let mut left = 300;
+            while left > 0 {
+                let step = dt.min(left);
+                out = calculate_movement(sliced, step, &map, &nntree);
+                sliced = carried(sliced, &out);
+                left -= step;
+            }
+            assert_eq!(out.heading, whole.heading, "slice {dt}");
+            assert_eq!(out.since_step_ms, whole.since_step_ms, "slice {dt}");
+            assert!(out.position.offset.distance(whole.position.offset) < 1e-3, "slice {dt}: {:?} vs {:?}", out.position.offset, whole.position.offset);
+        }
+    }
+
+    /// A slowed actor turns as much slower as it walks: a held key steps
+    /// once per repeat at its pace, the first step still at once.
+    #[test]
+    fn a_slowed_turn_steps_at_its_pace() {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        let nntree = create_test_nntree();
+        let pace = 0.5;
+        let interval = turn_interval_ms(pace).unwrap();
+        assert!(interval > TURN_REPEAT_MS, "slower than at whole pace");
+        let held = MovementInput { turn: 1, pace, ..walking(Heading::NORTH, false) };
+        let short = calculate_movement(held, interval as i16, &map, &nntree);
+        assert_eq!(short.heading, Heading::NORTH.turned(1), "one step, the rested one, before a whole interval passes");
+        let long = calculate_movement(held, interval as i16 * 2 + 1, &map, &nntree);
+        assert_eq!(long.heading, Heading::NORTH.turned(3), "then once per interval at its pace");
+        let whole = calculate_movement(MovementInput { pace: 1.0, ..held }, interval as i16 * 2 + 1, &map, &nntree);
+        assert!(whole.heading.turn_toward(Heading::NORTH).1 > long.heading.turn_toward(Heading::NORTH).1, "at whole pace it turns further");
+    }
+
+    /// A root holds the heading as it holds the walk, and the clock keeps
+    /// counting, so the first turn once it lifts steps at once.
+    #[test]
+    fn a_rooted_actor_does_not_turn() {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        let nntree = create_test_nntree();
+        let rooted = Status { root: Some(crate::components::status::Timed { pace: 0.0, remaining: 1.0 }), ..default() }.pace();
+        assert_eq!(turn_interval_ms(rooted), None);
+        let input = MovementInput { turn: 1, since_step_ms: 0, pace: rooted, ..walking(Heading::NORTH, true) };
+        let out = calculate_movement(input, 500, &map, &nntree);
+        assert_eq!(out.heading, Heading::NORTH);
+        assert_eq!(out.position.offset.xz(), Vec2::ZERO);
+        let freed = calculate_movement(MovementInput { pace: 1.0, ..carried(input, &out) }, 1, &map, &nntree);
+        assert_eq!(freed.heading, Heading::NORTH.turned(1));
+    }
+
+    /// Under a slow the bend still lands on the same millisecond however
+    /// the time is sliced.
+    #[test]
+    fn a_slowed_turn_is_partition_independent() {
+        let map = create_test_map();
+        flat_ground(&map, 3);
+        let nntree = create_test_nntree();
+        let input = MovementInput { turn: 1, since_step_ms: 30, pace: 0.7, ..walking(Heading::from_slot(6), true) };
+        let whole = calculate_movement(input, 500, &map, &nntree);
+        assert_ne!(whole.heading, input.heading);
+        for dt in [7, 50, 125] {
+            let (mut sliced, mut out, mut left) = (input, whole, 500);
             while left > 0 {
                 let step = dt.min(left);
                 out = calculate_movement(sliced, step, &map, &nntree);

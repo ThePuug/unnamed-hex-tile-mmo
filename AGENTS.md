@@ -212,7 +212,8 @@ Movement is `Heading` (24 bearings) × speed × dt in
 `movement::calculate_movement()`, the canonical physics;
 `physics::apply()` is a thin wrapper for NPCs. Turning is physics too: a
 held turn key steps the heading once per `TURN_REPEAT_MS` of input time
-inside the same loop, with `Turn` carrying the clock, so the wire carries
+at whole pace, slower as `Status::pace` falls and never at none, inside
+the same loop, with `Turn` carrying the clock, so the wire carries
 keys and never a heading. The result must not depend on how dt is
 partitioned — no per-call smoothing, no per-step constant unscaled by dt —
 because the client replays in different slices what the server applied.

@@ -15,7 +15,6 @@ use common_bevy::{
     message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
     resources::map::Map,
-    systems::movement::speed,
 };
 use common_bevy::message::AbilityType;
 use qrz::{Convert, Qrz};
@@ -109,7 +108,7 @@ pub fn chase(
             continue;
         }
         let dt_ms = dt.delta().as_millis() as i16;
-        let speed = speed(attrs.map_or(0.005, |a| a.movement_speed()), status);
+        let (own, pace) = (attrs.map_or(0.005, |a| a.movement_speed()), Status::pace_of(status));
         let Ok(&home) = q_home.get(member.0) else {
             continue;
         };
@@ -120,7 +119,7 @@ pub fn chase(
             if from_home <= HOME {
                 commands.entity(npc).remove::<Returning>();
             } else if let Some((floor, next)) = floor.and_then(|floor| Some((floor, step(&map, &nntree, floor, *home)?))) {
-                body.step_toward(loc, floor, next, speed, dt_ms, &map, &nntree);
+                body.step_toward(loc, floor, next, own, pace, dt_ms, &map, &nntree);
             }
             continue;
         }
@@ -174,7 +173,7 @@ pub fn chase(
         // where its bar holds one
         let tile = (map.convert(Qrz { q: 1, r: 0, z: 0 }) - map.convert(Qrz::default())).xz().length().max(f32::EPSILON);
         let per_second = |speed: f32| speed * 1000.0 / tile;
-        let own_pace = per_second(speed);
+        let own_pace = per_second(own * pace);
         let leap = bar.filter(|bar| bar.0.contains(&AbilityType::Leap))
             .and_then(|_| attrs)
             .map(|attrs| attrs.leap_tiles(&tuning) as i32);
@@ -220,15 +219,15 @@ pub fn chase(
             **under_way = chosen;
         }
         let Some(next) = step.map(|step| step.tile).filter(|&next| next != floor) else {
-            body.face(loc, *target_loc, dt_ms, &map, &nntree);
+            body.face(loc, *target_loc, pace, dt_ms, &map, &nntree);
             continue;
         };
         // A step that gives ground it takes backing away, facing its
         // target, so it never turns its back or costs it a swing
         if next.flat_distance(&target_loc) > floor.flat_distance(&target_loc) {
-            body.back_toward(loc, floor, next, *target_loc, speed, dt_ms, &map, &nntree);
+            body.back_toward(loc, floor, next, *target_loc, own, pace, dt_ms, &map, &nntree);
         } else {
-            body.step_toward(loc, floor, next, speed, dt_ms, &map, &nntree);
+            body.step_toward(loc, floor, next, own, pace, dt_ms, &map, &nntree);
         }
     }
 }

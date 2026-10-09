@@ -13,7 +13,7 @@ use common_bevy::{
     message::{Event, *},
     plugins::nntree::NNTree,
     resources::{map::Map, InputQueues},
-    systems::movement::{calculate_movement, speed, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED},
+    systems::movement::{calculate_movement, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED},
 };
 use crate::{network::ServerNet, *};
 use common_bevy::tuning::Tuning;
@@ -229,7 +229,6 @@ pub fn apply(
         if key_bits.is_pressed(KB_JUMP) && airtime.state.is_none() {
             airtime.state = Some(JUMP_DURATION_MS);
         }
-        let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), status);
         let out = calculate_movement(MovementInput {
             position: *position,
             heading: turn.heading,
@@ -238,7 +237,8 @@ pub fn apply(
             turn: key_bits.turn(),
             since_step_ms: turn.since_step_ms,
             airtime: airtime.state,
-            movement_speed,
+            movement_speed: attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()),
+            pace: common_bevy::components::status::Status::pace_of(status),
             collides: true,
         }, dt as i16, &map, &nntree);
         position.offset = out.position.offset;

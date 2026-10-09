@@ -22,7 +22,7 @@ use common_bevy::{
     message::{Component, Event, *},
     plugins::nntree::NNTree,
     resources::{map::Map, InputQueues},
-    systems::movement::{calculate_movement, speed, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
+    systems::movement::{calculate_movement, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
 };
 
 /// Interpolation span in fixed ticks. One tick completes inside a single
@@ -58,7 +58,7 @@ pub fn predict_local_player(
     for (ent, buffer) in buffers.iter() {
         assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
         let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, status)) = query.get_mut(ent) else { continue; };
-        let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), status);
+        let (movement_speed, pace) = (attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), Status::pace_of(status));
 
         let (mut offset, mut air) = (position.offset, airtime.state);
         let (mut facing, mut since_step_ms) = (turn.heading, turn.since_step_ms);
@@ -77,6 +77,7 @@ pub fn predict_local_player(
                 since_step_ms,
                 airtime: air,
                 movement_speed,
+                pace,
                 collides: true,
             }, *dt as i16, &map, &nntree);
             (offset, air, facing, since_step_ms) = (out.position.offset, out.airtime, out.heading, out.since_step_ms);
@@ -116,7 +117,6 @@ pub fn simulate_remote(
         let dt = (motion.residual_us / 1000) as u16;
         motion.residual_us %= 1000;
         if dt > 0 {
-            let movement_speed = speed(attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), status);
             let out = calculate_movement(MovementInput {
                 position: *position,
                 heading: *heading,
@@ -125,7 +125,8 @@ pub fn simulate_remote(
                 turn: 0,
                 since_step_ms: TURN_REPEAT_MS,
                 airtime: airtime.state,
-                movement_speed,
+                movement_speed: attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()),
+                pace: Status::pace_of(status),
                 collides: player,
             }, dt as i16, &map, &nntree);
             position.offset = out.position.offset;

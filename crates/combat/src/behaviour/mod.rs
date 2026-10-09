@@ -76,11 +76,13 @@ pub struct Body {
 
 impl BodyItem<'_, '_> {
     /// Carries it `dt` milliseconds toward `goal`, turning on its turn clock
-    /// and taking its `walk` once it faces the goal (see [`physics::steer`]).
-    /// The `Heading` is written only when it turns, since every change to it
-    /// is sent to clients.
-    pub fn steer(&mut self, goal: Heading, walk: Walk, movement_speed: f32, dt: i16, map: &Map, nntree: &NNTree) {
-        let (offset, airtime) = physics::steer(*self.position, &mut self.turn, goal, walk, self.airtime.state, movement_speed, dt, map, nntree);
+    /// and taking its `walk` once it faces the goal, at its own
+    /// `movement_speed` and the `pace` its status leaves it (see
+    /// [`physics::steer`]). The `Heading` is written only when it turns,
+    /// since every change to it is sent to clients.
+    #[allow(clippy::too_many_arguments)]
+    pub fn steer(&mut self, goal: Heading, walk: Walk, movement_speed: f32, pace: f32, dt: i16, map: &Map, nntree: &NNTree) {
+        let (offset, airtime) = physics::steer(*self.position, &mut self.turn, goal, walk, self.airtime.state, movement_speed, pace, dt, map, nntree);
         self.position.offset = offset;
         self.airtime.state = airtime;
         if *self.heading != self.turn.heading {
@@ -92,7 +94,7 @@ impl BodyItem<'_, '_> {
     /// tile `start` it stands on at `loc`, leaping when the step climbs and
     /// it faces the way to take it.
     #[allow(clippy::too_many_arguments)]
-    pub fn step_toward(&mut self, loc: &Loc, start: Qrz, next: Qrz, movement_speed: f32, dt: i16, map: &Map, nntree: &NNTree) {
+    pub fn step_toward(&mut self, loc: &Loc, start: Qrz, next: Qrz, movement_speed: f32, pace: f32, dt: i16, map: &Map, nntree: &NNTree) {
         let Some(goal) = Heading::between(map, start, next) else {
             return;
         };
@@ -100,7 +102,7 @@ impl BodyItem<'_, '_> {
         if facing && loc.z <= next.z && self.airtime.state.is_none() {
             self.airtime.state = Some(CLIMB_MS);
         }
-        self.steer(goal, Walk::Forward, movement_speed, dt, map, nntree);
+        self.steer(goal, Walk::Forward, movement_speed, pace, dt, map, nntree);
     }
 
     /// Carries it `dt` milliseconds backward toward `next`, a neighbour of
@@ -109,7 +111,7 @@ impl BodyItem<'_, '_> {
     /// faces `watched` itself otherwise, so it gives ground without turning
     /// its back.
     #[allow(clippy::too_many_arguments)]
-    pub fn back_toward(&mut self, loc: &Loc, start: Qrz, next: Qrz, watched: Qrz, movement_speed: f32, dt: i16, map: &Map, nntree: &NNTree) {
+    pub fn back_toward(&mut self, loc: &Loc, start: Qrz, next: Qrz, watched: Qrz, movement_speed: f32, pace: f32, dt: i16, map: &Map, nntree: &NNTree) {
         let Some(away) = Heading::between(map, start, next) else {
             return;
         };
@@ -117,13 +119,14 @@ impl BodyItem<'_, '_> {
             facing if is_in_facing_cone(facing, *loc, Loc::new(watched)) => facing,
             facing => Heading::between(map, **loc, watched).unwrap_or(facing),
         };
-        self.steer(goal, Walk::Backward, movement_speed, dt, map, nntree);
+        self.steer(goal, Walk::Backward, movement_speed, pace, dt, map, nntree);
     }
 
-    /// Turns it `dt` milliseconds toward the tile `to`, standing where it is.
-    pub fn face(&mut self, loc: &Loc, to: Qrz, dt: i16, map: &Map, nntree: &NNTree) {
+    /// Turns it `dt` milliseconds toward the tile `to` at its `pace`,
+    /// standing where it is.
+    pub fn face(&mut self, loc: &Loc, to: Qrz, pace: f32, dt: i16, map: &Map, nntree: &NNTree) {
         if let Some(goal) = Heading::between(map, **loc, to) {
-            self.steer(goal, Walk::Still, 0.0, dt, map, nntree);
+            self.steer(goal, Walk::Still, 0.0, pace, dt, map, nntree);
         }
     }
 }

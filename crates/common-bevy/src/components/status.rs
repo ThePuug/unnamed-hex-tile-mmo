@@ -4,10 +4,11 @@ use serde::{Deserialize, Serialize};
 /// The status effects that slow or hold an actor, one of each kind, a
 /// fresh one replacing the one it lands on. Each is a share of its speed,
 /// and its pace is all of them together: every caller of the physics takes
-/// its speed through [`Status::pace_of`], so the server, the owner's
-/// prediction and every remote simulation agree. A hold is an effect at no
-/// pace at all, and stops more than the walk: a held actor does not turn,
-/// jump or swing either ([`Status::holds`]).
+/// it through [`Status::pace_of`], and it scales the walk and the turn
+/// alike, so the server, the owner's prediction and every remote simulation
+/// agree. At no pace, a root or a hold, an actor neither walks nor turns; a
+/// hold stops more: a held actor does not jump or swing either
+/// ([`Status::holds`]).
 ///
 /// The server sends the whole of it whenever an ability changes it, and
 /// both sides count its timed effects down, so a client moves an actor at
@@ -18,8 +19,8 @@ pub struct Status {
     /// seconds ([`Status::slow`]). The server works `pace` out from its
     /// tuning and sends it, so a client holds none of the tuning.
     pub slow: Option<Timed>,
-    /// Rooted, a slow to nothing: it cannot move, and turns, swings and
-    /// recovers as ever ([`Status::root`])
+    /// Rooted, a slow to nothing: it can neither move nor turn, and swings
+    /// and recovers as ever ([`Status::root`])
     pub root: Option<Timed>,
     /// Overcommitted: the seconds each stack has left, a stack put on by
     /// every attack the actor made at a foe with Patience; 0 is no stack
