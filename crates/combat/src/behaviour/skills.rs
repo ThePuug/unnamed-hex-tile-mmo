@@ -63,8 +63,6 @@ pub struct View {
     pub recovery: Option<GlobalRecovery>,
     /// Its own timed effects
     pub status: Status,
-    /// How full its Intimidation's bank is, of what it holds full
-    pub intimidation_filled: f32,
     /// Its own reach, in tiles
     pub reach: i32,
     /// Tiles a Leap carries it
@@ -89,27 +87,35 @@ pub struct Threats {
     /// Of that, what the blows deal on landing, apart from what their
     /// DoTs have left: what a reflection returns a share of
     pub swept_direct: f32,
-    /// How far into its band the soonest threat in it stands, its time
-    /// left as a share of the span: 1 at the band's far end, and with
+    /// How many threats that is: past the first, each pays back a share of
+    /// the reaction's price at Awareness's facet
+    pub taken: usize,
+    /// How far into its band the soonest threat it would take stands, its
+    /// time left as a share of the span: 1 at the band's far end, and with
     /// nothing in it
     pub soonest_left: f32,
 }
 
 impl Default for Threats {
     fn default() -> Self {
-        Self { swept: 0.0, swept_direct: 0.0, soonest_left: 1.0 }
+        Self { swept: 0.0, swept_direct: 0.0, taken: 0, soonest_left: 1.0 }
     }
 }
 
 impl Threats {
     /// What a reaction pressed at `now`, the game's clock, reaching `span`
-    /// would take of `queue`, each threat beside when it is judged to land.
-    pub fn reading(queue: &[(Duration, QueuedThreat)], span: Duration, now: Duration) -> Self {
+    /// would take of `queue`, each threat beside when it is judged to land:
+    /// the band from the press, or with a `snap` (Awareness's capstone) from
+    /// a threat judged landing within `snap` of it, as `ReactionQueue::band`
+    /// starts it.
+    pub fn reading(queue: &[(Duration, QueuedThreat)], span: Duration, snap: Option<Duration>, now: Duration) -> Self {
+        let start = snap.and_then(|snap| queue.iter().map(|(lands, _)| *lands).filter(|lands| (now..=now + snap).contains(lands)).min()).unwrap_or(now);
         let mut read = Self::default();
-        for (lands, threat) in queue.iter().filter(|(lands, _)| (now..=now + span).contains(lands)) {
+        for (lands, threat) in queue.iter().filter(|(lands, _)| (start..=start + span).contains(lands)) {
             read.swept += threat.damage + threat.dot_left();
             read.swept_direct += threat.damage;
-            let left = if span.is_zero() { 0.0 } else { (*lands - now).as_secs_f32() / span.as_secs_f32() };
+            read.taken += 1;
+            let left = if span.is_zero() { 0.0 } else { lands.saturating_sub(now).as_secs_f32() / span.as_secs_f32() };
             read.soonest_left = read.soonest_left.min(left);
         }
         read
@@ -130,7 +136,8 @@ pub struct Foe {
     /// It stands past the foe's forward faces, flanking it
     pub flanked: bool,
     /// The share likelier the foe's skills would crit it for each stack of
-    /// Overcommitted it carries: none for a foe without Patience
+    /// Overcommitted it carries, weighed by how much harder its crits land:
+    /// none for a foe without Patience
     pub patient: f32,
     /// Seconds since the foe last used a skill, as its clip showed, as
     /// its Approach weighs them ([`super::mind::Mind::just_acted`])
@@ -229,14 +236,14 @@ fn part_considerations(part: Part) -> Vec<Considered> {
     }
 }
 
-/// A timed effect a decision puts on someone.
+/// A timed effect a decision puts on someone, the decision's whole purpose:
+/// a strike's own effects (Grace's capstone breaking a flanked foe's
+/// stride) ride on what it deals, so a fresh one already standing never
+/// holds the strike back.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Effect {
     /// Perfect Stride, on itself
     PerfectStride,
-    /// The bind a full Intimidation bank releases into a strike: a slow on
-    /// its foe, or a root on a foe already slowed
-    Bind,
 }
 
 impl Effect {
@@ -244,8 +251,6 @@ impl Effect {
     fn lasts(self, view: &View) -> f32 {
         match self {
             Effect::PerfectStride => view.tuning.stride_secs,
-            Effect::Bind if Self::roots(view) => view.tuning.intimidation_root_secs,
-            Effect::Bind => view.tuning.intimidation_slow_secs,
         }
     }
 
@@ -253,25 +258,16 @@ impl Effect {
     fn left(self, view: &View) -> f32 {
         let timed = match self {
             Effect::PerfectStride => view.status.perfect_stride,
-            Effect::Bind if Self::roots(view) => view.foe.and_then(|foe| foe.status.root),
-            Effect::Bind => view.foe.and_then(|foe| foe.status.slow),
         };
         timed.map_or(0.0, |timed| timed.remaining.max(0.0))
-    }
-
-    /// Whether a bind would root its foe: one already slowed
-    fn roots(view: &View) -> bool {
-        view.foe.is_some_and(|foe| foe.status.is_slowed())
     }
 }
 
 /// The timed effect `view.ability` would put on someone now: Perfect
-/// Stride's on itself, or the bind of a full Intimidation bank on whatever a skill
-/// strikes. None for a decision that puts on none.
+/// Stride's on itself. None for a decision that puts on none.
 fn effect(view: &View) -> Option<Effect> {
     match view.ability {
         AbilityType::PerfectStride => Some(Effect::PerfectStride),
-        ability if strikes(ability, view) && view.intimidation_filled >= 1.0 => Some(Effect::Bind),
         _ => None,
     }
 }
@@ -316,17 +312,22 @@ fn health(view: &View) -> f32 {
 /// foe within its reach and arc for one that strikes
 const USABLE: Considered = step("usable", |view| {
     let foe = view.foe.map(|foe| (foe.distance, foe.in_arc));
-    flag(admits(view.ability, reacting(view), view.recovery.as_ref(), &view.attrs, view.reach, foe).is_ok())
+    flag(admits(view.ability, reacting(view), view.recovery.as_ref(), &view.attrs, view.reach, foe, view.status.is_pinned()).is_ok())
 });
 
-/// The share of its pool it would have left once the skill is paid for:
-/// what spending it now leaves the rest of the fight, a dearer skill and an
-/// emptier pool weighing more. Authored and no mind's to set, or a search
-/// would shape it to even out how often skills are used
+/// The share of its pool it would have left once the skill is paid for,
+/// at the price it would pay: dearer by the toll of an Intimidating foe's
+/// zone it stands in, cheaper for a reaction taking many at Awareness's
+/// facet, as the gate charges it. What spending it now leaves the rest of
+/// the fight, a dearer skill and an emptier pool weighing more. Authored
+/// and no mind's to set, or a search would shape it to even out how often
+/// skills are used
 const ENDURANCE_LEFT: Considered = Consideration {
     name: "endurance_left",
     read: |view| {
-        let price = view.attrs.skill_endurance(&view.tuning, view.ability);
+        let taken = if reacting(view) { view.queue.taken } else { 0 };
+        let refund = (view.attrs.awareness_refund(&view.tuning) * taken.saturating_sub(1) as f32).min(1.0);
+        let price = view.attrs.skill_endurance(&view.tuning, view.ability) * view.status.price() * (1.0 - refund);
         (view.endurance - price).max(0.0) / view.endurance_max.max(f32::EPSILON)
     },
     bounds: (0.0, 1.0),
@@ -373,15 +374,19 @@ const STRIKE_WORTH: Considered = Consideration {
             return 0.0;
         }
         let tuning = &view.tuning;
-        let release = if view.intimidation_filled >= 1.0 { 1.0 + tuning.intimidation_share } else { 1.0 };
         let stacks = foe.status.overcommits();
         let flank = if foe.flanked { 1.0 + view.attrs.flank(tuning) } else { 1.0 };
-        let patient = 1.0 + (tuning.crit_power - 1.0) * (view.attrs.patience_crit(tuning) * stacks as f32).min(1.0);
+        // Patience: a crit likelier by the stacks, harder by its facet, and
+        // certain once its capstone's stacks stand
+        let opening = stacks > 0 && view.attrs.patience_opening(tuning).is_some_and(|at| stacks >= at);
+        let chance = if opening { 1.0 } else { (view.attrs.patience_crit(tuning) * stacks as f32).min(1.0) };
+        let power = if stacks > 0 { view.attrs.patience_power(tuning) } else { 0.0 };
+        let patient = 1.0 + (tuning.crit_power * (1.0 + power) - 1.0) * chance;
         let share = match view.ability {
             AbilityType::Punish => punish::share(tuning, &view.attrs, stacks),
             ability => tuning.damage(ability) * view.attrs.line_power(tuning, ability),
         };
-        let dealt = view.attrs.base_potency(tuning) * share * release * flank * patient;
+        let dealt = view.attrs.base_potency(tuning) * share * flank * patient;
         dealt / foe.health.max(1.0)
     },
     bounds: (0.0, 0.25),
@@ -413,8 +418,9 @@ const WORTH_ANSWERING: Considered = Consideration {
 };
 
 /// The soonest threat in its band has reached the band's middle, where a
-/// press misjudged by up to half its span either way still takes it. Every
-/// threat's window outlasts the widest span and the slowest reaction
+/// press misjudged by up to half its span either way still takes it; a
+/// snap then starts the band at that threat, reaching deeper behind it.
+/// Every threat's window outlasts the widest span and the slowest reaction
 /// delay, so it is seen before it reaches the band
 const MID_BAND: Considered = step("mid_band", |view| flag(view.queue.soonest_left <= 0.5));
 
@@ -456,7 +462,6 @@ mod tests {
             endurance_max: attrs.max_endurance(tuning).max(1000.0),
             recovery: None,
             status: Status::default(),
-            intimidation_filled: 0.0,
             reach: 2,
             leap: 9,
             leap_room: 1.0,
@@ -478,7 +483,7 @@ mod tests {
             let threat = create_threat(tuning, source, &plain, &plain, damage, ability, now + Duration::from_millis(left) - window, 0.0, 0.0);
             (threat.lands_at(), threat)
         }).collect();
-        Threats::reading(&queue, span, now)
+        Threats::reading(&queue, span, None, now)
     }
 
     fn scored_by(view: &mut View, reason: &str, mind: &Mind) -> f32 {
@@ -537,7 +542,8 @@ mod tests {
         let tuning = Tuning::DEFAULT;
         let shortest = tuning.reaction_window * (1.0 - tuning.fatigue_window);
         let slowest = crate::behaviour::perception::Skill::SLOPPY.slowest.as_secs_f32();
-        assert!(shortest > tuning.awareness_span_max + slowest, "{shortest}s against {}s", tuning.awareness_span_max + slowest);
+        let widest = tuning.awareness_core[1];
+        assert!(shortest > widest + slowest, "{shortest}s against {}s", widest + slowest);
     }
 
     #[test]
@@ -576,32 +582,37 @@ mod tests {
     }
 
     #[test]
-    fn a_full_bank_makes_a_strike_worth_more() {
+    fn patience_makes_a_strike_on_an_overcommitted_foe_worth_more_and_most_once_its_opening_stands() {
         let tuning = Tuning::DEFAULT;
-        let imposing = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
-        let mut empty = view(&tuning, AbilityType::Feint, imposing);
-        let mut full = view(&tuning, AbilityType::Feint, imposing);
-        full.intimidation_filled = 1.0;
-        assert!(response(&mut full, "strike_worth", &Mind::default()) > response(&mut empty, "strike_worth", &Mind::default()));
+        let worth = |steps: i8, stacks: usize| {
+            let mut striking = view(&tuning, AbilityType::Feint, built([0, 0, 0, 0, 0, 0, -steps, 0, 0]));
+            let mut status = Status::default();
+            (0..stacks).for_each(|_| status.overcommit(tuning.overcommit_secs));
+            striking.foe = Some(Foe { status, ..striking.foe.unwrap() });
+            response(&mut striking, "strike_worth", &Mind::default())
+        };
+        assert!(worth(3, 4) > worth(3, 0), "likelier to crit");
+        assert!(worth(9, 4) > worth(3, 4), "and harder at its facet");
+        let at = tuning.patience_opening[0];
+        assert!(worth(18, at) > worth(15, at), "certain once its capstone's stacks stand");
     }
 
     #[test]
-    fn a_release_is_not_spent_binding_a_foe_already_bound() {
+    fn a_toll_or_an_answer_to_many_moves_what_a_skill_leaves_of_the_pool() {
         let tuning = Tuning::DEFAULT;
-        let imposing = built([0, 0, 0, -10, 0, 0, 0, 0, 0]);
-        let mut loose = view(&tuning, AbilityType::Feint, imposing);
-        loose.intimidation_filled = 1.0;
-        let slowed = Status { slow: Some(Timed { pace: 0.8, remaining: tuning.intimidation_slow_secs }), ..Status::default() };
-        let mut slowed_foe = loose.clone();
-        slowed_foe.foe = Some(Foe { status: slowed, ..slowed_foe.foe.unwrap() });
-        let mut bound = loose.clone();
-        bound.foe = Some(Foe { status: Status { root: Some(Timed { pace: 0.0, remaining: tuning.intimidation_root_secs }), ..slowed }, ..bound.foe.unwrap() });
-        assert!(scored(&mut loose, "strike") > 0.0);
-        assert!(scored(&mut slowed_foe, "strike") > 0.0, "slowed, a release would root it");
-        assert_eq!(scored(&mut bound, "strike"), 0.0, "freshly rooted, a release would add nothing");
-        let mut unbanked = view(&tuning, AbilityType::Feint, imposing);
-        unbanked.foe = bound.foe;
-        assert!(scored(&mut unbanked, "strike") > 0.0, "a strike that releases nothing puts no bind on");
+        let mut free = view(&tuning, AbilityType::Feint, ActorAttributes::default());
+        (free.endurance, free.endurance_max) = (10.0, 10.0);
+        let mut taxed = free.clone();
+        taxed.status.tax(1.5, 5.0);
+        assert!(response(&mut taxed, "endurance_left", &Mind::default()) < response(&mut free, "endurance_left", &Mind::default()), "a toll leaves less");
+        let three = threats(&tuning, &[(50.0, true, 100), (50.0, true, 150), (50.0, true, 200)], Duration::from_millis(900));
+        let mut plain = view(&tuning, AbilityType::Parry, ActorAttributes::default());
+        (plain.endurance, plain.endurance_max) = (20.0, 20.0);
+        plain.queue = three;
+        let mut faceted = view(&tuning, AbilityType::Parry, built([0, 0, 0, 0, 0, 0, 9, 0, 0]));
+        (faceted.endurance, faceted.endurance_max) = (20.0, 20.0);
+        faceted.queue = three;
+        assert!(response(&mut faceted, "endurance_left", &Mind::default()) > response(&mut plain, "endurance_left", &Mind::default()), "answering many with one costs less at the facet");
     }
 
     #[test]

@@ -35,6 +35,12 @@ pub struct Status {
     pub held: Option<Timed>,
     /// Carrying past the bag's burden limit
     pub burden: bool,
+    /// Taxed, in an Intimidating foe's zone: every skill it uses costs
+    /// `pace` times its price, for `remaining` seconds ([`Status::tax`])
+    pub toll: Option<Timed>,
+    /// Pinned, in an Intimidating foe's zone at its capstone: no skill that
+    /// moves it, for `remaining` seconds ([`Status::pin`]); its `pace` is unused
+    pub pinned: Option<Timed>,
 }
 
 /// The most stacks of Overcommitted an actor carries
@@ -127,13 +133,43 @@ impl Status {
 
     /// Counts the timed effects and Overcommitted stacks down by `dt`
     /// seconds, dropping spent ones. Returns whether any was counting.
+    /// What its skills' prices are multiplied by now: its toll, or whole
+    pub fn price(&self) -> f32 {
+        Timed::pace(self.toll)
+    }
+
+    /// Taxes the actor `factor` times every skill's price for `seconds`,
+    /// keeping a toll already on it that is dearer or lasts longer
+    pub fn tax(&mut self, factor: f32, seconds: f32) {
+        let (held, left) = self.toll.map_or((1.0, 0.0), |toll| (toll.pace, toll.remaining));
+        self.toll = Some(Timed { pace: factor.max(held), remaining: seconds.max(left) });
+    }
+
+    /// Takes every stack of Overcommitted off it: a patient foe's certain
+    /// crit spent them
+    pub fn spend_overcommits(&mut self) {
+        self.overcommitted = [0.0; OVERCOMMIT_STACKS];
+    }
+
+    /// Whether it is pinned now: no skill may move it
+    pub fn is_pinned(&self) -> bool {
+        self.pinned.is_some_and(|pinned| pinned.remaining > 0.0)
+    }
+
+    /// Pins the actor for `seconds`, or for what a pin already on it has left
+    /// where that is longer
+    pub fn pin(&mut self, seconds: f32) {
+        let left = self.pinned.map_or(0.0, |pinned| pinned.remaining);
+        self.pinned = Some(Timed { pace: 1.0, remaining: seconds.max(left) });
+    }
+
     pub fn tick(&mut self, dt: f32) -> bool {
         let mut counted = false;
         for left in self.overcommitted.iter_mut().filter(|left| **left > 0.0) {
             *left = (*left - dt).max(0.0);
             counted = true;
         }
-        for slot in [&mut self.slow, &mut self.root, &mut self.stride, &mut self.perfect_stride, &mut self.held] {
+        for slot in [&mut self.slow, &mut self.root, &mut self.stride, &mut self.perfect_stride, &mut self.held, &mut self.toll, &mut self.pinned] {
             if let Some(timed) = slot {
                 timed.remaining -= dt;
                 if timed.remaining <= 0.0 {

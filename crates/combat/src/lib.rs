@@ -39,12 +39,14 @@ pub struct RunTime {
 /// An attack made at a target with Patience overcommits its source
 /// (`Status::overcommit`). Lands a strike from past its target's forward
 /// faces, a flank, harder by its striker's Grace (`ActorAttributes::flank`),
-/// weighs its blow and DoT by the level gap (`damage::level_factor`), rolls
-/// the attack's
-/// damage within its range (`Tuning::damage_spread`, one roll for its blow
-/// and its DoT), rolls its blow's crit, and inserts
-/// it into the reaction queue, its window starting as the strike is made:
-/// now, or its `delay` after
+/// and at Grace's capstone breaks its target's stride as it lands
+/// (`QueuedThreat::stride`); weighs its blow and DoT by the level gap
+/// (`damage::level_factor`), rolls the attack's damage within its range
+/// (`Tuning::damage_spread`, one roll for its blow and its DoT), rolls its
+/// blow's crit, a patient striker's skill likelier and harder on an
+/// overcommitted foe and certain once the foe carries Patience's capstone
+/// stacks, which that crit spends; and inserts it into the reaction queue,
+/// its window starting as the strike is made: now, or its `delay` after
 pub fn process_deal_damage(
     trigger: On<Try>,
     tuning: Res<Tuning>,
@@ -62,7 +64,7 @@ pub fn process_deal_damage(
 ) {
     let event = &trigger.event().event;
 
-    if let GameEvent::DealDamage { source, target, base_damage, ability, dot, bind, delay } = event {
+    if let GameEvent::DealDamage { source, target, base_damage, ability, dot, delay } = event {
         // Get attacker attributes for scaling
         let (Ok(source_attrs), Ok(mut rolls)) = (all_attrs.get(*source), rolls.get_mut(*source)) else {
             return;
@@ -86,15 +88,22 @@ pub fn process_deal_damage(
             heading.is_some_and(|&heading| !common_bevy::systems::targeting::is_in_facing_cone(heading, at, from))
         });
         let base_damage = if flanked { base_damage * (1.0 + source_attrs.flank(&tuning)) } else { *base_damage };
+        let stride = if flanked { source_attrs.flank_stride(&tuning).unwrap_or(0.0) } else { 0.0 };
         let gap = damage_calc::level_factor(&tuning, source_attrs.total_level(), attrs.total_level());
         let base_damage = base_damage * gap;
         let draw = dice.draw(&mut rolls, ("spread", *source)).signed();
         let outgoing = damage_calc::spread(base_damage, tuning.damage_spread, draw);
-        // A skill crits an overcommitted foe likelier by its striker's Patience
-        let patient = if *ability == Some(common_bevy::message::AbilityType::AutoAttack) { 0.0 } else {
-            source_attrs.patience_crit(&tuning) * statuses.get(*target).map_or(0, |status| status.overcommits()) as f32
-        };
-        let outgoing = damage_calc::crit(&tuning, outgoing, source_attrs, attrs, patient, dice.draw(&mut rolls, ("crit", *source)).share());
+        // A skill crits an overcommitted foe likelier and harder by its
+        // striker's Patience, and for certain at its capstone's stacks
+        let skill = *ability != Some(common_bevy::message::AbilityType::AutoAttack);
+        let stacks = if skill { statuses.get(*target).map_or(0, |status| status.overcommits()) } else { 0 };
+        let opening = stacks > 0 && source_attrs.patience_opening(&tuning).is_some_and(|at| stacks >= at);
+        let patient = if opening { 1.0 } else { source_attrs.patience_crit(&tuning) * stacks as f32 };
+        let power = if stacks > 0 { source_attrs.patience_power(&tuning) } else { 0.0 };
+        let outgoing = damage_calc::crit(&tuning, outgoing, source_attrs, attrs, patient, power, dice.draw(&mut rolls, ("crit", *source)).share());
+        if opening {
+            landing::update(*target, &mut statuses, &mut commands, &mut writer, |status| status.spend_overcommits());
+        }
         let dot = damage_calc::spread(*dot * gap, tuning.damage_spread, draw);
 
         // Use game world time (server uptime + offset) for consistent time base
@@ -125,7 +134,7 @@ pub fn process_deal_damage(
             now,           // When the strike is made
             dot,           // DoT per tick, a wound's
             Endurance::fatigue_of(&tuning, endurance),
-        ).binding(*bind);
+        ).breaking(stride);
 
         // Try to insert threat into queue
         let _overflow = queue_utils::insert_threat(&mut queue, threat, now);
@@ -177,15 +186,12 @@ pub fn resolve_threat(
 
             land_damage(*ent, threat.source, final_damage, threat.is_wound(), &mut health, &mut writer);
 
-            // A blow Intimidation's bank struck back binds its target as it
-            // lands: it slows, or roots a target already slowed
-            if threat.bind > 0.0 {
+            // A flank strike at Grace's capstone breaks its target's stride
+            // for a swing as it lands, the deeper of two breaks holding
+            if threat.stride > 0.0 {
                 landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| {
-                    if status.is_slowed() {
-                        status.root(tuning.intimidation_root_secs);
-                    } else {
-                        status.slow(1.0 - threat.bind, tuning.intimidation_slow_secs);
-                    }
+                    let pace = status.stride.map_or(threat.stride, |stride| stride.pace.min(threat.stride));
+                    status.stride = Some(common_bevy::components::status::Timed { pace, remaining: tuning.base_interval });
                 });
             }
 
@@ -213,15 +219,14 @@ pub fn resolve_dot_tick(
 /// is engaged: in combat, or with a living hostile within the range a fight
 /// is taken up at (`behaviour::ACQUISITION_RANGE`), first contact or not.
 /// As it is engaged its clock starts, a swing due at once; disengaged, no
-/// swing waits. The fight's end empties Intimidation's bank.
-#[allow(clippy::too_many_arguments)]
+/// swing waits.
 pub fn track_engagement(
-    mut query: Query<(Entity, &CombatState, &Loc, Option<&common_bevy::components::behaviour::Side>, &mut common_bevy::components::Swing, &mut common_bevy::components::intimidation::Intimidation)>,
+    mut query: Query<(Entity, &CombatState, &Loc, Option<&common_bevy::components::behaviour::Side>, &mut common_bevy::components::Swing)>,
     others: Query<(&common_bevy::components::behaviour::Side, &Health)>,
     nntree: Res<common_bevy::plugins::nntree::NNTree>,
     time: Res<Time>,
 ) {
-    for (ent, state, &loc, side, mut swing, mut intimidation) in &mut query {
+    for (ent, state, &loc, side, mut swing) in &mut query {
         let hostile_near = side.is_some_and(|&side| {
             crate::behaviour::spotted(&nntree, loc, crate::behaviour::ACQUISITION_RANGE)
                 .filter(|&other| other != ent)
@@ -233,52 +238,53 @@ pub fn track_engagement(
             (true, None) => swing.due = Some(time.elapsed()),
             _ => {}
         }
-        if !state.in_combat {
-            intimidation.filled = 0.0;
-        }
     }
 }
 
-/// Physique's Intimidation at work, for an actor committed to it: each
-/// living hostile within its reach that is not targeting it is slowed out of
-/// `Tuning::intimidation_slow` of its speed, lingering
-/// `Tuning::intimidation_aura_secs` past it, and while it is in a fight its
-/// bank fills each second by its tier, twice that while any hostile is
-/// ignoring it so. A slow is renewed only once half spent, so the clients
-/// are told of it a couple of times a second, not every tick.
-#[allow(clippy::too_many_arguments)]
+/// Physique's Intimidation at work, for an actor committed to it: every
+/// living hostile within its zone, its reach and at the capstone further
+/// (`ActorAttributes::intimidation_zone`), is slowed to its core's pace,
+/// taxed by its facet's toll and at the capstone pinned, each lingering
+/// `Tuning::intimidation_aura_secs` past the zone; of two zones the deeper
+/// slow and the dearer toll hold. Each is renewed only once half spent, so
+/// the clients are told of it a couple of times a second, not every tick.
 pub fn intimidate(
     tuning: Res<Tuning>,
-    time: Res<Time>,
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
-    mut actors: Query<(Entity, &Loc, &ActorAttributes, &CombatState, &common_bevy::components::behaviour::Side, Option<&AttackRange>, &mut common_bevy::components::intimidation::Intimidation)>,
-    others: Query<(&common_bevy::components::behaviour::Side, &Health, Option<&common_bevy::components::target::Target>)>,
+    actors: Query<(Entity, &Loc, &ActorAttributes, &common_bevy::components::behaviour::Side, Option<&AttackRange>)>,
+    others: Query<(&common_bevy::components::behaviour::Side, &Health)>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     nntree: Res<common_bevy::plugins::nntree::NNTree>,
 ) {
-    let dt = time.delta_secs();
-    let pace = 1.0 - tuning.intimidation_slow;
-    for (ent, &loc, attrs, state, &side, range, mut intimidation) in &mut actors {
-        let fill = attrs.intimidation_fill();
-        if fill <= 0.0 {
-            continue;
-        }
-        let reach = range.copied().unwrap_or_default().0.max(0) as u32;
-        let ignoring: Vec<Entity> = crate::behaviour::spotted(&nntree, loc, reach)
+    let linger = tuning.intimidation_aura_secs;
+    let fresh = |timed: Option<common_bevy::components::status::Timed>| timed.is_some_and(|timed| timed.remaining > linger / 2.0);
+    for (ent, &loc, attrs, &side, range) in &actors {
+        let Some(pace) = attrs.intimidation_pace(&tuning) else { continue };
+        let toll = attrs.intimidation_toll(&tuning);
+        let zone = attrs.intimidation_zone(&tuning);
+        let reach = (range.copied().unwrap_or_default().0 + zone.unwrap_or(0)).max(0) as u32;
+        let foes: Vec<Entity> = crate::behaviour::spotted(&nntree, loc, reach)
             .filter(|&other| other != ent)
-            .filter(|&other| others.get(other).is_ok_and(|(other_side, health, target)| {
-                side.is_hostile_to(*other_side) && health.state > 0.0 && target.and_then(|target| target.entity) != Some(ent)
-            }))
+            .filter(|&other| others.get(other).is_ok_and(|(other_side, health)| side.is_hostile_to(*other_side) && health.state > 0.0))
             .collect();
-        if state.in_combat {
-            intimidation.take(&tuning, fill * if ignoring.is_empty() { 1.0 } else { 2.0 } * dt);
-        }
-        for other in ignoring {
-            let held = statuses.get(other).ok().and_then(|status| status.slow)
-                .is_some_and(|slow| slow.pace <= pace && slow.remaining > tuning.intimidation_aura_secs / 2.0);
+        for other in foes {
+            let held = statuses.get(other).ok().is_some_and(|status| {
+                let slowed = status.slow.is_some_and(|slow| slow.pace <= pace) && fresh(status.slow);
+                let taxed = toll <= 0.0 || (status.toll.is_some_and(|held| held.pace >= 1.0 + toll) && fresh(status.toll));
+                let pinned = zone.is_none() || fresh(status.pinned);
+                slowed && taxed && pinned
+            });
             if !held {
-                landing::update(other, &mut statuses, &mut commands, &mut writer, |status| status.slow(pace, tuning.intimidation_aura_secs));
+                landing::update(other, &mut statuses, &mut commands, &mut writer, |status| {
+                    status.slow(pace, linger);
+                    if toll > 0.0 {
+                        status.tax(1.0 + toll, linger);
+                    }
+                    if zone.is_some() {
+                        status.pin(linger);
+                    }
+                });
             }
         }
     }
@@ -297,7 +303,7 @@ fn land_damage(ent: Entity, source: Entity, damage: f32, dot: bool, health: &mut
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
-    use common_bevy::components::{intimidation::Intimidation, Swing};
+    use common_bevy::components::Swing;
     use std::time::Duration;
 
     fn engaging(world: &mut World) {
@@ -313,7 +319,7 @@ mod tests {
         app.init_resource::<Time>();
         let at = |q: i32| Loc::new(qrz::Qrz { q, r: 0, z: 0 });
         let calm = CombatState { in_combat: false, last_action: Duration::ZERO };
-        let waiting = app.world_mut().spawn((calm, at(0), Side::WILD, Health::full(100.0), Swing::default(), Intimidation::default())).id();
+        let waiting = app.world_mut().spawn((calm, at(0), Side::WILD, Health::full(100.0), Swing::default())).id();
         app.world_mut().entity_mut(waiting).insert(NearestNeighbor::new(waiting, at(0)));
         app.update();
         engaging(app.world_mut());
@@ -328,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fight_starts_the_swing_clock_and_its_end_empties_both_banks() {
+    fn a_fight_starts_the_swing_clock_and_its_end_clears_it() {
         let secs = Duration::from_secs;
         let mut app = App::new();
         app.add_plugins(common_bevy::plugins::nntree::NNTreePlugin);
@@ -338,10 +344,9 @@ mod tests {
         time.advance_by(secs(10));
         world.insert_resource(time);
         let here = Loc::new(qrz::Qrz { q: 0, r: 0, z: 0 });
-        let fighter = world.spawn((CombatState { in_combat: true, last_action: Duration::ZERO }, here, Swing::default(), Intimidation { filled: 4.0 })).id();
+        let fighter = world.spawn((CombatState { in_combat: true, last_action: Duration::ZERO }, here, Swing::default())).id();
 
         engaging(world);
-        assert_eq!(world.get::<Intimidation>(fighter).unwrap().filled, 4.0, "in the fight, Intimidation keeps what it banked");
         let swing = *world.get::<Swing>(fighter).unwrap();
         assert_eq!(swing.waited(secs(10)), Some(Duration::ZERO), "due as the fight finds it");
         assert_eq!(swing.waited(secs(15)), Some(secs(5)), "and waiting from then");
@@ -349,43 +354,37 @@ mod tests {
 
         world.get_mut::<CombatState>(fighter).unwrap().in_combat = false;
         engaging(world);
-        assert_eq!(world.get::<Intimidation>(fighter).unwrap().filled, 0.0, "the fight over, it is gone");
         assert_eq!(world.get::<Swing>(fighter).unwrap().waited(secs(60)), Some(Duration::ZERO), "disengaged, it is due and has waited no time");
     }
 
     #[test]
-    fn intimidation_slows_whoever_looks_elsewhere_and_fills_faster_ignored() {
-        use common_bevy::{components::{behaviour::Side, status::Status, target::Target, AttackRange, Loc}, plugins::nntree::{NNTreePlugin, NearestNeighbor}};
-        let mut app = App::new();
-        app.add_plugins(NNTreePlugin);
-        app.add_message::<Do>();
-        app.init_resource::<Tuning>();
-        app.init_resource::<Time>();
-        let at = |q: i32| Loc::new(qrz::Qrz { q, r: 0, z: 0 });
-        let fighting = CombatState { in_combat: true, last_action: Duration::ZERO };
-        let attrs = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
-        let imposing = app.world_mut().spawn((fighting, at(0), attrs, Side::PLAYERS, AttackRange::default(), Intimidation::default(), Health::full(100.0))).id();
-        let watcher = app.world_mut().spawn((at(1), Side::WILD, Health::full(100.0), Target { entity: Some(imposing), last_target: None })).id();
-        for (ent, q) in [(imposing, 0), (watcher, 1)] {
-            app.world_mut().entity_mut(ent).insert(NearestNeighbor::new(ent, at(q)));
-        }
-        app.update();
-        let filled = |app: &App| app.world().get::<Intimidation>(imposing).unwrap().filled;
-        let slowed = |app: &App, ent| app.world().get::<Status>(ent).is_some_and(Status::is_slowed);
-
-        app.world_mut().resource_mut::<Time>().advance_by(Duration::from_secs(1));
-        app.world_mut().run_system_once(intimidate).unwrap();
-        let watched = filled(&app);
-        assert!(watched > 0.0, "fought one on one, it fills");
-        assert!(!slowed(&app, watcher), "and whoever watches it goes free");
-
-        let ignorer = app.world_mut().spawn((at(-1), Side::WILD, Health::full(100.0), Target::default())).id();
-        app.world_mut().entity_mut(ignorer).insert(NearestNeighbor::new(ignorer, at(-1)));
-        app.update();
-        app.world_mut().resource_mut::<Time>().advance_by(Duration::from_secs(1));
-        app.world_mut().run_system_once(intimidate).unwrap();
-        assert!(filled(&app) - watched > watched, "ignored, it fills faster");
-        assert!(slowed(&app, ignorer), "and whoever looks elsewhere is slowed");
-        assert!(!slowed(&app, watcher));
+    fn intimidation_slows_its_zone_then_taxes_it_then_pins_it_further_out() {
+        use common_bevy::{components::{behaviour::Side, status::Status, AttackRange, Loc}, plugins::nntree::{NNTreePlugin, NearestNeighbor}};
+        let zone_of = |steps: i8, foe_q: i32| {
+            let mut app = App::new();
+            app.add_plugins(NNTreePlugin);
+            app.add_message::<Do>();
+            app.init_resource::<Tuning>();
+            let at = |q: i32| Loc::new(qrz::Qrz { q, r: 0, z: 0 });
+            let attrs = ActorAttributes::new(0, 0, 0, -steps, 0, 0, 0, 0, 0);
+            let imposing = app.world_mut().spawn((at(0), attrs, Side::PLAYERS, AttackRange::default(), Health::full(100.0))).id();
+            let foe = app.world_mut().spawn((at(foe_q), Side::WILD, Health::full(100.0))).id();
+            for (ent, q) in [(imposing, 0), (foe, foe_q)] {
+                app.world_mut().entity_mut(ent).insert(NearestNeighbor::new(ent, at(q)));
+            }
+            app.update();
+            app.world_mut().run_system_once(intimidate).unwrap();
+            app.world().get::<Status>(foe).copied().unwrap_or_default()
+        };
+        let reach = AttackRange::default().0;
+        assert!(!zone_of(0, 1).is_slowed(), "no Intimidation, no zone");
+        let core = zone_of(3, 1);
+        assert!(core.is_slowed() && core.price() == 1.0 && !core.is_pinned(), "the core slows");
+        let facet = zone_of(9, 1);
+        assert!(facet.price() > 1.0 && !facet.is_pinned(), "the facet taxes");
+        assert!(zone_of(18, 1).is_pinned(), "the capstone pins");
+        assert!(!zone_of(18, reach + 1).is_slowed(), "its zone is its reach at T6");
+        assert!(zone_of(24, reach + 2).is_pinned(), "and reaches further by its depth");
+        assert!(zone_of(3, 1).slow.unwrap().pace > zone_of(6, 1).slow.unwrap().pace, "the core's depth slows deeper");
     }
 }

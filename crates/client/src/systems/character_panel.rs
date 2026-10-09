@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{Actor, ActorAttributes, Attribute, Pair},
+    components::{Actor, ActorAttributes, Attribute, Pair, Unlock},
     systems::combat::damage::contest_factor,
 };
 
@@ -878,6 +878,7 @@ fn shown(attrs: &ActorAttributes, stat: Stat) -> String {
 /// what contests it
 fn describe(attrs: &ActorAttributes, stat: Stat, tuning: &Tuning) -> String {
     let percent = |share: f32| format!("{:.0}%", share * 100.0);
+    let less = |discount: f32| if discount > 0.0 { format!(", {} less", percent(discount)) } else { String::new() };
     let contest = |stat: u16| contest_factor(tuning, stat, 0, 0.0);
     let against = "\nAgainst a foe of its level with none of what contests it.";
     match stat {
@@ -890,12 +891,49 @@ fn describe(attrs: &ActorAttributes, stat: Stat, tuning: &Tuning) -> String {
         Stat::Efficiency => format!("Efficiency, Discipline's contest, against a foe's Impact: its combos unlock {} sooner.{against}", percent(tuning.combo_share * contest(attrs.efficiency()))),
         Stat::Reflex => format!("Reflex, Instinct's contest, against a foe's Tempo: a threat on it waits {:.1}s to land, time to act and answer in.{against}", tuning.reaction_window * (1.0 + tuning.window_bonus * contest(attrs.reflex()))),
         Stat::Focus => format!("Focus, Resolve's contest, against a foe's Fitness: its blows crit {} of the time.{against}", percent(tuning.crit_chance * contest(attrs.focus()))),
-        Stat::Ferocity => format!("Ferocity, Might's commitment: up to {} combos in a chain fire before they unlock, the chain paying half the time skipped.", attrs.ferocity().count()),
-        Stat::Grace => format!("Grace, Agility's commitment: it strikes within {:.0} degrees either side of its heading, {} harder from a foe's flank.", attrs.arc(tuning), percent(attrs.flank(tuning))),
-        Stat::Intimidation => format!("Intimidation, Physique's commitment: it slows foes near it who look away, and fills its bank {:.0} a second, released into a strike that lands harder and binds.", attrs.intimidation_fill()),
-        Stat::Preparation => format!("Preparation, Discipline's commitment: up to {} reactions in a chain fire early after a strike, a Leap clear among them, the chain paying half the time skipped.", attrs.preparation().count()),
-        Stat::Patience => format!("Patience, Instinct's commitment: each attack made at it overcommits its attacker, and its skills crit {} likelier for each stack a foe carries.", percent(attrs.patience_crit(tuning))),
-        Stat::Awareness => format!("Awareness, Resolve's commitment: a reaction takes every threat landing within {:.2}s of its press.", attrs.span(tuning).as_secs_f32()),
+        Stat::Ferocity => {
+            let third = attrs.ferocity().at(Unlock::Capstone, tuning.ferocity_third)
+                .map_or(String::new(), |third| format!(" The third owes {} less.", percent(third)));
+            format!("Ferocity, Might's commitment: up to {} combos in a chain fire before they unlock, each owing the chain the time it skipped{}.{third}",
+                attrs.early_combos(), less(attrs.early_discount(tuning, Attribute::Might, 0)))
+        }
+        Stat::Grace => {
+            let stride = attrs.flank_stride(tuning)
+                .map_or(String::new(), |pace| format!(" A strike from a foe's flank breaks its stride, holding it to {} of its speed for a swing.", percent(pace)));
+            format!("Grace, Agility's commitment: its strikes land {} harder from a foe's flank, and it strikes within {:.0} degrees either side of its heading.{stride}",
+                percent(attrs.flank(tuning)), attrs.arc(tuning))
+        }
+        Stat::Intimidation => match attrs.intimidation_pace(tuning) {
+            None => "Intimidation, Physique's commitment: none yet. Its first tier slows foes in its reach.".to_string(),
+            Some(pace) => {
+                let toll = attrs.intimidation_toll(tuning);
+                let toll = if toll > 0.0 { format!(", and each skill they use there costs {} more", percent(toll)) } else { String::new() };
+                let pin = attrs.intimidation_zone(tuning)
+                    .map_or(String::new(), |zone| format!(" They use no skill that moves them there, and its zone reaches {zone} tiles past its reach."));
+                format!("Intimidation, Physique's commitment: foes in its reach move at {} of their speed{toll}.{pin}", percent(pace))
+            }
+        },
+        Stat::Preparation => {
+            let slip = attrs.slip(tuning)
+                .map_or(String::new(), |tiles| format!(" Each carries it {tiles} tiles away from what it answered."));
+            format!("Preparation, Discipline's commitment: up to {} reactions in a chain fire early after a strike, a Leap clear among them, each owing the chain the time it skipped{}.{slip}",
+                attrs.early_reactions(), less(attrs.early_discount(tuning, Attribute::Discipline, 0)))
+        }
+        Stat::Patience => {
+            let power = attrs.patience_power(tuning);
+            let power = if power > 0.0 { format!(", and land {} harder", percent(power)) } else { String::new() };
+            let opening = attrs.patience_opening(tuning)
+                .map_or(String::new(), |stacks| format!(" At {stacks} stacks its next skill on that foe crits for certain, spending them."));
+            format!("Patience, Instinct's commitment: each attack made at it overcommits its attacker, and its skills crit {} likelier for each stack a foe carries{power}.{opening}",
+                percent(attrs.patience_crit(tuning)))
+        }
+        Stat::Awareness => {
+            let refund = attrs.awareness_refund(tuning);
+            let refund = if refund > 0.0 { format!(" Each threat one answer takes past the first pays back {} of its price.", percent(refund)) } else { String::new() };
+            let snap = attrs.awareness_snap(tuning)
+                .map_or(String::new(), |snap| format!(" Pressed up to {:.1}s further ahead, its band starts at the next threat.", snap.as_secs_f32()));
+            format!("Awareness, Resolve's commitment: a reaction takes every threat landing within {:.2}s of its press.{refund}{snap}", attrs.span(tuning).as_secs_f32())
+        }
     }
 }
 

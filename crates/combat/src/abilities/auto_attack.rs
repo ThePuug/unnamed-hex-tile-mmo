@@ -17,6 +17,6 @@ pub fn swing(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, A
         let foe = abilities.actors.get(target).ok().map(|(_, attrs, ..)| *attrs);
         swing.due = Some(now + cast.attrs.cadence_interval(&tuning, foe.as_ref()));
     }
-    abilities.deal(cast.ent, target, cast.attrs.auto_damage(&tuning), AbilityType::AutoAttack, 0.0, Duration::ZERO);
+    abilities.deal(cast.ent, target, cast.attrs.auto_damage(&tuning), AbilityType::AutoAttack, Duration::ZERO);
     Ok(Some(target))
 }

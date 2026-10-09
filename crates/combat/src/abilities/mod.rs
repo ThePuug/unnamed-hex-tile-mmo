@@ -2,12 +2,15 @@
 //! The gate asks, in order and the same of every ability: is the caster
 //! alive; is it out of recovery, or taking the combo it was offered, or
 //! reacting through the recovery (an auto-attack asks its clock instead);
-//! does it strike a living hostile within the ability's reach and its arc.
-//! Nothing it holds refuses it. Then the ability's own effect runs, its
-//! endurance is paid, the clients are told, a strike across
-//! the caster's line breaks its stride, and the recovery starts, longer
-//! for an actor whose endurance is spent. A skill costs endurance; an
-//! auto-attack is free.
+//! does it strike a living hostile within the ability's reach and its arc;
+//! does a pin hold it, for a skill that moves its user. Nothing it holds
+//! refuses it. Then the ability's own effect runs, its endurance is paid,
+//! the clients are told, a strike across the caster's line breaks its
+//! stride, an early reaction at Preparation's capstone slips its user, and
+//! the recovery starts, longer for an actor whose endurance is spent. A
+//! skill costs endurance, more in an Intimidating foe's zone and less for
+//! a reaction that answers many at Awareness's facet; an auto-attack is
+//! free.
 //!
 //! What each ability costs, how long its recovery runs, how far it
 //! reaches, what it offers next and whether it is a reaction are the
@@ -39,7 +42,6 @@ use common_bevy::{
     components::{
         behaviour::Side,
         engagement::{Engagement, EngagementMember},
-        intimidation::Intimidation,
         heading::Heading,
         reaction_queue::{QueuedThreat, ReactionQueue},
         recovery::GlobalRecovery,
@@ -52,7 +54,7 @@ use common_bevy::{
     message::{AbilityType, ClearType, Component as MessageComponent, Do, Event as GameEvent, Try},
     resources::map::Map,
     systems::{
-        combat::{queue::clear_threats, combos::{may_use, recovery_after}},
+        combat::{queue::clear_threats, combos::{may_use, recovery_after, timing, Early, Timing}},
         targeting,
     },
 };
@@ -71,12 +73,15 @@ pub enum AbilityFailReason {
     OutOfRange,
     /// The target stands outside the caster's arc
     NotFacing,
+    /// A skill that moves its user, held in an Intimidating foe's zone
+    Pinned,
 }
 
 /// One use of an ability the gate has let through: who uses it, from where,
 /// at whom and when.
 pub struct Cast {
     pub ent: Entity,
+    pub ability: AbilityType,
     /// The moment it was used on the game clock: a player's press as its
     /// client stamped it, or as it arrived where that had passed
     /// ([`Press`]); an NPC's now. A reaction's band is judged here.
@@ -107,21 +112,18 @@ pub struct LastSkill(pub Duration);
 /// A skill's strike made whole and at once ([`Abilities::strike`])
 pub const WHOLE: [(f32, Duration); 1] = [(1.0, Duration::ZERO)];
 
-/// A strike of `damage`, and the share of its target's speed it binds away:
-/// `Tuning::intimidation_share` harder and `intimidation_slow` binding with a full Intimidation
-/// bank `released` into it, as it is without.
-fn released_into(tuning: &Tuning, damage: f32, released: bool) -> (f32, f32) {
-    if released { (damage * (1.0 + tuning.intimidation_share), tuning.intimidation_slow) } else { (damage, 0.0) }
-}
-
 /// What the gate asks of `ability` before it does anything, `reacting`
 /// where this use is a reaction (`AbilityType::reacts`), in order: out
 /// of `prior`, the recovery its caster is in, or let through it (an
 /// auto-attack's own clock is asked apart); for one with a reach out of
 /// `reach`, a target at `foe`'s distance and inside its arc, None for no
-/// target. An NPC's skills channel asks the
-/// same of what it perceives, so it never weighs a skill the gate refuses.
-pub fn admits(ability: AbilityType, reacting: bool, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool)>) -> Result<(), AbilityFailReason> {
+/// target; for one that moves its user, no pin on it (`pinned`). An NPC's
+/// skills channel asks the same of what it perceives, so it never weighs a
+/// skill the gate refuses.
+pub fn admits(ability: AbilityType, reacting: bool, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool)>, pinned: bool) -> Result<(), AbilityFailReason> {
+    if pinned && ability.moves() {
+        return Err(AbilityFailReason::Pinned);
+    }
     if ability != AbilityType::AutoAttack && !may_use(ability, reacting, prior, attrs) {
         return Err(AbilityFailReason::OnCooldown);
     }
@@ -156,7 +158,6 @@ pub struct Abilities<'w, 's> {
     pub queues: Query<'w, 's, &'static mut ReactionQueue>,
     pub statuses: Query<'w, 's, &'static mut Status>,
     pub swings: Query<'w, 's, &'static mut Swing>,
-    pub intimidations: Query<'w, 's, &'static mut Intimidation>,
     pub targets: Query<'w, 's, (Entity, &'static Target)>,
     pub npcs: Query<'w, 's, (Entity, &'static EntityType, &'static crate::behaviour::Bar), With<Chase>>,
     pub minds: Query<'w, 's, (&'static Skill, &'static mut Sight)>,
@@ -267,7 +268,7 @@ impl Abilities<'_, '_> {
         // A strike needs a living hostile within its reach and its arc;
         // reach is measured as a swing measures it, the first level of
         // height between free
-        let mut cast = Cast { ent, at, loc, attrs, side, reach, target: asked, target_loc: None };
+        let mut cast = Cast { ent, ability, at, loc, attrs, side, reach, target: asked, target_loc: None };
         if ability.reach(reach).is_some() {
             cast.target_loc = self.foe(&cast).ok().map(|(_, target_loc)| target_loc);
         }
@@ -277,7 +278,10 @@ impl Abilities<'_, '_> {
         // A Leap with its target in reach leaps clear, a reaction
         let reacting = ability.reacts(ability == AbilityType::Leap
             && self.foe(&cast).is_ok_and(|(_, target_loc)| loc.distance(&target_loc) <= reach));
-        admits(ability, reacting, prior.as_ref(), &attrs, reach, foe).map_err(Some)?;
+        let pinned = status.is_some_and(|status| status.is_pinned());
+        admits(ability, reacting, prior.as_ref(), &attrs, reach, foe, pinned).map_err(Some)?;
+        let early = timing(ability, reacting, prior.as_ref(), &attrs);
+        let price = self.price(&cast, reacting, status.as_ref());
 
         // The recovery runs by how spent the actor is as it uses the ability
         let fatigue = self.endurance.get(ent).map_or(0.0, |endurance| endurance.fatigue(&tuning));
@@ -298,7 +302,12 @@ impl Abilities<'_, '_> {
 
         // Endurance is spent and refuses nothing; an auto-attack is free
         if ability != AbilityType::AutoAttack {
-            self.tire(ent, attrs.skill_endurance(&tuning, ability));
+            self.tire(ent, price);
+        }
+        // An early reaction at Preparation's capstone slips its user away
+        // from what it answered; a Leap clear carries its user already
+        if early == Some(Timing::Early(Early::Preparation)) && ability != AbilityType::Leap && !pinned {
+            self.slip(&cast, opponent);
         }
         // Every client near draws it
         self.writer.write(Do { event: GameEvent::UseAbility { ent, ability, target: opponent, at: pressed, arrived } });
@@ -347,6 +356,43 @@ impl Abilities<'_, '_> {
         self.writer.write(Do { event: GameEvent::Incremental { ent, component: MessageComponent::Endurance(*endurance) } });
     }
 
+    /// What `cast` costs its user: its skill's price, times the toll of an
+    /// Intimidating foe's zone it stands in, less what Awareness's facet pays
+    /// back for each threat past the first a reaction would take
+    fn price(&self, cast: &Cast, reacting: bool, status: Option<&Status>) -> f32 {
+        let tuning = *self.tuning;
+        let toll = status.map_or(1.0, Status::price);
+        let taken = if reacting {
+            let (at, span) = self.band(cast);
+            self.queues.get(cast.ent).map_or(0, |queue| queue.swept(at, span).count())
+        } else {
+            0
+        };
+        let refund = (cast.attrs.awareness_refund(&tuning) * taken.saturating_sub(1) as f32).min(1.0);
+        cast.attrs.skill_endurance(&tuning, cast.ability) * toll * (1.0 - refund)
+    }
+
+    /// The band a reaction by `cast` takes from, where it starts and how
+    /// long it runs: from the press, or with Awareness's capstone from the
+    /// threat it snaps to (`ReactionQueue::band`)
+    fn band(&self, cast: &Cast) -> (Duration, Duration) {
+        let tuning = *self.tuning;
+        let span = cast.attrs.span(&tuning);
+        let at = self.queues.get(cast.ent).map_or(cast.at, |queue| queue.band(cast.at, cast.attrs.awareness_snap(&tuning)));
+        (at, span)
+    }
+
+    /// Slips `cast`'s user its Preparation capstone's tiles away from
+    /// `from`, the source of what it answered, over the ground as a Leap
+    /// clear goes, inside its leash
+    fn slip(&mut self, cast: &Cast, from: Option<Entity>) {
+        let tuning = *self.tuning;
+        let Some(tiles) = cast.attrs.slip(&tuning) else { return };
+        let Some((&from, ..)) = from.and_then(|from| self.actors.get(from).ok()) else { return };
+        let Some(landing) = crate::leap::away(&self.map, *cast.loc, *from, tiles, self.leash(cast.ent)) else { return };
+        crate::leap::slide(cast.ent, landing, crate::leap::LEAP_MS, None, &mut self.commands, &mut self.writer);
+    }
+
     /// Whether `ent` is in a Perfect Stride now
     pub fn strides(&self, ent: Entity) -> bool {
         self.statuses.get(ent).is_ok_and(|status| status.is_striding())
@@ -354,38 +400,29 @@ impl Abilities<'_, '_> {
 
     /// Queues a skill's strike on `target` for `damage` in all, in `parts`:
     /// each a share of it, struck its delay after now ([`WHOLE`] for one
-    /// strike made at once). A full Intimidation bank is released into it
-    /// (`Intimidation::release`): it lands `Tuning::intimidation_share`
-    /// harder, and its last part binds its target as it lands, slowing it
-    /// or rooting one already slowed (`resolve_threat`). Every skill that
-    /// strikes deals its damage through here,
-    /// and an auto-attack or a reaction's return never does.
+    /// strike made at once). Every skill that strikes deals its damage
+    /// through here, and an auto-attack or a reaction's return never does.
     pub fn strike(&mut self, cast: &Cast, target: Entity, damage: f32, ability: AbilityType, parts: &[(f32, Duration)]) {
-        let tuning = *self.tuning;
-        let released = self.intimidations.get_mut(cast.ent).is_ok_and(|mut intimidation| intimidation.release(&tuning));
-        let (damage, bind) = released_into(&tuning, damage, released);
-        for (i, &(share, delay)) in parts.iter().enumerate() {
-            let bind = if i + 1 == parts.len() { bind } else { 0.0 };
-            self.deal(cast.ent, target, damage * share, ability, bind, delay);
+        for &(share, delay) in parts {
+            self.deal(cast.ent, target, damage * share, ability, delay);
         }
     }
 
     /// Queues a blow of `base_damage` from `source` on `target` as
-    /// `ability`'s, struck `delay` after now, dazing away `bind` of its
-    /// pace as it lands.
-    pub fn deal(&mut self, source: Entity, target: Entity, base_damage: f32, ability: AbilityType, bind: f32, delay: Duration) {
+    /// `ability`'s, struck `delay` after now.
+    pub fn deal(&mut self, source: Entity, target: Entity, base_damage: f32, ability: AbilityType, delay: Duration) {
         self.commands.trigger(Try {
-            event: GameEvent::DealDamage { source, target, base_damage, ability: Some(ability), dot: 0.0, bind, delay },
+            event: GameEvent::DealDamage { source, target, base_damage, ability: Some(ability), dot: 0.0, delay },
         });
     }
 
     /// Takes the threats in `cast`'s band out of its user's queue, those
-    /// landing within its span after it was pressed: what a reaction
-    /// clears, and a Leap clear of its target. A reaction timed to nothing
-    /// clears nothing, and is paid for all the same.
+    /// landing within its span of where its band starts ([`Self::band`]):
+    /// what a reaction clears, and a Leap clear of its target. A reaction
+    /// timed to nothing clears nothing, and is paid for all the same.
     pub fn answer(&mut self, cast: &Cast) -> Vec<QueuedThreat> {
-        let span = cast.attrs.span(&self.tuning);
-        self.clear(cast.ent, ClearType::Span { at: cast.at, span })
+        let (at, span) = self.band(cast);
+        self.clear(cast.ent, ClearType::Span { at, span })
     }
 
     /// Takes the threats `clear_type` names out of `ent`'s queue, tells its
@@ -814,45 +851,125 @@ mod tests {
         assert!(!broken(&app, striding), "but a Perfect Stride");
     }
 
+    /// A blow of `damage` from `source` on `ent` landing `millis` after the
+    /// game's clock began, as a strike queues one
+    fn threat_on(app: &mut App, ent: Entity, source: Entity, damage: f32, millis: u64) -> Duration {
+        use common_bevy::systems::combat::queue::{create_threat, insert_threat};
+        let tuning = Tuning::DEFAULT;
+        let plain = ActorAttributes::default();
+        let at = Duration::from_millis(millis);
+        let threat = create_threat(&tuning, source, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
+        insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(ent).unwrap(), threat, at);
+        threat.lands_at()
+    }
+
     #[test]
-    fn a_full_bank_is_released_into_the_next_skill_slowing_its_target_or_rooting_one_slowed() {
+    fn a_pin_refuses_a_skill_that_moves_its_user_and_nothing_else() {
+        let mut app = arena();
+        let leaper = actor(&mut app, Side::PLAYERS, 0);
+        let far = actor(&mut app, Side::WILD, 6);
+        let near = actor(&mut app, Side::WILD, 1);
+        let mut pinned = Status::default();
+        pinned.pin(5.0);
+        app.world_mut().entity_mut(leaper).insert(pinned);
+        app.update();
+        assert_eq!(refused(&mut app, leaper, AbilityType::Leap, Some(far)), Some(AbilityFailReason::Pinned));
+        assert!(used(&ask(&mut app, leaper, AbilityType::Feint, Some(near)), AbilityType::Feint), "a strike still goes");
+        assert_eq!(admits(AbilityType::Leap, false, None, &ActorAttributes::default(), 2, None, true), Err(AbilityFailReason::Pinned), "and the minds ask the same");
+    }
+
+    #[test]
+    fn a_toll_raises_every_price_in_the_zone() {
+        let mut app = arena();
+        let free = actor(&mut app, Side::PLAYERS, 0);
+        let taxed = actor(&mut app, Side::PLAYERS, 2);
+        let foe = actor(&mut app, Side::WILD, 1);
+        turned_to(&mut app, taxed, -1);
+        let mut toll = Status::default();
+        toll.tax(1.3, 5.0);
+        app.world_mut().entity_mut(taxed).insert(toll);
+        app.update();
+        let spent = |app: &App, ent| 100.0 - app.world().get::<Endurance>(ent).unwrap().state;
+        assert!(used(&ask(&mut app, free, AbilityType::Feint, Some(foe)), AbilityType::Feint));
+        assert!(used(&ask(&mut app, taxed, AbilityType::Feint, Some(foe)), AbilityType::Feint));
+        assert!((spent(&app, taxed) - 1.3 * spent(&app, free)).abs() < 1e-3, "{} against {}", spent(&app, taxed), spent(&app, free));
+    }
+
+    #[test]
+    fn awareness_pays_back_for_answering_many_with_one_and_snaps_its_band_at_the_capstone() {
+        let mut app = arena();
+        let faceted = actor(&mut app, Side::PLAYERS, 0);
+        let plain = actor(&mut app, Side::PLAYERS, 3);
+        let snapping = actor(&mut app, Side::PLAYERS, -3);
+        let attacker = actor(&mut app, Side::WILD, 1);
+        app.world_mut().entity_mut(faceted).insert(ActorAttributes::new(0, 0, 0, 0, 0, 0, 9, 0, 0));
+        app.world_mut().entity_mut(snapping).insert(ActorAttributes::new(0, 0, 0, 0, 0, 0, 18, 0, 0));
+        app.update();
+        let spent = |app: &App, ent| 100.0 - app.world().get::<Endurance>(ent).unwrap().state;
+
+        for ent in [faceted, plain] {
+            let lands = [1000, 1050, 1100].map(|millis| threat_on(&mut app, ent, attacker, 10.0, millis))[0];
+            assert!(used(&press(&mut app, ent, AbilityType::Parry, None, lands - EARLY), AbilityType::Parry));
+        }
+        assert!(spent(&app, faceted) < spent(&app, plain), "three in one band, the facet pays some back");
+
+        // The capstone's band starts at a threat landing just after the
+        // press, so it takes one landing past the band from the press
+        let next = threat_on(&mut app, snapping, attacker, 10.0, 5150);
+        threat_on(&mut app, snapping, attacker, 10.0, 6000);
+        assert!(used(&press(&mut app, snapping, AbilityType::Parry, None, next - Duration::from_millis(150)), AbilityType::Parry));
+        assert!(queue(&app, snapping).is_empty(), "both taken, the later 1.0s after the press");
+    }
+
+    #[test]
+    fn preparations_capstone_slips_an_early_answer_away_from_its_source() {
+        let mut app = arena();
+        let slipping = actor(&mut app, Side::PLAYERS, 0);
+        let attacker = actor(&mut app, Side::WILD, 1);
+        app.world_mut().entity_mut(slipping).insert(ActorAttributes::new(0, 0, 0, 18, 0, 0, 0, 0, 0));
+        app.update();
+        let struck = Duration::from_secs(10);
+        assert!(used(&press(&mut app, slipping, AbilityType::Feint, Some(attacker), struck), AbilityType::Feint), "a strike first");
+        // A blow landing while the strike's recovery still runs
+        let window = Duration::from_secs_f32(Tuning::DEFAULT.reaction_window);
+        let lands = threat_on(&mut app, slipping, attacker, 10.0, (struck + Duration::from_millis(300) - window).as_millis() as u64);
+        assert!(used(&press(&mut app, slipping, AbilityType::Parry, None, lands - EARLY), AbilityType::Parry), "answered early in the chain");
+        app.update();
+        let at = app.world().get::<Loc>(slipping).unwrap();
+        assert!(at.q < 0, "slipped away from its source: {:?}", **at);
+    }
+
+    #[test]
+    fn graces_capstone_breaks_a_flanked_foes_stride_and_patiences_spends_its_stacks_on_a_certain_crit() {
         let tuning = Tuning::DEFAULT;
         let mut app = arena();
-        let imposing = actor(&mut app, Side::PLAYERS, 0);
-        let attacker = actor(&mut app, Side::WILD, 1);
-        app.world_mut().entity_mut(imposing).insert(ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0));
-        turned_to(&mut app, attacker, -1);
+        let graceful = actor(&mut app, Side::PLAYERS, 0);
+        let flanked = actor(&mut app, Side::WILD, 1);
+        let patient = actor(&mut app, Side::PLAYERS, -2);
+        let pressing = actor(&mut app, Side::WILD, -1);
+        app.world_mut().entity_mut(graceful).insert(ActorAttributes::new(18, 0, 0, 0, 0, 0, 0, 0, 0));
+        app.world_mut().entity_mut(patient).insert(ActorAttributes::new(0, 0, 0, 0, 0, 0, -18, 0, 0));
+        // Of its level, so no level gap weighs the blow
+        app.world_mut().entity_mut(pressing).insert(ActorAttributes::default().at_level(18));
+        // The flanked foe faces away, its back to the striker
+        turned_to(&mut app, flanked, 1);
+        let mut stacked = Status::default();
+        (0..10).for_each(|_| stacked.overcommit(tuning.overcommit_secs));
+        app.world_mut().entity_mut(pressing).insert(stacked);
+        turned_to(&mut app, pressing, -1);
         app.update();
-        let filled = |app: &App| app.world().get::<Intimidation>(imposing).unwrap().filled;
-        let feints = |app: &App| queue(app, attacker).into_iter().filter(|threat| threat.ability == Some(AbilityType::Feint)).collect::<Vec<_>>();
-        let release = |app: &mut App| {
-            app.world_mut().entity_mut(imposing).remove::<GlobalRecovery>();
-            app.world_mut().get_mut::<Intimidation>(imposing).unwrap().filled = Intimidation::size(&tuning);
-            assert!(used(&ask(app, imposing, AbilityType::Feint, Some(attacker)), AbilityType::Feint));
-        };
-        let land = |app: &mut App| {
-            let threat = app.world_mut().get_mut::<ReactionQueue>(attacker).unwrap().threats.pop_front().unwrap();
-            app.world_mut().trigger(Try { event: GameEvent::ResolveThreat { ent: attacker, threat } });
-            app.update();
-        };
-        let status = |app: &App| app.world().get::<Status>(attacker).copied().unwrap_or_default();
 
-        assert!(used(&ask(&mut app, imposing, AbilityType::Feint, Some(attacker)), AbilityType::Feint));
-        assert_eq!(feints(&app)[0].bind, 0.0, "short of full, a skill releases nothing");
+        assert!(used(&ask(&mut app, graceful, AbilityType::Feint, Some(flanked)), AbilityType::Feint));
+        assert!(queue(&app, flanked)[0].stride > 0.0, "its flank strike will break the foe's stride");
+        let threat = app.world_mut().get_mut::<ReactionQueue>(flanked).unwrap().threats.pop_front().unwrap();
+        app.world_mut().trigger(Try { event: GameEvent::ResolveThreat { ent: flanked, threat } });
+        app.update();
+        assert!(app.world().get::<Status>(flanked).is_some_and(|status| status.stride.is_some()), "and does as it lands");
 
-        release(&mut app);
-        assert!(filled(&app) < Intimidation::size(&tuning), "full, the next skill releases it");
-        assert!(feints(&app)[1].bind > 0.0, "binding");
-        assert_eq!(released_into(&tuning, 100.0, true), (100.0 * (1.0 + tuning.intimidation_share), tuning.intimidation_slow), "and landing harder");
-        assert_eq!(released_into(&tuning, 100.0, false), (100.0, 0.0));
-        land(&mut app);
-        assert!(status(&app).slow.is_none(), "queued, it binds nothing yet");
-        land(&mut app);
-        assert!(status(&app).slow.is_some() && status(&app).root.is_none(), "landed on a target fighting it, it slows");
-
-        release(&mut app);
-        land(&mut app);
-        assert!(status(&app).root.is_some(), "landed on a target already slowed, it roots");
+        assert!(used(&ask(&mut app, patient, AbilityType::Feint, Some(pressing)), AbilityType::Feint));
+        let feint = tuning.damage(AbilityType::Feint) * tuning.potency_base;
+        assert!(queue(&app, pressing)[0].damage > feint * (1.0 + tuning.damage_spread), "a certain crit");
+        assert_eq!(app.world().get::<Status>(pressing).unwrap().overcommits(), 0, "spending every stack");
     }
 
     #[test]

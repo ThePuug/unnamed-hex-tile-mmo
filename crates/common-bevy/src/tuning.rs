@@ -45,45 +45,57 @@ pub struct Tuning {
     /// light while the pool holds and bites as it empties
     pub fatigue_bend: f32,
 
-    // --- Commitment: what each tier gives (where the tiers fall is fixed, `CommitmentTier::calculate`).
-    // A tuned value is two knobs, `_min` at T0 and `_max` at T8, the tiers between on the curve
-    // that gives the first tiers the most (`CommitmentTier::between`) ---
-    /// Share of the time a skill fired early skipped that its chain owes,
-    /// paid once the chain ends (`combos::recovery_after`). Authored, never
-    /// searched: it sets how far Ferocity and Preparation reach
-    pub early_owed: f32,
-    /// Seconds wide the band a reaction takes from is, by its user's
-    /// Awareness; every actor has the least
-    pub awareness_span_min: f32,
-    pub awareness_span_max: f32,
-    /// The half-angle either side of its heading an actor strikes within,
-    /// in degrees, by its Grace
-    pub grace_arc_min: f32,
-    pub grace_arc_max: f32,
+    // --- Commitment: each a ladder (`CommitmentTier::at`), a value for each
+    // rung of its core (T1–T2), its facet (T3–T5) and its capstone (T6–T8) ---
+    /// Share less of the time it skipped an early combo (Ferocity) or an
+    /// early reaction (Preparation) owes its chain, by the commitment's facet;
+    /// fired early with no facet, it owes all of it
+    pub early_facet: [f32; 3],
+    /// Share less the third early combo Ferocity's capstone allows owes
+    pub ferocity_third: [f32; 3],
+    /// Seconds wide the band a reaction takes from is with no Awareness
+    pub awareness_band: f32,
+    /// The band's seconds by Awareness's core
+    pub awareness_core: [f32; 2],
+    /// Share of a reaction's price each threat it takes past the first pays
+    /// back, by Awareness's facet
+    pub awareness_refund: [f32; 3],
+    /// Seconds after a press its nearest incoming threat may land and draw
+    /// the band to start at it, by Awareness's capstone
+    pub awareness_snap: [f32; 3],
     /// Share harder a strike lands from past its target's forward faces, a
-    /// flank, by its striker's Grace
-    pub grace_flank_min: f32,
-    pub grace_flank_max: f32,
-    /// How much Intimidation's bank holds, filled each second an actor is
-    /// engaged by its tier's count, twice that while it is ignored
-    /// (`Intimidation`)
-    pub intimidation_bank: f32,
-    /// Share harder the skill a full bank releases into lands
-    pub intimidation_share: f32,
-    /// Share of its speed Intimidation's slow takes away, the aura's and
-    /// the release's alike
-    pub intimidation_slow: f32,
-    /// Seconds a release slows its target
-    pub intimidation_slow_secs: f32,
-    /// Seconds a release roots a target already slowed
-    pub intimidation_root_secs: f32,
-    /// Seconds the aura's slow lingers on a foe once it stops ignoring the
-    /// actor or leaves its reach
+    /// flank, by Grace's core
+    pub grace_flank: [f32; 2],
+    /// The half-angle either side of its heading an actor strikes within, in
+    /// degrees, with no Grace: the three forward faces
+    pub grace_arc: f32,
+    /// The arc's half-angle by Grace's facet
+    pub grace_arc_facet: [f32; 3],
+    /// Share of its speed a flank strike leaves its target for a swing, its
+    /// stride broken, by Grace's capstone
+    pub grace_stride: [f32; 3],
+    /// Share of its speed a foe in an Intimidating actor's zone keeps, by
+    /// Intimidation's core
+    pub intimidation_pace: [f32; 2],
+    /// Share more each skill costs a foe in the zone, by Intimidation's facet
+    pub intimidation_toll: [f32; 3],
+    /// Tiles past its reach the zone reaches, by Intimidation's capstone,
+    /// which also pins a foe in it
+    pub intimidation_zone: [i32; 3],
+    /// Seconds Intimidation's slow, toll and pin linger on a foe that leaves
+    /// the zone
     pub intimidation_aura_secs: f32,
-    /// Share likelier each stack of Overcommitted on a foe makes it take a
-    /// crit from a skill of an actor with Patience, by that actor's tier
-    pub patience_crit_min: f32,
-    pub patience_crit_max: f32,
+    /// Tiles an early reaction carries its user, by Preparation's capstone
+    pub preparation_slip: [usize; 3],
+    /// Share likelier each stack of Overcommitted on a foe makes a skill of
+    /// an actor with Patience crit it, by Patience's core
+    pub patience_crit: [f32; 2],
+    /// Share harder a patient actor's crit lands on an overcommitted foe,
+    /// by Patience's facet
+    pub patience_power: [f32; 3],
+    /// Stacks of Overcommitted on a foe at which a patient actor's next skill
+    /// on it crits for certain and spends them, by Patience's capstone
+    pub patience_opening: [usize; 3],
     /// Seconds each stack of Overcommitted lasts, each on its own
     pub overcommit_secs: f32,
 
@@ -201,21 +213,24 @@ impl Tuning {
         fatigue_bend: 2.0,
         base_interval: 2.1,
         tempo_ceiling: 0.5,
-        early_owed: 0.5,
-        awareness_span_min: 0.25,
-        awareness_span_max: 1.0,
-        grace_arc_min: 60.0,
-        grace_arc_max: 150.0,
-        grace_flank_min: 0.0,
-        grace_flank_max: 0.4,
-        intimidation_bank: 36.0,
-        intimidation_share: 0.221,
-        intimidation_slow: 0.213,
-        intimidation_slow_secs: 3.0,
-        intimidation_root_secs: 1.0,
+        early_facet: [0.3, 0.4, 0.5],
+        ferocity_third: [0.6, 0.7, 0.8],
+        awareness_band: 0.3,
+        awareness_core: [0.5, 0.9],
+        awareness_refund: [0.1, 0.2, 0.3],
+        awareness_snap: [0.2, 0.4, 0.6],
+        grace_flank: [0.15, 0.3],
+        grace_arc: 60.0,
+        grace_arc_facet: [90.0, 120.0, 150.0],
+        grace_stride: [0.7, 0.6, 0.5],
+        intimidation_pace: [0.85, 0.7],
+        intimidation_toll: [0.1, 0.2, 0.3],
+        intimidation_zone: [0, 1, 2],
         intimidation_aura_secs: 1.0,
-        patience_crit_min: 0.0,
-        patience_crit_max: 0.09,
+        preparation_slip: [1, 2, 3],
+        patience_crit: [0.05, 0.08],
+        patience_power: [0.1, 0.2, 0.3],
+        patience_opening: [10, 8, 6],
         overcommit_secs: 5.0,
         contest_scale: 400.0,
         contest_per_level: 7.5,
@@ -350,21 +365,9 @@ impl Tuning {
     fn knob(&mut self, name: &str) -> Result<&mut f32, String> {
         Ok(match name {
             "base_interval" => &mut self.base_interval,
-            "early_owed" => &mut self.early_owed,
-            "awareness_span_min" => &mut self.awareness_span_min,
-            "awareness_span_max" => &mut self.awareness_span_max,
-            "grace_arc_min" => &mut self.grace_arc_min,
-            "grace_arc_max" => &mut self.grace_arc_max,
-            "intimidation_bank" => &mut self.intimidation_bank,
-            "intimidation_share" => &mut self.intimidation_share,
-            "intimidation_slow" => &mut self.intimidation_slow,
-            "intimidation_slow_secs" => &mut self.intimidation_slow_secs,
-            "intimidation_root_secs" => &mut self.intimidation_root_secs,
             "intimidation_aura_secs" => &mut self.intimidation_aura_secs,
-            "grace_flank_min" => &mut self.grace_flank_min,
-            "grace_flank_max" => &mut self.grace_flank_max,
-            "patience_crit_min" => &mut self.patience_crit_min,
-            "patience_crit_max" => &mut self.patience_crit_max,
+            "awareness_band" => &mut self.awareness_band,
+            "grace_arc" => &mut self.grace_arc,
             "overcommit_secs" => &mut self.overcommit_secs,
             "tempo_ceiling" => &mut self.tempo_ceiling,
             "potency_base" => &mut self.potency_base,
@@ -442,11 +445,11 @@ mod tests {
         let mut tuning = Tuning::default();
         tuning.set("frenzy_damage", "0.25").unwrap();
         tuning.set("leap_distance", "2").unwrap();
-        tuning.set("intimidation_share", "0.25").unwrap();
+        tuning.set("awareness_band", "0.25").unwrap();
         assert_eq!(tuning.frenzy_damage, 0.25);
         assert_eq!(tuning.leap_distance, 2);
-        assert_eq!(tuning.intimidation_share, 0.25);
-        assert_eq!(tuning.get("intimidation_share"), Ok(0.25));
+        assert_eq!(tuning.awareness_band, 0.25);
+        assert_eq!(tuning.get("awareness_band"), Ok(0.25));
         assert_eq!(tuning.get("leap_distance"), Ok(2.0));
         assert!(tuning.get("no_such_knob").is_err());
         assert!(tuning.set("frenzy_damage", "much").is_err());

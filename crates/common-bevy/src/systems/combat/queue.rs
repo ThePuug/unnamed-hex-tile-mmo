@@ -63,7 +63,7 @@ pub fn create_threat(
         ability,
         dot,
         ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
     }
 }
 
@@ -135,7 +135,7 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
 
         };
 
@@ -167,7 +167,7 @@ mod tests {
             ability: Some(ability),
             dot,
             ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
         };
         for (ability, dot, secs) in [(Frenzy, 0.0, 2), (AutoAttack, 0.0, 0), (Frenzy, 5.0, 1), (AutoAttack, 0.0, 3)] {
             insert_threat(&mut queue, make(ability, dot, secs), Duration::ZERO);
@@ -189,7 +189,7 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
 
         };
 
@@ -214,7 +214,7 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
 
         };
 
@@ -241,7 +241,7 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
 
         };
 
@@ -254,7 +254,7 @@ mod tests {
             ability: None,
             dot: 0.0,
             ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
 
         };
 
@@ -285,7 +285,7 @@ mod tests {
                 ability: None,
                 dot: 0.0,
                 ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
             });
         }
 
@@ -310,7 +310,7 @@ mod tests {
             ability: Some(crate::message::AbilityType::Frenzy),
             dot: 0.0,
             ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
         };
         for threat in [make(0, 3), make(1, 3), make(4, 3)] {
             insert_threat(&mut queue, threat, Duration::ZERO);
@@ -333,7 +333,7 @@ mod tests {
             ability: Some(crate::message::AbilityType::Frenzy),
             dot: 0.0,
             ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
         };
         insert_threat(&mut queue, make(0, 5), Duration::ZERO);
         insert_threat(&mut queue, make(1, 3), Duration::ZERO);
@@ -351,7 +351,7 @@ mod tests {
             ability: None,
             dot: 5.0,
             ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
         };
         assert_eq!(wound.tick_count(), 2, "ticks fall short of the landing");
         assert_eq!(wound.ticks_due(Duration::from_millis(10_999)), 0);

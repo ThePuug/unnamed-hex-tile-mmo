@@ -213,16 +213,13 @@ struct Ledger {
     past_faces: f32,
     fatigue: f32,
     /// Its commitments at work: combos fired before they unlocked
-    /// (Ferocity), reactions taken through a recovery (Preparation), Intimidation
-    /// banks released and the seconds their bind held its foes, each foe's
-    /// binds merged so a refresh counts once (Intimidation), strikes struck
-    /// from a flank of all it struck (Grace), and the stacks of Overcommitted
-    /// on the foe each of its skills struck into, of the skills it struck
-    /// with (Patience)
+    /// (Ferocity), reactions taken through a recovery (Preparation), strikes
+    /// struck from a flank of all it struck (Grace), and the stacks of
+    /// Overcommitted on the foe each of its skills struck into, of the
+    /// skills it struck with (Patience); Intimidation's is its foe's time
+    /// slowed
     early_combos: u32,
     through: u32,
-    releases: u32,
-    bind: f32,
     flanked: u32,
     strikes: u32,
     patient_stacks: u32,
@@ -258,8 +255,6 @@ impl Ledger {
         self.fatigue += other.fatigue;
         self.early_combos += other.early_combos;
         self.through += other.through;
-        self.releases += other.releases;
-        self.bind += other.bind;
         self.flanked += other.flanked;
         self.strikes += other.strikes;
         self.patient_stacks += other.patient_stacks;
@@ -300,8 +295,6 @@ impl Ledger {
 struct Tally {
     sides: HashMap<Entity, Side>,
     ledgers: HashMap<Side, Ledger>,
-    /// Each actor Intimidation has bound: when its bind ends, and whose Intimidation bound it
-    bound: HashMap<Entity, (Duration, Entity)>,
     /// Each actor's recovery as last sent, whose chain's counts a new one
     /// adds to: a blow's pushback resends it longer, which adds nothing
     recoveries: HashMap<Entity, GlobalRecovery>,
@@ -370,10 +363,9 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
 }
 
 /// Counts each resolved threat and DoT tick against the side of the actor
-/// that sent it, each threat that lands on an actor out of its queue (a
-/// reflection never stood in one), and each blow that binds, an
-/// Intimidation bank released into it, counted as the release's slow.
-fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>, time: Res<Time>, tuning: Res<Tuning>) {
+/// that sent it, and each threat that lands on an actor out of its queue (a
+/// reflection never stood in one).
+fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>) {
     let (source, ability, damage) = match trigger.event() {
         Try { event: Event::ResolveThreat { ent, threat } } => {
             if threat.ability != Some(AbilityType::Counter) {
@@ -382,28 +374,9 @@ fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>, time: Res<Time>, t
                     ledger.landed_damage_on += whole(threat);
                 }
             }
-            // A blow Intimidation's bank struck back binds as it lands, a bind
-            // already running taking the longer of the two
-            if threat.bind > 0.0 {
-                let now = time.elapsed();
-                let until = now + Duration::from_secs_f32(tuning.intimidation_slow_secs);
-                let open = tally.bound.get(ent).map_or(now, |&(end, _)| end.max(now));
-                tally.bound.insert(*ent, (until.max(open), threat.source));
-                if let Some(ledger) = tally.of(threat.source) {
-                    ledger.bind += until.saturating_sub(open).as_secs_f32();
-                }
-            }
             (threat.source, threat.ability, whole(threat))
         }
         Try { event: Event::DotTick { source, ability, damage, .. } } => (*source, *ability, *damage),
-        Try { event: Event::DealDamage { source, bind, .. } } => {
-            if *bind > 0.0 {
-                if let Some(ledger) = tally.of(*source) {
-                    ledger.releases += 1;
-                }
-            }
-            return;
-        }
         _ => return,
     };
     let Some(ledger) = tally.of(source) else { return };
@@ -611,13 +584,6 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     let mut queues = app.world_mut().query::<(Entity, &ReactionQueue)>();
     let pending: Vec<(Entity, QueuedThreat)> = queues.iter(app.world()).flat_map(|(ent, queue)| queue.threats.iter().map(move |threat| (ent, *threat))).collect();
     let mut tally = std::mem::take(&mut *app.world_mut().resource_mut::<Tally>());
-    let now = app.world().resource::<Time>().elapsed();
-    let bound: Vec<(Duration, Entity)> = tally.bound.values().copied().collect();
-    for (until, source) in bound {
-        if let Some(ledger) = tally.of(source) {
-            ledger.bind -= until.saturating_sub(now).as_secs_f32();
-        }
-    }
     for (on, threat) in pending {
         if let Some(ledger) = tally.of(threat.source) {
             *ledger.pending.entry(threat.ability).or_default() += whole(&threat);
@@ -899,10 +865,10 @@ fn ledger_line(ledger: &Ledger, runs: f32) -> String {
     let alive = ledger.alive.max(f32::EPSILON);
     let share = |seconds: f32| 100.0 * seconds / alive;
     let each = |count: u32| count as f32 / runs;
-    format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% past faces {:.0}% fatigue {:.0}% || commitments: early combos {:.1} releases {:.1} bind {:.1}s flanked {:.1} of {:.1} strikes stacks {:.1} per skill strike through {:.1} per answer {:.1}",
+    format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% past faces {:.0}% fatigue {:.0}% || commitments: early combos {:.1} flanked {:.1} of {:.1} strikes stacks {:.1} per skill strike through {:.1} per answer {:.1}",
         abilities.join(" | "),
         share(ledger.recovering), share(ledger.held), share(ledger.slowed), share(ledger.beyond_reach), share(ledger.past_faces), share(ledger.fatigue),
-        each(ledger.early_combos), each(ledger.releases), ledger.bind / runs, each(ledger.flanked), each(ledger.strikes), ledger.patient_stacks as f32 / ledger.skill_strikes.max(1) as f32, each(ledger.through), ledger.per_answer())
+        each(ledger.early_combos), each(ledger.flanked), each(ledger.strikes), ledger.patient_stacks as f32 / ledger.skill_strikes.max(1) as f32, each(ledger.through), ledger.per_answer())
 }
 
 #[cfg(test)]

@@ -35,8 +35,8 @@ short = 24.0
 
 # A mind is held to its archetype's style: the commitment its build invests
 # in, used at least `floor`. In points: Ferocity's early combos of its
-# skills (at most three in four), Intimidation's bind uptime on its foe (about half
-# for a fighter playing to bind), Grace's strikes from a flank of its
+# skills (at most three in four), Intimidation's foe's time slowed in its
+# zone, Grace's strikes from a flank of its
 # strikes (at most two in three), Preparation's early answers of its
 # answers, a reaction's or a Leap clear's (at most all), Patience's stacks
 # of Overcommitted its skills strike into, ten points a stack; Awareness's damage answered per clear in

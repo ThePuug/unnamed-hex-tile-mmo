@@ -32,10 +32,11 @@ pub struct QueuedThreat {
     pub dot: f32,
     /// DoT ticks this wound has dealt. Only the server counts them.
     pub ticked: u8,
-    /// Share of its speed the target is slowed out of as the threat lands:
-    /// Intimidation's bank struck back, binding the target. Zero for most threats;
-    /// a reaction that clears the threat clears it too.
-    pub bind: f32,
+    /// Share of its speed the threat leaves its target for a swing as it
+    /// lands, its stride broken: a flank strike of a striker at Grace's
+    /// capstone. Zero for none; a reaction that clears the threat clears it
+    /// too.
+    pub stride: f32,
 }
 
 /// The lane a threat shows in on the highway, by its kind. Lanes are for
@@ -51,9 +52,10 @@ pub enum Lane {
 pub const DOT_TICK: Duration = Duration::from_secs(1);
 
 impl QueuedThreat {
-    /// This threat dazing its target out of `bind` of its pace as it lands
-    pub fn binding(self, bind: f32) -> Self {
-        Self { bind, ..self }
+    /// This threat breaking its target's stride to `stride` of its pace as
+    /// it lands
+    pub fn breaking(self, stride: f32) -> Self {
+        Self { stride, ..self }
     }
 
     /// A wound: its DoT ticks while it stands.
@@ -122,6 +124,15 @@ impl ReactionQueue {
         self.threats.is_empty()
     }
 
+    /// Where the band of a reaction pressed at `at` starts: at the press,
+    /// or with a `snap` (Awareness's capstone) at the soonest threat landing
+    /// within `snap` after the press, so the band reaches that much deeper
+    /// behind it. With no threat that soon it starts at the press.
+    pub fn band(&self, at: Duration, snap: Option<Duration>) -> Duration {
+        let Some(snap) = snap else { return at };
+        self.threats.iter().map(QueuedThreat::lands_at).filter(|&lands| lands >= at && lands <= at + snap).min().unwrap_or(at)
+    }
+
     /// The threats a reaction at `at` reaching `span` takes
     /// ([`QueuedThreat::in_band`])
     pub fn swept(&self, at: Duration, span: Duration) -> impl Iterator<Item = &QueuedThreat> {
@@ -133,6 +144,20 @@ impl ReactionQueue {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_snap_starts_the_band_at_a_threat_landing_soon_after_the_press_and_no_other() {
+        let landing = |millis: u64| QueuedThreat { inserted_at: Duration::ZERO, timer_duration: Duration::from_millis(millis), ..threat(None, 0.0) };
+        let (span, snap) = (Duration::from_millis(900), Some(Duration::from_millis(200)));
+        let soon = ReactionQueue { threats: [landing(150), landing(1000)].into() };
+        let start = soon.band(Duration::ZERO, snap);
+        assert_eq!(start, Duration::from_millis(150), "the band shifts to the threat 0.15s after the press");
+        assert_eq!(soon.swept(start, span).count(), 2, "and takes the one landing 1.0s after it");
+        assert_eq!(soon.band(Duration::ZERO, None), Duration::ZERO, "without a snap it starts at the press");
+        assert_eq!(soon.swept(Duration::ZERO, span).count(), 1, "where the later one lands past it");
+        let later = ReactionQueue { threats: [landing(300), landing(1000)].into() };
+        assert_eq!(later.band(Duration::ZERO, snap), Duration::ZERO, "a threat 0.3s out draws no snap of 0.2s");
+    }
+
     fn threat(ability: Option<crate::message::AbilityType>, dot: f32) -> QueuedThreat {
         QueuedThreat {
             source: Entity::from_raw_u32(0).unwrap(),
@@ -142,7 +167,7 @@ mod tests {
             ability,
             dot,
             ticked: 0,
-            bind: 0.0,
+            stride: 0.0,
         }
     }
 

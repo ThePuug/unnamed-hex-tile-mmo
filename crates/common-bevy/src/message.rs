@@ -45,9 +45,6 @@ pub enum Event {
         ability: Option<AbilityType>,
         /// Damage each DoT tick deals while the threat stands: a wound's, zero for a blow
         dot: f32,
-        /// Share of its target's speed the threat slows away as it lands
-        /// (`QueuedThreat::bind`), zero for most
-        bind: f32,
         /// How long after now the strike is made: its threat's window starts then
         delay: std::time::Duration,
     },
@@ -254,6 +251,12 @@ impl AbilityType {
     /// actor whose own reach is `own`: as far as the actor reaches. None
     /// for one the gate checks no target for: a reaction, a Leap, which
     /// checks its own, or the stride.
+    /// Whether using it moves its user: a skill a pin refuses
+    /// (`Status::is_pinned`)
+    pub fn moves(self) -> bool {
+        self == AbilityType::Leap
+    }
+
     pub fn reach(self, own: i32) -> Option<std::ops::RangeInclusive<i32>> {
         match self {
             AbilityType::AutoAttack | AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Punish => Some(0..=own),

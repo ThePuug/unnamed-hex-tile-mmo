@@ -105,7 +105,7 @@ impl Abilities<'_, '_> {
             health: target_health.state,
             in_arc: in_arc(&tuning, heading, Some(attrs), &loc, &target_loc),
             flanked: target_heading.is_some_and(|&target_heading| !targeting::is_in_facing_cone(target_heading, target_loc, loc)),
-            patient: target_attrs.patience_crit(&tuning),
+            patient: target_attrs.patience_crit(&tuning) * (1.0 + target_attrs.patience_power(&tuning)),
             since_skill: self.last_skills.get(target?).ok()
                 .map(|last| self.time.elapsed().saturating_sub(last.0).as_secs_f32()),
             status: self.statuses.get(target?).ok().copied().unwrap_or_default(),
@@ -170,12 +170,11 @@ impl Abilities<'_, '_> {
             endurance_max: self.endurance.get(ent).map_or(0.0, |endurance| endurance.max),
             recovery: self.recoveries.get(ent).ok().copied(),
             status: self.statuses.get(ent).ok().copied().unwrap_or_default(),
-            intimidation_filled: self.intimidations.get(ent).map_or(0.0, |intimidation| intimidation.filled as f32 / common_bevy::components::intimidation::Intimidation::size(&tuning) as f32),
             reach,
             leap: attrs.leap_tiles(&tuning) as i32,
             leap_room: self.leap_room(ent, loc, reach, target),
             capacity_taken: self.capacity_taken(ent, target),
-            queue: Threats::reading(&queue, attrs.span(&tuning), game_now),
+            queue: Threats::reading(&queue, attrs.span(&tuning), attrs.awareness_snap(&tuning), game_now),
             foe,
         })
     }

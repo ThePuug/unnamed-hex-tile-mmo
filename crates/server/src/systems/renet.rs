@@ -409,7 +409,7 @@ mod tests {
     fn what_the_server_keeps_to_itself_is_sent_to_no_one() {
         let ent = Entity::from_raw_u32(7).unwrap();
         assert_eq!(route(&Event::Stumble { ent }), None);
-        assert_eq!(route(&Event::DealDamage { source: ent, target: ent, base_damage: 1.0, ability: None, dot: 0.0, bind: 0.0, delay: std::time::Duration::ZERO }), None);
+        assert_eq!(route(&Event::DealDamage { source: ent, target: ent, base_damage: 1.0, ability: None, dot: 0.0, delay: std::time::Duration::ZERO }), None);
         assert_eq!(route(&Event::Play), None);
     }
 }

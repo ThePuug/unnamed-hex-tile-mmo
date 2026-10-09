@@ -84,14 +84,15 @@ pub fn crit_chance(tuning: &Tuning, attacker: &ActorAttributes, defender: &Actor
 }
 
 /// A blow's damage after its crit roll: `Tuning::crit_power` times
-/// `damage` where `draw`, from 0 to 1, falls under the chance `attacker`
-/// crits on `defender` ([`crit_chance`]) and `extra` beside it, else as it
-/// was. The chance decides whether, never how hard. Rolled as the blow
-/// enters the queue, so a crit stands there at its full weight for the
-/// defender to see.
-pub fn crit(tuning: &Tuning, damage: f32, attacker: &ActorAttributes, defender: &ActorAttributes, extra: f32, draw: f32) -> f32 {
+/// `damage`, `power` more again, where `draw`, from 0 to 1, falls under the
+/// chance `attacker` crits on `defender` ([`crit_chance`]) and `extra`
+/// beside it, else as it was; an `extra` of 1 makes it certain. The chance
+/// decides whether; `power` is a patient striker's, on an overcommitted foe.
+/// Rolled as the blow enters the queue, so a crit stands there at its full
+/// weight for the defender to see.
+pub fn crit(tuning: &Tuning, damage: f32, attacker: &ActorAttributes, defender: &ActorAttributes, extra: f32, power: f32, draw: f32) -> f32 {
     if draw < crit_chance(tuning, attacker, defender) + extra {
-        damage * tuning.crit_power
+        damage * tuning.crit_power * (1.0 + power)
     } else {
         damage
     }
@@ -143,13 +144,15 @@ mod tests {
         let keen = ActorAttributes::new(0, 0, 0, 0, 0, 0, 5, 0, 0);
         let tough = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
         let plain = ActorAttributes::default();
-        assert!(crit(&tuning, 100.0, &focused, &plain, 0.0, 0.0) > 100.0, "a draw under the chance crits");
-        assert_eq!(crit(&tuning, 100.0, &focused, &plain, 0.0, 0.999), 100.0, "a draw over it does not");
-        assert_eq!(crit(&tuning, 100.0, &plain, &plain, 0.0, 0.0), 100.0, "without a Focus lead nothing crits");
+        assert!(crit(&tuning, 100.0, &focused, &plain, 0.0, 0.0, 0.0) > 100.0, "a draw under the chance crits");
+        assert_eq!(crit(&tuning, 100.0, &focused, &plain, 0.0, 0.0, 0.999), 100.0, "a draw over it does not");
+        assert_eq!(crit(&tuning, 100.0, &plain, &plain, 0.0, 0.0, 0.0), 100.0, "without a Focus lead nothing crits");
         assert_eq!(crit_chance(&tuning, &focused, &tough), 0.0, "Fitness that matches it nullifies it");
         assert!(crit_chance(&tuning, &focused, &plain) > crit_chance(&tuning, &keen, &plain), "a wider lead crits more often");
-        assert_eq!(crit(&tuning, 100.0, &focused, &plain, 0.0, 0.0), crit(&tuning, 100.0, &keen, &plain, 0.0, 0.0), "and no harder");
-        assert!(crit(&tuning, 100.0, &plain, &plain, 0.5, 0.25) > 100.0, "what Patience adds beside the contest crits too");
+        assert_eq!(crit(&tuning, 100.0, &focused, &plain, 0.0, 0.0, 0.0), crit(&tuning, 100.0, &keen, &plain, 0.0, 0.0, 0.0), "and no harder");
+        assert!(crit(&tuning, 100.0, &plain, &plain, 0.5, 0.0, 0.25) > 100.0, "what Patience adds beside the contest crits too");
+        assert!(crit(&tuning, 100.0, &plain, &plain, 1.0, 0.0, 0.999) > 100.0, "a whole extra chance is certain");
+        assert!(crit(&tuning, 100.0, &focused, &plain, 0.0, 0.2, 0.0) > crit(&tuning, 100.0, &focused, &plain, 0.0, 0.0, 0.0), "power lands it harder");
     }
 
     #[test]

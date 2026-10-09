@@ -126,7 +126,9 @@ pub fn answer_own(
         if !reacting || !combos::may_use(*ability, reacting, recovery, attrs) {
             continue;
         }
-        let answered = queue_utils::clear_threats(&mut queue, ClearType::Span { at: *at, span: attrs.span(&tuning) });
+        let span = attrs.span(&tuning);
+        let start = queue.band(*at, attrs.awareness_snap(&tuning));
+        let answered = queue_utils::clear_threats(&mut queue, ClearType::Span { at: start, span });
         gone.record(own, &answered, false, time.elapsed_secs());
     }
 }

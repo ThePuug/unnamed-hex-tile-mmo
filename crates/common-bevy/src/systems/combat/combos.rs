@@ -1,5 +1,5 @@
 use crate::{
-    components::{recovery::{Chain, Combo, GlobalRecovery}, ActorAttributes},
+    components::{recovery::{Chain, Combo, GlobalRecovery}, ActorAttributes, Attribute},
     message::AbilityType,
     systems::combat::damage as damage_calc,
 };
@@ -37,9 +37,9 @@ pub fn timing(ability: AbilityType, reacting: bool, recovery: Option<&GlobalReco
         return Some(Timing::OnTime);
     }
     let chain = recovery.chain;
-    if offered.is_some() && (chain.early_combos as usize) < attrs.ferocity().count() {
+    if offered.is_some() && (chain.early_combos as usize) < attrs.early_combos() {
         Some(Timing::Early(Early::Ferocity))
-    } else if reacting && chain.struck && (chain.early_reactions as usize) < attrs.preparation().count() {
+    } else if reacting && chain.struck && (chain.early_reactions as usize) < attrs.early_reactions() {
         Some(Timing::Early(Early::Preparation))
     } else {
         None
@@ -61,9 +61,10 @@ pub fn may_use(ability: AbilityType, reacting: bool, recovery: Option<&GlobalRec
 /// 0 to 1 (`Endurance::fatigue`).
 ///
 /// Used out of recovery, it opens a chain; inside one, it continues
-/// `prior`'s. Fired early (`timing`), it adds `Tuning::early_owed` of what it
-/// skipped to what the chain owes, which `GlobalRecovery::tick` turns into
-/// a recovery once the chain's last runs out: from now to when `prior`
+/// `prior`'s. Fired early (`timing`), it adds what it skipped to what the
+/// chain owes, less the share its commitment's facet takes off
+/// (`ActorAttributes::early_discount`), which `GlobalRecovery::tick` turns
+/// into a recovery once the chain's last runs out: from now to when `prior`
 /// would have offered it, its combo's unlock or its end. A strike taken in
 /// its own time lets Preparation fire reactions early from then on.
 ///
@@ -90,7 +91,11 @@ pub fn recovery_after(tuning: &Tuning, ability: AbilityType, reacting: bool, pri
         (Some(prior), Some(Timing::Early(by))) => {
             let offered_at = prior.combo.filter(|combo| combo.ability == ability).map_or(0.0, |combo| combo.unlock_at);
             let mut chain = prior.chain;
-            chain.owed += tuning.early_owed * (prior.remaining - offered_at).max(0.0);
+            let discount = match by {
+                Early::Ferocity => attrs.early_discount(tuning, Attribute::Might, chain.early_combos as usize),
+                Early::Preparation => attrs.early_discount(tuning, Attribute::Discipline, chain.early_reactions as usize),
+            };
+            chain.owed += (1.0 - discount) * (prior.remaining - offered_at).max(0.0);
             match by {
                 Early::Ferocity => chain.early_combos += 1,
                 Early::Preparation => chain.early_reactions += 1,
@@ -111,9 +116,9 @@ mod tests {
         GlobalRecovery { combo: Some(Combo { ability, unlock_at }), ..GlobalRecovery::new(seconds) }
     }
 
-    /// All of its levels in Might, Discipline or nothing
-    fn fierce() -> ActorAttributes { ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0) }
-    fn prepared() -> ActorAttributes { ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0) }
+    /// Six steps in Might, Discipline or nothing: T2, its core whole and no facet
+    fn fierce() -> ActorAttributes { ActorAttributes::new(-6, 0, 0, 0, 0, 0, 0, 0, 0) }
+    fn prepared() -> ActorAttributes { ActorAttributes::new(0, 0, 0, 6, 0, 0, 0, 0, 0) }
     fn plain() -> ActorAttributes { ActorAttributes::default() }
 
     #[test]
@@ -130,7 +135,7 @@ mod tests {
     #[test]
     fn ferocity_fires_the_offered_combo_early_up_to_its_tier_in_a_chain() {
         let fierce = fierce();
-        let steps = fierce.ferocity().count();
+        let steps = fierce.early_combos();
         assert!(steps > 0, "all of it in Might reaches a Ferocity tier");
         let recovery = offering(2.0, AbilityType::Frenzy, 1.5);
         assert_eq!(timing(AbilityType::Frenzy, AbilityType::Frenzy.is_reaction(), Some(&recovery), &fierce), Some(Timing::Early(Early::Ferocity)));
@@ -145,7 +150,7 @@ mod tests {
     #[test]
     fn preparation_fires_any_reaction_early_once_a_strike_stands_in_the_chain() {
         let prepared = prepared();
-        let steps = prepared.preparation().count();
+        let steps = prepared.early_reactions();
         assert!(steps > 0, "all of it in Discipline reaches a Preparation tier");
         let struck = GlobalRecovery { chain: Chain { struck: true, ..Chain::default() }, ..GlobalRecovery::new(2.0) };
         assert_eq!(timing(AbilityType::Counter, AbilityType::Counter.is_reaction(), Some(&struck), &prepared), Some(Timing::Early(Early::Preparation)));
@@ -159,14 +164,14 @@ mod tests {
     }
 
     #[test]
-    fn an_early_skill_owes_half_of_what_it_skipped_and_one_on_time_nothing() {
+    fn an_early_skill_owes_all_it_skipped_and_one_on_time_nothing() {
         // A 1s recovery offering its combo halfway, fired a quarter second
-        // in: a quarter second skipped, an eighth owed
+        // in: a quarter second skipped, all of it owed
         let tuning = Tuning::DEFAULT;
         let mut prior = offering(1.0, AbilityType::Parry, 0.5);
         prior.tick(0.25);
         let early = recovery_after(&tuning, AbilityType::Parry, AbilityType::Parry.is_reaction(), Some(&prior), &fierce(), None, 0.0);
-        assert!((early.chain.owed - 0.125).abs() < 1e-6, "owes {}", early.chain.owed);
+        assert!((early.chain.owed - 0.25).abs() < 1e-6, "owes {}", early.chain.owed);
         assert_eq!(early.remaining, tuning.recovery(AbilityType::Parry), "its own recovery, the skipped time owed apart");
         assert_eq!(early.chain.early_combos, 1);
 
@@ -194,7 +199,7 @@ mod tests {
         assert_eq!(timing(AbilityType::Parry, AbilityType::Parry.is_reaction(), Some(&feint), &prepared), Some(Timing::Early(Early::Preparation)));
         let again = recovery_after(&tuning, AbilityType::Parry, AbilityType::Parry.is_reaction(), Some(&feint), &prepared, None, 0.0);
         let offered_at = feint.combo.filter(|combo| combo.ability == AbilityType::Parry).map_or(0.0, |combo| combo.unlock_at);
-        assert!((again.chain.owed - tuning.early_owed * (feint.remaining - offered_at)).abs() < 1e-5, "half of what it skipped of the Feint's recovery");
+        assert!((again.chain.owed - (feint.remaining - offered_at)).abs() < 1e-5, "all it skipped of the Feint's recovery");
         assert_eq!((again.chain.early_reactions, again.chain.struck), (1, true), "one chain throughout");
     }
 
@@ -204,12 +209,25 @@ mod tests {
         let prepared = prepared();
         let struck = GlobalRecovery { chain: Chain { struck: true, ..Chain::default() }, ..GlobalRecovery::new(2.0) };
         let first = recovery_after(&tuning, AbilityType::Counter, AbilityType::Counter.is_reaction(), Some(&struck), &prepared, None, 0.0);
-        if prepared.preparation().count() > 1 {
-            let second = recovery_after(&tuning, AbilityType::Parry, AbilityType::Parry.is_reaction(), Some(&first), &prepared, None, 0.0);
-            let skipped = 2.0 + first.remaining;
-            assert!((second.chain.owed - tuning.early_owed * skipped).abs() < 1e-5, "each pays half its own skip, summed");
-        }
-        assert!((first.chain.owed - tuning.early_owed * 2.0).abs() < 1e-5);
+        let second = recovery_after(&tuning, AbilityType::Parry, AbilityType::Parry.is_reaction(), Some(&first), &prepared, None, 0.0);
+        let skipped = 2.0 + first.remaining;
+        assert!((second.chain.owed - skipped).abs() < 1e-5, "each pays its own skip, summed");
+        assert!((first.chain.owed - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_facet_takes_off_what_an_early_skill_owes_and_ferocitys_capstone_the_third_most() {
+        let tuning = Tuning::DEFAULT;
+        let might = |steps: i8| ActorAttributes::new(-steps, 0, 0, 0, 0, 0, 0, 0, 0);
+        let owed = |attrs: &ActorAttributes, fired: u8| {
+            let prior = GlobalRecovery { chain: Chain { early_combos: fired, ..Chain::default() }, ..offering(2.0, AbilityType::Frenzy, 1.0) };
+            recovery_after(&tuning, AbilityType::Frenzy, false, Some(&prior), attrs, None, 0.0).chain.owed
+        };
+        assert!(owed(&might(9), 0) < owed(&might(6), 0), "the facet owes less");
+        assert!(owed(&might(15), 0) < owed(&might(9), 0), "and less by its depth");
+        assert_eq!(timing(AbilityType::Frenzy, false, Some(&GlobalRecovery { chain: Chain { early_combos: 2, ..Chain::default() }, ..offering(2.0, AbilityType::Frenzy, 1.0) }), &might(15)), None, "two early at most below the capstone");
+        assert!(owed(&might(18), 2) < owed(&might(18), 1), "the capstone's third owes least");
+        assert!(owed(&might(24), 2) < owed(&might(18), 2), "less by its depth");
     }
 
     #[test]

@@ -4,9 +4,10 @@
 //! Three lanes by kind, left to right: blows, wounds, auto-attacks
 //! ([`Lane`]). A note stands at its time left, at one speed, so it reaches
 //! the hit line as it lands, and grows as it nears it. Every note shows its
-//! damage. A band across the lanes at the hit line, as deep as the span,
-//! marks what a reaction pressed now takes, and every note in it carries a
-//! white rim. A cleared note shatters
+//! damage. A band across the lanes, as deep as the span, marks what a
+//! reaction pressed now takes, from the hit line or from the threat
+//! Awareness's capstone snaps it to, and every note in it carries a white
+//! rim. A cleared note shatters
 //! where it stands, broken; a landed one pulses on the line in its lane's
 //! colour with a flash down its lane.
 //!
@@ -62,8 +63,9 @@ pub struct HighwayUniform {
     pub span: f32,
     pub base: f32,
     pub unused: f32,
-    /// The band a reaction takes from, as seconds from landing: from x, the
-    /// hit line, to y, the span. No band where y is not past x.
+    /// The band a reaction takes from, as seconds from landing: from x,
+    /// where it starts (the hit line, or a snapped threat), to y, the span
+    /// past that. No band where y is not past x.
     pub band: Vec4,
     /// Each lane's landing flash, left to right in x, y and z, fading from 1
     pub flash: Vec4,
@@ -285,9 +287,12 @@ pub fn update(
     let key = |t: &QueuedThreat| (t.source, t.inserted_at, t.lane());
     let mut drawn = Vec::with_capacity(queue.threats.len());
 
-    // The band a reaction pressed now takes from, at the hit line
+    // The band a reaction pressed now takes from: at the hit line, or from
+    // the threat Awareness's capstone snaps it to, drawn where it starts
     let span = attrs.span(&tuning);
-    let band = Vec4::new(0.0, span.as_secs_f32(), 0.0, 0.0);
+    let band_at = queue.band(now, attrs.awareness_snap(&tuning));
+    let from = band_at.saturating_sub(now).as_secs_f32();
+    let band = Vec4::new(from, from + span.as_secs_f32(), 0.0, 0.0);
     if materials.get(&material.0).is_some_and(|lit| lit.highway.band != band) {
         if let Some(mut lit) = materials.get_mut(&material.0) {
             lit.highway.band = band;
@@ -320,7 +325,7 @@ pub fn update(
         drawn.push(note.key);
 
         let d = depth(threat.lands_at().saturating_sub(now));
-        let taken = threat.in_band(now, span);
+        let taken = threat.in_band(band_at, span);
         let (fill, rim, label) = look(threat, attrs, health, taken);
         let alpha = fade(d);
         let size = NOTE * scale(d);

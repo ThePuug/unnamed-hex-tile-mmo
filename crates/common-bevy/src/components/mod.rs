@@ -3,7 +3,6 @@ pub mod behaviour;
 pub mod engagement;
 pub mod entity_type;
 pub mod equipment;
-pub mod intimidation;
 pub mod heading;
 pub mod hex_assignment;
 pub mod keybits;
@@ -169,31 +168,50 @@ impl CommitmentTier {
         Self(((value as u32 * 100) / (whole * 12)).min(Self::TOP as u32) as u8)
     }
 
-    /// How much of the whole commitment this tier gives, 0 at T0 to 1 at
-    /// T8: `t / (t + 2)`, scaled so T8 is whole, so each tier adds less than
-    /// the one before and the first tiers give the most.
-    pub fn curve(self) -> f32 {
-        let at = |tier: f32| tier / (tier + 2.0);
-        at(self.0 as f32) / at(Self::TOP as f32)
+    /// How deep this tier holds `unlock`: None below the tier it opens at,
+    /// 0 there, one more for each tier after, no deeper than its last rung
+    pub fn rung(self, unlock: Unlock) -> Option<usize> {
+        self.0.checked_sub(unlock.opens()).map(|past| past.min(unlock.rungs() - 1) as usize)
     }
 
-    /// What a commitment gives at this tier, `min` at T0 and `max` at T8,
-    /// on the [`Self::curve`] between, so every tuned value a commitment
-    /// gives is those two numbers.
-    pub fn between(self, min: f32, max: f32) -> f32 {
-        min + (max - min) * self.curve()
+    /// `values`, one for each rung of `unlock`, at this tier: None below it
+    pub fn at<T: Copy, const N: usize>(self, unlock: Unlock, values: [T; N]) -> Option<T> {
+        self.rung(unlock).map(|rung| values[rung.min(N - 1)])
     }
 
     /// The tier's place, 0 to 8
     pub fn index(self) -> usize {
         self.0 as usize
     }
+}
 
-    /// A count the commitment gives (early combos, early reactions): one
-    /// for each quarter of the whole its [`Self::curve`] has crossed, so the
-    /// first comes by T1 and the fourth at T8
-    pub fn count(self) -> usize {
-        (self.curve() * 4.0 + 1e-4).floor() as usize
+/// The three unlocks of a commitment's ladder, each a mechanic of its own
+/// and each deepened by the tiers after it until the next opens: the core
+/// at T1 (T2 its depth), the facet at T3 (T4-T5) and the capstone at T6
+/// (T7-T8). A capstone costs 18 of a build's 25 steps, so no build holds two.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unlock {
+    Core,
+    Facet,
+    Capstone,
+}
+
+impl Unlock {
+    /// The tier it opens at
+    const fn opens(self) -> u8 {
+        match self {
+            Self::Core => 1,
+            Self::Facet => 3,
+            Self::Capstone => 6,
+        }
+    }
+
+    /// How many tiers it holds before the next opens or the ladder ends
+    const fn rungs(self) -> u8 {
+        match self {
+            Self::Core => 2,
+            Self::Facet | Self::Capstone => 3,
+        }
     }
 }
 
@@ -301,7 +319,7 @@ impl Pair {
 /// the methods here, each a share of the whole build ([`Self::ceiling`]),
 /// never of the level.
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Serialize)]
-#[require(intimidation::Intimidation, Swing)]
+#[require(Swing)]
 pub struct ActorAttributes {
     /// Might ↔ Agility
     physique: Pair,
@@ -505,22 +523,18 @@ impl ActorAttributes {
 
     // Commitment: an attribute's tier, by the name it goes by
 
-    /// Ferocity, Might: its count is how many combos it may fire early in a
-    /// chain (`combos::may_use`)
+    /// Ferocity, Might: combos fired early (`early_combos`)
     pub fn ferocity(&self) -> CommitmentTier { self.tier(Attribute::Might) }
-    /// Grace, Agility: the arc it strikes within (`arc`)
+    /// Grace, Agility: the flank, the arc and the stride (`flank`, `arc`, `flank_stride`)
     pub fn grace(&self) -> CommitmentTier { self.tier(Attribute::Agility) }
-    /// Intimidation, Physique: its count is how much its bank fills each
-    /// second it is engaged (`intimidation_fill`)
+    /// Intimidation, Physique: its zone (`intimidation_pace`, `intimidation_toll`, `intimidation_zone`)
     pub fn intimidation(&self) -> CommitmentTier { self.tier(Attribute::Physique) }
-    /// Preparation, Discipline: its count is how many reactions it may fire
-    /// early in a chain once a strike taken in its own time stands in it
-    /// (`combos::may_use`)
+    /// Preparation, Discipline: reactions fired early (`early_reactions`, `slip`)
     pub fn preparation(&self) -> CommitmentTier { self.tier(Attribute::Discipline) }
-    /// Patience, Instinct: each attack at it overcommits its attacker, and its
-    /// skills crit an overcommitted foe likelier (`patience_crit`)
+    /// Patience, Instinct: each attack at it overcommits its attacker
+    /// (`patience_crit`, `patience_power`, `patience_opening`)
     pub fn patience(&self) -> CommitmentTier { self.tier(Attribute::Instinct) }
-    /// Awareness, Resolve: how far behind the front threat its reactions reach (`span`)
+    /// Awareness, Resolve: its band (`span`, `awareness_refund`, `awareness_snap`)
     pub fn awareness(&self) -> CommitmentTier { self.tier(Attribute::Resolve) }
 
     /// The actor's level, whether or not a draft laid over it has placed
@@ -603,43 +617,112 @@ impl ActorAttributes {
         self.base_potency(tuning) * tuning.auto_damage * (1.0 + tuning.force_auto * self.pair_share(Attribute::Might))
     }
 
-    /// How much this actor's Intimidation bank fills each second it is
-    /// engaged (`components::intimidation::Intimidation`): its tier's
-    /// count, 0 to 4, twice that while it is ignored.
-    pub fn intimidation_fill(&self) -> f32 {
-        self.intimidation().count() as f32
+    /// Combos it may fire early in a chain (`combos::timing`): one at
+    /// Ferocity's core, two at its depth, and a third at its capstone
+    pub fn early_combos(&self) -> usize {
+        let ferocity = self.ferocity();
+        ferocity.at(Unlock::Core, [1, 2]).unwrap_or(0) + ferocity.at(Unlock::Capstone, [1]).unwrap_or(0)
+    }
+
+    /// Reactions it may fire early in a chain once a strike taken in its own
+    /// time stands in it (`combos::timing`): one at Preparation's core, two
+    /// at its depth
+    pub fn early_reactions(&self) -> usize {
+        self.preparation().at(Unlock::Core, [1, 2]).unwrap_or(0)
+    }
+
+    /// Share less of the time it skipped the `nth` skill fired early in a
+    /// chain owes (from 0), fired early by the commitment of `by`: its facet,
+    /// or for Ferocity's third combo its capstone; none without them
+    pub fn early_discount(&self, tuning: &Tuning, by: Attribute, nth: usize) -> f32 {
+        let tier = self.tier(by);
+        let third = if by == Attribute::Might && nth == 2 { tier.at(Unlock::Capstone, tuning.ferocity_third) } else { None };
+        third.or_else(|| tier.at(Unlock::Facet, tuning.early_facet)).unwrap_or(0.0)
+    }
+
+    /// Tiles an early reaction carries it: Preparation's capstone; None
+    /// below it
+    pub fn slip(&self, tuning: &Tuning) -> Option<usize> {
+        self.preparation().at(Unlock::Capstone, tuning.preparation_slip)
+    }
+
+    /// Share of its speed a foe in its zone keeps: Intimidation's core;
+    /// None with no Intimidation, which has no zone
+    pub fn intimidation_pace(&self, tuning: &Tuning) -> Option<f32> {
+        self.intimidation().at(Unlock::Core, tuning.intimidation_pace)
+    }
+
+    /// Share more each skill costs a foe in its zone: Intimidation's facet
+    pub fn intimidation_toll(&self, tuning: &Tuning) -> f32 {
+        self.intimidation().at(Unlock::Facet, tuning.intimidation_toll).unwrap_or(0.0)
+    }
+
+    /// Tiles past its reach its zone reaches, a zone that pins a foe in it:
+    /// Intimidation's capstone; None below it, where the zone is its reach
+    /// and pins nothing
+    pub fn intimidation_zone(&self, tuning: &Tuning) -> Option<i32> {
+        self.intimidation().at(Unlock::Capstone, tuning.intimidation_zone)
     }
 
     /// The share harder this actor's strikes land from past their target's
-    /// forward faces, a flank: `Tuning::grace_flank_min` at T0 to
-    /// `grace_flank_max` at T8, by its Grace.
+    /// forward faces, a flank: Grace's core
     pub fn flank(&self, tuning: &Tuning) -> f32 {
-        self.grace().between(tuning.grace_flank_min, tuning.grace_flank_max)
+        self.grace().at(Unlock::Core, tuning.grace_flank).unwrap_or(0.0)
+    }
+
+    /// Share of its speed a flank strike of this actor's leaves its target
+    /// for a swing, its stride broken: Grace's capstone; None below it
+    pub fn flank_stride(&self, tuning: &Tuning) -> Option<f32> {
+        self.grace().at(Unlock::Capstone, tuning.grace_stride)
     }
 
     /// The share likelier this actor's skills crit a foe for each stack of
-    /// Overcommitted on it (`Status::overcommitted`): `Tuning::patience_crit_min`
-    /// at T0 to `patience_crit_max` at T8.
+    /// Overcommitted on it (`Status::overcommitted`): Patience's core
     pub fn patience_crit(&self, tuning: &Tuning) -> f32 {
-        self.patience().between(tuning.patience_crit_min, tuning.patience_crit_max)
+        self.patience().at(Unlock::Core, tuning.patience_crit).unwrap_or(0.0)
     }
 
-    /// How wide this actor's band is, from Awareness:
-    /// `Tuning::awareness_span_min`, which every actor has, to
-    /// `awareness_span_max`. A reaction takes every threat landing within
-    /// this long after it is pressed (`QueuedThreat::in_band`), so a wider
-    /// band makes a reaction easier to time.
+    /// The share harder this actor's crits land on an overcommitted foe:
+    /// Patience's facet
+    pub fn patience_power(&self, tuning: &Tuning) -> f32 {
+        self.patience().at(Unlock::Facet, tuning.patience_power).unwrap_or(0.0)
+    }
+
+    /// The stacks of Overcommitted on a foe at which this actor's next skill
+    /// on it crits for certain and spends them: Patience's capstone; None
+    /// below it
+    pub fn patience_opening(&self, tuning: &Tuning) -> Option<usize> {
+        self.patience().at(Unlock::Capstone, tuning.patience_opening)
+    }
+
+    /// How wide this actor's band is: `Tuning::awareness_band` for every
+    /// actor, wider by Awareness's core. A reaction takes every threat
+    /// landing within this long after it is pressed (`QueuedThreat::in_band`),
+    /// so a wider band makes a reaction easier to time.
     pub fn span(&self, tuning: &Tuning) -> std::time::Duration {
-        std::time::Duration::from_secs_f32(self.awareness().between(tuning.awareness_span_min, tuning.awareness_span_max))
+        std::time::Duration::from_secs_f32(self.awareness().at(Unlock::Core, tuning.awareness_core).unwrap_or(tuning.awareness_band))
+    }
+
+    /// Share of a reaction's price each threat it takes past the first pays
+    /// back: Awareness's facet
+    pub fn awareness_refund(&self, tuning: &Tuning) -> f32 {
+        self.awareness().at(Unlock::Facet, tuning.awareness_refund).unwrap_or(0.0)
+    }
+
+    /// How soon after a press its nearest incoming threat may land and draw
+    /// the band to start at it (`ReactionQueue::band`), so the band reaches
+    /// that much deeper: Awareness's capstone; None below it, where the band
+    /// starts at the press
+    pub fn awareness_snap(&self, tuning: &Tuning) -> Option<std::time::Duration> {
+        self.awareness().at(Unlock::Capstone, tuning.awareness_snap).map(std::time::Duration::from_secs_f32)
     }
 
     /// The half-angle either side of its heading this actor strikes within:
-    /// `Tuning::grace_arc_min`, the three forward faces, with no Grace, and
-    /// each tier wider to `grace_arc_max` at T8, which leaves only what stands
-    /// straight behind it out of reach. A strike past the forward faces
-    /// breaks its stride (`targeting::across`).
+    /// `Tuning::grace_arc`, the three forward faces, with no Grace, wider by
+    /// Grace's facet. A strike past the forward faces breaks its stride
+    /// (`targeting::across`).
     pub fn arc(&self, tuning: &Tuning) -> f32 {
-        self.grace().between(tuning.grace_arc_min, tuning.grace_arc_max)
+        self.grace().at(Unlock::Facet, tuning.grace_arc_facet).unwrap_or(tuning.grace_arc)
     }
 
     /// Seconds between auto-attacks at `against`: `Tuning::base_interval`,
@@ -784,12 +867,14 @@ mod tests {
     }
 
     #[test]
-    fn patience_crits_an_overcommitted_foe_likelier_by_its_tier() {
+    fn patience_crits_an_overcommitted_foe_likelier_then_harder_then_for_certain() {
         let tuning = Tuning::DEFAULT;
-        let patient = ActorAttributes::new(0, 0, 0, 0, 0, 0, -10, 0, 0);
-        assert_eq!(ActorAttributes::default().patience_crit(&tuning), tuning.patience_crit_min, "without Patience, nothing");
-        assert_eq!(patient.patience_crit(&tuning), patient.patience().between(tuning.patience_crit_min, tuning.patience_crit_max));
-        assert!(patient.patience_crit(&tuning) > ActorAttributes::default().patience_crit(&tuning));
+        let patient = |steps: i8| ActorAttributes::new(0, 0, 0, 0, 0, 0, -steps, 0, 0);
+        assert_eq!(ActorAttributes::default().patience_crit(&tuning), 0.0, "without Patience, nothing");
+        assert!(patient(3).patience_crit(&tuning) > 0.0 && patient(3).patience_power(&tuning) == 0.0, "the core first");
+        assert!(patient(9).patience_power(&tuning) > 0.0 && patient(9).patience_opening(&tuning).is_none(), "then the facet");
+        assert!(patient(18).patience_opening(&tuning).is_some(), "then the capstone");
+        assert!(patient(24).patience_opening(&tuning) < patient(18).patience_opening(&tuning), "its depth opens sooner");
     }
 
     #[test]
@@ -847,14 +932,49 @@ mod tests {
     }
 
     #[test]
-    fn a_commitment_gives_the_most_at_its_first_tiers() {
-        let tiers: Vec<f32> = (0..=CommitmentTier::TOP).map(|t| CommitmentTier::calculate(24 * t as u16, 200).curve()).collect();
-        assert_eq!(tiers[0], 0.0);
-        assert!((tiers[8] - 1.0).abs() < 1e-6, "T8 is the whole");
-        assert!(tiers.windows(3).all(|w| w[2] - w[1] < w[1] - w[0]), "each tier adds less than the one before");
-        assert_eq!(CommitmentTier::T5.between(60.0, 150.0), 60.0 + 90.0 * CommitmentTier::T5.curve());
-        assert_eq!(CommitmentTier::T2.between(1.0, 1.0), 1.0, "a value the same at both ends is the same at every tier");
-        assert_eq!([0u8, 1, 2, 3, 8].map(|t| CommitmentTier::calculate(24 * t as u16, 200).count()), [0, 1, 2, 3, 4], "the first count by T1, the last at T8");
+    fn a_ladder_opens_its_core_facet_and_capstone_at_t1_t3_and_t6() {
+        let tier = |t: u8| CommitmentTier::calculate(24 * t as u16, 200);
+        let rungs = |unlock| (0..=CommitmentTier::TOP).map(|t| tier(t).rung(unlock)).collect::<Vec<_>>();
+        assert_eq!(rungs(Unlock::Core), [None, Some(0), Some(1), Some(1), Some(1), Some(1), Some(1), Some(1), Some(1)]);
+        assert_eq!(rungs(Unlock::Facet), [None, None, None, Some(0), Some(1), Some(2), Some(2), Some(2), Some(2)]);
+        assert_eq!(rungs(Unlock::Capstone), [None, None, None, None, None, None, Some(0), Some(1), Some(2)]);
+        assert_eq!(tier(4).at(Unlock::Facet, [1, 2, 3]), Some(2), "a value for each rung");
+    }
+
+    #[test]
+    fn no_build_holds_two_capstones() {
+        // A capstone takes 18 axis steps; a second would take 36 of 25
+        let attributes = [Attribute::Might, Attribute::Agility, Attribute::Physique, Attribute::Discipline, Attribute::Instinct, Attribute::Resolve];
+        let steps = ActorAttributes::STEPS as i8;
+        for split in 0..=steps {
+            let attrs = ActorAttributes::new(-split, 0, 0, -(steps - split), 0, 0, 0, 0, 0);
+            let capstones = attributes.iter().filter(|&&a| attrs.tier(a).rung(Unlock::Capstone).is_some()).count();
+            assert!(capstones <= 1, "{split}");
+        }
+    }
+
+    #[test]
+    fn each_commitment_climbs_its_ladder() {
+        let tuning = Tuning::DEFAULT;
+        let might = |steps: i8| ActorAttributes::new(-steps, 0, 0, 0, 0, 0, 0, 0, 0);
+        assert_eq!([0, 3, 6, 18].map(|s| might(s).early_combos()), [0, 1, 2, 3], "Ferocity: a combo, a second, a third");
+        assert!(might(9).early_discount(&tuning, Attribute::Might, 0) > 0.0 && might(6).early_discount(&tuning, Attribute::Might, 0) == 0.0);
+        assert!(might(18).early_discount(&tuning, Attribute::Might, 2) > might(18).early_discount(&tuning, Attribute::Might, 0), "the third owes least");
+        let agile = |steps: i8| ActorAttributes::new(steps, 0, 0, 0, 0, 0, 0, 0, 0);
+        assert!(agile(3).flank(&tuning) > 0.0 && agile(3).arc(&tuning) == tuning.grace_arc);
+        assert!(agile(9).arc(&tuning) > tuning.grace_arc && agile(9).flank_stride(&tuning).is_none());
+        assert!(agile(18).flank_stride(&tuning).is_some());
+        let physique = |steps: i8| ActorAttributes::new(0, 0, 0, -steps, 0, 0, 0, 0, 0);
+        assert!(physique(0).intimidation_pace(&tuning).is_none() && physique(3).intimidation_pace(&tuning).is_some());
+        assert!(physique(9).intimidation_toll(&tuning) > 0.0 && physique(9).intimidation_zone(&tuning).is_none());
+        assert!(physique(18).intimidation_zone(&tuning).is_some());
+        let discipline = |steps: i8| ActorAttributes::new(0, 0, 0, steps, 0, 0, 0, 0, 0);
+        assert_eq!([0, 3, 6, 24].map(|s| discipline(s).early_reactions()), [0, 1, 2, 2], "Preparation: two early reactions at most");
+        assert!(discipline(18).slip(&tuning).is_some() && discipline(15).slip(&tuning).is_none());
+        let resolve = |steps: i8| ActorAttributes::new(0, 0, 0, 0, 0, 0, steps, 0, 0);
+        assert!(resolve(6).span(&tuning) > resolve(3).span(&tuning) && resolve(3).span(&tuning) > resolve(0).span(&tuning));
+        assert_eq!(resolve(24).span(&tuning), resolve(6).span(&tuning), "the band grows at the core only");
+        assert!(resolve(9).awareness_refund(&tuning) > 0.0 && resolve(18).awareness_snap(&tuning).is_some());
     }
 
     #[test]

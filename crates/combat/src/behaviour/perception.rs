@@ -203,7 +203,7 @@ mod tests {
                 ability: None,
                 dot: 0.0,
                 ticked: 0,
-                bind: 0.0,
+                stride: 0.0,
             };
             skill.judged(&DICE, ent, &threat).as_millis() as i64 - threat.lands_at().as_millis() as i64
         }).collect();
