@@ -210,7 +210,7 @@ pub fn perform(score: &Score) -> Vec<Played> {
             n.1 = n.1.max(n.0 + SHORTEST_S);
         }
         notes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-        let mut fades: Vec<(f64, f64)> = Vec::new();
+        let mut fades: Vec<(f64, f64, f64)> = Vec::new();
         // The notes slurred from the one before, by start and pitch.
         let mut slurred: Vec<(f64, u8)> = Vec::new();
         if let Some(g) = &guitar {
@@ -279,8 +279,10 @@ pub fn perform(score: &Score) -> Vec<Played> {
                 next += 1;
             }
             let held = entry.filter(|&(_, off)| t < off).map_or(0.0, |(on, _)| swell(t - on));
-            // A slide off a phrase's end fades with its fall.
-            let fade = fades.iter().find(|(a, b)| t >= *a && t < *b).map_or(0.0, |(a, b)| -24.0 * ((t - a) / (b - a)) as f32);
+            // A slide off a phrase's end fades with its fall, and goes on
+            // dying past the tone's end: lifted there, the tone's release
+            // would come back at the fallen pitch, a second note.
+            let fade = fades.iter().find(|(a, _, c)| t >= *a && t < *c).map_or(0.0, |(a, b, c)| if t < *b { -24.0 * ((t - a) / (b - a)) as f32 } else { -24.0 - 24.0 * ((t - b) / (c - b)) as f32 });
             let db = held + BREATH_DB * (breath.at(t) - 1.0) / 2.0 + fade;
             let tick = score.tick_at(t).min(score.end().saturating_sub(1));
             let gain = score.trim_at(tick).clamp(0.0, 1.0) * 10f32.powf(db / 20.0);
@@ -300,11 +302,12 @@ pub fn perform(score: &Score) -> Vec<Played> {
 /// `cents`: bent or slid into where it arrives, its vibrato where it is
 /// held, let go its own way where it ends a phrase. `whole` is whether a
 /// whole step under it is in the key, so a bend rises through the mode.
-/// A fall off a phrase's end is a fade in `fades` as well. A `plain` tone
-/// takes its vibrato alone. Whether it slid in from the note before, the
-/// string never picked.
+/// A fall off a phrase's end is a fade in `fades` as well: from where the
+/// fall starts, to the tone's end, to where the fade is through — the next
+/// tone, or a fall's length on. A `plain` tone takes its vibrato alone.
+/// Whether it slid in from the note before, the string never picked.
 #[allow(clippy::too_many_arguments)]
-fn ornament(out: &mut Vec<Played>, fades: &mut Vec<(f64, f64)>, g: &Ornaments, ch: u8, (on, off, pitch, cents): (f64, f64, u8, f32), prev: Option<(f64, f64, u8)>, next: Option<(f64, f64, u8)>, whole: bool, plain: bool, rng: &mut Rng) -> bool {
+fn ornament(out: &mut Vec<Played>, fades: &mut Vec<(f64, f64, f64)>, g: &Ornaments, ch: u8, (on, off, pitch, cents): (f64, f64, u8, f32), prev: Option<(f64, f64, u8)>, next: Option<(f64, f64, u8)>, whole: bool, plain: bool, rng: &mut Rng) -> bool {
     let at = |t: f64, c: f32, out: &mut Vec<Played>| out.push(Played { at: t, msg: Msg::Bend { channel: ch, value: bend_on(c, g.range) } });
     let span = |r: (f64, f64), rng: &mut Rng| r.0 + (r.1 - r.0) * rng.f32() as f64;
     let len = off - on;
@@ -373,12 +376,15 @@ fn ornament(out: &mut Vec<Played>, fades: &mut Vec<(f64, f64)>, g: &Ornaments, c
             from
         }
         2 => {
+            // The fall glides, as the lip lets go — stepped by the
+            // semitone it is a run of notes — and the tone dies with it.
             let from = (off - g.fall_s).max(settled);
-            let fall = rng.range(g.fall.0, g.fall.1);
-            for k in 1..=fall {
-                at(from + (off - from) * k as f64 / fall as f64, base - 100.0 * k as f32, out);
+            let fall = rng.range(g.fall.0, g.fall.1) as f32;
+            for k in 1..=8 {
+                let x = k as f32 / 8.0;
+                at(from + (off - from) * x as f64, base - 100.0 * fall * x, out);
             }
-            fades.push((from, off));
+            fades.push((from, off, next.map_or(off + g.fall_s, |n| n.0.max(off + 0.01))));
             from
         }
         _ => off,
