@@ -276,7 +276,9 @@ pub struct Server {
     pub spread: f64,
     /// The wall-clock moment the server's game clock read 0 at, from
     /// `Init`: the calendar's anchor, read through [`Server::wall`] by the
-    /// date and the sky alone, never by timing.
+    /// date and the sky alone, never by timing. The client's own clock
+    /// until `Init`, so the sky drawn while connecting is about now: the
+    /// calendar cannot read a moment whose season began before the epoch.
     pub wall_at_zero: u128,
 }
 
@@ -290,7 +292,7 @@ impl Default for Server {
             margin: 40.0,
             early: 40.0,
             spread: 10.0,
-            wall_at_zero: 0,
+            wall_at_zero: common_bevy::systems::wall_now(),
         }
     }
 }

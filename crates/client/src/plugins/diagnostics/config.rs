@@ -34,9 +34,12 @@ pub struct LightingClock {
 }
 
 impl Default for LightingClock {
-    /// Held at nine in the morning.
+    /// Held at nine in the morning of the day the client starts on. Never
+    /// a day of 1970: the calendar reads no moment whose season began
+    /// before the epoch.
     fn default() -> Self {
-        Self { held: Some(9 * HOUR_MS) }
+        let now = common_bevy::systems::wall_now();
+        Self { held: Some(now - now % DAY_MS + 9 * HOUR_MS) }
     }
 }
 
@@ -140,11 +143,12 @@ mod tests {
         let mut clock = LightingClock::default();
         assert_eq!(clock.held_at().as_deref(), Some("09:00"));
         assert_eq!(clock.at(1_000), clock.at(500_000));
+        let held_day = clock.at(0) / DAY_MS;
 
         let wall = 3 * DAY_MS + 5 * HOUR_MS;
         clock.hold(wall, LightingClock::parse_time("1830").unwrap());
         assert_eq!(clock.held_at().as_deref(), Some("18:30"));
-        assert_eq!(clock.at(wall) / DAY_MS, 0, "the held day is the clock's, not wall time's");
+        assert_eq!(clock.at(wall) / DAY_MS, held_day, "the held day is the clock's, not wall time's");
 
         clock.sync();
         assert_eq!(clock.held_at(), None);
