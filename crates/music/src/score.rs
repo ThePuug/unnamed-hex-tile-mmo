@@ -359,13 +359,19 @@ impl Score {
     }
 
     /// What the part on `channel` plays through where its instrument is
-    /// recorded at the jack: the rig fitted for it, else the one its role
-    /// and instrument call for.
+    /// recorded at the jack: the rig fitted for it, else the gear the
+    /// band's member for its part brings, else the one its role and
+    /// instrument call for.
     pub fn rig(&self, channel: u8) -> &'static Rig {
-        self.rigs.iter().find(|(c, _)| *c == channel).map_or_else(|| {
-            let inst = self.instrument(channel);
-            rigs::of(inst.role, inst.program)
-        }, |(_, r)| *r)
+        if let Some((_, r)) = self.rigs.iter().find(|(c, _)| *c == channel) {
+            return r;
+        }
+        let inst = self.instrument(channel);
+        let part = self.parts.iter().find(|(c, _)| *c == channel).map(|(_, p)| *p);
+        match (self.band, part) {
+            (Some(band), Some(part)) => band.rig(part, inst.program).unwrap_or_else(|| rigs::of(inst.role, inst.program)),
+            _ => rigs::of(inst.role, inst.program),
+        }
     }
 
     pub fn section_at(&self, tick: u32) -> Option<&Section> {

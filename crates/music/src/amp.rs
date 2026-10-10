@@ -8,7 +8,7 @@
 
 use std::f32::consts::PI;
 
-use crate::rigs::{Amp, Cabinet, Delay, Rig, BASS_HZ, PRESENCE_HZ, TREBLE_HZ};
+use crate::rigs::{Amp, Cabinet, Compressor, Delay, Rig, BASS_HZ, PRESENCE_HZ, TREBLE_HZ};
 use audio::SAMPLE_RATE;
 
 /// How many times the sample rate the amp clips at.
@@ -26,6 +26,9 @@ const STAGE_TOP_HZ: f32 = 9_000.0;
 /// repeats either side of the middle.
 pub fn play(rig: &Rig, jack: &[f32], eighth_s: f64) -> Vec<(f32, f32)> {
     let mut x = jack.to_vec();
+    if let Some(c) = &rig.compressor {
+        x = hold(c, &x);
+    }
     if let Some(amp) = &rig.amp {
         x = head(amp, &x);
     }
@@ -36,6 +39,26 @@ pub fn play(rig: &Rig, jack: &[f32], eighth_s: f64) -> Vec<(f32, f32)> {
         Some(d) => delay(d, &x, eighth_s),
         None => x.into_iter().map(|m| (m, 0.0)).collect(),
     }
+}
+
+/// `x` held by `c`: a peak follower with the compressor's attack and
+/// release, and every rise of its level over the threshold given back
+/// divided by the ratio.
+fn hold(c: &Compressor, x: &[f32]) -> Vec<f32> {
+    let threshold_db = c.threshold_db;
+    let attack = (-1.0 / (c.attack_s * SAMPLE_RATE as f32)).exp();
+    let release = (-1.0 / (c.release_s * SAMPLE_RATE as f32)).exp();
+    let slope = 1.0 - 1.0 / c.ratio;
+    let mut env = 0.0f32;
+    x.iter()
+        .map(|&s| {
+            let v = s.abs();
+            let coeff = if v > env { attack } else { release };
+            env = coeff * env + (1.0 - coeff) * v;
+            let db = 20.0 * env.max(1e-9).log10();
+            if db > threshold_db { s * 10f32.powf((threshold_db - db) * slope / 20.0) } else { s }
+        })
+        .collect()
 }
 
 /// The cabinet's impulse response, 48 kHz.
@@ -351,5 +374,30 @@ mod tests {
         let right = |i: usize| y[i].0 - y[i].1;
         assert!(left(24_000) > 0.5 && right(24_000).abs() < 1e-6);
         assert!(right(36_000) > 0.5 && left(36_000).abs() < 1e-6);
+    }
+
+    /// Peak over RMS, the mean over one-second windows.
+    fn crest(x: &[f32]) -> f32 {
+        let wins: Vec<f32> = x.chunks(SAMPLE_RATE as usize).map(|w| w.iter().fold(0.0f32, |m, s| m.max(s.abs())) / rms(w)).collect();
+        wins.iter().sum::<f32>() / wins.len() as f32
+    }
+
+    #[test]
+    fn a_held_pluck_keeps_a_floor() {
+        // Three plucked low A's a second apart, each a sharp strike
+        // falling twelve decibels a second.
+        let rate = SAMPLE_RATE as f32;
+        let x: Vec<f32> = (0..3 * SAMPLE_RATE as usize)
+            .map(|i| {
+                let t = (i % SAMPLE_RATE as usize) as f32 / rate;
+                let strike = if t < 0.005 { 2.0 } else { 1.0 };
+                0.3 * strike * 10f32.powf(-12.0 * t / 20.0) * (2.0 * PI * 55.0 * t).sin()
+            })
+            .collect();
+        let held = hold(&crate::rigs::BASS.compressor.unwrap(), &x);
+        assert!(crest(&held) < crest(&x), "held {} dry {}", crest(&held), crest(&x));
+        // The tail stands nearer the strike than it did.
+        let late = |y: &[f32]| rms(&y[40_000..47_000]) / rms(&y[500..7_500]);
+        assert!(late(&held) > late(&x), "held tail {} dry {}", late(&held), late(&x));
     }
 }

@@ -158,6 +158,9 @@ pub struct Member {
     pub program: u8,
     /// The player of the part this member is.
     pub player: &'static Player,
+    /// The gear they bring, where their instrument is recorded at the
+    /// jack; none, the rig the program calls for (`rigs::of`).
+    pub rig: Option<&'static Rig>,
     pub feel: Feel,
 }
 
@@ -260,9 +263,10 @@ use gm::*;
 /// member's feel, `Feel`'s fields in order.
 #[allow(clippy::too_many_arguments)]
 const fn m(part: Part, program: u8, player: &'static Player, ornaments: f32, vibrato: f32, rate: f32, lean: f32, loose: f32, force: f32, length: f32) -> Member {
-    Member { part, program, player, feel: Feel { ornaments, vibrato, rate, lean, loose, force, length } }
+    Member { part, program, player, rig: None, feel: Feel { ornaments, vibrato, rate, lean, loose, force, length } }
 }
 
+use crate::rigs::Rig;
 use players::{DOUBLER, DRONE, DRUMMER, FOLK_CLARINET, HARP_PLAYER, LEAD_GUITARIST, MUTED_TRUMPETER, OBOIST, PAN_PIPER, PICKER, PIPER, PLAIN, SAXOPHONIST, SECOND, SECTION, VILLAGE_CLARINET, VILLAGE_FIDDLE, VILLAGE_TRUMPET, ZURNACI};
 use Part::*;
 
@@ -579,6 +583,12 @@ impl Band {
     pub fn player(&self, part: Part, program: u8) -> Option<Player> {
         let member = self.members(part).find(|m| m.program == program).or_else(|| self.members(part).next())?;
         Some(tilt(*member.player, member.feel))
+    }
+
+    /// The gear the member playing `part` on `program` brings, where
+    /// they bring any.
+    pub fn rig(&self, part: Part, program: u8) -> Option<&'static Rig> {
+        self.members(part).find(|m| m.program == program).and_then(|m| m.rig)
     }
 
     /// How much more or less often the band reaches for the choice named

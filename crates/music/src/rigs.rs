@@ -7,9 +7,16 @@
 //! A rig shapes only an instrument recorded at the jack (`Voice::direct`),
 //! which sounds as a guitar's pickup does before any amp: an instrument
 //! recorded through an amp already has one, and a program the default
-//! bank plays has its own. A part plays through the rig its role and
-//! program call for (`of`) unless its score fits another
+//! bank plays has its own. A rig is gear, so it is the band's: a part
+//! plays through what its member brings (`Member::rig`), else the rig
+//! its role and program call for (`of`), unless its score fits another
 //! (`Score::rig_up`).
+//!
+//! A bass at the jack is held: a compressor first, nothing after, since a
+//! plucked recording falls away under a chord held across bars and a
+//! record's bass is the steadiest thing in the mix — its peaks over a
+//! second some four times its level (De Man et al. 2014), ours eight
+//! unheld.
 //!
 //! The amp follows a high-gain head of the eighties as the literature
 //! models one (`proofs/research/guitar-lead-findings.md`): a mid boost
@@ -23,6 +30,8 @@
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rig {
     pub name: &'static str,
+    /// A compressor pedal first, holding the instrument to a floor.
+    pub compressor: Option<Compressor>,
     pub amp: Option<Amp>,
     pub cabinet: Option<Cabinet>,
     pub delay: Option<Delay>,
@@ -87,9 +96,36 @@ pub struct Delay {
     pub tone_hz: f32,
 }
 
+/// A compressor: its threshold at the jack, dBFS — fixed, so the tone the
+/// render measures a part by goes through what its notes go through and
+/// the evening holds; what it gives back of a rise over the threshold;
+/// and how fast it takes hold and lets go, seconds — the attack within a
+/// period of the lowest string, or the pluck passes whole and the body
+/// alone is squashed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Compressor {
+    pub threshold_db: f32,
+    pub ratio: f32,
+    pub attack_s: f32,
+    pub release_s: f32,
+}
+
 pub const BASS_HZ: f32 = 120.0;
 pub const TREBLE_HZ: f32 = 2500.0;
 pub const PRESENCE_HZ: f32 = 4000.0;
+
+/// The bass's hold, the gentlest that brings a blues line to the crest a
+/// record's bass track has over a second: a ballad's held note still
+/// falls — some four decibels over two seconds, where unheld it fell
+/// eleven — since a harder hold leaves a note level to the end, an organ
+/// where a bass was. The threshold sits well under a note at the jack (a
+/// bass at the velocities a part is written at peaks near −9 dBFS); it
+/// hardly matters once the whole note is over it, and the ratio and the
+/// attack set the hold.
+const HELD: Compressor = Compressor { threshold_db: -30.0, ratio: 2.0, attack_s: 0.0002, release_s: 0.1 };
+
+/// The bass's: held, with nothing after.
+pub const BASS: Rig = Rig { name: "bass", compressor: Some(HELD), amp: None, cabinet: None, delay: None };
 
 /// A Tube Screamer's: 720 Hz under its clipping, its tone near the middle.
 const SCREAMER: Boost = Boost { hz: 720.0, gain_db: 18.0, tone_hz: 4000.0 };
@@ -109,6 +145,7 @@ const PLEXI: &[Stage] = &[Stage { low_cut_hz: 30.0, gain_db: 12.0, bias: 0.1 }, 
 /// and a dotted eighth either side under it.
 pub const LEAD: Rig = Rig {
     name: "lead",
+    compressor: None,
     amp: Some(Amp { boost: Some(SCREAMER), drive_db: 6.0, stages: HOT, bass_db: -2.0, mid_db: 3.0, mid_hz: 800.0, treble_db: 1.0, presence_db: 2.0 }),
     cabinet: Some(Cabinet::V30),
     delay: Some(Delay { left_eighths: 2.0, right_eighths: 3.0, feedback: 0.3, mix: 0.18, tone_hz: 3500.0 }),
@@ -118,6 +155,7 @@ pub const LEAD: Rig = Rig {
 /// cabinet, so a twin is two guitarists.
 pub const LEAD_WARM: Rig = Rig {
     name: "warm lead",
+    compressor: None,
     amp: Some(Amp { boost: Some(SCREAMER), drive_db: 2.0, stages: HOT, bass_db: 0.0, mid_db: 2.0, mid_hz: 650.0, treble_db: -1.0, presence_db: 0.0 }),
     cabinet: Some(Cabinet::Celestion),
     delay: Some(Delay { left_eighths: 3.0, right_eighths: 2.0, feedback: 0.3, mix: 0.18, tone_hz: 3000.0 }),
@@ -127,6 +165,7 @@ pub const LEAD_WARM: Rig = Rig {
 /// little, dry.
 pub const RHYTHM: Rig = Rig {
     name: "rhythm",
+    compressor: None,
     amp: Some(Amp { boost: Some(SCREAMER), drive_db: 0.0, stages: HOT, bass_db: 1.0, mid_db: -2.0, mid_hz: 650.0, treble_db: 1.0, presence_db: 1.0 }),
     cabinet: Some(Cabinet::V30),
     delay: None,
@@ -135,18 +174,21 @@ pub const RHYTHM: Rig = Rig {
 /// The other rhythm's: a plexi's crunch through the rounder cabinet.
 pub const CRUNCH: Rig = Rig {
     name: "crunch",
+    compressor: None,
     amp: Some(Amp { boost: None, drive_db: 6.0, stages: PLEXI, bass_db: 0.0, mid_db: 1.0, mid_hz: 700.0, treble_db: 0.0, presence_db: 1.0 }),
     cabinet: Some(Cabinet::Celestion),
     delay: None,
 };
 
-/// The rig a part of `role` on `program` plays through where its score
-/// fits none: General MIDI's distortion guitar into the hot head, its
+/// The rig a part of `role` on `program` plays through where its band
+/// brings none and its score fits none: General MIDI's fingered and
+/// picked bass held; its distortion guitar into the hot head, its
 /// overdriven guitar into the warmer one or the plexi; a lead with its
 /// delay, a rhythm dry.
 pub fn of(role: crate::score::Role, program: u8) -> &'static Rig {
     use crate::score::Role;
     match (role, program) {
+        (_, 33 | 34) => &BASS,
         (Role::Melody, 29) => &LEAD_WARM,
         (Role::Melody, _) => &LEAD,
         (_, 29) => &CRUNCH,
