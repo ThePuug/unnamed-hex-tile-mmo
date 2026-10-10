@@ -3,7 +3,6 @@
 //! what plays next; the sheet at the foot; and the popovers, the credits
 //! among them.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui::text::{LayoutJob, TextWrapping};
