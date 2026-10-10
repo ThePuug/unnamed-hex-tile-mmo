@@ -527,11 +527,10 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     // do not share would decide a close one the same way every run: each
     // fighter faces its foes' end give or take two slots, near enough to
     // spot them as a staged party would
-    let map = world.resource::<Map>().clone();
     let mut fighters = world.query::<(Entity, &Side, &common_bevy::components::Loc, &mut Heading)>();
     for (ent, side, loc, mut heading) in fighters.iter_mut(world) {
         let foes = if *side == WEST { east_at } else { west_at };
-        let toward = Heading::between(&map, **loc, foes).unwrap_or(*heading);
+        let toward = Heading::between(**loc, foes).unwrap_or(*heading);
         *heading = toward.turned(dice.roll(("facing", ent)).pick(5) as i32 - 2);
     }
     let mut sides = world.query::<(Entity, &Side)>();

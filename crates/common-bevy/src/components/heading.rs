@@ -2,10 +2,9 @@
 //! after it stops, the direction it faces.
 
 use bevy::prelude::*;
-use qrz::{Convert, Qrz};
+use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
-use crate::resources::map::Map;
 
 /// Bearings a heading can take, evenly spaced around the compass. A multiple
 /// of six, so every tile-to-tile bearing of the hex grid is a heading.
@@ -100,10 +99,12 @@ impl Heading {
         Self::from_world_dir((to - from).xz())
     }
 
-    /// The heading from one tile's centre toward another's.
-    pub fn between(map: &Map, from: Qrz, to: Qrz) -> Option<Self> {
-        let (from, to): (Vec3, Vec3) = (map.convert(from), map.convert(to));
-        Self::toward(from, to)
+    /// The heading from one tile's centre toward another's, or None where
+    /// they share a column. The offset is taken on the grid, never between
+    /// the two world points: far from the origin those round apart.
+    pub fn between(from: Qrz, to: Qrz) -> Option<Self> {
+        let offset = to - from;
+        (offset.q != 0 || offset.r != 0).then(|| Self::from_hex(offset))
     }
 
     /// The heading of a hex offset on the flat-top grid, north for zero.

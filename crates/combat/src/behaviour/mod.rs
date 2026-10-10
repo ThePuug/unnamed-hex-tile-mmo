@@ -111,7 +111,7 @@ impl BodyItem<'_, '_> {
     /// it faces the way to take it.
     #[allow(clippy::too_many_arguments)]
     pub fn step_toward(&mut self, loc: &Loc, start: Qrz, next: Qrz, movement_speed: f32, pace: f32, dt: i16, map: &Map, nntree: &NNTree) {
-        let Some(goal) = Heading::between(map, start, next) else {
+        let Some(goal) = Heading::between(start, next) else {
             return;
         };
         let facing = self.turn.heading.turn_toward(goal).1 <= WALK_ARC;
@@ -128,12 +128,12 @@ impl BodyItem<'_, '_> {
     /// its back.
     #[allow(clippy::too_many_arguments)]
     pub fn back_toward(&mut self, loc: &Loc, start: Qrz, next: Qrz, watched: Qrz, movement_speed: f32, pace: f32, dt: i16, map: &Map, nntree: &NNTree) {
-        let Some(away) = Heading::between(map, start, next) else {
+        let Some(away) = Heading::between(start, next) else {
             return;
         };
         let goal = match away.reversed() {
             facing if is_in_facing_cone(facing, *loc, Loc::new(watched)) => facing,
-            facing => Heading::between(map, **loc, watched).unwrap_or(facing),
+            facing => Heading::between(**loc, watched).unwrap_or(facing),
         };
         self.steer(goal, Walk::Backward, movement_speed, pace, dt, map, nntree);
     }
@@ -141,7 +141,7 @@ impl BodyItem<'_, '_> {
     /// Turns it `dt` milliseconds toward the tile `to` at its `pace`,
     /// standing where it is.
     pub fn face(&mut self, loc: &Loc, to: Qrz, pace: f32, dt: i16, map: &Map, nntree: &NNTree) {
-        if let Some(goal) = Heading::between(map, **loc, to) {
+        if let Some(goal) = Heading::between(**loc, to) {
             self.steer(goal, Walk::Still, 0.0, pace, dt, map, nntree);
         }
     }
