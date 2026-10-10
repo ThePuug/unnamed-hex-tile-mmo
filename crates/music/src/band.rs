@@ -201,6 +201,30 @@ pub struct Blues {
     pub answers: Answers,
     pub runs_over: bool,
     pub harmony: Harmony,
+    /// How the band opens a song, what it does once in one, and how it
+    /// ends one, each as often as it does
+    /// (`proofs/research/blues-bands-findings.md` §8): a bandstand's
+    /// conventions are a band's, not a song's.
+    pub openings: &'static [(Intro, f32)],
+    pub events: &'static [(Event, f32)],
+    pub endings: &'static [(Ending, f32)],
+    /// How the bass moves where the song has it moving
+    /// (`proofs/research/blues-bands-findings.md` §3), each as often as
+    /// the band takes it; the rumba's three and three and two is the
+    /// groove's, not the band's.
+    pub moving: &'static [(Moving, f32)],
+}
+
+/// A bass's motion under a moving bar: a walk, a chord tone on every
+/// beat and a chromatic step into the next bar's root; the shuffle's box,
+/// the root, its fifth and its seventh on the beats, the up-town box
+/// leaping to the octave; or the riff, one figure in the minor pentatonic
+/// over every chord's root, the guitar in unison an octave up.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Moving {
+    Walking,
+    Boxes,
+    Riff,
 }
 
 /// The harmony a blues band puts under the frame
@@ -237,6 +261,44 @@ pub enum Last {
     FlatSix,
     Picardy,
     FlatTwo,
+}
+
+/// How the song opens: a vamp on the tonic the band layers into; the
+/// lead soloing a whole chorus before the head; four bars from the V; the
+/// lead alone in free time over a held tonic; or the head at once.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Intro {
+    Vamp,
+    SoloChorus,
+    Turnaround,
+    Rubato,
+    Straight,
+}
+
+/// The one thing the song does once, about two thirds through, or
+/// nothing: a chorus in stop-time, the band striking each bar's first
+/// beat for eight bars under the lead; a chorus the band drops to the
+/// bass and the kit for; or a vamp on the tonic at a lifted tempo before
+/// the end. The bridge and the feel switch the recordings also take are
+/// unbuilt.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Event {
+    None,
+    StopTime,
+    Drop,
+    CodaVamp,
+}
+
+/// How the song ends: its last chord held and rung; a vamp on the
+/// tonic falling away; the band stopping on the last chorus's eleventh
+/// bar for the lead's break, then a stab; or the last two bars three
+/// times.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Ending {
+    Held,
+    VampOut,
+    Break,
+    Tag,
 }
 
 /// The Chicago harp combo's harmony: the plain form, the quick change
@@ -456,10 +518,10 @@ pub const BANDS: &[Band] = &[
             m(Keys, PIANO, &PICKER, 1.0, 1.0, 0.5, -1.0, 1.1, 5.0, 0.95),
             m(Echo, CLEAN_GUITAR, &PICKER, 1.0, 1.0, 0.5, -1.0, 1.1, 5.0, 0.95),
         ],
-        habits: Habits::Blues(Blues { answers: Answers::Obbligato, runs_over: true, harmony: PLAIN_BLUES }),
+        habits: Habits::Blues(Blues { answers: Answers::Obbligato, runs_over: true, harmony: PLAIN_BLUES, openings: &[(Intro::Turnaround, 40.0), (Intro::Vamp, 30.0), (Intro::Straight, 20.0), (Intro::SoloChorus, 10.0)], events: &[(Event::None, 40.0), (Event::StopTime, 30.0), (Event::Drop, 15.0), (Event::CodaVamp, 15.0)], endings: &[(Ending::Break, 40.0), (Ending::Tag, 35.0), (Ending::Held, 25.0)], moving: &[(Moving::Boxes, 55.0), (Moving::Walking, 45.0)] }),
         prefs: Prefs {
             tempo: (0.4, 1.0),
-            leans: &[("slow twelve-eight", 1.3), ("walking four", 1.3), ("rumba", 0.7), ("six-eight", 0.6), ("rush hour", 1.3), ("corner", 1.3), ("vamp", 2.0), ("turnaround", 1.5), ("rubato", 0.5), ("stop-time", 2.0), ("break", 2.0), ("tag", 1.5)],
+            leans: &[("slow twelve-eight", 1.3), ("walking four", 1.3), ("rumba", 0.7), ("six-eight", 0.6), ("rush hour", 1.3), ("corner", 1.3)],
         },
     },
     Band {
@@ -478,10 +540,10 @@ pub const BANDS: &[Band] = &[
             m(Echo, VIBES, &PICKER, 1.0, 1.0, 0.5, 5.0, 0.9, -8.0, 1.05),
             m(Shimmer, VIBES, &PICKER, 1.0, 1.0, 0.5, 5.0, 0.9, -8.0, 1.05),
         ],
-        habits: Habits::Blues(Blues { answers: Answers::Pads, runs_over: false, harmony: JAZZ_BLUES }),
+        habits: Habits::Blues(Blues { answers: Answers::Pads, runs_over: false, harmony: JAZZ_BLUES, openings: &[(Intro::Rubato, 40.0), (Intro::SoloChorus, 25.0), (Intro::Vamp, 20.0), (Intro::Turnaround, 15.0)], events: &[(Event::None, 50.0), (Event::Drop, 25.0), (Event::CodaVamp, 15.0), (Event::StopTime, 10.0)], endings: &[(Ending::Held, 50.0), (Ending::VampOut, 35.0), (Ending::Tag, 15.0)], moving: &[(Moving::Walking, 100.0)] }),
         prefs: Prefs {
             tempo: (0.2, 0.7),
-            leans: &[("walking four", 2.0), ("rumba", 0.6), ("six-eight", 0.8), ("late night", 1.5), ("after hours", 1.5), ("rubato", 2.5), ("solo chorus", 1.5), ("vamp", 0.5), ("stop-time", 0.5), ("drop", 1.5), ("held", 2.0), ("vamp out", 1.5)],
+            leans: &[("walking four", 2.0), ("rumba", 0.6), ("six-eight", 0.8), ("late night", 1.5), ("after hours", 1.5)],
         },
     },
     Band {
@@ -502,10 +564,10 @@ pub const BANDS: &[Band] = &[
             m(Echo, E_PIANO, &PICKER, 1.0, 1.0, 0.5, 0.0, 0.9, 2.0, 0.9),
             m(Shimmer, VIBES, &PICKER, 1.0, 1.0, 0.5, 0.0, 0.9, 2.0, 0.9),
         ],
-        habits: Habits::Blues(Blues { answers: Answers::Sparse, runs_over: true, harmony: SOUL_BLUES }),
+        habits: Habits::Blues(Blues { answers: Answers::Sparse, runs_over: true, harmony: SOUL_BLUES, openings: &[(Intro::Straight, 40.0), (Intro::Turnaround, 30.0), (Intro::Vamp, 30.0)], events: &[(Event::None, 35.0), (Event::StopTime, 25.0), (Event::CodaVamp, 25.0), (Event::Drop, 15.0)], endings: &[(Ending::Tag, 40.0), (Ending::VampOut, 35.0), (Ending::Break, 25.0)], moving: &[(Moving::Riff, 60.0), (Moving::Walking, 40.0)] }),
         prefs: Prefs {
             tempo: (0.3, 0.8),
-            leans: &[("rumba", 1.8), ("six-eight", 1.5), ("slow twelve-eight", 1.2), ("walking four", 0.6), ("stroll", 1.3), ("straight", 2.0), ("turnaround", 1.5), ("coda vamp", 2.0), ("drop", 1.5), ("tag", 2.0), ("break", 1.5)],
+            leans: &[("rumba", 1.8), ("six-eight", 1.5), ("slow twelve-eight", 1.2), ("walking four", 0.6), ("stroll", 1.3)],
         },
     },
     Band {
