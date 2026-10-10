@@ -129,6 +129,10 @@ const SWIRLY: &[(u8, u8)] = &[(50, 48)];
 /// fingered bass is a round floor from the low D to the A over the low
 /// E, a line over it folded down; the picked starts at the C♯ over the
 /// low E and reaches high, so it suits a part that sits high, a solo.
+/// The brass — the trumpet open and under the harmon mute, the tenor
+/// trombone, the tuba, the horn, each sustained — are VSCO 2 Community
+/// Edition's, built by `banks/install.py` from its SFZ mappings: the
+/// default bank's muted trumpet, a blues band's lead, was heard as bad.
 pub const VOICES: &[Voice] = &[
     melodic(0, "upright-piano-kw.sf2", (21, 108)),
     melodic(16, "drawbar-organ.sf2", (33, 98)),
@@ -139,6 +143,11 @@ pub const VOICES: &[Voice] = &[
     Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(30, "guitar-di.sf2", (35, 86)) },
     melodic(33, "yr-finger-bass.sf2", (26, 45)),
     Voice { program: 34, percussion: false, file: "pasta-bass.sf2", bank: 0, preset: 34, keys: &[], range: (37, 85), takes: Takes::One, direct: false, legato: None },
+    melodic(56, "vsco-trumpet.sf2", (53, 84)),
+    melodic(57, "vsco-trombone.sf2", (34, 65)),
+    melodic(58, "vsco-tuba.sf2", (29, 62)),
+    melodic(59, "vsco-muted-trumpet.sf2", (58, 81)),
+    melodic(60, "vsco-horn.sf2", (33, 77)),
     melodic(66, "tenor-sax.sf2", (43, 89)),
     Voice { program: 16, percussion: true, file: "muldjord-kit.sf2", bank: 0, preset: 0, keys: MULDJORD, range: (0, 127), takes: Takes::One, direct: false, legato: None },
     Voice { program: 40, percussion: true, file: "swirly-kit.sf2", bank: 0, preset: 0, keys: SWIRLY, range: (0, 127), takes: Takes::Keys(4), direct: false, legato: None },

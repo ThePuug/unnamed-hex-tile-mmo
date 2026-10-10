@@ -39,6 +39,7 @@ pub const SOUNDS: &[Credit] = &[
     Credit { what: "Guitars, finger bass, piano, organ, tenor sax", work: "FreePats (freepats.zenvoid.org)", licence: "CC0", licence_link: ZERO },
     Credit { what: "Picked bass, brush kit", work: "Karoryfer Samples (github.com/sfzinstruments)", licence: "CC0", licence_link: ZERO },
     Credit { what: "Harmonica", work: "Versilian Community Sample Library (github.com/sgossner/VCSL)", licence: "CC0", licence_link: ZERO },
+    Credit { what: "Trumpet, muted trumpet, trombone, tuba, horn", work: "VSCO 2 Community Edition by Versilian Studios (github.com/sgossner/VSCO-2-CE)", licence: "CC0", licence_link: ZERO },
     Credit {
         what: "Every other instrument",
         work: "GeneralUser GS by S. Christian Collins (schristiancollins.com)",
