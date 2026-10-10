@@ -5112,6 +5112,7 @@ name = "music"
 version = "0.1.0"
 dependencies = [
  "audio",
+ "common",
  "rustysynth",
  "sevenz-rust2",
 ]

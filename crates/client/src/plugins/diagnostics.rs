@@ -32,7 +32,7 @@ impl Plugin for DiagnosticsPlugin {
 
         app.init_resource::<DiagnosticsState>();
         app.add_systems(PostStartup, milestones::log_started);
-        app.add_systems(Update, (milestones::log_stage, milestones::log_video));
+        app.add_systems(Update, (milestones::log_stage, milestones::log_video, milestones::log_window));
         app.init_resource::<network_ui::NetworkMetrics>();
         app.init_resource::<grid::PendingGridMesh>();
         app.add_systems(Startup, grid::setup_grid_overlay);

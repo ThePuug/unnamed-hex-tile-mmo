@@ -33,19 +33,10 @@ pub fn open(given: Option<PathBuf>) -> Result<Bank, String> {
     })
 }
 
-/// Where installed banks live: the user's own local data folder, never
-/// beside the program — a Mac app that changes its bundle breaks its
-/// signature, and a program under Program Files cannot write there.
+/// Where installed banks live: the studio's `music-banks` folder, which
+/// neither the game nor the music player owns.
 pub fn folder() -> Option<PathBuf> {
-    let var = |name| std::env::var_os(name).map(PathBuf::from).filter(|p| p.is_absolute());
-    let data = if cfg!(windows) {
-        var("LOCALAPPDATA")?.join("Music Player")
-    } else if cfg!(target_os = "macos") {
-        var("HOME")?.join("Library/Application Support/Music Player")
-    } else {
-        var("XDG_DATA_HOME").or_else(|| var("HOME").map(|h| h.join(".local/share")))?.join("music-player")
-    };
-    Some(data.join("banks"))
+    common::user_data::folder("music-banks")
 }
 
 /// Unpacks `archive` beside `folder` and puts it in the folder's place

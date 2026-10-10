@@ -30,7 +30,6 @@ use bevy::{
     prelude::*,
     render::view::screenshot::{Screenshot, ScreenshotCaptured},
     time::TimeUpdateStrategy,
-    window::PrimaryWindow,
 };
 use common_bevy::{
     components::{
@@ -48,6 +47,7 @@ use crate::{
     components::{ViewHud, Viewed},
     plugins::{
         diagnostics::DiagnosticsState,
+        settings::{Display, Resolution, VideoSettings},
         shell::{self, Entered, Stage},
     },
     resources::{LoadedChunks, RenderOrigin, SummaryMeshes},
@@ -226,7 +226,7 @@ fn enter(
     mut entered: ResMut<Entered>,
     mut writer: MessageWriter<Try>,
     mut next: ResMut<NextState<Stage>>,
-    mut window: Query<&mut Window, With<PrimaryWindow>>,
+    mut video: ResMut<VideoSettings>,
     mut viewing: ResMut<shell::view::Viewing>,
     mut rejoin: ResMut<shell::view::Rejoin>,
 ) {
@@ -241,12 +241,8 @@ fn enter(
     if !matches!(recorder.phase, Phase::Enter) {
         return;
     }
-    if let Ok(mut window) = window.single_mut() {
-        let [w, h] = recorder.script.size;
-        if window.resolution.physical_width() != w || window.resolution.physical_height() != h {
-            window.resolution.set_physical_resolution(w, h);
-        }
-    }
+    let [w, h] = recorder.script.size;
+    video.set_if_neq(VideoSettings { display: Display::Windowed, resolution: Some(Resolution::sized(w, h)), ..*video });
     match stage.get() {
         Stage::CharacterSelect if !entered.0 => shell::play(&mut writer, &mut next, &mut entered),
         Stage::Playing => {
