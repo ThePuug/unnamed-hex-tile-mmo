@@ -104,12 +104,13 @@ pub enum Event {
     /// Server → Client: evict these chunks (tiles + meshes). Server-authoritative
     /// to prevent client/server sync drift on which chunks are loaded.
     EvictChunks { ent: Entity, chunks: ArrayVec<[ChunkId; 64]> },
-    /// Server → Client: batch of summary hex updates for the visual frontier.
-    /// Summaries beyond the fixed streaming radius are computed server-side.
+    /// Server → Client: summaries for the visual frontier, computed
+    /// server-side beyond the fixed streaming radius, and the regions the
+    /// client drops, heights and mesh. The server decides both (INV-005).
     SummaryBatch {
         ent: Entity,
         additions: Vec<SummaryData>,
-        removals: Vec<SummaryKey>,
+        removals: Vec<crate::summary_mesh::MeshRegionKey>,
     },
     /// Client → Server (Try): wear an item from the bag, or take it off
     Wear { ent: Entity, item: Item, on: bool },

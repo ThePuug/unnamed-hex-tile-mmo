@@ -164,7 +164,10 @@ client drops and says so with `Event::EvictChunks`; the client never evicts tile
 data on its own. `server::systems::actor::do_incremental` diffs
 `calculate_visible_chunks(new_chunk, FIXED_STREAM_RADIUS)` against
 `VisibleChunkCache.sent`; `client::systems::world::evict_data` consumes it. One
-authority prevents drift over which chunks are loaded.
+authority prevents drift over which chunks are loaded. Summary regions go
+the same way: `Event::SummaryBatch.removals` names the regions a client
+drops, heights and mesh, chosen by `server::systems::summary::pass_summary_regions`
+as they leave every band's reach by a ring, against `VisibleSummaryCache.sent_regions`.
 
 **INV-006 — LoD levels nest.** Summary scales triple (`LOD_LEVELS`), so every
 coarse summary center is also a fine summary center, and `sample_center_z`'s 7

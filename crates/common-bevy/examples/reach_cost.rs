@@ -6,7 +6,7 @@ use std::time::Instant;
 fn main() {
     let bands = compute_active_bands(reach_wu());
     let t = Instant::now();
-    let regions = visible_lod_regions(&bands, 1234.5, -987.0, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU);
+    let regions = visible_lod_regions(&bands, 1234.5, -987.0, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU, 0);
     let enumerate = t.elapsed();
     let lat = mesh_region_lattice();
     let t = Instant::now();

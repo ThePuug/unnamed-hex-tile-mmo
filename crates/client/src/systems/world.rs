@@ -616,11 +616,7 @@ pub fn dispatch_summary_tasks(
         if !covered {
             continue; // replacement not on screen yet — hold the old mesh
         }
-        if let Some(state) = summary_meshes.states.remove(&key) {
-            if let Some(entity) = state.entity {
-                commands.entity(entity).despawn();
-            }
-        }
+        summary_meshes.drop_region(&key, &mut commands);
     }
 
     // Dispatch build tasks for needed regions, nearest-first so the terrain
@@ -1540,7 +1536,7 @@ mod tests {
 
             // Producer set, to the same reach as the consumer.
             let bands = compute_active_bands(common_bevy::summary::reach_wu());
-            let produced = visible_lod_regions(&bands, 0.0, 0.0, boundary);
+            let produced = visible_lod_regions(&bands, 0.0, 0.0, boundary, 0);
 
             // (b) Data coverage: needed r>0 regions reaching past the
             // boundary must be produced.

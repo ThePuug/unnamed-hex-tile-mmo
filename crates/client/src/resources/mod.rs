@@ -592,6 +592,17 @@ pub struct SummaryMeshes {
     pub epoch: u64,
 }
 
+impl SummaryMeshes {
+    /// Takes down a region's mesh where one stands, and forgets its state.
+    pub fn drop_region(&mut self, key: &MeshRegionKey, commands: &mut Commands) {
+        if let Some(state) = self.states.remove(key) {
+            if let Some(entity) = state.entity {
+                commands.entity(entity).despawn();
+            }
+        }
+    }
+}
+
 /// Marker component for summary mesh entities.
 #[derive(Component)]
 pub struct SummaryMesh;
@@ -699,6 +710,12 @@ impl SummaryCache {
     /// The regions noted as drawing a revised summary since the last call.
     pub fn take_revised(&self) -> HashSet<MeshRegionKey> {
         std::mem::take(&mut *self.revised.lock().expect("the lock is never poisoned"))
+    }
+
+    /// Forgets a region the server took back, and any revision noted for it.
+    pub fn remove_region(&self, key: &MeshRegionKey) {
+        self.regions.remove(key);
+        self.revised.lock().expect("the lock is never poisoned").remove(key);
     }
 }
 

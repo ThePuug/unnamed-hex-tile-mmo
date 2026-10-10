@@ -67,6 +67,7 @@ pub fn write_do(
     mut buffers: ResMut<InputQueues>,
     mut loaded_chunks: ResMut<LoadedChunks>,
     summary_cache: Res<crate::resources::SummaryCache>,
+    mut summary_meshes: ResMut<crate::resources::SummaryMeshes>,
     map: Res<common_bevy::resources::map::Map>,
     mut network_metrics: ResMut<NetworkMetrics>,
     time: Res<Time>,
@@ -238,7 +239,7 @@ pub fn write_do(
             Do { event: Event::EvictChunks { ent: _, chunks } } => {
                 do_writer.write(Do { event: Event::EvictChunks { ent: Entity::PLACEHOLDER, chunks } });
             }
-            Do { event: Event::SummaryBatch { ent: _, additions, removals: _ } } => {
+            Do { event: Event::SummaryBatch { ent: _, additions, removals } } => {
                 // Group additions by mesh region
                 let region_lat = common_bevy::summary::mesh_region_lattice();
                 let mut by_region: std::collections::HashMap<common_bevy::summary_mesh::MeshRegionKey, std::collections::HashMap<(i32,i32), common_bevy::summary::SummaryCell>> = std::collections::HashMap::new();
@@ -249,6 +250,12 @@ pub fn write_do(
                 }
                 for (key, cells) in by_region {
                     summary_cache.insert_region(key, crate::resources::RegionData { cells });
+                }
+                // The server took these back (INV-005): their heights go,
+                // and the mesh standing on them
+                for key in &removals {
+                    summary_cache.remove_region(key);
+                    summary_meshes.drop_region(key, &mut commands);
                 }
             }
             _ => {

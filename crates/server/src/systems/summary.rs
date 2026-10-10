@@ -49,6 +49,11 @@ pub const MAX_SUMMARY_TASKS: usize = 16;
 /// den is drawn (`dens::sight`).
 const CONTEXT_LEVEL: u32 = LOD_LEVELS[2];
 
+/// Region rings past a band's reach a sent region is kept before it is
+/// taken back: a player on the edge is not sent the same region again
+/// with every step.
+const KEEP_RINGS: u32 = 1;
+
 /// Whether a region is streamed for a player at `(px, pz)` heading `dir`:
 /// inside the context radius always, beyond it when any of it can lie in
 /// the sector, its centre judged with the slack of its own circumradius.
@@ -86,11 +91,19 @@ pub fn pass_summary_regions(
 
         let (cam_wx, cam_wz) = flat_top_tile_center(loc.q, loc.r, 1.0);
         let facing = heading.to_world_dir();
-        let visible_regions = visible_lod_regions(&bands, cam_wx, cam_wz, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU);
+        let visible_regions = visible_lod_regions(&bands, cam_wx, cam_wz, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU, 0);
 
-        // No removals on the wire: the client treats summary data as durable
-        // (its mesh lifecycle is position-based, its cache is session-long),
-        // so `sent_regions` tracks "ever sent" and grows with explored area.
+        // A region sent is taken back once it lies a ring past every band's
+        // reach, whatever the heading (INV-005): the client holds exactly
+        // what was sent and not taken back, and comes back to a region as
+        // to one never seen.
+        let kept = visible_lod_regions(&bands, cam_wx, cam_wz, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU, KEEP_RINGS);
+        let removals: Vec<MeshRegionKey> = vis_cache.sent_regions.iter().filter(|rk| !kept.contains(rk)).copied().collect();
+        if !removals.is_empty() {
+            vis_cache.sent_regions.retain(|rk| kept.contains(rk));
+            writer.write(Do { event: Event::SummaryBatch { ent, additions: Vec::new(), removals } });
+        }
+
         let mut cached_additions = Vec::new();
         let mut pending = Vec::new();
         for rk in &visible_regions {
@@ -332,7 +345,7 @@ mod tests {
     fn the_sector_keeps_the_context_ring_and_a_share_of_the_rest() {
         let bands = compute_active_bands(reach_wu());
         let (px, pz) = (1234.5, -987.0);
-        let regions = visible_lod_regions(&bands, px, pz, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU);
+        let regions = visible_lod_regions(&bands, px, pz, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU, 0);
         let context = threshold_horiz(CONTEXT_LEVEL);
         let (mut near, mut far, mut far_kept) = (0usize, 0usize, 0usize);
         let facing = Heading::from_slot(5).to_world_dir();

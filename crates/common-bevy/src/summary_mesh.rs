@@ -38,7 +38,7 @@ use crate::{
 };
 
 /// Key identifying a mesh region within a specific distance band.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MeshRegionKey {
     /// Summary radius for this band.
     pub r: u32,
@@ -683,11 +683,16 @@ pub fn region_tiles_loaded(key: MeshRegionKey, loaded_chunks: &HashSet<ChunkId>)
 /// producer covers one region ring more than the consumer needs at both
 /// ends of every band — without it, the horizon shell and the regions just
 /// inside the boundary would wait forever.
+///
+/// `margin_rings` widens every band's reach by that many region rings:
+/// none for what is sent, one for what is kept, so a region sent at the
+/// edge is not taken back as the player steps back over it.
 pub fn visible_lod_regions(
     bands: &[Band],
     cam_wx: f32,
     cam_wz: f32,
     local_boundary_wu: f32,
+    margin_rings: u32,
 ) -> HashSet<MeshRegionKey> {
     use crate::summary::{mesh_region_extent_wu, mesh_region_spacing_wu, summary_width_wu};
     let circum = |r: u32| mesh_region_extent_wu(r) / 3.0_f32.sqrt();
@@ -695,16 +700,17 @@ pub fn visible_lod_regions(
     for band in bands {
         let half_extent = 0.5 * mesh_region_extent_wu(band.r);
         let ring = mesh_region_spacing_wu(band.r);
+        let margin = margin_rings as f32 * ring;
         // Every region whose footprint touches the band is produced, as
         // the consumer enumerates them: a region centred just outside an
         // edge still has summaries inside it, and membership by centre
         // alone would leave it to no band.
         let (win_inner, win_outer) = (band.inner_wu, band.outer_wu);
-        let outer = win_outer + half_extent + ring;
+        let outer = win_outer + half_extent + ring + margin;
         // A band whose regions and rings cannot reach past the local
         // boundary is fully consumer-owned (Map-computed).
         if outer > local_boundary_wu {
-            let inner = (win_inner - half_extent).max(local_boundary_wu) - ring;
+            let inner = (win_inner - half_extent - margin).max(local_boundary_wu) - ring;
             out.extend(visible_mesh_regions_in_band_ungated(
                 band.r, cam_wx, cam_wz, inner.max(0.0), outer,
             ));
@@ -719,7 +725,7 @@ pub fn visible_lod_regions(
         // circumradius again.
         let Some(c) = coarser_level(band.r) else { continue };
         let cell_reach = summary_lattice(c).scale as f32 + summary_width_wu(c);
-        let reach = half_extent + circum(band.r) + cell_reach + circum(c);
+        let reach = half_extent + circum(band.r) + cell_reach + circum(c) + margin;
         let outer_c = win_outer + reach;
         if outer_c <= local_boundary_wu { continue; }
         let inner_c = (win_inner - reach).max(local_boundary_wu) - mesh_region_spacing_wu(c);
