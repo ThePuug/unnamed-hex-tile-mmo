@@ -258,17 +258,21 @@ impl Map {
     }
 
     /// The tile's seven vertices (six corners, then the centre) on the
-    /// terrain surface: corners at the mean of the three tiles meeting there
-    /// (`surface::cell_corner_zs`), the same surface the mesh draws and
-    /// physics walks.
-    pub fn vertices_with_slopes(&self, qrz: Qrz) -> Vec<Vec3> {
-        let mut verts = self.geo.vertices(qrz);
+    /// terrain surface, about the tile's own column: corners at the mean of
+    /// the three tiles meeting there (`surface::cell_corner_zs`), the same
+    /// surface the mesh draws and physics walks.
+    pub fn sloped_corners(&self, qrz: Qrz) -> Vec<Vec3> {
+        // About the column's foot, never the tile's world position: a mesh
+        // built on these is exact however far out the tile is, and is
+        // placed by its tile (`RenderOrigin::render_tile`).
+        let mut verts = self.geo.vertices(Qrz { q: 0, r: 0, z: 0 });
         let corner_zs = crate::surface::cell_corner_zs((qrz.q, qrz.r), |q, r| {
             self.get_by_qr(q, r).map(|(t, _)| t.z)
         });
         for (v, z) in verts.iter_mut().zip(corner_zs) {
             v.y = crate::surface::height_y(z.unwrap_or(qrz.z as f32));
         }
+        verts[6].y = crate::surface::height_y(qrz.z as f32);
         verts
     }
 

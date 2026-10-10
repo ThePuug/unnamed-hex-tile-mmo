@@ -4,7 +4,6 @@
 //! tier badge on the ring.
 
 use bevy::prelude::*;
-use bevy_camera::primitives::Aabb;
 use bevy_light::NotShadowCaster;
 
 use crate::components::TargetIndicator;
@@ -39,11 +38,8 @@ pub fn setup(
         MeshMaterial3d(hostile_material),
         Transform::default(),
         Visibility::Hidden,
-        Aabb::default(),
         NotShadowCaster,
-        TargetIndicator {
-            indicator_type: IndicatorType::Hostile,
-        },
+        TargetIndicator { indicator_type: IndicatorType::Hostile, tile: None },
     ));
 
     // Green material for ally targets
@@ -61,17 +57,14 @@ pub fn setup(
         MeshMaterial3d(ally_material),
         Transform::default(),
         Visibility::Hidden,
-        Aabb::default(),
         NotShadowCaster,
-        TargetIndicator {
-            indicator_type: IndicatorType::Ally,
-        },
+        TargetIndicator { indicator_type: IndicatorType::Ally, tile: None },
     ));
 }
 
 /// Moves each ring onto its target's tile, or hides it, every frame.
 pub fn update(
-    mut indicator_query: Query<(&mut Mesh3d, &mut Transform, &mut Visibility, &mut Aabb, &TargetIndicator)>,
+    mut indicator_query: Query<(&mut Mesh3d, &mut Transform, &mut Visibility, &mut TargetIndicator)>,
     local_player_query: Query<(&common_bevy::components::target::Target, Option<&common_bevy::components::ally_target::AllyTarget>, &common_bevy::components::resources::Health), With<crate::components::Viewed>>,
     entity_query: Query<(&EntityType, &Loc)>,
     map: Res<Map>,
@@ -86,7 +79,7 @@ pub fn update(
     // Don't show target indicator while dead (health <= 0)
     if health.state <= 0.0 {
         // Hide all indicators
-        for (_, _, mut visibility, _, _) in &mut indicator_query {
+        for (_, _, mut visibility, _) in &mut indicator_query {
             *visibility = Visibility::Hidden;
         }
         return;
@@ -97,7 +90,7 @@ pub fn update(
     let hostile_target = player_target.entity;
     let ally_target = player_ally_target.and_then(|ally| ally.entity);
 
-    for (mut mesh_handle, mut transform, mut visibility, mut aabb, indicator) in &mut indicator_query {
+    for (mut mesh_handle, mut transform, mut visibility, mut indicator) in &mut indicator_query {
         let wanted = match indicator.indicator_type {
             IndicatorType::Hostile => hostile_target,
             IndicatorType::Ally => ally_target,
@@ -113,38 +106,28 @@ pub fn update(
             continue;
         };
 
-        // A filled hex on the sloped terrain, raised 0.05 above it: the 6
-        // perimeter vertices, the centre, and a fan of triangles from it
-        let sloped_verts = map.vertices_with_slopes(tile);
-        let mut min = Vec3::splat(f32::MAX);
-        let mut max = Vec3::splat(f32::MIN);
-        let positions: Vec<[f32; 3]> = sloped_verts[..7]
-            .iter()
-            .map(|v| {
-                let pos = Vec3::new(v.x, v.y + 0.05, v.z);
-                min = min.min(pos);
-                max = max.max(pos);
-                [pos.x, pos.y, pos.z]
-            })
-            .collect();
-        let normals = vec![[0.0, 1.0, 0.0]; 7];
-        let indices: Vec<u32> = (0..6u32).flat_map(|i| [6, i, (i + 1) % 6]).collect();
+        // The ring is built once per tile it stands on: a filled hex on
+        // the sloped terrain, raised 0.05 above it, in the tile's own
+        // frame — the 6 corners, the centre, and a fan of triangles from it
+        if indicator.tile != Some(tile) {
+            let positions: Vec<[f32; 3]> = map.sloped_corners(tile).iter().map(|v| [v.x, v.y + 0.05, v.z]).collect();
+            let normals = vec![[0.0, 1.0, 0.0]; 7];
+            let indices: Vec<u32> = (0..6u32).flat_map(|i| [6, i, (i + 1) % 6]).collect();
+            let mut mesh = Mesh::new(
+                bevy::render::render_resource::PrimitiveTopology::TriangleList,
+                bevy_asset::RenderAssetUsages::default()
+            );
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+            mesh.insert_indices(bevy_mesh::Indices::U32(indices));
+            mesh_handle.0 = meshes.add(mesh);
+            indicator.tile = Some(tile);
+        }
 
-        let mut new_mesh = Mesh::new(
-            bevy::render::render_resource::PrimitiveTopology::TriangleList,
-            bevy_asset::RenderAssetUsages::default()
-        );
-        new_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-        new_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        new_mesh.insert_indices(bevy_mesh::Indices::U32(indices));
-        mesh_handle.0 = meshes.add(new_mesh);
-
-        // Bounds so it is never culled
-        *aabb = Aabb::from_min_max(min, max);
-
-        // The vertices are world coordinates: the transform takes the
-        // render origin off them.
-        transform.translation = -origin.world_vec();
+        // Stood at the tile's column, the heights in its vertices: the
+        // render origin comes off as a tile difference, never a vector.
+        let at = origin.render_tile(&map, tile);
+        transform.translation = Vec3::new(at.x, 0.0, at.z);
         transform.rotation = Quat::IDENTITY;
         *visibility = Visibility::Visible;
     }

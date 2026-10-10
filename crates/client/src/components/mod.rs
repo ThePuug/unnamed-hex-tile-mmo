@@ -53,10 +53,12 @@ pub struct ViewHud;
 #[derive(Component)]
 pub struct PlayerOriginDebug;
 
-/// Target indicator component for showing which entity will be targeted
+/// A ring under a target: which target it follows, and the tile its mesh
+/// was last built on, so it is rebuilt only as that changes.
 #[derive(Component)]
 pub struct TargetIndicator {
     pub indicator_type: crate::systems::target_indicator::IndicatorType,
+    pub tile: Option<qrz::Qrz>,
 }
 
 /// Floating text component for damage numbers and other temporary text
