@@ -9,9 +9,10 @@
 //! harmonic cycles, so it closes on an answer. What the layers are and
 //! what each plays at each notch is the piece's; this is the walk.
 //!
-//! A setting bounds a walk (`Bounds`): the stretch of the ladder that
-//! may sound and the stretch of a groove's tempo band it is taken in.
-//! The story walks as it would; a rung past a bound sounds at the bound.
+//! A setting bounds a walk's pace (`Bounds`): the stretch of a groove's
+//! tempo band it is taken in. The walk itself is the story's: a rung
+//! clamped to a floor or a ceiling is a part that holds where the story
+//! moves, and a story told at one rung for six parts is flat.
 
 use crate::rng::Rng;
 use crate::score::{Score, Section};
@@ -94,25 +95,22 @@ pub struct Walk<B, L> {
     pub parts: Vec<Part<B, L>>,
 }
 
-/// What a setting lets a story do: the stretch of its ladder that may
-/// sound, its floor and its ceiling as shares of the ladder's rungs, and
-/// the stretch of a groove's tempo band it is taken in, of which the
-/// story's pace then takes its own.
+/// What a setting lets a story do: the stretch of a groove's tempo band
+/// it is taken in, of which the story's pace then takes its own.
 #[derive(Clone, Copy, Debug)]
 pub struct Bounds {
-    pub texture: (f32, f32),
     pub tempo: (f32, f32),
 }
 
-/// A walk as the story walks it.
-pub const UNBOUNDED: Bounds = Bounds { texture: (0.0, 1.0), tempo: (0.0, 1.0) };
+/// A walk at any pace of the groove's.
+pub const UNBOUNDED: Bounds = Bounds { tempo: (0.0, 1.0) };
 
 impl Bounds {
     /// The bounds with the stretch `tempo` of their tempo stretch, as a
     /// band takes its own stretch of what a setting allows.
     pub fn within(self, tempo: (f32, f32)) -> Bounds {
         let (a, b) = self.tempo;
-        Bounds { tempo: (a + (b - a) * tempo.0, a + (b - a) * tempo.1), ..self }
+        Bounds { tempo: (a + (b - a) * tempo.0, a + (b - a) * tempo.1) }
     }
 }
 
@@ -146,18 +144,8 @@ impl<B: Bed, L: Copy> Story<B, L> {
 
     /// The rungs of one walk, the foot first: to each of the story's
     /// turns and then each of `then`, one rung a part or in one where the
-    /// turn leaps, held as the turn says, ending at the last; within
-    /// `bounds`, where a rung past one sounds at it, so the walk's length
-    /// is the story's and a part past a bound holds at it.
-    pub fn walk(&self, then: &[Turn], bounds: &Bounds, rng: &mut Rng) -> Vec<usize> {
-        let n = self.ladder.len() as f32;
-        let lo = (bounds.texture.0 * n).ceil() as usize;
-        let hi = ((bounds.texture.1 * n).floor() as usize).max(lo);
-        self.walked(then, rng).into_iter().map(|r| r.clamp(lo, hi)).collect()
-    }
-
-    /// The rungs of one walk as the story walks it.
-    fn walked(&self, then: &[Turn], rng: &mut Rng) -> Vec<usize> {
+    /// turn leaps, held as the turn says, ending at the last.
+    pub fn walk(&self, then: &[Turn], rng: &mut Rng) -> Vec<usize> {
         let mut rungs = vec![0usize];
         for t in self.turns.iter().chain(then) {
             let target = rng.range(t.rung.0, t.rung.1) as usize;
@@ -173,7 +161,7 @@ impl<B: Bed, L: Copy> Story<B, L> {
     }
 
     /// A walk placed on the score, the story's turns and then `then`,
-    /// within `bounds`, part by part: each a draw of
+    /// part by part: each a draw of
     /// half-phrases long, then stretched so the whole is whole cycles
     /// of `cycle` half-phrases — a half at a time to the highest part,
     /// where a longer stay is the crest, and to the last, where the piece
@@ -186,12 +174,11 @@ impl<B: Bed, L: Copy> Story<B, L> {
         score: &mut Score,
         cycle: u32,
         then: &[Turn],
-        bounds: &Bounds,
         trim: impl Fn(B, L) -> f32,
     ) -> Walk<B, L> {
         let bar = score.bar();
         score.story = self.name;
-        let walk = self.walk(then, bounds, rng);
+        let walk = self.walk(then, rng);
         let mut lengths: Vec<u32> = walk
             .iter()
             .map(|_| rng.range(self.halves.0, self.halves.1) as u32)
@@ -334,7 +321,7 @@ mod tests {
     fn every_walk_moves_a_rung_at_a_time_and_ends_at_its_last_turn() {
         assert_eq!(STORY.fault(), None);
         for seed in 0..64 {
-            let walk = STORY.walk(&[], &UNBOUNDED, &mut Rng::new(seed));
+            let walk = STORY.walk(&[], &mut Rng::new(seed));
             assert_eq!(walk[0], 0);
             assert_eq!(*walk.last().unwrap(), 1);
             for w in walk.windows(2) {
@@ -350,33 +337,16 @@ mod tests {
     fn a_leap_lands_in_one_part() {
         const THEN: [Turn; 2] = [leap((0, 0), (0, 0)), leap((3, 3), (1, 1))];
         for seed in 0..16 {
-            let walk = STORY.walk(&THEN, &UNBOUNDED, &mut Rng::new(seed));
+            let walk = STORY.walk(&THEN, &mut Rng::new(seed));
             let n = walk.len();
             assert_eq!(&walk[n - 4..], &[1, 0, 3, 3], "{walk:?}");
-        }
-    }
-
-    /// A bounded walk stays within its bounds, starts at its floor, and
-    /// is as long as the story's.
-    #[test]
-    fn a_bounded_walk_keeps_within_its_bounds() {
-        let floor = Bounds { texture: (0.6, 1.0), ..UNBOUNDED };
-        let ceiling = Bounds { texture: (0.0, 0.7), ..UNBOUNDED };
-        for seed in 0..64 {
-            let free = STORY.walk(&[], &UNBOUNDED, &mut Rng::new(seed));
-            let walk = STORY.walk(&[], &floor, &mut Rng::new(seed));
-            assert_eq!(walk[0], 2, "{walk:?}");
-            assert!(walk.iter().all(|r| *r >= 2), "{walk:?}");
-            assert_eq!(walk.len(), free.len());
-            let walk = STORY.walk(&[], &ceiling, &mut Rng::new(seed));
-            assert!(walk.iter().all(|r| *r <= 2), "{walk:?}");
         }
     }
 
     /// A bounded tempo is drawn from its stretch of the band.
     #[test]
     fn a_bounded_tempo_keeps_to_its_stretch() {
-        let quick = Bounds { tempo: (2.0 / 3.0, 1.0), ..UNBOUNDED };
+        let quick = Bounds { tempo: (2.0 / 3.0, 1.0) };
         for seed in 0..32 {
             let t = STORY.tempo((240, 300), &quick, &mut Rng::new(seed));
             assert!((280.0..=300.0).contains(&t), "{t}");

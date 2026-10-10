@@ -13,7 +13,7 @@
 
 use crate::cue::{self, Cut};
 use crate::ladder::{Part, Walk};
-use crate::band::{self, Style};
+use crate::band;
 use crate::pieces::Params;
 use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
@@ -73,20 +73,11 @@ const CH_BREATH_AIR: u8 = 15;
 /// The overworld's stone hall.
 const ROOM_S: f32 = 3.2;
 
-/// Who may tell the tune, and each one's level, dB: the overworld's
-/// storytellers at the overworld's levels, so each sits the same
-/// distance forward of the band.
+/// Who may tell the tune: the overworld's storytellers, each at the
+/// overworld's one level forward of the band, since the render evens
+/// what the bank gives each.
 const LEADS: [u8; 5] = [FLUTE, PAN_FLUTE, FIDDLE, CLARINET, ENGLISH_HORN];
-fn lead_level(program: u8) -> f32 {
-    match program {
-        FLUTE => -0.6,
-        PAN_FLUTE => 3.2,
-        FIDDLE => 3.1,
-        CLARINET => 2.1,
-        ENGLISH_HORN => 4.1,
-        _ => 0.0,
-    }
-}
+const LEAD: f32 = 3.0;
 
 /// Who may hold tones under the lead's riff.
 const SECONDS: [u8; 4] = [FIDDLE, CLARINET, ACCORDION, ENGLISH_HORN];
@@ -337,7 +328,7 @@ pub fn build(params: &Params) -> Score {
     let instruments = vec![
         Instrument { name: "drone", program: design.drone, channel: CH_DRONE, role: Role::Drone, low: 24, high: 60, reverb: 40, pan: 0, level: 0.0 },
         Instrument { name: "strings", program: STRINGS_2, channel: CH_PAD, role: Role::Sustain, low: 48, high: 79, reverb: 105, pan: -29, level: 0.0 },
-        Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 62, high: 91, reverb: 40, pan: 0, level: lead_level(design.lead) },
+        Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 62, high: 91, reverb: 40, pan: 0, level: LEAD },
         Instrument { name: "pluck", program: design.pluck, channel: CH_PLUCK, role: Role::Pluck, low: 45, high: 74, reverb: 30, pan: 34, level: 0.0 },
         Instrument { name: "second", program: design.second, channel: CH_SECOND, role: Role::Melody, low: 55, high: 88, reverb: 60, pan: 21, level: 0.0 },
         Instrument { name: "choir", program: CHOIR_AAHS, channel: CH_CHOIR, role: Role::Sustain, low: 55, high: 72, reverb: 100, pan: 23, level: 0.0 },
@@ -356,7 +347,6 @@ pub fn build(params: &Params) -> Score {
     score.lead = Some(CH_LEAD);
     score.played_by(
         band,
-        Style::Bulgarian,
         &[(CH_DRONE, band::Part::Drone), (CH_LEAD, band::Part::Lead), (CH_PLUCK, band::Part::Pluck), (CH_SECOND, band::Part::Second), (CH_DRUM, band::Part::Drums), (CH_PLUCK_2, band::Part::Pluck2)],
     );
     let bar = score.bar();

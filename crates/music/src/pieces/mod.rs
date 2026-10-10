@@ -16,6 +16,7 @@ mod balkan_horo;
 mod metal_ballad;
 mod overworld_ambient;
 mod speed_metal;
+mod stomp_and_holler;
 mod teaser;
 
 pub use crate::band::{Band, Style};
@@ -149,8 +150,8 @@ pub const TRACKS: &[Track] = &[
             figure alone with no drum, or no pulse at all, the pad and the lead \
             carrying the time, as field music mostly has none; its tempo \
             holding, or pressing on from a little past halfway. One theme runs \
-            the piece through, or two or three in series as a dance plays its \
-            tunes: a shape on the strong beats that comes down \
+            the piece through, or two in series as a dance plays its tunes, \
+            each told long enough to come round: a shape on the strong beats that comes down \
             to the finalis — an arch, a descent, a circling, a leap and its \
             recovery, a wave — filled by steps, said in four-bar phrases as a \
             period or a sentence, open and closed by turns, so eight bars are \
@@ -166,12 +167,14 @@ pub const TRACKS: &[Track] = &[
             each told by the bed filling and thinning one layer at a time, a \
             half-phrase a step, never two layers at once, coming back to the \
             texture it opened on, at a loudness that barely moves. Once, \
-            somewhere past its first pair, it does one thing of its own: the \
-            bed hollows to the drone and the breath for a phrase; the second \
-            sings the tune for a pair; a pair lifts onto the relative major's \
-            chords or steps onto the fifth; a phrase is sung in free time with \
-            the dance stopped; or a bar of the drone alone. It opens from the \
-            drone: the bed fading in, a prelude in free time, the dance or the \
+            somewhere past its first pair, it does one thing of its own, a \
+            colour and never a hole: the bed hollows to the drone and the \
+            breath under the lead for a phrase; the second sings the tune for \
+            a pair; a pair lifts onto the relative major's chords or steps \
+            onto the fifth; or a phrase is sung over the drone and the pad \
+            with the dance stopped, the tempo holding. It opens from the \
+            drone: the bed fading in, a prelude of the lead alone at the \
+            dance's tempo, the dance or the \
             plucks' figure first, or the lead's short call down from the fifth \
             to the tonic; and it ends with the bed thinning to the drone \
             ringing on, the lead alone over it holding home, the pad and the \
@@ -495,6 +498,61 @@ pub const TRACKS: &[Track] = &[
     range: 7.0,
     kin: IMPROVISED,
     build: speed_metal::build,
+    },
+    Track {
+    name: "stomp-and-holler",
+    style: Style::IndieFolk,
+    settings: &[],
+    brief: "Stomp and holler as Mumford & Sons, the Lumineers, Edward Sharpe and Of \
+            Monsters and Men play it: in the major, driving at a hundred and two to a \
+            hundred and fifty a beat or stomping at seventy-six to eighty-five, in a \
+            straight four, every seed its own song on one loop of four chords from I, \
+            IV, V and vi, often opening on vi, a chord a bar, the V in first inversion \
+            where the bass steps from vi or into I. Two tunes on the major \
+            pentatonic, the verse's and the chorus's, the chorus's a third over \
+            the verse's, each an octave wide, a chant of tones struck again, \
+            entering ahead of the beat; a line runs two bars, four or eight, as \
+            long as the songs' lines run, before it lands on the third or home, \
+            held, and rests. Two steel-string \
+            acoustics strummed through every bar, one each side, the second capoed \
+            high over the first — once or twice a bar left to ring, down on \
+            every quarter, down on the beats and up between, or the driving \
+            sixteenths of Little Lion Man — quickening as the song fills. A kick on \
+            every beat with the floor tom under it, or on one alone, and a tambourine \
+            on every off-beat, never a backbeat; the bass on the roots, a whole note \
+            a bar in a verse and every quarter in a chorus; a banjo rolling sixteenths \
+            and a piano on the quarters over the guitars where it is a chorus, each \
+            part in a register of its own. Two voices tell the tune \
+            as a conversation where it is a verse — the lead, a trumpet, a whistle or \
+            an accordion, the whistle never the hook's alone, and a second under it, trading two bars or a phrase, or the \
+            lead alone; where it is a chorus the lead plays the chorus's tune as the \
+            hook, the second \
+            on it in unison or an octave under; a bowed second, a cello, holds a \
+            chord tone under the lead every other bar instead, verse and chorus, \
+            a bow's tone needing a stroke to come up. At the top the holler: the gang \
+            chanting the chord on the beats in open spacing and singing the hook on \
+            it and an octave under, a whistle an octave over where the band brings \
+            one, clapping every beat, shouting into the tune's silences with the \
+            band's kick, clap and stroke hitting under the shout. One of four \
+            stories by the seed — four on the \
+            floor, the kick joining on one, then every beat, the gang last; from the \
+            top, the sixteenths driving from the first bar, the verse with no kick, \
+            the chorus all in at once with the banjo; the long climb, the strum \
+            quickening a notch at a time from ringing to sixteenths, the kick a third \
+            of the way in; hook and drop, the verse a strum or two a bar, the chorus \
+            all in — the verse the strum and a voice, the chorus all of it, the band \
+            thinning to the strum before the last chorus and stomping every eighth \
+            as it comes back all in. Every part varies by the phrase: an up-stroke \
+            into the next bar, the strum's ten for its seven, the bass walking a step \
+            into the next chord, a floor-tom run closing a question and its answer. \
+            It opens on the chorus's hook over the strum, or on the strum alone; it ends \
+            thinned to the strum and the tambourine, or with the gang singing the \
+            hook out over its claps, the band gone, or on one stomp of the whole \
+            band, and the tonic left to ring. A wooden room's reverb; no sung words.",
+    lufs: -19.0,
+    range: 8.0,
+    kin: IMPROVISED,
+    build: stomp_and_holler::build,
     },
 ];
 

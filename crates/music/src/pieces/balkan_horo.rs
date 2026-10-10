@@ -19,12 +19,12 @@
 //! one fork per purpose; the seed picks which shape at every level,
 //! never the next note.
 //!
-//! A setting leans the dance's draws and bounds its walk (`lean`): in a
-//! fight the band is at full stride from its first bar and holds it; as
-//! it is, the dance is as the records play it.
+//! A setting leans the dance's draws and bounds its tempo (`lean`): in a
+//! fight the band takes the quick dances at the quick end and holds one
+//! tempo; as it is, the dance is as the records play it.
 
 use crate::ladder::{self, turn, Bed, Bounds, Run, Story, Walk};
-use crate::band::{Part, Style};
+use crate::band::Part;
 use crate::pieces::{Params, Setting};
 use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
@@ -86,18 +86,10 @@ const LEADS: [u8; 4] = [SHANAI, FIDDLE, CLARINET, TRUMPET];
 /// Who may hold tones under the lead and take a phrase it hands over.
 const SECONDS: [u8; 5] = [FRENCH_HORN, ACCORDION, FIDDLE, CLARINET, TRUMPET];
 
-/// Each lead's level, dB, so that wherever it plays it sits three dB
-/// under the band: the bank's samples of them are not one
-/// loudness. Measured against the band over the piece's seeds.
-fn lead_level(program: u8) -> f32 {
-    match program {
-        SHANAI => 2.0,
-        FIDDLE => 5.6,
-        CLARINET => 0.0,
-        TRUMPET => 2.2,
-        _ => 0.0,
-    }
-}
+/// The lead's level, dB, whichever it is: forward of any one player of
+/// the band, a little under the band as a whole. The render evens what
+/// the bank gives each player, so one level holds for every lead.
+const LEAD: f32 = 3.0;
 
 /// Every other player's level, dB: the band is dense, rhythm first, and
 /// sits under the lead together so its own balance holds; the lead
@@ -417,14 +409,14 @@ impl Ending {
 }
 
 /// How a setting leans the dance (`proofs/research/settings-findings.md`,
-/// §7): each draw's weights multiplied, the walk bounded. In a fight the
-/// band is at full stride from the first bar and holds it: the râčenica
-/// and the kopanica most, the five-eight never, full swing twice as
-/// often, never under most of the band, the quick third of the dance's
-/// tempo held from the first bar to the last, straight in or off the
-/// tapan — no taksim, no free time before a fight — and out on a stop, a
-/// tag or a run, never a held tone. As it is, the dance as the records
-/// play it.
+/// §7): each draw's weights multiplied and the tempo bounded, the walk
+/// the story's whole — a walk held at a floor is a dance that never
+/// breathes. In a fight: the râčenica and the kopanica most, the
+/// five-eight never, full swing twice as often, the quick third of the
+/// dance's tempo held from the first bar to the last, straight in or off
+/// the tapan — no taksim, no free time before a fight — and out on a
+/// stop, a tag or a run, never a held tone. As it is, the dance as the
+/// records play it.
 struct Lean {
     grooves: [f32; 4],
     stories: [f32; 4],
@@ -444,7 +436,7 @@ fn lean(setting: Setting) -> Lean {
             openings: [1.0, 0.0, 1.0],
             paces: [1.0, 0.0, 0.0, 0.0, 0.0],
             endings: [1.0, 1.0, 0.0, 1.0],
-            bounds: Bounds { texture: (0.6, 1.0), tempo: (2.0 / 3.0, 1.0) },
+            bounds: Bounds { tempo: (2.0 / 3.0, 1.0) },
         },
         Setting::Ambient | Setting::City | Setting::None => AS_RECORDED,
     }
@@ -454,6 +446,12 @@ fn lean(setting: Setting) -> Lean {
 fn leaned<const N: usize>(weights: [f32; N], by: [f32; N]) -> [f32; N] {
     std::array::from_fn(|i| weights[i] * by[i])
 }
+
+/// What the dance draws, in the order their weights are given: the
+/// setting leans each, and the band after it, by name.
+const OPENINGS: [Opening; 3] = [Opening::Straight, Opening::Taksim, Opening::Tapan];
+const PACES: [Pace; 5] = [Pace::Steady, Pace::Press, Pace::Steps, Pace::Build, Pace::Arch];
+const ENDINGS: [Ending; 4] = [Ending::Stop, Ending::Tag, Ending::Held, Ending::Run];
 
 /// What a seed's piece is.
 struct Design {
@@ -585,16 +583,16 @@ fn compose(params: &Params) -> (Score, Form) {
         solo: vamp.is_some() && skeleton.chance(0.6),
         vamp,
         returns: skeleton.chance(0.6),
-        opening: [Opening::Straight, Opening::Taksim, Opening::Tapan][skeleton.weighted(&leaned([3.0, 2.0, 1.0], lean.openings))],
+        opening: OPENINGS[skeleton.weighted(&leaned(leaned([3.0, 2.0, 1.0], lean.openings), OPENINGS.map(|o| band.lean(o.name()))))],
         // Bulgarian dance records hold one tempo, fifteen in seventeen; the
         // rest press on, most from about halfway.
-        pace: [Pace::Steady, Pace::Press, Pace::Steps, Pace::Build, Pace::Arch][skeleton.weighted(&leaned([15.0, 1.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0], lean.paces))],
-        ending: [Ending::Stop, Ending::Tag, Ending::Held, Ending::Run][skeleton.weighted(&leaned([11.0, 3.0, 3.0, 2.0], lean.endings))],
+        pace: PACES[skeleton.weighted(&leaned(leaned([15.0, 1.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0], lean.paces), PACES.map(|p| band.lean(p.name()))))],
+        ending: ENDINGS[skeleton.weighted(&leaned(leaned([11.0, 3.0, 3.0, 2.0], lean.endings), ENDINGS.map(|e| band.lean(e.name()))))],
     };
     let instruments = vec![
         Instrument { name: "bass", program: band.program(Part::Bass, &[], FINGER_BASS), channel: CH_BASS, role: Role::Pluck, low: 36, high: 60, reverb: 20, pan: 0, level: BAND },
         Instrument { name: "tambura", program: band.program(Part::Figure, &[], STEEL_GUITAR), channel: CH_FIGURE, role: Role::Pluck, low: 45, high: 64, reverb: 35, pan: -26, level: BAND },
-        Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 58, high: 92, reverb: 30, pan: 0, level: lead_level(design.lead) },
+        Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 58, high: 92, reverb: 30, pan: 0, level: LEAD },
         Instrument { name: "trombone", program: band.program(Part::Trombone, &[], TROMBONE), channel: CH_TROMBONE, role: Role::Pluck, low: 45, high: 70, reverb: 30, pan: 22, level: BAND },
         Instrument { name: "horn, the second", program: band.programs(Part::Second).into_iter().find(|p| *p != lead && SECONDS.contains(p)).unwrap_or(FRENCH_HORN), channel: CH_SECOND, role: Role::Melody, low: 53, high: 76, reverb: 45, pan: -30, level: BAND },
         Instrument { name: "tuba", program: band.program(Part::Tuba, &[], TUBA), channel: CH_TUBA, role: Role::Pluck, low: 28, high: 45, reverb: 20, pan: 8, level: BAND },
@@ -609,7 +607,6 @@ fn compose(params: &Params) -> (Score, Form) {
     score.lead = Some(CH_LEAD);
     score.played_by(
         band,
-        Style::Bulgarian,
         &[
             (CH_BASS, Part::Bass),
             (CH_FIGURE, Part::Figure),
@@ -636,7 +633,7 @@ fn compose(params: &Params) -> (Score, Form) {
 
     // The walk, in half-phrases, and whole question-and-answer pairs
     // of them, so it closes on an answer.
-    let walk = story.place(&mut skeleton, &mut score, 4, &[], &lean.bounds, |texture, lead| texture.trim(lead));
+    let walk = story.place(&mut skeleton, &mut score, 4, &[], |texture, lead| texture.trim(lead));
     let order = order((walk.bars() / PAIR_BARS) as usize, design.kolena.len(), design.solo, design.returns);
     let kolena = order.iter().filter_map(|p| if let Pair::Kolyano(k) = p { Some(*k) } else { None }).max().unwrap_or(0) + 1;
     let soloed = order.contains(&Pair::Solo);
@@ -1283,8 +1280,9 @@ mod tests {
         Params { setting: Setting::None, ..Params::of(crate::pieces::find("balkan-horo").unwrap(), seed) }
     }
 
-    /// In a fight the dance holds one tempo, opens with no taksim, ends on
-    /// no held tone, and never falls under most of the band.
+    /// In a fight the dance holds one tempo from the quick third of its
+    /// band, opens with no taksim and ends on no held tone, and its walk
+    /// is the story's whole.
     #[test]
     fn a_fight_holds_the_dance_at_full_stride() {
         for seed in 0..48 {
@@ -1292,14 +1290,11 @@ mod tests {
             assert_eq!(form.design.pace, Pace::Steady, "seed {seed}");
             assert_ne!(form.design.opening, Opening::Taksim, "seed {seed}");
             assert_ne!(form.design.ending, Ending::Held, "seed {seed}");
-            let floor = (0.6 * score_ladder(&score) as f32).ceil() as usize;
-            assert!(form.walk.parts.iter().all(|p| p.rung >= floor), "seed {seed}: under the floor");
+            let (lo, hi) = form.design.groove.tempo;
+            assert!(score.eighth_bpm >= lo as f32 + (hi - lo) as f32 * 2.0 / 3.0 - 1.0, "seed {seed}: {} under the quick third", score.eighth_bpm);
+            let rungs = STORIES.iter().find(|s| s.name == score.story).unwrap().ladder.len();
+            assert!(form.walk.parts.iter().any(|p| p.rung == rungs), "seed {seed}: the story never reaches its top");
         }
-    }
-
-    /// The rungs of the story `score` tells.
-    fn score_ladder(score: &Score) -> usize {
-        STORIES.iter().find(|s| s.name == score.story).unwrap().ladder.len()
     }
 
     /// The dance is whole question-and-answer pairs between its opening

@@ -35,7 +35,7 @@
 //! late at night, and a fight hears it drive.
 
 use crate::ladder::{self, turn, Bed, Bounds, Run, Story, Walk};
-use crate::band::{Answers, Part, Style};
+use crate::band::{Answers, Part};
 use crate::pieces::{Params, Setting};
 use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
@@ -92,18 +92,10 @@ const LEADS: [u8; 4] = [HARMONICA, MUTED_TRUMPET, TENOR_SAX, ALTO_SAX];
 /// the lead nor the colours' horn.
 const SECONDS: [u8; 3] = [TENOR_SAX, ALTO_SAX, MUTED_TRUMPET];
 
-/// Each lead's level, dB, so that wherever it plays it sits 1.5 dB
-/// under the band: the bank's samples of them are not one
-/// loudness. Measured against the band over the piece's seeds.
-fn lead_level(program: u8) -> f32 {
-    match program {
-        HARMONICA => 0.4,
-        MUTED_TRUMPET => 5.3,
-        TENOR_SAX => 5.2,
-        ALTO_SAX => 1.2,
-        _ => 0.0,
-    }
-}
+/// The lead's level, dB, whichever it is: forward of any one player of
+/// the band, a little under the band as a whole. The render evens what
+/// the bank gives each player, so one level holds for every lead.
+const LEAD: f32 = 3.0;
 
 /// The velocity every voice strikes at before its own accent: one
 /// dynamic for the whole band, since its story is in what plays.
@@ -370,14 +362,15 @@ enum Last {
 }
 
 /// How a setting leans the song (`proofs/research/settings-findings.md`,
-/// §7): each draw's weights multiplied, the walk bounded. Wandering, the
-/// band plays late: the slow feels and the quiet stories, never all of
-/// the band, the slow half of the feel's tempo, the brushes on the snare
-/// with no ride, kick or crash, no solo chorus but the lead telling its
-/// theme, no stop-time and no lift, opening on a vamp or in free time and
-/// ending held or falling away. In a fight it drives: the walking four
-/// and the rumba, the stroll and the rush hour from most of the band up,
-/// the quick third of the tempo, stop-time twice as often and no
+/// §7): each draw's weights multiplied and the tempo bounded, and
+/// nothing of the song withheld — a setting picks among whole songs the
+/// band plays, which keep their form, their kit and their solos, since a
+/// song with a part held back is a thin song and not a quiet one.
+/// Wandering, the band plays late: the slow feels and the quiet stories,
+/// the slow half of the feel's tempo, no stop-time and no lift, opening
+/// on a vamp or in free time and ending held or falling away. In a fight
+/// it drives: the walking four and the rumba, the stroll and the rush
+/// hour, the quick third of the tempo, stop-time twice as often and no
 /// dropping out, straight in or from the V, and ending on a stab or a
 /// tag, never slowing into it. In a town, and as it is, the songs as the
 /// recordings play them.
@@ -387,13 +380,11 @@ struct Lean {
     intros: [f32; 5],
     events: [f32; 4],
     endings: [f32; 4],
-    solos: bool,
     slows: bool,
-    brushes: bool,
     bounds: Bounds,
 }
 
-const AS_RECORDED: Lean = Lean { feels: [1.0; 4], stories: [1.0; 5], intros: [1.0; 5], events: [1.0; 4], endings: [1.0; 4], solos: true, slows: true, brushes: false, bounds: ladder::UNBOUNDED };
+const AS_RECORDED: Lean = Lean { feels: [1.0; 4], stories: [1.0; 5], intros: [1.0; 5], events: [1.0; 4], endings: [1.0; 4], slows: true, bounds: ladder::UNBOUNDED };
 
 fn lean(setting: Setting) -> Lean {
     match setting {
@@ -403,10 +394,8 @@ fn lean(setting: Setting) -> Lean {
             intros: [1.0, 0.0, 0.0, 1.0, 0.0],
             events: [1.0, 0.0, 1.0, 0.0],
             endings: [1.0, 1.0, 0.0, 0.0],
-            solos: false,
             slows: true,
-            brushes: true,
-            bounds: Bounds { texture: (0.0, 0.7), tempo: (0.0, 0.5) },
+            bounds: Bounds { tempo: (0.0, 0.5) },
         },
         Setting::Combat => Lean {
             feels: [0.3, 1.5, 2.5, 0.5],
@@ -414,10 +403,8 @@ fn lean(setting: Setting) -> Lean {
             intros: [0.0, 0.0, 1.0, 0.0, 1.0],
             events: [1.0, 2.0, 0.0, 1.0],
             endings: [0.3, 0.0, 3.0, 2.0],
-            solos: true,
             slows: false,
-            brushes: false,
-            bounds: Bounds { texture: (0.6, 1.0), tempo: (2.0 / 3.0, 1.0) },
+            bounds: Bounds { tempo: (2.0 / 3.0, 1.0) },
         },
         Setting::City | Setting::None => AS_RECORDED,
     }
@@ -426,6 +413,47 @@ fn lean(setting: Setting) -> Lean {
 /// `weights` leaned by `by`.
 fn leaned<const N: usize>(weights: [f32; N], by: [f32; N]) -> [f32; N] {
     std::array::from_fn(|i| weights[i] * by[i])
+}
+
+/// What the song draws, in the order their weights are given: the
+/// setting leans each, and the band after it, by name.
+const INTROS: [Intro; 5] = [Intro::Vamp, Intro::SoloChorus, Intro::Turnaround, Intro::Rubato, Intro::Straight];
+const EVENTS: [Event; 4] = [Event::None, Event::StopTime, Event::Drop, Event::CodaVamp];
+const ENDINGS: [Ending; 4] = [Ending::Held, Ending::VampOut, Ending::Break, Ending::Tag];
+
+impl Intro {
+    /// Its name, as a band's preferences name it.
+    fn name(self) -> &'static str {
+        match self {
+            Intro::Vamp => "vamp",
+            Intro::SoloChorus => "solo chorus",
+            Intro::Turnaround => "turnaround",
+            Intro::Rubato => "rubato",
+            Intro::Straight => "straight",
+        }
+    }
+}
+
+impl Event {
+    fn name(self) -> &'static str {
+        match self {
+            Event::None => "no event",
+            Event::StopTime => "stop-time",
+            Event::Drop => "drop",
+            Event::CodaVamp => "coda vamp",
+        }
+    }
+}
+
+impl Ending {
+    fn name(self) -> &'static str {
+        match self {
+            Ending::Held => "held",
+            Ending::VampOut => "vamp out",
+            Ending::Break => "break",
+            Ending::Tag => "tag",
+        }
+    }
 }
 
 /// What a seed's piece is.
@@ -453,16 +481,6 @@ struct Design {
     /// runs into its last tone.
     ritard: bool,
     run_over: bool,
-    /// Whether the kit keeps time with the brush on the snare alone.
-    brushes: bool,
-}
-
-impl Design {
-    /// What keeps the kit's time and how much softer: the ride, or the
-    /// brush on the snare where the brushes play alone.
-    fn time(&self) -> (u8, i32) {
-        if self.brushes { (SNARE, -6) } else { (RIDE, 0) }
-    }
 }
 
 /// The bars of a chorus.
@@ -547,6 +565,8 @@ fn compose(params: &Params) -> (Score, Form) {
     let feel = skeleton.weighted(&leaned(leaned(FEEL_WEIGHTS, lean.feels), std::array::from_fn(|i| band.lean(BLUES[i].name))));
     let groove = &BLUES[feel];
     let tempo = story.tempo(groove.tempo, &lean.bounds.within(band.prefs.tempo), &mut skeleton);
+    // At least one colour, since a ladder may bring the colours in.
+    let colours = skeleton.range(1, 3);
     // The band's first lead the blues has a voice for, its horn, and its
     // first second that is neither.
     let teller = band.program(Part::Lead, &LEADS, LEADS[0]);
@@ -554,21 +574,21 @@ fn compose(params: &Params) -> (Score, Form) {
     let second = band.programs(Part::Second).into_iter().chain(SECONDS).find(|p| *p != teller && *p != other_horn && SECONDS.contains(p)).unwrap_or(SECONDS[0]);
     // The song's habits, on a stream of their own.
     let mut habits = rng.fork(14);
-    let close = [Ending::Held, Ending::VampOut, Ending::Break, Ending::Tag][habits.weighted(&leaned([70.0, 15.0, 10.0, 5.0], lean.endings))];
+    let close = ENDINGS[habits.weighted(&leaned(leaned([70.0, 15.0, 10.0, 5.0], lean.endings), ENDINGS.map(|e| band.lean(e.name()))))];
     let mut design = Design {
         piano: band.program(Part::Keys, &[], PIANO),
         lead: teller,
         second,
         horn: other_horn,
-        horns: band.plays(Part::Horn, Style::Blues),
-        shimmer: band.plays(Part::Shimmer, Style::Blues),
+        horns: colours & 1 != 0,
+        shimmer: colours & 2 != 0,
         groove,
         form: FORMS[skeleton.below(FORMS.len())],
         theme: Theme::draw(groove, &BLUES_SHAPES, &mut skeleton),
         rows: [row(0, mode, &mut skeleton), row(1, mode, &mut skeleton), row(2, mode, &mut skeleton)],
         feel: FEELS[feel],
-        intro: [Intro::Vamp, Intro::SoloChorus, Intro::Turnaround, Intro::Rubato, Intro::Straight][habits.weighted(&leaned([35.0, 25.0, 15.0, 15.0, 10.0], lean.intros))],
-        event: [Event::None, Event::StopTime, Event::Drop, Event::CodaVamp][habits.weighted(&leaned([40.0, 15.0, 10.0, 10.0], lean.events))],
+        intro: INTROS[habits.weighted(&leaned(leaned([35.0, 25.0, 15.0, 15.0, 10.0], lean.intros), INTROS.map(|i| band.lean(i.name()))))],
+        event: EVENTS[habits.weighted(&leaned(leaned([40.0, 15.0, 10.0, 10.0], lean.events), EVENTS.map(|e| band.lean(e.name()))))],
         answers: habits_of_band.answers,
         turnaround: [Turnaround::Tonic, Turnaround::Dominant, Turnaround::FlatSix, Turnaround::HalfDim, Turnaround::FlatTwo][habits.weighted(&[55.0, 20.0, 8.0, 7.0, 10.0])],
         ending: close,
@@ -577,12 +597,11 @@ fn compose(params: &Params) -> (Score, Form) {
         // others less; the lead runs into its last tone two times in five.
         ritard: habits.chance(if close == Ending::Held { 0.45 } else { 0.3 }) && lean.slows,
         run_over: habits_of_band.runs_over,
-        brushes: lean.brushes,
     };
     let instruments = vec![
         Instrument { name: "bass", program: band.program(Part::Bass, &[], UPRIGHT_BASS), channel: CH_BASS, role: Role::Pluck, low: 28, high: 60, reverb: 25, pan: 0, level: 0.0 },
         Instrument { name: "piano", program: design.piano, channel: CH_PIANO, role: Role::Pluck, low: 48, high: 79, reverb: 45, pan: -21, level: 0.0 },
-        Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 53, high: 84, reverb: 45, pan: 0, level: lead_level(design.lead) },
+        Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 53, high: 84, reverb: 45, pan: 0, level: LEAD },
         Instrument { name: "guitar", program: band.program(Part::Comp, &[], JAZZ_GUITAR), channel: CH_GUITAR, role: Role::Pluck, low: 40, high: 72, reverb: 35, pan: 36, level: 0.0 },
         Instrument { name: "second", program: design.second, channel: CH_SECOND, role: Role::Melody, low: 50, high: 84, reverb: 55, pan: 18, level: 0.0 },
         Instrument { name: "organ", program: band.program(Part::Organ, &[], ORGAN), channel: CH_ORGAN, role: Role::Sustain, low: 52, high: 69, reverb: 80, pan: -34, level: 0.0 },
@@ -596,7 +615,6 @@ fn compose(params: &Params) -> (Score, Form) {
     score.lead = Some(CH_LEAD);
     score.played_by(
         band,
-        Style::Blues,
         &[
             (CH_BASS, Part::Bass),
             (CH_PIANO, Part::Keys),
@@ -615,7 +633,7 @@ fn compose(params: &Params) -> (Score, Form) {
 
     // The walk, in half-phrases, and whole choruses of them, so it
     // closes on the turn home.
-    let walk = story.place(&mut skeleton, &mut score, 2 * TWELVE_BAR.len() as u32, &[], &lean.bounds, |_, _| 1.0);
+    let walk = story.place(&mut skeleton, &mut score, 2 * TWELVE_BAR.len() as u32, &[], |_, _| 1.0);
     let upper = story.ladder.len().max(1);
     for (section, part) in score.sections.iter_mut().zip(&walk.parts) {
         section.level = Some(LEVEL_FOOT * (1.0 - part.rung as f32 / upper as f32));
@@ -628,7 +646,7 @@ fn compose(params: &Params) -> (Score, Form) {
         design.intro = Intro::Vamp;
     }
     let head = if design.intro == Intro::SoloChorus { 1 } else { 0 };
-    let soloed: Vec<bool> = (0..choruses).map(|c| lean.solos && ((c == 0 && head == 1) || (c > head && c + 1 < choruses))).collect();
+    let soloed: Vec<bool> = (0..choruses).map(|c| (c == 0 && head == 1) || (c > head && c + 1 < choruses)).collect();
     // The event in a chorus between the heads two thirds or so through:
     // one starting from half to four fifths of the way, else the nearest.
     let middle: Vec<u32> = (head + 1..choruses.saturating_sub(1)).collect();
@@ -887,24 +905,28 @@ fn play(score: &mut Score, form: &Form, mut line: Vec<Placed>, a: u32, z: u32, r
             line[i].2 = tune::bent_apart(&key, chord, line[i].2, prev, next, lo, hi);
         }
     }
-    // Repaired as one line with the lead's tones either side of it within
-    // a bar, which it joins: they stand, and the turn bends to them.
+    // The turn's quick tones repaired as a run of its own; then the line a
+    // listener follows through it — its tones longer than a sixteenth —
+    // joined to the lead's heard tones either side of it within a bar, the
+    // last two before, which stand: the leap into the join is read with
+    // the turn's own first, and the turn bends to them. A written tone is
+    // heard from a half-eighth; the turn's own sixteenths are written a
+    // hair under one, graces.
+    form.tune.repair(score, &mut line, lo, hi);
     let heard_lead = |n: &&Note| n.channel == CH_LEAD && n.len >= E / 2;
-    let before = score.notes.iter().filter(heard_lead).filter(|n| n.start < a * bar && n.end() + bar > a * bar).max_by_key(|n| n.start).map(|n| (n.start, n.len, n.pitch));
+    let mut before: Vec<Placed> = score.notes.iter().filter(heard_lead).filter(|n| n.start < a * bar && n.end() + bar > a * bar).map(|n| (n.start, n.len, n.pitch)).collect();
+    before.sort_by_key(|n| n.0);
+    let before: Vec<Placed> = before.iter().rev().take(2).rev().copied().collect();
     let after = score.notes.iter().filter(heard_lead).filter(|n| n.start >= z * bar && n.start < (z + 1) * bar).min_by_key(|n| n.start).map(|n| (n.start, n.len, n.pitch));
-    let mut joined: Vec<Placed> = before.into_iter().chain(line.iter().copied()).chain(after).collect();
-    let from = before.is_some() as usize;
-    form.tune.repair(score, &mut joined, lo, hi);
-    let heard: Vec<usize> = (0..joined.len()).filter(|i| joined[*i].1 > E / 2).collect();
-    let mut skeleton: Vec<Placed> = heard.iter().map(|i| joined[*i]).collect();
-    form.tune.repair(score, &mut skeleton, lo, hi);
+    let heard: Vec<usize> = (0..line.len()).filter(|i| line[*i].1 > E / 2).collect();
+    let mut skeleton: Vec<Placed> = before.iter().copied().chain(heard.iter().map(|i| line[*i])).chain(after).collect();
+    form.tune.repair_from(score, &mut skeleton, lo, hi, before.len());
     for (k, i) in heard.iter().enumerate() {
-        joined[*i].2 = skeleton[k].2;
+        line[*i].2 = skeleton[before.len() + k].2;
     }
-    let mut line: Vec<Placed> = joined[from..from + line.len()].to_vec();
     // Where the repair moved the tone after, it stands, and the turn's last
     // heard tone steps to it instead.
-    if let Some(next) = after.filter(|n| joined.last() != Some(n)) {
+    if let Some(next) = after.filter(|n| skeleton.last() != Some(n)) {
         if let Some(last) = line.iter_mut().rev().find(|n| n.1 > E / 2) {
             let key = score.key_at(last.0);
             let chord = score.chord_at(last.0);
@@ -1003,10 +1025,9 @@ fn vamp(score: &mut Score, form: &Form, from: u32, n: u32, joins: impl Fn(u32) -
             // band's time does.
             let ride: Vec<u32> = strong.iter().chain(groove.chord).copied().collect();
             let dropped = (variation::role(k) == Bar::Variant).then(|| ride.iter().copied().max()).flatten();
-            let (time, soft) = form.design.time();
             for e in &ride {
-                let pitch = if Some(*e) == dropped { HAT_PEDAL } else { time };
-                score.add(Note { start: start + e * E, len: E - 20, pitch, vel: vel(soft + if strong.contains(e) { 6 } else { -8 }, rng), channel: CH_KIT });
+                let pitch = if Some(*e) == dropped { HAT_PEDAL } else { RIDE };
+                score.add(Note { start: start + e * E, len: E - 20, pitch, vel: vel(if strong.contains(e) { 6 } else { -8 }, rng), channel: CH_KIT });
             }
             for e in groove.tek {
                 score.add(Note { start: start + e * E, len: E - 20, pitch: HAT_PEDAL, vel: vel(0, rng), channel: CH_KIT });
@@ -1179,6 +1200,14 @@ fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
         at += VAMP_BARS;
     }
     if design.ending == Ending::Tag {
+        // The brushes pick up into every repeat of the line, as a drummer
+        // leads a tag round: the last two bars played three times as they
+        // were is a loop, and where the two are alike the kit plays one bar
+        // six times running.
+        let eighths = score.meter.eighths();
+        for k in 0..3 {
+            score.add(Note { start: (at - 1) * bar + (eighths - 3 + k) * E, len: E / 2, pitch: SNARE, vel: vel(-20 + 6 * k as i32, rng), channel: CH_KIT });
+        }
         for _ in 0..2 {
             let start = score.again(at - 2, at);
             score.sections.push(Section { name: "tag", start: start * bar, end: (start + 2) * bar, trim: 1.0, level: Some(LEVEL_FOOT), rings: false });
@@ -1241,15 +1270,12 @@ fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
         }
     }
     score.add(Note { start: from, len: 2 * bar - (from - hit), pitch: home, vel: vel(-10, rng), channel: CH_LEAD });
-    if !design.brushes {
-        score.add(Note { start: hit, len: E, pitch: KICK, vel: vel(-16, rng), channel: CH_KIT });
-    }
+    score.add(Note { start: hit, len: E, pitch: KICK, vel: vel(-16, rng), channel: CH_KIT });
     if !stab {
         let eighths = score.meter.eighths();
-        let (roll, _) = design.time();
         for k in 0..eighths * 2 {
             let x = k as f32 / (eighths * 2) as f32;
-            score.add(Note { start: hit + k * E / 2, len: E / 2, pitch: roll, vel: vel(-34 + (24.0 * x) as i32, rng), channel: CH_KIT });
+            score.add(Note { start: hit + k * E / 2, len: E / 2, pitch: RIDE, vel: vel(-34 + (24.0 * x) as i32, rng), channel: CH_KIT });
         }
     }
 }
@@ -1824,12 +1850,8 @@ const CRASH: u8 = 49;
 /// strike for the hat; every other chorus the whole kit opens on the
 /// crash. Every drum strikes about the band's velocity, the kit's
 /// level set by its ride, the stroke it plays most, and the crash
-/// marks a chorus a little over it. On the brushes alone the snare keeps
-/// the time where the ride would, softer, and the kick, the crash and the
-/// toms stay out. A stroke's length changes nothing.
+/// marks a chorus a little over it. A stroke's length changes nothing.
 fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
-    let brushes = form.design.brushes;
-    let (time, soft) = form.design.time();
     let strong = score.meter.strong_eighths();
     let eighths = score.meter.eighths();
     let groove = form.design.groove;
@@ -1859,14 +1881,14 @@ fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
             if Some(*e) == dropped {
                 stroke(*e, HAT_PEDAL, 0, rng);
             } else {
-                stroke(*e, time, soft + if strong.contains(e) { 6 } else { -8 }, rng);
+                stroke(*e, RIDE, if strong.contains(e) { 6 } else { -8 }, rng);
             }
         }
         for e in groove.tek.iter().filter(|e| **e < until) {
             stroke(*e, HAT_PEDAL, 0, rng);
         }
         if mode == Kit::Full {
-            for e in groove.dum.iter().filter(|e| **e < until && !brushes) {
+            for e in groove.dum.iter().filter(|e| **e < until) {
                 stroke(*e, KICK, -30, rng);
             }
             for e in groove.tek.iter().filter(|e| **e < until) {
@@ -1879,14 +1901,14 @@ fn kit(score: &mut Score, form: &Form, rng: &mut Rng) {
                     stroke(e, SNARE, -20, rng);
                 }
             }
-            if in_chorus == 0 && (b / chorus) % 2 == 1 && !brushes {
+            if in_chorus == 0 && (b / chorus) % 2 == 1 {
                 stroke(0, CRASH, 10, rng);
             }
         }
         if fills {
             let n = (eighths - last_beat) * 2;
             for k in 0..n {
-                let pitch = if mode == Kit::Full && !brushes { TOMS[(k as usize * TOMS.len() / n as usize).min(TOMS.len() - 1)] } else { SNARE };
+                let pitch = if mode == Kit::Full { TOMS[(k as usize * TOMS.len() / n as usize).min(TOMS.len() - 1)] } else { SNARE };
                 score.add(Note { start: b * form.bar + last_beat * E + k * E / 2, len: E / 2 - 10, pitch, vel: vel(-18 + (16 * k / n) as i32, rng), channel: CH_KIT });
             }
         }
@@ -1949,26 +1971,28 @@ mod tests {
         }
     }
 
-    /// Wandering, the band never solos, never plays all of itself, keeps
-    /// the time on the snare and never stops time; in a fight it never
-    /// drops out, never opens in free time or on a vamp, never slows into
-    /// its last chord and never falls under most of itself.
+    /// Wandering, the band plays its slow feels and quiet stories, opens
+    /// on a vamp or in free time and never stops time, and its walk is the
+    /// story's whole; in a fight it never drops out, never opens in free
+    /// time or on a vamp, never slows into its last chord, and takes the
+    /// quick third of its feel's tempo.
     #[test]
     fn a_setting_leans_the_song() {
         let track = crate::pieces::find("minor-blues").unwrap();
         for seed in 0..32 {
             let (score, form) = compose(&Params { setting: Setting::Ambient, ..Params::of(track, seed) });
-            let rungs = STORIES.iter().find(|s| s.name == score.story).unwrap().ladder.len();
-            assert!(form.solos.iter().all(|s| !s), "seed {seed}: a solo while wandering");
-            assert!(form.walk.parts.iter().all(|p| p.rung <= (0.7 * rungs as f32) as usize), "seed {seed}: all the band");
-            assert!(!score.notes.iter().any(|n| n.channel == CH_KIT && matches!(n.pitch, RIDE | KICK | CRASH)), "seed {seed}: the ride, kick or crash");
+            assert_ne!(form.design.feel, Feel::Swing, "seed {seed}: the walking four while wandering");
+            assert!(matches!(score.story, "late night" | "after hours" | "stroll" | "corner"), "seed {seed}: {}", score.story);
+            assert!(matches!(form.design.intro, Intro::Vamp | Intro::Rubato), "seed {seed}: {:?}", form.design.intro);
             assert_ne!(form.design.event, Event::StopTime, "seed {seed}");
-            let (score, form) = compose(&Params { setting: Setting::Combat, ..Params::of(track, seed) });
             let rungs = STORIES.iter().find(|s| s.name == score.story).unwrap().ladder.len();
-            assert!(form.walk.parts.iter().all(|p| p.rung >= (0.6 * rungs as f32).ceil() as usize), "seed {seed}: under the floor");
+            assert!(form.walk.parts.iter().any(|p| p.rung == rungs), "seed {seed}: the story never reaches its top");
+            let (score, form) = compose(&Params { setting: Setting::Combat, ..Params::of(track, seed) });
             assert_ne!(form.design.event, Event::Drop, "seed {seed}");
             assert!(!matches!(form.design.intro, Intro::Rubato | Intro::Vamp | Intro::SoloChorus), "seed {seed}: {:?}", form.design.intro);
             assert!(!form.design.ritard, "seed {seed}: slows");
+            let (lo, hi) = form.design.groove.tempo;
+            assert!(score.eighth_bpm >= lo as f32 + (hi - lo) as f32 * 2.0 / 3.0 - 1.0, "seed {seed}: {} under the quick third", score.eighth_bpm);
         }
     }
 

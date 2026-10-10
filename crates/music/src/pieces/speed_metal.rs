@@ -62,7 +62,7 @@
 //! the seed picks which shape at every level, never the next note.
 
 use crate::ladder::{self, leap, turn, Bed, Run, Story, Turn, Walk};
-use crate::band::{Part, Style};
+use crate::band::Part;
 use crate::pieces::Params;
 use crate::rng::Rng;
 use crate::rock::{self, Band, Figure, Ritual, Fill};
@@ -345,6 +345,25 @@ enum Intro {
     Alone,
 }
 
+impl Intro {
+    /// Its name, as a band's preferences name it.
+    fn name(self) -> &'static str {
+        match self {
+            Intro::Twins => "the twins first",
+            Intro::Hits => "hits first",
+            Intro::Drums => "drums first",
+            Intro::Held => "held chords first",
+            Intro::Band => "the riff first",
+            Intro::Alone => "one guitar first",
+        }
+    }
+}
+
+/// The intros in the order their weights are drawn, and the endings'
+/// names in theirs, as `Ending::name` has them.
+const INTROS: [Intro; 6] = [Intro::Twins, Intro::Hits, Intro::Drums, Intro::Held, Intro::Band, Intro::Alone];
+const ENDINGS: [&str; 6] = ["the ritual", "the band's hits", "one stab", "a false ending", "the lead alone, then the stab", "a chord left to ring"];
+
 /// How the song ends.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Ending {
@@ -621,7 +640,8 @@ fn compose(params: &Params) -> (Score, Form) {
     let families = [Family::Doubled, Family::Single, Family::Gallop, Family::Backbeat, Family::HalfSpeed];
     let weights: Vec<f32> = families.iter().zip([30.0, 20.0, 15.0, 25.0, 10.0]).map(|(f, w)| w * band.lean(f.name())).collect();
     let family = families[skeleton.weighted(&weights)];
-    let event = [Event::Break, Event::DeadBar, Event::FeelSwitch, Event::HalfTime, Event::DrumBars, Event::Lift][skeleton.weighted(&[20.0, 15.0, 15.0, 10.0, 10.0, 10.0])];
+    let events = [Event::Break, Event::DeadBar, Event::FeelSwitch, Event::HalfTime, Event::DrumBars, Event::Lift];
+    let event = events[skeleton.weighted(&events.iter().zip([20.0, 15.0, 15.0, 10.0, 10.0, 10.0]).map(|(e, w)| w * band.lean(e.name())).collect::<Vec<f32>>())];
     let key = Key::new(["E", "A", "D", "F#", "B", "G"][skeleton.weighted(&[4.0, 2.0, 2.0, 2.0, 2.0, 1.0])], Mode::Aeolian);
     let groove = &SPEED[if family == Family::Backbeat { 1 } else { 0 }];
     let tempo = STORY.tempo(groove.tempo, &ladder::UNBOUNDED.within(band.prefs.tempo), &mut skeleton);
@@ -663,7 +683,7 @@ fn compose(params: &Params) -> (Score, Form) {
     // The solo block: four, six or eight phrases.
     let solo_bars = [16, 24, 32][skeleton.weighted(&[2.0, 4.0, 1.0])];
     let song = [SongForm::PreChorus, SongForm::Verse, SongForm::Chorus][skeleton.weighted(&[6.0, 2.0, 2.0])];
-    let close = match skeleton.weighted(&[35.0, 30.0, 15.0, 5.0, 5.0, 10.0]) {
+    let close = match skeleton.weighted(&ENDINGS.iter().zip([35.0, 30.0, 15.0, 5.0, 5.0, 10.0]).map(|(e, w)| w * band.lean(e)).collect::<Vec<f32>>()) {
         0 => Ending::Ritual(
             Ritual { hold: [1, 2, 3, 4][skeleton.weighted(&[2.0, 3.0, 2.0, 1.0])], early: skeleton.chance(0.25), kick_runs: skeleton.chance(0.5), ring: 0 },
             skeleton.chance(0.4),
@@ -704,7 +724,7 @@ fn compose(params: &Params) -> (Score, Form) {
         pre_len,
         chorus_len,
         doubled,
-        intro: [Intro::Twins, Intro::Hits, Intro::Drums, Intro::Held, Intro::Band, Intro::Alone][skeleton.weighted(&[3.0, 2.0, 1.0, 2.0, 3.0, 2.0])],
+        intro: INTROS[skeleton.weighted(&INTROS.iter().zip([3.0, 2.0, 1.0, 2.0, 3.0, 2.0]).map(|(i, w)| w * band.lean(i.name())).collect::<Vec<f32>>())],
         interlude: skeleton.chance(0.6),
         song,
         ending: close,
@@ -723,12 +743,11 @@ fn compose(params: &Params) -> (Score, Form) {
     score.lead = Some(CH_LEAD);
     score.played_by(
         band,
-        Style::Metal,
         &[(CH_BASS, Part::Bass), (CH_LEFT, Part::RhythmLeft), (CH_RIGHT, Part::RhythmRight), (CH_LEAD, Part::Lead), (CH_TWIN, Part::Second), (CH_STRINGS, Part::Pad), (CH_KIT, Part::Drums)],
     );
     let bar = score.bar();
 
-    let walk = STORY.place(&mut skeleton, &mut score, 2, &walk_of(&design), &ladder::UNBOUNDED, |_, _| 1.0);
+    let walk = STORY.place(&mut skeleton, &mut score, 2, &walk_of(&design), |_, _| 1.0);
     let mut sections: Vec<Section> = walk.parts.iter().map(|p| p.bed.section()).collect();
     let mut leads: Vec<Lead> = walk.parts.iter().map(|p| p.lead).collect();
     // The interlude takes the first part after the first chorus; the

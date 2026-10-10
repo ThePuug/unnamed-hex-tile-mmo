@@ -41,6 +41,18 @@ pub enum Shape {
     /// A hook's fall in thirds by steps: from the fifth down, a step back
     /// up between, to home.
     Call,
+    /// Indie folk's sung fall, counted on the major pentatonic: the third,
+    /// down through the second to home, and under it to the sixth below.
+    Fall,
+    /// Indie folk's hook: the third and home by turns, then up to the fifth
+    /// and held there, the question a hook asks.
+    Rock,
+    /// Indie folk's brass hook: from the sixth below up through home to the
+    /// third, and back down to home and the sixth below.
+    Lift,
+    /// The gang's chant: the third struck again and again, up to the fifth
+    /// and back, ending on the third as most sung phrases of the style do.
+    Chant,
 }
 
 /// The shapes a Balkan tune sings in: each comes down to its finalis at
@@ -58,6 +70,12 @@ pub const BLUES_SHAPES: [Shape; 4] = [Shape::Tumble, Shape::Riff, Shape::Tumble,
 /// falling from it in a sequence.
 pub const SPEED_SHAPES: [Shape; 2] = [Shape::Rise, Shape::Call];
 
+/// The shapes a stomp-and-holler tune sings in
+/// (`proofs/research/stomp-holler-findings.md`, §7): counted on the
+/// major pentatonic, about an octave wide, short phrases ending on the
+/// third or home, a quarter of the moves a tone struck again.
+pub const INDIE_SHAPES: [Shape; 4] = [Shape::Fall, Shape::Chant, Shape::Rock, Shape::Lift];
+
 impl Shape {
     /// The shape over six strong beats; a skeleton of another length
     /// samples it.
@@ -72,6 +90,10 @@ impl Shape {
             Shape::Riff => [0, 2, 0, -1, 0, 0],
             Shape::Rise => [0, 1, 2, 4, 3, 4],
             Shape::Call => [4, 2, 3, 1, 2, 0],
+            Shape::Fall => [2, 2, 1, 0, -1, 0],
+            Shape::Rock => [2, 0, 2, 0, 3, 3],
+            Shape::Lift => [-1, 0, 2, 1, 0, -1],
+            Shape::Chant => [2, 2, 3, 2, 2, 2],
         }
     }
 
@@ -274,7 +296,7 @@ mod tests {
     /// recovers, and never wanders past a sixth.
     #[test]
     fn shapes_hold_their_span() {
-        for shape in FOLK_SHAPES.iter().chain(BLUES_SHAPES.iter()).chain(SPEED_SHAPES.iter()) {
+        for shape in FOLK_SHAPES.iter().chain(BLUES_SHAPES.iter()).chain(SPEED_SHAPES.iter()).chain(INDIE_SHAPES.iter()) {
             for n in [4, 6, 8, 10] {
                 let s = shape.skeleton(n);
                 assert_eq!(s.len(), n);

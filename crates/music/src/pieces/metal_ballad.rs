@@ -31,7 +31,7 @@
 //! the seed picks which shape at every level, never the next note.
 
 use crate::ladder::{self, leap, turn, Bed, Story, Turn, Walk};
-use crate::band::{Part, Style};
+use crate::band::Part;
 use crate::pieces::Params;
 use crate::rng::Rng;
 use crate::rock::{self, Band, Ritual, Fill};
@@ -51,9 +51,8 @@ const PIANO: u8 = 0;
 const CLEAN_GUITAR: u8 = 27;
 const OVERDRIVEN: u8 = 29;
 const DISTORTION: u8 = 30;
-/// The band's bass, fingered: the picked bass's recordings start over
-/// the low E. The bass's solo is picked, which cuts where the fingered
-/// thins, and stays over its lowest recording, the C sharp at 37.
+/// The band's bass, fingered; its solo picked, which cuts where the
+/// fingered thins.
 const BASS: u8 = 33;
 const SOLO_BASS: u8 = 34;
 const SOLO_BASS_LOW: u8 = 37;
@@ -442,9 +441,12 @@ enum SongForm {
 }
 
 impl SongForm {
-    fn draw(soloist: Soloist, rng: &mut Rng) -> SongForm {
+    /// One, as often as the ballads surveyed take each, and as `band`
+    /// likes to.
+    fn draw(soloist: Soloist, band: &crate::band::Band, rng: &mut Rng) -> SongForm {
         let outro = if soloist == Soloist::Guitar { 1.0 } else { 0.0 };
-        [SongForm::LastChorus, SongForm::QuietVerse, SongForm::SoloOut, SongForm::TwoSolos][rng.weighted(&[50.0, 20.0, 13.0 * outro, 17.0 * outro])]
+        let forms = [SongForm::LastChorus, SongForm::QuietVerse, SongForm::SoloOut, SongForm::TwoSolos];
+        forms[rng.weighted(&forms.iter().zip([50.0, 20.0, 13.0 * outro, 17.0 * outro]).map(|(f, w)| w * band.lean(f.name())).collect::<Vec<f32>>())]
     }
 
     fn name(self) -> &'static str {
@@ -559,9 +561,12 @@ enum Ending {
 }
 
 impl Ending {
-    fn draw(song: SongForm, rng: &mut Rng) -> Ending {
+    /// One, as often as the ballads surveyed end each way, and as `band`
+    /// likes to end.
+    fn draw(song: SongForm, band: &crate::band::Band, rng: &mut Rng) -> Ending {
         let chorus = if song.ends_on_chorus() { 1.0 } else { 0.0 };
-        [Ending::Subtraction, Ending::LoneChord, Ending::Bookend, Ending::Tag, Ending::Big][rng.weighted(&[30.0 * chorus, 21.0, 21.0, 18.0 * chorus, 3.0])]
+        let endings = [Ending::Subtraction, Ending::LoneChord, Ending::Bookend, Ending::Tag, Ending::Big];
+        endings[rng.weighted(&endings.iter().zip([30.0 * chorus, 21.0, 21.0, 18.0 * chorus, 3.0]).map(|(e, w)| w * band.lean(e.name())).collect::<Vec<f32>>())]
     }
 
     fn name(self) -> &'static str {
@@ -750,9 +755,12 @@ fn compose(params: &Params) -> (Score, Form) {
         let (open, closed) = split(schemata);
         [open[rng.below(open.len())], closed[rng.below(closed.len())]]
     };
-    let soloist = [Soloist::Guitar, Soloist::Drums, Soloist::Bass][skeleton.weighted(&[3.0, 2.0, 2.0])];
-    let song = SongForm::draw(soloist, &mut skeleton);
-    let close = Ending::draw(song, &mut skeleton);
+    // The soloist, what follows the solo and how the song ends, each as the
+    // band likes to: its house ways.
+    let soloists = [Soloist::Guitar, Soloist::Drums, Soloist::Bass];
+    let soloist = soloists[skeleton.weighted(&soloists.iter().zip([3.0, 2.0, 2.0]).map(|(s, w)| w * band.lean(s.name())).collect::<Vec<f32>>())];
+    let song = SongForm::draw(soloist, band, &mut skeleton);
+    let close = Ending::draw(song, band, &mut skeleton);
     // A key change lifts about one chorus-ending song in ten, most before a
     // tag; a whole step as often as not.
     let lifted = match close {
@@ -819,7 +827,6 @@ fn compose(params: &Params) -> (Score, Form) {
     let solo_part = if design.soloist == Soloist::Bass { Part::Bass } else { Part::Lead };
     score.played_by(
         band,
-        Style::Metal,
         &[
             (CH_BASS, Part::Bass),
             (CH_CLEAN, Part::Clean),
@@ -871,7 +878,7 @@ fn compose(params: &Params) -> (Score, Form) {
 
     let solo = story.ladder.len() as i32;
     let tail: Vec<Turn> = design.song.turns(solo).into_iter().chain(design.ending.turns()).collect();
-    let walk = story.place(&mut skeleton, &mut score, 4, &tail, &ladder::UNBOUNDED, |_, _| 1.0);
+    let walk = story.place(&mut skeleton, &mut score, 4, &tail, |_, _| 1.0);
     // A verse grows by every layer that joins it, from the foot to the
     // full band's verse, and falls by every one that leaves.
     let top_verse = walk.parts.iter().filter(|p| p.bed.section() == Section::Verse).map(|p| p.rung).max().unwrap_or(0).max(1);

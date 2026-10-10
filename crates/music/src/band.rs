@@ -10,9 +10,11 @@
 //! - **Its members:** one for every part its style's tracks give out
 //!   (`Part`), each an instrument and the player on it — the bassist's
 //!   upright or electric, the drummer's brushes or sticks, the tambura or
-//!   the guitar — and none for a part the band does not bring, which its
-//!   tracks then leave silent: a village band has no brass. A part may
-//!   have several members, ranked, where a track takes the first its
+//!   the guitar. A part the band names no member for is played on the
+//!   track's own instrument by the player its role calls for: every part
+//!   of a track sounds whoever plays it, since a story's ladder moves its
+//!   layers and a layer no one plays is a rung that moves nothing. A part
+//!   may have several members, ranked, where a track takes the first its
 //!   palette allows, as a lead does: a wedding orchestra's clarinet leads
 //!   the overworld and the horo alike.
 //! - **How each member plays:** a player of its part (`players`) tilted
@@ -43,40 +45,36 @@ pub enum Style {
     Bulgarian,
     Blues,
     Metal,
+    /// Indie folk-pop as Of Monsters and Men played it on their debut: the
+    /// major, a strummed acoustic, two voices trading the tune, the hook
+    /// on a horn or the accordion over a stomp.
+    IndieFolk,
 }
 
 impl Style {
-    pub const ALL: [Style; 3] = [Style::Bulgarian, Style::Blues, Style::Metal];
+    pub const ALL: [Style; 4] = [Style::Bulgarian, Style::Blues, Style::Metal, Style::IndieFolk];
 
     pub fn name(self) -> &'static str {
         match self {
             Style::Bulgarian => "bulgarian",
             Style::Blues => "blues",
             Style::Metal => "metal",
+            Style::IndieFolk => "indie folk",
         }
     }
 
-    /// The parts its tracks give out, every band of it bringing each or
-    /// leaving it silent.
+    /// The parts its tracks give out, each a band of it may name a member
+    /// for.
     pub fn parts(self) -> &'static [Part] {
         use Part::*;
         match self {
             Style::Bulgarian => &[Lead, Second, Bass, Drums, Drone, Pad, Pluck, Pluck2, Choir, Horn, Shimmer, Figure, Trombone, Tuba, Accordion, Doubler, HeldReed, Echo],
             Style::Blues => &[Lead, Second, Bass, Drums, Comp, Keys, Organ, Horn, Echo, Shimmer],
             Style::Metal => &[Lead, Second, Bass, Drums, RhythmLeft, RhythmRight, Clean, Pad, Choir],
+            Style::IndieFolk => &[Lead, Second, Bass, Drums, Figure, Pluck, Keys, Choir, Doubler],
         }
     }
 
-    /// The parts every band of it must bring: the ones its tracks cannot
-    /// play without.
-    pub fn needs(self) -> &'static [Part] {
-        use Part::*;
-        match self {
-            Style::Bulgarian => &[Lead, Second, Bass, Drums, Drone, Pad, Pluck, Pluck2, Figure],
-            Style::Blues => &[Lead, Second, Bass, Drums, Comp, Keys, Echo],
-            Style::Metal => &[Lead, Second, Bass, Drums, RhythmLeft, RhythmRight, Clean, Pad],
-        }
-    }
 }
 
 /// A part of the music, what a track gives one member to play.
@@ -90,7 +88,8 @@ pub enum Part {
     Drums,
     /// The blues guitar's comp.
     Comp,
-    /// The blues piano.
+    /// The piano: the blues piano's comp, the folk piano's chords on the
+    /// quarters.
     Keys,
     Organ,
     /// A held horn, a colour.
@@ -102,15 +101,19 @@ pub enum Part {
     Drone,
     /// The held harmony: strings.
     Pad,
+    /// A plucked part of its own: the tambura's line, the banjo's rolls.
     Pluck,
     Pluck2,
+    /// Voices: the choir's held harmony, a folk song's gang.
     Choir,
-    /// The tambura's strum, the horo's engine.
+    /// The figure a band runs on: the tambura's strum under a horo, the
+    /// acoustic guitar's strum under a folk song.
     Figure,
     Trombone,
     Tuba,
     Accordion,
-    /// The riff doubled in unison.
+    /// The riff doubled: in unison under a horo, an octave over a folk
+    /// song's hook.
     Doubler,
     /// A reed holding where the dance thickens.
     HeldReed,
@@ -136,14 +139,18 @@ pub struct Band {
 /// range it takes, of the stretch the setting allows (`ladder::Bounds`),
 /// and how much more or less often it reaches for a choice its tracks
 /// draw, by the choice's name in the style's vocabulary — a groove, a
-/// story — every other as the track draws it.
+/// story, how a track opens, the one thing it does, who solos, how it
+/// ends — every other as the track draws it. The openings and endings are
+/// the band's signatures, what a listener learns it by across its songs:
+/// a band whose every song opens and ends as any other's does is a
+/// roster, not a band.
 #[derive(Debug, PartialEq)]
 pub struct Prefs {
     pub tempo: (f32, f32),
     pub leans: &'static [(&'static str, f32)],
 }
 
-/// One member: the part they play, on what, and how.
+/// One member: the part they play, on what, through what, and how.
 #[derive(Debug, PartialEq)]
 pub struct Member {
     pub part: Part,
@@ -184,6 +191,7 @@ pub enum Habits {
 }
 
 /// A blues band's habits: how it answers its singer, and whether its lead
+    IndieFolk,
 /// runs into a last tone.
 #[derive(Debug, PartialEq)]
 pub struct Blues {
@@ -213,6 +221,7 @@ mod gm {
     pub const JAZZ_GUITAR: u8 = 26;
     pub const CLEAN_GUITAR: u8 = 27;
     pub const OVERDRIVEN: u8 = 29;
+    pub const STEEL_GUITAR: u8 = 25;
     pub const DISTORTION: u8 = 30;
     pub const UPRIGHT_BASS: u8 = 32;
     pub const FINGER_BASS: u8 = 33;
@@ -239,6 +248,8 @@ mod gm {
     pub const FIDDLE: u8 = 110;
     pub const SHANAI: u8 = 111;
     /// Drum kits: the standard, the rock kit on sticks, the brushes.
+    pub const WHISTLE: u8 = 78;
+    pub const BANJO: u8 = 105;
     pub const KIT: u8 = 0;
     pub const ROCK_KIT: u8 = 16;
     pub const BRUSH_KIT: u8 = 40;
@@ -286,7 +297,10 @@ pub const BANDS: &[Band] = &[
             m(Echo, NYLON_GUITAR, &PICKER, 1.0, 1.0, 0.5, -2.0, 0.9, 6.0, 0.85),
         ],
         habits: Habits::Bulgarian,
-        prefs: Prefs { tempo: (0.5, 1.0), leans: &[("râčenica", 2.0), ("kopanica", 1.5), ("lesnoto", 0.7), ("full swing", 1.5), ("dance", 1.5), ("fragments", 0.5)] },
+        prefs: Prefs {
+            tempo: (0.5, 1.0),
+            leans: &[("râčenica", 2.0), ("kopanica", 1.5), ("lesnoto", 0.7), ("full swing", 1.5), ("dance", 1.5), ("fragments", 0.5), ("dance first", 2.0), ("call", 1.5), ("fade", 0.5), ("fifth", 1.5), ("stroke", 2.0), ("decay", 0.5), ("the tapan", 1.5), ("a taksim", 0.5), ("pressing on", 3.0), ("a unison run", 3.0)],
+        },
     },
     Band {
         name: "Gorno Pole Village Band",
@@ -294,12 +308,14 @@ pub const BANDS: &[Band] = &[
         about: "Rhodope village musicians: a shepherd's flute and the gadulka, a zurna at a feast, the tambura's strum and the tapan, no brass; plain-spoken, loose, a little behind the beat",
         members: &[
             m(Lead, PAN_FLUTE, &PAN_PIPER, 0.9, 0.85, 0.4, 3.0, 1.3, -3.0, 1.0),
-            m(Lead, FIDDLE, &VILLAGE_FIDDLE, 0.95, 0.9, 0.45, 3.0, 1.3, -3.0, 1.0),
             m(Lead, SHANAI, &ZURNACI, 1.0, 0.9, 0.5, 2.0, 1.2, -3.0, 1.0),
             m(Lead, FLUTE, &PIPER, 0.9, 0.85, 0.4, 3.0, 1.3, -3.0, 1.0),
+            // Ranked so the overworld takes the shepherd's pipe and the horo
+            // the zurna, a track taking the first lead its palette allows.
             m(Second, FIDDLE, &SECOND, 1.0, 0.9, 0.4, 4.0, 1.3, -3.0, 1.0),
             m(Second, ACCORDION, &SECOND, 1.0, 0.9, 0.4, 4.0, 1.2, -3.0, 1.0),
             m(Bass, UPRIGHT_BASS, &PICKER, 1.0, 1.0, 0.5, 4.0, 1.4, -6.0, 1.05),
+            m(Lead, FIDDLE, &VILLAGE_FIDDLE, 0.95, 0.9, 0.45, 3.0, 1.3, -3.0, 1.0),
             m(Drums, KIT, &DRUMMER, 1.0, 1.0, 0.5, 2.0, 1.4, -6.0, 1.0),
             m(Drone, CELLO, &DRONE, 1.0, 1.0, 0.5, 0.0, 1.0, -3.0, 1.0),
             m(Pad, STRINGS_2, &SECTION, 1.0, 1.0, 0.5, 4.0, 1.2, -3.0, 1.0),
@@ -313,7 +329,10 @@ pub const BANDS: &[Band] = &[
             m(Echo, NYLON_GUITAR, &PICKER, 1.0, 1.0, 0.5, 3.0, 1.3, -6.0, 1.05),
         ],
         habits: Habits::Bulgarian,
-        prefs: Prefs { tempo: (0.0, 0.6), leans: &[("lesnoto", 1.5), ("dajčovo", 1.3), ("kopanica", 0.6), ("râčenica", 0.8), ("drum first", 1.5), ("breather", 1.2), ("lament", 1.5), ("fragments", 1.3)] },
+        prefs: Prefs {
+            tempo: (0.0, 0.6),
+            leans: &[("lesnoto", 1.5), ("dajčovo", 1.3), ("kopanica", 0.6), ("râčenica", 0.8), ("drum first", 1.5), ("breather", 1.2), ("lament", 1.5), ("fragments", 1.3), ("prelude", 2.0), ("figure first", 1.5), ("dance first", 0.5), ("song", 2.0), ("alone", 2.0), ("stroke", 0.5), ("a taksim", 2.5), ("one tempo", 1.5), ("a held tone", 2.0), ("a unison run", 0.3)],
+        },
     },
     Band {
         name: "Ensemble Zora",
@@ -322,12 +341,15 @@ pub const BANDS: &[Band] = &[
         members: &[
             m(Lead, FLUTE, &PIPER, 0.75, 1.15, 0.5, 0.0, 0.65, 0.0, 1.0),
             m(Lead, ENGLISH_HORN, &OBOIST, 0.75, 1.15, 0.5, 0.0, 0.65, 0.0, 1.0),
-            m(Lead, CLARINET, &FOLK_CLARINET, 0.75, 1.1, 0.5, 0.0, 0.65, 0.0, 1.0),
             m(Lead, FIDDLE, &PIPER, 0.75, 1.2, 0.5, 0.0, 0.65, 0.0, 1.0),
+            // Ranked so the overworld takes the flute and the horo the fiddle,
+            // the gadulka's stand-in, where a wedding orchestra's horo is the
+            // clarinet's.
             m(Second, ENGLISH_HORN, &SECOND, 1.0, 1.15, 0.5, 1.0, 0.65, 0.0, 1.0),
             m(Second, FIDDLE, &SECOND, 1.0, 1.15, 0.5, 1.0, 0.65, 0.0, 1.0),
             m(Second, FRENCH_HORN, &SECOND, 1.0, 1.1, 0.5, 1.0, 0.65, 0.0, 1.0),
             m(Bass, UPRIGHT_BASS, &PICKER, 1.0, 1.0, 0.5, 0.0, 0.6, 0.0, 1.0),
+            m(Lead, CLARINET, &FOLK_CLARINET, 0.75, 1.1, 0.5, 0.0, 0.65, 0.0, 1.0),
             m(Drums, KIT, &DRUMMER, 1.0, 1.0, 0.5, 0.0, 0.6, 0.0, 1.0),
             m(Drone, CONTRABASS, &DRONE, 1.0, 1.0, 0.5, 0.0, 1.0, 0.0, 1.0),
             m(Pad, STRINGS_2, &SECTION, 1.0, 1.0, 0.5, 1.0, 0.65, 0.0, 1.0),
@@ -344,7 +366,10 @@ pub const BANDS: &[Band] = &[
             m(Echo, HARP, &PICKER, 1.0, 1.0, 0.5, 0.0, 0.6, 0.0, 1.0),
         ],
         habits: Habits::Bulgarian,
-        prefs: Prefs { tempo: (0.25, 0.75), leans: &[("arc", 1.5), ("two waves", 1.3), ("slow burn", 1.2), ("gathering", 1.5)] },
+        prefs: Prefs {
+            tempo: (0.25, 0.75),
+            leans: &[("arc", 1.5), ("two waves", 1.3), ("slow burn", 1.2), ("gathering", 1.5), ("fade", 2.0), ("lifted", 2.0), ("handover", 1.5), ("cadence", 3.0), ("stroke", 0.5), ("straight in", 2.0), ("building", 2.0), ("a step a section", 2.0), ("the last line three times", 2.0)],
+        },
     },
     Band {
         name: "Ruby Hollis & the Late Shift",
@@ -362,7 +387,10 @@ pub const BANDS: &[Band] = &[
             m(Echo, CLEAN_GUITAR, &PICKER, 1.0, 1.0, 0.5, -1.0, 1.1, 5.0, 0.95),
         ],
         habits: Habits::Blues(Blues { answers: Answers::Obbligato, runs_over: true }),
-        prefs: Prefs { tempo: (0.4, 1.0), leans: &[("slow twelve-eight", 1.3), ("walking four", 1.3), ("rumba", 0.7), ("six-eight", 0.6), ("rush hour", 1.3), ("corner", 1.3)] },
+        prefs: Prefs {
+            tempo: (0.4, 1.0),
+            leans: &[("slow twelve-eight", 1.3), ("walking four", 1.3), ("rumba", 0.7), ("six-eight", 0.6), ("rush hour", 1.3), ("corner", 1.3), ("vamp", 2.0), ("turnaround", 1.5), ("rubato", 0.5), ("stop-time", 2.0), ("break", 2.0), ("tag", 1.5)],
+        },
     },
     Band {
         name: "The Back Room Quartet",
@@ -381,7 +409,10 @@ pub const BANDS: &[Band] = &[
             m(Shimmer, VIBES, &PICKER, 1.0, 1.0, 0.5, 5.0, 0.9, -8.0, 1.05),
         ],
         habits: Habits::Blues(Blues { answers: Answers::Pads, runs_over: false }),
-        prefs: Prefs { tempo: (0.2, 0.7), leans: &[("walking four", 2.0), ("rumba", 0.6), ("six-eight", 0.8), ("late night", 1.5), ("after hours", 1.5)] },
+        prefs: Prefs {
+            tempo: (0.2, 0.7),
+            leans: &[("walking four", 2.0), ("rumba", 0.6), ("six-eight", 0.8), ("late night", 1.5), ("after hours", 1.5), ("rubato", 2.5), ("solo chorus", 1.5), ("vamp", 0.5), ("stop-time", 0.5), ("drop", 1.5), ("held", 2.0), ("vamp out", 1.5)],
+        },
     },
     Band {
         name: "Otis Mabry & the Night Owls",
@@ -402,7 +433,10 @@ pub const BANDS: &[Band] = &[
             m(Shimmer, VIBES, &PICKER, 1.0, 1.0, 0.5, 0.0, 0.9, 2.0, 0.9),
         ],
         habits: Habits::Blues(Blues { answers: Answers::Sparse, runs_over: true }),
-        prefs: Prefs { tempo: (0.3, 0.8), leans: &[("rumba", 1.8), ("six-eight", 1.5), ("slow twelve-eight", 1.2), ("walking four", 0.6), ("stroll", 1.3)] },
+        prefs: Prefs {
+            tempo: (0.3, 0.8),
+            leans: &[("rumba", 1.8), ("six-eight", 1.5), ("slow twelve-eight", 1.2), ("walking four", 0.6), ("stroll", 1.3), ("straight", 2.0), ("turnaround", 1.5), ("coda vamp", 2.0), ("drop", 1.5), ("tag", 2.0), ("break", 1.5)],
+        },
     },
     Band {
         name: "Ashen Crown",
@@ -420,7 +454,10 @@ pub const BANDS: &[Band] = &[
             m(Choir, CHOIR_AAHS, &SECTION, 1.0, 1.0, 0.5, 2.0, 0.8, 2.0, 1.0),
         ],
         habits: Habits::Metal(rock::Habits { shredder_leads: false, fill: Fill::Descent, fill_every: 8, bass_sixteenths: true, violin: 0.0, fills: 0.15, pushes: 0.2 }),
-        prefs: Prefs { tempo: (0.5, 1.0), leans: &[("doubled", 1.5), ("gallop", 1.5), ("backbeat", 0.7), ("anthem", 1.5), ("power ballad", 1.3)] },
+        prefs: Prefs {
+            tempo: (0.5, 1.0),
+            leans: &[("doubled", 1.5), ("gallop", 1.5), ("backbeat", 0.7), ("anthem", 1.5), ("power ballad", 1.3), ("the twins first", 2.0), ("the ritual", 2.0), ("guitar solo", 1.5), ("a big ending", 2.0), ("a tag", 1.5)],
+        },
     },
     Band {
         name: "Iron Requiem",
@@ -437,7 +474,10 @@ pub const BANDS: &[Band] = &[
             m(Pad, STRINGS_1, &SECTION, 1.0, 1.0, 0.5, 0.0, 0.7, 4.0, 1.0),
         ],
         habits: Habits::Metal(rock::Habits { shredder_leads: true, fill: Fill::Roll, fill_every: 4, bass_sixteenths: true, violin: 0.0, fills: 0.45, pushes: 0.25 }),
-        prefs: Prefs { tempo: (0.6, 1.0), leans: &[("doubled", 2.0), ("single", 1.3), ("half-speed", 0.5), ("power ballad", 1.2), ("requiem", 0.7)] },
+        prefs: Prefs {
+            tempo: (0.6, 1.0),
+            leans: &[("doubled", 2.0), ("single", 1.3), ("half-speed", 0.5), ("power ballad", 1.2), ("requiem", 0.7), ("drums first", 2.0), ("one guitar first", 1.5), ("one stab", 2.0), ("a false ending", 2.0), ("drum solo", 2.0), ("the band leaving", 0.5)],
+        },
     },
     Band {
         name: "Pale Choir",
@@ -456,7 +496,46 @@ pub const BANDS: &[Band] = &[
             m(Choir, CHOIR_AAHS, &SECTION, 1.0, 1.0, 0.5, 5.0, 1.0, -2.0, 1.0),
         ],
         habits: Habits::Metal(rock::Habits { shredder_leads: false, fill: Fill::SnareThenToms, fill_every: 16, bass_sixteenths: false, violin: 0.6, fills: 0.0, pushes: 0.12 }),
-        prefs: Prefs { tempo: (0.0, 0.6), leans: &[("backbeat", 1.5), ("half-speed", 1.5), ("doubled", 0.6), ("requiem", 1.8), ("slow burn", 1.5), ("twelve-eight", 1.4)] },
+        prefs: Prefs {
+            tempo: (0.0, 0.6),
+            leans: &[("backbeat", 1.5), ("half-speed", 1.5), ("doubled", 0.6), ("requiem", 1.8), ("slow burn", 1.5), ("twelve-eight", 1.4), ("held chords first", 2.0), ("a chord left to ring", 3.0), ("the intro again", 2.0), ("the band leaving", 1.5), ("bass solo", 0.5)],
+        },
+    },
+    Band {
+        name: "Of Giants and Lanterns",
+        style: Style::IndieFolk,
+        about: "Icelandic stomp-and-holler in Of Monsters and Men's manner: two trumpets in unison on the hook, an accordion answering, two steel-string acoustics strummed hard, a piano on the quarters, the kit's kick and floor tom on every beat and the whole band shouting the chorus",
+        members: &[
+            m(Lead, TRUMPET, &PLAIN, 1.0, 0.9, 0.4, 0.0, 0.9, 0.0, 1.0),
+            m(Lead, ACCORDION, &PLAIN, 1.0, 1.0, 0.5, 0.0, 0.9, 0.0, 1.05),
+            m(Second, TRUMPET, &SECOND, 1.0, 0.9, 0.4, 2.0, 0.9, 0.0, 1.0),
+            m(Second, ACCORDION, &SECOND, 1.0, 1.0, 0.5, 1.0, 0.9, 0.0, 1.0),
+            m(Bass, FINGER_BASS, &PICKER, 1.0, 1.0, 0.5, -1.0, 0.9, 2.0, 1.0),
+            m(Drums, KIT, &DRUMMER, 1.0, 1.0, 0.5, -2.0, 0.9, 2.0, 1.0),
+            m(Figure, STEEL_GUITAR, &PICKER, 1.0, 1.0, 0.5, -1.0, 1.0, 2.0, 1.1),
+            m(Keys, PIANO, &PICKER, 1.0, 1.0, 0.5, 0.0, 0.9, 0.0, 1.0),
+            m(Choir, CHOIR_AAHS, &SECTION, 1.0, 1.0, 0.5, 2.0, 1.0, 0.0, 1.0),
+        ],
+        habits: Habits::IndieFolk,
+        prefs: Prefs { tempo: (0.0, 0.6), leans: &[("hook and drop", 1.8), ("drive", 1.3), ("from the top", 0.7), ("the hook first", 2.0), ("the gang out", 2.0), ("thinned out", 0.5)] },
+    },
+    Band {
+        name: "The Wheelwrights",
+        style: Style::IndieFolk,
+        about: "a barn-floor stomp-and-holler band in the manner of Mumford & Sons and the Lumineers: two guitarists strumming hard over the kick drum at one's foot, a banjo rolling sixteenths through the choruses, a piano on the quarters, the hook on the accordion with a whistle over it, a cello bowing long tones under it, the upright bass and the gang on the chorus",
+        members: &[
+            m(Lead, ACCORDION, &PLAIN, 1.0, 1.0, 0.5, 2.0, 1.1, 0.0, 1.05),
+            m(Second, CELLO, &SECOND, 1.0, 0.85, 0.3, 3.0, 1.1, -2.0, 1.0),
+            m(Bass, UPRIGHT_BASS, &PICKER, 1.0, 1.0, 0.5, 3.0, 1.2, 0.0, 1.05),
+            m(Drums, KIT, &DRUMMER, 1.0, 1.0, 0.5, 1.0, 1.2, 4.0, 1.0),
+            m(Figure, STEEL_GUITAR, &PICKER, 1.0, 1.0, 0.5, 1.0, 1.2, 3.0, 1.0),
+            m(Pluck, BANJO, &PICKER, 1.0, 1.0, 0.5, 0.0, 1.1, 0.0, 1.0),
+            m(Keys, PIANO, &PICKER, 1.0, 1.0, 0.5, 2.0, 1.1, 0.0, 1.0),
+            m(Choir, CHOIR_AAHS, &SECTION, 1.0, 1.0, 0.5, 3.0, 1.2, 2.0, 1.0),
+            m(Doubler, WHISTLE, &DOUBLER, 1.0, 1.0, 0.5, 2.0, 1.1, 0.0, 1.0),
+        ],
+        habits: Habits::IndieFolk,
+        prefs: Prefs { tempo: (0.2, 1.0), leans: &[("from the top", 1.8), ("long climb", 1.4), ("four on the floor", 1.3), ("hook and drop", 0.5), ("the strum first", 1.5), ("thinned out", 1.5), ("one stomp", 1.5), ("the gang out", 0.5)] },
     },
 ];
 
@@ -481,13 +560,6 @@ impl Band {
     pub fn members(&self, part: Part) -> impl Iterator<Item = &'static Member> + use<'_> {
         let members: &'static [Member] = self.members;
         members.iter().filter(move |m| m.part == part)
-    }
-
-    /// Whether `part` sounds: a band of the style plays it where a member
-    /// does and leaves it silent where none does; out of its style, a
-    /// band plays every part, as the track has it.
-    pub fn plays(&self, part: Part, style: Style) -> bool {
-        self.style != style || self.members(part).next().is_some()
     }
 
     /// The program `part` is played on: the first of its members' that
@@ -558,18 +630,16 @@ fn tilt(p: Player, feel: Feel) -> Player {
 mod tests {
     use super::*;
 
-    /// Every style has bands; every band brings every part its style
-    /// needs and no part out of it; every name is its band's alone; every
-    /// feel keeps to the studies' ranges.
+    /// Every style has bands; every band names a lead and no part out of
+    /// its style; every name is its band's alone; every feel keeps to the
+    /// studies' ranges.
     #[test]
     fn every_band_is_defined_in_its_style() {
         for style in Style::ALL {
             assert!(of_style(style).count() >= 2, "{} has too few bands", style.name());
         }
         for (i, band) in BANDS.iter().enumerate() {
-            for part in band.style.needs() {
-                assert!(band.members(*part).next().is_some(), "{} brings no {part:?}", band.name);
-            }
+            assert!(band.members(Part::Lead).next().is_some(), "{} brings no lead", band.name);
             for m in band.members {
                 assert!(band.style.parts().contains(&m.part), "{}: {:?} is no part of {}", band.name, m.part, band.style.name());
                 let f = m.feel;
@@ -578,7 +648,7 @@ mod tests {
             assert!(BANDS[i + 1..].iter().all(|b| b.name != band.name), "{} twice", band.name);
             assert!(0.0 <= band.prefs.tempo.0 && band.prefs.tempo.0 < band.prefs.tempo.1 && band.prefs.tempo.1 <= 1.0, "{}: a tempo out of the range", band.name);
             assert!(band.prefs.leans.iter().all(|(_, w)| *w > 0.0), "{}: a lean that forbids", band.name);
-            let fits = matches!((&band.habits, band.style), (Habits::Bulgarian, Style::Bulgarian) | (Habits::Blues(_), Style::Blues) | (Habits::Metal(_), Style::Metal));
+            let fits = matches!((&band.habits, band.style), (Habits::Bulgarian, Style::Bulgarian) | (Habits::Blues(_), Style::Blues) | (Habits::Metal(_), Style::Metal) | (Habits::IndieFolk, Style::IndieFolk));
             assert!(fits, "{}: habits out of its style", band.name);
         }
     }

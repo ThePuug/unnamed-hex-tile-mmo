@@ -90,9 +90,21 @@ pub const SPEED: [Groove; 2] = [
     Groove { name: "backbeat", groups: &[2, 2, 2, 2], tempo: (288, 328), dum: &[0, 3, 4], tek: &[2, 6], chord: &[1, 3, 5, 7], busy: 0.45 },
 ];
 
+/// Stomp-and-holler's pulses (`proofs/research/stomp-holler-findings.md`,
+/// §1–2), both a kick on every quarter and the "chick" — a tambourine, a
+/// clap, the strum's up-stroke — on every off-beat eighth, never a
+/// backbeat: the drive, a hundred and two to a hundred and fifty a
+/// quarter, as nineteen of the songs go; and the stomp, the half-time
+/// stompers' seventy-six to eighty-five, Ho Hey's and Ophelia's. Its
+/// tune leans on the beat and enters as a pick-up.
+pub const INDIE: [Groove; 2] = [
+    Groove { name: "drive", groups: &[2, 2, 2, 2], tempo: (204, 300), dum: &[0, 2, 4, 6], tek: &[1, 3, 5, 7], chord: &[1, 3, 5, 7], busy: 0.35 },
+    Groove { name: "stomp", groups: &[2, 2, 2, 2], tempo: (152, 170), dum: &[0, 2, 4, 6], tek: &[1, 3, 5, 7], chord: &[1, 3, 5, 7], busy: 0.3 },
+];
+
 /// Every groove there is.
 pub fn all() -> impl Iterator<Item = &'static Groove> {
-    BALKAN.iter().chain(BLUES.iter()).chain(HORO.iter()).chain(BALLAD.iter()).chain(SPEED.iter())
+    BALKAN.iter().chain(BLUES.iter()).chain(HORO.iter()).chain(BALLAD.iter()).chain(SPEED.iter()).chain(INDIE.iter())
 }
 
 impl Groove {

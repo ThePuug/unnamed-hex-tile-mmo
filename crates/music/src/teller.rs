@@ -310,7 +310,7 @@ fn told(score: &Score, tune: &Tune, runs: &[Run<Telling>], lo: u8, hi: u8, breat
 /// where one is and the nearest it, the first from home. Returns the
 /// last tone held.
 #[allow(clippy::too_many_arguments)]
-fn held(score: &mut Score, teller: &Teller, tune: &Tune, run: &Run<Telling>, range: (u8, u8, i32), channel: u8, mut last: Option<u8>, goal: Option<u8>, rng: &mut Rng) -> Option<u8> {
+pub fn held(score: &mut Score, teller: &Teller, tune: &Tune, run: &Run<Telling>, range: (u8, u8, i32), channel: u8, mut last: Option<u8>, goal: Option<u8>, rng: &mut Rng) -> Option<u8> {
     let (lo, hi) = teller.register;
     let bar = score.bar();
     let mut b = if run.a == 0 { run.a } else { run.a + 1 };

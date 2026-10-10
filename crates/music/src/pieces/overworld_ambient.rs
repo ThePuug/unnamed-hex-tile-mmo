@@ -22,7 +22,7 @@
 //! plucks, strings, breath — plays the dance under it.
 
 use crate::ladder::{self, turn, Bed, Run, Story, Walk};
-use crate::band::{Part, Style};
+use crate::band::Part;
 use crate::pieces::Params;
 use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
@@ -83,19 +83,10 @@ const ROOM_S: f32 = 3.2;
 /// Who may lead: the players that can hold a line and shape it. Each
 /// seed draws one.
 const LEADS: [u8; 5] = [FLUTE, PAN_FLUTE, FIDDLE, CLARINET, ENGLISH_HORN];
-/// Each lead's level, dB, so that wherever it plays it sits 1.5 dB
-/// under the band: the bank's samples of them are not one loudness.
-/// Measured against the band over the piece's seeds.
-fn lead_level(program: u8) -> f32 {
-    match program {
-        FLUTE => -0.6,
-        PAN_FLUTE => 3.2,
-        FIDDLE => 3.1,
-        CLARINET => 2.1,
-        ENGLISH_HORN => 4.1,
-        _ => 0.0,
-    }
-}
+/// The lead's level, dB, whichever it is: forward of any one voice of
+/// the bed, a little under the bed as a whole. The render evens what
+/// the bank gives each player, so one level holds for every lead.
+const LEAD: f32 = 3.0;
 
 /// Who may hold tones under the lead's riff.
 const SECONDS: [u8; 4] = [FIDDLE, CLARINET, ACCORDION, ENGLISH_HORN];
@@ -322,11 +313,14 @@ impl Pulse {
     }
 }
 
-/// The one thing the piece does once: the bed hollowing to the drone and
-/// the breath for a phrase; the tune sung by the second for a phrase pair;
-/// a phrase pair lifted onto the relative major's chords, or sequenced on
-/// the fifth; a phrase sung in free time over the drone and the pad, the
-/// dance stopped; or a bar of the drone alone.
+/// The one thing the piece does once, a colour and never a hole: the bed
+/// hollowing to the drone and the breath under the lead for a phrase; the
+/// tune sung by the second for a phrase pair; a phrase pair lifted onto
+/// the relative major's chords, or sequenced on the fifth; a phrase sung
+/// over the drone and the pad with the dance stopped. The lead sings
+/// through every one but the handover and the tempo holds through all of
+/// them: a bar of nothing, or a phrase that wanders off the beat and
+/// back, is heard as the band stopping and not as the piece turning.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Event {
     Hollow,
@@ -334,12 +328,24 @@ enum Event {
     Lifted,
     Fifth,
     Song,
-    Halt,
+}
+
+impl Event {
+    /// Its name, as a band's preferences name it.
+    fn name(self) -> &'static str {
+        match self {
+            Event::Hollow => "hollow",
+            Event::Voice => "handover",
+            Event::Lifted => "lifted",
+            Event::Fifth => "fifth",
+            Event::Song => "song",
+        }
+    }
 }
 
 /// How the piece opens: the bed fading in from the drone; the lead's
-/// prelude in free time; the dance first; the plucks' figure alone; or the
-/// lead's short call.
+/// prelude alone over the drone; the dance first; the plucks' figure
+/// alone; or the lead's short call.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Intro {
     Fade,
@@ -347,6 +353,18 @@ enum Intro {
     Dance,
     Figure,
     Call,
+}
+
+impl Intro {
+    fn name(self) -> &'static str {
+        match self {
+            Intro::Fade => "fade",
+            Intro::Prelude => "prelude",
+            Intro::Dance => "dance first",
+            Intro::Figure => "figure first",
+            Intro::Call => "call",
+        }
+    }
 }
 
 /// How the piece ends: the bed thinning to the drone, which rings on; the
@@ -360,6 +378,18 @@ enum Ending {
     Cadence,
     Stroke,
     Stop,
+}
+
+impl Ending {
+    fn name(self) -> &'static str {
+        match self {
+            Ending::Decay => "decay",
+            Ending::Alone => "alone",
+            Ending::Cadence => "cadence",
+            Ending::Stroke => "stroke",
+            Ending::Stop => "stop",
+        }
+    }
 }
 
 /// What a seed's piece is.
@@ -384,10 +414,9 @@ struct Design {
     /// Whether the tempo presses on from a little past halfway, and to
     /// how much faster.
     ramp: Option<f32>,
-    /// The tunes after the first, in series; and whether a third is the
-    /// first come back.
+    /// The tune after the first, in series, where the walk is long enough
+    /// to tell each three pairs.
     tunes: Vec<Theme>,
-    returns: bool,
     event: Event,
     intro: Intro,
     ending: Ending,
@@ -440,7 +469,7 @@ impl Form {
             }
         }
         let at = self.bars();
-        let quiet = self.inside_event(bar) && matches!(self.design.event, Event::Hollow | Event::Halt);
+        let quiet = self.inside_event(bar) && self.design.event == Event::Hollow;
         let alone = self.design.ending == Ending::Alone && bar + phrase::BARS / 2 >= at;
         let decayed = self.design.ending == Ending::Decay && bar + phrase::BARS / 2 >= at;
         if quiet || alone || decayed {
@@ -454,14 +483,15 @@ impl Form {
     fn inside_event(&self, bar: u32) -> bool {
         (self.event.0..self.event.1).contains(&bar)
     }
-    /// The walk's runs, the lead silent where the event hollows the bed or
-    /// hands the tune to the second, singing where it sings in free time.
+    /// The walk's runs, the lead silent where the event hands the tune to
+    /// the second, singing where the bed hollows under it or the dance
+    /// stops for its song.
     fn runs(&self) -> Vec<Run<Telling>> {
         let mut runs: Vec<Run<Telling>> = Vec::new();
         for b in 0..self.bars() {
             let lead = match self.design.event {
-                Event::Hollow | Event::Halt | Event::Voice if self.inside_event(b) => Telling::Off,
-                Event::Song if self.inside_event(b) => Telling::Phrases,
+                Event::Voice if self.inside_event(b) => Telling::Off,
+                Event::Hollow | Event::Song if self.inside_event(b) => Telling::Phrases,
                 _ => self.walk.at(b).lead,
             };
             match runs.last_mut() {
@@ -498,6 +528,8 @@ fn compose(params: &Params) -> (Score, Form) {
     // The slow dances, for a wander; the quick ones are other pieces'.
     let groove = &BALKAN[skeleton.weighted(&[4.0, 0.0, 0.0, 2.0, 1.0f32].iter().enumerate().map(|(i, w)| w * band.lean(BALKAN[i].name)).collect::<Vec<f32>>())];
     let tempo = story.tempo(groove.tempo, &ladder::UNBOUNDED.within(band.prefs.tempo), &mut skeleton);
+    // At least one colour, since a ladder may bring the colours in.
+    let colours = skeleton.range(1, 7);
     let (open, closed) = schemata_for(&key);
     // The band's first lead the overworld has a voice for, and its first
     // second besides.
@@ -511,19 +543,23 @@ fn compose(params: &Params) -> (Score, Form) {
     let theme = Theme::draw(groove, &FOLK_SHAPES, &mut skeleton);
     let open = open[skeleton.below(open.len())];
     let closed = closed[skeleton.below(closed.len())];
-    // The piece's identity, on a stream of its own.
+    // The piece's identity, on a stream of its own; how it opens, what it
+    // does once and how it ends as the band likes to, its house ways.
     let mut habits = rng.fork(14);
     let mut pulse = [Pulse::Dance, Pulse::StepsIn, Pulse::Figure, Pulse::Free][habits.weighted(&[30.0, 30.0, 20.0, 20.0])];
-    let opening = [Intro::Fade, Intro::Prelude, Intro::Dance, Intro::Figure, Intro::Call][habits.weighted(&[35.0, 20.0, 20.0, 15.0, 10.0])];
+    let intros = [Intro::Fade, Intro::Prelude, Intro::Dance, Intro::Figure, Intro::Call];
+    let opening = intros[habits.weighted(&intros.iter().zip([35.0, 20.0, 20.0, 15.0, 10.0]).map(|(i, w)| w * band.lean(i.name())).collect::<Vec<f32>>())];
     // The figure first is the plucks' and wants them playing.
     if opening == Intro::Figure && pulse == Pulse::Free {
         pulse = Pulse::Figure;
     }
-    let event = [Event::Hollow, Event::Voice, Event::Lifted, Event::Fifth, Event::Song, Event::Halt][habits.weighted(&[25.0, 20.0, 15.0, 15.0, 15.0, 10.0])];
-    // The tempo presses on in a dance's records, never in a free song.
+    let events = [Event::Hollow, Event::Voice, Event::Lifted, Event::Fifth, Event::Song];
+    let event = events[habits.weighted(&events.iter().zip([30.0, 20.0, 15.0, 15.0, 20.0]).map(|(e, w)| w * band.lean(e.name())).collect::<Vec<f32>>())];
+    // The tempo presses on in a dance's records, never under a song.
     let ramp = (pulse.drums() && event != Event::Song && habits.chance(0.2)).then(|| habits.range(110, 120) as f32 / 100.0);
-    let count = [1, 2, 3][habits.weighted(&[40.0, 45.0, 15.0])];
-    let returns = habits.chance(0.5);
+    // One tune, or two: a tune has to come round before the next can be
+    // heard as the next, and a third in a piece this long was a medley.
+    let count = [1, 2][habits.weighted(&[55.0, 45.0])];
     let tunes: Vec<Theme> = (1..count)
         .map(|_| {
             // Another shape than the first's, where a few draws find one.
@@ -537,7 +573,8 @@ fn compose(params: &Params) -> (Score, Form) {
             t
         })
         .collect();
-    let close = [Ending::Decay, Ending::Alone, Ending::Cadence, Ending::Stroke, Ending::Stop][habits.weighted(&[40.0, 20.0, 15.0, 20.0, 5.0])];
+    let endings = [Ending::Decay, Ending::Alone, Ending::Cadence, Ending::Stroke, Ending::Stop];
+    let close = endings[habits.weighted(&endings.iter().zip([40.0, 20.0, 15.0, 20.0, 5.0]).map(|(e, w)| w * band.lean(e.name())).collect::<Vec<f32>>())];
     // The stroke is the drum's.
     let close = if close == Ending::Stroke && !pulse.drums() { Ending::Decay } else { close };
     let slows = close == Ending::Alone || (close != Ending::Stop && habits.chance(0.15));
@@ -548,9 +585,9 @@ fn compose(params: &Params) -> (Score, Form) {
         second,
         pluck,
         pluck_2,
-        choir: band.plays(Part::Choir, Style::Bulgarian),
-        horn: band.plays(Part::Horn, Style::Bulgarian),
-        shimmer: band.plays(Part::Shimmer, Style::Bulgarian),
+        choir: colours & 1 != 0,
+        horn: colours & 2 != 0,
+        shimmer: colours & 4 != 0,
         groove,
         form,
         theme,
@@ -559,7 +596,6 @@ fn compose(params: &Params) -> (Score, Form) {
         pulse,
         ramp,
         tunes,
-        returns,
         event,
         intro: opening,
         ending: close,
@@ -568,7 +604,7 @@ fn compose(params: &Params) -> (Score, Form) {
     let instruments = vec![
         Instrument { name: "drone", program: design.drone, channel: CH_DRONE, role: Role::Drone, low: 24, high: 60, reverb: 40, pan: 0, level: 0.0 },
         Instrument { name: "strings", program: design.pad, channel: CH_PAD, role: Role::Sustain, low: 48, high: 79, reverb: 100, pan: -29, level: 0.0 },
-        Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 62, high: 91, reverb: 40, pan: 0, level: lead_level(design.lead) },
+        Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 62, high: 91, reverb: 40, pan: 0, level: LEAD },
         Instrument { name: "pluck", program: design.pluck, channel: CH_PLUCK, role: Role::Pluck, low: 45, high: 74, reverb: 30, pan: 34, level: 0.0 },
         Instrument { name: "second", program: design.second, channel: CH_SECOND, role: Role::Melody, low: 55, high: 88, reverb: 60, pan: 21, level: 0.0 },
         Instrument { name: "choir", program: band.program(Part::Choir, &[], CHOIR_AAHS), channel: CH_CHOIR, role: Role::Sustain, low: 55, high: 72, reverb: 100, pan: 23, level: 0.0 },
@@ -587,7 +623,6 @@ fn compose(params: &Params) -> (Score, Form) {
     score.lead = Some(CH_LEAD);
     score.played_by(
         band,
-        Style::Bulgarian,
         &[
             (CH_DRONE, Part::Drone),
             (CH_PAD, Part::Pad),
@@ -622,7 +657,7 @@ fn compose(params: &Params) -> (Score, Form) {
 
     // The walk, in half-phrases, and whole question-and-answer pairs
     // of them, so it closes on an answer.
-    let walk = story.place(&mut skeleton, &mut score, 4, &[], &ladder::UNBOUNDED, |texture, lead| texture.trim(lead));
+    let walk = story.place(&mut skeleton, &mut score, 4, &[], |texture, lead| texture.trim(lead));
     let bars = walk.bars();
     let pair = 2 * phrase::BARS;
     let pairs = bars / pair;
@@ -645,22 +680,16 @@ fn compose(params: &Params) -> (Score, Form) {
     }
     let event = match design.event {
         Event::Hollow => placed(0.15, 0.45, phrase::BARS, phrase::BARS, &mut habits),
-        Event::Halt => placed(0.2, 0.4, phrase::BARS, 1, &mut habits),
         Event::Song => placed(0.5, 0.75, phrase::BARS, phrase::BARS, &mut habits),
         Event::Voice => placed(0.4, 0.7, pair, pair, &mut habits),
         Event::Lifted | Event::Fifth => placed(0.34, 0.66, pair, pair, &mut habits),
     };
     let steps_in = ((habits.range(25, 40) as f32 / 100.0 * bars as f32) as u32 / phrase::BARS) * phrase::BARS;
-    // The tunes in series, each told two pairs or more: the first, then the
-    // second from halfway; or by thirds, the third the first come back or a
-    // tune of its own. One tune where the walk is too short for them.
-    let series = (design.tunes.len() + 1).min((pairs / 2).max(1) as usize);
-    let tunes: Vec<usize> = (0..bars)
-        .map(|b| {
-            let k = ((b / pair) as usize * series / pairs.max(1) as usize).min(series - 1);
-            if k == 2 && design.returns { 0 } else { k }
-        })
-        .collect();
+    // The tunes in series, each told three pairs or more: the first, then
+    // the second from halfway. One tune where the walk is too short for
+    // two.
+    let series = (design.tunes.len() + 1).min((pairs / 3).max(1) as usize);
+    let tunes: Vec<usize> = (0..bars).map(|b| ((b / pair) as usize * series / pairs.max(1) as usize).min(series - 1)).collect();
     score.summary = format!(
         "{} on the {}: a {:?} in a {:?}, {} to ask and {} to answer; {} drone, {} pad, {} lead, {} second, {} and {} plucks, colours {}; {:?}, {} tune{}{}, {:?} at {:.0}%, opens {:?}, ends {:?}",
         story.name,
@@ -688,34 +717,42 @@ fn compose(params: &Params) -> (Score, Form) {
     .to_lowercase();
 
     // Each phrase on its schema, by turns; a lifted pair's moved up the
-    // mode a third, a sequenced one's a fifth, its tune with it. The tune's
-    // degrees shifted: the climb at the ladder's top, else the phrase
-    // pair's sequence.
-    let by = match design.event {
-        Event::Lifted => 2,
-        Event::Fifth => 4,
-        _ => 0,
-    };
-    let moved = |s: &Schema| Schema { roots: s.roots.map(|r| r + by), ..*s };
-    let (moved_open, moved_closed) = (moved(design.open), moved(design.closed));
-    let moved_pair = |b: u32| by != 0 && (event.0..event.1).contains(&b);
-    let rows: Vec<&Schema> = (0..bars / phrase::BARS)
-        .map(|p| {
-            let b = p * phrase::BARS;
-            match (moved_pair(b), p % 2) {
-                (true, 0) => &moved_open,
-                (true, _) => &moved_closed,
-                (false, 0) => design.open,
-                (false, _) => design.closed,
-            }
-        })
-        .collect();
+    // mode a third, a sequenced one's a fifth, its tune with it — or down
+    // a sixth and a fourth, the same chords, where the tune a third or a
+    // fifth up would leave its register. The tune's degrees shifted: the
+    // climb at the ladder's top, else the phrase pair's sequence.
     let all: Vec<&Theme> = std::iter::once(&design.theme).chain(design.tunes.iter()).collect();
     let themes: Vec<&Theme> = (0..bars / phrase::BARS).map(|p| all[tunes[(p * phrase::BARS) as usize]]).collect();
     let upper = story.ladder.len().max(1);
-    let shifts: Vec<i32> = (0..bars).map(|b| if moved_pair(b) { by } else if walk.at(b).rung >= upper { CLIMB } else { PAIRS[(b / pair) as usize % PAIRS.len()] }).collect();
-    let tune = Tune::compose(&themes, &score.meter, design.form, &rows, 3, shifts);
+    let composed = |by: i32| -> Tune {
+        let moved = |s: &Schema| Schema { roots: s.roots.map(|r| r + by), ..*s };
+        let (moved_open, moved_closed) = (moved(design.open), moved(design.closed));
+        let moved_pair = |b: u32| by != 0 && (event.0..event.1).contains(&b);
+        let rows: Vec<&Schema> = (0..bars / phrase::BARS)
+            .map(|p| {
+                let b = p * phrase::BARS;
+                match (moved_pair(b), p % 2) {
+                    (true, 0) => &moved_open,
+                    (true, _) => &moved_closed,
+                    (false, 0) => design.open,
+                    (false, _) => design.closed,
+                }
+            })
+            .collect();
+        let shifts: Vec<i32> = (0..bars).map(|b| if moved_pair(b) { by } else if walk.at(b).rung >= upper { CLIMB } else { PAIRS[(b / pair) as usize % PAIRS.len()] }).collect();
+        Tune::compose(&themes, &score.meter, design.form, &rows, 3, shifts)
+    };
+    let (up, down) = match design.event {
+        Event::Lifted => (2, -5),
+        Event::Fifth => (4, -3),
+        _ => (0, 0),
+    };
+    let mut tune = composed(up);
     score.harmony = tune.chords.clone();
+    if up != 0 && tune.span(&score, event.0, event.1, TUNE.0, TUNE.1).1 > TUNE.1 {
+        tune = composed(down);
+        score.harmony = tune.chords.clone();
+    }
     let form = Form { bar, walk, tune, design, event, steps_in, tunes };
 
     drone(&mut score, &form);
@@ -756,7 +793,7 @@ fn compose(params: &Params) -> (Score, Form) {
     frame_drum(&mut score, &form, &mut rng.fork(10));
     linger(&mut score);
     score.mark_phrases(0, form.bars());
-    pace(&mut score, &form, &mut rng.fork(16));
+    pace(&mut score, &form);
     ending(&mut score, &form, &mut rng.fork(12));
     intro(&mut score, &form, &mut rng.fork(13));
     score.finish();
@@ -774,9 +811,9 @@ fn voice(score: &mut Score, form: &Form, rng: &mut Rng) {
 
 /// The piece's tempo as its design moves it: pressing on a phrase at a
 /// time from a little past halfway to its last phrase, where it presses
-/// on; a free-time phrase's beats each taken at seven to eight and a
-/// half tenths of the pace, wavering, where it sings one.
-fn pace(score: &mut Score, form: &Form, rng: &mut Rng) {
+/// on. Nothing else moves it: a phrase taken off the beat and back was
+/// heard as a band losing its way, not as a song.
+fn pace(score: &mut Score, form: &Form) {
     let bar = form.bar;
     let bars = form.bars();
     let base = score.eighth_bpm;
@@ -787,14 +824,6 @@ fn pace(score: &mut Score, form: &Form, rng: &mut Rng) {
         for (k, b) in steps.iter().enumerate() {
             score.tempo.push((b * bar, base * (1.0 + (to - 1.0) * (k + 1) as f32 / n)));
         }
-    }
-    if form.design.event == Event::Song {
-        let (a, z) = form.event;
-        let beats: Vec<u32> = (a * bar..z * bar).filter(|t| score.strong(*t)).collect();
-        for t in beats {
-            score.tempo.push((t, base * rng.range(70, 85) as f32 / 100.0));
-        }
-        score.tempo.push((z * bar, base));
     }
     score.tempo.sort_by_key(|(t, _)| *t);
 }
@@ -809,9 +838,11 @@ const RING_BARS: u32 = 3;
 /// The opening, as the piece's `Intro` has it, the drone under all of it
 /// from its first bar. The fade: the breath a bar in, the pad's top voice
 /// the bar after, two bars or four, the lead coming in with the tune. The
-/// prelude: the lead alone in free time over the drone, four bars, a tone
-/// high in the mode held and turned about, then the call down from the
-/// fifth to the tonic. The dance first, two bars or four of the plucks and
+/// prelude: the lead alone over the drone, four bars at the dance's
+/// tempo, a tone high in the mode held and turned about, then the call
+/// down from the fifth to the tonic — at the tempo, since a prelude taken
+/// in free time and a bed that enters on the beat sound like players
+/// warming up and a band starting. The dance first, two bars or four of the plucks and
 /// the drum where the pulse has one, and the figure first, two bars of
 /// the plucks alone. The call: two bars of the lead down from the fifth
 /// to the tonic, the descent a Balkan player's prelude ends on.
@@ -867,15 +898,6 @@ fn intro(score: &mut Score, form: &Form, rng: &mut Rng) {
                     let d = if score.meter.strong(i) { 4 } else if i % 2 == 1 { 5 } else { 3 };
                     score.add(Note { start: bar + i * E, len: E - E / 8, pitch: key.pitch(home + d, 4), vel: vel(-12, rng), channel: CH_LEAD });
                 }
-                let base = score.eighth_bpm;
-                let beats: Vec<u32> = (0..call_at * E + INTRO_BARS * bar).filter(|t| score.strong(*t)).collect();
-                for t in beats {
-                    score.tempo.push((t, base * rng.range(55, 75) as f32 / 100.0));
-                }
-                if !score.tempo.iter().any(|(t, _)| *t == opening) {
-                    score.tempo.push((opening, base));
-                }
-                score.tempo.sort_by_key(|(t, _)| *t);
             }
             let call = [(0, e - 1, 4), (e - 1, 1, 3), (e, second - 1, 2), (e + second - 1, 1, 1), (e + second, INTRO_BARS * e - e - second - 1, 0)];
             for (at, len, degree) in call {
@@ -1366,7 +1388,7 @@ mod tests {
         for pulse in [Pulse::Dance, Pulse::StepsIn, Pulse::Figure, Pulse::Free] {
             assert!(took(&|d| d.pulse == pulse), "{pulse:?} never taken");
         }
-        for event in [Event::Hollow, Event::Voice, Event::Song, Event::Halt] {
+        for event in [Event::Hollow, Event::Voice, Event::Song] {
             assert!(took(&|d| d.event == event), "{event:?} never taken");
         }
         for intro in [Intro::Fade, Intro::Prelude, Intro::Dance, Intro::Figure, Intro::Call] {

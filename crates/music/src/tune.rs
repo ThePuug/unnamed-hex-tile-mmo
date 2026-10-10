@@ -32,6 +32,10 @@ pub struct Tune {
 /// flat third, the fourth, the fifth and the flat seventh.
 pub const MINOR_PENTATONIC: &[i32] = &[0, 2, 3, 4, 6];
 
+/// The major pentatonic as degrees of the major: the tonic, the second,
+/// the third, the fifth and the sixth.
+pub const MAJOR_PENTATONIC: &[i32] = &[0, 1, 2, 4, 5];
+
 /// A note as placed: `(tick, len, pitch)`.
 pub type Placed = (u32, u32, u8);
 
@@ -93,14 +97,43 @@ impl Tune {
         });
         bar.iter()
             .map(|t| {
-                let mut pitch = key.pitch(home_degree + self.on_scale(t.degree) + shift, 4);
-                if score.meter.strong(t.onset) && !chord.holds(key, pitch) {
+                let strong = score.meter.strong(t.onset);
+                let mut pitch = self.within(key, chord, strong, key.pitch(home_degree + self.on_scale(t.degree) + shift, 4), lo, hi);
+                if strong && !chord.holds(key, pitch) {
                     pitch = bent_to_chord(key, chord, pitch, prev, lo, hi);
                 }
                 prev = Some(pitch);
                 (b * score.bar() + t.onset * E, t.len * E, pitch)
             })
             .collect()
+    }
+
+    /// `pitch` inside `lo..=hi`: itself, or the nearest tone of the line's
+    /// scale inside — the chord's on a `strong` beat — where a sequence
+    /// or a cadence's turn over the tune's top carries it past the
+    /// register: the line touches the register's edge rather than
+    /// leaving its instrument.
+    fn within(&self, key: &Key, chord: Chord, strong: bool, pitch: u8, lo: u8, hi: u8) -> u8 {
+        if (lo..=hi).contains(&pitch) {
+            return pitch;
+        }
+        (lo..=hi)
+            .filter(|p| self.sings(key, *p) && (!strong || chord.holds(key, *p)))
+            .min_by_key(|p| ((*p as i32 - pitch as i32).abs(), *p))
+            .unwrap_or(pitch.clamp(lo, hi))
+    }
+
+    /// The lowest and highest pitch bars `a..b` reach from the tune's
+    /// home in `lo..=hi` as written, before any tone is folded into the
+    /// register: what a piece reads to know whether a sequence fits.
+    pub fn span(&self, score: &Score, a: u32, b: u32, lo: u8, hi: u8) -> (u8, u8) {
+        let home_degree = score.key.absolute_degree(home_tonic(&score.key, lo, hi)).unwrap();
+        let pitches = (a..b).flat_map(|bar| {
+            let key = score.key_at(bar * score.bar());
+            let shift = self.shifts[bar as usize];
+            self.bars[bar as usize].iter().map(move |t| key.pitch(home_degree + self.on_scale(t.degree) + shift, 4)).collect::<Vec<u8>>()
+        });
+        pitches.fold((u8::MAX, u8::MIN), |(lo, hi), p| (lo.min(p), hi.max(p)))
     }
 
     /// Bars `a..b` as one line, its voice leading repaired: where a leap
@@ -120,10 +153,23 @@ impl Tune {
     /// `line`'s voice leading repaired in place, as `run` repairs a run:
     /// for a line pieced from several, where the joins are leaps too.
     pub fn repair(&self, score: &Score, line: &mut [Placed], lo: u8, hi: u8) {
+        self.repair_from(score, line, lo, hi, 0);
+    }
+
+    /// `repair`, with the first `fixed` tones of `line` standing as they
+    /// are: a line's join onto tones already written, which the repair
+    /// reads but never moves — where one of them lands a leap that leaps
+    /// on, the tone after it turns back instead. A join repaired on the
+    /// last written tone alone let a leap into it and the line's opening
+    /// leap pass as two.
+    pub fn repair_from(&self, score: &Score, line: &mut [Placed], lo: u8, hi: u8, fixed: usize) {
         // Every tone is a degree of the key its bar is heard in, so a
         // borrowed tone counts as the degree it stands for.
         let degree = |tick: u32, p: u8| score.key_at(tick).absolute_degree(p).unwrap();
         for i in 1..line.len().saturating_sub(1) {
+            if i + 1 < fixed {
+                continue;
+            }
             let key = &score.key_at(line[i].0);
             let (d0, d1, d2) = (
                 degree(line[i - 1].0, line[i - 1].2),
@@ -140,9 +186,10 @@ impl Tune {
             let strong = score.strong(line[i].0);
             let chord = score.chord_at(line[i].0);
             let target = key.pitch(d0 + 2 * leap.signum(), 4);
-            let fixed = (target.saturating_sub(4)..=target.saturating_add(4))
+            let landing = (target.saturating_sub(4)..=target.saturating_add(4))
                 .filter(|p| {
-                    *p != line[i].2
+                    i >= fixed
+                        && *p != line[i].2
                         && *p >= lo
                         && *p <= hi
                         && self.sings(key, *p)
@@ -150,13 +197,14 @@ impl Tune {
                 })
                 .filter(|p| (degree(line[i].0, *p) - d0).abs() < counterpoint::LEAP)
                 .min_by_key(|p| (*p as i32 - target as i32).abs());
-            if let Some(p) = fixed {
+            if let Some(p) = landing {
                 line[i].2 = p;
                 continue;
             }
             // Where the landing cannot move — a strong beat with no chord
-            // tone a step from where the leap began — the tone after it
-            // steps or turns back instead of leaping on.
+            // tone a step from where the leap began, or a tone already
+            // written — the tone after it steps or turns back instead of
+            // leaping on.
             let (start, pitch) = (line[i + 1].0, line[i + 1].2);
             let key = &score.key_at(start);
             let strong = score.strong(start);
@@ -180,7 +228,7 @@ impl Tune {
 impl Tune {
     /// The mode's degree from home of the tune's `step` from home: the
     /// step itself, or where there is a scale, that many of its steps.
-    fn on_scale(&self, step: i32) -> i32 {
+    pub fn on_scale(&self, step: i32) -> i32 {
         match self.scale {
             Some(scale) => {
                 let n = scale.len() as i32;

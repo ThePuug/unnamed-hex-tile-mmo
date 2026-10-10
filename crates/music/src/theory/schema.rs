@@ -29,7 +29,7 @@ impl Schema {
     }
 }
 
-use Mode::{Aeolian, Dorian, Hijaz};
+use Mode::{Aeolian, Dorian, Hijaz, Ionian};
 
 /// The Balkan loops and cadences, as an arranger sets a tune that is
 /// traditionally only droned: the shuttle between i and ♭VII, the
@@ -192,6 +192,51 @@ pub const SPEED: Speed = Speed {
     ],
 };
 
+/// Indie folk-pop's loops as Of Monsters and Men's debut runs them
+/// (`proofs/research/omam-findings.md`, §2), in the major and nowhere
+/// else: four chords — I, IV, V, vi — and now and then ii or iii, no
+/// borrowed chord, no seventh. A song keeps one loop, its question and
+/// its answer the same loop with its last bar turned home: Little Talks'
+/// vi–IV–I–V, which starts on the relative minor and finds the tonic;
+/// Mountain Sound's ii–IV–vi–V, home by IV and vi; Love Love Love's
+/// IV–V–I–iii and vi–V–I; Yellow Light's IV–vi–I–iii; Dirty Paws' vi–I–I–IV;
+/// King and Lionheart's IV–I–V–vi, its lift the plagal IV to I; Six
+/// Weeks' I–vi–V; and the tonic held under a verse, rocking to IV.
+pub const INDIE: [[Schema; 2]; 8] = [
+    [
+        Schema { name: "relative loop", modes: &[Ionian], roots: [5, 3, 0, 4], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "relative home", modes: &[Ionian], roots: [5, 3, 0, 0], closed: true, alters: [DIATONIC; 4] },
+    ],
+    [
+        Schema { name: "mountain loop", modes: &[Ionian], roots: [1, 3, 5, 4], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "mountain home", modes: &[Ionian], roots: [3, 5, 0, 0], closed: true, alters: [DIATONIC; 4] },
+    ],
+    [
+        Schema { name: "lullaby loop", modes: &[Ionian], roots: [3, 4, 0, 2], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "lullaby home", modes: &[Ionian], roots: [5, 4, 0, 0], closed: true, alters: [DIATONIC; 4] },
+    ],
+    [
+        Schema { name: "lamp loop", modes: &[Ionian], roots: [3, 5, 0, 2], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "lamp home", modes: &[Ionian], roots: [3, 5, 4, 0], closed: true, alters: [DIATONIC; 4] },
+    ],
+    [
+        Schema { name: "paws loop", modes: &[Ionian], roots: [5, 0, 0, 3], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "paws home", modes: &[Ionian], roots: [5, 0, 3, 0], closed: true, alters: [DIATONIC; 4] },
+    ],
+    [
+        Schema { name: "plagal lift", modes: &[Ionian], roots: [3, 0, 4, 5], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "plagal home", modes: &[Ionian], roots: [3, 0, 4, 0], closed: true, alters: [DIATONIC; 4] },
+    ],
+    [
+        Schema { name: "weeks loop", modes: &[Ionian], roots: [0, 5, 4, 4], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "weeks home", modes: &[Ionian], roots: [0, 5, 4, 0], closed: true, alters: [DIATONIC; 4] },
+    ],
+    [
+        Schema { name: "tonic pedal", modes: &[Ionian], roots: [0, 0, 3, 3], closed: false, alters: [DIATONIC; 4] },
+        Schema { name: "pedal home", modes: &[Ionian], roots: [3, 3, 0, 0], closed: true, alters: [DIATONIC; 4] },
+    ],
+];
+
 /// A part of the song's schemata: the open ones and the closed.
 pub fn split(schemata: &'static [Schema]) -> (Vec<&'static Schema>, Vec<&'static Schema>) {
     (schemata.iter().filter(|s| !s.closed).collect(), schemata.iter().filter(|s| s.closed).collect())
@@ -352,13 +397,33 @@ mod tests {
         let blues: Vec<&Schema> = TWELVE_BAR.iter().flat_map(|row| row.iter()).collect();
         let ballad: Vec<&Schema> = [BALLAD.verse, BALLAD.chorus, BALLAD.climax].into_iter().flatten().collect();
         let speed: Vec<&Schema> = [SPEED.verse, SPEED.pre, SPEED.chorus, SPEED.bright, SPEED.solo].into_iter().flatten().collect();
-        let styles = [("folk", folk), ("blues", blues), ("ballad", ballad), ("speed", speed)];
+        let indie: Vec<&Schema> = INDIE.iter().flatten().collect();
+        let styles = [("folk", folk), ("blues", blues), ("ballad", ballad), ("speed", speed), ("indie", indie)];
         for (i, (a, ours)) in styles.iter().enumerate() {
             for (b, theirs) in &styles[i + 1..] {
                 for s in ours {
                     for t in theirs.iter().filter(|t| t.roots == s.roots && t.alters == s.alters) {
                         assert!(!s.modes.iter().any(|m| t.modes.contains(m)), "{a}'s {} is {b}'s {}", s.name, t.name);
                     }
+                }
+            }
+        }
+    }
+
+    /// Every indie loop asks and then answers, its question ending off the
+    /// tonic and its answer on it, every chord the major's own major or
+    /// minor triad, never the diminished seventh degree.
+    #[test]
+    fn every_indie_loop_asks_and_answers() {
+        let key = Key::new("D", Ionian);
+        for [open, closed] in &INDIE {
+            assert!(!open.closed && open.roots[3] != 0, "{}", open.name);
+            assert!(closed.closed && closed.roots[3] == 0, "{}", closed.name);
+            for s in [open, closed] {
+                assert_eq!(s.alters, [DIATONIC; 4], "{}: a borrowed chord", s.name);
+                for r in s.roots {
+                    let tones: Vec<u8> = Chord::triad(r).degrees().iter().map(|d| key.pitch(*d, 4)).collect();
+                    assert!(matches!((tones[1] - tones[0], tones[2] - tones[1]), (3, 4) | (4, 3)), "{}: {r} is no major or minor triad", s.name);
                 }
             }
         }
