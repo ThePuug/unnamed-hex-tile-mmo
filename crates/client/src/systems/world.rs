@@ -370,16 +370,14 @@ pub fn update(
     player_query: Query<&Loc, With<crate::components::Viewed>>,
 ) {
     // The sky keeps wall-clock time (`Server::wall`), whole milliseconds
-    // until each fraction below. The sun's day drifts a whole day over the
-    // year, so one real hour meets every game hour across it; the date
-    // keeps the clock, only the sky carries the drift. The moon's phase
+    // until each fraction below. The sun keeps the clock's hour, noon at
+    // 12:00; its path swings with the year's phase, and the moon's phase
     // runs once per season.
     let wall = diagnostics_state.lighting.at(server.wall(server.now(time.elapsed().as_millis())));
     let (year_start, year_len) = Date::year(wall);
-    let into_year = wall - year_start;
-    let dtd = ((wall + into_year * DAY_MS / year_len) % DAY_MS) as f32 / DAY_MS as f32;
+    let dtd = (wall % DAY_MS) as f32 / DAY_MS as f32;
     let dtm = (wall - Date::season_start(wall)) as f32 / SEASON_MS as f32;
-    let dty = into_year as f32 / year_len as f32;
+    let dty = (wall - year_start) as f32 / year_len as f32;
 
     // sun
     let (mut s_light, mut s_transform, mut cascade_config) = q_sun.single_mut().expect("no result in q_sun");
