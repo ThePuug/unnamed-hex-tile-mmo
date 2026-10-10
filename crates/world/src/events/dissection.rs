@@ -60,8 +60,9 @@
 //! is settled here and not in migration, since the trunk's segment may be
 //! another cell's and `prepare` is the phase that sees the ring.
 //!
-//! Not dissection's: channels finer than the node spacing, sediment,
-//! terraces, the bank a bend cuts and the bar it builds. Unbuilt.
+//! The ravines on a range's flanks are thrusting's. Not dissection's:
+//! other channels finer than the node spacing, sediment, terraces, the
+//! bank a bend cuts and the bar it builds. Unbuilt.
 //!
 //! # Water
 //!
