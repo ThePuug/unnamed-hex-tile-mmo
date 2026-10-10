@@ -59,7 +59,7 @@ pub fn update_floating_text(
 const BAR_WIDTH: f32 = 50.0;
 const BAR_HEIGHT: f32 = 6.0;
 
-/// How fast a bar's fill eases toward what it measures
+/// The decay constant a bar's fill eases toward what it measures by
 const FILL_SPEED: f32 = 5.0;
 
 /// Where a node sits while what it follows is off screen
@@ -132,7 +132,7 @@ pub fn update_world_bars(
                 BAR_HEIGHT,
             ),
         };
-        bar.current_fill = bar.current_fill.lerp(measured, FILL_SPEED * time.delta_secs());
+        bar.current_fill = crate::systems::ease(bar.current_fill, measured, FILL_SPEED, time.delta_secs());
 
         // Over the target's head, centred on it
         let world_pos = transform.translation + Vec3::new(0.0, 1.5, 0.0);

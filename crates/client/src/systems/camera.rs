@@ -3,7 +3,7 @@
 //! is not drawn. No key moves it.
 
 use bevy::{core_pipeline::prepass::DepthPrepass, pbr::{DistanceFog, FogFalloff}, prelude::*};
-use crate::systems::closeup::CloseupCamera;
+use crate::systems::{closeup::CloseupCamera, ease};
 use qrz::{Convert, Qrz};
 use std::f32::consts::PI;
 
@@ -288,11 +288,6 @@ pub struct CameraPose {
 /// whether or not it is on the line: a boom drawn in among crowns would
 /// otherwise show their insides at the near plane.
 pub const NEAR_FADE_RADIUS: f32 = 2.5;
-
-/// `from` eased toward `to` by the decay constant `k` over `dt`.
-fn ease(from: f32, to: f32, k: f32, dt: f32) -> f32 {
-    from + (to - from) * (1.0 - (-k * dt).exp())
-}
 
 /// The yaw of the orbit stop behind `heading`, in radians: 0 behind a
 /// player facing north, counter-clockwise from there.

@@ -20,7 +20,7 @@ const BARS: [(Pool, Color); 2] = [
     (Pool::Endurance, Color::srgb(0.2, 0.65, 0.45)),
 ];
 
-/// How fast a bar's fill eases toward its pool
+/// The decay constant a bar's fill eases toward its pool by
 const EASE: f32 = 5.0;
 
 impl Pool {
@@ -137,7 +137,7 @@ pub fn update(
     for (mut bar, mut node) in &mut bars {
         let (now, max) = bar.pool.of(pools);
         let share = if max > 0.0 { (now / max * 100.0).clamp(0.0, 100.0) } else { 0.0 };
-        bar.current_percent = bar.current_percent.lerp(share, EASE * time.delta_secs());
+        bar.current_percent = crate::systems::ease(bar.current_percent, share, EASE, time.delta_secs());
         node.width = Val::Percent(bar.current_percent);
     }
     for (mut label, mut text) in &mut labels {

@@ -33,3 +33,10 @@ pub mod targeting;
 pub mod threat_icons;
 pub mod ui;
 pub mod world;
+
+/// `from` eased toward `to` by the decay constant `k` over `dt`: the one
+/// easing every smoothed value uses. Frame-rate independent, and it never
+/// passes `to`, however long a frame is.
+pub fn ease(from: f32, to: f32, k: f32, dt: f32) -> f32 {
+    from + (to - from) * (1.0 - (-k * dt).exp())
+}
