@@ -1358,7 +1358,8 @@ const CELLS_SIX: [(Cell, f32); 6] = [
 ];
 
 /// A cell for each bar of the piece, drawn, never the same three bars
-/// running.
+/// running, and the last two never alike: a tag plays the last two bars
+/// three times, and alike they are one bar six times running.
 fn cells(meter: &crate::theory::Meter, bars: u32, rng: &mut Rng) -> Vec<&'static Cell> {
     let pool: &'static [(Cell, f32)] = match meter.eighths() {
         12 => &CELLS_SHUFFLE,
@@ -1367,9 +1368,9 @@ fn cells(meter: &crate::theory::Meter, bars: u32, rng: &mut Rng) -> Vec<&'static
     };
     let weights: Vec<f32> = pool.iter().map(|(_, w)| *w).collect();
     let mut out: Vec<usize> = Vec::new();
-    for _ in 0..bars {
+    for i in 0..bars {
         let mut k = rng.weighted(&weights);
-        while out.len() >= 2 && out[out.len() - 1] == k && out[out.len() - 2] == k {
+        while (out.len() >= 2 && out[out.len() - 1] == k && out[out.len() - 2] == k) || (i + 1 == bars && out.last() == Some(&k)) {
             k = rng.weighted(&weights);
         }
         out.push(k);
