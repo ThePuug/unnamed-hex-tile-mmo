@@ -194,13 +194,79 @@ pub enum Habits {
     IndieFolk,
 }
 
-/// A blues band's habits: how it answers its singer, and whether its lead
-/// runs into a last tone.
+/// A blues band's habits: how it answers its singer, whether its lead
+/// runs into a last tone, and the harmony it puts under the twelve bars.
 #[derive(Debug, PartialEq)]
 pub struct Blues {
     pub answers: Answers,
     pub runs_over: bool,
+    pub harmony: Harmony,
 }
+
+/// The harmony a blues band puts under the frame
+/// (`proofs/research/blues-bands-findings.md` §2): how often it takes
+/// each twelve-bar row the schemata hold, by name and weight — the
+/// quick change, the jazz blues' dominant into four, the turn home
+/// through ♭VI7 and V7, the soul blues' thrill turn — what it turns a
+/// chorus on in its last bar, and what it ends on. A row a band names
+/// no weight for it never plays.
+#[derive(Debug, PartialEq)]
+pub struct Harmony {
+    pub rows: &'static [(&'static str, f32)],
+    pub turnarounds: &'static [(Turnaround, f32)],
+    pub lasts: &'static [(Last, f32)],
+}
+
+/// The chord a chorus turns into the next on, its last bar: the tonic
+/// held, the V7, ♭VI7, iiø or ♭II7.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Turnaround {
+    Tonic,
+    Dominant,
+    FlatSix,
+    HalfDim,
+    FlatTwo,
+}
+
+/// The last chord: the tonic seventh, its ninth, ♭VI, the major tonic,
+/// or ♭II.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Last {
+    Seventh,
+    Ninth,
+    FlatSix,
+    Picardy,
+    FlatTwo,
+}
+
+/// The Chicago harp combo's harmony: the plain form, the quick change
+/// a third of the time, the turn home through V and IV or through the
+/// minor turn, a turnaround bar as often as the tonic held, the seventh
+/// or its ninth to end.
+const PLAIN_BLUES: Harmony = Harmony {
+    rows: &[("tonic row", 7.0), ("quick change", 3.0), ("subdominant row", 1.0), ("turn home", 40.0), ("turn home, the dominant held", 20.0), ("minor turn", 40.0), ("minor turn, the sixth lowered", 40.0)],
+    turnarounds: &[(Turnaround::Tonic, 50.0), (Turnaround::Dominant, 50.0)],
+    lasts: &[(Last::Seventh, 70.0), (Last::Ninth, 30.0)],
+};
+
+/// The late-night quartet's: the quick change and the dominant into
+/// four, the minor turn, the deceptive and the two-five, a chorus turned
+/// on the iiø, ♭II7 or ♭VI7, the ninth or a borrowed major seventh to
+/// end.
+const JAZZ_BLUES: Harmony = Harmony {
+    rows: &[("quick change", 5.0), ("quick change, the dominant into four", 5.0), ("tonic row, the dominant into four", 2.0), ("subdominant row", 1.0), ("minor turn", 50.0), ("minor turn, the sixth lowered", 50.0), ("deceptive turn", 25.0), ("deceptive turn, the sixth lowered", 25.0), ("two-five turn", 25.0), ("two-five turn, the fifth lowered", 25.0)],
+    turnarounds: &[(Turnaround::HalfDim, 35.0), (Turnaround::FlatTwo, 25.0), (Turnaround::FlatSix, 20.0), (Turnaround::Dominant, 20.0)],
+    lasts: &[(Last::Ninth, 50.0), (Last::FlatSix, 20.0), (Last::FlatTwo, 20.0), (Last::Seventh, 10.0)],
+};
+
+/// The soul horn band's: the tonic row mostly, the thrill turn — ♭VI a
+/// major seventh into the V — over the turn home, the tonic held or the
+/// V to turn, the seventh, the major tonic or the ninth to end.
+const SOUL_BLUES: Harmony = Harmony {
+    rows: &[("tonic row", 6.0), ("quick change", 4.0), ("subdominant row", 1.0), ("the thrill turn", 50.0), ("the thrill turn, the sixth lowered", 50.0), ("turn home", 30.0), ("minor turn", 20.0), ("minor turn, the sixth lowered", 20.0)],
+    turnarounds: &[(Turnaround::Tonic, 60.0), (Turnaround::Dominant, 30.0), (Turnaround::FlatSix, 10.0)],
+    lasts: &[(Last::Seventh, 60.0), (Last::Picardy, 20.0), (Last::Ninth, 20.0)],
+};
 
 /// How a blues band answers its singer: in every hole the lead leaves,
 /// in about half of them, or never, holding the chord.
@@ -390,7 +456,7 @@ pub const BANDS: &[Band] = &[
             m(Keys, PIANO, &PICKER, 1.0, 1.0, 0.5, -1.0, 1.1, 5.0, 0.95),
             m(Echo, CLEAN_GUITAR, &PICKER, 1.0, 1.0, 0.5, -1.0, 1.1, 5.0, 0.95),
         ],
-        habits: Habits::Blues(Blues { answers: Answers::Obbligato, runs_over: true }),
+        habits: Habits::Blues(Blues { answers: Answers::Obbligato, runs_over: true, harmony: PLAIN_BLUES }),
         prefs: Prefs {
             tempo: (0.4, 1.0),
             leans: &[("slow twelve-eight", 1.3), ("walking four", 1.3), ("rumba", 0.7), ("six-eight", 0.6), ("rush hour", 1.3), ("corner", 1.3), ("vamp", 2.0), ("turnaround", 1.5), ("rubato", 0.5), ("stop-time", 2.0), ("break", 2.0), ("tag", 1.5)],
@@ -412,7 +478,7 @@ pub const BANDS: &[Band] = &[
             m(Echo, VIBES, &PICKER, 1.0, 1.0, 0.5, 5.0, 0.9, -8.0, 1.05),
             m(Shimmer, VIBES, &PICKER, 1.0, 1.0, 0.5, 5.0, 0.9, -8.0, 1.05),
         ],
-        habits: Habits::Blues(Blues { answers: Answers::Pads, runs_over: false }),
+        habits: Habits::Blues(Blues { answers: Answers::Pads, runs_over: false, harmony: JAZZ_BLUES }),
         prefs: Prefs {
             tempo: (0.2, 0.7),
             leans: &[("walking four", 2.0), ("rumba", 0.6), ("six-eight", 0.8), ("late night", 1.5), ("after hours", 1.5), ("rubato", 2.5), ("solo chorus", 1.5), ("vamp", 0.5), ("stop-time", 0.5), ("drop", 1.5), ("held", 2.0), ("vamp out", 1.5)],
@@ -436,7 +502,7 @@ pub const BANDS: &[Band] = &[
             m(Echo, E_PIANO, &PICKER, 1.0, 1.0, 0.5, 0.0, 0.9, 2.0, 0.9),
             m(Shimmer, VIBES, &PICKER, 1.0, 1.0, 0.5, 0.0, 0.9, 2.0, 0.9),
         ],
-        habits: Habits::Blues(Blues { answers: Answers::Sparse, runs_over: true }),
+        habits: Habits::Blues(Blues { answers: Answers::Sparse, runs_over: true, harmony: SOUL_BLUES }),
         prefs: Prefs {
             tempo: (0.3, 0.8),
             leans: &[("rumba", 1.8), ("six-eight", 1.5), ("slow twelve-eight", 1.2), ("walking four", 0.6), ("stroll", 1.3), ("straight", 2.0), ("turnaround", 1.5), ("coda vamp", 2.0), ("drop", 1.5), ("tag", 2.0), ("break", 1.5)],

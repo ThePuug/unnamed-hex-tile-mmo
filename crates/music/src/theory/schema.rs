@@ -62,6 +62,10 @@ pub const TWELVE_BAR: [&[Schema]; 3] = [
     &[
         Schema { name: "tonic row", modes: &[Dorian, Aeolian], roots: [0, 0, 0, 0], closed: false, alters: [DIATONIC; 4] },
         Schema { name: "quick change", modes: &[Dorian, Aeolian], roots: [0, 3, 0, 0], closed: false, alters: [DIATONIC; 4] },
+        // The jazz blues' fourth bar: the tonic made the dominant of the
+        // iv it sets up.
+        Schema { name: "tonic row, the dominant into four", modes: &[Dorian, Aeolian], roots: [0, 0, 0, 0], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
+        Schema { name: "quick change, the dominant into four", modes: &[Dorian, Aeolian], roots: [0, 3, 0, 0], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
     ],
     &[Schema { name: "subdominant row", modes: &[Dorian, Aeolian], roots: [3, 3, 0, 0], closed: false, alters: [DIATONIC; 4] }],
     &[
@@ -69,6 +73,11 @@ pub const TWELVE_BAR: [&[Schema]; 3] = [
         Schema { name: "turn home, the dominant held", modes: &[Dorian, Aeolian], roots: [4, 4, 0, 0], closed: true, alters: [DIATONIC; 4] },
         Schema { name: "minor turn", modes: &[Aeolian], roots: [5, 4, 0, 0], closed: true, alters: [[0, 0, 0, -1], MAJOR, DIATONIC, DIATONIC] },
         Schema { name: "minor turn, the sixth lowered", modes: &[Dorian], roots: [5, 4, 0, 0], closed: true, alters: [[-1, 0, 0, -1], MAJOR, DIATONIC, DIATONIC] },
+        // The soul blues' turn, The Thrill Is Gone's: the ♭VI a major
+        // seventh, not the dominant the jazz turn makes it; Dorian's VI
+        // is half-diminished, so lowering its root alone makes the ♭VI.
+        Schema { name: "the thrill turn", modes: &[Aeolian], roots: [5, 4, 0, 0], closed: true, alters: [DIATONIC, MAJOR, DIATONIC, DIATONIC] },
+        Schema { name: "the thrill turn, the sixth lowered", modes: &[Dorian], roots: [5, 4, 0, 0], closed: true, alters: [[-1, 0, 0, 0], MAJOR, DIATONIC, DIATONIC] },
         Schema { name: "deceptive turn", modes: &[Aeolian], roots: [4, 5, 0, 0], closed: true, alters: [MAJOR, [0, 0, 0, -1], DIATONIC, DIATONIC] },
         Schema { name: "deceptive turn, the sixth lowered", modes: &[Dorian], roots: [4, 5, 0, 0], closed: true, alters: [MAJOR, [-1, 0, 0, -1], DIATONIC, DIATONIC] },
         Schema { name: "two-five turn", modes: &[Aeolian], roots: [1, 4, 0, 0], closed: true, alters: [DIATONIC, MAJOR, DIATONIC, DIATONIC] },

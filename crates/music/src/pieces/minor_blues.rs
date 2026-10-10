@@ -35,7 +35,7 @@
 //! late at night, and a fight hears it drive.
 
 use crate::ladder::{self, turn, Bed, Bounds, Run, Story, Walk};
-use crate::band::{Answers, Part};
+use crate::band::{Answers, Harmony, Last, Part, Turnaround};
 use crate::pieces::{Params, Setting};
 use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
@@ -328,17 +328,6 @@ enum Event {
     CodaVamp,
 }
 
-/// The chord a chorus turns into the next on, its last bar: the tonic
-/// held, the V7, ♭VI7, iiø or ♭II7.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Turnaround {
-    Tonic,
-    Dominant,
-    FlatSix,
-    HalfDim,
-    FlatTwo,
-}
-
 /// How the song ends: its last chord held and rung; a vamp on the
 /// tonic falling away; the band stopping on the last chorus's eleventh
 /// bar for the lead's break, then a stab; or the last two bars three
@@ -349,17 +338,6 @@ enum Ending {
     VampOut,
     Break,
     Tag,
-}
-
-/// The last chord: the tonic seventh, its ninth, ♭VI, the major tonic,
-/// or ♭II.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Last {
-    Seventh,
-    Ninth,
-    FlatSix,
-    Picardy,
-    FlatTwo,
 }
 
 /// How a setting leans the song (`proofs/research/settings-findings.md`,
@@ -589,15 +567,15 @@ fn compose(params: &Params) -> (Score, Form) {
         groove,
         form: FORMS[skeleton.below(FORMS.len())],
         theme: Theme::draw(groove, &BLUES_SHAPES, &mut skeleton),
-        rows: [row(0, mode, &mut skeleton), row(1, mode, &mut skeleton), row(2, mode, &mut skeleton)],
+        rows: [row(0, mode, &habits_of_band.harmony, &mut skeleton), row(1, mode, &habits_of_band.harmony, &mut skeleton), row(2, mode, &habits_of_band.harmony, &mut skeleton)],
         feel: FEELS[feel],
         register: voices::fit(TUNE, teller),
         intro: INTROS[habits.weighted(&leaned(leaned([35.0, 25.0, 15.0, 15.0, 10.0], lean.intros), INTROS.map(|i| band.lean(i.name()))))],
         event: EVENTS[habits.weighted(&leaned(leaned([40.0, 15.0, 10.0, 10.0], lean.events), EVENTS.map(|e| band.lean(e.name()))))],
         answers: habits_of_band.answers,
-        turnaround: [Turnaround::Tonic, Turnaround::Dominant, Turnaround::FlatSix, Turnaround::HalfDim, Turnaround::FlatTwo][habits.weighted(&[55.0, 20.0, 8.0, 7.0, 10.0])],
+        turnaround: drawn(habits_of_band.harmony.turnarounds, &mut habits),
         ending: close,
-        last: [Last::Seventh, Last::Ninth, Last::FlatSix, Last::Picardy, Last::FlatTwo][habits.weighted(&[70.0, 15.0, 7.0, 5.0, 3.0])],
+        last: drawn(habits_of_band.harmony.lasts, &mut habits),
         // A held ending slows into its chord about half the time, the
         // others less; the lead runs into its last tone two times in five.
         ritard: habits.chance(if close == Ending::Held { 0.45 } else { 0.3 }) && lean.slows,
@@ -1291,29 +1269,20 @@ fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
     }
 }
 
-/// How often a twelve-bar row's choices are taken, by the lead sheets
-/// and recordings surveyed: the quick change one chorus in ten; the turn
-/// home through ♭VI7 and V7 most, v and iv next, then V7 deceived to
-/// ♭VI7, iiø and V7, and v held.
-fn row_weight(schema: &Schema) -> f32 {
-    match schema.name {
-        "tonic row" => 9.0,
-        "quick change" => 1.0,
-        "subdominant row" => 1.0,
-        "turn home" => 30.0,
-        "turn home, the dominant held" => 7.0,
-        n if n.starts_with("minor turn") => 45.0,
-        n if n.starts_with("deceptive turn") => 10.0,
-        n if n.starts_with("two-five turn") => 8.0,
-        _ => 0.0,
-    }
+/// One of row `r`'s schemata the mode can take, as often as the band's
+/// `harmony` takes each; a row the band names no weight for it never
+/// plays.
+fn row(r: usize, mode: Mode, harmony: &Harmony, rng: &mut Rng) -> &'static Schema {
+    let fits: Vec<&'static Schema> = TWELVE_BAR[r].iter().filter(|s| s.modes.contains(&mode)).collect();
+    let weights: Vec<f32> = fits.iter().map(|s| harmony.rows.iter().find(|(n, _)| *n == s.name).map_or(0.0, |(_, w)| *w)).collect();
+    assert!(weights.iter().any(|w| *w > 0.0), "no row of {r} in {mode:?} for the band's harmony");
+    fits[rng.weighted(&weights)]
 }
 
-/// One of row `r`'s schemata the mode can take, as often as each is.
-fn row(r: usize, mode: Mode, rng: &mut Rng) -> &'static Schema {
-    let fits: Vec<&'static Schema> = TWELVE_BAR[r].iter().filter(|s| s.modes.contains(&mode)).collect();
-    let weights: Vec<f32> = fits.iter().map(|s| row_weight(s)).collect();
-    fits[rng.weighted(&weights)]
+/// One of the band's choices, as often as it takes each.
+fn drawn<T: Copy>(choices: &[(T, f32)], rng: &mut Rng) -> T {
+    let weights: Vec<f32> = choices.iter().map(|(_, w)| *w).collect();
+    choices[rng.weighted(&weights)].0
 }
 
 /// The tune as a blues sings it, every chorus AAB: the second row's line
