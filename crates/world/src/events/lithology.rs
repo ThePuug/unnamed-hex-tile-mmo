@@ -31,9 +31,11 @@
 //! No index. The plate a position stands in carries its column, hashed:
 //! the formations in order from the top with their thicknesses, resistant
 //! and weak by turns. A basin potential says how much cover remains at the
-//! position, and the relief above the platform says how much the plate's
-//! age has stripped from it, so the depth into the column at the surface,
-//! and with it the rock, is a function of position. The cuesta is a
+//! position, and the height the ranges' structure stands above the platform
+//! says how much the plate's age has stripped from it, so the depth into the
+//! column at the surface, and with it the rock, is a function of position.
+//! The structure and not the ranges' surface: the surface stands under the
+//! limit the rock sets, so it cannot also set the rock. The cuesta is a
 //! function of that depth alone: how far the weak rock around the position
 //! has been lowered against the resistant, held up where a harder bed lies
 //! just beneath, which is what makes the dip slope, and stepped at every
@@ -115,6 +117,14 @@ impl Column {
         (self.beds.len(), Rock::Basement, depth - top)
     }
 
+    /// The rock at the surface at `exposed` into the column on a plate of
+    /// `age`, and how far the cuesta rule lowers the ground there: the bed
+    /// at the lowered floor, so a dip slope shows the bed beneath.
+    pub fn floor_at(&self, exposed: f64, age: f64) -> (Rock, f64) {
+        let lowering = self.lowering(exposed) * aged(age);
+        (self.bed_at(exposed + lowering).1, lowering)
+    }
+
     fn rock_of(&self, k: usize) -> Rock {
         self.beds.get(k).map_or(Rock::Basement, |b| b.0)
     }
@@ -178,6 +188,14 @@ pub fn cover(wx: f64, wy: f64, seed: u64) -> f64 {
     COVER_MEAN + COVER_SWING * simplex_2d(wx / BASIN_WAVELENGTH, wy / BASIN_WAVELENGTH, seed ^ COVER_SEED)
 }
 
+/// Depth into `column` at the surface, in z-levels, where `cover` remains
+/// and the ranges' structure stands `structure` above the platform on a
+/// plate of `age`: what the cover leaves exposed, deeper by what the age
+/// has stripped from the structure.
+pub fn exposed_in(column: &Column, cover: f64, age: f64, structure: f64) -> f64 {
+    (column.total - cover + age * structure.max(0.0)).max(0.0)
+}
+
 // ── The cuesta ──────────────────────────────────────────────────────────────
 
 /// How far the weakest rock is lowered against the most resistant, in
@@ -188,7 +206,7 @@ pub const CUESTA_RELIEF: f64 = 8.0;
 /// The column depth over which the lowering steps at a contact, in
 /// z-levels: at the platform's dip that is a scarp a few tens of tiles
 /// across, steeper where the beds dip harder.
-const CONTACT_RAMP: f64 = 1.0;
+pub const CONTACT_RAMP: f64 = 1.0;
 
 /// The rock at a position, and what it does to the ground there.
 #[derive(Clone, Copy, Debug)]
@@ -204,20 +222,18 @@ pub struct Ground {
 }
 
 /// The rock at a position on `plate`, given the substrate beneath, the
-/// relief the ranges stand above it, and the plate's age: the column
-/// entered at the depth the cover leaves exposed, deeper by what the age
-/// has stripped from the relief; lowered by the cuesta rule, so the rock
-/// read is the rock at the lowered floor, the dip slope showing the bed
-/// beneath. The relief is the ranges' and not the plateau's: a plateau is
-/// uplift, and keeps its cover flat-lying to be cut in canyons, while a
-/// range's crest is what erosion has bitten into. Only land stands, and
-/// the beach band tapers by the substrate's gate, as the tilt does.
-pub fn rock_at(wx: f64, wy: f64, seed: u64, plate: PlateId, age: f64, substrate: f64, relief: f64) -> Ground {
+/// height the ranges' structure stands above it, and the plate's age: the
+/// column entered at the depth [`exposed_in`] reads, the rock at the floor
+/// the cuesta rule lowers it to. The structure is the ranges' and not the
+/// plateau's: a plateau is uplift, and keeps its cover flat-lying to be cut
+/// in canyons, while a range's crest is what erosion has bitten into. Only
+/// land stands, and the beach band tapers by the substrate's gate, as the
+/// tilt does.
+pub fn rock_at(wx: f64, wy: f64, seed: u64, plate: PlateId, age: f64, substrate: f64, structure: f64) -> Ground {
     let column = Column::of(plate, seed);
-    let exposed = (column.total - cover(wx, wy, seed) + age * relief.max(0.0)).max(0.0);
-    let lowering = column.lowering(exposed) * aged(age);
+    let exposed = exposed_in(&column, cover(wx, wy, seed), age, structure);
+    let (rock, lowering) = column.floor_at(exposed, age);
     let stand = (CUESTA_RELIEF * aged(age) - lowering).max(0.0) * shore_gate(substrate);
-    let (_, rock, _) = column.bed_at(exposed + lowering);
     Ground { rock, erodibility: rock.erodibility(), stand, exposed }
 }
 
@@ -231,8 +247,7 @@ pub fn off_plate() -> Ground {
 pub fn rock_on(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Ground {
     let substrate = substrate_on(wx, wy, coasts, seed);
     let Some(at) = outlines.at(wx, wy) else { return off_plate() };
-    let relief = outlines.relief_of(&at).max(0.0);
-    rock_at(wx, wy, seed, at.plate.id, at.plate.age, substrate, relief)
+    rock_at(wx, wy, seed, at.plate.id, at.plate.age, substrate, outlines.structure_of(&at))
 }
 
 // ── The event ───────────────────────────────────────────────────────────────
@@ -343,8 +358,8 @@ mod tests {
     }
 
     /// The rock read is the column's at the depth the cover leaves, older
-    /// where the cover is thinner and stripped from relief by age; what
-    /// stands is nothing at sea and never more than the cuesta's relief.
+    /// where the cover is thinner and stripped from the structure by age;
+    /// what stands is nothing at sea and never more than the cuesta's relief.
     #[test]
     fn rock_follows_the_cover_and_the_stripping() {
         let plate = (0, 0);

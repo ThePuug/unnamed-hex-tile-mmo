@@ -216,7 +216,7 @@ pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlin
     };
     let relief = outlines.relief_of(&at).max(0.0);
     let plateau = PLATEAU_RISE * plateau_share_of(at.plate, &at.distances).max(0.0);
-    let rock = rock_at(wx, wy, seed, at.plate.id, at.plate.age, substrate, relief);
+    let rock = rock_at(wx, wy, seed, at.plate.id, at.plate.age, substrate, outlines.structure_of(&at));
     Ground { surface: base + relief + plateau + rock.stand, age: at.plate.age, erodibility: rock.erodibility }
 }
 
