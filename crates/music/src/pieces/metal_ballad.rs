@@ -55,7 +55,6 @@ const DISTORTION: u8 = 30;
 /// fingered thins.
 const BASS: u8 = 33;
 const SOLO_BASS: u8 = 34;
-const SOLO_BASS_LOW: u8 = 37;
 const VIOLIN: u8 = 40;
 const SLOW_STRINGS: u8 = 49;
 const CHOIR_AAHS: u8 = 52;
@@ -816,7 +815,7 @@ fn compose(params: &Params) -> (Score, Form) {
         Instrument { name: "strings", program: band.program(Part::Pad, &[], SLOW_STRINGS), channel: CH_PAD, role: Role::Sustain, low: 52, high: 79, reverb: 75, pan: -20, level: BAND },
         Instrument { name: "choir", program: band.program(Part::Choir, &[], CHOIR_AAHS), channel: CH_CHOIR, role: Role::Sustain, low: 52, high: 74, reverb: 85, pan: 26, level: BAND },
         match design.soloist {
-            Soloist::Bass => Instrument { name: "solo bass", program: SOLO_BASS, channel: CH_SOLO, role: Role::Melody, low: SOLO_BASS_LOW, high: BASS_SOLO.1, reverb: 35, pan: 0, level: SOLO_LEVEL },
+            Soloist::Bass => Instrument { name: "solo bass", program: SOLO_BASS, channel: CH_SOLO, role: Role::Melody, low: BASS_SOLO.0, high: BASS_SOLO.1, reverb: 35, pan: 0, level: SOLO_LEVEL },
             _ => Instrument { name: "solo guitar", program: DISTORTION, channel: CH_SOLO, role: Role::Melody, low: SOLO.0 - 4, high: SOLO.1, reverb: 40, pan: 12, level: SOLO_LEVEL },
         },
         Instrument { name: "kit", program: band.program(Part::Drums, &[], ROCK_KIT), channel: CH_KIT, role: Role::Percussion, low: KICK, high: CRASH_2, reverb: 30, pan: 0, level: KIT },

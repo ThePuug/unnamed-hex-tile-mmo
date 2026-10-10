@@ -117,18 +117,21 @@ const SWIRLY: &[(u8, u8)] = &[(50, 48)];
 /// Every program another bank plays: FreePats' Fender guitars sampled
 /// clean and jazz, and recorded at the jack for the overdriven and the
 /// distorted guitar, which sound through their parts' rigs, entered past
-/// the pick for legato (`banks/fsbs.py`); its fingered bass, tenor sax,
-/// upright piano and drawbar organ; Lars Muldjord's rock kit (CC BY 4.0:
-/// the music must credit him); Karoryfer's Swirly Drums for the brush
-/// kit, its drums struck with brushes and its cymbals as well, four
-/// recordings of every stroke (`banks/swirly.py`), and only the drums a
-/// piece plays: the kick, the snare's centre, the hat's foot, the crash,
-/// the ride and the toms; a harmonica built from VCSL's Hohner
-/// Special 20s (`banks/harmonica.py`); and Karoryfer's Pastabass, picked,
-/// built from its SFZ mapping (`banks/sfz.py`). The
-/// fingered bass is a round floor from the low D to the A over the low
-/// E, a line over it folded down; the picked starts at the C♯ over the
-/// low E and reaches high, so it suits a part that sits high, a solo.
+/// the pick for legato (`banks/fsbs.py`); its tenor sax, upright piano
+/// and drawbar organ; Lars Muldjord's rock kit (CC BY 4.0: the music
+/// must credit him); Karoryfer's Swirly Drums for the brush kit, its
+/// drums struck with brushes and its cymbals as well, four recordings of
+/// every stroke (`banks/swirly.py`), and only the drums a piece plays:
+/// the kick, the snare's centre, the hat's foot, the crash, the ride and
+/// the toms; a harmonica built from VCSL's Hohner Special 20s
+/// (`banks/harmonica.py`); and Karoryfer's basses, built from their SFZ
+/// mappings (`banks/sfz.py`): the fingered is Growlybass, a Jazz Bass at
+/// the jack with both pickups open, whose tone carries a bass's
+/// harmonics — FreePats' finger bass, nearly all fundamental, was lost
+/// on any speaker without a low end and under a horn section; the
+/// picked is Pastabass, a Bass VI. Both reach the C♯ under the low E,
+/// keyed where they sound, since a bass mapping names its notes as a
+/// bassist reads them, an octave over.
 /// The brass — the trumpet open and under the harmon mute, the tenor
 /// trombone, the tuba, the horn, each sustained — are VSCO 2 Community
 /// Edition's, built by `banks/install.py` from its SFZ mappings: the
@@ -141,8 +144,8 @@ pub const VOICES: &[Voice] = &[
     Voice { takes: FSBS, ..melodic(27, "fsbs-clean.sf2", (35, 86)) },
     Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(29, "guitar-di.sf2", (35, 86)) },
     Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(30, "guitar-di.sf2", (35, 86)) },
-    melodic(33, "yr-finger-bass.sf2", (26, 45)),
-    Voice { program: 34, percussion: false, file: "pasta-bass.sf2", bank: 0, preset: 34, keys: &[], range: (37, 85), takes: Takes::One, direct: false, legato: None },
+    Voice { program: 33, percussion: false, file: "growly-bass.sf2", bank: 0, preset: 33, keys: &[], range: (25, 63), takes: Takes::One, direct: false, legato: None },
+    Voice { program: 34, percussion: false, file: "pasta-bass.sf2", bank: 0, preset: 34, keys: &[], range: (25, 73), takes: Takes::One, direct: false, legato: None },
     melodic(56, "vsco-trumpet.sf2", (53, 84)),
     melodic(57, "vsco-trombone.sf2", (34, 65)),
     melodic(58, "vsco-tuba.sf2", (29, 62)),
