@@ -125,13 +125,14 @@ const SWIRLY: &[(u8, u8)] = &[(50, 48)];
 /// the kick, the snare's centre, the hat's foot, the crash, the ride and
 /// the toms; a harmonica built from VCSL's Hohner Special 20s
 /// (`banks/harmonica.py`); and Karoryfer's basses, built from their SFZ
-/// mappings (`banks/sfz.py`): the fingered is Growlybass, a Jazz Bass at
-/// the jack with both pickups open, whose tone carries a bass's
-/// harmonics — FreePats' finger bass, nearly all fundamental, was lost
-/// on any speaker without a low end and under a horn section; the
-/// picked is Pastabass, a Bass VI. Both are recorded from the C♯ under
-/// the low E and keyed where they sound, since a bass mapping names its
-/// notes as a bassist reads them, an octave over. Every bank built from
+/// mappings (`banks/sfz.py`): the fingered is Fashionbass, a bass at the
+/// jack from its neck pickup, whose tone carries a bass's harmonics low
+/// and up the neck alike — FreePats' finger bass, nearly all
+/// fundamental, was lost on any speaker without a low end and under a
+/// horn section, and Growlybass, a Jazz Bass with both pickups open,
+/// went near a sine over the octave while it growled below; the picked
+/// is Pastabass, a Bass VI, keyed where it sounds, since its mapping
+/// names its notes as a bassist reads them, an octave over. Every bank built from
 /// a mapping reaches four semitones past its outermost recordings
 /// (`banks/sfz.py`), so a line's lowest notes are pitched down rather
 /// than folded up an octave.
@@ -147,7 +148,7 @@ pub const VOICES: &[Voice] = &[
     Voice { takes: FSBS, ..melodic(27, "fsbs-clean.sf2", (35, 86)) },
     Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(29, "guitar-di.sf2", (32, 89)) },
     Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(30, "guitar-di.sf2", (32, 89)) },
-    Voice { program: 33, percussion: false, file: "growly-bass.sf2", bank: 0, preset: 33, keys: &[], range: (21, 67), takes: Takes::One, direct: true, legato: None },
+    Voice { program: 33, percussion: false, file: "fashion-bass.sf2", bank: 0, preset: 33, keys: &[], range: (14, 73), takes: Takes::One, direct: true, legato: None },
     Voice { program: 34, percussion: false, file: "pasta-bass.sf2", bank: 0, preset: 34, keys: &[], range: (21, 77), takes: Takes::One, direct: true, legato: None },
     melodic(56, "vsco-trumpet.sf2", (49, 88)),
     melodic(57, "vsco-trombone.sf2", (30, 69)),
