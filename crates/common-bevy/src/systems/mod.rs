@@ -22,7 +22,7 @@ pub const SEASON_MS: u128 = WEEK_MS*7;      //  1 week  real time = 7-week   sea
 /// with a fifth Monday ends on; and the weeks of a season, named for the
 /// weekday each is.
 pub const SEASONS: [&str; 5] = ["Thaw", "Blaze", "Ash", "Freeze", "Omen"];
-pub const WEEKS: [&str; 7] = ["Mot", "Tus", "Wad", "Tur", "Fid", "Sut", "Sud"];
+pub const WEEKS: [&str; 7] = ["Mot", "Tus", "Wen", "Tur", "Fid", "Sar", "Sud"];
 
 /// A day of the year by its season, week of the season and day of the
 /// week, shown as `day.week.season`.
