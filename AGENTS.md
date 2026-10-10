@@ -398,6 +398,14 @@ points `VisualPosition` at it, `actor::update` renders it.
     same way: the mesh builder's vertices (`p − mesh_origin`), a region's
     placement (`mesh_origin − origin`), the camera's ray march, and the
     terrain shader's bombing, which re-rolls at a rebase.
+11. **A moment as a float.** `as_secs_f32()` on an absolute game time
+    keeps seconds at a day of uptime and minutes at the wall clock's size.
+    A float is made from the difference of two moments, never from one.
+    An absolute time is a `Moment` (`common_bevy::moment`), which has no
+    float and no count; a length of time is a `Duration`.
+    The wall clock lives in `RunTime::wall_at_zero` and `Server::wall`,
+    read by the calendar (`systems::Date`) and the sky alone; the game
+    clock every timer runs on is the server's uptime, and stays small.
 
 ## Writing a world event
 

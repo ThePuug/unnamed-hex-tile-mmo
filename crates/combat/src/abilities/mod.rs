@@ -49,6 +49,7 @@ use common_bevy::{
     },
     components::entity_type::EntityType,
     message::{AbilityType, ClearType, Component as MessageComponent, Do, Event as GameEvent, Try},
+    moment::Moment,
     resources::map::Map,
     systems::{
         combat::{queue::clear_threats, combos::{may_use, recovery_after, timing, Early, Timing}},
@@ -84,7 +85,7 @@ pub struct Cast {
     /// The moment it was used on the game clock: a player's press as its
     /// client stamped it, or as it arrived where that had passed
     /// ([`Press`]); an NPC's now. A reaction's band is judged here.
-    pub at: Duration,
+    pub at: Moment,
     pub loc: Loc,
     pub attrs: ActorAttributes,
     pub side: Option<Side>,
@@ -106,7 +107,7 @@ impl Cast {
 /// When an actor last used a skill, on the server's clock: what anyone
 /// watching sees, its clip starting. An auto-attack is no skill.
 #[derive(Clone, Component, Copy, Debug)]
-pub struct LastSkill(pub Duration);
+pub struct LastSkill(pub Moment);
 
 /// What the gate asks of `ability` before it does anything, `reacting`
 /// where this use is a reaction (`AbilityType::reacts`), in order: out
@@ -203,15 +204,15 @@ pub struct Press {
     ability: AbilityType,
     target: Option<Entity>,
     /// The moment its client stamped
-    pressed: Duration,
+    pressed: Moment,
     /// The server's clock as it came
-    arrived: Duration,
+    arrived: Moment,
 }
 
 impl Press {
     /// The moment it is judged at: the later of when it was pressed and
     /// when it arrived
-    fn at(&self) -> Duration {
+    fn at(&self) -> Moment {
         self.pressed.max(self.arrived)
     }
 }
@@ -240,7 +241,7 @@ impl Abilities<'_, '_> {
     /// when the server heard of it, judged at the later ([`Press`]). Errs
     /// with the reason it was refused, or with none where there is nothing
     /// to tell: a dead caster, a swing not yet due.
-    fn cast(&mut self, ent: Entity, ability: AbilityType, asked: Option<Entity>, pressed: Duration, arrived: Duration) -> Result<(), Option<AbilityFailReason>> {
+    fn cast(&mut self, ent: Entity, ability: AbilityType, asked: Option<Entity>, pressed: Moment, arrived: Moment) -> Result<(), Option<AbilityFailReason>> {
         let at = pressed.max(arrived);
         let tuning = *self.tuning;
         let Ok((&loc, &attrs, _, heading, side, range, dead)) = self.actors.get(ent) else { return Err(None) };
@@ -255,7 +256,7 @@ impl Abilities<'_, '_> {
         // An auto-attack comes due on its own clock, whatever the recovery,
         // and a held actor swings at nothing
         if ability == AbilityType::AutoAttack {
-            let due = self.swings.get(ent).is_ok_and(|swing| swing.waited(self.time.elapsed()).is_some());
+            let due = self.swings.get(ent).is_ok_and(|swing| swing.waited(Moment::ZERO + self.time.elapsed()).is_some());
             if !due || Status::holds(status.as_ref()) {
                 return Err(None);
             }
@@ -311,7 +312,7 @@ impl Abilities<'_, '_> {
             self.commands.trigger(Try { event: GameEvent::Stumble { ent } });
         }
         if ability != AbilityType::AutoAttack {
-            self.commands.entity(ent).try_insert(LastSkill(self.time.elapsed()));
+            self.commands.entity(ent).try_insert(LastSkill(Moment::ZERO + self.time.elapsed()));
             let against = opponent.and_then(|opponent| self.actors.get(opponent).ok()).map(|(_, attrs, ..)| *attrs);
             landing::recover(ent, recovery_after(&tuning, ability, reacting, prior.as_ref(), &attrs, against.as_ref(), fatigue), &mut self.commands, &mut self.writer);
         }
@@ -369,7 +370,7 @@ impl Abilities<'_, '_> {
     /// The band a reaction by `cast` takes from, where it starts and how
     /// long it runs: from the press, or with Awareness's capstone from the
     /// threat it snaps to (`ReactionQueue::band`)
-    fn band(&self, cast: &Cast) -> (Duration, Duration) {
+    fn band(&self, cast: &Cast) -> (Moment, Duration) {
         let tuning = *self.tuning;
         let span = cast.attrs.span(&tuning);
         let at = self.queues.get(cast.ent).map_or(cast.at, |queue| queue.band(cast.at, cast.attrs.awareness_snap(&tuning)));
@@ -428,7 +429,7 @@ impl Abilities<'_, '_> {
     }
 
     /// The game's clock, the one a threat's times are on
-    pub fn game_now(&self) -> Duration {
+    pub fn game_now(&self) -> Moment {
         self.runtime.now(&self.time)
     }
 }
@@ -491,28 +492,34 @@ mod tests {
     }
 
     /// The game's clock in `app`, the one a threat's times are on
-    fn game_now(app: &App) -> Duration {
-        let elapsed = app.world().resource::<Time>().elapsed().as_millis();
-        Duration::from_millis((elapsed + app.world().resource::<crate::RunTime>().elapsed_offset) as u64)
+    fn game_now(app: &App) -> Moment {
+        app.world().resource::<crate::RunTime>().now(app.world().resource::<Time>())
     }
 
     fn ask(app: &mut App, ent: Entity, ability: AbilityType, target: Option<Entity>) -> Vec<GameEvent> {
         let at = game_now(app);
         app.world_mut().resource_mut::<Said>().0.clear();
-        app.world_mut().write_message(Try { event: GameEvent::UseAbility { ent, ability, target, at, arrived: Duration::ZERO } });
+        app.world_mut().write_message(Try { event: GameEvent::UseAbility { ent, ability, target, at, arrived: Moment::ZERO } });
         app.update();
         std::mem::take(&mut app.world_mut().resource_mut::<Said>().0)
     }
 
+    /// Sets the game's clock in `app` to `at`. The clock reads its `Time`
+    /// in whole milliseconds (`RunTime::now`), so the offset is taken
+    /// against that reading, or it lands a millisecond short.
+    fn clock_to(app: &mut App, at: Moment) {
+        let elapsed = app.world().resource::<Time>().elapsed().as_millis() as u64;
+        app.world_mut().resource_mut::<crate::RunTime>().elapsed_offset = at.since(Moment::from_millis(elapsed)).as_millis();
+    }
+
     /// [`ask`], pressed with the game's clock set to `at`
-    fn press(app: &mut App, ent: Entity, ability: AbilityType, target: Option<Entity>, at: Duration) -> Vec<GameEvent> {
-        let elapsed = app.world().resource::<Time>().elapsed().as_millis();
-        app.world_mut().resource_mut::<crate::RunTime>().elapsed_offset = at.as_millis().saturating_sub(elapsed);
+    fn press(app: &mut App, ent: Entity, ability: AbilityType, target: Option<Entity>, at: Moment) -> Vec<GameEvent> {
+        clock_to(app, at);
         ask(app, ent, ability, target)
     }
 
     /// When the soonest threat in `ent`'s queue lands
-    fn soonest(app: &App, ent: Entity) -> Duration {
+    fn soonest(app: &App, ent: Entity) -> Moment {
         queue(app, ent)[0].lands_at()
     }
 
@@ -669,7 +676,7 @@ mod tests {
         let plain = ActorAttributes::default();
         let endurance = |app: &App| app.world().get::<Endurance>(defender).unwrap().state;
         let queued = |app: &mut App, damage: f32, millis: u64| {
-            let at = Duration::from_millis(millis);
+            let at = Moment::from_millis(millis);
             let threat = create_threat(&tuning, attacker, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
             insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat);
             threat.lands_at()
@@ -716,25 +723,21 @@ mod tests {
         app.update();
 
         let plain = ActorAttributes::default();
-        let queued = |app: &mut App, at: Duration| {
+        let queued = |app: &mut App, at: Moment| {
             let threat = create_threat(&tuning, attacker, &plain, &plain, 10.0, Some(AbilityType::Frenzy), at, 0.0, 0.0);
             insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat);
             threat.lands_at()
         };
-        let clock_to = |app: &mut App, at: Duration| {
-            let elapsed = app.world().resource::<Time>().elapsed().as_millis();
-            app.world_mut().resource_mut::<crate::RunTime>().elapsed_offset = at.as_millis().saturating_sub(elapsed);
-        };
-        let stamped = |app: &mut App, at: Duration| {
+        let stamped = |app: &mut App, at: Moment| {
             app.world_mut().resource_mut::<Said>().0.clear();
-            app.world_mut().write_message(Try { event: GameEvent::UseAbility { ent: defender, ability: AbilityType::Parry, target: None, at, arrived: Duration::ZERO } });
+            app.world_mut().write_message(Try { event: GameEvent::UseAbility { ent: defender, ability: AbilityType::Parry, target: None, at, arrived: Moment::ZERO } });
             app.update();
             std::mem::take(&mut app.world_mut().resource_mut::<Said>().0)
         };
         let answered = |said: &[GameEvent]| said.iter().any(|event| matches!(event, GameEvent::ClearQueue { clear_type: ClearType::Span { .. }, .. }));
 
         // Stamped ahead of the server's clock, as a press on time arrives
-        let lands = queued(&mut app, Duration::ZERO);
+        let lands = queued(&mut app, Moment::ZERO);
         clock_to(&mut app, lands - Duration::from_millis(400));
         assert!(!used(&stamped(&mut app, lands - EARLY), AbilityType::Parry), "it is held");
         clock_to(&mut app, lands - EARLY);
@@ -745,7 +748,7 @@ mod tests {
 
         // Stamped long before it arrived, its band starts as it arrives
         app.world_mut().entity_mut(defender).remove::<GlobalRecovery>();
-        let lands = queued(&mut app, Duration::from_secs(5));
+        let lands = queued(&mut app, Moment::from_millis(5_000));
         clock_to(&mut app, lands + EARLY);
         let said = stamped(&mut app, lands - EARLY);
         assert!(used(&said, AbilityType::Parry), "a late press is used");
@@ -763,15 +766,15 @@ mod tests {
 
         let plain = ActorAttributes::default();
         let span = plain.span(&tuning);
-        for at in [Duration::ZERO, span / 2, span * 4] {
+        for at in [Moment::ZERO, Moment::ZERO + span / 2, Moment::ZERO + span * 4] {
             let threat = create_threat(&tuning, attacker, &plain, &plain, 10.0, Some(AbilityType::Frenzy), at, 0.0, 0.0);
             insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat);
         }
 
         let lands = soonest(&app, defender);
         assert!(used(&press(&mut app, defender, AbilityType::Counter, None, lands), AbilityType::Counter));
-        let left: Vec<Duration> = queue(&app, defender).iter().map(|threat| threat.inserted_at).collect();
-        assert_eq!(left, vec![span * 4], "the two landing within its band are taken; the later one stands");
+        let left: Vec<Moment> = queue(&app, defender).iter().map(|threat| threat.inserted_at).collect();
+        assert_eq!(left, vec![Moment::ZERO + span * 4], "the two landing within its band are taken; the later one stands");
     }
 
     #[test]
@@ -841,13 +844,12 @@ mod tests {
         assert!(!broken(&app, striding), "but a Perfect Stride");
     }
 
-    /// A blow of `damage` from `source` on `ent` landing `millis` after the
-    /// game's clock began, as a strike queues one
-    fn threat_on(app: &mut App, ent: Entity, source: Entity, damage: f32, millis: u64) -> Duration {
+    /// A blow of `damage` from `source` on `ent`, struck at `at` on the
+    /// game's clock as a strike queues one; when it lands
+    fn threat_on(app: &mut App, ent: Entity, source: Entity, damage: f32, at: Moment) -> Moment {
         use common_bevy::systems::combat::queue::{create_threat, insert_threat};
         let tuning = Tuning::DEFAULT;
         let plain = ActorAttributes::default();
-        let at = Duration::from_millis(millis);
         let threat = create_threat(&tuning, source, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
         insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(ent).unwrap(), threat);
         threat.lands_at()
@@ -898,15 +900,15 @@ mod tests {
         let spent = |app: &App, ent| 100.0 - app.world().get::<Endurance>(ent).unwrap().state;
 
         for ent in [faceted, plain] {
-            let lands = [1000, 1050, 1100].map(|millis| threat_on(&mut app, ent, attacker, 10.0, millis))[0];
+            let lands = [1000, 1050, 1100].map(|millis| threat_on(&mut app, ent, attacker, 10.0, Moment::from_millis(millis)))[0];
             assert!(used(&press(&mut app, ent, AbilityType::Parry, None, lands - EARLY), AbilityType::Parry));
         }
         assert!(spent(&app, faceted) < spent(&app, plain), "three in one band, the facet pays some back");
 
         // The capstone's band starts at a threat landing just after the
         // press, so it takes one landing past the band from the press
-        let next = threat_on(&mut app, snapping, attacker, 10.0, 5150);
-        threat_on(&mut app, snapping, attacker, 10.0, 6000);
+        let next = threat_on(&mut app, snapping, attacker, 10.0, Moment::from_millis(5150));
+        threat_on(&mut app, snapping, attacker, 10.0, Moment::from_millis(6000));
         assert!(used(&press(&mut app, snapping, AbilityType::Parry, None, next - Duration::from_millis(150)), AbilityType::Parry));
         assert!(queue(&app, snapping).is_empty(), "both taken, the later 1.0s after the press");
     }
@@ -918,11 +920,11 @@ mod tests {
         let attacker = actor(&mut app, Side::WILD, 1);
         app.world_mut().entity_mut(slipping).insert(ActorAttributes::new(0, 0, 0, 18, 0, 0, 0, 0, 0));
         app.update();
-        let struck = Duration::from_secs(10);
+        let struck = Moment::from_millis(10_000);
         assert!(used(&press(&mut app, slipping, AbilityType::Feint, Some(attacker), struck), AbilityType::Feint), "a strike first");
         // A blow landing while the strike's recovery still runs
         let window = Duration::from_secs_f32(Tuning::DEFAULT.reaction_window);
-        let lands = threat_on(&mut app, slipping, attacker, 10.0, (struck + Duration::from_millis(300) - window).as_millis() as u64);
+        let lands = threat_on(&mut app, slipping, attacker, 10.0, struck + Duration::from_millis(300) - window);
         assert!(used(&press(&mut app, slipping, AbilityType::Parry, None, lands - EARLY), AbilityType::Parry), "answered early in the chain");
         app.update();
         let at = app.world().get::<Loc>(slipping).unwrap();
@@ -967,7 +969,7 @@ mod tests {
         let mut app = arena();
         let caster = actor(&mut app, Side::PLAYERS, 0);
         let near = actor(&mut app, Side::WILD, 1);
-        app.world_mut().entity_mut(caster).insert(RespawnTimer::new(Duration::ZERO));
+        app.world_mut().entity_mut(caster).insert(RespawnTimer::new(Moment::ZERO));
         app.update();
 
         let said = ask(&mut app, caster, AbilityType::Frenzy, Some(near));

@@ -12,7 +12,7 @@
 use std::{collections::VecDeque, hash::Hash, time::Duration};
 
 use bevy::prelude::*;
-use common_bevy::components::reaction_queue::QueuedThreat;
+use common_bevy::{components::reaction_queue::QueuedThreat, moment::Moment};
 
 use super::skills::Foe;
 use crate::dice::Dice;
@@ -79,15 +79,15 @@ impl Skill {
 
     /// Whether `threat`, in the queue of the NPC `ent`, has reached it by
     /// `now`, the game's clock
-    pub fn sees(&self, dice: &Dice, ent: Entity, threat: &QueuedThreat, now: Duration) -> bool {
+    pub fn sees(&self, dice: &Dice, ent: Entity, threat: &QueuedThreat, now: Moment) -> bool {
         threat.inserted_at + self.delay(dice, (ent, threat.source, threat.inserted_at)) <= now
     }
 
     /// When the NPC `ent` judges `threat`, in its queue, lands: off by up
     /// to its `misjudge` either way
-    pub fn judged(&self, dice: &Dice, ent: Entity, threat: &QueuedThreat) -> Duration {
+    pub fn judged(&self, dice: &Dice, ent: Entity, threat: &QueuedThreat) -> Moment {
         let off = self.misjudge.mul_f32(dice.roll(("misjudge", ent, threat.source, threat.inserted_at)).share() * 2.0);
-        (threat.lands_at() + off).saturating_sub(self.misjudge)
+        threat.lands_at() + off - self.misjudge
     }
 }
 
@@ -102,7 +102,7 @@ impl Default for Skill {
 /// it has seen its target strike it from, which a new target starts over.
 #[derive(Clone, Component, Debug, Default)]
 pub struct Sight {
-    seen: VecDeque<(Duration, Entity, Foe)>,
+    seen: VecDeque<(Moment, Entity, Foe)>,
     reach: i32,
 }
 
@@ -121,7 +121,7 @@ impl Sight {
     /// Takes in how its target `target` stands at `now`, and returns how
     /// the NPC `ent` perceives it: the newest change whose delay has run.
     /// A new target is unseen until its first change reaches it.
-    pub fn look(&mut self, dice: &Dice, ent: Entity, skill: &Skill, now: Duration, target: Option<(Entity, Foe)>) -> Option<Foe> {
+    pub fn look(&mut self, dice: &Dice, ent: Entity, skill: &Skill, now: Moment, target: Option<(Entity, Foe)>) -> Option<Foe> {
         let Some((target, foe)) = target else {
             self.seen.clear();
             self.reach = 0;
@@ -134,7 +134,7 @@ impl Sight {
         if self.seen.back().is_none_or(|&(_, _, last)| last != foe) {
             self.seen.push_back((now, target, foe));
         }
-        let reached = |&(at, _, _): &(Duration, Entity, Foe)| at + skill.delay(dice, (ent, at)) <= now;
+        let reached = |&(at, _, _): &(Moment, Entity, Foe)| at + skill.delay(dice, (ent, at)) <= now;
         let newest = self.seen.iter().rposition(reached)?;
         self.seen.drain(..newest);
         self.seen.front().map(|&(_, _, foe)| foe)
@@ -161,6 +161,10 @@ mod tests {
         Duration::from_millis(millis)
     }
 
+    fn at(millis: u64) -> Moment {
+        Moment::from_millis(millis)
+    }
+
     #[test]
     fn a_skill_is_named_or_spelled_out() {
         assert_eq!(Skill::named("steady").unwrap().error, Skill::STEADY.error);
@@ -173,11 +177,11 @@ mod tests {
     fn it_learns_how_far_its_target_strikes_from_and_a_new_target_starts_over() {
         let (ent, target, other) = (Entity::from_raw_u32(1).unwrap(), Entity::from_raw_u32(2).unwrap(), Entity::from_raw_u32(3).unwrap());
         let mut sight = Sight::default();
-        sight.look(&DICE, ent, &Skill::SHARP, ms(0), Some((target, foe(12))));
+        sight.look(&DICE, ent, &Skill::SHARP, at(0), Some((target, foe(12))));
         sight.saw_strike(12);
         sight.saw_strike(4);
         assert_eq!(sight.reach(), 12, "the furthest it has seen");
-        sight.look(&DICE, ent, &Skill::SHARP, ms(10), Some((other, foe(3))));
+        sight.look(&DICE, ent, &Skill::SHARP, at(10), Some((other, foe(3))));
         assert_eq!(sight.reach(), 0, "a new target is unknown");
     }
 
@@ -198,14 +202,15 @@ mod tests {
             let threat = QueuedThreat {
                 source: Entity::from_raw_u32(2).unwrap(),
                 damage: 10.0,
-                inserted_at: ms(key * 10),
+                inserted_at: at(key * 10),
                 timer_duration: ms(3000),
                 ability: None,
                 dot: 0.0,
                 ticked: 0,
                 stride: 0.0,
             };
-            skill.judged(&DICE, ent, &threat).as_millis() as i64 - threat.lands_at().as_millis() as i64
+            let (judged, lands) = (skill.judged(&DICE, ent, &threat), threat.lands_at());
+            judged.since(lands).as_millis() as i64 - lands.since(judged).as_millis() as i64
         }).collect();
         let reach = skill.misjudge.as_millis() as i64;
         assert!(judged.iter().all(|off| off.abs() <= reach));
@@ -217,10 +222,10 @@ mod tests {
         let (ent, target) = (Entity::from_raw_u32(1).unwrap(), Entity::from_raw_u32(2).unwrap());
         let skill = Skill::SHARP;
         let mut sight = Sight::default();
-        assert_eq!(sight.look(&DICE, ent, &skill, ms(0), Some((target, foe(5)))), None, "nothing has reached it yet");
-        assert_eq!(sight.look(&DICE, ent, &skill, ms(300), Some((target, foe(4)))), Some(foe(5)), "the first change has, the second not");
-        assert_eq!(sight.look(&DICE, ent, &skill, ms(600), Some((target, foe(4)))), Some(foe(4)));
+        assert_eq!(sight.look(&DICE, ent, &skill, at(0), Some((target, foe(5)))), None, "nothing has reached it yet");
+        assert_eq!(sight.look(&DICE, ent, &skill, at(300), Some((target, foe(4)))), Some(foe(5)), "the first change has, the second not");
+        assert_eq!(sight.look(&DICE, ent, &skill, at(600), Some((target, foe(4)))), Some(foe(4)));
         let other = Entity::from_raw_u32(3).unwrap();
-        assert_eq!(sight.look(&DICE, ent, &skill, ms(610), Some((other, foe(1)))), None, "a new target starts unseen");
+        assert_eq!(sight.look(&DICE, ent, &skill, at(610), Some((other, foe(1)))), None, "a new target starts unseen");
     }
 }

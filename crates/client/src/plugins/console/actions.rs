@@ -66,7 +66,7 @@ pub fn execute_console_actions(
     time: Res<Time>,
     server: Res<crate::resources::Server>,
 ) {
-    let game = server.current_time(time.elapsed().as_millis());
+    let wall = server.wall(server.now(time.elapsed().as_millis()));
     for action in reader.read() {
         match action {
             DevConsoleAction::ToggleGrid => {
@@ -98,15 +98,15 @@ pub fn execute_console_actions(
                 info!("Grid overlay: {}", if state.grid_visible { "ON" } else { "OFF" });
             }
             DevConsoleAction::SetLightingTime(ms_of_day) => {
-                state.lighting.hold(game, *ms_of_day);
+                state.lighting.hold(wall, *ms_of_day);
                 info!("Lighting clock: held at {}", state.lighting.held_at().unwrap_or_default());
             }
             DevConsoleAction::ScrubLightingClock(delta) => {
-                state.lighting.scrub(game, *delta);
+                state.lighting.scrub(wall, *delta);
             }
             DevConsoleAction::StepLightingDate(field, steps) => {
-                state.lighting.step(game, *field, *steps);
-                let at = state.lighting.at(game);
+                state.lighting.step(wall, *field, *steps);
+                let at = state.lighting.at(wall);
                 info!("Lighting clock: held on {}", common_bevy::systems::Date::of(at));
             }
             DevConsoleAction::SyncLightingClock => {

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use bevy::prelude::*;
-use common_bevy::message::AbilityType;
+use common_bevy::{message::AbilityType, moment::Moment};
 
 use super::{Abilities, AbilityFailReason, Cast};
 
@@ -12,7 +12,7 @@ use super::{Abilities, AbilityFailReason, Cast};
 pub fn swing(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let tuning = *abilities.tuning;
     let (target, _) = cast.struck()?;
-    let now = abilities.time.elapsed();
+    let now = Moment::ZERO + abilities.time.elapsed();
     if let Ok(mut swing) = abilities.swings.get_mut(cast.ent) {
         let foe = abilities.actors.get(target).ok().map(|(_, attrs, ..)| *attrs);
         swing.due = Some(now + cast.attrs.cadence_interval(&tuning, foe.as_ref()));

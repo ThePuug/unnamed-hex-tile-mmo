@@ -4,6 +4,7 @@ use std::time::Duration;
 use crate::{
     components::{*, behaviour::*, resources::*},
     message::{Component as MessageComponent, Event, *},
+    moment::Moment,
     plugins::nntree::*,
 };
 
@@ -22,7 +23,7 @@ pub fn update_combat_state(
     nntree: Res<NNTree>,
     time: Res<Time>,
 ) {
-    let current_time = time.elapsed();
+    let current_time = Moment::ZERO + time.elapsed();
     let combat_exit_timeout = Duration::from_secs(5);
 
     for (ent, loc, mut combat_state, side) in &mut query {
@@ -31,7 +32,7 @@ pub fn update_combat_state(
         }
 
         // Check if 5 seconds have passed since last combat action
-        let time_since_action = current_time.saturating_sub(combat_state.last_action);
+        let time_since_action = current_time.since(combat_state.last_action);
         if time_since_action < combat_exit_timeout {
             continue; // Still within 5 second window
         }
@@ -103,7 +104,7 @@ pub fn enter_combat(
     let was_in_combat = combat_state.in_combat;
 
     combat_state.in_combat = true;
-    combat_state.last_action = time.elapsed();
+    combat_state.last_action = Moment::ZERO + time.elapsed();
 
     // Only broadcast if state changed
     if !was_in_combat {

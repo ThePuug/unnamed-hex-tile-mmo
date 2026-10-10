@@ -4,6 +4,7 @@ use common_bevy::components::{
     resources::{CombatState, Health}, status::Status,
 };
 use common_bevy::message::{Do, Event};
+use common_bevy::moment::Moment;
 use crate::components::{DeathMarker, Viewed};
 
 /// Shows an actor hidden by its respawn ([`respawn`]) once it is alive
@@ -53,7 +54,7 @@ pub fn cleanup_dead_entities(
     const DEATH_LINGER_SECS: f32 = 3.0;
 
     for (entity, marker, mut transform, queue, combat, viewed) in &mut query {
-        let elapsed = (time.elapsed() - marker.death_time).as_secs_f32();
+        let elapsed = (Moment::ZERO + time.elapsed()).since(marker.death_time).as_secs_f32();
         if elapsed <= 0.01 {
             // First frame: tip over 90 degrees to lay on side
             transform.rotation *= Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
@@ -100,7 +101,7 @@ mod tests {
         let mut time = Time::<()>::default();
         time.advance_by(std::time::Duration::from_secs(10));
         world.insert_resource(time);
-        let fell = || DeathMarker { death_time: std::time::Duration::from_secs(1) };
+        let fell = || DeathMarker { death_time: Moment::from_millis(1_000) };
         let viewed = world.spawn((fell(), Transform::default(), Viewed)).id();
         let other = world.spawn((fell(), Transform::default())).id();
 
@@ -119,7 +120,7 @@ mod tests {
         app.insert_resource(crate::resources::world_map());
         app.init_resource::<crate::resources::RenderOrigin>();
         app.add_systems(Update, (cleanup_dead_entities, respawn, update_dead_visibility));
-        let fell = DeathMarker { death_time: std::time::Duration::ZERO };
+        let fell = DeathMarker { death_time: Moment::ZERO };
         let player = app.world_mut().spawn((
             Actor, fell, Transform::default(), Visibility::Visible, Viewed,
             Health { max: 100.0, state: 100.0 }, Status::default(), Loc::new(Qrz { q: 9, r: 9, z: 0 }),
@@ -150,13 +151,13 @@ mod tests {
         queue.threats.push_back(common_bevy::systems::combat::queue::create_threat(
             &tuning,
             Entity::PLACEHOLDER, &Default::default(), &Default::default(), 10.0,
-            None, std::time::Duration::ZERO, 0.0, 0.0,
+            None, Moment::ZERO, 0.0, 0.0,
         ));
         let body = world.spawn((
-            DeathMarker { death_time: std::time::Duration::ZERO },
+            DeathMarker { death_time: Moment::ZERO },
             Transform::default(),
             queue,
-            CombatState { in_combat: true, last_action: std::time::Duration::ZERO },
+            CombatState { in_combat: true, last_action: Moment::ZERO },
             Viewed,
         )).id();
 

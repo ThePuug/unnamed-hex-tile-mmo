@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::components::{ResolvedThreatEntry, ResolvedThreatsContainer};
 use crate::systems::threat_icons::{self, severity_rgb};
-use common_bevy::components::resources::Health;
+use common_bevy::{components::resources::Health, moment::Moment};
 
 const ENTRY_SIZE: f32 = 30.0;
 const MAX_ENTRIES: usize = 5;
@@ -70,7 +70,7 @@ pub fn on_damage_resolved(
                 container,
                 damage,
                 (rgb.red, rgb.green, rgb.blue),
-                time.elapsed(),
+                Moment::ZERO + time.elapsed(),
             ));
         }
     }
@@ -84,7 +84,7 @@ pub fn update_entries(
     time: Res<Time>,
 ) {
     for (entity, entry, mut border_color, mut bg_color, children) in &mut query {
-        let elapsed = (time.elapsed() - entry.spawn_time).as_secs_f32();
+        let elapsed = (Moment::ZERO + time.elapsed()).since(entry.spawn_time).as_secs_f32();
 
         // Check if lifetime expired; the cap may have taken it this frame
         if elapsed >= entry.lifetime {
@@ -120,7 +120,7 @@ fn spawn_resolved_threat_entry(
     container: Entity,
     damage: f32,
     rgb: (f32, f32, f32),
-    spawn_time: std::time::Duration,
+    spawn_time: Moment,
 ) -> Entity {
     let (r, g, b) = rgb;
 

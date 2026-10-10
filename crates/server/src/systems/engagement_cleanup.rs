@@ -10,6 +10,7 @@ use combat::engagement::{Engagement, EngagementMember, LastPlayerProximity};
 use common_bevy::{
     components::Loc,
     message::{Do, Event},
+    moment::Moment,
 };
 
 use crate::{resources::Lobby, systems::dens::EngagementEnded};
@@ -45,7 +46,7 @@ pub fn cleanup_engagements(
     for (engagement_entity, engagement, engagement_loc, last_proximity) in engagement_query.iter() {
         let all_npcs_dead = !engagement.spawned_npcs.iter().any(|&npc_entity| npc_query.get(npc_entity).is_ok());
         let should_cleanup = all_npcs_dead
-            || (last_proximity.is_abandoned(time.elapsed(), ABANDONMENT_TIMEOUT) && !watched(engagement_loc, &lobby, &locs));
+            || (last_proximity.is_abandoned(Moment::ZERO + time.elapsed(), ABANDONMENT_TIMEOUT) && !watched(engagement_loc, &lobby, &locs));
 
         if should_cleanup {
             // Emit Despawn events for all NPCs — send_do routes via LoadedBy,
@@ -81,7 +82,7 @@ pub fn update_engagement_proximity(
 ) {
     for (engagement_loc, mut last_proximity) in engagement_query.iter_mut() {
         if watched(engagement_loc, &lobby, &locs) {
-            last_proximity.update(time.elapsed());
+            last_proximity.update(Moment::ZERO + time.elapsed());
         }
     }
 }

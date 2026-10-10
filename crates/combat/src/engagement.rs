@@ -22,6 +22,7 @@ use common_bevy::{
     },
     plugins::nntree::NearestNeighbor,
     archetype::{calculate_enemy_attributes, EnemyArchetype},
+    moment::Moment,
     systems::combat::resources::Fighter,
 };
 use common_bevy::tuning::Tuning;
@@ -63,25 +64,26 @@ pub struct EngagementMember(pub Entity);
 /// Last time players were near this engagement (for abandonment tracking)
 #[derive(Component, Debug, Clone, Copy)]
 pub struct LastPlayerProximity {
-    /// Game time when a player was last within proximity range
-    pub last_seen: std::time::Duration,
+    /// The moment a player was last within proximity range, on the
+    /// server's clock
+    pub last_seen: Moment,
 }
 
 impl LastPlayerProximity {
-    pub fn new(current_time: std::time::Duration) -> Self {
+    pub fn new(current_time: Moment) -> Self {
         Self {
             last_seen: current_time,
         }
     }
 
     /// Update last seen time
-    pub fn update(&mut self, current_time: std::time::Duration) {
+    pub fn update(&mut self, current_time: Moment) {
         self.last_seen = current_time;
     }
 
     /// Check if abandoned (no players for given duration)
-    pub fn is_abandoned(&self, current_time: std::time::Duration, abandonment_duration: std::time::Duration) -> bool {
-        current_time.saturating_sub(self.last_seen) >= abandonment_duration
+    pub fn is_abandoned(&self, current_time: Moment, abandonment_duration: std::time::Duration) -> bool {
+        current_time.since(self.last_seen) >= abandonment_duration
     }
 }
 
@@ -137,7 +139,7 @@ pub fn spawn_engagement(
     let engagement_entity = commands
         .spawn((
             Loc::new(location),
-            LastPlayerProximity::new(time.elapsed()),
+            LastPlayerProximity::new(Moment::ZERO + time.elapsed()),
             HexAssignment::default(),
         ))
         .id();
@@ -162,7 +164,7 @@ pub fn spawn_engagement(
             .spawn((
                 EntityType::Actor(actor_impl),
                 npc_loc,
-                Fighter::new(tuning, attributes, time.elapsed()),
+                Fighter::new(tuning, attributes, Moment::ZERO + time.elapsed()),
                 side,
                 EngagementMember(engagement_entity),
             ))

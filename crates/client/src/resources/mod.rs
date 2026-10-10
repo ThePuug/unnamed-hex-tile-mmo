@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use dashmap::DashMap;
 
 use common_bevy::chunk::ChunkId;
+use common_bevy::moment::Moment;
 use common_bevy::summary_mesh::MeshRegionKey;
 
 /// The band cut for one LoD level: two circles on the ground, the inner
@@ -273,6 +274,10 @@ pub struct Server {
     pub early: f64,
     /// How far an arrival strays from `early`, smoothed
     pub spread: f64,
+    /// The wall-clock moment the server's game clock read 0 at, from
+    /// `Init`: the calendar's anchor, read through [`Server::wall`] by the
+    /// date and the sky alone, never by timing.
+    pub wall_at_zero: u128,
 }
 
 impl Default for Server {
@@ -285,6 +290,7 @@ impl Default for Server {
             margin: 40.0,
             early: 40.0,
             spread: 10.0,
+            wall_at_zero: 0,
         }
     }
 }
@@ -293,9 +299,23 @@ impl Server {
     /// Set the clock from `dt`, the server's game world time as it sent
     /// Init, received at `client_now`: the server has run on by the trip
     /// here since, and by nothing else, however long the client ran before.
-    pub fn sync(&mut self, dt: u128, client_now: u128) {
-        self.server_time_at_init = dt.saturating_add(self.latency);
+    pub fn sync(&mut self, dt: Moment, client_now: u128) {
+        self.server_time_at_init = dt.since(Moment::ZERO).as_millis().saturating_add(self.latency);
         self.client_time_at_init = client_now;
+    }
+
+    /// Anchors the calendar: `wall` is the wall-clock moment the server's
+    /// clock read 0 at, as `Init` says.
+    pub fn anchor(&mut self, wall: u128) {
+        self.wall_at_zero = wall;
+    }
+
+    /// The wall-clock moment game time `game` is: what the calendar and
+    /// the sky read (`systems::Date`). Billions of milliseconds, so never
+    /// a float and never a timer's operand; the one place a moment is
+    /// counted.
+    pub fn wall(&self, game: Moment) -> u128 {
+        self.wall_at_zero.saturating_add(game.since(Moment::ZERO).as_millis())
     }
 
     /// The game clock as this client lives it, at `client_now`: the
@@ -309,10 +329,10 @@ impl Server {
         self.server_time_at_init.saturating_add(time_since_init).saturating_add(self.lead())
     }
 
-    /// [`Server::current_time`] as a `Duration`, the form the queues and
+    /// [`Server::current_time`] as a [`Moment`], the form the queues and
     /// abilities are stamped in.
-    pub fn now(&self, client_now: u128) -> std::time::Duration {
-        std::time::Duration::from_millis(self.current_time(client_now).min(u64::MAX as u128) as u64)
+    pub fn now(&self, client_now: u128) -> Moment {
+        Moment::from_millis(self.current_time(client_now) as u64)
     }
 
     /// How far the clock leads the server's: a trip there, and the margin
@@ -772,7 +792,7 @@ mod tests {
     fn the_clock_does_not_run_ahead_by_the_clients_uptime() {
         let at = |uptime: u128| {
             let mut server = Server::default();
-            server.sync(10_000, uptime);
+            server.sync(Moment::from_millis(10_000), uptime);
             server.current_time(uptime + 1_500)
         };
         assert_eq!(at(0), at(90_000), "time on the character screen shifts nothing");
@@ -781,7 +801,7 @@ mod tests {
     #[test]
     fn the_clock_starts_a_trip_past_what_the_server_sent_and_leads_it() {
         let mut server = Server::default();
-        server.sync(10_000, 4_000);
+        server.sync(Moment::from_millis(10_000), 4_000);
         assert_eq!(server.current_time(4_000), 10_000 + server.latency + server.lead());
     }
 
@@ -827,9 +847,9 @@ mod tests {
     #[test]
     fn a_pong_takes_back_the_time_the_server_lost() {
         let mut server = Server::default();
-        server.sync(10_000, 0);
+        server.sync(Moment::from_millis(10_000), 0);
         // The server stalls and its clock falls 1_750 behind the client's
-        server.sync(10_000 + 20_000 - 1_750, 20_000);
+        server.sync(Moment::from_millis(10_000 + 20_000 - 1_750), 20_000);
         assert_eq!(server.current_time(20_000), 10_000 + 20_000 - 1_750 + server.latency + server.lead());
     }
     /// A revised canopy at the rise's level rebuilds every finer region

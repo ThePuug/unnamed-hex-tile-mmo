@@ -21,6 +21,7 @@ use common_bevy::{
         Loc,
     },
     message::{Do, Event, Try},
+    moment::Moment,
     resources::map::Map,
     systems::movement::{stand_point, stepped},
 };
@@ -332,7 +333,7 @@ pub struct Working {
     pub q: i32,
     pub r: i32,
     pub slot: usize,
-    pub until: std::time::Duration,
+    pub until: Moment,
     pub from: Position,
     pub facing: Heading,
 }
@@ -435,7 +436,7 @@ pub fn try_gather(
             if working {
                 continue;
             }
-            let until = time.elapsed() + std::time::Duration::from_millis(common::gathering::WORK_MS);
+            let until = Moment::ZERO + time.elapsed() + std::time::Duration::from_millis(common::gathering::WORK_MS);
             commands.entity(ent).insert(Working { q, r, slot, until, from: position, facing });
             show(ent, Some(common::gathering::Activity::Work(work)), &mut commands);
         } else {
@@ -467,7 +468,7 @@ pub fn finish_work(
             stop(ent, was.is_some(), &mut commands);
             continue;
         }
-        if time.elapsed() < working.until {
+        if Moment::ZERO + time.elapsed() < working.until {
             continue;
         }
         let Working { q, r, slot, .. } = *working;

@@ -14,6 +14,7 @@ use common_bevy::{
         resources::*,
     },
     message::{ Event, * },
+    moment::Moment,
     plugins::nntree::*,
     resources::*,
     systems::combat::resources::Fighter,
@@ -92,7 +93,7 @@ pub fn do_presence(
                     1, 0, 0,
                     -3, 4, 0,
                 );
-                let fighter = Fighter::new(&tuning, attrs, time.elapsed());
+                let fighter = Fighter::new(&tuning, attrs, Moment::ZERO + time.elapsed());
                 let (health, endurance, combat_state) = (fighter.health, fighter.endurance, fighter.combat_state);
                 let equipment = Equipment::starting_outfit();
                 let bag = Inventory::wearing(&equipment);
@@ -116,8 +117,8 @@ pub fn do_presence(
                     queue: [Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 }].into(), ..default() }));
 
                 // init client
-                let dt = runtime.now_ms(&time);
-                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Init { ent, dt }});
+                let dt = runtime.now(&time);
+                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Init { ent, dt, wall: runtime.wall_at_zero }});
 
                 // Send own Spawn + component states directly to connecting client
                 // AOI will handle discovering nearby entities via Changed<Loc>
@@ -240,7 +241,7 @@ pub fn write_try(
             let (Try { mut event }, _): (Try, _) = bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
             match event {
                 Event::Ping => {
-                    let dt = runtime.now_ms(&time);
+                    let dt = runtime.now(&time);
                     conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Pong { dt }});
                 }
                 Event::Play => commands.trigger(Presence::Enter { client_id }),

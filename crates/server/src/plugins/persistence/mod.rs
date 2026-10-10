@@ -25,7 +25,7 @@ use bevy::{
     prelude::*,
     tasks::{block_on, futures_lite::future::poll_once, IoTaskPool, Task},
 };
-use common_bevy::chunk::{loc_to_chunk, ChunkId};
+use common_bevy::{chunk::{loc_to_chunk, ChunkId}, moment::Moment};
 use qrz::Qrz;
 
 use crate::{
@@ -70,7 +70,7 @@ struct Keeper {
     write: Option<(Vec<(i32, i32)>, Task<Result<Vec<ChunkId>, sqlx::Error>>)>,
     /// Chunks and boxes whose query failed, asked again at the next flush.
     failed: (Vec<ChunkId>, Vec<((i32, i32), (i32, i32))>),
-    next_flush: Duration,
+    next_flush: Moment,
 }
 
 impl Keeper {
@@ -83,7 +83,7 @@ impl Keeper {
             reads: Vec::new(),
             write: None,
             failed: (Vec::new(), Vec::new()),
-            next_flush: FLUSH,
+            next_flush: Moment::ZERO + FLUSH,
         }
     }
 
@@ -206,10 +206,11 @@ fn refuse(keeper: &mut Keeper, refused: Vec<ChunkId>) {
 /// Every [`FLUSH`], writes what players changed and asks again after what
 /// failed. A write still in flight holds the next one back.
 fn flush(time: Res<Time<Real>>, changes: Res<WorldChanges>, piles: Res<Piles>, mut keeper: ResMut<Keeper>) {
-    if time.elapsed() < keeper.next_flush {
+    let now = Moment::ZERO + time.elapsed();
+    if now < keeper.next_flush {
         return;
     }
-    keeper.next_flush = time.elapsed() + FLUSH;
+    keeper.next_flush = now + FLUSH;
     let (chunks, areas) = std::mem::take(&mut keeper.failed);
     if !chunks.is_empty() {
         keeper.recall(chunks);

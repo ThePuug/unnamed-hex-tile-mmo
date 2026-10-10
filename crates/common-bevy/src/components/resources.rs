@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use crate::moment::Moment;
 use crate::tuning::Tuning;
 
 /// Health, as the server holds it and sends it
@@ -77,19 +78,19 @@ impl Endurance {
 
 /// Combat state component tracking whether entity is in combat
 /// - in_combat: Whether entity is currently in combat
-/// - last_action: Duration from Time::elapsed() when last combat action occurred
+/// - last_action: the moment of the last combat action, on the server's clock
 #[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
 pub struct CombatState {
     pub in_combat: bool,
     #[serde(skip)]
-    pub last_action: Duration,
+    pub last_action: Moment,
 }
 
 impl Default for CombatState {
     fn default() -> Self {
         Self {
             in_combat: false,
-            last_action: Duration::ZERO,
+            last_action: Moment::ZERO,
         }
     }
 }
@@ -102,22 +103,22 @@ pub struct SpawnPoint(pub qrz::Qrz);
 /// Respawn timer for dead players
 #[derive(Clone, Component, Copy, Debug)]
 pub struct RespawnTimer {
-    /// Time when death occurred
-    pub death_time: Duration,
+    /// The moment of death, on the server's clock
+    pub death_time: Moment,
 
     /// How long to wait before respawn (5 seconds)
     pub respawn_delay: Duration,
 }
 
 impl RespawnTimer {
-    pub fn new(death_time: Duration) -> Self {
+    pub fn new(death_time: Moment) -> Self {
         Self {
             death_time,
             respawn_delay: Duration::from_secs(5),
         }
     }
 
-    pub fn should_respawn(&self, current_time: Duration) -> bool {
-        current_time.saturating_sub(self.death_time) >= self.respawn_delay
+    pub fn should_respawn(&self, current_time: Moment) -> bool {
+        current_time.since(self.death_time) >= self.respawn_delay
     }
 }

@@ -3,6 +3,8 @@
 //! simulate from.
 
 use std::collections::HashMap;
+use std::time::Duration;
+use common_bevy::Moment;
 
 use bevy::prelude::*;
 use common_bevy::{
@@ -35,22 +37,24 @@ pub const MAX_INPUTS_PER_SECOND: u16 = 256;
 /// client opens a new input every second, so only a misbehaving one gets here.
 pub const MAX_OPEN_INPUT_MS: u16 = 2000;
 
-/// Violations inside `VIOLATION_WINDOW_S` that disconnect the client.
+/// Violations inside `VIOLATION_WINDOW` that disconnect the client.
 pub const MAX_VIOLATIONS: u8 = 10;
-pub const VIOLATION_WINDOW_S: f32 = 10.0;
+pub const VIOLATION_WINDOW: Duration = Duration::from_secs(10);
 
 /// The clock guard for one connection (INV-007): every millisecond physics
 /// applies for a player was drawn from this credit, which refills at real
 /// time. Refilled from `Time<Real>`: the default clock is virtual and clamps
 /// a long frame, which would refill less than clients legitimately sent.
+/// Its moments are `Moment`s of that clock, so a refill is a span's float
+/// and never an uptime's (anti-pattern 11).
 #[derive(Debug)]
 pub struct InputGuard {
     credit_ms: f32,
-    last_refill: f32,
+    last_refill: Moment,
     messages: u16,
-    window_start: f32,
+    window_start: Moment,
     violations: u8,
-    violation_start: f32,
+    violation_start: Moment,
     open_seq: u8,
     open_key_bits: KeyBits,
     open_dt: u16,
@@ -63,7 +67,7 @@ enum Verdict {
 }
 
 impl InputGuard {
-    fn new(now: f32) -> Self {
+    fn new(now: Moment) -> Self {
         Self {
             credit_ms: CREDIT_CAP_MS,
             last_refill: now,
@@ -77,11 +81,11 @@ impl InputGuard {
         }
     }
 
-    fn accept(&mut self, now: f32, key_bits: KeyBits, dt: u16, seq: u8) -> Verdict {
-        self.credit_ms = (self.credit_ms + (now - self.last_refill) * 1000.0).min(CREDIT_CAP_MS);
+    fn accept(&mut self, now: Moment, key_bits: KeyBits, dt: u16, seq: u8) -> Verdict {
+        self.credit_ms = (self.credit_ms + now.since(self.last_refill).as_secs_f32() * 1000.0).min(CREDIT_CAP_MS);
         self.last_refill = now;
 
-        if now - self.window_start >= 1.0 {
+        if now.since(self.window_start) >= Duration::from_secs(1) {
             self.messages = 0;
             self.window_start = now;
         }
@@ -118,8 +122,8 @@ impl InputGuard {
     }
 
     /// Records a violation; true when the client has earned a disconnect.
-    fn violate(&mut self, now: f32) -> bool {
-        if now - self.violation_start >= VIOLATION_WINDOW_S {
+    fn violate(&mut self, now: Moment) -> bool {
+        if now.since(self.violation_start) >= VIOLATION_WINDOW {
             self.violations = 0;
             self.violation_start = now;
         }
@@ -145,7 +149,7 @@ pub fn try_input(
     time: Res<Time<Real>>,
     snapshot: Res<crate::plugins::metrics::MetricSnapshot>,
 ) {
-    let now = time.elapsed_secs();
+    let now = Moment::ZERO + time.elapsed();
     let (mut clamped_ms, mut drops, mut violations, mut disconnects) = (0.0, 0.0, 0.0, 0.0);
     for message in reader.read() {
         let Try { event: Event::Input { ent, key_bits, dt, seq } } = message else { continue };
@@ -384,7 +388,7 @@ mod tests {
         world.init_resource::<Messages<Do>>();
         world.init_resource::<Tuning>();
         let mighty = ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0);
-        let fighting = common_bevy::components::resources::CombatState { in_combat: true, last_action: std::time::Duration::ZERO };
+        let fighting = common_bevy::components::resources::CombatState { in_combat: true, last_action: common_bevy::moment::Moment::ZERO };
         let ent = world.spawn((mighty, Health::full(mighty.max_health(&tuning)), fighting)).id();
         let pairs = [Pair::new(0, 0, 0), Pair::new(-10, 0, 0), Pair::new(0, 0, 0)];
         world.write_message(Try { event: Event::RespecAttributes { ent, pairs } });
@@ -396,45 +400,50 @@ mod tests {
         KeyBits { key_bits: KB_FORWARD, accumulator: 0 }
     }
 
+    /// `secs` into the real clock.
+    fn at(secs: f32) -> Moment {
+        Moment::ZERO + Duration::from_secs_f32(secs)
+    }
+
     #[test]
     fn a_new_seq_opens_and_the_same_seq_extends() {
-        let mut guard = InputGuard::new(0.0);
-        assert!(matches!(guard.accept(0.0, moving(), 0, 2), Verdict::Apply(0)));
-        assert!(matches!(guard.accept(0.01, moving(), 16, 2), Verdict::Apply(16)));
-        assert!(matches!(guard.accept(0.02, moving(), 0, 2), Verdict::Drop), "nothing to apply");
-        assert!(matches!(guard.accept(0.03, moving(), 16, 4), Verdict::Violation(_)), "skipped seq");
-        assert!(matches!(guard.accept(0.04, KeyBits::default(), 16, 2), Verdict::Violation(_)), "keys changed under the seq");
+        let mut guard = InputGuard::new(at(0.0));
+        assert!(matches!(guard.accept(at(0.0), moving(), 0, 2), Verdict::Apply(0)));
+        assert!(matches!(guard.accept(at(0.01), moving(), 16, 2), Verdict::Apply(16)));
+        assert!(matches!(guard.accept(at(0.02), moving(), 0, 2), Verdict::Drop), "nothing to apply");
+        assert!(matches!(guard.accept(at(0.03), moving(), 16, 4), Verdict::Violation(_)), "skipped seq");
+        assert!(matches!(guard.accept(at(0.04), KeyBits::default(), 16, 2), Verdict::Violation(_)), "keys changed under the seq");
     }
 
     /// Time is drawn from real time: a burst spends the bank, then the
     /// guard admits only what has elapsed.
     #[test]
     fn credit_bounds_accepted_time() {
-        let mut guard = InputGuard::new(0.0);
+        let mut guard = InputGuard::new(at(0.0));
         let mut accepted = 0u32;
         for i in 0..20 {
             let seq = 2u8.wrapping_add(i as u8);
-            if let Verdict::Apply(dt) = guard.accept(0.0, moving(), MAX_INPUT_DT_MS, seq) {
+            if let Verdict::Apply(dt) = guard.accept(at(0.0), moving(), MAX_INPUT_DT_MS, seq) {
                 accepted += dt as u32;
             }
         }
         assert_eq!(accepted, CREDIT_CAP_MS as u32, "an instant burst gets the cap and no more");
-        assert!(matches!(guard.accept(0.0, moving(), 16, 22), Verdict::Apply(0)));
-        assert!(matches!(guard.accept(0.5, moving(), 16, 23), Verdict::Apply(16)), "real time refills");
+        assert!(matches!(guard.accept(at(0.0), moving(), 16, 22), Verdict::Apply(0)));
+        assert!(matches!(guard.accept(at(0.5), moving(), 16, 23), Verdict::Apply(16)), "real time refills");
     }
 
     #[test]
     fn oversized_and_flooded_inputs_are_violations() {
-        let mut guard = InputGuard::new(0.0);
-        assert!(matches!(guard.accept(0.0, moving(), MAX_INPUT_DT_MS + 1, 2), Verdict::Violation(_)));
-        let mut guard = InputGuard::new(0.0);
+        let mut guard = InputGuard::new(at(0.0));
+        assert!(matches!(guard.accept(at(0.0), moving(), MAX_INPUT_DT_MS + 1, 2), Verdict::Violation(_)));
+        let mut guard = InputGuard::new(at(0.0));
         let mut violations = 0;
         for _ in 0..=MAX_INPUTS_PER_SECOND {
-            if let Verdict::Violation(_) = guard.accept(0.0, moving(), 1, 2) { violations += 1; }
+            if let Verdict::Violation(_) = guard.accept(at(0.0), moving(), 1, 2) { violations += 1; }
         }
         assert_eq!(violations, 1, "the message past the rate is refused");
-        assert!(!guard.violate(0.0));
-        for _ in 1..MAX_VIOLATIONS - 1 { guard.violate(0.0); }
-        assert!(guard.violate(0.0), "repeated violations disconnect");
+        assert!(!guard.violate(at(0.0)));
+        for _ in 1..MAX_VIOLATIONS - 1 { guard.violate(at(0.0)); }
+        assert!(guard.violate(at(0.0)), "repeated violations disconnect");
     }
 }

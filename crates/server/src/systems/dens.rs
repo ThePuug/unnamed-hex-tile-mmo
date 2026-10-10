@@ -34,6 +34,7 @@ use common_bevy::{
     archetype::EnemyArchetype,
     den::DenLook,
     message::{Do, Event},
+    moment::Moment,
     chunk::{calculate_visible_chunks, loc_to_chunk, ChunkId},
     components::{behaviour::Side, ActorAttributes, Loc},
     haven::HAVEN_LOCATION,
@@ -93,8 +94,8 @@ pub struct Den {
     /// has first stood
     pub at: Option<Qrz>,
     pub state: DenState,
-    /// When it came to be as it is
-    pub since: Duration,
+    /// When it came to be as it is, on the server's clock
+    pub since: Moment,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,7 +110,7 @@ pub enum DenState {
 impl Den {
     /// Whether the den has decayed by `now`, and the site is as the world
     /// made it.
-    pub fn decayed(&self, now: Duration) -> bool {
+    pub fn decayed(&self, now: Moment) -> bool {
         self.state == DenState::Cleared && now >= self.since + DECAY
     }
 }
@@ -133,7 +134,7 @@ impl Dens {
 
     /// Notes how `pack` ended at `now`: killed, its den is cleared from
     /// then; abandoned, its den stands without it.
-    pub fn ended(&mut self, pack: Entity, cleared: bool, now: Duration) {
+    pub fn ended(&mut self, pack: Entity, cleared: bool, now: Moment) {
         let Some(den) = self.sites.values_mut().flatten().filter_map(|site| site.den.as_mut())
             .find(|den| den.state == DenState::Standing { pack: Some(pack) })
         else {
@@ -203,10 +204,10 @@ pub fn tend_dens(
     tuning: Res<Tuning>,
     time: Res<Time>,
     dice: Res<combat::dice::Dice>,
-    mut next: Local<Duration>,
+    mut next: Local<Moment>,
     mut commands: Commands,
 ) {
-    let now = time.elapsed();
+    let now = Moment::ZERO + time.elapsed();
     for ending in ended.read() {
         dens.ended(ending.engagement, ending.cleared, now);
     }
@@ -384,14 +385,14 @@ mod tests {
         let den = |dens: &Dens| dens.sites[&loc_to_chunk(site)][0].den.unwrap();
         dens.sites.get_mut(&loc_to_chunk(site)).unwrap()[0].den = Some(Den {
             archetype: EnemyArchetype::Berserker, level: 0, size: 1, at: Some(site),
-            state: DenState::Standing { pack: Some(pack) }, since: Duration::ZERO,
+            state: DenState::Standing { pack: Some(pack) }, since: Moment::ZERO,
         });
 
-        dens.ended(pack, false, Duration::from_secs(5));
+        dens.ended(pack, false, Moment::from_millis(5_000));
         assert_eq!(den(&dens).state, DenState::Standing { pack: None }, "abandoned, it stands without its pack");
 
         dens.sites.get_mut(&loc_to_chunk(site)).unwrap()[0].den.as_mut().unwrap().state = DenState::Standing { pack: Some(pack) };
-        let killed = Duration::from_secs(10);
+        let killed = Moment::from_millis(10_000);
         dens.ended(pack, true, killed);
         assert_eq!(den(&dens).state, DenState::Cleared);
         assert!(!den(&dens).decayed(killed + DECAY - Duration::from_secs(1)), "cleared, it stands a while");

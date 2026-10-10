@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use crate::{
     components::{ActorAttributes, Loc, position::Position, resources::*},
     message::{Component as MessageComponent, Event, *},
+    moment::Moment,
 };
 use crate::tuning::Tuning;
 
@@ -22,7 +23,7 @@ pub struct Fighter {
 
 impl Fighter {
     /// An actor with `attrs`, spawned at `now`
-    pub fn new(tuning: &Tuning, attrs: ActorAttributes, now: std::time::Duration) -> Self {
+    pub fn new(tuning: &Tuning, attrs: ActorAttributes, now: Moment) -> Self {
         Self {
             attrs,
             health: Health::full(attrs.max_health(tuning)),
@@ -102,7 +103,7 @@ pub fn check_death(
 
             if is_player {
                 // Player death: add respawn timer (5 seconds) and despawn from client view
-                commands.entity(ent).insert(RespawnTimer::new(time.elapsed()));
+                commands.entity(ent).insert(RespawnTimer::new(Moment::ZERO + time.elapsed()));
             }
 
             // Despawned at once, a player and an NPC alike
@@ -124,7 +125,7 @@ pub fn process_respawn(
     mut query: Query<(Entity, &RespawnTimer, &mut Health, Option<&mut Endurance>, &mut Loc, &mut Position, Option<&crate::components::behaviour::PlayerControlled>)>,
 ) {
     for (ent, timer, mut health, endurance, mut loc, mut position, player_controlled) in &mut query {
-        if timer.should_respawn(time.elapsed()) {
+        if timer.should_respawn(Moment::ZERO + time.elapsed()) {
             let spawn_qrz = spawn_point.0;
             *loc = Loc::new(spawn_qrz);
 
@@ -198,7 +199,7 @@ mod tests {
         world.init_resource::<Tuning>();
         let body = world.spawn((
             Health { state: 0.0, max: 100.0 },
-            CombatState { in_combat: false, last_action: std::time::Duration::ZERO },
+            CombatState { in_combat: false, last_action: Moment::ZERO },
         )).id();
 
         world.run_system_once(regenerate_resources).unwrap();
@@ -217,7 +218,7 @@ mod tests {
         let pools = |in_combat: bool| (
             Health { state: 100.0, max: 100.0 },
             Endurance { state: 10.0, max: 100.0 },
-            CombatState { in_combat, last_action: std::time::Duration::ZERO },
+            CombatState { in_combat, last_action: Moment::ZERO },
         );
         let fighting = world.spawn(pools(true)).id();
         let resting = world.spawn(pools(false)).id();
@@ -231,7 +232,7 @@ mod tests {
     #[test]
     fn an_actor_is_spawned_with_its_pools_full() {
         let tuning = Tuning::DEFAULT;
-        let now = std::time::Duration::from_secs(3);
+        let now = Moment::from_millis(3_000);
         let attrs = test_attrs_simple(0, -5);
         let fighter = Fighter::new(&tuning, attrs, now);
         assert_eq!((fighter.health.state, fighter.health.max), (attrs.max_health(&tuning), attrs.max_health(&tuning)));
@@ -253,7 +254,7 @@ mod tests {
         world.init_resource::<Time>();
         world.init_resource::<Messages<Do>>();
         let dead = world.spawn(Health { state: 0.0, max: 100.0 }).id();
-        world.spawn((Health { state: 0.0, max: 100.0 }, RespawnTimer::new(std::time::Duration::ZERO)));
+        world.spawn((Health { state: 0.0, max: 100.0 }, RespawnTimer::new(Moment::ZERO)));
         world.spawn(Health { state: 50.0, max: 100.0 });
 
         world.run_system_once(check_death).unwrap();

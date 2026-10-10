@@ -12,6 +12,7 @@ use crate::*;
 use common_bevy::{
     components::{behaviour::*, entity_type::*},
     message::{Component, Event, *},
+    moment::Moment,
     resources::*,
 };
 
@@ -91,7 +92,7 @@ pub fn write_do(
         match message {
 
             // insert l2r for player
-            Do { event: Event::Init { ent: ent0, dt }} => {
+            Do { event: Event::Init { ent: ent0, dt, wall }} => {
                 // Create local player entity with markers
                 // Health/Endurance will be inserted by Incremental events from server
                 let ent = commands.spawn((
@@ -105,7 +106,7 @@ pub fn write_do(
                 l2r.insert(ent, ent0);
                 buffers.extend_one((ent, InputQueue {
                     queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into(), ..default() }));
-                do_writer.write(Do { event: Event::Init { ent, dt }});
+                do_writer.write(Do { event: Event::Init { ent, dt, wall }});
             }
 
             // The client now sees the world as an actor it does not control:
@@ -149,7 +150,7 @@ pub fn write_do(
                 // and it stands again
                 let local = l2r.get_by_right(&ent).copied().filter(|local| buffers.get(local).is_some());
                 if let Some(local_ent) = local {
-                    commands.entity(local_ent).try_insert(crate::components::DeathMarker { death_time: time.elapsed() });
+                    commands.entity(local_ent).try_insert(crate::components::DeathMarker { death_time: Moment::ZERO + time.elapsed() });
                 } else {
                     // For NPCs/other players: remove from EntityMap and delay despawn
                     // Entity stays alive for 3s in a death pose so damage numbers can render
@@ -160,7 +161,7 @@ pub fn write_do(
                     if let Ok(mut cmd) = commands.get_entity(local_ent) {
                         cmd.insert(
                             crate::components::DeathMarker {
-                                death_time: time.elapsed(),
+                                death_time: Moment::ZERO + time.elapsed(),
                             }
                         );
                     } else {
@@ -385,7 +386,7 @@ pub fn handle_arrived(
     for message in reader.read() {
         let Do { event: Event::UseAbility { ent, ability, at, arrived, .. } } = message else { continue };
         if own.contains(*ent) && *ability != AbilityType::AutoAttack {
-            server.arrived(at.as_millis() as i64 - arrived.as_millis() as i64);
+            server.arrived(at.since(*arrived).as_millis() as i64 - arrived.since(*at).as_millis() as i64);
         }
     }
 }
@@ -393,7 +394,6 @@ pub fn handle_arrived(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn only_the_players_own_presses_hold_the_lead() {
@@ -404,7 +404,7 @@ mod tests {
         let player = app.world_mut().spawn(common_bevy::components::Actor).id();
         let other = app.world_mut().spawn_empty().id();
         let used = |ent, ability, early: u64| Do { event: Event::UseAbility {
-            ent, ability, target: None, at: Duration::from_millis(1_000 + early), arrived: Duration::from_millis(1_000),
+            ent, ability, target: None, at: Moment::from_millis(1_000 + early), arrived: Moment::from_millis(1_000),
         }};
         let margin = |app: &App| app.world().resource::<crate::resources::Server>().margin;
 

@@ -697,15 +697,15 @@ impl ActorAttributes {
 /// starts the clock.
 #[derive(Clone, Component, Copy, Debug, Default)]
 pub struct Swing {
-    pub due: Option<std::time::Duration>,
+    pub due: Option<crate::moment::Moment>,
 }
 
 impl Swing {
     /// How long the due swing has waited at `now`; None while the next is
     /// still to come due. Out of combat it is due and has waited no time.
-    pub fn waited(&self, now: std::time::Duration) -> Option<std::time::Duration> {
+    pub fn waited(&self, now: crate::moment::Moment) -> Option<std::time::Duration> {
         match self.due {
-            Some(due) => now.checked_sub(due),
+            Some(due) => (now >= due).then(|| now.since(due)),
             None => Some(std::time::Duration::ZERO),
         }
     }

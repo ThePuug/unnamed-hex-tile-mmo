@@ -330,10 +330,11 @@ pub fn do_init(
     time: Res<Time>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::Init { dt, .. } } = message else { continue };
+        let Do { event: Event::Init { dt, wall, .. } } = message else { continue };
         let dt = *dt;
         let client_now = time.elapsed().as_millis();
         server.sync(dt, client_now);
+        server.anchor(*wall);
         server.last_ping_time = client_now;
     }
 }
@@ -368,10 +369,17 @@ pub fn update(
     diagnostics_state: Res<DiagnosticsState>,
     player_query: Query<&Loc, With<crate::components::Viewed>>,
 ) {
-    let dt = diagnostics_state.lighting.at(server.current_time(time.elapsed().as_millis()));
-    let dtd = (dt % DAY_MS) as f32 / DAY_MS as f32;
-    let dtm = (dt % SEASON_MS) as f32 / SEASON_MS as f32;
-    let dty = (dt % YEAR_MS) as f32 / YEAR_MS as f32;
+    // The sky keeps wall-clock time (`Server::wall`), whole milliseconds
+    // until each fraction below. The sun's day drifts a whole day over the
+    // year, so one real hour meets every game hour across it; the date
+    // keeps the clock, only the sky carries the drift. The moon's phase
+    // runs once per season.
+    let wall = diagnostics_state.lighting.at(server.wall(server.now(time.elapsed().as_millis())));
+    let (year_start, year_len) = Date::year(wall);
+    let into_year = wall - year_start;
+    let dtd = ((wall + into_year * DAY_MS / year_len) % DAY_MS) as f32 / DAY_MS as f32;
+    let dtm = (wall - Date::season_start(wall)) as f32 / SEASON_MS as f32;
+    let dty = into_year as f32 / year_len as f32;
 
     // sun
     let (mut s_light, mut s_transform, mut cascade_config) = q_sun.single_mut().expect("no result in q_sun");

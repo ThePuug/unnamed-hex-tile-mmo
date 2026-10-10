@@ -1,7 +1,4 @@
 use bevy::{ecs::{entity::Entities, query::QueryData}, prelude::*};
-use chrono::{
-    offset::Local, Datelike, Timelike
-};
 use qrz::*;
 
 use common_bevy::{
@@ -112,14 +109,12 @@ pub fn setup(
     mut runtime: ResMut<RunTime>,
     time: Res<Time>,
 ) {
+    // The calendar's anchor: the wall-clock moment, in the calendar's own
+    // zone, the game clock read 0 at, so a date is read from the wall
+    // clock alone (`systems::Date`): its midnight is the day's, Monday is
+    // Mot, a month's first Monday the year's. The game clock stays small.
     let elapsed = time.elapsed().as_millis();
-    let secs_since_midnight = Local::now().time().num_seconds_from_midnight();
-    let days_since_monday = Local::now().weekday().number_from_monday() - 1;
-    let weeks_since_year = Local::now().iso_week().week();
-    runtime.elapsed_offset = weeks_since_year as u128 * SEASON_MS
-        + days_since_monday as u128 * WEEK_MS
-        + secs_since_midnight as u128 * 1000
-        - elapsed;
+    runtime.wall_at_zero = wall_now() - elapsed;
 }
 
 pub fn try_spawn(

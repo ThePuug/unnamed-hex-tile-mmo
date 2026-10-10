@@ -22,6 +22,7 @@ use std::time::Duration;
 use common_bevy::{
     components::{heading::Heading, reaction_queue::QueuedThreat, recovery::GlobalRecovery, status::Status, ActorAttributes, Loc},
     message::AbilityType,
+    moment::Moment,
 };
 
 use super::{mind::Mind, utility::{score, Consideration, Curve, Shape}};
@@ -108,14 +109,14 @@ impl Threats {
     /// the band from the press, or with a `snap` (Awareness's capstone) from
     /// a threat judged landing within `snap` of it, as `ReactionQueue::band`
     /// starts it.
-    pub fn reading(queue: &[(Duration, QueuedThreat)], span: Duration, snap: Option<Duration>, now: Duration) -> Self {
+    pub fn reading(queue: &[(Moment, QueuedThreat)], span: Duration, snap: Option<Duration>, now: Moment) -> Self {
         let start = snap.and_then(|snap| queue.iter().map(|(lands, _)| *lands).filter(|lands| (now..=now + snap).contains(lands)).min()).unwrap_or(now);
         let mut read = Self::default();
         for (lands, threat) in queue.iter().filter(|(lands, _)| (start..=start + span).contains(lands)) {
             read.swept += threat.damage + threat.dot_left();
             read.swept_direct += threat.damage;
             read.taken += 1;
-            let left = if span.is_zero() { 0.0 } else { lands.saturating_sub(now).as_secs_f32() / span.as_secs_f32() };
+            let left = if span.is_zero() { 0.0 } else { lands.since(now).as_secs_f32() / span.as_secs_f32() };
             read.soonest_left = read.soonest_left.min(left);
         }
         read
@@ -470,9 +471,9 @@ mod tests {
     fn threats(tuning: &Tuning, blows: &[(f32, bool, u64)], span: Duration) -> Threats {
         let plain = ActorAttributes::default();
         let source = Entity::from_raw_u32(9).unwrap();
-        let now = Duration::from_secs(10);
+        let now = Moment::from_millis(10_000);
         let window = threat_window(tuning, &plain, &plain, 0.0);
-        let queue: Vec<(Duration, QueuedThreat)> = blows.iter().map(|&(damage, ability, left)| {
+        let queue: Vec<(Moment, QueuedThreat)> = blows.iter().map(|&(damage, ability, left)| {
             let ability = Some(if ability { AbilityType::Frenzy } else { AbilityType::AutoAttack });
             let threat = create_threat(tuning, source, &plain, &plain, damage, ability, now + Duration::from_millis(left) - window, 0.0, 0.0);
             (threat.lands_at(), threat)

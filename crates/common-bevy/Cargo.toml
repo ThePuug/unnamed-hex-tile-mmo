@@ -17,6 +17,7 @@ dashmap = "6"
 lru = "0"
 rstar = "0"
 serde = { version = "1", features = ["derive"] }
+chrono = "0"
 tinyvec = { version = "1", features = ["serde"] }
 
 [dependencies.qrz]

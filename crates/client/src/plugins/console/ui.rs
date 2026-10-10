@@ -255,7 +255,7 @@ fn state_color(state: bool) -> Color {
 /// The lighting menu's date row: the game clock's date, the picked field
 /// bracketed.
 fn date_line(console: &DevConsole, diagnostics_state: &DiagnosticsState, server: &crate::resources::Server, time: &Time) -> String {
-    let date = Date::of(diagnostics_state.lighting.at(server.current_time(time.elapsed().as_millis())));
+    let date = Date::of(diagnostics_state.lighting.at(server.wall(server.now(time.elapsed().as_millis()))));
     format!("Date = {}", picked_date(date, console.lighting_date_field))
 }
 

@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common_bevy::components::{ally_target::AllyTarget, target::Target};
+use common_bevy::{components::{ally_target::AllyTarget, target::Target}, moment::Moment};
 
 use crate::{
     components::{Measure, WorldBar, WorldBarFill},
@@ -28,7 +28,7 @@ pub fn update_floating_text(
     };
 
     for (entity, mut floating_text, mut node, mut text_color) in &mut query {
-        let elapsed = (time.elapsed() - floating_text.spawn_time).as_secs_f32();
+        let elapsed = (Moment::ZERO + time.elapsed()).since(floating_text.spawn_time).as_secs_f32();
 
         // Check if lifetime expired
         if elapsed >= floating_text.lifetime {

@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{entity_type::{actor::ActorIdentity, EntityType}, Loc},
     message::AbilityType,
+    moment::Moment,
     systems::targeting,
 };
 
@@ -38,7 +39,7 @@ impl Abilities<'_, '_> {
             let skill = self.minds.get(ent).map_or(Skill::SHARP, |(skill, _)| *skill);
             let target = self.targets.get(ent).ok().and_then(|(_, target)| target.entity);
             let foe = self.foe_of(ent, target);
-            let now = self.time.elapsed();
+            let now = Moment::ZERO + self.time.elapsed();
             let reach = target.and_then(|target| self.reach_seen(ent, target));
             let foe = match self.minds.get_mut(ent) {
                 Ok((_, mut sight)) => {
@@ -87,7 +88,7 @@ impl Abilities<'_, '_> {
     fn reach_seen(&self, ent: Entity, target: Entity) -> Option<i32> {
         let queue = self.queues.get(ent).ok()?;
         let game_now = self.game_now();
-        let fresh = queue.threats.iter().any(|threat| threat.source == target && game_now.saturating_sub(threat.inserted_at) < self.time.delta() * 2);
+        let fresh = queue.threats.iter().any(|threat| threat.source == target && game_now.since(threat.inserted_at) < self.time.delta() * 2);
         let (&loc, ..) = self.actors.get(ent).ok()?;
         let (&target_loc, ..) = self.actors.get(target).ok()?;
         fresh.then(|| loc.distance(&target_loc))
@@ -107,7 +108,7 @@ impl Abilities<'_, '_> {
             flanked: targeting::flanked(target_heading, &target_loc, &loc),
             patient: target_attrs.patience_crit(&tuning) * (1.0 + target_attrs.patience_power(&tuning)),
             since_skill: self.last_skills.get(target?).ok()
-                .map(|last| self.time.elapsed().saturating_sub(last.0).as_secs_f32()),
+                .map(|last| (Moment::ZERO + self.time.elapsed()).since(last.0).as_secs_f32()),
             status: self.statuses.get(target?).ok().copied().unwrap_or_default(),
         })
     }

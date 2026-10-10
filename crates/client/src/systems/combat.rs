@@ -3,6 +3,7 @@ use common_bevy::{
     components::{reaction_queue::*, Actor, ActorAttributes, AttackRange, Loc},
     components::recovery::GlobalRecovery,
     message::{AbilityType, ClearType, Do, Try, Event as GameEvent},
+    moment::Moment,
     systems::combat::{combos, queue as queue_utils},
     tuning::Tuning,
 };
@@ -20,7 +21,7 @@ pub struct Gone(Vec<Went>);
 struct Went {
     ent: Entity,
     source: Entity,
-    inserted_at: std::time::Duration,
+    inserted_at: Moment,
     landed: bool,
     at: f32,
 }
@@ -28,7 +29,7 @@ struct Went {
 impl Gone {
     /// Whether the threat `source` queued at `inserted_at` on `ent` landed,
     /// or None while nothing is known of it going
-    pub fn landed(&self, ent: Entity, source: Entity, inserted_at: std::time::Duration) -> Option<bool> {
+    pub fn landed(&self, ent: Entity, source: Entity, inserted_at: Moment) -> Option<bool> {
         self.0.iter()
             .find(|went| (went.ent, went.source, went.inserted_at) == (ent, source, inserted_at))
             .map(|went| went.landed)
@@ -151,7 +152,7 @@ mod tests {
         let threat = queue_utils::create_threat(
             &tuning,
             on_server, &ActorAttributes::default(), &ActorAttributes::default(),
-            50.0, Some(AbilityType::Frenzy), Duration::from_secs(10), 0.0, 0.0,
+            50.0, Some(AbilityType::Frenzy), Moment::from_millis(10_000), 0.0, 0.0,
         );
         app.world_mut().write_message(Do { event: GameEvent::InsertThreat { ent: player, threat } });
         app.update();
@@ -181,7 +182,7 @@ mod tests {
     fn queued(app: &mut App, ent: Entity, source: Entity, lands_in: Duration) -> QueuedThreat {
         let tuning = Tuning::DEFAULT;
         let server = app.world().resource::<crate::resources::Server>();
-        let now = Duration::from_millis(server.current_time(0) as u64);
+        let now = server.now(0);
         let mut threat = queue_utils::create_threat(&tuning, source, &ActorAttributes::default(), &ActorAttributes::default(), 10.0, Some(AbilityType::Frenzy), now, 0.0, 0.0);
         threat.timer_duration = lands_in;
         queue_utils::insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(ent).unwrap(), threat);
@@ -212,7 +213,7 @@ mod tests {
         let far = queued(&mut app, player, other, Duration::from_secs(2));
         let span = ActorAttributes::default().span(&tuning);
         let at = near.lands_at() - span / 2;
-        app.world_mut().write_message(Try { event: GameEvent::UseAbility { ent: player, ability: AbilityType::Parry, target: None, at, arrived: Duration::ZERO } });
+        app.world_mut().write_message(Try { event: GameEvent::UseAbility { ent: player, ability: AbilityType::Parry, target: None, at, arrived: Moment::ZERO } });
         app.update();
         let gone = app.world().resource::<Gone>();
         assert_eq!(gone.landed(player, one, near.inserted_at), Some(false), "what lands in its band is answered");
@@ -220,7 +221,7 @@ mod tests {
 
         // A skill that is no reaction answers nothing
         let struck = queued(&mut app, player, third, Duration::from_millis(700));
-        app.world_mut().write_message(Try { event: GameEvent::UseAbility { ent: player, ability: AbilityType::Frenzy, target: None, at: struck.lands_at(), arrived: Duration::ZERO } });
+        app.world_mut().write_message(Try { event: GameEvent::UseAbility { ent: player, ability: AbilityType::Frenzy, target: None, at: struck.lands_at(), arrived: Moment::ZERO } });
         app.update();
         assert_eq!(app.world().resource::<Gone>().landed(player, third, struck.inserted_at), None);
     }

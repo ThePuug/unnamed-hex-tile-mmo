@@ -3,6 +3,7 @@ use crate::components::ActorAttributes;
 use crate::message::ClearType;
 use bevy::prelude::*;
 use std::time::Duration;
+use crate::moment::Moment;
 use crate::tuning::Tuning;
 
 /// How long a threat from `source_attrs` waits in the queue of
@@ -35,7 +36,7 @@ pub fn create_threat(
     source_attrs: &ActorAttributes,
     damage: f32,
     ability: Option<crate::message::AbilityType>,
-    now: Duration,
+    now: Moment,
     dot: f32,
     fatigue: f32,
 ) -> crate::components::reaction_queue::QueuedThreat {
@@ -64,7 +65,7 @@ pub fn insert_threat(
 
 /// The threats in the queue whose time has run by `now`. Does not remove
 /// them; the caller does.
-pub fn check_expired_threats(queue: &ReactionQueue, now: Duration) -> Vec<QueuedThreat> {
+pub fn check_expired_threats(queue: &ReactionQueue, now: Moment) -> Vec<QueuedThreat> {
     queue
         .threats
         .iter()
@@ -101,7 +102,7 @@ mod tests {
         QueuedThreat {
             source,
             damage,
-            inserted_at: Duration::from_secs(secs),
+            inserted_at: Moment::from_millis(secs * 1_000),
             timer_duration: Duration::from_secs(window),
             ability: None,
             dot: 0.0,
@@ -131,8 +132,8 @@ mod tests {
         for (ability, dot, secs) in [(Frenzy, 0.0, 2), (AutoAttack, 0.0, 0), (Frenzy, 5.0, 1), (AutoAttack, 0.0, 3)] {
             insert_threat(&mut queue, QueuedThreat { ability: Some(ability), dot, ..blow(someone(), 10.0, secs, 1) });
         }
-        let order: Vec<_> = queue.threats.iter().map(|t| t.inserted_at.as_secs()).collect();
-        assert_eq!(order, vec![0, 1, 2, 3]);
+        let order: Vec<_> = queue.threats.iter().map(|t| t.inserted_at).collect();
+        assert_eq!(order, [0, 1, 2, 3].map(|secs| Moment::from_millis(secs * 1_000)));
     }
 
     #[test]
@@ -140,8 +141,8 @@ mod tests {
         let mut queue = ReactionQueue::default();
         queue.threats.push_back(blow(someone(), 10.0, 0, 1));
 
-        assert!(check_expired_threats(&queue, Duration::from_millis(999)).is_empty(), "its time still runs");
-        let expired = check_expired_threats(&queue, Duration::from_secs(1));
+        assert!(check_expired_threats(&queue, Moment::from_millis(999)).is_empty(), "its time still runs");
+        let expired = check_expired_threats(&queue, Moment::from_millis(1_000));
         assert_eq!(expired.len(), 1);
         assert_eq!(expired[0].damage, 10.0);
         assert_eq!(queue.threats.len(), 1); // check_expired_threats doesn't remove
@@ -152,15 +153,15 @@ mod tests {
         let mut queue = ReactionQueue::default();
         // Landing at 1s and at 1.5s
         queue.threats.push_back(blow(someone(), 10.0, 0, 1));
-        queue.threats.push_back(QueuedThreat { inserted_at: Duration::from_millis(500), ..blow(someone(), 15.0, 0, 1) });
+        queue.threats.push_back(QueuedThreat { inserted_at: Moment::from_millis(500), ..blow(someone(), 15.0, 0, 1) });
 
         // Only the first has landed
-        let expired = check_expired_threats(&queue, Duration::from_secs(1));
+        let expired = check_expired_threats(&queue, Moment::from_millis(1_000));
         assert_eq!(expired.len(), 1);
         assert_eq!(expired[0].damage, 10.0);
 
         // Both have
-        let expired = check_expired_threats(&queue, Duration::from_millis(1500));
+        let expired = check_expired_threats(&queue, Moment::from_millis(1500));
         assert_eq!(expired.len(), 2);
     }
 
@@ -173,12 +174,12 @@ mod tests {
             queue.threats.push_back(blow(source, 10.0, secs, 1));
         }
 
-        let cleared = clear_threats(&mut queue, ClearType::Threat { source: b, inserted_at: Duration::from_secs(0) });
+        let cleared = clear_threats(&mut queue, ClearType::Threat { source: b, inserted_at: Moment::ZERO });
         assert_eq!(cleared.len(), 1);
         assert_eq!(cleared[0].source, b);
-        assert_eq!(queue.threats.iter().map(|t| (t.source, t.inserted_at.as_secs())).collect::<Vec<_>>(), vec![(a, 0), (a, 1)]);
+        assert_eq!(queue.threats.iter().map(|t| (t.source, t.inserted_at)).collect::<Vec<_>>(), vec![(a, Moment::ZERO), (a, Moment::from_millis(1_000))]);
 
-        let missing = clear_threats(&mut queue, ClearType::Threat { source: b, inserted_at: Duration::from_secs(0) });
+        let missing = clear_threats(&mut queue, ClearType::Threat { source: b, inserted_at: Moment::ZERO });
         assert!(missing.is_empty());
         assert_eq!(queue.threats.len(), 2);
     }
@@ -193,7 +194,7 @@ mod tests {
         for threat in [make(0, 3), make(1, 3), make(4, 3)] {
             insert_threat(&mut queue, threat);
         }
-        let band = ClearType::Span { at: Duration::from_millis(3500), span: Duration::from_secs(1) };
+        let band = ClearType::Span { at: Moment::from_millis(3500), span: Duration::from_secs(1) };
         let cleared = clear_threats(&mut queue, band);
         assert_eq!(cleared.iter().map(|t| t.damage).collect::<Vec<_>>(), vec![1.0], "the one landing in the band");
         assert_eq!(queue.threats.iter().map(|t| t.damage).collect::<Vec<_>>(), vec![0.0, 4.0]);
@@ -209,17 +210,17 @@ mod tests {
         };
         insert_threat(&mut queue, make(0, 5));
         insert_threat(&mut queue, make(1, 3));
-        let order: Vec<_> = queue.threats.iter().map(|t| t.inserted_at.as_secs()).collect();
-        assert_eq!(order, vec![1, 0], "the later blow lands first, so it stands first");
+        let order: Vec<_> = queue.threats.iter().map(|t| t.inserted_at).collect();
+        assert_eq!(order, [1, 0].map(|secs| Moment::from_millis(secs * 1_000)), "the later blow lands first, so it stands first");
     }
 
     #[test]
     fn a_wound_ticks_before_it_lands_and_lands_for_what_it_has_not_dealt() {
         let wound = QueuedThreat { dot: 5.0, ..blow(someone(), 0.0, 10, 3) };
         assert_eq!(wound.tick_count(), 2, "ticks fall short of the landing");
-        assert_eq!(wound.ticks_due(Duration::from_millis(10_999)), 0);
-        assert_eq!(wound.ticks_due(Duration::from_secs(11)), 1);
-        assert_eq!(wound.ticks_due(Duration::from_secs(20)), 2);
+        assert_eq!(wound.ticks_due(Moment::from_millis(10_999)), 0);
+        assert_eq!(wound.ticks_due(Moment::from_millis(11_000)), 1);
+        assert_eq!(wound.ticks_due(Moment::from_millis(20_000)), 2);
         assert_eq!(wound.dot_left(), 10.0, "taken at once, it deals every tick");
         assert_eq!(QueuedThreat { ticked: 2, ..wound }.dot_left(), 0.0, "ticked out, it lands for nothing");
         assert_eq!(QueuedThreat { dot: 0.0, ..wound }.tick_count(), 0, "a blow never ticks");

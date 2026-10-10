@@ -10,13 +10,12 @@
 //! A threat names its source by the server's id here (`renet::write_do`),
 //! a landing by the client's, so the viewed actor is matched by each.
 
-use std::time::Duration;
-
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use common_bevy::components::reaction_queue::{Lane, ReactionQueue};
 use common_bevy::components::resources::Health;
 use common_bevy::message::{Do, Event as GameEvent};
+use common_bevy::moment::Moment;
 
 use crate::components::{FloatingText, Viewed};
 use crate::resources::EntityMap;
@@ -61,8 +60,8 @@ pub struct Flashing(Handle<CelMaterial>);
 #[derive(Component)]
 pub struct Mark {
     struck: Entity,
-    key: (Entity, Duration, Lane),
-    lands_at: Duration,
+    key: (Entity, Moment, Lane),
+    lands_at: Moment,
     color: Color,
     born: f32,
     unsure: Option<f32>,
@@ -152,7 +151,7 @@ pub fn on_landing(
             TextColor(if dot { DOT_COLOR } else { Color::WHITE }),
             TextLayout::justify(Justify::Center),
             FloatingText {
-                spawn_time: time.elapsed(),
+                spawn_time: Moment::ZERO + time.elapsed(),
                 world_position: body.translation + Vec3::Y * RISES_FROM,
                 lifetime: 1.5,
                 velocity: 1.0,
@@ -181,7 +180,7 @@ pub fn update_marks(
     };
     let now_secs = time.elapsed_secs();
 
-    let mut rows: HashMap<Entity, Vec<(Duration, Entity)>> = HashMap::default();
+    let mut rows: HashMap<Entity, Vec<(Moment, Entity)>> = HashMap::default();
     for (note, mark, ..) in &marks {
         if mark.gone.is_none() {
             rows.entry(mark.struck).or_default().push((mark.lands_at, note));
@@ -311,11 +310,11 @@ mod tests {
         queue_utils::create_threat(
             &Tuning::DEFAULT,
             source, &ActorAttributes::default(), &ActorAttributes::default(),
-            50.0, Some(AbilityType::Frenzy), Duration::from_secs(at), 0.0, 0.0,
+            50.0, Some(AbilityType::Frenzy), Moment::from_millis(at * 1_000), 0.0, 0.0,
         )
     }
 
-    fn notes(app: &mut App) -> Vec<(Entity, Duration, bool)> {
+    fn notes(app: &mut App) -> Vec<(Entity, Moment, bool)> {
         let mut query = app.world_mut().query::<&Mark>();
         query.iter(app.world()).map(|mark| (mark.struck, mark.key.1, mark.gone.is_some())).collect()
     }
@@ -340,7 +339,7 @@ mod tests {
         app.update();
         let mut standing = notes(&mut app);
         standing.sort();
-        assert_eq!(standing, vec![(foe, Duration::from_secs(1), false), (foe, Duration::from_secs(2), false)], "a note for each of its own strikes, none for another's or on itself");
+        assert_eq!(standing, vec![(foe, Moment::from_millis(1_000), false), (foe, Moment::from_millis(2_000), false)], "a note for each of its own strikes, none for another's or on itself");
         assert!(app.world().get::<Struck>(foe).is_none(), "nothing flashes before it lands");
 
         app.world_mut().write_message(Do { event: GameEvent::ApplyDamage { ent: foe, damage: 50.0, source: player, dot: false } });

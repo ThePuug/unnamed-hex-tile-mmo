@@ -24,29 +24,31 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{reaction_queue::*, resources::*, *},
     message::{Do, Try, Event as GameEvent},
+    moment::Moment,
     systems::{
         combat::{damage as damage_calc, queue as queue_utils},
     },
 };
 use common_bevy::tuning::Tuning;
 
-/// The game's clock: what the server's `Time` has run plus the offset the
-/// world's calendar sets at startup, in milliseconds. A threat's times, a
-/// press and a client's `Init` and `Pong` are all stamped on it.
+/// The game's clock: what the server's `Time` has run, in milliseconds,
+/// from `elapsed_offset` (0 live; a test starts it where it likes). A
+/// threat's times, a press and a client's `Init` and `Pong` are all
+/// stamped on it, each a [`Moment`]. The calendar is not: `wall_at_zero`
+/// is the wall-clock moment the clock read 0 at, sent to clients once and
+/// read by the calendar and the sky alone. A moment of the wall clock is
+/// billions of milliseconds; as a float it keeps minutes, so it never
+/// reaches timing.
 #[derive(Default, Resource)]
 pub struct RunTime {
     pub elapsed_offset: u128,
+    pub wall_at_zero: u128,
 }
 
 impl RunTime {
-    /// The game's clock at `time`, in milliseconds
-    pub fn now_ms(&self, time: &Time) -> u128 {
-        time.elapsed().as_millis() + self.elapsed_offset
-    }
-
-    /// The game's clock at `time`, as far as a `Duration` holds it
-    pub fn now(&self, time: &Time) -> std::time::Duration {
-        std::time::Duration::from_millis(self.now_ms(time).min(u64::MAX as u128) as u64)
+    /// The game's clock at `time`
+    pub fn now(&self, time: &Time) -> Moment {
+        Moment::from_millis(time.elapsed().as_millis() as u64 + self.elapsed_offset as u64)
     }
 }
 
@@ -240,7 +242,7 @@ pub fn track_engagement(
         let engaged = state.in_combat || hostile_near;
         match (engaged, swing.due) {
             (false, Some(_)) => swing.due = None,
-            (true, None) => swing.due = Some(time.elapsed()),
+            (true, None) => swing.due = Some(Moment::ZERO + time.elapsed()),
             _ => {}
         }
     }
@@ -322,7 +324,7 @@ mod tests {
         app.add_message::<Do>();
         app.init_resource::<Time>();
         let at = |q: i32| Loc::new(qrz::Qrz { q, r: 0, z: 0 });
-        let calm = CombatState { in_combat: false, last_action: Duration::ZERO };
+        let calm = CombatState { in_combat: false, last_action: Moment::ZERO };
         let waiting = app.world_mut().spawn((calm, at(0), Side::WILD, Health::full(100.0), Swing::default())).id();
         app.world_mut().entity_mut(waiting).insert(NearestNeighbor::new(waiting, at(0)));
         app.update();
@@ -340,6 +342,7 @@ mod tests {
     #[test]
     fn a_fight_starts_the_swing_clock_and_its_end_clears_it() {
         let secs = Duration::from_secs;
+        let at = |secs: u64| Moment::from_millis(secs * 1_000);
         let mut app = App::new();
         app.add_plugins(common_bevy::plugins::nntree::NNTreePlugin);
         app.add_message::<Do>();
@@ -348,17 +351,17 @@ mod tests {
         time.advance_by(secs(10));
         world.insert_resource(time);
         let here = Loc::new(qrz::Qrz { q: 0, r: 0, z: 0 });
-        let fighter = world.spawn((CombatState { in_combat: true, last_action: Duration::ZERO }, here, Swing::default())).id();
+        let fighter = world.spawn((CombatState { in_combat: true, last_action: Moment::ZERO }, here, Swing::default())).id();
 
         engaging(world);
         let swing = *world.get::<Swing>(fighter).unwrap();
-        assert_eq!(swing.waited(secs(10)), Some(Duration::ZERO), "due as the fight finds it");
-        assert_eq!(swing.waited(secs(15)), Some(secs(5)), "and waiting from then");
-        assert_eq!(Swing { due: Some(secs(20)) }.waited(secs(15)), None, "one still to come due waits for nothing");
+        assert_eq!(swing.waited(at(10)), Some(Duration::ZERO), "due as the fight finds it");
+        assert_eq!(swing.waited(at(15)), Some(secs(5)), "and waiting from then");
+        assert_eq!(Swing { due: Some(at(20)) }.waited(at(15)), None, "one still to come due waits for nothing");
 
         world.get_mut::<CombatState>(fighter).unwrap().in_combat = false;
         engaging(world);
-        assert_eq!(world.get::<Swing>(fighter).unwrap().waited(secs(60)), Some(Duration::ZERO), "disengaged, it is due and has waited no time");
+        assert_eq!(world.get::<Swing>(fighter).unwrap().waited(at(60)), Some(Duration::ZERO), "disengaged, it is due and has waited no time");
     }
 
     #[test]

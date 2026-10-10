@@ -19,6 +19,7 @@ use common_bevy::{
         ActorAttributes, AirTime, Loc, Turn,
     },
     message::{Component, Event, *},
+    moment::Moment,
     plugins::nntree::NNTree,
     resources::{map::Map, InputQueues},
     systems::movement::{calculate_movement, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
@@ -221,7 +222,7 @@ pub fn apply_displace(
         }
 
         if let Ok(mut e) = commands.get_entity(ent) {
-            e.insert(Displacing { destination, ends_at: time.elapsed() + Duration::from_millis(duration_ms as u64), around: *around });
+            e.insert(Displacing { destination, ends_at: Moment::ZERO + time.elapsed() + Duration::from_millis(duration_ms as u64), around: *around });
         }
     }
 }
@@ -230,7 +231,7 @@ pub fn apply_displace(
 /// moves it otherwise.
 pub fn end_displace(time: Res<Time>, mut commands: Commands, query: Query<(Entity, &Displacing)>) {
     for (ent, displacing) in &query {
-        if time.elapsed() >= displacing.ends_at {
+        if Moment::ZERO + time.elapsed() >= displacing.ends_at {
             commands.entity(ent).try_remove::<Displacing>();
         }
     }

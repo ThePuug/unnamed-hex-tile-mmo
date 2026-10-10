@@ -6,6 +6,7 @@ use tinyvec::ArrayVec;
 use crate::{
     chunk::ChunkId,
     components::{ behaviour::*, entity_type::*, equipment::{Equipment, Inventory, Item}, heading::*, keybits::*, position::Position, reaction_queue::*, resources::*, * },
+    moment::Moment,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -27,7 +28,10 @@ pub enum Event {
         chunk_id: ChunkId,
         tiles: ArrayVec<[(i32, EntityType, Option<i32>); 272]>,
     },
-    Init { ent: Entity, dt: u128 },
+    /// Server → Client: the client's actor, the game clock `dt` as it was
+    /// sent, and `wall`, the wall-clock moment the clock read 0 at, for
+    /// the calendar and the sky (`systems::Date`).
+    Init { ent: Entity, dt: Moment, wall: u128 },
     /// Client → Server: `dt` milliseconds of input `seq` on the client's own
     /// clock. A new `seq` opens an input; the same `seq` again extends it.
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
@@ -68,14 +72,14 @@ pub enum Event {
     /// tells the client how far ahead its press came; a Try's is unread.
     /// The server holds a press until the later of the two and judges a
     /// reaction's band there (`abilities::Press`)
-    UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity>, at: std::time::Duration, arrived: std::time::Duration },
+    UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity>, at: Moment, arrived: Moment },
     /// Server → Client: Clear threats from queue
     ClearQueue { ent: Entity, clear_type: ClearType },
     /// Client → Server: ask for the server's game world time
     Ping,
     /// Server → Client: the answer to a Ping, the server's game world time
     /// as it answered
-    Pong { dt: u128 },
+    Pong { dt: Moment },
     /// Server → Client: the state a remote entity is simulated from. Sent
     /// when any of it changes and at every tile crossing while moving.
     MovementIntent { ent: Entity, position: Position, heading: Heading, moving: bool, back: bool, airtime: Option<i16>, burdened: bool },
@@ -283,11 +287,11 @@ impl AbilityType {
 pub enum ClearType {
     /// Clear every threat landing at `at` or within `span` after it
     /// (`ReactionQueue::swept`): what a reaction takes
-    Span { at: std::time::Duration, span: std::time::Duration },
+    Span { at: Moment, span: std::time::Duration },
     /// Clear the one threat `source` inserted at `inserted_at`, wherever it
     /// stands: an expiry, since threats from different sources expire out of
     /// queue order.
-    Threat { source: Entity, inserted_at: std::time::Duration },
+    Threat { source: Entity, inserted_at: Moment },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]

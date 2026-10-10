@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS, SEASON_MS, WEEK_MS, YEAR_MS};
+use common_bevy::systems::{Date, DAY_MS, HOUR_MS, MINUTE_MS, SEASON_MS, WEEK_MS};
 
 #[derive(Resource, Default)]
 pub struct DiagnosticsState {
@@ -24,12 +24,12 @@ pub struct DiagnosticsState {
     pub canopy_parts_off: bool,
 }
 
-/// The clock the sun and moon keep: game time, or an hour the console
-/// holds it at, so the sky can be looked at by the hour while threats
-/// keep game time.
+/// The clock the sun and moon keep, in wall-clock time (`Server::wall`):
+/// the wall clock itself, or a moment the console holds it at, so the sky
+/// can be looked at by the hour and the date while threats keep game time.
 #[derive(Clone, Copy, Debug)]
 pub struct LightingClock {
-    /// Lighting time held, or none to read game time.
+    /// Lighting time held, or none to read the wall clock.
     held: Option<u128>,
 }
 
@@ -41,9 +41,9 @@ impl Default for LightingClock {
 }
 
 impl LightingClock {
-    /// Lighting time at game time `game`.
-    pub fn at(&self, game: u128) -> u128 {
-        self.held.unwrap_or(game)
+    /// Lighting time at wall-clock time `wall`.
+    pub fn at(&self, wall: u128) -> u128 {
+        self.held.unwrap_or(wall)
     }
 
     /// The hour of the day the clock is held at, as `HH:MM`, if held.
@@ -52,16 +52,16 @@ impl LightingClock {
         Some(format!("{:02}:{:02}", day / HOUR_MS, day % HOUR_MS / MINUTE_MS))
     }
 
-    /// Holds the clock at `ms_of_day` on the day it reads at game time
-    /// `game`, so the season stays.
-    pub fn hold(&mut self, game: u128, ms_of_day: u128) {
-        let now = self.at(game);
+    /// Holds the clock at `ms_of_day` on the day it reads at wall time
+    /// `wall`, so the season stays.
+    pub fn hold(&mut self, wall: u128, ms_of_day: u128) {
+        let now = self.at(wall);
         self.held = Some(now - now % DAY_MS + ms_of_day % DAY_MS);
     }
 
-    /// Holds the clock at `ms` into the year, the date with the hour.
+    /// Holds the clock at game time `ms`, the date with the hour.
     pub fn hold_at(&mut self, ms: u128) {
-        self.held = Some(ms % YEAR_MS);
+        self.held = Some(ms);
     }
 
     /// Reads game time again.
@@ -69,23 +69,31 @@ impl LightingClock {
         self.held = None;
     }
 
-    /// Moves the clock `delta` ms either way within the year, holding it
-    /// first where it read game time `game` if it was not held.
-    pub fn scrub(&mut self, game: u128, delta: i128) {
-        let now = self.at(game) as i128;
-        self.held = Some((now + delta).rem_euclid(YEAR_MS as i128) as u128);
+    /// Moves the clock `delta` ms either way, never before the epoch,
+    /// holding it first where it read game time `game` if it was not held.
+    pub fn scrub(&mut self, wall: u128, delta: i128) {
+        let now = self.at(wall) as i128;
+        self.held = Some((now + delta).max(0) as u128);
     }
 
     /// Moves the clock `steps` of `field` on, or back, wrapping within the
     /// span above it — a day within its week, a week within its season, a
-    /// season within the year — so nothing coarser or finer moves. Holds the
-    /// clock first where it read game time `game` if it was not held.
-    pub fn step(&mut self, game: u128, field: DateField, steps: i32) {
-        let (unit, span) = field.unit_span();
-        let now = self.at(game);
+    /// season within its year of four or five — so nothing coarser or finer
+    /// moves. Holds the clock first where it read game time `game` if it
+    /// was not held.
+    pub fn step(&mut self, wall: u128, field: DateField, steps: i32) {
+        let now = self.at(wall);
+        let (unit, start, span) = match field {
+            DateField::Day => (DAY_MS, now - now % WEEK_MS, WEEK_MS),
+            DateField::Week => (WEEK_MS, Date::season_start(now), SEASON_MS),
+            DateField::Season => {
+                let (start, span) = Date::year(now);
+                (SEASON_MS, start, span)
+            }
+        };
         let count = (span / unit) as i128;
-        let index = ((now % span / unit) as i128 + steps as i128).rem_euclid(count) as u128;
-        self.held = Some(now - now % span + index * unit + now % unit);
+        let index = (((now - start) / unit) as i128 + steps as i128).rem_euclid(count) as u128;
+        self.held = Some(start + index * unit + (now - start) % unit);
     }
 
     /// An hour of the day typed as `HHMM` or `HH`, in ms of the day.
@@ -119,15 +127,6 @@ impl DateField {
             Self::Season => Self::Day,
         }
     }
-
-    /// The field's length and the span it counts within, in ms.
-    fn unit_span(self) -> (u128, u128) {
-        match self {
-            Self::Day => (DAY_MS, WEEK_MS),
-            Self::Week => (WEEK_MS, SEASON_MS),
-            Self::Season => (SEASON_MS, YEAR_MS),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -142,22 +141,22 @@ mod tests {
         assert_eq!(clock.held_at().as_deref(), Some("09:00"));
         assert_eq!(clock.at(1_000), clock.at(500_000));
 
-        let game = 3 * DAY_MS + 5 * HOUR_MS;
-        clock.hold(game, LightingClock::parse_time("1830").unwrap());
+        let wall = 3 * DAY_MS + 5 * HOUR_MS;
+        clock.hold(wall, LightingClock::parse_time("1830").unwrap());
         assert_eq!(clock.held_at().as_deref(), Some("18:30"));
-        assert_eq!(clock.at(game) / DAY_MS, 0, "the held day is the clock's, not game time's");
+        assert_eq!(clock.at(wall) / DAY_MS, 0, "the held day is the clock's, not wall time's");
 
         clock.sync();
         assert_eq!(clock.held_at(), None);
-        assert_eq!(clock.at(game), game);
-        clock.hold(game, LightingClock::parse_time("7").unwrap());
-        assert_eq!(clock.at(game), 3 * DAY_MS + 7 * HOUR_MS);
+        assert_eq!(clock.at(wall), wall);
+        clock.hold(wall, LightingClock::parse_time("7").unwrap());
+        assert_eq!(clock.at(wall), 3 * DAY_MS + 7 * HOUR_MS);
 
         clock.sync();
-        clock.scrub(game, -(HOUR_MS as i128));
-        assert_eq!(clock.at(game), game - HOUR_MS, "a scrub from game time holds an hour behind it");
-        clock.scrub(game, -(game as i128) - 1);
-        assert_eq!(clock.at(game), YEAR_MS - HOUR_MS - 1, "rewinding past the start wraps to the year's end");
+        clock.scrub(wall, -(HOUR_MS as i128));
+        assert_eq!(clock.at(wall), wall - HOUR_MS, "a scrub from wall time holds an hour behind it");
+        clock.scrub(wall, -(wall as i128) - 1);
+        assert_eq!(clock.at(wall), 0, "rewinding past the epoch stops at it");
 
         assert_eq!(LightingClock::parse_time("2460"), None);
         assert_eq!(LightingClock::parse_time("123"), None);
@@ -165,22 +164,32 @@ mod tests {
     }
 
     /// A stepped field wraps within the span above it and moves nothing
-    /// else; from game time, the step holds the clock where game time was.
+    /// else — a season within its year of four or five — and from game
+    /// time the step holds the clock where game time was.
     #[test]
     fn a_date_field_steps_within_its_span() {
-        use common_bevy::systems::Date;
+        let midnight = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis() as u128;
+        // March 2026 has five Mondays, the 2nd its first; April four
+        let (march, april) = (midnight(2026, 3, 2), midnight(2026, 4, 6));
 
         let mut clock = LightingClock::default();
+        clock.hold_at(march + 9 * HOUR_MS);
         clock.step(0, DateField::Day, -1);
         assert_eq!(Date::of(clock.at(0)), Date { season: 0, week: 0, day: 5 });
         assert_eq!(clock.held_at().as_deref(), Some("09:00"));
         clock.step(0, DateField::Week, 8);
         assert_eq!(Date::of(clock.at(0)), Date { season: 0, week: 1, day: 5 });
         clock.step(0, DateField::Season, -1);
-        assert_eq!(Date::of(clock.at(0)), Date { season: 3, week: 1, day: 5 });
+        assert_eq!(Date::of(clock.at(0)), Date { season: 4, week: 1, day: 5 }, "March wraps to its leap season");
+        clock.step(0, DateField::Season, 1);
+        assert_eq!(Date::of(clock.at(0)), Date { season: 0, week: 1, day: 5 });
+
+        clock.hold_at(april + 9 * HOUR_MS);
+        clock.step(0, DateField::Season, -1);
+        assert_eq!(Date::of(clock.at(0)), Date { season: 3, week: 0, day: 0 }, "April has four");
 
         clock.sync();
-        let game = 2 * SEASON_MS + 3 * WEEK_MS + 4 * DAY_MS + 5 * HOUR_MS;
+        let game = march + 2 * SEASON_MS + 3 * WEEK_MS + 4 * DAY_MS + 5 * HOUR_MS;
         clock.step(game, DateField::Day, 1);
         assert_eq!(clock.at(game), game + DAY_MS);
         assert_eq!(clock.at(0), game + DAY_MS);

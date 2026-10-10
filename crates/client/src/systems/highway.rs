@@ -24,6 +24,7 @@ use bevy::shader::ShaderRef;
 use common_bevy::components::reaction_queue::{Lane, QueuedThreat, ReactionQueue};
 use common_bevy::components::resources::{CombatState, Health};
 use common_bevy::components::ActorAttributes;
+use common_bevy::moment::Moment;
 
 use crate::components::{ResolvedThreatsContainer, ViewHud, Viewed};
 use crate::systems::threat_icons::{estimate, severity, severity_rgb, DOT_COLOR};
@@ -95,7 +96,7 @@ pub struct Highway;
 /// damage seen, if it has.
 #[derive(Component)]
 pub struct Note {
-    key: (Entity, Duration, Lane),
+    key: (Entity, Moment, Lane),
     centre: Vec2,
     size: f32,
     color: Color,
@@ -290,7 +291,7 @@ pub fn update(
     // the threat Awareness's capstone snaps it to, drawn where it starts
     let span = attrs.span(&tuning);
     let band_at = queue.band(now, attrs.awareness_snap(&tuning));
-    let from = band_at.saturating_sub(now).as_secs_f32();
+    let from = band_at.since(now).as_secs_f32();
     let band = Vec4::new(from, from + span.as_secs_f32(), 0.0, 0.0);
     if materials.get(&material.0).is_some_and(|lit| lit.highway.band != band) {
         if let Some(mut lit) = materials.get_mut(&material.0) {
@@ -323,7 +324,7 @@ pub fn update(
         };
         drawn.push(note.key);
 
-        let d = depth(threat.lands_at().saturating_sub(now));
+        let d = depth(threat.lands_at().since(now));
         let taken = threat.in_band(band_at, span);
         let (fill, rim, label) = look(threat, health, taken);
         let alpha = fade(d);
@@ -353,7 +354,7 @@ pub fn update(
     }
 
     for threat in queue.threats.iter().filter(|t| !drawn.contains(&key(t))) {
-        let d = depth(threat.lands_at().saturating_sub(now));
+        let d = depth(threat.lands_at().since(now));
         let size = NOTE * scale(d);
         let at = centre(threat.lane(), d);
         let (fill, rim, label) = look(threat, health, false);

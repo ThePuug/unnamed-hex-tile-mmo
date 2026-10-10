@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use common_bevy::moment::Moment;
 
 /// The entity is sliding to `destination` under an ability (a lunge, a
 /// knockback, a flank's circle). While present nothing else moves what is
@@ -9,8 +10,8 @@ use bevy::prelude::*;
 pub struct Displacing {
     /// Standing-height tile the slide ends on.
     pub destination: qrz::Qrz,
-    /// The client's elapsed time the slide ends at.
-    pub ends_at: std::time::Duration,
+    /// The moment the slide ends at, on the client's clock.
+    pub ends_at: Moment,
     /// The tile a slide round a target circles, facing the way it goes;
     /// any other slide keeps the heading it has.
     pub around: Option<qrz::Qrz>,
@@ -66,7 +67,7 @@ pub struct TargetIndicator {
 #[derive(Component)]
 pub struct FloatingText {
     /// Time when this text was spawned
-    pub spawn_time: std::time::Duration,
+    pub spawn_time: Moment,
     /// How long this text should live (in seconds)
     pub lifetime: f32,
     /// World position this text is attached to
@@ -100,7 +101,7 @@ pub struct WorldBarFill;
 /// Resolved threat entry - fades out after showing damage resolution
 #[derive(Component)]
 pub struct ResolvedThreatEntry {
-    pub spawn_time: std::time::Duration,
+    pub spawn_time: Moment,
     pub lifetime: f32,  // 4.0 seconds
     /// Its colour: a blow's by severity, damage over time's its own
     pub rgb: (f32, f32, f32),
@@ -125,7 +126,7 @@ pub struct CombatLogEntry;
 /// Marker for NPC entities in death pose (lying on side for 3s before despawn)
 #[derive(Component)]
 pub struct DeathMarker {
-    pub death_time: std::time::Duration,
+    pub death_time: Moment,
 }
 
 /// Marker for compass container
