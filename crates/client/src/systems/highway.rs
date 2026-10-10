@@ -55,7 +55,7 @@ const SPAN: Duration = Duration::from_millis(4500);
 
 /// How long a note whose threat has gone with nothing known of how waits
 /// before it shatters: one that left the view with its actor, never told.
-pub(crate) const UNSURE: f32 = 0.15;
+pub(crate) const UNSURE: Duration = Duration::from_millis(150);
 
 /// The shader's parameters; every length is the node's, in pixels.
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
@@ -100,7 +100,7 @@ pub struct Note {
     centre: Vec2,
     size: f32,
     color: Color,
-    unsure: Option<f32>,
+    unsure: Option<Moment>,
 }
 
 #[derive(Component)]
@@ -110,7 +110,7 @@ pub struct NoteLabel;
 #[derive(Component)]
 pub struct Pulse {
     at: Vec2,
-    born: f32,
+    born: Moment,
     size: f32,
     color: Color,
 }
@@ -120,7 +120,7 @@ pub struct Pulse {
 pub struct Shard {
     from: Vec2,
     velocity: Vec2,
-    born: f32,
+    born: Moment,
     size: f32,
     color: Color,
 }
@@ -301,7 +301,7 @@ pub fn update(
 
     for (entity, mut note, mut node, mut background, mut border, children) in &mut note_query {
         let Some(threat) = queue.threats.iter().find(|t| key(t) == note.key) else {
-            let at = time.elapsed_secs();
+            let at = Moment::ZERO + time.elapsed();
             let landed = gone.landed(viewed, note.key.0, note.key.1);
             if landed == Some(true) {
                 let lane = note.key.2;
@@ -314,7 +314,7 @@ pub fn update(
                     }
                 }
                 pulse(&mut commands, highway, note.centre, note.size, lane_color(lane), at);
-            } else if landed == Some(false) || at - *note.unsure.get_or_insert(at) >= UNSURE {
+            } else if landed == Some(false) || at.since(*note.unsure.get_or_insert(at)) >= UNSURE {
                 shatter(&mut commands, highway, note.centre, note.size, note.color, at);
             } else {
                 continue;
@@ -409,7 +409,7 @@ pub(crate) const SHARDS_FLY: f32 = 0.45;
 
 /// A landed note, of width `size`, pulses: a disc in `color` spreading
 /// from `at` in `parent`'s box as it fades.
-pub(crate) fn pulse(commands: &mut Commands, parent: Entity, at: Vec2, size: f32, color: Color, now: f32) {
+pub(crate) fn pulse(commands: &mut Commands, parent: Entity, at: Vec2, size: f32, color: Color, now: Moment) {
     commands.entity(parent).with_children(|children| {
         children.spawn((
             Node {
@@ -429,7 +429,7 @@ pub(crate) fn pulse(commands: &mut Commands, parent: Entity, at: Vec2, size: f32
 
 /// A cleared note, of width `size`, breaks: shards in its `color`, children
 /// of `parent`, flying out from `from` in its box.
-pub(crate) fn shatter(commands: &mut Commands, parent: Entity, from: Vec2, size: f32, color: Color, now: f32) {
+pub(crate) fn shatter(commands: &mut Commands, parent: Entity, from: Vec2, size: f32, color: Color, now: Moment) {
     commands.entity(parent).with_children(|children| {
         for i in 0..SHARDS {
             let angle = std::f32::consts::TAU * (i as f32 + 0.5) / SHARDS as f32;
@@ -457,9 +457,9 @@ pub fn update_pulses(
     mut pulse_query: Query<(Entity, &Pulse, &mut Node, &mut BackgroundColor)>,
     time: Res<Time>,
 ) {
-    let now = time.elapsed_secs();
+    let now = Moment::ZERO + time.elapsed();
     for (entity, pulse, mut node, mut background) in &mut pulse_query {
-        let k = (now - pulse.born) / PULSE;
+        let k = now.since(pulse.born).as_secs_f32() / PULSE;
         if k >= 1.0 {
             commands.entity(entity).despawn();
             continue;
@@ -482,9 +482,9 @@ pub fn update_shards(
     mut materials: ResMut<Assets<HighwayMaterial>>,
     time: Res<Time>,
 ) {
-    let now = time.elapsed_secs();
+    let now = Moment::ZERO + time.elapsed();
     for (entity, shard, mut node, mut background) in &mut shard_query {
-        let t = now - shard.born;
+        let t = now.since(shard.born).as_secs_f32();
         if t >= SHARDS_FLY {
             commands.entity(entity).despawn();
             continue;

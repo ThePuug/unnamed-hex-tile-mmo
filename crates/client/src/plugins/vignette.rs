@@ -67,6 +67,8 @@ fn update_vignette_intensity(
         let current = settings.intensity;
         let new_intensity = current + (target_intensity - current) * (FADE_SPEED * time.delta_secs()).min(1.0);
         settings.intensity = new_intensity;
-        settings.time = time.elapsed_secs();
+        // The shader wants a phase, `sin(time * 4.0)`: a wrapped time keeps
+        // the float's precision where an uptime loses it.
+        settings.time = time.elapsed_secs_wrapped();
     }
 }

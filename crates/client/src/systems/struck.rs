@@ -10,6 +10,8 @@
 //! A threat names its source by the server's id here (`renet::write_do`),
 //! a landing by the client's, so the viewed actor is matched by each.
 
+use std::time::Duration;
+
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use common_bevy::components::reaction_queue::{Lane, ReactionQueue};
@@ -43,12 +45,12 @@ const ARRIVES_AT: f32 = 1.8;
 /// keeps a glyph atlas for every size it is drawn at, never freed
 const LABEL_FONT: f32 = NOTE * ARRIVES_AT * 0.4;
 /// How long a gone note lingers while it pulses or its shards fly
-const GONE: f32 = 0.6;
+const GONE: Duration = Duration::from_millis(600);
 use crate::systems::combat_ui::OFF_SCREEN;
 
 /// When damage last landed on a body, while its flash lasts
 #[derive(Component)]
-pub struct Struck(f32);
+pub struct Struck(Moment);
 
 /// A mesh of a struck body, wearing its own copy of its material while it
 /// flashes: the material it shares, to wear again after
@@ -63,9 +65,9 @@ pub struct Mark {
     key: (Entity, Moment, Lane),
     lands_at: Moment,
     color: Color,
-    born: f32,
-    unsure: Option<f32>,
-    gone: Option<f32>,
+    born: Moment,
+    unsure: Option<Moment>,
+    gone: Option<Moment>,
 }
 
 #[derive(Component)]
@@ -82,7 +84,7 @@ pub fn on_contact(
 ) {
     let viewed = viewed.single().ok();
     let on_server = viewed.and_then(|viewed| l2r.get_by_left(&viewed).copied());
-    let now = time.elapsed_secs();
+    let now = Moment::ZERO + time.elapsed();
     for message in reader.read() {
         let GameEvent::InsertThreat { ent, threat } = message.event else { continue };
         if on_server != Some(threat.source) || viewed == Some(ent) {
@@ -133,7 +135,7 @@ pub fn on_landing(
     time: Res<Time>,
 ) {
     let viewed = viewed.single().ok();
-    let now = time.elapsed_secs();
+    let now = Moment::ZERO + time.elapsed();
     for message in reader.read() {
         let GameEvent::ApplyDamage { ent, damage, dot, .. } = message.event else { continue };
         let Ok(mut struck) = commands.get_entity(ent) else { continue };
@@ -178,7 +180,7 @@ pub fn update_marks(
     let Ok((camera, camera_transform)) = camera_query.single() else {
         return;
     };
-    let now_secs = time.elapsed_secs();
+    let now = Moment::ZERO + time.elapsed();
 
     let mut rows: HashMap<Entity, Vec<(Moment, Entity)>> = HashMap::default();
     for (note, mark, ..) in &marks {
@@ -192,7 +194,7 @@ pub fn update_marks(
 
     for (note, mut mark, mut node, mut background, mut border, children) in &mut marks {
         if let Some(gone) = mark.gone {
-            if now_secs - gone >= GONE {
+            if now.since(gone) >= GONE {
                 commands.entity(note).despawn();
                 continue;
             }
@@ -225,20 +227,20 @@ pub fn update_marks(
                 }
             }
             None if gone.landed(mark.struck, mark.key.0, mark.key.1) == Some(true) => {
-                mark.gone = Some(now_secs);
-                highway::pulse(&mut commands, note, Vec2::splat(NOTE / 2.0), NOTE, highway::lane_color(mark.key.2), now_secs);
+                mark.gone = Some(now);
+                highway::pulse(&mut commands, note, Vec2::splat(NOTE / 2.0), NOTE, highway::lane_color(mark.key.2), now);
                 continue;
             }
             None if gone.landed(mark.struck, mark.key.0, mark.key.1) == Some(false)
-                || now_secs - *mark.unsure.get_or_insert(now_secs) >= highway::UNSURE => {
-                mark.gone = Some(now_secs);
-                highway::shatter(&mut commands, note, Vec2::splat(NOTE / 2.0), NOTE, mark.color, now_secs);
+                || now.since(*mark.unsure.get_or_insert(now)) >= highway::UNSURE => {
+                mark.gone = Some(now);
+                highway::shatter(&mut commands, note, Vec2::splat(NOTE / 2.0), NOTE, mark.color, now);
                 continue;
             }
             None => {}
         }
 
-        let arriving = 1.0 - ((now_secs - mark.born) / ARRIVAL).min(1.0);
+        let arriving = 1.0 - (now.since(mark.born).as_secs_f32() / ARRIVAL).min(1.0);
         let size = NOTE * (1.0 + (ARRIVES_AT - 1.0) * arriving);
         let row = &rows[&mark.struck];
         let slot = row.iter().position(|&(_, e)| e == note).unwrap_or(0) as f32;
@@ -271,9 +273,9 @@ pub fn flash(
     mut materials: ResMut<Assets<CelMaterial>>,
     time: Res<Time>,
 ) {
-    let now = time.elapsed_secs();
+    let now = Moment::ZERO + time.elapsed();
     for (body, &Struck(at)) in &bodies {
-        let left = 1.0 - (now - at) / FLASH;
+        let left = 1.0 - now.since(at).as_secs_f32() / FLASH;
         if left <= 0.0 {
             commands.entity(body).remove::<Struck>();
         }

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bevy::prelude::*;
 use common_bevy::{
     components::{reaction_queue::*, Actor, ActorAttributes, AttackRange, Loc},
@@ -9,7 +11,7 @@ use common_bevy::{
 };
 
 /// How long a gone threat is kept for the notes it ends
-const GONE_KEPT: f32 = 1.0;
+const GONE_KEPT: Duration = Duration::from_secs(1);
 
 /// How each threat lately gone from a queue here went: landed, or
 /// answered. A note whose threat is gone looks it up to pulse or shatter.
@@ -23,7 +25,7 @@ struct Went {
     source: Entity,
     inserted_at: Moment,
     landed: bool,
-    at: f32,
+    at: Moment,
 }
 
 impl Gone {
@@ -35,8 +37,8 @@ impl Gone {
             .map(|went| went.landed)
     }
 
-    fn record(&mut self, ent: Entity, threats: &[QueuedThreat], landed: bool, at: f32) {
-        self.0.retain(|went| at - went.at < GONE_KEPT);
+    fn record(&mut self, ent: Entity, threats: &[QueuedThreat], landed: bool, at: Moment) {
+        self.0.retain(|went| at.since(went.at) < GONE_KEPT);
         self.0.extend(threats.iter().map(|threat| Went { ent, source: threat.source, inserted_at: threat.inserted_at, landed, at }));
     }
 }
@@ -71,7 +73,7 @@ pub fn handle_clear_queue(
         if let GameEvent::ClearQueue { ent, clear_type } = event.event {
             if let Ok(mut queue) = query.get_mut(ent) {
                 let cleared = queue_utils::clear_threats(&mut queue, clear_type);
-                gone.record(ent, &cleared, matches!(clear_type, ClearType::Threat { .. }), time.elapsed_secs());
+                gone.record(ent, &cleared, matches!(clear_type, ClearType::Threat { .. }), Moment::ZERO + time.elapsed());
             }
         }
     }
@@ -92,7 +94,7 @@ pub fn land_own(
     for threat in &landed {
         queue_utils::clear_threats(&mut queue, ClearType::Threat { source: threat.source, inserted_at: threat.inserted_at });
     }
-    gone.record(ent, &landed, true, time.elapsed_secs());
+    gone.record(ent, &landed, true, Moment::ZERO + time.elapsed());
 }
 
 /// Answers the local player's reaction as it is pressed, as the server
@@ -123,7 +125,7 @@ pub fn answer_own(
         let span = attrs.span(&tuning);
         let start = queue.band(*at, attrs.awareness_snap(&tuning));
         let answered = queue_utils::clear_threats(&mut queue, ClearType::Span { at: start, span });
-        gone.record(own, &answered, false, time.elapsed_secs());
+        gone.record(own, &answered, false, Moment::ZERO + time.elapsed());
     }
 }
 
@@ -131,7 +133,6 @@ pub fn answer_own(
 mod tests {
     use super::*;
     use common_bevy::{components::ActorAttributes, message::{AbilityType, ClearType}, tuning::Tuning};
-    use std::time::Duration;
 
     #[test]
     fn a_threat_clears_after_its_source_is_gone_here() {
