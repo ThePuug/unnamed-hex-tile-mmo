@@ -58,7 +58,7 @@ pub fn update_keybits(
         // The player's kit: each key's ability, used on the hostile it
         // faces, stamped with the game time it was pressed at, where the
         // server judges a reaction's band
-        let at = std::time::Duration::from_millis(server.current_time(dt.elapsed().as_millis()).min(u64::MAX as u128) as u64);
+        let at = server.now(dt.elapsed().as_millis());
         for (key, ability) in crate::systems::action_bar::KEYS.into_iter().zip(crate::systems::action_bar::PLAYER) {
             if keys.pressed(key, crate::systems::action_bar::tells(ability)) {
                 writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity, at, arrived: Default::default() }});

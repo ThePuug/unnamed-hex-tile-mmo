@@ -50,9 +50,25 @@ pub const ACQUISITION_RANGE: u32 = 25;
 /// it is searched a tile wider and the reach measure decides.
 pub fn spotted(nntree: &NNTree, loc: Loc, range: u32) -> impl Iterator<Item = bevy::prelude::Entity> + '_ {
     let wider = range as i64 + 1;
-    nntree.locate_within_distance(loc, wider * wider)
+    nntree.within_tiles(loc, wider)
         .filter(move |nn| nn.loc.distance(&loc) <= range as i32)
         .map(|nn| nn.ent)
+}
+
+/// The living hostiles to `side` that `ent` at `loc` spots within `range`
+/// ([`spotted`]), itself left out: each other's side and health as
+/// `lookup` finds them, None for one with neither.
+pub fn hostiles_near<'a>(
+    nntree: &'a NNTree,
+    ent: bevy::prelude::Entity,
+    loc: Loc,
+    range: u32,
+    side: common_bevy::components::behaviour::Side,
+    lookup: impl Fn(bevy::prelude::Entity) -> Option<(common_bevy::components::behaviour::Side, f32)> + 'a,
+) -> impl Iterator<Item = bevy::prelude::Entity> + 'a {
+    spotted(nntree, loc, range)
+        .filter(move |&other| other != ent)
+        .filter(move |&other| lookup(other).is_some_and(|(other_side, health)| side.is_hostile_to(other_side) && health > 0.0))
 }
 
 /// How far an NPC follows a target from its den, in tiles, before it gives

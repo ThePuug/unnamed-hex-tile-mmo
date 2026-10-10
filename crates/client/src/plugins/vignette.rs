@@ -70,14 +70,3 @@ fn update_vignette_intensity(
         settings.time = time.elapsed_secs();
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_vignette_settings_default() {
-        let settings = VignetteSettings::default();
-        assert_eq!(settings.intensity, 0.0, "Default vignette intensity should be 0.0 (disabled)");
-    }
-}

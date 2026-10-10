@@ -16,8 +16,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
 
-pub const METRICS_MAGIC: [u8; 4] = *b"GMSV";
-pub const METRICS_VERSION: u16 = 10;
+const METRICS_MAGIC: [u8; 4] = *b"GMSV";
+const METRICS_VERSION: u16 = 10;
 
 /// The group the client publishes to.
 pub const CLIENT_GROUP: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(239, 255, 51, 1), 5101);
@@ -40,7 +40,7 @@ pub enum Aggregator {
 /// Packet cadence — tells the console how to handle the data.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Cadence {
-    /// Periodic snapshot (every 2s). Console updates gauge displays.
+    /// Periodic snapshot. Console updates gauge displays.
     Snapshot = 0,
     /// Per-event observation. Console accumulates into p95 windows.
     Event = 1,

@@ -1,13 +1,12 @@
 # qrz Library
 
-Hexagonal coordinate system library — 3D hex grid math, world space conversion, and orientation-aware rendering. This is the coordinate reference, not game design or architecture.
+Hexagonal coordinate system library — 3D hex grid math and world space conversion. This is the coordinate reference, not game design or architecture.
 
 ## When to Read This
 
 - Working with hex coordinates or grid navigation
-- Implementing new movement or pathfinding features
 - Converting between hex tiles and world positions
-- Adding grid-based features (FOV, line of sight, etc.)
+- Adding grid-based features (rings, lines, walks round a tile)
 - Debugging position or distance calculations
 
 ## Core Concepts
@@ -15,21 +14,17 @@ Hexagonal coordinate system library — 3D hex grid math, world space conversion
 ### Axial Coordinates (q, r, z)
 
 The library uses **axial coordinates** for hexagonal grids:
-- **q**: East-west axis
-- **r**: Northeast-southwest axis
-- **s**: Derived axis (s = -q - r) - southeast-northwest
+- **q**, **r**: The two grid axes
+- **s**: Derived axis (s = -q - r)
 - **z**: Vertical elevation
 
 **Invariant**: `q + r + s = 0` (automatically maintained)
 
-### Hex Orientation
+### Orientation
 
-The library supports two orientations via `HexOrientation`:
+The grid is flat-top: a flat edge faces north, vertices point east and west. `convert()` uses `x = 3/2*q, z = √3/2*q + √3*r`, so north is −z and east is +x. Up maps directly to N (flat edge), so arrow keys need no heading context.
 
-- **FlatTop** (default): Flat edge north/south, vertices east/west. `convert()` uses `x = 3/2*q, z = √3/2*q + √3*r`.
-- **PointyTop**: Vertex pointing north. Legacy orientation with context-sensitive diagonal input.
-
-FlatTop eliminates directional ambiguity — Up maps directly to N (flat edge), so arrow keys need no heading context.
+`DIRECTIONS` runs round the tile NW, SW, S, SE, NE, N — `(-1,0), (-1,1), (0,1), (1,0), (1,-1), (0,-1)` — and `ring` and `circling` turn the same way.
 
 **Heading angles** (flat-top compass): N=0°, NE=60°, SE=120°, S=180°, SW=240°, NW=300°. `From<Heading> for Quat` converts to Y-rotation via `quat_angle = 2π - compass` (Y-rotation is CCW from above, compass is CW). Targeting's `to_angle()` uses the same table, and `angle_between_locs()` adds a +90° offset because `atan2` on flat-top Cartesian puts SE at 30°, not 120°.
 
@@ -37,14 +32,11 @@ FlatTop eliminates directional ambiguity — Up maps directly to N (flat edge), 
 
 ### Distance Metrics
 
-**`flat_distance(other)`**: 2D hex distance ignoring elevation
-- Maximum of absolute differences in cube coordinates (q, r, s)
-- Correct distance for hex grid topology
-- Example: Adjacent hexes are distance 1
+**`hex_distance((q1, r1), (q2, r2))`**: The hex distance between two axial coordinates — the maximum of the absolute cube deltas, `max(|dq|, |dr|, |dq + dr|)`. The one formula: `common-bevy`'s chunks and summaries and the server call it rather than restating it.
 
-**`distance(other)`**: 3D distance including elevation
-- Adds absolute z difference to flat_distance
-- Use for queries that care about height
+**`flat_distance(other)`**: `hex_distance` of two tiles, elevation ignored. Adjacent hexes are distance 1.
+
+**`distance(other)`**: `flat_distance` plus the absolute z difference. Use for queries that care about height.
 
 ## Key Types
 
@@ -58,50 +50,36 @@ pub struct Qrz {
 ```
 
 **Constants**:
-- `Qrz::Q` - Unit vector in q direction (1,0,0)
-- `Qrz::R` - Unit vector in r direction (0,1,0)
 - `Qrz::Z` - Unit vector in z direction (0,0,1)
-- `DIRECTIONS` - Array of 6 cardinal hex directions
+- `DIRECTIONS` - The 6 neighbour offsets, in order round the tile
 
 **Key Methods**:
 - `flat_distance(&Qrz) -> i32` / `distance(&Qrz) -> i32`
-- `neighbors() -> Vec<Qrz>` - All 6 adjacent hexes (same z)
-- `normalize() -> Qrz` - Unit direction vector; **z is zeroed**
-- `arc(dir, radius: u8) -> Vec<Qrz>` - Hexes in 120° arc at distance
-- `fov(dir, dist: u8) -> Vec<Qrz>` - All hexes in cone (field of view)
+- `neighbors() -> Vec<Qrz>` - All 6 adjacent hexes (same z), in `DIRECTIONS`' order
+- `ring(radius) -> Vec<Qrz>` - The `6 × radius` tiles at that flat distance, in order round the ring; entry `radius × i` is the corner along `DIRECTIONS[i]`
+- `circling(from, to) -> Vec<Qrz>` - The walk round this tile along `to`'s ring, the shorter way, from the ring tile nearest `from` through `to`
+- `beyond(from, steps) -> Vec<Qrz>` - The tiles straight on along the line from `from` through this one, a neighbour at a time
 
-**Arithmetic**: Supports `+`, `-`, `*` (scalar multiply)
+**Arithmetic**: Supports `+`, `-`, `*` (scalar multiply, z included). `Qrz` is `Eq + Hash`, not `Ord`: a set or map of tiles is a `HashSet`/`HashMap`.
 
-### `Map<T>` Struct
+### `Map` Struct
 
-Generic container for storing data at hex coordinates with world space conversion.
+The grid's geometry, holding no tiles. Terrain is `common_bevy::resources::map::Map`, which keeps the tiles and delegates conversion and vertices to a `qrz::Map`.
 
 ```rust
-pub struct Map<T> {
-    radius: f32,       // Hex size in world units
+pub struct Map {
+    radius: f32,       // Hex size in world units, centre to vertex
     rise: f32,         // Vertical scale (z → y)
-    orientation: HexOrientation,
-    tree: BTreeMap<Qrz, T>,          // ordered iteration
-    hash: HashMap<Qrz, T>,           // O(1) exact lookup
-    flat: HashMap<(i32, i32), i32>,  // (q, r) → z column index
 }
 ```
 
-`T: Copy`. The three stores are kept in sync by `insert` / `remove`.
-
-**Construction**: `Map::new(radius, rise, orientation)`
+**Construction**: `Map::new(radius, rise)` — the game's values are `common::grid::HEX_RADIUS` and `common::grid::RISE`.
 
 **Key Methods**:
-- `convert(Qrz) -> Vec3` - Hex to world space (orientation-aware)
+- `convert(Qrz) -> Vec3` - Hex to world space
 - `convert(Vec3) -> Qrz` - World to hex space (with cube rounding)
-- `radius()` / `rise()` / `orientation()` - Accessors for the construction parameters
-- `insert(qrz, value)` / `remove(qrz) -> Option<T>` - Store and drop tile data
-- `get(qrz) -> Option<&T>` - Retrieve tile data at an exact coordinate
-- `get_by_qr(q, r) -> Option<(Qrz, T)>` - Column lookup via the flat index; returns the occupied tile and its z
-- `iter()` - Iterate tiles in sorted order (BTreeMap)
-- `neighbors(qrz) -> Vec<(Qrz, T)>` - Adjacent hexes, filtered to walkable elevation (`|Δz| ≤ 1`)
-- `line(&a, &b) -> Vec<Qrz>` - Hexes along a line
-- `vertices(qrz) -> Vec<Vec3>` - **7** positions: 6 outer vertices clockwise, then the center. Flat-top order is `[NE, E, SE, SW, W, NW, Center]`; pointy-top is `[N, NE, SE, S, SW, NW, Center]`
+- `radius()` / `rise()` - Accessors for the construction parameters
+- `vertices(qrz) -> Vec<Vec3>` - **7** positions, `rise` above the centre: 6 corners clockwise `[NE, E, SE, SW, W, NW]`, then the centre
 - `face(here, next) -> (Vec2, Vec2)` - The face between neighbours in the ground plane (x, z): unit normal from `here` into `next`, and midpoint
 - `exit(from, dir, here) -> (f32, Qrz)` - Where a ground-plane ray leaves `here`: distance along `dir` to the first face, and the neighbour across it. Zero for a point already a hair past a face
 
@@ -118,16 +96,14 @@ Implemented by `Map` for `Qrz ↔ Vec3` conversions.
 
 ## Coordinate Conversion Details
 
-**Affine Transformation**: Orientation-specific matrices.
-- Forward: Qrz → Vec3 (hex to world)
-- Inverse: Vec3 → Qrz (world to hex, with cube rounding)
+**Affine Transformation**: One forward matrix (Qrz → Vec3) and its inverse (Vec3 → Qrz, then cube rounding), both scaled by `radius`; `z` scales by `rise`.
 
 **Cube Rounding**: Converting Vec3 → Qrz requires rounding to nearest hex:
 1. Convert to fractional cube coordinates
 2. Round to nearest integer satisfying q+r+s=0
 3. Handles edge cases where multiple coordinates need rounding
 
-**Vertex topology**: The edge-to-direction mapping is identical for both orientations — edge `(i, i+1)` faces `DIRECTIONS[(i+4) % 6]`. Direction-to-vertex tables, skirt mapping, and slope code work unchanged across a re-orientation.
+**Vertex topology**: Corners `i` and `i+1` bound the edge facing `DIRECTIONS[(4 - i) mod 6]` — the corners run clockwise and `DIRECTIONS` counter-clockwise. `common-bevy`'s `surface::CORNER_NEIGHBOURS` and the mesh builder's corner tables are written to this order; `map.rs`'s test `an_edge_faces_its_direction` pins it.
 
 ## Common Patterns
 
@@ -135,12 +111,12 @@ Implemented by `Map` for `Qrz ↔ Vec3` conversions.
 ```rust
 let origin = Qrz { q: 0, r: 0, z: 0 };
 let neighbors = origin.neighbors();  // 6 adjacent hexes
-let fov = origin.fov(&Qrz::Q, 5);   // Cone in Q direction, distance 5
+let ring = origin.ring(3);           // the 18 tiles three steps out, in order round
 ```
 
 ### World ↔ Hex Conversion
 ```rust
-let map: Map<EntityType> = Map::new(1.0, 0.8, HexOrientation::FlatTop);
+let map = Map::new(1.0, 0.8);
 let hex = Qrz { q: 1, r: 2, z: 3 };
 let world_pos: Vec3 = map.convert(hex);
 let recovered: Qrz = map.convert(world_pos);  // Rounds to nearest hex
@@ -156,24 +132,19 @@ let dist_3d = a.distance(&b);    // Includes elevation
 
 ## Module Structure
 
-- `qrz.rs` - Core `Qrz` type and hex grid math
-- `map.rs` - `Map<T>` storage, world space conversion, orientation-aware vertex generation
-- `lib.rs` - Public exports (`Qrz`, `Map`, `HexOrientation`, `Convert`)
+- `qrz.rs` - Core `Qrz` type, `DIRECTIONS`, `hex_distance`, rings, walks and lines
+- `map.rs` - `Map` geometry: world space conversion, vertices, faces, exits
+- `lib.rs` - Public exports (`Qrz`, `DIRECTIONS`, `hex_distance`, `Map`, `Convert`)
 
 ## Usage in Main Codebase
 
-The qrz library is used throughout:
 - `Loc` component wraps `Qrz` for entity positions
-- `Map<EntityType>` resource stores terrain tiles
-- Physics and movement systems use hex distance
-- Pathfinding operates on hex coordinates
+- `common_bevy::resources::map::Map` holds the terrain and wraps a `qrz::Map` for its geometry
+- Physics, movement, pathfinding, chunking and summaries use hex distance
 - NNTree uses qrz for spatial queries
-- Input system branches on `map.orientation()` for arrow key mapping
 
 ## Testing
 
 ```bash
 cargo test -p qrz
 ```
-
-Tests are parameterized over both orientations for roundtrip conversion, vertex shape, and origin.

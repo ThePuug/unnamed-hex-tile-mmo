@@ -37,13 +37,22 @@ impl Fighter {
     }
 }
 
+/// Health an NPC returning to its spawn regains each second: a leash
+/// reset, not a regen (`Returning`)
+pub const RETURNING_HEALTH_REGEN: f32 = 100.0;
+
+/// Health an actor out of combat regains each second
+pub const RESTING_HEALTH_REGEN: f32 = 5.0;
+
+/// Health an actor in combat regains each second: none
+pub const COMBAT_HEALTH_REGEN: f32 = 0.0;
+
 /// Regenerate mana, endurance and health for all entities with resources
 /// Runs in FixedUpdate schedule (125ms ticks)
 /// Endurance regenerates steadily, in combat or out.
-/// Health regenerates at:
-/// - 100 HP/sec when Returning (leashing NPCs)
-/// - 5 HP/sec when out of combat (normal regen)
-/// - 0 HP/sec when in combat
+/// Health regenerates at `RETURNING_HEALTH_REGEN` a second while
+/// Returning, else `RESTING_HEALTH_REGEN` out of combat and
+/// `COMBAT_HEALTH_REGEN` in it.
 pub fn regenerate_resources(
     tuning: Res<Tuning>,
     mut query: Query<(&mut Health, &mut Mana, Option<&mut Endurance>, &CombatState, Option<&crate::components::returning::Returning>)>,
@@ -51,8 +60,8 @@ pub fn regenerate_resources(
 ) {
     let current_time = time.elapsed();
     let dt = time.delta_secs();
-    // Cap dt to 1 second max to prevent instant regen from stale last_update values
-    // (e.g., after network updates where last_update gets reset to Duration::ZERO)
+    // `Mana::last_update` is not on the wire, so a pool that just arrived
+    // reads ZERO: cap the gap or it would refill at once.
     const MAX_DT_SECS: f32 = 1.0;
 
     for (mut health, mut mana, endurance, combat_state, returning_opt) in &mut query {
@@ -73,14 +82,12 @@ pub fn regenerate_resources(
         mana.state = (mana.state + mana.regen_rate * dt_mana).min(mana.max);
         mana.last_update = current_time;
 
-        // Regenerate health
-        // Priority: Returning (100 HP/s) > Out of combat (5 HP/s) > In combat (0 HP/s)
         let health_regen_rate = if returning_opt.is_some() {
-            100.0  // Leashing NPC - rapid reset
+            RETURNING_HEALTH_REGEN
         } else if !combat_state.in_combat {
-            5.0    // Out of combat - normal regen
+            RESTING_HEALTH_REGEN
         } else {
-            0.0    // In combat - no regen
+            COMBAT_HEALTH_REGEN
         };
 
         if health_regen_rate > 0.0 {
@@ -91,7 +98,7 @@ pub fn regenerate_resources(
 
 /// Check for entities with health <= 0 and handle death immediately
 /// Runs on server only, after damage application systems
-/// For NPCs: emits Despawn event directly (no 1-frame delay)
+/// For NPCs: emits Despawn
 /// For players: adds RespawnTimer and emits Despawn
 pub fn check_death(
     mut commands: Commands,
@@ -112,8 +119,7 @@ pub fn check_death(
                 commands.entity(ent).insert(RespawnTimer::new(time.elapsed()));
             }
 
-            // Emit Despawn event immediately (for both players and NPCs)
-            // This avoids the 1-frame delay from using trigger_targets
+            // Despawned at once, a player and an NPC alike
             writer.write(Do {
                 event: Event::Despawn { ent },
             });
@@ -121,7 +127,8 @@ pub fn check_death(
     }
 }
 
-/// Process respawn timers and respawn players at origin after 5 seconds
+/// Stands every player whose respawn timer has run out at the `SpawnPoint`,
+/// its pools full
 /// Runs on server only
 pub fn process_respawn(
     mut commands: Commands,
@@ -262,137 +269,30 @@ mod tests {
 
     // ===== SYSTEM TESTS =====
 
+    /// A body at no health is despawned once: a respawn timer already
+    /// running marks a death already handled, and a living body is left
+    /// alone.
     #[test]
-    fn test_check_death_emits_event_when_health_zero() {
-        use std::sync::{Arc, Mutex};
+    fn the_dead_are_despawned_once() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Time>();
+        world.init_resource::<Messages<Do>>();
+        let mana = Mana { state: 0.0, max: 100.0, regen_rate: 8.0, last_update: std::time::Duration::ZERO };
+        let dead = world.spawn((Health { state: 0.0, max: 100.0 }, mana)).id();
+        world.spawn((Health { state: 0.0, max: 100.0 }, mana, RespawnTimer::new(std::time::Duration::ZERO)));
+        world.spawn((Health { state: 50.0, max: 100.0 }, mana));
 
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
-        app.add_message::<Do>();
+        world.run_system_once(check_death).unwrap();
 
-        // Track emitted events using a system
-        let emitted_events: Arc<Mutex<Vec<Entity>>> = Arc::new(Mutex::new(Vec::new()));
-        let emitted_events_clone = emitted_events.clone();
-
-        app.add_systems(Update, move |mut reader: MessageReader<Do>| {
-            for event in reader.read() {
-                if let Event::Despawn { ent } = event.event {
-                    emitted_events_clone.lock().unwrap().push(ent);
-                }
-            }
-        });
-
-        // Create entity with 0 health (e.g., from fall damage, not combat)
-        let entity = app.world_mut().spawn((
-            Health {
-                max: 100.0,
-                state: 0.0,
-            },
-            Mana {
-                max: 100.0,
-                state: 0.0,
-                regen_rate: 8.0,
-                last_update: std::time::Duration::ZERO,
-            },
-        )).id();
-
-        // Run check_death system
-        app.add_systems(Update, check_death);
-        app.update();
-
-        // Verify Despawn event was emitted
-        let events = emitted_events.lock().unwrap();
-        assert_eq!(events.len(), 1, "Expected one Despawn event");
-        assert_eq!(events[0], entity, "Despawn event should be for the correct entity");
+        let despawned: Vec<Entity> = world
+            .resource::<Messages<Do>>()
+            .iter_current_update_messages()
+            .filter_map(|message| match message.event {
+                Event::Despawn { ent } => Some(ent),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(despawned, vec![dead]);
     }
-
-    #[test]
-    fn test_check_death_ignores_entities_with_respawn_timer() {
-        use std::sync::{Arc, Mutex};
-        use std::time::Duration;
-
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
-        app.add_message::<Do>();
-
-        // Track emitted events using a system
-        let emitted_events: Arc<Mutex<Vec<()>>> = Arc::new(Mutex::new(Vec::new()));
-        let emitted_events_clone = emitted_events.clone();
-
-        app.add_systems(Update, move |mut reader: MessageReader<Do>| {
-            for event in reader.read() {
-                if let Event::Despawn { ent: _ } = event.event {
-                    emitted_events_clone.lock().unwrap().push(());
-                }
-            }
-        });
-
-        // Create entity with 0 health AND RespawnTimer (already dead)
-        app.world_mut().spawn((
-            Health {
-                max: 100.0,
-                state: 0.0,
-            },
-            Mana {
-                max: 100.0,
-                state: 0.0,
-                regen_rate: 8.0,
-                last_update: Duration::ZERO,
-            },
-            RespawnTimer::new(Duration::from_secs(0)),
-        ));
-
-        // Run check_death system
-        app.add_systems(Update, check_death);
-        app.update();
-
-        // Verify NO Despawn event was emitted (entity already has respawn timer)
-        let events = emitted_events.lock().unwrap();
-        assert_eq!(events.len(), 0, "Should not emit Despawn event for entities with RespawnTimer");
-    }
-
-    #[test]
-    fn test_check_death_ignores_alive_entities() {
-        use std::sync::{Arc, Mutex};
-        use std::time::Duration;
-
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);  // MinimalPlugins includes TimePlugin
-        app.add_message::<Do>();
-
-        // Track emitted events using a system
-        let emitted_events: Arc<Mutex<Vec<()>>> = Arc::new(Mutex::new(Vec::new()));
-        let emitted_events_clone = emitted_events.clone();
-
-        app.add_systems(Update, move |mut reader: MessageReader<Do>| {
-            for event in reader.read() {
-                if let Event::Despawn { ent: _ } = event.event {
-                    emitted_events_clone.lock().unwrap().push(());
-                }
-            }
-        });
-
-        // Create entity with positive health
-        app.world_mut().spawn((
-            Health {
-                max: 100.0,
-                state: 50.0,
-            },
-            Mana {
-                max: 100.0,
-                state: 50.0,
-                regen_rate: 8.0,
-                last_update: Duration::ZERO,
-            },
-        ));
-
-        // Run check_death system
-        app.add_systems(Update, check_death);
-        app.update();
-
-        // Verify NO Despawn event was emitted
-        let events = emitted_events.lock().unwrap();
-        assert_eq!(events.len(), 0, "Should not emit Despawn event for alive entities");
-    }
-
 }

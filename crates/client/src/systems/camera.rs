@@ -98,12 +98,7 @@ const CLOSE_OUT_EASE: f32 = 0.4;
 const TILT_RINGS_WU: [f32; 2] = [20.0, 45.0];
 const CLOSE_TILT_RINGS_WU: [f32; 2] = [2.0 * TILE_ACROSS_WU, 3.0 * TILE_ACROSS_WU];
 /// A tile's width flat to flat.
-const TILE_ACROSS_WU: f32 = 1.732_050_8 * common::camera::HEX_RADIUS;
-
-/// Camera height for normal gameplay (convenience alias).
-pub fn gameplay_camera_height() -> f32 {
-    camera_height(MAX_GAMEPLAY_FOV)
-}
+const TILE_ACROSS_WU: f32 = 1.732_050_8 * common::grid::HEX_RADIUS;
 
 /// The haze at noon: one colour that distance fades everything toward, and
 /// the sky above the horizon, so the frontier at the reach never shows.
@@ -166,7 +161,7 @@ impl Pose {
     /// The pose nothing pulls on: from the height the ladder is measured
     /// by, the lens narrow.
     fn rest(yaw: f32) -> Self {
-        Pose { yaw, elevation: (gameplay_camera_height() / CAMERA_DISTANCE).atan(), fov: REST_FOV, reach: 1.0 }
+        Pose { yaw, elevation: (camera_height(MAX_GAMEPLAY_FOV) / CAMERA_DISTANCE).atan(), fov: REST_FOV, reach: 1.0 }
     }
 
     /// The pose among trees: rest's elevation, over the shoulder on a
@@ -299,32 +294,10 @@ fn ease(from: f32, to: f32, k: f32, dt: f32) -> f32 {
     from + (to - from) * (1.0 - (-k * dt).exp())
 }
 
-/// Camera orbit state: discrete stops, one per heading, and smooth
-/// interpolation. The target stop follows the player's heading and
-/// `current` is the pose's yaw.
-#[derive(Resource)]
-pub struct CameraOrbit {
-    /// Current interpolated angle (radians, 0 = behind player facing north)
-    pub current: f32,
-    /// Target stop index, counter-clockwise from behind the player
-    pub target_index: usize,
-}
-
-impl Default for CameraOrbit {
-    fn default() -> Self {
-        Self { current: 0.0, target_index: 0 }
-    }
-}
-
-impl CameraOrbit {
-    pub fn target_angle(&self) -> f32 {
-        self.target_index as f32 * ORBIT_STEP
-    }
-
-    /// Stand behind `heading`.
-    pub fn follow(&mut self, heading: Heading) {
-        self.target_index = (ORBIT_STOPS - heading.slot() as usize) % ORBIT_STOPS;
-    }
+/// The yaw of the orbit stop behind `heading`, in radians: 0 behind a
+/// player facing north, counter-clockwise from there.
+fn stop_yaw(heading: Heading) -> f32 {
+    ((ORBIT_STOPS - heading.slot() as usize) % ORBIT_STOPS) as f32 * ORBIT_STEP
 }
 
 /// Shortest signed angle from `from` to `to` on the unit circle.
@@ -336,7 +309,6 @@ fn angle_diff(from: f32, to: f32) -> f32 {
 pub fn setup(
     mut commands: Commands,
 ) {
-    commands.insert_resource(CameraOrbit::default());
     commands.insert_resource(CameraPose { pose: Pose::floor(0.0), limit: None, openness: 0.0, climb: 0.0, tilt: Vec2::ZERO, clearance: 1.0, closed: 0.0 });
     commands.insert_resource(ClearColor(HAZE_COLOR));
 
@@ -707,7 +679,6 @@ fn clearance_step(current: f32, measured: f32, dt: f32) -> f32 {
 }
 
 pub fn update(
-    mut orbit: ResMut<CameraOrbit>,
     mut state: ResMut<CameraPose>,
     mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
     actor: Query<(&VisualPosition, &Heading), (With<crate::components::Viewed>, Without<Camera3d>)>,
@@ -734,7 +705,6 @@ pub fn update(
     // and the lens opens as far as it takes for what is left. The pulls
     // are smoothed so the ground sampled ahead cannot flick the pose;
     // unloaded ground holds them.
-    orbit.follow(heading);
     let aspect = match &*projection {
         Projection::Perspective(p) => p.aspect_ratio,
         _ => 1.0,
@@ -751,7 +721,7 @@ pub fn update(
         state.tilt = state.tilt.lerp(tilt, k);
     }
     let tilt = state.tilt;
-    let open = Pose { yaw: orbit.target_angle(), ..Pose::rest(0.0).toward(Pose::ceiling(0.0), state.openness) };
+    let open = Pose { yaw: stop_yaw(heading), ..Pose::rest(0.0).toward(Pose::ceiling(0.0), state.openness) };
     let mut wanted = open.toward(Pose::hill(open, state.climb, tilt), (state.climb / HILL_GRADE).min(1.0));
     wanted.fov = lens_to_hold(&wanted, tilt, state.climb);
 
@@ -783,7 +753,6 @@ pub fn update(
     let translation = head + (foot - head) * state.clearance;
 
     state.pose = next;
-    orbit.current = next.yaw;
     if let Projection::Perspective(p) = &mut *projection {
         p.fov = next.fov;
     }
@@ -798,7 +767,7 @@ mod tests {
 
     fn reach_of(pose: &Pose) -> f32 {
         let player = Vec3::new(300.0, 7.0, -40.0);
-        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
         footprint(pose, player, Vec2::ZERO, WIDE, &map, Vec3::ZERO).into_iter()
             .map(|p| p.distance(player.xz()))
             .fold(0.0, f32::max)
@@ -860,7 +829,7 @@ mod tests {
     #[test]
     fn rays_meet_a_wall_and_fly_free_over_a_plain() {
         use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
-        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
         let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         for q in -220..=220 {
             for r in -220..=220 {
@@ -882,7 +851,7 @@ mod tests {
     #[test]
     fn the_sweep_plane_tilts_with_the_ground() {
         use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
-        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
         let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         for q in -60..=60 {
             for r in -60..=60 {
@@ -1029,7 +998,7 @@ mod tests {
     #[test]
     fn the_lowest_stand_is_clear_on_level_ground() {
         use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
-        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
         let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         for q in -30..=30 {
             for r in -30..=30 {

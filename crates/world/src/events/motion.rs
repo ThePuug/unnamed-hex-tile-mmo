@@ -37,14 +37,9 @@ use std::collections::HashMap;
 
 use crate::noise::simplex_2d;
 use crate::tectonic::{Edge, PLATE_SPACING};
-use crate::world_to_hex;
-use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use super::index::{CellId, CellIndex, IndexRegistry};
 use super::plates::{PlateEdgeIndex, GRAPH_CELL_SCALE};
 use super::{CellScope, TileOutput, TileView, WorldEvent};
-
-/// The plate graph's cell: the layer reads edges by the cell that owns them
-/// and publishes under the same one.
-pub const MOTION_CELL_SCALE: u32 = GRAPH_CELL_SCALE;
 
 /// Wavelength of the differential octave of the motion field, in world
 /// units: nine plates. Neighbours sample a tenth of a wavelength apart and
@@ -64,8 +59,8 @@ const DRIFT_WAVELENGTH: f64 = 5.0 * STRAIN_WAVELENGTH;
 /// motion at all does not classify as transform on rounding noise.
 const TRANSFORM_EPSILON: f64 = 1e-9;
 
-pub(crate) const STRAIN_SEED_X: u64 = 0x4D6F_7469_6F6E_5F58; // "Motion_X"
-pub(crate) const STRAIN_SEED_Y: u64 = 0x4D6F_7469_6F6E_5F59; // "Motion_Y"
+const STRAIN_SEED_X: u64 = 0x4D6F_7469_6F6E_5F58; // "Motion_X"
+const STRAIN_SEED_Y: u64 = 0x4D6F_7469_6F6E_5F59; // "Motion_Y"
 const DRIFT_SEED_X: u64 = 0x4472_6966_745F_5F58; // "Drift__X"
 const DRIFT_SEED_Y: u64 = 0x4472_6966_745F_5F59; // "Drift__Y"
 
@@ -153,23 +148,6 @@ impl CellIndex for PlateBoundaryIndex {
     }
 }
 
-impl EventIndex for PlateBoundaryIndex {
-    fn source_scale(&self) -> u32 { MOTION_CELL_SCALE }
-
-    fn tiles(&self, cell_ids: &[CellId]) -> Vec<(i32, i32)> {
-        cell_ids.iter()
-            .filter_map(|id| self.cells.get(id))
-            .flat_map(|segs| segs.iter().map(|s| { let (x, y) = s.mid(); world_to_hex(x, y) }))
-            .collect()
-    }
-
-    fn neighbors(&self, _q: i32, _r: i32) -> Vec<(i32, i32)> { Vec::new() }
-
-    fn remove_cell(&mut self, cell_id: CellId) {
-        self.cells.remove(&cell_id);
-    }
-}
-
 // ── Motion field ────────────────────────────────────────────────────────────
 
 /// The drift the crust at a position is carried on: the long octave of the
@@ -243,19 +221,19 @@ pub fn resolve(edge: &Edge, seed: u64) -> BoundarySegment {
 
 // ── MotionEvent ─────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct MotionEvent;
 
 impl MotionEvent {
     pub fn new() -> Self { MotionEvent }
 }
 
-impl Default for MotionEvent {
-    fn default() -> Self { Self::new() }
-}
-
 impl WorldEvent for MotionEvent {
     fn name(&self) -> &str { "motion" }
-    fn scale(&self) -> u32 { MOTION_CELL_SCALE }
+
+    /// The plate graph's cell: the layer reads edges by the cell that owns
+    /// them and publishes under the same one.
+    fn scale(&self) -> u32 { GRAPH_CELL_SCALE }
 
     /// A resolved edge reaches as far as the edge does; the plate layer's
     /// cell already holds that.

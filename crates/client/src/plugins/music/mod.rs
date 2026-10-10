@@ -127,7 +127,7 @@ enum Phase {
     /// Silent until `until`, counted for the stage it was set on, or for
     /// none yet.
     Resting { stage: Option<Stage>, until: Duration },
-    Playing { entity: Entity, kind: usize, started: Duration, ends: Duration, fade_in: f32, fade_out: f32 },
+    Playing { entity: Entity, kind: usize, started: Duration, ends: Duration, fade_out: f32 },
 }
 
 impl Default for Phase {
@@ -292,11 +292,10 @@ fn play(
                 kind: k,
                 started: now,
                 ends: now + next.length,
-                fade_in: 0.0,
                 fade_out: 0.0,
             };
         }
-        Phase::Playing { entity, kind, started, ends, fade_in, fade_out } => {
+        Phase::Playing { entity, kind, started, ends, fade_out } => {
             let kind = &KINDS[*kind];
             if kind.stage != stage && *ends > now + Duration::from_secs_f32(FADE_LEAVING) {
                 *ends = now + Duration::from_secs_f32(FADE_LEAVING);
@@ -311,62 +310,51 @@ fn play(
             // The sink arrives the frame after the spawn; until then the
             // player is silent by its settings.
             if let Ok(mut sink) = sinks.get_mut(*entity) {
-                let gain = envelope((now - *started).as_secs_f32(), (*ends - *started).as_secs_f32(), *fade_in, *fade_out);
+                let gain = envelope((now - *started).as_secs_f32(), (*ends - *started).as_secs_f32(), *fade_out);
                 sink.set_volume(Volume::Linear(gain * audio.music.gain()));
             }
         }
     }
 }
 
-/// The gain `t` seconds into a play `span` seconds long: up from silence
-/// over `fade_in`, down to silence at `span` over `fade_out`, with no fade
-/// where either is zero. Squared, so each fade moves evenly to the ear
-/// rather than lingering near full.
-fn envelope(t: f32, span: f32, fade_in: f32, fade_out: f32) -> f32 {
-    let ramp = |left: f32, fade: f32| if fade > 0.0 { (left / fade).clamp(0.0, 1.0) } else { 1.0 };
-    ramp(t, fade_in).min(ramp(span - t, fade_out)).powi(2)
+/// The gain `t` seconds into a play `span` seconds long: full, then down
+/// to silence at `span` over `fade_out`, with no fade where that is zero.
+/// Squared, so the fade moves evenly to the ear rather than lingering
+/// near full.
+fn envelope(t: f32, span: f32, fade_out: f32) -> f32 {
+    let ramp = if fade_out > 0.0 { ((span - t) / fade_out).clamp(0.0, 1.0) } else { 1.0 };
+    ramp.powi(2)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const LOOP: (f32, f32) = (3.0, 10.0);
+    const FADE_OUT: f32 = 10.0;
 
     #[test]
-    fn a_play_starts_and_ends_silent_and_holds_full_between() {
+    fn a_play_holds_full_and_ends_silent() {
         let span = 120.0;
-        assert_eq!(envelope(0.0, span, LOOP.0, LOOP.1), 0.0);
-        assert_eq!(envelope(span, span, LOOP.0, LOOP.1), 0.0);
-        assert_eq!(envelope(span / 2.0, span, LOOP.0, LOOP.1), 1.0);
+        assert_eq!(envelope(span / 2.0, span, FADE_OUT), 1.0);
+        assert_eq!(envelope(span, span, FADE_OUT), 0.0);
     }
 
     #[test]
     fn a_cue_plays_whole_at_full() {
-        assert!((0..=1200).all(|i| envelope(i as f32 / 10.0, 120.0, 0.0, 0.0) == 1.0));
+        assert!((0..=1200).all(|i| envelope(i as f32 / 10.0, 120.0, 0.0) == 1.0));
     }
 
     #[test]
-    fn each_fade_moves_one_way() {
+    fn the_fade_moves_one_way() {
         let span = 120.0;
-        let gains: Vec<f32> = (0..=1200).map(|i| envelope(i as f32 / 10.0, span, LOOP.0, LOOP.1)).collect();
-        let peak = gains.iter().position(|&g| g == 1.0).unwrap();
-        assert!(gains[..=peak].windows(2).all(|w| w[0] <= w[1]));
-        assert!(gains[peak..].windows(2).all(|w| w[0] >= w[1]));
-    }
-
-    #[test]
-    fn leaving_mid_fade_in_never_lifts_the_gain() {
-        // Leaving 1 s in: the play is cut to end FADE_LEAVING later.
-        let before = envelope(1.0, 120.0, LOOP.0, LOOP.1);
-        let after = envelope(1.0, 1.0 + FADE_LEAVING, LOOP.0, FADE_LEAVING);
-        assert!(after <= before);
+        let gains: Vec<f32> = (0..=1200).map(|i| envelope(i as f32 / 10.0, span, FADE_OUT)).collect();
+        assert!(gains.windows(2).all(|w| w[0] >= w[1]));
     }
 
     #[test]
     fn a_cue_cut_short_by_leaving_still_fades() {
-        assert!(envelope(119.0, 120.0, 0.0, FADE_LEAVING) < 1.0);
-        assert_eq!(envelope(120.0, 120.0, 0.0, FADE_LEAVING), 0.0);
+        assert!(envelope(119.0, 120.0, FADE_LEAVING) < 1.0);
+        assert_eq!(envelope(120.0, 120.0, FADE_LEAVING), 0.0);
     }
 
     /// Every stage plays one kind of music.

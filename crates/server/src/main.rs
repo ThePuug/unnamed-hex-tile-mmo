@@ -5,10 +5,8 @@ mod systems;
 
 use std::time::*;
 use bevy::{ log::LogPlugin, prelude::*, time::common_conditions::* };
-use bevy_easings::*;
 
 use common_bevy::{
-    components::entity_type::*,
     plugins::nntree,
     resources::{map::*, *},
 };
@@ -34,13 +32,11 @@ fn main() {
             custom_layer: |_| None,
             ..default()
         },
-        TransformPlugin,
         crate::network::NetworkPlugin,
-        EasingsPlugin::default(),
         nntree::NNTreePlugin,
         combat::BehaviourPlugin,
         combat::CombatPlugin,
-        crate::plugins::metrics::MetricsPlugin::default(),
+        crate::plugins::metrics::MetricsPlugin,
         crate::plugins::world_streaming::WorldStreamingPlugin,
         crate::plugins::persistence::PersistencePlugin,
         // Ctrl-C stops the server through `AppExit`, so what it holds is
@@ -49,7 +45,6 @@ fn main() {
     ));
 
 
-    // Add observers for triggered events
     app.add_observer(renet::do_manage_connections);
     app.add_observer(renet::do_presence);
 
@@ -59,7 +54,7 @@ fn main() {
 
     app.add_systems(FixedPostUpdate, (
         input::broadcast_movement_intent,
-        actor::broadcast_heading_changes, // Broadcast heading changes to clients
+        actor::broadcast_heading_changes,
     ));
 
     app.add_systems(PreUpdate, (
@@ -79,7 +74,7 @@ fn main() {
         input::try_input,
         actor::try_teleport,
         engagement_spawner::try_spawn_party,
-        input::try_respec_attributes, // Attribute respec system
+        input::try_respec_attributes,
         crate::systems::equipment::try_wear,
         crate::systems::gathering::try_gather,
         crate::systems::gathering::try_take,
@@ -88,8 +83,8 @@ fn main() {
         crate::systems::gathering::close_windows,
         crate::systems::gathering::try_drop,
         common_bevy::systems::movement::update_burden,
-        engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))), // Update proximity tracking
-        engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))), // Clean up dead/abandoned engagements
+        engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))),
+        engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))),
         crate::systems::dens::tend_dens,
         crate::systems::dens::show_dens.run_if(on_timer(Duration::from_secs(1))),
         world::do_spawn,
@@ -104,11 +99,7 @@ fn main() {
 
 
     app.insert_resource(Time::<Fixed>::from_seconds(0.125));
-    app.insert_resource(Map::new(qrz::Map::<EntityType>::new(
-        common::camera::HEX_RADIUS,
-        common::camera::RISE,
-        qrz::HexOrientation::FlatTop,
-    )));
+    app.insert_resource(Map::new(qrz::Map::new(common::grid::HEX_RADIUS, common::grid::RISE)));
 
     app.init_resource::<Lobby>();
     app.init_resource::<crate::systems::gathering::Piles>();

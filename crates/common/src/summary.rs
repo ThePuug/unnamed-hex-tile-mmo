@@ -160,11 +160,14 @@ pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Optio
     }
     let parts: [TileSample; PARTS] = read.map(|sample| sample.expect("every part was read"));
     let samples = &parts[..SAMPLES];
-    let covers: Vec<Cover> = samples.iter().map(|s| s.cover).collect();
+    let covers: [Cover; SAMPLES] = std::array::from_fn(|i| samples[i].cover);
     let (wet, surface) = wet_parts(&parts);
     let z = match surface {
         Some(surface) => surface - 1,
-        None => select_center_z(&samples.iter().map(|s| s.z).collect::<Vec<_>>()),
+        None => {
+            let zs: [i32; SAMPLES] = std::array::from_fn(|i| samples[i].z);
+            select_center_z(&zs)
+        }
     };
     Some(SummaryCell {
         z,
@@ -273,9 +276,23 @@ mod tests {
         }
     }
 
+    /// The tile furthest from the mean stands for the group, the higher on
+    /// a tie, so a peak survives and a valley does; one tile is itself and
+    /// none is zero.
     #[test]
-    fn select_center_z_single_tile() {
-        assert_eq!(select_center_z(&[42]), 42);
+    fn select_center_z_takes_the_tile_furthest_from_the_mean() {
+        let cases: [(&[i32], i32); 7] = [
+            (&[], 0),
+            (&[42], 42),
+            (&[5, 5, 5, 5], 5),
+            (&[1, 2, 3, 2, 10], 10),
+            (&[10, 10, 10, 10, 0], 0),
+            (&[5, 0, 10, 5], 10),
+            (&[0, 10], 10),
+        ];
+        for (zs, expected) in cases {
+            assert_eq!(select_center_z(zs), expected, "{zs:?}");
+        }
     }
 
     /// Every part under water above the sea is wet, however few, and the
@@ -291,36 +308,6 @@ mod tests {
         assert_eq!(wet_parts(&parts), (1 << 8 | 1 << 2, Some(5)));
         parts[0] = tile(Some(0));
         assert_eq!(wet_parts(&parts), (1 << 8 | 1 << 2, Some(5)), "the sea is the plane's");
-    }
-
-    #[test]
-    fn select_center_z_empty() {
-        assert_eq!(select_center_z(&[]), 0);
-    }
-
-    #[test]
-    fn select_center_z_uniform() {
-        assert_eq!(select_center_z(&[5, 5, 5, 5]), 5);
-    }
-
-    #[test]
-    fn select_center_z_peak() {
-        assert_eq!(select_center_z(&[1, 2, 3, 2, 10]), 10);
-    }
-
-    #[test]
-    fn select_center_z_valley() {
-        assert_eq!(select_center_z(&[10, 10, 10, 10, 0]), 0);
-    }
-
-    #[test]
-    fn select_center_z_tie_prefers_higher() {
-        assert_eq!(select_center_z(&[5, 0, 10, 5]), 10);
-    }
-
-    #[test]
-    fn select_center_z_symmetric_tie() {
-        assert_eq!(select_center_z(&[0, 10]), 10);
     }
 
     /// A part is counted from its tiles on the first change and moved by

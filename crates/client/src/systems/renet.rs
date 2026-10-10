@@ -70,7 +70,6 @@ pub fn write_do(
     summary_cache: Res<crate::resources::SummaryCache>,
     map: Res<common_bevy::resources::map::Map>,
     mut network_metrics: ResMut<NetworkMetrics>,
-    _locs: Query<&Loc>,
     time: Res<Time>,
     client_timers: Res<crate::resources::ClientTimers>,
 ) {
@@ -145,17 +144,12 @@ pub fn write_do(
             }
 
             Do { event: Event::Despawn { ent } } => {
-                // Check if this is the local player (has InputQueue)
-                let is_local_player = l2r.get_by_right(&ent)
-                    .and_then(|&local_ent| buffers.get(&local_ent))
-                    .is_some();
-
-                if is_local_player {
-                    // The player falls as any actor does, but keeps its
-                    // entity: the server respawns it, and it stands again
-                    if let Some(&local_ent) = l2r.get_by_right(&ent) {
-                        commands.entity(local_ent).try_insert(crate::components::DeathMarker { death_time: time.elapsed() });
-                    }
+                // The local player has an input queue; it falls as any
+                // actor does, but keeps its entity: the server respawns it,
+                // and it stands again
+                let local = l2r.get_by_right(&ent).copied().filter(|local| buffers.get(local).is_some());
+                if let Some(local_ent) = local {
+                    commands.entity(local_ent).try_insert(crate::components::DeathMarker { death_time: time.elapsed() });
                 } else {
                     // For NPCs/other players: remove from EntityMap and delay despawn
                     // Entity stays alive for 3s in a death pose so damage numbers can render

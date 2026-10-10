@@ -250,7 +250,7 @@ mod tests {
     use common::Content;
 
     fn map_with(tiles: &[(Qrz, common::Cover)]) -> Map {
-        let map = Map::new(qrz::Map::new(common::camera::HEX_RADIUS, common::camera::RISE, qrz::HexOrientation::FlatTop));
+        let map = Map::new(qrz::Map::new(common::grid::HEX_RADIUS, common::grid::RISE));
         for &(qrz, cover) in tiles {
             map.insert(qrz, EntityType::Decorator(Decorator { cover, is_solid: true }));
         }

@@ -198,12 +198,10 @@ impl Recorder {
             }
             Command::Snapshot { count, every, all } => self.snapshot(count.max(1), every.max(1), all, now),
             Command::Stats { window, all } => self.stats(window, all, now),
-            Command::Page { name: None, .. } => PAGES.iter().map(|(name, patterns)| format!("{name:<8} {}
-", patterns.join("  "))).collect(),
+            Command::Page { name: None, .. } => PAGES.iter().map(|(name, patterns)| format!("{name:<8} {}\n", patterns.join("  "))).collect(),
             Command::Page { name: Some(name), window } => match PAGES.iter().find(|(page, _)| *page == name) {
                 Some((_, patterns)) => self.page(patterns, window, now),
-                None => format!("no page {name}: `metrics page` lists them
-"),
+                None => format!("no page {name}: `metrics page` lists them\n"),
             },
         }
     }
@@ -248,7 +246,7 @@ impl Recorder {
                 let last = *values.last()?;
                 let mean = values.iter().sum::<f64>() / values.len() as f64;
                 values.sort_by(f64::total_cmp);
-                let p95 = values[((values.len() as f64 * 0.95).ceil() as usize).saturating_sub(1)];
+                let p95 = common::quantile(&values, 0.95)?;
                 Some(vec![name.clone(), values.len().to_string(), value(last), value(values[0]), value(mean), value(p95), value(*values.last()?)])
             })
             .collect();
@@ -298,7 +296,7 @@ impl Recorder {
                 let mut values: Vec<f64> = heard.iter().map(|s| s.value as f64).collect();
                 values.sort_by(f64::total_cmp);
                 let (min, max) = (values[0], values[values.len() - 1]);
-                let p95 = values[((values.len() as f64 * 0.95).ceil() as usize).saturating_sub(1)];
+                let Some(p95) = common::quantile(&values, 0.95) else { continue };
                 let mut bins = [None::<f64>; LINE];
                 for s in &heard {
                     let bin = (((s.at - (now - window)) / window * LINE as f64) as usize).min(LINE - 1);
@@ -316,8 +314,7 @@ impl Recorder {
             }
         }
         if rows.is_empty() {
-            return format!("nothing on this page heard in the last {window}s
-");
+            return format!("nothing on this page heard in the last {window}s\n");
         }
         table(&header, &rows)
     }

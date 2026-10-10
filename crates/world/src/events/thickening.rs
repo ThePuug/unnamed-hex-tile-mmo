@@ -36,13 +36,11 @@
 //! outline of any plate a tile in the cell stands in.
 
 use std::any::Any;
-
-use crate::hex_to_world;
-use super::index::IndexRegistry;
-use super::plates::GRAPH_CELL_SCALE;
 use std::sync::Arc;
 
-use super::thrusting::{outlines_for, sheets_in, sheets_of, smoothstep, Outlines, PlateOutline, RANGE_RISE, RANGE_SPACING};
+use crate::{hex_to_world, smoothstep};
+use super::plates::GRAPH_CELL_SCALE;
+use super::thrusting::{outlines_for, sheets_in, sheets_of, Outlines, PlateOutline, OUTLINE_REACH, RANGE_RISE, RANGE_SPACING};
 use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent};
 
 // ── The plateau ─────────────────────────────────────────────────────────────
@@ -106,24 +104,20 @@ pub fn thickening_on(wx: f64, wy: f64, outlines: &Outlines) -> f64 {
 
 // ── The event ───────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct ThickeningEvent;
 
 impl ThickeningEvent {
     pub fn new() -> Self { ThickeningEvent }
 }
 
-impl Default for ThickeningEvent {
-    fn default() -> Self { Self::new() }
-}
-
 impl WorldEvent for ThickeningEvent {
     fn name(&self) -> &str { "thickening" }
     fn scale(&self) -> u32 { GRAPH_CELL_SCALE }
 
-    /// Nothing originates here.
-    fn max_influence(&self) -> u32 { 0 }
-
-    fn register_indexes(&self, _registry: &mut IndexRegistry) {}
+    /// A tile reads the whole outline of the plate it stands in, as far as
+    /// an outline lies from a position in its plate.
+    fn max_influence(&self) -> u32 { OUTLINE_REACH as u32 }
 
     /// Nothing to place: the plateau is read off the plate graph.
     fn deform(&self, _scope: &CellScope) {}

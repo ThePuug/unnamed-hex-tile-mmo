@@ -75,7 +75,7 @@ fn den_ahead(tile: Qrz, heading: Heading) -> Qrz {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use combat::engagement::get_random_hex_offset;
+    use combat::engagement::member_offset;
 
     #[test]
     fn every_party_is_on_a_side_of_its_own() {
@@ -93,7 +93,7 @@ mod tests {
         for slot in 0..HEADING_SLOTS {
             let den = den_ahead(player, Heading::from_slot(slot));
             for i in 0..3 {
-                let member = den + get_random_hex_offset(i);
+                let member = den + member_offset(i);
                 assert!(
                     player.flat_distance(&member) > ACQUISITION_RANGE as i32,
                     "member {i} at slot {slot} starts in range",

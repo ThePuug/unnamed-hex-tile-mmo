@@ -1,26 +1,17 @@
 use bevy::prelude::*;
 use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, combat_log, combat_ui, drop_panel, equipment_panel, highway, resolved_threats, resource_bars, target_frame, target_indicator, ui};
 
-/// Plugin that handles game UI elements
-
-/// This plugin provides:
-/// - Character panel (C key) for viewing and adjusting attributes
-/// - HUD elements (time display, etc.)
-/// - Target indicator (red hex showing which entity will be targeted)
-/// - The highway (the player's reaction queue as rhythm-game lanes)
-/// - Combat feedback (floating damage numbers, health bars)
-/// - Other game UI elements as they are added
+/// The game's UI: the panels, the HUD, the target rings, the highway and
+/// the combat feedback drawn over the world.
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        // Initialize UI resources
         app.init_resource::<character_panel::CharacterPanelState>();
         app.init_resource::<closeup::Turn>();
         app.init_resource::<bag_panel::BagCursor>();
         app.init_resource::<drop_panel::DropChoice>();
 
-        // Setup systems run once at startup
         app.add_systems(
             Startup,
             (
@@ -37,7 +28,6 @@ impl Plugin for UiPlugin {
             ),
         );
 
-        // HUD update systems (registered individually due to complex query types)
         app.add_systems(Update, ui::update);
         app.add_systems(Update, ui::update_compass);  // Compass rotation
         app.add_systems(Update, ui::scale_to_window);

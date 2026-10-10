@@ -1,50 +1,28 @@
-//! Unified Position and Visual Interpolation Components
-
-//! This module implements the Unified Interpolation Model which separates
-//! authoritative position from visual interpolation.
-
-//! # Architecture
-
-//! ```text
-//! Authoritative Layer:          Visual Layer:
-//! ┌─────────────────────┐       ┌─────────────────────┐
-//! │ Position            │       │ VisualPosition      │
-//! │  - tile: Qrz        │──────▶│  - from: Vec3       │
-//! │  - offset: Vec3     │       │  - to: Vec3         │
-//! └─────────────────────┘       │  - progress: f32    │
-//!                               └─────────────────────┘
-//! ```
-
-//! # Key Insight
-
-//! When Position changes, VisualPosition starts interpolating from its current
-//! visual location toward the new Position. This means direction changes don't
-//! cause jitter - the visual smoothly continues from wherever it currently is.
+//! Where an entity is and where it is drawn: `Position`, what physics
+//! says, and `VisualPosition`, the interpolation the renderer reads.
+//!
+//! When `Position` changes, `VisualPosition` starts from wherever the
+//! entity currently appears toward the new position, never from a point
+//! physics computed, so a direction change bends the drawn path without a
+//! jump.
 
 use bevy::prelude::*;
 use qrz::Qrz;
 use serde::{Deserialize, Serialize};
 
-/// Authoritative position in the game world.
-
-/// Combines discrete tile location (Qrz hex coordinates) with continuous
-/// sub-tile offset (Vec3). This is "where physics says the entity is."
-
-/// # Fields
-
-/// - `tile`: The hex tile the entity occupies (discrete)
-/// - `offset`: Sub-tile offset from tile center (continuous, typically -0.5 to 0.5)
-
-/// # Usage
-
-/// - **Local player**: Updated by physics prediction, confirmed by server
-/// - **Remote entities**: Updated by server messages
-/// - **Both**: VisualPosition interpolates toward this
+/// Authoritative position: the tile the entity stands in and its offset
+/// from that tile's centre, in world units. The world position is
+/// `map.convert(tile) + offset`. The offset may leave the tile; the caller
+/// re-bases onto the tile it `reached` (`Position::rebase`).
+///
+/// The local player's is predicted by physics and confirmed by the server;
+/// a remote entity's comes with its intent; `VisualPosition` interpolates
+/// toward either.
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Position {
     /// The hex tile this entity occupies
     pub tile: Qrz,
-    /// Sub-tile offset from tile center (world units)
+    /// Offset from the tile's centre, in world units
     pub offset: Vec3,
 }
 
@@ -84,37 +62,23 @@ impl Position {
     }
 }
 
-/// Visual interpolation state for smooth rendering.
-
-/// This component handles all visual smoothing, completely separate from
-/// authoritative position. When Position changes, the rendering system
-/// updates VisualPosition to interpolate from current visual location
-/// toward the new authoritative position.
-
-/// # Why This Fixes Jitter
-
-/// Old system: physics updates `step`, then lerp from `prev_step` causes oscillation
-/// New system: interpolation always starts from current visual position, never jumps
-
-/// # Fields
-
-/// - `from`: World-space position where interpolation started
-/// - `to`: World-space position we're interpolating toward
-/// - `progress`: 0.0 = at `from`, 1.0 = at `to`
-/// - `duration`: Time in seconds for this interpolation
+/// Where an entity is drawn: an interpolation in rendered coordinates,
+/// about the render origin and never the world's, from where the entity
+/// appeared when its target was set to that target, with the waypoints
+/// beyond it of a multi-segment path.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct VisualPosition {
-    /// World-space position where interpolation started
+    /// Rendered position the interpolation started from
     pub from: Vec3,
-    /// World-space position we're interpolating toward
+    /// Rendered position it moves toward
     pub to: Vec3,
-    /// Interpolation progress (0.0 to 1.0)
+    /// 0 at `from`, 1 at `to`
     pub progress: f32,
-    /// Total duration for this interpolation in seconds
+    /// Seconds the segment takes
     pub duration: f32,
-    /// Remaining waypoints after current `to` (multi-segment paths)
+    /// Waypoints after `to`, in order
     path: [Vec3; 4],
-    /// Number of valid entries in `path`
+    /// How many of `path` are set
     path_len: u8,
 }
 
@@ -132,7 +96,7 @@ impl Default for VisualPosition {
 }
 
 impl VisualPosition {
-    /// Create a new VisualPosition at a specific world position (no interpolation)
+    /// At `position`, with nothing to interpolate
     pub fn at(position: Vec3) -> Self {
         Self {
             from: position,
@@ -144,10 +108,10 @@ impl VisualPosition {
         }
     }
 
-    /// Start a new interpolation from current visual position toward target
-
-    /// This is the key method that prevents jitter: we always start from
-    /// wherever we currently appear, not from a physics-calculated position.
+    /// Starts a new interpolation from where the entity currently appears
+    /// toward `target` over `duration` seconds, dropping any path. Starting
+    /// from the appearance, not a physics point, is what keeps a direction
+    /// change from jumping.
     pub fn interpolate_toward(&mut self, target: Vec3, duration: f32) {
         self.from = self.current();
         self.to = target;
@@ -170,7 +134,7 @@ impl VisualPosition {
     }
 
     /// Set up multi-segment interpolation along a path of waypoints.
-    /// `waypoints` are world-space positions (up to 5: the first becomes `to`,
+    /// `waypoints` are rendered positions (up to 5: the first becomes `to`,
     /// the rest go into the path buffer). `total_duration` is split evenly.
     pub fn interpolate_along_path(&mut self, waypoints: &[Vec3], total_duration: f32) {
         if waypoints.is_empty() {
@@ -256,7 +220,7 @@ mod tests {
     #[test]
     fn a_rebase_keeps_the_place_however_far_out() {
         use qrz::Convert;
-        let map = crate::resources::map::Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+        let map = crate::resources::map::Map::new(qrz::Map::new(1.0, 0.8));
         let step: Vec3 = map.convert(Qrz { q: 1, r: 0, z: 1 });
         let walk = |at: Qrz| {
             let mut position = Position::new(at, step * 0.6 + Vec3::new(0.0, 0.05, 0.11));
@@ -295,102 +259,18 @@ mod tests {
         assert_eq!(walk.current(), there);
     }
 
-    // ===== Position Tests =====
-
-    #[test]
-    fn test_position_at_tile() {
-        let pos = Position::at_tile(Qrz { q: 5, r: 3, z: 0 });
-        assert_eq!(pos.tile, Qrz { q: 5, r: 3, z: 0 });
-        assert_eq!(pos.offset, Vec3::ZERO);
-    }
-
-    #[test]
-    fn test_position_new() {
-        let offset = Vec3::new(0.3, 0.5, -0.2);
-        let pos = Position::new(Qrz { q: 1, r: 2, z: 3 }, offset);
-        assert_eq!(pos.tile, Qrz { q: 1, r: 2, z: 3 });
-        assert_eq!(pos.offset, offset);
-    }
-
-    #[test]
-    fn test_position_default() {
-        let pos = Position::default();
-        assert_eq!(pos.tile, Qrz::default());
-        assert_eq!(pos.offset, Vec3::ZERO);
-    }
-
-    // ===== VisualPosition Tests =====
-
-    #[test]
-    fn test_visual_position_default_is_complete() {
-        let vis = VisualPosition::default();
-        assert!(vis.is_complete());
-        assert_eq!(vis.current(), Vec3::ZERO);
-    }
-
-    #[test]
-    fn test_visual_position_at() {
-        let pos = Vec3::new(1.0, 2.0, 3.0);
-        let vis = VisualPosition::at(pos);
-        assert!(vis.is_complete());
-        assert_eq!(vis.current(), pos);
-    }
-
-    #[test]
-    fn test_visual_position_interpolation_starts_from_current() {
-        let mut vis = VisualPosition::at(Vec3::new(0.0, 0.0, 0.0));
-
-        // Start interpolating toward (10, 0, 0) over 1 second
-        vis.interpolate_toward(Vec3::new(10.0, 0.0, 0.0), 1.0);
-
-        assert!(!vis.is_complete());
-        assert_eq!(vis.progress, 0.0);
-        assert_eq!(vis.from, Vec3::ZERO);
-        assert_eq!(vis.to, Vec3::new(10.0, 0.0, 0.0));
-    }
-
-    #[test]
-    fn test_visual_position_advance() {
-        let mut vis = VisualPosition::at(Vec3::ZERO);
-        vis.interpolate_toward(Vec3::new(10.0, 0.0, 0.0), 1.0);
-
-        // Advance by 0.5 seconds (50%)
-        vis.advance(0.5);
-        assert!(!vis.is_complete());
-
-        let current = vis.current();
-        assert!((current.x - 5.0).abs() < 0.01, "Expected x=5.0, got {}", current.x);
-
-        // Advance another 0.5 seconds (100%)
-        let complete = vis.advance(0.5);
-        assert!(complete);
-        assert!(vis.is_complete());
-    }
-
-    #[test]
-    fn test_visual_position_current_lerps_correctly() {
-        let vis = VisualPosition {
-            from: Vec3::new(0.0, 0.0, 0.0),
-            to: Vec3::new(10.0, 20.0, 30.0),
-            progress: 0.25,
-            duration: 1.0,
-            path: [Vec3::ZERO; 4],
-            path_len: 0,
-        };
-
-        let current = vis.current();
-        assert!((current.x - 2.5).abs() < 0.01);
-        assert!((current.y - 5.0).abs() < 0.01);
-        assert!((current.z - 7.5).abs() < 0.01);
-    }
-
+    /// An interpolation starts from where the entity appears, so a change
+    /// of direction part way along continues from there without a jump.
     #[test]
     fn test_visual_position_direction_change_no_jump() {
-        // This is the key test: direction change should not cause visual jump
         let mut vis = VisualPosition::at(Vec3::ZERO);
 
         // Start moving right
         vis.interpolate_toward(Vec3::new(10.0, 0.0, 0.0), 1.0);
+        assert!(!vis.is_complete());
+        assert_eq!(vis.progress, 0.0);
+        assert_eq!(vis.from, Vec3::ZERO);
+        assert_eq!(vis.to, Vec3::new(10.0, 0.0, 0.0));
         vis.advance(0.5); // Now at (5, 0, 0)
 
         let pos_before_direction_change = vis.current();
@@ -410,19 +290,6 @@ mod tests {
     }
 
     #[test]
-    fn test_visual_position_snap_to() {
-        let mut vis = VisualPosition::at(Vec3::ZERO);
-        vis.interpolate_toward(Vec3::new(100.0, 0.0, 0.0), 10.0);
-        vis.advance(0.1); // Partway through
-
-        // Snap should immediately move to new position
-        vis.snap_to(Vec3::new(50.0, 50.0, 50.0));
-
-        assert!(vis.is_complete());
-        assert_eq!(vis.current(), Vec3::new(50.0, 50.0, 50.0));
-    }
-
-    #[test]
     fn test_visual_position_zero_duration_completes_immediately() {
         let mut vis = VisualPosition::at(Vec3::ZERO);
         vis.interpolate_toward(Vec3::new(10.0, 0.0, 0.0), 0.0);
@@ -432,22 +299,19 @@ mod tests {
         assert!(complete);
     }
 
-    // ===== Invariant Tests =====
-
+    /// A progress past either end of the segment appears at that end.
     #[test]
     fn test_progress_clamped_in_current() {
-        // Even if progress exceeds 1.0, current() should clamp
-        let vis = VisualPosition {
+        let at = |progress: f32| VisualPosition {
             from: Vec3::ZERO,
             to: Vec3::new(10.0, 0.0, 0.0),
-            progress: 2.0, // Over 100%
+            progress,
             duration: 1.0,
             path: [Vec3::ZERO; 4],
             path_len: 0,
         };
-
-        let current = vis.current();
-        assert_eq!(current, Vec3::new(10.0, 0.0, 0.0), "Progress > 1.0 should clamp to target");
+        assert_eq!(at(2.0).current(), Vec3::new(10.0, 0.0, 0.0), "Progress > 1.0 should clamp to target");
+        assert_eq!(at(-0.5).current(), Vec3::ZERO, "Negative progress should clamp to from");
     }
 
     // ===== Multi-Segment Path Tests =====
@@ -517,35 +381,10 @@ mod tests {
     }
 
     #[test]
-    fn test_single_waypoint_same_as_interpolate_toward() {
-        let mut vis = VisualPosition::at(Vec3::ZERO);
-        vis.interpolate_along_path(&[Vec3::new(10.0, 0.0, 0.0)], 1.0);
-        assert!(!vis.advance(0.5));
-        let c = vis.current();
-        assert!((c.x - 5.0).abs() < 0.01);
-        assert!(vis.advance(0.5));
-    }
-
-    #[test]
     fn test_empty_waypoints_noop() {
         let mut vis = VisualPosition::at(Vec3::new(5.0, 0.0, 0.0));
         vis.interpolate_along_path(&[], 1.0);
         assert_eq!(vis.current(), Vec3::new(5.0, 0.0, 0.0));
         assert!(vis.is_complete());
-    }
-
-    #[test]
-    fn test_negative_progress_clamped() {
-        let vis = VisualPosition {
-            from: Vec3::ZERO,
-            to: Vec3::new(10.0, 0.0, 0.0),
-            progress: -0.5,
-            duration: 1.0,
-            path: [Vec3::ZERO; 4],
-            path_len: 0,
-        };
-
-        let current = vis.current();
-        assert_eq!(current, Vec3::ZERO, "Negative progress should clamp to from");
     }
 }

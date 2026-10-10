@@ -4,7 +4,7 @@ use bevy::ui::UiTransform;
 use crate::{
     components::*,
     resources::Server,
-    systems::camera::CameraOrbit,
+    systems::camera::CameraPose,
 };
 use common_bevy::{
     components::Loc,
@@ -118,12 +118,12 @@ pub fn spawn_compass(parent: &mut ChildSpawnerCommands, size: f32, border: f32) 
 
 pub fn update_compass(
     mut compass_container: Query<&mut UiTransform, With<CompassContainer>>,
-    camera_angle: Res<CameraOrbit>,
+    camera: Res<CameraPose>,
 ) {
     if let Ok(mut ui_transform) = compass_container.single_mut() {
         // Rotate the entire compass to counter-rotate the camera orbit (stay oriented to world).
         // Positive because Rot2 in UI (Y-down) is visually clockwise for positive angles.
-        ui_transform.rotation = Rot2::radians(camera_angle.current);
+        ui_transform.rotation = Rot2::radians(camera.pose.yaw);
     }
 }
 
@@ -132,7 +132,6 @@ pub fn update(
     player_query: Query<&Loc, With<crate::components::Viewed>>,
     server: Res<Server>,
     time: Res<Time>,
-    _camera_angle: Res<CameraOrbit>,
     mut time_cache: Local<Option<u128>>,
     mut dist_cache: Local<Option<i32>>,
 ) {

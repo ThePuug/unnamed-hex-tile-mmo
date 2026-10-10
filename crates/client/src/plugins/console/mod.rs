@@ -1,9 +1,7 @@
 mod actions;
 mod navigation;
 mod state;
-mod ui_simple;
-
-use ui_simple as ui;
+mod ui;
 
 use bevy::prelude::*;
 
@@ -11,22 +9,21 @@ use bevy::prelude::*;
 pub use state::{DevConsole, MenuPath};
 pub use actions::DevConsoleAction;
 
-/// Plugin that provides a hierarchical, numpad-navigable developer console
-
-/// This plugin consolidates all debug capabilities into a contextual menu system:
-/// - Performance monitoring (FPS, stats, profiling)
-/// - Terrain debugging (grid, slopes, lighting)
-/// - Combat testing (resource drains, reaction queue)
-/// - Visualization toggles (spawner markers, future debug viz)
-/// - Developer tools (future: teleport, spawn NPCs)
-
-/// Navigation:
-/// - **NumpadDivide (/)**: Open/close console
-/// - **Numpad 0-9**: Select menu options
-/// - **Numpad 0**: Back to previous menu / Close from root
-
-/// The console provides an alternative to scattered keybindings (J/H/G/V/F3/Digit1-3),
-/// making debug features discoverable and organized.
+/// The developer console: menus the numpad walks, drawn over the game.
+///
+/// NumpadDivide opens and closes it, except over the open character
+/// panel, which has the numpad. A digit picks the row it numbers. Numpad0
+/// goes back a menu, or closes the console from the main menu; where the
+/// digits type instead — the lighting hour and the goto coordinates —
+/// Escape goes back.
+///
+/// Terrain (1): the grid overlay; the lighting clock, held at an hour
+/// typed as HHMM, scrubbed by the left and right arrows and its day, week
+/// or season stepped by the up and down ones; the camera envelope; the
+/// terrain and the cover hidden; the camera close-up; and the canopy drawn
+/// from its parts or its vertices. Admin builds add goto by world units or
+/// q,r (2), added latency (3), a den spawned (5), the view (6), and a
+/// party or an opposition staged (7, 8).
 pub struct DevConsolePlugin;
 
 impl Plugin for DevConsolePlugin {

@@ -10,7 +10,7 @@
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
-use common::camera::{HEX_RADIUS, RISE};
+use common::grid::{HEX_RADIUS, RISE};
 
 /// Lattice offsets of the two cells sharing each corner with the cell that
 /// owns it, in flat-top corner order NE(0), E(1), SE(2), SW(3), W(4), NW(5).
@@ -167,9 +167,7 @@ mod tests {
         // The two neighbours sharing a corner must also neighbour each other,
         // or the corner is not a point three cells meet at.
         for [a, b] in CORNER_NEIGHBOURS {
-            let d = (a.0 - b.0, a.1 - b.1);
-            let dist = d.0.abs().max(d.1.abs()).max((d.0 + d.1).abs());
-            assert_eq!(dist, 1, "{a:?} and {b:?} are not adjacent");
+            assert_eq!(qrz::hex_distance(a, b), 1, "{a:?} and {b:?} are not adjacent");
         }
     }
 

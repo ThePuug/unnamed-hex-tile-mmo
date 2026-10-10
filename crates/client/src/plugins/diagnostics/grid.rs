@@ -4,10 +4,10 @@ use bevy::{
     tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task},
 };
 use bevy_asset::RenderAssetUsages;
-use bevy_camera::primitives::Aabb;
 use bevy_light::NotShadowCaster;
 
-use common_bevy::components::behaviour::PlayerControlled;
+use common_bevy::{components::behaviour::PlayerControlled, resources::map::Map};
+use qrz::Convert;
 use crate::resources::SummaryMeshes;
 use super::config::DiagnosticsState;
 
@@ -18,7 +18,7 @@ use super::config::DiagnosticsState;
 /// Tracks pending async grid mesh generation task
 #[derive(Resource, Default)]
 pub struct PendingGridMesh {
-    pub task: Option<Task<(Mesh, Aabb)>>,
+    pub task: Option<Task<Mesh>>,
 }
 
 // ============================================================================
@@ -68,11 +68,12 @@ pub fn setup_grid_overlay(
         ..default()
     });
 
+    // No `Aabb`: `calculate_bounds` adds one from the mesh and rewrites it
+    // whenever the handle changes.
     commands.spawn((
         Mesh3d(mesh),
         MeshMaterial3d(material),
         Transform::from_xyz(0.0, 0.0, 0.0),
-        Aabb::default(),
         NotShadowCaster,
         Visibility::Hidden,
         HexGridOverlay {
@@ -88,20 +89,21 @@ struct ChunkMeshSnapshot {
     origin: Vec3,
 }
 
-/// Spawns async grid mesh generation task when needed.
-
-/// Extracts triangle edges from the actually-displayed chunk meshes so the grid
-/// outlines the decimated geometry (inner hex fans, partial residuals, etc.)
-/// rather than the full-detail tile hexagons.
 /// Maximum chunk distance from the player for grid overlay.
 const GRID_RADIUS: i32 = 5;
 
+/// Spawns async grid mesh generation task when needed.
+///
+/// Extracts triangle edges from the actually-displayed chunk meshes so the grid
+/// outlines the decimated geometry (inner hex fans, partial residuals, etc.)
+/// rather than the full-detail tile hexagons.
 pub fn spawn_grid_mesh_task(
     summary_meshes: Res<SummaryMeshes>,
     mesh_assets: Res<Assets<Mesh>>,
     mut grid_query: Query<&mut HexGridOverlay>,
     state: Res<DiagnosticsState>,
     mut pending_mesh: ResMut<PendingGridMesh>,
+    map: Res<Map>,
     player_query: Query<&common_bevy::components::Loc, (With<PlayerControlled>, With<common_bevy::components::Actor>)>,
 ) {
     let Ok(mut overlay) = grid_query.single_mut() else {
@@ -120,11 +122,7 @@ pub fn spawn_grid_mesh_task(
 
     overlay.needs_regeneration = false;
 
-    let center_pos: Option<Vec3> = player_query.iter().next().map(|loc| {
-        use qrz::Convert;
-        let m = qrz::Map::<()>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
-        m.convert(**loc)
-    });
+    let center_pos: Option<Vec3> = player_query.iter().next().map(|loc| map.convert(**loc));
 
     // Extract mesh data from nearby summary mesh regions
     let grid_wu = GRID_RADIUS as f32 * common_bevy::chunk::CHUNK_EXTENT_WU;
@@ -168,7 +166,7 @@ pub fn spawn_grid_mesh_task(
 pub fn poll_grid_mesh_task(
     mut pending_mesh: ResMut<PendingGridMesh>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut grid_query: Query<(&mut Mesh3d, &mut Aabb, &mut Transform), With<HexGridOverlay>>,
+    mut grid_query: Query<(&mut Mesh3d, &mut Transform), With<HexGridOverlay>>,
     origin: Res<crate::resources::RenderOrigin>,
 ) {
     let Some(task) = pending_mesh.task.as_mut() else {
@@ -178,11 +176,11 @@ pub fn poll_grid_mesh_task(
     // Poll the task (non-blocking)
     let result = block_on(future::poll_once(task));
 
-    if let Some((new_mesh, new_aabb)) = result {
+    if let Some(new_mesh) = result {
         // Task completed - update the mesh
         pending_mesh.task = None;
 
-        let Ok((mut grid_mesh_handle, mut aabb, mut grid_transform)) = grid_query.single_mut() else {
+        let Ok((mut grid_mesh_handle, mut grid_transform)) = grid_query.single_mut() else {
             return;
         };
 
@@ -190,7 +188,6 @@ pub fn poll_grid_mesh_task(
         // The lines are world coordinates: the transform takes the render
         // origin off them.
         grid_transform.translation = -origin.world_vec();
-        *aabb = new_aabb;
     }
 }
 
@@ -200,44 +197,32 @@ pub fn poll_grid_mesh_task(
 
 /// Helper struct for building hex grid line meshes
 
-/// Accumulates line segments and tracks spatial bounds while building the mesh.
+/// Accumulates line segments while building the mesh.
 /// Each line is represented by two vertices in the positions array.
 struct HexGridBuilder {
     /// Vertex positions for all lines (2 vertices per line)
     positions: Vec<[f32; 3]>,
-    /// Minimum bounds of all vertices
-    min_bounds: Vec3,
-    /// Maximum bounds of all vertices
-    max_bounds: Vec3,
 }
 
 impl HexGridBuilder {
     fn new() -> Self {
-        Self {
-            positions: Vec::new(),
-            min_bounds: Vec3::splat(f32::MAX),
-            max_bounds: Vec3::splat(f32::MIN),
-        }
+        Self { positions: Vec::new() }
     }
 
     /// Adds a line segment between two vertices
     fn add_line(&mut self, v1: Vec3, v2: Vec3) {
         self.positions.push([v1.x, v1.y, v1.z]);
         self.positions.push([v2.x, v2.y, v2.z]);
-        self.min_bounds = self.min_bounds.min(v1).min(v2);
-        self.max_bounds = self.max_bounds.max(v1).max(v2);
     }
 
-    /// Converts the builder into a Bevy mesh with correct AABB
-    fn into_mesh(self) -> (Mesh, Aabb) {
+    /// Converts the builder into a Bevy mesh
+    fn into_mesh(self) -> Mesh {
         let mut mesh = Mesh::new(
             PrimitiveTopology::LineList,
             RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
         );
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
-
-        let aabb = Aabb::from_min_max(self.min_bounds, self.max_bounds);
-        (mesh, aabb)
+        mesh
     }
 }
 
@@ -246,7 +231,7 @@ impl HexGridBuilder {
 /// Extracts every triangle edge and draws it as a line. Edges shared by
 /// two triangles appear twice but overlap perfectly — no visual artifact.
 /// A small Y offset prevents z-fighting with the terrain surface.
-fn build_grid_from_mesh_edges(snapshots: &[ChunkMeshSnapshot]) -> (Mesh, Aabb) {
+fn build_grid_from_mesh_edges(snapshots: &[ChunkMeshSnapshot]) -> Mesh {
     const Y_OFFSET: f32 = 0.02;
     let mut builder = HexGridBuilder::new();
 

@@ -28,7 +28,7 @@ pub enum Event {
         tiles: ArrayVec<[(i32, EntityType, Option<i32>); 272]>,
     },
     Init { ent: Entity, dt: u128 },
-    /// Client → Server: `dt` milliseconds of input `seq` on the client.s own
+    /// Client → Server: `dt` milliseconds of input `seq` on the client's own
     /// clock. A new `seq` opens an input; the same `seq` again extends it.
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
     /// Server → Client: input `seq` closed with the entity here. The client
@@ -247,16 +247,16 @@ impl AbilityType {
         self.is_reaction() || (self == AbilityType::Leap && in_reach)
     }
 
-    /// How near and how far, in tiles, `ability` strikes a target from an
-    /// actor whose own reach is `own`: as far as the actor reaches. None
-    /// for one the gate checks no target for: a reaction, a Leap, which
-    /// checks its own, or the stride.
     /// Whether using it moves its user: a skill a pin refuses
     /// (`Status::is_pinned`)
     pub fn moves(self) -> bool {
         self == AbilityType::Leap
     }
 
+    /// How near and how far, in tiles, `ability` strikes a target from an
+    /// actor whose own reach is `own`: as far as the actor reaches. None
+    /// for one the gate checks no target for: a reaction, a Leap, which
+    /// checks its own, or the stride.
     pub fn reach(self, own: i32) -> Option<std::ops::RangeInclusive<i32>> {
         match self {
             AbilityType::AutoAttack | AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Punish => Some(0..=own),

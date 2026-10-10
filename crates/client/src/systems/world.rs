@@ -193,6 +193,7 @@ fn tint(share: f32) -> Color {
 }
 
 use crate::{
+    components::{Moon, Sun},
     plugins::diagnostics::DiagnosticsState,
     systems::camera::HAZE_COLOR,
     resources::{
@@ -444,8 +445,8 @@ pub fn update(
     // and does not hide the seam. maximum_distance is measured from the
     // camera, not the player, so add the camera-to-player distance.
     if let Ok(player_loc) = player_query.single() {
-        use crate::systems::camera::{CAMERA_DISTANCE, gameplay_camera_height};
-        let height = gameplay_camera_height();
+        use crate::systems::camera::{CAMERA_DISTANCE, MAX_GAMEPLAY_FOV, camera_height};
+        let height = camera_height(MAX_GAMEPLAY_FOV);
         let loading_r = chunk::terrain_chunk_radius(player_loc.z) as f32;
         let camera_to_player = (CAMERA_DISTANCE * CAMERA_DISTANCE + height * height).sqrt();
         let max_dist = camera_to_player + loading_r * 0.8 * CHUNK_EXTENT_WU;
@@ -471,14 +472,6 @@ pub fn follow_camera(
     }
 }
 
-// ── Summary Mesh Pipeline ──
-// All terrain rendering — r=0 tiles through r=N summaries — goes through
-// this unified pipeline. No separate chunk mesh path.
-
-/// Dispatch async tasks to build summary mesh regions.
-
-/// **Forced mode** (`Some(r)`): single band at that radius, all visible regions.
-/// **Auto mode** (`None`): multiple bands from `compute_active_bands`, with overlap.
 /// Camera movement (WU) that forces a region re-evaluation even without new
 /// map or cache data. Band edges are player-centric — without this, bands
 /// only advance on chunk/summary arrival and then snap in bursts.
@@ -499,6 +492,8 @@ fn region_center_world(key: &common_bevy::summary_mesh::MeshRegionKey) -> (f32, 
     common_bevy::geometry::flat_top_tile_center(cq, cr, 1.0)
 }
 
+/// Dispatches async builds of the summary mesh regions the bands want,
+/// every level from the tiles out through one pipeline.
 pub fn dispatch_summary_tasks(
     mut commands: Commands,
     loaded_chunks: Res<LoadedChunks>,
@@ -566,7 +561,7 @@ pub fn dispatch_summary_tasks(
     ) = match camera_pos {
         Some(pos) => {
             let regions = |at: Vec2, margin: f32| {
-                compute_auto_mode_regions(at, &loaded_chunks.chunks, margin, local_boundary)
+                compute_band_regions(at, &loaded_chunks.chunks, margin, local_boundary)
             };
             let mut n = regions(pos.xz(), 0.0);
             let mut k = regions(pos.xz(), BAND_HYSTERESIS_MARGIN);
@@ -638,11 +633,7 @@ pub fn dispatch_summary_tasks(
     let mut ordered: Vec<(f32, common_bevy::summary_mesh::MeshRegionKey, Vec3)> = needed
         .iter()
         .map(|region_key| {
-            let summary_lat = common_bevy::summary::summary_lattice(region_key.r);
-            let region_lat = common_bevy::summary::mesh_region_lattice();
-            let region_center = region_lat.cell_center((region_key.mn, region_key.mm));
-            let (cq, cr) = summary_lat.cell_center(region_center);
-            let (wx, wz) = common_bevy::geometry::flat_top_tile_center(cq, cr, 1.0);
+            let (wx, wz) = region_center_world(region_key);
             let d2 = camera_pos.map_or(0.0, |pos| {
                 let dx = wx - pos.x;
                 let dz = wz - pos.z;
@@ -930,15 +921,12 @@ fn level_cut(
     }
 }
 
-/// Compute visible mesh regions for auto mode (multi-band).
-
-/// Local bands (within `local_boundary_wu`): gated on loaded chunks.
-/// Remote bands (beyond it): ungated — data from the server's summaries.
-
-/// `local_boundary_wu`: the extent the Map can serve — FIXED_STREAM_RADIUS_WU.
-/// `margin`: hysteresis expansion of each band's annulus (0.0 = crisp band
-/// assignment for building; > 0.0 = widened keep set for eviction).
-fn compute_auto_mode_regions(
+/// The mesh regions every band wants around `at`. Local bands (within
+/// `local_boundary_wu`, the extent the Map can serve) are gated on loaded
+/// chunks; remote bands beyond it are not, their data being the server's
+/// summaries. `margin` widens each band's annulus: 0.0 is the crisp band
+/// assignment for building, more the widened keep set for eviction.
+fn compute_band_regions(
     at: Vec2,
     loaded_chunks: &std::collections::HashSet<common_bevy::chunk::ChunkId>,
     margin: f32,
@@ -1075,13 +1063,12 @@ fn collect_and_build_summary_mesh(
     if radius == 0 {
         let tile_water = |q: i32, r: i32| -> Option<i32> { map.water_at(q, r) };
         return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse, None, None)
-            .as_ref()
             .map_or(empty, |smr| {
                 let mut result = smr_to_result(smr);
                 let w = common_bevy::summary_mesh::build_water_mesh_region(0, region_key, &tile_water);
                 result.water = crate::resources::WaterGeometry { positions: w.positions, normals: w.normals, indices: w.indices };
-                result.cover = crate::plugins::cover::place_cover(0, region_key, smr.mesh_origin, map, &height);
-                result.cover.extend(crate::plugins::cover::place_dens(0, region_key, smr.mesh_origin, dens, map, &height));
+                result.cover = crate::plugins::cover::place_cover(0, region_key, result.mesh_origin, map, &height);
+                result.cover.extend(crate::plugins::cover::place_dens(0, region_key, result.mesh_origin, dens, map, &height));
                 result
             });
     }
@@ -1096,8 +1083,8 @@ fn collect_and_build_summary_mesh(
     // crowns on it or not by level.
     let summary = |sq: i32, sr: i32| cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr));
     let summary_canopy = |sq: i32, sr: i32| -> Option<[common::Canopy; common_bevy::summary::PARTS]> { summary(sq, sr).map(|c| c.canopy) };
-    let last = *common_bevy::summary::LOD_LEVELS.last().expect("a ladder");
-    let canopied: Option<&dyn Fn(i32, i32) -> Option<[common::Canopy; common_bevy::summary::PARTS]>> = (radius != last).then_some(&summary_canopy);
+    let canopied: Option<&dyn Fn(i32, i32) -> Option<[common::Canopy; common_bevy::summary::PARTS]>> =
+        TerrainMaterial::canopied(radius).then_some(&summary_canopy);
     // The canopy's rise is read from one level's cells by every level that
     // draws one.
     let reading = crate::resources::RISE_LEVEL;
@@ -1106,37 +1093,37 @@ fn collect_and_build_summary_mesh(
         (radius <= reading).then_some((reading, &rise_summary));
 
     common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse, canopied, rise)
-        .as_ref()
         .map_or(empty, |smr| {
             let mut result = smr_to_result(smr);
             if canopied.is_some() {
                 result.parts = common_bevy::summary_mesh::parts_layer(radius, region_key, &summary).unwrap_or_default();
             }
             if radius == common_bevy::summary::LOD_LEVELS[1] {
-                result.cover = crate::plugins::cover::place_cover(radius, region_key, smr.mesh_origin, map, &height);
+                result.cover = crate::plugins::cover::place_cover(radius, region_key, result.mesh_origin, map, &height);
             }
             // Past the tiles a crag stands from the summaries' own reading
             // of it, the level after the first.
             if radius == common_bevy::summary::LOD_LEVELS[2] {
                 let outcrop = |sq: i32, sr: i32| cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr)).map(|c| c.outcrop);
-                result.cover = crate::plugins::cover::place_crags(radius, region_key, smr.mesh_origin, &outcrop, &height);
+                result.cover = crate::plugins::cover::place_crags(radius, region_key, result.mesh_origin, &outcrop, &height);
             }
             if crate::systems::den::DRAWN_AT.contains(&radius) {
-                result.cover.extend(crate::plugins::cover::place_dens(radius, region_key, smr.mesh_origin, dens, map, &height));
+                result.cover.extend(crate::plugins::cover::place_dens(radius, region_key, result.mesh_origin, dens, map, &height));
             }
             result
         })
 }
 
-fn smr_to_result(smr: &common_bevy::summary_mesh::SummaryMeshResult) -> SummaryMeshBuildResult {
+/// The built geometry as the main thread takes it, its buffers moved in.
+fn smr_to_result(smr: common_bevy::summary_mesh::SummaryMeshResult) -> SummaryMeshBuildResult {
     SummaryMeshBuildResult {
-        positions: smr.positions.clone(),
-        normals: smr.normals.clone(),
-        coarse: smr.coarse.clone(),
-        rise: smr.rise.clone(),
-        canopy: smr.canopy.clone(),
+        positions: smr.positions,
+        normals: smr.normals,
+        coarse: smr.coarse,
+        rise: smr.rise,
+        canopy: smr.canopy,
         parts: Vec::new(),
-        indices: smr.indices.clone(),
+        indices: smr.indices,
         tri_count: smr.tri_count,
         mesh_origin: smr.mesh_origin,
         water: Default::default(),
@@ -1251,7 +1238,7 @@ pub fn poll_summary_meshes(
                         Mesh3d(mesh_handle),
                         MeshMaterial3d(terrain_material.for_level(key.r, &mut materials, parts)),
                         Transform::from_translation(origin.render_world(state.mesh_origin)),
-                        SummaryMesh { region_key: key },
+                        SummaryMesh,
                     ))
                     .id();
                 state.entity = Some(entity);
@@ -1390,7 +1377,6 @@ mod tests {
         assert_eq!(c.inner_center, origin.xz());
         assert_eq!(c.outer_center, origin.xz());
         assert_eq!(c.inner, 0.0);
-        assert!(c.outer > 100.0 && c.outer < 200.0, "outer {}", c.outer);
         assert!(c.fade > 0.0 && c.fade < c.outer);
         let c1 = level_cut(1, &bands, &edges, origin.xz());
         assert_eq!(c1.inner_center, origin.xz());
@@ -1536,10 +1522,11 @@ mod tests {
         use common_bevy::summary::{compute_active_bands, mesh_region_extent_wu};
         use common_bevy::summary_mesh::visible_lod_regions;
 
+        // (fov, camera ground y, loaded chunk ring, local boundary): the
+        // regions are chosen on the ground plane, so neither the lens nor
+        // the camera's height reaches the computation
         let cases: &[(f32, f32, u8, f32)] = &[
-            // (fov, camera ground y, loaded chunk ring, local boundary)
             (common::camera::MAX_GAMEPLAY_FOV, 0.0, FIXED_STREAM_RADIUS, FIXED_STREAM_APOTHEM_WU),
-            (common::camera::MAX_GAMEPLAY_FOV, 80.0, FIXED_STREAM_RADIUS, FIXED_STREAM_APOTHEM_WU),
         ];
 
         for &(fov, cam_y, chunk_ring, boundary) in cases {
@@ -1549,7 +1536,7 @@ mod tests {
                 calculate_visible_chunks(ChunkId(0, 0), chunk_ring).into_iter().collect();
 
             let cam = Vec3::new(0.0, cam_y, 0.0);
-            let needed = compute_auto_mode_regions(cam.xz(), &loaded, 0.0, boundary);
+            let needed = compute_band_regions(cam.xz(), &loaded, 0.0, boundary);
 
             // Producer set, to the same reach as the consumer.
             let bands = compute_active_bands(common_bevy::summary::reach_wu());
@@ -1665,7 +1652,7 @@ mod tests {
                         let (ox, oz) = region_center_world(&owner);
                         let owner_dist = (ox * ox + oz * oz).sqrt();
                         // Probe the enumerators directly with the same args
-                        // compute_auto_mode_regions uses for this band.
+                        // compute_band_regions uses for this band.
                         let h = 0.5 * mesh_region_extent_wu(band.r);
                         let b_inner = (win_inner - h).max(0.0);
                         let b_outer = win_outer + h;

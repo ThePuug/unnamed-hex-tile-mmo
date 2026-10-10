@@ -51,9 +51,8 @@ use std::sync::Arc;
 use crate::noise::{hash_channel_f64, simplex_2d};
 use crate::tectonic::{aged, PlateId, PLATE_SPACING};
 use crate::{hex_to_world, substrate_on};
-use super::index::IndexRegistry;
-use super::plates::{Coasts, PlateEdgeIndex, GRAPH_CELL_SCALE};
-use super::thrusting::{outlines_for, Outlines};
+use super::plates::{coasts_of, shore_gate, Coasts, GRAPH_CELL_SCALE};
+use super::thrusting::{outlines_for, Outlines, OUTLINE_REACH};
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 const COVER_SEED: u64 = 0x436f_7665_725f_5f5f; // "Cover___"
@@ -80,10 +79,11 @@ pub const FORMATION_MAX: f64 = 40.0;
 const CYCLE: [Rock; 4] = [Rock::Sandstone, Rock::Shale, Rock::Limestone, Rock::Shale];
 
 /// A plate's cover: its formations from the top down, each a rock and a
-/// thickness, and the whole's thickness. Basement lies beneath.
+/// thickness, and the whole's thickness. Basement lies beneath. Built per
+/// tile, so it holds its beds inline and allocates nothing.
 #[derive(Clone, Debug)]
 pub struct Column {
-    pub beds: Vec<(Rock, f64)>,
+    pub beds: [(Rock, f64); FORMATIONS],
     pub total: f64,
 }
 
@@ -93,12 +93,10 @@ impl Column {
     pub fn of(plate: PlateId, seed: u64) -> Self {
         let (a, b) = (plate.0 as i64, plate.1 as i64);
         let phase = (hash_channel_f64(a, b, seed, COLUMN_PHASE) * CYCLE.len() as f64) as usize;
-        let beds: Vec<(Rock, f64)> = (0..FORMATIONS)
-            .map(|k| {
-                let u = hash_channel_f64(a, b, seed, COLUMN_THICKNESS.wrapping_add(k as u64));
-                (CYCLE[(phase + k) % CYCLE.len()], FORMATION_MIN + (FORMATION_MAX - FORMATION_MIN) * u)
-            })
-            .collect();
+        let beds: [(Rock, f64); FORMATIONS] = std::array::from_fn(|k| {
+            let u = hash_channel_f64(a, b, seed, COLUMN_THICKNESS.wrapping_add(k as u64));
+            (CYCLE[(phase + k) % CYCLE.len()], FORMATION_MIN + (FORMATION_MAX - FORMATION_MIN) * u)
+        });
         let total = beds.iter().map(|b| b.1).sum();
         Column { beds, total }
     }
@@ -192,15 +190,6 @@ pub const CUESTA_RELIEF: f64 = 8.0;
 /// across, steeper where the beds dip harder.
 const CONTACT_RAMP: f64 = 1.0;
 
-/// Substrate elevation at which the cuestas stand fully, in z-levels: only
-/// land stands, and the beach band tapers, as the tilt's does.
-const STAND_FULL_ELEVATION: f64 = 9.0;
-
-fn shore_gate(substrate: f64) -> f64 {
-    let t = (substrate / STAND_FULL_ELEVATION).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
 /// The rock at a position, and what it does to the ground there.
 #[derive(Clone, Copy, Debug)]
 pub struct Ground {
@@ -221,7 +210,8 @@ pub struct Ground {
 /// read is the rock at the lowered floor, the dip slope showing the bed
 /// beneath. The relief is the ranges' and not the plateau's: a plateau is
 /// uplift, and keeps its cover flat-lying to be cut in canyons, while a
-/// range's crest is what erosion has bitten into.
+/// range's crest is what erosion has bitten into. Only land stands, and
+/// the beach band tapers by the substrate's gate, as the tilt does.
 pub fn rock_at(wx: f64, wy: f64, seed: u64, plate: PlateId, age: f64, substrate: f64, relief: f64) -> Ground {
     let column = Column::of(plate, seed);
     let exposed = (column.total - cover(wx, wy, seed) + age * relief.max(0.0)).max(0.0);
@@ -247,14 +237,11 @@ pub fn rock_on(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines
 
 // ── The event ───────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct LithologyEvent;
 
 impl LithologyEvent {
     pub fn new() -> Self { LithologyEvent }
-}
-
-impl Default for LithologyEvent {
-    fn default() -> Self { Self::new() }
 }
 
 /// What a cell's tiles read: the coasts and outlines in reach.
@@ -267,18 +254,15 @@ impl WorldEvent for LithologyEvent {
     fn name(&self) -> &str { "lithology" }
     fn scale(&self) -> u32 { GRAPH_CELL_SCALE }
 
-    /// Nothing originates here.
-    fn max_influence(&self) -> u32 { 0 }
-
-    fn register_indexes(&self, _registry: &mut IndexRegistry) {}
+    /// A tile reads the whole outline of the plate it stands in, as far as
+    /// an outline lies from a position in its plate.
+    fn max_influence(&self) -> u32 { OUTLINE_REACH as u32 }
 
     /// Nothing to place: the rock is read off the plate graph.
     fn deform(&self, _scope: &CellScope) {}
 
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
-        let edges = scope.read::<PlateEdgeIndex>();
-        let coasts = Coasts::new(edges.iter().flat_map(|idx| idx.entries().flatten()), scope.seed());
-        Box::new(Reach { coasts, outlines: outlines_for(scope) })
+        Box::new(Reach { coasts: coasts_of(scope), outlines: outlines_for(scope) })
     }
 
     /// What stands at the tile: the cuesta over the envelope beneath.

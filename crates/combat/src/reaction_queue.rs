@@ -12,29 +12,23 @@ pub fn process_expired_threats(
     mut commands: Commands,
     time: Res<Time>,
     runtime: Res<crate::RunTime>,
-    mut query: Query<(Entity, &mut ReactionQueue, &ActorAttributes)>,
+    mut query: Query<(Entity, &mut ReactionQueue), With<ActorAttributes>>,
     mut writer: MessageWriter<Do>,
 ) {
-    // Use game world time (same as threat timestamps)
-    let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
-    let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
+    let now = runtime.now(&time);
 
-    for (ent, mut queue, _attrs) in &mut query {
-        // Check which threats have expired
+    for (ent, mut queue) in &mut query {
         let expired = queue_utils::check_expired_threats(&queue, now);
 
         if expired.is_empty() {
             continue;
         }
 
-        // Remove expired threats from the queue and emit ResolveThreat events
         for expired_threat in &expired {
             let clear_type = ClearType::Threat { source: expired_threat.source, inserted_at: expired_threat.inserted_at };
             if !queue_utils::clear_threats(&mut queue, clear_type).is_empty() {
-                // Broadcast ClearQueue event to clients so they remove the threat from UI
                 writer.write(Do { event: GameEvent::ClearQueue { ent, clear_type } });
 
-                // Emit ResolveThreat event to trigger damage application
                 commands.trigger(
                     Try {
                         event: GameEvent::ResolveThreat {
@@ -58,8 +52,7 @@ pub fn tick_dots(
     runtime: Res<crate::RunTime>,
     mut query: Query<(Entity, &mut ReactionQueue)>,
 ) {
-    let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
-    let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
+    let now = runtime.now(&time);
     for (ent, mut queue) in &mut query {
         for wound in queue.threats.iter_mut().filter(|t| t.is_wound()) {
             let due = wound.ticks_due(now);

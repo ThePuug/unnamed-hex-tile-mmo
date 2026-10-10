@@ -85,12 +85,13 @@ use std::sync::OnceLock;
 use common::HexLattice;
 
 use crate::chains::{Segment, SegmentGrid};
-use super::drainage::{aged, growth, DrainageCell, DrainageIndex, DrainageNode};
-use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use super::drainage::{growth, DrainageCell, DrainageIndex, DrainageNode};
+use super::index::{CellId, CellIndex, IndexRegistry};
 use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
-use crate::lattice::{node_site, site_at, NodeKey, NODE_SPACING, NODE_SWING};
+use crate::lattice::{NodeKey, NODE_SPACING, NODE_SWING};
 use crate::noise::{hash_channel, hash_channel_f64};
-use crate::RISE;
+use crate::tectonic::aged;
+use crate::{smoothstep, RISE};
 
 // ── The channel ─────────────────────────────────────────────────────────────
 
@@ -390,8 +391,8 @@ pub fn vigour(node: &DrainageNode, floor_down: f64, run: f64) -> f64 {
         return 0.0;
     }
     let grade = (node.floor - floor_down).max(0.0) * RISE / run;
-    let g = ((grade - MEANDER_GRADE_FULL) / (MEANDER_GRADE_NONE - MEANDER_GRADE_FULL)).clamp(0.0, 1.0);
-    aged(node.age) * node.erodibility * (1.0 - g * g * (3.0 - 2.0 * g))
+    let g = (grade - MEANDER_GRADE_FULL) / (MEANDER_GRADE_NONE - MEANDER_GRADE_FULL);
+    aged(node.age) * node.erodibility * (1.0 - smoothstep(g))
 }
 
 /// A channel's train across its flow line: the live channel in world
@@ -556,10 +557,7 @@ fn drawn_train(length: f64, width: f64, channel: &Channel, seed: u64) -> (Vec<(f
         *e *= length / total;
     }
     let taper = MIGRATION_TAPER * wavelength;
-    let shoulder = |x: f64| {
-        let u = (x / taper).clamp(0.0, 1.0);
-        u * u * (3.0 - 2.0 * u)
-    };
+    let shoulder = |x: f64| smoothstep(x / taper);
     let shoulders = |x: f64| shoulder(x) * shoulder(length - x);
     let envelope = |x: f64| {
         let t = (x / length).clamp(0.0, 1.0);
@@ -659,33 +657,6 @@ impl CellIndex for ChannelIndex {
     }
 }
 
-impl EventIndex for ChannelIndex {
-    fn source_scale(&self) -> u32 { MIGRATION_CELL_SCALE }
-
-    /// Each channel at its start node's tile.
-    fn tiles(&self, cell_ids: &[CellId]) -> Vec<(i32, i32)> {
-        cell_ids
-            .iter()
-            .filter_map(|id| self.cells.get(id))
-            .flat_map(|c| c.channels.iter().map(|ch| node_site(ch.from)))
-            .collect()
-    }
-
-    /// Downstream: the tile of the node a channel starting here ends at.
-    fn neighbors(&self, q: i32, r: i32) -> Vec<(i32, i32)> {
-        let Some(key) = site_at(q, r) else { return Vec::new() };
-        self.cells
-            .get(&Self::lattice().cell_id(q, r))
-            .and_then(|c| c.channels.iter().find(|ch| ch.from == key))
-            .map(|ch| vec![node_site(ch.to)])
-            .unwrap_or_default()
-    }
-
-    fn remove_cell(&mut self, cell_id: CellId) {
-        self.cells.remove(&cell_id);
-    }
-}
-
 /// The channels of the reaches in `cells` whose start node `owns` accepts:
 /// each pair of consecutive nodes along a reach, the last with the node it
 /// joins, looked up across every cell given since a reach's downstream
@@ -736,14 +707,11 @@ pub fn channels(cells: &[&DrainageCell], owns: impl Fn(&DrainageNode) -> bool, s
 
 // ── The event ───────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct MigrationEvent;
 
 impl MigrationEvent {
     pub fn new() -> Self { MigrationEvent }
-}
-
-impl Default for MigrationEvent {
-    fn default() -> Self { Self::new() }
 }
 
 impl WorldEvent for MigrationEvent {
@@ -787,7 +755,8 @@ impl WorldEvent for MigrationEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::drainage::{CATCHMENT_FULL, CHANNEL_HEAD, YOUNG_SHARE};
+    use super::super::drainage::{CATCHMENT_FULL, CHANNEL_HEAD};
+    use crate::tectonic::YOUNG_SHARE;
     use std::collections::HashSet;
 
     const S: u64 = 0x9E3779B97F4A7C15;

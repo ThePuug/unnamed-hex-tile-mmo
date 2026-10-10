@@ -50,7 +50,7 @@ enum Layer {
     WaterField,
     /// Tilt field: a diverging ramp, with lean arrows.
     Tilt,
-    /// Thrusting index: the deformation fronts, the convergent edges' chains facing the overriding plate.
+    /// Motion index: the deformation fronts, the convergent edges' chains facing the overriding plate.
     Fronts,
     /// Drainage index: every reach as its node chain, width by catchment.
     Reaches,
@@ -715,9 +715,6 @@ fn main() {
     save(&cli, &buf, width, height);
 }
 
-/// Encode an RGB buffer in the requested format. The default output name
-/// follows the format, so `world.qoi` and `world.png` never hold the other's
-/// bytes.
 /// A chain as a tile sees it: each segment in eight, every point moved to
 /// where a tile stands to read it, since the layers read the chain through
 /// the plate layer's warp and the drawn line has to lie on what they draw.
@@ -735,6 +732,9 @@ fn drawn_chain(chain: &[world::lattice::NodeKey], seed: u64) -> Vec<(f64, f64)> 
     out
 }
 
+/// Encode an RGB buffer in the requested format. The default output name
+/// follows the format, so `world.qoi` and `world.png` never hold the other's
+/// bytes.
 fn save(cli: &Cli, buf: &[u8], width: u32, height: u32) {
     let output = cli.output.clone().unwrap_or_else(|| match cli.format.as_str() {
         "png" => "world.png".to_string(),
@@ -797,6 +797,23 @@ fn orogen_ramp(z: f64) -> (f64, f64, f64) {
     STOPS[STOPS.len() - 1].1
 }
 
+/// The hillshade's light: from the north-west, low, so belts throw shadow
+/// across strike.
+const LIGHT: (f64, f64, f64) = (-0.55, -0.55, 0.63);
+
+/// Lambert shade of the surface at `z` that stands `zx` a step `d` along x
+/// and `zy` a step along y, lit from `LIGHT`: `ambient` facing away from
+/// it, `ambient + diffuse` facing it. RISE converts a z-level to the
+/// crate's horizontal unit of height.
+fn hillshade(z: f64, zx: f64, zy: f64, d: f64, ambient: f64, diffuse: f64) -> f64 {
+    let (lx, ly, lz) = LIGHT;
+    let (gx, gy) = ((zx - z) * world::RISE / d, (zy - z) * world::RISE / d);
+    let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
+    let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
+    let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
+    ambient + diffuse * lambert
+}
+
 /// The cut on its own, hillshaded: every valley as a depression in a flat
 /// sheet, darker the deeper, so the network's shape reads without the
 /// envelope under it. Routes the drainage cells under the viewport itself,
@@ -805,7 +822,6 @@ fn render_dissection_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8>
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
     let seed = cli.seed;
-    let (lx, ly, lz) = (-0.55f64, -0.55, 0.63);
     let d = scale.max(1.0);
     let valleys = Valleys::in_box(cli.center_x, cli.center_y, cli.radius, seed);
     let valleys = &valleys;
@@ -827,11 +843,7 @@ fn render_dissection_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8>
             let zy = -cut(wx, wy + d);
             // Depth on a grey ramp: white at the envelope, dark at 100 z down.
             let tone = 0.95 - 0.7 * (-z / 100.0).clamp(0.0, 1.0);
-            let (gx, gy) = ((zx - z) * world::RISE / d, (zy - z) * world::RISE / d);
-            let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
-            let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
-            let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
-            let shade = 0.35 + 0.85 * lambert;
+            let shade = hillshade(z, zx, zy, d, 0.35, 0.85);
             let c = (tone * shade).clamp(0.0, 1.0);
             [(c * 255.0) as u8, (c * 255.0) as u8, ((c * 0.92) * 255.0) as u8]
         }).collect::<Vec<u8>>()
@@ -845,7 +857,6 @@ fn render_water_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
     let seed = cli.seed;
-    let (lx, ly, lz) = (-0.55f64, -0.55, 0.63);
     let d = scale.max(1.0);
     let valleys = Valleys::in_box(cli.center_x, cli.center_y, cli.radius, seed);
     let valleys = &valleys;
@@ -874,11 +885,7 @@ fn render_water_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
             let (z, water) = sample(wx, wy);
             let (zx, _) = sample(wx + d, wy);
             let (zy, _) = sample(wx, wy + d);
-            let (gx, gy) = ((zx - z) * world::RISE / d, (zy - z) * world::RISE / d);
-            let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
-            let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
-            let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
-            let shade = 0.35 + 0.85 * lambert;
+            let shade = hillshade(z, zx, zy, d, 0.35, 0.85);
             match water {
                 Some(s) => {
                     // Depth on a blue ramp: pale at a step deep, deep blue at 30.
@@ -993,9 +1000,6 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
         .collect()
 }
 
-/// The plateau on the substrate, hillshaded, so the thickening's shape reads
-/// independently of how the vertical scale is calibrated. Marches the fronts
-/// under the viewport itself, since the plateau rises with the wedge.
 /// A kind's green: pine blue-green, deciduous green, brush olive.
 fn kind_color(kind: common::Content) -> (f64, f64, f64) {
     match kind {
@@ -1095,12 +1099,13 @@ fn render_moisture_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
     }).collect()
 }
 
+/// The plateau on the substrate, hillshaded, so the thickening's shape reads
+/// independently of how the vertical scale is calibrated. Marches the fronts
+/// under the viewport itself, since the plateau rises with the wedge.
 fn render_thickening_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
     let seed = cli.seed;
-    // Light from the north-west, low, so belts throw shadow across strike.
-    let (lx, ly, lz) = (-0.55f64, -0.55, 0.63);
     let d = scale.max(1.0);
     // The plateau is read off the plate graph, so the view builds the
     // outlines under the viewport, as the event's own prepare does.
@@ -1120,12 +1125,7 @@ fn render_thickening_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8>
             let zx = surface(wx + d, wy);
             let zy = surface(wx, wy + d);
             let base = orogen_ramp(z);
-            // RISE converts a z-level to this crate's horizontal unit of height.
-            let (gx, gy) = ((zx - z) * world::RISE / d, (zy - z) * world::RISE / d);
-            let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
-            let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
-            let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
-            let shade = 0.35 + 0.85 * lambert;
+            let shade = hillshade(z, zx, zy, d, 0.35, 0.85);
             let c = (
                 (base.0 * shade).clamp(0.0, 1.0),
                 (base.1 * shade).clamp(0.0, 1.0),
@@ -1143,7 +1143,6 @@ fn render_lithology_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> 
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
     let seed = cli.seed;
-    let (lx, ly, lz) = (-0.55f64, -0.55, 0.63);
     let d = scale.max(1.0);
     let outlines = Outlines::in_box(cli.center_x, cli.center_y, cli.radius, seed);
     let outlines = &outlines;
@@ -1171,11 +1170,7 @@ fn render_lithology_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> 
             let z = g.stand;
             let zx = at(wx + d, wy).0.stand;
             let zy = at(wx, wy + d).0.stand;
-            let (gx, gy) = ((zx - z) * world::RISE / d, (zy - z) * world::RISE / d);
-            let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
-            let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
-            let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
-            let shade = 0.45 + 0.7 * lambert;
+            let shade = hillshade(z, zx, zy, d, 0.45, 0.7);
             [
                 ((base.0 * shade).clamp(0.0, 1.0) * 255.0) as u8,
                 ((base.1 * shade).clamp(0.0, 1.0) * 255.0) as u8,

@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::net::SocketAddrV4;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -11,11 +10,38 @@ use common::metrics::{self, Aggregator, Cadence, MetricsPacket};
 use common_bevy::resources::map::Map;
 use crate::resources::Lobby;
 
-const DEFAULT_INTERVAL: Duration = Duration::from_secs(2);
+/// How often each resource's packet goes out.
+const INTERVAL: Duration = Duration::from_secs(2);
 
 /// The socket every packet goes out on, to the group the console and the
 /// `metrics` CLI read.
 type Transport = Arc<metrics::Publisher>;
+
+/// Where a resource's packets go and when: every `interval` since the
+/// last, judged on `Time`'s elapsed milliseconds. The last is atomic so a
+/// flush records itself through `Res`.
+struct Flush {
+    transport: Transport,
+    interval: Duration,
+    last_ms: AtomicU64,
+}
+
+impl Flush {
+    fn new(transport: Transport, interval: Duration) -> Self {
+        Self { transport, interval, last_ms: AtomicU64::new(0) }
+    }
+
+    /// Whether `interval` has passed at `time` since the last flush.
+    fn due(&self, time: &Time) -> bool {
+        let elapsed_ms = time.elapsed().as_millis() as u64;
+        elapsed_ms.saturating_sub(self.last_ms.load(Ordering::Relaxed)) >= self.interval.as_millis() as u64
+    }
+
+    /// Records a flush made at `time`.
+    fn done(&self, time: &Time) {
+        self.last_ms.store(time.elapsed().as_millis() as u64, Ordering::Relaxed);
+    }
+}
 
 // ── MetricSnapshot ──
 
@@ -63,9 +89,7 @@ impl SnapshotState {
 pub struct MetricSnapshot {
     group: &'static str,
     state: std::sync::Mutex<SnapshotState>,
-    transport: Transport,
-    flush_interval: Duration,
-    last_flush_ms: AtomicU64,
+    flush: Flush,
 }
 
 impl MetricSnapshot {
@@ -73,9 +97,7 @@ impl MetricSnapshot {
         Self {
             group,
             state: std::sync::Mutex::new(SnapshotState::default()),
-            transport,
-            flush_interval: interval,
-            last_flush_ms: AtomicU64::new(0),
+            flush: Flush::new(transport, interval),
         }
     }
 
@@ -118,7 +140,7 @@ impl MetricSnapshot {
             timestamp_secs,
             fields,
         };
-        self.transport.send(&packet);
+        self.flush.transport.send(&packet);
 
         // Reset Peak and Sum fields after flush
         for f in state.fields.iter_mut() {
@@ -137,18 +159,14 @@ impl MetricSnapshot {
 #[derive(Resource)]
 pub struct SystemTimings {
     timers: common::timers::SystemTimers,
-    transport: Transport,
-    flush_interval: Duration,
-    last_flush_ms: AtomicU64,
+    flush: Flush,
 }
 
 impl SystemTimings {
     fn new(transport: Transport, interval: Duration) -> Self {
         Self {
             timers: common::timers::SystemTimers::new(),
-            transport,
-            flush_interval: interval,
-            last_flush_ms: AtomicU64::new(0),
+            flush: Flush::new(transport, interval),
         }
     }
 
@@ -158,7 +176,6 @@ impl SystemTimings {
     }
 
     fn flush(&self, timestamp_secs: f64) {
-        use std::borrow::Cow;
         let drained = self.timers.drain();
         if drained.is_empty() { return; }
 
@@ -168,7 +185,7 @@ impl SystemTimings {
             fields.push((Cow::Owned(format!("{name}.n")), count));
         }
 
-        self.transport.send(&MetricsPacket {
+        self.flush.transport.send(&MetricsPacket {
             group: Cow::Borrowed("timings"),
             cadence: Cadence::Event,
             timestamp_secs,
@@ -178,37 +195,25 @@ impl SystemTimings {
 }
 
 fn maybe_flush_timings(timings: Res<SystemTimings>, time: Res<Time>) {
-    let elapsed = time.elapsed();
-    let elapsed_ms = elapsed.as_millis() as u64;
-    let last_ms = timings.last_flush_ms.load(Ordering::Relaxed);
-    if elapsed_ms.saturating_sub(last_ms) >= timings.flush_interval.as_millis() as u64 {
-        timings.flush(elapsed.as_secs_f64());
-        timings.last_flush_ms.store(elapsed_ms, Ordering::Relaxed);
+    if timings.flush.due(&time) {
+        timings.flush(time.elapsed().as_secs_f64());
+        timings.flush.done(&time);
     }
 }
 
 // ── Plugin ──
 
-pub struct MetricsPlugin {
-    pub group: SocketAddrV4,
-    pub interval: Duration,
-}
-
-impl Default for MetricsPlugin {
-    fn default() -> Self {
-        Self {
-            group: metrics::SERVER_GROUP,
-            interval: DEFAULT_INTERVAL,
-        }
-    }
-}
+/// Publishes the server's gauges and system timings to
+/// `metrics::SERVER_GROUP`, each as a packet every [`INTERVAL`].
+pub struct MetricsPlugin;
 
 impl Plugin for MetricsPlugin {
     fn build(&self, app: &mut App) {
-        let transport: Transport = Arc::new(metrics::publisher(self.group).unwrap_or_else(|e| panic!("no metrics publisher on {}: {e}", self.group)));
+        let group = metrics::SERVER_GROUP;
+        let transport: Transport = Arc::new(metrics::publisher(group).unwrap_or_else(|e| panic!("no metrics publisher on {group}: {e}")));
 
         // ── Snapshot: server gauges ──
-        let mut snapshot = MetricSnapshot::new("server", transport.clone(), self.interval);
+        let mut snapshot = MetricSnapshot::new("server", transport.clone(), INTERVAL);
         snapshot.register("tick_count", Aggregator::Sum);
         snapshot.register("tick_duration_ms", Aggregator::Last);
         snapshot.register("tick_peak_ms", Aggregator::Peak);
@@ -252,7 +257,7 @@ impl Plugin for MetricsPlugin {
         snapshot.register("input.drops", Aggregator::Sum);
         snapshot.register("input.violations", Aggregator::Sum);
         snapshot.register("input.disconnects", Aggregator::Sum);
-        let timings = SystemTimings::new(transport.clone(), self.interval);
+        let timings = SystemTimings::new(transport.clone(), INTERVAL);
         app.insert_resource(snapshot)
             .insert_resource(timings)
             .insert_resource(TickTimer::default())
@@ -268,7 +273,7 @@ impl Plugin for MetricsPlugin {
 
 fn drain_event_metrics(
     registry: Res<crate::resources::event_registry::EventRegistry>,
-    engagements: Query<(), With<common_bevy::components::engagement::Engagement>>,
+    engagements: Query<(), With<combat::engagement::Engagement>>,
     snapshot: Res<MetricSnapshot>,
 ) {
     let m = registry.drain_metrics();
@@ -325,9 +330,7 @@ fn track_frame_time(time: Res<Time>, snapshot: Res<MetricSnapshot>) {
 }
 
 fn flush_due(snapshot: Res<MetricSnapshot>, time: Res<Time>) -> bool {
-    let last_ms = snapshot.last_flush_ms.load(Ordering::Relaxed);
-    let elapsed_ms = time.elapsed().as_millis() as u64;
-    elapsed_ms.saturating_sub(last_ms) >= snapshot.flush_interval.as_millis() as u64
+    snapshot.flush.due(&time)
 }
 
 fn refresh_metric_gauges(
@@ -344,7 +347,7 @@ fn refresh_metric_gauges(
         ("npc_count", npc_query.iter().count() as f32),
         ("memory_mb", common::metrics::memory().working_set as f32 / 1_048_576.0),
         ("memory_map_mb", map.heap_size_estimate() as f32 / 1_048_576.0),
-        ("chunk.in_flight", chunk_tasks.in_flight.len() as f32),
+        ("chunk.in_flight", chunk_tasks.in_flight_len() as f32),
         ("chunk.pending", chunk_tasks.pending_len() as f32),
         ("chunk.budget", crate::systems::actor::MAX_CHUNK_TASKS as f32),
         ("summary.budget", crate::systems::summary::MAX_SUMMARY_TASKS as f32),
@@ -373,12 +376,9 @@ fn refresh_metric_gauges(
 }
 
 fn maybe_flush_snapshot(snapshot: Res<MetricSnapshot>, time: Res<Time>) {
-    let elapsed = time.elapsed();
-    let elapsed_ms = elapsed.as_millis() as u64;
-    let last_ms = snapshot.last_flush_ms.load(Ordering::Relaxed);
-    if elapsed_ms.saturating_sub(last_ms) >= snapshot.flush_interval.as_millis() as u64 {
-        snapshot.flush(elapsed.as_secs_f64());
-        snapshot.last_flush_ms.store(elapsed_ms, Ordering::Relaxed);
+    if snapshot.flush.due(&time) {
+        snapshot.flush(time.elapsed().as_secs_f64());
+        snapshot.flush.done(&time);
     }
 }
 

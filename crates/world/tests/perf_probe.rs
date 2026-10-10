@@ -46,30 +46,30 @@ fn report_metrics(c: &Composite, label: &str) {
     }
 }
 
-/// Breakdown of the one-time deform cascade: plate-only composite first touch
-/// (1 plate cell) vs full-stack first touch, where the spine layer's cell scale
-/// dilates the 1800-scale layers below it into the thousands.
+/// Breakdown of the one-time deform cascade: a plate-only composite's first
+/// touch against the full stack's, where every layer deforms the graph's
+/// cells under its own footprint plus one ring.
 #[test]
 #[ignore]
 fn perf_probe_cascade_breakdown() {
-    // 1 plate-cell deform alone
+    // The plate graph's cell and its ring alone
     let mut c = Composite::new(SEED);
     c.add_event(Box::new(PlateEvent::new()));
     c.add_event(Box::new(TiltEvent::new()));
     let t = Instant::now();
     c.tile_at(3000, 2000);
-    println!("plate-only first_touch (1 plate cell deform): {:?}", t.elapsed());
+    println!("plate-only first_touch (one graph cell and its ring): {:?}", t.elapsed());
 
-    // Full stack on a fresh composite: 169 plate cells + spine deform
+    // Full stack on a fresh composite
     let c = composite_full();
     let t = Instant::now();
     c.tile_at(3000, 2000);
     println!("full-stack first_touch: {:?}", t.elapsed());
 
-    // Second spine cell, far away: plate chunks partially warm
+    // A second tile far away: some graph cells already warm
     let t = Instant::now();
     c.tile_at(3000, 40000);
-    println!("second spine cell first_touch: {:?}", t.elapsed());
+    println!("second far tile first_touch: {:?}", t.elapsed());
 }
 
 #[test]
@@ -83,11 +83,7 @@ fn perf_probe() {
         let t = Instant::now();
         let view = c.tile_at(q, r);
         let dt = t.elapsed();
-        let tags: Vec<_> = view.tags.iter().collect();
-        println!(
-            "first_touch ({q},{r}): {dt:?}  tags={tags:?} elev={:.1}",
-            view.elevation
-        );
+        println!("first_touch ({q},{r}): {dt:?}  elev={:.1}", view.elevation);
     }
     println!();
 

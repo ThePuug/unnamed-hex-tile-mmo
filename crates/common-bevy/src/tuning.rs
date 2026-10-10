@@ -466,4 +466,14 @@ mod tests {
             assert!(tuning.recovery(ability) <= tuning.reaction_window, "{ability:?}");
         }
     }
+
+    #[test]
+    fn every_ability_but_the_auto_attack_leaves_its_user_recovering() {
+        let tuning = Tuning::DEFAULT;
+        use AbilityType::*;
+        assert_eq!(tuning.recovery(AutoAttack), 0.0, "an auto-attack runs on its own timer");
+        for ability in [Frenzy, Feint, Overpower, Punish, Parry, Counter, Leap, PerfectStride] {
+            assert!(tuning.recovery(ability) > 0.0, "{ability:?} leaves its user recovering");
+        }
+    }
 }

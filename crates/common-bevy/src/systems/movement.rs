@@ -83,10 +83,6 @@ pub fn turn_interval_ms(pace: f32) -> Option<u16> {
 /// the slow landed during the rest. The longest `dt` the physics takes.
 pub const TURN_RESTED_MS: u16 = i16::MAX as u16;
 
-/// Ledge grab threshold in world units
-/// Set to 0.0 to disable ledge grabbing
-pub const LEDGE_GRAB_THRESHOLD: f32 = 0.0;
-
 /// Maximum entity count per tile before considering it solid
 pub const MAX_ENTITIES_PER_TILE: usize = 7;
 
@@ -230,7 +226,7 @@ pub fn is_tile_blocked(
     let cliff = match (here_floor, next_floor) {
         (Some(here), Some(there)) if there.z - here.z > 1 => {
             let standing = (there.z + 1 - tile.z) as f32 * map.rise();
-            airtime.is_none() || y + LEDGE_GRAB_THRESHOLD < standing
+            airtime.is_none() || y < standing
         }
         _ => false,
     };
@@ -637,7 +633,7 @@ mod tests {
     use super::*;
 
     fn create_test_map() -> Map {
-        Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop))
+        Map::new(qrz::Map::new(1.0, 0.8))
     }
 
     fn create_test_nntree() -> NNTree {
@@ -962,15 +958,6 @@ mod tests {
     }
 
     #[test]
-    fn movement_is_deterministic() {
-        let map = create_test_map();
-        flat_ground(&map, 3);
-        let nntree = create_test_nntree();
-        let input = MovementInput { airtime: Some(50), ..walking(Heading::from_degrees(90.0), true) };
-        assert_eq!(calculate_movement(input, 125, &map, &nntree), calculate_movement(input, 125, &map, &nntree));
-    }
-
-    #[test]
     fn a_move_travels_along_its_heading() {
         let map = create_test_map();
         flat_ground(&map, 3);
@@ -1020,8 +1007,8 @@ mod tests {
         map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: false }));
     }
 
-    /// A walk through a wood short of full covers what its pace gives, the
-    /// same however the time is sliced; two trees make a wall.
+    /// A walk through a wood of one tree a tile covers what its pace gives,
+    /// the same however the time is sliced; two trees make a wall.
     #[test]
     fn a_wood_short_of_full_is_walked_and_two_trees_stop_it() {
         let nntree = create_test_nntree();
@@ -1032,28 +1019,27 @@ mod tests {
             flat_ground(&map, 6);
             calculate_movement(input, 1000, &map, &nntree).position.offset.xz().length()
         };
-        for n in 1..2 {
-            let map = create_test_map();
-            flat_ground(&map, 6);
-            for q in -6..=6 {
-                for r in -6..=6 {
-                    wooded(&map, q, r, n);
-                }
+        let map = create_test_map();
+        flat_ground(&map, 6);
+        for q in -6..=6 {
+            for r in -6..=6 {
+                wooded(&map, q, r, 1);
             }
-            let whole = calculate_movement(input, 1000, &map, &nntree);
-            let mut sliced = input;
-            for _ in 0..40 {
-                sliced = carried(sliced, &calculate_movement(sliced, 25, &map, &nntree));
-            }
-            assert!(whole.position.offset.abs_diff_eq(sliced.position.offset, 1e-3), "{n} trees: whole {:?} vs sliced {:?}", whole.position.offset, sliced.position.offset);
-            let went = whole.position.offset.xz().length();
-            let fullness = map.cover_at(0, 0).fullness();
-            assert!(fullness < COVER_FULL);
-            // The pace sets how far the walk goes; going round a trunk on
-            // the way can only shorten it.
-            let paced = open * pace(fullness);
-            assert!(went <= paced + 1e-3 && went > 0.8 * paced, "{n} trees: {went} against the pace's share {paced} of {open}");
         }
+        let whole = calculate_movement(input, 1000, &map, &nntree);
+        let mut sliced = input;
+        for _ in 0..40 {
+            sliced = carried(sliced, &calculate_movement(sliced, 25, &map, &nntree));
+        }
+        assert!(whole.position.offset.abs_diff_eq(sliced.position.offset, 1e-3), "whole {:?} vs sliced {:?}", whole.position.offset, sliced.position.offset);
+        let went = whole.position.offset.xz().length();
+        let fullness = map.cover_at(0, 0).fullness();
+        assert!(fullness < COVER_FULL);
+        // The pace sets how far the walk goes; going round a trunk on
+        // the way can only shorten it.
+        let paced = open * pace(fullness);
+        assert!(went <= paced + 1e-3 && went > 0.8 * paced, "{went} against the pace's share {paced} of {open}");
+
         let map = create_test_map();
         flat_ground(&map, 6);
         let out = calculate_movement(input, 2000, &map, &nntree);

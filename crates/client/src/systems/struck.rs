@@ -16,7 +16,6 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use common_bevy::components::reaction_queue::{Lane, ReactionQueue};
 use common_bevy::components::resources::Health;
-use common_bevy::components::ActorAttributes;
 use common_bevy::message::{Do, Event as GameEvent};
 
 use crate::components::{FloatingText, Viewed};
@@ -46,8 +45,7 @@ const ARRIVES_AT: f32 = 1.8;
 const LABEL_FONT: f32 = NOTE * ARRIVES_AT * 0.4;
 /// How long a gone note lingers while it pulses or its shards fly
 const GONE: f32 = 0.6;
-/// Where a note sits while what it stands over is off screen
-const OFF_SCREEN: f32 = -10000.0;
+use crate::systems::combat_ui::OFF_SCREEN;
 
 /// When damage last landed on a body, while its flash lasts
 #[derive(Component)]
@@ -172,7 +170,7 @@ pub fn update_marks(
     mut commands: Commands,
     mut marks: Query<(Entity, &mut Mark, &mut Node, &mut BackgroundColor, &mut BorderColor, &Children)>,
     mut labels: Query<(&mut Text, &mut UiTransform, &mut Visibility), With<MarkLabel>>,
-    targets: Query<(&ReactionQueue, &Health, Option<&ActorAttributes>, &Transform)>,
+    targets: Query<(&ReactionQueue, &Health, &Transform)>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
     scale: Res<UiScale>,
     gone: Res<crate::systems::combat::Gone>,
@@ -208,14 +206,14 @@ pub fn update_marks(
             }
             continue;
         }
-        let Ok((queue, health, attrs, body)) = targets.get(mark.struck) else {
+        let Ok((queue, health, body)) = targets.get(mark.struck) else {
             commands.entity(note).despawn();
             continue;
         };
 
         match queue.threats.iter().find(|t| (t.source, t.inserted_at, t.lane()) == mark.key) {
             Some(threat) => {
-                let (fill, rim, label) = highway::look(threat, &attrs.copied().unwrap_or_default(), health, false);
+                let (fill, rim, label) = highway::look(threat, health, false);
                 background.0 = fill;
                 *border = BorderColor::all(rim);
                 mark.color = fill;
@@ -307,7 +305,7 @@ pub fn flash(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common_bevy::{message::AbilityType, systems::combat::queue as queue_utils, tuning::Tuning};
+    use common_bevy::{components::ActorAttributes, message::AbilityType, systems::combat::queue as queue_utils, tuning::Tuning};
 
     fn strike(source: Entity, at: u64) -> common_bevy::components::reaction_queue::QueuedThreat {
         queue_utils::create_threat(

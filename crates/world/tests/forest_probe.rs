@@ -7,9 +7,10 @@
 use std::time::Instant;
 
 use common::Content;
+use world::events::climate::{temperature, TREELINE};
 use world::events::dissection::DissectionEvent;
 use world::events::drainage::DrainageEvent;
-use world::events::forest::{self, ForestEvent};
+use world::events::forest::ForestEvent;
 use world::events::lithology::LithologyEvent;
 use world::events::migration::MigrationEvent;
 use world::events::motion::MotionEvent;
@@ -72,7 +73,7 @@ fn cover_stands_only_where_it_may() {
         }
         assert!(v.water.is_none(), "cover in water at ({q}, {r})");
         let (wx, wy) = hex_to_world(q, r);
-        assert!(forest::temperature(wx, wy, v.elevation, SEED) > forest::TREELINE, "cover above the treeline at ({q}, {r})");
+        assert!(temperature(wx, wy, v.elevation, SEED) > TREELINE, "cover above the treeline at ({q}, {r})");
         assert!(v.cover.fullness() <= common::TILE_SLOTS);
     }
 }
@@ -98,11 +99,11 @@ fn forest_census() {
         }
         land += 1;
         let (wx, wy) = hex_to_world(q, r);
-        let temp = forest::temperature(wx, wy, v.elevation, SEED);
+        let temp = temperature(wx, wy, v.elevation, SEED);
         t_min = t_min.min(temp);
         t_max = t_max.max(temp);
         t_sum += temp;
-        if temp <= forest::TREELINE {
+        if temp <= TREELINE {
             cold += 1;
         }
         let f = v.cover.filled().count();
@@ -118,7 +119,7 @@ fn forest_census() {
     let secs = t.elapsed().as_secs_f64();
     println!("{} tiles in {secs:.2}s ({:.1} µs per tile, sparse)", tiles.len(), secs * 1e6 / tiles.len() as f64);
     println!("land {land}: {:.1}% covered, {:.1}% above the treeline", 100.0 * covered as f64 / land.max(1) as f64, 100.0 * cold as f64 / land.max(1) as f64);
-    println!("temperature on land: {t_min:.1} to {t_max:.1}, mean {:.1} (treeline {})", t_sum / land.max(1) as f64, forest::TREELINE);
+    println!("temperature on land: {t_min:.1} to {t_max:.1}, mean {:.1} (treeline {})", t_sum / land.max(1) as f64, TREELINE);
     println!("mean sites filled where covered: {:.2}", full as f64 / covered.max(1) as f64);
     println!("sites filled histogram 0..3: {hist:?}");
     println!(

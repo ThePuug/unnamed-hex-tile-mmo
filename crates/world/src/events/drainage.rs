@@ -5,11 +5,13 @@
 //! catchment. It moves no ground and its query returns nothing: dissection
 //! cuts along what this publishes.
 //!
-//! # The surface is a function, plus one index
+//! # The surface is a function, plus the plate graph
 //!
-//! The field layers beneath — substrate, tilt, thickening — sum to one
-//! function of position and seed, and the ranges come from the thrusting
-//! layer's fronts, the one index this deform reads over its window.
+//! The field layers beneath — substrate, tilt, thrusting, thickening,
+//! lithology — sum to one function of position and seed, read off the plate
+//! graph: the edges the plate layer published, for the coasts, and the
+//! resolved edges the motion layer published, for the outlines, the two
+//! indexes this deform reads over its window.
 //! [`surface_at`] is that sum, evaluated at each node without materialising a
 //! tile, which is what lets routing, which needs the ground over a whole
 //! basin, happen in `deform`. A layer added beneath drainage either stays a
@@ -32,9 +34,9 @@
 //! continues on the far side. Catchment is counted within the window, so the
 //! largest rivers plateau in discharge past it rather than truncating.
 //!
-//! Reading the front index deforms the thrusting cells under the window and
-//! nothing else beneath. Node elevations are memoised across windows, so each
-//! node is evaluated once however many windows contain it.
+//! Reading the graph's indexes deforms the plate and motion cells under the
+//! window and nothing else beneath. Node elevations are memoised across
+//! windows, so each node is evaluated once however many windows contain it.
 //!
 //! # Closed ground and the sill
 //!
@@ -73,17 +75,15 @@ use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use common::HexLattice;
 use dashmap::DashMap;
 
-use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use super::index::{CellId, CellIndex, IndexRegistry};
 use super::lithology::rock_at;
-use super::plates::{Coasts, PlateEdgeIndex};
+use super::plates::{coasts_of, Coasts};
 use super::thickening::{plateau_share_of, PLATEAU_RISE};
 use super::thrusting::{outlines_of, Outlines};
 use super::tilt::tilt_at;
 use super::{CellScope, Neighbourhood, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
-use crate::lattice::{hex_distance, DIRECTIONS as NEIGHBOURS};
-pub use crate::lattice::{node_site, site_at, site_world, NodeKey, NODE_SPACING, NODE_SWING};
-pub use crate::tectonic::{aged, YOUNG_SHARE};
-use crate::tectonic::PLATE_REACH;
+use crate::lattice::{hex_distance, node_site, site_world, NodeKey, DIRECTIONS as NEIGHBOURS, NODE_SPACING, NODE_SWING};
+use crate::tectonic::{aged, PLATE_REACH};
 use crate::{hex_to_world, substrate_on};
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -423,31 +423,6 @@ impl CellIndex for DrainageIndex {
     }
 }
 
-impl EventIndex for DrainageIndex {
-    fn source_scale(&self) -> u32 { DRAINAGE_CELL_SCALE }
-
-    fn tiles(&self, cell_ids: &[CellId]) -> Vec<(i32, i32)> {
-        cell_ids
-            .iter()
-            .filter_map(|id| self.cells.get(id))
-            .flat_map(|c| c.nodes.values().map(|n| (n.q, n.r)))
-            .collect()
-    }
-
-    /// Downstream: the one tile this node's water goes to next.
-    fn neighbors(&self, q: i32, r: i32) -> Vec<(i32, i32)> {
-        site_at(q, r)
-            .and_then(|key| self.node(key))
-            .and_then(|n| n.down)
-            .map(|d| vec![node_site(d)])
-            .unwrap_or_default()
-    }
-
-    fn remove_cell(&mut self, cell_id: CellId) {
-        self.cells.remove(&cell_id);
-    }
-}
-
 // ── Routing ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -460,6 +435,13 @@ pub enum Kind {
     /// Closed ground under the flood's fill: its water runs down the
     /// ground to the basin's pit, and leaves over the rim from there.
     Basin,
+}
+
+/// Whether node `k` is a basin's pit: a flooded node whose water leaves
+/// closed ground, over the sill or nowhere. The one place a reach ends
+/// short of a sink, and what base level is read down to.
+pub fn is_pit(kind: &[Kind], down: &[Option<usize>], k: usize) -> bool {
+    kind[k] == Kind::Basin && down[k].map_or(true, |d| kind[d] != Kind::Basin)
 }
 
 /// Min-heap entry for the flood, ordered by level then node so the flood is
@@ -674,24 +656,29 @@ impl DrainageEvent {
             .iter()
             .map(|&(i, j)| NEIGHBOURS.map(|(di, dj)| index.get(&(i + di, j + dj)).copied()))
             .collect();
+        let site: Vec<(f64, f64)> = keys.iter().map(|&k| site_world(k)).collect();
         let grounds: Vec<Ground> = keys.iter().map(|&k| self.ground(k, seed, coasts, outlines)).collect();
         let elevation: Vec<f64> = grounds.iter().map(|g| g.surface).collect();
         let age: Vec<f64> = grounds.iter().map(|g| g.age).collect();
         let erodibility: Vec<f64> = grounds.iter().map(|g| g.erodibility).collect();
 
-        let mut ground = elevation.clone();
-        let mut routing = Self::route_over(keys.clone(), owned.clone(), index.clone(), &nbrs, ground.clone());
+        let mut routing = Self::route_over(&nbrs, &site, elevation.clone());
         let mut cut_sills: HashSet<usize> = HashSet::new();
         for _ in 0..ROUTING_PASSES {
             let Some(breached) = Self::breach(&routing, &mut cut_sills, &age, &erodibility) else { break };
-            ground = breached;
-            routing = Self::route_over(keys.clone(), owned.clone(), index.clone(), &nbrs, ground.clone());
+            routing = Self::route_over(&nbrs, &site, breached);
         }
-        routing.cut = elevation.iter().zip(&ground).map(|(e, g)| e - g).collect();
+        // Until here `routing.elevation` is the ground the last pass routed
+        // over: the envelope with every breach cut.
+        let cut: Vec<f64> = elevation.iter().zip(&routing.elevation).map(|(e, g)| e - g).collect();
+        routing.cut = cut;
         // A cut node is a fixed floor, so base levels are read again with
         // the cuts known.
-        routing.base = Self::base_levels(&routing.down, &routing.kind, &routing.cut, &ground);
+        routing.base = Self::base_levels(&routing.down, &routing.kind, &routing.cut, &routing.elevation);
         routing.elevation = elevation;
+        routing.keys = keys;
+        routing.owned = owned;
+        routing.index = index;
         routing.age = age;
         routing.erodibility = erodibility;
         routing.floor = Self::floors(&routing);
@@ -736,7 +723,7 @@ impl DrainageEvent {
                 // pit: the pit's own link, to the sill its water leaves
                 // over, is not walked.
                 match routing.down[cur] {
-                    Some(d) if matches!(routing.kind[d], Kind::Land | Kind::Basin) && !(routing.kind[cur] == Kind::Basin && routing.kind[d] != Kind::Basin) => path.push(d),
+                    Some(d) if matches!(routing.kind[d], Kind::Land | Kind::Basin) && !is_pit(&routing.kind, &routing.down, cur) => path.push(d),
                     _ => break,
                 }
             }
@@ -832,7 +819,7 @@ impl DrainageEvent {
                 }
                 // A flooded node whose water leaves closed ground is the
                 // pit; the others run on down to it.
-                if kind[cur] == Kind::Basin && down[cur].map_or(true, |d| kind[d] != Kind::Basin) {
+                if is_pit(kind, down, cur) {
                     break ground[cur];
                 }
                 match down[cur] {
@@ -847,17 +834,17 @@ impl DrainageEvent {
         base.into_iter().map(|b| b.unwrap_or(0.0)).collect()
     }
 
-    /// Route the window's nodes over `elevation`: the flood, every node's
-    /// outflow, catchment, basins, base level and reaches. Publishes no
-    /// age, no cut and no floor; `route` sets them.
+    /// Route the window's nodes, whose sites are `site` and neighbours
+    /// `nbrs`, over `elevation`: the flood, every node's outflow,
+    /// catchment, basins, base level and reaches. The keys, ownership,
+    /// ages, erodibilities, cuts and floors are left empty; `route` sets
+    /// them once the passes are done.
     fn route_over(
-        keys: Vec<NodeKey>,
-        owned: Vec<bool>,
-        index: HashMap<NodeKey, usize>,
         nbrs: &[[Option<usize>; 6]],
+        site: &[(f64, f64)],
         elevation: Vec<f64>,
     ) -> Routing {
-        let n = keys.len();
+        let n = elevation.len();
 
         let mut kind: Vec<Kind> = (0..n)
             .map(|k| {
@@ -902,7 +889,6 @@ impl DrainageEvent {
 
         // ── Outflow: the true downslope of the water surface, split between the
         //    two neighbours bracketing it; flats follow the flood ──
-        let site: Vec<(f64, f64)> = keys.iter().map(|&k| site_world(k)).collect();
         let unit = |from: usize, to: usize| -> (f64, f64) {
             let (dx, dy) = (site[to].0 - site[from].0, site[to].1 - site[from].1);
             let len = dx.hypot(dy);
@@ -922,7 +908,7 @@ impl DrainageEvent {
                     // sill: one link, so the flow never loops through the
                     // basin.
                     let lower = |m: usize| elevation[m] < elevation[k] - FLAT;
-                    let facet = steepest_facet(&nbrs[k], k, &site, &elevation);
+                    let facet = steepest_facet(&nbrs[k], k, site, &elevation);
                     match facet {
                         Some((angle, a, b, share_next)) if lower(a) || lower(b) => {
                             direction[k] = (angle.cos(), angle.sin());
@@ -959,7 +945,7 @@ impl DrainageEvent {
                     }
                 }
                 Kind::Land => {
-                    let facet = steepest_facet(&nbrs[k], k, &site, &surface);
+                    let facet = steepest_facet(&nbrs[k], k, site, &surface);
                     match facet {
                         Some((angle, a, b, share_next)) => {
                             direction[k] = (angle.cos(), angle.sin());
@@ -1055,7 +1041,7 @@ impl DrainageEvent {
 
         // ── Reaches: a head is a source, a confluence, or a basin's sill;
         //    a reach runs through closed ground to its pit and ends there ──
-        let pit = |k: usize| kind[k] == Kind::Basin && down[k].map_or(true, |d| kind[d] != Kind::Basin);
+        let pit = |k: usize| is_pit(&kind, &down, k);
         let mut inflow = vec![0u32; n];
         let mut from_pit = vec![false; n];
         for k in 0..n {
@@ -1108,8 +1094,8 @@ impl DrainageEvent {
         }
 
         Routing {
-            keys,
-            owned,
+            keys: Vec::new(),
+            owned: Vec::new(),
             elevation,
             surface,
             kind,
@@ -1121,13 +1107,13 @@ impl DrainageEvent {
             base,
             basin_of,
             parent,
-            index,
+            index: HashMap::new(),
             basins,
             reaches,
-            age: vec![0.0; n],
-            erodibility: vec![1.0; n],
-            cut: vec![0.0; n],
-            floor: vec![0.0; n],
+            age: Vec::new(),
+            erodibility: Vec::new(),
+            cut: Vec::new(),
+            floor: Vec::new(),
         }
     }
 }
@@ -1150,15 +1136,15 @@ impl WorldEvent for DrainageEvent {
         registry.pre_register::<DrainageIndex>();
     }
 
-    /// The one index read beneath: the thrusting fronts over this cell's
-    /// window, which complete the surface the nodes are evaluated on. The
-    /// cells read are the fronts' cells under the window plus one ring, so a
-    /// node's nearest front is in reach from every window that holds the
-    /// node, and its elevation is the same in all of them.
+    /// What is read beneath: the plate graph's edges and resolved edges over
+    /// this cell's window, which as the coasts and the outlines complete
+    /// the surface the nodes are evaluated on. The cells read are the
+    /// graph's cells under the window plus one ring, so a node's plate is
+    /// in reach from every window that holds the node, and its elevation
+    /// is the same in all of them.
     fn deform(&self, scope: &CellScope) {
         let outlines = outlines_of(scope);
-        let edges = scope.read::<PlateEdgeIndex>();
-        let coasts = Coasts::new(edges.iter().flat_map(|idx| idx.entries().flatten()), scope.seed());
+        let coasts = coasts_of(scope);
         let routing = self.route(scope.lattice(), scope.cell(), scope.seed(), &coasts, &outlines);
         scope.publish::<DrainageIndex>(routing.owned_cell());
     }
@@ -1180,6 +1166,7 @@ impl WorldEvent for DrainageEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tectonic::YOUNG_SHARE;
 
     /// The share starts at the head, grows with catchment, and saturates.
     #[test]

@@ -1,12 +1,10 @@
 use bevy::prelude::*;
 use world::events::Composite;
-use world::{Cover, TagSet};
+use world::Cover;
 
-/// Server-side registry of world events.
-
-/// Owns the Composite with PlateEvent + TiltEvent + MotionEvent + ThrustingEvent + ThickeningEvent +
-/// DrainageEvent. All terrain queries route through here.
-/// Arc-wrapped so async chunk generation tasks can share it.
+/// Server-side registry of world events: the composite every terrain
+/// query goes through (INV-009), Arc-wrapped so async chunk generation
+/// tasks share it.
 #[derive(Resource, Clone)]
 pub struct EventRegistry {
     composite: std::sync::Arc<Composite>,
@@ -26,12 +24,6 @@ impl EventRegistry {
     /// the tile is dry.
     pub fn water_at(&self, q: i32, r: i32) -> Option<i32> {
         self.composite.water_at(q, r)
-    }
-
-    /// Get tags at a hex tile position.
-    #[allow(dead_code)]
-    pub fn tags_at(&self, q: i32, r: i32) -> TagSet {
-        self.composite.tags_at(q, r)
     }
 
     /// What stands in a tile's slots.

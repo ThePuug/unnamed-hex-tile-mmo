@@ -46,19 +46,12 @@ impl Gone {
 pub fn handle_insert_threat(
     mut reader: MessageReader<Do>,
     mut query: Query<&mut ReactionQueue>,
-    time: Res<Time>,
-    server: Res<crate::resources::Server>,
 ) {
     for event in reader.read() {
         if let GameEvent::InsertThreat { ent, threat } = event.event {
             if let Ok(mut queue) = query.get_mut(ent) {
-                // Calculate current server time
-                let client_now = time.elapsed().as_millis();
-                let server_now_ms = server.current_time(client_now);
-                let server_now = std::time::Duration::from_millis(server_now_ms.min(u64::MAX as u128) as u64);
-
                 // Insert always succeeds (unbounded queue)
-                queue_utils::insert_threat(&mut queue, threat, server_now);
+                queue_utils::insert_threat(&mut queue, threat);
             }
         }
     }
@@ -93,7 +86,7 @@ pub fn land_own(
     server: Res<crate::resources::Server>,
 ) {
     let Ok((ent, mut queue)) = query.single_mut() else { return };
-    let now = std::time::Duration::from_millis(server.current_time(time.elapsed().as_millis()).min(u64::MAX as u128) as u64);
+    let now = server.now(time.elapsed().as_millis());
     let landed = queue_utils::check_expired_threats(&queue, now);
     for threat in &landed {
         queue_utils::clear_threats(&mut queue, ClearType::Threat { source: threat.source, inserted_at: threat.inserted_at });
@@ -191,7 +184,7 @@ mod tests {
         let now = Duration::from_millis(server.current_time(0) as u64);
         let mut threat = queue_utils::create_threat(&tuning, source, &ActorAttributes::default(), &ActorAttributes::default(), 10.0, Some(AbilityType::Frenzy), now, 0.0, 0.0);
         threat.timer_duration = lands_in;
-        queue_utils::insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(ent).unwrap(), threat, now);
+        queue_utils::insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(ent).unwrap(), threat);
         threat
     }
 

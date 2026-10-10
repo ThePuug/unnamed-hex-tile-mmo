@@ -47,11 +47,6 @@ impl Heading {
         self.0 as f32 * SLOT_DEGREES
     }
 
-    /// Alias of [`Heading::degrees`] for the targeting cone.
-    pub fn to_angle(self) -> f32 {
-        self.degrees()
-    }
-
     /// The nearest heading to a bearing in degrees clockwise from north.
     pub fn from_degrees(degrees: f32) -> Self {
         let slot = (degrees.rem_euclid(360.0) / SLOT_DEGREES).round() as u8;

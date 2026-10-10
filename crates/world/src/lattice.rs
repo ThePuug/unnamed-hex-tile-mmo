@@ -22,6 +22,8 @@
 //! nodes is a pure function of the two, and the same from either end, which
 //! is what lets two cells draw one edge and agree on every node of it.
 
+use common::HexLattice;
+
 use crate::noise::hash_channel_f64;
 use crate::{hex_to_world, world_to_hex, SQRT_3};
 
@@ -90,17 +92,6 @@ pub fn site_world(key: NodeKey) -> (f64, f64) {
     hex_to_world(q, r)
 }
 
-/// The node whose site is a tile, if it is one: the key the tile's lattice
-/// cell names, or one of its neighbours, since a site strays under half a
-/// spacing.
-pub fn site_at(q: i32, r: i32) -> Option<NodeKey> {
-    let s = NODE_SPACING as f64;
-    let home = hex_round(q as f64 / s, r as f64 / s);
-    std::iter::once(home)
-        .chain(DIRECTIONS.iter().map(|(di, dj)| (home.0 + di, home.1 + dj)))
-        .find(|&key| node_site(key) == (q, r))
-}
-
 /// A node's position in world units.
 pub fn node_world(key: NodeKey) -> (f64, f64) {
     let (q, r) = node_tile(key);
@@ -114,7 +105,7 @@ pub fn nearest_node(wx: f64, wy: f64) -> NodeKey {
     hex_round(q as f64 / s, r as f64 / s)
 }
 
-pub fn hex_round(fq: f64, fr: f64) -> (i32, i32) {
+fn hex_round(fq: f64, fr: f64) -> (i32, i32) {
     let fs = -fq - fr;
     let (mut q, mut r, s) = (fq.round(), fr.round(), fs.round());
     let (dq, dr, ds) = ((q - fq).abs(), (r - fr).abs(), (s - fs).abs());
@@ -126,9 +117,23 @@ pub fn hex_round(fq: f64, fr: f64) -> (i32, i32) {
     (q as i32, r as i32)
 }
 
-pub fn hex_distance(a: NodeKey, b: NodeKey) -> i32 {
+/// Hex distance between two axial coordinates, tiles or nodes alike.
+pub fn hex_distance(a: (i32, i32), b: (i32, i32)) -> i32 {
     let (dq, dr) = (a.0 - b.0, a.1 - b.1);
     dq.abs().max(dr.abs()).max((dq + dr).abs())
+}
+
+/// A cell's centre on `lattice`, carried off it by up to `jitter` of the
+/// cell spacing along each world axis by a hash of the cell under `seed`,
+/// in world units: where a feature standing one to a cell originates, so
+/// the lattice never shows. The hash's first two channels are taken; a
+/// caller drawing more of the cell draws from the third on.
+pub fn jittered_centre(lattice: &HexLattice, id: (i32, i32), jitter: f64, seed: u64) -> (f64, f64) {
+    let (cq, cr) = lattice.cell_center(id);
+    let (cx, cy) = hex_to_world(cq, cr);
+    let swing = 2.0 * jitter * (lattice.tiles_per_cell() as f64).sqrt();
+    let h = |channel: u64| hash_channel_f64(id.0 as i64, id.1 as i64, seed, channel);
+    (cx + (h(1) - 0.5) * swing, cy + (h(2) - 0.5) * swing)
 }
 
 /// The two lattice directions that bracket a displacement, with how many

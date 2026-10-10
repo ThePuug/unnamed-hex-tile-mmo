@@ -96,13 +96,13 @@ mod tests {
     use common_bevy::components::entity_type::EntityType;
 
     fn flat() -> Map {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
         for q in -12..=12 {
             for r in -12..=12 {
-                qrz_map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
+                map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
             }
         }
-        Map::new(qrz_map)
+        map
     }
 
     #[test]

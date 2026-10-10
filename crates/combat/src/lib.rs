@@ -30,12 +30,27 @@ use common_bevy::{
 };
 use common_bevy::tuning::Tuning;
 
+/// The game's clock: what the server's `Time` has run plus the offset the
+/// world's calendar sets at startup, in milliseconds. A threat's times, a
+/// press and a client's `Init` and `Pong` are all stamped on it.
 #[derive(Default, Resource)]
 pub struct RunTime {
     pub elapsed_offset: u128,
 }
 
-/// System to process DealDamage events (Phase 1: Outgoing damage calculation)
+impl RunTime {
+    /// The game's clock at `time`, in milliseconds
+    pub fn now_ms(&self, time: &Time) -> u128 {
+        time.elapsed().as_millis() + self.elapsed_offset
+    }
+
+    /// The game's clock at `time`, as far as a `Duration` holds it
+    pub fn now(&self, time: &Time) -> std::time::Duration {
+        std::time::Duration::from_millis(self.now_ms(time).min(u64::MAX as u128) as u64)
+    }
+}
+
+/// Takes a `DealDamage` and queues the threat it makes on its target.
 /// An attack made at a target with Patience overcommits its source
 /// (`Status::overcommit`). Lands a strike from past its target's forward
 /// faces, a flank, harder by its striker's Grace (`ActorAttributes::flank`),
@@ -84,9 +99,8 @@ pub fn process_deal_damage(
             landing::update(*source, &mut statuses, &mut commands, &mut writer, |status| status.overcommit(tuning.overcommit_secs));
         }
 
-        let flanked = places.get(*source).ok().zip(places.get(*target).ok()).is_some_and(|((&from, _), (&at, heading))| {
-            heading.is_some_and(|&heading| !common_bevy::systems::targeting::is_in_facing_cone(heading, at, from))
-        });
+        let flanked = places.get(*source).ok().zip(places.get(*target).ok())
+            .is_some_and(|((from, _), (at, heading))| common_bevy::systems::targeting::flanked(heading, at, from));
         let base_damage = if flanked { base_damage * (1.0 + source_attrs.flank(&tuning)) } else { *base_damage };
         let stride = if flanked { source_attrs.flank_stride(&tuning).unwrap_or(0.0) } else { 0.0 };
         let gap = damage_calc::level_factor(&tuning, source_attrs.total_level(), attrs.total_level());
@@ -106,9 +120,7 @@ pub fn process_deal_damage(
         }
         let dot = damage_calc::spread(*dot * gap, tuning.damage_spread, draw);
 
-        // Use game world time (server uptime + offset) for consistent time base
-        let now_ms = time.elapsed().as_millis() + runtime.elapsed_offset;
-        let now = std::time::Duration::from_millis(now_ms.min(u64::MAX as u128) as u64) + *delay;
+        let now = runtime.now(&time) + *delay;
 
         // A blow pushes its target's recovery back, by the attacker's Impact
         // over the target's Efficiency with the level gap weighing in
@@ -123,24 +135,22 @@ pub fn process_deal_damage(
             writer.write(Do { event: GameEvent::Incremental { ent: *target, component: common_bevy::message::Component::Recovery(*recovery) } });
         }
 
-        // Create threat using canonical helper (INV-003: ensures consistent timers)
+        // INV-003: the threat's timer is the helper's to set
         let threat = queue_utils::create_threat(
             &tuning,
-            *source,       // Source entity
-            attrs,         // Target attributes
-            source_attrs,  // Source attributes
-            outgoing,      // Damage
-            *ability,      // Ability
-            now,           // When the strike is made
-            dot,           // DoT per tick, a wound's
+            *source,
+            attrs,
+            source_attrs,
+            outgoing,
+            *ability,
+            now,
+            dot,
             Endurance::fatigue_of(&tuning, endurance),
         ).breaking(stride);
 
-        // Try to insert threat into queue
-        let _overflow = queue_utils::insert_threat(&mut queue, threat, now);
+        queue_utils::insert_threat(&mut queue, threat);
 
-        // Enter combat for both attacker and target AFTER threat is successfully inserted
-        // Handle case where source == target (self-damage)
+        // Both enter combat once the threat stands in the queue
         if source == target {
             if let Ok(mut combat_state) = combat_query.get_mut(*source) {
                 common_bevy::systems::combat::state::enter_combat(*source, &mut combat_state, &time, &mut writer);
@@ -156,20 +166,17 @@ pub fn process_deal_damage(
             }
         }
 
-        // Send InsertThreat event to clients
         writer.write(Do {
             event: GameEvent::InsertThreat {
                 ent: *target,
                 threat,
             },
         });
-
-        // Queue is unbounded, no overflow handling needed
     }
 }
 
-/// System to resolve threats (Phase 2: Apply passive modifiers and apply to health)
-/// Processes ResolveThreat events: a threat whose time ran out, one dismissed, a Counter's reflection
+/// Lands a `ResolveThreat` on its target's health: a threat whose time
+/// ran out, or a Counter's reflection.
 pub fn resolve_threat(
     trigger: On<Try>,
     tuning: Res<Tuning>,
@@ -194,8 +201,6 @@ pub fn resolve_threat(
                     status.stride = Some(common_bevy::components::status::Timed { pace, remaining: tuning.base_interval });
                 });
             }
-
-            // Death check moved to dedicated check_death system (decoupled from combat)
         }
     }
 }
@@ -228,9 +233,9 @@ pub fn track_engagement(
 ) {
     for (ent, state, &loc, side, mut swing) in &mut query {
         let hostile_near = side.is_some_and(|&side| {
-            crate::behaviour::spotted(&nntree, loc, crate::behaviour::ACQUISITION_RANGE)
-                .filter(|&other| other != ent)
-                .any(|other| others.get(other).is_ok_and(|(other_side, health)| side.is_hostile_to(*other_side) && health.state > 0.0))
+            crate::behaviour::hostiles_near(&nntree, ent, loc, crate::behaviour::ACQUISITION_RANGE, side, |other| {
+                others.get(other).ok().map(|(other_side, health)| (*other_side, health.state))
+            }).next().is_some()
         });
         let engaged = state.in_combat || hostile_near;
         match (engaged, swing.due) {
@@ -264,10 +269,9 @@ pub fn intimidate(
         let toll = attrs.intimidation_toll(&tuning);
         let zone = attrs.intimidation_zone(&tuning);
         let reach = (range.copied().unwrap_or_default().0 + zone.unwrap_or(0)).max(0) as u32;
-        let foes: Vec<Entity> = crate::behaviour::spotted(&nntree, loc, reach)
-            .filter(|&other| other != ent)
-            .filter(|&other| others.get(other).is_ok_and(|(other_side, health)| side.is_hostile_to(*other_side) && health.state > 0.0))
-            .collect();
+        let foes: Vec<Entity> = crate::behaviour::hostiles_near(&nntree, ent, loc, reach, side, |other| {
+            others.get(other).ok().map(|(other_side, health)| (*other_side, health.state))
+        }).collect();
         for other in foes {
             let held = statuses.get(other).ok().is_some_and(|status| {
                 let slowed = status.slow.is_some_and(|slow| slow.pace <= pace) && fresh(status.slow);

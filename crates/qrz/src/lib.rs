@@ -3,5 +3,5 @@
 mod qrz;
 mod map;
 
-pub use qrz::{Qrz, DIRECTIONS};
-pub use map::{Map, Convert, HexOrientation};
+pub use qrz::{hex_distance, Qrz, DIRECTIONS};
+pub use map::{Convert, Map};

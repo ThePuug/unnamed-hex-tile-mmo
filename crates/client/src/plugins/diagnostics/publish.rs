@@ -59,11 +59,8 @@ impl Default for Publication {
 impl Publication {
     fn frame_p95(&self) -> f64 {
         let mut times: Vec<f64> = self.frames.iter().map(|&(_, ms)| ms).collect();
-        if times.is_empty() {
-            return 0.0;
-        }
         times.sort_by(f64::total_cmp);
-        times[((times.len() as f64 * 0.95).ceil() as usize).saturating_sub(1)]
+        common::quantile(&times, 0.95).unwrap_or(0.0)
     }
 }
 
@@ -115,13 +112,13 @@ pub fn publish(
     if let Ok(transform) = player.single() {
         let qrz: qrz::Qrz = map.convert(origin.world(transform.translation));
         let z = map.get_by_qr(qrz.q, qrz.r).map_or(qrz.z, |(real, _)| real.z);
-        let (q, r) = (qrz.q as f64, qrz.r as f64);
+        let (wx, wy) = common::hex_to_world(qrz.q, qrz.r);
         world.extend([
-            field("q", q),
-            field("r", r),
+            field("q", qrz.q as f64),
+            field("r", qrz.r as f64),
             field("z", z as f64),
-            field("wx", q + r * 0.5),
-            field("wy", r * 3f64.sqrt() / 2.0),
+            field("wx", wx),
+            field("wy", wy),
         ]);
     }
     topics.push(("world", Cadence::Snapshot, world));

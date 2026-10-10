@@ -19,8 +19,6 @@ pub fn update(
         if **loc0 != qrz {
             position.rebase(qrz, &map);
             **loc0 = qrz;
-
-            // Send Loc update to client
             writer.write(Try { event: Event::Incremental { ent, component: Component::Loc(Loc::new(qrz)) } });
         }
     }

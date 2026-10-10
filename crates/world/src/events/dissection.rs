@@ -84,13 +84,10 @@ use std::any::Any;
 use std::collections::HashMap;
 
 use crate::chains::{Segment, SegmentGrid};
-use crate::lattice::{hex_distance, node_site, NodeKey, NODE_SPACING, NODE_SWING};
-use crate::{hex_to_world, world_to_hex};
+use crate::lattice::{hex_distance, node_site, NodeKey};
+use crate::{hex_to_world, smoothstep, world_to_hex};
 use super::drainage::{growth, DrainageCell, DrainageEvent, DrainageIndex, DrainageNode};
-pub use super::drainage::{CATCHMENT_FULL, CHANNEL_HEAD};
-use super::index::IndexRegistry;
-use super::migration::{channels, Channel, ChannelIndex, Train, AXIS_SWING, CHANNEL_REACH, MIGRATION_CELL_SCALE};
-pub use super::migration::VALLEY_HALF_WIDTH;
+use super::migration::{channels, Channel, ChannelIndex, Train, AXIS_SWING, CHANNEL_REACH, MIGRATION_CELL_SCALE, VALLEY_HALF_WIDTH};
 use super::plates::Coasts;
 use super::thrusting::Outlines;
 use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent};
@@ -120,8 +117,7 @@ pub fn channel_depth(node: &DrainageNode) -> f64 {
 /// drop crowds against the channel and the valley is a gorge under a wide
 /// rim: the step raised to the hardness.
 pub fn profile(u: f64, erodibility: f64) -> f64 {
-    let u = u.clamp(0.0, 1.0);
-    (1.0 - u * u * (3.0 - 2.0 * u)).powf(1.0 / erodibility.max(0.05))
+    (1.0 - smoothstep(u)).powf(1.0 / erodibility.max(0.05))
 }
 
 /// What dissection removes at a node: the envelope less the floor drainage
@@ -344,10 +340,6 @@ impl Valleys {
         Self::new(&refs, &channel_refs, |_| true)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.grid.is_empty()
-    }
-
     /// The cuts at a position whose envelope is `envelope`, in z-levels: of
     /// every valley in reach, each interpolated along its flow line and
     /// profiled across it from the edge of its belt, the deepest; and of
@@ -424,7 +416,7 @@ pub fn valleys_of(scope: &CellScope) -> Valleys {
         return Valleys::new(&[], &[], |_| true);
     };
     let centre = scope.lattice().cell_center(scope.cell());
-    let keep_within = scope.lattice().radius as i32 + NODE_SPACING + (2.0 * NODE_SWING + VALLEY_HALF_WIDTH + AXIS_SWING).ceil() as i32;
+    let keep_within = scope.lattice().radius as i32 + CHANNEL_REACH.ceil() as i32;
     let cells: Vec<&DrainageCell> = drainage.entries().collect();
     let drawn: Vec<&Channel> = channels.entries().flat_map(|c| c.channels.iter()).collect();
     Valleys::new(&cells, &drawn, |key| hex_distance(node_site(key), centre) <= keep_within)
@@ -432,14 +424,11 @@ pub fn valleys_of(scope: &CellScope) -> Valleys {
 
 // ── The event ───────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct DissectionEvent;
 
 impl DissectionEvent {
     pub fn new() -> Self { DissectionEvent }
-}
-
-impl Default for DissectionEvent {
-    fn default() -> Self { Self::new() }
 }
 
 impl WorldEvent for DissectionEvent {
@@ -448,8 +437,6 @@ impl WorldEvent for DissectionEvent {
 
     /// Nothing originates here.
     fn max_influence(&self) -> u32 { 0 }
-
-    fn register_indexes(&self, _registry: &mut IndexRegistry) {}
 
     /// Nothing to place: the valleys are read off the channel index.
     fn deform(&self, _scope: &CellScope) {}
@@ -487,39 +474,45 @@ impl WorldEvent for DissectionEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::migration::{meander_amplitude, CHANNEL_HALF_WIDTH_MAX, MEANDER_WAVELENGTH};
+    use std::sync::OnceLock;
 
+    use super::*;
+    use super::super::drainage::{CATCHMENT_FULL, CHANNEL_HEAD};
+    use super::super::migration::{meander_amplitude, CHANNEL_HALF_WIDTH_MAX, MEANDER_WAVELENGTH};
 
     const S: u64 = 0x9E3779B97F4A7C15;
 
     /// The nearest cell to the spawn that owns a channelled node and a
-    /// flooded one, routed, with its channels drawn and its valleys built.
-    /// Searched rather than named, since a change beneath drainage can
-    /// drain the closed ground of any one cell.
-    fn spawn_valleys() -> (DrainageCell, Valleys) {
-        let lattice = DrainageIndex::lattice();
-        let spawn = lattice.cell_id(104_289, -4_677);
-        let mut cells = lattice.cells_within_distance(spawn, 2);
-        cells.sort_by_key(|&c| (hex_distance(lattice.cell_center(c), lattice.cell_center(spawn)), c));
-        for cell in cells {
-            let (cq, cr) = lattice.cell_center(cell);
-            let (cx, cy) = hex_to_world(cq, cr);
-            let window = (3 * lattice.radius + 1) as f64;
-            let coasts = Coasts::in_box(cx, cy, window, S);
-            let outlines = Outlines::in_box(cx, cy, window, S);
-            let published = DrainageEvent::new().route(&lattice, cell, S, &coasts, &outlines).owned_cell();
-            let flooded = published.nodes.values().any(|n| n.flooded);
-            let channelled = published.nodes.values().any(|n| channel_depth(n) > 0.0);
-            if !(flooded && channelled) {
-                continue;
+    /// flooded one, routed, with its channels drawn and its valleys built,
+    /// once for every test that reads it. Searched rather than named, since
+    /// a change beneath drainage can drain the closed ground of any one
+    /// cell.
+    fn spawn_valleys() -> &'static (DrainageCell, Valleys) {
+        static SPAWN: OnceLock<(DrainageCell, Valleys)> = OnceLock::new();
+        SPAWN.get_or_init(|| {
+            let lattice = DrainageIndex::lattice();
+            let spawn = lattice.cell_id(104_289, -4_677);
+            let mut cells = lattice.cells_within_distance(spawn, 2);
+            cells.sort_by_key(|&c| (hex_distance(lattice.cell_center(c), lattice.cell_center(spawn)), c));
+            for cell in cells {
+                let (cq, cr) = lattice.cell_center(cell);
+                let (cx, cy) = hex_to_world(cq, cr);
+                let window = (3 * lattice.radius + 1) as f64;
+                let coasts = Coasts::in_box(cx, cy, window, S);
+                let outlines = Outlines::in_box(cx, cy, window, S);
+                let published = DrainageEvent::new().route(&lattice, cell, S, &coasts, &outlines).owned_cell();
+                let flooded = published.nodes.values().any(|n| n.flooded);
+                let channelled = published.nodes.values().any(|n| channel_depth(n) > 0.0);
+                if !(flooded && channelled) {
+                    continue;
+                }
+                let drawn = channels(&[&published], |_| true, S);
+                let refs: Vec<&Channel> = drawn.iter().collect();
+                let valleys = Valleys::new(&[&published], &refs, |_| true);
+                return (published, valleys);
             }
-            let drawn = channels(&[&published], |_| true, S);
-            let refs: Vec<&Channel> = drawn.iter().collect();
-            let valleys = Valleys::new(&[&published], &refs, |_| true);
-            return (published, valleys);
-        }
-        panic!("no cell within two of the spawn owns closed ground and a channel");
+            panic!("no cell within two of the spawn owns closed ground and a channel");
+        })
     }
 
     /// The profile is level at the channel and the divide, falls between,

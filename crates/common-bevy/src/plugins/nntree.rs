@@ -1,8 +1,6 @@
-// common/plugins/nntree.rs:
-// NNTree plugins implements Nearest neighbor lookups
-// - adds a NNTree Resource for querying nearest neighbors given a location
-// - updates the NNTree as Entities change their locations
-// - provides a manhattan distance algorithm ("Hexhattan") for hexagonal grids using axial coordinates in first 2 dimensions and z in the 3rd
+//! Nearest-neighbour lookups over every entity with a `Loc`: an R-tree
+//! resource kept by component hooks and a `Changed<Loc>` system, measured
+//! in Hexhattan — hex distance in the axial plane plus the z gap.
 
 use bevy::{
     ecs::{
@@ -53,6 +51,13 @@ fn on_remove(mut world: DeferredWorld, context: HookContext) {
 pub struct NNTree(RTree<NearestNeighbor, DefaultParams>);
 
 impl NNTree {
+    /// Every entry within `tiles` of `loc` as the tree measures, Hexhattan.
+    /// The tree takes its radius squared (`distance_2`), so it is squared
+    /// once here and no caller hands it a squared one.
+    pub fn within_tiles(&self, loc: Loc, tiles: i64) -> impl Iterator<Item = &NearestNeighbor> + '_ {
+        self.locate_within_distance(loc, tiles * tiles)
+    }
+
     /// Create an empty NNTree for testing purposes
     #[cfg(test)]
     pub fn new_for_test() -> Self {

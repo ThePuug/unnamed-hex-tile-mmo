@@ -13,18 +13,21 @@
 //! on soft, gentle, warm ground shows nothing. On basement a site shows on
 //! the flat, a tor; on shale only where the slope is near repose.
 //!
-//! A site is a pure function of its lattice cell's hash, so a tile finds
-//! the sites reaching it from its own lattice cell and the six around it,
-//! and nothing is published. A tile reads its grade, its rock and its
-//! elevation from the layers beneath, and nothing else. Drought, the rim a
-//! hard bed stands as at a scarp, and sea cliffs are unbuilt.
+//! A site is a pure function of its lattice cell's hash, so a cell finds
+//! once the sites of its own lattice cell and the six around it, a tile
+//! the nearest of those reaching it, and nothing is published. A tile reads
+//! its grade, its rock and its elevation from the layers beneath, and
+//! nothing else. Drought, the rim a hard bed stands as at a scarp, and sea
+//! cliffs are unbuilt.
 
 use common::{Cover, HexLattice, Rock, TILE_SLOTS};
 
-use crate::hex_to_world;
+use crate::lattice::jittered_centre;
 use crate::noise::hash_channel_f64;
-use super::forest::{temperature, TREELINE, TREELINE_BAND};
-use super::thrusting::{smoothstep, REPOSE_GRADE};
+use crate::{hex_to_world, smoothstep};
+use super::climate::{temperature, TREELINE, TREELINE_BAND};
+use super::index::CellId;
+use super::thrusting::REPOSE_GRADE;
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 const SITE_SEED: u64 = 0x6372_6167;
@@ -69,30 +72,36 @@ pub struct Site {
 
 /// The site of a lattice cell: its centre jittered, and its radius, by
 /// the cell's hash.
-pub fn site_of(lattice: &HexLattice, id: (i32, i32), seed: u64) -> Site {
-    let (cq, cr) = lattice.cell_center(id);
-    let (cx, cy) = hex_to_world(cq, cr);
+pub fn site_of(lattice: &HexLattice, id: CellId, seed: u64) -> Site {
+    let (x, y) = jittered_centre(lattice, id, SITE_JITTER, seed ^ SITE_SEED);
     let h = |channel: u64| hash_channel_f64(id.0 as i64, id.1 as i64, seed ^ SITE_SEED, channel);
-    let swing = 2.0 * SITE_JITTER * (lattice.tiles_per_cell() as f64).sqrt();
-    Site {
-        x: cx + (h(1) - 0.5) * swing,
-        y: cy + (h(2) - 0.5) * swing,
-        radius: CRAG_RADIUS * (1.0 + CRAG_SPREAD * (2.0 * h(3) - 1.0)),
-    }
+    Site { x, y, radius: CRAG_RADIUS * (1.0 + CRAG_SPREAD * (2.0 * h(3) - 1.0)) }
 }
 
-/// How far into the nearest site reaching a tile it lies, 1 at the origin
-/// to 0 at the site's edge, or 0 where none reaches.
+/// The sites a cell's tiles may lie in: its own and the six around it,
+/// which is as far as a site strays.
+pub fn sites_near(lattice: &HexLattice, cell: CellId, seed: u64) -> [Site; 7] {
+    let mut sites = [site_of(lattice, cell, seed); 7];
+    for (slot, id) in sites.iter_mut().skip(1).zip(lattice.neighbor_cells(cell)) {
+        *slot = site_of(lattice, id, seed);
+    }
+    sites
+}
+
+/// How far into the nearest of `sites` reaching a position it lies, 1 at
+/// the origin to 0 at the site's edge, or 0 where none reaches.
+pub fn nearness_of(sites: &[Site], wx: f64, wy: f64) -> f64 {
+    sites
+        .iter()
+        .map(|s| 1.0 - (s.x - wx).hypot(s.y - wy) / s.radius)
+        .fold(0.0, f64::max)
+}
+
+/// How far into the nearest site reaching a tile it lies, from the sites
+/// of its own lattice cell and the six around it.
 pub fn nearness(lattice: &HexLattice, q: i32, r: i32, seed: u64) -> f64 {
     let (wx, wy) = hex_to_world(q, r);
-    let home = lattice.cell_id(q, r);
-    std::iter::once(home)
-        .chain(lattice.neighbor_cells(home))
-        .map(|id| {
-            let s = site_of(lattice, id, seed);
-            1.0 - (s.x - wx).hypot(s.y - wy) / s.radius
-        })
-        .fold(0.0, f64::max)
+    nearness_of(&sites_near(lattice, lattice.cell_id(q, r), seed), wx, wy)
 }
 
 /// How readily a tile's ground stands out as rock, 0 to 1: the most of how
@@ -124,10 +133,6 @@ pub fn boulders_of(q: i32, r: i32, share: f64, rock: Rock, seed: u64) -> Cover {
 
 // ── The event ───────────────────────────────────────────────────────────────
 
-/// Cell scale for the layer's own grid. A site is found from its hash, so
-/// nothing is published and the scale only sets how often `prepare` runs.
-pub const OUTCROP_CELL_SCALE: u32 = 1800;
-
 pub struct OutcropEvent {
     lattice: HexLattice,
 }
@@ -142,24 +147,34 @@ impl Default for OutcropEvent {
 
 impl WorldEvent for OutcropEvent {
     fn name(&self) -> &str { "outcrop" }
-    fn scale(&self) -> u32 { OUTCROP_CELL_SCALE }
+
+    /// The site lattice's own: the seven sites `prepare` finds for a cell
+    /// are the seven every tile in it reads only when the cell is the
+    /// tile's own site lattice cell.
+    fn scale(&self) -> u32 { self.lattice.radius }
 
     /// Nothing to place: a site is its lattice cell's hash.
     fn deform(&self, _scope: &CellScope) {}
+
+    /// The sites the cell's tiles may lie in, found once for all of them.
+    fn prepare(&self, scope: &CellScope) -> Box<dyn std::any::Any + Send + Sync> {
+        Box::new(sites_near(&self.lattice, scope.cell(), scope.seed()))
+    }
 
     fn query(
         &self,
         q: i32, r: i32,
         below: &TileView,
-        _cell: &(dyn std::any::Any + Send + Sync),
+        cell: &(dyn std::any::Any + Send + Sync),
         seed: u64,
     ) -> Option<TileOutput> {
-        let near = nearness(&self.lattice, q, r, seed);
+        let sites = cell.downcast_ref::<[Site; 7]>()?;
+        let (wx, wy) = hex_to_world(q, r);
+        let near = nearness_of(sites, wx, wy);
         if near <= 0.0 || below.water.is_some() {
             return None;
         }
         let rock = below.rock?;
-        let (wx, wy) = hex_to_world(q, r);
         let t = temperature(wx, wy, below.elevation, seed);
         let share = boulder_share(near * resistance(rock, below.grade(), t));
         let cover = boulders_of(q, r, share, rock, seed);
@@ -210,7 +225,8 @@ mod tests {
     }
 
     /// Sites are sparse: about one per lattice cell, each reaching only its
-    /// radius, so nearly every tile lies in none and the origin lies in one.
+    /// radius, so nearly every tile lies in none and the origin lies in one,
+    /// found from the cell its tile lies in.
     #[test]
     fn sites_are_rare_and_found_from_any_tile() {
         let lattice = site_lattice();
@@ -230,6 +246,7 @@ mod tests {
         let s = site_of(&lattice, id, S);
         let (q, r) = crate::world_to_hex(s.x, s.y);
         assert!(nearness(&lattice, q, r, S) > 0.8, "the origin's own tile is not in its site");
+        assert!(sites_near(&lattice, lattice.cell_id(q, r), S).contains(&s), "a site strays no further than the ring");
     }
 
     /// Boulders fill with their share and carry the rock they are.

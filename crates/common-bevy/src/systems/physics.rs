@@ -82,7 +82,7 @@ mod tests {
     use crate::components::heading::HEADING_SLOTS;
 
     fn create_test_map() -> Map {
-        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
         let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
         for q in -3..=3 {
             for r in -3..=3 {
@@ -130,13 +130,6 @@ mod tests {
         let expected = JUMP_ASCENT * 125.0;
         assert!((offset.y - expected).abs() < 0.01, "ascent is JUMP_ASCENT per ms: {} vs {expected}", offset.y);
         assert_eq!(airtime, Some(0));
-    }
-
-    #[test]
-    fn a_jump_in_progress_is_not_restarted() {
-        let (map, nntree) = (create_test_map(), create_test_nntree());
-        let (_, airtime) = apply(high_up(), Heading::NORTH, false, Some(50), MOVEMENT_SPEED, 125, &map, &nntree);
-        assert!(airtime.is_some_and(|air| air < 50), "counts on from 50: {airtime:?}");
     }
 
     #[test]

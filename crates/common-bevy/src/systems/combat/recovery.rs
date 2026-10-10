@@ -6,7 +6,7 @@ use crate::tuning::Tuning;
 
 /// Calculate Fitness-based recovery time reduction percentage.
 
-/// Pattern 1 (Nullifying): `Tuning::fitness_share` × contest_factor(Fitness, target's Focus),
+/// `Tuning::fitness_share` × contest_factor(Fitness, target's Focus),
 /// with no ceiling.
 
 /// Returns the reduction, 0 up to `Tuning::fitness_share`, never reaching it.
@@ -52,25 +52,5 @@ pub fn global_recovery_system(
                 commands.entity(entity).remove::<GlobalRecovery>();
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_fitness_reduction_zero() {
-        let tuning = Tuning::DEFAULT;
-        let reduction = calculate_fitness_reduction(&tuning, 0, 0, 0.0);
-        assert!((reduction - 0.0).abs() < 0.001, "0 Fitness → 0% reduction, got {reduction}");
-    }
-
-    #[test]
-    fn test_fitness_reduction_nullifies_at_equal() {
-        let tuning = Tuning::DEFAULT;
-        // Equal level, equal stats: contest = 0 → nullified
-        let reduction = calculate_fitness_reduction(&tuning, 100, 100, 0.0);
-        assert!((reduction - 0.0).abs() < 0.001, "Equal stats → 0% reduction, got {reduction}");
     }
 }

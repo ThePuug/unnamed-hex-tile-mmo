@@ -19,7 +19,7 @@ use crate::systems::gathering::WorldChanges;
 pub struct VisibleSummaryCache {
     /// Regions sent to this client, whole: a region is the unit, its
     /// summaries never sent apart.
-    pub sent_regions: HashSet<MeshRegionKey>,
+    sent_regions: HashSet<MeshRegionKey>,
     /// Regions this client wants that are not computed yet, nearest first;
     /// the feeder takes from the front as task slots free up.
     pending: Vec<MeshRegionKey>,
@@ -45,8 +45,9 @@ pub const MAX_SUMMARY_TASKS: usize = 16;
 
 /// The level whose band, and everything inside it, streams all round the
 /// player for context; beyond its outer edge only the sector around the
-/// heading streams.
-const CONTEXT_LEVEL: u32 = 4;
+/// heading streams. The level past the first summary level, as far as a
+/// den is drawn (`dens::sight`).
+const CONTEXT_LEVEL: u32 = LOD_LEVELS[2];
 
 /// Whether a region is streamed for a player at `(px, pz)` heading `dir`:
 /// inside the context radius always, beyond it when any of it can lie in
@@ -89,8 +90,7 @@ pub fn pass_summary_regions(
 
         // No removals on the wire: the client treats summary data as durable
         // (its mesh lifecycle is position-based, its cache is session-long),
-        // so `sent_regions` tracks "ever sent". Memory grows with explored
-        // area on both sides — bounded by the world, revisit if it matters.
+        // so `sent_regions` tracks "ever sent" and grows with explored area.
         let mut cached_additions = Vec::new();
         let mut pending = Vec::new();
         for rk in &visible_regions {
@@ -348,7 +348,6 @@ mod tests {
         }
         let share = far_kept as f32 / far as f32;
         let sector = common::camera::STREAM_SECTOR_HALF_ANGLE / std::f32::consts::PI;
-        println!("context {near} regions; far {far_kept} of {far} kept ({share:.2}) for a sector of {sector:.2}");
         assert!(share > sector * 0.8 && share < sector * 1.6, "kept {far_kept} of {far} far regions ({share:.2}) for a sector of {sector:.2}; {near} near");
     }
 

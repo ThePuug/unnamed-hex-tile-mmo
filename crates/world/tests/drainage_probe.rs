@@ -6,9 +6,8 @@
 use std::time::Instant;
 
 use common::HexLattice;
-use world::events::drainage::{
-    node_site, DrainageEvent, DrainageIndex, Kind, Terminus, DRAINAGE_CELL_SCALE, NODE_SPACING,
-};
+use world::events::drainage::{is_pit, DrainageEvent, DrainageIndex, Kind, Terminus, DRAINAGE_CELL_SCALE};
+use world::lattice::{node_site, NODE_SPACING};
 use world::events::motion::MotionEvent;
 use world::events::lithology::LithologyEvent;
 use world::events::thickening::ThickeningEvent;
@@ -347,8 +346,7 @@ fn base_level_is_the_first_pit_downstream_or_the_sea() {
             if cur != k && routing.cut[cur] > 0.0 {
                 break routing.elevation[cur] - routing.cut[cur];
             }
-            let pit = routing.kind[cur] == Kind::Basin && routing.down[cur].map_or(true, |d| routing.kind[d] != Kind::Basin);
-            if pit {
+            if is_pit(&routing.kind, &routing.down, cur) {
                 break routing.elevation[cur] - routing.cut[cur];
             }
             match routing.down[cur] {

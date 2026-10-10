@@ -173,21 +173,8 @@ pub fn handle_scroll(
 
     // Check if any hovered entity is the panel or a descendant of it
     let hovered_entities = hover_map.get(&PointerId::Mouse);
-    let is_over_panel = hovered_entities.map_or(false, |map| {
-        map.keys().any(|&entity| {
-            let mut current = entity;
-            if current == panel_entity {
-                return true;
-            }
-            while let Ok(child_of) = parent_query.get(current) {
-                let parent = child_of.parent();
-                if parent == panel_entity {
-                    return true;
-                }
-                current = parent;
-            }
-            false
-        })
+    let is_over_panel = hovered_entities.is_some_and(|map| {
+        map.keys().any(|&entity| entity == panel_entity || parent_query.iter_ancestors(entity).any(|a| a == panel_entity))
     });
 
     if !is_over_panel {

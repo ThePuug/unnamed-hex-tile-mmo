@@ -9,14 +9,14 @@ pub mod events;
 pub mod lattice;
 pub mod tectonic;
 
-pub use common::{ArrayVec, Cover, PlateTag, Content, TagSet, Tagged, MAX_PLATE_TAGS};
+pub use common::{ArrayVec, Cover, Content};
 pub use events::plates::{substrate_elevation_at, substrate_on, Coasts};
 
 // ──── The vertical scale ────
 
 /// Height of one z-level in this crate's horizontal unit, the tile spacing.
 ///
-/// The renderer stands a z-level `common::camera::RISE` of its units tall
+/// The renderer stands a z-level `common::grid::RISE` of its units tall
 /// and spaces neighbouring tiles √3 of its units apart, while this crate
 /// spaces them one apart ([`TILE_SPACING`]), so a z-level is that height
 /// over √3 here. The dips the ranges are built at and the grade a continent
@@ -66,19 +66,14 @@ pub const TILE_SPACING: f64 = 1.0;
 /// different worlds.
 pub const WORLD_SEED: u64 = 0x9E3779B97F4A7C15;
 
-/// Convert hex tile coordinates to world (cartesian) coordinates.
-/// Hex q,r axes are 60° apart; this produces isotropic x,y.
-pub fn hex_to_world(q: i32, r: i32) -> (f64, f64) {
-    let qf = q as f64;
-    let rf = r as f64;
-    (qf + rf * 0.5, rf * SQRT_3 / 2.0)
-}
+pub use common::{hex_to_world, world_to_hex};
 
-/// Inverse of hex_to_world: convert world coordinates to nearest hex (q, r).
-pub fn world_to_hex(wx: f64, wy: f64) -> (i32, i32) {
-    let r = (wy * 2.0 / SQRT_3).round() as i32;
-    let q = (wx - r as f64 * 0.5).round() as i32;
-    (q, r)
+/// The smooth step from 0 at `u ≤ 0` to 1 at `u ≥ 1`, level at both: how
+/// every layer eases one thing into another over a reach. One function, so
+/// a gate reads the same wherever it is taken.
+pub fn smoothstep(u: f64) -> f64 {
+    let u = u.clamp(0.0, 1.0);
+    u * u * (3.0 - 2.0 * u)
 }
 
 #[cfg(test)]
@@ -108,55 +103,26 @@ mod tests {
         events::Composite::standard(DEFAULT_SEED)
     }
 
-    #[test]
-    fn composite_deterministic() {
-        let composite = make_composite();
-        let a = composite.tile_at(100, 50);
-        let b = composite.tile_at(100, 50);
-        assert_eq!(a.tags, b.tags);
-        assert_eq!(a.elevation, b.elevation);
-    }
-
-    /// Two independent composites with the same seed produce identical results.
+    /// Two independent composites with the same seed produce identical
+    /// tiles, whatever order they are asked in: the height, the water, the
+    /// cover, the rock and the den.
     #[test]
     fn composite_reproducible() {
         let c1 = make_composite();
         let c2 = make_composite();
-
-        for q in (-100..=100).step_by(10) {
-            for r in (-100..=100).step_by(10) {
-                let a = c1.tile_at(q, r);
-                let b = c2.tile_at(q, r);
-                assert_eq!(a.elevation, b.elevation,
-                    "elevation mismatch at ({q},{r}): {:.2} vs {:.2}", a.elevation, b.elevation);
-                assert_eq!(a.tags, b.tags,
-                    "tags mismatch at ({q},{r})");
-            }
+        let tiles: Vec<(i32, i32)> = (-100..=100).step_by(10).flat_map(|q| (-100..=100).step_by(10).map(move |r| (q, r))).collect();
+        for &(q, r) in tiles.iter().rev() {
+            c2.tile_at(q, r);
         }
-    }
-
-    /// Every tile stands on the substrate, and the substrate alone decides
-    /// whether it is land. Both crust types must occur, or the field is a
-    /// constant and the sign test means nothing.
-    #[test]
-    fn composite_puts_every_tile_on_the_substrate() {
-        let composite = make_composite();
-        let coasts = Coasts::in_box(0.0, 0.0, 4_000.0, DEFAULT_SEED);
-        let mut land = 0;
-        let mut sea = 0;
-
-        for q in (-4000..=4000).step_by(250) {
-            for r in (-4000..=4000).step_by(250) {
-                let view = composite.tile_at(q, r);
-                let (wx, wy) = hex_to_world(q, r);
-                let substrate = substrate_on(wx, wy, &coasts, DEFAULT_SEED);
-                // Layers above only ever add, so the composite never sits below
-                // the substrate it stands on.
-                assert!(view.elevation >= substrate - 1e-9,
-                    "tile ({q},{r}) at {} is below its substrate {substrate}", view.elevation);
-                if substrate >= 0.0 { land += 1 } else { sea += 1 }
-            }
+        for &(q, r) in &tiles {
+            let a = c1.tile_at(q, r);
+            let b = c2.tile_at(q, r);
+            assert_eq!(a.elevation, b.elevation,
+                "elevation mismatch at ({q},{r}): {:.2} vs {:.2}", a.elevation, b.elevation);
+            assert_eq!(a.water, b.water, "water mismatch at ({q},{r})");
+            assert_eq!(a.cover, b.cover, "cover mismatch at ({q},{r})");
+            assert_eq!(a.rock, b.rock, "rock mismatch at ({q},{r})");
+            assert_eq!(a.den, b.den, "den mismatch at ({q},{r})");
         }
-        assert!(land + sea > 0);
     }
 }

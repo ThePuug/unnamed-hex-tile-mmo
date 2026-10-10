@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use crate::components::*;
 use common_bevy::{
-    components::{ displacing::Displacing, heading::Heading, position::VisualPosition, * },
+    components::{ heading::Heading, position::VisualPosition, * },
     message::{ AbilityType, Do, Event },
     resources::map::Map,
     systems::movement::{ fall_time, standing_y },

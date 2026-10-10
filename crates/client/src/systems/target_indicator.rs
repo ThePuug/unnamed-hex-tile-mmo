@@ -1,21 +1,7 @@
-//! Target Indicator System
-
-//! Shows visual indicators on entities that will be targeted by abilities.
-//! This is THE MOST CRITICAL system for player feedback.
-
-//! # Design Requirements (from player feedback)
-
-//! - Updates EVERY FRAME (zero lag, instant feedback)
-//! - Position matches target exactly
-//! - No flickering or ghost indicators
-//! - Clear visual distinction (red = hostile, green = ally)
-
-//! # How it works
-
-//! 1. Read hostile/ally targets from Target and AllyTarget components
-//! 2. Target components are updated every frame by targeting system
-//! 3. Update indicator position to match target's location
-//! 4. Show/hide indicator based on target availability
+//! The rings under the viewed actor's targets: red under the hostile its
+//! `Target` names, green under the ally its `AllyTarget` names, each moved
+//! onto its tile every frame and hidden while there is none. Unbuilt: a
+//! tier badge on the ring.
 
 use bevy::prelude::*;
 use bevy_camera::primitives::Aabb;
@@ -51,7 +37,7 @@ pub fn setup(
     commands.spawn((
         Mesh3d(indicator_mesh.clone()),
         MeshMaterial3d(hostile_material),
-        Transform::from_xyz(0.0, -1000.0, 0.0), // Start hidden below world
+        Transform::default(),
         Visibility::Hidden,
         Aabb::default(),
         NotShadowCaster,
@@ -59,10 +45,6 @@ pub fn setup(
             indicator_type: IndicatorType::Hostile,
         },
     ));
-
-    // TODO: Spawn tier badge as child of hostile indicator
-    // Tier badge requires proper 3D text setup with Bevy 0.16 API
-    // For now, tier lock functionality works without visual badge (tested in Phase 1)
 
     // Green material for ally targets
     let ally_material = materials.add(StandardMaterial {
@@ -77,7 +59,7 @@ pub fn setup(
     commands.spawn((
         Mesh3d(indicator_mesh),
         MeshMaterial3d(ally_material),
-        Transform::from_xyz(0.0, -1000.0, 0.0), // Start hidden below world
+        Transform::default(),
         Visibility::Hidden,
         Aabb::default(),
         NotShadowCaster,
@@ -85,15 +67,9 @@ pub fn setup(
             indicator_type: IndicatorType::Ally,
         },
     ));
-
-    // TODO: Spawn tier badge as child of ally indicator
-    // Tier badge requires proper 3D text setup with Bevy 0.16 API
-    // For now, tier lock functionality works without visual badge (tested in Phase 1)
 }
 
-/// Update target indicator position every frame
-
-/// This runs in Update schedule for instant feedback (60fps)
+/// Moves each ring onto its target's tile, or hides it, every frame.
 pub fn update(
     mut indicator_query: Query<(&mut Mesh3d, &mut Transform, &mut Visibility, &mut Aabb, &TargetIndicator)>,
     local_player_query: Query<(&common_bevy::components::target::Target, Option<&common_bevy::components::ally_target::AllyTarget>, &common_bevy::components::resources::Health), With<crate::components::Viewed>>,
@@ -116,179 +92,62 @@ pub fn update(
         return;
     }
 
-    // Read hostile target from Target component (updated every frame by update_targets)
+    // The current target, never the sticky `last_target`: a ring shows
+    // what a press would strike now
     let hostile_target = player_target.entity;
-
-    // Read ally target from AllyTarget component (updated every frame by update_ally_targets)
-    // Use entity (current) not last_target (sticky) for target indicators
     let ally_target = player_ally_target.and_then(|ally| ally.entity);
 
-    // Update both hostile and ally indicators
     for (mut mesh_handle, mut transform, mut visibility, mut aabb, indicator) in &mut indicator_query {
-        if matches!(indicator.indicator_type, IndicatorType::Hostile) {
-            if let Some(target_ent) = hostile_target {
-                // Get target's location
-                if let Ok((_, target_loc)) = entity_query.get(target_ent) {
-                    // Find the actual terrain tile at target location (handles elevation)
-                    if let Some((actual_tile, _)) = map.get_by_qr(target_loc.q, target_loc.r) {
-                        // Get the vertices for this tile (respecting slope toggle)
-                        let sloped_verts = map.vertices_with_slopes(actual_tile, true);
+        let wanted = match indicator.indicator_type {
+            IndicatorType::Hostile => hostile_target,
+            IndicatorType::Ally => ally_target,
+        };
+        // No target, a target without a place, or a place with no terrain
+        // under it: the ring hides
+        let tile = wanted
+            .and_then(|ent| entity_query.get(ent).ok())
+            .and_then(|(_, loc)| map.get_by_qr(loc.q, loc.r))
+            .map(|(tile, _)| tile);
+        let Some(tile) = tile else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
 
-                        // Create a filled hex mesh matching the sloped terrain
-                        let mut positions = Vec::new();
-                        let mut normals = Vec::new();
-                        let mut indices = Vec::new();
+        // A filled hex on the sloped terrain, raised 0.05 above it: the 6
+        // perimeter vertices, the centre, and a fan of triangles from it
+        let sloped_verts = map.vertices_with_slopes(tile);
+        let mut min = Vec3::splat(f32::MAX);
+        let mut max = Vec3::splat(f32::MIN);
+        let positions: Vec<[f32; 3]> = sloped_verts[..7]
+            .iter()
+            .map(|v| {
+                let pos = Vec3::new(v.x, v.y + 0.05, v.z);
+                min = min.min(pos);
+                max = max.max(pos);
+                [pos.x, pos.y, pos.z]
+            })
+            .collect();
+        let normals = vec![[0.0, 1.0, 0.0]; 7];
+        let indices: Vec<u32> = (0..6u32).flat_map(|i| [6, i, (i + 1) % 6]).collect();
 
-                        // Track min/max for AABB
-                        let mut min = Vec3::splat(f32::MAX);
-                        let mut max = Vec3::splat(f32::MIN);
+        let mut new_mesh = Mesh::new(
+            bevy::render::render_resource::PrimitiveTopology::TriangleList,
+            bevy_asset::RenderAssetUsages::default()
+        );
+        new_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        new_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+        new_mesh.insert_indices(bevy_mesh::Indices::U32(indices));
+        mesh_handle.0 = meshes.add(new_mesh);
 
-                        // Add the 6 perimeter vertices + center, slightly above terrain
-                        for i in 0..6 {
-                            let v = sloped_verts[i];
-                            let pos = Vec3::new(v.x, v.y + 0.05, v.z); // Raise 0.05 above terrain
-                            positions.push([pos.x, pos.y, pos.z]);
-                            min = min.min(pos);
-                            max = max.max(pos);
-                        }
-                        // Center vertex
-                        let center = sloped_verts[6];
-                        let center_pos = Vec3::new(center.x, center.y + 0.05, center.z);
-                        positions.push([center_pos.x, center_pos.y, center_pos.z]);
-                        min = min.min(center_pos);
-                        max = max.max(center_pos);
+        // Bounds so it is never culled
+        *aabb = Aabb::from_min_max(min, max);
 
-                        // Add normals (all pointing up)
-                        for _ in 0..7 {
-                            normals.push([0.0, 1.0, 0.0]);
-                        }
-
-                        // Create triangles from center to each edge (fan pattern)
-                        for i in 0..6 {
-                            let next = (i + 1) % 6;
-                            indices.extend_from_slice(&[
-                                6, i as u32, next as u32,  // Center, current vertex, next vertex
-                            ]);
-                        }
-
-                        // Create new mesh
-                        let mut new_mesh = Mesh::new(
-                            bevy::render::render_resource::PrimitiveTopology::TriangleList,
-                            bevy_asset::RenderAssetUsages::default()
-                        );
-                        new_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-                        new_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-                        new_mesh.insert_indices(bevy_mesh::Indices::U32(indices));
-
-                        // Replace the mesh
-                        mesh_handle.0 = meshes.add(new_mesh);
-
-                        // Update AABB to prevent culling
-                        *aabb = Aabb::from_min_max(min, max);
-
-                        // The vertices are world coordinates: the transform
-                        // takes the render origin off them.
-                        transform.translation = -origin.world_vec();
-                        transform.rotation = Quat::IDENTITY;
-
-                        *visibility = Visibility::Visible;
-                    } else {
-                        // Can't find terrain at target location, hide indicator
-                        *visibility = Visibility::Hidden;
-                    }
-                } else {
-                    // Target entity doesn't have location, hide indicator
-                    *visibility = Visibility::Hidden;
-                }
-            } else {
-                // No target, hide indicator
-                *visibility = Visibility::Hidden;
-            }
-        } else if matches!(indicator.indicator_type, IndicatorType::Ally) {
-            if let Some(ally_ent) = ally_target {
-                // Get ally's location
-                if let Ok((_, ally_loc)) = entity_query.get(ally_ent) {
-                    // Find the actual terrain tile at ally location (handles elevation)
-                    if let Some((actual_tile, _)) = map.get_by_qr(ally_loc.q, ally_loc.r) {
-                        // Get the vertices for this tile (respecting slope toggle)
-                        let sloped_verts = map.vertices_with_slopes(actual_tile, true);
-
-                        // Create a filled hex mesh matching the sloped terrain
-                        let mut positions = Vec::new();
-                        let mut normals = Vec::new();
-                        let mut indices = Vec::new();
-
-                        // Track min/max for AABB
-                        let mut min = Vec3::splat(f32::MAX);
-                        let mut max = Vec3::splat(f32::MIN);
-
-                        // Add the 6 perimeter vertices + center, slightly above terrain
-                        for i in 0..6 {
-                            let v = sloped_verts[i];
-                            let pos = Vec3::new(v.x, v.y + 0.05, v.z); // Raise 0.05 above terrain
-                            positions.push([pos.x, pos.y, pos.z]);
-                            min = min.min(pos);
-                            max = max.max(pos);
-                        }
-                        // Center vertex
-                        let center = sloped_verts[6];
-                        let center_pos = Vec3::new(center.x, center.y + 0.05, center.z);
-                        positions.push([center_pos.x, center_pos.y, center_pos.z]);
-                        min = min.min(center_pos);
-                        max = max.max(center_pos);
-
-                        // Add normals (all pointing up)
-                        for _ in 0..7 {
-                            normals.push([0.0, 1.0, 0.0]);
-                        }
-
-                        // Create triangles from center to each edge (fan pattern)
-                        for i in 0..6 {
-                            let next = (i + 1) % 6;
-                            indices.extend_from_slice(&[
-                                6, i as u32, next as u32,  // Center, current vertex, next vertex
-                            ]);
-                        }
-
-                        // Create new mesh
-                        let mut new_mesh = Mesh::new(
-                            bevy::render::render_resource::PrimitiveTopology::TriangleList,
-                            bevy_asset::RenderAssetUsages::default()
-                        );
-                        new_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-                        new_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-                        new_mesh.insert_indices(bevy_mesh::Indices::U32(indices));
-
-                        // Replace the mesh
-                        mesh_handle.0 = meshes.add(new_mesh);
-
-                        // Update AABB to prevent culling
-                        *aabb = Aabb::from_min_max(min, max);
-
-                        // The vertices are world coordinates: the transform
-                        // takes the render origin off them.
-                        transform.translation = -origin.world_vec();
-                        transform.rotation = Quat::IDENTITY;
-
-                        *visibility = Visibility::Visible;
-                    } else {
-                        // Can't find terrain at ally location, hide indicator
-                        *visibility = Visibility::Hidden;
-                    }
-                } else {
-                    // Ally entity doesn't have location, hide indicator
-                    *visibility = Visibility::Hidden;
-                }
-            } else {
-                // No ally target, hide indicator
-                *visibility = Visibility::Hidden;
-            }
-        }
+        // The vertices are world coordinates: the transform takes the
+        // render origin off them.
+        transform.translation = -origin.world_vec();
+        transform.rotation = Quat::IDENTITY;
+        *visibility = Visibility::Visible;
     }
-
-    // TODO: Update tier badges (Tier lock UI feedback)
-    // Tier badge UI deferred - requires proper 3D text component setup
-    // Tier lock functionality is working (tested in Phase 1), just missing visual indicator
 }
 
 /// Indicator types for different targeting modes
@@ -296,7 +155,6 @@ pub fn update(
 pub enum IndicatorType {
     /// Red indicator for hostile targets
     Hostile,
-    /// Green indicator for ally targets (future)
-    #[allow(dead_code)]
+    /// Green indicator for ally targets
     Ally,
 }

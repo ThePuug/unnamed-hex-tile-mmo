@@ -260,6 +260,28 @@ pub struct Cover(u32);
 /// The first rock bit.
 const ROCK_BIT: u32 = CONTENT_BITS * TILE_SLOTS as u32;
 
+impl Rock {
+    /// The two bits a cover and an outcrop carry the rock as.
+    fn to_bits(self) -> u32 {
+        match self {
+            Rock::Shale => 0,
+            Rock::Sandstone => 1,
+            Rock::Limestone => 2,
+            Rock::Basement => 3,
+        }
+    }
+
+    /// The rock two bits name; bits past them are ignored.
+    fn from_bits(bits: u32) -> Rock {
+        match bits & 3 {
+            0 => Rock::Shale,
+            1 => Rock::Sandstone,
+            2 => Rock::Limestone,
+            _ => Rock::Basement,
+        }
+    }
+}
+
 impl Cover {
     pub const NONE: Cover = Cover(0);
 
@@ -328,23 +350,12 @@ impl Cover {
 
     /// The rock the boulders are.
     pub fn rock(self) -> Rock {
-        match self.0 >> ROCK_BIT & 3 {
-            0 => Rock::Shale,
-            1 => Rock::Sandstone,
-            2 => Rock::Limestone,
-            _ => Rock::Basement,
-        }
+        Rock::from_bits(self.0 >> ROCK_BIT)
     }
 
     /// This cover with its boulders of `rock`.
     pub fn with_rock(self, rock: Rock) -> Cover {
-        let bits = match rock {
-            Rock::Shale => 0,
-            Rock::Sandstone => 1,
-            Rock::Limestone => 2,
-            Rock::Basement => 3,
-        };
-        Cover((self.0 & !(3 << ROCK_BIT)) | bits << ROCK_BIT)
+        Cover((self.0 & !(3 << ROCK_BIT)) | rock.to_bits() << ROCK_BIT)
     }
 
     /// Whether `growth` may stand at site `k`: every slot it would hold is
@@ -474,10 +485,7 @@ impl Outcrop {
         debug_assert!(covers.len() <= crate::summary::SAMPLES);
         let count = covers.iter().map(|c| c.boulders().count() as u8).sum::<u8>();
         match covers.iter().find(|c| c.boulders().next().is_some()) {
-            Some(first) => {
-                let rock = (Cover::NONE.with_rock(first.rock()).bits() >> ROCK_BIT) as u8;
-                Outcrop(count | rock << 6)
-            }
+            Some(first) => Outcrop(count | (first.rock().to_bits() as u8) << 6),
             None => Outcrop::NONE,
         }
     }
@@ -497,7 +505,7 @@ impl Outcrop {
 
     /// The rock the boulders are.
     pub fn rock(self) -> Rock {
-        Cover::from_bits(((self.0 >> 6) as u32) << ROCK_BIT).rock()
+        Rock::from_bits((self.0 >> 6) as u32)
     }
 
     pub fn is_empty(self) -> bool {

@@ -12,15 +12,6 @@ pub struct Health {
     pub max: f32,
 }
 
-impl Default for Health {
-    fn default() -> Self {
-        Self {
-            state: 100.0,
-            max: 100.0,
-        }
-    }
-}
-
 /// What a pool of `max` holding `state` holds once it is resized to
 /// `new_max`: as full as it was, so a change of attributes neither fills
 /// nor drains it.
@@ -107,17 +98,6 @@ impl Mana {
     /// The pool, full, regenerating from `now`
     pub fn full(now: Duration) -> Self {
         Self { state: Self::MAX, max: Self::MAX, regen_rate: Self::REGEN, last_update: now }
-    }
-}
-
-impl Default for Mana {
-    fn default() -> Self {
-        Self {
-            state: 100.0,
-            max: 100.0,
-            regen_rate: 8.0,
-            last_update: Duration::ZERO,
-        }
     }
 }
 

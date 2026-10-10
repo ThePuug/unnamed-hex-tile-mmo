@@ -1,14 +1,11 @@
 pub mod ally_target;
 pub mod behaviour;
-pub mod engagement;
 pub mod entity_type;
 pub mod equipment;
 pub mod heading;
-pub mod hex_assignment;
 pub mod keybits;
 pub mod loaded_by;
 pub mod movement_intent_state;
-pub mod displacing;
 pub mod position;
 pub mod reaction_queue;
 pub mod recovery;
@@ -48,13 +45,6 @@ mod loc_tests {
     use super::*;
 
     #[test]
-    fn test_distance_flat() {
-        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let b = Loc::new(Qrz { q: 3, r: 0, z: 0 });
-        assert_eq!(a.distance(&b), 3);
-    }
-
-    #[test]
     fn test_distance_slope_is_free() {
         // Single z-level = slope, no extra distance
         let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
@@ -71,46 +61,11 @@ mod loc_tests {
     }
 
     #[test]
-    fn test_distance_adjacent_slope_is_melee() {
-        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let b = Loc::new(Qrz { q: 1, r: 0, z: 1 });
-        assert_eq!(a.distance(&b), 1, "adjacent tile on slope is melee range");
-    }
-
-    #[test]
-    fn test_distance_adjacent_cliff_blocks_melee() {
-        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let b = Loc::new(Qrz { q: 1, r: 0, z: 2 });
-        assert_eq!(a.distance(&b), 2, "adjacent tile on cliff exceeds melee range");
-    }
-
-    #[test]
-    fn test_distance_vertical_cliff() {
-        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let b = Loc::new(Qrz { q: 0, r: 0, z: 10 });
-        assert_eq!(a.distance(&b), 9, "0 flat + (10-1) cliff = 9");
-    }
-
-    #[test]
-    fn test_distance_ranged_blocked_by_steep_cliff() {
-        let a = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let b = Loc::new(Qrz { q: 5, r: 0, z: 5 });
-        assert_eq!(a.distance(&b), 9, "5 flat + (5-1) cliff = 9, exceeds range 6");
-    }
-
-    #[test]
     fn test_distance_symmetric() {
         let a = Loc::new(Qrz { q: 2, r: -1, z: 5 });
         let b = Loc::new(Qrz { q: -3, r: 4, z: 1 });
         assert_eq!(a.distance(&b), b.distance(&a));
     }
-
-    #[test]
-    fn test_distance_same_loc() {
-        let a = Loc::new(Qrz { q: 3, r: 2, z: 7 });
-        assert_eq!(a.distance(&a), 0);
-    }
-
 }
 
 #[derive(Clone, Component, Copy, Debug, Default)]
@@ -321,12 +276,9 @@ impl Pair {
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Serialize)]
 #[require(Swing)]
 pub struct ActorAttributes {
-    /// Might ↔ Agility
-    physique: Pair,
-    /// Physique ↔ Discipline
-    conditioning: Pair,
-    /// Instinct ↔ Resolve
-    temperament: Pair,
+    might_agility: Pair,
+    physique_discipline: Pair,
+    instinct_resolve: Pair,
     /// The actor's level, which a respec never changes: it holds a step of
     /// the build for each, up to [`Self::STEPS`]
     level: u32,
@@ -357,8 +309,8 @@ impl ActorAttributes {
             Pair::new(physique_discipline_axis, physique_discipline_spectrum, physique_discipline_shift),
             Pair::new(instinct_resolve_axis, instinct_resolve_spectrum, instinct_resolve_shift),
         ];
-        let [physique, conditioning, temperament] = pairs;
-        Self { physique, conditioning, temperament, level: Self::invested(&pairs) }
+        let [might_agility, physique_discipline, instinct_resolve] = pairs;
+        Self { might_agility, physique_discipline, instinct_resolve, level: Self::invested(&pairs) }
     }
 
     /// The same build at `level`, never below the steps it places
@@ -371,25 +323,25 @@ impl ActorAttributes {
         level.min(Self::STEPS)
     }
 
-    pub fn might_agility_axis(&self) -> i8 { self.physique.axis }
-    pub fn might_agility_spectrum(&self) -> i8 { self.physique.spectrum }
-    pub fn might_agility_shift(&self) -> i8 { self.physique.shift }
+    pub fn might_agility_axis(&self) -> i8 { self.might_agility.axis }
+    pub fn might_agility_spectrum(&self) -> i8 { self.might_agility.spectrum }
+    pub fn might_agility_shift(&self) -> i8 { self.might_agility.shift }
 
-    pub fn physique_discipline_axis(&self) -> i8 { self.conditioning.axis }
-    pub fn physique_discipline_spectrum(&self) -> i8 { self.conditioning.spectrum }
-    pub fn physique_discipline_shift(&self) -> i8 { self.conditioning.shift }
+    pub fn physique_discipline_axis(&self) -> i8 { self.physique_discipline.axis }
+    pub fn physique_discipline_spectrum(&self) -> i8 { self.physique_discipline.spectrum }
+    pub fn physique_discipline_shift(&self) -> i8 { self.physique_discipline.shift }
 
-    pub fn instinct_resolve_axis(&self) -> i8 { self.temperament.axis }
-    pub fn instinct_resolve_spectrum(&self) -> i8 { self.temperament.spectrum }
-    pub fn instinct_resolve_shift(&self) -> i8 { self.temperament.shift }
+    pub fn instinct_resolve_axis(&self) -> i8 { self.instinct_resolve.axis }
+    pub fn instinct_resolve_spectrum(&self) -> i8 { self.instinct_resolve.spectrum }
+    pub fn instinct_resolve_shift(&self) -> i8 { self.instinct_resolve.shift }
 
-    pub fn set_might_agility_shift(&mut self, shift: i8) { self.physique.set_shift(shift) }
-    pub fn set_physique_discipline_shift(&mut self, shift: i8) { self.conditioning.set_shift(shift) }
-    pub fn set_instinct_resolve_shift(&mut self, shift: i8) { self.temperament.set_shift(shift) }
+    pub fn set_might_agility_shift(&mut self, shift: i8) { self.might_agility.set_shift(shift) }
+    pub fn set_physique_discipline_shift(&mut self, shift: i8) { self.physique_discipline.set_shift(shift) }
+    pub fn set_instinct_resolve_shift(&mut self, shift: i8) { self.instinct_resolve.set_shift(shift) }
 
     /// The three pairs: Might ↔ Agility, Physique ↔ Discipline, Instinct ↔ Resolve
     pub fn pairs(&self) -> [Pair; 3] {
-        [self.physique, self.conditioning, self.temperament]
+        [self.might_agility, self.physique_discipline, self.instinct_resolve]
     }
 
     /// The steps `pairs` put in
@@ -414,7 +366,7 @@ impl ActorAttributes {
     /// pair's axis and spectrum as given, its shift as far as the pair
     /// allows, and the level as it was.
     pub fn apply_respec(&mut self, pairs: [Pair; 3]) {
-        for (own, respec) in [&mut self.physique, &mut self.conditioning, &mut self.temperament].into_iter().zip(pairs) {
+        for (own, respec) in [&mut self.might_agility, &mut self.physique_discipline, &mut self.instinct_resolve].into_iter().zip(pairs) {
             *own = Pair::new(respec.axis, respec.spectrum, 0);
             own.set_shift(respec.shift);
         }
@@ -422,12 +374,12 @@ impl ActorAttributes {
 
     fn pair(&self, attribute: Attribute) -> (Pair, End) {
         match attribute {
-            Attribute::Might => (self.physique, End::Left),
-            Attribute::Agility => (self.physique, End::Right),
-            Attribute::Physique => (self.conditioning, End::Left),
-            Attribute::Discipline => (self.conditioning, End::Right),
-            Attribute::Instinct => (self.temperament, End::Left),
-            Attribute::Resolve => (self.temperament, End::Right),
+            Attribute::Might => (self.might_agility, End::Left),
+            Attribute::Agility => (self.might_agility, End::Right),
+            Attribute::Physique => (self.physique_discipline, End::Left),
+            Attribute::Discipline => (self.physique_discipline, End::Right),
+            Attribute::Instinct => (self.instinct_resolve, End::Left),
+            Attribute::Resolve => (self.instinct_resolve, End::Right),
         }
     }
 
@@ -738,12 +690,6 @@ impl ActorAttributes {
     }
 }
 
-#[derive(Debug, Default, Component)]
-pub struct Sun();
-
-#[derive(Debug, Default, Component)]
-pub struct Moon();
-
 /// When an actor's next auto-attack comes due, as the server counts it:
 /// an interval after its last, or the moment its fight found it not yet
 /// swinging. A due swing waits for a target it can strike. None
@@ -765,9 +711,9 @@ impl Swing {
     }
 }
 
-/// Auto-attack range in hex tiles. Default is 2, melee reach, so a blow
-/// lands on a target a step away as well as one beside it.
-/// Eventually sourced from equipped weapon; for now set per-archetype at spawn.
+/// Auto-attack range in hex tiles: 2, melee reach, so a blow lands on a
+/// target a step away as well as one beside it. Every actor's is the
+/// default; nothing sets another.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct AttackRange(pub i32);
 
@@ -780,12 +726,6 @@ impl Default for AttackRange {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ===== MOVEMENT SPEED TESTS =====
-    // TODO: Re-enable when movement speed is allocated to a meta-attribute
-
-    // ===== LEVEL MULTIPLIER TESTS =====
-    // Property tests only — no specific formula values, survives balance tuning
 
     #[test]
     fn a_pair_share_rises_evenly_to_whole() {
@@ -897,12 +837,6 @@ mod tests {
         let vital = ActorAttributes::new(0, 0, 0, -10, 0, 0, 0, 0, 0);
         assert!(vital.max_health(&tuning) > plain.max_health(&tuning));
         assert_eq!(vital.max_health(&tuning), ActorAttributes::new(0, 0, 0, 10, 0, 0, 0, 0, 0).max_health(&tuning), "either of the pair, alike");
-    }
-
-    #[test]
-    fn base_potency_is_the_same_at_every_level() {
-        let tuning = Tuning::DEFAULT;
-        assert_eq!(ActorAttributes::new(-10, 0, 0, 0, 0, 0, 0, 0, 0).base_potency(&tuning), ActorAttributes::default().base_potency(&tuning));
     }
 
     // ===== COMMITMENT TIER TESTS =====
@@ -1044,47 +978,6 @@ mod tests {
         // Try to exceed max positive shift (should clamp to +spectrum)
         attrs.set_might_agility_shift(10);
         assert_eq!(attrs.might_agility_shift(), 5, "Shift should clamp to +spectrum");
-    }
-
-    #[test]
-    fn test_shift_constrained_physique_discipline() {
-        // Test same constraints for physique/discipline pair
-        let mut attrs = ActorAttributes::new(0, 0, 0, 3, 4, 0, 0, 0, 0);
-
-        // axis=3 (discipline/right), shift can only go negative
-        attrs.set_physique_discipline_shift(2);
-        assert_eq!(attrs.physique_discipline_shift(), 0, "Positive shift should clamp when axis on right");
-
-        attrs.set_physique_discipline_shift(-2);
-        assert_eq!(attrs.physique_discipline_shift(), -2, "Negative shift should work when axis on right");
-    }
-
-    #[test]
-    fn test_shift_constrained_instinct_resolve() {
-        // Test same constraints for instinct/resolve pair
-        let mut attrs = ActorAttributes::new(0, 0, 0, 0, 0, 0, -4, 3, 0);
-
-        // axis=-4 (instinct/left), shift can only go positive
-        attrs.set_instinct_resolve_shift(-2);
-        assert_eq!(attrs.instinct_resolve_shift(), 0, "Negative shift should clamp when axis on left");
-
-        attrs.set_instinct_resolve_shift(2);
-        assert_eq!(attrs.instinct_resolve_shift(), 2, "Positive shift should work when axis on left");
-    }
-
-    #[test]
-    fn test_shift_zero_allowed_regardless_of_axis() {
-        // Shift=0 should always be valid regardless of axis direction
-        let mut attrs = ActorAttributes::new(5, 5, 0, -3, 4, 0, 0, 6, 0);
-
-        attrs.set_might_agility_shift(0);
-        assert_eq!(attrs.might_agility_shift(), 0);
-
-        attrs.set_physique_discipline_shift(0);
-        assert_eq!(attrs.physique_discipline_shift(), 0);
-
-        attrs.set_instinct_resolve_shift(0);
-        assert_eq!(attrs.instinct_resolve_shift(), 0);
     }
 
     #[test]

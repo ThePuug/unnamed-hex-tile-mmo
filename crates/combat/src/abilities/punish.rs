@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use common_bevy::{components::ActorAttributes, message::AbilityType};
 
-use super::{Abilities, AbilityFailReason, Cast, WHOLE};
+use super::{Abilities, AbilityFailReason, Cast};
 use common_bevy::tuning::Tuning;
 
 /// Punish, the Ambusher's skill: a strike on a target within the caster's
@@ -11,7 +11,7 @@ pub fn strike(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, 
     let (target, _) = cast.struck()?;
     let stacks = abilities.statuses.get(target).map_or(0, |status| status.overcommits());
     let damage = cast.attrs.base_potency(&tuning) * share(&tuning, &cast.attrs, stacks);
-    abilities.strike(cast, target, damage, AbilityType::Punish, &WHOLE);
+    abilities.strike(cast, target, damage, AbilityType::Punish);
     Ok(Some(target))
 }
 

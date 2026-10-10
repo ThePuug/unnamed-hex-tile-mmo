@@ -13,15 +13,15 @@ use common_bevy::{
     components::{
         Loc,
         behaviour::Side,
-        engagement::{Engagement, EngagementMember},
-        hex_assignment::{AssignedHex, HexAssignment},
         resources::Health,
         target::Target,
+        AttackRange,
     },
     plugins::nntree::NNTree,
     resources::map::Map,
 };
-use crate::behaviour::chase::Chase;
+use crate::behaviour::chase::{self, Chase};
+use crate::engagement::{AssignedHex, Engagement, EngagementMember, HexAssignment};
 
 /// Steps between two entries of a ring `slots` long, the shorter way
 /// round: `min(|a - b|, slots - |a - b|)`.
@@ -81,8 +81,8 @@ pub fn calculate_assignments(
 pub fn assign_hexes(
     mut commands: Commands,
     mut engagement_query: Query<(&Engagement, &mut HexAssignment)>,
-    npc_query: Query<(Entity, &Loc, Option<&Chase>, Option<&Target>), With<EngagementMember>>,
-    player_query: Query<(Entity, &Loc), With<Side>>,
+    npc_query: Query<(Entity, &Loc, Has<Chase>, Option<&Target>, &AttackRange), With<EngagementMember>>,
+    sided: Query<(Entity, &Loc), With<Side>>,
     health_query: Query<&Health>,
     map: Res<Map>,
     nntree: Res<NNTree>,
@@ -94,8 +94,8 @@ pub fn assign_hexes(
             continue; // No NPC has a target yet
         };
 
-        let Ok((_, player_loc)) = player_query.get(target_player) else {
-            continue; // Target isn't an actor or doesn't exist
+        let Ok((_, player_loc)) = sided.get(target_player) else {
+            continue; // Target isn't a sided actor or doesn't exist
         };
 
         let player_tile = **player_loc;
@@ -110,8 +110,8 @@ pub fn assign_hexes(
         }
         *hex_assign = assigning_for;
 
-        // Collect living melee NPCs, and the reach every one of them
-        // swings from
+        // Collect the living NPCs that chase, and the reach every one of
+        // them swings from
         let mut reach = u32::MAX;
         let alive_npcs: Vec<(Entity, Qrz)> = engagement.spawned_npcs.iter()
             .filter_map(|&npc_ent| {
@@ -119,11 +119,9 @@ pub fn assign_hexes(
                 let health = health_query.get(npc_ent).ok()?;
                 if health.current() <= 0.0 { return None; }
 
-                // Only melee NPCs take a hex: one that fights from range
-                // stands wherever its shots reach
-                let (_, loc, chase, _) = npc_query.get(npc_ent).ok()?;
-                let chase = chase.filter(|chase| chase.attack_range <= common_bevy::components::AttackRange::default().0)?;
-                reach = reach.min(chase.attack_range.max(1) as u32);
+                let (_, loc, chases, _, range) = npc_query.get(npc_ent).ok()?;
+                if !chases { return None; }
+                reach = reach.min(range.0.max(1) as u32);
                 Some((npc_ent, **loc))
             })
             .collect();
@@ -136,9 +134,7 @@ pub fn assign_hexes(
             ring.into_iter().enumerate()
                 .filter_map(|(i, hex)| {
                     let (floor, _) = map.get_by_qr(hex.q, hex.r)?;
-                    let entity_tile = floor + qrz::Qrz::Z;
-                    let occupant_count = nntree.locate_all_at_point(&Loc::new(entity_tile)).count();
-                    (occupant_count < 7).then_some((entity_tile, i))
+                    chase::uncrowded(&nntree, floor).then_some((floor + qrz::Qrz::Z, i))
                 })
                 .collect()
         };
@@ -156,10 +152,10 @@ pub fn assign_hexes(
 /// Find the player that this engagement's NPCs are targeting.
 fn find_engagement_target(
     engagement: &Engagement,
-    npc_query: &Query<(Entity, &Loc, Option<&Chase>, Option<&Target>), With<EngagementMember>>,
+    npc_query: &Query<(Entity, &Loc, Has<Chase>, Option<&Target>, &AttackRange), With<EngagementMember>>,
 ) -> Option<Entity> {
     for &npc_ent in &engagement.spawned_npcs {
-        if let Ok((_, _, _, Some(target))) = npc_query.get(npc_ent) {
+        if let Ok((_, _, _, Some(target), _)) = npc_query.get(npc_ent) {
             if let Some(target_ent) = target.entity {
                 return Some(target_ent);
             }
@@ -265,33 +261,32 @@ mod tests {
     /// An engagement of two melee NPCs either side of a target at the
     /// origin, on flat ground: the world, the target and the two NPCs.
     fn engaged() -> (App, Entity, [Entity; 2]) {
-        use common_bevy::{components::entity_type::EntityType, archetype::EnemyArchetype};
+        use common_bevy::components::entity_type::EntityType;
 
         let mut app = App::new();
         app.add_plugins(common_bevy::plugins::nntree::NNTreePlugin);
         let world = app.world_mut();
-        let mut tiles = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+        let tiles = Map::new(qrz::Map::new(1.0, 0.8));
         for q in -8..=8 {
             for r in -8..=8 {
                 tiles.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
             }
         }
-        world.insert_resource(Map::new(tiles));
+        world.insert_resource(tiles);
 
         let target = world.spawn((Loc::new(TARGET + Qrz::Z), Side::PLAYERS)).id();
         let engagement = world.spawn_empty().id();
-        let reach = common_bevy::components::AttackRange::default().0;
         let npcs = [5, -5].map(|q| {
             world.spawn((
                 Loc::new(Qrz { q, r: 0, z: 1 }),
-                Chase { acquisition_range: 20, leash_distance: 0, attack_range: reach },
+                Chase { acquisition_range: 20, leash_distance: 0 },
+                AttackRange::default(),
                 Target { entity: Some(target), last_target: None },
                 EngagementMember(engagement),
                 Health { state: 100.0, max: 100.0 },
             )).id()
         });
-        let mut members = Engagement::new(TARGET, 10, EnemyArchetype::Juggernaut, 2);
-        members.spawned_npcs = npcs.to_vec();
+        let members = Engagement { spawned_npcs: npcs.to_vec(), ..default() };
         world.entity_mut(engagement).insert((members, HexAssignment::default()));
         (app, target, npcs)
     }

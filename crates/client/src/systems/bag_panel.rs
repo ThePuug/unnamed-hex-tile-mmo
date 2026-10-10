@@ -274,7 +274,7 @@ pub fn update(
 }
 
 /// A cell's icon, and a stack's count on it, at `scale` of a cell.
-fn cell_contents(cell: &mut ChildSpawnerCommands, asset_server: &AssetServer, slot: Cell, scale: f32) {
+pub(crate) fn cell_contents(cell: &mut ChildSpawnerCommands, asset_server: &AssetServer, slot: Cell, scale: f32) {
     let (image, count) = match slot {
         Cell::Piece(item) => (icon(asset_server, item), None),
         Cell::Stack(stack) => (stack_icon(asset_server, stack.kind), Some(stack.count)),

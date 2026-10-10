@@ -13,11 +13,8 @@ dynamic = ["bevy/dynamic_linking"]
 [dependencies]
 common = { path = "../common" }
 bevy = "0.19"
-bevy_camera = "0.19"
-bevy_mesh = "0.19"
 dashmap = "6"
 lru = "0"
-rand = "0.9"
 rstar = "0"
 serde = { version = "1", features = ["derive"] }
 tinyvec = { version = "1", features = ["serde"] }

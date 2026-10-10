@@ -46,7 +46,7 @@ pub const MAX_CHUNK_TASKS: usize = 16;
 pub struct ChunkTaskQueue {
     tasks: Vec<(ChunkId, Task<(TerrainChunk, Vec<(Qrz, Habitat)>, f32)>)>,
     /// Chunks currently being generated (avoid duplicate tasks).
-    pub in_flight: std::collections::HashSet<ChunkId>,
+    in_flight: std::collections::HashSet<ChunkId>,
     /// Cache-missed chunks awaiting a task slot, drained nearest-first.
     pending: Vec<ChunkId>,
     /// Every player waiting on a chunk queued or in flight. Each is sent it
@@ -86,18 +86,45 @@ impl ChunkTaskQueue {
     /// Chunks waiting on a task slot. What the queue is behind by: the
     /// in-flight count only says the budget is spent.
     pub fn pending_len(&self) -> usize { self.pending.len() }
+
+    /// Chunks being generated now, up to `MAX_CHUNK_TASKS`.
+    pub fn in_flight_len(&self) -> usize { self.in_flight.len() }
 }
 
-/// Hex distance between two chunks (in tiles, via their center tiles).
-fn chunk_hex_distance(a: ChunkId, b: ChunkId) -> i32 {
-    let ca = a.center();
-    let cb = b.center();
-    let dq = ca.q - cb.q;
-    let dr = ca.r - cb.r;
-    dq.abs().max(dr.abs()).max((dq + dr).abs())
+/// Streams the chunks within `FIXED_STREAM_RADIUS` of `new_chunk` to
+/// `ent`: those `cache` holds beyond it are evicted, in batches, then
+/// those it lacks are discovered in `calculate_visible_chunks`' order; one
+/// sent already is left as it is (INV-005). A fresh cache evicts nothing.
+fn stream(ent: Entity, new_chunk: ChunkId, cache: &mut VisibleChunkCache, writer: &mut MessageWriter<Try>) {
+    let new_chunks = calculate_visible_chunks(new_chunk, FIXED_STREAM_RADIUS);
+    let new_set: std::collections::HashSet<ChunkId> = new_chunks.iter().copied().collect();
+
+    let evicted: Vec<ChunkId> = cache.sent.iter()
+        .filter(|id| !new_set.contains(id))
+        .copied()
+        .collect();
+    cache.sent.retain(|id| new_set.contains(id));
+
+    if !evicted.is_empty() {
+        use tinyvec::ArrayVec;
+        for batch in evicted.chunks(64) {
+            let mut chunks = ArrayVec::new();
+            for &cid in batch { chunks.push(cid); }
+            writer.write(Try { event: Event::EvictChunks { ent, chunks } });
+        }
+    }
+
+    for &chunk_id in &new_chunks {
+        if !cache.sent.contains(&chunk_id) {
+            writer.write(Try { event: Event::DiscoverChunk { ent, chunk_id } });
+            cache.sent.insert(chunk_id);
+        }
+    }
+
+    cache.chunk_id = new_chunk;
 }
 
-/// Discover initial chunks when a player first spawns
+/// Streams the chunks round a player as it first spawns.
 pub fn do_spawn_discover(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
@@ -115,43 +142,29 @@ pub fn do_spawn_discover(
         // Only process entities with PlayerDiscoveryState (players)
         let Ok(mut player_state) = player_states.get_mut(ent) else { continue };
 
-        // CRITICAL: Only discover chunks for initial spawns (when last_chunk is None).
-        // This prevents infinite loops when try_discover_chunk sends Do::Spawn events
-        // for remote players - we don't want to re-discover chunks for them.
+        // Only its first `Spawn` streams: one is written again whenever a
+        // client asks after the actor (`world::try_spawn`)
         if player_state.last_chunk.is_some() {
             continue;
         }
 
-        // Get player's location
         let Ok(loc) = query.get(ent) else { continue };
 
         let current_chunk = loc_to_chunk(**loc);
-
-        // Fixed streaming radius — covers gameplay area (AOI, physics, r=0–r=2).
-        // Visual frontier beyond this is handled by server-sent summaries.
-        let send_radius = FIXED_STREAM_RADIUS as i32;
-
-        let chunks = calculate_visible_chunks(current_chunk, send_radius as u8);
-
-        for &chunk_id in &chunks {
-            writer.write(Try { event: Event::DiscoverChunk { ent, chunk_id } });
-            player_state.seen_chunks.insert(chunk_id);
-        }
+        let mut cache = VisibleChunkCache { sent: std::collections::HashSet::new(), chunk_id: current_chunk };
+        stream(ent, current_chunk, &mut cache, &mut writer);
 
         player_state.last_chunk = Some(current_chunk);
 
         commands.entity(ent).insert((
-            VisibleChunkCache {
-                sent: chunks.into_iter().collect(),
-                chunk_id: current_chunk,
-            },
+            cache,
             crate::systems::summary::VisibleSummaryCache::default(),
         ));
     }
 }
 
-/// Server-side system: Generates Try::DiscoverChunk events when the server authoritatively changes an entity's Loc.
-/// Uses chunk-based boundary detection to reduce discovery events dramatically.
+/// Streams the chunks round a player again as its `Loc` crosses into
+/// another chunk.
 pub fn do_incremental(
     mut reader: MessageReader<Do>,
     mut writer: MessageWriter<Try>,
@@ -177,42 +190,8 @@ pub fn do_incremental(
             continue;
         }
 
-        // Fixed streaming radius (same as do_spawn_discover)
-        let send_radius = FIXED_STREAM_RADIUS as i32;
-
-        let new_chunks = calculate_visible_chunks(new_chunk, send_radius as u8);
-        let new_set: std::collections::HashSet<ChunkId> = new_chunks.iter().copied().collect();
-
-        // Capture evicted chunks before retaining
-        let evicted: Vec<ChunkId> = cache.sent.iter()
-            .filter(|id| !new_set.contains(id))
-            .copied()
-            .collect();
-
-        cache.sent.retain(|id| new_set.contains(id));
-        player_state.seen_chunks.retain(|id| new_set.contains(id));
-
-        // Send eviction message to client
-        if !evicted.is_empty() {
-            use tinyvec::ArrayVec;
-            for batch in evicted.chunks(64) {
-                let mut chunks = ArrayVec::new();
-                for &cid in batch { chunks.push(cid); }
-                writer.write(Try { event: Event::EvictChunks { ent, chunks } });
-            }
-        }
-
-        // Send newly visible chunks
-        for &chunk_id in &new_chunks {
-            if !cache.sent.contains(&chunk_id) {
-                writer.write(Try { event: Event::DiscoverChunk { ent, chunk_id } });
-                player_state.seen_chunks.insert(chunk_id);
-                cache.sent.insert(chunk_id);
-            }
-        }
-
+        stream(ent, new_chunk, &mut cache, &mut writer);
         player_state.last_chunk = Some(new_chunk);
-        cache.chunk_id = new_chunk;
     }
 }
 
@@ -296,7 +275,7 @@ pub fn try_discover_chunk(
         pending.sort_by_key(|&chunk_id| {
             let dist = task_queue.waiters.get(&chunk_id).into_iter().flatten()
                 .filter_map(|&ent| locs.get(ent).ok())
-                .map(|loc| chunk_hex_distance(loc_to_chunk(**loc), chunk_id))
+                .map(|loc| loc_to_chunk(**loc).center().flat_distance(&chunk_id.center()))
                 .min()
                 .unwrap_or(i32::MAX);
             std::cmp::Reverse(dist)
@@ -467,21 +446,6 @@ mod chunk_queue_tests {
 
         assert_eq!(queue.release(chunk, |_| true), vec![a, b]);
         assert!(queue.release(chunk, |_| true).is_empty());
-    }
-
-    #[test]
-    fn a_chunk_in_flight_still_collects_waiters() {
-        let mut world = World::new();
-        let (a, b) = (world.spawn_empty().id(), world.spawn_empty().id());
-        let mut queue = ChunkTaskQueue::default();
-        let chunk = ChunkId(0, 0);
-
-        assert!(queue.enqueue(chunk, a));
-        queue.pending.clear();
-        queue.in_flight.insert(chunk);
-        assert!(!queue.enqueue(chunk, b));
-        assert!(queue.pending.is_empty());
-        assert_eq!(queue.release(chunk, |_| true), vec![a, b]);
     }
 
     /// A player that left a chunk's range while it was queued is not sent

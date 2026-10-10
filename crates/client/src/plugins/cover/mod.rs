@@ -1,11 +1,11 @@
 //! The cover drawn: each tile's trees, bushes and stumps at its sites,
 //! and its boulders and piles in its slots, as instances of a kind's
-//! model, in
-//! batches that are children of the mesh region their tiles lie in, so
-//! they are evicted and re-based with the ground as the water is. A kind's
-//! GLB carries its variations as its meshes; each is merged once into one
-//! mesh coloured by its materials, and a region's instances of one
-//! variation are one draw from one instance buffer, built with the region.
+//! model. A mesh region says what it stands, as its [`draw::RegionCover`],
+//! in its own frame, and each stand — one entity of its own for each
+//! model — gathers every region's instances into one instance buffer
+//! (`draw`), so a region going or re-basing takes its instances with it
+//! and the stand stays. A kind's GLB carries its variations as its
+//! meshes; each is merged once into one mesh coloured by its materials.
 
 pub mod draw;
 
@@ -114,15 +114,10 @@ fn den_models() -> impl Iterator<Item = (Kind, String)> {
 /// The least a bush stands, as a share of its model.
 pub const BRUSH_SMALL: f32 = 0.6;
 
-/// How far from the camera a region's trees are drawn as models, in
-/// world units, and the further reach they are kept to once drawn, so a
 /// How far past the ring a region of tiles keeps its models: its own
 /// half-width and a margin, so a region astride the ring carries them
 /// and none flickers at its edge.
 const RING_MARGIN: f32 = 40.0;
-
-/// The six tiles around a tile, as coordinate offsets.
-const NEIGHBOURS: [(i32, i32); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
 
 /// The trees a tile stands, bushes aside.
 pub fn trees_on(map: &common_bevy::resources::map::Map, q: i32, r: i32) -> usize {
@@ -133,7 +128,7 @@ pub fn trees_on(map: &common_bevy::resources::map::Map, q: i32, r: i32) -> usize
 /// bushes aside: the camera closes in over the shoulder there, since a
 /// boom at its length would stand among the crowns.
 pub fn among_trees(map: &common_bevy::resources::map::Map, q: i32, r: i32) -> bool {
-    trees_on(map, q, r) > 0 || NEIGHBOURS.iter().any(|&(dq, dr)| trees_on(map, q + dq, r + dr) > 0)
+    trees_on(map, q, r) > 0 || qrz::DIRECTIONS.iter().any(|d| trees_on(map, q + d.q, r + d.r) > 0)
 }
 
 /// One variation of a kind: its mesh in the tree's own frame, foot at the
@@ -233,15 +228,13 @@ impl Kit {
     /// `common::cover::BOULDER_SMALL` toward `BOULDER_LARGE`.
     pub fn scale(kind: Kind, model_height: f32, growth: f32) -> f32 {
         let growth = growth.clamp(0.0, 1.0);
-        if kind.is_pile() || matches!(kind, Kind::Den(..)) {
-            return 1.0;
-        }
         match kind {
-            Kind::Brush => return BRUSH_SMALL + (1.0 - BRUSH_SMALL) * growth,
-            Kind::Boulder => return common::cover::boulder_scale(growth),
-            _ => {}
+            Kind::Den(..) => 1.0,
+            _ if kind.is_pile() => 1.0,
+            Kind::Brush => BRUSH_SMALL + (1.0 - BRUSH_SMALL) * growth,
+            Kind::Boulder => common::cover::boulder_scale(growth),
+            _ => common::cover::tree_scale(model_height, growth),
         }
-        common::cover::tree_scale(model_height, growth)
     }
 }
 
@@ -280,6 +273,7 @@ pub struct CoverInstance {
 /// in them, models and cards apart. A stand is one call a pass however
 /// many regions its instances stand in, so the two numbers say which of the two a
 /// frame is paying for.
+#[cfg(feature = "admin")]
 #[derive(Resource, Default)]
 pub struct CoverDraws {
     pub models: u32,
@@ -288,6 +282,7 @@ pub struct CoverDraws {
     pub card_instances: u32,
 }
 
+#[cfg(feature = "admin")]
 fn count_draws(mut draws: ResMut<CoverDraws>, models: Query<&draw::ModelStand>, cards: Query<&draw::CardStand>) {
     use draw::Stand;
     *draws = CoverDraws::default();
@@ -307,9 +302,13 @@ pub struct CoverPlugin;
 impl Plugin for CoverPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(draw::CoverDrawPlugin);
-        app.init_resource::<CoverDraws>();
+        #[cfg(feature = "admin")]
+        {
+            app.init_resource::<CoverDraws>();
+            app.add_systems(Update, count_draws);
+        }
         app.add_systems(Startup, begin_loading);
-        app.add_systems(Update, (count_draws, draw::update_stands));
+        app.add_systems(Update, draw::update_stands);
         app.add_systems(Update, load_kit.run_if(resource_exists::<Loading>));
         app.add_systems(Update, dress_far_ground.run_if(resource_added::<CoverKit>));
         app.add_systems(
@@ -800,7 +799,7 @@ mod tests {
     /// within its own tile.
     #[test]
     fn a_region_places_one_instance_per_filled_slot() {
-        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
         let region_lat = common_bevy::summary::mesh_region_lattice();
         let lattice = common_bevy::summary::summary_lattice(0);
         let key = MeshRegionKey { r: 0, mn: 0, mm: 0 };
@@ -839,7 +838,7 @@ mod tests {
     #[test]
     fn a_felled_tree_stands_as_its_stump() {
         let place = |cover: Cover| {
-            let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+            let map = Map::new(qrz::Map::new(1.0, 0.8));
             map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
             let key = MeshRegionKey { r: 0, mn: 0, mm: 0 };
             place_cover(0, key, Vec3::ZERO, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z))
@@ -860,7 +859,7 @@ mod tests {
     #[test]
     fn a_pile_lies_as_its_kind() {
         let place = |cover: Cover| {
-            let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+            let map = Map::new(qrz::Map::new(1.0, 0.8));
             map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
             let key = MeshRegionKey { r: 0, mn: 0, mm: 0 };
             place_cover(0, key, Vec3::ZERO, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z))

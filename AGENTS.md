@@ -210,7 +210,7 @@ leave the tile, and `Position::rebase` moves it onto the tile it `reached`
 — on the server in `actor::update`, on the client in `movement::do_loc`.
 Movement is `Heading` (24 bearings) × speed × dt in
 `movement::calculate_movement()`, the canonical physics;
-`physics::apply()` is a thin wrapper for NPCs. Turning is physics too: a
+`physics::steer()` is a thin wrapper for NPCs. Turning is physics too: a
 held turn key steps the heading once per `TURN_REPEAT_MS` of input time
 at whole pace, slower as `Status::pace` falls and never at none, inside
 the same loop, with `Turn` carrying the clock, so the wire carries

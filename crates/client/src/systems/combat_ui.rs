@@ -46,7 +46,7 @@ pub fn update_floating_text(
             node.top = Val::Px(at.y);
         } else {
             // Position is behind camera or off-screen, hide it
-            node.left = Val::Px(-1000.0);
+            node.left = Val::Px(OFF_SCREEN);
         }
 
         // Fade out (alpha based on remaining lifetime)
@@ -63,7 +63,7 @@ const BAR_HEIGHT: f32 = 6.0;
 const FILL_SPEED: f32 = 5.0;
 
 /// Where a node sits while what it follows is off screen
-const OFF_SCREEN: f32 = -10000.0;
+pub const OFF_SCREEN: f32 = -10000.0;
 
 /// Builds, for each lane, the bars drawn over its target in the world:
 /// health, and recovery flush under it.

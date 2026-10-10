@@ -1,7 +1,28 @@
 use bevy::prelude::*;
 
-use common_bevy::chunk::ChunkId;
+/// The entity is sliding to `destination` under an ability (a lunge, a
+/// knockback, a flank's circle). While present nothing else moves what is
+/// drawn, the tile that reaches the destination re-anchors the position
+/// there, and the slide ends when its time is up — the server sends that
+/// tile with the slide, so it cannot be what ends it.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Displacing {
+    /// Standing-height tile the slide ends on.
+    pub destination: qrz::Qrz,
+    /// The client's elapsed time the slide ends at.
+    pub ends_at: std::time::Duration,
+    /// The tile a slide round a target circles, facing the way it goes;
+    /// any other slide keeps the heading it has.
+    pub around: Option<qrz::Qrz>,
+}
 
+/// The directional light that is the sun.
+#[derive(Debug, Default, Component)]
+pub struct Sun();
+
+/// The directional light that is the moon.
+#[derive(Debug, Default, Component)]
+pub struct Moon();
 
 #[derive(Clone, Component, Copy)]
 #[relationship(relationship_target = AnimatedBy)]
@@ -15,13 +36,6 @@ pub struct AnimatedBy(Entity);
 pub enum Info {
     Time,
     DistanceIndicator,  // Shows distance from haven
-}
-
-/// Links a mesh entity to its chunk. Read by diagnostics only.
-#[derive(Component)]
-#[allow(dead_code)]
-pub struct ChunkMesh {
-    pub chunk_id: ChunkId,
 }
 
 /// The actor the view follows: the camera, the reaction queue and the
@@ -44,8 +58,6 @@ pub struct PlayerOriginDebug;
 pub struct TargetIndicator {
     pub indicator_type: crate::systems::target_indicator::IndicatorType,
 }
-
-// TODO: TierBadge component - deferred until proper 3D text setup
 
 /// Floating text component for damage numbers and other temporary text
 /// Used with UI Node entities that follow world-space positions
@@ -104,7 +116,7 @@ pub struct CombatLogPanel;
 #[derive(Component)]
 pub struct CombatLogContent;
 
-/// Combat log entry with metadata for color coding
+/// Marker for a line of the combat log
 #[derive(Component)]
 pub struct CombatLogEntry;
 

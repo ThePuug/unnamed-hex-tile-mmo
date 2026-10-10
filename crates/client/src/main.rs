@@ -103,7 +103,6 @@ fn main() {
 
     app.add_systems(Startup, (
         setup,
-        actor::setup,
         camera::setup,
         world::setup,
     ));

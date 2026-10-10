@@ -5,8 +5,8 @@
 use bevy::prelude::*;
 
 use crate::systems::{
-    bag_panel::stack_icon,
-    equipment_panel::{CELL, OTHER_ROW, UNWORN},
+    bag_panel::{cell_contents, Cell},
+    equipment_panel::{CELL, CURSOR_ROW, OTHER_ROW, UNWORN},
     gathering::{LootWindow, ENTRY_KEYS},
 };
 
@@ -17,8 +17,6 @@ pub struct LootPanel;
 /// The window's rows of cells.
 #[derive(Component)]
 pub struct LootCells;
-
-const CURSOR_ROW: Color = Color::srgba(0.25, 0.25, 0.25, 0.9);
 
 /// Shows the window while one is open and lays its cells out again
 /// whenever what it holds changes.
@@ -68,20 +66,10 @@ pub fn update(
                     ChildOf(row_cells),
                 ))
                 .with_children(|cell| {
-                    cell.spawn((
-                        ImageNode::new(stack_icon(&asset_server, stack.kind)),
-                        Node { width: Val::Px(CELL - 8.0), height: Val::Px(CELL - 8.0), ..default() },
-                    ));
+                    cell_contents(cell, &asset_server, Cell::Stack(*stack), 1.0);
                     if cursor {
                         crate::systems::keycap::corner_keycap(cell, ENTRY_KEYS[i]);
                     }
-                    cell.spawn((
-                        Text::new(stack.count.to_string()),
-                        TextFont { font_size: FontSize::Px(13.0), ..default() },
-                        TextColor(Color::WHITE),
-                        TextShadow::default(),
-                        Node { position_type: PositionType::Absolute, bottom: Val::Px(2.), right: Val::Px(5.), ..default() },
-                    ));
                 });
         }
     }

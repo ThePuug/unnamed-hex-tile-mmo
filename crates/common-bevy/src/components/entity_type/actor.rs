@@ -69,19 +69,6 @@ impl Origin {
             Origin::Indiscernible => (0.7, 0.7, 0.7), // Gray - mysterious, unknowable
         }
     }
-
-    /// Get display name for this origin
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Origin::Evolved => "Evolved",
-            Origin::Synthetic => "Synthetic",
-            Origin::Essential => "Essential",
-            Origin::Corrupted => "Corrupted",
-            Origin::Mythic => "Mythic",
-            Origin::Forgotten => "Forgotten",
-            Origin::Indiscernible => "Indiscernible",
-        }
-    }
 }
 
 

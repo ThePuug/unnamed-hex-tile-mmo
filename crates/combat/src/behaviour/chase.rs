@@ -7,10 +7,8 @@ use common_bevy::{
         entity_type::{actor::ActorIdentity, EntityType},
         heading::{Heading, HEADING_SLOTS},
         Loc, resources::Health,
-        behaviour::Side, status::Status, ActorAttributes, target::Target,
+        behaviour::Side, status::Status, ActorAttributes, AttackRange, target::Target,
         returning::Returning,
-        hex_assignment::AssignedHex,
-        engagement::EngagementMember,
     },
     message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
@@ -20,6 +18,7 @@ use common_bevy::message::AbilityType;
 use qrz::{Convert, Qrz};
 
 use super::{mind::Minds, moves::{self, Candidate, Footing, Move}, perception::Sight, Bar, Body};
+use crate::engagement::{AssignedHex, EngagementMember};
 use crate::leap::LEAP_MS;
 use common_bevy::tuning::Tuning;
 
@@ -37,7 +36,7 @@ const HOME: i32 = 2;
 /// without a `Sight` sees it at once.
 ///
 /// It strikes from its assigned hex where it has one (`AssignedHex`), else
-/// from wherever its target is within `attack_range`. A step that gives
+/// from wherever its target is within its `AttackRange`. A step that gives
 /// ground it takes backing away, facing its target; holding, or keeping to
 /// its tile, it stands and faces it.
 ///
@@ -48,11 +47,10 @@ const HOME: i32 = 2;
 pub struct Chase {
     pub acquisition_range: u32,
     pub leash_distance: i32,
-    pub attack_range: i32,
 }
 
 /// Whether the floor tile `tile` has room to stand on
-fn uncrowded(nntree: &NNTree, tile: Qrz) -> bool {
+pub(super) fn uncrowded(nntree: &NNTree, tile: Qrz) -> bool {
     nntree.locate_all_at_point(&Loc::new(tile + Qrz::Z)).count() < 7
 }
 
@@ -87,7 +85,7 @@ pub fn chase(
         Option<&AssignedHex>,
         &Side,
         Option<&Status>,
-        (Option<&mut Move>, Option<&EntityType>, Option<&Bar>, Option<&Sight>),
+        (Option<&mut Move>, Option<&EntityType>, Option<&Bar>, Option<&Sight>, &AttackRange),
         Option<&common_bevy::components::recovery::GlobalRecovery>,
     )>, Query<(Entity, &Heading)>)>,
     q_target: Query<(&Loc, &Health, &Side, Option<&ActorAttributes>, Option<&Status>)>,
@@ -102,7 +100,7 @@ pub fn chase(
 ) {
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, (mut under_way, kind, bar, sight), recovery) in actors.p0().iter_mut() {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, (mut under_way, kind, bar, sight, range), recovery) in actors.p0().iter_mut() {
         // Held: it neither walks nor turns
         if Status::holds(status) {
             continue;
@@ -137,9 +135,9 @@ pub fn chase(
         let held = target.entity
             .filter(|&held| q_target.get(held).is_ok_and(|(_, health, ..)| health.current() > 0.0))
             .or_else(|| {
-                let foes: Vec<Entity> = super::spotted(&nntree, *loc, chase.acquisition_range)
-                    .filter(|&seen| q_target.get(seen).is_ok_and(|(_, health, side, ..)| health.current() > 0.0 && side.is_hostile_to(*own_side)))
-                    .collect();
+                let foes: Vec<Entity> = super::hostiles_near(&nntree, npc, *loc, chase.acquisition_range, *own_side, |seen| {
+                    q_target.get(seen).ok().map(|(_, health, side, ..)| (*side, health.current()))
+                }).collect();
                 let mut rolls = rolls.get_mut(npc).ok()?;
                 (!foes.is_empty()).then(|| foes[dice.draw(&mut rolls, ("foe", npc)).pick(foes.len())])
             });
@@ -181,7 +179,7 @@ pub fn chase(
             if let Some(hex) = assigned {
                 return seconds(at.flat_distance(&hex.0), own_pace);
             }
-            let gap = Loc::new(at + Qrz::Z).distance(&target_loc) - chase.attack_range;
+            let gap = Loc::new(at + Qrz::Z).distance(&target_loc) - range.0;
             let walked = seconds(gap, own_pace);
             match leap {
                 Some(tiles) if gap > 0 => walked.min(LEAP_MS as f32 / 1000.0 + seconds(gap - tiles, own_pace)),
@@ -251,13 +249,13 @@ mod tests {
         app.insert_resource(Minds::tuned());
         app.init_resource::<Tuning>();
         app.register_required_components::<Chase, crate::dice::Rolls>();
-        let mut tiles = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+        let tiles = Map::new(qrz::Map::new(1.0, 0.8));
         for q in -4..=LEASH + 8 {
             for r in -4..=4 {
                 tiles.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
             }
         }
-        app.insert_resource(Map::new(tiles));
+        app.insert_resource(tiles);
         let home = app.world_mut().spawn(Loc::new(Qrz { q: 0, r: 0, z: 1 })).id();
         (app, home)
     }
@@ -272,7 +270,8 @@ mod tests {
     fn npc(app: &mut App, home: Entity, q: i32) -> Entity {
         let ent = actor(app, Side::WILD, q);
         app.world_mut().entity_mut(ent).insert((
-            Chase { acquisition_range: 10, leash_distance: LEASH, attack_range: REACH },
+            Chase { acquisition_range: 10, leash_distance: LEASH },
+            AttackRange(REACH),
             Target::default(),
             EngagementMember(home),
             Position::at_tile(Qrz { q, r: 0, z: 1 }),

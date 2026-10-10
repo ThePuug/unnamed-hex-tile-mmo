@@ -68,14 +68,6 @@ pub enum AttributeTitle {
     InstinctResolve,
 }
 
-/// Marker component for attribute current value row (container for values + bar)
-#[derive(Component)]
-pub enum AttributeCurrent {
-    MightAgility,
-    PhysiqueDiscipline,
-    InstinctResolve,
-}
-
 /// Marker for left current value text
 #[derive(Component)]
 pub enum LeftCurrentValue {
@@ -266,7 +258,7 @@ macro_rules! create_stat_cell {
 }
 
 macro_rules! create_attribute_section {
-    ($parent:expr, $pair:expr, $left_name:expr, $right_name:expr, $left_color:expr, $right_color:expr, $title_marker:expr, $current_marker:expr, $bar_marker:expr, $axis_marker:expr, $left_current_marker:expr, $right_current_marker:expr) => {
+    ($parent:expr, $pair:expr, $left_name:expr, $right_name:expr, $left_color:expr, $right_color:expr, $title_marker:expr, $bar_marker:expr, $axis_marker:expr, $left_current_marker:expr, $right_current_marker:expr) => {
         $parent
         .spawn((
             PairSection($pair),
@@ -321,7 +313,6 @@ macro_rules! create_attribute_section {
 
             // Bar and current values row
             section.spawn((
-                $current_marker,
                 Node {
                     flex_direction: FlexDirection::Row,
                     justify_content: JustifyContent::SpaceBetween,
@@ -460,8 +451,6 @@ macro_rules! create_attribute_section {
 pub fn setup(
     mut commands: Commands,
 ) {
-    commands.init_resource::<CharacterPanelState>();
-
     // The panel: a bordered frame round a strip of tabs and the chosen tab's
     // content, which the open tab joins in the content's own colour.
     let panel = commands
@@ -531,7 +520,7 @@ pub fn setup(
                 main.spawn(pair_row()).with_children(|pair| {
                     create_attribute_section!(pair, 0, "MIGHT", "AGILITY",
                         Color::srgb(0.9, 0.5, 0.5), Color::srgb(0.9, 0.9, 0.5),
-                        AttributeTitle::MightAgility, AttributeCurrent::MightAgility, AttributeBar::MightAgility, AxisMarker::MightAgility,
+                        AttributeTitle::MightAgility, AttributeBar::MightAgility, AxisMarker::MightAgility,
                         LeftCurrentValue::MightAgility, RightCurrentValue::MightAgility);
                     create_stat_section!(pair,
                         ("Might", Color::srgb(0.9, 0.5, 0.5), [Stat::Force, Stat::Impact, Stat::Ferocity]),
@@ -542,7 +531,7 @@ pub fn setup(
                 main.spawn(pair_row()).with_children(|pair| {
                     create_attribute_section!(pair, 1, "PHYSIQUE", "DISCIPLINE",
                         Color::srgb(0.5, 0.8, 0.5), Color::srgb(0.5, 0.7, 0.9),
-                        AttributeTitle::PhysiqueDiscipline, AttributeCurrent::PhysiqueDiscipline, AttributeBar::PhysiqueDiscipline, AxisMarker::PhysiqueDiscipline,
+                        AttributeTitle::PhysiqueDiscipline, AttributeBar::PhysiqueDiscipline, AxisMarker::PhysiqueDiscipline,
                         LeftCurrentValue::PhysiqueDiscipline, RightCurrentValue::PhysiqueDiscipline);
                     create_stat_section!(pair,
                         ("Physique", Color::srgb(0.5, 0.8, 0.5), [Stat::Constitution, Stat::Fitness, Stat::Intimidation]),
@@ -553,7 +542,7 @@ pub fn setup(
                 main.spawn(pair_row()).with_children(|pair| {
                     create_attribute_section!(pair, 2, "INSTINCT", "RESOLVE",
                         Color::srgb(0.7, 0.5, 0.9), Color::srgb(0.9, 0.6, 0.3),
-                        AttributeTitle::InstinctResolve, AttributeCurrent::InstinctResolve, AttributeBar::InstinctResolve, AxisMarker::InstinctResolve,
+                        AttributeTitle::InstinctResolve, AttributeBar::InstinctResolve, AxisMarker::InstinctResolve,
                         LeftCurrentValue::InstinctResolve, RightCurrentValue::InstinctResolve);
                     create_stat_section!(pair,
                         ("Instinct", Color::srgb(0.7, 0.5, 0.9), [Stat::Endurance, Stat::Reflex, Stat::Patience]),
@@ -824,11 +813,11 @@ pub fn update_attributes(
             for child in bar_children.iter() {
                 // Update spectrum range (blue bar - shows reach values)
                 if let Ok(mut node) = spectrum_query.get_mut(child) {
-                    update_reach_display(&mut node, left_reach, right_reach, max_attr_scaled);
+                    place_span(&mut node, left_reach, right_reach, max_attr_scaled);
                 }
                 // Update axis bar (yellow bar - shows current available values)
                 if let Ok((_, mut node)) = axis_query.get_mut(child) {
-                    update_axis_bar(&mut node, left_current, right_current, max_attr_scaled);
+                    place_span(&mut node, left_current, right_current, max_attr_scaled);
                 }
             }
         }
@@ -937,53 +926,19 @@ fn describe(attrs: &ActorAttributes, stat: Stat, tuning: &Tuning) -> String {
     }
 }
 
-/// Convert attribute value to percentage position on bar
-/// Range is -max_attr to +max_attr mapped to 0% to 100%
-/// max_attr is calculated as level * 2 (e.g., at level 10, range is -20 to +20)
-fn attr_to_percent(value: i16, max_attr_scaled: i16) -> f32 {
-    // Map value from [-max_attr_scaled, +max_attr_scaled] to [0%, 100%]
-    let range = max_attr_scaled as f32 * 2.0;
-    ((value as f32 + max_attr_scaled as f32) / range * 100.0).clamp(0.0, 100.0)
+/// Where a value from `-ceiling` to `+ceiling` sits along the bar, as a
+/// percentage of its width.
+fn attr_to_percent(value: i16, ceiling: i16) -> f32 {
+    let range = ceiling as f32 * 2.0;
+    ((value as f32 + ceiling as f32) / range * 100.0).clamp(0.0, 100.0)
 }
 
-fn update_reach_display(node: &mut Node, left_reach: u16, right_reach: u16, max_attr_scaled: i16) {
-    // The reach values represent the maximum value achievable in each direction
-    // They are scaled attribute values (axis×10 + spectrum×7)
-
-    // For might_agility with axis=-2, spectrum=3:
-    //   might_reach=41 (20+21) at position -41 on the scale
-    //   agility_reach=21 at position +21 on the scale
-
-    // For instinct_resolve with axis=0, spectrum=3:
-    //   instinct_reach=21 at position -21
-    //   resolve_reach=21 at position +21
-
-    // The bar should show from the leftmost reach to the rightmost reach
-
-    // Left reach is on the negative side (might, physique, instinct)
-    let left_bound = -(left_reach as i16);
-    // Right reach is on the positive side (agility, discipline, resolve)
-    let right_bound = right_reach as i16;
-
-    let left_percent = attr_to_percent(left_bound, max_attr_scaled);
-    let right_percent = attr_to_percent(right_bound, max_attr_scaled);
-    let width_percent = right_percent - left_percent;
-
-    node.left = Val::Percent(left_percent);
-    node.width = Val::Percent(width_percent);
-}
-
-fn update_axis_bar(node: &mut Node, left_current: u16, right_current: u16, max_attr_scaled: i16) {
-    // The yellow bar shows the current available values on each side
-    // For might_agility: might=250, agility=50 (scaled values)
-    //   Left bound at -250 (might value, scaled)
-    //   Right bound at +50 (agility value, scaled)
-
-    let left_bound = -(left_current as i16);
-    let right_bound = right_current as i16;
-
-    let left_percent = attr_to_percent(left_bound, max_attr_scaled);
-    let right_percent = attr_to_percent(right_bound, max_attr_scaled);
+/// Lays `node` over the bar from `left` on the negative side (might,
+/// physique, instinct) to `right` on the positive (agility, discipline,
+/// resolve), on a bar reaching `ceiling` each way.
+fn place_span(node: &mut Node, left: u16, right: u16, ceiling: i16) {
+    let left_percent = attr_to_percent(-(left as i16), ceiling);
+    let right_percent = attr_to_percent(right as i16, ceiling);
     let width_percent = right_percent - left_percent;
 
     node.left = Val::Percent(left_percent);

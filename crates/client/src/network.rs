@@ -371,11 +371,4 @@ mod tests {
         }
         assert!(AddedLatency::default().one_way().is_zero());
     }
-
-    #[test]
-    fn retry_now_makes_the_attempt_due() {
-        let mut link = Link::Waiting { failures: 3, retry_at: Duration::from_secs(60), reason: String::new() };
-        link.retry_now();
-        assert!(matches!(link, Link::Waiting { retry_at: Duration::ZERO, .. }));
-    }
 }

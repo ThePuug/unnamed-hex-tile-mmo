@@ -26,15 +26,23 @@ impl TimingBuffer {
 
     /// Compute p95 and sample count, then clear. Returns (p95_ms, count).
     fn drain(&mut self) -> (f32, f32) {
-        if self.observations.is_empty() { return (0.0, 0.0); }
         self.observations.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let n = self.observations.len();
-        let p95_idx = ((n as f64 * 0.95).ceil() as usize).saturating_sub(1).min(n - 1);
-        let p95 = self.observations[p95_idx];
-        let count = n as f32;
+        let p95 = quantile(&self.observations, 0.95).unwrap_or(0.0);
+        let count = self.observations.len() as f32;
         self.observations.clear();
         (p95, count)
     }
+}
+
+/// The value at quantile `q` (0 to 1) of `sorted`, nearest rank: the
+/// element at rank `ceil(q·n)` counted from one, so `q = 1` is the last
+/// and anything up to `1/n` the first; none of none.
+pub fn quantile<T: Copy>(sorted: &[T], q: f64) -> Option<T> {
+    if sorted.is_empty() {
+        return None;
+    }
+    let rank = ((q * sorted.len() as f64).ceil() as usize).clamp(1, sorted.len());
+    Some(sorted[rank - 1])
 }
 
 /// Transport-agnostic timing accumulator. Thread-safe via interior Mutex.
@@ -86,5 +94,36 @@ impl Drop for ScopeTimer<'_> {
     fn drop(&mut self) {
         let ms = self.start.elapsed().as_secs_f64() as f32 * 1000.0;
         self.timers.record(self.name, ms);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quantile;
+
+    fn sorted(v: &[u64]) -> Vec<u64> {
+        let mut v = v.to_vec();
+        v.sort_unstable();
+        v
+    }
+
+    #[test]
+    fn quantile_is_a_sample_at_its_rank() {
+        let v = sorted(&[30, 10, 50, 20, 40]);
+        assert_eq!(quantile(&v, 0.5), Some(30));
+        assert_eq!(quantile(&v, 1.0), Some(50));
+        assert_eq!(quantile(&v, 0.0), Some(10));
+    }
+
+    #[test]
+    fn quantile_rises_with_q() {
+        let v = sorted(&[7, 3, 9, 1, 12, 5, 30, 2]);
+        let qs = [0.1, 0.5, 0.9, 0.95, 1.0].map(|q| quantile(&v, q).unwrap());
+        assert!(qs.windows(2).all(|w| w[0] <= w[1]));
+    }
+
+    #[test]
+    fn quantile_of_nothing_is_none() {
+        assert_eq!(quantile::<u64>(&[], 0.95), None);
     }
 }

@@ -26,7 +26,7 @@ use common::summary::{SummaryCell, PARTS};
 
 use crate::{
     chunk::{self, ChunkId},
-    geometry::flat_top_tile_center,
+    geometry::{flat_top_tile_center, hex_ball_tiles},
     summary::{
         Band, SummaryLattice, canonical_vertex_id, coarser_level, level_depth_bias,
         mesh_region_lattice, summary_lattice,
@@ -159,8 +159,8 @@ impl<'a> LevelRise<'a> {
     }
 }
 
-/// Cells in a mesh region (radius-9 hex ball).
-pub const MESH_REGION_CELLS: u32 = 271;
+/// Cells in a mesh region: the hex ball of `MESH_REGION_RADIUS`.
+pub const MESH_REGION_CELLS: u32 = hex_ball_tiles(crate::summary::MESH_REGION_RADIUS);
 
 /// Downward curtain depth (WU) under edges facing unbuilt cells. Deep enough
 /// to cover the relief between a built region and the ground beside it.
@@ -562,12 +562,9 @@ pub fn build_water_mesh_region(
     }
 }
 
-/// Enumerate mesh regions within a distance band that overlap loaded chunks.
-
-/// `camera_wx/wz`: camera world position (XZ plane).
-/// `inner_wu/outer_wu`: extended band range (natural + overlap).
-/// Only includes regions whose world-space centers fall within range
-/// AND overlap at least one loaded chunk.
+/// The mesh regions of [`visible_mesh_regions_in_band_ungated`] that
+/// overlap a loaded chunk: one whose centre summary, or one of the six
+/// summaries round it, stands on a tile in `loaded_chunks`.
 pub fn visible_mesh_regions_in_band(
     r: u32,
     camera_wx: f32,
@@ -578,62 +575,19 @@ pub fn visible_mesh_regions_in_band(
 ) -> HashSet<MeshRegionKey> {
     let summary_lat = summary_lattice(r);
     let region_lat = mesh_region_lattice();
-
-    // Convert camera world position to tile coordinates using flat-top inverse,
-    // then to summary-lattice coordinates, then to mesh-region lattice.
-    // Flat-top: x = 1.5*q, z = sqrt(3)/2*q + sqrt(3)*r
-    // Inverse: q = x/1.5, r = (z - sqrt(3)/2*q) / sqrt(3)
-    let cam_q = camera_wx as f64 / 1.5;
-    let cam_r = (camera_wz as f64 - cam_q * 3.0_f64.sqrt() / 2.0) / 3.0_f64.sqrt();
-    let cam_sq = (cam_q / summary_lat.scale as f64).round() as i32;
-    let cam_sr = (cam_r / summary_lat.scale as f64).round() as i32;
-    let cam_region = region_lat.cell_id(cam_sq, cam_sr);
-
-    let sr = search_steps(r, outer_wu);
-    let mut regions = HashSet::new();
-    for dn in -sr..=sr {
-        let dm_min = (-sr).max(-dn - sr);
-        let dm_max = sr.min(-dn + sr);
-        for dm in dm_min..=dm_max {
-            let mn = cam_region.0 + dn;
-            let mm = cam_region.1 + dm;
-
-            // Check world-space distance of this region's center from camera
-            let region_center = region_lat.cell_center((mn, mm));
-            let (scq, scr) = summary_lat.cell_center(region_center);
-            let (rwx, rwz) = flat_top_tile_center(scq, scr, 1.0);
-            let dx = rwx - camera_wx;
-            let dz = rwz - camera_wz;
-            let dist = (dx * dx + dz * dz).sqrt();
-
-            if dist < inner_wu || dist > outer_wu {
-                continue;
-            }
-
-            // Check overlap with loaded chunks: at least one summary's tiles
-            // must be in loaded chunks. Quick check: region center's tile.
-            let qrz = qrz::Qrz { q: scq, r: scr, z: 0 };
-            let chunk_id = chunk::loc_to_chunk(qrz);
-            if !loaded_chunks.contains(&chunk_id) {
-                // Try neighbor summary centers
-                let mut any_loaded = false;
-                for &(dsn, dsm) in &[(1,0),(-1,0),(0,1),(0,-1),(1,-1),(-1,1)] {
-                    let nb = (region_center.0 + dsn, region_center.1 + dsm);
-                    let (nq, nr) = summary_lat.cell_center(nb);
-                    let nqrz = qrz::Qrz { q: nq, r: nr, z: 0 };
-                    if loaded_chunks.contains(&chunk::loc_to_chunk(nqrz)) {
-                        any_loaded = true;
-                        break;
-                    }
-                }
-                if !any_loaded { continue; }
-            }
-
-            regions.insert(MeshRegionKey { r, mn, mm });
-        }
-    }
-
-    regions
+    let loaded = |cell: (i32, i32)| {
+        let (cq, cr) = summary_lat.cell_center(cell);
+        loaded_chunks.contains(&chunk::loc_to_chunk(qrz::Qrz { q: cq, r: cr, z: 0 }))
+    };
+    visible_mesh_regions_in_band_ungated(r, camera_wx, camera_wz, inner_wu, outer_wu)
+        .into_iter()
+        .filter(|key| {
+            let centre = region_lat.cell_center((key.mn, key.mm));
+            [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)]
+                .into_iter()
+                .any(|(dq, dr)| loaded((centre.0 + dq, centre.1 + dr)))
+        })
+        .collect()
 }
 
 /// Lattice steps a region search must reach from the camera's region to
@@ -645,8 +599,11 @@ fn search_steps(r: u32, outer_wu: f32) -> i32 {
     ((outer_wu / step).ceil() as i32 + 2).min(60)
 }
 
-/// Like `visible_mesh_regions_in_band` but without the loaded-chunk gate.
-/// Used for remote summary bands where data comes from server, not local tiles.
+/// Enumerate mesh regions within a distance band, whether or not their
+/// tiles are loaded: those whose centres lie within `[inner_wu, outer_wu]`
+/// of the camera at `camera_wx/wz` in the XZ plane. The remote summary
+/// bands take this, their data coming from the server, not local tiles;
+/// `visible_mesh_regions_in_band` gates it on the loaded chunks.
 pub fn visible_mesh_regions_in_band_ungated(
     r: u32,
     camera_wx: f32,
@@ -657,6 +614,10 @@ pub fn visible_mesh_regions_in_band_ungated(
     let summary_lat = summary_lattice(r);
     let region_lat = mesh_region_lattice();
 
+    // Convert camera world position to tile coordinates using flat-top inverse,
+    // then to summary-lattice coordinates, then to mesh-region lattice.
+    // Flat-top: x = 1.5*q, z = sqrt(3)/2*q + sqrt(3)*r
+    // Inverse: q = x/1.5, r = (z - sqrt(3)/2*q) / sqrt(3)
     let cam_q = camera_wx as f64 / 1.5;
     let cam_r = (camera_wz as f64 - cam_q * 3.0_f64.sqrt() / 2.0) / 3.0_f64.sqrt();
     let cam_sq = (cam_q / summary_lat.scale as f64).round() as i32;
@@ -734,11 +695,10 @@ pub fn visible_lod_regions(
     for band in bands {
         let half_extent = 0.5 * mesh_region_extent_wu(band.r);
         let ring = mesh_region_spacing_wu(band.r);
-        // Footprint-overlap enumeration over the band (matches the
-        // consumer): every region whose footprint touches the band is
-        // produced. Center-only membership left regions centered just
-        // outside an edge to neither band — un-rendered crescents at every
-        // level boundary.
+        // Every region whose footprint touches the band is produced, as
+        // the consumer enumerates them: a region centred just outside an
+        // edge still has summaries inside it, and membership by centre
+        // alone would leave it to no band.
         let (win_inner, win_outer) = (band.inner_wu, band.outer_wu);
         let outer = win_outer + half_extent + ring;
         // A band whose regions and rings cannot reach past the local
@@ -929,7 +889,7 @@ mod tests {
         let want = height_y(20.0) - level_depth_bias(1);
         // Fan vertices only: a curtain keeps its own normal and hangs from
         // its corners' targets.
-        for (c, n) in result.coarse.iter().zip(&result.normals).filter(|(_, n)| n[1].abs() > 1e-3) {
+        for (c, _) in result.coarse.iter().zip(&result.normals).filter(|(_, n)| n[1].abs() > 1e-3) {
             assert!((c[3] - want).abs() < 1e-4, "target {} off flat coarser ground at {want}", c[3]);
             assert!((c[1] - 1.0).abs() < 1e-5, "flat coarser ground has a leaning normal");
         }

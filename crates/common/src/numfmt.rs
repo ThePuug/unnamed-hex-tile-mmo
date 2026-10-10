@@ -1,14 +1,14 @@
-/// Configurable number formatter for fixed-width character budgets.
-
-/// Formats `f64` values into compact strings using the notation appropriate for
-/// the configured width budget. The `width` field drives formatting decisions
-/// (when to suffix, how many decimal places) but does NOT pad the output —
-/// callers handle alignment via `format!("{:>w$}", ...)`.
-
-/// Three orthogonal axes:
-/// - **width**: character budget driving notation decisions (typically 3, 5, or 7)
-/// - **precision**: how fractional digits are handled
-/// - **overflow**: what happens when the value exceeds the budget
+//! Configurable number formatter for fixed-width character budgets.
+//!
+//! Formats `f64` values into compact strings using the notation appropriate for
+//! the configured width budget. The `width` field drives formatting decisions
+//! (when to suffix, how many decimal places) but does NOT pad the output —
+//! callers handle alignment via `format!("{:>w$}", ...)`.
+//!
+//! Three orthogonal axes:
+//! - **width**: character budget driving notation decisions (typically 3, 5, or 7)
+//! - **precision**: how fractional digits are handled
+//! - **overflow**: what happens when the value exceeds the budget
 
 const SUFFIXES: [(f64, &str); 4] = [(1e3, "K"), (1e6, "M"), (1e9, "B"), (1e12, "T")];
 
@@ -22,9 +22,6 @@ pub enum Precision {
     /// Start at maximum decimal precision and reduce until the result fits.
     /// Gracefully degrades from 2dp → 1dp → 0dp as magnitude grows.
     Collapsing,
-    /// Always emit exactly `n` digits after the decimal point in the raw range.
-    /// Suffixed tiers use exactly `n-1` dp to maintain decimal alignment.
-    Fixed(u8),
 }
 
 /// What happens when the value exceeds what raw formatting can display.
@@ -36,9 +33,9 @@ pub enum Overflow {
     Clamp,
 }
 
-/// Fixed-width number formatter.
-
-/// Use the provided presets or construct directly for custom widths.
+/// Fixed-width number formatter, built as a struct literal. `width` is at
+/// least the notation's minimum: 1 for `Integer`, 2 for `Collapsing`
+/// (a digit and the point), and 1 more under `Suffix` for the suffix.
 #[derive(Debug, Clone, Copy)]
 pub struct NumFmt {
     pub width: usize,
@@ -49,28 +46,6 @@ pub struct NumFmt {
 // ── Implementation ──
 
 impl NumFmt {
-    /// Construct with validation. Panics if width is too narrow for the precision/overflow combo.
-
-    /// Minimum width per precision: Integer=1, Collapsing=2 (digit+point), Fixed(n)=n+2.
-    /// Suffix adds 1 to the minimum (the suffix character itself).
-    pub fn new(width: usize, precision: Precision, overflow: Overflow) -> Self {
-        let precision_min = match precision {
-            Precision::Integer => 1,
-            Precision::Collapsing => 2,
-            Precision::Fixed(n) => n as usize + 2,
-        };
-        let suffix_cost = match overflow {
-            Overflow::Suffix => 1,
-            Overflow::Clamp => 0,
-        };
-        let min_width = precision_min + suffix_cost;
-        assert!(
-            width >= min_width,
-            "NumFmt: width {width} too narrow for {precision:?}/{overflow:?} (minimum {min_width})"
-        );
-        Self { width, precision, overflow }
-    }
-
     /// Format a value into a compact string. Output is NOT padded — callers
     /// handle alignment via `format!("{:>w$}", ...)` or `format!("{:^w$}", ...)`.
     pub fn fmt(&self, v: f64) -> String {
@@ -81,12 +56,6 @@ impl NumFmt {
                 let threshold = 0.5 * f64::powi(10.0, -(dp as i32));
                 if v.abs() < threshold {
                     return format!("{:.prec$}", 0.0, prec = dp as usize);
-                }
-            }
-            Precision::Fixed(n) => {
-                let threshold = 0.5 * f64::powi(10.0, -(n as i32));
-                if v.abs() < threshold {
-                    return format!("{:.prec$}", 0.0, prec = n as usize);
                 }
             }
             Precision::Integer => {
@@ -140,10 +109,6 @@ impl NumFmt {
                 }
                 None
             }
-            Precision::Fixed(n) => {
-                let s = format!("{v:.prec$}", prec = n as usize);
-                if s.len() <= w { Some(s) } else { None }
-            }
         }
     }
 
@@ -153,13 +118,8 @@ impl NumFmt {
         let a = v.abs();
         let sign = if v < 0.0 { "-" } else { "" };
 
-        // Determine precision range for suffix tiers.
-        // Fixed(n): use exactly n-1 dp in suffix (maintains decimal alignment).
-        // Integer/Collapsing: try 2dp → 1dp → 0dp, taking first that fits.
-        let (min_sfx_prec, max_sfx_prec) = match self.precision {
-            Precision::Fixed(n) if n > 0 => (n as usize - 1, n as usize - 1),
-            _ => (0, 2),
-        };
+        // Suffix tiers try 2dp → 1dp → 0dp, taking the first that fits.
+        let (min_sfx_prec, max_sfx_prec) = (0, 2);
 
         for &(div, sfx) in &SUFFIXES {
             let scaled = a / div;
@@ -264,13 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn width_fixed_suffix() {
-        for (w, n) in [(5, 2), (7, 3)] {
-            assert_max_width(&NumFmt { width: w, precision: Precision::Fixed(n), overflow: Overflow::Suffix }, WIDE_RANGE);
-        }
-    }
-
-    #[test]
     fn width_integer_clamp() {
         for w in [3, 5, 7] {
             assert_max_width(&NumFmt { width: w, precision: Precision::Integer, overflow: Overflow::Clamp }, WIDE_RANGE);
@@ -333,26 +286,6 @@ mod tests {
         assert_eq!(f.fmt(-99.0), "-99");
     }
 
-    // ── 7ch fixed-3dp + suffix (decimal at column 4) ──
-
-    #[test]
-    fn fixed3_7ch_known_outputs() {
-        let f = NumFmt { width: 7, precision: Precision::Fixed(3), overflow: Overflow::Suffix };
-        assert_eq!(f.fmt(0.0), "0.000");
-        assert_eq!(f.fmt(5.0), "5.000");
-        assert_eq!(f.fmt(0.5), "0.500");
-        assert_eq!(f.fmt(92.6), "92.600");
-        assert_eq!(f.fmt(999.999), "999.999");
-        assert_eq!(f.fmt(1000.0), "1.00K");
-        assert_eq!(f.fmt(9990.0), "9.99K");
-        assert_eq!(f.fmt(10_000.0), "10.00K");
-        assert_eq!(f.fmt(999_990.0), "999.99K");
-        assert_eq!(f.fmt(1_000_000.0), "1.00M");
-        assert_eq!(f.fmt(-0.5), "-0.500");
-        assert_eq!(f.fmt(-9.999), "-9.999");
-        assert_eq!(f.fmt(-99.999), "-99.999");
-    }
-
     // ── Integer + clamp ──
 
     #[test]
@@ -388,38 +321,5 @@ mod tests {
         assert_eq!(f.fmt(1_000_000_000.0), "1.00B");
         assert_eq!(f.fmt(999_000_000_000.0), "999B");
         assert_eq!(f.fmt(1_000_000_000_000.0), "1.00T");
-    }
-
-    // ── Construction validation ──
-
-    #[test]
-    #[should_panic(expected = "too narrow")]
-    fn rejects_degenerate_width() {
-        NumFmt::new(1, Precision::Collapsing, Overflow::Suffix);
-    }
-
-    #[test]
-    #[should_panic(expected = "too narrow")]
-    fn rejects_fixed_too_narrow() {
-        NumFmt::new(3, Precision::Fixed(3), Overflow::Suffix);
-    }
-
-    #[test]
-    fn accepts_valid_narrow() {
-        let _ = NumFmt::new(2, Precision::Integer, Overflow::Suffix);
-        let _ = NumFmt::new(3, Precision::Collapsing, Overflow::Suffix);
-    }
-
-    // ── Caller-side padding ──
-
-    #[test]
-    fn caller_pads() {
-        let i5 = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Suffix };
-        let d5 = NumFmt { width: 5, precision: Precision::Collapsing, overflow: Overflow::Suffix };
-        let c5 = NumFmt { width: 5, precision: Precision::Integer, overflow: Overflow::Clamp };
-        assert_eq!(format!("{:>5}", i5.fmt(42.0)), "   42");
-        assert_eq!(format!("{:>5}", d5.fmt(0.5)), " 0.50");
-        assert_eq!(format!("{:^7}", format!("q:{}", c5.fmt(1.0))), "  q:1  ");
-        assert_eq!(format!("{:^7}", format!("q:{}", c5.fmt(999.0))), " q:999 ");
     }
 }

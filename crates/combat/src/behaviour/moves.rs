@@ -77,26 +77,21 @@ struct Ground {
 /// on, and of steps scoring alike it keeps to it.
 pub fn choose(footing: &Footing, candidates: &[Candidate], under_way: Move, mind: &Mind) -> (Move, Option<Candidate>) {
     let threshold = mind.hold + if under_way == Move::Hold { mind.momentum } else { 0.0 };
-    let mut best: Option<(Move, Candidate, f32)> = None;
+    let momentum = if under_way == Move::Engage { mind.momentum } else { 0.0 };
+    let mut best: Option<(Candidate, f32)> = None;
     for &candidate in candidates {
-        for decision in [Move::Engage] {
-            let momentum = if decision == under_way { mind.momentum } else { 0.0 };
-            let scored = weigh(footing, &candidate, decision, mind) + momentum;
-            if scored > threshold && best.is_none_or(|(.., top)| scored > top) {
-                best = Some((decision, candidate, scored));
-            }
+        let scored = weigh(footing, &candidate, mind) + momentum;
+        if scored > threshold && best.is_none_or(|(_, top)| scored > top) {
+            best = Some((candidate, scored));
         }
     }
-    best.map_or((Move::Hold, None), |(decision, candidate, _)| (decision, Some(candidate)))
+    best.map_or((Move::Hold, None), |(candidate, _)| (Move::Engage, Some(candidate)))
 }
 
-/// What a step to `candidate` scores for `decision`, for `footing`, as
-/// `mind` shapes it
-pub fn weigh(footing: &Footing, candidate: &Candidate, decision: Move, mind: &Mind) -> f32 {
-    let considerations: &[Consideration<Ground>] = match decision {
-        Move::Hold => return mind.hold,
-        Move::Engage => &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND],
-    };
+/// What a step to `candidate` scores to engage, for `footing`, as `mind`
+/// shapes it
+fn weigh(footing: &Footing, candidate: &Candidate, mind: &Mind) -> f32 {
+    let considerations: &[Consideration<Ground>] = &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND];
     let ground = Ground { footing: *footing, candidate: *candidate };
     score(1.0, considerations.iter().map(|consideration| mind.shape(consideration).answer(&ground)))
 }

@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 
 #[cfg(feature = "admin")]
-use super::state::Staging;
+use super::state::{GotoCoordType, GotoInputState, Staging};
 
 use super::{
-    state::{DevConsole, MenuPath, GotoCoordType, GotoInputState},
+    state::{DevConsole, MenuPath},
     actions::DevConsoleAction,
 };
 
@@ -74,12 +74,7 @@ pub fn handle_console_input(
 
     // Handle menu-specific inputs
     match console.current_menu {
-        MenuPath::Root => {
-            #[cfg(feature = "admin")]
-            handle_root_menu(&mut keyboard, &mut console);
-            #[cfg(not(feature = "admin"))]
-            handle_root_menu(&mut keyboard, &mut console);
-        }
+        MenuPath::Root => handle_root_menu(&mut keyboard, &mut console),
         MenuPath::Terrain => handle_terrain_menu(&mut keyboard, &mut console, &mut action_writer),
         MenuPath::LightingTime => handle_lighting_time(&mut keyboard, &mut console, &mut action_writer, time.delta_secs()),
         #[cfg(feature = "admin")]
@@ -258,6 +253,14 @@ const DIGIT_KEYS: &[(KeyCode, char)] = &[
     (KeyCode::Numpad9, '9'),
 ];
 
+/// The sign and the point a coordinate may carry, and the character each
+/// types.
+#[cfg(feature = "admin")]
+const SIGN_KEYS: &[(KeyCode, char)] = &[
+    (KeyCode::Minus, '-'), (KeyCode::NumpadSubtract, '-'),
+    (KeyCode::Period, '.'), (KeyCode::NumpadDecimal, '.'),
+];
+
 /// Numpad 1 on stages the archetype `DENS` lists in that row, and stays in
 /// the menu so another can follow.
 #[cfg(feature = "admin")]
@@ -381,20 +384,7 @@ fn handle_goto_input(
         return;
     }
 
-    let digit_keys: &[(KeyCode, char)] = &[
-        (KeyCode::Digit0, '0'), (KeyCode::Digit1, '1'), (KeyCode::Digit2, '2'),
-        (KeyCode::Digit3, '3'), (KeyCode::Digit4, '4'), (KeyCode::Digit5, '5'),
-        (KeyCode::Digit6, '6'), (KeyCode::Digit7, '7'), (KeyCode::Digit8, '8'),
-        (KeyCode::Digit9, '9'),
-        (KeyCode::Numpad0, '0'), (KeyCode::Numpad1, '1'), (KeyCode::Numpad2, '2'),
-        (KeyCode::Numpad3, '3'), (KeyCode::Numpad4, '4'), (KeyCode::Numpad5, '5'),
-        (KeyCode::Numpad6, '6'), (KeyCode::Numpad7, '7'), (KeyCode::Numpad8, '8'),
-        (KeyCode::Numpad9, '9'),
-        (KeyCode::Minus, '-'), (KeyCode::NumpadSubtract, '-'),
-        (KeyCode::Period, '.'), (KeyCode::NumpadDecimal, '.'),
-    ];
-
-    for &(key, ch) in digit_keys {
+    for &(key, ch) in DIGIT_KEYS.iter().chain(SIGN_KEYS) {
         if keyboard.just_pressed(key) {
             if ch == '-' && !input.buffers[input.active_field].is_empty() {
                 keyboard.clear_just_pressed(key);

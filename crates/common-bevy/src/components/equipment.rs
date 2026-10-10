@@ -58,12 +58,6 @@ impl Piece {
         }
     }
 
-    /// How many styles the piece is made in: the glTF scenes its asset
-    /// holds, one outfit each.
-    pub fn styles(self) -> u8 {
-        STYLES
-    }
-
     /// The slot a piece is worn in. The game assigns it: pants and boots
     /// both fit the legs.
     pub fn slot(self) -> Slot {
@@ -140,8 +134,7 @@ impl Slot {
             Slot::Waist => "Waist",
             Slot::Legs => "Legs",
             Slot::Feet => "Feet",
-            Slot::OffHand => "Off
-hand",
+            Slot::OffHand => "Off\nhand",
         }
     }
 
@@ -151,8 +144,8 @@ hand",
 }
 
 /// The styles every set is made in: its seeds, one outfit each, which
-/// are a piece's glTF scenes in order (`Piece::styles`). A style of the
-/// leather and the same style of the plate are one outfit.
+/// are a piece's glTF scenes in order. A style of the leather and the
+/// same style of the plate are one outfit.
 pub const STYLES: u8 = 3;
 
 /// A piece in a style.
@@ -439,7 +432,7 @@ mod tests {
     fn a_full_bag_takes_only_what_it_stacks() {
         let worn = Equipment::default();
         let mut bag = Inventory::default();
-        let pieces: Vec<Item> = Piece::ALL.iter().flat_map(|&piece| (0..piece.styles()).map(move |style| item(piece, style))).collect();
+        let pieces: Vec<Item> = Piece::ALL.iter().flat_map(|&piece| (0..STYLES).map(move |style| item(piece, style))).collect();
         bag.items = pieces.into_iter().cycle().take(BAG_STACKS - 1).collect();
         bag.add(of(common::Material::Softwood, 1));
         assert_eq!(bag.stacks(&worn), BAG_STACKS);

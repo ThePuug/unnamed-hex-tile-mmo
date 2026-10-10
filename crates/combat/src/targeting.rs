@@ -29,9 +29,10 @@ pub fn update_targets(
             *loc,
             *heading,
             arc_of(&tuning, attrs),
-            &mut target,
+            &mut *target,
             &nntree,
             |e| sides.get(e).ok().copied(),
+            Side::is_hostile_to,
         );
     }
 }

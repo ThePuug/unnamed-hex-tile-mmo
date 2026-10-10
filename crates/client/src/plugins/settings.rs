@@ -13,7 +13,7 @@ use bevy::{
     window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode},
 };
 
-use common_bevy::components::Sun;
+use crate::components::Sun;
 
 pub struct SettingsPlugin;
 
@@ -46,11 +46,10 @@ pub enum Display {
 }
 
 impl Display {
-    fn step(self, _: i32) -> Self {
-        match self {
-            Display::Windowed => Display::Borderless,
-            Display::Borderless => Display::Windowed,
-        }
+    const ALL: [Display; 2] = [Display::Windowed, Display::Borderless];
+
+    fn step(self, by: i32) -> Self {
+        step(&Self::ALL, self, by)
     }
 
     pub fn label(self) -> &'static str {
@@ -69,11 +68,10 @@ pub enum Vsync {
 }
 
 impl Vsync {
-    fn step(self, _: i32) -> Self {
-        match self {
-            Vsync::On => Vsync::Off,
-            Vsync::Off => Vsync::On,
-        }
+    const ALL: [Vsync; 2] = [Vsync::On, Vsync::Off];
+
+    fn step(self, by: i32) -> Self {
+        step(&Self::ALL, self, by)
     }
 
     pub fn label(self) -> &'static str {

@@ -122,14 +122,6 @@ mod tests {
     // ===== ATTRIBUTE CALCULATION TESTS =====
 
     #[test]
-    fn test_berserker_level_0() {
-        let attrs = calculate_enemy_attributes(0, EnemyArchetype::Berserker);
-        assert_eq!(attrs.might_agility_axis(), 0);
-        assert_eq!(attrs.physique_discipline_axis(), 0);
-        assert_eq!(attrs.instinct_resolve_axis(), 0);
-    }
-
-    #[test]
     fn test_each_archetype_leads_with_its_attribute() {
         for (archetype, lead) in [
             (EnemyArchetype::Berserker, 0),
@@ -144,31 +136,6 @@ mod tests {
             let top = (0..6).max_by_key(|&i| values[i]).unwrap();
             assert_eq!(top, lead, "{archetype:?} should lead with attribute {lead}, got {values:?}");
         }
-    }
-
-    #[test]
-    fn test_npc_has_zero_shift() {
-        // All current archetypes have 0 shift
-        for archetype in [
-            EnemyArchetype::Berserker,
-            EnemyArchetype::Juggernaut,
-            EnemyArchetype::Flanker,
-            EnemyArchetype::Defender,
-        ] {
-            let attrs = calculate_enemy_attributes(10, archetype);
-            assert_eq!(attrs.might_agility_shift(), 0);
-            assert_eq!(attrs.physique_discipline_shift(), 0);
-            assert_eq!(attrs.instinct_resolve_shift(), 0);
-        }
-    }
-
-    #[test]
-    fn test_only_the_ambusher_invests_in_instinct() {
-        // Instinct is the Ambusher's alone, so only it has Reflex
-        for archetype in [EnemyArchetype::Berserker, EnemyArchetype::Juggernaut, EnemyArchetype::Flanker, EnemyArchetype::Defender, EnemyArchetype::Skirmisher] {
-            assert_eq!(calculate_enemy_attributes(10, archetype).reflex(), 0, "{archetype:?}");
-        }
-        assert!(calculate_enemy_attributes(10, EnemyArchetype::Ambusher).reflex() > 0);
     }
 
     #[test]

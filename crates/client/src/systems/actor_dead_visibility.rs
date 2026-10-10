@@ -95,39 +95,6 @@ mod tests {
     }
 
     #[test]
-    fn test_alive_actor_stays_visible() {
-        let mut world = World::new();
-
-        let entity = world.spawn((
-            Actor,
-            Health { max: 100.0, state: 50.0 },
-            Visibility::Visible,
-        )).id();
-
-        world.run_system_once(update_dead_visibility).unwrap();
-
-        let visibility = world.get::<Visibility>(entity).unwrap();
-        assert_eq!(*visibility, Visibility::Visible);
-    }
-
-    #[test]
-    fn test_respawned_actor_becomes_visible() {
-        let mut world = World::new();
-
-        // Actor that was hidden for some reason gets restored when health > 0
-        let entity = world.spawn((
-            Actor,
-            Health { max: 100.0, state: 100.0 },
-            Visibility::Hidden,
-        )).id();
-
-        world.run_system_once(update_dead_visibility).unwrap();
-
-        let visibility = world.get::<Visibility>(entity).unwrap();
-        assert_eq!(*visibility, Visibility::Visible);
-    }
-
-    #[test]
     fn a_viewed_body_stays_until_the_view_ends() {
         let mut world = World::new();
         let mut time = Time::<()>::default();

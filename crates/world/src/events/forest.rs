@@ -40,20 +40,20 @@ use std::sync::Arc;
 use common::{Cover, HexLattice, HexSpatialGrid, Content, SITES};
 
 use crate::chains::{Segment, SegmentGrid};
-use crate::lattice::{nearest_node, PATH_SWING};
-use crate::noise::{hash_channel_f64, hash_f64, simplex_2d};
+use crate::lattice::{jittered_centre, nearest_node, PATH_SWING};
+use crate::noise::{hash_channel_f64, hash_f64};
 use crate::tectonic::{Edge, PLATE_SPACING};
-use crate::{hex_to_world, world_to_hex};
+use crate::{hex_to_world, smoothstep, world_to_hex};
+use super::climate::{temperature, TREELINE, TREELINE_BAND};
 use super::drainage::DrainageIndex;
-use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use super::index::{CellId, CellIndex, IndexRegistry};
 use super::lithology::rock_on;
 use super::migration::{ChannelIndex, VALLEY_HALF_WIDTH};
 use super::plates::{Coasts, PlateEdgeIndex, COAST_REACH, GRAPH_CELL_SCALE, WARP_SWING};
-use super::thrusting::{rim_of, sheets_of, smoothstep, EdgeOutline, OutlineIndex, Outlines, RANGE_RISE, RANGE_SPACING, WEDGE_SHEETS};
+use super::thrusting::{rim_of, sheets_of, EdgeOutline, OutlineIndex, Outlines, RANGE_SPACING, WEDGE_SHEETS};
 use super::{footprint_plus_ring, CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 
 const WIND_SEED: u64 = 0x7769_6e64;
-const CLIMATE_SEED: u64 = 0x636c_696d;
 const STAND_SEED: u64 = 0x7374_616e;
 const SLOT_FILL: u64 = 0x66;
 const SLOT_KIND: u64 = 0x6b;
@@ -187,47 +187,13 @@ pub fn sky_moisture(wx: f64, wy: f64, wind: (f64, f64), coasts: &Coasts, outline
     sea_moisture(wx, wy, coasts) * (1.0 - shadow(wx, wy, wind, outlines))
 }
 
-// ── Temperature ─────────────────────────────────────────────────────────────
-
-/// The growing-season isotherm trees stop at, in degrees: Körner's, the
-/// same on every continent.
-pub const TREELINE: f64 = 6.4;
-
-/// The height the mean region's temperature reaches the treeline at, in
-/// z-levels: a range and a half's rise, so a full plateau stands just
-/// under the line in cold forest and a range's crest above it. The stack's
-/// heights are their own scale, so the lapse rate is set against them and
-/// never against a kilometre.
-pub const TREELINE_RISE: f64 = 1.5 * RANGE_RISE;
-
-/// The lapse rate in degrees per z-level, from [`TREELINE_RISE`].
-pub const LAPSE: f64 = (SEA_LEVEL_MEAN - TREELINE) / TREELINE_RISE;
-
-/// How many degrees above the treeline the forest thins to brush.
-pub const TREELINE_BAND: f64 = 2.0;
+// ── The kinds ───────────────────────────────────────────────────────────────
 
 /// Below this the trees are pine; above [`DECIDUOUS_ABOVE`] deciduous;
-/// between, both, by the share of the way.
+/// between, both, by the share of the way. The temperature is the
+/// climate's, read at the tile.
 pub const PINE_BELOW: f64 = 11.0;
 pub const DECIDUOUS_ABOVE: f64 = 15.0;
-
-/// Sea-level temperature across the world: a mean, a spread, and the
-/// wavelength of the slow field carrying it, several plates.
-pub const SEA_LEVEL_MEAN: f64 = 18.0;
-pub const SEA_LEVEL_SPREAD: f64 = 10.0;
-pub const CLIMATE_WAVELENGTH: f64 = 4.0 * PLATE_SPACING;
-
-/// The regional temperature at sea level: the world has no latitude, so
-/// this slow field is the only climate a region has.
-pub fn sea_level_temperature(wx: f64, wy: f64, seed: u64) -> f64 {
-    SEA_LEVEL_MEAN + SEA_LEVEL_SPREAD * simplex_2d(wx / CLIMATE_WAVELENGTH, wy / CLIMATE_WAVELENGTH, seed ^ CLIMATE_SEED)
-}
-
-/// The temperature at a position `elevation` z-levels up: the regional
-/// field less the lapse rate over the ground above the sea.
-pub fn temperature(wx: f64, wy: f64, elevation: f64, seed: u64) -> f64 {
-    sea_level_temperature(wx, wy, seed) - LAPSE * elevation.max(0.0)
-}
 
 // ── The stands ──────────────────────────────────────────────────────────────
 
@@ -335,25 +301,6 @@ impl CellIndex for StandIndex {
     }
 }
 
-impl EventIndex for StandIndex {
-    fn source_scale(&self) -> u32 { FOREST_CELL_SCALE }
-
-    /// Each stand at its origin's tile.
-    fn tiles(&self, cell_ids: &[CellId]) -> Vec<(i32, i32)> {
-        cell_ids
-            .iter()
-            .filter_map(|id| self.cells.get(id))
-            .flat_map(|c| c.stands.iter().map(|s| world_to_hex(s.wx, s.wy)))
-            .collect()
-    }
-
-    fn neighbors(&self, _q: i32, _r: i32) -> Vec<(i32, i32)> { Vec::new() }
-
-    fn remove_cell(&mut self, cell_id: CellId) {
-        self.cells.remove(&cell_id);
-    }
-}
-
 /// The lattice the origins are drawn on.
 pub fn stand_lattice() -> HexLattice {
     HexLattice::new(STAND_LATTICE)
@@ -362,13 +309,7 @@ pub fn stand_lattice() -> HexLattice {
 /// The origin a stand lattice cell puts its stand at: the cell's centre,
 /// jittered by the cell's hash.
 pub fn origin_of(lattice: &HexLattice, id: CellId, seed: u64) -> (f64, f64) {
-    let (cq, cr) = lattice.cell_center(id);
-    let (cx, cy) = hex_to_world(cq, cr);
-    let spacing = (lattice.tiles_per_cell() as f64).sqrt();
-    let swing = 2.0 * STAND_JITTER * spacing;
-    let jx = (hash_channel_f64(id.0 as i64, id.1 as i64, seed ^ STAND_SEED, 1) - 0.5) * swing;
-    let jy = (hash_channel_f64(id.0 as i64, id.1 as i64, seed ^ STAND_SEED, 2) - 0.5) * swing;
-    (cx + jx, cy + jy)
+    jittered_centre(lattice, id, STAND_JITTER, seed ^ STAND_SEED)
 }
 
 /// The stand lattice cells whose origins can fall in a cell of `lattice`:
@@ -594,14 +535,11 @@ pub fn cover_of(q: i32, r: i32, ground: Cover, density: f64, trees: f64, tempera
 
 // ── The event ───────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct ForestEvent;
 
 impl ForestEvent {
     pub fn new() -> Self { ForestEvent }
-}
-
-impl Default for ForestEvent {
-    fn default() -> Self { Self::new() }
 }
 
 impl WorldEvent for ForestEvent {
@@ -666,7 +604,6 @@ impl WorldEvent for ForestEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::Composite;
     use super::super::lithology::Rock;
     use super::super::plates::unwarp;
     use crate::tectonic::PLATE_REACH;
@@ -719,17 +656,6 @@ mod tests {
                 assert!(ground_moisture(sky, r.retention(), 1.0, true) >= MOISTURE_CLOSED);
             }
         }
-    }
-
-    /// The temperature falls with elevation at the lapse rate, so the
-    /// treeline is a height, and the sea-level field stays in its spread.
-    #[test]
-    fn temperature_falls_at_the_lapse_rate() {
-        let (wx, wy) = hex_to_world(SPAWN.0, SPAWN.1);
-        let t0 = temperature(wx, wy, 0.0, S);
-        assert!((t0 - SEA_LEVEL_MEAN).abs() <= SEA_LEVEL_SPREAD);
-        assert!((temperature(wx, wy, 100.0, S) - (t0 - 100.0 * LAPSE)).abs() < 1e-9);
-        assert_eq!(temperature(wx, wy, -50.0, S), t0, "the sea is at sea level");
     }
 
     /// No site is filled at no density, every site at a density past
@@ -842,20 +768,5 @@ mod tests {
         // Turned round, the foreland is the lee.
         let back = (-wind.0, -wind.1);
         assert!(shadow(fore.0, fore.1, back, &outlines) > shadow(lee.0, lee.1, back, &outlines));
-    }
-
-    /// The stack reads one cover for a tile however it is asked: the same
-    /// from two composites of one seed, and after its neighbours.
-    #[test]
-    fn cover_is_deterministic() {
-        let a = Composite::standard(S);
-        let b = Composite::standard(S);
-        let tiles: Vec<(i32, i32)> = (0..6).flat_map(|i| (0..6).map(move |j| (SPAWN.0 + i * 37, SPAWN.1 + j * 41))).collect();
-        let first: Vec<Cover> = tiles.iter().map(|&(q, r)| a.cover_at(q, r)).collect();
-        let second: Vec<Cover> = tiles.iter().rev().map(|&(q, r)| b.cover_at(q, r)).collect();
-        for (i, &(q, r)) in tiles.iter().enumerate() {
-            assert_eq!(first[i], second[tiles.len() - 1 - i], "cover at ({q}, {r}) differs");
-            assert_eq!(a.cover_at(q, r), first[i]);
-        }
     }
 }

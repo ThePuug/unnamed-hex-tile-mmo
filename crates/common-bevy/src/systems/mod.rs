@@ -4,8 +4,6 @@ pub mod physics;
 pub mod targeting;
 pub mod world;
 
-// TODO: add "leap" season once per quarter
-// TODO: shift day/night cycle by 12 minutes every day
 pub const MINUTE_MS: u128 = HOUR_MS / 60;   // 10 secs  real time = 60-sec   min    game time
 pub const HOUR_MS: u128 = DAY_MS / 24;      // 10 mins  real time = 60-min   hour   game time
 pub const DAY_MS: u128 = 14_400_000;        //  4 hour  real time = 24-hour  day    game time

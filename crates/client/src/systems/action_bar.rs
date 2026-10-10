@@ -8,10 +8,6 @@ use common_bevy::{
 };
 use common_bevy::tuning::Tuning;
 
-/// Marker component for the action bar container
-#[derive(Component)]
-pub struct ActionBarDisplay;
-
 /// Marker component for individual ability slot UI
 #[derive(Component)]
 pub struct AbilitySlot {
@@ -65,7 +61,6 @@ pub fn setup(
             ..default()
         },
         Pickable::IGNORE,
-        ActionBarDisplay,
         crate::components::ViewHud,
     ))
     .with_children(|parent| {
@@ -237,9 +232,8 @@ fn spawn_slot(icons: &Handle<Font>, parent: &mut ChildSpawnerCommands, keybind: 
             CooldownOverlay,
         ));
 
-        // Combo glow overlay (bright gold glow while the slot's ability is offered)
-        // Positioned absolutely to cover the entire slot, hidden by default
-        // INTENTIONALLY VERY BRIGHT for testing - will tone down once confirmed working
+        // Combo glow overlay: a yellow glow over the whole slot while its
+        // ability is offered, hidden otherwise
         parent.spawn((
             Node {
                 position_type: PositionType::Absolute,
@@ -247,12 +241,12 @@ fn spawn_slot(icons: &Handle<Font>, parent: &mut ChildSpawnerCommands, keybind: 
                 height: Val::Percent(100.),
                 top: Val::Px(0.),
                 left: Val::Px(0.),
-                border: UiRect::all(Val::Px(8.)),  // THICK border
+                border: UiRect::all(Val::Px(8.)),
                 ..default()
             },
-            BorderColor::all(Color::srgb(1.0, 1.0, 0.0)),  // BRIGHT YELLOW (impossible to miss)
-            BackgroundColor(Color::srgba(1.0, 1.0, 0.0, 0.5)),  // BRIGHT semi-transparent yellow fill
-            Visibility::Hidden,  // Hidden by default
+            BorderColor::all(Color::srgb(1.0, 1.0, 0.0)),
+            BackgroundColor(Color::srgba(1.0, 1.0, 0.0, 0.5)),
+            Visibility::Hidden,
             ComboGlow,
         ));
     });
@@ -302,12 +296,11 @@ pub fn update(
         };
         // Range is judged for the client's own character, who picks its
         // targets here; a viewed actor's targets are the server's
-        let state = if controlled {
-            get_ability_state(
+        let state = if recovery_active {
+            recovery_state(offered.is_some_and(|combo| combo.ability == ability), early_reaction(ability))
+        } else if controlled {
+            range_state(
                 ability,
-                recovery_active,
-                offered.is_some_and(|combo| combo.ability == ability),
-                early_reaction(ability),
                 player_ent,
                 *player_loc,
                 *player_heading,
@@ -316,19 +309,15 @@ pub fn update(
                 &nntree,
                 &entity_query,
             )
-        } else if recovery_active {
-            recovery_state(offered.is_some_and(|combo| combo.ability == ability), early_reaction(ability))
         } else {
             AbilityState::Ready
         };
 
         // Update border color based on state (keep meaningful colors)
         let (border, show_combo_glow) = match state {
-            AbilityState::Ready => (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), false),           // Green
+            AbilityState::Ready => (BorderColor::all(READY), false),
             AbilityState::OnCooldown => (BorderColor::all(Color::srgb(0.5, 0.5, 0.5)), false),      // Gray
-            AbilityState::ComboUnlocked => {
-                (BorderColor::all(Color::srgb(0.3, 0.8, 0.3)), true)  // Green + BRIGHT YELLOW GLOW!
-            },
+            AbilityState::ComboUnlocked => (BorderColor::all(READY), true),
             AbilityState::EarlyReaction => (BorderColor::all(Color::srgb(0.2, 0.8, 0.9)), false),   // Cyan
             AbilityState::OutOfRange => (BorderColor::all(Color::srgb(0.8, 0.5, 0.1)), false),      // Orange
         };
@@ -389,12 +378,9 @@ fn recovery_state(offered: bool, early_reaction: bool) -> AbilityState {
     }
 }
 
-/// Determine ability state based on recovery, combo, and targeting
-fn get_ability_state(
+/// Whether `ability` has its target in reach, for an actor not recovering.
+fn range_state(
     ability: AbilityType,
-    recovery_active: bool,
-    offered: bool,
-    early_reaction: bool,
     player_ent: Entity,
     player_loc: Loc,
     player_heading: Heading,
@@ -403,12 +389,6 @@ fn get_ability_state(
     nntree: &NNTree,
     entity_query: &Query<(&EntityType, &Loc, Option<&Side>)>,
 ) -> AbilityState {
-    // In recovery the offered combo glows from the start, a reaction
-    // Preparation fires early shows it may, and all else waits
-    if recovery_active {
-        return recovery_state(offered, early_reaction);
-    }
-
     // The actors the player may target: those on a side hostile to its own
     let side_of = |ent: Entity| entity_query.get(ent).ok().and_then(|(_, _, side)| side.copied());
     let own_side = side_of(player_ent);

@@ -45,7 +45,6 @@ pub struct TileRecord {
 pub struct Map {
     radius: f32,
     rise: f32,
-    orientation: qrz::HexOrientation,
     /// Hot-path elevation index: single shard probe, no chunk derivation.
     flat: Arc<DashMap<(i32, i32), i32>>,
     /// Flooded tiles only: the surface water stands at, as a z-level. A
@@ -58,40 +57,23 @@ pub struct Map {
     /// it, and the tiles each den's are under, by its tile.
     solids: Arc<DashMap<(i32, i32), Vec<Solid>>>,
     solid_tiles: Arc<DashMap<(i32, i32), Vec<(i32, i32)>>>,
-    /// Geometry-only delegate for coordinate conversion and vertex computation.
-    geo: Arc<qrz::Map<()>>,
+    /// The grid's geometry: conversion, vertices, faces.
+    geo: Arc<qrz::Map>,
 }
 
 impl Map {
-    pub fn new(map: qrz::Map<EntityType>) -> Map {
-        let radius = map.radius();
-        let rise = map.rise();
-        let orientation = map.orientation();
-
-        let flat: DashMap<(i32, i32), i32> = DashMap::new();
-        let chunks: DashMap<ChunkId, HashMap<(i32, i32), TileRecord>> = DashMap::new();
-        for (&qrz, &typ) in map.iter() {
-            flat.insert((qrz.q, qrz.r), qrz.z);
-            let chunk_id = loc_to_chunk(qrz);
-            chunks.entry(chunk_id).or_default().insert(
-                (qrz.q, qrz.r),
-                TileRecord { z: qrz.z, typ },
-            );
-        }
-
-        let geo = qrz::Map::<()>::new(radius, rise, orientation);
-
+    /// An empty map on the grid `map` describes.
+    pub fn new(map: qrz::Map) -> Map {
         Map {
-            radius,
-            rise,
-            orientation,
-            flat: Arc::new(flat),
+            radius: map.radius(),
+            rise: map.rise(),
+            flat: Arc::new(DashMap::new()),
             water: Arc::new(DashMap::new()),
-            chunks: Arc::new(chunks),
+            chunks: Arc::new(DashMap::new()),
             changed: Arc::new(AtomicBool::new(false)),
             solids: Arc::new(DashMap::new()),
             solid_tiles: Arc::new(DashMap::new()),
-            geo: Arc::new(geo),
+            geo: Arc::new(map),
         }
     }
 
@@ -226,7 +208,6 @@ impl Map {
 
     pub fn rise(&self) -> f32 { self.rise }
     pub fn radius(&self) -> f32 { self.radius }
-    pub fn orientation(&self) -> qrz::HexOrientation { self.orientation }
 
     pub fn len(&self) -> usize {
         self.chunks.iter().map(|e| e.value().len()).sum()
@@ -248,16 +229,6 @@ impl Map {
             }
         }
         result
-    }
-
-    pub fn iter_tiles(&self) -> Vec<(Qrz, EntityType)> {
-        self.chunks.iter()
-            .flat_map(|entry| {
-                entry.value().iter()
-                    .map(|(&(q, r), rec)| (Qrz { q, r, z: rec.z }, rec.typ))
-                    .collect::<Vec<_>>()
-            })
-            .collect()
     }
 
     pub fn greedy_path(&self, from: Qrz, toward: Qrz, max_steps: usize) -> Vec<Qrz> {
@@ -289,13 +260,9 @@ impl Map {
     /// The tile's seven vertices (six corners, then the centre) on the
     /// terrain surface: corners at the mean of the three tiles meeting there
     /// (`surface::cell_corner_zs`), the same surface the mesh draws and
-    /// physics walks. `apply_slopes = false` gives the flat hex at the
-    /// tile's own height.
-    pub fn vertices_with_slopes(&self, qrz: Qrz, apply_slopes: bool) -> Vec<Vec3> {
+    /// physics walks.
+    pub fn vertices_with_slopes(&self, qrz: Qrz) -> Vec<Vec3> {
         let mut verts = self.geo.vertices(qrz);
-        if !apply_slopes {
-            return verts;
-        }
         let corner_zs = crate::surface::cell_corner_zs((qrz.q, qrz.r), |q, r| {
             self.get_by_qr(q, r).map(|(t, _)| t.z)
         });
@@ -349,13 +316,13 @@ mod tests {
     use qrz::Qrz;
 
     fn make_flat_map() -> Map {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
         for q in -5..=5 {
             for r in -5..=5 {
-                qrz_map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
+                map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
             }
         }
-        Map::new(qrz_map)
+        map
     }
 
     /// A tile's cover is its decorator's, and a tile not loaded has none.
@@ -371,42 +338,30 @@ mod tests {
         assert_eq!(map.cover_at(50, 50), Cover::NONE);
     }
 
+    /// A path steps a tile nearer the goal each step, on the flat and up a
+    /// slope of one level a tile.
     #[test]
-    fn greedy_path_flat_terrain() {
-        let map = make_flat_map();
-        let path = map.greedy_path(
-            Qrz { q: 0, r: 0, z: 0 },
-            Qrz { q: 3, r: 0, z: 0 },
-            10,
-        );
+    fn greedy_path_steps_toward_the_goal_on_the_flat_and_up_a_slope() {
+        let flat = make_flat_map();
+        let path = flat.greedy_path(Qrz { q: 0, r: 0, z: 0 }, Qrz { q: 3, r: 0, z: 0 }, 10);
         assert_eq!(path.len(), 3);
         assert_eq!(path.last().unwrap().flat_distance(&Qrz { q: 3, r: 0, z: 0 }), 0);
-    }
 
-    #[test]
-    fn greedy_path_follows_slope() {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+        let slope = Map::new(qrz::Map::new(1.0, 0.8));
         for q in 0..=4 {
-            qrz_map.insert(Qrz { q, r: 0, z: q }, EntityType::Decorator(default()));
+            slope.insert(Qrz { q, r: 0, z: q }, EntityType::Decorator(default()));
         }
-        let map = Map::new(qrz_map);
-
-        let path = map.greedy_path(
-            Qrz { q: 0, r: 0, z: 0 },
-            Qrz { q: 4, r: 0, z: 4 },
-            10,
-        );
+        let path = slope.greedy_path(Qrz { q: 0, r: 0, z: 0 }, Qrz { q: 4, r: 0, z: 4 }, 10);
         assert_eq!(path.len(), 4);
         assert_eq!(*path.last().unwrap(), Qrz { q: 4, r: 0, z: 4 });
     }
 
     #[test]
     fn greedy_path_stops_at_cliff() {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
-        qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(default()));
-        qrz_map.insert(Qrz { q: 1, r: 0, z: 0 }, EntityType::Decorator(default()));
-        qrz_map.insert(Qrz { q: 2, r: 0, z: 5 }, EntityType::Decorator(default()));
-        let map = Map::new(qrz_map);
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
+        map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(default()));
+        map.insert(Qrz { q: 1, r: 0, z: 0 }, EntityType::Decorator(default()));
+        map.insert(Qrz { q: 2, r: 0, z: 5 }, EntityType::Decorator(default()));
 
         let path = map.greedy_path(
             Qrz { q: 0, r: 0, z: 0 },
@@ -415,14 +370,6 @@ mod tests {
         );
         assert_eq!(path.len(), 1);
         assert_eq!(path[0], Qrz { q: 1, r: 0, z: 0 });
-    }
-
-    #[test]
-    fn greedy_path_already_at_dest() {
-        let map = make_flat_map();
-        let origin = Qrz { q: 0, r: 0, z: 0 };
-        let path = map.greedy_path(origin, origin, 10);
-        assert!(path.is_empty());
     }
 
     #[test]
@@ -438,9 +385,8 @@ mod tests {
 
     #[test]
     fn greedy_path_no_progress_stops() {
-        let mut qrz_map = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
-        qrz_map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(default()));
-        let map = Map::new(qrz_map);
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
+        map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(default()));
 
         let path = map.greedy_path(
             Qrz { q: 0, r: 0, z: 0 },

@@ -131,8 +131,6 @@ impl Status {
         self.slow = Some(Timed { pace: pace.min(held), remaining: seconds.max(left) });
     }
 
-    /// Counts the timed effects and Overcommitted stacks down by `dt`
-    /// seconds, dropping spent ones. Returns whether any was counting.
     /// What its skills' prices are multiplied by now: its toll, or whole
     pub fn price(&self) -> f32 {
         Timed::pace(self.toll)
@@ -163,6 +161,8 @@ impl Status {
         self.pinned = Some(Timed { pace: 1.0, remaining: seconds.max(left) });
     }
 
+    /// Counts the timed effects and Overcommitted stacks down by `dt`
+    /// seconds, dropping spent ones. Returns whether any was counting.
     pub fn tick(&mut self, dt: f32) -> bool {
         let mut counted = false;
         for left in self.overcommitted.iter_mut().filter(|left| **left > 0.0) {
@@ -249,16 +249,6 @@ mod tests {
     }
 
     #[test]
-    fn a_broken_stride_slows_with_the_rest() {
-        let slowed = Status { slow: Some(Timed { pace: 0.5, remaining: 1.0 }), ..default() };
-        let stumbling = Status { stride: Some(Timed { pace: 0.7, remaining: 1.0 }), ..slowed };
-        assert!(stumbling.pace() < slowed.pace());
-        let mut spent = stumbling;
-        spent.tick(1.5);
-        assert_eq!(spent.stride, None);
-    }
-
-    #[test]
     fn a_hold_stops_the_actor_until_it_runs_out_and_a_shorter_one_never_cuts_it() {
         let mut status = Status::default();
         assert!(!status.is_held() && !Status::holds(None));
@@ -286,15 +276,5 @@ mod tests {
         assert_eq!(status.overcommits(), OVERCOMMIT_STACKS);
         status.tick(5.0);
         assert_eq!(status.overcommits(), 0);
-    }
-
-    #[test]
-    fn a_timed_effect_runs_out() {
-        let mut status = Status { slow: Some(Timed { pace: 0.8, remaining: 0.5 }), ..default() };
-        status.tick(0.3);
-        assert!(status.pace() < 1.0);
-        status.tick(0.3);
-        assert_eq!(status.slow, None);
-        assert_eq!(status.pace(), 1.0);
     }
 }

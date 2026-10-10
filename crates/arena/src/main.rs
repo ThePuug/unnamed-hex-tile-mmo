@@ -323,7 +323,7 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
             Event::UseAbility { ent, ability, target, .. } => {
                 let flanked = ability.reach(1).is_some() && target.and_then(|target| places.get(target).ok())
                     .zip(places.get(*ent).ok())
-                    .is_some_and(|((target_loc, target_heading), (loc, _))| target_heading.is_some_and(|&heading| !targeting::is_in_facing_cone(heading, *target_loc, *loc)));
+                    .is_some_and(|((target_loc, target_heading), (loc, _))| targeting::flanked(target_heading, target_loc, loc));
                 let skill_strike = *ability != AbilityType::AutoAttack && target.is_some() && !ability.is_reaction() && *ability != AbilityType::PerfectStride;
                 let stacks = target.and_then(|target| statuses.get(target).ok()).map_or(0, |status| status.overcommits());
                 if let Some(ledger) = tally.of(*ent) {
@@ -396,8 +396,8 @@ fn tally_states(world: &mut World, step: f32) {
     let frames: Vec<_> = actors.iter(world).filter(|(_, health, ..)| health.state > 0.0).map(|(ent, _, loc, range, target, recovery, status, endurance)| {
         let foe = target.and_then(|target| target.entity);
         let beyond = foe.and_then(|foe| locs.get(&foe)).is_some_and(|foe| loc.flat_distance(foe) > range.0);
-        let past_faces = foe.and_then(|foe| Some((locs.get(&foe)?, headings.get(&foe)?)))
-            .is_some_and(|(foe_loc, heading)| !targeting::is_in_facing_cone(*heading, *foe_loc, *loc));
+        let past_faces = foe.and_then(|foe| Some((locs.get(&foe)?, headings.get(&foe))))
+            .is_some_and(|(foe_loc, heading)| targeting::flanked(heading, foe_loc, loc));
         (ent, recovery.is_some(), Status::holds(status), status.is_some_and(|status| status.slow.is_some()), beyond, past_faces, Endurance::fatigue_of(&tuning, endurance))
     }).collect();
     let mut tally = world.resource_mut::<Tally>();
@@ -450,11 +450,7 @@ fn flat_map() -> Map {
 }
 
 fn lay_flat_map() -> Map {
-    let map = Map::new(qrz::Map::<EntityType>::new(
-        common::camera::HEX_RADIUS,
-        common::camera::RISE,
-        qrz::HexOrientation::FlatTop,
-    ));
+    let map = Map::new(qrz::Map::new(common::grid::HEX_RADIUS, common::grid::RISE));
     for q in -ARENA_RADIUS..=ARENA_RADIUS {
         for r in -ARENA_RADIUS..=ARENA_RADIUS {
             if (q + r).abs() <= ARENA_RADIUS {
@@ -614,13 +610,14 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
 
 /// Prints where every actor stands and what it is doing.
 fn timeline(world: &mut World, elapsed: Duration) {
-    use common_bevy::components::{Loc, hex_assignment::AssignedHex, resources::CombatState, returning::Returning, status::Status, target::Target};
+    use common_bevy::components::{Loc, resources::CombatState, returning::Returning, status::Status, target::Target};
+    use combat::engagement::{AssignedHex, HexAssignment};
     let mut facings = world.query::<(Entity, &Loc, &Heading)>();
     let facing: HashMap<Entity, (Loc, Heading)> = facings.iter(world).map(|(e, loc, heading)| (e, (*loc, *heading))).collect();
     let mut actors = world.query::<(Entity, &Side, &Loc, &Health, &CombatState, Option<&Target>, Option<&Returning>, Option<&AssignedHex>, Option<&Status>, &common_bevy::components::position::Position)>();
     let lines: Vec<_> = actors.iter(world).map(|(e, side, loc, hp, combat, target, returning, assigned, status, pos)| {
         // Whether it stands past its target's forward faces, as a strike it lands would count a flank
-        let flanking = target.and_then(|t| t.entity).and_then(|t| facing.get(&t)).is_some_and(|&(at, heading)| !common_bevy::systems::targeting::is_in_facing_cone(heading, at, *loc));
+        let flanking = target.and_then(|t| t.entity).and_then(|t| facing.get(&t)).is_some_and(|(at, heading)| targeting::flanked(Some(heading), at, loc));
         format!("{}#{} {:?} face {:?}{} pos {:?}+({:.2},{:.2}) hp {:.0}{}{}{}{} ->{:?}", side.0, e.index(), (loc.q, loc.r, loc.z),
             facing.get(&e).map(|(_, heading)| *heading), if flanking { " FLANKING" } else { "" },
             (pos.tile.q, pos.tile.r), pos.offset.x, pos.offset.z, hp.state,
@@ -630,7 +627,7 @@ fn timeline(world: &mut World, elapsed: Duration) {
             if Status::holds(status) { " HELD" } else { "" },
             target.and_then(|t| t.entity).map(|t| t.index()))
     }).collect();
-    let mut engagements = world.query::<&common_bevy::components::hex_assignment::HexAssignment>();
+    let mut engagements = world.query::<&HexAssignment>();
     let assigning: Vec<_> = engagements.iter(world).map(|h| format!("{:?}@{:?}", h.target_player.map(|e| e.index()), h.last_player_tile.map(|t| (t.q, t.r)))).collect();
     println!("    t={:>5.1}s {} || engagements {}", elapsed.as_secs_f32(), lines.join(" | "), assigning.join(" "));
 }

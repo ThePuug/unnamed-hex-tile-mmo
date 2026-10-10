@@ -28,13 +28,14 @@ use std::{collections::HashMap, time::Duration};
 use bevy::prelude::*;
 use qrz::{Qrz, DIRECTIONS};
 
+use combat::engagement::Engagement;
 use common::den::Habitat;
 use common_bevy::{
     archetype::EnemyArchetype,
     den::DenLook,
     message::{Do, Event},
     chunk::{calculate_visible_chunks, loc_to_chunk, ChunkId},
-    components::{behaviour::Side, engagement::Engagement, ActorAttributes, Loc},
+    components::{behaviour::Side, ActorAttributes, Loc},
     haven::HAVEN_LOCATION,
     resources::map::Map,
     tuning::Tuning,
@@ -259,7 +260,7 @@ pub fn tend_dens(
 /// level past the first summary level, the furthest a den is drawn.
 pub fn sight() -> i32 {
     let edge = common_bevy::summary::threshold_horiz(common_bevy::summary::LOD_LEVELS[2]);
-    (edge / (common::camera::HEX_RADIUS * 3f32.sqrt())).ceil() as i32
+    (edge / (common::grid::HEX_RADIUS * 3f32.sqrt())).ceil() as i32
 }
 
 /// The den on `site` as drawn, about the tile its pack stands on, once
@@ -400,7 +401,7 @@ mod tests {
     #[test]
     fn a_dens_clearing_holds_every_piece() {
         use qrz::Convert;
-        let map = Map::new(qrz::Map::new(common::camera::HEX_RADIUS, 0.8, qrz::HexOrientation::FlatTop));
+        let map = Map::new(qrz::Map::new(common::grid::HEX_RADIUS, 0.8));
         let at = Qrz { q: 5, r: -3, z: 2 };
         for archetype in EnemyArchetype::ALL {
             for seed in 0..3 {
@@ -436,7 +437,7 @@ mod tests {
 
     #[test]
     fn a_den_stands_on_the_nearest_dry_ground_to_its_site() {
-        let map = Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop));
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
         for q in -3..=3 {
             map.insert(Qrz { q, r: 0, z: 0 }, Default::default());
         }

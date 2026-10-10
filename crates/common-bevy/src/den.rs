@@ -51,7 +51,7 @@ impl DenLook {
                 x.hypot(z) + extent
             })
             .fold(0.0, f32::max);
-        (reach / (common::camera::HEX_RADIUS * 3f32.sqrt())).ceil() as u32
+        (reach / (common::grid::HEX_RADIUS * 3f32.sqrt())).ceil() as u32
     }
 
     /// The circles its pieces stand: each centre from the centre of its

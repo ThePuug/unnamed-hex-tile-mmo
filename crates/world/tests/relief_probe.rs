@@ -7,7 +7,6 @@
 
 use std::time::Instant;
 
-use common::PlateTag;
 use world::events::Composite;
 use world::events::thrusting::Outlines;
 use world::events::drainage::surface_at;
@@ -30,7 +29,7 @@ fn minutes(tiles: f64) -> f64 {
     tiles / TILES_PER_SEC / 60.0
 }
 
-/// Coarse world census: elevation + tag distribution over a continental span.
+/// Coarse world census: the elevation distribution over a continental span.
 #[test]
 #[ignore]
 fn relief_census() {
@@ -38,7 +37,7 @@ fn relief_census() {
     let c = composite();
 
     // 81x81 samples, 500 tiles apart -> 40,000 x 40,000 tile span
-    // (~2.6 spine exclusion distances across; ~154 min of running edge to edge)
+    // (~154 min of running edge to edge)
     const N: i32 = 81;
     const STEP: i32 = 500;
     let origin = -(N / 2) * STEP;
@@ -46,7 +45,6 @@ fn relief_census() {
     let mut z_hist: Vec<u32> = vec![0; 13];
     let mut zero = 0u32;
     let mut land = 0u32;
-    let mut tag_counts = [0u32; 3];
     let mut max_z = 0i32;
     let mut min_z = 0i32;
     let total = (N * N) as u32;
@@ -84,18 +82,6 @@ fn relief_census() {
             if substrate_elevation_at(wx, wy, SEED) >= 0.0 {
                 land += 1;
             }
-            for (k, tag) in [
-                PlateTag::Ridge,
-                PlateTag::Highland,
-                PlateTag::Foothills,
-            ]
-            .iter()
-            .enumerate()
-            {
-                if view.tags.has(*tag) {
-                    tag_counts[k] += 1;
-                }
-            }
         }
         if i % 20 == 0 {
             println!("  row {i}/{N} elapsed {:?}", t.elapsed());
@@ -114,13 +100,6 @@ fn relief_census() {
     println!("\n  elevation histogram:");
     for (l, n) in labels.iter().zip(&z_hist) {
         println!("    {l:>8}: {:5.1}%  ({n})", pct(*n));
-    }
-    println!("\n  tag coverage:");
-    for (l, n) in ["Ridge", "Highland", "Foothills"]
-        .iter()
-        .zip(&tag_counts)
-    {
-        println!("    {l:>10}: {:5.1}%  ({n})", pct(*n));
     }
 }
 
@@ -217,7 +196,7 @@ fn shoreline_profile() {
             let z = c.elevation_at(q, r);
             if let Some(p) = prev_z {
                 // Only count steps climbing out of water — steps on dry land are
-                // spine terrain, measured separately by `climbability`.
+                // the belts', measured separately by `climbability`.
                 let step = z - p;
                 if step > 0 && p < 0 {
                     uphill_steps += 1;
@@ -250,7 +229,7 @@ fn shoreline_profile() {
 }
 
 /// Traversability: a player can step up at most +1 z per tile (movement.rs
-/// `is_tile_blocked`, "cliff transition"). Walk transects through a spine and
+/// `is_tile_blocked`, "cliff transition"). Walk transects through a belt and
 /// count how many steps exceed that.
 #[test]
 #[ignore]
@@ -258,7 +237,7 @@ fn climbability() {
     println!("\n=== climbability of elevated terrain ===\n");
     let c = composite();
 
-    // Transects through the spine found near (1437, 8362) by local_relief.
+    // Transects through the belt found near (1437, 8362) by local_relief.
     let center = (1437, 8362);
     let mut total_steps = 0u32;
     let mut uphill = 0u32;
@@ -370,17 +349,15 @@ fn feature_spacing() {
     );
 }
 
-/// The server's hardcoded spawn point (server/src/main.rs) must be dry land.
-/// PlateEvent submerges everything below the regime land threshold, and a spawn
-/// under the waterline puts the camera beneath the water plane.
+/// The server's spawn point must be dry land: a spawn under the waterline
+/// puts the camera beneath the water plane.
 #[test]
 #[ignore]
 fn spawn_point_is_above_water() {
     let c = composite();
     for &(q, r, label) in &[(SPAWN.0, SPAWN.1, "server spawn")] {
         let view = c.tile_at(q, r);
-        let tags: Vec<_> = view.tags.iter().collect();
-        println!("  {label} ({q},{r}): z={} tags={tags:?}", c.elevation_at(q, r));
+        println!("  {label} ({q},{r}): z={}", c.elevation_at(q, r));
         assert!(
             view.elevation >= 0.0,
             "{label} ({q},{r}) is underwater at elevation {:.1} — the camera \

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use common_bevy::{components::Loc, message::AbilityType};
 
-use super::{Abilities, AbilityFailReason, Cast, WHOLE};
+use super::{Abilities, AbilityFailReason, Cast};
 use crate::leap::{away, slide, toward, LEAP_MS};
 
 /// Leap, the Skirmisher's skill: an action that carries its user its
@@ -36,8 +36,8 @@ pub fn leap(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, Ab
     if clear {
         abilities.answer(cast);
     } else if Loc::new(landing).distance(&target_loc) <= cast.reach {
-        let damage = cast.attrs.base_potency(&tuning) * tuning.leap_strike * cast.attrs.line_power(&tuning, AbilityType::Leap);
-        abilities.strike(cast, target, damage, AbilityType::Leap, &WHOLE);
+        let damage = cast.attrs.base_potency(&tuning) * tuning.damage(AbilityType::Leap) * cast.attrs.line_power(&tuning, AbilityType::Leap);
+        abilities.strike(cast, target, damage, AbilityType::Leap);
     }
     Ok(Some(target))
 }

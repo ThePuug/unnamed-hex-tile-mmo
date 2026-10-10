@@ -26,14 +26,12 @@
 
 pub mod auto_attack;
 pub mod counter;
-pub mod feint;
-pub mod frenzy;
 pub mod leap;
 pub mod npc;
-pub mod overpower;
 pub mod parry;
 pub mod punish;
 pub mod stride;
+pub mod strike;
 
 use std::time::Duration;
 
@@ -41,7 +39,6 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use common_bevy::{
     components::{
         behaviour::Side,
-        engagement::{Engagement, EngagementMember},
         heading::Heading,
         reaction_queue::{QueuedThreat, ReactionQueue},
         recovery::GlobalRecovery,
@@ -61,6 +58,7 @@ use common_bevy::{
 
 use crate::{
     behaviour::{chase::Chase, perception::{Sight, Skill}},
+    engagement::{Engagement, EngagementMember},
     landing,
 };
 use common_bevy::tuning::Tuning;
@@ -69,7 +67,8 @@ use common_bevy::tuning::Tuning;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AbilityFailReason {
     NoTargets,
-    OnCooldown,
+    /// The caster is in a recovery the ability may not be used through
+    Recovering,
     OutOfRange,
     /// The target stands outside the caster's arc
     NotFacing,
@@ -109,9 +108,6 @@ impl Cast {
 #[derive(Clone, Component, Copy, Debug)]
 pub struct LastSkill(pub Duration);
 
-/// A skill's strike made whole and at once ([`Abilities::strike`])
-pub const WHOLE: [(f32, Duration); 1] = [(1.0, Duration::ZERO)];
-
 /// What the gate asks of `ability` before it does anything, `reacting`
 /// where this use is a reaction (`AbilityType::reacts`), in order: out
 /// of `prior`, the recovery its caster is in, or let through it (an
@@ -125,7 +121,7 @@ pub fn admits(ability: AbilityType, reacting: bool, prior: Option<&GlobalRecover
         return Err(AbilityFailReason::Pinned);
     }
     if ability != AbilityType::AutoAttack && !may_use(ability, reacting, prior, attrs) {
-        return Err(AbilityFailReason::OnCooldown);
+        return Err(AbilityFailReason::Recovering);
     }
     if let Some(within) = ability.reach(reach) {
         let (distance, in_arc) = foe.ok_or(AbilityFailReason::NoTargets)?;
@@ -290,9 +286,7 @@ impl Abilities<'_, '_> {
         // changes anything; it names whom its recovery is contested by
         let opponent = match ability {
             AbilityType::AutoAttack => auto_attack::swing(self, &cast),
-            AbilityType::Frenzy => frenzy::strike(self, &cast),
-            AbilityType::Feint => feint::strike(self, &cast),
-            AbilityType::Overpower => overpower::strike(self, &cast),
+            AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower => strike::strike(self, &cast),
             AbilityType::Punish => punish::strike(self, &cast),
             AbilityType::Parry => parry::answer(self, &cast),
             AbilityType::Counter => counter::answer(self, &cast),
@@ -398,14 +392,11 @@ impl Abilities<'_, '_> {
         self.statuses.get(ent).is_ok_and(|status| status.is_striding())
     }
 
-    /// Queues a skill's strike on `target` for `damage` in all, in `parts`:
-    /// each a share of it, struck its delay after now ([`WHOLE`] for one
-    /// strike made at once). Every skill that strikes deals its damage
-    /// through here, and an auto-attack or a reaction's return never does.
-    pub fn strike(&mut self, cast: &Cast, target: Entity, damage: f32, ability: AbilityType, parts: &[(f32, Duration)]) {
-        for &(share, delay) in parts {
-            self.deal(cast.ent, target, damage * share, ability, delay);
-        }
+    /// Queues a skill's strike on `target` for `damage`, struck at once.
+    /// Every skill that strikes deals its damage through here, and an
+    /// auto-attack or a reaction's return never does.
+    pub fn strike(&mut self, cast: &Cast, target: Entity, damage: f32, ability: AbilityType) {
+        self.deal(cast.ent, target, damage, ability, Duration::ZERO);
     }
 
     /// Queues a blow of `base_damage` from `source` on `target` as
@@ -438,8 +429,7 @@ impl Abilities<'_, '_> {
 
     /// The game's clock, the one a threat's times are on
     pub fn game_now(&self) -> Duration {
-        let now_ms = self.time.elapsed().as_millis() + self.runtime.elapsed_offset;
-        Duration::from_millis(now_ms.min(u64::MAX as u128) as u64)
+        self.runtime.now(&self.time)
     }
 }
 
@@ -470,13 +460,13 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, NNTreePlugin, crate::plugin::CombatPlugin));
         app.insert_resource(Tuning::DEFAULT);
-        let mut tiles = qrz::Map::<EntityType>::new(1.0, 0.8, qrz::HexOrientation::FlatTop);
+        let tiles = Map::new(qrz::Map::new(1.0, 0.8));
         for q in -12..=12 {
             for r in -12..=12 {
                 tiles.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(default()));
             }
         }
-        app.insert_resource(Map::new(tiles));
+        app.insert_resource(tiles);
         app.insert_resource(common_bevy::components::resources::SpawnPoint(Qrz { q: 0, r: 0, z: 1 }));
         app.init_resource::<Said>();
         app.add_systems(PostUpdate, record);
@@ -590,7 +580,7 @@ mod tests {
         app.update();
 
         assert!(used(&ask(&mut app, caster, AbilityType::Feint, Some(near)), AbilityType::Feint));
-        assert_eq!(refused(&mut app, caster, AbilityType::Frenzy, Some(near)), Some(AbilityFailReason::OnCooldown), "recovering, it uses no other ability");
+        assert_eq!(refused(&mut app, caster, AbilityType::Frenzy, Some(near)), Some(AbilityFailReason::Recovering), "recovering, it uses no other ability");
 
         let said = ask(&mut app, caster, AbilityType::AutoAttack, Some(near));
         assert!(used(&said, AbilityType::AutoAttack), "an auto-attack is outside the recovery");
@@ -611,7 +601,7 @@ mod tests {
         app.update();
 
         assert!(used(&ask(&mut app, plain, AbilityType::Frenzy, Some(near)), AbilityType::Frenzy));
-        assert_eq!(refused(&mut app, plain, AbilityType::Frenzy, Some(near)), Some(AbilityFailReason::OnCooldown), "with no Ferocity the next bite waits to unlock");
+        assert_eq!(refused(&mut app, plain, AbilityType::Frenzy, Some(near)), Some(AbilityFailReason::Recovering), "with no Ferocity the next bite waits to unlock");
 
         assert!(used(&ask(&mut app, fierce, AbilityType::Frenzy, Some(near)), AbilityType::Frenzy));
         assert!(used(&ask(&mut app, fierce, AbilityType::Frenzy, Some(near)), AbilityType::Frenzy), "Ferocity bites again at once");
@@ -681,7 +671,7 @@ mod tests {
         let queued = |app: &mut App, damage: f32, millis: u64| {
             let at = Duration::from_millis(millis);
             let threat = create_threat(&tuning, attacker, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
-            insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat, at);
+            insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat);
             threat.lands_at()
         };
         let flat = plain.skill_endurance(&tuning, AbilityType::Parry);
@@ -728,7 +718,7 @@ mod tests {
         let plain = ActorAttributes::default();
         let queued = |app: &mut App, at: Duration| {
             let threat = create_threat(&tuning, attacker, &plain, &plain, 10.0, Some(AbilityType::Frenzy), at, 0.0, 0.0);
-            insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat, at);
+            insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat);
             threat.lands_at()
         };
         let clock_to = |app: &mut App, at: Duration| {
@@ -775,7 +765,7 @@ mod tests {
         let span = plain.span(&tuning);
         for at in [Duration::ZERO, span / 2, span * 4] {
             let threat = create_threat(&tuning, attacker, &plain, &plain, 10.0, Some(AbilityType::Frenzy), at, 0.0, 0.0);
-            insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat, at);
+            insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat);
         }
 
         let lands = soonest(&app, defender);
@@ -859,7 +849,7 @@ mod tests {
         let plain = ActorAttributes::default();
         let at = Duration::from_millis(millis);
         let threat = create_threat(&tuning, source, &plain, &plain, damage, Some(AbilityType::Frenzy), at, 0.0, 0.0);
-        insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(ent).unwrap(), threat, at);
+        insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(ent).unwrap(), threat);
         threat.lands_at()
     }
 

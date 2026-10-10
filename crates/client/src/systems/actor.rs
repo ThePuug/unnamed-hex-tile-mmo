@@ -1,12 +1,10 @@
 use std::time::Duration;
 
 use bevy::{gltf::GltfNode, prelude::*, world_serialization::WorldInstanceReady};
-use qrz::Convert;
 
 use crate::{components::*, systems::animator::{Clip, Clips, Rig}};
 use common_bevy::{
     components::{
-        displacing::Displacing,
         entity_type::{ actor::*, * },
         heading::*, keybits::*,
         position::{Position, VisualPosition},
@@ -18,8 +16,6 @@ use common_bevy::{
     resources::map::Map,
     archetype::EnemyArchetype,
 };
-
-pub fn setup() {}
 
 /// Plays an actor's scene once it is spawned: every clip its GLB holds, each
 /// found by name (`animator::Clip`), the idle playing, which the animator
@@ -84,21 +80,16 @@ pub fn face(current: Quat, heading: Heading, dt: f32) -> Quat {
 /// sliding round a target, toward the way it goes, so it runs round rather
 /// than sideways; the heading takes the turn back as the slide ends.
 pub fn update(
-    mut query: Query<(&Loc, &Heading, &mut Transform, Option<&VisualPosition>, Option<&Displacing>), Without<DeathMarker>>,
-    map: Res<Map>,
+    mut query: Query<(&Heading, &mut Transform, &VisualPosition, Option<&Displacing>), (With<Loc>, Without<DeathMarker>)>,
     time: Res<Time>,
 ) {
-    for (&loc, &heading, mut transform0, vis_pos, displacing) in &mut query {
-        let final_pos = if let Some(vis) = vis_pos {
-            // Use VisualPosition for smooth, jitter-free rendering
-            vis.current()
-        } else {
-            // Fallback: tile center for entities without VisualPosition
-            map.convert(*loc)
-        };
+    for (&heading, mut transform0, vis, displacing) in &mut query {
+        // The visual, not the position: the same value the camera reads,
+        // whichever runs first
+        let final_pos = vis.current();
 
-        let circling = displacing.filter(|d| d.around.is_some()).and(vis_pos)
-            .and_then(|vis| Heading::toward(vis.from, vis.to));
+        let circling = displacing.filter(|d| d.around.is_some())
+            .and_then(|_| Heading::toward(vis.from, vis.to));
         let turned = face(transform0.rotation, circling.unwrap_or(heading), time.delta_secs());
         // Written only when it moves: the same value written again marks
         // the whole rig changed and the skin is re-extracted for nothing.
@@ -212,10 +203,6 @@ pub(crate) fn get_asset(typ: EntityType) -> String {
     format!("actors/{}-basic.glb", actor_name(typ))
 }
 
-/// Apply movement intent to predict remote entity movement ( +)
-
-/// When a MovementIntent arrives, start interpolating toward the predicted destination.
-/// Local player is skipped (already predicted via Input system).
 /// Spawn a debug sphere as a child of the given actor entity.
 /// Called at actor spawn time (if grid visible) and when grid is toggled on.
 pub fn spawn_debug_sphere(

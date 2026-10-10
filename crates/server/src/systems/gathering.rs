@@ -157,7 +157,7 @@ impl WorldChanges {
         for dq in -radius..=radius {
             for dr in (-radius).max(-dq - radius)..=radius.min(-dq + radius) {
                 let generated = cover_at(q + dq, r + dr);
-                let distance = dq.abs().max(dr.abs()).max((dq + dr).abs());
+                let distance = Qrz { q: q + dq, r: r + dr, z: 0 }.flat_distance(&Qrz { q, r, z: 0 });
                 let chance = if fades { 1.0 - distance as f64 / (radius + 1) as f64 } else { 1.0 };
                 let cleared = (0..common::TILE_SLOTS as usize)
                     .filter(|&k| generated.content(k) != common::Content::Spanned && roll(q + dq, r + dr, k) < chance)
@@ -793,7 +793,7 @@ mod tests {
         let felled_at = |d: i32| {
             let ring: Vec<(i32, i32)> = (-d..=d)
                 .flat_map(|q| (-d..=d).map(move |r| (q, r)))
-                .filter(|&(q, r)| q.abs().max(r.abs()).max((q + r).abs()) == d)
+                .filter(|&(q, r)| qrz::hex_distance((q, r), (0, 0)) == d)
                 .collect();
             ring.iter().filter(|tile| changes.tiles.contains_key(tile)).count() as f64 / ring.len() as f64
         };

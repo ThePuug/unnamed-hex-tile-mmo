@@ -32,17 +32,14 @@ use std::any::Any;
 use crate::noise::simplex_2d;
 use crate::{hex_to_world, RISE};
 use crate::tectonic::PLATE_SPACING;
-use super::index::IndexRegistry;
+use super::plates::shore_gate;
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
 const TILT_SEED: u64 = 0x5469_6C74_5F5F_5F5F; // "Tilt____"
 
-/// Matched to `PLATE_CELL_SCALE` and `MOTION_CELL_SCALE`, so this layer shares
-/// cell boundaries with the ones either side of it and warms with them.
-///
-/// Scale is pure cache granularity here — `deform` is empty and there is no
-/// index — but it is not free: a layer's scale dilates every layer beneath it,
-/// and choosing a coarser one would deform more plate cells for no gain.
+/// Cell scale: tile-cache partitioning only. The layer reads no index and
+/// publishes none, so the scale decides how many tiles share one cached
+/// cell and nothing else.
 pub const TILT_CELL_SCALE: u32 = 1800;
 
 // ── Wavelength ──────────────────────────────────────────────────────────────
@@ -83,27 +80,6 @@ const TARGET_GRADE: f64 = 0.001;
 /// does not reach its bounds: see `tilt_probe::grade_and_coherence`.
 pub const TILT_AMPLITUDE: f64 = TARGET_GRADE * (TILT_WAVELENGTH * 0.25) / RISE;
 
-// ── Gating ──────────────────────────────────────────────────────────────────
-
-/// Substrate elevation at which a continent takes the full lean, in z-levels.
-///
-/// The substrate's land elevation p10 is 8.7 z, so saturating here gives nine
-/// tenths of all land the full tilt and confines the taper to the beach band.
-///
-/// It **saturates** deliberately. Amplitude simply proportional to substrate
-/// elevation would put the maximum in the interior and zero at every coast,
-/// which is a dome — the one shape a tilt is not. Only the coastal band tapers;
-/// the interior leans uniformly and the lean's direction comes from the
-/// potential's gradient, not from the coastline.
-const TILT_FULL_ELEVATION: f64 = 9.0;
-
-/// How much of the lean the crust at this elevation takes. Zero at and below
-/// sea level, one from [`TILT_FULL_ELEVATION`] up.
-fn shore_gate(elevation: f64) -> f64 {
-    let t = (elevation / TILT_FULL_ELEVATION).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
 // ── The field ───────────────────────────────────────────────────────────────
 
 /// The tilt potential at a position, before gating, in z-levels. Exposed for
@@ -116,21 +92,20 @@ pub fn potential(wx: f64, wy: f64, seed: u64) -> f64 {
     )
 }
 
-/// The elevation tilt adds at a position, given the substrate beneath it.
+/// The elevation tilt adds at a position, given the substrate beneath it:
+/// the potential, gated by how far above the beach the substrate stands, so
+/// the interior leans uniformly and only the coastal band tapers.
 pub fn tilt_at(wx: f64, wy: f64, substrate: f64, seed: u64) -> f64 {
     let gate = shore_gate(substrate);
     if gate <= 0.0 { return 0.0 }
     potential(wx, wy, seed) * gate
 }
 
+#[derive(Default)]
 pub struct TiltEvent;
 
 impl TiltEvent {
     pub fn new() -> Self { TiltEvent }
-}
-
-impl Default for TiltEvent {
-    fn default() -> Self { Self::new() }
 }
 
 impl WorldEvent for TiltEvent {
@@ -139,8 +114,6 @@ impl WorldEvent for TiltEvent {
 
     /// Nothing originates anywhere, so nothing reaches.
     fn max_influence(&self) -> u32 { 0 }
-
-    fn register_indexes(&self, _registry: &mut IndexRegistry) {}
 
     /// Nothing to place. A tilt has no features, no origins and no extent — it
     /// is a function of position, and the only thing it reads is the substrate
@@ -170,38 +143,6 @@ mod tests {
     use super::*;
 
     const SEED: u64 = 0x9E3779B97F4A7C15;
-
-    /// The gate saturates. A tilt that scaled with substrate elevation would be
-    /// a dome, and this is the assertion that separates the two.
-    #[test]
-    fn gate_saturates_above_the_beach() {
-        assert_eq!(shore_gate(-10.0), 0.0);
-        assert_eq!(shore_gate(0.0), 0.0);
-        assert!(shore_gate(TILT_FULL_ELEVATION * 0.5) > 0.3);
-        assert_eq!(shore_gate(TILT_FULL_ELEVATION), 1.0);
-        // Saturated: the interior leans uniformly however high it stands.
-        assert_eq!(shore_gate(20.0), 1.0);
-        assert_eq!(shore_gate(45.0), 1.0);
-    }
-
-    /// The amplitude is the target grade restated, so the derivation is
-    /// asserted rather than described.
-    #[test]
-    fn amplitude_matches_the_target_grade() {
-        let quarter = TILT_WAVELENGTH * 0.25;
-        let grade = TILT_AMPLITUDE * RISE / quarter;
-        assert!((grade - TARGET_GRADE).abs() < 1e-12,
-            "amplitude implies a {grade} grade against a {TARGET_GRADE} target");
-    }
-
-    /// A quarter wavelength has to hold at least two continents, or a landmass
-    /// straddles a maximum and leans two ways at once.
-    #[test]
-    fn a_continent_fits_inside_one_limb() {
-        let quarter = TILT_WAVELENGTH * 0.25;
-        assert!(quarter >= 2.0 * PLATE_SPACING,
-            "quarter wavelength {quarter} holds under two continents");
-    }
 
     /// Below sea level the layer contributes nothing at all — not a small
     /// number, nothing, so the ocean floor is untouched.

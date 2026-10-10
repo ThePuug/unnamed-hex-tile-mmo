@@ -18,9 +18,6 @@ pub enum Material {
 }
 
 impl Material {
-    pub const ALL: [Material; 5] =
-        [Material::Softwood, Material::Hardwood, Material::Sandstone, Material::Limestone, Material::Basement];
-
     pub fn name(self) -> &'static str {
         match self {
             Material::Softwood => "Softwood",
@@ -29,10 +26,6 @@ impl Material {
             Material::Limestone => "Limestone",
             Material::Basement => "Basement stone",
         }
-    }
-
-    pub fn index(self) -> usize {
-        self as usize
     }
 
     /// What one of it weighs in the bag: wood lighter than stone, and the
@@ -48,7 +41,7 @@ impl Material {
 
     /// The stone a boulder of `rock` gives, or None for shale, which breaks
     /// to clay.
-    pub fn stone(rock: Rock) -> Option<Material> {
+    fn stone(rock: Rock) -> Option<Material> {
         match rock {
             Rock::Shale => None,
             Rock::Sandstone => Some(Material::Sandstone),
@@ -138,10 +131,10 @@ pub fn work(cover: Cover, k: usize) -> Option<Work> {
 }
 
 /// How much one felled tree gives.
-pub const TREE_YIELD: u32 = 4;
+const TREE_YIELD: u32 = 4;
 
 /// How much one mined boulder gives.
-pub const BOULDER_YIELD: u32 = 3;
+const BOULDER_YIELD: u32 = 3;
 
 /// What gathering one slot takes and leaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,7 +156,7 @@ impl Harvest {
 }
 
 /// The pile that holds `material`: its wood, or stone in the tile's rock.
-pub fn pile_of(material: Material) -> Content {
+fn pile_of(material: Material) -> Content {
     match material {
         Material::Softwood => Content::SoftwoodPile,
         Material::Hardwood => Content::HardwoodPile,

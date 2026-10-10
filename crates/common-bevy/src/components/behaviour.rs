@@ -22,11 +22,6 @@ impl Side {
     pub const PLAYERS: Side = Side(0);
     pub const WILD: Side = Side(1);
 
-    /// The side of an actor that is, or is not, `PlayerControlled`
-    pub fn of_player(is_player: bool) -> Side {
-        if is_player { Side::PLAYERS } else { Side::WILD }
-    }
-
     pub fn is_hostile_to(self, other: Side) -> bool {
         self != other
     }

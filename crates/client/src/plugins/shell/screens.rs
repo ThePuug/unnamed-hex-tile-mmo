@@ -190,17 +190,6 @@ const OFFLINE: char = '\u{F0319}';
 #[derive(Resource, Default)]
 pub struct RttSamples(VecDeque<(Duration, Duration)>);
 
-/// The value at quantile `q` (0 to 1) of `samples`, nearest rank; none of none.
-fn quantile(samples: impl Iterator<Item = Duration>, q: f64) -> Option<Duration> {
-    let mut sorted: Vec<Duration> = samples.collect();
-    if sorted.is_empty() {
-        return None;
-    }
-    sorted.sort_unstable();
-    let rank = ((q * sorted.len() as f64).ceil() as usize).clamp(1, sorted.len());
-    Some(sorted[rank - 1])
-}
-
 /// The round trip to the server, over every stage: a quantile of the last
 /// few seconds, so one slow packet neither hides nor dominates.
 pub fn show_rtt(
@@ -219,7 +208,9 @@ pub fn show_rtt(
             while samples.0.front().is_some_and(|&(at, _)| now - at > RTT_WINDOW) {
                 samples.0.pop_front();
             }
-            let shown = quantile(samples.0.iter().map(|&(_, rtt)| rtt), RTT_QUANTILE).unwrap_or_default();
+            let mut taken: Vec<Duration> = samples.0.iter().map(|&(_, rtt)| rtt).collect();
+            taken.sort_unstable();
+            let shown = common::quantile(&taken, RTT_QUANTILE).unwrap_or_default();
             format!("{CONNECTED} {} ms", shown.as_millis())
         }
         _ => {
@@ -232,34 +223,5 @@ pub fn show_rtt(
     let Ok(mut text) = text.single_mut() else { return };
     if text.0 != said {
         text.0 = said;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn ms(v: &[u64]) -> impl Iterator<Item = Duration> + '_ {
-        v.iter().map(|&m| Duration::from_millis(m))
-    }
-
-    #[test]
-    fn quantile_is_a_sample_at_its_rank() {
-        let v = [30, 10, 50, 20, 40];
-        assert_eq!(quantile(ms(&v), 0.5), Some(Duration::from_millis(30)));
-        assert_eq!(quantile(ms(&v), 1.0), Some(Duration::from_millis(50)));
-        assert_eq!(quantile(ms(&v), 0.0), Some(Duration::from_millis(10)));
-    }
-
-    #[test]
-    fn quantile_rises_with_q() {
-        let v = [7, 3, 9, 1, 12, 5, 30, 2];
-        let qs = [0.1, 0.5, 0.9, 0.95, 1.0].map(|q| quantile(ms(&v), q).unwrap());
-        assert!(qs.windows(2).all(|w| w[0] <= w[1]));
-    }
-
-    #[test]
-    fn quantile_of_nothing_is_none() {
-        assert_eq!(quantile(ms(&[]), 0.95), None);
     }
 }

@@ -48,7 +48,7 @@
 //! **Publish what you know; never make a consumer infer it.** A headwall, a
 //! channel wall, a closed basin — the layer that cut it knows where it is, and
 //! a consumer that has to recover it by reading elevations around a tile is
-//! doing far more work to get a worse answer. Publish an `EventIndex` and let
+//! doing far more work to get a worse answer. Publish a `CellIndex` and let
 //! the framework own its lifecycle. Do not hang it off your own instance type
 //! and make consumers reach through you for it.
 //!
@@ -77,6 +77,7 @@
 //! the stack that reads a layer's index. A caller sees tiles and nothing else
 //! (INV-009), and what a layer offers a caller rides on the tile.
 
+pub mod climate;
 pub mod den;
 pub mod dissection;
 pub mod drainage;
@@ -99,11 +100,12 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use dashmap::DashMap;
 use parking_lot::{MappedRwLockReadGuard, Mutex};
 
-use common::{den::Habitat, Cover, HexLattice, Rock, TagSet};
+use common::{den::Habitat, Cover, HexLattice, Rock};
 
 use crate::hex_to_world;
+use crate::lattice::hex_distance;
 
-pub use index::{CellId, CellIndex, EventIndex, IndexRegistry};
+pub use index::{CellId, CellIndex, IndexRegistry};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // World Event Composite Framework
@@ -112,8 +114,6 @@ pub use index::{CellId, CellIndex, EventIndex, IndexRegistry};
 /// Per-tile output from a single event's query.
 #[derive(Default, Clone, Copy)]
 pub struct TileOutput {
-    pub tags_added: TagSet,
-    pub tags_removed: TagSet,
     pub elevation_delta: f64,
     /// How steeply `elevation_delta` climbs, in z-levels per world unit
     /// along x and y, where the layer makes ground steep enough to read.
@@ -145,7 +145,6 @@ pub struct TileView {
     pub r: i32,
     pub wx: f64,
     pub wy: f64,
-    pub tags: TagSet,
     pub elevation: f64,
     /// How steeply the ground climbs, as [`TileOutput::gradient`], summed
     /// over the layers beneath.
@@ -165,12 +164,10 @@ pub struct TileView {
 impl TileView {
     fn at(q: i32, r: i32) -> Self {
         let (wx, wy) = hex_to_world(q, r);
-        TileView { q, r, wx, wy, tags: TagSet::new(), elevation: 0.0, gradient: (0.0, 0.0), water: None, valley: None, rock: None, cover: Cover::NONE, den: None }
+        TileView { q, r, wx, wy, elevation: 0.0, gradient: (0.0, 0.0), water: None, valley: None, rock: None, cover: Cover::NONE, den: None }
     }
 
     fn compose(&mut self, out: &TileOutput) {
-        for t in out.tags_added.iter() { self.tags.add(t); }
-        for t in out.tags_removed.iter() { self.tags.remove(t); }
         self.elevation += out.elevation_delta;
         self.gradient.0 += out.gradient.0;
         self.gradient.1 += out.gradient.1;
@@ -259,12 +256,11 @@ impl<'a> CellScope<'a> {
     /// [`Neighbourhood`] answers for. Asking for it deforms them without
     /// taking the index's lock, so a layer can deform every index it reads
     /// before holding any of them.
-    pub fn source_cells<T: EventIndex>(&self) -> Vec<CellId> {
+    pub fn source_cells<T: CellIndex>(&self) -> Vec<CellId> {
         self.composite.deform_under::<T>(self.layer, self.lattice, self.cell);
-        let scale = self.composite.indexes
-            .source_scale_of(std::any::TypeId::of::<T>())
-            .unwrap_or(self.lattice.radius);
-        footprint_plus_ring(self.lattice, self.cell, &HexLattice::new(scale))
+        // The index's lattice is the lattice of the layer that fills it.
+        let other = self.composite.indexes.layer_of::<T>().map_or(self.lattice, |layer| &self.composite.lattices[layer]);
+        footprint_plus_ring(self.lattice, self.cell, other)
     }
 
     /// Record this cell's entry. There is deliberately no way to say which
@@ -398,28 +394,6 @@ impl HitCounters {
     fn misses(&self) -> u64 { self.misses.load(Relaxed) }
 }
 
-/// Per-event layer metrics (lock-free).
-struct LayerMetrics {
-    cell_counters: HitCounters,
-}
-
-impl Default for LayerMetrics {
-    fn default() -> Self {
-        Self { cell_counters: HitCounters::new() }
-    }
-}
-
-/// Composite-level metrics (lock-free).
-struct CompositeMetrics {
-    tile_counters: HitCounters,
-}
-
-impl Default for CompositeMetrics {
-    fn default() -> Self {
-        Self { tile_counters: HitCounters::new() }
-    }
-}
-
 /// Snapshot of event metrics for external consumption.
 pub struct EventMetricsSnapshot {
     pub visible: usize,
@@ -430,7 +404,8 @@ pub struct EventMetricsSnapshot {
 
 pub struct LayerMetricsSnapshot {
     pub name: String,
-    /// Cells currently in LRU cache with index entries (gauge — current coverage).
+    /// Cells the layer has deformed: a gauge of its coverage. Nothing is
+    /// ever evicted.
     pub indexed: usize,
     pub cell_hits: u64,
     pub cell_misses: u64,
@@ -438,20 +413,13 @@ pub struct LayerMetricsSnapshot {
 
 // ── Cell Cache (concurrent) ─────────────────────────────────────────────────
 
-/// Hex distance between two tile coordinates.
-fn hex_distance(a: (i32, i32), b: (i32, i32)) -> i32 {
-    let (dq, dr) = (a.0 - b.0, a.1 - b.1);
-    (dq.abs() + dr.abs() + (dq + dr).abs()) / 2
-}
-
 /// The `other`-lattice cells a cell of `lattice` may read: everything
 /// overlapping its footprint, plus exactly one ring.
 ///
-/// This is the one-ring rule in code, and it is the only implementation. The
-/// deform cascade and `CellScope::source_cells` both call it — they used to carry
-/// separate copies of the same arithmetic, and when one was tightened the other
-/// went on asking for cells nobody deformed, which is a silent-empty read and
-/// moved 913 tiles of terrain before it was caught.
+/// This is the one-ring rule in code, and it is the only implementation: the
+/// deform cascade and `CellScope::source_cells` both call it. Two copies of
+/// the arithmetic drift, and the one that asks for a cell nobody deformed
+/// gets a silent-empty read, never a failure.
 ///
 /// Two hex balls share a tile exactly when their centres are within the sum of
 /// their radii in hex distance. That test is exact and costs a subtraction,
@@ -549,7 +517,8 @@ struct CellCache {
     /// Cells whose ring has been deformed. Lets the hot path settle for a
     /// single lookup instead of re-walking the ring on every tile in the cell.
     neighbourhood_ready: DashMap<CellId, ()>,
-    metrics: LayerMetrics,
+    /// Deform hits and misses: a cell found deformed against one deformed.
+    metrics: HitCounters,
 }
 
 impl CellCache {
@@ -559,7 +528,7 @@ impl CellCache {
             contexts: DashMap::new(),
             deform_locks: DashMap::new(),
             neighbourhood_ready: DashMap::new(),
-            metrics: LayerMetrics::default(),
+            metrics: HitCounters::new(),
         }
     }
 
@@ -608,7 +577,8 @@ pub struct Composite {
     lattices: Vec<HexLattice>,
     cell_caches: Vec<CellCache>,
     indexes: IndexRegistry,
-    metrics: CompositeMetrics,
+    /// Tile hits and misses: a tile found cached against one queried.
+    metrics: HitCounters,
     seed: u64,
 }
 
@@ -619,7 +589,7 @@ impl Composite {
             lattices: Vec::new(),
             cell_caches: Vec::new(),
             indexes: IndexRegistry::new(),
-            metrics: CompositeMetrics::default(),
+            metrics: HitCounters::new(),
             seed,
         }
     }
@@ -698,10 +668,10 @@ impl Composite {
 
                 let cached = self.cell_caches[layer].get_tile(cell_id, q, r);
                 let tile_out = if let Some(to) = cached {
-                    self.metrics.tile_counters.record(true);
+                    self.metrics.record(true);
                     to
                 } else {
-                    self.metrics.tile_counters.record(false);
+                    self.metrics.record(false);
                     // `view` already holds the composite of every layer below,
                     // which is the whole of what a query may read besides its
                     // own cell context.
@@ -749,10 +719,6 @@ impl Composite {
         (surface > view.elevation.round() as i32).then_some(surface)
     }
 
-    pub fn tags_at(&self, q: i32, r: i32) -> TagSet {
-        self.tile_at(q, r).tags
-    }
-
     /// What stands in a tile's slots.
     pub fn cover_at(&self, q: i32, r: i32) -> Cover {
         self.tile_at(q, r).cover
@@ -771,24 +737,22 @@ impl Composite {
         f(&self.indexes)
     }
 
-    /// Read gauges and drain interval counters. Returns a snapshot for external reporting.
+    /// A snapshot of the counters for external reporting: the tiles held,
+    /// and the hits and misses of the tile cache and of each layer's
+    /// deform. The counters are cumulative lifetime totals and nothing is
+    /// drained; the reader computes rates between two snapshots.
     pub fn drain_metrics(&self) -> EventMetricsSnapshot {
         let visible: usize = self.cell_caches.iter().map(|c| c.tile_count()).sum();
 
-        let tile_hits = self.metrics.tile_counters.hits();
-        let tile_misses = self.metrics.tile_counters.misses();
+        let tile_hits = self.metrics.hits();
+        let tile_misses = self.metrics.misses();
 
-        let layers: Vec<LayerMetricsSnapshot> = self.cell_caches.iter().enumerate().map(|(i, cache)| {
-            let name = if i < self.events.len() {
-                self.events[i].name().to_string()
-            } else {
-                format!("layer_{i}")
-            };
+        let layers: Vec<LayerMetricsSnapshot> = self.events.iter().zip(&self.cell_caches).map(|(event, cache)| {
             LayerMetricsSnapshot {
-                name,
+                name: event.name().to_string(),
                 indexed: cache.cells.len(),
-                cell_hits: cache.metrics.cell_counters.hits(),
-                cell_misses: cache.metrics.cell_counters.misses(),
+                cell_hits: cache.metrics.hits(),
+                cell_misses: cache.metrics.misses(),
             }
         }).collect();
 
@@ -847,7 +811,7 @@ impl Composite {
     /// Deform the cells of `T`'s layer under `cell` of `lattice`, plus one
     /// ring, so an index read over them is complete. The reading layer's own
     /// index, or a higher one, is never deformed from here.
-    fn deform_under<T: EventIndex>(&self, reader: usize, lattice: &HexLattice, cell: CellId) {
+    fn deform_under<T: CellIndex>(&self, reader: usize, lattice: &HexLattice, cell: CellId) {
         let Some(layer) = self.indexes.layer_of::<T>() else { return };
         if layer >= reader {
             return;
@@ -860,7 +824,7 @@ impl Composite {
     fn ensure_deformed(&self, layer: usize, cell_id: CellId) {
         // Fast path: already deformed
         if self.cell_caches[layer].has(cell_id) {
-            self.cell_caches[layer].metrics.cell_counters.record(true);
+            self.cell_caches[layer].metrics.record(true);
             return;
         }
 
@@ -870,10 +834,10 @@ impl Composite {
 
         // Recheck after acquiring lock (another task may have deformed it)
         if self.cell_caches[layer].has(cell_id) {
-            self.cell_caches[layer].metrics.cell_counters.record(true);
+            self.cell_caches[layer].metrics.record(true);
             return;
         }
-        self.cell_caches[layer].metrics.cell_counters.record(false);
+        self.cell_caches[layer].metrics.record(false);
 
         // Lower layers are deformed on demand: a read of their index through
         // the scope deforms their cells under this footprint plus one ring
@@ -907,12 +871,6 @@ impl common::summary::SummarySource for Composite {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Tiles in a hex ball of the given radius.
-    fn hex_ball_tiles(radius: u32) -> usize {
-        let r = radius as usize;
-        3 * r * r + 3 * r + 1
-    }
 
     /// Where the ground is steeper than a step, the gradient the layers
     /// report reads the slope between a tile's neighbours along the
@@ -994,7 +952,7 @@ mod tests {
     /// Every event gets its own cell and one ring — seven cells — whatever it
     /// would prefer. There is no declaration that widens it, which is the point:
     /// a layer folding over origins it cannot see caches the wrong tile forever,
-    /// and that is how whole mountains went missing depending on access order.
+    /// and which tile depends on access order.
     #[test]
     fn every_event_gets_exactly_one_ring() {
         let deformed = Arc::new(parking_lot::Mutex::new(Vec::new()));
@@ -1021,44 +979,20 @@ mod tests {
 
         assert_eq!(
             deformed.lock().len(),
-            hex_ball_tiles(1),
+            7,
             "neighbourhood re-walked per tile instead of once per cell"
         );
     }
 
-    #[test]
-    fn hex_ball_tiles_matches_known_sizes() {
-        assert_eq!(hex_ball_tiles(0), 1);
-        assert_eq!(hex_ball_tiles(1), 7);
-        // Chunk radius 9 — the scale the streaming layers are cut to.
-        assert_eq!(hex_ball_tiles(9), 271);
-    }
-
-    /// Two adjacent layers at the same cell scale must not walk tiles to find
-    /// their overlap — at radius 1800 that is 9.7M tiles per cell, and it once
-    /// turned a ~100ms first touch into minutes. Now trivial: same scale means
-    /// same lattice, so the footprint is one cell and the answer is its ring.
+    /// Two layers at the same cell scale share a lattice, so a cell's
+    /// footprint on the other is itself and the translation is exactly its
+    /// ring: seven cells, at any radius.
     #[test]
     fn equal_scale_layers_do_not_enumerate_whole_cells() {
-        use motion::MotionEvent;
-        use plates::PlateEvent;
-        use tilt::TiltEvent;
-
-        let seed = 0x9E3779B97F4A7C15;
-
-        let mut c = Composite::new(seed);
-        c.add_event(Box::new(PlateEvent::new()));
-        c.add_event(Box::new(TiltEvent::new()));
-        c.add_event(Box::new(MotionEvent::new()));
-
-        // Both layers share the plate graph's scale. A cold first touch is
-        // dominated by the plate deform; the bug this guards made it minutes.
-        let t = std::time::Instant::now();
-        c.tile_at(3000, 2000);
-        let dt = t.elapsed();
-        assert!(
-            dt < std::time::Duration::from_secs(20),
-            "same-scale deform cascade took {dt:?} — footprint walk regressed"
-        );
+        for radius in [32, 1800, plates::GRAPH_CELL_SCALE] {
+            let l = HexLattice::new(radius);
+            let c = l.cell_id(3000, 2000);
+            assert_eq!(footprint_plus_ring(&l, c, &l).len(), 7, "radius {radius}");
+        }
     }
 }

@@ -1,8 +1,9 @@
 //! # Engagements
 //!
-//! Builds an engagement — a group of NPCs at a location — and finds where
-//! a party stands to engage. Where a den or party goes in the world is the
-//! installer's to say.
+//! The engagement — a group of NPCs spawned together — and what tracks it:
+//! its members, who last watched it, and where each member stands round
+//! its target. Builds one at a location and finds where a party stands to
+//! engage. Where a den or party goes in the world is the installer's to say.
 
 use bevy::prelude::*;
 use qrz::Qrz;
@@ -10,14 +11,12 @@ use qrz::Qrz;
 use common_bevy::{
     components::{
         behaviour::Side,
-        engagement::{Engagement, EngagementMember, LastPlayerProximity},
         equipment::{Equipment, Item, Piece},
         entity_type::{
             actor::{ActorIdentity, ActorImpl, Origin},
             EntityType,
         },
         heading::Heading,
-        hex_assignment::HexAssignment,
         position::Position,
         AirTime, Loc,
     },
@@ -26,6 +25,81 @@ use common_bevy::{
     systems::combat::resources::Fighter,
 };
 use common_bevy::tuning::Tuning;
+
+/// A group of NPCs spawned together. It is cleaned up once every one is
+/// dead, or no client has watched it for a while (`engagement_cleanup`).
+#[derive(Component, Debug, Clone)]
+pub struct Engagement {
+    /// Child NPC entities (tracked for cleanup)
+    pub spawned_npcs: Vec<Entity>,
+    /// How many of its NPCs may have an ability standing in one target's
+    /// queue at once. A reaction's span answers abilities that land
+    /// together, so it seldom binds: high by default, lower to make an
+    /// engagement easier.
+    pub attack_capacity: u8,
+}
+
+/// An engagement's attack capacity unless set lower
+pub const ATTACK_CAPACITY: u8 = 6;
+
+impl Default for Engagement {
+    fn default() -> Self {
+        Self { spawned_npcs: Vec::new(), attack_capacity: ATTACK_CAPACITY }
+    }
+}
+
+impl Engagement {
+    /// Add NPC entity to tracking list
+    pub fn add_npc(&mut self, entity: Entity) {
+        self.spawned_npcs.push(entity);
+    }
+}
+
+/// Marker component for NPCs that belong to an engagement
+/// Back-reference to parent engagement entity
+#[derive(Component, Debug, Clone, Copy)]
+pub struct EngagementMember(pub Entity);
+
+/// Last time players were near this engagement (for abandonment tracking)
+#[derive(Component, Debug, Clone, Copy)]
+pub struct LastPlayerProximity {
+    /// Game time when a player was last within proximity range
+    pub last_seen: std::time::Duration,
+}
+
+impl LastPlayerProximity {
+    pub fn new(current_time: std::time::Duration) -> Self {
+        Self {
+            last_seen: current_time,
+        }
+    }
+
+    /// Update last seen time
+    pub fn update(&mut self, current_time: std::time::Duration) {
+        self.last_seen = current_time;
+    }
+
+    /// Check if abandoned (no players for given duration)
+    pub fn is_abandoned(&self, current_time: std::time::Duration, abandonment_duration: std::time::Duration) -> bool {
+        current_time.saturating_sub(self.last_seen) >= abandonment_duration
+    }
+}
+
+/// What an engagement's places were last assigned for: the target its NPCs
+/// chase, the tile it stood on, and how many of them lived. The assignment
+/// runs afresh when any of the three changes, and not otherwise, so a place
+/// taken between assignments stands until then.
+#[derive(Component, Debug, Clone, Default, PartialEq)]
+pub struct HexAssignment {
+    pub last_player_tile: Option<Qrz>,
+    pub target_player: Option<Entity>,
+    pub living: usize,
+}
+
+/// The hex an NPC is assigned to stand on, the one record of it: the
+/// assignment and a Flank write it, chase walks to it.
+#[derive(Clone, Component, Copy, Debug)]
+pub struct AssignedHex(pub Qrz);
 
 /// How far apart two parties staged to fight stand, as the balance arena
 /// sets its teams apart: inside the range either acquires a target from.
@@ -58,11 +132,10 @@ pub fn spawn_engagement(
     commands: &mut Commands,
     time: &Time,
 ) -> Entity {
-    let mut engagement = Engagement::new(location, level, archetype, npc_count);
+    let mut engagement = Engagement::default();
 
     let engagement_entity = commands
         .spawn((
-            engagement.clone(),
             Loc::new(location),
             LastPlayerProximity::new(time.elapsed()),
             HexAssignment::default(),
@@ -72,7 +145,7 @@ pub fn spawn_engagement(
     let attributes = calculate_enemy_attributes(level, archetype);
 
     for i in 0..npc_count {
-        let offset = get_random_hex_offset(i as usize);
+        let offset = member_offset(i as usize);
         let npc_location_base = location + offset;
         let npc_z = elevation(npc_location_base.q, npc_location_base.r);
         let npc_location = Qrz { q: npc_location_base.q, r: npc_location_base.r, z: npc_z + 1 };
@@ -103,7 +176,6 @@ pub fn spawn_engagement(
         let chase = crate::behaviour::chase::Chase {
             acquisition_range: crate::behaviour::ACQUISITION_RANGE,
             leash_distance: crate::behaviour::LEASH_DISTANCE,
-            attack_range: common_bevy::components::AttackRange::default().0,
         };
         commands.entity(npc_entity).insert((
             NearestNeighbor::new(npc_entity, npc_loc),
@@ -127,7 +199,9 @@ pub fn spawn_engagement(
     engagement_entity
 }
 
-pub fn get_random_hex_offset(index: usize) -> Qrz {
+/// Where the `index`th member of a pack stands round its place: one of
+/// the six neighbours, in a fixed order round again past the sixth.
+pub fn member_offset(index: usize) -> Qrz {
     let directions = [
         Qrz { q: 1, r: 0, z: 0 },
         Qrz { q: -1, r: 0, z: 0 },

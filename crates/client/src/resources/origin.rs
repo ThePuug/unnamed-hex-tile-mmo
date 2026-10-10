@@ -119,7 +119,7 @@ mod tests {
     use crate::components::Viewed;
 
     fn map() -> Map {
-        Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop))
+        Map::new(qrz::Map::new(1.0, 0.8))
     }
 
     /// The viewed actor far from the origin moves it: the world's roots and visuals

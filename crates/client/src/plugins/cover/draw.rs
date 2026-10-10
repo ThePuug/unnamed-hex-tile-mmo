@@ -856,22 +856,11 @@ fn prepare_cover_bind_groups(
     }
 }
 
-/// One indirect indexed draw, as the GPU reads it.
-#[derive(Clone, Copy, Pod, Zeroable)]
-#[repr(C)]
-struct IndirectArgs {
-    index_count: u32,
-    instance_count: u32,
-    first_index: u32,
-    base_vertex: i32,
-    first_instance: u32,
-}
-
 /// Every view's draws of every stand, in one indirect buffer written once
 /// a frame: for a view and a stand, where its draws start and how many.
 #[derive(Resource)]
 struct StandDraws {
-    args: RawBufferVec<IndirectArgs>,
+    args: RawBufferVec<DrawIndexedIndirectArgs>,
     at: HashMap<(RetainedViewEntity, Entity), (u32, u32)>,
 }
 
@@ -941,7 +930,7 @@ fn prepare_stand_draws(
                 if !seen.get(range.slot as usize).copied().unwrap_or(false) {
                     continue;
                 }
-                draws.args.push(IndirectArgs {
+                draws.args.push(DrawIndexedIndirectArgs {
                     index_count: *index_count,
                     instance_count: range.count,
                     first_index: *first_index,
@@ -1053,7 +1042,7 @@ impl<P: PhaseItem, S: Stand> RenderCommand<P> for DrawStand<S> {
         pass.set_vertex_buffer(0, vertices.buffer.slice(..));
         pass.set_vertex_buffer(1, instances.slice(..));
         pass.set_index_buffer(indices.buffer.slice(..), index_format);
-        pass.multi_draw_indexed_indirect(args, start as u64 * size_of::<IndirectArgs>() as u64, count);
+        pass.multi_draw_indexed_indirect(args, start as u64 * size_of::<DrawIndexedIndirectArgs>() as u64, count);
         RenderCommandResult::Success
     }
 }

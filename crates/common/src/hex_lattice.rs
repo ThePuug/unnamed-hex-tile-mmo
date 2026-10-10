@@ -11,7 +11,7 @@
 /// Hex ball tessellation lattice for a given radius.
 
 /// Provides O(1) cell ID from tile coordinates, tile enumeration within cells,
-/// and neighbor/overlap computation.
+/// and the cells around a cell.
 #[derive(Clone)]
 pub struct HexLattice {
     pub radius: u32,
@@ -98,17 +98,6 @@ impl HexLattice {
         })
     }
 
-    /// Iterate all tiles in a hex ball of given radius centered on a cell.
-    pub fn tiles_in_radius(&self, id: (i32, i32), radius: u32) -> impl Iterator<Item = (i32, i32)> {
-        let (cq, cr) = self.cell_center(id);
-        let r = radius as i32;
-        (-r..=r).flat_map(move |dq| {
-            let dr_min = (-r).max(-dq - r);
-            let dr_max = r.min(-dq + r);
-            (dr_min..=dr_max).map(move |dr| (cq + dq, cr + dr))
-        })
-    }
-
     /// The 6 neighboring cell IDs in lattice coordinates.
     pub fn neighbor_cells(&self, id: (i32, i32)) -> [(i32, i32); 6] {
         [
@@ -134,38 +123,12 @@ impl HexLattice {
         }
         result
     }
-
-    /// Find all cells of another lattice whose hex balls overlap a hex ball
-    /// of `query_radius` tiles centered on `center_q, center_r`.
-    pub fn cells_overlapping_ball(
-        &self,
-        center_q: i32, center_r: i32,
-        query_radius: u32,
-    ) -> Vec<(i32, i32)> {
-        // A cell overlaps if its center is within (self.radius + query_radius) hex distance
-        let reach = self.radius + query_radius;
-        let r = reach as i32;
-        let mut result = Vec::new();
-        for dq in -r..=r {
-            let dr_min = (-r).max(-dq - r);
-            let dr_max = r.min(-dq + r);
-            for dr in dr_min..=dr_max {
-                let candidate = self.cell_id(center_q + dq, center_r + dr);
-                if !result.contains(&candidate) {
-                    result.push(candidate);
-                }
-            }
-        }
-        // Deduplicate: the cell_id calls can produce duplicates since many tiles
-        // map to the same cell. Use a simpler approach: search in lattice space.
-        result
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     #[test]
     fn determinant_equals_tile_count() {
@@ -209,50 +172,37 @@ mod tests {
         }
     }
 
+    /// Over a region of cells, every tile belongs to exactly one cell, at
+    /// the chunk radius and a large one.
     #[test]
     fn no_gaps_no_overlaps() {
-        // For a region, verify every tile belongs to exactly one cell
-        let lat = HexLattice::new(9);
-        let mut tile_owners: HashMap<(i32, i32), (i32, i32)> = HashMap::new();
+        for radius in [9, 64] {
+            let lat = HexLattice::new(radius);
+            let mut tile_owners: HashMap<(i32, i32), (i32, i32)> = HashMap::new();
 
-        // Enumerate tiles from several cells
-        for n in -2..=2 {
-            for m in -2..=2 {
-                let cell = (n, m);
-                for (q, r) in lat.tiles_in_cell(cell) {
-                    if let Some(prev) = tile_owners.insert((q, r), cell) {
-                        panic!("tile ({q},{r}) claimed by both {prev:?} and {cell:?}");
+            // Enumerate tiles from several cells
+            for n in -2..=2 {
+                for m in -2..=2 {
+                    let cell = (n, m);
+                    for (q, r) in lat.tiles_in_cell(cell) {
+                        if let Some(prev) = tile_owners.insert((q, r), cell) {
+                            panic!("radius {radius}: tile ({q},{r}) claimed by both {prev:?} and {cell:?}");
+                        }
                     }
                 }
             }
-        }
 
-        // Verify all tiles in the covered area are accounted for
-        let center = lat.cell_center((0, 0));
-        for dq in -15..=15 {
-            for dr in -15..=15 {
-                let q = center.0 + dq;
-                let r = center.1 + dr;
-                let cell = lat.cell_id(q, r);
-                if cell.0.abs() <= 2 && cell.1.abs() <= 2 {
-                    assert!(tile_owners.contains_key(&(q, r)),
-                        "tile ({q},{r}) in cell {cell:?} not enumerated");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn no_gaps_no_overlaps_large_radius() {
-        let lat = HexLattice::new(64);
-        let mut seen: HashSet<(i32, i32)> = HashSet::new();
-
-        for n in -1..=1 {
-            for m in -1..=1 {
-                let cell = (n, m);
-                for (q, r) in lat.tiles_in_cell(cell) {
-                    assert!(seen.insert((q, r)),
-                        "tile ({q},{r}) claimed by multiple cells");
+            // Verify all tiles in the covered area are accounted for
+            let center = lat.cell_center((0, 0));
+            for dq in -15..=15 {
+                for dr in -15..=15 {
+                    let q = center.0 + dq;
+                    let r = center.1 + dr;
+                    let cell = lat.cell_id(q, r);
+                    if cell.0.abs() <= 2 && cell.1.abs() <= 2 {
+                        assert!(tile_owners.contains_key(&(q, r)),
+                            "radius {radius}: tile ({q},{r}) in cell {cell:?} not enumerated");
+                    }
                 }
             }
         }

@@ -46,18 +46,11 @@ pub enum DevConsoleAction {
 }
 
 /// System that executes console actions
-/// Everything the console switches, gathered into one parameter: a
-/// system takes at most sixteen, and the actions already read most of
-/// the scene in order to act on it.
-#[derive(bevy::ecs::system::SystemParam)]
-pub struct Switches<'w> {
-    state: ResMut<'w, DiagnosticsState>,
-    added: ResMut<'w, crate::network::AddedLatency>,
-}
-
+#[allow(clippy::too_many_arguments)]
 pub fn execute_console_actions(
     mut commands: Commands,
-    mut switches: Switches,
+    mut state: ResMut<DiagnosticsState>,
+    #[cfg(feature = "admin")] mut added: ResMut<crate::network::AddedLatency>,
     mut reader: MessageReader<DevConsoleAction>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -80,24 +73,23 @@ pub fn execute_console_actions(
     server: Res<crate::resources::Server>,
 ) {
     let game = server.current_time(time.elapsed().as_millis());
-    let diagnostics_state = &mut *switches.state;
     for action in reader.read() {
         match action {
             DevConsoleAction::ToggleGrid => {
-                diagnostics_state.grid_visible = !diagnostics_state.grid_visible;
+                state.grid_visible = !state.grid_visible;
 
                 if let Ok((mut visibility, mut overlay)) = grid_query.single_mut() {
-                    *visibility = if diagnostics_state.grid_visible {
+                    *visibility = if state.grid_visible {
                         Visibility::Visible
                     } else {
                         Visibility::Hidden
                     };
-                    if diagnostics_state.grid_visible {
+                    if state.grid_visible {
                         overlay.needs_regeneration = true;
                     }
                 }
 
-                if diagnostics_state.grid_visible {
+                if state.grid_visible {
                     for actor_entity in actor_query.iter() {
                         crate::systems::actor::spawn_debug_sphere(
                             &mut commands, &mut meshes, &mut materials, actor_entity,
@@ -109,51 +101,51 @@ pub fn execute_console_actions(
                     }
                 }
 
-                info!("Grid overlay: {}", if diagnostics_state.grid_visible { "ON" } else { "OFF" });
+                info!("Grid overlay: {}", if state.grid_visible { "ON" } else { "OFF" });
             }
             DevConsoleAction::SetLightingTime(ms_of_day) => {
-                diagnostics_state.lighting.hold(game, *ms_of_day);
-                info!("Lighting clock: held at {}", diagnostics_state.lighting.held_at().unwrap_or_default());
+                state.lighting.hold(game, *ms_of_day);
+                info!("Lighting clock: held at {}", state.lighting.held_at().unwrap_or_default());
             }
             DevConsoleAction::ScrubLightingClock(delta) => {
-                diagnostics_state.lighting.scrub(game, *delta);
+                state.lighting.scrub(game, *delta);
             }
             DevConsoleAction::StepLightingDate(field, steps) => {
-                diagnostics_state.lighting.step(game, *field, *steps);
-                let at = diagnostics_state.lighting.at(game);
+                state.lighting.step(game, *field, *steps);
+                let at = state.lighting.at(game);
                 info!("Lighting clock: held on {}", common_bevy::systems::Date::of(at));
             }
             DevConsoleAction::SyncLightingClock => {
-                diagnostics_state.lighting.sync();
+                state.lighting.sync();
                 info!("Lighting clock: game time");
             }
             DevConsoleAction::ToggleCameraEnvelope => {
-                diagnostics_state.camera_envelope_off = !diagnostics_state.camera_envelope_off;
-                info!("Camera envelope: {}", if diagnostics_state.camera_envelope_off { "LIFTED" } else { "ON" });
+                state.camera_envelope_off = !state.camera_envelope_off;
+                info!("Camera envelope: {}", if state.camera_envelope_off { "LIFTED" } else { "ON" });
             }
             DevConsoleAction::ToggleTerrainHidden => {
-                diagnostics_state.terrain_hidden = !diagnostics_state.terrain_hidden;
-                let shown = if diagnostics_state.terrain_hidden { Visibility::Hidden } else { Visibility::Inherited };
+                state.terrain_hidden = !state.terrain_hidden;
+                let shown = if state.terrain_hidden { Visibility::Hidden } else { Visibility::Inherited };
                 for mut visibility in terrain.iter_mut() {
                     *visibility = shown;
                 }
-                info!("Terrain: {}", if diagnostics_state.terrain_hidden { "HIDDEN" } else { "shown" });
+                info!("Terrain: {}", if state.terrain_hidden { "HIDDEN" } else { "shown" });
             }
             DevConsoleAction::ToggleCoverHidden => {
-                diagnostics_state.cover_hidden = !diagnostics_state.cover_hidden;
-                let shown = if diagnostics_state.cover_hidden { Visibility::Hidden } else { Visibility::Inherited };
+                state.cover_hidden = !state.cover_hidden;
+                let shown = if state.cover_hidden { Visibility::Hidden } else { Visibility::Inherited };
                 for mut visibility in cover.iter_mut() {
                     *visibility = shown;
                 }
-                info!("Cover: {}", if diagnostics_state.cover_hidden { "HIDDEN" } else { "shown" });
+                info!("Cover: {}", if state.cover_hidden { "HIDDEN" } else { "shown" });
             }
             DevConsoleAction::ToggleCameraCloseup => {
-                diagnostics_state.camera_closeup = !diagnostics_state.camera_closeup;
-                info!("Camera close-up: {}", if diagnostics_state.camera_closeup { "ON" } else { "off" });
+                state.camera_closeup = !state.camera_closeup;
+                info!("Camera close-up: {}", if state.camera_closeup { "ON" } else { "off" });
             }
             DevConsoleAction::ToggleCanopyParts => {
-                diagnostics_state.canopy_parts_off = !diagnostics_state.canopy_parts_off;
-                info!("Canopy: {}", if diagnostics_state.canopy_parts_off { "vertices" } else { "parts" });
+                state.canopy_parts_off = !state.canopy_parts_off;
+                info!("Canopy: {}", if state.canopy_parts_off { "vertices" } else { "parts" });
             }
 
             #[cfg(feature = "admin")]
@@ -167,9 +159,9 @@ pub fn execute_console_actions(
             #[cfg(feature = "admin")]
             DevConsoleAction::AddLatency(ms) => {
                 let most = crate::network::AddedLatency::MOST.as_millis() as i64;
-                let added = (switches.added.0.as_millis() as i64 + ms).clamp(0, most);
-                switches.added.0 = std::time::Duration::from_millis(added as u64);
-                info!("Added latency: {added}ms round trip");
+                let total = (added.0.as_millis() as i64 + ms).clamp(0, most);
+                added.0 = std::time::Duration::from_millis(total as u64);
+                info!("Added latency: {total}ms round trip");
             }
         }
     }
@@ -216,10 +208,7 @@ pub fn send_goto(
 ) {
     for action in reader.read() {
         let (q, r) = match *action {
-            DevConsoleAction::GotoWorldUnits(wx, wy) => {
-                let rf = wy * 2.0 / 3_f64.sqrt();
-                ((wx - rf * 0.5).round() as i32, rf.round() as i32)
-            }
+            DevConsoleAction::GotoWorldUnits(wx, wy) => common::world_to_hex(wx, wy),
             DevConsoleAction::GotoQR(q, r) => (q, r),
             _ => continue,
         };

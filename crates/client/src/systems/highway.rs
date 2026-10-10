@@ -279,8 +279,7 @@ pub fn update(
         return;
     };
 
-    let now_ms = server.current_time(time.elapsed().as_millis());
-    let now = Duration::from_millis(now_ms.min(u64::MAX as u128) as u64);
+    let now = server.now(time.elapsed().as_millis());
     let shown = !queue.is_empty() || combat.is_some_and(|c| c.in_combat);
     visibility.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
 
@@ -326,7 +325,7 @@ pub fn update(
 
         let d = depth(threat.lands_at().saturating_sub(now));
         let taken = threat.in_band(band_at, span);
-        let (fill, rim, label) = look(threat, attrs, health, taken);
+        let (fill, rim, label) = look(threat, health, taken);
         let alpha = fade(d);
         let size = NOTE * scale(d);
         let at = centre(threat.lane(), d);
@@ -357,7 +356,7 @@ pub fn update(
         let d = depth(threat.lands_at().saturating_sub(now));
         let size = NOTE * scale(d);
         let at = centre(threat.lane(), d);
-        let (fill, rim, label) = look(threat, attrs, health, false);
+        let (fill, rim, label) = look(threat, health, false);
         commands.entity(highway).with_children(|parent| {
             parent
                 .spawn((
@@ -393,10 +392,10 @@ pub fn update(
 /// A note's fill, rim and label: its colour says how hard it hits, its lane
 /// what kind it is, and its label its damage. One a reaction would take is
 /// `taken`, and rimmed white.
-pub(crate) fn look(threat: &QueuedThreat, attrs: &ActorAttributes, health: &Health, taken: bool) -> (Color, Color, String) {
+pub(crate) fn look(threat: &QueuedThreat, health: &Health, taken: bool) -> (Color, Color, String) {
     let rim = if taken { Color::WHITE } else { Color::srgba(0.1, 0.08, 0.06, 0.9) };
-    let (r, g, b) = severity_rgb(severity(threat, attrs, health));
-    (Color::srgb(r, g, b), rim, format!("{:.0}", estimate(threat, attrs)))
+    let (r, g, b) = severity_rgb(severity(threat, health));
+    (Color::srgb(r, g, b), rim, format!("{:.0}", estimate(threat)))
 }
 
 /// How long a landed note's pulse spreads, and how wide it ends, as a

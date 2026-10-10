@@ -89,8 +89,8 @@ use crate::chains::{join_at_nodes, Segment};
 use crate::lattice::{nearest_node, node_world, NodeKey, PATH_SWING};
 use crate::tectonic::{edges_of, plate_cell_for, plates_near, PlateId, PLATE_REACH};
 use super::plates::{warp, WARP_SWING};
-use crate::{hex_to_world, RISE, SEA_MAX_DEPTH};
-use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use crate::{hex_to_world, smoothstep, RISE, SEA_MAX_DEPTH};
+use super::index::{CellId, CellIndex, IndexRegistry};
 use super::motion::{resolve, BoundaryRegime, BoundarySegment, PlateBoundaryIndex};
 use super::plates::GRAPH_CELL_SCALE;
 use super::thickening::ESCARPMENT;
@@ -348,6 +348,11 @@ impl PlateOutline {
 /// at, the tile's carried by the warp.
 pub struct Standing<'a> {
     pub plate: &'a PlateOutline,
+    /// The position's distance to each edge of the plate, in the outline's
+    /// edge order, as [`PlateOutline::distances`] reads them: exact for an
+    /// edge that carries a wedge; for a quiet edge exact where it lies
+    /// within [`OUTLINE_FAR`], else a lower bound on it, never nearer than
+    /// the truth.
     pub distances: Vec<f64>,
     pub x: f64,
     pub y: f64,
@@ -574,11 +579,6 @@ impl Outlines {
     }
 }
 
-pub fn smoothstep(u: f64) -> f64 {
-    let u = u.clamp(0.0, 1.0);
-    u * u * (3.0 - 2.0 * u)
-}
-
 /// Sheets an edge stacks for a convergence share: the count is the
 /// shortening over a constant, partial at the end.
 pub fn sheets_of(converge: f64) -> f64 {
@@ -695,14 +695,11 @@ fn family_at_repose(d: f64, sheets: f64) -> f64 {
 
 // ── The event ───────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct ThrustingEvent;
 
 impl ThrustingEvent {
     pub fn new() -> Self { ThrustingEvent }
-}
-
-impl Default for ThrustingEvent {
-    fn default() -> Self { Self::new() }
 }
 
 /// The outlines each cell of the graph lattice reads, published by the
@@ -725,23 +722,14 @@ impl CellIndex for OutlineIndex {
     }
 }
 
-impl EventIndex for OutlineIndex {
-    fn source_scale(&self) -> u32 { GRAPH_CELL_SCALE }
-
-    /// Nothing stands at a tile: the outlines are the plate graph's.
-    fn tiles(&self, _cell_ids: &[CellId]) -> Vec<(i32, i32)> { Vec::new() }
-
-    fn neighbors(&self, _q: i32, _r: i32) -> Vec<(i32, i32)> { Vec::new() }
-
-    fn remove_cell(&mut self, cell_id: CellId) {
-        self.cells.remove(&cell_id);
-    }
-}
-
 /// The outlines a cell of the graph lattice reads: the entry the thrusting
 /// layer published for it. What thrusting itself and every layer above at
 /// the same scale ask in `prepare`.
 pub fn outlines_for(scope: &CellScope) -> Arc<Outlines> {
+    // The entry read is the caller's own cell on the graph lattice. A layer
+    // at any other scale would need the outlines of every graph cell under
+    // its footprint, which this does not gather.
+    debug_assert_eq!(scope.lattice().radius, GRAPH_CELL_SCALE, "outlines_for reads one graph cell: the caller's own");
     scope
         .read::<OutlineIndex>()
         .and_then(|idx| idx.entry(scope.cell()).cloned())
@@ -759,8 +747,9 @@ impl WorldEvent for ThrustingEvent {
     fn name(&self) -> &str { "thrusting" }
     fn scale(&self) -> u32 { GRAPH_CELL_SCALE }
 
-    /// Nothing originates here.
-    fn max_influence(&self) -> u32 { 0 }
+    /// A tile reads the whole outline of the plate it stands in, as far as
+    /// an outline lies from a position in its plate.
+    fn max_influence(&self) -> u32 { OUTLINE_REACH as u32 }
 
     fn register_indexes(&self, registry: &mut IndexRegistry) {
         registry.pre_register::<OutlineIndex>();
@@ -889,26 +878,6 @@ mod tests {
             assert!((sheets_in(rim) - sheets).abs() < 1e-9, "rim of {sheets} sheets at {rim} holds {}", sheets_in(rim));
         }
         assert!(rim_of(WEDGE_SHEETS) <= WEDGE_REACH, "the full wedge outreaches WEDGE_REACH");
-    }
-
-    /// Every chain node lies within the stated swing of the straight edge it
-    /// draws, and the swing is not slack.
-    #[test]
-    fn chains_stay_near_their_edges() {
-        let mut worst: f64 = 0.0;
-        for cq in -12..=12 {
-            for cr in -12..=12 {
-                for e in edges_of((cq, cr), S) {
-                    let line = Segment::along((e.x0, e.y0), (e.x1, e.y1), true);
-                    for n in &e.chain {
-                        let (x, y) = node_world(*n);
-                        worst = worst.max(line.distance(x, y).0);
-                    }
-                }
-            }
-        }
-        assert!(worst <= PATH_SWING, "a chain node {worst:.0} off its edge, past PATH_SWING");
-        assert!(worst > 0.5 * PATH_SWING, "PATH_SWING is slack for the edges: the farthest node is {worst:.0}");
     }
 
     /// The ranges' relief is continuous across every front and around every

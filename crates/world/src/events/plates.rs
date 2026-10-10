@@ -48,8 +48,8 @@ use crate::chains::{join_at_nodes, Segment, SegmentGrid};
 use crate::lattice::{node_world, NODE_SPACING};
 use crate::noise::simplex_2d;
 use crate::tectonic::{edges_of, plate_at, plates_near, Edge, PlateId, PLATE_SPACING};
-use crate::{hex_to_world, world_to_hex, CONTINENT_MAX_RISE, CONTINENT_RISE_EXPONENT, SEA_MAX_DEPTH, SHELF_EXPONENT};
-use super::index::{CellId, CellIndex, EventIndex, IndexRegistry};
+use crate::{hex_to_world, smoothstep, world_to_hex, CONTINENT_MAX_RISE, CONTINENT_RISE_EXPONENT, SEA_MAX_DEPTH, SHELF_EXPONENT};
+use super::index::{CellId, CellIndex, IndexRegistry};
 use super::thrusting::OUTLINE_REACH;
 use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 
@@ -169,16 +169,6 @@ pub struct PlateEdgeIndex {
     pub cells: HashMap<CellId, Vec<Edge>>,
 }
 
-impl PlateEdgeIndex {
-    pub fn edges_in(&self, cell_ids: &[CellId]) -> Vec<Edge> {
-        cell_ids
-            .iter()
-            .filter_map(|id| self.cells.get(id))
-            .flat_map(|v| v.iter().cloned())
-            .collect()
-    }
-}
-
 impl CellIndex for PlateEdgeIndex {
     type Cell = Vec<Edge>;
 
@@ -188,23 +178,6 @@ impl CellIndex for PlateEdgeIndex {
 
     fn get(&self, cell: CellId) -> Option<&Self::Cell> {
         self.cells.get(&cell)
-    }
-}
-
-impl EventIndex for PlateEdgeIndex {
-    fn source_scale(&self) -> u32 { GRAPH_CELL_SCALE }
-
-    fn tiles(&self, cell_ids: &[CellId]) -> Vec<(i32, i32)> {
-        self.edges_in(cell_ids)
-            .iter()
-            .map(|e| { let (x, y) = e.mid(); world_to_hex(x, y) })
-            .collect()
-    }
-
-    fn neighbors(&self, _q: i32, _r: i32) -> Vec<(i32, i32)> { Vec::new() }
-
-    fn remove_cell(&mut self, cell_id: CellId) {
-        self.cells.remove(&cell_id);
     }
 }
 
@@ -269,6 +242,14 @@ impl Coasts {
     }
 }
 
+/// Every coast a cell's tiles can see, from the edges the plate layer
+/// published under the cell and its ring: what a layer standing on the
+/// substrate builds once in `prepare`.
+pub fn coasts_of(scope: &CellScope) -> Coasts {
+    let edges = scope.read::<PlateEdgeIndex>();
+    Coasts::new(edges.iter().flat_map(|idx| idx.entries().flatten()), scope.seed())
+}
+
 // ── The substrate ───────────────────────────────────────────────────────────
 
 /// Interior relief at a position, in [−1, 1]: two octaves.
@@ -301,6 +282,22 @@ pub fn substrate_on(wx: f64, wy: f64, coasts: &Coasts, seed: u64) -> f64 {
 /// reader with many positions builds [`Coasts`] once.
 pub fn substrate_elevation_at(wx: f64, wy: f64, seed: u64) -> f64 {
     substrate_on(wx, wy, &Coasts::in_box(wx, wy, 0.0, seed), seed)
+}
+
+/// Substrate elevation at which what stands on land stands whole, in
+/// z-levels: the tilt's lean and the cuestas. The substrate's land
+/// elevation p10 is 8.7 z, so saturating here gives nine tenths of all land
+/// the whole and confines the taper to the beach band.
+///
+/// It **saturates** deliberately. A share proportional to the substrate
+/// elevation would put the maximum in the interior and nothing at every
+/// coast, which is a dome. Only the coastal band tapers.
+pub const SHORE_FULL_ELEVATION: f64 = 9.0;
+
+/// How much of what stands on land stands at `substrate`: nothing at and
+/// below sea level, the whole from [`SHORE_FULL_ELEVATION`] up.
+pub fn shore_gate(substrate: f64) -> f64 {
+    smoothstep(substrate / SHORE_FULL_ELEVATION)
 }
 
 // ── The event ───────────────────────────────────────────────────────────────
@@ -362,8 +359,7 @@ impl WorldEvent for PlateEvent {
 
     /// Every coast a tile in this cell can see: the cell's and its ring's.
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
-        let edges = scope.read::<PlateEdgeIndex>();
-        Box::new(Coasts::new(edges.iter().flat_map(|idx| idx.entries().flatten()), scope.seed()))
+        Box::new(coasts_of(scope))
     }
 
     fn query(
@@ -429,6 +425,20 @@ mod tests {
             }
         }
         assert!(land > 100 && sea > 100, "{land} land, {sea} sea samples near a coast");
+    }
+
+    /// The gate saturates. What stands on land scaled with the substrate's
+    /// elevation would be a dome, and this is the assertion that separates
+    /// the two.
+    #[test]
+    fn gate_saturates_above_the_beach() {
+        assert_eq!(shore_gate(-10.0), 0.0);
+        assert_eq!(shore_gate(0.0), 0.0);
+        assert!(shore_gate(SHORE_FULL_ELEVATION * 0.5) > 0.3);
+        assert_eq!(shore_gate(SHORE_FULL_ELEVATION), 1.0);
+        // Saturated: the interior stands whole however high it is.
+        assert_eq!(shore_gate(20.0), 1.0);
+        assert_eq!(shore_gate(45.0), 1.0);
     }
 
     /// The warp carries no position past its swing, never folds, and its

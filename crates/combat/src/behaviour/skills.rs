@@ -272,12 +272,6 @@ fn effect(view: &View) -> Option<Effect> {
     }
 }
 
-/// Whether `ability` strikes its foe now: a strike, or a Leap onto a foe
-/// out of reach
-fn strikes(ability: AbilityType, view: &View) -> bool {
-    ability.reach(view.reach).is_some() || (ability == AbilityType::Leap && view.foe.is_some_and(|foe| foe.distance > view.reach))
-}
-
 /// Whether `view.ability` would be a reaction used now: a Leap with its
 /// foe in reach leaps clear
 fn reacting(view: &View) -> bool {

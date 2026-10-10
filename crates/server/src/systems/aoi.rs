@@ -13,29 +13,25 @@ use crate::network::ServerNet;
 use common_bevy::{
     chunk::{FOV_CHUNK_RADIUS, CHUNK_SPACING, CHUNK_RADIUS},
     components::{
-        behaviour::PlayerControlled,
-        entity_type::EntityType,
-        heading::Heading,
         loaded_by::LoadedBy,
-        resources::{CombatState, Endurance, Health, Mana, RespawnTimer},
-        ActorAttributes, Loc,
+        resources::RespawnTimer,
+        Loc,
     },
+    message::{Do, Event},
     plugins::nntree::{NNTree, NearestNeighbor},
 };
 use crate::{
     plugins::metrics::SystemTimings,
     resources::Lobby,
-    systems::world::generate_actor_spawn_events,
+    systems::world::Synced,
 };
 
 /// AOI radius: entities within this distance are visible to players.
 /// Covers FOV_CHUNK_RADIUS + 1 buffer chunk in all directions (hex chunks).
-pub const AOI_RADIUS: i32 = (FOV_CHUNK_RADIUS as i32 + 1) * CHUNK_SPACING as i32 + CHUNK_RADIUS as i32;
-const AOI_RADIUS_SQ: i64 = AOI_RADIUS as i64 * AOI_RADIUS as i64;
+const AOI_RADIUS: i32 = (FOV_CHUNK_RADIUS as i32 + 1) * CHUNK_SPACING as i32 + CHUNK_RADIUS as i32;
 
 /// Exit radius: hysteresis buffer to prevent enter/exit flicker at the boundary.
-const EXIT_RADIUS: i32 = AOI_RADIUS + CHUNK_SPACING as i32;
-const EXIT_RADIUS_SQ: i64 = EXIT_RADIUS as i64 * EXIT_RADIUS as i64;
+pub(crate) const EXIT_RADIUS: i32 = AOI_RADIUS + CHUNK_SPACING as i32;
 
 /// Updates LoadedBy membership when entities move.
 
@@ -49,23 +45,11 @@ const EXIT_RADIUS_SQ: i64 = EXIT_RADIUS as i64 * EXIT_RADIUS as i64;
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn update_area_of_interest(
     changed_query: Query<
-        (Entity, &Loc, &NearestNeighbor),
-        (Changed<Loc>, Without<RespawnTimer>),
+        (Entity, &Loc),
+        (Changed<Loc>, Without<RespawnTimer>, With<NearestNeighbor>),
     >,
     mut loaded_by_query: Query<&mut LoadedBy>,
-    actor_query: Query<(
-        &Loc,
-        &EntityType,
-        Option<&ActorAttributes>,
-        Option<&PlayerControlled>,
-        Option<&common_bevy::components::behaviour::Side>,
-        Option<&Heading>,
-        Option<&Health>,
-        Option<&Endurance>,
-        Option<&Mana>,
-        Option<&CombatState>,
-        Option<&common_bevy::components::equipment::Equipment>,
-    ), Without<RespawnTimer>>,
+    actor_query: Query<Synced, Without<RespawnTimer>>,
     nntree: Res<NNTree>,
     lobby: Res<Lobby>,
     mut conn: ResMut<ServerNet>,
@@ -76,15 +60,15 @@ pub fn update_area_of_interest(
 ) {
     if changed_query.is_empty() { return; }
     let _t = timings.scope("aoi");
-    for (ent, loc, _nn) in &changed_query {
+    for (ent, loc) in &changed_query {
         // A client sees the world as it: its character, or an actor it views
-        let is_player = lobby.contains_right(&ent);
+        let client_id = lobby.get_by_right(&ent);
 
         // Step 1+2: Find nearby entities and handle enters
         buf_nearby.clear();
         buf_nearby.extend(
             nntree
-                .locate_within_distance(*loc, AOI_RADIUS_SQ)
+                .within_tiles(*loc, AOI_RADIUS as i64)
                 .filter(|nn| nn.ent != ent)
                 .map(|nn| nn.ent),
         );
@@ -97,14 +81,9 @@ pub fn update_area_of_interest(
                     if !e_loaded_by.players.contains(&other_ent) {
                         e_loaded_by.players.insert(other_ent);
                         // Send Spawn(E) to other player
-                        if let Ok((_, &typ, attrs, pc, side, heading, health, endurance, mana, combat_state, equipment)) = actor_query.get(ent) {
-                            let spawn_events = generate_actor_spawn_events(
-                                ent, typ, **loc,
-                                attrs.copied(), pc, side, heading, health, endurance, mana, combat_state, equipment,
-                            );
-                            for event in spawn_events {
-                                let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
-                                conn.send_reliable(*other_client_id, DefaultChannel::ReliableOrdered, message);
+                        if let Ok(synced) = actor_query.get(ent) {
+                            for event in synced.events(ent) {
+                                conn.send(*other_client_id, DefaultChannel::ReliableOrdered, &event);
                             }
                         }
                     }
@@ -112,21 +91,14 @@ pub fn update_area_of_interest(
             }
 
             // If E is a player → check if E should have other loaded
-            if is_player {
-                if let Some(client_id) = lobby.get_by_right(&ent) {
-                    if let Ok(mut other_loaded_by) = loaded_by_query.get_mut(other_ent) {
-                        if !other_loaded_by.players.contains(&ent) {
-                            other_loaded_by.players.insert(ent);
-                            // Send Spawn(other) to E
-                            if let Ok((&other_loc, &other_typ, other_attrs, other_pc, other_side, other_heading, other_health, other_endurance, other_mana, other_combat_state, other_equipment)) = actor_query.get(other_ent) {
-                                let spawn_events = generate_actor_spawn_events(
-                                    other_ent, other_typ, *other_loc,
-                                    other_attrs.copied(), other_pc, other_side, other_heading, other_health, other_endurance, other_mana, other_combat_state, other_equipment,
-                                );
-                                for event in spawn_events {
-                                    let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
-                                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                                }
+            if let Some(client_id) = client_id {
+                if let Ok(mut other_loaded_by) = loaded_by_query.get_mut(other_ent) {
+                    if !other_loaded_by.players.contains(&ent) {
+                        other_loaded_by.players.insert(ent);
+                        // Send Spawn(other) to E
+                        if let Ok(synced) = actor_query.get(other_ent) {
+                            for event in synced.events(other_ent) {
+                                conn.send(*client_id, DefaultChannel::ReliableOrdered, &event);
                             }
                         }
                     }
@@ -152,11 +124,7 @@ pub fn update_area_of_interest(
                 e_loaded_by.players.remove(&player_ent);
                 // Send Despawn(E) to player
                 if let Some(client_id) = lobby.get_by_right(&player_ent) {
-                    let message = bincode::serde::encode_to_vec(
-                        common_bevy::message::Do { event: common_bevy::message::Event::Despawn { ent } },
-                        bincode::config::legacy(),
-                    ).unwrap();
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send(*client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Despawn { ent } });
                 }
             }
         }
@@ -164,16 +132,14 @@ pub fn update_area_of_interest(
         // Step 4: If E is a player, handle "player walks away from static entities"
         // Query at EXIT_RADIUS to find entities that still have E in their LoadedBy
         // but are now beyond AOI_RADIUS
-        if is_player {
+        if let Some(client_id) = client_id {
             buf_nearby.clear();
             buf_nearby.extend(
                 nntree
-                    .locate_within_distance(*loc, EXIT_RADIUS_SQ)
+                    .within_tiles(*loc, EXIT_RADIUS as i64)
                     .filter(|nn| nn.ent != ent)
                     .map(|nn| nn.ent),
             );
-
-            let client_id = lobby.get_by_right(&ent);
 
             for &other_ent in &*buf_nearby {
                 // Skip entities already in nearby (within AOI) — they're fine
@@ -185,13 +151,7 @@ pub fn update_area_of_interest(
                 if let Ok(mut other_loaded_by) = loaded_by_query.get_mut(other_ent) {
                     if other_loaded_by.players.remove(&ent) {
                         // Send Despawn(other) to E
-                        if let Some(client_id) = client_id {
-                            let message = bincode::serde::encode_to_vec(
-                                common_bevy::message::Do { event: common_bevy::message::Event::Despawn { ent: other_ent } },
-                                bincode::config::legacy(),
-                            ).unwrap();
-                            conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, message);
-                        }
+                        conn.send(*client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Despawn { ent: other_ent } });
                     }
                 }
             }

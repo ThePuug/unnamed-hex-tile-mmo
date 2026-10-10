@@ -8,11 +8,10 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 
-use crate::components::RemoteMotion;
+use crate::components::{Displacing, RemoteMotion};
 use crate::resources::RenderOrigin;
 use common_bevy::{
     components::{
-        displacing::Displacing,
         status::Status,
         heading::Heading,
         keybits::*,
@@ -222,7 +221,7 @@ pub fn apply_displace(
         }
 
         if let Ok(mut e) = commands.get_entity(ent) {
-            e.insert(Displacing { destination, duration_ms, ends_at: time.elapsed() + Duration::from_millis(duration_ms as u64), around: *around });
+            e.insert(Displacing { destination, ends_at: time.elapsed() + Duration::from_millis(duration_ms as u64), around: *around });
         }
     }
 }
@@ -283,50 +282,5 @@ pub fn do_loc(
         }
 
         *loc0 = loc;
-    }
-}
-
-#[allow(dead_code)]
-fn _duration_ms(duration_ms: u16) -> Duration {
-    Duration::from_millis(duration_ms as u64)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use qrz::{Convert, Qrz};
-
-    fn create_test_map() -> Map {
-        Map::new(qrz::Map::new(1.0, 0.8, qrz::HexOrientation::FlatTop))
-    }
-
-    /// An adjacent Loc re-anchors without moving the entity in the world.
-    #[test]
-    fn world_space_preserved_on_smooth_tile_crossing() {
-        let map = create_test_map();
-        let old = Position::new(Qrz { q: 5, r: 5, z: 0 }, Vec3::new(0.5, 0.0, 0.3));
-        let before = old.to_world(&map);
-
-        let new_tile = Qrz { q: 6, r: 5, z: 0 };
-        let centre: Vec3 = map.convert(new_tile);
-        let rebased = Position::new(new_tile, before - centre);
-
-        assert!((rebased.to_world(&map) - before).length() < 0.001);
-    }
-
-    #[test]
-    fn visual_follows_the_predicted_point_without_jumping() {
-        let map = create_test_map();
-        let start = Position::at_tile(Qrz { q: 0, r: 0, z: 0 });
-        let mut visual = VisualPosition::at(start.to_world(&map));
-
-        let east = Position::new(start.tile, Vec3::new(0.5, 0.0, 0.0)).to_world(&map);
-        visual.interpolate_toward(east, 0.125);
-        visual.advance(0.0625);
-        let before = visual.current();
-
-        let west = Position::new(start.tile, Vec3::new(-0.5, 0.0, 0.0)).to_world(&map);
-        visual.interpolate_toward(west, 0.125);
-        assert!((visual.current() - before).length() < 0.001, "a redirect starts from what is on screen");
     }
 }

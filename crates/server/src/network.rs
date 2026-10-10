@@ -7,6 +7,7 @@ use ::renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer, ServerEve
 use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
 
 use common::network::*;
+use common_bevy::message::Do;
 
 // ── Connection events ──
 
@@ -76,14 +77,28 @@ impl ServerNet {
 
     // ── Send ──
 
-    /// Queue a reliable message for a client. Deferred until the next send tick
-    /// and subject to per-client per-tick byte budget.
-    pub fn send_reliable(&mut self, client_id: ClientId, channel: DefaultChannel, message: Vec<u8>) {
-        let state = self.clients.entry(client_id).or_default();
+    /// Sends `message` to `client_id` on `channel`, encoded for the wire.
+    /// On a reliable channel it is queued until the next send tick, under
+    /// the client's per-tick byte budget; on the unreliable one it goes at
+    /// once, never budget-gated.
+    pub fn send(&mut self, client_id: ClientId, channel: DefaultChannel, message: &Do) {
+        self.send_bytes(client_id, channel.into(), encode(message));
+    }
+
+    /// Sends `message` to every client of `clients` on `channel`, encoded
+    /// once.
+    pub fn send_each(&mut self, clients: impl IntoIterator<Item = ClientId>, channel: DefaultChannel, message: &Do) {
+        let (bytes, channel): (Vec<u8>, u8) = (encode(message), channel.into());
+        for client_id in clients {
+            self.send_bytes(client_id, channel, bytes.clone());
+        }
+    }
+
+    fn send_bytes(&mut self, client_id: ClientId, channel: u8, bytes: Vec<u8>) {
         match channel {
-            DefaultChannel::ReliableOrdered => state.ordered.queue.push(message),
-            DefaultChannel::ReliableUnordered => state.unordered.queue.push(message),
-            DefaultChannel::Unreliable => unreachable!("use send_unreliable"),
+            CH_RELIABLE_ORDERED => self.clients.entry(client_id).or_default().ordered.queue.push(bytes),
+            CH_RELIABLE_UNORDERED => self.clients.entry(client_id).or_default().unordered.queue.push(bytes),
+            _ => self.server.send_message(client_id, CH_UNRELIABLE, bytes),
         }
     }
 
@@ -94,11 +109,6 @@ impl ServerNet {
             state.ordered.queue.clear();
             state.unordered.queue.clear();
         }
-    }
-
-    /// Send an unreliable message immediately. Never budget-gated (no ACK accumulation).
-    pub fn send_unreliable(&mut self, client_id: ClientId, message: Vec<u8>) {
-        self.server.send_message(client_id, DefaultChannel::Unreliable, message);
     }
 
     // ── Receive ──
@@ -249,12 +259,16 @@ fn net_send(mut net: ResMut<ServerNet>, time: Res<Time>) {
         net.health_timer -= HEALTH_CHECK_INTERVAL;
         let stale = net.check_health();
         for client_id in stale {
-            net.clients.remove(&client_id);
-            net.server.disconnect(client_id);
+            net.disconnect(client_id);
         }
     }
 
     // Flush to wire — only on drain ticks, not every frame
     let ServerNet { ref mut server, ref mut transport, .. } = *net;
     transport.send_packets(server);
+}
+
+/// `message` as it crosses the wire.
+fn encode(message: &Do) -> Vec<u8> {
+    bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap()
 }

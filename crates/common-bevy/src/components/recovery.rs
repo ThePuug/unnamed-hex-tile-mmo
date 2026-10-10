@@ -111,7 +111,6 @@ impl Combo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tuning::Tuning;
 
     #[test]
     fn a_recovery_counts_down_to_nothing_and_no_further() {
@@ -138,24 +137,6 @@ mod tests {
         assert_eq!(recovery.chain, Chain::default(), "and the chain ends");
         recovery.tick(0.125);
         assert!(!recovery.is_active(), "then it is over");
-    }
-
-    #[test]
-    fn a_combo_unlocks_once_the_recovery_has_run_down_to_it() {
-        let combo = Combo { ability: AbilityType::Frenzy, unlock_at: 0.5 };
-        assert!(!combo.is_unlocked(1.0));
-        assert!(combo.is_unlocked(0.5));
-        assert!(combo.is_unlocked(0.0));
-    }
-
-    #[test]
-    fn every_ability_but_the_auto_attack_leaves_its_user_recovering() {
-        let tuning = Tuning::DEFAULT;
-        use AbilityType::*;
-        assert_eq!(tuning.recovery(AutoAttack), 0.0, "an auto-attack runs on its own timer");
-        for ability in [Frenzy, Feint, Overpower, Punish, Parry, Counter, Leap, PerfectStride] {
-            assert!(tuning.recovery(ability) > 0.0, "{ability:?} leaves its user recovering");
-        }
     }
 
     #[test]

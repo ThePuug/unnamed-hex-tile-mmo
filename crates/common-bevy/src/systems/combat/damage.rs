@@ -1,10 +1,5 @@
-//! Damage calculation functions for combat system
-
-//! Two contest patterns:
-//! - Pattern 1 (Nullifying): base × gap × contest_factor → nullifies at equal investment
-//! - Pattern 2 (Baseline+Bonus): base × gap × (1.0 + k × contest_factor) → preserves baseline
-
-
+//! Damage and contest arithmetic: the level gap, the two contest curves,
+//! the spread, the crit and the pushback.
 
 use crate::components::ActorAttributes;
 use crate::tuning::Tuning;
@@ -28,7 +23,7 @@ pub fn level_edge(tuning: &Tuning, level: u32, opposing_level: u32) -> f32 {
     (level as f32 - opposing_level as f32) * tuning.contest_per_level
 }
 
-/// Contest factor (Pattern 1: Nullifying).
+/// The nullifying contest: nothing at or below parity.
 
 /// Returns 0 up to 1, never reaching it, as a share does:
 /// - Equal/losing → 0 (effect nullified)
@@ -47,7 +42,7 @@ pub fn contest_factor(tuning: &Tuning, advantage_stat: u16, counter_stat: u16, e
     delta / (delta + tuning.contest_scale)
 }
 
-/// Reaction window contest (Pattern 2: Baseline+Bonus).
+/// The reaction window's contest, which keeps a baseline.
 
 /// Returns 1.0 up to 1.0 + `Tuning::window_bonus`, never reaching it:
 /// - Equal/losing → 1.0 (baseline window preserved)
@@ -74,7 +69,7 @@ pub fn spread(damage: f32, spread: f32, draw: f32) -> f32 {
 
 /// The chance a blow `attacker` strikes on `defender` crits.
 
-/// Pattern 1 (Nullifying): `Tuning::crit_chance` × contest_factor(the
+/// `Tuning::crit_chance` × contest_factor(the
 /// attacker's Focus, the defender's Fitness), with the level gap's edge
 /// on the attacker's side: none at or below parity, and never the whole
 /// of the ceiling.
@@ -100,7 +95,7 @@ pub fn crit(tuning: &Tuning, damage: f32, attacker: &ActorAttributes, defender: 
 
 /// Calculate recovery pushback percentage: Impact's, alone.
 
-/// Pattern 1 (Nullifying): `Tuning::pushback_share` × contest_factor(Impact,
+/// `Tuning::pushback_share` × contest_factor(Impact,
 /// Efficiency), with the level gap's `edge` on the attacker's side. No ceiling: the recovery itself
 /// never stretches past twice its length.
 pub fn calculate_recovery_pushback(

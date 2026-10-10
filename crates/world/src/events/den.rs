@@ -21,8 +21,8 @@
 
 use common::{den::Habitat, Canopy, HexLattice, SITES};
 
-use crate::noise::hash_channel_f64;
-use crate::{hex_to_world, world_to_hex};
+use crate::lattice::jittered_centre;
+use crate::world_to_hex;
 use super::index::CellId;
 use super::thrusting::REPOSE_GRADE;
 use super::{CellScope, TileOutput, TileView, WorldEvent};
@@ -57,11 +57,8 @@ pub fn den_lattice() -> HexLattice {
 /// The tile a lattice cell puts its den site on: the cell's centre,
 /// jittered by the cell's hash.
 pub fn site_of(lattice: &HexLattice, id: CellId, seed: u64) -> (i32, i32) {
-    let (cq, cr) = lattice.cell_center(id);
-    let (cx, cy) = hex_to_world(cq, cr);
-    let swing = 2.0 * DEN_JITTER * (lattice.tiles_per_cell() as f64).sqrt();
-    let h = |channel: u64| hash_channel_f64(id.0 as i64, id.1 as i64, seed ^ DEN_SEED, channel);
-    world_to_hex(cx + (h(1) - 0.5) * swing, cy + (h(2) - 0.5) * swing)
+    let (x, y) = jittered_centre(lattice, id, DEN_JITTER, seed ^ DEN_SEED);
+    world_to_hex(x, y)
 }
 
 /// The sites a cell's tiles may be: its own and the six around it, which is
@@ -107,9 +104,10 @@ impl Default for DenEvent {
 impl WorldEvent for DenEvent {
     fn name(&self) -> &str { "den" }
 
-    /// A site is found from its hash, so nothing is published and the scale
-    /// only sets how often `prepare` runs.
-    fn scale(&self) -> u32 { DEN_LATTICE }
+    /// The site lattice's own: the seven sites `prepare` finds for a cell
+    /// are the seven every tile in it may be only when the cell is the
+    /// tile's own site lattice cell.
+    fn scale(&self) -> u32 { self.lattice.radius }
 
     /// Nothing to place: a site is its lattice cell's hash.
     fn deform(&self, _scope: &CellScope) {}

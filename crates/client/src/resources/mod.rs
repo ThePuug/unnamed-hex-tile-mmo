@@ -173,9 +173,10 @@ pub struct KindLook {
 ///
 /// Every texture is sampled in world space, so its sampler must wrap: a
 /// clamped sampler smears the edge texel across the terrain. Each asset is
-/// a texture array of `TEXTURE_VARIANTS` seeds of the tile, each with its
-/// mip chain; the shader blends the layers by world position so the
-/// repeat never lines up.
+/// a texture array of three seeds of the tile (texgen's `VARIANTS`), each
+/// with its mip chain; the shader blends the layers by world position so
+/// the repeat never lines up, and carries that count itself, since it
+/// cannot read it from the asset.
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
 pub struct TerrainExtension {
     #[uniform(100)]
@@ -202,11 +203,6 @@ pub struct TerrainExtension {
     #[uniform(109)]
     pub lattice: CanopyLattice,
 }
-
-/// Layers in each texture asset, as texgen's `VARIANTS` writes them: the
-/// count `terrain.wgsl` blends, which cannot read it from the asset.
-#[allow(dead_code)]
-const TEXTURE_VARIANTS: u32 = 3;
 
 impl MaterialExtension for TerrainExtension {
     fn vertex_shader() -> ShaderRef {
@@ -257,11 +253,7 @@ pub struct EntityMap(BiMap<Entity,Entity>);
 
 /// The map before any of the world has arrived.
 pub fn world_map() -> common_bevy::resources::map::Map {
-    common_bevy::resources::map::Map::new(qrz::Map::<common_bevy::components::entity_type::EntityType>::new(
-        common::camera::HEX_RADIUS,
-        common::camera::RISE,
-        qrz::HexOrientation::FlatTop,
-    ))
+    common_bevy::resources::map::Map::new(qrz::Map::new(common::grid::HEX_RADIUS, common::grid::RISE))
 }
 
 #[derive(Debug, Resource)]
@@ -317,6 +309,12 @@ impl Server {
         self.server_time_at_init.saturating_add(time_since_init).saturating_add(self.lead())
     }
 
+    /// [`Server::current_time`] as a `Duration`, the form the queues and
+    /// abilities are stamped in.
+    pub fn now(&self, client_now: u128) -> std::time::Duration {
+        std::time::Duration::from_millis(self.current_time(client_now).min(u64::MAX as u128) as u64)
+    }
+
     /// How far the clock leads the server's: a trip there, and the margin
     /// past it that arrivals hold ([`Server::arrived`]).
     pub fn lead(&self) -> u128 {
@@ -336,8 +334,7 @@ impl Server {
     }
 }
 
-/// Terrain materials by LoD level, created on first use so a forced debug
-/// radius gets one like any ladder level. Every level shares the textures,
+/// Terrain materials by LoD level, created on first use. Every level shares the textures,
 /// loaded once here.
 #[derive(Resource)]
 pub struct TerrainMaterial {
@@ -389,7 +386,7 @@ impl TerrainMaterial {
         use common_bevy::summary::{threshold_horiz, LOD_LEVELS};
         let full = common_bevy::summary_mesh::CANOPY_FULL;
         let Some(kinds) = &self.kinds else { return CanopyLook { full, ..default() } };
-        let (relief_full, relief_gone) = if LOD_LEVELS[1..LOD_LEVELS.len() - 1].contains(&r) {
+        let (relief_full, relief_gone) = if Self::canopied(r) {
             (threshold_horiz(LOD_LEVELS[2]), threshold_horiz(LOD_LEVELS[3]))
         } else {
             (0.0, 0.0)
@@ -439,7 +436,7 @@ impl TerrainMaterial {
             step: if Self::canopied(r) && scale % 3 == 0 { scale / 3 } else { 0 },
             half: common_bevy::summary_mesh::PARTS_LAYER_HALF,
             whole: common::cover::CANOPY_WHOLE as f32,
-            radius: common::camera::HEX_RADIUS,
+            radius: common::grid::HEX_RADIUS,
             on: 1,
         };
         self.by_level
@@ -597,20 +594,15 @@ pub struct SummaryMeshes {
 
 /// Marker component for summary mesh entities.
 #[derive(Component)]
-#[allow(dead_code)]
-pub struct SummaryMesh {
-    pub region_key: MeshRegionKey,
-}
+pub struct SummaryMesh;
 
 /// Marker component for the water mesh under a summary mesh entity.
 #[derive(Component)]
 pub struct WaterMesh;
 
-/// Per-region summary elevation cache.
-
-/// Each entry holds all ~271 center_z values for one mesh region.
+/// Per-region summary cache: each entry holds a mesh region's 271 cells.
 /// DashMap for per-region locking — async mesh build tasks get an Arc
-/// clone (one brief shard lock) then read 271 values lock-free.
+/// clone (one brief shard lock) then read the cells lock-free.
 #[derive(Resource, Clone, Default)]
 pub struct SummaryCache {
     regions: Arc<DashMap<MeshRegionKey, Arc<RegionData>>>,

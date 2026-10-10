@@ -116,11 +116,8 @@ pub fn do_presence(
                     queue: [Event::Input { ent, key_bits: KeyBits::default(), dt: 0, seq: 1 }].into(), ..default() }));
 
                 // init client
-                let dt = time.elapsed().as_millis() + runtime.elapsed_offset;
-                let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Init { ent, dt }},
-                    bincode::config::legacy()).unwrap();
-                conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
+                let dt = runtime.now_ms(&time);
+                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Init { ent, dt }});
 
                 // Send own Spawn + component states directly to connecting client
                 // AOI will handle discovering nearby entities via Changed<Loc>
@@ -141,15 +138,11 @@ pub fn do_presence(
                 );
 
                 for event in spawn_events {
-                    let message = bincode::serde::encode_to_vec(event, bincode::config::legacy()).unwrap();
-                    conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
+                    conn.send(client_id, DefaultChannel::ReliableOrdered, &event);
                 }
 
                 // The bag goes to its owner only, after Init so the client has its entity
-                let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::Inventory { ent, bag }},
-                    bincode::config::legacy()).unwrap();
-                conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
+                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Inventory { ent, bag }});
 
                 // Write Spawn to message bus so do_spawn_discover triggers initial chunk discovery
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) } });
@@ -169,10 +162,7 @@ pub fn do_presence(
                 }
                 info!("Client {} views {}", client_id, viewed);
                 lobby.insert(client_id, viewed);
-                let message = bincode::serde::encode_to_vec(
-                    Do { event: Event::View { ent: viewed }},
-                    bincode::config::legacy()).unwrap();
-                conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
+                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::View { ent: viewed }});
                 // Streaming starts from the actor as it does from a character
                 // entering: `do_spawn_discover` sends the chunks round it,
                 // and AOI from its `Loc` changing, so what stands round it comes too
@@ -222,14 +212,8 @@ fn leave(
 
     // Send Despawn to all players who had this entity loaded
     if let Ok(loaded_by) = loaded_by_query.get(ent) {
-        let bytes = bincode::serde::encode_to_vec(
-            Do { event: Event::Despawn { ent }},
-            bincode::config::legacy()).unwrap();
-        for &player_ent in &loaded_by.players {
-            if let Some(player_client_id) = lobby.get_by_right(&player_ent) {
-                conn.send_reliable(*player_client_id, DefaultChannel::ReliableOrdered, bytes.clone());
-            }
-        }
+        let seeing = loaded_by.players.iter().filter_map(|player_ent| lobby.get_by_right(player_ent)).copied();
+        conn.send_each(seeing, DefaultChannel::ReliableOrdered, &Do { event: Event::Despawn { ent }});
     }
 
     commands.entity(ent).despawn();
@@ -257,11 +241,8 @@ pub fn write_try(
             let (Try { mut event }, _): (Try, _) = bincode::serde::borrow_decode_from_slice(&serialized, bincode::config::legacy()).unwrap();
             match event {
                 Event::Ping => {
-                    let dt = time.elapsed().as_millis() + runtime.elapsed_offset;
-                    let message = bincode::serde::encode_to_vec(
-                        Do { event: Event::Pong { dt }},
-                        bincode::config::legacy()).unwrap();
-                    conn.send_reliable(client_id, DefaultChannel::ReliableOrdered, message);
+                    let dt = runtime.now_ms(&time);
+                    conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Pong { dt }});
                 }
                 Event::Play => commands.trigger(Presence::Enter { client_id }),
                 Event::Leave => commands.trigger(Presence::Leave { client_id }),
@@ -352,16 +333,15 @@ pub fn send_do(
         let Some((ent, route)) = route(&message.event) else { continue };
         _t.get_or_insert_with(|| timings.scope("send_do"));
         let owner = lobby.get_by_right(&ent);
-        let encode = || bincode::serde::encode_to_vec(message, bincode::config::legacy()).unwrap();
         match route {
             Route::Owner => {
                 if let Some(client_id) = owner {
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, encode());
+                    conn.send(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
             Route::OwnerUnordered => {
                 if let Some(client_id) = owner {
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableUnordered, encode());
+                    conn.send(*client_id, DefaultChannel::ReliableUnordered, message);
                 }
             }
             Route::Seen => {
@@ -372,21 +352,16 @@ pub fn send_do(
                     continue;
                 };
                 // Its owner too: a client viewing the actor sees what befalls it
-                let bytes = encode();
                 let seeing = loaded_by.players.iter().filter(|&&player| player != ent).filter_map(|player| lobby.get_by_right(player));
-                for client_id in owner.into_iter().chain(seeing) {
-                    conn.send_reliable(*client_id, DefaultChannel::ReliableOrdered, bytes.clone());
-                }
+                conn.send_each(owner.into_iter().chain(seeing).copied(), DefaultChannel::ReliableOrdered, message);
             }
             Route::Moving => {
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue };
                 // A client viewing the actor simulates it as any other it sees;
                 // a character's own client predicts it and wants none
-                let bytes = encode();
                 let viewer = owner.filter(|_| !characters.contains(ent));
-                for client_id in loaded_by.players.iter().filter_map(|player| lobby.get_by_right(player)).chain(viewer) {
-                    conn.send_unreliable(*client_id, bytes.clone());
-                }
+                let simulating = loaded_by.players.iter().filter_map(|player| lobby.get_by_right(player)).chain(viewer);
+                conn.send_each(simulating.copied(), DefaultChannel::Unreliable, message);
             }
         }
     }

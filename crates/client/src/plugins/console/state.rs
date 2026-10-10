@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::plugins::diagnostics::DateField;
 
 /// Which coordinate system the goto input expects.
+#[cfg(feature = "admin")]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GotoCoordType {
     WorldUnits,
@@ -10,6 +11,7 @@ pub enum GotoCoordType {
 }
 
 /// Text input state for the goto coordinate entry.
+#[cfg(feature = "admin")]
 #[derive(Clone, Debug)]
 pub struct GotoInputState {
     pub coord_type: GotoCoordType,
@@ -18,6 +20,7 @@ pub struct GotoInputState {
     pub buffers: [String; 2],
 }
 
+#[cfg(feature = "admin")]
 impl GotoInputState {
     pub fn new(coord_type: GotoCoordType) -> Self {
         Self {
@@ -45,6 +48,7 @@ pub struct DevConsole {
     /// Navigation history (breadcrumb trail)
     pub history: Vec<MenuPath>,
     /// Active goto text input (when in GotoInput menu)
+    #[cfg(feature = "admin")]
     pub goto_input: Option<GotoInputState>,
     /// Text buffer for the lighting hour (when in LightingTime menu)
     pub lighting_time_buf: String,
@@ -60,6 +64,7 @@ impl Default for DevConsole {
             visible: false,
             current_menu: MenuPath::Root,
             history: Vec::new(),
+            #[cfg(feature = "admin")]
             goto_input: None,
             lighting_time_buf: String::new(),
             lighting_scrub_secs: 0.0,

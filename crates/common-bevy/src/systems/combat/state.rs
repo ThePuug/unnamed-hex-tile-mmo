@@ -53,7 +53,6 @@ pub fn update_combat_state(
         combat_state.in_combat = false;
 
         // Broadcast combat state change to clients via Incremental
-        combat_state.in_combat = false;
         writer.write(Do {
             event: Event::Incremental {
                 ent,
@@ -73,10 +72,7 @@ fn has_hostile_within_radius(
     nntree: &NNTree,
     radius: i16,
 ) -> bool {
-    // Query NNTree for entities within radius (squared distance)
-    let nearby = nntree.locate_within_distance(*self_loc, (radius as i64) * (radius as i64));
-
-    for other in nearby {
+    for other in nntree.within_tiles(*self_loc, radius as i64) {
         if other.ent == self_ent {
             continue; // Skip self
         }

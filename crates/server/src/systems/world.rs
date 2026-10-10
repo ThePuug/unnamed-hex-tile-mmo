@@ -1,4 +1,4 @@
-use bevy::{ecs::entity::Entities, prelude::*};
+use bevy::{ecs::{entity::Entities, query::QueryData}, prelude::*};
 use chrono::{
     offset::Local, Datelike, Timelike
 };
@@ -6,7 +6,7 @@ use qrz::*;
 
 use common_bevy::{
     components::{ *,
-        behaviour::PlayerControlled,
+        behaviour::{PlayerControlled, Side},
         entity_type::*,
         equipment::Equipment,
         heading::Heading,
@@ -18,21 +18,54 @@ use common_bevy::{
 };
 use ::combat::RunTime;
 
-/// Helper function to generate Spawn event + component sync events for an actor entity.
-/// This ensures consistent syncing of actor state across different scenarios:
-/// - Initial player connection (via do_manage_connections)
-/// - Remote player discovery (via try_spawn)
-/// - Respawning (future use)
+/// What a client is sent of an actor as it meets it: the components
+/// that cross the wire, each where the actor has it.
+#[derive(QueryData)]
+pub struct Synced {
+    loc: &'static Loc,
+    typ: &'static EntityType,
+    attrs: Option<&'static ActorAttributes>,
+    player_controlled: Option<&'static PlayerControlled>,
+    side: Option<&'static Side>,
+    heading: Option<&'static Heading>,
+    health: Option<&'static Health>,
+    endurance: Option<&'static Endurance>,
+    mana: Option<&'static Mana>,
+    combat_state: Option<&'static CombatState>,
+    equipment: Option<&'static Equipment>,
+}
 
-/// Returns a Vec of Do events with Spawn first, followed by Incremental events for all available components.
-/// This ordering is critical - the entity must be spawned before components can be attached.
+impl SyncedItem<'_, '_> {
+    /// The `Do`s that put `ent` on a client ([`generate_actor_spawn_events`])
+    pub fn events(&self, ent: Entity) -> Vec<Do> {
+        generate_actor_spawn_events(
+            ent,
+            *self.typ,
+            **self.loc,
+            self.attrs.copied(),
+            self.player_controlled,
+            self.side,
+            self.heading,
+            self.health,
+            self.endurance,
+            self.mana,
+            self.combat_state,
+            self.equipment,
+        )
+    }
+}
+
+/// The `Do`s that put `ent` on a client: its `Spawn`, then an
+/// `Incremental` for each component it has. The `Spawn` comes first: a
+/// client attaches a component only to an entity it holds.
+#[allow(clippy::too_many_arguments)]
 pub fn generate_actor_spawn_events(
     ent: Entity,
     typ: EntityType,
     qrz: Qrz,
     attrs: Option<ActorAttributes>,
     player_controlled: Option<&PlayerControlled>,
-    side: Option<&common_bevy::components::behaviour::Side>,
+    side: Option<&Side>,
     heading: Option<&Heading>,
     health: Option<&Health>,
     endurance: Option<&Endurance>,
@@ -98,45 +131,15 @@ pub fn setup(
 pub fn try_spawn(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
-    query: Query<(
-        &Loc,
-        &EntityType,
-        Option<&ActorAttributes>,
-        Option<&PlayerControlled>,
-        Option<&common_bevy::components::behaviour::Side>,
-        Option<&Heading>,
-        Option<&Health>,
-        Option<&Endurance>,
-        Option<&Mana>,
-        Option<&CombatState>,
-        Option<&Equipment>,
-    ), Without<RespawnTimer>>,
+    query: Query<Synced, Without<RespawnTimer>>,
 ) {
     for message in reader.read() {
         let Try { event: Event::Spawn { ent, .. }} = message else { continue };
         let ent = *ent;
         // A dead player is spawned for no one until it respawns
         // (`resources::process_respawn`)
-        let Ok((loc, typ, attrs, player_controlled, side, heading, health, endurance, mana, combat_state, equipment)) = query.get(ent) else { continue; };
-
-        // Send Spawn + all available actor components using shared helper
-        // This ensures remote players are immediately visible and targetable
-        let spawn_events = generate_actor_spawn_events(
-            ent,
-            *typ,
-            **loc,
-            attrs.copied(),
-            player_controlled,
-            side,
-            heading,
-            health,
-            endurance,
-            mana,
-            combat_state,
-            equipment,
-        );
-
-        for event in spawn_events {
+        let Ok(synced) = query.get(ent) else { continue; };
+        for event in synced.events(ent) {
             writer.write(event);
         }
     }
@@ -145,7 +148,6 @@ pub fn try_spawn(
 pub fn do_spawn(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
-    map: ResMut<crate::Map>,
     entities: &Entities,
     existing_actors: Query<(), With<Actor>>,
 ) {
@@ -154,30 +156,19 @@ pub fn do_spawn(
             let qrz = *qrz;
             let typ = *typ;
             let ent = *ent;
-            match typ {
-                EntityType::Decorator(_) => {
-                    if map.get(qrz).is_none() { map.insert(qrz, typ) }
-                },
-                EntityType::Actor(_) => {
-                    // Only insert components if:
-                    // 1. The entity exists (it was created by player connection or NPC spawner)
-                    // 2. The entity doesn't already have the Actor component
-                    // This handles the case where try_discover_chunk sends spawn events for
-                    // existing players/NPCs - we skip those because they're already set up
-                    if entities.contains(ent) && existing_actors.get(ent).is_err() {
-                        commands.entity(ent).insert((
-                            Actor,
-                            AirTime { state: Some(125), step: None },
-                            Heading::default(),
-                            Turn::default(),
-                            Position::at_tile(qrz),
-                            Transform {
-                                translation: map.convert(qrz),
-                                ..default()},
-                        ));
-                    }
-                },
-                _ => {}
+            // A `Spawn` comes again for an actor a client asks after
+            // (`try_spawn`), and for one gone since: an actor standing
+            // already keeps what it has
+            if let EntityType::Actor(_) = typ {
+                if entities.contains(ent) && existing_actors.get(ent).is_err() {
+                    commands.entity(ent).insert((
+                        Actor,
+                        AirTime { state: Some(movement::JUMP_DURATION_MS), step: None },
+                        Heading::default(),
+                        Turn::default(),
+                        Position::at_tile(qrz),
+                    ));
+                }
             }
         }
     }

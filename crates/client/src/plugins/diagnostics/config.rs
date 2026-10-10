@@ -1,15 +1,16 @@
 use bevy::prelude::*;
 use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS, SEASON_MS, WEEK_MS, YEAR_MS};
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct DiagnosticsState {
     pub grid_visible: bool,
     pub lighting: LightingClock,
     /// Every terrain mesh is hidden.
     pub terrain_hidden: bool,
-    /// Every stand of models and cards is hidden. The batches hang under
-    /// the region meshes, so hiding terrain hides these too; this hides
-    /// them alone, leaving the ground to be measured by itself.
+    /// Every stand of models and cards is hidden. A stand is an entity of
+    /// its own, gathering every region's instances, so hiding the terrain
+    /// leaves it drawn; this hides the cover alone, leaving the ground to
+    /// be measured by itself.
     pub cover_hidden: bool,
     /// The camera holds its lowest pose — the boom at its shortest, looking
     /// up — instead of following the ground: an actor seen close.
@@ -21,20 +22,6 @@ pub struct DiagnosticsState {
     /// instead of reading its parts, the two drawn in the same frame for a
     /// measurement of what the parts cost.
     pub canopy_parts_off: bool,
-}
-
-impl Default for DiagnosticsState {
-    fn default() -> Self {
-        Self {
-            grid_visible: false,
-            lighting: LightingClock::default(),
-            terrain_hidden: false,
-            cover_hidden: false,
-            camera_closeup: false,
-            camera_envelope_off: false,
-            canopy_parts_off: false,
-        }
-    }
 }
 
 /// The clock the sun and moon keep: game time, or an hour the console

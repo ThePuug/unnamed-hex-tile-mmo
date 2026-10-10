@@ -28,13 +28,14 @@ fn composite() -> Composite {
 
 /// Fresh against warm, across cell boundaries.
 ///
-/// No layer in this stack reads a neighbouring cell: plates and motion resolve
-/// their own cell, and tilt and orogen are fields with `max_influence` of zero
-/// and empty `deform`. So a tile must read the same whether the cells around it
-/// were already warm or are being touched for the first time — and unlike the
-/// spine layer this replaced, that now holds by construction rather than by
-/// luck. One composite for the whole sweep against a fresh composite per probe
-/// is the test that would catch a layer quietly acquiring a neighbourhood.
+/// No layer in this stack folds over a cell of its own that may be cold:
+/// plates and motion resolve their own cell, tilt is a field with an empty
+/// `deform`, and thrusting, thickening and drainage read lower indexes the
+/// framework deforms under their footprint and ring first. So a tile must
+/// read the same whether the cells around it were already warm or are being
+/// touched for the first time, by construction. One composite for the whole
+/// sweep against a fresh composite per probe is the test that would catch a
+/// layer quietly acquiring a neighbourhood.
 #[test]
 #[ignore]
 fn cold_neighbours_do_not_change_a_tile() {
@@ -86,7 +87,7 @@ fn cold_neighbours_do_not_change_a_tile() {
 fn elevation_independent_of_access_order() {
     println!("\n=== elevation vs access order ===\n");
 
-    // Probe tiles spread across a spine and its surroundings.
+    // Probe tiles spread across a belt and its surroundings.
     let probes: Vec<(i32, i32)> = (0..60)
         .map(|i| {
             let a = i as f64 * 2.399963;
