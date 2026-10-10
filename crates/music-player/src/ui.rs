@@ -162,12 +162,7 @@ impl Player {
         }
         let toggle = if self.playing { Glyph::Pause } else { Glyph::Play };
         if round_button(ui, play_r, "play", toggle, true).clicked() {
-            if self.playing {
-                self.playing = false;
-                self.rest_until = None;
-            } else {
-                self.play();
-            }
+            self.toggle_play();
         }
         if round_button(ui, next_r, "next", Glyph::Next, false).clicked() {
             self.next();
@@ -307,7 +302,7 @@ impl Player {
         p.rect_stroke(seed_rect, 6.0, Stroke::new(1.0_f32, EDGE), StrokeKind::Inside);
         let before = self.seed.clone();
         let field = egui::TextEdit::singleline(&mut self.seed).font(mono(12.0)).text_color(PARCHMENT).frame(false).margin(egui::Margin::symmetric(10, 10)).vertical_align(Align::Center);
-        ui.put(seed_rect, field);
+        self.typing = ui.put(seed_rect, field).has_focus();
         self.seed.retain(|c| c.is_ascii_digit());
         self.seed.truncate(9);
         let dice = hit(ui, dice_rect, "dice").on_hover_text("A random seed");
@@ -919,6 +914,11 @@ fn credits_entries(ui: &mut egui::Ui) {
 impl eframe::App for Player {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
+        // The space bar plays or pauses, unless it is typed into the seed;
+        // taken here, no button with the focus takes it as its own.
+        if !self.typing && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Space)) {
+            self.toggle_play();
+        }
         ctx.request_repaint_after(Duration::from_millis(33));
         let side = |top: i8, bottom: i8| egui::Margin { left: 20, right: 20, top, bottom };
         let mut midi_anchor = Rect::NOTHING;

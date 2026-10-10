@@ -136,6 +136,9 @@ pub struct Player {
     /// Whether the listener wants sound: the deck plays when this is set
     /// and the current variation has arrived.
     pub playing: bool,
+    /// Whether the seed field has the keyboard, as it was last drawn: the
+    /// space bar is typed there, and plays or pauses anywhere else.
+    pub typing: bool,
     /// Whether the current variation plays again after its rest, in place
     /// of what follows.
     pub repeat: bool,
@@ -187,6 +190,7 @@ impl Player {
             composed,
             popover: None,
             playing: false,
+            typing: false,
             repeat: false,
             rest_until: None,
             deck,
@@ -345,6 +349,16 @@ impl Player {
         }
         self.playing = true;
         self.rest_until = None;
+    }
+
+    /// Pauses what plays, or plays.
+    pub fn toggle_play(&mut self) {
+        if self.playing {
+            self.playing = false;
+            self.rest_until = None;
+        } else {
+            self.play();
+        }
     }
 
     /// Moves on to the history's next entry, taking the queue's head, else
