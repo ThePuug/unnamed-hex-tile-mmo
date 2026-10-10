@@ -41,6 +41,7 @@ use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
 use crate::solo;
 use crate::teller::{self, Hold, Teller, Telling};
+use crate::voices;
 use crate::theory::groove::{Groove, BLUES};
 use crate::theory::melody::{Theme, Tone, BLUES_SHAPES};
 use crate::theory::phrase::{Form as PhraseForm, FORMS};
@@ -471,6 +472,9 @@ struct Design {
     theme: Theme,
     rows: [&'static Schema; 3],
     feel: Feel,
+    /// The tune's register as the lead's instrument has it: `TUNE` fitted
+    /// to where the teller sounds.
+    register: (u8, u8),
     intro: Intro,
     event: Event,
     answers: Answers,
@@ -587,6 +591,7 @@ fn compose(params: &Params) -> (Score, Form) {
         theme: Theme::draw(groove, &BLUES_SHAPES, &mut skeleton),
         rows: [row(0, mode, &mut skeleton), row(1, mode, &mut skeleton), row(2, mode, &mut skeleton)],
         feel: FEELS[feel],
+        register: voices::fit(TUNE, teller),
         intro: INTROS[habits.weighted(&leaned(leaned([35.0, 25.0, 15.0, 15.0, 10.0], lean.intros), INTROS.map(|i| band.lean(i.name()))))],
         event: EVENTS[habits.weighted(&leaned(leaned([40.0, 15.0, 10.0, 10.0], lean.events), EVENTS.map(|e| band.lean(e.name()))))],
         answers: habits_of_band.answers,
@@ -598,14 +603,20 @@ fn compose(params: &Params) -> (Score, Form) {
         ritard: habits.chance(if close == Ending::Held { 0.45 } else { 0.3 }) && lean.slows,
         run_over: habits_of_band.runs_over,
     };
+    // Every part written where its player's instrument has notes.
+    let bass_program = band.program(Part::Bass, &[], UPRIGHT_BASS);
+    let bass_bounds = voices::within(bass_program, (28, 60));
+    let lead_bounds = voices::within(design.lead, (design.register.0.saturating_sub(2), design.register.1 + 3));
+    let second_bounds = voices::within(design.second, (50, 84));
+    let horn_bounds = voices::within(design.horn, (50, 72));
     let instruments = vec![
-        Instrument { name: "bass", program: band.program(Part::Bass, &[], UPRIGHT_BASS), channel: CH_BASS, role: Role::Pluck, low: 28, high: 60, reverb: 25, pan: 0, level: 0.0 },
+        Instrument { name: "bass", program: bass_program, channel: CH_BASS, role: Role::Pluck, low: bass_bounds.0, high: bass_bounds.1, reverb: 25, pan: 0, level: 0.0 },
         Instrument { name: "piano", program: design.piano, channel: CH_PIANO, role: Role::Pluck, low: 48, high: 79, reverb: 45, pan: -21, level: 0.0 },
-        Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: 53, high: 84, reverb: 45, pan: 0, level: LEAD },
+        Instrument { name: "lead", program: design.lead, channel: CH_LEAD, role: Role::Melody, low: lead_bounds.0, high: lead_bounds.1, reverb: 45, pan: 0, level: LEAD },
         Instrument { name: "guitar", program: band.program(Part::Comp, &[], JAZZ_GUITAR), channel: CH_GUITAR, role: Role::Pluck, low: 40, high: 72, reverb: 35, pan: 36, level: 0.0 },
-        Instrument { name: "second", program: design.second, channel: CH_SECOND, role: Role::Melody, low: 50, high: 84, reverb: 55, pan: 18, level: 0.0 },
+        Instrument { name: "second", program: design.second, channel: CH_SECOND, role: Role::Melody, low: second_bounds.0, high: second_bounds.1, reverb: 55, pan: 18, level: 0.0 },
         Instrument { name: "organ", program: band.program(Part::Organ, &[], ORGAN), channel: CH_ORGAN, role: Role::Sustain, low: 52, high: 69, reverb: 80, pan: -34, level: 0.0 },
-        Instrument { name: "horn", program: design.horn, channel: CH_HORN, role: Role::Sustain, low: 50, high: 72, reverb: 75, pan: 29, level: 0.0 },
+        Instrument { name: "horn", program: design.horn, channel: CH_HORN, role: Role::Sustain, low: horn_bounds.0, high: horn_bounds.1, reverb: 75, pan: 29, level: 0.0 },
         Instrument { name: "weave", program: band.program(Part::Echo, &[], E_PIANO), channel: CH_WEAVE, role: Role::Pluck, low: 40, high: 84, reverb: 70, pan: -47, level: 0.0 },
         Instrument { name: "shimmer", program: band.program(Part::Shimmer, &[], VIBES), channel: CH_SHIMMER, role: Role::Pluck, low: 72, high: 91, reverb: 75, pan: 47, level: 0.0 },
         Instrument { name: "kit", program: band.program(Part::Drums, &[], BRUSH_KIT), channel: CH_KIT, role: Role::Percussion, low: KICK, high: RIDE, reverb: 35, pan: 0, level: LEVEL_KIT },
@@ -759,7 +770,7 @@ fn compose(params: &Params) -> (Score, Form) {
         second: CH_SECOND,
         double: None,
         echo: CH_WEAVE,
-        register: TUNE,
+        register: form.design.register,
         sung: -12,
         riff: (-8, -14),
         // The lead holds at its tune's strength: a bank's horns fall
@@ -879,7 +890,7 @@ fn solos(score: &mut Score, form: &Form, rng: &mut Rng) {
             Some(to) => solo::Shape::answer(&to, player, rng),
             None => solo::Shape::draw(player, rng),
         };
-        let line = solo::turn(score, from * CHORUS, c * CHORUS, TUNE, player, &shape, rng);
+        let line = solo::turn(score, from * CHORUS, c * CHORUS, form.design.register, player, &shape, rng);
         play(score, form, line, from * CHORUS, c * CHORUS, rng);
         answered = Some(shape);
     }
@@ -890,7 +901,7 @@ fn solos(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// repaired as the tune is — and the line a listener follows through a
 /// run, its tones longer than a sixteenth, too — growing as it goes.
 fn play(score: &mut Score, form: &Form, mut line: Vec<Placed>, a: u32, z: u32, rng: &mut Rng) {
-    let (lo, hi) = TUNE;
+    let (lo, hi) = form.design.register;
     let bar = form.bar;
     line.sort_by_key(|n| n.0);
     for i in 0..line.len() {
@@ -1076,7 +1087,7 @@ fn rubato(score: &mut Score, form: &Form, rng: &mut Rng) {
     }
     let player = &solo::BLUESMAN;
     let shape = solo::Shape::draw(player, rng);
-    let line = solo::turn(score, 0, RUBATO_BARS, TUNE, player, &shape, rng);
+    let line = solo::turn(score, 0, RUBATO_BARS, form.design.register, player, &shape, rng);
     play(score, form, line, 0, RUBATO_BARS, rng);
     let base = score.eighth_bpm;
     let beats: Vec<u32> = (0..RUBATO_BARS * bar).filter(|t| score.strong(*t)).collect();
@@ -1195,7 +1206,7 @@ fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
         vamp(score, form, at, VAMP_BARS, |_| (true, true, true), rng);
         let player = &solo::BLUESMAN;
         let shape = solo::Shape::draw(player, rng);
-        let line = solo::turn(score, at, at + VAMP_BARS, TUNE, player, &shape, rng);
+        let line = solo::turn(score, at, at + VAMP_BARS, form.design.register, player, &shape, rng);
         play(score, form, line, at, at + VAMP_BARS, rng);
         at += VAMP_BARS;
     }
@@ -1226,7 +1237,7 @@ fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
         }
         let player = &solo::BLUESMAN;
         let shape = solo::Shape::draw(player, rng);
-        let line = solo::turn(score, at - 2, at, TUNE, player, &shape, rng);
+        let line = solo::turn(score, at - 2, at, form.design.register, player, &shape, rng);
         play(score, form, line, at - 2, at, rng);
     }
     let hit = at * bar;
@@ -1254,7 +1265,7 @@ fn ending(score: &mut Score, form: &Form, rng: &mut Rng) {
     // The lead's home tonic, a tone of every last chord; run into, where it
     // runs, from the chord's tone over it down the pentatonic in the
     // chord's first beat.
-    let home = tune::home_tonic(&key, TUNE.0, TUNE.1);
+    let home = tune::home_tonic(&key, form.design.register.0, form.design.register.1);
     let under = key.under(chord);
     let first = *score.meter.strong_eighths().get(1).unwrap_or(&score.meter.eighths());
     let mut from = hit;
@@ -1450,7 +1461,7 @@ fn led(candidates: &[u8], voices: &[u8]) -> Vec<u8> {
 fn bass(score: &mut Score, form: &Form, rng: &mut Rng) {
     // From A1 to A3: where an upright walks, its root in two on C3 and
     // its fifth under it, clear of the boom below.
-    let (lo, hi) = (33, 57);
+    let (lo, hi) = voices::within(score.instrument(CH_BASS).program, (33, 57));
     let strong = score.meter.strong_eighths();
     let eighths = score.meter.eighths();
     let groups = score.meter.groups.clone();
@@ -1666,7 +1677,7 @@ fn organ(score: &mut Score, form: &Form, rng: &mut Rng) {
     let key = score.key;
     // Under the tune's peaks; from G#3, so its root and seventh, a
     // whole tone apart, are never both under G3, where that is mud.
-    let (lo, hi) = (52, 64);
+    let (lo, hi) = voices::within(score.instrument(CH_ORGAN).program, (52, 64));
     let mut voices: Option<Vec<u8>> = None;
     let mut alone: Option<u8> = None;
     let mut rising = true;
@@ -1733,7 +1744,7 @@ fn organ(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// strike; carried across the bar where the next chord keeps it.
 fn horn(score: &mut Score, form: &Form, rng: &mut Rng) {
     let key = score.key;
-    let (lo, hi) = (52, 67);
+    let (lo, hi) = voices::within(score.instrument(CH_HORN).program, (52, 67));
     let mut last: Option<u8> = None;
     for b in 0..form.bars() {
         if !form.texture_at(b).colours || form.stop(b) {
@@ -1782,7 +1793,7 @@ fn shimmer(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// instead, the electric piano's third and fifth and the vibes' root over
 /// them. It leaves the lead's solos alone.
 fn weave(score: &mut Score, form: &Form, rng: &mut Rng) {
-    let (lo, hi) = (TUNE.0 - 12, TUNE.1 - 12);
+    let (lo, hi) = (form.design.register.0 - 12, form.design.register.1 - 12);
     let late = form.design.theme.feet[0][0].1;
     let eighths = score.meter.eighths();
     for b in (0..form.bars()).filter(|b| hole(*b)) {
@@ -1820,14 +1831,14 @@ fn weave(score: &mut Score, form: &Form, rng: &mut Rng) {
         if mode != Weave::Two {
             continue;
         }
-        for (start, len, pitch) in form.tune.bar(score, call, TUNE.0, TUNE.1, false) {
+        for (start, len, pitch) in form.tune.bar(score, call, form.design.register.0, form.design.register.1, false) {
             let onset = (start - call * form.bar) / E;
             if !score.meter.strong(onset) || onset + late >= eighths {
                 continue;
             }
             let mut third = score.key.pitch(score.key.standing_degree(pitch) + 2, 4).min(89);
             if !chord.holds(&score.key, third) {
-                third = tune::nearest_chord_tone(&score.key, chord, third, TUNE.0, 89);
+                third = tune::nearest_chord_tone(&score.key, chord, third, form.design.register.0, 89);
             }
             let held = (len - E / 2).min((eighths - onset - late) * E - E / 4);
             score.add(Note { start: b * form.bar + (onset + late) * E, len: held, pitch: third, vel: vel(-18, rng), channel: CH_WEAVE_2 });
@@ -1960,8 +1971,9 @@ mod tests {
             if form.design.intro == Intro::Turnaround {
                 assert_eq!(score.harmony[intro - 1].root, 4, "seed {seed}: the intro does not end on the V");
             }
+            let (lo, hi) = form.design.register;
             for n in score.notes.iter().filter(|n| matches!(n.channel, CH_LEAD | CH_SECOND) && n.len >= E / 2) {
-                assert!((TUNE.0..=TUNE.1).contains(&n.pitch), "seed {seed}: the tune at {} leaves its register", n.pitch);
+                assert!((lo..=hi).contains(&n.pitch), "seed {seed}: the tune at {} leaves its register {lo}..{hi}", n.pitch);
             }
             let end = score.end();
             for n in &score.notes {

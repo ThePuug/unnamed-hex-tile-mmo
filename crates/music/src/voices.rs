@@ -142,7 +142,7 @@ const SWIRLY: &[(u8, u8)] = &[(50, 48)];
 pub const VOICES: &[Voice] = &[
     melodic(0, "upright-piano-kw.sf2", (21, 108)),
     melodic(16, "drawbar-organ.sf2", (33, 98)),
-    Voice { program: 22, percussion: false, file: "harmonica.sf2", bank: 0, preset: 22, keys: &[], range: (0, 127), takes: Takes::One, direct: false, legato: None },
+    Voice { program: 22, percussion: false, file: "harmonica.sf2", bank: 0, preset: 22, keys: &[], range: (56, 100), takes: Takes::One, direct: false, legato: None },
     Voice { takes: FSBS, ..melodic(26, "fsbs-jazz.sf2", (35, 86)) },
     Voice { takes: FSBS, ..melodic(27, "fsbs-clean.sf2", (35, 86)) },
     Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(29, "guitar-di.sf2", (32, 89)) },
@@ -173,6 +173,82 @@ pub fn sings(program: u8) -> bool {
 /// — so a player adds none: a second one beats against it.
 pub fn vibrato_recorded(program: u8) -> bool {
     matches!(program, 40 | 48 | 49 | 52 | 73 | 110)
+}
+
+/// The compass of a General MIDI program the default bank plays, as the
+/// instrument sounds — a trumpet from E3 to B♭5, a tenor sax from A♭2 to
+/// E5, a diatonic harp three octaves from its lowest blow — so a part is
+/// written where its player's instrument has notes
+/// (`proofs/research/blues-bands-findings.md` §9; the orchestration
+/// compasses otherwise). A program not here plays the whole keyboard.
+const COMPASS: &[(u8, (u8, u8))] = &[
+    (0, (21, 108)),
+    (4, (28, 103)),
+    (11, (53, 89)),
+    (15, (48, 84)),
+    (16, (36, 96)),
+    (21, (41, 93)),
+    (24, (40, 88)),
+    (25, (40, 88)),
+    (26, (40, 88)),
+    (27, (40, 88)),
+    (32, (28, 67)),
+    (40, (55, 103)),
+    (42, (36, 81)),
+    (43, (28, 67)),
+    (45, (55, 91)),
+    (46, (24, 103)),
+    (48, (28, 103)),
+    (49, (28, 103)),
+    (52, (48, 84)),
+    (56, (52, 82)),
+    (57, (40, 74)),
+    (58, (26, 65)),
+    (59, (52, 82)),
+    (60, (34, 77)),
+    (65, (49, 80)),
+    (66, (44, 76)),
+    (69, (52, 81)),
+    (71, (50, 91)),
+    (73, (60, 96)),
+    (75, (60, 96)),
+    (78, (72, 98)),
+    (105, (48, 86)),
+    (110, (55, 103)),
+    (111, (62, 91)),
+];
+
+/// Where `program` has notes: the keys its bank recorded, with their
+/// reach, where a bank plays it; else the instrument's compass.
+pub fn compass(program: u8) -> (u8, u8) {
+    voice(program, false).map(|v| v.range).unwrap_or_else(|| COMPASS.iter().find(|(p, _)| *p == program).map_or((0, 127), |(_, c)| *c))
+}
+
+/// `wanted`, a part's register, where `program` has notes: cut to the
+/// compass, and moved by octaves first where less than an octave and a
+/// half of it would be left, so a tune written for one instrument is
+/// played whole on another that sits elsewhere.
+pub fn fit(wanted: (u8, u8), program: u8) -> (u8, u8) {
+    let (lo, hi) = compass(program);
+    let overlap = |w: (u8, u8)| (w.1.min(hi) as i32 - w.0.max(lo) as i32).max(0);
+    let mut best = wanted;
+    for octaves in [0i32, 12, -12, 24, -24] {
+        let w = ((wanted.0 as i32 + octaves).clamp(0, 127) as u8, (wanted.1 as i32 + octaves).clamp(0, 127) as u8);
+        if overlap(w) > overlap(best) {
+            best = w;
+        }
+        if overlap(best) >= 19 {
+            break;
+        }
+    }
+    (best.0.max(lo), best.1.min(hi))
+}
+
+/// `bounds` cut to where `program` has notes, never moved: a part's
+/// range as the render reads it.
+pub fn within(program: u8, bounds: (u8, u8)) -> (u8, u8) {
+    let (lo, hi) = compass(program);
+    (bounds.0.max(lo).min(hi), bounds.1.min(hi).max(lo))
 }
 
 /// The voice for `program`, where another bank plays it.
