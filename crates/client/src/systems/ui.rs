@@ -138,13 +138,13 @@ pub fn update(
     for (mut span, info) in &mut query {
         match info {
             Info::Time => {
-                let dt = server.current_time(time.elapsed().as_millis());
-                let tick = dt / MINUTE_MS;
+                let wall = server.wall(server.now(time.elapsed().as_millis()));
+                let tick = wall / MINUTE_MS;
                 if *time_cache == Some(tick) { continue; }
                 *time_cache = Some(tick);
-                let hour = dt % DAY_MS / HOUR_MS;
-                let minute = dt % HOUR_MS / MINUTE_MS;
-                **span = format!("{hour:02}:{minute:02} {}", Date::of(dt));
+                let hour = wall % DAY_MS / HOUR_MS;
+                let minute = wall % HOUR_MS / MINUTE_MS;
+                **span = format!("{hour:02}:{minute:02} {}", Date::of(wall));
             }
             Info::DistanceIndicator => {
                 if let Ok(player_loc) = player_query.single() {
