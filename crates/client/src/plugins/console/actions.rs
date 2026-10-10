@@ -25,23 +25,17 @@ pub enum DevConsoleAction {
     ToggleCanopyParts,
 
     // Admin actions
-    #[cfg(feature = "admin")]
     GotoWorldUnits(f64, f64),
-    #[cfg(feature = "admin")]
     GotoQR(i32, i32),
     /// See the world as the target of the actor the client sees as.
-    #[cfg(feature = "admin")]
     ViewTarget,
     /// Stop viewing: back as a fresh character.
-    #[cfg(feature = "admin")]
     StopViewing,
     /// Add this many ms to the latency the client adds to its traffic,
     /// held between none and `AddedLatency::MOST`.
-    #[cfg(feature = "admin")]
     AddLatency(i64),
     /// Stage a party of this archetype ahead of the actor the client sees
     /// as: a den, a party out of its reach, or one engaging it.
-    #[cfg(feature = "admin")]
     SpawnParty { archetype: common_bevy::archetype::EnemyArchetype, staging: super::state::Staging },
 }
 
@@ -50,7 +44,7 @@ pub enum DevConsoleAction {
 pub fn execute_console_actions(
     mut commands: Commands,
     mut state: ResMut<DiagnosticsState>,
-    #[cfg(feature = "admin")] mut added: ResMut<crate::network::AddedLatency>,
+    mut added: ResMut<crate::network::AddedLatency>,
     mut reader: MessageReader<DevConsoleAction>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -148,15 +142,10 @@ pub fn execute_console_actions(
                 info!("Canopy: {}", if state.canopy_parts_off { "vertices" } else { "parts" });
             }
 
-            #[cfg(feature = "admin")]
             DevConsoleAction::GotoWorldUnits(_, _) => {}
-            #[cfg(feature = "admin")]
             DevConsoleAction::GotoQR(_, _) => {}
-            #[cfg(feature = "admin")]
             DevConsoleAction::ViewTarget | DevConsoleAction::StopViewing => {}
-            #[cfg(feature = "admin")]
             DevConsoleAction::SpawnParty { .. } => {}
-            #[cfg(feature = "admin")]
             DevConsoleAction::AddLatency(ms) => {
                 let most = crate::network::AddedLatency::MOST.as_millis() as i64;
                 let total = (added.0.as_millis() as i64 + ms).clamp(0, most);
@@ -170,7 +159,6 @@ pub fn execute_console_actions(
 
 /// Asks the server to see the world as the target of the actor the client
 /// sees as, or stops the view.
-#[cfg(feature = "admin")]
 pub fn send_view(
     mut reader: MessageReader<DevConsoleAction>,
     mut writer: MessageWriter<common_bevy::message::Try>,
@@ -200,7 +188,6 @@ pub fn send_view(
 }
 
 /// Asks the server to teleport the player to the tile the console named.
-#[cfg(feature = "admin")]
 pub fn send_goto(
     mut reader: MessageReader<DevConsoleAction>,
     mut writer: MessageWriter<common_bevy::message::Try>,
@@ -220,24 +207,20 @@ pub fn send_goto(
 
 /// The level and size of a party the console stages: one fighter at the
 /// balance arena's level.
-#[cfg(feature = "admin")]
 const PARTY: (u8, u8) = (10, 1);
 
 /// Levels below an actor each of a den's pair stands: the level rule puts
 /// a pair this far below about even with one of the actor's level.
-#[cfg(feature = "admin")]
 const PAIR_DEFICIT: u8 = 3;
 
 /// A den one actor at `level` can beat alone, as `(level, size)`: one NPC
 /// at its level, or with `pair` two `PAIR_DEFICIT` levels below it.
-#[cfg(feature = "admin")]
 fn den_for(level: u8, pair: bool) -> (u8, u8) {
     if pair { (level.saturating_sub(PAIR_DEFICIT), 2) } else { (level, 1) }
 }
 
 /// Asks the server for the party the console picked, ahead of the actor
 /// the client sees as.
-#[cfg(feature = "admin")]
 pub fn send_spawn_party(
     mut reader: MessageReader<DevConsoleAction>,
     mut writer: MessageWriter<common_bevy::message::Try>,
@@ -257,7 +240,7 @@ pub fn send_spawn_party(
     }
 }
 
-#[cfg(all(test, feature = "admin"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

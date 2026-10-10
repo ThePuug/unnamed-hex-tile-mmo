@@ -4,7 +4,6 @@ pub mod console;
 pub mod diagnostics;
 pub mod ink;
 #[cfg(feature = "admin")]
-#[cfg(feature = "admin")]
 pub mod recorder;
 pub mod ui;
 pub mod vignette;

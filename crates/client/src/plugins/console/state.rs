@@ -12,7 +12,7 @@ pub enum GotoCoordType {
 
 /// Text input state for the goto coordinate entry.
 #[cfg(feature = "admin")]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GotoInputState {
     pub coord_type: GotoCoordType,
     /// 0 = first field (x / q), 1 = second field (y / r)
@@ -38,8 +38,10 @@ impl GotoInputState {
     }
 }
 
-/// Resource that tracks developer console state
-#[derive(Resource)]
+/// The developer console's state. Held in every build, so what reads
+/// `visible` compiles everywhere; only an admin build has the console
+/// that sets it.
+#[derive(Resource, Clone, PartialEq)]
 pub struct DevConsole {
     /// Whether the console is currently visible
     pub visible: bool,

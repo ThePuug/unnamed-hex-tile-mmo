@@ -13,6 +13,11 @@ pub struct BreadcrumbText;
 #[derive(Component)]
 pub struct MenuItemsContainer;
 
+/// The lighting menu's date row, written every frame while it shows: the
+/// game clock moves under it between the key presses that rebuild the menu.
+#[derive(Component)]
+pub struct DateLine;
+
 /// The colour of the row that goes back or closes the console.
 const BACK: Color = Color::srgb(0.8, 0.3, 0.3);
 
@@ -121,13 +126,11 @@ pub fn update_console_menu(
             match console.current_menu {
                 MenuPath::Root => {
                     line(parent, "1. Terrain", 16.0, Color::WHITE);
-                    #[cfg(feature = "admin")]
                     {
                         line(parent, "2. Goto Coordinates", 16.0, Color::WHITE);
                         line(parent, format!("3. Added Latency      [{}ms]", added.0.as_millis()), 16.0, state_color(!added.0.is_zero()));
                     }
                     gap(parent);
-                    #[cfg(feature = "admin")]
                     for text in ["5. Spawn Den", "6. View", "7. Stage Party", "8. Stage Opposition"] {
                         line(parent, text, 16.0, Color::WHITE);
                     }
@@ -165,8 +168,12 @@ pub fn update_console_menu(
                     let display = if buf.is_empty() { "_" } else { buf };
                     line(parent, format!("Time = {display}"), 16.0, Color::srgb(0.9, 0.9, 0.4));
 
-                    let date = Date::of(diagnostics_state.lighting.at(server.current_time(time.elapsed().as_millis())));
-                    line(parent, format!("Date = {}", picked_date(date, console.lighting_date_field)), 16.0, Color::srgb(0.9, 0.9, 0.4));
+                    parent.spawn((
+                        Text::new(date_line(&console, &diagnostics_state, &server, &time)),
+                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                        TextColor(Color::srgb(0.9, 0.9, 0.4)),
+                        DateLine,
+                    ));
 
                     for text in [
                         "Enter HHMM or HH, press Enter (empty = game time)",
@@ -178,7 +185,6 @@ pub fn update_console_menu(
                     gap(parent);
                     line(parent, "Esc. Back", 16.0, BACK);
                 }
-                #[cfg(feature = "admin")]
                 MenuPath::Stage(_) => {
                     for (i, (label, _)) in super::state::DENS.iter().enumerate() {
                         line(parent, format!("{}. {label}", i + 1), 16.0, Color::WHITE);
@@ -186,7 +192,6 @@ pub fn update_console_menu(
                     gap(parent);
                     line(parent, "0. Back", 16.0, BACK);
                 }
-                #[cfg(feature = "admin")]
                 MenuPath::Latency => {
                     line(
                         parent,
@@ -203,7 +208,6 @@ pub fn update_console_menu(
                     gap(parent);
                     line(parent, "0. Back", 16.0, BACK);
                 }
-                #[cfg(feature = "admin")]
                 MenuPath::View => {
                     for text in ["1. View Target", "2. Stop Viewing"] {
                         line(parent, text, 16.0, Color::WHITE);
@@ -211,7 +215,6 @@ pub fn update_console_menu(
                     gap(parent);
                     line(parent, "0. Back", 16.0, BACK);
                 }
-                #[cfg(feature = "admin")]
                 MenuPath::GotoSelect => {
                     for text in ["1. World Units (X, Y)", "2. QR Coordinates (Q, R)"] {
                         line(parent, text, 16.0, Color::WHITE);
@@ -219,7 +222,6 @@ pub fn update_console_menu(
                     gap(parent);
                     line(parent, "0. Back", 16.0, BACK);
                 }
-                #[cfg(feature = "admin")]
                 MenuPath::GotoInput => {
                     if let Some(ref input) = console.goto_input {
                         for (i, label) in input.field_labels().iter().enumerate() {
@@ -247,6 +249,29 @@ fn state_color(state: bool) -> Color {
         Color::srgb(0.2, 0.8, 0.2)
     } else {
         Color::srgb(0.8, 0.2, 0.2)
+    }
+}
+
+/// The lighting menu's date row: the game clock's date, the picked field
+/// bracketed.
+fn date_line(console: &DevConsole, diagnostics_state: &DiagnosticsState, server: &crate::resources::Server, time: &Time) -> String {
+    let date = Date::of(diagnostics_state.lighting.at(server.current_time(time.elapsed().as_millis())));
+    format!("Date = {}", picked_date(date, console.lighting_date_field))
+}
+
+/// Keeps the date row current while the lighting menu shows.
+pub fn refresh_date_line(
+    console: Res<DevConsole>,
+    diagnostics_state: Res<DiagnosticsState>,
+    server: Res<crate::resources::Server>,
+    time: Res<Time>,
+    mut rows: Query<&mut Text, With<DateLine>>,
+) {
+    if !console.visible || console.current_menu != MenuPath::LightingTime {
+        return;
+    }
+    for mut row in &mut rows {
+        **row = date_line(&console, &diagnostics_state, &server, &time);
     }
 }
 

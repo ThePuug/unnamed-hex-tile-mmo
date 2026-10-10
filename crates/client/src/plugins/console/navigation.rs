@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 
-#[cfg(feature = "admin")]
 use super::state::{GotoCoordType, GotoInputState, Staging};
 
 use super::{
@@ -8,13 +7,31 @@ use super::{
     actions::DevConsoleAction,
 };
 
-/// System that handles numpad input for console navigation
+/// Reads the numpad for the console. The console is marked changed only
+/// when a key changed it: the handlers work on the state unwatched, and
+/// the menu is rebuilt (`ui::update_console_menu`) for a change, never for
+/// a frame.
 pub fn handle_console_input(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut console: ResMut<DevConsole>,
     panel: Res<crate::systems::character_panel::CharacterPanelState>,
     mut action_writer: MessageWriter<DevConsoleAction>,
     time: Res<Time>,
+) {
+    let before = console.clone();
+    let state = console.bypass_change_detection();
+    handle(&mut keyboard, state, &panel, &mut action_writer, time.delta_secs());
+    if *state != before {
+        console.set_changed();
+    }
+}
+
+fn handle(
+    keyboard: &mut ButtonInput<KeyCode>,
+    console: &mut DevConsole,
+    panel: &crate::systems::character_panel::CharacterPanelState,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
+    dt: f32,
 ) {
     // Toggle console visibility with NumpadDivide. The open character panel
     // has the numpad, so the console does not open over it.
@@ -36,13 +53,10 @@ pub fn handle_console_input(
     }
 
     // Back key: Numpad0 normally, Escape when numpad digits have other meaning
-    #[cfg(feature = "admin")]
     let uses_escape_back = matches!(
         console.current_menu,
         MenuPath::GotoInput | MenuPath::LightingTime
     );
-    #[cfg(not(feature = "admin"))]
-    let uses_escape_back = matches!(console.current_menu, MenuPath::LightingTime);
 
     let back_pressed = if uses_escape_back {
         keyboard.just_pressed(KeyCode::Escape)
@@ -54,7 +68,6 @@ pub fn handle_console_input(
         if console.current_menu == MenuPath::Root {
             console.visible = false;
         } else {
-            #[cfg(feature = "admin")]
             if matches!(console.current_menu, MenuPath::GotoInput) {
                 console.goto_input = None;
             }
@@ -74,19 +87,14 @@ pub fn handle_console_input(
 
     // Handle menu-specific inputs
     match console.current_menu {
-        MenuPath::Root => handle_root_menu(&mut keyboard, &mut console),
-        MenuPath::Terrain => handle_terrain_menu(&mut keyboard, &mut console, &mut action_writer),
-        MenuPath::LightingTime => handle_lighting_time(&mut keyboard, &mut console, &mut action_writer, time.delta_secs()),
-        #[cfg(feature = "admin")]
-        MenuPath::GotoSelect => handle_goto_select_menu(&mut keyboard, &mut console),
-        #[cfg(feature = "admin")]
-        MenuPath::GotoInput => handle_goto_input(&mut keyboard, &mut console, &mut action_writer),
-        #[cfg(feature = "admin")]
-        MenuPath::View => handle_view_menu(&mut keyboard, &mut action_writer),
-        #[cfg(feature = "admin")]
-        MenuPath::Latency => handle_latency_menu(&mut keyboard, &mut action_writer),
-        #[cfg(feature = "admin")]
-        MenuPath::Stage(staging) => handle_stage_menu(&mut keyboard, &mut action_writer, staging),
+        MenuPath::Root => handle_root_menu(keyboard, console),
+        MenuPath::Terrain => handle_terrain_menu(keyboard, console, action_writer),
+        MenuPath::LightingTime => handle_lighting_time(keyboard, console, action_writer, dt),
+        MenuPath::GotoSelect => handle_goto_select_menu(keyboard, console),
+        MenuPath::GotoInput => handle_goto_input(keyboard, console, action_writer),
+        MenuPath::View => handle_view_menu(keyboard, action_writer),
+        MenuPath::Latency => handle_latency_menu(keyboard, action_writer),
+        MenuPath::Stage(staging) => handle_stage_menu(keyboard, action_writer, staging),
     }
 }
 
@@ -103,28 +111,24 @@ fn handle_root_menu(
         consumed = Some(KeyCode::Numpad1);
     }
 
-    #[cfg(feature = "admin")]
     if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad2) {
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::GotoSelect;
         consumed = Some(KeyCode::Numpad2);
     }
 
-    #[cfg(feature = "admin")]
     if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad3) {
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::Latency;
         consumed = Some(KeyCode::Numpad3);
     }
 
-    #[cfg(feature = "admin")]
     if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad6) {
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::View;
         consumed = Some(KeyCode::Numpad6);
     }
 
-    #[cfg(feature = "admin")]
     for (key, staging) in [(KeyCode::Numpad5, Staging::Den), (KeyCode::Numpad7, Staging::Party), (KeyCode::Numpad8, Staging::Opposition)] {
         if consumed.is_none() && keyboard.just_pressed(key) {
             console.history.push(console.current_menu.clone());
@@ -255,7 +259,6 @@ const DIGIT_KEYS: &[(KeyCode, char)] = &[
 
 /// The sign and the point a coordinate may carry, and the character each
 /// types.
-#[cfg(feature = "admin")]
 const SIGN_KEYS: &[(KeyCode, char)] = &[
     (KeyCode::Minus, '-'), (KeyCode::NumpadSubtract, '-'),
     (KeyCode::Period, '.'), (KeyCode::NumpadDecimal, '.'),
@@ -263,7 +266,6 @@ const SIGN_KEYS: &[(KeyCode, char)] = &[
 
 /// Numpad 1 on stages the archetype `DENS` lists in that row, and stays in
 /// the menu so another can follow.
-#[cfg(feature = "admin")]
 fn handle_stage_menu(
     keyboard: &mut ButtonInput<KeyCode>,
     action_writer: &mut MessageWriter<DevConsoleAction>,
@@ -283,7 +285,6 @@ fn handle_stage_menu(
     }
 }
 
-#[cfg(feature = "admin")]
 fn handle_view_menu(
     keyboard: &mut ButtonInput<KeyCode>,
     action_writer: &mut MessageWriter<DevConsoleAction>,
@@ -297,10 +298,8 @@ fn handle_view_menu(
 }
 
 /// How far one press moves the added latency
-#[cfg(feature = "admin")]
 pub const LATENCY_STEP_MS: i64 = 25;
 
-#[cfg(feature = "admin")]
 fn handle_latency_menu(
     keyboard: &mut ButtonInput<KeyCode>,
     action_writer: &mut MessageWriter<DevConsoleAction>,
@@ -314,7 +313,6 @@ fn handle_latency_menu(
     }
 }
 
-#[cfg(feature = "admin")]
 fn handle_goto_select_menu(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
@@ -338,7 +336,6 @@ fn handle_goto_select_menu(
     }
 }
 
-#[cfg(feature = "admin")]
 fn handle_goto_input(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
