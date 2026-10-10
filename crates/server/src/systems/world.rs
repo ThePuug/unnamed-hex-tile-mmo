@@ -30,7 +30,6 @@ pub struct Synced {
     heading: Option<&'static Heading>,
     health: Option<&'static Health>,
     endurance: Option<&'static Endurance>,
-    mana: Option<&'static Mana>,
     combat_state: Option<&'static CombatState>,
     equipment: Option<&'static Equipment>,
 }
@@ -48,7 +47,6 @@ impl SyncedItem<'_, '_> {
             self.heading,
             self.health,
             self.endurance,
-            self.mana,
             self.combat_state,
             self.equipment,
         )
@@ -69,7 +67,6 @@ pub fn generate_actor_spawn_events(
     heading: Option<&Heading>,
     health: Option<&Health>,
     endurance: Option<&Endurance>,
-    mana: Option<&Mana>,
     combat_state: Option<&CombatState>,
     equipment: Option<&Equipment>,
 ) -> Vec<Do> {
@@ -99,9 +96,6 @@ pub fn generate_actor_spawn_events(
         events.push(Do { event: Event::Incremental { ent, component: Component::Endurance(*e) }});
     }
 
-    if let Some(m) = mana {
-        events.push(Do { event: Event::Incremental { ent, component: Component::Mana(*m) }});
-    }
 
     if let Some(cs) = combat_state {
         events.push(Do { event: Event::Incremental { ent, component: Component::CombatState(*cs) }});

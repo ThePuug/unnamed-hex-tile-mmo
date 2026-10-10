@@ -28,7 +28,6 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::Heading(_) => "Inc:Heading",
             Component::Health(_) => "Inc:Health",
             Component::Endurance(_) => "Inc:Endurance",
-            Component::Mana(_) => "Inc:Mana",
             Component::CombatState(_) => "Inc:Combat",
             Component::PlayerControlled(_) => "Inc:PlayerControlled",
             Component::Recovery(_) => "Inc:Recovery",
@@ -93,7 +92,7 @@ pub fn write_do(
             // insert l2r for player
             Do { event: Event::Init { ent: ent0, dt }} => {
                 // Create local player entity with markers
-                // Health/Endurance/Mana will be inserted by Incremental events from server
+                // Health/Endurance will be inserted by Incremental events from server
                 let ent = commands.spawn((
                     Actor,
                     crate::components::Viewed,

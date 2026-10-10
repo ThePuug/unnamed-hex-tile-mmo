@@ -75,32 +75,6 @@ impl Endurance {
     }
 }
 
-/// Mana, as the server holds it and sends it
-/// - state: what the actor has now
-/// - max: Maximum mana calculated from ActorAttributes
-/// - regen_rate: Mana regeneration per second
-/// - last_update: Duration from Time::elapsed() when last regenerated
-#[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
-pub struct Mana {
-    pub state: f32,
-    pub max: f32,
-    pub regen_rate: f32,
-    #[serde(skip)]
-    pub last_update: Duration,
-}
-
-impl Mana {
-    /// The mana every actor holds, no attribute deepening it
-    pub const MAX: f32 = 100.0;
-    /// Mana every actor regains each second
-    pub const REGEN: f32 = 8.0;
-
-    /// The pool, full, regenerating from `now`
-    pub fn full(now: Duration) -> Self {
-        Self { state: Self::MAX, max: Self::MAX, regen_rate: Self::REGEN, last_update: now }
-    }
-}
-
 /// Combat state component tracking whether entity is in combat
 /// - in_combat: Whether entity is currently in combat
 /// - last_action: Duration from Time::elapsed() when last combat action occurred

@@ -171,7 +171,7 @@ pub fn do_spawn(
                     spawn_debug_sphere(&mut commands, &mut meshes, &mut materials, actor_entity);
                 }
 
-                // Health/Endurance/Mana/CombatState will be inserted by Incremental events from server
+                // Health/Endurance/CombatState will be inserted by Incremental events from server
                 // (do_incremental handles inserting missing components)
             }
             _ => continue,

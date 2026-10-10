@@ -93,7 +93,7 @@ pub fn do_presence(
                     -3, 4, 0,
                 );
                 let fighter = Fighter::new(&tuning, attrs, time.elapsed());
-                let (health, endurance, mana, combat_state) = (fighter.health, fighter.endurance, fighter.mana, fighter.combat_state);
+                let (health, endurance, combat_state) = (fighter.health, fighter.endurance, fighter.combat_state);
                 let equipment = Equipment::starting_outfit();
                 let bag = Inventory::wearing(&equipment);
 
@@ -132,7 +132,6 @@ pub fn do_presence(
                     None,
                     Some(&health),
                     Some(&endurance),
-                    Some(&mana),
                     Some(&combat_state),
                     Some(&equipment),
                 );

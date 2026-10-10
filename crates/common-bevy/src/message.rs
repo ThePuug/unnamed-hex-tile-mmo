@@ -297,7 +297,6 @@ pub enum Component {
     Health(Health),
     Heading(Heading),
     Loc(Loc),
-    Mana(Mana),
     PlayerControlled(PlayerControlled),
     Recovery(crate::components::recovery::GlobalRecovery),
     Returning(crate::components::returning::Returning),
@@ -314,7 +313,6 @@ impl Component {
             Component::Endurance(v) => { entity.insert(v); }
             Component::Equipment(v) => { entity.insert(v); }
             Component::Health(v) => { entity.insert(v); }
-            Component::Mana(v) => { entity.insert(v); }
             Component::PlayerControlled(v) => { entity.insert(v); }
             Component::Recovery(v) => { entity.insert(v); }
             Component::Returning(v) => { entity.insert(v); }
