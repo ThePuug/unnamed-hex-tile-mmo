@@ -65,9 +65,15 @@ const LOCK_W: f32 = 32.0;
 impl Player {
     /// The left half of the top: the track by name and where it came
     /// from; under it the band playing it, the setting and the seed; what
-    /// it drew, and the summary of its score.
+    /// it drew, and the summary of its score. Before the first play, how
+    /// to start one.
     pub fn now_playing(&mut self, ui: &mut egui::Ui) {
-        let v = self.current();
+        let Some(v) = self.current() else {
+            ui.label(RichText::new("Nothing playing").font(FontId::new(30.0, FontFamily::Name(DISPLAY.into()))).color(MUTED));
+            ui.add_space(4.0);
+            ui.label(RichText::new("Play for the composer's draw, or play now from the selection.").font(mono(12.0)).color(MUTED));
+            return;
+        };
         let (piece, setting, band, seed, source) = (v.piece, v.setting, v.band, v.seed, v.source.label());
         let p = ui.painter().clone();
         let width = ui.available_width();
@@ -96,7 +102,7 @@ impl Player {
         p.galley(line.min, who, MUTED);
         ui.interact(who_rect, ui.id().with("band about"), Sense::hover()).on_hover_text(band.about);
 
-        let v = self.current();
+        let Some(v) = self.current() else { return };
         ui.add_space(4.0);
         match (&v.take, &v.failed) {
             (_, Some(e)) => {
@@ -155,8 +161,12 @@ impl Player {
         }
         let toggle = if self.playing { Glyph::Pause } else { Glyph::Play };
         if round_button(ui, play_r, "play", toggle, true).clicked() {
-            self.playing = !self.playing;
-            self.rest_until = None;
+            if self.playing {
+                self.playing = false;
+                self.rest_until = None;
+            } else {
+                self.play();
+            }
         }
         if round_button(ui, next_r, "next", Glyph::Next, false).clicked() {
             self.next();
@@ -176,7 +186,7 @@ impl Player {
         }
         ui.add_space(16.0);
 
-        let take = self.current().take.clone();
+        let take = self.current().and_then(|v| v.take.clone());
         let total = take.as_ref().map_or(0.0, |t| t.audio.len() as f64 / SAMPLE_RATE as f64);
         let at = self.position().min(total);
         let (line, _) = ui.allocate_exact_size(vec2(width, 14.0), Sense::hover());
@@ -187,7 +197,7 @@ impl Player {
                 // The bar too, so a moment heard can be named.
                 (t.sheet.bar_at(at).map_or_else(|| section.to_string(), |b| format!("{section} · bar {b}")), PARCHMENT)
             }
-            (None, None) => (self.state(self.current()).1.to_string(), MUTED),
+            (None, None) => (self.current().map_or("nothing playing", |v| self.state(v).1).to_string(), MUTED),
         };
         let p = ui.painter();
         p.text(line.left_center(), Align2::LEFT_CENTER, where_, mono(11.0), ink);
@@ -254,20 +264,26 @@ impl Player {
         let toggle = |which: Popover| if open == Some(which) { None } else { Some(which) };
 
         let (band_rect, band_lock) = row(0.0, "band");
-        if select_field(ui, band_rect, "band", self.band.name, open == Some(Popover::Band)).on_hover_text(self.band.about).clicked() {
+        let band = select_field(ui, band_rect, "band", self.band.map(|b| b.name), open == Some(Popover::Band));
+        let band = match self.band {
+            Some(b) => band.on_hover_text(b.about),
+            None => band,
+        };
+        if band.clicked() {
             self.popover = toggle(Popover::Band);
         }
         let (style_rect, style_lock) = row(1.0, "style");
-        if select_field(ui, style_rect, "style", TRACKS[self.track].style.name(), open == Some(Popover::Style)).clicked() {
+        if select_field(ui, style_rect, "style", self.style.map(Style::name), open == Some(Popover::Style)).clicked() {
             self.popover = toggle(Popover::Style);
         }
         let (track_rect, track_lock) = row(2.0, "track");
-        if select_field(ui, track_rect, "track", &title(TRACKS[self.track].name), open == Some(Popover::Track)).clicked() {
+        let track = self.track.map(|t| title(TRACKS[t].name));
+        if select_field(ui, track_rect, "track", track.as_deref(), open == Some(Popover::Track)).clicked() {
             self.popover = toggle(Popover::Track);
         }
         let (setting_rect, setting_lock) = row(3.0, "setting");
         let setting = self.chosen_setting();
-        if select_field(ui, setting_rect, "setting", setting_label(setting), open == Some(Popover::Setting)).on_hover_text("The settings this track is made for, and none: the track as it is").clicked() {
+        if select_field(ui, setting_rect, "setting", Some(setting_label(setting)), open == Some(Popover::Setting)).on_hover_text("The settings this track is made for, and none: the track as it is").clicked() {
             self.popover = toggle(Popover::Setting);
         }
         let (seed_cell, seed_lock) = row(4.0, "seed");
@@ -296,11 +312,7 @@ impl Player {
         let dice = hit(ui, dice_rect, "dice").on_hover_text("A random seed");
         p.rect_filled(dice_rect, 6.0, if dice.hovered() { RULE } else { PANEL });
         p.rect_stroke(dice_rect, 6.0, Stroke::new(1.0_f32, if dice.hovered() { MUTED } else { EDGE }), StrokeKind::Inside);
-        let face = Rect::from_center_size(dice_rect.center(), vec2(14.0, 14.0));
-        p.rect_stroke(face, 3.0, Stroke::new(1.4_f32, PARCHMENT), StrokeKind::Inside);
-        for d in [vec2(-3.0, -3.0), vec2(0.0, 0.0), vec2(3.0, 3.0)] {
-            p.circle_filled(face.center() + d, 1.0, PARCHMENT);
-        }
+        die(&p, dice_rect.center(), PARCHMENT);
         if dice.clicked() {
             self.seed = self.rng.below(SEEDS as usize).to_string();
         }
@@ -310,20 +322,21 @@ impl Player {
 
         // A band out of the track's style plays, untested.
         let note_y = seed_cell.bottom() + 10.0;
-        if self.band.style != TRACKS[self.track].style {
+        if let Some((band, track)) = self.band.zip(self.track).filter(|(b, t)| b.style != TRACKS[*t].style) {
             let mut job = LayoutJob::default();
-            run(&mut job, &format!("a {} band on a {} track: out of its style, untested", self.band.style.name(), TRACKS[self.track].style.name()), 11.0, DOT);
+            run(&mut job, &format!("a {} band on a {} track: out of its style, untested", band.style.name(), TRACKS[track].style.name()), 11.0, DOT);
             let note = fit(&p, job, top.width() - LABEL_W);
             p.galley(pos2(top.left() + LABEL_W, note_y), note, DOT);
         }
 
-        // Play now, and add to the queue, at the column's foot.
+        // Play now, and add to the queue, at the column's foot, once a band,
+        // a track and a seed are chosen.
         let half = (top.width() - 10.0) / 2.0;
         let now_rect = Rect::from_min_size(pos2(top.left(), top.bottom() - 40.0), vec2(half, 40.0));
         let add_rect = Rect::from_min_size(pos2(now_rect.right() + 10.0, now_rect.top()), vec2(half, 40.0));
-        let seed = self.typed_seed();
+        let chosen = self.band.zip(self.track).zip(self.typed_seed());
         let now = hit(ui, now_rect, "play now");
-        p.rect_filled(now_rect, 6.0, if seed.is_none() { LAMP_LOW } else if now.hovered() { LAMP_HOVER } else { LAMP });
+        p.rect_filled(now_rect, 6.0, if chosen.is_none() { LAMP_LOW } else if now.hovered() { LAMP_HOVER } else { LAMP });
         let t = p.layout_no_wrap("Play now".to_string(), mono(12.0), INK);
         let start = now_rect.center() - vec2((t.size().x + 18.0) / 2.0, 0.0);
         p.add(Shape::convex_polygon(vec![start + vec2(0.0, -5.0), start + vec2(9.0, 0.0), start + vec2(0.0, 5.0)], INK, Stroke::NONE));
@@ -337,19 +350,20 @@ impl Player {
         p.line_segment([start + vec2(5.0, -5.0), start + vec2(5.0, 5.0)], plus);
         p.line_segment([start + vec2(0.0, 0.0), start + vec2(10.0, 0.0)], plus);
         p.galley(pos2(start.x + 20.0, add_rect.center().y - t.size().y / 2.0), t, PARCHMENT);
-        if let Some(seed) = seed {
+        if let Some(((band, track), seed)) = chosen {
             if now.clicked() {
-                self.play_now(self.track, self.band, setting, seed);
+                self.play_now(track, band, setting, seed);
             }
             if add.clicked() {
-                self.enqueue(self.track, self.band, setting, seed);
+                self.enqueue(track, band, setting, seed);
             }
         }
         [band_rect, style_rect, track_rect, setting_rect]
     }
 
     /// Up next: the queue, in order, each moved up or down or taken out,
-    /// and after it what the composer plays when it runs out.
+    /// and after it what the composer plays when it runs out, rolled
+    /// again at its die.
     pub fn up_next(&mut self, ui: &mut egui::Ui) {
         let top = ui.max_rect();
         let p = ui.painter().clone();
@@ -373,6 +387,8 @@ impl Player {
             Some(v) if self.queue.is_empty() => self.state(v),
             _ => (DOT, "waits for the queue"),
         };
+        let rollable = self.autoplay && self.composed.is_some();
+        let mut rolled = false;
         ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
             egui::ScrollArea::vertical().max_height(list.height()).auto_shrink([false, false]).show(ui, |ui| {
                 for (i, (piece, detail, (dot, state))) in rows.iter().enumerate() {
@@ -406,7 +422,7 @@ impl Player {
                     ui.add_space(4.0);
                 }
                 // What the composer plays when the queue runs out, or that
-                // the player stops.
+                // the player stops; its die rolls the draw again.
                 let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), QUEUE_ROW_H), Sense::hover());
                 let p = ui.painter();
                 dashed(p, row, EDGE);
@@ -414,14 +430,24 @@ impl Player {
                 let (dot, state) = then_state;
                 p.circle_filled(pos2(row.left() + 15.5, cy), 3.5, dot);
                 let status = p.layout_no_wrap(state.to_string(), mono(11.0), MUTED);
-                let sx = row.right() - 12.0 - status.size().x;
+                let right = if rollable { row.right() - 6.0 - 28.0 - 10.0 } else { row.right() - 12.0 };
+                let sx = right - status.size().x;
                 p.galley(pos2(sx, cy - status.size().y / 2.0), status, MUTED);
                 let mut job = LayoutJob::default();
                 run(&mut job, &then, 12.0, MUTED);
                 let line = fit(p, job, sx - 10.0 - (row.left() + 28.0));
                 p.galley(pos2(row.left() + 28.0, cy - line.size().y / 2.0), line, MUTED);
+                if rollable {
+                    let cell = Rect::from_min_size(pos2(row.right() - 6.0 - 28.0, cy - 14.0), vec2(28.0, 28.0));
+                    if icon_button(ui, cell, "roll then", die).on_hover_text("Roll another: a fresh draw of what is not locked").clicked() {
+                        rolled = true;
+                    }
+                }
             });
         });
+        if rolled {
+            self.selected();
+        }
         for (i, by) in moves {
             let j = i as isize + by;
             if j >= 0 && (j as usize) < self.queue.len() {
@@ -442,7 +468,7 @@ impl Player {
     /// stands.
     pub fn sheet(&mut self, ui: &mut egui::Ui) -> Rect {
         let mut credits = Rect::NOTHING;
-        let take = self.current().take.clone();
+        let take = self.current().and_then(|v| v.take.clone());
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 16.0;
             ui.label(caps("SHEET", 10.0));
@@ -481,7 +507,7 @@ impl Player {
         let p = ui.painter().with_clip_rect(rect);
         p.rect_filled(rect, 6.0, SHEET_INK);
         let Some(take) = take else {
-            p.text(rect.center(), Align2::CENTER_CENTER, self.state(self.current()).1, mono(12.0), MUTED);
+            p.text(rect.center(), Align2::CENTER_CENTER, self.current().map_or("nothing playing", |v| self.state(v).1), mono(12.0), MUTED);
             p.rect_stroke(rect, 6.0, Stroke::new(1.0_f32, RULE), StrokeKind::Inside);
             return credits;
         };
@@ -583,8 +609,8 @@ impl Player {
         let below = (ctx.screen_rect().bottom() - anchor.bottom() - 8.0 - 24.0).clamp(68.0, LIST_H);
         let area = match open {
             Popover::Band => egui::Area::new(egui::Id::new("band")).order(egui::Order::Foreground).fixed_pos(pos2(anchor.left(), anchor.bottom() + 6.0)).show(ctx, |ui| {
-                if let Some(band) = band_list(ui, self.band, below) {
-                    self.band = band;
+                if let Some(band) = band_list(ui, self.band, self.style, below) {
+                    self.band = Some(band);
                     self.popover = None;
                     self.selected();
                 }
@@ -592,7 +618,7 @@ impl Player {
             Popover::Style => {
                 let width = anchor.width();
                 egui::Area::new(egui::Id::new("style")).order(egui::Order::Foreground).fixed_pos(pos2(anchor.left(), anchor.bottom() + 6.0)).show(ctx, |ui| {
-                    if let Some(style) = style_list(ui, width, TRACKS[self.track].style) {
+                    if let Some(style) = style_list(ui, width, self.style) {
                         self.popover = None;
                         self.choose_style(style);
                     }
@@ -667,19 +693,18 @@ impl Player {
         }
     }
 
-    /// The chosen style's tracks, one to pick, each with the settings it
-    /// is made for.
+    /// The chosen style's tracks, else every style's under its name, one
+    /// to pick, each with the settings it is made for.
     pub fn track_list(&mut self, ui: &mut egui::Ui, width: f32, list_h: f32) {
         let mut picked = None;
         egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0_f32, EDGE)).corner_radius(8.0).show(ui, |ui| {
             ui.set_width(width - 2.0);
             ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
             egui::ScrollArea::vertical().max_height(list_h).show(ui, |ui| {
-                let style = TRACKS[self.track].style;
-                for (_, members) in styles().into_iter().filter(|(s, _)| *s == style) {
+                for (style, members) in styles().into_iter().filter(|(s, _)| self.style.is_none_or(|c| c == *s)) {
                     pool_heading(ui, &format!("{} tracks", style.name()));
                     for i in members {
-                        let on = i == self.track;
+                        let on = Some(i) == self.track;
                         let (rect, row) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
                         let row = row.on_hover_cursor(CursorIcon::PointingHand);
                         let p = ui.painter();
@@ -705,13 +730,12 @@ impl Player {
             });
         });
         if let Some(i) = picked {
-            self.track = i;
             self.popover = None;
-            self.selected();
+            self.choose_track(i);
         }
     }
 
-    /// The settings the chosen track is made for, and none, one to pick.
+    /// The settings to choose from, one to pick.
     pub fn setting_list(&mut self, ui: &mut egui::Ui) {
         let mut picked = None;
         let taken = self.chosen_setting();
@@ -719,7 +743,7 @@ impl Player {
             ui.set_width(SETTING_W - 2.0);
             ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
             ui.add_space(4.0);
-            for setting in TRACKS[self.track].settings.iter().copied().chain([Setting::None]) {
+            for setting in self.settings() {
                 let on = setting == taken;
                 let (rect, row) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
                 let row = row.on_hover_cursor(CursorIcon::PointingHand);
@@ -748,14 +772,14 @@ impl Player {
 }
 
 /// Every style, `taken` marked; the one pressed, if any.
-fn style_list(ui: &mut egui::Ui, width: f32, taken: Style) -> Option<Style> {
+fn style_list(ui: &mut egui::Ui, width: f32, taken: Option<Style>) -> Option<Style> {
     let mut picked = None;
     egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0_f32, EDGE)).corner_radius(8.0).show(ui, |ui| {
         ui.set_width(width - 2.0);
         ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
         ui.add_space(4.0);
         for style in Style::ALL {
-            let on = style == taken;
+            let on = Some(style) == taken;
             let (rect, row) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
             let row = row.on_hover_cursor(CursorIcon::PointingHand);
             let p = ui.painter();
@@ -774,35 +798,34 @@ fn style_list(ui: &mut egui::Ui, width: f32, taken: Style) -> Option<Style> {
     picked
 }
 
-/// Every band under its style, each with who it is, `taken` marked; the
-/// one pressed, if any. Scrolls past `list_h`.
-fn band_list(ui: &mut egui::Ui, taken: &'static Band, list_h: f32) -> Option<&'static Band> {
+/// Every band a line, its style tagged at the right and who it is under
+/// the pointer, the bands of `style` first where one is chosen; `taken`
+/// marked; the one pressed, if any. Scrolls past `list_h`.
+fn band_list(ui: &mut egui::Ui, taken: Option<&'static Band>, style: Option<Style>, list_h: f32) -> Option<&'static Band> {
     let mut picked = None;
+    let styles = style.into_iter().chain(Style::ALL.into_iter().filter(|s| Some(*s) != style));
     egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0_f32, EDGE)).corner_radius(8.0).show(ui, |ui| {
         ui.set_width(BAND_W - 2.0);
         ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
         egui::ScrollArea::vertical().max_height(list_h).show(ui, |ui| {
-            for style in Style::ALL {
-                pool_heading(ui, style.name());
-                for band in band::of_style(style) {
-                    let on = band == taken;
-                    let about = ui.painter().layout(band.about.to_string(), mono(11.0), DOT, BAND_W - 2.0 - 28.0);
-                    let (rect, row) = ui.allocate_exact_size(vec2(ui.available_width(), 10.0 + 18.0 + about.size().y + 8.0), Sense::click());
-                    let row = row.on_hover_cursor(CursorIcon::PointingHand);
-                    let p = ui.painter();
-                    if row.hovered() {
-                        p.rect_filled(rect, 0.0, RULE);
-                    } else if on {
-                        p.rect_filled(rect, 0.0, ROW_ON);
-                    }
-                    p.text(pos2(rect.left() + 14.0, rect.top() + 10.0), Align2::LEFT_TOP, band.name, mono(12.0), if on { PARCHMENT } else { MUTED });
-                    p.galley(pos2(rect.left() + 14.0, rect.top() + 10.0 + 18.0), about, DOT);
-                    if row.clicked() {
-                        picked = Some(band);
-                    }
+            ui.add_space(4.0);
+            for band in styles.flat_map(band::of_style) {
+                let on = Some(band) == taken;
+                let (rect, row) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+                let row = row.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(band.about);
+                let p = ui.painter();
+                if row.hovered() {
+                    p.rect_filled(rect, 0.0, RULE);
+                } else if on {
+                    p.rect_filled(rect, 0.0, ROW_ON);
+                }
+                p.text(pos2(rect.left() + 14.0, rect.center().y), Align2::LEFT_CENTER, band.name, mono(12.0), if on { PARCHMENT } else { MUTED });
+                p.text(pos2(rect.right() - 14.0, rect.center().y), Align2::RIGHT_CENTER, band.style.name(), mono(11.0), DOT);
+                if row.clicked() {
+                    picked = Some(band);
                 }
             }
-            ui.add_space(6.0);
+            ui.add_space(4.0);
         });
     });
     picked

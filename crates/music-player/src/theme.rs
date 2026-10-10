@@ -154,21 +154,34 @@ pub fn cross(p: &egui::Painter, c: Pos2, color: Color32) {
     p.line_segment([c + vec2(3.0, -3.0), c + vec2(-3.0, 3.0)], s);
 }
 
+/// A die's face, three pips on the diagonal: a random draw.
+pub fn die(p: &egui::Painter, c: Pos2, color: Color32) {
+    let face = Rect::from_center_size(c, vec2(14.0, 14.0));
+    p.rect_stroke(face, 3.0, Stroke::new(1.4_f32, color), StrokeKind::Inside);
+    for d in [vec2(-3.0, -3.0), vec2(0.0, 0.0), vec2(3.0, 3.0)] {
+        p.circle_filled(c + d, 1.0, color);
+    }
+}
+
 /// `job` on one line, cut with an ellipsis where it runs past `width`.
 pub fn fit(p: &egui::Painter, mut job: LayoutJob, width: f32) -> Arc<Galley> {
     job.wrap = TextWrapping { max_width: width.max(1.0), max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
     p.layout_job(job)
 }
 
-/// A field that opens a list under it: its text, cut to fit, and a
-/// chevron; lit while its list is open.
-pub fn select_field(ui: &mut egui::Ui, rect: Rect, id: &str, text: &str, open: bool) -> Response {
+/// A field that opens a list under it: its text, cut to fit, or a muted
+/// "choose" where nothing is chosen, and a chevron; lit while its list is
+/// open.
+pub fn select_field(ui: &mut egui::Ui, rect: Rect, id: &str, text: Option<&str>, open: bool) -> Response {
     let response = hit(ui, rect, id);
     let p = ui.painter();
     p.rect_filled(rect, 6.0, PANEL);
     p.rect_stroke(rect, 6.0, Stroke::new(1.0_f32, if open { LAMP } else if response.hovered() { MUTED } else { EDGE }), StrokeKind::Inside);
     let mut job = LayoutJob::default();
-    run(&mut job, text, 12.0, PARCHMENT);
+    match text {
+        Some(text) => run(&mut job, text, 12.0, PARCHMENT),
+        None => run(&mut job, "choose", 12.0, MUTED),
+    }
     let text = fit(p, job, rect.width() - 12.0 - 28.0);
     p.galley(pos2(rect.left() + 12.0, rect.center().y - text.size().y / 2.0), text, PARCHMENT);
     chevron(p, rect.right_center() - vec2(16.0, 0.0), false, MUTED);
