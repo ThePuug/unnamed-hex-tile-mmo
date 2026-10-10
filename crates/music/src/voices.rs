@@ -129,9 +129,12 @@ const SWIRLY: &[(u8, u8)] = &[(50, 48)];
 /// the jack with both pickups open, whose tone carries a bass's
 /// harmonics — FreePats' finger bass, nearly all fundamental, was lost
 /// on any speaker without a low end and under a horn section; the
-/// picked is Pastabass, a Bass VI. Both reach the C♯ under the low E,
-/// keyed where they sound, since a bass mapping names its notes as a
-/// bassist reads them, an octave over.
+/// picked is Pastabass, a Bass VI. Both are recorded from the C♯ under
+/// the low E and keyed where they sound, since a bass mapping names its
+/// notes as a bassist reads them, an octave over. Every bank built from
+/// a mapping reaches four semitones past its outermost recordings
+/// (`banks/sfz.py`), so a line's lowest notes are pitched down rather
+/// than folded up an octave.
 /// The brass — the trumpet open and under the harmon mute, the tenor
 /// trombone, the tuba, the horn, each sustained — are VSCO 2 Community
 /// Edition's, built by `banks/install.py` from its SFZ mappings: the
@@ -142,15 +145,15 @@ pub const VOICES: &[Voice] = &[
     Voice { program: 22, percussion: false, file: "harmonica.sf2", bank: 0, preset: 22, keys: &[], range: (0, 127), takes: Takes::One, direct: false, legato: None },
     Voice { takes: FSBS, ..melodic(26, "fsbs-jazz.sf2", (35, 86)) },
     Voice { takes: FSBS, ..melodic(27, "fsbs-clean.sf2", (35, 86)) },
-    Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(29, "guitar-di.sf2", (35, 86)) },
-    Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(30, "guitar-di.sf2", (35, 86)) },
-    Voice { program: 33, percussion: false, file: "growly-bass.sf2", bank: 0, preset: 33, keys: &[], range: (25, 63), takes: Takes::One, direct: true, legato: None },
-    Voice { program: 34, percussion: false, file: "pasta-bass.sf2", bank: 0, preset: 34, keys: &[], range: (25, 73), takes: Takes::One, direct: true, legato: None },
-    melodic(56, "vsco-trumpet.sf2", (53, 84)),
-    melodic(57, "vsco-trombone.sf2", (34, 65)),
-    melodic(58, "vsco-tuba.sf2", (29, 62)),
-    melodic(59, "vsco-muted-trumpet.sf2", (58, 81)),
-    melodic(60, "vsco-horn.sf2", (33, 77)),
+    Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(29, "guitar-di.sf2", (32, 89)) },
+    Voice { takes: FSBS, direct: true, legato: Some(1), ..melodic(30, "guitar-di.sf2", (32, 89)) },
+    Voice { program: 33, percussion: false, file: "growly-bass.sf2", bank: 0, preset: 33, keys: &[], range: (21, 67), takes: Takes::One, direct: true, legato: None },
+    Voice { program: 34, percussion: false, file: "pasta-bass.sf2", bank: 0, preset: 34, keys: &[], range: (21, 77), takes: Takes::One, direct: true, legato: None },
+    melodic(56, "vsco-trumpet.sf2", (49, 88)),
+    melodic(57, "vsco-trombone.sf2", (30, 69)),
+    melodic(58, "vsco-tuba.sf2", (25, 66)),
+    melodic(59, "vsco-muted-trumpet.sf2", (54, 85)),
+    melodic(60, "vsco-horn.sf2", (29, 81)),
     melodic(66, "tenor-sax.sf2", (43, 89)),
     Voice { program: 16, percussion: true, file: "muldjord-kit.sf2", bank: 0, preset: 0, keys: MULDJORD, range: (0, 127), takes: Takes::One, direct: false, legato: None },
     Voice { program: 40, percussion: true, file: "swirly-kit.sf2", bank: 0, preset: 0, keys: SWIRLY, range: (0, 127), takes: Takes::Keys(4), direct: false, legato: None },
