@@ -1,6 +1,8 @@
 //! What plays: the history gone through, the queue the listener filled,
-//! and the composer's next draw, played only when the queue is empty.
+//! and the composer's next draw, played only when the queue is empty;
+//! and which parts the listener has muted, heard by their absence.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
@@ -22,7 +24,7 @@ use music::banks::folder;
 use crate::midi::{self, Port};
 use crate::sheet::Sheet;
 use crate::theme::{ALERT, DOT, LAMP, READY};
-use crate::worker::{spawn_worker, Done, Wanted};
+use crate::worker::{spawn_worker, Done, Want, Wanted};
 
 /// The silence between one variation's end and the next one's start.
 pub const REST: Duration = Duration::from_secs(4);
@@ -51,7 +53,8 @@ impl Source {
 }
 
 /// A play: a track, the band playing it, the setting it is played in and
-/// the play's seed, its render once it arrives.
+/// the play's seed, its render once it arrives, and the render without
+/// the muted parts where any of them is in it.
 pub struct Variation {
     pub piece: usize,
     pub band: &'static Band,
@@ -59,12 +62,13 @@ pub struct Variation {
     pub seed: u64,
     pub source: Source,
     pub take: Option<Arc<Take>>,
+    pub mix: Option<Mix>,
     pub failed: Option<String>,
 }
 
 impl Variation {
     pub fn new(piece: usize, band: &'static Band, setting: Setting, seed: u64, source: Source) -> Self {
-        Variation { piece, band, setting, seed, source, take: None, failed: None }
+        Variation { piece, band, setting, seed, source, take: None, mix: None, failed: None }
     }
 
     pub fn job(&self) -> Job {
@@ -79,6 +83,16 @@ pub struct Take {
     /// The score as MIDI, for MIDI out.
     pub midi: Arc<Vec<Event>>,
     pub sheet: Sheet,
+}
+
+/// A take rendered again without the parts named in `muted`, as long as
+/// the take, with its MIDI and its sheet without them.
+#[derive(Clone)]
+pub struct Mix {
+    pub muted: Vec<&'static str>,
+    pub audio: Arc<Vec<[f32; 2]>>,
+    pub midi: Arc<Vec<Event>>,
+    pub sheet: Arc<Sheet>,
 }
 
 pub type Job = (usize, &'static Band, Setting, u64);
@@ -107,6 +121,9 @@ pub struct Player {
     pub seed: String,
     pub locks: Locks,
     pub autoplay: bool,
+    /// The parts the listener has muted, by name, whatever plays: a play
+    /// with any of them is rendered again without them.
+    pub muted: BTreeSet<&'static str>,
     pub history: Vec<Variation>,
     /// The history entry playing; none before the listener first plays.
     pub at: Option<usize>,
@@ -163,6 +180,7 @@ impl Player {
             seed: "0".to_string(),
             locks: Locks::default(),
             autoplay: false,
+            muted: BTreeSet::new(),
             history: Vec::new(),
             at: None,
             queue: Vec::new(),
@@ -202,13 +220,16 @@ impl Player {
                 Done::Bank(b) => self.bank = Some(b),
                 Done::Take(job, taken) => {
                     let taken = taken.map(Arc::new);
-                    let near = self.after().saturating_sub(2)..=self.after();
-                    let in_history = self.history.iter_mut().enumerate().filter(|(i, _)| near.contains(i)).map(|(_, v)| v);
-                    for v in in_history.chain(self.queue.first_mut()).chain(self.composed.as_mut()).filter(|v| v.job() == job) {
+                    for v in self.rendering(job) {
                         match &taken {
                             Ok(t) => v.take = Some(t.clone()),
                             Err(e) => v.failed = Some(e.clone()),
                         }
+                    }
+                }
+                Done::Mix(job, mix) => {
+                    for v in self.rendering(job) {
+                        v.mix = Some(mix.clone());
                     }
                 }
             }
@@ -221,15 +242,26 @@ impl Player {
         // of megabytes, and one moved back behind it renders again.
         for v in self.queue.iter_mut().skip(1) {
             v.take = None;
+            v.mix = None;
         }
 
         let current = self.current();
         let mut deck = self.deck.lock().unwrap();
-        if let Some(t) = current.and_then(|v| v.take.as_ref()) {
-            if !deck.audio.as_ref().is_some_and(|a| Arc::ptr_eq(a, &t.audio)) {
-                deck.audio = Some(t.audio.clone());
-                deck.midi = Some(t.midi.clone());
-                deck.at = 0.0;
+        if let Some((v, t)) = current.and_then(|v| v.take.as_ref().map(|t| (v, t))) {
+            // The mix without the muted parts where it has arrived, else
+            // the take, which plays on until it does.
+            let (audio, midi) = match v.mix.as_ref().filter(|m| m.muted == muting(&t.score, &self.muted)) {
+                Some(m) => (&m.audio, &m.midi),
+                None => (&t.audio, &t.midi),
+            };
+            if !deck.audio.as_ref().is_some_and(|a| Arc::ptr_eq(a, audio)) {
+                // A variation starts at its head; a render of the one
+                // playing takes over where it stands.
+                if deck.audio.is_none() {
+                    deck.at = 0.0;
+                }
+                deck.audio = Some(audio.clone());
+                deck.midi = Some(midi.clone());
             }
         }
         deck.playing = self.playing;
@@ -249,15 +281,45 @@ impl Player {
             }
         }
 
-        let need = self.current().into_iter().chain(self.following()).find(|v| v.take.is_none() && v.failed.is_none()).map(Variation::job);
-        if let Some(job) = need {
-            if *self.busy.lock().unwrap() != Some(job) {
-                let mut slot = self.wanted.job.lock().unwrap();
-                if *slot != Some(job) {
-                    *slot = Some(job);
+        // The mix the current variation lacks comes before any render
+        // ahead: the listener waits on it.
+        let mix = self.current().and_then(|v| v.take.as_ref().map(|t| (v, t))).and_then(|(v, t)| {
+            let muted = muting(&t.score, &self.muted);
+            (!muted.is_empty() && v.mix.as_ref().is_none_or(|m| m.muted != muted)).then(|| Want::Mix(v.job(), t.clone(), muted))
+        });
+        let need = mix.or_else(|| self.current().into_iter().chain(self.following()).find(|v| v.take.is_none() && v.failed.is_none()).map(|v| Want::Take(v.job())));
+        if let Some(want) = need {
+            if *self.busy.lock().unwrap() != Some(want.job()) {
+                let mut slot = self.wanted.want.lock().unwrap();
+                if !slot.as_ref().is_some_and(|w| w.same(&want)) {
+                    *slot = Some(want);
                     self.wanted.posted.notify_one();
                 }
             }
+        }
+    }
+
+    /// The variations a render of `job` is for: the current one and its
+    /// neighbours in the history, the queue's head and the composer's
+    /// draw.
+    fn rendering(&mut self, job: Job) -> impl Iterator<Item = &mut Variation> {
+        let near = self.after().saturating_sub(2)..=self.after();
+        let in_history = self.history.iter_mut().enumerate().filter(move |(i, _)| near.contains(i)).map(|(_, v)| v);
+        in_history.chain(self.queue.first_mut()).chain(self.composed.as_mut()).filter(move |v| v.job() == job)
+    }
+
+    /// The mix the deck plays, where what plays is a mix of the current
+    /// variation and not its take.
+    pub fn heard_mix(&self) -> Option<Mix> {
+        let mix = self.current()?.mix.as_ref()?;
+        let playing = self.deck.lock().unwrap().audio.clone()?;
+        Arc::ptr_eq(&playing, &mix.audio).then(|| mix.clone())
+    }
+
+    /// Mutes the part named, or unmutes it where it is muted.
+    pub fn toggle_mute(&mut self, name: &'static str) {
+        if !self.muted.remove(name) {
+            self.muted.insert(name);
         }
     }
 
@@ -374,6 +436,7 @@ impl Player {
         for (k, v) in self.history.iter_mut().enumerate() {
             if k + 1 < i || k > i + 1 {
                 v.take = None;
+                v.mix = None;
             }
         }
         let mut deck = self.deck.lock().unwrap();
@@ -410,6 +473,7 @@ impl Player {
         let after = self.after();
         for v in self.history.iter_mut().skip(after).chain(self.queue.first_mut()).chain(self.composed.as_mut()) {
             v.take = None;
+            v.mix = None;
             v.failed = None;
         }
     }
@@ -446,6 +510,12 @@ impl Player {
         let made = |t: usize| self.track.is_none_or(|c| c == t) && self.style.is_none_or(|s| s == TRACKS[t].style);
         Setting::ALL.into_iter().filter(|s| *s == Setting::None || (0..TRACKS.len()).any(|t| made(t) && TRACKS[t].plays_in(*s))).collect()
     }
+}
+
+/// The parts of `score` among `muted`, in the score's order: what a mix
+/// of it leaves out, and nothing where none of them plays in it.
+pub fn muting(score: &Score, muted: &BTreeSet<&'static str>) -> Vec<&'static str> {
+    score.instruments.iter().map(|i| i.name).filter(|n| muted.contains(n)).collect()
 }
 
 /// Which of the selection the composer keeps when it draws.
@@ -525,9 +595,24 @@ pub fn styles() -> Vec<(Style, Vec<usize>)> {
 mod tests {
     use super::*;
     use music::band;
+    use music::pieces::Params;
 
     fn track(name: &str) -> usize {
         TRACKS.iter().position(|t| t.name == name).unwrap()
+    }
+
+    /// A score's muting is the muted parts it has, in its own order, so
+    /// two mixes compare by what they leave out; a muted part no score
+    /// has mutes nothing.
+    #[test]
+    fn muting_is_the_muted_parts_the_score_has() {
+        let piece = &TRACKS[track("minor-blues")];
+        let score = (piece.build)(&Params::of(piece, 1));
+        let names: Vec<&str> = score.instruments.iter().map(|i| i.name).collect();
+        assert!(names.len() >= 3);
+        let muted: BTreeSet<&'static str> = [names[2], names[0], "no such part"].into_iter().collect();
+        assert_eq!(muting(&score, &muted), vec![names[0], names[2]]);
+        assert!(muting(&score, &["no such part"].into_iter().collect()).is_empty());
     }
 
     /// A draw with nothing locked keeps a band and its track in one style

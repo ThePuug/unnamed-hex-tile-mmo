@@ -8,10 +8,13 @@ use std::process::{Command, Stdio};
 use crate::measure;
 use crate::SAMPLE_RATE;
 
-/// The audio with its integrated loudness moved to `lufs` by one gain.
-pub fn set_loudness(audio: &mut [[f32; 2]], lufs: f32) {
+/// The audio with its integrated loudness moved to `lufs` by one gain,
+/// which it returns.
+pub fn set_loudness(audio: &mut [[f32; 2]], lufs: f32) -> f32 {
     let now = measure::integrated(audio);
-    scale(audio, 10f32.powf((lufs - now) / 20.0));
+    let gain = 10f32.powf((lufs - now) / 20.0);
+    scale(audio, gain);
+    gain
 }
 
 /// The audio with its loudest moment moved to `lufs` by one gain: a
@@ -27,7 +30,7 @@ pub fn set_peak(audio: &mut [[f32; 2]], dbtp: f32) {
     scale(audio, 10f32.powf((dbtp - now) / 20.0));
 }
 
-fn scale(audio: &mut [[f32; 2]], gain: f32) {
+pub fn scale(audio: &mut [[f32; 2]], gain: f32) {
     for s in audio.iter_mut() {
         s[0] *= gain;
         s[1] *= gain;

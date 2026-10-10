@@ -145,11 +145,26 @@ pub struct Score {
     /// The rigs fitted for parts, by channel, in place of the one each
     /// part's role and instrument call for (`rigs::of`).
     pub rigs: Vec<(u8, &'static Rig)>,
+    /// The gain the take plays at, as `render::take` sets it bringing the
+    /// whole to its setting's loudness; one until then. Rendered again at
+    /// it, the score with parts taken out keeps every part where it sat
+    /// in the whole.
+    pub gain: f32,
 }
 
 impl Score {
     pub fn new(key: Key, meter: Meter, eighth_bpm: f32, instruments: Vec<Instrument>, room: f32) -> Self {
-        Score { key, meter, eighth_bpm, tempo: Vec::new(), instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), room, lead: None, marks: Vec::new(), story: "", lifts: Vec::new(), cast: Vec::new(), band: None, parts: Vec::new(), rigs: Vec::new() }
+        Score { key, meter, eighth_bpm, tempo: Vec::new(), instruments, sections: Vec::new(), harmony: Vec::new(), notes: Vec::new(), summary: String::new(), room, lead: None, marks: Vec::new(), story: "", lifts: Vec::new(), cast: Vec::new(), band: None, parts: Vec::new(), rigs: Vec::new(), gain: 1.0 }
+    }
+
+    /// The score with the notes on `channels` taken out and everything
+    /// else standing — the parts, their levels, the room, the gain — so
+    /// rendered it is the whole with those parts silent, and a part is
+    /// heard by its absence.
+    pub fn without(&self, channels: &[u8]) -> Score {
+        let mut s = self.clone();
+        s.notes.retain(|n| !channels.contains(&n.channel));
+        s
     }
 
     pub fn chord_at(&self, tick: u32) -> Chord {
@@ -452,6 +467,19 @@ mod tests {
         s.add(Note { start: 0, len: 200, pitch: 50, vel: 80, channel: 3 });
         s.add(Note { start: 3 * bar, len: 200, pitch: 50, vel: 80, channel: 3 });
         s
+    }
+
+    /// A score without a channel keeps every part and every other
+    /// channel's note, and only that channel's are gone.
+    #[test]
+    fn without_takes_out_one_channel_and_nothing_else() {
+        let s = score();
+        let w = s.without(&[3]);
+        assert_eq!(w.instruments.len(), s.instruments.len());
+        assert_eq!(w.sections.len(), s.sections.len());
+        assert!(w.notes.iter().all(|n| n.channel != 3));
+        assert_eq!(w.notes.len(), s.notes.iter().filter(|n| n.channel != 3).count());
+        assert_eq!(s.without(&[]).notes.len(), s.notes.len());
     }
 
     /// Time runs through every tempo step: a bar at half the tempo lasts

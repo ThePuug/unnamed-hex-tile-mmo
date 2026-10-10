@@ -367,7 +367,7 @@ pub fn take(piece: &Track, params: &Params, bank: &Bank) -> (Score, Vec<[f32; 2]
     let lufs = piece.lufs_in(params.setting);
     levelled(&mut score, bank, &mut amped, lufs);
     let mut audio = rendered(&score, bank, &mut amped);
-    audio::encode::set_loudness(&mut audio, lufs);
+    score.gain = audio::encode::set_loudness(&mut audio, lufs);
     master::limit(&mut audio);
     let (_, tail) = audio::measure::silence(&audio);
     if tail > RING_KEPT_S {
@@ -425,6 +425,17 @@ fn levelled(score: &mut Score, bank: &Bank, amped: &mut Amped, lufs: f32) {
 /// for the room's time, the fall of 60 dB, past which is silence.
 pub fn render(score: &Score, bank: &Bank) -> Vec<[f32; 2]> {
     rendered(score, bank, &mut Amped::default())
+}
+
+/// A take's score rendered again as the take plays: at the gain `take`
+/// set and limited under the ceiling, never set to a loudness of its own
+/// — so with parts taken out (`Score::without`) the rest is heard as it
+/// is in the whole. Its tail is the room's, not cut as the take's is.
+pub fn mix(score: &Score, bank: &Bank) -> Vec<[f32; 2]> {
+    let mut audio = render(score, bank);
+    audio::encode::scale(&mut audio, score.gain);
+    master::limit(&mut audio);
+    audio
 }
 
 fn rendered(score: &Score, bank: &Bank, amped: &mut Amped) -> Vec<[f32; 2]> {

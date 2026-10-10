@@ -3,6 +3,7 @@
 //! what plays next; the sheet at the foot; and the popovers, the credits
 //! among them.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui::text::{LayoutJob, TextWrapping};
@@ -16,7 +17,7 @@ use crate::banks::Install;
 use music::banks::folder;
 use crate::midi::{self, Port};
 use crate::player::{styles, Player, Popover, Take};
-use crate::sheet::LANES;
+use crate::sheet::{Sheet, LANES};
 use crate::theme::*;
 
 /// The most a list grows before it scrolls.
@@ -472,16 +473,6 @@ impl Player {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 16.0;
             ui.label(caps("SHEET", 10.0));
-            if let Some(t) = &take {
-                for (lane, v) in t.sheet.at(self.position()).iter().enumerate().filter_map(|(lane, v)| v.map(|v| (lane, v))) {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        let (swatch, _) = ui.allocate_exact_size(vec2(10.0, 4.0), Sense::hover());
-                        ui.painter().rect_filled(swatch, 1.0, VOICE_INKS[lane]);
-                        ui.label(RichText::new(t.sheet.voices[v].name).font(mono(11.0)).color(PARCHMENT));
-                    });
-                }
-            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let small = |text: String, color: Color32| RichText::new(text).font(mono(11.0)).color(color);
                 let open = self.popover == Some(Popover::Credits);
@@ -500,6 +491,12 @@ impl Player {
                 if let Some(Err(e)) = &self.bank {
                     ui.label(small(format!("SoundFont: {e}"), ALERT));
                 }
+                // The parts take the room left of the credits and the
+                // banks, in a strip the wheel scrolls where they run past it.
+                if let Some(t) = &take {
+                    let strip = vec2(ui.available_width(), 18.0);
+                    ui.allocate_ui_with_layout(strip, Layout::left_to_right(Align::Center), |ui| self.parts(ui, t));
+                }
             });
         });
         ui.add_space(8.0);
@@ -511,7 +508,10 @@ impl Player {
             p.rect_stroke(rect, 6.0, Stroke::new(1.0_f32, RULE), StrokeKind::Inside);
             return credits;
         };
-        let sheet = &take.sheet;
+        // The lanes are the mix's where a mix plays: a muted part gives
+        // its lane to the next most present.
+        let heard = self.heard_mix();
+        let sheet: &Sheet = heard.as_ref().map_or(&take.sheet, |m| &m.sheet);
         let at = self.position();
         let x = |t: f64| rect.left() + PLAYHEAD_X + ((t - at) as f32) * SHEET_PX_PER_S;
         let (from, to) = (at - (PLAYHEAD_X / SHEET_PX_PER_S) as f64, at + ((rect.width() - PLAYHEAD_X) / SHEET_PX_PER_S) as f64);
@@ -558,6 +558,41 @@ impl Player {
         p.line_segment([pos2(head, rect.top()), pos2(head, rect.bottom())], Stroke::new(2.0_f32, PARCHMENT.gamma_multiply(0.85)));
         p.rect_stroke(rect, 6.0, Stroke::new(1.0_f32, RULE), StrokeKind::Inside);
         credits
+    }
+
+    /// Every part of the play, each with its lane's ink where it holds
+    /// one under the playhead; a click mutes it, struck out until the mix
+    /// without it arrives and plays.
+    fn parts(&mut self, ui: &mut egui::Ui, t: &Take) {
+        let heard = self.heard_mix();
+        let lanes = heard.as_ref().map_or(&t.sheet, |m| &m.sheet).at(self.position());
+        // The plain wheel scrolls the strip: egui gives a one-way area the
+        // wheel's other axis only when told to.
+        ui.style_mut().always_scroll_the_only_direction = true;
+        egui::ScrollArea::horizontal().id_salt("parts").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 16.0;
+                for inst in &t.score.instruments {
+                    let sheet = heard.as_ref().map_or(&t.sheet, |m| &m.sheet);
+                    let lane = lanes.iter().position(|v| v.is_some_and(|v| sheet.voices[v].name == inst.name));
+                    let muted = self.muted.contains(inst.name);
+                    let silent = muted && heard.as_ref().is_some_and(|m| m.muted.contains(&inst.name));
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let (swatch, _) = ui.allocate_exact_size(vec2(10.0, 4.0), Sense::hover());
+                        if let Some(lane) = lane {
+                            ui.painter().rect_filled(swatch, 1.0, VOICE_INKS[lane]);
+                        }
+                        let text = RichText::new(inst.name).font(mono(11.0)).color(if silent { DOT } else if muted { MUTED } else { PARCHMENT });
+                        let text = if muted { text.strikethrough() } else { text };
+                        let part = ui.add(egui::Label::new(text).sense(Sense::click())).on_hover_cursor(CursorIcon::PointingHand).on_hover_text(if muted { "unmute" } else { "mute" });
+                        if part.clicked() {
+                            self.toggle_mute(inst.name);
+                        }
+                    });
+                }
+            });
+        });
     }
 
     /// What the banks are doing, as a word and its colour: an install's
