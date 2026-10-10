@@ -89,6 +89,7 @@ impl VideoSettings {
     fn window_mode(&self, monitor: MonitorSelection) -> WindowMode {
         match (self.display, self.resolution) {
             (Display::Windowed, _) => WindowMode::Windowed,
+            (Display::Borderless, _) => WindowMode::BorderlessFullscreen(monitor),
             (Display::Fullscreen, Some(resolution)) => {
                 WindowMode::Fullscreen(monitor, VideoModeSelection::Specific(resolution.video_mode()))
             }
@@ -97,17 +98,20 @@ impl VideoSettings {
     }
 }
 
-/// A window the size of the chosen resolution, or the whole screen switched
-/// to it, which the GPU or the monitor scales to the panel.
+/// A window the size of the chosen resolution; a window covering the screen
+/// at the desktop's mode, which takes no resolution; or the whole screen
+/// switched to the chosen resolution, which the GPU or the monitor scales to
+/// the panel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Display {
     #[default]
     Windowed,
+    Borderless,
     Fullscreen,
 }
 
 impl Display {
-    const ALL: [Display; 2] = [Display::Windowed, Display::Fullscreen];
+    const ALL: [Display; 3] = [Display::Windowed, Display::Borderless, Display::Fullscreen];
 
     fn step(self, by: i32) -> Self {
         step(&Self::ALL, self, by)
@@ -116,8 +120,15 @@ impl Display {
     pub fn label(self) -> &'static str {
         match self {
             Display::Windowed => "Windowed",
+            Display::Borderless => "Borderless",
             Display::Fullscreen => "Fullscreen",
         }
+    }
+
+    /// Whether the window is the chosen resolution's size. Borderless keeps
+    /// the chosen one for the next display that takes it.
+    pub fn takes_resolution(self) -> bool {
+        self != Display::Borderless
     }
 }
 
@@ -497,9 +508,16 @@ impl Row {
         }
     }
 
+    /// Whether Left and Right change it: the resolution waits while the
+    /// display takes none.
+    fn enabled(self, video: &VideoSettings) -> bool {
+        self != Row::Resolution || video.display.takes_resolution()
+    }
+
     fn value(self, video: &VideoSettings, audio: &AudioSettings) -> String {
         match self {
             Row::Display => video.display.label().into(),
+            Row::Resolution if !self.enabled(video) => "Desktop".into(),
             Row::Resolution => video.resolution.map_or_else(|| "Desktop".into(), Resolution::label),
             Row::Vsync => video.vsync.label().into(),
             Row::Rate => video.rate.label().into(),
@@ -517,6 +535,9 @@ impl Row {
         by: i32,
     ) -> (VideoSettings, AudioSettings) {
         let (mut video, mut audio) = (*video, *audio);
+        if !self.enabled(&video) {
+            return (video, audio);
+        }
         match self {
             Row::Display => {
                 video.display = video.display.step(by);
@@ -611,7 +632,7 @@ fn fit_to_monitor(
     let desktop = monitor.physical_size();
     let fitted = match (video.resolution, video.display) {
         (Some(at), _) => nearest(&resolutions, at.size()),
-        (None, Display::Windowed) => windowed(&resolutions, desktop, nearest(&resolutions, desktop)),
+        (None, Display::Windowed | Display::Borderless) => windowed(&resolutions, desktop, nearest(&resolutions, desktop)),
         (None, Display::Fullscreen) => nearest(&resolutions, desktop),
     };
     if fitted.is_some() && video.resolution != fitted {
@@ -794,6 +815,7 @@ const PANEL_WIDTH: f32 = 420.0;
 const TITLE: Color = Color::srgb(0.85, 0.75, 0.55);
 const PICKED: Color = Color::srgb(1.0, 0.9, 0.6);
 const PLAIN: Color = Color::srgb(0.75, 0.75, 0.75);
+const DISABLED: Color = Color::srgb(0.4, 0.4, 0.4);
 
 /// Shows the panel while it is open and redraws its rows when a setting or
 /// the picked row changes.
@@ -822,15 +844,21 @@ fn draw(
                 ));
             }
             let picked = i == panel.row;
-            let text = if picked {
-                format!("> {:<16}< {} >", row.name(), row.value(&video, &audio))
-            } else {
-                format!("  {:<16}  {}", row.name(), row.value(&video, &audio))
+            let enabled = row.enabled(&video);
+            let text = match (picked, enabled) {
+                (true, true) => format!("> {:<16}< {} >", row.name(), row.value(&video, &audio)),
+                (true, false) => format!("> {:<16}  {}", row.name(), row.value(&video, &audio)),
+                (false, _) => format!("  {:<16}  {}", row.name(), row.value(&video, &audio)),
+            };
+            let color = match (picked, enabled) {
+                (_, false) => DISABLED,
+                (true, true) => PICKED,
+                (false, true) => PLAIN,
             };
             parent.spawn((
                 Text::new(text),
                 TextFont { font_size: FontSize::Px(17.0), ..default() },
-                TextColor(if picked { PICKED } else { PLAIN }),
+                TextColor(color),
             ));
         }
     });
@@ -883,6 +911,22 @@ mod tests {
         assert_eq!(size(windowed(&offered, desktop, Some(offered[3]))), Some(UVec2::new(1920, 1080)), "above it");
         assert_eq!(size(windowed(&offered, desktop, Some(offered[0]))), Some(UVec2::new(1280, 720)), "one that fits stays");
         assert_eq!(windowed(&offered[2..3], desktop, Some(offered[2])), Some(offered[2]), "nothing smaller offered");
+    }
+
+    #[test]
+    fn borderless_holds_the_resolution_for_the_next_display() {
+        let offered = offered(&[mode(1280, 720, 60), mode(1920, 1080, 60), mode(2560, 1440, 60)]);
+        let panel = SettingsPanel { resolutions: offered.clone(), desktop: UVec2::new(2560, 1440), ..default() };
+        let audio = AudioSettings::default();
+        let borderless = VideoSettings { display: Display::Borderless, resolution: Some(offered[2]), ..default() };
+        assert_eq!(Row::Resolution.value(&borderless, &audio), "Desktop");
+        assert_eq!(Row::Resolution.change(&borderless, &audio, &panel, 1).0, borderless, "the row does not change");
+        assert_eq!(Row::Resolution.change(&borderless, &audio, &panel, -1).0, borderless);
+
+        let fullscreen = Row::Display.change(&borderless, &audio, &panel, 1).0;
+        assert_eq!((fullscreen.display, fullscreen.resolution), (Display::Fullscreen, Some(offered[2])), "kept for fullscreen");
+        let windowed = Row::Display.change(&borderless, &audio, &panel, -1).0;
+        assert_eq!((windowed.display, windowed.resolution), (Display::Windowed, Some(offered[1])), "a window steps below the desktop");
     }
 
     #[test]

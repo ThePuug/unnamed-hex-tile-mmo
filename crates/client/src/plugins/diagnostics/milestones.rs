@@ -59,7 +59,7 @@ pub fn log_video(video: Res<VideoSettings>) {
         info!(
             "milestone: video display={} resolution={} msaa={} shadows={} vsync={}",
             video.display.label(),
-            video.resolution.map_or_else(|| "desktop".into(), |r| r.label()),
+            video.resolution.filter(|_| video.display.takes_resolution()).map_or_else(|| "desktop".into(), |r| r.label()),
             video.samples.label(),
             video.shadows.label(),
             video.vsync.label()
