@@ -191,10 +191,10 @@ pub enum Habits {
     Bulgarian,
     Blues(Blues),
     Metal(rock::Habits),
+    IndieFolk,
 }
 
 /// A blues band's habits: how it answers its singer, and whether its lead
-    IndieFolk,
 /// runs into a last tone.
 #[derive(Debug, PartialEq)]
 pub struct Blues {
@@ -221,10 +221,10 @@ mod gm {
     pub const ACCORDION: u8 = 21;
     pub const HARMONICA: u8 = 22;
     pub const NYLON_GUITAR: u8 = 24;
+    pub const STEEL_GUITAR: u8 = 25;
     pub const JAZZ_GUITAR: u8 = 26;
     pub const CLEAN_GUITAR: u8 = 27;
     pub const OVERDRIVEN: u8 = 29;
-    pub const STEEL_GUITAR: u8 = 25;
     pub const DISTORTION: u8 = 30;
     pub const UPRIGHT_BASS: u8 = 32;
     pub const FINGER_BASS: u8 = 33;
@@ -248,11 +248,11 @@ mod gm {
     pub const CLARINET: u8 = 71;
     pub const FLUTE: u8 = 73;
     pub const PAN_FLUTE: u8 = 75;
+    pub const WHISTLE: u8 = 78;
+    pub const BANJO: u8 = 105;
     pub const FIDDLE: u8 = 110;
     pub const SHANAI: u8 = 111;
     /// Drum kits: the standard, the rock kit on sticks, the brushes.
-    pub const WHISTLE: u8 = 78;
-    pub const BANJO: u8 = 105;
     pub const KIT: u8 = 0;
     pub const ROCK_KIT: u8 = 16;
     pub const BRUSH_KIT: u8 = 40;
@@ -311,15 +311,15 @@ pub const BANDS: &[Band] = &[
         style: Style::Bulgarian,
         about: "Rhodope village musicians: a shepherd's flute and the gadulka, a zurna at a feast, the tambura's strum and the tapan, no brass; plain-spoken, loose, a little behind the beat",
         members: &[
-            m(Lead, PAN_FLUTE, &PAN_PIPER, 0.9, 0.85, 0.4, 3.0, 1.3, -3.0, 1.0),
-            m(Lead, SHANAI, &ZURNACI, 1.0, 0.9, 0.5, 2.0, 1.2, -3.0, 1.0),
-            m(Lead, FLUTE, &PIPER, 0.9, 0.85, 0.4, 3.0, 1.3, -3.0, 1.0),
             // Ranked so the overworld takes the shepherd's pipe and the horo
             // the zurna, a track taking the first lead its palette allows.
+            m(Lead, PAN_FLUTE, &PAN_PIPER, 0.9, 0.85, 0.4, 3.0, 1.3, -3.0, 1.0),
+            m(Lead, SHANAI, &ZURNACI, 1.0, 0.9, 0.5, 2.0, 1.2, -3.0, 1.0),
+            m(Lead, FIDDLE, &VILLAGE_FIDDLE, 0.95, 0.9, 0.45, 3.0, 1.3, -3.0, 1.0),
+            m(Lead, FLUTE, &PIPER, 0.9, 0.85, 0.4, 3.0, 1.3, -3.0, 1.0),
             m(Second, FIDDLE, &SECOND, 1.0, 0.9, 0.4, 4.0, 1.3, -3.0, 1.0),
             m(Second, ACCORDION, &SECOND, 1.0, 0.9, 0.4, 4.0, 1.2, -3.0, 1.0),
             m(Bass, UPRIGHT_BASS, &PICKER, 1.0, 1.0, 0.5, 4.0, 1.4, -6.0, 1.05),
-            m(Lead, FIDDLE, &VILLAGE_FIDDLE, 0.95, 0.9, 0.45, 3.0, 1.3, -3.0, 1.0),
             m(Drums, KIT, &DRUMMER, 1.0, 1.0, 0.5, 2.0, 1.4, -6.0, 1.0),
             m(Drone, CELLO, &DRONE, 1.0, 1.0, 0.5, 0.0, 1.0, -3.0, 1.0),
             m(Pad, STRINGS_2, &SECTION, 1.0, 1.0, 0.5, 4.0, 1.2, -3.0, 1.0),
@@ -343,17 +343,17 @@ pub const BANDS: &[Band] = &[
         style: Style::Bulgarian,
         about: "a state folk ensemble: folk tunes arranged for flute, English horn, harp and strings under a women's choir, the brass orchestral, ornamented as a tune is sung, tight and on the beat",
         members: &[
-            m(Lead, FLUTE, &PIPER, 0.75, 1.15, 0.5, 0.0, 0.65, 0.0, 1.0),
-            m(Lead, ENGLISH_HORN, &OBOIST, 0.75, 1.15, 0.5, 0.0, 0.65, 0.0, 1.0),
-            m(Lead, FIDDLE, &PIPER, 0.75, 1.2, 0.5, 0.0, 0.65, 0.0, 1.0),
             // Ranked so the overworld takes the flute and the horo the fiddle,
             // the gadulka's stand-in, where a wedding orchestra's horo is the
             // clarinet's.
+            m(Lead, FLUTE, &PIPER, 0.75, 1.15, 0.5, 0.0, 0.65, 0.0, 1.0),
+            m(Lead, ENGLISH_HORN, &OBOIST, 0.75, 1.15, 0.5, 0.0, 0.65, 0.0, 1.0),
+            m(Lead, FIDDLE, &PIPER, 0.75, 1.2, 0.5, 0.0, 0.65, 0.0, 1.0),
+            m(Lead, CLARINET, &FOLK_CLARINET, 0.75, 1.1, 0.5, 0.0, 0.65, 0.0, 1.0),
             m(Second, ENGLISH_HORN, &SECOND, 1.0, 1.15, 0.5, 1.0, 0.65, 0.0, 1.0),
             m(Second, FIDDLE, &SECOND, 1.0, 1.15, 0.5, 1.0, 0.65, 0.0, 1.0),
             m(Second, FRENCH_HORN, &SECOND, 1.0, 1.1, 0.5, 1.0, 0.65, 0.0, 1.0),
             m(Bass, UPRIGHT_BASS, &PICKER, 1.0, 1.0, 0.5, 0.0, 0.6, 0.0, 1.0),
-            m(Lead, CLARINET, &FOLK_CLARINET, 0.75, 1.1, 0.5, 0.0, 0.65, 0.0, 1.0),
             m(Drums, KIT, &DRUMMER, 1.0, 1.0, 0.5, 0.0, 0.6, 0.0, 1.0),
             m(Drone, CONTRABASS, &DRONE, 1.0, 1.0, 0.5, 0.0, 1.0, 0.0, 1.0),
             m(Pad, STRINGS_2, &SECTION, 1.0, 1.0, 0.5, 1.0, 0.65, 0.0, 1.0),
