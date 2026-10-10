@@ -23,7 +23,12 @@
 //! hands over to the next — and where a lone player carries a part that
 //! step is the part's loudness. Each note is struck at the velocity that
 //! brings its pitch to the level its instrument has across its range, as
-//! the bank sounds it: a short tone of every pitch, measured once.
+//! the bank sounds it: a short tone of every pitch, measured once — a
+//! struck tone at its loudest moment, a sustained one at what it settles
+//! to past its attack, since a bowed or blown tone is heard at its
+//! sustain: measured at the bow or the breath, a fiddle and a harmonica
+//! sat some four decibels under the band, and a slow pad, measured
+//! before it was full, over it.
 //!
 //! The summed band goes through the mix bus (`master`) before it is
 //! kept.
@@ -46,7 +51,7 @@ use crate::perform::{perform, Msg};
 use crate::pieces::{Params, Track};
 use crate::rigs::Rig;
 use crate::rng::Rng;
-use crate::score::{Instrument, Role, Score, TICKS_PER_EIGHTH};
+use crate::score::{Instrument, Note, Role, Score, TICKS_PER_EIGHTH};
 use crate::voices;
 
 pub use audio::SAMPLE_RATE;
@@ -74,10 +79,29 @@ fn open(path: &Path) -> Result<Arc<SoundFont>, String> {
     Ok(Arc::new(SoundFont::new(&mut file).map_err(|e| format!("{}: {e:?}", path.display()))?))
 }
 
-/// The velocity a pitch is measured at, and how long its tone sounds;
-/// and the eighth note a rig's delay is timed by there.
-const MEASURED_AT: i32 = 100;
-const MEASURED_S: f64 = 0.6;
+/// The velocity a level is stated at. A part is struck at the middle of
+/// its own notes' velocities, since a bank's layers differ in level key
+/// by key and the layer struck at a hundred is not the one heard at
+/// seventy-five, and what it gives is brought to this velocity by the
+/// synthesizer's own law (`law`), so a part written softer stays softer.
+/// A tone is read over the length the part writes — the middle of its
+/// notes' lengths, at least `READ_S` and at most `READ_TO_S` — from
+/// `SETTLED_FROM_S` in where its voice sings, its attack past, so a
+/// plucked part writing long notes is heard at its mean and not its
+/// strike, and a reed is not read in its swell. A drum is read at its
+/// loudest moment over `READ_S`. The eighth note a rig's delay is timed
+/// by there.
+const MEASURED_AT: u8 = 100;
+
+/// The gain the synthesizer gives a note at `vel`, dB: twice the
+/// velocity's share of the top in decibels (rustysynth, as SoundFont
+/// players do), the one dynamic every bank is played with.
+fn law(vel: u8) -> f32 {
+    2.0 * 20.0 * (vel as f32 / 127.0).log10()
+}
+const READ_S: f64 = 0.4;
+const READ_TO_S: f64 = 1.2;
+const SETTLED_FROM_S: f64 = 0.5;
 const MEASURED_EIGHTH_S: f64 = 0.2;
 
 /// The most a note is evened by, dB either way: past it a pitch is a
@@ -99,9 +123,10 @@ pub struct Bank {
     levels: Mutex<HashMap<Measured, f32>>,
 }
 
-/// A tone measured: its font, bank, preset and key, and the rig it
+/// A tone measured: its font, bank, preset, key and velocity, the window
+/// it was read over (milliseconds from its strike), and the rig it
 /// sounded through, by name.
-type Measured = (usize, u8, u8, u8, &'static str);
+type Measured = (usize, u8, u8, u8, u8, (u16, u16), &'static str);
 
 /// A SoundFont of the bank, held only while a render holds it: the
 /// sampled ones run to hundreds of megabytes each, and a player playing
@@ -219,13 +244,16 @@ impl Bank {
         self.seat(inst).voice.filter(|v| v.direct).map(|_| score.rig(inst.channel))
     }
 
-    /// The loudness of `seat`'s `pitch`, LUFS at its loudest moment: one
-    /// tone at `MEASURED_AT`, dry and centred, on the key the seat strikes
+    /// The loudness of `seat`'s `pitch`, LUFS, as at `MEASURED_AT`: one
+    /// tone struck at `vel`, dry and centred, on the key the seat strikes
     /// for it, through `rig` where there is one, driven as a stem drives
-    /// it. A kit the default bank plays is on the drum channel.
-    fn level(&self, seat: Seat, drums: bool, pitch: u8, rig: Option<&'static Rig>) -> f32 {
+    /// it — read over `window`, seconds from its strike, or a drum at its
+    /// loudest moment — less what the synthesizer's law gave `vel` over
+    /// `MEASURED_AT`. A kit the default bank plays is on the drum channel.
+    fn level(&self, seat: Seat, drums: bool, window: (f64, f64), pitch: u8, vel: u8, rig: Option<&'static Rig>) -> f32 {
         let struck = seat.voice.map_or(pitch, |v| voices::key(v, pitch, 0));
-        let key = (seat.font, seat.bank, seat.preset, struck, rig.map_or("", |r| r.name));
+        let ms = |s: f64| (s * 1000.0).round() as u16;
+        let key = (seat.font, seat.bank, seat.preset, struck, vel, (ms(window.0), ms(window.1)), rig.map_or("", |r| r.name));
         if let Some(l) = self.levels.lock().unwrap().get(&key) {
             return *l;
         }
@@ -238,11 +266,12 @@ impl Bank {
             synth.process_midi_message(ch, 0xB0, 0, seat.bank as i32);
         }
         synth.process_midi_message(ch, 0xC0, seat.preset as i32, 0);
-        if rig.is_some() {
-            synth.process_midi_message(ch, 0xB0, 7, 127);
-        }
-        synth.note_on(ch, struck as i32, MEASURED_AT);
-        let n = (MEASURED_S * SAMPLE_RATE as f64) as usize / BLOCK;
+        // At the top of the volume, as `volumes` places the part furthest
+        // over its samples and as a rigged stem is driven at the jack: the
+        // synthesizer's own default is a hundred, four decibels under.
+        synth.process_midi_message(ch, 0xB0, 7, 127);
+        synth.note_on(ch, struck as i32, vel as i32);
+        let n = (window.1 * SAMPLE_RATE as f64) as usize / BLOCK;
         let (mut left, mut right) = (vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]);
         let mut tone = Vec::with_capacity(n * BLOCK);
         for _ in 0..n {
@@ -253,25 +282,37 @@ impl Bank {
             let jack: Vec<f32> = tone.iter().map(|[l, r]| (l + r) / 2.0).collect();
             tone = amp::play(rig, &jack, MEASURED_EIGHTH_S).into_iter().map(|(m, s)| [m + s, m - s]).collect();
         }
-        let l = audio::measure::loudest_moment(&tone);
+        let l = if drums { audio::measure::loudest_moment(&tone) } else { read(&tone, window).unwrap_or_else(|| audio::measure::loudest_moment(&tone)) };
+        let l = l - (law(vel) - law(MEASURED_AT));
         self.levels.lock().unwrap().insert(key, l);
         l
     }
 
     /// The level of each key `inst` plays in `score`, and the middle of
-    /// them, LUFS: every pitch of a melodic player's range, each once;
-    /// the drums a kit strikes, each a different instrument, counted
-    /// once a stroke, so the middle is the drum that keeps the time
-    /// whichever others a seed adds.
+    /// them, LUFS: every pitch of a melodic player's range, each once,
+    /// struck at the middle of the velocities the part is written at and
+    /// read over the middle of its notes' lengths; the drums a kit
+    /// strikes, each a different instrument, counted once a stroke, so
+    /// the middle is the drum that keeps the time whichever others a seed
+    /// adds.
     fn levels(&self, score: &Score, inst: &Instrument) -> (Vec<(u8, f32)>, Option<f32>) {
         let seat = self.seat(inst);
         let rig = self.rig(score, inst);
         let drums = inst.role == Role::Percussion;
-        let counted: Vec<u8> = if drums { score.notes.iter().filter(|n| n.channel == inst.channel).map(|n| n.pitch).collect() } else { (inst.low..=inst.high).collect() };
+        let notes: Vec<&Note> = score.notes.iter().filter(|n| n.channel == inst.channel).collect();
+        let middle = |mut v: Vec<f64>| {
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v.get(v.len() / 2).copied()
+        };
+        let vel = middle(notes.iter().map(|n| n.vel as f64).collect()).map_or(MEASURED_AT, |v| v as u8);
+        let held = middle(notes.iter().map(|n| score.seconds(n.end()) - score.seconds(n.start)).collect()).unwrap_or(READ_S);
+        let from = if voices::sings(inst.program) { SETTLED_FROM_S } else { 0.0 };
+        let window = (from, (from + READ_S).max(held.min(READ_TO_S)));
+        let counted: Vec<u8> = if drums { notes.iter().map(|n| n.pitch).collect() } else { (inst.low..=inst.high).collect() };
         let mut keys = counted.clone();
         keys.sort();
         keys.dedup();
-        let levels: Vec<(u8, f32)> = keys.into_iter().map(|p| (p, self.level(seat, drums, p, rig))).filter(|(_, l)| l.is_finite()).collect();
+        let levels: Vec<(u8, f32)> = keys.into_iter().map(|p| (p, self.level(seat, drums, window, p, vel, rig))).filter(|(_, l)| l.is_finite()).collect();
         let mut sorted: Vec<f32> = counted.iter().filter_map(|p| levels.iter().find(|(k, _)| k == p).map(|(_, l)| *l)).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let middle = sorted.get(sorted.len() / 2).copied();
@@ -298,6 +339,17 @@ impl Bank {
         let top = gains.iter().map(|(_, g)| *g).fold(f32::NEG_INFINITY, f32::max);
         gains.into_iter().map(|(ch, g)| (ch, (127.0 * 10f32.powf((g - top) / 40.0)).round().max(1.0) as u8)).collect()
     }
+}
+
+/// What a tone gives over `window`, LUFS: the mean power of its momentary
+/// loudness blocks starting within it; none where none does.
+fn read(tone: &[[f32; 2]], window: (f64, f64)) -> Option<f32> {
+    let (blocks, starts) = audio::measure::block_loudness(tone);
+    let read: Vec<f32> = blocks.into_iter().zip(starts).filter(|(l, s)| (window.0..window.1).contains(&(*s as f64)) && l.is_finite()).map(|(l, _)| l).collect();
+    if read.is_empty() {
+        return None;
+    }
+    Some(10.0 * (read.iter().map(|l| 10f32.powf(l / 10.0)).sum::<f32>() / read.len() as f32).log10())
 }
 
 /// How long a piece runs on past the last sample over the silence
