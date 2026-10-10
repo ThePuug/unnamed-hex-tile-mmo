@@ -36,7 +36,7 @@ pub fn open(given: Option<PathBuf>) -> Result<Bank, String> {
 /// Where installed banks live: the studio's `music-banks` folder, which
 /// neither the game nor the music player owns.
 pub fn folder() -> Option<PathBuf> {
-    common::user_data::folder("music-banks")
+    user_data::folder("music-banks")
 }
 
 /// Unpacks `archive` beside `folder` and puts it in the folder's place

@@ -20,6 +20,7 @@ trace_chrome = ["bevy/trace_chrome"]
 common = { path = "../common" }
 common-bevy = { path = "../common-bevy" }
 music = { path = "../music" }
+user-data = { path = "../user-data" }
 bevy = { version = "0.19", features = ["dds"] }
 bevy_asset = "0.19"
 bevy_camera = "0.19"

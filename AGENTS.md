@@ -102,6 +102,7 @@ flat-top hex grid. All crates under `crates/`:
 | `music` | Music composed from a seed and rendered through a SoundFont — the pieces and their vocabulary; the client composes from it as it plays, `assets/crates/musicgen` checks and proofs it, and its `AGENTS.md` binds the pieces |
 | `music-player` | A window playing fresh variations of the chosen pieces as they are composed, a rest between |
 | `audio` | Seeded draws, BS.1770 loudness and true peak, WAV and OGG writers — what `music` and the assets repo's sound generators stand on |
+| `user-data` | Where the studio's programs keep a user's data: one folder rule and nothing else, so the music player builds without `common`'s asset-baking build script |
 
 ## Comments and docs
 

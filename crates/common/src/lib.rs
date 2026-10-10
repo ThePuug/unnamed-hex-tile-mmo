@@ -13,7 +13,6 @@ pub mod plane;
 pub mod rock;
 pub mod summary;
 pub mod timers;
-pub mod user_data;
 pub use cover::{boulder_draw, boulder_sway, sway, Canopy, Content, Cover, Outcrop, Sway, SITES, SITE_SLOTS, SLOT_JITTER, SLOT_SHARE, SLOT_TOWARD, TILE_SLOTS};
 pub use gathering::{Material, Stack, Stackable};
 pub use hex_lattice::HexLattice;

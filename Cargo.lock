@@ -2607,6 +2607,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "ureq",
+ "user-data",
 ]
 
 [[package]]
@@ -5112,9 +5113,9 @@ name = "music"
 version = "0.1.0"
 dependencies = [
  "audio",
- "common",
  "rustysynth",
  "sevenz-rust2",
+ "user-data",
 ]
 
 [[package]]
@@ -7994,6 +7995,10 @@ dependencies = [
  "idna",
  "percent-encoding",
 ]
+
+[[package]]
+name = "user-data"
+version = "0.1.0"
 
 [[package]]
 name = "utf8-zero"

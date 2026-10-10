@@ -11,6 +11,7 @@ members = [
     "crates/console",
     "crates/metrics-cli",
     "crates/audio",
+    "crates/user-data",
     "crates/music",
     "crates/music-player",
     "crates/world",

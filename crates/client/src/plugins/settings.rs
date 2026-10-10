@@ -5,7 +5,7 @@
 //! Right change it, Enter or Esc closes it. Whoever opens it routes the keys
 //! to `navigate` while it is open, so one system decides what they close.
 //!
-//! The settings are kept in the client's folder (`common::user_data`) as the
+//! The settings are kept in the client's folder (`user_data`) as the
 //! panel closes, and read back as the plugin is built, before the window
 //! opens, so the window opens as they were left.
 
@@ -431,7 +431,7 @@ impl Saved {
 }
 
 fn path() -> Option<PathBuf> {
-    common::user_data::folder("client").map(|folder| folder.join("settings.json"))
+    user_data::folder("client").map(|folder| folder.join("settings.json"))
 }
 
 /// The settings kept by the last run, or the defaults where none were.

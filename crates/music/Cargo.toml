@@ -5,9 +5,9 @@ edition = "2021"
 
 [dependencies]
 audio = { path = "../audio" }
-common = { path = "../common" }
 rustysynth = "1"
 sevenz-rust2 = { version = "0.23", default-features = false }
+user-data = { path = "../user-data" }
 
 [dev-dependencies]
 sevenz-rust2 = { version = "0.23", default-features = false, features = ["compress", "util"] }
