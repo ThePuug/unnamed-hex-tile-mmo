@@ -24,6 +24,10 @@ pub struct DiagnosticsState {
     pub canopy_parts_off: bool,
 }
 
+/// The earliest moment the clock is scrubbed to, 1 January 1971: the
+/// calendar reads no moment whose week or year began before the epoch.
+const EARLIEST: u128 = 365 * 86_400_000;
+
 /// The clock the sun and moon keep, in wall-clock time (`Server::wall`):
 /// the wall clock itself, or a moment the console holds it at, so the sky
 /// can be looked at by the hour and the date while threats keep game time.
@@ -72,11 +76,11 @@ impl LightingClock {
         self.held = None;
     }
 
-    /// Moves the clock `delta` ms either way, never before the epoch,
+    /// Moves the clock `delta` ms either way, never before `EARLIEST`,
     /// holding it first where it read game time `game` if it was not held.
     pub fn scrub(&mut self, wall: u128, delta: i128) {
         let now = self.at(wall) as i128;
-        self.held = Some((now + delta).max(0) as u128);
+        self.held = Some((now + delta).max(EARLIEST as i128) as u128);
     }
 
     /// Moves the clock `steps` of `field` on, or back, wrapping within the
@@ -145,7 +149,7 @@ mod tests {
         assert_eq!(clock.at(1_000), clock.at(500_000));
         let held_day = clock.at(0) / DAY_MS;
 
-        let wall = 3 * DAY_MS + 5 * HOUR_MS;
+        let wall = EARLIEST + 3 * DAY_MS + 5 * HOUR_MS;
         clock.hold(wall, LightingClock::parse_time("1830").unwrap());
         assert_eq!(clock.held_at().as_deref(), Some("18:30"));
         assert_eq!(clock.at(wall) / DAY_MS, held_day, "the held day is the clock's, not wall time's");
@@ -154,13 +158,14 @@ mod tests {
         assert_eq!(clock.held_at(), None);
         assert_eq!(clock.at(wall), wall);
         clock.hold(wall, LightingClock::parse_time("7").unwrap());
-        assert_eq!(clock.at(wall), 3 * DAY_MS + 7 * HOUR_MS);
+        assert_eq!(clock.at(wall), EARLIEST + 3 * DAY_MS + 7 * HOUR_MS);
 
         clock.sync();
         clock.scrub(wall, -(HOUR_MS as i128));
         assert_eq!(clock.at(wall), wall - HOUR_MS, "a scrub from wall time holds an hour behind it");
         clock.scrub(wall, -(wall as i128) - 1);
-        assert_eq!(clock.at(wall), 0, "rewinding past the epoch stops at it");
+        assert_eq!(clock.at(wall), EARLIEST, "rewinding stops at 1971");
+        assert!(Date::year(clock.at(wall)).1 > 0, "the calendar reads it");
 
         assert_eq!(LightingClock::parse_time("2460"), None);
         assert_eq!(LightingClock::parse_time("123"), None);

@@ -40,7 +40,7 @@ use common_bevy::{
     },
     message::{Event, Try},
     resources::{map::Map, InputQueues},
-    systems::HOUR_MS,
+    systems::{wall_now, Date, HOUR_MS},
 };
 
 use crate::{
@@ -71,7 +71,8 @@ impl Plugin for RecorderPlugin {
             .collect();
         info!("recorder: {} of {} shots from {path}", shots.len(), script.shots.len());
 
-        app.insert_resource(Recorder { script, shots, index: 0, phase: Phase::Enter, keys: Keys::default(), sink: None });
+        let year = Date::year(wall_now()).0;
+        app.insert_resource(Recorder { script, shots, year, index: 0, phase: Phase::Enter, keys: Keys::default(), sink: None });
         app.init_resource::<Captured>();
         app.add_systems(PreUpdate, press_keys.after(bevy::input::InputSystems).before(input::update_keybits));
         // The path is laid over what the gameplay camera placed, so a shot
@@ -99,6 +100,10 @@ pub fn camera_free(recorder: Option<Res<Recorder>>) -> bool {
 pub struct Recorder {
     script: Script,
     shots: Vec<Shot>,
+    /// The game time the year a script's clock counts its hours from began
+    /// at: the year the recording started in, so a shot that runs past its
+    /// end does not jump back.
+    year: u128,
     index: usize,
     phase: Phase,
     keys: Keys,
@@ -306,7 +311,7 @@ fn advance(
     // under the light it is recorded in, and holds it while a view has no
     // player
     let hours = clock_at(&shot.clock, recorder.t());
-    diagnostics.lighting.hold_at((hours * HOUR_MS as f64) as u128);
+    diagnostics.lighting.hold_at(recorder.year + (hours * HOUR_MS as f64) as u128);
     let now = Instant::now();
 
     // A shot that views its fighter ends with the view: the fighter fell
