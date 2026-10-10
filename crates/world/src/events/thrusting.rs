@@ -41,26 +41,11 @@
 //! repose, and basement on a young one stands steepest. The rock at a point
 //! is the bed the structure exposes there, so a hard bed stands as a cliff,
 //! a weak bed lies at its own limit under the talus the cliff above it
-//! sheds, and a flank is a staircase. The crest keeps its height but where
-//! ravines notch it, the frontal sheet's talus runs out past the front onto
-//! the plate going under as far as its rock lets it, and the backlimb,
-//! gentler than any limit, is barely touched. Repose is over the one level a
-//! step climbs, so a weathered range is climbed by traverse and crossed at
-//! its passes.
-//!
-//! Ravines run down both flanks of every sheet, a gully about every two
-//! kilometres along strike, each sheet's sited out of line with its
-//! neighbours'. A sheet's two flanks share their sites, so two heads meet at
-//! each notch in the crest: that notch is a col, and the crest between two
-//! cols a summit. A ravine is a cut parallel to the face it runs down, below
-//! the face by its depth across a valley's profile, so neighbouring ravines
-//! meet at spurs standing at the face's full height. Down the flank its
-//! depth grows as a channel's does, held to the depth its walls can stand in
-//! its rock, a slot in young basement and a broad V in shale, and it
-//! shallows to nothing at the trough and at the front, where a gully spreads
-//! onto its fan and the toe past the front is uncut. A ravine through a
-//! cliff is a chute as steep as the face: the way through a young range is
-//! its cols.
+//! sheds, and a flank is a staircase. The crest keeps its height, the
+//! frontal sheet's talus runs out past the front onto the plate going under
+//! as far as its rock lets it, and the backlimb, gentler than any limit, is
+//! barely touched. Repose is over the one level a step climbs, so a
+//! weathered range is climbed by traverse and crossed at its passes.
 //!
 //! The retro-wedge at the plateau's far side is not expressed. Unbuilt.
 //!
@@ -112,13 +97,12 @@ use std::sync::{Arc, OnceLock};
 use dashmap::DashMap;
 
 use crate::chains::{join_at_nodes, Segment};
-use crate::noise::{hash_channel, hash_channel_f64, simplex_2d};
+use crate::noise::{hash_channel, simplex_2d};
 use crate::tectonic::aged;
 use crate::lattice::{nearest_node, node_world, NodeKey, PATH_SWING};
 use crate::tectonic::{edges_of, plate_cell_for, plates_near, PlateId, PLATE_REACH};
 use super::plates::{warp, WARP_SWING};
 use crate::{hex_to_world, smoothstep, RISE, SEA_MAX_DEPTH};
-use super::dissection::profile;
 use super::index::{CellId, CellIndex, IndexRegistry};
 use super::lithology::{cover, exposed_in, Column, Rock, CONTACT_RAMP};
 use super::motion::{resolve, BoundaryRegime, BoundarySegment, PlateBoundaryIndex};
@@ -815,23 +799,11 @@ pub struct Faces {
     /// The plate's column and age, which the profiles weather.
     column: Column,
     age: f64,
-    /// The grades and wear the column's rock holds by depth, built with
-    /// the first profile or ravine read.
-    limits: OnceLock<Limits>,
 }
 
 /// One sheet of a wedge on the profiles' grid, over the points its
 /// structure and its talus can reach.
 struct Sheet {
-    /// The distance from the front of the sheet's crest, and of the ends
-    /// of its forelimb and its backlimb: the trough before it or the
-    /// front, and the trough after it or the wedge's rim.
-    crest: f64,
-    fore: f64,
-    back: f64,
-    /// The share of a range's rise the sheet stands at, the last sheet's
-    /// partial.
-    weight: f64,
     /// The grid point the sheet's span begins at.
     start: usize,
     /// The sheet's structure at full height over its span, nothing off its
@@ -894,15 +866,13 @@ impl Faces {
                     }
                 }
                 let profiles = (0..PLUNGE_STEPS).map(|_| OnceLock::new()).collect();
-                let (crest, fore, back) = (rim_of(j as f64 + RANGE_STEEP_HALF_WIDTH / RANGE_SPACING), rim_of(j as f64), rim_of(j as f64 + 1.0));
-                let weight = (sheets - j as f64).clamp(0.0, 1.0);
-                Some(Sheet { crest, fore, back, weight, start, structure, slots, reached, runs, profiles })
+                Some(Sheet { start, structure, slots, reached, runs, profiles })
             })
             .collect();
         let first = band.0.max(0.0);
         let top = band.1.min(column.total + age * RANGE_RISE * crest).max(first);
         let count = ((top - first) / CONTACT_RAMP).ceil() as usize + 1;
-        Faces { sheets, plunges, first, count, column: column.clone(), age, limits: OnceLock::new() }
+        Faces { sheets, plunges, first, count, column: column.clone(), age }
     }
 
     /// The share of its height sheet `sheet` stands at, `along` its edge's
@@ -919,7 +889,7 @@ impl Faces {
         sheet.profiles[p].get_or_init(|| {
             let (column, age, n) = (&self.column, self.age, sheet.structure.len());
             let share = plunge_step(p);
-            let limits = self.limits();
+            let limits = Limits::new(column, age);
             let mut profiles = Vec::with_capacity(self.count * sheet.reached);
             let (mut depths, mut sums, mut falls, mut h) = (vec![0.0; n], vec![0.0; n], vec![0.0; n], vec![0.0; n]);
             for k in 0..self.count {
@@ -957,95 +927,37 @@ impl Faces {
         }
     }
 
-    /// The column's grades and wear by depth.
-    fn limits(&self) -> &Limits {
-        self.limits.get_or_init(|| Limits::new(&self.column, self.age))
-    }
-
     /// The wedge's share at a distance `d` from the front, `along` its
     /// strike, on ground where `remaining` cover is left: the highest of
-    /// its sheets, each at its own plunge, cut by its ravines.
+    /// its sheets, each at its own plunge.
     fn at(&self, d: f64, along: f64, remaining: f64) -> f64 {
-        self.surface(d, along, remaining, |j| self.plunge(j, along))
+        self.at_plunged(d, remaining, |j| self.plunge(j, along))
     }
 
-    /// [`Faces::at`] with sheet `j` at the share `plunge(j)` of its height.
-    fn surface(&self, d: f64, along: f64, remaining: f64, plunge: impl Fn(usize) -> f64) -> f64 {
-        let mut best = 0.0f64;
-        for j in self.spanning(d) {
-            let m = plunge(j);
-            let face = self.face(j, d, remaining, m);
-            if face <= best { continue }
-            best = best.max(face - self.ravine(j, d, along, remaining, m, face));
-        }
-        best
-    }
-
-    /// The sheets whose spans hold a distance `d` from the front.
-    fn spanning(&self, d: f64) -> impl Iterator<Item = usize> + '_ {
-        let x = (d - SCREE_START) / REPOSE_STEP;
-        let i = if x < 0.0 { None } else { Some(x as usize) };
-        self.sheets.iter().enumerate().filter_map(move |(j, sheet)| {
-            let i = i?;
-            (i + 1 >= sheet.start && i < sheet.start + sheet.structure.len()).then_some(j)
-        })
-    }
-
-    /// The faces alone, without the ravines: [`Faces::surface`] before the
-    /// cut.
-    #[cfg(test)]
+    /// [`Faces::at`] with sheet `j` at the share `plunge(j)` of its height:
+    /// each sheet whose span holds `d` read from the four profiles
+    /// bracketing its cover and plunge, blended; past either end of the
+    /// covers, the end one.
     fn at_plunged(&self, d: f64, remaining: f64, plunge: impl Fn(usize) -> f64) -> f64 {
-        self.spanning(d).map(|j| self.face(j, d, remaining, plunge(j))).fold(0.0, f64::max)
-    }
-
-    /// Sheet `j`'s face at a distance `d` from the front at the share
-    /// `plunge` of its height, on ground where `remaining` cover is left:
-    /// the four profiles bracketing its cover and plunge, blended; past
-    /// either end of the covers, the end one.
-    fn face(&self, j: usize, d: f64, remaining: f64, plunge: f64) -> f64 {
+        let x = (d - SCREE_START) / REPOSE_STEP;
+        if x < 0.0 {
+            return 0.0;
+        }
+        let i = x as usize;
         let c = ((remaining - self.first) / CONTACT_RAMP).clamp(0.0, (self.count - 1) as f64);
         let k = (c as usize).min(self.count.saturating_sub(2));
         let k1 = (k + 1).min(self.count - 1);
-        let m = ((plunge - PLUNGE_FLOOR) / PLUNGE_STEP).clamp(0.0, (PLUNGE_STEPS - 1) as f64);
-        let p = (m as usize).min(PLUNGE_STEPS - 2);
-        let read = |k: usize, p: usize| between(d, |i| self.point(j, k, p, i));
-        let low = read(k, p) + (read(k, p + 1) - read(k, p)) * (m - p as f64);
-        let high = read(k1, p) + (read(k1, p + 1) - read(k1, p)) * (m - p as f64);
-        low + (high - low) * (c - k as f64)
-    }
-
-    /// How deep sheet `j`'s ravines cut its face, standing at `face`, at a
-    /// distance `d` from the front, `along` its strike, as a share of a
-    /// range's rise: the cut down the flank times the across profile of
-    /// the ravines about the position.
-    ///
-    /// The cut is the least of three. The gully's growth: [`RAVINE_HEAD`]
-    /// at the crest, growing as the square root of the way down the flank
-    /// toward [`RAVINE_TOE`] of the sheet's height, as a channel grows with
-    /// the ground it drains. The depth whose across profile's steepest wall
-    /// stands at the rock's own limit, [`face_grade`]: a ravine is as deep
-    /// as its walls can stand, a slot in young basement and a shallow V in
-    /// shale, the one rule the face already stands by. And the height the
-    /// face stands above the higher of its flank's two ends, so a ravine
-    /// shallows to nothing at the trough and at the front, the toe past
-    /// the front uncut where a gully spreads onto its fan, and the sheet's
-    /// own height is the most it can lose. The rock is the column's around
-    /// the depth the plunged structure exposes, the grades and wear blended
-    /// over a contact ramp, so the cut is continuous across contacts.
-    fn ravine(&self, j: usize, d: f64, along: f64, remaining: f64, plunge: f64, face: f64) -> f64 {
-        let sheet = &self.sheets[j];
-        let ends = self.face(j, sheet.fore, remaining, plunge).max(self.face(j, sheet.back, remaining, plunge));
-        if face <= ends { return 0.0 }
-        let end = if d < sheet.crest { sheet.fore } else { sheet.back };
-        let down = ((d - sheet.crest) / (end - sheet.crest)).clamp(0.0, 1.0);
-        let toe = RAVINE_TOE * RANGE_RISE * plunge * sheet.weight;
-        let growth = RAVINE_HEAD + (toe - RAVINE_HEAD).max(0.0) * down.sqrt();
-        let structure = between(d, |i| i.checked_sub(sheet.start).and_then(|i| sheet.structure.get(i)).copied().unwrap_or(0.0));
-        let depth = exposed_in(&self.column, remaining, self.age, RANGE_RISE * plunge * structure);
-        let (grade, wear) = self.limits().around(depth);
-        let (u, half_width) = ravine_site(self.plunges[j], along);
-        let cut = growth.min(wall_depth(grade, wear, half_width)).min((face - ends) * RANGE_RISE) / RANGE_RISE;
-        cut * profile(u, wear)
+        let mut best = 0.0f64;
+        for (j, sheet) in self.sheets.iter().enumerate() {
+            if i + 1 < sheet.start || i >= sheet.start + sheet.structure.len() { continue }
+            let m = ((plunge(j) - PLUNGE_FLOOR) / PLUNGE_STEP).clamp(0.0, (PLUNGE_STEPS - 1) as f64);
+            let p = (m as usize).min(PLUNGE_STEPS - 2);
+            let read = |k: usize, p: usize| between(d, |i| self.point(j, k, p, i));
+            let low = read(k, p) + (read(k, p + 1) - read(k, p)) * (m - p as f64);
+            let high = read(k1, p) + (read(k1, p + 1) - read(k1, p)) * (m - p as f64);
+            best = best.max(low + (high - low) * (c - k as f64));
+        }
+        best
     }
 
     /// The wedge's share at a distance `d` from the front, `along` its
@@ -1127,82 +1039,6 @@ fn plunge_at(seed: u64, along: f64) -> f64 {
     1.0 - (1.0 - PLUNGE_FLOOR) * (0.5 * (1.0 - n)).powi(3)
 }
 
-// ── The ravines ─────────────────────────────────────────────────────────────
-
-/// Spacing of the ravines down a range's flanks along strike, in world
-/// units: two kilometres, the gully spacing of mountain fronts, on the
-/// vertical scale that maps Earth's 4 km abyssal plain to
-/// [`SEA_MAX_DEPTH`], through the z-to-world ratio the dips use, as the
-/// sheet spacing is.
-pub const RAVINE_SPACING: f64 = SEA_MAX_DEPTH / 4.0 * 2.0 * RISE;
-
-/// How far a ravine's site strays from its place along strike, as a share
-/// of the spacing: a quarter, so the two sites bracketing a position are
-/// the one at the place its along rounds to and a neighbour, and no two
-/// sites are nearer than half the spacing.
-const RAVINE_JITTER: f64 = 0.25;
-
-/// How deep a ravine's head notches the crest, in z-levels: half what half
-/// the spacing climbs at repose, so from a col the crest rises to the
-/// summit beside it at half repose, a ridge walked along.
-pub const RAVINE_HEAD: f64 = 0.5 * 0.5 * RAVINE_SPACING * REPOSE_GRADE;
-
-/// The depth a ravine grows toward at the foot of its flank, as a share of
-/// its sheet's height: a tenth, the few hundred metres a gully at a
-/// mountain front is cut below its spurs on a range a few kilometres high.
-const RAVINE_TOE: f64 = 0.1;
-
-const RAVINE_SEED: u64 = 0x5261_7669_6e65_5f5f; // "Ravine__"
-
-/// Where a position `along` a sheet's strike stands among the ravines the
-/// sheet's `seed` sites: its share `u` of the way from the nearest site to
-/// the spur halfway to the next, and the nearest ravine's half-width, half
-/// the nearer of its two neighbours. The spur between two sites stands at
-/// one from both, so neighbouring ravines meet at a spur that keeps the
-/// face's height; a ravine is as wide as its narrower side, so its walls
-/// stand within their limit on both. Three hashes: the site the along
-/// rounds to, the neighbour on its side, and the nearest site's other.
-fn ravine_site(seed: u64, along: f64) -> (f64, f64) {
-    let site = |k: i64| site_of(seed, k);
-    let place = (along / RAVINE_SPACING).round() as i64;
-    let here = site(place);
-    let (k, a, b) = if along >= here { (place, here, site(place + 1)) } else { (place - 1, site(place - 1), here) };
-    let half = 0.5 * (b - a);
-    let (nearest, outer) = if along - a <= b - along { (k, site(k - 1)) } else { (k + 1, site(k + 2)) };
-    let gap = if nearest == k { a - outer } else { outer - b };
-    let u = (along - a).min(b - along) / half;
-    (u, half.min(0.5 * gap))
-}
-
-/// Where the `k`-th ravine the sheet's `seed` sites lies along strike:
-/// its place, strayed by [`RAVINE_JITTER`] of the spacing at most.
-fn site_of(seed: u64, k: i64) -> f64 {
-    (k as f64 + (hash_channel_f64(k, 0, seed ^ RAVINE_SEED, 0) - 0.5) * 2.0 * RAVINE_JITTER) * RAVINE_SPACING
-}
-
-/// The depth a ravine `half_width` wide is cut to with its steepest wall at
-/// `grade`, through rock of erodibility `wear`, in z-levels.
-fn wall_depth(grade: f64, wear: f64, half_width: f64) -> f64 {
-    grade * half_width / steepest_wall(wear)
-}
-
-/// The steepest dissection's valley profile falls through rock of
-/// erodibility `wear`, per unit of its share of the half-width: where the
-/// derivative of `(1 - smoothstep(u))^(1/wear)` is greatest, found by
-/// halving on the zero of its logarithmic derivative. A ravine cut by this
-/// over half the spacing stands its walls at the grade it is held to.
-fn steepest_wall(wear: f64) -> f64 {
-    let k = 1.0 / wear.max(0.05);
-    let s = |u: f64| u * u * (3.0 - 2.0 * u);
-    let (mut lo, mut hi) = (0.0f64, 0.5f64);
-    for _ in 0..40 {
-        let u = 0.5 * (lo + hi);
-        if (k - 1.0) * 6.0 * u * u * (1.0 - u) * (1.0 - u) < (1.0 - 2.0 * u) * (1.0 - s(u)) { lo = u } else { hi = u }
-    }
-    let u = 0.5 * (lo + hi);
-    k * (1.0 - s(u)).powf(k - 1.0) * 6.0 * u * (1.0 - u)
-}
-
 // ── The cover ───────────────────────────────────────────────────────────────
 
 /// Spacing of the samples an edge reads the cover over its ground at, in
@@ -1250,61 +1086,33 @@ struct Limits {
     /// integral over the first `j` steps, in z-levels per world unit times
     /// z-levels of column.
     sums: Vec<f64>,
-    /// The rock's erodibility summed down the column the same way.
-    wears: Vec<f64>,
-    /// The grade and the erodibility at the top of the column, and in
-    /// basement past its foot.
-    top: (f64, f64),
-    basement: (f64, f64),
+    /// The grade at the top of the column, and in basement past its foot.
+    top: f64,
+    basement: f64,
 }
 
 impl Limits {
     fn new(column: &Column, age: f64) -> Self {
         let steps = (column.total / DEPTH_STEP).ceil() as usize + 1;
-        let rock = |depth: f64| column.floor_at(depth, age).0;
-        let (mut sums, mut wears) = (Vec::with_capacity(steps + 1), Vec::with_capacity(steps + 1));
+        let grade = |depth: f64| face_grade(column.floor_at(depth, age).0, age);
+        let mut sums = Vec::with_capacity(steps + 1);
         sums.push(0.0);
-        wears.push(0.0);
         for j in 0..steps {
-            let r = rock((j as f64 + 0.5) * DEPTH_STEP);
-            sums.push(sums[j] + DEPTH_STEP * face_grade(r, age));
-            wears.push(wears[j] + DEPTH_STEP * r.erodibility());
+            sums.push(sums[j] + DEPTH_STEP * grade((j as f64 + 0.5) * DEPTH_STEP));
         }
-        let (top, basement) = (rock(0.0), Rock::Basement);
-        Limits {
-            sums,
-            wears,
-            top: (face_grade(top, age), top.erodibility()),
-            basement: (face_grade(basement, age), basement.erodibility()),
-        }
+        Limits { sums, top: grade(0.0), basement: face_grade(Rock::Basement, age) }
     }
 
     /// The integral of the grade from the top of the column to `depth`,
     /// straight between the steps and carried on past either end at the
     /// grade there.
     fn integral(&self, depth: f64) -> f64 {
-        Self::summed(&self.sums, self.top.0, self.basement.0, depth)
-    }
-
-    /// The integral `sums` hold to `depth`, carried on past the top at
-    /// `top` and past the foot at `foot`.
-    fn summed(sums: &[f64], top: f64, foot: f64, depth: f64) -> f64 {
-        let end = (sums.len() - 1) as f64 * DEPTH_STEP;
-        if depth <= 0.0 { return depth * top }
-        if depth >= end { return sums[sums.len() - 1] + (depth - end) * foot }
+        let end = (self.sums.len() - 1) as f64 * DEPTH_STEP;
+        if depth <= 0.0 { return depth * self.top }
+        if depth >= end { return self.sums[self.sums.len() - 1] + (depth - end) * self.basement }
         let x = depth / DEPTH_STEP;
         let j = x as usize;
-        sums[j] + (sums[j + 1] - sums[j]) * (x - j as f64)
-    }
-
-    /// The mean grade and erodibility of the rock over a contact ramp of
-    /// column about `depth`: continuous in it, as a contact is spread over
-    /// a ramp.
-    fn around(&self, depth: f64) -> (f64, f64) {
-        let (a, b) = (depth - 0.5 * CONTACT_RAMP, depth + 0.5 * CONTACT_RAMP);
-        let grade = (self.integral(b) - self.integral(a)) / CONTACT_RAMP;
-        let wear = (Self::summed(&self.wears, self.top.1, self.basement.1, b) - Self::summed(&self.wears, self.top.1, self.basement.1, a)) / CONTACT_RAMP;
-        (grade, wear)
+        self.sums[j] + (self.sums[j + 1] - self.sums[j]) * (x - j as f64)
     }
 
     /// The most the surface falls over a step whose ends expose depths `a`
@@ -1690,159 +1498,6 @@ mod tests {
         assert!(together.abs() < 0.2, "neighbouring sheets rise and fall together, {together}");
     }
 
-    /// The full wedge on a new plate's column.
-    fn young_faces() -> Faces {
-        faces_of(WEDGE_SHEETS, &Column::of((3, 4), S), 0.0)
-    }
-
-    /// How far below its face the surface stands along strike at a
-    /// distance `d`, at full height on ground with no cover, which is bare
-    /// basement: every step's cut, in z-levels.
-    fn cuts(faces: &Faces, d: f64, from: f64, to: f64, step: f64) -> Vec<(f64, f64)> {
-        let mut out = Vec::new();
-        let mut a = from;
-        while a <= to {
-            let face = faces.at_plunged(d, 0.0, |_| 1.0);
-            out.push((a, (face - faces.surface(d, a, 0.0, |_| 1.0)) * RANGE_RISE));
-            a += step;
-        }
-        out
-    }
-
-    /// A ravine is cut below its face and never above it: the cut is never
-    /// negative and never more than the face stands above its flank's ends.
-    #[test]
-    fn a_ravine_is_cut_below_the_face() {
-        for age in [0.0, 1.0] {
-            let column = Column::of((3, 4), S);
-            let faces = faces_of(WEDGE_SHEETS, &column, age);
-            for remaining in [0.0, 60.0, 150.0] {
-                for p in [0, PLUNGE_STEPS - 1] {
-                    let mut d = SCREE_START;
-                    while d < WEDGE_REACH + SCREE_REACH {
-                        for a in [0.0, 11.0, 23.0, 37.0] {
-                            let face = faces.at_plunged(d, remaining, |_| plunge_step(p));
-                            let surface = faces.surface(d, a, remaining, |_| plunge_step(p));
-                            assert!(surface <= face + 1e-12 && surface >= -1e-12, "a ravine above its face at {d}");
-                        }
-                        d += 17.0;
-                    }
-                }
-            }
-        }
-    }
-
-    /// At a spur the face stands whole, and at the crest a ravine's head
-    /// notches it by the head depth where the walls can stand that deep:
-    /// the col.
-    #[test]
-    fn a_ravine_is_nothing_at_a_spur_and_its_head_at_a_col() {
-        let faces = young_faces();
-        let (j, seed) = (0, faces.plunges[0]);
-        let crest = faces.sheets[j].crest;
-        let mut heads = 0;
-        for k in 0..40 {
-            let (a, b) = (site_of(seed, k), site_of(seed, k + 1));
-            let spur = faces.surface(crest, 0.5 * (a + b), 0.0, |_| 1.0);
-            assert!((spur - faces.at_plunged(crest, 0.0, |_| 1.0)).abs() < 1e-12, "the spur between sites {k} and {} is cut", k + 1);
-            let col = cuts(&faces, crest, a, a, 1.0)[0].1;
-            let (_, half_width) = ravine_site(seed, a);
-            let (grade, wear) = faces.limits().around(exposed_in(&faces.column, 0.0, 0.0, RANGE_RISE * faces.structure_plunged(crest, |_| 1.0)));
-            let expected = RAVINE_HEAD.min(wall_depth(grade, wear, half_width));
-            assert!((col - expected).abs() < 1e-6, "the col at site {k} is {col} deep, not {expected}");
-            if expected == RAVINE_HEAD { heads += 1 }
-        }
-        assert!(heads > 0, "no col stood at the head depth");
-    }
-
-    /// Along the crest the ground alternates summits and cols, about one of
-    /// each to a ravine spacing.
-    #[test]
-    fn the_crest_alternates_summits_and_cols() {
-        let faces = young_faces();
-        let crest = faces.sheets[0].crest;
-        let length = 200.0 * RAVINE_SPACING;
-        let cut = cuts(&faces, crest, 0.0, length, 1.0);
-        let cols = cut.windows(3).filter(|w| w[1].1 > w[0].1 && w[1].1 >= w[2].1 && w[1].1 > 1.0).count();
-        let summits = cut.windows(3).filter(|w| w[1].1 < w[0].1 && w[1].1 <= w[2].1).count() + cut.iter().filter(|c| c.1 == 0.0).count().min(1);
-        let expected = length / RAVINE_SPACING;
-        assert!((0.8 * expected..=1.2 * expected).contains(&(cols as f64)), "{cols} cols over {expected} spacings");
-        assert!(summits > 0, "no summits");
-    }
-
-    /// The surface is continuous across ravine sites, across a sheet from
-    /// its toe past the front to its rim, at the troughs and at every
-    /// plunge: over a ten-thousandth of a unit it moves by a hair. A
-    /// ravine deepens or shallows steeply where its rock changes, a
-    /// knickpoint as steep as the contact ramp is short on the flank, so a
-    /// bound on a longer step would measure the contacts, not the seams.
-    #[test]
-    fn ravines_are_continuous() {
-        let column = Column::of((3, 4), S);
-        for age in [0.0, 0.6] {
-            let faces = faces_of(WEDGE_SHEETS, &column, age);
-            let (step, bound) = (1e-4, 0.1);
-            for p in [0, 2, PLUNGE_STEPS - 1] {
-                let at = |d: f64, a: f64| faces.surface(d, a, 40.0, |_| plunge_step(p)) * RANGE_RISE;
-                let mut d = SCREE_START;
-                while d < WEDGE_REACH + SCREE_REACH {
-                    let mut a = 0.0;
-                    while a < 4.0 * RAVINE_SPACING {
-                        let here = at(d, a);
-                        assert!((at(d + step, a) - here).abs() <= bound, "a step across strike at {d}, {a}");
-                        assert!((at(d, a + step) - here).abs() <= bound, "a step along strike at {d}, {a}");
-                        a += 3.7;
-                    }
-                    d += 2.3;
-                }
-            }
-        }
-    }
-
-    /// A ravine's walls stand no steeper than the rock they are cut in.
-    #[test]
-    fn a_ravine_wall_stands_within_its_rock() {
-        let column = Column::of((3, 4), S);
-        for age in [0.0, 1.0] {
-            let faces = faces_of(WEDGE_SHEETS, &column, age);
-            for sheet in &faces.sheets {
-                for d in [0.5 * (sheet.fore + sheet.crest), 0.5 * (sheet.crest + sheet.back)] {
-                    // Every sheet there reads its rock by its own structure.
-                    let grade = faces.spanning(d).map(|j| {
-                        let s = &faces.sheets[j];
-                        let structure = between(d, |i| i.checked_sub(s.start).and_then(|i| s.structure.get(i)).copied().unwrap_or(0.0));
-                        faces.limits().around(exposed_in(&column, 0.0, age, RANGE_RISE * structure)).0
-                    }).fold(0.0, f64::max);
-                    let step = 0.1;
-                    let walls = cuts(&faces, d, 0.0, 6.0 * RAVINE_SPACING, step);
-                    let walls: Vec<f64> = walls.iter().map(|w| w.1).collect();
-                    for w in walls.windows(2) {
-                        assert!((w[1] - w[0]).abs() / step <= grade * (1.0 + 1e-3) + 1e-6, "a wall at {} past {grade}", (w[1] - w[0]).abs() / step);
-                    }
-                }
-            }
-        }
-    }
-
-    /// A ravine through young basement is cut deeper than one through
-    /// shale as wide: its walls hold the steeper grade, though its profile
-    /// crowds them toward the floor.
-    #[test]
-    fn young_basement_ravines_cut_deeper_than_shale() {
-        let w = 0.5 * RAVINE_SPACING;
-        let basement = wall_depth(face_grade(Rock::Basement, 0.0), Rock::Basement.erodibility(), w);
-        let shale = wall_depth(face_grade(Rock::Shale, 0.0), Rock::Shale.erodibility(), w);
-        assert!(basement > shale, "young basement cut {basement}, shale {shale}");
-        // The wall's steepest grade is the valley profile's steepest.
-        for wear in [0.3, 0.5, 0.6, 1.0] {
-            let numeric = (0..10_000).map(|i| {
-                let u = i as f64 / 10_000.0;
-                (profile(u, wear) - profile(u + 1e-4, wear)) / 1e-4
-            }).fold(0.0, f64::max);
-            assert!((numeric - steepest_wall(wear)).abs() < 1e-2 * numeric, "the steepest wall at {wear} is {numeric}, not {}", steepest_wall(wear));
-        }
-    }
-
     /// Along strike the relief is continuous at a distance from a bent
     /// chain: the position's place along the line moves no faster than the
     /// position, so the plunge moves by no more than its gradient's chord
@@ -1961,15 +1616,8 @@ mod tests {
                 })
                 .fold(0.0, f64::max)
         };
-        // A ravine's wall stands at its rock's limit, and below the crest
-        // its head deepens as the square root of the way down the shortest
-        // flank.
-        let shortest = RANGE_STEEP_HALF_WIDTH * (1.0 - BELT_SHORTENING);
-        let ravine = |run: f64| face_grade(Rock::Basement, 0.0) * run + (RAVINE_TOE * RANGE_RISE - RAVINE_HEAD) * (run / shortest).sqrt();
         let bound = |x0: f64, y0: f64, x1: f64, y1: f64| {
-            let run = stretch_at(x0, y0, S).0 * (x1 - x0).hypot(y1 - y0);
-            steepest * run
-                + ravine(run)
+            steepest * stretch_at(x0, y0, S).0 * (x1 - x0).hypot(y1 - y0)
                 + blend * (cover(x1, y1, S) - cover(x0, y0, S)).abs()
                 + plunged * moved(x0, y0, x1, y1)
         };
