@@ -104,7 +104,7 @@ use crate::tectonic::{edges_of, plate_cell_for, plates_near, PlateId, PLATE_REAC
 use super::plates::{warp, WARP_SWING};
 use crate::{hex_to_world, smoothstep, RISE, SEA_MAX_DEPTH};
 use super::index::{CellId, CellIndex, IndexRegistry};
-use super::lithology::{cover, exposed_in, Column, Rock, CONTACT_RAMP};
+use super::lithology::{cover, cover_on, exposed_in, Column, Rock, BELT_COVER, CONTACT_RAMP};
 use super::motion::{resolve, BoundaryRegime, BoundarySegment, PlateBoundaryIndex};
 use super::plates::GRAPH_CELL_SCALE;
 use super::thickening::ESCARPMENT;
@@ -185,7 +185,7 @@ pub const REPOSE_GRADE: f64 = REPOSE_TAN / RISE;
 
 /// How far talus from a full range's crest reaches, in world units: its
 /// height over the repose grade, the gentlest slope any rock lies at.
-const SCREE_REACH: f64 = RANGE_RISE / REPOSE_GRADE;
+pub const SCREE_REACH: f64 = RANGE_RISE / REPOSE_GRADE;
 
 /// Spacing of the points a cross-section is read at to hold it under its
 /// rock's limit, in world units, on a grid fixed in the across-strike
@@ -583,9 +583,23 @@ impl Outlines {
     /// standing, so a caller reading several layers at one position looks
     /// the plate up once.
     pub fn relief_of(&self, at: &Standing) -> f64 {
-        let remaining = cover(at.wx, at.wy, self.seed);
+        let remaining = cover_on(self, at, self.seed);
         let wedges = Self::wedges_of(at.plate, &at.distances, |e, faces, d| faces.at(d, e.along(at.x, at.y), remaining));
-        RANGE_RISE * wedges.max(self.toes_on(at.plate, at.x, at.y, remaining))
+        let toes = self.toes_on(at.plate, at.x, at.y, SCREE_REACH, |front, faces, d| faces.at(-d, front.along(at.x, at.y), remaining));
+        RANGE_RISE * wedges.max(toes)
+    }
+
+    /// How near a position standing `at` lies to the front of a wedge, as a
+    /// share: one at a front, falling smoothly to nothing `own` in from it
+    /// on the plate whose wedge it is and `under` out from it on any other,
+    /// and ended against the wedge's plate's other edges as the wedge is;
+    /// the nearest front's. Past a front it is read as the toes are, from
+    /// every front within `under`, so it is one at the front from both
+    /// sides and continuous around its corners.
+    pub fn front_share(&self, at: &Standing, own: f64, under: f64) -> f64 {
+        let near = |d: f64, reach: f64| 1.0 - smoothstep(d.max(0.0) / reach);
+        let wedges = Self::wedges_of(at.plate, &at.distances, |_, _, d| near(d, own));
+        wedges.max(self.toes_on(at.plate, at.x, at.y, under, |_, _, d| near(d, under)))
     }
 
     /// The height the ranges' structure stands at a position where
@@ -615,22 +629,21 @@ impl Outlines {
         best
     }
 
-    /// The highest toe of talus at rest at a position standing outside the
-    /// plate whose wedge it is, where `remaining` cover is left, as a share
-    /// of a range's rise: every wedge of every other plate in reach, read
-    /// past its front at the position's distance to its edge, and ended
-    /// against that plate's other edges as the wedge is. Read from every
-    /// front in reach, not only across the edge the position is nearest, so
-    /// the plates meeting at a corner all read the same toes around it and
-    /// nothing steps.
-    fn toes_on(&self, plate: &PlateOutline, x: f64, y: f64, remaining: f64) -> f64 {
+    /// The highest toe at a position standing outside the plate whose
+    /// wedge it is, as `share` reads each front at the position's distance
+    /// out past it: every wedge of every other plate whose front lies
+    /// within `reach`, ended against that plate's other edges as the wedge
+    /// is. Read from every front in reach, not only across the edge the
+    /// position is nearest, so the plates meeting at a corner all read the
+    /// same toes around it and nothing steps.
+    fn toes_on(&self, plate: &PlateOutline, x: f64, y: f64, reach: f64, share: impl Fn(&EdgeOutline, &Faces, f64) -> f64) -> f64 {
         let mut best = 0.0f64;
         for &(id, k, bounds) in &self.fronts {
-            if id == plate.id || box_distance(bounds, x, y) >= SCREE_REACH { continue }
+            if id == plate.id || box_distance(bounds, x, y) >= reach { continue }
             let p = &self.plates[&id];
             let front = &p.edges[k];
             let Some(faces) = &front.faces else { continue };
-            let family = faces.at(-front.distance(x, y).0, front.along(x, y), remaining);
+            let family = share(front, faces, front.distance(x, y).0);
             if family <= 0.0 { continue }
             let others = p
                 .edges
@@ -1051,8 +1064,9 @@ const COVER_SAMPLE: f64 = RANGE_SPACING;
 /// of the edge's chain, widened by the faces' reach and the warp a tile
 /// reads the chain through, then widened by the most two neighbouring
 /// samples part by, more than the cover moves between a sample and a
-/// position nearest it. A position outside reads the end profile, so its
-/// faces stay continuous.
+/// position nearest it, and up to the [`BELT_COVER`] the belt fills to at
+/// its front. A position outside reads the end profile, so its faces stay
+/// continuous.
 fn cover_band(bounds: [f64; 4], seed: u64) -> (f64, f64) {
     let reach = WEDGE_REACH + SCREE_REACH + WARP_SWING;
     let [x0, y0, x1, y1] = [bounds[0] - reach, bounds[1] - reach, bounds[2] + reach, bounds[3] + reach];
@@ -1068,7 +1082,7 @@ fn cover_band(bounds: [f64; 4], seed: u64) -> (f64, f64) {
             (lo, hi) = (lo.min(c), hi.max(c));
         }
     }
-    (lo - part, hi + part)
+    (lo - part, (hi + part).max(BELT_COVER))
 }
 
 /// The grades a plate's rock holds down its column, as what a step of a
@@ -1094,7 +1108,9 @@ struct Limits {
 impl Limits {
     fn new(column: &Column, age: f64) -> Self {
         let steps = (column.total / DEPTH_STEP).ceil() as usize + 1;
-        let grade = |depth: f64| face_grade(column.floor_at(depth, age).0, age);
+        // The faces stand by the rock the platform's cuesta floor shows:
+        // the flank's cut is lithology's, laid over them.
+        let grade = |depth: f64| face_grade(column.floor_at(depth, age, 0.0).0, age);
         let mut sums = Vec::with_capacity(steps + 1);
         sums.push(0.0);
         for j in 0..steps {
@@ -1361,7 +1377,7 @@ mod tests {
             let depth = |i: usize| exposed_in(&column, remaining, age, RANGE_RISE * share * sheet.structure[i]);
             for i in 1..n {
                 let (a, b) = (depth(i - 1).min(depth(i)), depth(i - 1).max(depth(i)));
-                let rocks: Vec<Rock> = (0..=16).map(|j| column.floor_at(a + (b - a) * j as f64 / 16.0, age).0).collect();
+                let rocks: Vec<Rock> = (0..=16).map(|j| column.floor_at(a + (b - a) * j as f64 / 16.0, age, 0.0).0).collect();
                 let hardest = rocks.iter().map(|&r| face_grade(r, age)).fold(0.0, f64::max);
                 let grade = (h[i] - h[i - 1]).abs() * RANGE_RISE / REPOSE_STEP;
                 assert!(grade <= hardest * (1.0 + 1e-4) + 1e-3, "a step at {grade}, past the {hardest} its hardest rock holds");
@@ -1616,9 +1632,11 @@ mod tests {
                 })
                 .fold(0.0, f64::max)
         };
+        // The cover a position reads its faces at, the belt's fill with it.
+        let filled = |x: f64, y: f64| outlines.at(x, y).map_or(cover(x, y, S), |at| cover_on(&outlines, &at, S));
         let bound = |x0: f64, y0: f64, x1: f64, y1: f64| {
             steepest * stretch_at(x0, y0, S).0 * (x1 - x0).hypot(y1 - y0)
-                + blend * (cover(x1, y1, S) - cover(x0, y0, S)).abs()
+                + blend * (filled(x1, y1) - filled(x0, y0)).abs()
                 + plunged * moved(x0, y0, x1, y1)
         };
         let (mut fronts, mut toes) = (0, 0);
@@ -1634,7 +1652,7 @@ mod tests {
                 let (mx, my) = unwarp(mx, my, S);
                 let at = |t: f64| outlines.relief(mx + s.nx * t, my + s.ny * t);
                 let (fx, fy) = warp(mx, my, S);
-                if e.faces.as_ref().unwrap().at(-10.0, e.along(fx, fy), cover(mx, my, S)) > 0.0 {
+                if e.faces.as_ref().unwrap().at(-10.0, e.along(fx, fy), filled(mx, my)) > 0.0 {
                     toes += 1;
                     assert!(at(-4.0) > 0.0, "no talus rests across the front of {:?}", plate.id);
                 }

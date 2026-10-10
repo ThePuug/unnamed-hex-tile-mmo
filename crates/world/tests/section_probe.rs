@@ -1,9 +1,12 @@
-//! Section probe — the ground and the ranges' own relief along a line.
+//! Section probe — the ground, the ranges' own relief, the rock at the
+//! surface, the depth into the column it is exposed at and what it stands
+//! or is cut by, and the plate's age along a line.
 //! Run: SECTION="x0,y0,x1,y1,step" cargo test -p world --release --test section_probe -- --ignored --nocapture
 
 use world::events::Composite;
+use world::events::lithology::rock_on;
 use world::events::thrusting::Outlines;
-use world::world_to_hex;
+use world::{hex_to_world, world_to_hex, Coasts};
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
 
@@ -16,8 +19,9 @@ fn section() {
     let c = Composite::standard(SEED);
     let len = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt();
     let outlines = Outlines::in_box((x0 + x1) / 2.0, (y0 + y1) / 2.0, len / 2.0 + 10.0, SEED);
+    let coasts = Coasts::in_box((x0 + x1) / 2.0, (y0 + y1) / 2.0, len / 2.0 + 10.0, SEED);
     let n = (len / step).ceil() as usize;
-    println!("{:>8} {:>10} {:>10} {:>8} {:>8} {:>8} {:>10} {:>5}  plate", "s", "wx", "wy", "ground", "ranges", "water", "rock", "age");
+    println!("{:>8} {:>10} {:>10} {:>8} {:>8} {:>8} {:>10} {:>7} {:>7} {:>5}  plate", "s", "wx", "wy", "ground", "ranges", "water", "rock", "exposed", "stand", "age");
     for i in 0..=n {
         let t = i as f64 / n as f64;
         let (wx, wy) = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
@@ -25,12 +29,14 @@ fn section() {
         let view = c.tile_at(q, r);
         let relief = outlines.relief(wx, wy);
         let rock = view.rock.map(|r| format!("{r:?}")).unwrap_or_default();
+        let (cx, cy) = hex_to_world(q, r);
+        let ground = rock_on(cx, cy, SEED, &coasts, &outlines);
         let age = outlines.at(wx, wy).map(|at| format!("{:.2}", at.plate.age)).unwrap_or_default();
         let plate = outlines.at(wx, wy).map(|at| {
             let ds: Vec<String> = at.plate.edges.iter().zip(&at.distances).map(|(e, d)| format!("{}{:.0}", if e.converge > 0.0 { "*" } else { "" }, d)).collect();
             format!("{:?} [{}]", at.plate.id, ds.join(" "))
         }).unwrap_or_default();
         let water = c.water_at(q, r).map(|w| format!("{w}")).unwrap_or_default();
-        println!("{:8.0} {:10.0} {:10.0} {:8.1} {:8.1} {:>8} {rock:>10} {age:>5}  {plate}", t * len, wx, wy, view.elevation, relief, water);
+        println!("{:8.0} {:10.0} {:10.0} {:8.1} {:8.1} {:>8} {rock:>10} {:7.1} {:7.1} {age:>5}  {plate}", t * len, wx, wy, view.elevation, relief, water, ground.exposed, ground.stand);
     }
 }

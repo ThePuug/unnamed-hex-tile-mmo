@@ -76,7 +76,7 @@ use common::HexLattice;
 use dashmap::DashMap;
 
 use super::index::{CellId, CellIndex, IndexRegistry};
-use super::lithology::rock_at;
+use super::lithology::{cover_on, rock_at};
 use super::plates::{coasts_of, Coasts};
 use super::thickening::{plateau_share_of, PLATEAU_RISE};
 use super::thrusting::{outlines_of, Outlines};
@@ -206,7 +206,8 @@ pub struct Ground {
 /// The ground beneath drainage at a position: the layers summed as the
 /// functions they are, the substrate from the coasts in reach, the tilt,
 /// the ranges and the plateau from the plate outlines in reach, and the
-/// cuesta the rock stands as, the plate looked up once for all of them.
+/// cuesta the rock stands as or the cut it is lowered by over that
+/// envelope, the plate looked up once for all of them.
 /// The surface equals the composed tile's elevation at a tile centre.
 pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Ground {
     let substrate = substrate_on(wx, wy, coasts, seed);
@@ -216,8 +217,9 @@ pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlin
     };
     let relief = outlines.relief_of(&at).max(0.0);
     let plateau = PLATEAU_RISE * plateau_share_of(at.plate, &at.distances).max(0.0);
-    let rock = rock_at(wx, wy, seed, at.plate.id, at.plate.age, substrate, outlines.structure_of(&at));
-    Ground { surface: base + relief + plateau + rock.stand, age: at.plate.age, erodibility: rock.erodibility }
+    let rock = rock_at(seed, at.plate.id, at.plate.age, cover_on(outlines, &at, seed), substrate, outlines.structure_of(&at));
+    let envelope = base + relief + plateau;
+    Ground { surface: envelope + rock.stand_over(envelope), age: at.plate.age, erodibility: rock.erodibility }
 }
 
 /// The surface of [`ground_at`] alone.

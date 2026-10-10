@@ -268,7 +268,7 @@ fn ground_sample_costs() {
     time("outlines.at", &|x, y| outlines.at(x, y).map_or(0.0, |s| s.distances[0]));
     time("relief_of", &|x, y| outlines.at(x, y).map_or(0.0, |s| outlines.relief_of(&s)));
     time("plateau", &|x, y| outlines.at(x, y).map_or(0.0, |s| plateau_share_of(s.plate, &s.distances)));
-    time("rock_at", &|x, y| outlines.at(x, y).map_or(0.0, |s| rock_at(x, y, SEED, s.plate.id, s.plate.age, 10.0, 50.0).stand));
+    time("rock_at", &|x, y| outlines.at(x, y).map_or(0.0, |s| rock_at(SEED, s.plate.id, s.plate.age, 60.0, 10.0, 50.0).stand));
     time("ground_at", &|x, y| ground_at(x, y, SEED, &coasts, &outlines).surface);
 }
 
