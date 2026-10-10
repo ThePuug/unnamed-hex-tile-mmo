@@ -202,6 +202,7 @@ pub fn tend_dens(
     registry: Res<EventRegistry>,
     tuning: Res<Tuning>,
     time: Res<Time>,
+    dice: Res<combat::dice::Dice>,
     mut next: Local<Duration>,
     mut commands: Commands,
 ) {
@@ -225,9 +226,10 @@ pub fn tend_dens(
                     site.den = None;
                 }
                 let den = site.den.get_or_insert_with(|| {
-                    // The spec's den: one at its level, or two three below it
+                    // The spec's den: one at its level, or two three below
+                    // it, rolled by the site so a seed pairs the same dens
                     let level = den_level(site.tile, level);
-                    let pair = rand::random::<bool>() && level >= 3;
+                    let pair = dice.roll(("pair", site.tile)).pick(2) == 0 && level >= 3;
                     Den {
                         archetype: EnemyArchetype::denning_on(site.habitat),
                         level: if pair { level - 3 } else { level },
