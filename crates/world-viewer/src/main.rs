@@ -1,11 +1,14 @@
-//! World viewer: the event stack, or one event's product, rendered to an image.
+//! World viewer: the event stack, or one event's published index, rendered
+//! to an image.
 //!
 //! Two kinds of view, and a view is one or the other. A composite view draws
 //! what the stack composes at each tile, read through the composite and
-//! nothing else. An event view draws one event's own product: an index read
-//! from the registry, or a field read through the event's own functions. The
-//! stack built here is the server's stack, so same seed, same image. Which
-//! views exist, and when one is added or removed, is the README.
+//! nothing else. An index view draws what one event published, read from the
+//! registry through `Composite::with_indexes` once the tiles under the
+//! viewport are materialised. Nothing reads a layer's functions directly
+//! (INV-009). The stack built here is the server's stack, so same seed,
+//! same image. Which views exist, and when one is added or removed, is the
+//! README.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -16,21 +19,15 @@ use rayon::prelude::*;
 
 use world::events::Composite;
 use world::events::motion::{BoundaryRegime, BoundarySegment, MarginClass, PlateBoundaryIndex};
-use world::events::thrusting::{Outlines, CONVERGENCE_FULL};
-use world::events::dissection::Valleys;
-use world::events::drainage::{surface_at, DrainageIndex};
+use world::events::thrusting::CONVERGENCE_FULL;
+use world::events::drainage::DrainageIndex;
 use world::events::forest;
-use world::events::lithology::{rock_on, Rock};
 use world::events::migration::ChannelIndex;
-use world::events::plates::{unwarp, Coasts, PlateEdgeIndex};
+use world::events::plates::{unwarp, PlateEdgeIndex};
 use world::lattice::node_world;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layer {
-    /// Plate index: the substrate from the coasts under the viewport, coloured by elevation against sea level.
-    Plates,
-    /// Plate field: each plate's age as a grey ramp, black new, white aged: how far erosion has carried each plate.
-    Age,
     /// Composite: height on the terrain shader's ramp, with slope shading.
     Elevation,
     /// Plate index: every edge of the plate graph along its chain, coasts white and interior edges grey, a dot at each seed.
@@ -38,18 +35,6 @@ enum Layer {
     /// Motion index: plate boundaries, drawn by what the motion resolves
     /// them to.
     Boundaries,
-    /// Thickening field: the plateau on the substrate, hillshaded.
-    ThickeningField,
-    /// Lithology field: the rock at the surface by kind, the cuestas
-    /// hillshaded over it.
-    LithologyField,
-    /// Dissection field: the cut on its own, hillshaded.
-    DissectionField,
-    /// Water field: the dissected ground hillshaded, and every surface
-    /// standing over it in blue, darker with depth.
-    WaterField,
-    /// Tilt field: a diverging ramp, with lean arrows.
-    Tilt,
     /// Motion index: the deformation fronts, the convergent edges' chains facing the overriding plate.
     Fronts,
     /// Drainage index: every reach as its node chain, width by catchment.
@@ -63,49 +48,24 @@ enum Layer {
     /// Stand index: the density the stands give each position, in four
     /// plain bands over whatever is drawn beneath, open ground showing it.
     Stands,
-    /// Moisture field: what the sky gives each position, the sea's share
-    /// less the belts' shadow, on a dry-to-wet ramp; the wind is logged.
-    MoistureField,
 }
 
 /// Every view by its command-line name. The one list: parsing, the help text
 /// and the error message all read it.
 const LAYERS: &[(&str, Layer)] = &[
-    ("plates", Layer::Plates),
-    ("age", Layer::Age),
     ("elevation", Layer::Elevation),
     ("plate-edges", Layer::Edges),
     ("boundaries", Layer::Boundaries),
-    ("tilt", Layer::Tilt),
-    ("thickening-field", Layer::ThickeningField),
-    ("lithology-field", Layer::LithologyField),
-    ("dissection-field", Layer::DissectionField),
-    ("water-field", Layer::WaterField),
     ("thrusting-fronts", Layer::Fronts),
     ("drainage-reaches", Layer::Reaches),
     ("channels", Layer::Channels),
     ("forest", Layer::Forest),
     ("stands", Layer::Stands),
-    ("moisture-field", Layer::MoistureField),
 ];
 
 impl Layer {
     fn name(self) -> &'static str {
         LAYERS.iter().find(|(_, l)| *l == self).map(|(n, _)| *n).unwrap()
-    }
-
-    /// A field view paints every pixel from one field and owns the image, so
-    /// it cannot stack with anything.
-    fn is_whole_image(self) -> bool {
-        matches!(
-            self,
-            Layer::Tilt
-                | Layer::ThickeningField
-                | Layer::LithologyField
-                | Layer::DissectionField
-                | Layer::WaterField
-                | Layer::MoistureField
-        )
     }
 }
 
@@ -165,7 +125,7 @@ struct Cli {
     #[arg(long, default_value_t = 0x9E3779B97F4A7C15)]
     seed: u64,
 
-    #[arg(long, default_value = "plates,elevation", help = layer_help())]
+    #[arg(long, default_value = "elevation", help = layer_help())]
     layers: String,
 
     /// Render as the client draws a distance band: summaries of this
@@ -186,22 +146,6 @@ fn lerp_rgb(a: (f64, f64, f64), b: (f64, f64, f64), t: f64) -> (f64, f64, f64) {
         a.1 + (b.1 - a.1) * t,
         a.2 + (b.2 - a.2) * t,
     )
-}
-
-/// Substrate colour: the crust, graded, with sea level as the only edge in it.
-/// Land and water are the same field either side of zero, so the ramp is
-/// continuous through the datum and the coastline is where it crosses.
-fn substrate_color(elevation: f64) -> (f64, f64, f64) {
-    const DEEP: (f64, f64, f64) = (0.20, 0.25, 0.45);
-    const SHALLOW: (f64, f64, f64) = (0.35, 0.48, 0.62);
-    const SHORE: (f64, f64, f64) = (0.70, 0.65, 0.50);
-    const INTERIOR: (f64, f64, f64) = (0.30, 0.50, 0.30);
-
-    if elevation < 0.0 {
-        lerp_rgb(SHALLOW, DEEP, -elevation / world::SEA_MAX_DEPTH)
-    } else {
-        lerp_rgb(SHORE, INTERIOR, elevation / world::CONTINENT_MAX_RISE)
-    }
 }
 
 /// Darken by local steepness, so relief reads as relief rather than as colour
@@ -282,27 +226,6 @@ fn main() {
         return;
     }
 
-    if let Some(&view) = layers.iter().find(|l| l.is_whole_image()) {
-        if layers.len() > 1 {
-            eprintln!(
-                "{} paints the whole image and cannot stack with other views",
-                view.name()
-            );
-            std::process::exit(1);
-        }
-        let t = Instant::now();
-        let buf = match view {
-            Layer::Tilt => render_tilt(&cli, w, h, scale),
-            Layer::DissectionField => render_dissection_field(&cli, w, h, scale),
-            Layer::WaterField => render_water_field(&cli, w, h, scale),
-            Layer::LithologyField => render_lithology_field(&cli, w, h, scale),
-            Layer::MoistureField => render_moisture_field(&cli, w, h, scale),
-            _ => render_thickening_field(&cli, w, h, scale),
-        };
-        log::info!("Field: {}x{} in {:.2}s", w, h, t.elapsed().as_secs_f64());
-        save(&cli, &buf, width, height);
-        return;
-    }
     let needs_boundaries = layers.contains(&Layer::Boundaries);
 
     // The whole stack, in the order the server builds it, so what the viewer
@@ -439,8 +362,6 @@ fn main() {
     let tc = &tile_cache;
     let layer_slice = &layers;
     let seed = cli.seed;
-    let coasts_box = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let coasts = &coasts_box;
     let pixels: Vec<[u8; 3]> = (0..h)
         .into_par_iter()
         .flat_map(|py| {
@@ -456,17 +377,6 @@ fn main() {
 
                     for &layer in layer_slice {
                         match layer {
-                            Layer::Plates => {
-                                // The substrate itself, which is what this layer
-                                // names — its ramp spans the substrate's own
-                                // range and nothing above it.
-                                color = substrate_color(
-                                    world::substrate_on(wx, wy, coasts, seed));
-                            }
-                            Layer::Age => {
-                                let v = 0.15 + 0.8 * world::tectonic::plate_at(wx, wy, seed).age;
-                                color = (v, v, v);
-                            }
                             Layer::Elevation => {
                                 // The composite surface, on the same ramp the
                                 // terrain shader uses: dense stops through the
@@ -762,11 +672,7 @@ fn save(cli: &Cli, buf: &[u8], width: u32, height: u32) {
     log::info!("Saved {output}");
 }
 
-// ── Field views ─────────────────────────────────────────────────────────────
-//
-// Point-evaluable fields, read through the event's own functions rather than
-// through the composite: no tile is materialised, and the number drawn is the
-// number the event returns, never a re-derivation of it.
+// ── Colour ──────────────────────────────────────────────────────────────────
 
 /// Mirrors the terrain shader's elevation ramp, so a viewer render and the game
 /// read the same heights the same way. See `assets/shaders/terrain.wgsl` for
@@ -795,111 +701,6 @@ fn orogen_ramp(z: f64) -> (f64, f64, f64) {
         if z >= a && z < b { return lerp_rgb(ca, cb, (z - a) / (b - a)) }
     }
     STOPS[STOPS.len() - 1].1
-}
-
-/// The hillshade's light: from the north-west, low, so belts throw shadow
-/// across strike.
-const LIGHT: (f64, f64, f64) = (-0.55, -0.55, 0.63);
-
-/// Lambert shade of the surface at `z` that stands `zx` a step `d` along x
-/// and `zy` a step along y, lit from `LIGHT`: `ambient` facing away from
-/// it, `ambient + diffuse` facing it. RISE converts a z-level to the
-/// crate's horizontal unit of height.
-fn hillshade(z: f64, zx: f64, zy: f64, d: f64, ambient: f64, diffuse: f64) -> f64 {
-    let (lx, ly, lz) = LIGHT;
-    let (gx, gy) = ((zx - z) * world::RISE / d, (zy - z) * world::RISE / d);
-    let inv = 1.0 / (gx * gx + gy * gy + 1.0).sqrt();
-    let (nx, ny, nz) = (-gx * inv, -gy * inv, inv);
-    let lambert = (nx * lx + ny * ly + nz * lz).clamp(0.0, 1.0);
-    ambient + diffuse * lambert
-}
-
-/// The cut on its own, hillshaded: every valley as a depression in a flat
-/// sheet, darker the deeper, so the network's shape reads without the
-/// envelope under it. Routes the drainage cells under the viewport itself,
-/// as the event's own prepare reads them.
-fn render_dissection_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
-    let origin_x = cli.center_x - cli.radius;
-    let origin_y = cli.center_y - cli.radius;
-    let seed = cli.seed;
-    let d = scale.max(1.0);
-    let valleys = Valleys::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let valleys = &valleys;
-    let outlines = Outlines::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let outlines = &outlines;
-    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let coasts = &coasts;
-    let cut = move |x: f64, y: f64| {
-        let envelope = surface_at(x, y, seed, coasts, outlines);
-        valleys.cut_at(x, y, envelope)
-    };
-
-    (0..h).into_par_iter().flat_map(|py| {
-        (0..w).flat_map(move |px| {
-            let wx = origin_x + px as f64 * scale;
-            let wy = origin_y + py as f64 * scale;
-            let z = -cut(wx, wy);
-            let zx = -cut(wx + d, wy);
-            let zy = -cut(wx, wy + d);
-            // Depth on a grey ramp: white at the envelope, dark at 100 z down.
-            let tone = 0.95 - 0.7 * (-z / 100.0).clamp(0.0, 1.0);
-            let shade = hillshade(z, zx, zy, d, 0.35, 0.85);
-            let c = (tone * shade).clamp(0.0, 1.0);
-            [(c * 255.0) as u8, (c * 255.0) as u8, ((c * 0.92) * 255.0) as u8]
-        }).collect::<Vec<u8>>()
-    }).collect()
-}
-
-/// The dissected ground hillshaded in grey, and every surface standing over
-/// it in blue, darker with depth: the sea and the channels.
-/// Routes the drainage cells under the viewport as the event's prepare does.
-fn render_water_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
-    let origin_x = cli.center_x - cli.radius;
-    let origin_y = cli.center_y - cli.radius;
-    let seed = cli.seed;
-    let d = scale.max(1.0);
-    let valleys = Valleys::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let valleys = &valleys;
-    let outlines = Outlines::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let outlines = &outlines;
-    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let coasts = &coasts;
-    // The ground after the cuts, and the surface over it as the tile rule
-    // reads it: rounded to steps, dry where the surface's step is not above
-    // the ground's.
-    let sample = move |x: f64, y: f64| -> (f64, Option<f64>) {
-        let envelope = surface_at(x, y, seed, coasts, outlines);
-        let cuts = valleys.cuts_at(x, y, envelope);
-        let ground = envelope - cuts.valley - cuts.channel;
-        let water = valleys
-            .surface_at(ground, cuts)
-            .map(|s| s.round())
-            .filter(|s| *s > ground.round());
-        (ground, water)
-    };
-
-    (0..h).into_par_iter().flat_map(|py| {
-        (0..w).flat_map(move |px| {
-            let wx = origin_x + px as f64 * scale;
-            let wy = origin_y + py as f64 * scale;
-            let (z, water) = sample(wx, wy);
-            let (zx, _) = sample(wx + d, wy);
-            let (zy, _) = sample(wx, wy + d);
-            let shade = hillshade(z, zx, zy, d, 0.35, 0.85);
-            match water {
-                Some(s) => {
-                    // Depth on a blue ramp: pale at a step deep, deep blue at 30.
-                    let t = ((s - z) / 30.0).clamp(0.0, 1.0);
-                    let c = lerp_rgb((0.55, 0.75, 0.95), (0.05, 0.15, 0.45), t);
-                    [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8]
-                }
-                None => {
-                    let c = (0.85 * shade).clamp(0.0, 1.0);
-                    [(c * 255.0) as u8, (c * 0.97 * 255.0) as u8, (c * 0.9 * 255.0) as u8]
-                }
-            }
-        }).collect::<Vec<u8>>()
-    }).collect()
 }
 
 /// The viewport as one of the client's distance bands draws it: summaries
@@ -1054,225 +855,4 @@ fn canopy_color(ground: (f64, f64, f64), parts: &[common::Canopy]) -> (f64, f64,
     let shares = kinds.into_iter().flat_map(|k| parts.iter().flat_map(move |p| std::iter::repeat(k).take(p.share(k) as usize)));
     let density = parts.iter().map(|p| p.density()).sum::<f64>() / parts.len() as f64;
     trees_color(ground, shares, density)
-}
-
-/// What the sky gives each position, on a ramp from the dry ground's tan
-/// through the interior's grey-green to the wet coast's deep green, the
-/// sea blue. Reads the forest layer's own functions off the coasts and
-/// outlines under the viewport, so the rain shadow is the one the stands
-/// read.
-fn render_moisture_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
-    let origin_x = cli.center_x - cli.radius;
-    let origin_y = cli.center_y - cli.radius;
-    let seed = cli.seed;
-    let wind = forest::wind(seed);
-    log::info!(
-        "wind blows toward ({:.2}, {:.2}), bearing {:.0}° from +x",
-        wind.0,
-        wind.1,
-        wind.1.atan2(wind.0).to_degrees()
-    );
-    let outlines = Outlines::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let outlines = &outlines;
-    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let coasts = &coasts;
-
-    (0..h).into_par_iter().flat_map(|py| {
-        (0..w).flat_map(move |px| {
-            let wx = origin_x + px as f64 * scale;
-            let wy = origin_y + py as f64 * scale;
-            let c = if world::substrate_on(wx, wy, coasts, seed) <= 0.0 {
-                (0.18, 0.30, 0.50)
-            } else {
-                let m = forest::sky_moisture(wx, wy, wind, coasts, outlines);
-                let dry = (0.78, 0.66, 0.42);
-                let mid = (0.55, 0.60, 0.35);
-                let wet = (0.08, 0.40, 0.18);
-                if m < forest::MOISTURE_CLOSED {
-                    lerp_rgb(dry, mid, m / forest::MOISTURE_CLOSED)
-                } else {
-                    lerp_rgb(mid, wet, (m - forest::MOISTURE_CLOSED) / (1.0 - forest::MOISTURE_CLOSED))
-                }
-            };
-            [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8]
-        }).collect::<Vec<u8>>()
-    }).collect()
-}
-
-/// The plateau on the substrate, hillshaded, so the thickening's shape reads
-/// independently of how the vertical scale is calibrated. Marches the fronts
-/// under the viewport itself, since the plateau rises with the wedge.
-fn render_thickening_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
-    let origin_x = cli.center_x - cli.radius;
-    let origin_y = cli.center_y - cli.radius;
-    let seed = cli.seed;
-    let d = scale.max(1.0);
-    // The plateau is read off the plate graph, so the view builds the
-    // outlines under the viewport, as the event's own prepare does.
-    let outlines = Outlines::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let outlines = &outlines;
-    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let coasts = &coasts;
-    let surface = move |x: f64, y: f64| {
-        world::substrate_on(x, y, coasts, seed) + world::events::thickening::thickening_on(x, y, outlines)
-    };
-
-    (0..h).into_par_iter().flat_map(|py| {
-        (0..w).flat_map(move |px| {
-            let wx = origin_x + px as f64 * scale;
-            let wy = origin_y + py as f64 * scale;
-            let z = surface(wx, wy);
-            let zx = surface(wx + d, wy);
-            let zy = surface(wx, wy + d);
-            let base = orogen_ramp(z);
-            let shade = hillshade(z, zx, zy, d, 0.35, 0.85);
-            let c = (
-                (base.0 * shade).clamp(0.0, 1.0),
-                (base.1 * shade).clamp(0.0, 1.0),
-                (base.2 * shade).clamp(0.0, 1.0),
-            );
-            [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8]
-        }).collect::<Vec<u8>>()
-    }).collect()
-}
-
-/// The rock at the surface by kind, shale grey, sandstone tan, limestone
-/// pale, basement dark red, the sea blue, with the cuestas hillshaded: the
-/// bands and rings the cover makes and the scarps that stand on them.
-fn render_lithology_field(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
-    let origin_x = cli.center_x - cli.radius;
-    let origin_y = cli.center_y - cli.radius;
-    let seed = cli.seed;
-    let d = scale.max(1.0);
-    let outlines = Outlines::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let outlines = &outlines;
-    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let coasts = &coasts;
-    let at = move |x: f64, y: f64| {
-        let substrate = world::substrate_on(x, y, coasts, seed);
-        (rock_on(x, y, seed, coasts, outlines), substrate)
-    };
-    let mut counts = [0usize; 5];
-    let buf: Vec<u8> = (0..h).into_par_iter().flat_map(|py| {
-        (0..w).flat_map(move |px| {
-            let wx = origin_x + px as f64 * scale;
-            let wy = origin_y + py as f64 * scale;
-            let (g, substrate) = at(wx, wy);
-            if substrate <= 0.0 {
-                return [40u8, 70, 140];
-            }
-            let base: (f64, f64, f64) = match g.rock {
-                Rock::Shale => (0.55, 0.55, 0.52),
-                Rock::Sandstone => (0.82, 0.68, 0.42),
-                Rock::Limestone => (0.90, 0.88, 0.78),
-                Rock::Basement => (0.55, 0.25, 0.22),
-            };
-            let z = g.stand;
-            let zx = at(wx + d, wy).0.stand;
-            let zy = at(wx, wy + d).0.stand;
-            let shade = hillshade(z, zx, zy, d, 0.45, 0.7);
-            [
-                ((base.0 * shade).clamp(0.0, 1.0) * 255.0) as u8,
-                ((base.1 * shade).clamp(0.0, 1.0) * 255.0) as u8,
-                ((base.2 * shade).clamp(0.0, 1.0) * 255.0) as u8,
-            ]
-        }).collect::<Vec<u8>>()
-    }).collect();
-    // A census of the land in view, for the eye's check of the shares.
-    let step = (w / 200).max(1);
-    for py in (0..h).step_by(step) {
-        for px in (0..w).step_by(step) {
-            let (g, substrate) = at(origin_x + px as f64 * scale, origin_y + py as f64 * scale);
-            if substrate <= 0.0 { counts[4] += 1; continue }
-            counts[match g.rock { Rock::Shale => 0, Rock::Sandstone => 1, Rock::Limestone => 2, Rock::Basement => 3 }] += 1;
-        }
-    }
-    let land: usize = counts[..4].iter().sum::<usize>().max(1);
-    log::info!(
-        "Lithology: shale {:.0}%, sandstone {:.0}%, limestone {:.0}%, basement {:.0}% of the land in view",
-        100.0 * counts[0] as f64 / land as f64,
-        100.0 * counts[1] as f64 / land as f64,
-        100.0 * counts[2] as f64 / land as f64,
-        100.0 * counts[3] as f64 / land as f64,
-    );
-    buf
-}
-
-/// Regional tilt: a diverging ramp over the land/ocean base, with arrows on a
-/// coarse grid showing which way each landmass leans.
-///
-/// Reads the tilt field directly rather than through the composite. `TiltEvent`
-/// is a pure function of position and the substrate beneath it, so this is the
-/// same number the event returns, at a fraction of the cost.
-fn render_tilt(cli: &Cli, w: usize, h: usize, scale: f64) -> Vec<u8> {
-    use world::events::tilt::{TILT_AMPLITUDE, potential, tilt_at};
-    let origin_x = cli.center_x - cli.radius;
-    let origin_y = cli.center_y - cli.radius;
-    let seed = cli.seed;
-    let coasts = Coasts::in_box(cli.center_x, cli.center_y, cli.radius, seed);
-    let coasts = &coasts;
-
-    let mut buf: Vec<u8> = (0..h).into_par_iter().flat_map(|py| {
-        (0..w).flat_map(move |px| {
-            let wx = origin_x + px as f64 * scale;
-            let wy = origin_y + py as f64 * scale;
-            let e = world::substrate_on(wx, wy, coasts, seed);
-            if e < 0.0 {
-                // Ocean, desaturated — tilt does nothing here and the layer
-                // should show that rather than implying it does.
-                let d = (1.0 + e / 200.0).clamp(0.0, 1.0);
-                let v = 0.10 + 0.10 * d;
-                return [(v * 210.0) as u8, (v * 225.0) as u8, (v * 255.0) as u8];
-            }
-            let t = tilt_at(wx, wy, e, seed) / TILT_AMPLITUDE; // -1 .. 1
-            // Diverging: down is blue, up is amber, neutral is a pale grey so
-            // zero reads as zero rather than as a colour.
-            let c = if t >= 0.0 {
-                lerp_rgb((0.88, 0.88, 0.86), (0.85, 0.45, 0.10), t.min(1.0))
-            } else {
-                lerp_rgb((0.88, 0.88, 0.86), (0.10, 0.35, 0.75), (-t).min(1.0))
-            };
-            [(c.0 * 255.0) as u8, (c.1 * 255.0) as u8, (c.2 * 255.0) as u8]
-        }).collect::<Vec<u8>>()
-    }).collect();
-
-    // Lean arrows, downslope, on a coarse grid — magnitude alone cannot show
-    // whether a landmass leans one way or several.
-    let spacing = (w / 26).max(24);
-    let arm = (spacing as f64 * 0.42) as i64;
-    let d = scale * 4.0;
-    let put = |buf: &mut Vec<u8>, x: i64, y: i64| {
-        if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 { return }
-        let k = (y as usize * w + x as usize) * 3;
-        buf[k] = 20; buf[k + 1] = 20; buf[k + 2] = 24;
-    };
-    for gy in (spacing / 2..h).step_by(spacing) {
-        for gx in (spacing / 2..w).step_by(spacing) {
-            let wx = origin_x + gx as f64 * scale;
-            let wy = origin_y + gy as f64 * scale;
-            if world::substrate_on(wx, wy, coasts, seed) < 0.0 { continue }
-            let ddx = potential(wx + d, wy, seed) - potential(wx - d, wy, seed);
-            let ddy = potential(wx, wy + d, seed) - potential(wx, wy - d, seed);
-            let m = ddx.hypot(ddy);
-            if m < 1e-12 { continue }
-            // Downslope: the way water would run.
-            let (ux, uy) = (-ddx / m, -ddy / m);
-            for t in 0..=arm {
-                put(&mut buf, gx as i64 + (ux * t as f64) as i64,
-                              gy as i64 + (uy * t as f64) as i64);
-            }
-            // Head.
-            let (tipx, tipy) = (gx as i64 + (ux * arm as f64) as i64,
-                                gy as i64 + (uy * arm as f64) as i64);
-            for t in 0..=(arm / 3) {
-                let b = t as f64;
-                for s in [-1.0f64, 1.0] {
-                    put(&mut buf,
-                        tipx - (ux * b) as i64 + (-uy * s * b * 0.6) as i64,
-                        tipy - (uy * b) as i64 + (ux * s * b * 0.6) as i64);
-                }
-            }
-        }
-    }
-    buf
 }

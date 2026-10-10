@@ -55,7 +55,7 @@ cargo run --bin client       # Run client (requires display)
 Headless world composite visualization tool. Renders PNGs for validating terrain generation and world event output without running the full client.
 
 ```bash
-cargo run --bin world-viewer -- --layers plates,elevation --radius 15000 --scale 8 --format png --output world.png
+cargo run --bin world-viewer -- --layers elevation,plate-edges --radius 15000 --scale 8 --format png --output world.png
 ```
 
 Views, what each reads, and when one is added or removed: `crates/world-viewer/README.md`.
