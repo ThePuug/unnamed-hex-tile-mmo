@@ -172,7 +172,9 @@ pub fn show(
         },
     };
     let Ok(window) = window.single() else { return };
-    let screen = Vec2::new(window.width(), window.height());
+    // In the tooltip's own units, which `UiScale` and the desktop's scale
+    // both shrink, as the cap's place and the tooltip's width are.
+    let screen = window.physical_size().as_vec2() * size.inverse_scale_factor();
     let wide = size.size().x * size.inverse_scale_factor();
     if text.0 != now {
         text.0 = now;
