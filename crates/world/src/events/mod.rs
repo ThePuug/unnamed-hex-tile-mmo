@@ -412,6 +412,81 @@ pub struct LayerMetricsSnapshot {
     pub indexed: usize,
     pub cell_hits: u64,
     pub cell_misses: u64,
+    /// What the layer's own code has cost in each phase. A lower layer's
+    /// deform that a read here pulled in is that layer's, and is counted
+    /// in `pulled` as well.
+    #[cfg(feature = "inspect")]
+    pub deform: Spent,
+    /// As `deform`.
+    #[cfg(feature = "inspect")]
+    pub prepare: Spent,
+    /// As `deform`.
+    #[cfg(feature = "inspect")]
+    pub query: Spent,
+    /// The cells of each layer beneath that this layer's reads deformed,
+    /// from `deform` or `prepare`, by that layer's place in the stack, and
+    /// the time they took, all they pulled in turn included. A cell no
+    /// layer pulled was deformed by the tiles themselves.
+    #[cfg(feature = "inspect")]
+    pub pulled: Vec<Spent>,
+}
+
+/// How many times something ran and the time spent in it.
+#[cfg(feature = "inspect")]
+#[derive(Clone, Copy, Default)]
+pub struct Spent {
+    pub count: u64,
+    pub time: std::time::Duration,
+}
+
+#[cfg(feature = "inspect")]
+#[derive(Default)]
+struct SpentCounter {
+    count: AtomicU64,
+    nanos: AtomicU64,
+}
+
+#[cfg(feature = "inspect")]
+impl SpentCounter {
+    fn add(&self, time: std::time::Duration) {
+        self.count.fetch_add(1, Relaxed);
+        self.nanos.fetch_add(time.as_nanos() as u64, Relaxed);
+    }
+    fn spent(&self) -> Spent {
+        Spent { count: self.count.load(Relaxed), time: std::time::Duration::from_nanos(self.nanos.load(Relaxed)) }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Phase {
+    Deform,
+    Prepare,
+    Query,
+}
+
+/// One layer's cost, as [`LayerMetricsSnapshot`] reports it.
+#[cfg(feature = "inspect")]
+struct LayerClock {
+    phases: [SpentCounter; 3],
+    /// Indexed by the lower layer deformed: a read only ever deforms
+    /// beneath the reader.
+    pulled: Vec<SpentCounter>,
+}
+
+#[cfg(feature = "inspect")]
+impl LayerClock {
+    fn new(layer: usize) -> Self {
+        Self { phases: Default::default(), pulled: (0..layer).map(|_| SpentCounter::default()).collect() }
+    }
+}
+
+#[cfg(feature = "inspect")]
+thread_local! {
+    /// The phases running on this thread, innermost last: the layer each
+    /// runs for and the time the phases nested in it have taken. A phase
+    /// nests only through a read deforming a lower layer, and the world
+    /// spawns no work, so a thread's nesting is one cascade's.
+    static RUNNING: std::cell::RefCell<Vec<(usize, std::time::Duration)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 // ── Cell Cache (concurrent) ─────────────────────────────────────────────────
@@ -515,16 +590,20 @@ struct CellCache {
     neighbourhood_ready: DashMap<CellId, ()>,
     /// Deform hits and misses: a cell found deformed against one deformed.
     metrics: HitCounters,
+    #[cfg(feature = "inspect")]
+    clock: LayerClock,
 }
 
 impl CellCache {
-    fn new() -> Self {
+    fn new(#[cfg_attr(not(feature = "inspect"), allow(unused))] layer: usize) -> Self {
         Self {
             cells: DashMap::new(),
             contexts: DashMap::new(),
             deform_locks: DashMap::new(),
             neighbourhood_ready: DashMap::new(),
             metrics: HitCounters::new(),
+            #[cfg(feature = "inspect")]
+            clock: LayerClock::new(layer),
         }
     }
 
@@ -627,7 +706,7 @@ impl Composite {
         // Pre-register indexes declared by this event (HashMap frozen after init)
         self.indexes.set_registering_layer(self.events.len());
         event.register_indexes(&mut self.indexes);
-        self.cell_caches.push(CellCache::new());
+        self.cell_caches.push(CellCache::new(self.events.len()));
         self.lattices.push(lattice);
         self.events.push(event);
     }
@@ -644,7 +723,30 @@ impl Composite {
         }
         self.metrics.record(false);
 
-        // Phase 1: Deform cascade — ensure all cells containing this tile are deformed.
+        let view = self.compose(q, r, |_, _| {});
+        if self.tiles.len() >= RECENT_TILES {
+            self.tiles.clear();
+        }
+        self.tiles.insert((q, r), view.clone());
+        view
+    }
+
+    /// Each layer's own output at (q, r), as its query returned it before
+    /// the composite folded it in, named and in the order the stack runs
+    /// them, with the tile they compose to: for the world viewer and the
+    /// probes, never the game, which reads tiles (INV-009). The cascade
+    /// runs afresh; the tile cache is neither read nor filled.
+    #[cfg(feature = "inspect")]
+    pub fn outputs_at(&self, q: i32, r: i32) -> (TileView, Vec<(&str, Option<TileOutput>)>) {
+        let mut outputs = Vec::with_capacity(self.events.len());
+        let view = self.compose(q, r, |layer, out| outputs.push((self.events[layer].name(), out)));
+        (view, outputs)
+    }
+
+    /// The tile at (q, r) through the stack: every layer's neighbourhood
+    /// deformed, then each layer queried over the composite of those
+    /// below it, `each` handed what it returned.
+    fn compose(&self, q: i32, r: i32, mut each: impl FnMut(usize, Option<TileOutput>)) -> TileView {
         {
             let _s = tracing::debug_span!("deform").entered();
             for layer in 0..self.events.len() {
@@ -653,28 +755,21 @@ impl Composite {
             }
         }
 
-        // Phase 2: Query cascade — resolve tile bottom-up
         let mut view = TileView::at(q, r);
-
-        {
-            let _s = tracing::debug_span!("query").entered();
-            for layer in 0..self.events.len() {
-                let cell_id = self.lattices[layer].cell_id(q, r);
-                // `view` already holds the composite of every layer below,
-                // which is the whole of what a query may read besides its
-                // own cell context.
-                let ctx = self.cell_context(layer, cell_id);
-                let _s = tracing::debug_span!("event_query", event = self.events[layer].name()).entered();
-                if let Some(out) = self.events[layer].query(q, r, &view, &*ctx, self.seed) {
-                    view.compose(&out);
-                }
+        let _s = tracing::debug_span!("query").entered();
+        for layer in 0..self.events.len() {
+            let cell_id = self.lattices[layer].cell_id(q, r);
+            // `view` already holds the composite of every layer below,
+            // which is the whole of what a query may read besides its
+            // own cell context.
+            let ctx = self.cell_context(layer, cell_id);
+            let _s = tracing::debug_span!("event_query", event = self.events[layer].name()).entered();
+            let out = self.timed(layer, Phase::Query, || self.events[layer].query(q, r, &view, &*ctx, self.seed));
+            if let Some(out) = &out {
+                view.compose(out);
             }
+            each(layer, out);
         }
-
-        if self.tiles.len() >= RECENT_TILES {
-            self.tiles.clear();
-        }
-        self.tiles.insert((q, r), view.clone());
         view
     }
 
@@ -723,8 +818,9 @@ impl Composite {
 
     /// A snapshot of the counters for external reporting: the tiles held,
     /// and the hits and misses of the tile cache and of each layer's
-    /// deform. The counters are cumulative lifetime totals and nothing is
-    /// drained; the reader computes rates between two snapshots.
+    /// deform, and under `inspect` what each layer's phases cost. The
+    /// counters are cumulative lifetime totals and nothing is drained; the
+    /// reader computes rates between two snapshots.
     pub fn drain_metrics(&self) -> EventMetricsSnapshot {
         let visible = self.tiles.len();
 
@@ -737,10 +833,49 @@ impl Composite {
                 indexed: cache.cells.len(),
                 cell_hits: cache.metrics.hits(),
                 cell_misses: cache.metrics.misses(),
+                #[cfg(feature = "inspect")]
+                deform: cache.clock.phases[Phase::Deform as usize].spent(),
+                #[cfg(feature = "inspect")]
+                prepare: cache.clock.phases[Phase::Prepare as usize].spent(),
+                #[cfg(feature = "inspect")]
+                query: cache.clock.phases[Phase::Query as usize].spent(),
+                #[cfg(feature = "inspect")]
+                pulled: cache.clock.pulled.iter().map(SpentCounter::spent).collect(),
             }
         }).collect();
 
         EventMetricsSnapshot { visible, tile_hits, tile_misses, layers }
+    }
+
+    /// Run one phase of `layer`, its time charged to the layer's own code
+    /// less the phases nested in it, and a deform charged as well to the
+    /// layer whose read pulled it in.
+    #[cfg(feature = "inspect")]
+    fn timed<R>(&self, layer: usize, phase: Phase, f: impl FnOnce() -> R) -> R {
+        RUNNING.with_borrow_mut(|running| running.push((layer, std::time::Duration::ZERO)));
+        let start = std::time::Instant::now();
+        let out = f();
+        let spent = start.elapsed();
+        let (nested, reader) = RUNNING.with_borrow_mut(|running| {
+            let (_, nested) = running.pop().expect("a phase pops what it pushed");
+            let reader = running.last_mut().map(|(reader, inner)| {
+                *inner += spent;
+                *reader
+            });
+            (nested, reader)
+        });
+        let clock = &self.cell_caches[layer].clock;
+        clock.phases[phase as usize].add(spent.saturating_sub(nested));
+        if let (Phase::Deform, Some(reader)) = (phase, reader) {
+            self.cell_caches[reader].clock.pulled[layer].add(spent);
+        }
+        out
+    }
+
+    #[cfg(not(feature = "inspect"))]
+    #[inline(always)]
+    fn timed<R>(&self, _layer: usize, _phase: Phase, f: impl FnOnce() -> R) -> R {
+        f()
     }
 
     // ── Deform cascade (per-cell double-checked locking) ────────────────────
@@ -787,7 +922,7 @@ impl Composite {
             composite: self,
             seed: self.seed,
         };
-        let built: Arc<dyn Any + Send + Sync> = Arc::from(self.events[layer].prepare(&scope));
+        let built: Arc<dyn Any + Send + Sync> = Arc::from(self.timed(layer, Phase::Prepare, || self.events[layer].prepare(&scope)));
         self.cell_caches[layer].contexts.insert(cell_id, built.clone());
         built
     }
@@ -836,7 +971,7 @@ impl Composite {
             composite: self,
             seed: self.seed,
         };
-        self.events[layer].deform(&scope);
+        self.timed(layer, Phase::Deform, || self.events[layer].deform(&scope));
 
         self.cell_caches[layer].mark_deformed(cell_id);
     }
@@ -965,6 +1100,69 @@ mod tests {
             7,
             "neighbourhood re-walked per tile instead of once per cell"
         );
+    }
+
+    #[derive(Default)]
+    struct Marks(HashMap<CellId, ()>);
+
+    impl CellIndex for Marks {
+        type Cell = ();
+        fn set(&mut self, cell: CellId, entry: ()) { self.0.insert(cell, entry); }
+        fn get(&self, cell: CellId) -> Option<&()> { self.0.get(&cell) }
+    }
+
+    /// Publishes a mark in every cell it deforms.
+    struct Marker;
+
+    impl WorldEvent for Marker {
+        fn name(&self) -> &str { "marker" }
+        fn scale(&self) -> u32 { 32 }
+        fn register_indexes(&self, registry: &mut IndexRegistry) { registry.pre_register::<Marks>(); }
+        fn deform(&self, scope: &CellScope) { scope.publish::<Marks>(()); }
+        fn query(&self, _q: i32, _r: i32, _b: &TileView, _c: &(dyn Any + Send + Sync), _s: u64) -> Option<TileOutput> { None }
+    }
+
+    /// Reads the marks under each cell it deforms, at a coarser scale.
+    struct MarkReader;
+
+    impl WorldEvent for MarkReader {
+        fn name(&self) -> &str { "mark-reader" }
+        fn scale(&self) -> u32 { 96 }
+        fn deform(&self, scope: &CellScope) { scope.source_cells::<Marks>(); }
+        fn query(&self, _q: i32, _r: i32, _b: &TileView, _c: &(dyn Any + Send + Sync), _s: u64) -> Option<TileOutput> {
+            Some(TileOutput { elevation_delta: 1.0, ..Default::default() })
+        }
+    }
+
+    /// A lower layer's cells are each charged once: to the tile, for the
+    /// ring its own query needs, or to the layer whose read deformed it.
+    #[cfg(feature = "inspect")]
+    #[test]
+    fn a_deform_is_charged_to_the_read_that_pulled_it() {
+        let mut c = Composite::new(1);
+        c.add_event(Box::new(Marker));
+        c.add_event(Box::new(MarkReader));
+        c.tile_at(0, 0);
+        let m = c.drain_metrics();
+        let (marker, reader) = (&m.layers[0], &m.layers[1]);
+        assert_eq!(marker.deform.count as usize, marker.indexed);
+        assert!(reader.pulled[0].count > 0, "the reader's ring reaches past the marker's");
+        assert_eq!(reader.pulled[0].count + 7, marker.deform.count, "the tile deforms the marker's own cell and ring");
+        assert!(m.layers.iter().all(|l| l.query.count == 1));
+    }
+
+    /// Each layer's output is what its query returned, the tile their fold.
+    #[cfg(feature = "inspect")]
+    #[test]
+    fn outputs_are_each_layers_own() {
+        let mut c = Composite::new(1);
+        c.add_event(Box::new(Marker));
+        c.add_event(Box::new(MarkReader));
+        let (view, outputs) = c.outputs_at(5, -3);
+        assert_eq!(outputs.iter().map(|(name, _)| *name).collect::<Vec<_>>(), ["marker", "mark-reader"]);
+        assert!(outputs[0].1.is_none());
+        assert_eq!(outputs[1].1.map(|o| o.elevation_delta), Some(1.0));
+        assert_eq!(view.elevation, c.tile_at(5, -3).elevation);
     }
 
     /// Two layers at the same cell scale share a lattice, so a cell's

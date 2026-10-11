@@ -202,8 +202,9 @@ layer's index, or skips a layer it thinks it does not need. A layer's work
 changes behind that contract, and a bypass becomes load-bearing. A layer too
 slow for the tile path is made cheaper inside itself, never at the
 composite's boundary; what a layer offers a caller rides on the tile, as a
-den site's habitat does. `Composite::with_indexes` is for the world viewer
-and the probes, behind the world crate's `inspect` feature.
+den site's habitat does. `Composite::with_indexes` and
+`Composite::outputs_at`, each layer's own output at a tile, are for the
+world viewer and the probes, behind the world crate's `inspect` feature.
 
 ## Patterns
 
