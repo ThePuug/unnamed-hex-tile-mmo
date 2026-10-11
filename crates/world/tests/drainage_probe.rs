@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use common::HexLattice;
 use world::events::drainage::{is_pit, DrainageEvent, DrainageIndex, Kind, DRAINAGE_CELL_SCALE};
+use world::events::ground::stands_at;
 use world::lattice::{node_site, NODE_SPACING};
 use world::events::motion::MotionEvent;
 use world::events::lithology::LithologyEvent;
@@ -67,11 +68,13 @@ fn coasts_for(cell: (i32, i32)) -> Coasts {
 #[test]
 fn nodes_sit_on_the_composed_surface() {
     let c = composite();
-    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
+    let outlines = outlines_for(spawn_cell());
+    let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines);
     let mut worst = 0.0f64;
     let mut checked = 0;
     for (k, &key) in routing.keys.iter().enumerate().step_by(211) {
-        let (q, r) = node_site(key);
+        let (x, y) = stands_at(key, &outlines);
+        let (q, r) = world::world_to_hex(x, y);
         worst = worst.max((c.tile_at(q, r).elevation - routing.elevation[k]).abs());
         checked += 1;
     }
@@ -174,8 +177,9 @@ fn the_index_holds_the_owned_share_only() {
     c.with_indexes(|ix| {
         let idx = ix.get::<DrainageIndex>().expect("drainage index registered");
         let entry = idx.cells.get(&cell).expect("spawn cell deformed");
-        for (key, node) in &entry.nodes {
-            assert_eq!(lat.cell_id(node.q, node.r), cell, "node {key:?} is not this cell's");
+        for key in entry.nodes.keys() {
+            let (q, r) = node_site(*key);
+            assert_eq!(lat.cell_id(q, r), cell, "node {key:?} is not this cell's");
             assert_eq!(idx.node(*key).map(|n| n.key), Some(*key), "node lookup by key");
         }
         // A channel ending at a pit ends: nothing is drawn on from it,

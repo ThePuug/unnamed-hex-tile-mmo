@@ -71,7 +71,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use common::HexLattice;
 
 use super::index::{CellId, CellIndex, IndexRegistry, Located};
-use super::ground::GroundIndex;
+use super::ground::{sample_of, GroundIndex, Sample};
 use super::scarp::Scarps;
 use super::lithology::{cover_on, rock_at};
 use super::plates::Coasts;
@@ -79,9 +79,9 @@ use super::thickening::{plateau_share_of, PLATEAU_RISE};
 use super::thrusting::Outlines;
 use super::tilt::tilt_at;
 use super::{CellScope, Neighbourhood, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
-use crate::lattice::{hex_distance, node_site, site_world, NodeKey, DIRECTIONS as NEIGHBOURS, NODE_SPACING, NODE_SWING};
+use crate::lattice::{hex_distance, node_site, NodeKey, DIRECTIONS as NEIGHBOURS, NODE_SPACING, NODE_SWING};
 use crate::tectonic::{aged, PLATE_REACH};
-use crate::{hex_to_world, substrate_on};
+use crate::{substrate_on, world_to_hex};
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -247,17 +247,20 @@ fn steepest_facet(
     nbrs: &[Option<usize>; 6],
     k: usize,
     site: &[(f64, f64)],
-    surface: &[f64],
+    z0: f64,
+    height: &[f64; 6],
 ) -> Option<(f64, usize, usize, f64)> {
     use std::f64::consts::PI;
-    let (x0, y0, z0) = (site[k].0, site[k].1, surface[k]);
-    // The neighbours present, by angle around the node.
-    let mut around: Vec<(f64, usize, f64, f64)> = nbrs
+    let (x0, y0) = site[k];
+    // The neighbours present, by angle around the node, each at the height
+    // its link stands at.
+    let mut around: Vec<(f64, usize, f64, f64, f64)> = nbrs
         .iter()
-        .flatten()
-        .map(|&m| {
+        .enumerate()
+        .filter_map(|(d, m)| m.map(|m| (d, m)))
+        .map(|(d, m)| {
             let (dx, dy) = (site[m].0 - x0, site[m].1 - y0);
-            (dy.atan2(dx), m, dx, dy)
+            (dy.atan2(dx), m, dx, dy, height[d])
         })
         .collect();
     around.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -267,15 +270,15 @@ fn steepest_facet(
     }
     let mut best: Option<(f64, f64, usize, usize, f64)> = None;
     for e in 0..count {
-        let (ta, a, ax, ay) = around[e];
-        let (tb, b, bx, by) = around[(e + 1) % count];
+        let (ta, a, ax, ay, ha) = around[e];
+        let (tb, b, bx, by, hb) = around[(e + 1) % count];
         // The facet spans from a round to b; past the last neighbour it
         // wraps to the first, a wedge wider than any other.
         let width = (tb - ta).rem_euclid(2.0 * PI);
         if width <= 0.0 || width >= PI {
             continue;
         }
-        let (za, zb) = (surface[a] - z0, surface[b] - z0);
+        let (za, zb) = (ha - z0, hb - z0);
         // Gradient g of the plane with d_a·g = za and d_b·g = zb.
         let det = ax * by - ay * bx;
         if det.abs() < 1e-9 {
@@ -309,6 +312,19 @@ fn steepest_facet(
         }
     }
     best.map(|(_, angle, a, b, share)| (angle, a, b, share))
+}
+
+/// The height each of a node's links stands at over `z`, the ground or the
+/// water surface: the neighbour's, or the pass between, whichever is
+/// higher; NaN where there is no neighbour.
+fn link_heights(nbrs: &[Option<usize>; 6], pass: &[f64; 6], z: &[f64]) -> [f64; 6] {
+    std::array::from_fn(|d| nbrs[d].map_or(f64::NAN, |m| z[m].max(pass[d])))
+}
+
+/// The height the link from a node to neighbour `m` stands at, of the
+/// node's `heights`.
+fn link_to(nbrs: &[Option<usize>; 6], heights: &[f64; 6], m: usize) -> f64 {
+    nbrs.iter().position(|&n| n == Some(m)).map_or(f64::NAN, |d| heights[d])
 }
 
 // ── What a cell publishes ───────────────────────────────────────────────────
@@ -518,6 +534,8 @@ pub struct Routing {
     /// by any harder lip downstream.
     pub floor: Vec<f64>,
     index: HashMap<NodeKey, usize>,
+    /// Where each node stands.
+    site: Vec<(f64, f64)>,
     basins: Vec<RoutedBasin>,
 }
 
@@ -538,8 +556,8 @@ impl Routing {
             if !self.owned[k] || matches!(self.kind[k], Kind::Sea | Kind::Edge) {
                 continue;
             }
-            let (q, r) = node_site(self.keys[k]);
-            let (wx, wy) = hex_to_world(q, r);
+            let (wx, wy) = self.site[k];
+            let (q, r) = world_to_hex(wx, wy);
             nodes.insert(
                 self.keys[k],
                 DrainageNode {
@@ -584,17 +602,16 @@ impl DrainageEvent {
     /// layer's samples.
     pub fn route(&self, lattice: &HexLattice, cell: CellId, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Routing {
         let scarps = Scarps::new();
-        Self::route_over_ground(lattice, cell, |key| {
-            let (wx, wy) = site_world(key);
-            ground_at(wx, wy, seed, coasts, outlines, &scarps)
-        })
+        Self::route_over_ground(lattice, cell, |key| sample_of(key, seed, coasts, outlines, &scarps))
     }
 
     /// Route the window of `cell`, every node in the cell and its ring,
-    /// over the ground `ground` gives each; then again over the ground with
-    /// the breaches, while a routing cuts any sill, so base levels and the
-    /// reach leaving each basin agree with every cut sill.
-    pub fn route_over_ground(lattice: &HexLattice, cell: CellId, ground: impl Fn(NodeKey) -> Ground) -> Routing {
+    /// each where `sample` stands it and over the ground there; then again
+    /// over the ground with the breaches, while a routing cuts any sill, so
+    /// base levels and the reach leaving each basin agree with every cut
+    /// sill. A node belongs to the window its lattice site lies in,
+    /// wherever it stands.
+    pub fn route_over_ground(lattice: &HexLattice, cell: CellId, sample: impl Fn(NodeKey) -> Sample) -> Routing {
         // ── Nodes in the window, in key order ──
         let centre = lattice.cell_center(cell);
         let reach = 3 * lattice.radius as i32 + 1;
@@ -625,17 +642,19 @@ impl DrainageEvent {
             .iter()
             .map(|&(i, j)| NEIGHBOURS.map(|(di, dj)| index.get(&(i + di, j + dj)).copied()))
             .collect();
-        let site: Vec<(f64, f64)> = keys.iter().map(|&k| site_world(k)).collect();
-        let grounds: Vec<Ground> = keys.iter().map(|&k| ground(k)).collect();
+        let samples: Vec<Sample> = keys.iter().map(|&k| sample(k)).collect();
+        let site: Vec<(f64, f64)> = samples.iter().map(|s| (s.wx, s.wy)).collect();
+        let grounds: Vec<Ground> = samples.iter().map(|s| s.ground).collect();
         let elevation: Vec<f64> = grounds.iter().map(|g| g.surface).collect();
         let age: Vec<f64> = grounds.iter().map(|g| g.age).collect();
         let erodibility: Vec<f64> = grounds.iter().map(|g| g.erodibility).collect();
 
-        let mut routing = Self::route_over(&nbrs, &site, elevation.clone());
+        let mut pass: Vec<[f64; 6]> = samples.iter().map(|s| s.passes).collect();
+        let mut routing = Self::route_over(&nbrs, &site, &pass, elevation.clone());
         let mut cut_sills: HashSet<usize> = HashSet::new();
         for _ in 0..ROUTING_PASSES {
-            let Some(breached) = Self::breach(&routing, &mut cut_sills, &age, &erodibility) else { break };
-            routing = Self::route_over(&nbrs, &site, breached);
+            let Some(breached) = Self::breach(&routing, &mut cut_sills, &age, &erodibility, &nbrs, &mut pass) else { break };
+            routing = Self::route_over(&nbrs, &site, &pass, breached);
         }
         // Until here `routing.elevation` is the ground the last pass routed
         // over: the envelope with every breach cut.
@@ -648,6 +667,7 @@ impl DrainageEvent {
         routing.keys = keys;
         routing.owned = owned;
         routing.index = index;
+        routing.site = site;
         routing.age = age;
         routing.erodibility = erodibility;
         routing.floor = Self::floors(&routing);
@@ -709,11 +729,29 @@ impl DrainageEvent {
     /// leaving over it, no deeper than the basin behind it or the base level
     /// below it; every hump on the flood's path across the basin cut to the
     /// sill; and the ground down the outflow graded from the sill to the
-    /// first node no higher. A sill in `cut_sills`, cut by an earlier pass,
-    /// is not cut again and every sill cut joins it: one cut per basin, so a
-    /// pass cuts only the sills of the sub-basins the pass before uncovered.
-    /// None when no sill is cut.
-    fn breach(routing: &Routing, cut_sills: &mut HashSet<usize>, age: &[f64], erodibility: &[f64]) -> Option<Vec<f64>> {
+    /// first node no higher. Every link the cut runs along is cut through
+    /// whatever crest it crossed, its pass lowered to the cut ground. A sill
+    /// in `cut_sills`, cut by an earlier pass, is not cut again and every
+    /// sill cut joins it: one cut per basin, so a pass cuts only the sills
+    /// of the sub-basins the pass before uncovered. None when no sill is
+    /// cut.
+    fn breach(
+        routing: &Routing,
+        cut_sills: &mut HashSet<usize>,
+        age: &[f64],
+        erodibility: &[f64],
+        nbrs: &[[Option<usize>; 6]],
+        pass: &mut [[f64; 6]],
+    ) -> Option<Vec<f64>> {
+        // The pass between `a` and `b`, from either side, no higher than
+        // `level`.
+        let mut lower_pass = |a: usize, b: usize, level: f64| {
+            for (x, y) in [(a, b), (b, a)] {
+                if let Some(d) = nbrs[x].iter().position(|&n| n == Some(y)) {
+                    pass[x][d] = pass[x][d].min(level);
+                }
+            }
+        };
         let mut ground = routing.elevation.clone();
         let mut cut_any = false;
         for (id, basin) in routing.basins.iter().enumerate() {
@@ -739,12 +777,18 @@ impl DrainageEvent {
                 if ground[k] > target - under {
                     ground[k] = target - under;
                 }
+                if let Some(p) = routing.parent[k] {
+                    lower_pass(k, p, if p == sill { target } else { target - under });
+                }
                 cur = routing.parent[k];
             }
             // Beyond the sill the breach grades down to the first ground no
             // higher than the cut sill, so the river leaves over a lip and
             // falls, and a flat floor at the fill never stands past it.
-            ground[sill] = target;
+            // A basin filled to a pass stands above its sill's ground: the
+            // cut lowers the pass, and the sill's ground only where it
+            // stands higher.
+            ground[sill] = ground[sill].min(target);
             cut_sills.insert(sill);
             let mut ramp = Vec::new();
             let mut cur = routing.down[sill];
@@ -755,6 +799,11 @@ impl DrainageEvent {
             let end = cur.map_or(target, |e| ground[e]);
             for (i, &k) in ramp.iter().enumerate() {
                 ground[k] = ground[k].min(target + (end - target) * (i + 1) as f64 / (ramp.len() + 1) as f64);
+            }
+            let mut prev = sill;
+            for &k in ramp.iter().chain(cur.as_ref()) {
+                lower_pass(prev, k, ground[prev].max(ground[k]));
+                prev = k;
             }
             cut_any = true;
         }
@@ -812,6 +861,7 @@ impl DrainageEvent {
     fn route_over(
         nbrs: &[[Option<usize>; 6]],
         site: &[(f64, f64)],
+        pass: &[[f64; 6]],
         elevation: Vec<f64>,
     ) -> Routing {
         let n = elevation.len();
@@ -840,12 +890,13 @@ impl DrainageEvent {
             }
         }
         while let Some(Pending { level, node }) = heap.pop() {
-            for m in nbrs[node].into_iter().flatten() {
+            for (d, m) in nbrs[node].into_iter().enumerate().filter_map(|(d, m)| m.map(|m| (d, m))) {
                 if visited[m] {
                     continue;
                 }
                 visited[m] = true;
-                let lvl = elevation[m].max(level);
+                // Water reaching a neighbour across a pass fills to it.
+                let lvl = elevation[m].max(level).max(pass[node][d]);
                 surface[m] = lvl;
                 parent[m] = Some(node);
                 heap.push(Pending { level: lvl, node: m });
@@ -877,8 +928,9 @@ impl DrainageEvent {
                     // leaves over the rim node the flood came in by, the
                     // sill: one link, so the flow never loops through the
                     // basin.
-                    let lower = |m: usize| elevation[m] < elevation[k] - FLAT;
-                    let facet = steepest_facet(&nbrs[k], k, site, &elevation);
+                    let ground = link_heights(&nbrs[k], &pass[k], &elevation);
+                    let lower = |m: usize| link_to(&nbrs[k], &ground, m) < elevation[k] - FLAT;
+                    let facet = steepest_facet(&nbrs[k], k, site, elevation[k], &ground);
                     match facet {
                         Some((angle, a, b, share_next)) if lower(a) || lower(b) => {
                             direction[k] = (angle.cos(), angle.sin());
@@ -892,7 +944,7 @@ impl DrainageEvent {
                             }
                         }
                         _ => {
-                            let lowest = nbrs[k].into_iter().flatten().filter(|&m| lower(m)).min_by(|&a, &b| elevation[a].total_cmp(&elevation[b]));
+                            let lowest = nbrs[k].into_iter().flatten().filter(|&m| lower(m)).min_by(|&a, &b| link_to(&nbrs[k], &ground, a).total_cmp(&link_to(&nbrs[k], &ground, b)));
                             match lowest {
                                 Some(m) => {
                                     direction[k] = unit(k, m);
@@ -915,14 +967,15 @@ impl DrainageEvent {
                     }
                 }
                 Kind::Land => {
-                    let facet = steepest_facet(&nbrs[k], k, site, &surface);
+                    let water = link_heights(&nbrs[k], &pass[k], &surface);
+                    let facet = steepest_facet(&nbrs[k], k, site, surface[k], &water);
                     match facet {
                         Some((angle, a, b, share_next)) => {
                             direction[k] = (angle.cos(), angle.sin());
                             // Only a lower neighbour may receive: the facet
-                            // descends between them, but a share sent uphill
-                            // would loop.
-                            let lower = |m: usize| surface[m] < surface[k] - FLAT;
+                            // descends between them, but a share sent uphill,
+                            // or over a pass, would loop.
+                            let lower = |m: usize| link_to(&nbrs[k], &water, m) < surface[k] - FLAT;
                             match (lower(a), lower(b)) {
                                 (true, true) => {
                                     flow[k].push((a, 1.0 - share_next));
@@ -1057,6 +1110,7 @@ impl DrainageEvent {
             basin_of,
             parent,
             index: HashMap::new(),
+            site: Vec::new(),
             basins,
             age: Vec::new(),
             erodibility: Vec::new(),
@@ -1088,12 +1142,12 @@ impl WorldEvent for DrainageEvent {
     /// window, its footprint and ring, so a node's ground is the same in
     /// every window that holds it.
     fn deform(&self, scope: &CellScope) {
-        let ground: HashMap<NodeKey, Ground> = scope
+        let samples: HashMap<NodeKey, Sample> = scope
             .read::<GroundIndex>()
-            .map(|idx| idx.features().map(|s| (s.key, s.ground)).collect())
+            .map(|idx| idx.features().map(|s| (s.key, *s)).collect())
             .unwrap_or_default();
         let routing = Self::route_over_ground(scope.lattice(), scope.cell(), |key| {
-            *ground.get(&key).expect("a node of the window with no ground published")
+            *samples.get(&key).expect("a node of the window with no ground published")
         });
         scope.publish::<DrainageIndex>(routing.owned_cell());
     }
