@@ -11,7 +11,7 @@ use world::events::Composite;
 use world::WORLD_SEED;
 
 /// The haven's tile, as `common_bevy::haven::HAVEN_LOCATION` holds it.
-const HAVEN: (i32, i32) = (104289, -4677);
+const HAVEN: (i32, i32) = (107289, -7677);
 
 #[test]
 #[ignore]

@@ -16,7 +16,7 @@ const SEED: u64 = 0x9E3779B97F4A7C15;
 fn census() {
     let c = Composite::standard(SEED);
     let lattice = site_lattice();
-    let home = lattice.cell_id(104_289, -4_677);
+    let home = lattice.cell_id(107_289, -7_677);
     let (mut sites, mut on_land, mut showing) = (0, 0, 0);
     let (mut rock_tiles, mut closed_tiles) = (0, 0);
     let mut by_rock = [(0usize, 0usize); 4];

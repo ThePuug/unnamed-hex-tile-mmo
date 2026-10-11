@@ -8,7 +8,7 @@ use std::time::Instant;
 use world::events::{den, dissection, drainage, forest, lithology, migration, motion, outcrop, plates, thickening, thrusting, tilt, Composite};
 use world::WORLD_SEED;
 
-const HAVEN: (i32, i32) = (104289, -4677);
+const HAVEN: (i32, i32) = (107289, -7677);
 
 fn without_dens() -> Composite {
     let mut composite = Composite::new(WORLD_SEED);
