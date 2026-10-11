@@ -3,7 +3,9 @@
 //! turn to. One press of a turn key moves it one mark. The six tile-to-tile
 //! bearings stand taller, the cardinals carry their letters, a bracket
 //! spans the arc the viewed actor strikes within, and a pin stands at each
-//! target's bearing, held at the edge while the target is off the strip.
+//! target's bearing and the haven's, held at the edge while it is off the
+//! strip. Each den the server has told of stands at its bearing too, and
+//! drops off the strip with the rest of what lies behind.
 
 use bevy::prelude::*;
 use bevy::math::Rot2;
@@ -11,12 +13,16 @@ use bevy::ui::UiTransform;
 
 use common_bevy::{
     components::{ally_target::AllyTarget, heading::*, position::VisualPosition, target::Target},
+    haven::HAVEN_LOCATION,
+    resources::map::Map,
     systems::targeting::STRIDE_ARC,
 };
+use qrz::Qrz;
 
 use crate::{
     components::{ViewHud, Viewed},
-    systems::{camera::CameraPose, target_frame::{Lane, LANES}},
+    resources::RenderOrigin,
+    systems::{camera::CameraPose, den::Dens, target_frame::{Lane, LANES}},
 };
 
 /// The strip's width and height, in px.
@@ -28,7 +34,11 @@ const PX_PER_DEGREE: f32 = BAR_PX / SPAN_DEGREES;
 /// Width of the column a bearing's mark and letter stand centred in.
 const MARK_PX: f32 = 20.;
 const PIN_PX: f32 = 10.;
+const DEN_PX: f32 = 8.;
+const HAVEN_PX: f32 = 12.;
 const BRACKET_PX: f32 = 6.;
+/// The line the pins stand centred on, in px down from the strip's top.
+const PIN_ROW_PX: f32 = 20.;
 
 const GOLD: Color = Color::srgb(0.85, 0.65, 0.13);
 
@@ -41,7 +51,32 @@ pub enum Mark {
     Facing,
     /// The target the viewed actor holds in a lane
     Pin(Lane),
+    /// The den whose pack stands on a tile
+    Den(Qrz),
+    Haven,
 }
+
+impl Mark {
+    /// Its width on the strip, in px.
+    fn px(self) -> f32 {
+        match self {
+            Mark::Bearing(_) => MARK_PX,
+            Mark::Facing => 2. * STRIDE_ARC * PX_PER_DEGREE,
+            Mark::Pin(_) => PIN_PX,
+            Mark::Den(_) => DEN_PX,
+            Mark::Haven => HAVEN_PX,
+        }
+    }
+
+    /// Whether it is held at the strip's edge while its bearing is off it.
+    fn held(self) -> bool {
+        matches!(self, Mark::Pin(_) | Mark::Haven)
+    }
+}
+
+/// The node the dens' pins stand in, beneath every other pin.
+#[derive(Component)]
+pub struct DenPins;
 
 /// The bearing in degrees clockwise from north of a ground-plane direction
 /// given as (x, z), north at -z.
@@ -101,12 +136,25 @@ pub fn setup(
                 spawn_bearing(bar, Heading::from_slot(slot));
             }
 
+            // Filled by `sync_dens`
+            bar.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.),
+                    height: Val::Percent(100.),
+                    ..default()
+                },
+                DenPins,
+            ));
+
+            bar.spawn(pin(Mark::Haven, GOLD, Color::WHITE));
+
             // The bracket: open at the top, its ends standing up
             bar.spawn((
                 Node {
                     position_type: PositionType::Absolute,
                     bottom: Val::Px(0.),
-                    width: Val::Px(2. * STRIDE_ARC * PX_PER_DEGREE),
+                    width: Val::Px(Mark::Facing.px()),
                     height: Val::Px(BRACKET_PX),
                     border: UiRect { left: Val::Px(2.), right: Val::Px(2.), bottom: Val::Px(2.), ..default() },
                     justify_content: JustifyContent::Center,
@@ -129,19 +177,8 @@ pub fn setup(
                     Lane::Ally => Color::srgb(0.2, 0.8, 0.2),
                 };
                 bar.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        top: Val::Px(15.),
-                        width: Val::Px(PIN_PX),
-                        height: Val::Px(PIN_PX),
-                        border: UiRect::all(Val::Px(1.)),
-                        ..default()
-                    },
-                    BackgroundColor(color),
-                    BorderColor::all(Color::BLACK),
+                    pin(Mark::Pin(lane), color, Color::BLACK),
                     UiTransform { rotation: Rot2::degrees(45.), ..default() },
-                    Visibility::Hidden,
-                    Mark::Pin(lane),
                 ));
             }
         });
@@ -185,44 +222,79 @@ fn spawn_bearing(bar: &mut ChildSpawnerCommands, heading: Heading) {
     });
 }
 
-/// Slides every mark to its bearing off the camera's, and each pin to its
-/// target's.
+/// A square pin for `mark`, its size the mark's, hidden until `update`
+/// places it.
+fn pin(mark: Mark, fill: Color, border: Color) -> impl Bundle {
+    let side = mark.px();
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(PIN_ROW_PX - side / 2.),
+            width: Val::Px(side),
+            height: Val::Px(side),
+            border: UiRect::all(Val::Px(1.)),
+            ..default()
+        },
+        BackgroundColor(fill),
+        BorderColor::all(border),
+        Visibility::Hidden,
+        mark,
+    )
+}
+
+/// Stands a pin for each den the server has told of, anew whenever they
+/// change: red while its pack stands, grey once cleared.
+pub fn sync_dens(mut commands: Commands, dens: Res<Dens>, pins: Query<Entity, With<DenPins>>) {
+    if !dens.is_changed() {
+        return;
+    }
+    let Ok(pins) = pins.single() else { return };
+    commands.entity(pins).despawn_related::<Children>();
+    commands.entity(pins).with_children(|pins| {
+        for (&at, look) in dens.0.iter() {
+            let fill = if look.cleared { Color::srgb(0.45, 0.45, 0.45) } else { Color::srgb(0.75, 0.15, 0.1) };
+            pins.spawn(pin(Mark::Den(at), fill, Color::BLACK));
+        }
+    });
+}
+
+/// Slides every mark to its bearing off the camera's: a pin to its
+/// target's, its den's or the haven's from the viewed actor.
 pub fn update(
     camera: Res<CameraPose>,
+    map: Res<Map>,
+    origin: Res<RenderOrigin>,
     viewed: Query<(&Heading, &VisualPosition, &Target, Option<&AllyTarget>), With<Viewed>>,
     positions: Query<&VisualPosition>,
     mut marks: Query<(&Mark, &mut Node, &mut Visibility)>,
 ) {
     let view = view_bearing(camera.pose.yaw);
     let seer = viewed.single().ok();
-    for (mark, mut node, mut visibility) in &mut marks {
-        match *mark {
-            Mark::Bearing(degrees) => {
-                node.left = Val::Px(px(relative(degrees, view)) - MARK_PX / 2.);
-            }
-            Mark::Facing => {
-                let Some((heading, ..)) = seer else {
-                    *visibility = Visibility::Hidden;
-                    continue;
-                };
-                *visibility = Visibility::Inherited;
-                node.left = Val::Px(px(relative(heading.degrees(), view) - STRIDE_ARC));
-            }
-            Mark::Pin(lane) => {
-                let toward = seer.and_then(|(_, at, target, ally)| {
-                    let to = positions.get(lane.held(target, ally)?).ok()?.current() - at.current();
-                    let xz = Vec2::new(to.x, to.z);
-                    (xz.length_squared() > f32::EPSILON).then(|| bearing(xz))
-                });
-                let Some(toward) = toward else {
-                    *visibility = Visibility::Hidden;
-                    continue;
-                };
-                *visibility = Visibility::Inherited;
-                let x = px(relative(toward, view)).clamp(PIN_PX / 2. + 2., BAR_PX - PIN_PX / 2. - 2.);
-                node.left = Val::Px(x - PIN_PX / 2.);
-            }
-        }
+    // Degrees off the strip's centre of a rendered point, from the viewed actor
+    let toward = |to: Option<Vec3>| {
+        let to = to? - seer?.1.current();
+        let xz = Vec2::new(to.x, to.z);
+        (xz.length_squared() > f32::EPSILON).then(|| relative(bearing(xz), view))
+    };
+    for (&mark, mut node, mut visibility) in &mut marks {
+        let rel = match mark {
+            Mark::Bearing(degrees) => Some(relative(degrees, view)),
+            Mark::Facing => seer.map(|(heading, ..)| relative(heading.degrees(), view)),
+            Mark::Pin(lane) => toward(
+                seer.and_then(|(_, _, target, ally)| positions.get(lane.held(target, ally)?).ok())
+                    .map(VisualPosition::current),
+            ),
+            Mark::Den(tile) => toward(Some(origin.render_tile(&map, tile))),
+            Mark::Haven => toward(Some(origin.render_tile(&map, HAVEN_LOCATION))),
+        };
+        let Some(rel) = rel else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        *visibility = Visibility::Inherited;
+        let half = mark.px() / 2.;
+        let x = if mark.held() { px(rel).clamp(half + 2., BAR_PX - half - 2.) } else { px(rel) };
+        node.left = Val::Px(x - half);
     }
 }
 

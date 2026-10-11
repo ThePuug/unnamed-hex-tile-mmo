@@ -30,7 +30,7 @@ impl Plugin for UiPlugin {
         );
 
         app.add_systems(Update, ui::update);
-        app.add_systems(Update, compass::update);
+        app.add_systems(Update, (compass::sync_dens, compass::update));
         app.add_systems(Update, ui::scale_to_window);
         app.add_systems(Update, resource_bars::update);
         app.add_systems(Update, (action_bar::sync_loadout, action_bar::update).chain());
