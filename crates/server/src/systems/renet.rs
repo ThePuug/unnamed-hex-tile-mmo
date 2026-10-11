@@ -135,6 +135,7 @@ pub fn do_presence(
                     Some(&endurance),
                     Some(&combat_state),
                     Some(&equipment),
+                    None,
                 );
 
                 for event in spawn_events {
@@ -213,7 +214,7 @@ fn leave(
     // Send Despawn to all players who had this entity loaded
     if let Ok(loaded_by) = loaded_by_query.get(ent) {
         let seeing = loaded_by.players.iter().filter_map(|player_ent| lobby.get_by_right(player_ent)).copied();
-        conn.send_each(seeing, DefaultChannel::ReliableOrdered, &Do { event: Event::Despawn { ent }});
+        conn.send_each(seeing, DefaultChannel::ReliableOrdered, &Do { event: Event::Despawn { ent, died: false }});
     }
 
     commands.entity(ent).despawn();
@@ -264,6 +265,7 @@ pub fn write_try(
                 | Event::Drop { .. }
                 | Event::UseAbility { .. }
                 | Event::RespecAttributes { .. }
+                | Event::SetLoadout { .. }
                 | Event::Wear { .. }
                 | Event::Teleport { .. } => {
                     let (Some(character), Some(ent)) = (character, event.ent_mut()) else { continue };
@@ -298,7 +300,7 @@ enum Route {
 fn route(event: &Event) -> Option<(Entity, Route)> {
     match event {
         Event::Incremental { ent, .. }
-        | Event::Despawn { ent }
+        | Event::Despawn { ent, .. }
         | Event::Activity { ent, .. }
         | Event::InsertThreat { ent, .. }
         | Event::ApplyDamage { ent, .. }
@@ -307,6 +309,7 @@ fn route(event: &Event) -> Option<(Entity, Route)> {
         | Event::UseAbility { ent, .. } => Some((*ent, Route::Seen)),
         Event::Confirm { ent, .. }
         | Event::RespecAttributes { ent, .. }
+        | Event::SetLoadout { ent, .. }
         | Event::Inventory { ent, .. }
         | Event::CoverChanged { ent, .. }
         | Event::Den { ent, .. }
@@ -376,7 +379,7 @@ mod tests {
         let ent = Entity::from_raw_u32(7).unwrap();
         assert_eq!(route(&Event::Loot { ent, entries: None }), Some((ent, Route::Owner)));
         assert_eq!(route(&Event::UseAbility { ent, ability: AbilityType::Frenzy, target: None, at: Default::default(), arrived: Default::default() }), Some((ent, Route::Seen)));
-        assert_eq!(route(&Event::Despawn { ent }), Some((ent, Route::Seen)));
+        assert_eq!(route(&Event::Despawn { ent, died: true }), Some((ent, Route::Seen)));
         assert_eq!(route(&Event::Displace { ent, destination: Qrz::default(), duration_ms: 0, around: None }), Some((ent, Route::Moving)));
     }
 
@@ -384,7 +387,7 @@ mod tests {
     fn what_the_server_keeps_to_itself_is_sent_to_no_one() {
         let ent = Entity::from_raw_u32(7).unwrap();
         assert_eq!(route(&Event::Stumble { ent }), None);
-        assert_eq!(route(&Event::DealDamage { source: ent, target: ent, base_damage: 1.0, ability: None, dot: 0.0, delay: std::time::Duration::ZERO }), None);
+        assert_eq!(route(&Event::DealDamage { source: ent, target: ent, base_damage: 1.0, ability: None, dot: 0.0, delay: std::time::Duration::ZERO, stun: 0.0, drag: 0 }), None);
         assert_eq!(route(&Event::Play), None);
     }
 }

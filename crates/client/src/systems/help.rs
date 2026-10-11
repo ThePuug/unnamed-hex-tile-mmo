@@ -6,7 +6,7 @@
 //! same tooltip shows what a [`Describes`] node says while the pointer
 //! rests on it and no key is asked about.
 
-use std::collections::HashSet;
+use std::{borrow::Cow, collections::HashSet};
 
 use bevy::{diagnostic::FrameCount, ecs::system::SystemParam, picking::{hover::HoverMap, pointer::PointerId}, prelude::*, window::PrimaryWindow};
 
@@ -31,7 +31,7 @@ const TIP_EDGE: Color = Color::srgb(0.5, 0.5, 0.5);
 pub struct Help {
     /// The key last asked about, the frame it was, and what each reader
     /// would have done with it there
-    asked: Option<(KeyCode, u32, Vec<&'static str>)>,
+    asked: Option<(KeyCode, u32, Vec<Cow<'static, str>>)>,
     /// Keys pressed while asking: they act on nothing until released
     spent: HashSet<KeyCode>,
 }
@@ -47,27 +47,27 @@ pub struct Keys<'w> {
 
 impl Keys<'_> {
     /// Whether `key` went down this frame, to do what `does` says.
-    pub fn pressed(&mut self, key: KeyCode, does: &'static str) -> bool {
-        self.read(key, does, false)
+    pub fn pressed(&mut self, key: KeyCode, does: impl Into<Cow<'static, str>>) -> bool {
+        self.read(key, does.into(), false)
     }
 
     /// [`Self::pressed`], and the press is taken: no reader after this one
     /// sees it.
-    pub fn take(&mut self, key: KeyCode, does: &'static str) -> bool {
-        self.read(key, does, true)
+    pub fn take(&mut self, key: KeyCode, does: impl Into<Cow<'static, str>>) -> bool {
+        self.read(key, does.into(), true)
     }
 
     /// Whether `key` is held, doing what `does` says while it is. A key
     /// held since before help was asked keeps acting; one pressed while it
     /// was does nothing until it is pressed again.
-    pub fn held(&mut self, key: KeyCode, does: &'static str) -> bool {
+    pub fn held(&mut self, key: KeyCode, does: impl Into<Cow<'static, str>>) -> bool {
         if self.input.just_pressed(key) && self.asking() {
-            self.ask(key, does);
+            self.ask(key, does.into());
         }
         !self.help.spent.contains(&key) && self.input.pressed(key)
     }
 
-    fn read(&mut self, key: KeyCode, does: &'static str, take: bool) -> bool {
+    fn read(&mut self, key: KeyCode, does: Cow<'static, str>, take: bool) -> bool {
         if !self.input.just_pressed(key) {
             return false;
         }
@@ -87,7 +87,7 @@ impl Keys<'_> {
 
     /// Notes what `key` does, beside what other readers said of it this
     /// frame.
-    fn ask(&mut self, key: KeyCode, does: &'static str) {
+    fn ask(&mut self, key: KeyCode, does: Cow<'static, str>) {
         let frame = self.frame.0;
         self.help.spent.insert(key);
         match &mut self.help.asked {
@@ -226,7 +226,7 @@ mod tests {
         press(&mut app, &[KEYCODE_HELP, KeyCode::KeyG]);
         assert_eq!(read(&mut app), (false, false));
         let asked = app.world().resource::<Help>().asked.clone().map(|(key, _, said)| (key, said));
-        assert_eq!(asked, Some((KeyCode::KeyG, vec!["Gather"])));
+        assert_eq!(asked, Some((KeyCode::KeyG, vec![Cow::from("Gather")])));
     }
 
     #[test]

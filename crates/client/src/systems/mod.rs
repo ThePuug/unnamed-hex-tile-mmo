@@ -6,6 +6,8 @@ pub mod bag_panel;
 pub mod camera;
 pub mod character_panel;
 pub mod character_panel_respec;
+pub mod skill_text;
+pub mod skills_panel;
 pub mod closeup;
 pub mod combat;
 pub mod combat_log; // Combat log panel for event history
@@ -16,6 +18,7 @@ pub mod equipment;
 pub mod equipment_panel;
 pub mod focus;
 pub mod gathering;
+pub mod ghost;
 pub mod help;
 pub mod highway;
 pub mod hiding;

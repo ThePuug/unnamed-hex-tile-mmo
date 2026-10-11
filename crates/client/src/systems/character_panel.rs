@@ -16,35 +16,31 @@ use common_bevy::tuning::Tuning;
 pub enum PanelTab {
     #[default]
     Attributes,
+    Skills,
     Equipment,
     Bag,
 }
 
 impl PanelTab {
-    pub const ALL: [PanelTab; 3] = [PanelTab::Attributes, PanelTab::Equipment, PanelTab::Bag];
+    pub const ALL: [PanelTab; 4] = [PanelTab::Attributes, PanelTab::Skills, PanelTab::Equipment, PanelTab::Bag];
 
     pub fn name(self) -> &'static str {
         match self {
             PanelTab::Attributes => "Attributes",
+            PanelTab::Skills => "Skills",
             PanelTab::Equipment => "Equipment",
             PanelTab::Bag => "Bag",
         }
     }
 
     pub fn above(self) -> PanelTab {
-        match self {
-            PanelTab::Attributes => PanelTab::Attributes,
-            PanelTab::Equipment => PanelTab::Attributes,
-            PanelTab::Bag => PanelTab::Equipment,
-        }
+        let at = Self::ALL.iter().position(|&tab| tab == self).unwrap_or(0);
+        Self::ALL[at.saturating_sub(1)]
     }
 
     pub fn below(self) -> PanelTab {
-        match self {
-            PanelTab::Attributes => PanelTab::Equipment,
-            PanelTab::Equipment => PanelTab::Bag,
-            PanelTab::Bag => PanelTab::Bag,
-        }
+        let at = Self::ALL.iter().position(|&tab| tab == self).unwrap_or(0);
+        Self::ALL[(at + 1).min(Self::ALL.len() - 1)]
     }
 }
 
@@ -180,11 +176,21 @@ pub struct CharacterPanelState {
     /// The respec being drafted: present exactly while it differs from the
     /// pairs the character has.
     pub pending_respec: Option<[Pair; 3]>,
+    /// The row of skills of the skills tab the digits act on.
+    pub skill_row: usize,
+    /// The skill picked in the skills tab, to go on the bar key pressed next.
+    pub picked: Option<common_bevy::message::AbilityType>,
 }
 
 impl CharacterPanelState {
     pub fn has_pending_changes(&self) -> bool {
         self.pending_respec.is_some()
+    }
+
+    /// The skill the bar's keys place rather than use: one picked while the
+    /// skills tab shows.
+    pub fn placing(&self) -> Option<common_bevy::message::AbilityType> {
+        self.picked.filter(|_| self.visible && self.tab == PanelTab::Skills)
     }
 }
 
@@ -450,6 +456,7 @@ macro_rules! create_attribute_section {
 
 pub fn setup(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
 ) {
     // The panel: a bordered frame round a strip of tabs and the chosen tab's
     // content, which the open tab joins in the content's own colour.
@@ -497,6 +504,7 @@ pub fn setup(
             ChildOf(content),
         ))
         .id();
+    crate::systems::skills_panel::spawn_tab(&mut commands, content, &asset_server);
     equipment_panel::spawn_tab(&mut commands, content);
     bag_panel::spawn_tab(&mut commands, content);
 
@@ -605,10 +613,12 @@ pub fn toggle_panel(
     }
 }
 
-/// Closes the panel, dropping any respec not yet applied.
+/// Closes the panel, dropping any respec not yet applied and the skill
+/// picked.
 pub fn close(state: &mut CharacterPanelState, visibility: &mut Visibility) {
     state.visible = false;
     state.pending_respec = None;
+    state.picked = None;
     *visibility = Visibility::Hidden;
 }
 

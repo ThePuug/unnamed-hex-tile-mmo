@@ -2,9 +2,10 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// An actor a player controls, on the server and on every client: the one
-/// word for it. An NPC has none.
+/// word for it. An NPC has none. It holds a bar of its own choosing.
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Reflect)]
 #[reflect(Component)]
+#[require(crate::components::loadout::Loadout)]
 pub struct PlayerControlled;
 
 

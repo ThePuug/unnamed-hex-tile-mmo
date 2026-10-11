@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{Actor, behaviour::Side, recovery::GlobalRecovery, Loc, heading::Heading, entity_type::EntityType},
+    components::{Actor, behaviour::Side, recovery::GlobalRecovery, Loc, heading::Heading, entity_type::EntityType, loadout::Loadout},
     message::AbilityType,
     plugins::nntree::NNTree,
     systems::targeting::select_target,
@@ -36,8 +36,10 @@ pub struct CooldownOverlay;
 
 /// Side of an ability slot and its border, in px; the compass beside the
 /// bar takes the same.
-const SLOT_PX: f32 = 80.;
+pub const SLOT_PX: f32 = 80.;
 const SLOT_BORDER_PX: f32 = 3.;
+/// Room between the bar's slots, along a line and between its lines
+const SLOT_GAP_PX: f32 = 10.;
 
 /// Setup action bar UI, hung below the resource bars' line
 /// Creates the ability slots, four to a row, and beside them the compass
@@ -74,60 +76,32 @@ pub fn setup(
         ))
         .with_children(|parent| {
             // The viewed actor's loadout, filled in by `sync_loadout`
-            parent.spawn((
-                Node {
-                    display: Display::Grid,
-                    grid_template_columns: RepeatedGridTrack::px(4, SLOT_PX),
-                    column_gap: Val::Px(10.),
-                    row_gap: Val::Px(10.),
-                    ..default()
-                },
-                AbilitySlots,
-            ));
+            parent.spawn((bar_grid(), AbilitySlots));
 
             crate::systems::ui::spawn_compass(parent, SLOT_PX, SLOT_BORDER_PX);
         });  // Close .with_children from line 73 (action bar children)
     });  // Close outer .with_children
 }
 
-/// The bar's keys, row by row, and the ability a player holds on each: the
-/// four strikes on the top row; the reactions, then the moves, below. Every
-/// skill of the kit has its key.
+/// The bar's keys, a slot each of a `Loadout`'s eight.
 pub const KEYS: [KeyCode; 8] = [
     KeyCode::KeyQ, KeyCode::KeyW, KeyCode::KeyE, KeyCode::KeyR,
     KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD, KeyCode::KeyF,
 ];
-pub const PLAYER: [AbilityType; 8] = [
-    AbilityType::Frenzy, AbilityType::Feint, AbilityType::Overpower, AbilityType::Punish,
-    AbilityType::Parry, AbilityType::Counter, AbilityType::Leap, AbilityType::PerfectStride,
-];
-
-/// What `ability` does, as its key's help says.
-pub fn tells(ability: AbilityType) -> &'static str {
-    match ability {
-        AbilityType::AutoAttack => "Auto-attack: strikes the hostile target within reach on its own",
-        AbilityType::Frenzy => "Frenzy: a bite on the target in reach; its combo is another bite",
-        AbilityType::Feint => "Feint: a light strike on the target in reach",
-        AbilityType::Overpower => "Overpower: one heavy blow on the target in reach",
-        AbilityType::Punish => "Punish: a light strike on the target in reach, harder for each stack of Overcommitted on it",
-        AbilityType::Parry => "Parry: clear the span, sending nothing back",
-        AbilityType::Counter => "Counter: clear the span, and send a share of each threat back to its source at any range",
-        AbilityType::Leap => "Leap: clear of the target in reach, or onto the one out of it",
-        AbilityType::PerfectStride => "Perfect Stride: for a few seconds, strike past the forward faces freely and run faster",
-    }
-}
 
 /// What stands on each of the bar's keys for an actor of `typ`: a player's
-/// whole kit; each of an NPC's skills on the key a player holds it on, so a
-/// view's bar looks as a player's does.
-pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 8] {
+/// own bar, `held`; an NPC's skills in its bar's order from the first key.
+pub fn loadout(typ: &EntityType, held: Option<&Loadout>) -> [Option<AbilityType>; 8] {
     use common_bevy::components::entity_type::actor::ActorIdentity;
     match typ {
         EntityType::Actor(actor) => match actor.identity {
-            ActorIdentity::Player => PLAYER.map(Some),
+            ActorIdentity::Player => held.copied().unwrap_or_default().0.map(Some),
             ActorIdentity::Npc(npc) => {
-                let skills = npc.bar();
-                PLAYER.map(|ability| skills.contains(&ability).then_some(ability))
+                let mut bar = [None; 8];
+                for (slot, ability) in bar.iter_mut().zip(npc.bar()) {
+                    *slot = Some(ability);
+                }
+                bar
             }
         },
         _ => [None; 8],
@@ -135,24 +109,25 @@ pub fn loadout(typ: &EntityType) -> [Option<AbilityType>; 8] {
 }
 
 /// Fills the bar with the loadout of the actor the client sees as, anew
-/// whenever that actor changes.
+/// whenever that actor or its bar changes.
 pub fn sync_loadout(
     asset_server: Res<AssetServer>,
     mut commands: Commands,
-    seer: Query<(Entity, &EntityType), With<crate::components::Viewed>>,
+    seer: Query<(Entity, &EntityType, Option<&Loadout>), With<crate::components::Viewed>>,
     slots: Query<Entity, With<AbilitySlots>>,
-    mut shown: Local<Option<Entity>>,
+    mut shown: Local<Option<(Entity, Option<Loadout>)>>,
 ) {
     let Ok(container) = slots.single() else { return };
     let seer = seer.single().ok();
-    if seer.map(|(ent, _)| ent) == *shown {
+    let seen = seer.map(|(ent, _, held)| (ent, held.copied()));
+    if seen == *shown {
         return;
     }
-    *shown = seer.map(|(ent, _)| ent);
+    *shown = seen;
     commands.entity(container).despawn_related::<Children>();
-    let Some((_, typ)) = seer else { return };
+    let Some((_, typ, held)) = seer else { return };
     commands.entity(container).with_children(|parent| {
-        for (keybind, ability) in KEYS.into_iter().zip(loadout(typ)) {
+        for (keybind, ability) in KEYS.into_iter().zip(loadout(typ, held)) {
             spawn_slot(parent, keybind, ability, ability.map(|a| asset_server.load(icon_path(a))));
         }
     });
@@ -161,7 +136,7 @@ pub fn sync_loadout(
 /// Where a skill's icon is: `icons/skills/` and its name in kebab case,
 /// `PerfectStride` at `perfect-stride.png`, as the assets repo's icongen
 /// names what it draws.
-fn icon_path(ability: AbilityType) -> String {
+pub fn icon_path(ability: AbilityType) -> String {
     let mut stem = String::new();
     for (i, c) in format!("{ability:?}").chars().enumerate() {
         if c.is_ascii_uppercase() && i > 0 {
@@ -173,17 +148,31 @@ fn icon_path(ability: AbilityType) -> String {
 }
 
 
-const READY: Color = Color::srgb(0.3, 0.8, 0.3);
+pub const READY: Color = Color::srgb(0.3, 0.8, 0.3);
 const EMPTY: Color = Color::srgb(0.2, 0.2, 0.2);
 
-/// A slot under `parent`: its border and fill, `icon` filling its inside
-/// when it holds a skill, and the cap of the key that works it in its
-/// corner. Returns the slot, for what else it holds.
-fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, keybind: KeyCode, icon: Option<Handle<Image>>) -> EntityCommands<'a> {
+/// How the bar lays its slots: four to a line.
+pub fn bar_grid() -> Node {
+    Node {
+        display: Display::Grid,
+        grid_template_columns: RepeatedGridTrack::px(4, SLOT_PX),
+        column_gap: Val::Px(SLOT_GAP_PX),
+        row_gap: Val::Px(SLOT_GAP_PX),
+        ..default()
+    }
+}
+
+/// A slot `side` px across under `parent`: its border and fill, `icon`
+/// (`SlotIcon`) filling its inside when it holds a skill, and the cap of
+/// `keybind` (`SlotKeybind`) in its corner. A slot `named` is the key's
+/// own, where help shows what the key does; one not is a picture of a
+/// slot, as a panel shows the bar. Returns the slot, for what else it
+/// holds.
+pub fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, keybind: KeyCode, icon: Option<Handle<Image>>, side: f32, named: bool) -> EntityCommands<'a> {
     let mut slot = parent.spawn((
         Node {
-            width: Val::Px(SLOT_PX),
-            height: Val::Px(SLOT_PX),
+            width: Val::Px(side),
+            height: Val::Px(side),
             border: UiRect::all(Val::Px(SLOT_BORDER_PX)),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
@@ -194,16 +183,20 @@ fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, keybind: KeyCode, icon: 
     ));
     slot.with_children(|parent| {
         if let Some(icon) = icon {
-            let inside = Val::Px(SLOT_PX - 2. * SLOT_BORDER_PX);
+            let inside = Val::Px(side - 2. * SLOT_BORDER_PX);
             parent.spawn((ImageNode::new(icon), Node { width: inside, height: inside, ..default() }, SlotIcon));
         }
-        crate::systems::keycap::corner_keycap(parent, keybind).insert(SlotKeybind);
+        let mut cap = crate::systems::keycap::corner_keycap(parent, keybind);
+        cap.insert(SlotKeybind);
+        if !named {
+            cap.remove::<crate::systems::keycap::Names>();
+        }
     });
     slot
 }
 
 fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>, icon: Option<Handle<Image>>) {
-    slot_frame(parent, keybind, icon).insert(AbilitySlot { ability }).with_children(|parent| {
+    slot_frame(parent, keybind, icon, SLOT_PX, true).insert(AbilitySlot { ability }).with_children(|parent| {
         // Cooldown overlay: dark rect anchored at bottom, height = recovery %
         parent.spawn((
             Node {
@@ -402,19 +395,18 @@ mod loadout_tests {
     }
 
     #[test]
-    fn a_player_fills_every_key() {
+    fn a_player_fills_every_key_from_its_own_bar() {
         let player = EntityType::Actor(ActorImpl::new(Origin::Evolved, Approach::Direct, Resilience::Vital, ActorIdentity::Player));
-        assert_eq!(loadout(&player), PLAYER.map(Some));
+        assert_eq!(loadout(&player, None), Loadout::DEFAULT.0.map(Some));
+        let held = Loadout::DEFAULT.placed(AbilityType::Lurk, 0);
+        assert_eq!(loadout(&player, Some(&held)), held.0.map(Some));
     }
 
     #[test]
-    fn an_npc_skill_stands_on_a_players_key_for_it() {
+    fn an_npc_shows_its_own_skills_and_no_other() {
         for archetype in EnemyArchetype::ALL {
-            let bar = loadout(&npc(archetype));
-            for skill in archetype.bar() {
-                let key = PLAYER.iter().position(|&a| a == skill).expect("every skill has a player's key");
-                assert_eq!(bar[key], Some(skill), "{archetype:?}");
-            }
+            let bar = loadout(&npc(archetype), None);
+            assert!(archetype.bar().iter().all(|&skill| bar.contains(&Some(skill))), "{archetype:?}: every skill of its stands on the bar");
             assert_eq!(bar.iter().flatten().count(), archetype.bar().len(), "{archetype:?} shows only its own");
         }
     }
@@ -437,12 +429,11 @@ mod icon_tests {
     use super::*;
 
     /// A skill without its icon shows an empty slot; icongen draws one for
-    /// every skill a bar can hold.
+    /// every skill, any of which a player may put on its bar.
     #[test]
     fn every_skill_on_a_bar_has_its_icon() {
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
-        let npcs = common_bevy::archetype::EnemyArchetype::ALL.into_iter().flat_map(|a| a.bar());
-        for ability in PLAYER.into_iter().chain(npcs) {
+        for ability in AbilityType::ALL {
             let path = assets.join(icon_path(ability));
             assert!(path.exists(), "{ability:?} has no icon at {}", path.display());
         }

@@ -53,7 +53,7 @@ pub fn cleanup_engagements(
             // cleanup_despawned handles actual entity removal
             for &npc_entity in &engagement.spawned_npcs {
                 if npc_query.get(npc_entity).is_ok() {
-                    writer.write(Do { event: Event::Despawn { ent: npc_entity } });
+                    writer.write(Do { event: Event::Despawn { ent: npc_entity, died: false } });
                 }
             }
 

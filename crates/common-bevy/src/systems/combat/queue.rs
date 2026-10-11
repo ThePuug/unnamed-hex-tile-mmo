@@ -49,6 +49,9 @@ pub fn create_threat(
         dot,
         ticked: 0,
         stride: 0.0,
+        crit: false,
+        stun: 0.0,
+        drag: 0,
     }
 }
 
@@ -108,6 +111,9 @@ mod tests {
             dot: 0.0,
             ticked: 0,
             stride: 0.0,
+            crit: false,
+            stun: 0.0,
+            drag: 0,
         }
     }
 

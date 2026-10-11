@@ -108,7 +108,7 @@ pub fn check_death(
 
             // Despawned at once, a player and an NPC alike
             writer.write(Do {
-                event: Event::Despawn { ent },
+                event: Event::Despawn { ent, died: true },
             });
         }
     }
@@ -263,7 +263,7 @@ mod tests {
             .resource::<Messages<Do>>()
             .iter_current_update_messages()
             .filter_map(|message| match message.event {
-                Event::Despawn { ent } => Some(ent),
+                Event::Despawn { ent, died: true } => Some(ent),
                 _ => None,
             })
             .collect();

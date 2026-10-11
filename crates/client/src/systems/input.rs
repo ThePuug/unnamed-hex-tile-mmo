@@ -35,7 +35,9 @@ pub fn update_keybits(
     console: Res<crate::plugins::console::DevConsole>,
     menu: Res<crate::plugins::shell::menu::GameMenu>,
     focus: Res<crate::systems::focus::NumpadFocus>,
-    mut query: Query<(Entity, &mut KeyBits, &Target), With<Actor>>,
+    panel: Res<crate::systems::character_panel::CharacterPanelState>,
+    mut query: Query<(Entity, &mut KeyBits, &Target, Option<&common_bevy::components::loadout::Loadout>, Option<&common_bevy::components::ActorAttributes>), With<Actor>>,
+    tuning: Res<common_bevy::tuning::Tuning>,
     mut writer: MessageWriter<Try>,
     mut buffers: ResMut<InputQueues>,
     dt: Res<Time>,
@@ -48,7 +50,7 @@ pub fn update_keybits(
     // open.
     let modal = menu.open
         || (console.visible && console.current_menu == crate::plugins::console::MenuPath::LightingTime);
-    let Ok((ent, mut keybits0, target)) = query.single_mut() else { return };
+    let Ok((ent, mut keybits0, target, held, attrs)) = query.single_mut() else { return };
 
     let delta_ns = dt.delta().as_nanos();
     keybits0.accumulator += delta_ns;
@@ -57,10 +59,13 @@ pub fn update_keybits(
     if !modal {
         // The player's kit: each key's ability, used on the hostile it
         // faces, stamped with the game time it was pressed at, where the
-        // server judges a reaction's band
+        // server judges a reaction's band. A skill picked in the skills tab
+        // is placed by the keys instead (`skills_panel::place`).
         let at = server.now(dt.elapsed().as_millis());
-        for (key, ability) in crate::systems::action_bar::KEYS.into_iter().zip(crate::systems::action_bar::PLAYER) {
-            if keys.pressed(key, crate::systems::action_bar::tells(ability)) {
+        let attrs = attrs.copied().unwrap_or_default();
+        let kit = held.copied().unwrap_or_default().0.into_iter().filter(|_| panel.placing().is_none());
+        for (key, ability) in crate::systems::action_bar::KEYS.into_iter().zip(kit) {
+            if keys.pressed(key, crate::systems::skill_text::describe(ability, &attrs, &tuning)) {
                 writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity, at, arrived: Default::default() }});
             }
         }

@@ -27,6 +27,18 @@ pub struct Leash {
 }
 
 impl Leash {
+    /// `ent`'s leash: its den's, at its chase's leash distance. None for an
+    /// actor in no engagement, a player's.
+    pub fn of(
+        ent: Entity,
+        leashed: &Query<(&crate::behaviour::chase::Chase, &crate::engagement::EngagementMember)>,
+        dens: &Query<&Loc, With<crate::engagement::Engagement>>,
+    ) -> Option<Leash> {
+        let (chase, member) = leashed.get(ent).ok()?;
+        let den = dens.get(member.0).ok()?;
+        Some(Leash { den: **den, reach: chase.leash_distance })
+    }
+
     /// Whether an actor on `leash`, or on none, may stand on `tile`
     fn holds(leash: Option<Leash>, tile: Qrz) -> bool {
         leash.is_none_or(|leash| tile.flat_distance(&leash.den) <= leash.reach)
@@ -75,6 +87,25 @@ pub fn toward(map: &Map, at: Qrz, to: Qrz, tiles: usize, leash: Option<Leash>) -
             break;
         };
         ground = next;
+    }
+    let landing = ground + Qrz::Z;
+    (landing != at).then_some(landing)
+}
+
+/// The standing tile up to `steps` steps round `center` from `at`, walking
+/// the ground along the ring at `to`'s distance the shorter way toward `to`
+/// (`Qrz::circling`), stopping there or where the ground or its `leash`
+/// does; `None` when not even the first step can be taken.
+pub fn round(map: &Map, at: Qrz, center: Qrz, to: Qrz, steps: usize, leash: Option<Leash>) -> Option<Qrz> {
+    let (mut ground, _) = map.get_by_qr(at.q, at.r)?;
+    for next in center.circling(at, to).into_iter().take(steps) {
+        let Some((floor, _)) = map.neighbors(ground).into_iter()
+            .find(|(neighbor, _)| (neighbor.q, neighbor.r) == (next.q, next.r))
+            .filter(|(neighbor, _)| Leash::holds(leash, *neighbor))
+        else {
+            break;
+        };
+        ground = floor;
     }
     let landing = ground + Qrz::Z;
     (landing != at).then_some(landing)

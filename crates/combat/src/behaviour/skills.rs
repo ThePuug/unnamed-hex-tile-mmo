@@ -95,11 +95,13 @@ pub struct Threats {
     /// time left as a share of the span: 1 at the band's far end, and with
     /// nothing in it
     pub soonest_left: f32,
+    /// One of them carries control: a stun, a drag or a broken stride
+    pub controls: bool,
 }
 
 impl Default for Threats {
     fn default() -> Self {
-        Self { swept: 0.0, swept_direct: 0.0, taken: 0, soonest_left: 1.0 }
+        Self { swept: 0.0, swept_direct: 0.0, taken: 0, soonest_left: 1.0, controls: false }
     }
 }
 
@@ -118,6 +120,7 @@ impl Threats {
             read.taken += 1;
             let left = if span.is_zero() { 0.0 } else { lands.since(now).as_secs_f32() / span.as_secs_f32() };
             read.soonest_left = read.soonest_left.min(left);
+            read.controls |= threat.stun > 0.0 || threat.drag != 0 || threat.stride > 0.0;
         }
         read
     }
@@ -210,14 +213,19 @@ enum Part {
 fn reason(ability: AbilityType, view: &View) -> Option<(&'static str, Vec<Considered>)> {
     let (reason, part) = match ability {
         AbilityType::AutoAttack => return None,
-        AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower => ("strike", Part::Strike),
+        AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Backstab | AbilityType::Kick | AbilityType::Defy => ("strike", Part::Strike),
         AbilityType::Punish => ("punish", Part::Strike),
-        AbilityType::Parry | AbilityType::Counter => ("answer", Part::Reaction),
+        AbilityType::Parry | AbilityType::Counter | AbilityType::Clash | AbilityType::Sidestep | AbilityType::Yank | AbilityType::Pounce => ("answer", Part::Reaction),
         AbilityType::Leap => match view.foe?.distance <= view.reach {
             true => ("dodge", Part::Clear),
             false => ("dive", Part::Dive),
         },
         AbilityType::PerfectStride => ("stride", Part::Effect),
+        AbilityType::Bloodlust => ("bloodlust", Part::Effect),
+        AbilityType::Brace => ("brace", Part::Effect),
+        AbilityType::Surge => ("surge", Part::Effect),
+        AbilityType::Vigil => ("vigil", Part::Effect),
+        AbilityType::Lurk => ("lurk", Part::Effect),
     };
     let mut considerations = vec![USABLE, ENDURANCE_LEFT];
     considerations.extend(part_considerations(part));
@@ -233,7 +241,7 @@ fn part_considerations(part: Part) -> Vec<Considered> {
         Part::Reaction => vec![MID_BAND, WORTH_ANSWERING],
         Part::Clear => vec![MID_BAND, WORTH_ANSWERING, LEASH_LEFT],
         Part::Dive => vec![CAPACITY, STRIKE_WORTH, LEASH_LEFT, EXPOSURE],
-        Part::Effect => vec![IN_REACH],
+        Part::Effect => vec![TAKES_HOLD],
     }
 }
 
@@ -245,13 +253,43 @@ fn part_considerations(part: Part) -> Vec<Considered> {
 enum Effect {
     /// Perfect Stride, on itself
     PerfectStride,
+    /// Bloodlust, on itself
+    Bloodlust,
+    /// Brace, on itself
+    Brace,
+    /// Surge, on itself
+    Surge,
+    /// Vigil, on itself
+    Vigil,
+    /// Lurk, on itself
+    Lurk,
 }
 
 impl Effect {
+    /// Whether it would do anything now, by its own rule: a stride or a
+    /// bloodlust with a foe in reach to strike; a lurk or a surge with its
+    /// foe beyond reach, unseen or ground to cover; a vigil with its foe
+    /// outside the arc it strikes within, at its flank; a brace with control
+    /// coming in its band
+    fn takes_hold(self, view: &View) -> bool {
+        let in_reach = view.foe.is_some_and(|foe| foe.distance <= view.reach);
+        match self {
+            Effect::PerfectStride | Effect::Bloodlust => in_reach,
+            Effect::Lurk | Effect::Surge => view.foe.is_some() && !in_reach,
+            Effect::Vigil => view.foe.is_some_and(|foe| !foe.in_arc),
+            Effect::Brace => view.queue.controls,
+        }
+    }
+
     /// Seconds a fresh one lasts on whoever it lands on
     fn lasts(self, view: &View) -> f32 {
         match self {
             Effect::PerfectStride => view.tuning.stride_secs,
+            Effect::Bloodlust => view.tuning.bloodlust_secs,
+            Effect::Brace => view.tuning.brace_secs * view.attrs.line_power(&view.tuning, AbilityType::Brace),
+            Effect::Surge => view.tuning.surge_secs,
+            Effect::Vigil => view.tuning.vigil_secs * view.attrs.line_power(&view.tuning, AbilityType::Vigil),
+            Effect::Lurk => view.tuning.lurk_secs * view.attrs.line_power(&view.tuning, AbilityType::Lurk),
         }
     }
 
@@ -259,16 +297,26 @@ impl Effect {
     fn left(self, view: &View) -> f32 {
         let timed = match self {
             Effect::PerfectStride => view.status.perfect_stride,
+            Effect::Bloodlust => view.status.bloodlust,
+            Effect::Brace => view.status.braced,
+            Effect::Surge => view.status.surge,
+            Effect::Vigil => view.status.vigil,
+            Effect::Lurk => view.status.lurk,
         };
         timed.map_or(0.0, |timed| timed.remaining.max(0.0))
     }
 }
 
-/// The timed effect `view.ability` would put on someone now: Perfect
-/// Stride's on itself. None for a decision that puts on none.
+/// The timed effect `view.ability` would put on someone now: a stance's on
+/// itself. None for a decision that puts on none.
 fn effect(view: &View) -> Option<Effect> {
     match view.ability {
         AbilityType::PerfectStride => Some(Effect::PerfectStride),
+        AbilityType::Bloodlust => Some(Effect::Bloodlust),
+        AbilityType::Brace => Some(Effect::Brace),
+        AbilityType::Surge => Some(Effect::Surge),
+        AbilityType::Vigil => Some(Effect::Vigil),
+        AbilityType::Lurk => Some(Effect::Lurk),
         _ => None,
     }
 }
@@ -306,7 +354,7 @@ fn health(view: &View) -> f32 {
 /// The gate would let the skill through on its foe now: its recovery, its
 /// foe within its reach and arc for one that strikes
 const USABLE: Considered = step("usable", |view| {
-    let foe = view.foe.map(|foe| (foe.distance, foe.in_arc));
+    let foe = view.foe.map(|foe| (foe.distance, foe.in_arc, foe.flanked));
     flag(admits(view.ability, reacting(view), view.recovery.as_ref(), &view.attrs, view.reach, foe, view.status.is_pinned()).is_ok())
 });
 
@@ -431,8 +479,9 @@ const LEASH_LEFT: Considered = Consideration {
 
 // --- Effect ---
 
-/// Its foe stands within its reach, where an effect on itself pays
-const IN_REACH: Considered = step("in_reach", |view| flag(view.foe.is_some_and(|foe| foe.distance <= view.reach)));
+/// The effect it would put on itself would do something now, by the
+/// effect's own rule (`Effect::takes_hold`)
+const TAKES_HOLD: Considered = step("takes_hold", |view| flag(effect(view).is_some_and(|effect| effect.takes_hold(view))));
 
 #[cfg(test)]
 mod tests {
@@ -625,6 +674,30 @@ mod tests {
         assert!(chosen.is_some_and(|decision| decision.ability == AbilityType::Feint), "carried on past a wait it would not beat alone");
         let mut fresh = view(&tuning, AbilityType::Feint, ActorAttributes::default());
         assert!(choose(&mut fresh, &[AbilityType::Feint], &mind, |_| 0.0).is_none(), "and out of recovery the same strike waits");
+    }
+
+    #[test]
+    fn a_stance_is_taken_only_where_it_takes_hold() {
+        let tuning = Tuning::DEFAULT;
+        let taken = |view: &mut View| choose(view, &[view.ability], &Mind::default(), |_| 0.0).is_some();
+
+        let mut beside = view(&tuning, AbilityType::Lurk, ActorAttributes::default());
+        assert!(!taken(&mut beside), "no lurking beside its foe");
+        let mut apart = view(&tuning, AbilityType::Lurk, ActorAttributes::default());
+        apart.foe.as_mut().unwrap().distance = 5;
+        assert!(taken(&mut apart), "but beyond its reach");
+
+        let mut calm = view(&tuning, AbilityType::Brace, ActorAttributes::default());
+        assert!(!taken(&mut calm), "no bracing with nothing coming");
+        let mut coming = view(&tuning, AbilityType::Brace, ActorAttributes::default());
+        coming.queue.controls = true;
+        assert!(taken(&mut coming), "but against a stun or a drag in its band");
+
+        let mut faced = view(&tuning, AbilityType::Vigil, ActorAttributes::default());
+        assert!(!taken(&mut faced), "no vigil with its foe in front of it");
+        let mut flanked = view(&tuning, AbilityType::Vigil, ActorAttributes::default());
+        flanked.foe.as_mut().unwrap().in_arc = false;
+        assert!(taken(&mut flanked), "but with its foe at its flank");
     }
 
     #[test]

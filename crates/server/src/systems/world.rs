@@ -29,6 +29,7 @@ pub struct Synced {
     endurance: Option<&'static Endurance>,
     combat_state: Option<&'static CombatState>,
     equipment: Option<&'static Equipment>,
+    status: Option<&'static status::Status>,
 }
 
 impl SyncedItem<'_, '_> {
@@ -46,6 +47,7 @@ impl SyncedItem<'_, '_> {
             self.endurance,
             self.combat_state,
             self.equipment,
+            self.status,
         )
     }
 }
@@ -66,6 +68,7 @@ pub fn generate_actor_spawn_events(
     endurance: Option<&Endurance>,
     combat_state: Option<&CombatState>,
     equipment: Option<&Equipment>,
+    status: Option<&status::Status>,
 ) -> Vec<Do> {
     let mut events = Vec::new();
 
@@ -100,6 +103,11 @@ pub fn generate_actor_spawn_events(
 
     if let Some(e) = equipment {
         events.push(Do { event: Event::Incremental { ent, component: Component::Equipment(*e) }});
+    }
+
+    // What holds it now, a lurk among them
+    if let Some(s) = status {
+        events.push(Do { event: Event::Incremental { ent, component: Component::Status(*s) }});
     }
 
     events

@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, combat_log, combat_ui, drop_panel, equipment_panel, highway, resolved_threats, resource_bars, target_frame, target_indicator, ui};
+use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, skills_panel, combat_log, combat_ui, drop_panel, equipment_panel, highway, resolved_threats, resource_bars, target_frame, target_indicator, ui};
 
 /// The game's UI: the panels, the HUD, the target rings, the highway and
 /// the combat feedback drawn over the world.
@@ -60,6 +60,7 @@ impl Plugin for UiPlugin {
                 character_panel_respec::toggle_apply_label,
             ),
         );
+        app.add_systems(Update, (skills_panel::handle_numpad, skills_panel::place, skills_panel::handle_loadout_taken, skills_panel::sync_bar, skills_panel::update, skills_panel::update_card).chain());
 
         // Dropping from the bag
         app.add_systems(Update, (bag_panel::handle_numpad, (drop_panel::handle_keys, drop_panel::update).chain()));

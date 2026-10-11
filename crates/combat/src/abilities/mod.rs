@@ -1,6 +1,6 @@
 //! Every ability an actor uses goes through one gate, [`Abilities::cast`].
 //! The gate asks, in order and the same of every ability: is the caster
-//! alive; is it out of recovery, or taking the combo it was offered, or
+//! alive; is it on the bar, for a player (`Loadout`); is it out of recovery, or taking the combo it was offered, or
 //! reacting through the recovery (an auto-attack asks its clock instead);
 //! does it strike a living hostile within the ability's reach and its arc;
 //! does a pin hold it, for a skill that moves its user. Nothing it holds
@@ -25,13 +25,24 @@
 //! within its reach.
 
 pub mod auto_attack;
+pub mod bloodlust;
+pub mod brace;
+pub mod clash;
 pub mod counter;
+pub mod defy;
+pub mod kick;
 pub mod leap;
+pub mod lurk;
 pub mod npc;
 pub mod parry;
+pub mod pounce;
 pub mod punish;
+pub mod sidestep;
 pub mod stride;
 pub mod strike;
+pub mod surge;
+pub mod vigil;
+pub mod yank;
 
 use std::time::Duration;
 
@@ -73,8 +84,23 @@ pub enum AbilityFailReason {
     OutOfRange,
     /// The target stands outside the caster's arc
     NotFacing,
+    /// A skill struck from a flank, its caster within its target's forward
+    /// faces
+    NotFlanking,
+    /// A player's skill not on its bar
+    NotHeld,
     /// A skill that moves its user, held in an Intimidating foe's zone
     Pinned,
+}
+
+/// What a threat carries to the one it is queued on: damage, seconds of
+/// stun and tiles of drag (toward its source where positive), each landing
+/// as the threat does.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Carried {
+    pub damage: f32,
+    pub stun: f32,
+    pub drag: i8,
 }
 
 /// One use of an ability the gate has let through: who uses it, from where,
@@ -113,11 +139,13 @@ pub struct LastSkill(pub Moment);
 /// where this use is a reaction (`AbilityType::reacts`), in order: out
 /// of `prior`, the recovery its caster is in, or let through it (an
 /// auto-attack's own clock is asked apart); for one with a reach out of
-/// `reach`, a target at `foe`'s distance and inside its arc, None for no
-/// target; for one that moves its user, no pin on it (`pinned`). An NPC's
+/// `reach`, a target at `foe`'s distance and inside its arc, and for one
+/// struck from a flank (`AbilityType::flanks`) its caster past the
+/// target's forward faces, None for no target; for one that moves its
+/// user, no pin on it (`pinned`). An NPC's
 /// skills channel asks the same of what it perceives, so it never weighs a
 /// skill the gate refuses.
-pub fn admits(ability: AbilityType, reacting: bool, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool)>, pinned: bool) -> Result<(), AbilityFailReason> {
+pub fn admits(ability: AbilityType, reacting: bool, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool, bool)>, pinned: bool) -> Result<(), AbilityFailReason> {
     if pinned && ability.moves() {
         return Err(AbilityFailReason::Pinned);
     }
@@ -125,12 +153,15 @@ pub fn admits(ability: AbilityType, reacting: bool, prior: Option<&GlobalRecover
         return Err(AbilityFailReason::Recovering);
     }
     if let Some(within) = ability.reach(reach) {
-        let (distance, in_arc) = foe.ok_or(AbilityFailReason::NoTargets)?;
+        let (distance, in_arc, flanked) = foe.ok_or(AbilityFailReason::NoTargets)?;
         if !within.contains(&distance) {
             return Err(AbilityFailReason::OutOfRange);
         }
         if !in_arc {
             return Err(AbilityFailReason::NotFacing);
+        }
+        if ability.flanks() && !flanked {
+            return Err(AbilityFailReason::NotFlanking);
         }
     }
     Ok(())
@@ -163,6 +194,7 @@ pub struct Abilities<'w, 's> {
     pub engagements: Query<'w, 's, &'static Engagement>,
     pub last_skills: Query<'w, 's, &'static LastSkill>,
     pub kinds: Query<'w, 's, &'static EntityType>,
+    pub loadouts: Query<'w, 's, &'static common_bevy::components::loadout::Loadout>,
     pub map: Res<'w, Map>,
     pub time: Res<'w, Time>,
     pub runtime: Res<'w, crate::RunTime>,
@@ -253,6 +285,11 @@ impl Abilities<'_, '_> {
         let status = self.statuses.get(ent).ok().copied();
         let prior = self.recoveries.get(ent).ok().copied();
 
+        // A player uses only what its bar holds
+        if ability != AbilityType::AutoAttack && self.loadouts.get(ent).is_ok_and(|loadout| !loadout.holds(ability)) {
+            return Err(Some(AbilityFailReason::NotHeld));
+        }
+
         // An auto-attack comes due on its own clock, whatever the recovery,
         // and a held actor swings at nothing
         if ability == AbilityType::AutoAttack {
@@ -269,7 +306,12 @@ impl Abilities<'_, '_> {
         if ability.reach(reach).is_some() {
             cast.target_loc = self.foe(&cast).ok().map(|(_, target_loc)| target_loc);
         }
-        let foe = cast.target_loc.map(|target_loc| (loc.distance(&target_loc), in_arc(&tuning, heading.as_ref(), Some(&attrs), &loc, &target_loc)));
+        let target_heading = cast.target.and_then(|target| self.actors.get(target).ok()).and_then(|(_, _, _, heading, ..)| heading.copied());
+        let foe = cast.target_loc.map(|target_loc| (
+            loc.distance(&target_loc),
+            in_arc(&tuning, heading.as_ref(), Some(&attrs), &loc, &target_loc),
+            targeting::takes_flank(target_heading.as_ref(), cast.target.and_then(|target| self.statuses.get(target).ok()), &target_loc, &loc),
+        ));
 
         let across = cast.target_loc.is_some_and(|target_loc| targeting::across(heading.as_ref(), &loc, &target_loc));
         // A Leap with its target in reach leaps clear, a reaction
@@ -287,12 +329,23 @@ impl Abilities<'_, '_> {
         // changes anything; it names whom its recovery is contested by
         let opponent = match ability {
             AbilityType::AutoAttack => auto_attack::swing(self, &cast),
-            AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower => strike::strike(self, &cast),
+            AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Backstab => strike::strike(self, &cast),
             AbilityType::Punish => punish::strike(self, &cast),
             AbilityType::Parry => parry::answer(self, &cast),
             AbilityType::Counter => counter::answer(self, &cast),
             AbilityType::Leap => leap::leap(self, &cast),
             AbilityType::PerfectStride => stride::take(self, &cast),
+            AbilityType::Clash => clash::answer(self, &cast),
+            AbilityType::Sidestep => sidestep::answer(self, &cast),
+            AbilityType::Yank => yank::answer(self, &cast),
+            AbilityType::Pounce => pounce::answer(self, &cast),
+            AbilityType::Kick => kick::strike(self, &cast),
+            AbilityType::Defy => defy::strike(self, &cast),
+            AbilityType::Bloodlust => bloodlust::take(self, &cast),
+            AbilityType::Brace => brace::take(self, &cast),
+            AbilityType::Surge => surge::take(self, &cast),
+            AbilityType::Vigil => vigil::take(self, &cast),
+            AbilityType::Lurk => lurk::take(self, &cast),
         }.map_err(Some)?;
 
         // Endurance is spent and refuses nothing; an auto-attack is free
@@ -322,11 +375,12 @@ impl Abilities<'_, '_> {
     /// The living hostile `cast` was asked about, and where it stands
     pub fn foe(&self, cast: &Cast) -> Result<(Entity, Loc), AbilityFailReason> {
         let target = cast.target.ok_or(AbilityFailReason::NoTargets)?;
-        let Ok((&loc, _, _, _, side, _, dead)) = self.actors.get(target) else {
+        let Ok((&loc, _, _, _, side, range, dead)) = self.actors.get(target) else {
             return Err(AbilityFailReason::NoTargets);
         };
         let hostile = cast.side.zip(side.copied()).is_some_and(|(own, theirs)| own.is_hostile_to(theirs));
-        if dead || !hostile {
+        let hidden = targeting::unseen(self.statuses.get(target).ok(), range.copied().unwrap_or_default().0, cast.loc.flat_distance(&loc));
+        if dead || !hostile || hidden {
             return Err(AbilityFailReason::NoTargets);
         }
         Ok((target, loc))
@@ -335,9 +389,7 @@ impl Abilities<'_, '_> {
     /// The leash `ent`'s moves keep inside: an NPC's, round its
     /// engagement's place. A player has none.
     pub fn leash(&self, ent: Entity) -> Option<crate::leap::Leash> {
-        let (chase, member) = self.leashed.get(ent).ok()?;
-        let den = self.dens.get(member.0).ok()?;
-        Some(crate::leap::Leash { den: **den, reach: chase.leash_distance })
+        crate::leap::Leash::of(ent, &self.leashed, &self.dens)
     }
 
     /// Spends `spent` of `ent`'s endurance, as far as it has any, and tells
@@ -404,7 +456,34 @@ impl Abilities<'_, '_> {
     /// `ability`'s, struck `delay` after now.
     pub fn deal(&mut self, source: Entity, target: Entity, base_damage: f32, ability: AbilityType, delay: Duration) {
         self.commands.trigger(Try {
-            event: GameEvent::DealDamage { source, target, base_damage, ability: Some(ability), dot: 0.0, delay },
+            event: GameEvent::DealDamage { source, target, base_damage, ability: Some(ability), dot: 0.0, delay, stun: 0.0, drag: 0 },
+        });
+    }
+
+    /// Queues what `cast`, a reaction, does to the sources of the threats
+    /// it `cleared` on them: one threat to each, carrying what `carried`
+    /// makes of all it cleared from that source, a wound's DoT still to come
+    /// included, so the source may answer it in turn. A dead source takes
+    /// nothing.
+    pub fn send_back(&mut self, cast: &Cast, cleared: &[QueuedThreat], carried: impl Fn(f32) -> Carried) {
+        let mut sums: Vec<(Entity, f32)> = Vec::new();
+        for threat in cleared {
+            let whole = threat.damage + threat.dot_left();
+            match sums.iter_mut().find(|(source, _)| *source == threat.source) {
+                Some((_, sum)) => *sum += whole,
+                None => sums.push((threat.source, whole)),
+            }
+        }
+        for (source, sum) in sums {
+            self.carry(cast, source, carried(sum));
+        }
+    }
+
+    /// Queues `carried` on `target` as `cast`'s, struck at once
+    pub fn carry(&mut self, cast: &Cast, target: Entity, carried: Carried) {
+        let Carried { damage, stun, drag } = carried;
+        self.commands.trigger(Try {
+            event: GameEvent::DealDamage { source: cast.ent, target, base_damage: damage, ability: Some(cast.ability), dot: 0.0, delay: Duration::ZERO, stun, drag },
         });
     }
 
@@ -645,7 +724,296 @@ mod tests {
         assert!(used(&said, AbilityType::Counter));
         assert!(queue(&app, defender).is_empty(), "the blow is cleared");
         assert!(said.iter().any(|event| matches!(event, GameEvent::UseAbility { target, .. } if *target == Some(attacker))), "and answered to its source");
-        assert!(app.world().get::<Health>(attacker).unwrap().state < before, "which takes a share of it back");
+        let [back] = queue(&app, attacker)[..] else { panic!("one return queued on its source") };
+        assert_eq!((back.source, back.ability), (defender, Some(AbilityType::Counter)));
+        assert_eq!(app.world().get::<Health>(attacker).unwrap().state, before, "which lands only when its window runs out");
+    }
+
+    #[test]
+    fn a_counter_returns_one_blow_to_each_source_carrying_all_it_cleared_from_it() {
+        let tuning = Tuning::DEFAULT;
+        use common_bevy::systems::combat::queue::{create_threat, insert_threat};
+        let mut app = arena();
+        let defender = actor(&mut app, Side::PLAYERS, 0);
+        let one = actor(&mut app, Side::WILD, 1);
+        let other = actor(&mut app, Side::WILD, 2);
+        app.update();
+
+        let plain = ActorAttributes::default();
+        let mut land = |source: Entity, damage: f32, dot: f32| {
+            let threat = create_threat(&tuning, source, &plain, &plain, damage, Some(AbilityType::Frenzy), Moment::ZERO, dot, 0.0);
+            insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat);
+            threat
+        };
+        land(one, 40.0, 4.0);
+        land(one, 20.0, 0.0);
+        land(other, 10.0, 0.0);
+
+        let lands = soonest(&app, defender);
+        assert!(used(&press(&mut app, defender, AbilityType::Counter, None, lands - EARLY), AbilityType::Counter));
+        let back = |app: &App, source: Entity| -> Vec<f32> {
+            queue(app, source).iter().filter(|threat| threat.source == defender).map(|threat| threat.damage).collect()
+        };
+        let (from_one, from_other) = (back(&app, one), back(&app, other));
+        assert_eq!((from_one.len(), from_other.len()), (1, 1), "one return to each source");
+        assert!(from_one[0] > from_other[0], "a source's two blows go back as one, heavier than the other's one");
+    }
+
+    #[test]
+    fn a_backstab_strikes_only_from_a_flank_and_its_crit_lands_harder() {
+        let mut app = arena();
+        let caster = actor(&mut app, Side::PLAYERS, 0);
+        let target = actor(&mut app, Side::WILD, 1);
+        turned_to(&mut app, target, -1);
+        app.update();
+        assert_eq!(refused(&mut app, caster, AbilityType::Backstab, Some(target)), Some(AbilityFailReason::NotFlanking), "not from in front of it");
+
+        turned_to(&mut app, target, 1);
+        app.update();
+        assert!(used(&ask(&mut app, caster, AbilityType::Backstab, Some(target)), AbilityType::Backstab), "from behind it");
+        assert_eq!(queue(&app, target).len(), 1);
+
+        let tuning = Tuning::DEFAULT;
+        assert!(tuning.crit_severity(Some(AbilityType::Backstab)) > tuning.crit_severity(Some(AbilityType::Frenzy)));
+    }
+
+    #[test]
+    fn a_pounce_lunges_beside_its_source() {
+        let tuning = Tuning::DEFAULT;
+        use common_bevy::systems::combat::queue::{create_threat, insert_threat};
+        let mut app = arena();
+        let defender = actor(&mut app, Side::PLAYERS, 0);
+        let far = actor(&mut app, Side::WILD, 4);
+        app.update();
+
+        let plain = ActorAttributes::default();
+        let threat = create_threat(&tuning, far, &plain, &plain, 10.0, Some(AbilityType::Frenzy), game_now(&app), 0.0, 0.0);
+        insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat);
+        let lands = soonest(&app, defender);
+        assert!(used(&press(&mut app, defender, AbilityType::Pounce, None, lands - EARLY), AbilityType::Pounce));
+        assert!(queue(&app, defender).is_empty(), "the blow is cleared");
+        app.update();
+        let distance = app.world().get::<Loc>(far).unwrap().flat_distance(app.world().get::<Loc>(defender).unwrap());
+        assert!(distance < 4, "and it lunges toward its source");
+    }
+
+    #[test]
+    fn a_kick_knocks_its_target_back_as_it_lands() {
+        let mut app = arena();
+        let caster = actor(&mut app, Side::PLAYERS, 0);
+        let target = actor(&mut app, Side::WILD, 1);
+        app.update();
+
+        assert!(used(&ask(&mut app, caster, AbilityType::Kick, Some(target)), AbilityType::Kick));
+        let [kick] = queue(&app, target)[..] else { panic!("one blow") };
+        assert!(kick.drag < 0, "it carries a knock back");
+        let distance = |app: &App| app.world().get::<Loc>(target).unwrap().flat_distance(app.world().get::<Loc>(caster).unwrap());
+        assert_eq!(distance(&app), 1, "which waits in the queue");
+        clock_to(&mut app, kick.lands_at() + EARLY);
+        app.update();
+        app.update();
+        assert!(distance(&app) > 1, "and knocks its target back once it lands");
+    }
+
+    #[test]
+    fn a_defy_strikes_harder_for_each_threat_waiting_on_its_user() {
+        let tuning = Tuning::DEFAULT;
+        use common_bevy::systems::combat::queue::{create_threat, insert_threat};
+        let mut app = arena();
+        let calm = actor(&mut app, Side::PLAYERS, 0);
+        let pressed = actor(&mut app, Side::PLAYERS, 2);
+        let foe = actor(&mut app, Side::WILD, 1);
+        turned_to(&mut app, pressed, -1);
+        // Resolve, whose line the bonus rides, past what the spread hides
+        app.world_mut().entity_mut(pressed).insert(ActorAttributes::new(0, 0, 0, 0, 0, 0, 24, 0, 0));
+        app.update();
+
+        let plain = ActorAttributes::default();
+        for _ in 0..3 {
+            let threat = create_threat(&tuning, foe, &plain, &plain, 10.0, Some(AbilityType::Frenzy), game_now(&app), 0.0, 0.0);
+            insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(pressed).unwrap(), threat);
+        }
+        assert!(used(&ask(&mut app, calm, AbilityType::Defy, Some(foe)), AbilityType::Defy));
+        assert!(used(&ask(&mut app, pressed, AbilityType::Defy, Some(foe)), AbilityType::Defy));
+        let struck = |source: Entity| queue(&app, foe).iter().find(|threat| threat.source == source).unwrap().damage;
+        let widest = (1.0 + tuning.damage_spread) / (1.0 - tuning.damage_spread);
+        assert!(struck(pressed) > struck(calm) * widest, "three threats waiting strike harder than none");
+    }
+
+    #[test]
+    fn a_bloodlust_heals_its_user_by_what_its_attacks_land() {
+        let mut app = arena();
+        let caster = actor(&mut app, Side::PLAYERS, 0);
+        let target = actor(&mut app, Side::WILD, 1);
+        app.update();
+        app.world_mut().get_mut::<Health>(caster).unwrap().state = 500.0;
+
+        assert!(used(&ask(&mut app, caster, AbilityType::Bloodlust, None), AbilityType::Bloodlust));
+        assert!(app.world().get::<Status>(caster).is_some_and(|status| status.lifesteal() > 0.0));
+        let threat = create_threat_on(&mut app, caster, target, 100.0);
+        clock_to(&mut app, threat.lands_at() + EARLY);
+        app.update();
+        assert!(app.world().get::<Health>(target).unwrap().state < 1000.0, "the attack lands");
+        assert!(app.world().get::<Health>(caster).unwrap().state > 500.0, "and heals its user");
+    }
+
+    #[test]
+    fn a_brace_takes_no_stun_and_no_drag() {
+        let mut app = arena();
+        let defender = actor(&mut app, Side::PLAYERS, 0);
+        let attacker = actor(&mut app, Side::WILD, 1);
+        turned_to(&mut app, attacker, -1);
+        app.update();
+
+        let braced = Status { braced: Some(common_bevy::components::status::Timed { pace: 1.0, remaining: 30.0 }), ..default() };
+        app.world_mut().entity_mut(attacker).insert(braced);
+        let [back] = answered_with(&mut app, defender, attacker, AbilityType::Clash)[..] else { panic!("one return") };
+        clock_to(&mut app, back.lands_at() + EARLY);
+        app.update();
+        assert!(!Status::holds(app.world().get::<Status>(attacker)), "a braced source takes no stun");
+
+        let mut status = Status { braced: Some(common_bevy::components::status::Timed { pace: 1.0, remaining: 1.0 }), ..default() };
+        status.slow(0.5, 1.0);
+        status.pin(1.0);
+        status.break_stride(0.5, 1.0);
+        assert_eq!(status.pace(), 1.0, "nor slow nor broken stride");
+        assert!(!status.is_pinned(), "nor pin");
+    }
+
+    #[test]
+    fn a_surge_lands_its_next_strike_harder_for_each_tile_moved() {
+        let tuning = Tuning::DEFAULT;
+        let mut app = arena();
+        let surger = actor(&mut app, Side::PLAYERS, -3);
+        let plain = actor(&mut app, Side::PLAYERS, 2);
+        let target = actor(&mut app, Side::WILD, 1);
+        turned_to(&mut app, plain, -1);
+        // Discipline, whose line the bonus rides, past what the spread hides
+        app.world_mut().entity_mut(surger).insert(ActorAttributes::new(0, 0, 0, 24, 0, 0, 0, 0, 0));
+        app.update();
+
+        assert!(used(&ask(&mut app, surger, AbilityType::Surge, None), AbilityType::Surge));
+        let beside = Qrz { q: 0, r: 0, z: 1 };
+        app.world_mut().entity_mut(surger).insert((Loc::new(beside), common_bevy::components::position::Position::at_tile(beside)));
+        app.update();
+        assert_eq!(app.world().get::<surge::Surged>(surger).map(|surged| surged.tiles), Some(3), "three tiles moved");
+
+        app.world_mut().entity_mut(surger).remove::<GlobalRecovery>();
+        assert!(used(&ask(&mut app, surger, AbilityType::Frenzy, Some(target)), AbilityType::Frenzy));
+        assert!(used(&ask(&mut app, plain, AbilityType::Frenzy, Some(target)), AbilityType::Frenzy));
+        let struck = |source: Entity| queue(&app, target).iter().find(|threat| threat.source == source).unwrap().damage;
+        let widest = (1.0 + tuning.damage_spread) / (1.0 - tuning.damage_spread);
+        assert!(struck(surger) > struck(plain) * widest, "the moves land in the strike");
+        assert!(app.world().get::<Status>(surger).is_some_and(|status| status.surging() == 0.0), "which spends the Surge");
+    }
+
+    #[test]
+    fn a_vigil_gives_no_flank() {
+        let mut app = arena();
+        let caster = actor(&mut app, Side::PLAYERS, 0);
+        let target = actor(&mut app, Side::WILD, 1);
+        turned_to(&mut app, target, 1);
+        let watching = Status { vigil: Some(common_bevy::components::status::Timed { pace: 1.0, remaining: 30.0 }), ..default() };
+        app.world_mut().entity_mut(target).insert(watching);
+        app.update();
+        assert_eq!(refused(&mut app, caster, AbilityType::Backstab, Some(target)), Some(AbilityFailReason::NotFlanking), "not even from behind it");
+    }
+
+    #[test]
+    fn a_lurker_goes_unseen_beyond_its_reach_until_it_attacks() {
+        let mut app = arena();
+        let leaper = actor(&mut app, Side::PLAYERS, 0);
+        let lurker = actor(&mut app, Side::WILD, 4);
+        let near = actor(&mut app, Side::PLAYERS, 3);
+        turned_to(&mut app, lurker, -1);
+        let lurking = Status { lurk: Some(common_bevy::components::status::Timed { pace: 1.0, remaining: 30.0 }), ..default() };
+        app.world_mut().entity_mut(lurker).insert(lurking);
+        app.update();
+
+        assert_eq!(refused(&mut app, leaper, AbilityType::Leap, Some(lurker)), Some(AbilityFailReason::NoTargets), "no leap onto what it cannot see");
+        assert!(used(&ask(&mut app, lurker, AbilityType::Frenzy, Some(near)), AbilityType::Frenzy), "it strikes from hiding");
+        assert!(!app.world().get::<Status>(lurker).unwrap().is_lurking(), "and is seen once it has");
+        assert_eq!(refused(&mut app, leaper, AbilityType::Leap, Some(lurker)), None, "so it may be leapt onto");
+    }
+
+    /// Queues a blow of `damage` from `source` on `target`, as a strike
+    /// would, and returns it as queued
+    fn create_threat_on(app: &mut App, source: Entity, target: Entity, damage: f32) -> QueuedThreat {
+        app.world_mut().trigger(Try { event: GameEvent::DealDamage { source, target, base_damage: damage, ability: Some(AbilityType::Frenzy), dot: 0.0, delay: Duration::ZERO, stun: 0.0, drag: 0 } });
+        app.update();
+        queue(app, target).into_iter().find(|threat| threat.source == source).expect("the blow is queued")
+    }
+
+    /// A Frenzy from `attacker` on `defender`, answered by `defender` with
+    /// `reaction` just before it lands; what `reaction` queued back on the
+    /// attacker
+    fn answered_with(app: &mut App, defender: Entity, attacker: Entity, reaction: AbilityType) -> Vec<QueuedThreat> {
+        assert!(used(&ask(app, attacker, AbilityType::Frenzy, Some(defender)), AbilityType::Frenzy));
+        let lands = soonest(app, defender);
+        assert!(used(&press(app, defender, reaction, None, lands - EARLY), reaction));
+        assert!(queue(app, defender).is_empty(), "the blow is cleared");
+        queue(app, attacker).into_iter().filter(|threat| threat.source == defender).collect()
+    }
+
+    #[test]
+    fn a_clash_stuns_its_source_as_its_return_lands() {
+        let mut app = arena();
+        let defender = actor(&mut app, Side::PLAYERS, 0);
+        let attacker = actor(&mut app, Side::WILD, 1);
+        turned_to(&mut app, attacker, -1);
+        app.update();
+
+        let [back] = answered_with(&mut app, defender, attacker, AbilityType::Clash)[..] else { panic!("one return") };
+        assert!(back.stun > 0.0, "the return carries a stun");
+        assert!(!Status::holds(app.world().get::<Status>(attacker)), "which waits in the queue");
+        clock_to(&mut app, back.lands_at() + EARLY);
+        app.update();
+        assert!(Status::holds(app.world().get::<Status>(attacker)), "and holds its source once it lands");
+    }
+
+    #[test]
+    fn a_yank_drags_its_source_in_as_its_return_lands() {
+        let tuning = Tuning::DEFAULT;
+        use common_bevy::systems::combat::queue::{create_threat, insert_threat};
+        let mut app = arena();
+        let defender = actor(&mut app, Side::PLAYERS, 0);
+        let far = actor(&mut app, Side::WILD, 4);
+        app.update();
+
+        let plain = ActorAttributes::default();
+        let threat = create_threat(&tuning, far, &plain, &plain, 10.0, Some(AbilityType::Frenzy), game_now(&app), 0.0, 0.0);
+        insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(defender).unwrap(), threat);
+        let lands = soonest(&app, defender);
+        assert!(used(&press(&mut app, defender, AbilityType::Yank, None, lands - EARLY), AbilityType::Yank));
+        let [back] = queue(&app, far)[..] else { panic!("one return queued on its source") };
+        assert!(back.drag > 0, "the return carries a pull");
+        let distance = |app: &App| app.world().get::<Loc>(far).unwrap().flat_distance(app.world().get::<Loc>(defender).unwrap());
+        assert_eq!(distance(&app), 4, "which waits in the queue");
+        clock_to(&mut app, back.lands_at() + EARLY);
+        app.update();
+        app.update();
+        assert!(distance(&app) < 4, "and drags its source in once it lands");
+    }
+
+    #[test]
+    fn a_sidestep_steps_round_its_source_toward_its_back() {
+        let mut app = arena();
+        let defender = actor(&mut app, Side::PLAYERS, 0);
+        let attacker = actor(&mut app, Side::WILD, 1);
+        turned_to(&mut app, attacker, -1);
+        app.update();
+
+        let at = |app: &App| *app.world().get::<Loc>(defender).unwrap();
+        let center = *app.world().get::<Loc>(attacker).unwrap();
+        let back = Qrz { q: 2, r: 0, z: 1 };
+        let before = at(&app);
+        assert!(answered_with(&mut app, defender, attacker, AbilityType::Sidestep).is_empty(), "nothing goes back");
+        app.update();
+        let after = at(&app);
+        assert_ne!(after, before, "it steps");
+        assert_eq!(after.flat_distance(&center), 1, "round its source, beside it still");
+        let way = center.circling(*before, back);
+        assert_eq!((after.q, after.r), (way[0].q, way[0].r), "a step along the way round toward its back");
     }
 
     #[test]

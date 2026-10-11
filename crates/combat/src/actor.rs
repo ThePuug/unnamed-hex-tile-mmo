@@ -33,7 +33,7 @@ pub fn cleanup_despawned(
     respawn_query: Query<&RespawnTimer>,
 ) {
     for message in reader.read() {
-        if let Do { event: Event::Despawn { ent } } = message {
+        if let Do { event: Event::Despawn { ent, .. } } = message {
             let ent = *ent;
             if respawn_query.get(ent).is_ok() {
                 continue;

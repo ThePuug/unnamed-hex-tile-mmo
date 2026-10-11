@@ -75,6 +75,20 @@ pub fn flanked(heading: Option<&Heading>, at: &Loc, from: &Loc) -> bool {
     heading.is_some_and(|heading| !is_in_facing_cone(*heading, *at, *from))
 }
 
+/// Whether an actor with `status`, reaching `reach` tiles, goes unseen by a
+/// foe `distance` tiles off: lurking beyond its own reach. No foe targets
+/// it, acquires it or keeps it as a target then.
+pub fn unseen(status: Option<&crate::components::status::Status>, reach: i32, distance: i32) -> bool {
+    status.is_some_and(|status| status.is_lurking()) && distance > reach
+}
+
+/// Whether a strike from `from` takes the flank of a target at `at`
+/// facing `heading` with `status`: from past its forward faces
+/// ([`flanked`]), while no Vigil watches it (`Status::is_vigilant`).
+pub fn takes_flank(heading: Option<&Heading>, status: Option<&crate::components::status::Status>, at: &Loc, from: &Loc) -> bool {
+    flanked(heading, at, from) && !status.is_some_and(|status| status.is_vigilant())
+}
+
 /// The bearing from `from` to `to` in degrees clockwise from north, in
 /// [0, 360): the six tile-to-tile bearings of the flat-top grid fall 60°
 /// apart from north at 0.

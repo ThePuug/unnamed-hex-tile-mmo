@@ -208,6 +208,9 @@ mod tests {
                 dot: 0.0,
                 ticked: 0,
                 stride: 0.0,
+                crit: false,
+                stun: 0.0,
+                drag: 0,
             };
             let (judged, lands) = (skill.judged(&DICE, ent, &threat), threat.lands_at());
             judged.since(lands).as_millis() as i64 - lands.since(judged).as_millis() as i64

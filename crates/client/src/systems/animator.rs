@@ -94,13 +94,17 @@ impl Clip {
     /// none: the gait it keeps shows it.
     pub fn of(ability: AbilityType) -> Option<Clip> {
         match ability {
-            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Punish => Some(Clip::Attack),
+            AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Punish | AbilityType::Backstab
+            | AbilityType::Kick | AbilityType::Defy => Some(Clip::Attack),
             AbilityType::Frenzy => Some(Clip::Frenzy),
             AbilityType::Feint => Some(Clip::Rattle),
             AbilityType::Parry => Some(Clip::Parry),
             AbilityType::Counter => Some(Clip::Counter),
             AbilityType::Leap => Some(Clip::Disengage),
-            AbilityType::PerfectStride => None,
+            AbilityType::PerfectStride | AbilityType::Bloodlust | AbilityType::Brace | AbilityType::Surge | AbilityType::Vigil | AbilityType::Lurk => None,
+            AbilityType::Clash => Some(Clip::Parry),
+            AbilityType::Sidestep | AbilityType::Pounce => Some(Clip::Disengage),
+            AbilityType::Yank => Some(Clip::Counter),
         }
     }
 

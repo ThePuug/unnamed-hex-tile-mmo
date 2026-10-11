@@ -47,7 +47,7 @@
 //! A side's ledger says why, per fight: each ability's uses, the damage it
 //! sent into its foes' queues and the share of what settled that landed, the
 //! rest answered (a reaction's is what it reflected); then the share of the
-//! fight it spent recovering, held, slowed, with its target beyond its
+//! fight it spent recovering, held, lost to a slow, with its target beyond its
 //! reach and standing past its target's forward faces, and its mean
 //! fatigue; then how much it used its commitment.
 
@@ -202,28 +202,31 @@ struct Ledger {
     /// Damage of its still queued when the fight ended, neither landed nor
     /// answered
     pending: HashMap<Option<AbilityType>, f32>,
-    /// Seconds alive, and of those recovering, held, slowed, with its
-    /// target beyond its reach and standing past its target's forward
-    /// faces; and its fatigue summed over them
+    /// Seconds alive, and of those recovering, held, lost to a slow (a slow
+    /// to 85% for a second losing 0.15 s), with its target beyond its reach
+    /// and standing past its target's forward faces; and its fatigue summed
+    /// over them
     alive: f32,
     recovering: f32,
     held: f32,
-    slowed: f32,
+    lost_to_slow: f32,
     beyond_reach: f32,
     past_faces: f32,
     fatigue: f32,
-    /// Its commitments at work: combos fired before they unlocked
-    /// (Ferocity), reactions taken through a recovery (Preparation), strikes
-    /// struck from a flank of all it struck (Grace), and the stacks of
-    /// Overcommitted on the foe each of its skills struck into, of the
-    /// skills it struck with (Patience); Intimidation's is its foe's time
-    /// slowed
+    /// Its commitments at work: skill strikes taken as a combo, and of
+    /// those the combos fired before they unlocked (Ferocity); reactions
+    /// taken through a recovery (Preparation); strikes struck from a flank
+    /// of all it struck (Grace); the stacks of Overcommitted on the foe each
+    /// of its skills struck into, of the skills it struck with, and its
+    /// damage landed as crits (Patience)
+    combo_strikes: u32,
     early_combos: u32,
     through: u32,
     flanked: u32,
     strikes: u32,
     patient_stacks: u32,
     skill_strikes: u32,
+    crit_landed: f32,
     /// Threats queued on it, of those landed and still queued at the end,
     /// and the clears that took the rest: how many each clear answered
     /// (Awareness); and the damage of each, whole
@@ -249,16 +252,18 @@ impl Ledger {
         self.alive += other.alive;
         self.recovering += other.recovering;
         self.held += other.held;
-        self.slowed += other.slowed;
+        self.lost_to_slow += other.lost_to_slow;
         self.beyond_reach += other.beyond_reach;
         self.past_faces += other.past_faces;
         self.fatigue += other.fatigue;
+        self.combo_strikes += other.combo_strikes;
         self.early_combos += other.early_combos;
         self.through += other.through;
         self.flanked += other.flanked;
         self.strikes += other.strikes;
         self.patient_stacks += other.patient_stacks;
         self.skill_strikes += other.skill_strikes;
+        self.crit_landed += other.crit_landed;
         self.queued_damage_on += other.queued_damage_on;
         self.landed_damage_on += other.landed_damage_on;
         self.pending_damage_on += other.pending_damage_on;
@@ -295,9 +300,11 @@ impl Ledger {
 struct Tally {
     sides: HashMap<Entity, Side>,
     ledgers: HashMap<Side, Ledger>,
-    /// Each actor's recovery as last sent, whose chain's counts a new one
-    /// adds to: a blow's pushback resends it longer, which adds nothing
-    recoveries: HashMap<Entity, GlobalRecovery>,
+    /// Each actor's recovery as last sent and the second it was sent: its
+    /// chain's counts a new one adds to (a blow's pushback resends it
+    /// longer, which adds nothing), and a skill taken while it runs may be
+    /// the combo it offers
+    recoveries: HashMap<Entity, (GlobalRecovery, f32)>,
 }
 
 impl Tally {
@@ -314,10 +321,13 @@ fn whole(threat: &QueuedThreat) -> f32 {
 
 /// Counts each ability an actor uses, auto-attacks included, and each
 /// threat it sends; a strike struck from past its target's forward faces; each threat
-/// queued on an actor and each answer that cleared its span; and of each recovery an
-/// ability starts, a combo fired before it unlocked (it carries what it
-/// skipped, with no reaction through it) or a reaction taken through one.
-fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Query<(&Loc, Option<&Heading>)>, statuses: Query<&Status>) {
+/// queued on an actor and each answer that cleared its span; a skill strike
+/// taken as the combo the recovery it was taken in offers; and of each
+/// recovery an ability starts, a combo fired before it unlocked (it carries
+/// what it skipped, with no reaction through it) or a reaction taken
+/// through one. A use is sent before the recovery it starts.
+fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Query<(&Loc, Option<&Heading>)>, statuses: Query<&Status>, time: Res<Time>) {
+    let now = time.elapsed_secs();
     for message in reader.read() {
         match &message.event {
             Event::UseAbility { ent, ability, target, .. } => {
@@ -326,7 +336,11 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
                     .is_some_and(|((target_loc, target_heading), (loc, _))| targeting::flanked(target_heading, target_loc, loc));
                 let skill_strike = *ability != AbilityType::AutoAttack && target.is_some() && !ability.is_reaction() && *ability != AbilityType::PerfectStride;
                 let stacks = target.and_then(|target| statuses.get(target).ok()).map_or(0, |status| status.overcommits());
+                let combo = skill_strike && tally.recoveries.get(ent).is_some_and(|(recovery, sent)| {
+                    recovery.remaining > now - sent && recovery.combo.is_some_and(|combo| combo.ability == *ability)
+                });
                 if let Some(ledger) = tally.of(*ent) {
+                    ledger.combo_strikes += combo as u32;
                     *ledger.used.entry(*ability).or_default() += 1;
                     ledger.strikes += ability.reach(1).is_some() as u32;
                     ledger.flanked += flanked as u32;
@@ -349,7 +363,7 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
                 ledger.clears += 1;
             },
             Event::Incremental { ent, component: MessageComponent::Recovery(recovery) } => {
-                let last = tally.recoveries.insert(*ent, *recovery).map_or_else(Default::default, |last| last.chain);
+                let last = tally.recoveries.insert(*ent, (*recovery, now)).map_or_else(Default::default, |(last, _)| last.chain);
                 let added = |now: u8, before: u8| if now >= before { now - before } else { now };
                 let (combos, reactions) = (added(recovery.chain.early_combos, last.early_combos), added(recovery.chain.early_reactions, last.early_reactions));
                 if let Some(ledger) = tally.of(*ent) {
@@ -363,15 +377,17 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
 }
 
 /// Counts each resolved threat and DoT tick against the side of the actor
-/// that sent it, and each threat that lands on an actor out of its queue (a
-/// reflection never stood in one).
+/// that sent it, and each threat that lands on an actor out of its queue.
 fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>) {
     let (source, ability, damage) = match trigger.event() {
         Try { event: Event::ResolveThreat { ent, threat } } => {
-            if threat.ability != Some(AbilityType::Counter) {
-                if let Some(ledger) = tally.of(*ent) {
-                    ledger.landed_on += 1;
-                    ledger.landed_damage_on += whole(threat);
+            if let Some(ledger) = tally.of(*ent) {
+                ledger.landed_on += 1;
+                ledger.landed_damage_on += whole(threat);
+            }
+            if threat.crit {
+                if let Some(ledger) = tally.of(threat.source) {
+                    ledger.crit_landed += whole(threat);
                 }
             }
             (threat.source, threat.ability, whole(threat))
@@ -384,8 +400,8 @@ fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>) {
 }
 
 /// Adds a frame of `step` seconds to each living actor's side: whether it
-/// is recovering, held, slowed, has its target beyond its reach or stands
-/// past its target's forward faces, and its fatigue.
+/// is recovering, held, what its slow takes, has its target beyond its
+/// reach or stands past its target's forward faces, and its fatigue.
 fn tally_states(world: &mut World, step: f32) {
     let tuning = *world.resource::<Tuning>();
     let mut locs = world.query::<(Entity, &Loc)>();
@@ -398,16 +414,17 @@ fn tally_states(world: &mut World, step: f32) {
         let beyond = foe.and_then(|foe| locs.get(&foe)).is_some_and(|foe| loc.flat_distance(foe) > range.0);
         let past_faces = foe.and_then(|foe| Some((locs.get(&foe)?, headings.get(&foe))))
             .is_some_and(|(foe_loc, heading)| targeting::flanked(heading, foe_loc, loc));
-        (ent, recovery.is_some(), Status::holds(status), status.is_some_and(|status| status.slow.is_some()), beyond, past_faces, Endurance::fatigue_of(&tuning, endurance))
+        let slow = status.and_then(|status| status.slow).filter(|slow| slow.remaining > 0.0).map_or(0.0, |slow| 1.0 - slow.pace);
+        (ent, recovery.is_some(), Status::holds(status), slow, beyond, past_faces, Endurance::fatigue_of(&tuning, endurance))
     }).collect();
     let mut tally = world.resource_mut::<Tally>();
-    for (ent, recovering, held, slowed, beyond, past_faces, fatigue) in frames {
+    for (ent, recovering, held, slow, beyond, past_faces, fatigue) in frames {
         let Some(ledger) = tally.of(ent) else { continue };
         let during = |state: bool| if state { step } else { 0.0 };
         ledger.alive += step;
         ledger.recovering += during(recovering);
         ledger.held += during(held);
-        ledger.slowed += during(slowed);
+        ledger.lost_to_slow += slow * step;
         ledger.beyond_reach += during(beyond);
         ledger.past_faces += during(past_faces);
         ledger.fatigue += fatigue * step;
@@ -861,10 +878,10 @@ fn ledger_line(ledger: &Ledger, runs: f32) -> String {
     let alive = ledger.alive.max(f32::EPSILON);
     let share = |seconds: f32| 100.0 * seconds / alive;
     let each = |count: u32| count as f32 / runs;
-    format!("{} || recovering {:.0}% held {:.0}% slowed {:.0}% beyond reach {:.0}% past faces {:.0}% fatigue {:.0}% || commitments: early combos {:.1} flanked {:.1} of {:.1} strikes stacks {:.1} per skill strike through {:.1} per answer {:.1}",
+    format!("{} || recovering {:.0}% held {:.0}% lost to slow {:.0}% beyond reach {:.0}% past faces {:.0}% fatigue {:.0}% || commitments: combo strikes {:.1} early combos {:.1} crit landed {:.0} flanked {:.1} of {:.1} strikes stacks {:.1} per skill strike through {:.1} per answer {:.1}",
         abilities.join(" | "),
-        share(ledger.recovering), share(ledger.held), share(ledger.slowed), share(ledger.beyond_reach), share(ledger.past_faces), share(ledger.fatigue),
-        each(ledger.early_combos), each(ledger.flanked), each(ledger.strikes), ledger.patient_stacks as f32 / ledger.skill_strikes.max(1) as f32, each(ledger.through), ledger.per_answer())
+        share(ledger.recovering), share(ledger.held), share(ledger.lost_to_slow), share(ledger.beyond_reach), share(ledger.past_faces), share(ledger.fatigue),
+        each(ledger.combo_strikes), each(ledger.early_combos), ledger.crit_landed / runs, each(ledger.flanked), each(ledger.strikes), ledger.patient_stacks as f32 / ledger.skill_strikes.max(1) as f32, each(ledger.through), ledger.per_answer())
 }
 
 #[cfg(test)]

@@ -25,6 +25,7 @@ impl Plugin for CombatPlugin {
 
         app.add_observer(combat::process_deal_damage);
         app.add_observer(combat::resolve_threat);
+        app.add_observer(combat::resolve_drag);
         app.add_observer(combat::resolve_dot_tick);
         app.add_observer(combat::landing::stumble);
 
@@ -39,6 +40,7 @@ impl Plugin for CombatPlugin {
 
         app.add_systems(Update, (
             targeting::update_targets,
+            combat::abilities::surge::count,
             // Every ability, through the one gate, then what lands: a press
             // come due this frame takes its band before any of it lands
             (combat::abilities::use_abilities, reaction_queue::process_expired_threats).chain(),

@@ -74,11 +74,13 @@ impl EnemyArchetype {
 }
 
 impl EnemyArchetype {
-    /// The skills an NPC of it holds: its own, and a Feint and a Parry, as
-    /// every fighter does
+    /// The skills an NPC of it holds: its own first, then the rest of its
+    /// attribute's line
     pub fn bar(self) -> Vec<AbilityType> {
         let own = self.profile().ability;
-        std::iter::once(own).chain([AbilityType::Feint, AbilityType::Parry].into_iter().filter(|&shared| shared != own)).collect()
+        let line = ActorAttributes::line(own);
+        let rest = AbilityType::ALL.into_iter().filter(|&ability| ability != own && ActorAttributes::line(ability) == line && line.is_some());
+        std::iter::once(own).chain(rest).collect()
     }
 }
 

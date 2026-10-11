@@ -56,7 +56,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 use cmaes::{CMAESOptions, DVector};
 use serde::{Deserialize, Serialize};
 
-use common_bevy::{archetype::EnemyArchetype, components::{ActorAttributes, Attribute}, message::AbilityType, tuning::Tuning};
+use common_bevy::{archetype::EnemyArchetype, components::{ActorAttributes, Attribute}, tuning::Tuning};
 
 use super::{matrices, matrix, print_matrix, Ledger, Pairing, Settings};
 use combat::behaviour::mind::{Minds, TUNED};
@@ -76,6 +76,7 @@ struct Config {
     check_runs: u32,
     population: f64,
     skill: String,
+    level: u8,
     fixed: BTreeMap<String, f32>,
     score: Score,
     screen: Screen,
@@ -196,7 +197,7 @@ fn knob(state: &State, name: &str) -> f32 {
 /// `minds` laid over it, and `focus`'s pairings alone where given, its
 /// fights rolled from `seed`
 fn settings(config: &Config, state: &State, knobs: &BTreeMap<String, f32>, minds: &BTreeMap<String, f32>, focus: Option<EnemyArchetype>, runs: u32, seed: u64) -> Settings {
-    let mut settings = Settings::parse(&[format!("runs={runs}"), format!("skill={}", config.skill)]);
+    let mut settings = Settings::parse(&[format!("runs={runs}"), format!("skill={}", config.skill), format!("level={}", config.level)]);
     settings.focus = focus;
     settings.seed = seed;
     let mut tuning = Tuning::default();
@@ -268,29 +269,27 @@ fn commitment(archetype: EnemyArchetype) -> Attribute {
 }
 
 /// How much `ledger`'s side worked `attribute`'s commitment against the
-/// side `foe`'s ledger keeps, each a share in points but Awareness's:
-/// Ferocity's, of its skills the combos fired early; Intimidation's, of its foe's
-/// time alive the time it was slowed, in its zone; Grace's, of its strikes those
-/// struck from past their target's forward faces; Preparation's, of its
-/// answers, a reaction's or a Leap clear's, those fired early; Patience's,
-/// the stacks of Overcommitted its skills struck into, ten points a stack;
-/// Awareness's, the damage each clear answered in
-/// threats' worth, a threat's worth the mean damage of those queued on it.
+/// side `foe`'s ledger keeps, each a share in points: Ferocity's, of its
+/// skill strikes those taken as a combo, never a chain's first; Patience's,
+/// of the damage it landed what landed as crits; Awareness's, of the damage
+/// queued on it what it cleared, a status a threat carried unweighed;
+/// Preparation's, how near even its time with its target in reach and
+/// beyond it stands, whole at one to one; Grace's, of its strikes those
+/// struck from past their target's forward faces; Intimidation's, of its
+/// foe's time alive the time its slow took, a slow to 85% for a second
+/// taking 0.15 s.
 fn style_use(ledger: &Ledger, foe: &Ledger, attribute: Attribute) -> f32 {
+    let share = |part: f32, whole: f32| if whole > 0.0 { 100.0 * part / whole } else { 0.0 };
     match attribute {
-        Attribute::Might => {
-            let skills: u32 = ledger.used.iter().filter(|&(&ability, _)| ability != AbilityType::AutoAttack).map(|(_, &uses)| uses).sum();
-            100.0 * ledger.early_combos as f32 / skills.max(1) as f32
+        Attribute::Might => share(ledger.combo_strikes as f32, ledger.skill_strikes as f32),
+        Attribute::Instinct => share(ledger.crit_landed, ledger.landed_total()),
+        Attribute::Resolve => share((ledger.queued_damage_on - ledger.landed_damage_on - ledger.pending_damage_on).max(0.0), ledger.queued_damage_on),
+        Attribute::Discipline => {
+            let beyond = share(ledger.beyond_reach, ledger.alive) / 100.0;
+            if ledger.alive > 0.0 { 100.0 * (1.0 - (2.0 * beyond - 1.0).abs()) } else { 0.0 }
         }
-        Attribute::Physique => 100.0 * foe.slowed / foe.alive.max(f32::EPSILON),
-        Attribute::Agility => 100.0 * ledger.flanked as f32 / ledger.strikes.max(1) as f32,
-        Attribute::Discipline => 100.0 * ledger.through as f32 / ledger.clears.max(1) as f32,
-        Attribute::Instinct => 10.0 * ledger.patient_stacks as f32 / ledger.skill_strikes.max(1) as f32,
-        Attribute::Resolve => {
-            let answered = (ledger.queued_damage_on - ledger.landed_damage_on - ledger.pending_damage_on).max(0.0);
-            let threat = ledger.queued_damage_on / ledger.queued_on.max(1) as f32;
-            if threat > 0.0 { answered / ledger.clears.max(1) as f32 / threat } else { 0.0 }
-        }
+        Attribute::Agility => share(ledger.flanked as f32, ledger.strikes as f32),
+        Attribute::Physique => share(foe.lost_to_slow, foe.alive),
     }
 }
 

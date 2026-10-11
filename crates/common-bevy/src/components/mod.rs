@@ -5,6 +5,7 @@ pub mod equipment;
 pub mod heading;
 pub mod keybits;
 pub mod loaded_by;
+pub mod loadout;
 pub mod movement_intent_state;
 pub mod position;
 pub mod reaction_queue;
@@ -520,17 +521,16 @@ impl ActorAttributes {
     }
 
     /// The attribute line `ability` belongs to, whose points raise it: none
-    /// for the auto-attack and the skills every fighter holds alike, Feint
-    /// and Parry.
+    /// for the auto-attack and the skills no line holds, Feint and Parry.
     pub fn line(ability: crate::message::AbilityType) -> Option<Attribute> {
         use crate::message::AbilityType::*;
         match ability {
-            Frenzy => Some(Attribute::Might),
-            Overpower => Some(Attribute::Physique),
-            PerfectStride => Some(Attribute::Agility),
-            Punish => Some(Attribute::Instinct),
-            Leap => Some(Attribute::Discipline),
-            Counter => Some(Attribute::Resolve),
+            Frenzy | Clash | Bloodlust => Some(Attribute::Might),
+            Overpower | Yank | Brace => Some(Attribute::Physique),
+            PerfectStride | Sidestep | Backstab => Some(Attribute::Agility),
+            Punish | Pounce | Lurk => Some(Attribute::Instinct),
+            Leap | Kick | Surge => Some(Attribute::Discipline),
+            Counter | Defy | Vigil => Some(Attribute::Resolve),
             AutoAttack | Feint | Parry => None,
         }
     }
@@ -552,8 +552,13 @@ impl ActorAttributes {
     /// Tiles this actor's Leap carries it: `Tuning::leap_distance` as its
     /// Discipline line has it, never less than one
     pub fn leap_tiles(&self, tuning: &Tuning) -> usize {
-        let tiles = tuning.leap_distance as f32 * self.line_power(tuning, crate::message::AbilityType::Leap);
-        tiles.round().max(1.0) as usize
+        self.line_tiles(tuning, crate::message::AbilityType::Leap, tuning.leap_distance as f32)
+    }
+
+    /// Tiles `whole` tiles of `ability`'s come to as this actor's line has
+    /// it, never less than one
+    pub fn line_tiles(&self, tuning: &Tuning, ability: crate::message::AbilityType, whole: f32) -> usize {
+        (whole * self.line_power(tuning, ability)).round().max(1.0) as usize
     }
 
     /// The endurance `ability`, a skill, costs this actor: its flat price

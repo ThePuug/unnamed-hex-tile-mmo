@@ -11,7 +11,9 @@ use crate::{
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Event {
-    Despawn { ent: Entity },
+    /// Server → Client: the actor leaves the client, fallen where `died`,
+    /// else gone from its sight. On the server's own bus, the entity goes.
+    Despawn { ent: Entity, died: bool },
     /// Server → Client: a dead actor stands again at `qrz`, its pools
     /// following. A client that kept its body moves it there unseen,
     /// stands it, and shows it once it is alive; one that did not asks for
@@ -51,6 +53,11 @@ pub enum Event {
         dot: f32,
         /// How long after now the strike is made: its threat's window starts then
         delay: std::time::Duration,
+        /// Seconds the threat stuns its target as it lands, and tiles it
+        /// moves its target, toward `source` where positive and away where
+        /// negative
+        stun: f32,
+        drag: i8,
     },
     /// Server-internal: a wound's DoT tick lands outside the queue
     DotTick { ent: Entity, source: Entity, damage: f32, ability: Option<AbilityType> },
@@ -148,6 +155,9 @@ pub enum Event {
     /// Client → Server (Try): put `ent`'s levels into `pairs` instead
     /// Server → Client (Do): the respec was taken
     RespecAttributes { ent: Entity, pairs: [Pair; 3] },
+    /// Client → Server (Try): put `loadout` on `ent`'s bar
+    /// Server → Client (Do): the bar was taken
+    SetLoadout { ent: Entity, loadout: crate::components::loadout::Loadout },
     /// Client → Server: put this connection's character in the world. The
     /// server answers with `Init`; a connection already playing is ignored.
     Play,
@@ -169,7 +179,7 @@ impl Event {
     /// handler's to exchange.
     pub fn ent_mut(&mut self) -> Option<&mut Entity> {
         match self {
-            Event::Despawn { ent }
+            Event::Despawn { ent, .. }
             | Event::Respawn { ent, .. }
             | Event::DiscoverChunk { ent, .. }
             | Event::ChunkData { ent, .. }
@@ -202,6 +212,7 @@ impl Event {
             | Event::Drop { ent, .. }
             | Event::Activity { ent, .. }
             | Event::RespecAttributes { ent, .. }
+            | Event::SetLoadout { ent, .. }
             | Event::View { ent } => Some(ent),
             Event::DealDamage { .. } | Event::Ping { .. } | Event::Pong { .. } | Event::Play | Event::Leave => None,
         }
@@ -235,14 +246,64 @@ pub enum AbilityType {
     /// The Flanker's stride: for a while its strikes past the forward faces
     /// break no stride, so Grace strikes on the run
     PerfectStride,
+    /// Might's reaction: clears its span and stuns each source it cleared
+    Clash,
+    /// Agility's reaction: clears its span and steps round its source
+    /// toward that one's back
+    Sidestep,
+    /// Physique's reaction: clears its span and drags each source it
+    /// cleared toward its user
+    Yank,
+    /// Agility's strike: a blow struck only from a target's flank, its crit
+    /// the harder
+    Backstab,
+    /// Instinct's reaction: clears its span and lunges beside its source
+    Pounce,
+    /// Discipline's strike: a blow that knocks its target back as it lands
+    Kick,
+    /// Resolve's strike: a blow the harder for each threat waiting in its
+    /// user's own queue
+    Defy,
+    /// Might's stance: for a while a share of the damage its attacks land
+    /// comes back to it as health
+    Bloodlust,
+    /// Physique's stance: for a while nothing a foe lays on it holds or
+    /// moves it
+    Brace,
+    /// Discipline's stance: for a moment each tile it moves adds to its
+    /// next skill strike
+    Surge,
+    /// Resolve's stance: for a while no strike takes its flank
+    Vigil,
+    /// Instinct's stance: for a while no foe beyond its reach sees it,
+    /// until it attacks
+    Lurk,
+}
+
+/// The kinds of slot a bar holds ([`AbilityType::kind`]): four strikes,
+/// three reactions and a stance
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SkillKind {
+    Strike,
+    Reaction,
+    Stance,
 }
 
 impl AbilityType {
+    /// Every ability, the auto-attack first
+    pub const ALL: [AbilityType; 21] = [
+        AbilityType::AutoAttack, AbilityType::Frenzy, AbilityType::Feint, AbilityType::Overpower, AbilityType::Punish,
+        AbilityType::Parry, AbilityType::Counter, AbilityType::Leap, AbilityType::PerfectStride,
+        AbilityType::Clash, AbilityType::Sidestep, AbilityType::Yank, AbilityType::Backstab,
+        AbilityType::Pounce, AbilityType::Kick, AbilityType::Defy, AbilityType::Bloodlust, AbilityType::Brace,
+        AbilityType::Surge, AbilityType::Vigil, AbilityType::Lurk,
+    ];
+
     /// Whether it is a reaction, an answer to what is queued, where every
     /// other skill is an action. Discipline's Preparation fires a reaction
     /// early (`combos::may_use`).
     pub fn is_reaction(self) -> bool {
-        matches!(self, AbilityType::Parry | AbilityType::Counter)
+        matches!(self, AbilityType::Parry | AbilityType::Counter | AbilityType::Clash | AbilityType::Sidestep | AbilityType::Yank | AbilityType::Pounce)
     }
 
     /// Whether using it now is a reaction: one always, and a Leap with its
@@ -250,6 +311,23 @@ impl AbilityType {
     /// reaction does
     pub fn reacts(self, in_reach: bool) -> bool {
         self.is_reaction() || (self == AbilityType::Leap && in_reach)
+    }
+
+    /// The kind of slot it takes on a bar: a Leap the reaction's, the
+    /// answer it makes in reach; a stance, a while of something on its user,
+    /// the stance's
+    pub fn kind(self) -> SkillKind {
+        match self {
+            AbilityType::PerfectStride | AbilityType::Bloodlust | AbilityType::Brace | AbilityType::Surge | AbilityType::Vigil | AbilityType::Lurk => SkillKind::Stance,
+            AbilityType::Leap => SkillKind::Reaction,
+            ability if ability.is_reaction() => SkillKind::Reaction,
+            _ => SkillKind::Strike,
+        }
+    }
+
+    /// Whether it strikes only from past its target's forward faces
+    pub fn flanks(self) -> bool {
+        self == AbilityType::Backstab
     }
 
     /// Whether using it moves its user: a skill a pin refuses
@@ -264,8 +342,11 @@ impl AbilityType {
     /// checks its own, or the stride.
     pub fn reach(self, own: i32) -> Option<std::ops::RangeInclusive<i32>> {
         match self {
-            AbilityType::AutoAttack | AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Punish => Some(0..=own),
-            AbilityType::Parry | AbilityType::Counter | AbilityType::Leap | AbilityType::PerfectStride => None,
+            AbilityType::AutoAttack | AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Punish
+            | AbilityType::Backstab | AbilityType::Kick | AbilityType::Defy => Some(0..=own),
+            AbilityType::Parry | AbilityType::Counter | AbilityType::Leap | AbilityType::PerfectStride
+            | AbilityType::Clash | AbilityType::Sidestep | AbilityType::Yank | AbilityType::Pounce
+            | AbilityType::Bloodlust | AbilityType::Brace | AbilityType::Surge | AbilityType::Vigil | AbilityType::Lurk => None,
         }
     }
 

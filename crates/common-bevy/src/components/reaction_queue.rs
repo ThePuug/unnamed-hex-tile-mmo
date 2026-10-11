@@ -39,6 +39,15 @@ pub struct QueuedThreat {
     /// capstone. Zero for none; a reaction that clears the threat clears it
     /// too.
     pub stride: f32,
+    /// Struck as a crit, its damage already raised
+    pub crit: bool,
+    /// Seconds it stuns its target as it lands: a Clash's return. Zero for
+    /// none.
+    pub stun: f32,
+    /// Tiles it moves its target as it lands: toward its source where
+    /// positive (a Yank's return), away from it where negative (a Kick).
+    /// Zero for none.
+    pub drag: i8,
 }
 
 /// The lane a threat shows in on the highway, by its kind. Lanes are for
@@ -58,6 +67,17 @@ impl QueuedThreat {
     /// it lands
     pub fn breaking(self, stride: f32) -> Self {
         Self { stride, ..self }
+    }
+
+    /// This threat stunning its target for `stun` seconds and moving it
+    /// `drag` tiles as it lands
+    pub fn carrying(self, stun: f32, drag: i8) -> Self {
+        Self { stun, drag, ..self }
+    }
+
+    /// This threat struck as a crit or not
+    pub fn critical(self, crit: bool) -> Self {
+        Self { crit, ..self }
     }
 
     /// A wound: its DoT ticks while it stands.
@@ -170,6 +190,9 @@ mod tests {
             dot,
             ticked: 0,
             stride: 0.0,
+            crit: false,
+            stun: 0.0,
+            drag: 0,
         }
     }
 

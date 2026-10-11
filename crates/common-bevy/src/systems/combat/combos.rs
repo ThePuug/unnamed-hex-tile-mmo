@@ -28,8 +28,9 @@ pub enum Early {
 /// `reacting` where this use is a reaction (`AbilityType::reacts`): in its
 /// own time, or early while its Ferocity has a step left in the chain (the
 /// combo offered) or its Preparation has one (any reaction, once a strike
-/// taken in its own time stands in the chain); None where it may not. An
-/// offered reaction fired early spends Ferocity's step first.
+/// taken in its own time stands in the chain, and while the chain is not
+/// full); None where it may not. An offered reaction fired early spends
+/// Ferocity's step first.
 pub fn timing(ability: AbilityType, reacting: bool, recovery: Option<&GlobalRecovery>, attrs: &ActorAttributes) -> Option<Timing> {
     let Some(recovery) = recovery.filter(|recovery| recovery.is_active()) else { return Some(Timing::OnTime) };
     let offered = recovery.combo.filter(|combo| combo.ability == ability);
@@ -39,7 +40,7 @@ pub fn timing(ability: AbilityType, reacting: bool, recovery: Option<&GlobalReco
     let chain = recovery.chain;
     if offered.is_some() && (chain.early_combos as usize) < attrs.early_combos() {
         Some(Timing::Early(Early::Ferocity))
-    } else if reacting && chain.struck && (chain.early_reactions as usize) < attrs.early_reactions() {
+    } else if reacting && chain.struck && !chain.is_full() && (chain.early_reactions as usize) < attrs.early_reactions() {
         Some(Timing::Early(Early::Preparation))
     } else {
         None
@@ -72,7 +73,7 @@ pub fn may_use(ability: AbilityType, reacting: bool, recovery: Option<&GlobalRec
 /// the ability's own seconds: earlier by a floor every actor has
 /// (`Tuning::combo_floor`), and more by the user's Efficiency over the
 /// Impact of a strike's target, the level gap weighing in; a reaction's is
-/// contested by no one.
+/// contested by no one. The skill that fills its chain offers none.
 pub fn recovery_after(tuning: &Tuning, ability: AbilityType, reacting: bool, prior: Option<&GlobalRecovery>, attrs: &ActorAttributes, against: Option<&ActorAttributes>, fatigue: f32) -> GlobalRecovery {
     let prior = prior.filter(|prior| prior.is_active());
     let own = tuning.recovery(ability) * (1.0 + tuning.fatigue_recovery * fatigue);
@@ -105,6 +106,10 @@ pub fn recovery_after(tuning: &Tuning, ability: AbilityType, reacting: bool, pri
         (Some(prior), _) => Chain { struck: prior.chain.struck || strike, ..prior.chain },
         (None, _) => Chain { struck: strike, ..Chain::default() },
     };
+    recovery.chain.skills = prior.map_or(0, |prior| prior.chain.skills).saturating_add(1);
+    if recovery.chain.is_full() {
+        recovery.combo = None;
+    }
     recovery
 }
 
@@ -234,7 +239,7 @@ mod tests {
     fn out_of_recovery_a_skill_opens_a_fresh_chain() {
         let tuning = Tuning::DEFAULT;
         let fresh = recovery_after(&tuning, AbilityType::Frenzy, AbilityType::Frenzy.is_reaction(), None, &fierce(), None, 0.0);
-        assert_eq!(fresh.chain, Chain { struck: true, ..Chain::default() }, "a strike in its own time, owing nothing");
+        assert_eq!(fresh.chain, Chain { skills: 1, struck: true, ..Chain::default() }, "a strike in its own time, owing nothing");
         assert_eq!(fresh.remaining, tuning.recovery(AbilityType::Frenzy));
     }
 
@@ -269,6 +274,25 @@ mod tests {
         let tired = recovery_after(&tuning, AbilityType::Frenzy, AbilityType::Frenzy.is_reaction(), None, &plain(), None, 0.5);
         let spent = recovery_after(&tuning, AbilityType::Frenzy, AbilityType::Frenzy.is_reaction(), None, &plain(), None, 1.0);
         assert!(tired.remaining > fresh.remaining && spent.remaining > tired.remaining, "the more spent, the longer");
+    }
+
+    #[test]
+    fn a_chain_ends_at_its_limit_and_what_it_owes_comes_due() {
+        use crate::components::recovery::CHAIN_LIMIT;
+        let tuning = Tuning::DEFAULT;
+        let fierce = ActorAttributes::new(-24, 0, 0, 0, 0, 0, 0, 0, 0);
+        let mut recovery = recovery_after(&tuning, AbilityType::Frenzy, false, None, &fierce, None, 0.0);
+        for skills in 2..=CHAIN_LIMIT {
+            assert!(may_use(AbilityType::Frenzy, false, Some(&recovery), &fierce), "skill {skills} continues the chain");
+            recovery = recovery_after(&tuning, AbilityType::Frenzy, false, Some(&recovery), &fierce, None, 0.0);
+            assert_eq!(recovery.chain.skills, skills);
+        }
+        assert!(recovery.combo.is_none(), "the skill that fills the chain offers no combo");
+        assert!(!may_use(AbilityType::Frenzy, false, Some(&recovery), &fierce), "so nothing passes its recovery");
+        let owed = recovery.chain.owed;
+        assert!(owed > 0.0, "the early bites owe");
+        recovery.tick(recovery.remaining);
+        assert_eq!(recovery.remaining, owed, "and the debt comes due as it ends");
     }
 
     #[test]

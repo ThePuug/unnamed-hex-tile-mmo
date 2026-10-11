@@ -72,7 +72,7 @@ impl Abilities<'_, '_> {
             let Some(decision) = chosen else { continue };
             let at = match decision.ability {
                 ability if ability.is_reaction() => None,
-                AbilityType::PerfectStride => None,
+                ability if ability.kind() == common_bevy::message::SkillKind::Stance => None,
                 _ => target,
             };
             debug!("npc {ent} {:?} to {}: {:.2} {:?}", decision.ability, decision.reason, decision.score, decision.responses);
@@ -105,7 +105,7 @@ impl Abilities<'_, '_> {
             distance: loc.distance(&target_loc),
             health: target_health.state,
             in_arc: in_arc(&tuning, heading, Some(attrs), &loc, &target_loc),
-            flanked: targeting::flanked(target_heading, &target_loc, &loc),
+            flanked: targeting::takes_flank(target_heading, self.statuses.get(target?).ok(), &target_loc, &loc),
             patient: target_attrs.patience_crit(&tuning) * (1.0 + target_attrs.patience_power(&tuning)),
             since_skill: self.last_skills.get(target?).ok()
                 .map(|last| (Moment::ZERO + self.time.elapsed()).since(last.0).as_secs_f32()),

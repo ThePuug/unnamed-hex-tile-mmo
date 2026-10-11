@@ -86,11 +86,16 @@ pub fn crit_chance(tuning: &Tuning, attacker: &ActorAttributes, defender: &Actor
 /// Rolled as the blow enters the queue, so a crit stands there at its full
 /// weight for the defender to see.
 pub fn crit(tuning: &Tuning, damage: f32, attacker: &ActorAttributes, defender: &ActorAttributes, extra: f32, power: f32, draw: f32) -> f32 {
-    if draw < crit_chance(tuning, attacker, defender) + extra {
+    if crits(tuning, attacker, defender, extra, draw) {
         damage * tuning.crit_power * (1.0 + power)
     } else {
         damage
     }
+}
+
+/// Whether a blow whose roll is `draw` crits ([`crit`])
+pub fn crits(tuning: &Tuning, attacker: &ActorAttributes, defender: &ActorAttributes, extra: f32, draw: f32) -> bool {
+    draw < crit_chance(tuning, attacker, defender) + extra
 }
 
 /// Calculate recovery pushback percentage: Impact's, alone.

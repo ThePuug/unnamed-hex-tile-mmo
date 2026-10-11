@@ -73,6 +73,7 @@ pub fn process_deal_damage(
     mut combat_query: Query<&mut CombatState>,
     all_attrs: Query<&ActorAttributes>,
     places: Query<(&Loc, Option<&common_bevy::components::heading::Heading>)>,
+    surges: Query<&abilities::surge::Surged>,
     time: Res<Time>,
     runtime: Res<crate::RunTime>,
     dice: Res<dice::Dice>,
@@ -81,7 +82,7 @@ pub fn process_deal_damage(
 ) {
     let event = &trigger.event().event;
 
-    if let GameEvent::DealDamage { source, target, base_damage, ability, dot, delay } = event {
+    if let GameEvent::DealDamage { source, target, base_damage, ability, dot, delay, stun, drag } = event {
         // Get attacker attributes for scaling
         let (Ok(source_attrs), Ok(mut rolls)) = (all_attrs.get(*source), rolls.get_mut(*source)) else {
             return;
@@ -102,7 +103,23 @@ pub fn process_deal_damage(
         }
 
         let flanked = places.get(*source).ok().zip(places.get(*target).ok())
-            .is_some_and(|((from, _), (at, heading))| common_bevy::systems::targeting::flanked(heading, at, from));
+            .is_some_and(|((from, _), (at, heading))| common_bevy::systems::targeting::takes_flank(heading, statuses.get(*target).ok(), at, from));
+        // An attack gives a lurker away; a skill struck out of hiding is an
+        // ambush, a certain crit
+        let lurking = statuses.get(*source).is_ok_and(|status| status.is_lurking());
+        if lurking {
+            landing::update(*source, &mut statuses, &mut commands, &mut writer, |status| status.lurk = None);
+        }
+        // A Surge spends what its user's moves built on its next skill strike
+        let surged = match statuses.get(*source).map(|status| status.surging()) {
+            Ok(share) if share > 0.0 && ability.is_some_and(|ability| ability.kind() == common_bevy::message::SkillKind::Strike && ability != common_bevy::message::AbilityType::AutoAttack) => {
+                let tiles = surges.get(*source).map_or(0, |surged| surged.tiles);
+                landing::update(*source, &mut statuses, &mut commands, &mut writer, |status| status.surge = None);
+                1.0 + share * tiles as f32
+            }
+            _ => 1.0,
+        };
+        let base_damage = &(base_damage * surged);
         let base_damage = if flanked { base_damage * (1.0 + source_attrs.flank(&tuning)) } else { *base_damage };
         let stride = if flanked { source_attrs.flank_stride(&tuning).unwrap_or(0.0) } else { 0.0 };
         let gap = damage_calc::level_factor(&tuning, source_attrs.total_level(), attrs.total_level());
@@ -114,9 +131,12 @@ pub fn process_deal_damage(
         let skill = *ability != Some(common_bevy::message::AbilityType::AutoAttack);
         let stacks = if skill { statuses.get(*target).map_or(0, |status| status.overcommits()) } else { 0 };
         let opening = stacks > 0 && source_attrs.patience_opening(&tuning).is_some_and(|at| stacks >= at);
-        let patient = if opening { 1.0 } else { source_attrs.patience_crit(&tuning) * stacks as f32 };
-        let power = if stacks > 0 { source_attrs.patience_power(&tuning) } else { 0.0 };
-        let outgoing = damage_calc::crit(&tuning, outgoing, source_attrs, attrs, patient, power, dice.draw(&mut rolls, ("crit", *source)).share());
+        let ambush = lurking && skill;
+        let patient = if opening || ambush { 1.0 } else { source_attrs.patience_crit(&tuning) * stacks as f32 };
+        let power = if stacks > 0 { source_attrs.patience_power(&tuning) } else { 0.0 } + tuning.crit_severity(*ability);
+        let roll = dice.draw(&mut rolls, ("crit", *source)).share();
+        let critted = damage_calc::crits(&tuning, source_attrs, attrs, patient, roll);
+        let outgoing = damage_calc::crit(&tuning, outgoing, source_attrs, attrs, patient, power, roll);
         if opening {
             landing::update(*target, &mut statuses, &mut commands, &mut writer, |status| status.spend_overcommits());
         }
@@ -148,7 +168,7 @@ pub fn process_deal_damage(
             now,
             dot,
             Endurance::fatigue_of(&tuning, endurance),
-        ).breaking(stride);
+        ).breaking(stride).critical(critted).carrying(*stun, *drag);
 
         queue_utils::insert_threat(&mut queue, threat);
 
@@ -177,8 +197,10 @@ pub fn process_deal_damage(
     }
 }
 
-/// Lands a `ResolveThreat` on its target's health: a threat whose time
-/// ran out, or a Counter's reflection.
+/// Lands a `ResolveThreat` on its target: its damage on the target's
+/// health, and what it carries, a stride broken and a stun, on its status;
+/// and a share of its damage on its source's health where a Bloodlust holds
+/// it (`Status::lifesteal`).
 pub fn resolve_threat(
     trigger: On<Try>,
     tuning: Res<Tuning>,
@@ -190,20 +212,58 @@ pub fn resolve_threat(
     let event = &trigger.event().event;
 
     if let GameEvent::ResolveThreat { ent, threat } = event {
-        if let Ok(mut health) = query.get_mut(*ent) {
-            let final_damage = threat.damage + threat.dot_left();
+        let Ok(mut health) = query.get_mut(*ent) else { return };
+        let final_damage = threat.damage + threat.dot_left();
+        land_damage(*ent, threat.source, final_damage, threat.is_wound(), &mut health, &mut writer);
 
-            land_damage(*ent, threat.source, final_damage, threat.is_wound(), &mut health, &mut writer);
+        // A flank strike at Grace's capstone breaks its target's stride
+        // for a swing as it lands
+        if threat.stride > 0.0 {
+            landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| status.break_stride(threat.stride, tuning.base_interval));
+        }
+        if threat.stun > 0.0 {
+            landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| status.hold(threat.stun));
+        }
 
-            // A flank strike at Grace's capstone breaks its target's stride
-            // for a swing as it lands, the deeper of two breaks holding
-            if threat.stride > 0.0 {
-                landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| {
-                    let pace = status.stride.map_or(threat.stride, |stride| stride.pace.min(threat.stride));
-                    status.stride = Some(common_bevy::components::status::Timed { pace, remaining: tuning.base_interval });
-                });
+        let lifesteal = statuses.get(threat.source).map_or(0.0, |status| status.lifesteal());
+        if lifesteal > 0.0 && final_damage > 0.0 {
+            let Ok(mut health) = query.get_mut(threat.source) else { return };
+            if health.state > 0.0 {
+                health.state = (health.state + final_damage * lifesteal).min(health.max);
+                writer.write(Do { event: GameEvent::Incremental { ent: threat.source, component: common_bevy::message::Component::Health(*health) } });
             }
         }
+    }
+}
+
+/// Moves the target of a `ResolveThreat` that carries a drag as it lands: a
+/// walk over the ground up to its tiles, toward the threat's source and
+/// stopping beside it, or away along the line from it, inside the
+/// target's leash (`leap::Leash::of`), slid there as a Leap is. A braced
+/// target stands.
+pub fn resolve_drag(
+    trigger: On<Try>,
+    mut commands: Commands,
+    mut writer: MessageWriter<Do>,
+    map: Res<common_bevy::resources::map::Map>,
+    actors: Query<(&Loc, &Health)>,
+    statuses: Query<&common_bevy::components::status::Status>,
+    leashed: Query<(&behaviour::chase::Chase, &engagement::EngagementMember)>,
+    dens: Query<&Loc, With<engagement::Engagement>>,
+) {
+    let Try { event: GameEvent::ResolveThreat { ent, threat } } = trigger.event() else { return };
+    if threat.drag == 0 || statuses.get(*ent).is_ok_and(|status| status.is_braced()) {
+        return;
+    }
+    let (Ok((&at, health)), Ok((&to, _))) = (actors.get(*ent), actors.get(threat.source)) else { return };
+    if health.state <= 0.0 {
+        return;
+    }
+    let leash = leap::Leash::of(*ent, &leashed, &dens);
+    let tiles = threat.drag.unsigned_abs() as usize;
+    let landing = if threat.drag > 0 { leap::toward(&map, *at, *to, tiles, leash) } else { leap::away(&map, *at, *to, tiles, leash) };
+    if let Some(landing) = landing {
+        leap::slide(*ent, landing, leap::LEAP_MS, None, &mut commands, &mut writer);
     }
 }
 
@@ -276,6 +336,10 @@ pub fn intimidate(
         }).collect();
         for other in foes {
             let held = statuses.get(other).ok().is_some_and(|status| {
+                // A braced foe takes no slow or pin to keep fresh
+                if status.is_braced() {
+                    return toll <= 0.0 || status.toll.is_some_and(|held| held.pace >= 1.0 + toll) && fresh(status.toll);
+                }
                 let slowed = status.slow.is_some_and(|slow| slow.pace <= pace) && fresh(status.slow);
                 let taxed = toll <= 0.0 || (status.toll.is_some_and(|held| held.pace >= 1.0 + toll) && fresh(status.toll));
                 let pinned = zone.is_none() || fresh(status.pinned);

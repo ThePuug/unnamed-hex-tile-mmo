@@ -34,9 +34,11 @@ pub struct GlobalRecovery {
 
 /// A chain of skills: opened by one taken in its own time, out of recovery,
 /// and continued by each skill used inside its recoveries
-/// (`combos::recovery_after`).
+/// (`combos::recovery_after`), [`CHAIN_LIMIT`] skills at most.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Chain {
+    /// Skills in it, its opener included
+    pub skills: u8,
     /// Seconds it owes, a share of what each skill fired early skipped,
     /// paid once its last recovery runs out
     pub owed: f32,
@@ -47,6 +49,17 @@ pub struct Chain {
     /// A strike taken in its own time stands in it, which lets Preparation
     /// fire reactions early
     pub struck: bool,
+}
+
+/// The most skills a chain holds: the last offers no combo and no reaction
+/// fires early in its recovery, so what the chain owes comes due.
+pub const CHAIN_LIMIT: u8 = 4;
+
+impl Chain {
+    /// Whether it holds all the skills it may
+    pub fn is_full(&self) -> bool {
+        self.skills >= CHAIN_LIMIT
+    }
 }
 
 impl GlobalRecovery {

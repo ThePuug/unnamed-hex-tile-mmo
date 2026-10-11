@@ -186,6 +186,76 @@ pub struct Tuning {
     /// Share faster a Perfect Stride runs its user, at full commitment to
     /// its Agility line
     pub stride_speed: f32,
+    pub clash_cost: f32,
+    pub clash_recovery: f32,
+    /// Seconds a Clash's return stuns each source, at full commitment to
+    /// its Might line
+    pub clash_stun: f32,
+    pub sidestep_cost: f32,
+    pub sidestep_recovery: f32,
+    /// Tiles round its source a Sidestep steps, at full commitment to its
+    /// Agility line
+    pub sidestep_steps: f32,
+    pub backstab_cost: f32,
+    pub backstab_recovery: f32,
+    /// Share of base potency a Backstab strikes for, at full commitment to
+    /// its Agility line
+    pub backstab_damage: f32,
+    /// How much harder a Backstab's crit lands than another's: 0.5 lands it
+    /// half again as hard
+    pub backstab_crit: f32,
+    pub pounce_cost: f32,
+    pub pounce_recovery: f32,
+    /// Tiles a Pounce lunges toward its source, at full commitment to its
+    /// Instinct line
+    pub pounce_tiles: f32,
+    pub kick_cost: f32,
+    pub kick_recovery: f32,
+    /// Share of base potency a Kick strikes for, whatever the build
+    pub kick_damage: f32,
+    /// Tiles a Kick knocks its target back, at full commitment to its
+    /// Discipline line
+    pub kick_tiles: f32,
+    pub defy_cost: f32,
+    pub defy_recovery: f32,
+    /// Share of base potency a Defy strikes for with nothing in its
+    /// user's queue, whatever the build
+    pub defy_damage: f32,
+    /// Share more a Defy strikes for each threat waiting in its user's
+    /// queue, at full commitment to its Resolve line
+    pub defy_per_threat: f32,
+    pub bloodlust_cost: f32,
+    pub bloodlust_recovery: f32,
+    /// Seconds a Bloodlust lasts
+    pub bloodlust_secs: f32,
+    /// Share of the damage its attacks land a Bloodlust returns as health,
+    /// at full commitment to its Might line
+    pub bloodlust_share: f32,
+    pub brace_cost: f32,
+    pub brace_recovery: f32,
+    /// Seconds a Brace lasts, at full commitment to its Physique line
+    pub brace_secs: f32,
+    pub surge_cost: f32,
+    pub surge_recovery: f32,
+    /// Seconds a Surge lasts unspent
+    pub surge_secs: f32,
+    /// Share more a Surge adds to its user's next skill strike for each
+    /// tile it moved, at full commitment to its Discipline line
+    pub surge_per_tile: f32,
+    pub vigil_cost: f32,
+    pub vigil_recovery: f32,
+    /// Seconds a Vigil lasts, at full commitment to its Resolve line
+    pub vigil_secs: f32,
+    pub lurk_cost: f32,
+    pub lurk_recovery: f32,
+    /// Seconds a Lurk lasts unbroken, at full commitment to its Instinct
+    /// line
+    pub lurk_secs: f32,
+    pub yank_cost: f32,
+    pub yank_recovery: f32,
+    /// Tiles a Yank's return drags each source, at full commitment to its
+    /// Physique line
+    pub yank_tiles: f32,
 
     // --- Lines: the share of a skill's own numbers it has with no points in
     // its line, rising evenly to all of them at full commitment
@@ -196,6 +266,18 @@ pub struct Tuning {
     pub counter_line: f32,
     pub stride_line: f32,
     pub leap_line: f32,
+    pub clash_line: f32,
+    pub sidestep_line: f32,
+    pub yank_line: f32,
+    pub backstab_line: f32,
+    pub pounce_line: f32,
+    pub kick_line: f32,
+    pub defy_line: f32,
+    pub bloodlust_line: f32,
+    pub brace_line: f32,
+    pub surge_line: f32,
+    pub vigil_line: f32,
+    pub lurk_line: f32,
 }
 
 impl Tuning {
@@ -278,6 +360,59 @@ impl Tuning {
         leap_line: 0.2,
         stride_secs: 5.849,
         stride_speed: 0.401,
+        clash_cost: 15.0,
+        clash_recovery: 2.0,
+        clash_stun: 0.75,
+        sidestep_cost: 12.0,
+        sidestep_recovery: 1.5,
+        sidestep_steps: 2.0,
+        backstab_cost: 6.0,
+        backstab_recovery: 2.0,
+        backstab_damage: 1.5,
+        backstab_crit: 0.5,
+        pounce_cost: 8.0,
+        pounce_recovery: 1.0,
+        pounce_tiles: 3.0,
+        kick_cost: 4.0,
+        kick_recovery: 1.5,
+        kick_damage: 0.8,
+        kick_tiles: 3.0,
+        defy_cost: 6.0,
+        defy_recovery: 2.0,
+        defy_damage: 0.8,
+        defy_per_threat: 0.25,
+        bloodlust_cost: 10.0,
+        bloodlust_recovery: 1.0,
+        bloodlust_secs: 6.0,
+        bloodlust_share: 0.12,
+        brace_cost: 10.0,
+        brace_recovery: 1.0,
+        brace_secs: 3.0,
+        surge_cost: 6.0,
+        surge_recovery: 1.0,
+        surge_secs: 3.0,
+        surge_per_tile: 0.15,
+        vigil_cost: 10.0,
+        vigil_recovery: 1.0,
+        vigil_secs: 4.0,
+        lurk_cost: 10.0,
+        lurk_recovery: 1.0,
+        lurk_secs: 6.0,
+        yank_cost: 12.0,
+        yank_recovery: 1.5,
+        yank_tiles: 3.0,
+        clash_line: 0.2,
+        sidestep_line: 0.2,
+        yank_line: 0.2,
+        backstab_line: 0.2,
+        pounce_line: 0.2,
+        kick_line: 0.2,
+        defy_line: 0.2,
+        bloodlust_line: 0.2,
+        brace_line: 0.2,
+        surge_line: 0.2,
+        vigil_line: 0.2,
+        lurk_line: 0.2,
     };
 
     /// The endurance `ability` costs, in points of the pool
@@ -293,6 +428,18 @@ impl Tuning {
             AbilityType::Counter => self.counter_cost,
             AbilityType::Leap => self.leap_cost,
             AbilityType::PerfectStride => self.stride_cost,
+            AbilityType::Clash => self.clash_cost,
+            AbilityType::Sidestep => self.sidestep_cost,
+            AbilityType::Yank => self.yank_cost,
+            AbilityType::Backstab => self.backstab_cost,
+            AbilityType::Pounce => self.pounce_cost,
+            AbilityType::Kick => self.kick_cost,
+            AbilityType::Defy => self.defy_cost,
+            AbilityType::Bloodlust => self.bloodlust_cost,
+            AbilityType::Brace => self.brace_cost,
+            AbilityType::Surge => self.surge_cost,
+            AbilityType::Vigil => self.vigil_cost,
+            AbilityType::Lurk => self.lurk_cost,
         }
     }
 
@@ -305,7 +452,12 @@ impl Tuning {
             AbilityType::Overpower => self.overpower_damage,
             AbilityType::Punish => self.punish_base,
             AbilityType::Leap => self.leap_strike,
-            AbilityType::AutoAttack | AbilityType::Parry | AbilityType::Counter | AbilityType::PerfectStride => 0.0,
+            AbilityType::Backstab => self.backstab_damage,
+            AbilityType::Kick => self.kick_damage,
+            AbilityType::Defy => self.defy_damage,
+            AbilityType::AutoAttack | AbilityType::Parry | AbilityType::Counter | AbilityType::PerfectStride
+            | AbilityType::Clash | AbilityType::Sidestep | AbilityType::Yank | AbilityType::Pounce
+            | AbilityType::Bloodlust | AbilityType::Brace | AbilityType::Surge | AbilityType::Vigil | AbilityType::Lurk => 0.0,
         }
     }
 
@@ -319,7 +471,28 @@ impl Tuning {
             AbilityType::Counter => self.counter_line,
             AbilityType::PerfectStride => self.stride_line,
             AbilityType::Leap => self.leap_line,
+            AbilityType::Clash => self.clash_line,
+            AbilityType::Sidestep => self.sidestep_line,
+            AbilityType::Yank => self.yank_line,
+            AbilityType::Backstab => self.backstab_line,
+            AbilityType::Pounce => self.pounce_line,
+            AbilityType::Kick => self.kick_line,
+            AbilityType::Defy => self.defy_line,
+            AbilityType::Bloodlust => self.bloodlust_line,
+            AbilityType::Brace => self.brace_line,
+            AbilityType::Surge => self.surge_line,
+            AbilityType::Vigil => self.vigil_line,
+            AbilityType::Lurk => self.lurk_line,
             AbilityType::AutoAttack | AbilityType::Feint | AbilityType::Parry => 1.0,
+        }
+    }
+
+    /// How much harder a crit of `ability`'s lands than another's: a
+    /// Backstab's `backstab_crit`, none for any other
+    pub fn crit_severity(&self, ability: Option<AbilityType>) -> f32 {
+        match ability {
+            Some(AbilityType::Backstab) => self.backstab_crit,
+            _ => 0.0,
         }
     }
 
@@ -337,6 +510,18 @@ impl Tuning {
             AbilityType::Counter => self.counter_recovery,
             AbilityType::Leap => self.leap_recovery,
             AbilityType::PerfectStride => self.stride_recovery,
+            AbilityType::Clash => self.clash_recovery,
+            AbilityType::Sidestep => self.sidestep_recovery,
+            AbilityType::Yank => self.yank_recovery,
+            AbilityType::Backstab => self.backstab_recovery,
+            AbilityType::Pounce => self.pounce_recovery,
+            AbilityType::Kick => self.kick_recovery,
+            AbilityType::Defy => self.defy_recovery,
+            AbilityType::Bloodlust => self.bloodlust_recovery,
+            AbilityType::Brace => self.brace_recovery,
+            AbilityType::Surge => self.surge_recovery,
+            AbilityType::Vigil => self.vigil_recovery,
+            AbilityType::Lurk => self.lurk_recovery,
         }
     }
 
@@ -425,6 +610,60 @@ impl Tuning {
             "stride_line" => &mut self.stride_line,
             "leap_line" => &mut self.leap_line,
             "leap_strike" => &mut self.leap_strike,
+            "clash_cost" => &mut self.clash_cost,
+            "clash_recovery" => &mut self.clash_recovery,
+            "clash_stun" => &mut self.clash_stun,
+            "clash_line" => &mut self.clash_line,
+            "sidestep_cost" => &mut self.sidestep_cost,
+            "sidestep_recovery" => &mut self.sidestep_recovery,
+            "sidestep_steps" => &mut self.sidestep_steps,
+            "sidestep_line" => &mut self.sidestep_line,
+            "yank_cost" => &mut self.yank_cost,
+            "yank_recovery" => &mut self.yank_recovery,
+            "yank_tiles" => &mut self.yank_tiles,
+            "yank_line" => &mut self.yank_line,
+            "backstab_cost" => &mut self.backstab_cost,
+            "backstab_recovery" => &mut self.backstab_recovery,
+            "backstab_damage" => &mut self.backstab_damage,
+            "backstab_crit" => &mut self.backstab_crit,
+            "backstab_line" => &mut self.backstab_line,
+            "pounce_cost" => &mut self.pounce_cost,
+            "pounce_recovery" => &mut self.pounce_recovery,
+            "pounce_tiles" => &mut self.pounce_tiles,
+            "pounce_line" => &mut self.pounce_line,
+            "kick_cost" => &mut self.kick_cost,
+            "kick_recovery" => &mut self.kick_recovery,
+            "kick_damage" => &mut self.kick_damage,
+            "kick_tiles" => &mut self.kick_tiles,
+            "kick_line" => &mut self.kick_line,
+            "defy_cost" => &mut self.defy_cost,
+            "defy_recovery" => &mut self.defy_recovery,
+            "defy_damage" => &mut self.defy_damage,
+            "defy_per_threat" => &mut self.defy_per_threat,
+            "defy_line" => &mut self.defy_line,
+            "bloodlust_cost" => &mut self.bloodlust_cost,
+            "bloodlust_recovery" => &mut self.bloodlust_recovery,
+            "bloodlust_secs" => &mut self.bloodlust_secs,
+            "bloodlust_share" => &mut self.bloodlust_share,
+            "bloodlust_line" => &mut self.bloodlust_line,
+            "brace_cost" => &mut self.brace_cost,
+            "brace_recovery" => &mut self.brace_recovery,
+            "brace_secs" => &mut self.brace_secs,
+            "brace_line" => &mut self.brace_line,
+            "surge_cost" => &mut self.surge_cost,
+            "surge_recovery" => &mut self.surge_recovery,
+            "surge_secs" => &mut self.surge_secs,
+            "surge_per_tile" => &mut self.surge_per_tile,
+            "surge_line" => &mut self.surge_line,
+            "vigil_cost" => &mut self.vigil_cost,
+            "vigil_recovery" => &mut self.vigil_recovery,
+            "vigil_secs" => &mut self.vigil_secs,
+            "vigil_line" => &mut self.vigil_line,
+            "lurk_cost" => &mut self.lurk_cost,
+            "lurk_recovery" => &mut self.lurk_recovery,
+            "lurk_secs" => &mut self.lurk_secs,
+            "lurk_line" => &mut self.lurk_line,
+
             _ => return Err(format!("no tuning knob {name}")),
         })
     }
@@ -459,10 +698,7 @@ mod tests {
     #[test]
     fn no_skill_recovers_longer_than_a_reaction_window() {
         let tuning = Tuning::DEFAULT;
-        for ability in [
-            AbilityType::Frenzy, AbilityType::Feint, AbilityType::Overpower, AbilityType::Punish,
-            AbilityType::Parry, AbilityType::Counter, AbilityType::Leap, AbilityType::PerfectStride,
-        ] {
+        for ability in AbilityType::ALL.into_iter().filter(|&ability| ability != AbilityType::AutoAttack) {
             assert!(tuning.recovery(ability) <= tuning.reaction_window, "{ability:?}");
         }
     }
@@ -472,7 +708,7 @@ mod tests {
         let tuning = Tuning::DEFAULT;
         use AbilityType::*;
         assert_eq!(tuning.recovery(AutoAttack), 0.0, "an auto-attack runs on its own timer");
-        for ability in [Frenzy, Feint, Overpower, Punish, Parry, Counter, Leap, PerfectStride] {
+        for ability in AbilityType::ALL.into_iter().filter(|&ability| ability != AutoAttack) {
             assert!(tuning.recovery(ability) > 0.0, "{ability:?} leaves its user recovering");
         }
     }

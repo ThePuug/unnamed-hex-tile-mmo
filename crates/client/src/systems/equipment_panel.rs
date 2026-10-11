@@ -383,11 +383,13 @@ mod tests {
     #[test]
     fn tabs_stop_at_the_strip_ends() {
         assert_eq!(PanelTab::Attributes.above(), PanelTab::Attributes);
-        assert_eq!(PanelTab::Attributes.below(), PanelTab::Equipment);
+        assert_eq!(PanelTab::Attributes.below(), PanelTab::Skills);
+        assert_eq!(PanelTab::Skills.below(), PanelTab::Equipment);
         assert_eq!(PanelTab::Equipment.below(), PanelTab::Bag);
         assert_eq!(PanelTab::Bag.below(), PanelTab::Bag);
         assert_eq!(PanelTab::Bag.above(), PanelTab::Equipment);
-        assert_eq!(PanelTab::Equipment.above(), PanelTab::Attributes);
+        assert_eq!(PanelTab::Equipment.above(), PanelTab::Skills);
+        assert_eq!(PanelTab::Skills.above(), PanelTab::Attributes);
         assert_eq!(PanelTab::ALL.first().copied(), Some(PanelTab::default()));
     }
 }

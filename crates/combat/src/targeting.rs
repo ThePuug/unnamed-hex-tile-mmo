@@ -3,9 +3,9 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{behaviour::Side, heading::Heading, ActorAttributes, Loc, target::Target},
+    components::{behaviour::Side, heading::Heading, status::Status, ActorAttributes, AttackRange, Loc, target::Target},
     plugins::nntree::NNTree,
-    systems::targeting::{arc_of, update_targets_impl},
+    systems::targeting::{arc_of, unseen, update_targets_impl},
 };
 use crate::behaviour::chase::Chase;
 use common_bevy::tuning::Tuning;
@@ -21,9 +21,13 @@ pub fn update_targets(
         Without<Chase>
     >,
     sides: Query<&Side>,
+    others: Query<(&Loc, Option<&Status>, Option<&AttackRange>)>,
     nntree: Res<NNTree>,
 ) {
     for (ent, loc, heading, mut target, attrs) in &mut query {
+        let seen = |other: Entity| others.get(other).is_ok_and(|(at, status, range)| {
+            !unseen(status, range.copied().unwrap_or_default().0, loc.flat_distance(at))
+        });
         update_targets_impl(
             ent,
             *loc,
@@ -31,7 +35,7 @@ pub fn update_targets(
             arc_of(&tuning, attrs),
             &mut *target,
             &nntree,
-            |e| sides.get(e).ok().copied(),
+            |e| sides.get(e).ok().copied().filter(|_| e == ent || seen(e)),
             Side::is_hostile_to,
         );
     }

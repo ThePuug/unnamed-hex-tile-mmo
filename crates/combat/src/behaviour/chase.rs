@@ -13,6 +13,7 @@ use common_bevy::{
     message::{Event, Do, Component as MessageComponent},
     plugins::nntree::*,
     resources::map::Map,
+    systems::targeting::unseen,
 };
 use common_bevy::message::AbilityType;
 use qrz::{Convert, Qrz};
@@ -131,12 +132,16 @@ pub fn chase(
             continue;
         }
 
-        // The target it has, while that one lives, else any hostile in sight
+        // The target it has, while that one lives and it sees it, else any
+        // hostile in sight
+        let seen = |other: Entity| q_target.get(other).is_ok_and(|(at, _, _, _, status)| {
+            !unseen(status, AttackRange::default().0, loc.flat_distance(at))
+        });
         let held = target.entity
-            .filter(|&held| q_target.get(held).is_ok_and(|(_, health, ..)| health.current() > 0.0))
+            .filter(|&held| q_target.get(held).is_ok_and(|(_, health, ..)| health.current() > 0.0) && seen(held))
             .or_else(|| {
-                let foes: Vec<Entity> = super::hostiles_near(&nntree, npc, *loc, chase.acquisition_range, *own_side, |seen| {
-                    q_target.get(seen).ok().map(|(_, health, side, ..)| (*side, health.current()))
+                let foes: Vec<Entity> = super::hostiles_near(&nntree, npc, *loc, chase.acquisition_range, *own_side, |other| {
+                    q_target.get(other).ok().filter(|_| seen(other)).map(|(_, health, side, ..)| (*side, health.current()))
                 }).collect();
                 let mut rolls = rolls.get_mut(npc).ok()?;
                 (!foes.is_empty()).then(|| foes[dice.draw(&mut rolls, ("foe", npc)).pick(foes.len())])

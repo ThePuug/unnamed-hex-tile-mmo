@@ -1,47 +1,18 @@
 use bevy::prelude::*;
-use common_bevy::{
-    message::{AbilityType, Event as GameEvent, Try},
-    systems::combat::{damage::level_factor, queue::create_threat},
-};
+use common_bevy::message::AbilityType;
 
-use super::{Abilities, AbilityFailReason, Cast};
+use super::{Abilities, AbilityFailReason, Cast, Carried};
 
 /// Counter, the Defender's skill: a reaction that clears the threats in its
-/// user's band ([`Abilities::answer`]), which Awareness widens. Each cleared threat goes back to its living
-/// source wherever it stands, at `Tuning::counter_reflect` of the threat's
-/// own damage raised by the counterer's Resolve line
-/// (`ActorAttributes::line_power`), weighed by the counterer's level
-/// against its source's (`damage::level_factor`)
-/// and nothing more, so a Counter returns what comes in, and lands at
-/// once: a reflection never enters the source's queue, so it
-/// cannot be countered. Its recovery is contested by the source of the
-/// first threat it answers.
+/// user's band ([`Abilities::answer`]), which Awareness widens. It returns one
+/// blow to each source it cleared ([`Abilities::send_back`]),
+/// `Tuning::counter_reflect` of all it cleared from that source, raised by
+/// the counterer's Resolve line (`ActorAttributes::line_power`). Its
+/// recovery is contested by the source of the first threat it answers.
 pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let tuning = *abilities.tuning;
     let answered = abilities.answer(cast);
-
-    let now = abilities.game_now();
-    let weight = cast.attrs.line_power(&tuning, AbilityType::Counter);
-    for threat in &answered {
-        // A reflection needs a living source to go back to
-        let Ok((_, source_attrs, _, _, _, _, dead)) = abilities.actors.get(threat.source) else { continue };
-        if dead {
-            continue;
-        }
-        // A reflection lands on impact and never waits its window out
-        let reflected = create_threat(
-            &tuning,
-            cast.ent,
-            source_attrs,
-            &cast.attrs,
-            threat.damage * tuning.counter_reflect * weight * level_factor(&tuning, cast.attrs.total_level(), source_attrs.total_level()),
-            Some(AbilityType::Counter),
-            now,
-            0.0,
-            0.0,
-        );
-        abilities.commands.trigger(Try { event: GameEvent::ResolveThreat { ent: threat.source, threat: reflected } });
-    }
-
+    let share = tuning.counter_reflect * cast.attrs.line_power(&tuning, AbilityType::Counter);
+    abilities.send_back(cast, &answered, |sum| Carried { damage: sum * share, ..Carried::default() });
     Ok(answered.first().map(|threat| threat.source))
 }

@@ -54,6 +54,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Loot { .. } => "Loot",
         Event::Activity { .. } => "Activity",
         Event::View { .. } => "View",
+        Event::SetLoadout { .. } => "SetLoadout",
         _ => "Other",
     }
 }
@@ -144,7 +145,7 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs }});
             }
 
-            Do { event: Event::Despawn { ent } } => {
+            Do { event: Event::Despawn { ent, died } } => {
                 // The local player has an input queue; it falls as any
                 // actor does, but keeps its entity: the server respawns it,
                 // and it stands again
@@ -158,7 +159,13 @@ pub fn write_do(
                         continue
                     };
 
-                    if let Ok(mut cmd) = commands.get_entity(local_ent) {
+                    // One gone from sight, lurking or out of range, goes as
+                    // it stands: a fall would say where it went
+                    if !died {
+                        if let Ok(mut cmd) = commands.get_entity(local_ent) {
+                            cmd.despawn();
+                        }
+                    } else if let Ok(mut cmd) = commands.get_entity(local_ent) {
                         cmd.insert(
                             crate::components::DeathMarker {
                                 death_time: Moment::ZERO + time.elapsed(),
@@ -194,6 +201,7 @@ pub fn write_do(
                 | Event::ClearQueue { .. }
                 | Event::UseAbility { .. }
                 | Event::RespecAttributes { .. }
+                | Event::SetLoadout { .. }
             ) } => {
                 let Some(ent) = event.ent_mut() else { continue };
                 let Some(&local) = l2r.get_by_right(ent) else {
@@ -318,7 +326,8 @@ pub fn send_try(
             | Event::Wear { .. }
             | Event::Teleport { .. }
             | Event::SpawnParty { .. }
-            | Event::RespecAttributes { .. } => {
+            | Event::RespecAttributes { .. }
+            | Event::SetLoadout { .. } => {
                 // One the server never told the client of has nothing to ask
                 let Some(ent) = event.ent_mut() else { continue };
                 let Some(&remote) = l2r.get_by_left(ent) else { continue };

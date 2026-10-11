@@ -41,6 +41,23 @@ pub struct Status {
     /// Pinned, in an Intimidating foe's zone at its capstone: no skill that
     /// moves it, for `remaining` seconds ([`Status::pin`]); its `pace` is unused
     pub pinned: Option<Timed>,
+    /// A Bloodlust under way: `pace` of the damage its attacks land comes
+    /// back to it as health, for `remaining` seconds
+    pub bloodlust: Option<Timed>,
+    /// A Brace under way: no hold, slow, root, pin or broken stride a foe
+    /// lays on it takes, and no drag moves it, for `remaining` seconds
+    /// ([`Status::is_braced`]); its `pace` is unused
+    pub braced: Option<Timed>,
+    /// A Surge under way: each tile it moves adds `pace` more to its next
+    /// skill strike, for `remaining` seconds or until that strike spends it
+    pub surge: Option<Timed>,
+    /// A Vigil under way: no strike takes its flank, for `remaining`
+    /// seconds ([`Status::is_vigilant`]); its `pace` is unused
+    pub vigil: Option<Timed>,
+    /// A Lurk under way: no foe beyond its reach sees it, for `remaining`
+    /// seconds or until it attacks (`targeting::unseen`); its `pace` is
+    /// unused
+    pub lurk: Option<Timed>,
 }
 
 /// The most stacks of Overcommitted an actor carries
@@ -92,9 +109,40 @@ impl Status {
         status.is_some_and(Status::is_held)
     }
 
+    /// Whether a Lurk holds now: no foe beyond its reach sees it
+    pub fn is_lurking(&self) -> bool {
+        self.lurk.is_some_and(|lurk| lurk.remaining > 0.0)
+    }
+
+    /// Whether a Vigil holds now: no strike takes its flank
+    pub fn is_vigilant(&self) -> bool {
+        self.vigil.is_some_and(|vigil| vigil.remaining > 0.0)
+    }
+
+    /// The share more each tile it has moved adds to its next skill strike
+    /// now: a Surge's, none without one
+    pub fn surging(&self) -> f32 {
+        self.surge.filter(|surge| surge.remaining > 0.0).map_or(0.0, |surge| surge.pace)
+    }
+
+    /// Whether a Brace holds now: nothing a foe lays on it holds or moves it
+    pub fn is_braced(&self) -> bool {
+        self.braced.is_some_and(|braced| braced.remaining > 0.0)
+    }
+
+    /// The share of the damage its attacks land that comes back to it as
+    /// health now: a Bloodlust's, none without one
+    pub fn lifesteal(&self) -> f32 {
+        self.bloodlust.filter(|bloodlust| bloodlust.remaining > 0.0).map_or(0.0, |bloodlust| bloodlust.pace)
+    }
+
     /// Holds the actor for `seconds`, or for what a hold already on it has
-    /// left where that is longer: a short hold never cuts a long one.
+    /// left where that is longer: a short hold never cuts a long one. A
+    /// braced actor takes none.
     pub fn hold(&mut self, seconds: f32) {
+        if self.is_braced() {
+            return;
+        }
         let left = self.held.map_or(0.0, |held| held.remaining);
         self.held = Some(Timed { pace: 0.0, remaining: seconds.max(left) });
     }
@@ -118,15 +166,22 @@ impl Status {
     }
 
     /// Roots the actor for `seconds`, or for what a root already on it has
-    /// left where that is longer
+    /// left where that is longer. A braced actor takes none.
     pub fn root(&mut self, seconds: f32) {
+        if self.is_braced() {
+            return;
+        }
         let left = self.root.map_or(0.0, |root| root.remaining);
         self.root = Some(Timed { pace: 0.0, remaining: seconds.max(left) });
     }
 
     /// Slows the actor to `pace` for `seconds`, keeping what a slow already
-    /// on it holds deeper or longer: a light slow never eases a deep one.
+    /// on it holds deeper or longer: a light slow never eases a deep one. A
+    /// braced actor takes none.
     pub fn slow(&mut self, pace: f32, seconds: f32) {
+        if self.is_braced() {
+            return;
+        }
         let (held, left) = self.slow.map_or((1.0, 0.0), |slow| (slow.pace, slow.remaining));
         self.slow = Some(Timed { pace: pace.min(held), remaining: seconds.max(left) });
     }
@@ -143,6 +198,16 @@ impl Status {
         self.toll = Some(Timed { pace: factor.max(held), remaining: seconds.max(left) });
     }
 
+    /// Breaks the actor's stride to `pace` for `seconds` as a foe's strike
+    /// lands, the deeper of two breaks holding. A braced actor takes none.
+    pub fn break_stride(&mut self, pace: f32, seconds: f32) {
+        if self.is_braced() {
+            return;
+        }
+        let pace = self.stride.map_or(pace, |stride| stride.pace.min(pace));
+        self.stride = Some(Timed { pace, remaining: seconds });
+    }
+
     /// Takes every stack of Overcommitted off it: a patient foe's certain
     /// crit spent them
     pub fn spend_overcommits(&mut self) {
@@ -155,8 +220,11 @@ impl Status {
     }
 
     /// Pins the actor for `seconds`, or for what a pin already on it has left
-    /// where that is longer
+    /// where that is longer. A braced actor takes none.
     pub fn pin(&mut self, seconds: f32) {
+        if self.is_braced() {
+            return;
+        }
         let left = self.pinned.map_or(0.0, |pinned| pinned.remaining);
         self.pinned = Some(Timed { pace: 1.0, remaining: seconds.max(left) });
     }
@@ -169,7 +237,7 @@ impl Status {
             *left = (*left - dt).max(0.0);
             counted = true;
         }
-        for slot in [&mut self.slow, &mut self.root, &mut self.stride, &mut self.perfect_stride, &mut self.held, &mut self.toll, &mut self.pinned] {
+        for slot in [&mut self.slow, &mut self.root, &mut self.stride, &mut self.perfect_stride, &mut self.held, &mut self.toll, &mut self.pinned, &mut self.bloodlust, &mut self.braced, &mut self.surge, &mut self.vigil, &mut self.lurk] {
             if let Some(timed) = slot {
                 timed.remaining -= dt;
                 if timed.remaining <= 0.0 {

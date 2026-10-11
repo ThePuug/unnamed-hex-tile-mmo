@@ -13,6 +13,8 @@ use super::{Abilities, AbilityFailReason, Cast};
 ///   recovered from. Its combo is a Parry.
 /// - Overpower, the Juggernaut's: one heavy blow raised by its Physique
 ///   line.
+/// - Backstab: a blow raised by its Agility line, struck only from a flank
+///   (`admits`), its crit the harder by `Tuning::crit_severity`.
 pub fn strike(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
     let tuning = *abilities.tuning;
     let (target, _) = cast.struck()?;

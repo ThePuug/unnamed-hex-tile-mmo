@@ -74,7 +74,7 @@ fn main() {
         input::try_input,
         actor::try_teleport,
         engagement_spawner::try_spawn_party,
-        input::try_respec_attributes,
+        (input::try_respec_attributes, input::try_set_loadout),
         crate::systems::equipment::try_wear,
         crate::systems::gathering::try_gather,
         crate::systems::gathering::try_take,

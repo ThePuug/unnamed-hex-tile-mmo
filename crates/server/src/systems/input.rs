@@ -345,6 +345,25 @@ pub fn try_respec_attributes(
     }
 }
 
+/// Takes a player's choice of bar (`Event::SetLoadout`) where it holds no
+/// skill twice and nothing off the pool (`Loadout::fits`), out of combat,
+/// and says so to its client. Unbuilt: a bar chosen at a haven only.
+pub fn try_set_loadout(
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
+    mut loadouts: Query<(&mut common_bevy::components::loadout::Loadout, Option<&common_bevy::components::resources::CombatState>)>,
+) {
+    for message in reader.read() {
+        let Try { event: Event::SetLoadout { ent, loadout } } = message else { continue };
+        let Ok((mut held, combat)) = loadouts.get_mut(*ent) else { continue };
+        if combat.is_some_and(|combat| combat.in_combat) || !loadout.fits() {
+            continue;
+        }
+        *held = *loadout;
+        writer.write(Do { event: message.event.clone() });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

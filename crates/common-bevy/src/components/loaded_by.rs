@@ -9,4 +9,7 @@ use std::collections::HashSet;
 #[derive(Clone, Component, Debug, Default)]
 pub struct LoadedBy {
     pub players: HashSet<Entity>,
+    /// Whether the entity lurked when `players` was last chosen: a lurk
+    /// begun or ended chooses them again, a foe beyond its reach left out
+    pub lurking: bool,
 }
