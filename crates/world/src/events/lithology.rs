@@ -26,20 +26,11 @@
 //! and limestone hold; basement holds hardest. So a formation that holds
 //! stands above its neighbours as a cuesta: a scarp facing the older rocks
 //! updip, and a long dip slope down the bed's own top surface to the next
-//! vale. On a range's flank the stripping runs deeper than any bed, so a
-//! weak bed is cut to the hard bed beneath it: a strike valley the weak
-//! bed's whole thickness deep, and the hard bed between two such standing
-//! as a strike ridge, the ridge-and-valley a folded cover makes. A weak bed
-//! crossing a crest lowers it by its thickness, a col, and the hard bed
-//! beside it stands as the summit. Every river reads that: it runs along
-//! the vales, crosses the scarps at gaps, and cuts as fast as the rock it
-//! is in allows.
-//!
-//! The geology is compressed and its drama is not. The distance between
-//! features is short, a range crossed in minutes, and the size of a feature
-//! the player stands under is not: a scarp is a weak bed's thickness tall,
-//! a cliff many times the player's height over the bench below it, and a
-//! flank is a staircase of such cliffs.
+//! vale. Every river crossing the platform reads that: it runs along the
+//! vales, crosses the scarps at gaps, and cuts as fast as the rock it is in
+//! allows. The cuesta is the platform's texture; the cliff a hard bed's
+//! edge can make is a landform's, carved at its full size where its site
+//! finds the ground for it.
 //!
 //! # A field
 //!
@@ -50,16 +41,14 @@
 //! the height the ranges' structure stands above the platform says how
 //! much the plate's age has stripped from it, so the depth into the column
 //! at the surface, and with it the rock, is a function of position. The
-//! structure and not the ranges' surface: the surface stands under the
-//! limit the rock sets, so it cannot also set the rock. The cuesta is a
-//! function of that depth and the stripping: how far the weak rock around
-//! the position has been lowered against the resistant, by a cuesta's
-//! relief and, resting on a harder bed, by the stripping down to that bed,
-//! held up where a harder bed lies just beneath, which is what makes the
-//! dip slope, and stepped at every contact, which is what makes the scarp.
-//! What stands is added to the envelope, above it where a bed holds and
-//! cut into it where a bed is lowered, never below the shore, and the
-//! rock's erodibility is what drainage, migration and dissection read.
+//! structure and not the ranges' surface: the scree swept over a range is
+//! debris, not the bed beneath. The cuesta is a function of that depth
+//! alone: how far the weak rock around the position has been lowered
+//! against the resistant, held up where a harder bed lies just beneath,
+//! which is what makes the dip slope, and stepped at every contact, which
+//! is what makes the scarp. What stands is added to the envelope, on land,
+//! and the rock's erodibility is what drainage, migration and dissection
+//! read.
 //!
 //! Not lithology's: volcanics; karst; the coastal plain's unconsolidated
 //! wedge. Unbuilt.
@@ -87,11 +76,10 @@ pub use common::Rock;
 /// Formations in a plate's cover, from the top down.
 pub const FORMATIONS: usize = 8;
 
-/// A formation's thickness, in z-levels: sixteen to forty-eight metres.
-/// On a flank a weak bed is cut to the hard bed beneath it, so the scarp
-/// at its contact is its thickness tall: a cliff ten to thirty times a
-/// person's height, the size a player stands under, where the platform's
-/// cuesta is six metres.
+/// A formation's thickness, in z-levels: sixteen to forty-eight metres. A
+/// scarp's free face is its hard bed's thickness tall and its debris slope
+/// the weak bed's beneath, so a face is ten to thirty times a person's
+/// height, the size a player stands under.
 pub const FORMATION_MIN: f64 = 20.0;
 pub const FORMATION_MAX: f64 = 60.0;
 
@@ -138,11 +126,10 @@ impl Column {
     }
 
     /// The rock at the surface at `exposed` into the column on a plate of
-    /// `age` where `stripped` has been taken from the structure above, and
-    /// how far the cuesta rule lowers the ground there: the bed at the
-    /// lowered floor, so a dip slope shows the bed beneath.
-    pub fn floor_at(&self, exposed: f64, age: f64, stripped: f64) -> (Rock, f64) {
-        let lowering = self.lowering(exposed, age, stripped);
+    /// `age`, and how far the cuesta rule lowers the ground there: the bed
+    /// at the lowered floor, so a dip slope shows the bed beneath.
+    pub fn floor_at(&self, exposed: f64, age: f64) -> (Rock, f64) {
+        let lowering = self.lowering(exposed) * aged(age);
         (self.bed_at(exposed + lowering).1, lowering)
     }
 
@@ -151,25 +138,17 @@ impl Column {
     }
 
     /// How far the ground at `depth` into the column has been lowered
-    /// against the most resistant rock, in z-levels, on a plate of `age`
-    /// where `stripped` has been taken from the structure above. A
-    /// cuesta's relief by the rock's erodibility and the age, unless a
-    /// harder bed lies within it beneath, which holds the floor up on its
-    /// own top, the dip slope. A bed resting on a harder one is cut further
-    /// by the stripping times how much faster it wears, down to that bed's
-    /// top at most: on the platform nothing is stripped and nothing more is
-    /// cut, and on a flank, stripped deeper than any bed, a weak bed is cut
-    /// to the hard bed beneath it, its whole thickness at its contact with
-    /// the bed above and nothing at its contact with the one beneath.
-    /// Stepped at every contact over [`CONTACT_RAMP`] of column, the scarp.
-    fn lowering(&self, depth: f64, age: f64, stripped: f64) -> f64 {
+    /// against the most resistant rock, in z-levels: the weak rock's full
+    /// lowering, unless a harder bed lies within it beneath, which holds
+    /// the floor up on its own top, the dip slope. Stepped at every contact
+    /// over [`CONTACT_RAMP`] of column, the scarp.
+    fn lowering(&self, depth: f64) -> f64 {
         let (k, _, into) = self.bed_at(depth);
-        let (aged, wear) = (aged(age), |k: usize| self.rock_of(k).erodibility());
-        let own = |k: usize| CUESTA_RELIEF * wear(k);
-        // The cuesta's lowering within bed k at `d` into it: its own, held
-        // up by the first harder bed beneath at that bed's own lowering
-        // plus the rock still to cut down to it.
-        let cuesta = |k: usize, d: f64| -> f64 {
+        let own = |k: usize| CUESTA_RELIEF * self.rock_of(k).erodibility();
+        // Lowering within bed k at `d` into it: its own, held up by the
+        // first harder bed beneath at that bed's own lowering plus the
+        // rock still to cut down to it.
+        let held = |k: usize, d: f64| -> f64 {
             let mut lowering = own(k);
             let mut below = self.beds.get(k).map_or(f64::INFINITY, |b| b.1 - d);
             for j in k + 1..=self.beds.len() {
@@ -180,17 +159,6 @@ impl Column {
                 below += self.beds.get(j).map_or(f64::INFINITY, |b| b.1);
             }
             lowering
-        };
-        // The whole lowering within bed k at `d` into it: the cuesta's by
-        // the age, and resting on a harder bed, the stripping's cut by how
-        // much faster it wears, never below that bed's top.
-        let held = |k: usize, d: f64| -> f64 {
-            let platform = aged * cuesta(k, d);
-            let Some(&(_, thick)) = self.beds.get(k) else { return platform };
-            let faster = wear(k) - wear(k + 1);
-            if faster <= 0.0 { return platform }
-            let floor = thick - d + aged * cuesta(k + 1, 0.0);
-            (platform + stripped * faster).min(floor).max(platform)
         };
         let here = held(k, into);
         let thick = self.beds.get(k).map_or(f64::INFINITY, |b| b.1);
@@ -271,39 +239,26 @@ pub struct Ground {
     pub rock: Rock,
     /// The rock's, as [`Rock::erodibility`].
     pub erodibility: f64,
-    /// How far the ground stands above the envelope, in z-levels: above it
-    /// where a bed holds, below it where a bed is cut. What is added to the
-    /// envelope, as [`Ground::stand_over`] bounds it.
+    /// How far the ground stands above the vales around it, in z-levels:
+    /// what is added to the envelope.
     pub stand: f64,
     /// Depth into the column at the surface, in z-levels.
     pub exposed: f64,
 }
 
-impl Ground {
-    /// The stand over an envelope `beneath` high: a cut never takes land
-    /// below the shore, so it reaches no deeper than the envelope stands
-    /// above the sea, and the bound is continuous in both.
-    pub fn stand_over(&self, beneath: f64) -> f64 {
-        self.stand.max(-beneath.max(0.0))
-    }
-}
-
 /// The rock at a position on `plate` of `age` where `cover` remains, given
 /// the substrate beneath and the height the ranges' structure stands above
 /// it: the column entered at the depth [`exposed_in`] reads, the rock at
-/// the floor the cuesta rule lowers it to with the age's stripping of the
-/// structure. The structure is the ranges' and not the plateau's: a plateau
-/// is uplift, and keeps its cover flat-lying to be cut in canyons, while a
-/// range's crest is what erosion has bitten into. A bed stands above the
-/// envelope by what it holds of the cuesta, tapered in the beach band by
-/// the substrate's gate as the tilt is, and a bed cut deeper stands below
-/// it by the cut.
+/// the floor the cuesta rule lowers it to. The structure is the ranges'
+/// and not the plateau's: a plateau is uplift, and keeps its cover
+/// flat-lying to be cut in canyons, while a range's crest is what erosion
+/// has bitten into. Only land stands, and the beach band tapers by the
+/// substrate's gate, as the tilt does.
 pub fn rock_at(seed: u64, plate: PlateId, age: f64, cover: f64, substrate: f64, structure: f64) -> Ground {
     let column = Column::of(plate, seed);
     let exposed = exposed_in(&column, cover, age, structure);
-    let (rock, lowering) = column.floor_at(exposed, age, age * structure.max(0.0));
-    let stand = CUESTA_RELIEF * aged(age) - lowering;
-    let stand = if stand > 0.0 { stand * shore_gate(substrate) } else { stand };
+    let (rock, lowering) = column.floor_at(exposed, age);
+    let stand = (CUESTA_RELIEF * aged(age) - lowering).max(0.0) * shore_gate(substrate);
     Ground { rock, erodibility: rock.erodibility(), stand, exposed }
 }
 
@@ -351,26 +306,19 @@ impl WorldEvent for LithologyEvent {
     }
 
     /// What stands at the tile: the cuesta over the envelope beneath, and
-    /// the cut into it, with how steeply it climbs, since a flank's scarps
-    /// are cliffs. Where the shore bounds the cut, the ground is the shore
-    /// and the cut falls as the envelope does.
+    /// how steeply it climbs, which the landforms above read.
     fn query(
         &self,
         q: i32, r: i32,
-        below: &TileView,
+        _below: &TileView,
         cell: &(dyn Any + Send + Sync),
         seed: u64,
     ) -> Option<TileOutput> {
         let reach = cell.downcast_ref::<Reach>()?;
         let (wx, wy) = hex_to_world(q, r);
         let ground = rock_on(wx, wy, seed, &reach.coasts, &reach.outlines);
-        let stand = ground.stand_over(below.elevation);
-        let gradient = if stand > ground.stand {
-            (-below.gradient.0, -below.gradient.1)
-        } else {
-            gradient_of(wx, wy, stand, |x, y| rock_on(x, y, seed, &reach.coasts, &reach.outlines).stand)
-        };
-        Some(TileOutput { elevation_delta: stand, gradient, rock: Some(ground.rock), ..TileOutput::default() })
+        let gradient = gradient_of(wx, wy, ground.stand, |x, y| rock_on(x, y, seed, &reach.coasts, &reach.outlines).stand);
+        Some(TileOutput { elevation_delta: ground.stand, gradient, rock: Some(ground.rock), ..TileOutput::default() })
     }
 }
 
@@ -405,21 +353,17 @@ mod tests {
 
     /// The lowering is a weak bed's full lowering deep in a weak bed, a
     /// resistant bed's own on it, held up on a harder bed's top just
-    /// beneath a weak one, and continuous down the column; on the platform,
-    /// where nothing is stripped, it is the cuesta's by the age alone.
+    /// beneath a weak one, and continuous down the column.
     #[test]
     fn weak_rock_is_lowered_and_held_up_by_hard_rock_beneath() {
         let c = Column::of((3, 4), S);
-        let mut last = c.lowering(0.0, 1.0, 0.0);
+        let mut last = c.lowering(0.0);
         let mut steps = 0;
         let mut d = 0.0;
         while d < c.total + 20.0 {
-            let l = c.lowering(d, 1.0, 0.0);
+            let l = c.lowering(d);
             assert!(l >= 0.0 && l <= CUESTA_RELIEF + 1e-9, "lowering {l} at {d}");
             assert!((l - last).abs() < 0.6, "a step of {} in the lowering at {d}", (l - last).abs());
-            for age in [0.0, 0.4] {
-                assert!((c.lowering(d, age, 0.0) - aged(age) * l).abs() < 1e-9, "the platform's lowering is not the cuesta's by the age at {d}");
-            }
             last = l;
             d += 0.1;
             steps += 1;
@@ -433,79 +377,11 @@ mod tests {
                 continue;
             }
             let top: f64 = c.beds[..k].iter().map(|b| b.1).sum();
-            let deep = c.lowering(top + CONTACT_RAMP + 0.5, 1.0, 0.0);
-            let on_hard = c.lowering(top + thick - CONTACT_RAMP - 0.1, 1.0, 0.0);
+            let deep = c.lowering(top + CONTACT_RAMP + 0.5);
+            let on_hard = c.lowering(top + thick - CONTACT_RAMP - 0.1);
             assert!(on_hard < deep, "the floor on the hard bed's top is not held up: {on_hard} for {deep}");
             assert!(on_hard <= CUESTA_RELIEF * c.beds[k + 1].0.erodibility() + CONTACT_RAMP + 0.1 + 1e-9);
         }
-    }
-
-    /// On a flank a weak bed resting on a harder one is cut to that bed:
-    /// its whole thickness at its contact with the bed above and nothing at
-    /// the one beneath, deeper as more is stripped and never deeper than
-    /// its thickness; a bed resting on a weaker one is not cut.
-    #[test]
-    fn a_weak_bed_on_a_flank_is_cut_to_the_hard_bed_beneath() {
-        let c = Column::of((3, 4), S);
-        let below = 0.5 * CONTACT_RAMP + 0.1;
-        let mut cut = 0;
-        for age in [0.0, 0.5, 1.0] {
-            let mut top = 0.0;
-            for (k, &(rock, thick)) in c.beds.iter().enumerate() {
-                let next = c.beds.get(k + 1).map_or(Rock::Basement, |b| b.0);
-                let (upper, lower) = (top + below, top + thick - below);
-                if next.erodibility() < rock.erodibility() {
-                    let under = c.lowering(top + thick + below, age, 1e4);
-                    let full = c.lowering(upper, age, 1e4);
-                    assert!((full - (thick - below + under)).abs() < 1e-9, "bed {k} is cut {full} at its top, not its thickness over {under}");
-                    assert!(c.lowering(lower, age, 1e4) - c.lowering(lower, age, 0.0) <= below + 1e-9, "bed {k} is cut at its base");
-                    let mut last = c.lowering(upper, age, 0.0);
-                    for s in [1.0, 5.0, 20.0, 80.0, 300.0, 1e4] {
-                        let l = c.lowering(upper, age, s);
-                        assert!(l >= last - 1e-12 && l <= thick - below + under + 1e-9, "bed {k} cut {l} at stripping {s}");
-                        last = l;
-                    }
-                    cut += 1;
-                } else {
-                    assert_eq!(c.lowering(upper, age, 1e4), c.lowering(upper, age, 0.0), "bed {k} on a weaker bed is cut");
-                }
-                top += thick;
-            }
-        }
-        assert!(cut > 0, "no weak bed rests on a hard one");
-    }
-
-    /// What stands is signed: a hard bed stands above the envelope and a
-    /// weak bed on a flank is cut below it, and a crest a weak bed crosses
-    /// is lowered by about its thickness, a col, against the hard bed
-    /// beside it, the summit. A cut never takes land below the shore.
-    #[test]
-    fn a_flank_stands_as_ridges_and_is_cut_into_vales() {
-        let (plate, age, structure) = ((3, 4), 0.5, 400.0);
-        let c = Column::of(plate, S);
-        let stripped = age * structure;
-        // The cover that puts the crest's surface at `depth` into the column.
-        let at = |depth: f64| rock_at(S, plate, age, c.total + stripped - depth, 30.0, structure);
-        let mut top = 0.0;
-        for (k, &(rock, thick)) in c.beds.iter().enumerate() {
-            let next = c.beds.get(k + 1).map_or(Rock::Basement, |b| b.0);
-            let middle = at(top + 0.5 * thick).stand;
-            if next.erodibility() < rock.erodibility() {
-                assert!(middle < 0.0, "a weak bed {k} on a flank stands at {middle}");
-                if k > 0 {
-                    let col = at(top + CONTACT_RAMP).stand;
-                    let summit = at(top - CONTACT_RAMP).stand;
-                    assert!(summit - col >= thick - 2.0 * CONTACT_RAMP - CUESTA_RELIEF, "a weak bed {k} {thick} thick lowers its crest by {}", summit - col);
-                }
-            } else {
-                assert!(middle > 0.0, "a hard bed {k} stands at {middle}");
-            }
-            top += thick;
-        }
-        let cut = Ground { rock: Rock::Shale, erodibility: 1.0, stand: -30.0, exposed: 0.0 };
-        assert_eq!(cut.stand_over(50.0), -30.0);
-        assert_eq!(cut.stand_over(12.0), -12.0);
-        assert_eq!(cut.stand_over(-3.0), 0.0);
     }
 
     /// Within a wedge's reach of a front the cover is filled: never less
@@ -546,8 +422,8 @@ mod tests {
 
     /// The rock read is the column's at the depth the cover leaves, older
     /// where the cover is thinner and stripped from the structure by age;
-    /// on the platform what stands is nothing at sea and never more than
-    /// the cuesta's relief.
+    /// what stands is nothing at sea and never more than the cuesta's
+    /// relief.
     #[test]
     fn rock_follows_the_cover_and_the_stripping() {
         let plate = (0, 0);
@@ -561,7 +437,7 @@ mod tests {
         let sea = rock_at(S, plate, 1.0, 40.0, -5.0, 0.0);
         assert_eq!(sea.stand, 0.0);
         for i in 0..200 {
-            let g = rock_at(S, plate, 0.7, i as f64 * 1.7 - 60.0, 30.0, 0.0);
+            let g = rock_at(S, plate, 0.7, i as f64 * 1.7 - 60.0, 30.0, i as f64 * 3.0);
             assert!(g.stand >= 0.0 && g.stand <= CUESTA_RELIEF + 1e-9);
             assert!((g.erodibility - g.rock.erodibility()).abs() < 1e-12);
         }
