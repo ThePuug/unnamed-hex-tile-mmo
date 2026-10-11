@@ -151,26 +151,35 @@ pub fn sync_loadout(
     *shown = seer.map(|(ent, _)| ent);
     commands.entity(container).despawn_related::<Children>();
     let Some((_, typ)) = seer else { return };
-    let icons: Handle<Font> = asset_server.load(ICON_FONT);
     commands.entity(container).with_children(|parent| {
         for (keybind, ability) in KEYS.into_iter().zip(loadout(typ)) {
-            spawn_slot(&icons, parent, keybind, ability);
+            spawn_slot(parent, keybind, ability, ability.map(|a| asset_server.load(icon_path(a))));
         }
     });
 }
 
-/// The font a slot's icon is drawn in: a Nerd Font, whose private-use
-/// glyphs stand for the skills until they have icons of their own.
-const ICON_FONT: &str = "fonts/IosevkaNerdFont-Regular.ttf";
+/// Where a skill's icon is: `icons/skills/` and its name in kebab case,
+/// `PerfectStride` at `perfect-stride.png`, as the assets repo's icongen
+/// names what it draws.
+fn icon_path(ability: AbilityType) -> String {
+    let mut stem = String::new();
+    for (i, c) in format!("{ability:?}").chars().enumerate() {
+        if c.is_ascii_uppercase() && i > 0 {
+            stem.push('-');
+        }
+        stem.push(c.to_ascii_lowercase());
+    }
+    format!("icons/skills/{stem}.png")
+}
 
 
 const READY: Color = Color::srgb(0.3, 0.8, 0.3);
 const EMPTY: Color = Color::srgb(0.2, 0.2, 0.2);
 
-/// A slot under `parent`: its border and fill, `icon` at its centre in
-/// `ICON_FONT`, and the cap of the key that works it in its corner.
-/// Returns the slot, for what else it holds.
-fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, icons: &Handle<Font>, keybind: KeyCode, icon: &str) -> EntityCommands<'a> {
+/// A slot under `parent`: its border and fill, `icon` filling its inside
+/// when it holds a skill, and the cap of the key that works it in its
+/// corner. Returns the slot, for what else it holds.
+fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, keybind: KeyCode, icon: Option<Handle<Image>>) -> EntityCommands<'a> {
     let mut slot = parent.spawn((
         Node {
             width: Val::Px(SLOT_PX),
@@ -184,40 +193,17 @@ fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, icons: &Handle<Font>, ke
         BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
     ));
     slot.with_children(|parent| {
-        parent.spawn((
-            Text::new(icon),
-            TextFont {
-                font: icons.clone().into(),
-                font_size: FontSize::Px(36.0),
-                ..default()
-            },
-            TextColor(Color::WHITE),
-            Node {
-                position_type: PositionType::Relative,
-                ..default()
-            },
-            SlotIcon,
-        ));
+        if let Some(icon) = icon {
+            let inside = Val::Px(SLOT_PX - 2. * SLOT_BORDER_PX);
+            parent.spawn((ImageNode::new(icon), Node { width: inside, height: inside, ..default() }, SlotIcon));
+        }
         crate::systems::keycap::corner_keycap(parent, keybind).insert(SlotKeybind);
     });
     slot
 }
 
-fn spawn_slot(icons: &Handle<Font>, parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>) {
-    // Ability icon, named for its glyph in `ICON_FONT`
-    let icon = match ability {
-        None => "",
-        Some(AbilityType::AutoAttack) => "\u{F04E5}",     // md-sword
-        Some(AbilityType::Frenzy) => "\u{EEB5}",          // fa-teeth_open
-        Some(AbilityType::Feint) => "\u{F0D02}",          // md-drama_masks
-        Some(AbilityType::Overpower) => "\u{F08EA}",      // md-hammer
-        Some(AbilityType::Punish) => "\u{F09FC}",         // md-knife_military
-        Some(AbilityType::Parry) => "\u{F0498}",          // md-shield
-        Some(AbilityType::Counter) => "\u{F045A}",        // md-reply
-        Some(AbilityType::Leap) => "\u{F0907}",           // md-rabbit
-        Some(AbilityType::PerfectStride) => "\u{F046E}",  // md-run_fast
-    };
-    slot_frame(parent, icons, keybind, icon).insert(AbilitySlot { ability }).with_children(|parent| {
+fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>, icon: Option<Handle<Image>>) {
+    slot_frame(parent, keybind, icon).insert(AbilitySlot { ability }).with_children(|parent| {
         // Cooldown overlay: dark rect anchored at bottom, height = recovery %
         parent.spawn((
             Node {
@@ -443,5 +429,28 @@ mod tests {
         assert!(matches!(recovery_state(true, false), AbilityState::ComboUnlocked));
         assert!(matches!(recovery_state(false, true), AbilityState::EarlyReaction));
         assert!(matches!(recovery_state(false, false), AbilityState::OnCooldown));
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+
+    /// A skill without its icon shows an empty slot; icongen draws one for
+    /// every skill a bar can hold.
+    #[test]
+    fn every_skill_on_a_bar_has_its_icon() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let npcs = common_bevy::archetype::EnemyArchetype::ALL.into_iter().flat_map(|a| a.bar());
+        for ability in PLAYER.into_iter().chain(npcs) {
+            let path = assets.join(icon_path(ability));
+            assert!(path.exists(), "{ability:?} has no icon at {}", path.display());
+        }
+    }
+
+    #[test]
+    fn an_icon_is_named_in_kebab_case() {
+        assert_eq!(icon_path(AbilityType::PerfectStride), "icons/skills/perfect-stride.png");
+        assert_eq!(icon_path(AbilityType::Leap), "icons/skills/leap.png");
     }
 }
