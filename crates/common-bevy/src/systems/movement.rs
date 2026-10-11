@@ -372,8 +372,9 @@ pub fn solid_extent(cover: common::Cover, q: i32, r: i32, k: usize) -> Option<(f
     match content {
         common::Content::Pine | common::Content::Deciduous | common::Content::PineStump | common::Content::DeciduousStump => {
             let site = common::SITE_SLOTS.iter().position(|s| s[0] == k)?;
-            let form = common::cover::tree_form(content, common::sway(q, r, site).variation)?;
-            let scale = common::cover::tree_scale(form.height, common::cover::tree_growth(cover, q, r, site));
+            let sway = common::sway(q, r, site);
+            let form = common::cover::tree_form(content, sway.variation)?;
+            let scale = common::cover::tree_scale(form.height, sway.growth as f32);
             let stump = matches!(content, common::Content::PineStump | common::Content::DeciduousStump);
             Some((form.trunk * scale, if stump { form.stump } else { form.height } * scale))
         }
@@ -699,8 +700,9 @@ mod tests {
     /// How far a walker keeps from the trunk in site 0 of the tile north.
     fn trunk_keep(cover: common::Cover) -> f32 {
         let north = (0, -1);
-        let form = common::cover::tree_form(cover.content(common::SITE_SLOTS[0][0]), common::sway(north.0, north.1, 0).variation).unwrap();
-        form.trunk * common::cover::tree_scale(form.height, common::cover::tree_growth(cover, north.0, north.1, 0)) + WALKER_RADIUS
+        let sway = common::sway(north.0, north.1, 0);
+        let form = common::cover::tree_form(cover.content(common::SITE_SLOTS[0][0]), sway.variation).unwrap();
+        form.trunk * common::cover::tree_scale(form.height, sway.growth as f32) + WALKER_RADIUS
     }
 
     /// Straight into a trunk, a walker stands against it, never in it.

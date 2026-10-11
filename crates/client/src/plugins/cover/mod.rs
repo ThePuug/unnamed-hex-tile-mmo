@@ -522,7 +522,7 @@ pub fn place_cover(
                     translation: Vec3::new(x, y, z),
                     yaw: sway.yaw as f32,
                     tilt: Quat::IDENTITY,
-                    growth: common::cover::tree_growth(cover, q, r, k),
+                    growth: sway.growth as f32,
                     kind: slot.into(),
                     variation: sway.variation,
                     far: false,

@@ -140,11 +140,6 @@ pub fn boulder_sway(q: i32, r: i32, k: usize) -> Sway {
     sway(q, r, SITES.len() + k)
 }
 
-/// How far a tree on a tile with one site grown has grown, as a share of
-/// what its own growth gives it: a stand tapers at its edge, and a sparse
-/// tile is an edge.
-pub const EDGE_GROWTH: f32 = 0.5;
-
 /// A sapling's height in world units, the least a tree stands: a player's.
 pub const SAPLING_HEIGHT: f32 = 2.0;
 
@@ -186,15 +181,6 @@ pub fn tree_form(content: Content, variation: u32) -> Option<TreeForm> {
         _ => return None,
     };
     Some(forms[variation as usize % forms.len()])
-}
-
-/// How far the tree at site `k` of tile `(q, r)` has grown, 0 to 1: its
-/// own growth, less at a thin tile's edge. A stump counts as the tree it
-/// was, so felling one leaves its neighbours the size they grew to.
-pub fn tree_growth(cover: Cover, q: i32, r: i32, k: usize) -> f32 {
-    let grown = cover.filled().count() + cover.stumps().count();
-    let edge = EDGE_GROWTH + (1.0 - EDGE_GROWTH) * grown as f32 / SITES.len() as f32;
-    sway(q, r, k).growth as f32 * edge
 }
 
 /// The scale a tree model `model_height` tall stands at, `growth` of the
