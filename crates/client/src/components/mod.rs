@@ -129,9 +129,6 @@ pub struct DeathMarker {
     pub death_time: Moment,
 }
 
-/// Marker for compass container
-#[derive(Component)]
-pub struct CompassContainer;
 /// A remote entity is simulated from its last movement intent: whether it
 /// travels, whether opposite its heading, and the fixed time not yet
 /// attributed to it.

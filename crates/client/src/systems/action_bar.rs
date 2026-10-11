@@ -34,15 +34,14 @@ pub struct ComboGlow;
 #[derive(Component)]
 pub struct CooldownOverlay;
 
-/// Side of an ability slot and its border, in px; the compass beside the
-/// bar takes the same.
+/// Side of an ability slot and its border, in px.
 pub const SLOT_PX: f32 = 80.;
 const SLOT_BORDER_PX: f32 = 3.;
 /// Room between the bar's slots, along a line and between its lines
 const SLOT_GAP_PX: f32 = 10.;
 
 /// Setup action bar UI, hung below the resource bars' line
-/// Creates the ability slots, four to a row, and beside them the compass
+/// Creates the ability slots, four to a row
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, With<IsDefaultUiCamera>>,
@@ -77,8 +76,6 @@ pub fn setup(
         .with_children(|parent| {
             // The viewed actor's loadout, filled in by `sync_loadout`
             parent.spawn((bar_grid(), AbilitySlots));
-
-            crate::systems::ui::spawn_compass(parent, SLOT_PX, SLOT_BORDER_PX);
         });  // Close .with_children from line 73 (action bar children)
     });  // Close outer .with_children
 }

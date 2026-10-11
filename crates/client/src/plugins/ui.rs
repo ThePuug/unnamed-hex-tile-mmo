@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, skills_panel, combat_log, combat_ui, drop_panel, equipment_panel, highway, resolved_threats, resource_bars, target_frame, target_indicator, ui};
+use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, skills_panel, combat_log, combat_ui, compass, drop_panel, equipment_panel, highway, resolved_threats, resource_bars, target_frame, target_indicator, ui};
 
 /// The game's UI: the panels, the HUD, the target rings, the highway and
 /// the combat feedback drawn over the world.
@@ -20,6 +20,7 @@ impl Plugin for UiPlugin {
                 character_panel::setup,
                 resource_bars::setup.after(crate::systems::camera::setup),
                 action_bar::setup.after(crate::systems::camera::setup),
+                compass::setup.after(crate::systems::camera::setup),
                 highway::setup.after(crate::systems::camera::setup),
                 target_frame::setup.after(crate::systems::camera::setup),
                 target_indicator::setup,
@@ -29,7 +30,7 @@ impl Plugin for UiPlugin {
         );
 
         app.add_systems(Update, ui::update);
-        app.add_systems(Update, ui::update_compass);  // Compass rotation
+        app.add_systems(Update, compass::update);
         app.add_systems(Update, ui::scale_to_window);
         app.add_systems(Update, resource_bars::update);
         app.add_systems(Update, (action_bar::sync_loadout, action_bar::update).chain());
