@@ -763,10 +763,12 @@ pub fn update_terrain_cut(
     let target = origin.xz();
     advance_edges(&mut edges.0, &bands, target, time.delta_secs(), &summary_meshes);
 
-    // A material is written only where its cut or a switch has changed: a
-    // changed material is prepared again and every region wearing it
-    // specialised again, which for the terrain is every mesh it has.
+    // A material is written only where its cut, a switch or the render
+    // origin has changed: a changed material is prepared again and every
+    // region wearing it specialised again, which for the terrain is every
+    // mesh it has.
     let last = *common_bevy::summary::LOD_LEVELS.last().expect("a ladder");
+    let terrain_origin = crate::resources::TerrainOrigin::of(&render_origin);
     let mut band = *card_band;
     for (&r, handle) in &terrain_material.by_level {
         let cut = level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz());
@@ -778,11 +780,13 @@ pub fn update_terrain_cut(
         let on = if bare { 0 } else { parts_on };
         let look = terrain_material.canopy_for(r);
         let look = if bare { crate::resources::CanopyLook { full: f32::MAX, relief_from: 0.0, relief_to: 0.0, ..look } } else { look };
-        if material.extension.cut != cut || material.extension.lattice.on != on || material.extension.canopy != look {
+        let extension = &material.extension;
+        if extension.cut != cut || extension.lattice.on != on || extension.canopy != look || extension.origin != terrain_origin {
             if let Some(mut material) = materials.get_mut(handle) {
                 material.extension.cut = cut;
                 material.extension.lattice.on = on;
                 material.extension.canopy = look;
+                material.extension.origin = terrain_origin;
             }
         }
         // The ring is the tiles' own outer edge, with their ground's

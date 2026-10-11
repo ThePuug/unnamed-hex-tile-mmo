@@ -398,8 +398,9 @@ points `VisualPosition` at it, `actor::update` renders it.
     millions of tiles out gives the same output, bit for bit. A terrain
     region's vertices and cover are built from its origin tile
     (`MeshRegionKey::origin`) and placed at its difference from the render
-    origin's. One site is still world-space: the terrain shader's bombing,
-    which re-rolls at a rebase.
+    origin's. The terrain shader lays its lattices on the world's tiles
+    from the origin's tile (`TerrainOrigin`), so the ground's texture holds
+    through a rebase.
 11. **A moment as a float.** `as_secs_f32()` on an absolute game time
     keeps seconds at a day of uptime and minutes at the wall clock's size.
     A float is made from the difference of two moments, never from one.

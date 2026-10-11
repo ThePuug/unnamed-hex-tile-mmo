@@ -127,6 +127,27 @@ pub struct CanopyLattice {
     pub on: u32,
 }
 
+/// The tile the world is drawn about and a tile's radius, as the terrain
+/// shader lays its lattices on the world's tiles: the origin's place on
+/// each is whole steps, so a lattice keeps its draws through a rebase.
+#[derive(Clone, Copy, Debug, PartialEq, ShaderType)]
+pub struct TerrainOrigin {
+    pub tile: IVec2,
+    pub radius: f32,
+}
+
+impl TerrainOrigin {
+    pub fn of(origin: &RenderOrigin) -> Self {
+        Self { tile: IVec2::new(origin.tile().q, origin.tile().r), radius: common::grid::HEX_RADIUS }
+    }
+}
+
+impl Default for TerrainOrigin {
+    fn default() -> Self {
+        Self::of(&RenderOrigin::default())
+    }
+}
+
 /// One kind's look as the tree kit hands it over: the mean colour of its
 /// models, and a grown crown's width.
 #[derive(Clone, Copy, Debug)]
@@ -174,6 +195,8 @@ pub struct TerrainExtension {
     pub parts: Handle<Image>,
     #[uniform(109)]
     pub lattice: CanopyLattice,
+    #[uniform(110)]
+    pub origin: TerrainOrigin,
 }
 
 impl MaterialExtension for TerrainExtension {
