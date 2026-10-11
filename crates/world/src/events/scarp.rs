@@ -38,8 +38,9 @@
 //!
 //! # The window
 //!
-//! The cell is the graph's, as lithology's is, so its tiles read the
-//! outlines of every plate they can stand in. A tile finds the sites of its
+//! One ring of the cell holds everything a tile's carve reads: the site of
+//! any scarp whose footprint holds the tile, and the whole outline of the
+//! plate that site stands in. A tile finds the sites of its
 //! own site cell and the six around it, seven hashes and distance checks,
 //! and reads the decision of any whose footprint holds it; the site
 //! lattice's ring holds every footprint and stray reaching a tile. The cell
@@ -63,9 +64,9 @@ use super::drainage::envelope_at;
 use super::index::CellId;
 use super::lithology::{rock_on, Column, FORMATION_MAX};
 use super::outcrop::{SITE_JITTER, SITE_LATTICE};
-use super::plates::{coasts_of, Coasts, GRAPH_CELL_SCALE};
+use super::plates::{coasts_of, Coasts};
 use super::thrusting::{outlines_of, Outlines, OUTLINE_REACH, REPOSE_GRADE};
-use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent};
+use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 
 const SCARP_SEED: u64 = 0x4c61_6e64_666f_726d; // "Landform"
 
@@ -105,6 +106,19 @@ const TAPER: f64 = 0.25;
 /// thickest hard bed's face, the thickest weak bed's debris slope and the
 /// wash back up from both, some 900 tiles, a kilometre and a half.
 pub const FOOTPRINT: f64 = (FORMATION_MAX / CLIFF_GRADE + FORMATION_MAX / REPOSE_GRADE + 2.0 * FORMATION_MAX / WASH_GRADE) / (1.0 - TAPER);
+
+/// How far a scarp carves from its lattice cell's centre: its footprint,
+/// and the stray of its site.
+pub fn reach() -> f64 {
+    FOOTPRINT + SITE_JITTER * (scarp_lattice().tiles_per_cell() as f64).sqrt()
+}
+
+/// How far what a position's carve depends on lies from it: the site of
+/// any scarp whose footprint holds the position, and from that site the
+/// whole outline of the plate it stands in, which decides it.
+pub fn read_reach() -> f64 {
+    OUTLINE_REACH + reach()
+}
 
 /// The scarp site lattice.
 pub fn scarp_lattice() -> HexLattice {
@@ -301,13 +315,13 @@ struct Reach {
 
 impl WorldEvent for ScarpEvent {
     fn name(&self) -> &str { "scarp" }
-    fn scale(&self) -> u32 { GRAPH_CELL_SCALE }
+    /// One ring holds everything a tile's carve reads.
+    fn scale(&self) -> u32 {
+        (read_reach() / RING_CLEARANCE).ceil() as u32 + 1
+    }
 
-    /// A tile reads the whole outline of the plate it stands in, which
-    /// reaches further than any footprint and a site's stray.
     fn max_influence(&self) -> u32 {
-        let stray = SITE_JITTER * (scarp_lattice().tiles_per_cell() as f64).sqrt();
-        OUTLINE_REACH.max(FOOTPRINT + stray) as u32
+        read_reach().ceil() as u32
     }
 
     /// Nothing to place: a site is its lattice cell's hash.
