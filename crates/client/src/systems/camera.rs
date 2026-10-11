@@ -256,11 +256,12 @@ pub struct CameraPose {
     pub pose: Pose,
     limit: Option<Pose>,
     /// How steeply the ground ahead climbs, in radians, smoothed.
-    climb: f32,
+    pub climb: f32,
     /// The ground's plane under the player, smoothed: what the camera
     /// sweeps on.
-    tilt: Tilt,
-    clearance: f32,
+    pub tilt: Tilt,
+    /// The fraction of the boom the camera stands at.
+    pub clearance: f32,
     /// How far the camera has closed in among trees, 0 to 1, smoothed.
     closed: f32,
 }

@@ -84,6 +84,7 @@ pub fn publish(
     origin: Res<crate::resources::RenderOrigin>,
     player: Query<(&Transform, &Heading), (With<Actor>, With<PlayerControlled>)>,
     camera: Option<Res<crate::systems::camera::CameraPose>>,
+    view: Query<&Transform, (With<Camera3d>, Without<crate::systems::closeup::CloseupCamera>)>,
 ) {
     let now = time.elapsed_secs_f64();
     if let Some(ms) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.value()) {
@@ -128,6 +129,27 @@ pub fn publish(
         ]);
         if let Some(camera) = &camera {
             world.push(field("yaw", camera.pose.yaw.to_degrees()));
+        }
+    }
+    // The camera's pose and what pulled it there, and how high it stands
+    // over the ground beneath it.
+    if let Some(camera) = &camera {
+        let (sin, cos) = camera.pose.yaw.sin_cos();
+        world.extend([
+            field("cam_elevation", camera.pose.elevation.to_degrees()),
+            field("cam_fov", camera.pose.fov.to_degrees()),
+            field("cam_reach", camera.pose.reach),
+            field("cam_clearance", camera.clearance),
+            field("cam_climb", camera.climb.to_degrees()),
+            field("cam_rise_behind", camera.tilt.dot(Vec2::new(sin, cos)).atan().to_degrees()),
+        ]);
+    }
+    if let Ok(eye) = view.single() {
+        let at = origin.world(eye.translation);
+        let under: qrz::Qrz = map.convert(at);
+        if let Some((floor, _)) = map.get_by_qr(under.q, under.r) {
+            let ground = common_bevy::systems::movement::surface_y(at.xz(), floor, &map);
+            world.push(field("cam_above_ground", at.y - ground));
         }
     }
     topics.push(("world", Cadence::Snapshot, world));
