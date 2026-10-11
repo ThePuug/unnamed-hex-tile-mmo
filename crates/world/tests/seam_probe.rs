@@ -28,7 +28,7 @@ fn straight_seams_in_the_belt_window() {
     let c = composite();
     let (cx, cy, half, step) = (0.0, 0.0, 30_000.0, 250.0);
     let outlines = Outlines::in_box(cx, cy, half, SEED);
-    let landforms = world::events::landform::Landforms::new();
+    let scarps = world::events::scarp::Scarps::new();
     let coasts = Coasts::in_box(cx, cy, half, SEED);
     let valleys = Valleys::in_box(cx, cy, half, SEED);
     let n = (2.0 * half / step) as usize;
@@ -40,7 +40,7 @@ fn straight_seams_in_the_belt_window() {
             let (q, r) = world_to_hex(x, y);
             comp[j * n + i] = c.tile_at(q, r).elevation;
             let (wx, wy) = hex_to_world(q, r);
-            let envelope = surface_at(wx, wy, SEED, &coasts, &outlines, &landforms);
+            let envelope = surface_at(wx, wy, SEED, &coasts, &outlines, &scarps);
             field[j * n + i] = envelope - valleys.cut_at(wx, wy, envelope);
         }
     }

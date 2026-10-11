@@ -9,7 +9,7 @@
 //! # The surface is a function, plus the plate graph
 //!
 //! The field layers beneath — substrate, tilt, thrusting, thickening,
-//! lithology, and the landforms carved into them — sum to one function of
+//! lithology, and the scarps carved into them — sum to one function of
 //! position and seed, read off the plate
 //! graph: the edges the plate layer published, for the coasts, and the
 //! resolved edges the motion layer published, for the outlines, the two
@@ -78,7 +78,7 @@ use common::HexLattice;
 use dashmap::DashMap;
 
 use super::index::{CellId, CellIndex, IndexRegistry, Located};
-use super::landform::Landforms;
+use super::scarp::Scarps;
 use super::lithology::{cover_on, rock_at};
 use super::plates::{coasts_of, Coasts};
 use super::thickening::{plateau_share_of, PLATEAU_RISE};
@@ -207,19 +207,19 @@ pub struct Ground {
 }
 
 /// The ground beneath drainage at a position: the envelope, less what the
-/// landforms carve into it, which `landforms` decides and keeps. The
+/// scarps carve into it, which `scarps` decides and keeps. The
 /// surface equals the composed tile's elevation at a tile centre.
-pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines, landforms: &Landforms) -> Ground {
+pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines, scarps: &Scarps) -> Ground {
     let mut ground = envelope_at(wx, wy, seed, coasts, outlines);
-    ground.surface -= landforms.carve_at(wx, wy, seed, coasts, outlines, ground.surface);
+    ground.surface -= scarps.carve_at(wx, wy, seed, coasts, outlines, ground.surface);
     ground
 }
 
-/// The envelope at a position: the field layers beneath the landforms
+/// The envelope at a position: the field layers beneath the scarps
 /// summed as the functions they are, the substrate from the coasts in
 /// reach, the tilt, the ranges and the plateau from the plate outlines in
 /// reach, and the cuesta the rock stands as, the plate looked up once for
-/// all of them. What a landform reads at its site and carves into.
+/// all of them. What a scarp reads at its site and carves into.
 pub fn envelope_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Ground {
     let substrate = substrate_on(wx, wy, coasts, seed);
     let base = substrate + tilt_at(wx, wy, substrate, seed);
@@ -233,8 +233,8 @@ pub fn envelope_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outl
 }
 
 /// The surface of [`ground_at`] alone.
-pub fn surface_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines, landforms: &Landforms) -> f64 {
-    ground_at(wx, wy, seed, coasts, outlines, landforms).surface
+pub fn surface_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines, scarps: &Scarps) -> f64 {
+    ground_at(wx, wy, seed, coasts, outlines, scarps).surface
 }
 
 // ── Nodes ───────────────────────────────────────────────────────────────────
@@ -580,14 +580,14 @@ impl Routing {
 pub struct DrainageEvent {
     /// The ground at each node, shared by every window that contains it.
     nodes: DashMap<NodeKey, Ground>,
-    /// The landforms the nodes read, each site decided once for every
+    /// The scarps the nodes read, each site decided once for every
     /// window.
-    landforms: Landforms,
+    scarps: Scarps,
 }
 
 impl DrainageEvent {
     pub fn new() -> Self {
-        Self { nodes: DashMap::new(), landforms: Landforms::new() }
+        Self { nodes: DashMap::new(), scarps: Scarps::new() }
     }
 
     /// The ground at a node.
@@ -597,7 +597,7 @@ impl DrainageEvent {
         }
         let (q, r) = node_site(key);
         let (wx, wy) = hex_to_world(q, r);
-        let g = ground_at(wx, wy, seed, coasts, outlines, &self.landforms);
+        let g = ground_at(wx, wy, seed, coasts, outlines, &self.scarps);
         self.nodes.insert(key, g);
         g
     }

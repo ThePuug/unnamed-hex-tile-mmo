@@ -29,7 +29,7 @@
 //! vale. Every river crossing the platform reads that: it runs along the
 //! vales, crosses the scarps at gaps, and cuts as fast as the rock it is in
 //! allows. The cuesta is the platform's texture; the cliff a hard bed's
-//! edge can make is a landform's, carved at its full size where its site
+//! edge can make is the scarp layer's, carved at its full size where its site
 //! finds the ground for it.
 //!
 //! # A field
@@ -306,7 +306,7 @@ impl WorldEvent for LithologyEvent {
     }
 
     /// What stands at the tile: the cuesta over the envelope beneath, and
-    /// how steeply it climbs, which the landforms above read.
+    /// how steeply it climbs, which the layers above read.
     fn query(
         &self,
         q: i32, r: i32,

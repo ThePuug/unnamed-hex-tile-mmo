@@ -1,57 +1,53 @@
-//! LandformEvent — the few dramatic places a landscape is read by, each
-//! carved at its own full size where the ground beneath makes it
-//! reasonable: the scarp.
+//! ScarpEvent — a hard bed's updip edge standing as a cliff over the weak
+//! bed cut back beneath it, carved at its full size where the beds make it
+//! reasonable, and nowhere else.
 //!
 //! # Claims
 //!
 //! A landscape is read by its few dramatic places, never by a rule applied
-//! to every slope. The layers beneath say what kind of ground a place is,
-//! and a landform is a place on that ground, sited as dens and outcrops are
-//! and carved with its own profile, so geomorphology that takes a change of
-//! structure or climate to produce on Earth stands within a walk of the
-//! next. The field layers keep the envelope and the context; the drama is
-//! the landforms'.
+//! to every slope, and a scarp is one of them: a place on the ground the
+//! layers beneath make, sited as dens and outcrops are and carved with its
+//! own profile. Each such landform is a layer of its own, standing before
+//! drainage where water follows what it cuts, after it where it is cut by
+//! the water. A scarp stands before.
 //!
 //! Sites stand on a sparse jittered lattice, about ten minutes' walk apart,
-//! each a pure function of its lattice cell's hash. What stands at a site
-//! is decided from the ground at the site alone, through the layers' own
-//! functions at that position, and every tile in the site's footprint reads
-//! that one decision, so a landform is one thing across its extent. A site
-//! on ground that fits no idiom shows nothing, which keeps landforms few. A
-//! landform carves within its footprint and is nothing at its rim, and it
-//! is carved before drainage routes, so water follows what it cuts.
+//! each a pure function of its lattice cell's hash. Whether a scarp stands
+//! at a site is decided from the ground at the site alone, through the
+//! layers' own functions at that position, and every tile in the site's
+//! footprint reads that one decision, so a scarp is one thing across its
+//! extent. A site on ground that makes no scarp shows nothing, which keeps
+//! scarps few. A scarp carves within its footprint and is nothing at its
+//! rim.
 //!
-//! The scarp is Wallace's profile: a flat top, a free face of bare rock, a
-//! debris slope at repose beneath it, a wash slope back to the toe. A site
-//! stands one where a hard bed lies at the surface on ground gentler than
-//! repose with a weak bed beneath it in the column: the face is the hard
-//! bed's updip edge, where the weak bed under it has been cut back. The
-//! scarp line is the contact itself, the iso-line of the depth lithology
-//! exposes at the hard bed's base, so the face follows the contact's every
-//! bend; a tile reads its place across the profile from its own exposed
-//! depth and the contact's over the depth's gradient at the site. Downdip of
-//! the contact the ground is the envelope, the flat the player walks out to
-//! the edge of. Updip the free face falls the hard bed's thickness at
+//! The profile is Wallace's: a flat top, a free face of bare rock, a debris
+//! slope at repose beneath it, a wash slope back to the toe. A site stands
+//! one where a hard bed lies at the surface on ground gentler than repose
+//! with a weak bed beneath it in the column: the face is the hard bed's
+//! updip edge, where the weak bed under it has been cut back. The scarp
+//! line is the contact itself, the iso-line of the depth lithology exposes
+//! at the hard bed's base, so the face follows the contact's every bend; a
+//! tile reads its place across the profile from its own exposed depth and
+//! the contact's over the depth's gradient at the site. Downdip of the
+//! contact the ground is the envelope, the flat the player walks out to the
+//! edge of. Updip the free face falls the hard bed's thickness at
 //! [`CLIFF_GRADE`], the debris slope the weak bed's at repose, and the wash
 //! slope climbs back to the envelope at [`WASH_GRADE`]: the vale. Over the
 //! last quarter of the footprint's radius, and toward the plate's edges, the
 //! drop tapers to nothing, so the face ends by diminishing.
 //!
-//! Not landforms' yet: the cut ravine, the gully that carries a flank's
-//! water, the plain, the bowl, and the scarp at a plateau's edge. Unbuilt.
-//!
 //! # The window
 //!
 //! The cell is the graph's, as lithology's is, so its tiles read the
-//! outlines thrusting published for it. A tile finds the sites of its own
-//! site cell and the six around it, seven hashes and distance checks, and
-//! reads the decision of any whose footprint holds it; the site lattice's
-//! ring holds every footprint and stray reaching a tile. The cell keeps
-//! each site's decision, made from the ground at the site the first time a
-//! tile of the cell reads it, so no decision is made per tile and every
-//! tile of a footprint reads the same one. Drainage keeps its own decisions,
-//! made by the same function from the same fields, so the surface it routes
-//! on is the composite's.
+//! outlines of every plate they can stand in. A tile finds the sites of its
+//! own site cell and the six around it, seven hashes and distance checks,
+//! and reads the decision of any whose footprint holds it; the site
+//! lattice's ring holds every footprint and stray reaching a tile. The cell
+//! keeps each site's decision, made from the ground at the site the first
+//! time a tile of the cell reads it, so no decision is made per tile and
+//! every tile of a footprint reads the same one. Drainage keeps its own
+//! decisions, made by the same function from the same fields, so the
+//! surface it routes on is the composite's.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -71,12 +67,12 @@ use super::plates::{coasts_of, Coasts, GRAPH_CELL_SCALE};
 use super::thrusting::{outlines_of, Outlines, OUTLINE_REACH, REPOSE_GRADE};
 use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent};
 
-const LANDFORM_SEED: u64 = 0x4c61_6e64_666f_726d; // "Landform"
+const SCARP_SEED: u64 = 0x4c61_6e64_666f_726d; // "Landform"
 
-/// The radius of a landform site lattice cell, in tiles: the outcrops'
+/// The radius of a scarp site lattice cell, in tiles: the outcrops'
 /// lattice, whose sites stand three minutes' walk apart, widened to ten,
 /// some 2,500 tiles or four kilometres.
-pub const LANDFORM_LATTICE: u32 = SITE_LATTICE * 10 / 3;
+pub const SCARP_LATTICE: u32 = SITE_LATTICE * 10 / 3;
 
 /// tan of a free face's angle, seventy degrees. A const cannot call `tan`;
 /// a test holds the two equal.
@@ -110,15 +106,15 @@ const TAPER: f64 = 0.25;
 /// wash back up from both, some 900 tiles, a kilometre and a half.
 pub const FOOTPRINT: f64 = (FORMATION_MAX / CLIFF_GRADE + FORMATION_MAX / REPOSE_GRADE + 2.0 * FORMATION_MAX / WASH_GRADE) / (1.0 - TAPER);
 
-/// The landform site lattice.
-pub fn landform_lattice() -> HexLattice {
-    HexLattice::new(LANDFORM_LATTICE)
+/// The scarp site lattice.
+pub fn scarp_lattice() -> HexLattice {
+    HexLattice::new(SCARP_LATTICE)
 }
 
 /// Where the site of a lattice cell stands: its centre, jittered by the
 /// cell's hash as an outcrop's is.
 pub fn site_of(lattice: &HexLattice, id: CellId, seed: u64) -> (f64, f64) {
-    jittered_centre(lattice, id, SITE_JITTER, seed ^ LANDFORM_SEED)
+    jittered_centre(lattice, id, SITE_JITTER, seed ^ SCARP_SEED)
 }
 
 // ── The scarp ───────────────────────────────────────────────────────────────
@@ -222,24 +218,24 @@ impl Scarp {
     }
 }
 
-// ── The landforms ───────────────────────────────────────────────────────────
+// ── The scarps ───────────────────────────────────────────────────────────
 
-/// The landforms a set of tiles reads: the site lattice, and the decision
+/// The scarps a set of tiles reads: the site lattice, and the decision
 /// of each site any of them has read, kept so a site is decided once.
-pub struct Landforms {
+pub struct Scarps {
     lattice: HexLattice,
     decided: DashMap<CellId, Option<Scarp>>,
 }
 
-impl Default for Landforms {
+impl Default for Scarps {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Landforms {
+impl Scarps {
     pub fn new() -> Self {
-        Landforms { lattice: landform_lattice(), decided: DashMap::new() }
+        Scarps { lattice: scarp_lattice(), decided: DashMap::new() }
     }
 
     /// The decision of the site of lattice cell `id`, standing at `(x, y)`.
@@ -252,7 +248,7 @@ impl Landforms {
         d
     }
 
-    /// How deep the landforms carve below an envelope `envelope` high at a
+    /// How deep the scarps carve below an envelope `envelope` high at a
     /// position, in z-levels: the deepest of the scarps whose footprints
     /// hold it, of the sites of its own site cell and the six around it.
     /// A cut never takes land below the sea, so it reaches no deeper than
@@ -287,11 +283,11 @@ impl Landforms {
 // ── The event ───────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct LandformEvent;
+pub struct ScarpEvent;
 
-impl LandformEvent {
+impl ScarpEvent {
     pub fn new() -> Self {
-        LandformEvent
+        ScarpEvent
     }
 }
 
@@ -300,17 +296,17 @@ impl LandformEvent {
 struct Reach {
     coasts: Coasts,
     outlines: Arc<Outlines>,
-    landforms: Landforms,
+    scarps: Scarps,
 }
 
-impl WorldEvent for LandformEvent {
-    fn name(&self) -> &str { "landform" }
+impl WorldEvent for ScarpEvent {
+    fn name(&self) -> &str { "scarp" }
     fn scale(&self) -> u32 { GRAPH_CELL_SCALE }
 
     /// A tile reads the whole outline of the plate it stands in, which
     /// reaches further than any footprint and a site's stray.
     fn max_influence(&self) -> u32 {
-        let stray = SITE_JITTER * (landform_lattice().tiles_per_cell() as f64).sqrt();
+        let stray = SITE_JITTER * (scarp_lattice().tiles_per_cell() as f64).sqrt();
         OUTLINE_REACH.max(FOOTPRINT + stray) as u32
     }
 
@@ -318,15 +314,15 @@ impl WorldEvent for LandformEvent {
     fn deform(&self, _scope: &CellScope) {}
 
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
-        Box::new(Reach { coasts: coasts_of(scope), outlines: Arc::new(outlines_of(scope)), landforms: Landforms::new() })
+        Box::new(Reach { coasts: coasts_of(scope), outlines: Arc::new(outlines_of(scope)), scarps: Scarps::new() })
     }
 
-    /// What a landform carves at the tile below the envelope, and how
+    /// What a scarp carves at the tile below the envelope, and how
     /// steeply.
     fn query(&self, q: i32, r: i32, below: &TileView, cell: &(dyn Any + Send + Sync), seed: u64) -> Option<TileOutput> {
         let reach = cell.downcast_ref::<Reach>()?;
         let (wx, wy) = hex_to_world(q, r);
-        let carve = |x: f64, y: f64| reach.landforms.carve_at(x, y, seed, &reach.coasts, &reach.outlines, below.elevation);
+        let carve = |x: f64, y: f64| reach.scarps.carve_at(x, y, seed, &reach.coasts, &reach.outlines, below.elevation);
         let cut = carve(wx, wy);
         if cut <= 0.0 {
             return None;
@@ -383,7 +379,7 @@ mod tests {
     /// about any tile holds every site whose footprint reaches it.
     #[test]
     fn a_site_is_its_cell_and_its_ring_holds_every_reach() {
-        let lattice = landform_lattice();
+        let lattice = scarp_lattice();
         assert_eq!(site_of(&lattice, (3, -2), 7), site_of(&lattice, (3, -2), 7));
         assert_ne!(site_of(&lattice, (3, -2), 7), site_of(&lattice, (3, -2), 8));
         for i in -30..30 {
@@ -428,7 +424,7 @@ mod tests {
 
     /// The sites of the haven's belt.
     fn belt_sites() -> Vec<(f64, f64)> {
-        let lattice = landform_lattice();
+        let lattice = scarp_lattice();
         let (q, r) = world_to_hex(BELT.0, BELT.1);
         lattice
             .cells_within_distance(lattice.cell_id(q, r), 3)
@@ -480,9 +476,9 @@ mod tests {
     }
 
     /// Every tile of a scarp's footprint carves what any reader of the
-    /// site decides: the stack through the landforms stands each tile where
-    /// the surface drainage routes on stands, which a fresh reader of the
-    /// landforms computes.
+    /// site decides: the stack through the scarps stands each tile where the
+    /// surface drainage routes on stands, which a fresh reader of the scarps
+    /// computes.
     #[test]
     fn a_footprint_reads_one_decision() {
         use super::super::{lithology, motion, plates, thickening, thrusting, tilt, Composite};
@@ -493,7 +489,7 @@ mod tests {
         composite.add_event(Box::new(thrusting::ThrustingEvent::new()));
         composite.add_event(Box::new(thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(lithology::LithologyEvent::new()));
-        composite.add_event(Box::new(LandformEvent::new()));
+        composite.add_event(Box::new(ScarpEvent::new()));
         let (o, c) = (Outlines::in_box(BELT.0, BELT.1, 9_000.0, S), Coasts::in_box(BELT.0, BELT.1, 9_000.0, S));
         let scarp = belt_sites().into_iter().find_map(|(x, y)| decide(x, y, S, &c, &o)).expect("a scarp on the belt");
         let mut carved = 0;
@@ -502,7 +498,7 @@ mod tests {
             let reach = FOOTPRINT * (k as f64 / 64.0);
             let (q, r) = world_to_hex(scarp.x + reach * angle.cos(), scarp.y + reach * angle.sin());
             let (wx, wy) = hex_to_world(q, r);
-            let fresh = Landforms::new();
+            let fresh = Scarps::new();
             let ground = super::super::drainage::ground_at(wx, wy, S, &c, &o, &fresh).surface;
             let envelope = envelope_at(wx, wy, S, &c, &o).surface;
             assert!((composite.tile_at(q, r).elevation - ground).abs() < 1e-9, "the tile at ({q}, {r}) reads another decision");

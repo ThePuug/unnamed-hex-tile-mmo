@@ -241,7 +241,7 @@ fn ground_sample_costs() {
     let (cx, cy) = hex_to_world(104_289, -4_677);
     let coasts = Coasts::in_box(cx, cy, 6_000.0, SEED);
     let outlines = Outlines::in_box(cx, cy, 6_000.0, SEED);
-    let landforms = world::events::landform::Landforms::new();
+    let scarps = world::events::scarp::Scarps::new();
     let pts: Vec<(f64, f64)> = (0..100).flat_map(|i| (0..100).map(move |j| (cx - 5_000.0 + i as f64 * 100.0, cy - 5_000.0 + j as f64 * 100.0))).collect();
     let n = pts.len() as f64;
     let time = |label: &str, f: &dyn Fn(f64, f64) -> f64| {
@@ -258,7 +258,7 @@ fn ground_sample_costs() {
     time("relief_of", &|x, y| outlines.at(x, y).map_or(0.0, |s| outlines.relief_of(&s)));
     time("plateau", &|x, y| outlines.at(x, y).map_or(0.0, |s| plateau_share_of(s.plate, &s.distances)));
     time("rock_at", &|x, y| outlines.at(x, y).map_or(0.0, |s| rock_at(SEED, s.plate.id, s.plate.age, 60.0, 10.0, 50.0).stand));
-    time("ground_at", &|x, y| ground_at(x, y, SEED, &coasts, &outlines, &landforms).surface);
+    time("ground_at", &|x, y| ground_at(x, y, SEED, &coasts, &outlines, &scarps).surface);
 }
 
 /// What `Outlines::at` is made of over the same patch: the warp, the seed

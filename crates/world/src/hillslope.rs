@@ -88,7 +88,7 @@ pub fn crest_curvature(erosion: f64) -> f64 {
 /// limit's term, under a twentieth at a range's height, is left out, so a
 /// range falls that much slower at first. What survives longest is not
 /// height but the contrast between rocks, which lithology and the
-/// landforms carry.
+/// scarps carry.
 pub fn standing_after(myr: f64) -> f64 {
     (-myr.max(0.0) / RELIEF_DECAY).exp()
 }
