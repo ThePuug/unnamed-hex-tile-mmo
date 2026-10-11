@@ -395,11 +395,11 @@ points `VisualPosition` at it, `actor::update` renders it.
     `map.convert(here − tile)`, a height is `(z − tile.z) × rise`, and only
     a lookup names the tile, as `calculate_movement`, `Position::rebase` and
     `RenderOrigin` do. The test is exact: the same input at the origin and
-    millions of tiles out gives the same output, bit for bit. Sites still
-    world-space are static and drawn, each off by one step and fixable the
-    same way: the mesh builder's vertices (`p − mesh_origin`), a region's
-    placement (`mesh_origin − origin`), the camera's ray march, and the
-    terrain shader's bombing, which re-rolls at a rebase.
+    millions of tiles out gives the same output, bit for bit. A terrain
+    region's vertices and cover are built from its origin tile
+    (`MeshRegionKey::origin`) and placed at its difference from the render
+    origin's. One site is still world-space: the terrain shader's bombing,
+    which re-rolls at a rebase.
 11. **A moment as a float.** `as_secs_f32()` on an absolute game time
     keeps seconds at a day of uptime and minutes at the wall clock's size.
     A float is made from the difference of two moments, never from one.

@@ -236,6 +236,18 @@ impl SummaryLattice {
         (cell.q, cell.r)
     }
 
+    /// The cell under a point `xz` from the centre of tile `frame`, exact
+    /// however far out the tile is: the tile is taken as a cell's centre,
+    /// a lattice point by which [`Self::cell_at`] shifts in whole cells,
+    /// and the few tiles past it, and only those few become a vector.
+    pub fn cell_from(&self, frame: (i32, i32), xz: bevy::math::Vec2) -> (i32, i32) {
+        let k = self.cell_id(frame.0, frame.1);
+        let (cq, cr) = self.cell_center(k);
+        let (mx, mz) = crate::geometry::flat_top_tile_center(frame.0 - cq, frame.1 - cr, 1.0);
+        let (q, r) = self.cell_at(xz + bevy::math::Vec2::new(mx, mz));
+        (k.0 + q, k.1 + r)
+    }
+
     /// Summary-lattice cell ID for a tile at (q, r).
     /// Finds the nearest center by hex distance, tie-breaking by lower (sq, sr).
     pub fn cell_id(&self, q: i32, r: i32) -> (i32, i32) {
@@ -370,6 +382,29 @@ mod tests {
     use super::*;
     use crate::geometry::flat_top_tile_center;
     use common::summary::scale;
+
+    /// A point given from a tile's centre is under the cell its world
+    /// position is, from any tile; and a frame a whole number of cells
+    /// out, however far, names the same point's cell that many cells out.
+    #[test]
+    fn a_cell_is_found_from_any_frame() {
+        for radius in [0u32, 1, 4, 13] {
+            let lattice = summary_lattice(radius);
+            for frame in [(0, 0), (7, -3), (-11, 20), (2 * lattice.scale + 1, -lattice.scale)] {
+                for i in 0..200 {
+                    let a = i as f32 * 2.399;
+                    let xz = bevy::math::Vec2::new(a.cos(), a.sin()) * (i as f32 * 0.37);
+                    let (fx, fz) = flat_top_tile_center(frame.0, frame.1, 1.0);
+                    let want = lattice.cell_at(xz + bevy::math::Vec2::new(fx, fz));
+                    assert_eq!(lattice.cell_from(frame, xz), want, "r={radius} from {frame:?} at {xz}");
+                    let shift = (-400_000, 900_000);
+                    let (sq, sr) = lattice.cell_center(shift);
+                    let far = lattice.cell_from((frame.0 + sq, frame.1 + sr), xz);
+                    assert_eq!(far, (want.0 + shift.0, want.1 + shift.1), "r={radius} from far off {frame:?} at {xz}");
+                }
+            }
+        }
+    }
 
     /// The cells' footprints tile the plane: every tile of a window is
     /// covered by exactly one cell, the one its nearest centre names.

@@ -93,9 +93,10 @@ pub const MESH_REGION_CELLS: u32 = hex_ball_tiles(crate::summary::MESH_REGION_RA
 /// to cover the relief between a built region and the ground beside it.
 pub const CURTAIN_DEPTH_WU: f32 = 24.0;
 
-/// A cell's fan as its level draws it: the centre in world XZ, centre and
-/// corner heights in world Y before the level's depth bias, and the vertex
-/// normals. Corners are the mean of the three cells meeting there.
+/// A cell's fan as its level draws it: the centre in XZ from the centre of
+/// the frame's tile, centre and corner heights in world Y before the
+/// level's depth bias, and the vertex normals. Corners are the mean of the
+/// three cells meeting there.
 pub struct Fan {
     pub centre: Vec2,
     pub centre_y: f32,
@@ -104,18 +105,21 @@ pub struct Fan {
     pub corner_n: [Vec3; 6],
 }
 
-/// The fan of `cell` on `lattice` from a height lookup over it. None while
-/// the cell or one of its six neighbours is absent: a corner with a cell
-/// missing would not be the corner the neighbour draws.
+/// The fan of `cell` on `lattice` from a height lookup over it, in the
+/// frame of tile `frame`: every centre is taken as a tile difference from
+/// it before it becomes a vector, so the fan is exact however far out it
+/// is. None while the cell or one of its six neighbours is absent: a
+/// corner with a cell missing would not be the corner the neighbour draws.
 pub fn cell_fan(
     lattice: &SummaryLattice,
     cell: (i32, i32),
+    frame: qrz::Qrz,
     height: impl Fn(i32, i32) -> Option<i32>,
 ) -> Option<Fan> {
     let offsets = corner_offsets(lattice.scale as f32);
     let centre_of = |c: (i32, i32)| -> Vec2 {
         let (cq, cr) = lattice.cell_center(c);
-        let (wx, wz) = flat_top_tile_center(cq, cr, 1.0);
+        let (wx, wz) = flat_top_tile_center(cq - frame.q, cr - frame.r, 1.0);
         Vec2::new(wx, wz)
     };
     let centre_3d = |c: (i32, i32)| -> Option<Vec3> {
@@ -148,26 +152,29 @@ pub fn cell_fan(
 /// A level's drawn surface from a height lookup over its lattice, its fans
 /// made as they are read: what a vertex morphs toward at the level below,
 /// and what stands on the level at its own.
+/// Read in the frame of a tile, as the region's own vertices are.
 pub struct LevelSurface<'a> {
     lattice: SummaryLattice,
+    frame: qrz::Qrz,
     height: &'a dyn Fn(i32, i32) -> Option<i32>,
     fans: HashMap<(i32, i32), Option<Fan>>,
 }
 
 impl<'a> LevelSurface<'a> {
-    pub fn new(radius: u32, height: &'a dyn Fn(i32, i32) -> Option<i32>) -> Self {
-        LevelSurface { lattice: summary_lattice(radius), height, fans: HashMap::new() }
+    pub fn new(radius: u32, frame: qrz::Qrz, height: &'a dyn Fn(i32, i32) -> Option<i32>) -> Self {
+        LevelSurface { lattice: summary_lattice(radius), frame, height, fans: HashMap::new() }
     }
 
-    /// Height (world Y, before any bias) and normal at world `xz`. None
-    /// while a cell the fan reads is absent.
+    /// Height (world Y, before any bias) and normal at `xz` from the
+    /// centre of the frame's tile. None while a cell the fan reads is
+    /// absent.
     pub fn at(&mut self, xz: Vec2) -> Option<(f32, Vec3)> {
-        let cell = self.lattice.cell_at(xz);
-        let (lattice, height) = (&self.lattice, self.height);
+        let cell = self.lattice.cell_from((self.frame.q, self.frame.r), xz);
+        let (lattice, frame, height) = (&self.lattice, self.frame, self.height);
         let fan = self
             .fans
             .entry(cell)
-            .or_insert_with(|| cell_fan(lattice, cell, height))
+            .or_insert_with(|| cell_fan(lattice, cell, frame, height))
             .as_ref()?;
         let ((i, j), w) = fan_weights(xz, fan.centre, lattice.scale as f32);
         let y = w.x * fan.centre_y + w.y * fan.corner_y[i] + w.z * fan.corner_y[j];
@@ -207,8 +214,6 @@ pub fn build_summary_mesh_region(
     let region_id = (region_key.mn, region_key.mm);
 
     let origin = region_key.origin();
-    let (origin_wx, origin_wz) = flat_top_tile_center(origin.q, origin.r, 1.0);
-    let mesh_origin = Vec3::new(origin_wx, 0.0, origin_wz);
 
     // Heights for the region and its ring — the ring only feeds corners.
     let region_cells: Vec<(i32, i32)> = region_lat.tiles_in_cell(region_id).collect();
@@ -231,7 +236,7 @@ pub fn build_summary_mesh_region(
     let bias = level_depth_bias(radius);
     let offsets = corner_offsets(lattice.scale as f32);
     let mut coarse = coarse.map(|height| {
-        LevelSurface::new(coarser_level(radius).expect("a level with a coarser one"), height)
+        LevelSurface::new(coarser_level(radius).expect("a level with a coarser one"), origin, height)
     });
     // The morph target of a vertex at `p` with normal `n`: the coarser
     // surface there in this level's frame, or the vertex itself.
@@ -250,11 +255,10 @@ pub fn build_summary_mesh_region(
     let mut corner_index: HashMap<(i32, i32), u32> = HashMap::new();
 
     let mut push = |p: Vec3, n: Vec3, target: (f32, Vec3), canopy: [f32; 4]| -> u32 {
-        let v = p - mesh_origin;
         let (ty, tn) = target;
-        positions.push([v.x, v.y, v.z]);
+        positions.push([p.x, p.y, p.z]);
         normals.push([n.x, n.y, n.z]);
-        coarse_attr.push([tn.x, tn.y, tn.z, ty - mesh_origin.y]);
+        coarse_attr.push([tn.x, tn.y, tn.z, ty]);
         if !canopies.is_empty() {
             canopy_attr.push(canopy);
         }
@@ -263,7 +267,7 @@ pub fn build_summary_mesh_region(
     let canopy_of = |cell: (i32, i32)| canopies.get(&cell).copied().unwrap_or([0.0; 4]);
 
     for &cell in &region_cells {
-        let fan = cell_fan(&lattice, cell, |q, r| heights.get(&(q, r)).copied())
+        let fan = cell_fan(&lattice, cell, origin, |q, r| heights.get(&(q, r)).copied())
             .expect("region and ring heights are present");
         let centre_canopy = canopy_of(cell);
 
@@ -398,8 +402,6 @@ pub fn build_water_mesh_region(
     let region_id = (region_key.mn, region_key.mm);
 
     let origin = region_key.origin();
-    let (origin_wx, origin_wz) = flat_top_tile_center(origin.q, origin.r, 1.0);
-    let mesh_origin = Vec3::new(origin_wx, 0.0, origin_wz);
 
     let bias = level_depth_bias(radius);
     let offsets = corner_offsets(lattice.scale as f32);
@@ -414,8 +416,7 @@ pub fn build_water_mesh_region(
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     let push = |positions: &mut Vec<[f32; 3]>, normals: &mut Vec<[f32; 3]>, p: Vec3, n: Vec3| -> u32 {
-        let v = p - mesh_origin;
-        positions.push([v.x, v.y, v.z]);
+        positions.push([p.x, p.y, p.z]);
         normals.push([n.x, n.y, n.z]);
         (positions.len() - 1) as u32
     };
@@ -423,7 +424,7 @@ pub fn build_water_mesh_region(
     for cell in region_lat.tiles_in_cell(region_id) {
         let Some(w) = water(cell.0, cell.1).filter(|&w| w > 0) else { continue };
         let (cq, cr) = lattice.cell_center(cell);
-        let (wx, wz) = flat_top_tile_center(cq, cr, 1.0);
+        let (wx, wz) = flat_top_tile_center(cq - origin.q, cr - origin.r, 1.0);
         let y = surface_y(w);
         let ci = push(&mut positions, &mut normals, Vec3::new(wx, y, wz), Vec3::Y);
         let corners = offsets.map(|o| Vec3::new(wx + o.x, y, wz + o.y));
@@ -745,6 +746,28 @@ mod tests {
         }
         assert!(ys.iter().any(|y| (y - expect(4)).abs() < 1e-4) && ys.iter().any(|y| (y - expect(3)).abs() < 1e-4));
         assert!(expect(4) < height_y(4.0) && expect(4) > height_y(3.0), "a surface at a step sits between that step's ground and the one below");
+    }
+
+    /// A region millions of tiles out is built as the same region at the
+    /// world's origin, its vertices, normals and morph targets bit for bit:
+    /// every vector is a tile difference from the region's origin tile.
+    #[test]
+    fn a_region_builds_the_same_however_far_out() {
+        let field = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
+        let coarse = |q: i32, r: i32| Some((q * 5 + r * 2).rem_euclid(9));
+        let far = MeshRegionKey { r: 1, mn: 30_000, mm: -60_000 };
+        let shift = mesh_region_lattice().cell_center((far.mn, far.mm));
+        assert_eq!((shift.0 % 3, shift.1 % 3), (0, 0), "the far region's origin is a coarser centre too");
+        let coarse_shift = (shift.0 / 3, shift.1 / 3);
+        let far_field = move |q: i32, r: i32| field(q - shift.0, r - shift.1);
+        let far_coarse = move |q: i32, r: i32| coarse(q - coarse_shift.0, r - coarse_shift.1);
+        let near = build_summary_mesh_region(1, REGION, &field, Some(&coarse), None).unwrap();
+        let out = build_summary_mesh_region(1, far, &far_field, Some(&far_coarse), None).unwrap();
+        assert!(far.origin().r.abs() > 1_000_000, "{:?}", far.origin());
+        assert_eq!(near.positions, out.positions);
+        assert_eq!(near.normals, out.normals);
+        assert_eq!(near.coarse, out.coarse);
+        assert_eq!(near.indices, out.indices);
     }
 
     #[test]

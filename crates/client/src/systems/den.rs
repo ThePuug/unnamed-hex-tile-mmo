@@ -29,14 +29,15 @@ pub const DRAWN_AT: [u32; 3] = [LOD_LEVELS[0], LOD_LEVELS[1], LOD_LEVELS[2]];
 pub struct Dens(pub Arc<HashMap<Qrz, DenLook>>);
 
 /// Each piece of the den on `at` as `look` draws it: the piece, where its
-/// origin stands in the world along the ground, and the tile it stands in.
+/// origin stands along the ground from the centre of the den's tile, and
+/// the tile it stands in, taken from the den's so it is exact however far
+/// out the den is.
 pub fn standing(at: Qrz, look: DenLook, map: &Map) -> impl Iterator<Item = (&'static Piece, Vec2, (i32, i32))> + '_ {
-    let centre = map.convert(Qrz { z: 0, ..at }).xz();
     let yaw = look.yaw;
     look.pieces().iter().map(move |piece| {
-        let origin = centre + Vec2::from(piece.placed(yaw));
-        let tile = map.convert(Vec3::new(origin.x, 0.0, origin.y));
-        (piece, origin, (tile.q, tile.r))
+        let about = Vec2::from(piece.placed(yaw));
+        let step: Qrz = map.convert(Vec3::new(about.x, 0.0, about.y));
+        (piece, about, (at.q + step.q, at.r + step.r))
     })
 }
 

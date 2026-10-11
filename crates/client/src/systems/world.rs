@@ -976,8 +976,6 @@ fn collect_and_build_summary_mesh(
         cover: Vec::new(),
     };
 
-    let (origin_x, origin_z) = region_center_world(&region_key);
-    let mesh_origin = Vec3::new(origin_x, 0.0, origin_z);
     let tile_z = |q: i32, r: i32| -> Option<i32> { map.get_by_qr(q, r).map(|(qrz, _)| qrz.z) };
     // The same seven samples over the map's tiles, where every producer's
     // rule reads them; nothing until the tiles are all there.
@@ -1028,8 +1026,8 @@ fn collect_and_build_summary_mesh(
                 let mut result = smr_to_result(smr);
                 let w = common_bevy::summary_mesh::build_water_mesh_region(0, region_key, &tile_water);
                 result.water = crate::resources::WaterGeometry { positions: w.positions, normals: w.normals, indices: w.indices };
-                result.cover = crate::plugins::cover::place_cover(0, region_key, mesh_origin, map, &height);
-                result.cover.extend(crate::plugins::cover::place_dens(0, region_key, mesh_origin, dens, map, &height));
+                result.cover = crate::plugins::cover::place_cover(0, region_key, map, &height);
+                result.cover.extend(crate::plugins::cover::place_dens(0, region_key, dens, map, &height));
                 result
             });
     }
@@ -1054,16 +1052,16 @@ fn collect_and_build_summary_mesh(
                 result.parts = common_bevy::summary_mesh::parts_layer(radius, region_key, &summary).unwrap_or_default();
             }
             if radius == common_bevy::summary::LOD_LEVELS[1] {
-                result.cover = crate::plugins::cover::place_cover(radius, region_key, mesh_origin, map, &height);
+                result.cover = crate::plugins::cover::place_cover(radius, region_key, map, &height);
             }
             // Past the tiles a crag stands from the summaries' own reading
             // of it, the level after the first.
             if radius == common_bevy::summary::LOD_LEVELS[2] {
                 let outcrop = |sq: i32, sr: i32| cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr)).map(|c| c.outcrop);
-                result.cover = crate::plugins::cover::place_crags(radius, region_key, mesh_origin, &outcrop, &height);
+                result.cover = crate::plugins::cover::place_crags(radius, region_key, &outcrop, &height);
             }
             if crate::systems::den::DRAWN_AT.contains(&radius) {
-                result.cover.extend(crate::plugins::cover::place_dens(radius, region_key, mesh_origin, dens, map, &height));
+                result.cover.extend(crate::plugins::cover::place_dens(radius, region_key, dens, map, &height));
             }
             result
         })
