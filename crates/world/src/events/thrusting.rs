@@ -34,15 +34,17 @@
 //! lenses and a typical sheet stands near its full height; neighbouring
 //! sheets culminate out of step, so a belt is a chain of culminations and
 //! saddles, not ridges rising and falling together. A sheet's structure
-//! stands at a thrust wedge's dips, the forelimb at 50°; its surface does
-//! not, since rock steeper than debris rests at sheds, so the cross-section
-//! is held under a cone at repose from every point of it: the crest keeps
-//! its height, the forelimb becomes scree reaching further from it and
-//! buries the trough's near side, the frontal sheet's runs out past the
-//! front onto the plate going under, and the backlimb is barely touched.
-//! Under a lower crest the scree is shorter, never gentler. Repose is over
-//! the one level a step climbs, so a range is climbed by traverse and
-//! crossed at its passes.
+//! stands at a thrust wedge's dips, each flank falling straight from the
+//! crest, the forelimb at 50°; its surface does not, since rock steeper
+//! than debris rests at sheds, so the cross-section is held under a cone at
+//! repose from every point of it: the forelimb becomes scree reaching
+//! further from the crest and buries the trough's near side, the frontal
+//! sheet's runs out past the front onto the plate going under, and the
+//! backlimb is barely touched. Under a lower crest the scree is shorter,
+//! never gentler. Repose is over the one level a step climbs, so a range
+//! is climbed by traverse and crossed at its passes. The crest is a
+//! hillslope's, rounded to the curvature its height erodes at
+//! ([`crate::hillslope`]): sharp at a culmination, broad in a saddle.
 //!
 //! The retro-wedge at the plateau's far side is not expressed. Unbuilt.
 //!
@@ -99,6 +101,7 @@ use crate::lattice::{nearest_node, node_world, NodeKey, PATH_SWING};
 use crate::tectonic::{edges_of, plate_cell_for, plates_near, PlateId, PLATE_REACH};
 use super::plates::{warp, WARP_SWING};
 use crate::{hex_to_world, smoothstep, RISE, SEA_MAX_DEPTH};
+use crate::hillslope::{crest_curvature, erosion_rate};
 use super::index::{CellId, CellIndex, IndexRegistry};
 use super::motion::{resolve, BoundaryRegime, BoundarySegment, PlateBoundaryIndex};
 use super::plates::GRAPH_CELL_SCALE;
@@ -136,11 +139,6 @@ const STEEP_FLANK_SHARE: f64 = 0.35;
 pub const RANGE_STEEP_HALF_WIDTH: f64 =
     2.0 * RANGE_HALF_WIDTH * STEEP_FLANK_SHARE / (1.0 + STEEP_FLANK_SHARE);
 pub const RANGE_GRADED_HALF_WIDTH: f64 = 2.0 * RANGE_HALF_WIDTH / (1.0 + STEEP_FLANK_SHARE);
-
-/// Exponent of the cross-strike amplitude taper of one sheet. A squared taper
-/// puts the shoulders where a wedge's are: relief falls away slowly near the
-/// crest and steeply at the toe. It has no derivation of its own.
-const TAPER_EXPONENT: f64 = 2.0;
 
 /// Dip of a range's forelimb, in degrees: the midpoint of the 40–60° a thrust
 /// wedge's forelimb dips at, the same geology [`STEEP_FLANK_SHARE`] is read
@@ -671,12 +669,12 @@ pub fn rim_of(sheets: f64) -> f64 {
 }
 
 /// One sheet's cross-section at a signed distance from its crest, positive
-/// toward the front: the steep flank faces the front, and the taper reaches
-/// zero at the trough it shares with the next sheet.
+/// toward the front: each flank falls straight at its dip from the crest
+/// to nothing at the trough it shares with the next sheet, the steep flank
+/// facing the front. The crest is a corner; its hillslope rounds it.
 fn wedge(d: f64) -> f64 {
     let half = if d >= 0.0 { RANGE_STEEP_HALF_WIDTH } else { RANGE_GRADED_HALF_WIDTH };
-    let u = d.abs() / half;
-    if u >= 1.0 { 0.0 } else { (1.0 - u * u).powf(TAPER_EXPONENT) }
+    (1.0 - d.abs() / half).max(0.0)
 }
 
 /// The wedge across a belt, in [0, 1] of a range's rise, at a coordinate
@@ -721,6 +719,62 @@ pub(crate) fn sweep(h: &mut [f64], falls: &[f64]) {
     }
 }
 
+/// A profile on a grid with its crest rounded to a curvature, in place:
+/// the highest profile beneath it that a parabola of curvature `c`, per
+/// step squared, fits under at every point. The profile rises to one crest
+/// and falls from it, straight or curving the other way, as a sheet's
+/// does. The crest, sharper than `c`, lowers to the parabola tangent to its
+/// flanks; the rest is untouched; and no slope steepens, so a profile under
+/// repose stays under it.
+pub(crate) fn round(h: &mut [f64], c: f64) {
+    let steepest = h.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f64::max);
+    if c <= 0.0 || steepest <= 0.0 {
+        return;
+    }
+    // Past this many steps the parabola turns faster than the steepest
+    // slope, so no point further off can decide either pass; a pass's
+    // result is no steeper than what it read.
+    let reach = (steepest / c).ceil() as usize + 1;
+    // The cap lies within a reach of its apex and the apex within a reach
+    // of the highest point, so outside twice that nothing moves; the passes
+    // read twice that again, so the window's own ends decide nothing kept.
+    let top = (0..h.len()).fold(0, |best, i| if h[i] > h[best] { i } else { best });
+    let (lo, hi) = (top.saturating_sub(4 * reach), (top + 4 * reach + 1).min(h.len()));
+    let window = &mut h[lo..hi];
+    let keep = (top - lo).saturating_sub(2 * reach)..(top - lo + 2 * reach + 1).min(window.len());
+    let n = window.len();
+    if n < 2 {
+        return;
+    }
+    // Each pass takes the parabola's extreme over every segment read
+    // straight, not at the points alone, or a straight flank whose slope
+    // is no whole number of the parabola's steps comes out lowered.
+    let pass = |v: &[f64], sign: f64| -> Vec<f64> {
+        (0..n)
+            .map(|i| {
+                let t = i as f64;
+                let at = (i.saturating_sub(reach)..(i + reach).min(n - 1)).map(|k| {
+                    let s = v[k + 1] - v[k];
+                    let x = (t - sign * s / c).clamp(k as f64, (k + 1) as f64);
+                    v[k] + s * (x - k as f64) + sign * 0.5 * c * (x - t) * (x - t)
+                });
+                if sign > 0.0 { at.fold(f64::MAX, f64::min) } else { at.fold(f64::MIN, f64::max) }
+            })
+            .collect()
+    };
+    let rounded = pass(&pass(window, 1.0), -1.0);
+    for i in keep {
+        window[i] = window[i].min(rounded[i]);
+    }
+}
+
+/// The curvature a sheet's crest is rounded to, per profile step squared
+/// as a share of a range's rise, where the crest stands `relief` z-levels
+/// high: the hillslope its height erodes at.
+fn crest_rounding(relief: f64) -> f64 {
+    crest_curvature(erosion_rate(relief)) * REPOSE_STEP * REPOSE_STEP / RANGE_RISE
+}
+
 /// A profile's share at a distance `d` from the front, read straight
 /// between its points, where `point` is its share at a point of the grid
 /// and nothing past its end; nothing before the grid begins.
@@ -735,7 +789,8 @@ fn between(d: f64, point: impl Fn(usize) -> f64) -> f64 {
 }
 
 /// A wedge's cross-section held under repose, sheet by sheet, one profile
-/// for each share of its height a sheet's plunge leaves it.
+/// for each share of its height a sheet's plunge leaves it, each crest
+/// rounded to the curvature that height erodes at.
 ///
 /// The sheets' wedges are disjoint across strike, each meeting the next at
 /// a trough, so the structure is the highest of them, and the highest of
@@ -781,10 +836,12 @@ impl Faces {
                 let (start, end) = (a.saturating_sub(reach), (b + reach + 1).min(full));
                 let structure: Vec<f64> = (start..end).map(|i| if own(i) { family[i] } else { 0.0 }).collect();
                 let falls = vec![REPOSE_GRADE * REPOSE_STEP / RANGE_RISE; structure.len()];
+                let crest = structure.iter().copied().fold(0.0, f64::max);
                 let mut profiles = Vec::with_capacity(PLUNGE_STEPS * structure.len());
                 for p in 0..PLUNGE_STEPS {
                     let mut h: Vec<f64> = structure.iter().map(|s| plunge_step(p) * s).collect();
                     sweep(&mut h, &falls);
+                    round(&mut h, crest_rounding(plunge_step(p) * crest * RANGE_RISE));
                     profiles.extend(h);
                 }
                 Some(Sheet { start, structure, profiles })
@@ -1049,26 +1106,61 @@ mod tests {
         let structure = |d: f64| RANGE_RISE * family_at(d, WEDGE_SHEETS);
         let surface = |d: f64| RANGE_RISE * between(d, |i| weathered.get(i).copied().unwrap_or(0.0));
         let (mut steepest_structure, mut steepest_surface) = (0.0f64, 0.0f64);
+        // A chord across a crest's corner falls under it by at most a step
+        // of the gentler flank, steepened as far as the sheets tighten.
+        let chord = REPOSE_STEP * RANGE_RISE / (RANGE_GRADED_HALF_WIDTH * (1.0 - BELT_SHORTENING));
         let mut d = -200.0;
         while d < WEDGE_REACH + 600.0 {
             steepest_structure = steepest_structure.max((structure(d + 1.0) - structure(d)).abs());
             steepest_surface = steepest_surface.max((surface(d + 1.0) - surface(d)).abs());
-            assert!(surface(d) >= structure(d) - 1.0, "scree under the structure by more than a chord's error at {d}");
+            assert!(surface(d) >= structure(d) - chord, "scree under the structure by more than a chord's error at {d}");
             d += 1.0;
         }
         assert!(steepest_structure > REPOSE_GRADE, "the structure never exceeded repose: {steepest_structure}");
         assert!(steepest_surface <= REPOSE_GRADE + 1e-6, "the surface exceeds repose: {steepest_surface} over {REPOSE_GRADE}");
-        // The crests: wherever the structure stands highest, the surface
-        // stands within a chord's error of it.
-        let mut d = 0.0;
-        let (mut top, mut at) = (0.0f64, 0.0);
-        while d < WEDGE_REACH {
-            if structure(d) > top { top = structure(d); at = d; }
-            d += 1.0;
-        }
-        assert!((top - RANGE_RISE).abs() < 0.1, "no crest stands full: {top}");
-        let lost = top - surface(at);
-        assert!(lost >= -1e-9 && lost <= 1.0, "a crest lowered by repose by {lost} z");
+        // The crests: the sweep only raises, so the highest point of the
+        // grid stands full within a step of the corner, and keeps it.
+        let grid = structure_of(WEDGE_SHEETS);
+        let (top, at) = (0..grid.len())
+            .map(|i| (RANGE_RISE * grid[i], i))
+            .fold((0.0f64, 0), |best, p| if p.0 > best.0 { p } else { best });
+        let dip = RANGE_RISE / RANGE_STEEP_HALF_WIDTH;
+        assert!(top <= RANGE_RISE + 1e-9 && top >= RANGE_RISE - dip * REPOSE_STEP, "no crest stands full: {top}");
+        assert!(RANGE_RISE * weathered[at] >= top - 1e-9, "a crest lowered by repose");
+    }
+
+    /// Rounding lowers a crest's corner to a parabola tangent to its flanks
+    /// and leaves the flanks alone, as the whole opening would; it never
+    /// raises, and no slope comes out steeper.
+    #[test]
+    fn rounding_takes_the_corner_off_a_crest_alone() {
+        let ridge: Vec<f64> = (0..90).map(|i| 30.0 - (i as f64 - 30.0).abs() * if i < 30 { 0.5 } else { 1.0 }).collect();
+        let steepest = |h: &[f64]| h.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f64::max);
+        let same = |a: &[f64], b: &[f64]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-9);
+        let mut r = ridge.clone();
+        round(&mut r, 0.2);
+        assert!(r.iter().zip(&ridge).all(|(a, b)| a <= b), "rounding raised the ridge");
+        assert!(r[30] < ridge[30], "the crest kept its corner");
+        assert!(same(&r[..25], &ridge[..25]) && same(&r[36..], &ridge[36..]), "the flanks moved");
+        assert!(steepest(&r) <= steepest(&ridge) + 1e-9, "a slope steepened");
+        let mut sharper = ridge.clone();
+        round(&mut sharper, 0.8);
+        assert!(sharper[30] > r[30], "a sharper curvature took more off");
+    }
+
+    /// A crest erodes faster the higher it stands, so it is rounded
+    /// sharper at a culmination than in a saddle; a range's full height is
+    /// within the relief erosion is bounded over.
+    #[test]
+    fn crests_round_sharper_at_culminations() {
+        let at = |share: f64| crest_rounding(share * RANGE_RISE);
+        assert!(at(1.0) > at(PLUNGE_FLOOR) && at(PLUNGE_FLOOR) > 0.0);
+        assert!(erosion_rate(RANGE_RISE) > erosion_rate(0.99 * RANGE_RISE) && erosion_rate(RANGE_RISE).is_finite());
+        let faces = faces_of(1.0);
+        let sheet = &faces.sheets[0];
+        let n = sheet.structure.len();
+        let crest = |p: usize| (0..n).map(|i| sheet.profiles[p * n + i]).fold(0.0, f64::max) / plunge_step(p);
+        assert!(crest(PLUNGE_STEPS - 1) > crest(0), "a saddle's crest is no broader than a culmination's");
     }
 
     /// The faces of a wedge of `sheets`.
@@ -1085,7 +1177,9 @@ mod tests {
         let faces = faces_of(2.5);
         let whole = |p: usize, i: usize| {
             faces.sheets.iter().map(|sheet| {
-                let h = under_repose(&sheet.structure.iter().map(|s| plunge_step(p) * s).collect::<Vec<_>>());
+                let mut h = under_repose(&sheet.structure.iter().map(|s| plunge_step(p) * s).collect::<Vec<_>>());
+                let crest = sheet.structure.iter().copied().fold(0.0, f64::max);
+                round(&mut h, crest_rounding(plunge_step(p) * crest * RANGE_RISE));
                 i.checked_sub(sheet.start).and_then(|r| h.get(r).copied()).unwrap_or(0.0)
             }).fold(0.0, f64::max)
         };
