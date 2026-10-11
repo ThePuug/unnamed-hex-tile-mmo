@@ -6,20 +6,14 @@
 //! no ground and its query returns nothing: dissection cuts along what this
 //! publishes.
 //!
-//! # The surface is a function, plus the plate graph
+//! # The surface is the ground layer's
 //!
-//! The field layers beneath — substrate, tilt, thrusting, thickening,
-//! lithology, and the scarps carved into them — sum to one function of
-//! position and seed, read off the plate
-//! graph: the edges the plate layer published, for the coasts, and the
-//! resolved edges the motion layer published, for the outlines, the two
-//! indexes this deform reads over its window.
-//! [`surface_at`] is that sum, evaluated at each node without materialising a
-//! tile, which is what lets routing, which needs the ground over a whole
-//! basin, happen in `deform`. A layer added beneath drainage either stays a
-//! field or publishes what drainage needs, and is added to [`surface_at`], or
-//! drainage routes over ground that is not there. `drainage_probe` checks the
-//! sum against the composite.
+//! The field layers beneath and the scarps carved into them sum to one
+//! function of position and seed, [`ground_at`], and the ground layer
+//! evaluates it at every node and publishes it, since a node's ground reads
+//! the plate graph further out than this layer's window reaches. Routing,
+//! which needs the ground over a whole basin, reads those samples over its
+//! window in `deform` and evaluates no ground of its own.
 //!
 //! # One lattice, one window
 //!
@@ -75,14 +69,14 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use common::HexLattice;
-use dashmap::DashMap;
 
 use super::index::{CellId, CellIndex, IndexRegistry, Located};
+use super::ground::GroundIndex;
 use super::scarp::Scarps;
 use super::lithology::{cover_on, rock_at};
-use super::plates::{coasts_of, Coasts};
+use super::plates::Coasts;
 use super::thickening::{plateau_share_of, PLATEAU_RISE};
-use super::thrusting::{outlines_of, Outlines};
+use super::thrusting::Outlines;
 use super::tilt::tilt_at;
 use super::{CellScope, Neighbourhood, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 use crate::lattice::{hex_distance, node_site, site_world, NodeKey, DIRECTIONS as NEIGHBOURS, NODE_SPACING, NODE_SWING};
@@ -577,36 +571,30 @@ impl Routing {
 
 // ── The event ───────────────────────────────────────────────────────────────
 
-pub struct DrainageEvent {
-    /// The ground at each node, shared by every window that contains it.
-    nodes: DashMap<NodeKey, Ground>,
-    /// The scarps the nodes read, each site decided once for every
-    /// window.
-    scarps: Scarps,
-}
+pub struct DrainageEvent;
 
 impl DrainageEvent {
     pub fn new() -> Self {
-        Self { nodes: DashMap::new(), scarps: Scarps::new() }
+        DrainageEvent
     }
 
-    /// The ground at a node.
-    fn ground(&self, key: NodeKey, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Ground {
-        if let Some(g) = self.nodes.get(&key) {
-            return *g;
-        }
-        let (q, r) = node_site(key);
-        let (wx, wy) = hex_to_world(q, r);
-        let g = ground_at(wx, wy, seed, coasts, outlines, &self.scarps);
-        self.nodes.insert(key, g);
-        g
-    }
-
-    /// Route the window of `cell`: every node in the cell and its ring, on
-    /// the surface the fronts in reach complete; then again over the ground
-    /// with the breaches, while a routing cuts any sill, so base levels and
-    /// the reach leaving each basin agree with every cut sill.
+    /// Route the window of `cell` over the ground the plate graph in reach
+    /// of `coasts` and `outlines` leaves, evaluated here: what a view or a
+    /// probe routes a cell by, as the layer routes it over the ground
+    /// layer's samples.
     pub fn route(&self, lattice: &HexLattice, cell: CellId, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Routing {
+        let scarps = Scarps::new();
+        Self::route_over_ground(lattice, cell, |key| {
+            let (wx, wy) = site_world(key);
+            ground_at(wx, wy, seed, coasts, outlines, &scarps)
+        })
+    }
+
+    /// Route the window of `cell`, every node in the cell and its ring,
+    /// over the ground `ground` gives each; then again over the ground with
+    /// the breaches, while a routing cuts any sill, so base levels and the
+    /// reach leaving each basin agree with every cut sill.
+    pub fn route_over_ground(lattice: &HexLattice, cell: CellId, ground: impl Fn(NodeKey) -> Ground) -> Routing {
         // ── Nodes in the window, in key order ──
         let centre = lattice.cell_center(cell);
         let reach = 3 * lattice.radius as i32 + 1;
@@ -638,7 +626,7 @@ impl DrainageEvent {
             .map(|&(i, j)| NEIGHBOURS.map(|(di, dj)| index.get(&(i + di, j + dj)).copied()))
             .collect();
         let site: Vec<(f64, f64)> = keys.iter().map(|&k| site_world(k)).collect();
-        let grounds: Vec<Ground> = keys.iter().map(|&k| self.ground(k, seed, coasts, outlines)).collect();
+        let grounds: Vec<Ground> = keys.iter().map(|&k| ground(k)).collect();
         let elevation: Vec<f64> = grounds.iter().map(|g| g.surface).collect();
         let age: Vec<f64> = grounds.iter().map(|g| g.age).collect();
         let erodibility: Vec<f64> = grounds.iter().map(|g| g.erodibility).collect();
@@ -1096,16 +1084,17 @@ impl WorldEvent for DrainageEvent {
         registry.pre_register::<DrainageIndex>();
     }
 
-    /// What is read beneath: the plate graph's edges and resolved edges over
-    /// this cell's window, which as the coasts and the outlines complete
-    /// the surface the nodes are evaluated on. The cells read are the
-    /// graph's cells under the window plus one ring, so a node's plate is
-    /// in reach from every window that holds the node, and its elevation
-    /// is the same in all of them.
+    /// What is read beneath: the ground layer's samples over this cell's
+    /// window, its footprint and ring, so a node's ground is the same in
+    /// every window that holds it.
     fn deform(&self, scope: &CellScope) {
-        let outlines = outlines_of(scope);
-        let coasts = coasts_of(scope);
-        let routing = self.route(scope.lattice(), scope.cell(), scope.seed(), &coasts, &outlines);
+        let ground: HashMap<NodeKey, Ground> = scope
+            .read::<GroundIndex>()
+            .map(|idx| idx.features().map(|s| (s.key, s.ground)).collect())
+            .unwrap_or_default();
+        let routing = Self::route_over_ground(scope.lattice(), scope.cell(), |key| {
+            *ground.get(&key).expect("a node of the window with no ground published")
+        });
         scope.publish::<DrainageIndex>(routing.owned_cell());
     }
 

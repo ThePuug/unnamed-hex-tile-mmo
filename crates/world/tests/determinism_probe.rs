@@ -22,6 +22,7 @@ fn composite() -> Composite {
     c.add_event(Box::new(MotionEvent::new()));
     c.add_event(Box::new(ThrustingEvent::new()));
     c.add_event(Box::new(ThickeningEvent::new()));
+    c.add_event(Box::new(world::events::ground::GroundEvent::new()));
     c.add_event(Box::new(DrainageEvent::new()));
     c
 }

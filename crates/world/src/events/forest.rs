@@ -813,6 +813,7 @@ mod tests {
         c.add_event(Box::new(thickening::ThickeningEvent::new()));
         c.add_event(Box::new(lithology::LithologyEvent::new()));
         c.add_event(Box::new(scarp::ScarpEvent::new()));
+        c.add_event(Box::new(ground::GroundEvent::new()));
         c.add_event(Box::new(drainage::DrainageEvent::new()));
         c.add_event(Box::new(migration::MigrationEvent::new()));
         c.add_event(Box::new(dissection::DissectionEvent::new()));

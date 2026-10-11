@@ -91,6 +91,7 @@ pub mod den;
 pub mod dissection;
 pub mod drainage;
 pub mod forest;
+pub mod ground;
 pub mod index;
 pub mod scarp;
 pub mod lithology;
@@ -800,6 +801,7 @@ impl Composite {
         composite.add_event(Box::new(thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(lithology::LithologyEvent::new()));
         composite.add_event(Box::new(scarp::ScarpEvent::new()));
+        composite.add_event(Box::new(ground::GroundEvent::new()));
         composite.add_event(Box::new(drainage::DrainageEvent::new()));
         composite.add_event(Box::new(migration::MigrationEvent::new()));
         composite.add_event(Box::new(dissection::DissectionEvent::new()));

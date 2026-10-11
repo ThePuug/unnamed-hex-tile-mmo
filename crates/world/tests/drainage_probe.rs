@@ -31,6 +31,7 @@ fn composite() -> Composite {
     c.add_event(Box::new(ThickeningEvent::new()));
     c.add_event(Box::new(LithologyEvent::new()));
     c.add_event(Box::new(world::events::scarp::ScarpEvent::new()));
+    c.add_event(Box::new(world::events::ground::GroundEvent::new()));
     c.add_event(Box::new(DrainageEvent::new()));
     c
 }
@@ -132,6 +133,34 @@ fn catchment_is_conserved_and_grows_downstream() {
         links += 1;
     }
     println!("{links} channel links in the cell; catchment conserved to {at_sinks:.6} of {n}");
+}
+
+/// The layer routes over the ground layer's samples what a routing over
+/// the plate graph itself gives, node for node: no node's ground is read
+/// short of what it needs. Heights agree to a hair, since the plateau sums
+/// its plate's margins in the order its edges arrive, and the network
+/// exactly.
+#[test]
+fn the_published_routing_is_the_plate_graphs() {
+    let c = composite();
+    c.tile_at(SPAWN.0, SPAWN.1);
+    let cell = spawn_cell();
+    let routed = DrainageEvent::new().route(&lattice(), cell, SEED, &coasts_for(cell), &outlines_for(cell)).owned_cell();
+    c.with_indexes(|ix| {
+        let idx = ix.get::<DrainageIndex>().expect("drainage index registered");
+        let published = idx.cells.get(&cell).expect("spawn cell deformed");
+        assert_eq!(published.nodes.len(), routed.nodes.len(), "a different set of nodes");
+        for (key, a) in &routed.nodes {
+            let b = &published.nodes[key];
+            let near = |x: f64, y: f64| (x - y).abs() < 1e-9;
+            assert!(
+                near(a.elevation, b.elevation) && near(a.surface, b.surface) && near(a.catchment, b.catchment) && near(a.floor, b.floor)
+                    && near(a.base, b.base) && near(a.cut, b.cut) && a.down == b.down && a.next == b.next && a.flooded == b.flooded && a.sill == b.sill,
+                "node {key:?} routes differently: {a:?} against {b:?}"
+            );
+        }
+        println!("{} nodes of {cell:?} route alike", routed.nodes.len());
+    });
 }
 
 /// A cell publishes its own nodes and nothing else, and a channel runs on
