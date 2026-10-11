@@ -15,9 +15,6 @@ pub struct DiagnosticsState {
     /// The camera holds its lowest pose — the boom at its shortest, looking
     /// up — instead of following the ground: an actor seen close.
     pub camera_closeup: bool,
-    /// The camera goes straight to its wanted pose, showing whatever the
-    /// envelope would have hidden.
-    pub camera_envelope_off: bool,
     /// The ground wears the one canopy each summary's vertices carry
     /// instead of reading its parts, the two drawn in the same frame for a
     /// measurement of what the parts cost.

@@ -145,15 +145,11 @@ pub fn update_console_menu(
                             format!("2. Lighting Time            [{}]", held.as_ref().map_or("Game time".to_string(), |at| format!("Held {at}"))),
                             held.is_some(),
                         ),
-                        (
-                            format!("3. Toggle Camera Envelope   [{}]", if diagnostics_state.camera_envelope_off { "Lifted" } else { "On" }),
-                            !diagnostics_state.camera_envelope_off,
-                        ),
-                        (format!("4. Terrain                  [{}]", if diagnostics_state.terrain_hidden { "Hidden" } else { "Shown" }), !diagnostics_state.terrain_hidden),
-                        (format!("5. Camera Close-up          [{}]", if diagnostics_state.camera_closeup { "On" } else { "Off" }), !diagnostics_state.camera_closeup),
-                        (format!("6. Cover                    [{}]", if diagnostics_state.cover_hidden { "Hidden" } else { "Shown" }), !diagnostics_state.cover_hidden),
-                        (format!("7. Canopy                   [{}]", if diagnostics_state.canopy_parts_off { "Vertices" } else { "Parts" }), !diagnostics_state.canopy_parts_off),
-                        (format!("8. Last Level Wood          [{}]", if diagnostics_state.canopy_last_off { "Bare" } else { "Worn" }), !diagnostics_state.canopy_last_off),
+                        (format!("3. Terrain                  [{}]", if diagnostics_state.terrain_hidden { "Hidden" } else { "Shown" }), !diagnostics_state.terrain_hidden),
+                        (format!("4. Camera Close-up          [{}]", if diagnostics_state.camera_closeup { "On" } else { "Off" }), !diagnostics_state.camera_closeup),
+                        (format!("5. Cover                    [{}]", if diagnostics_state.cover_hidden { "Hidden" } else { "Shown" }), !diagnostics_state.cover_hidden),
+                        (format!("6. Canopy                   [{}]", if diagnostics_state.canopy_parts_off { "Vertices" } else { "Parts" }), !diagnostics_state.canopy_parts_off),
+                        (format!("7. Last Level Wood          [{}]", if diagnostics_state.canopy_last_off { "Bare" } else { "Worn" }), !diagnostics_state.canopy_last_off),
                     ];
                     for (text, on) in rows {
                         line(parent, text, 16.0, state_color(on));

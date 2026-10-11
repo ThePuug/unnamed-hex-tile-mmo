@@ -158,23 +158,20 @@ fn handle_terrain_menu(
         console.lighting_time_buf.clear();
         consumed = Some(KeyCode::Numpad2);
     } else if keyboard.just_pressed(KeyCode::Numpad3) {
-        action_writer.write(DevConsoleAction::ToggleCameraEnvelope);
+        action_writer.write(DevConsoleAction::ToggleTerrainHidden);
         consumed = Some(KeyCode::Numpad3);
     } else if keyboard.just_pressed(KeyCode::Numpad4) {
-        action_writer.write(DevConsoleAction::ToggleTerrainHidden);
+        action_writer.write(DevConsoleAction::ToggleCameraCloseup);
         consumed = Some(KeyCode::Numpad4);
     } else if keyboard.just_pressed(KeyCode::Numpad5) {
-        action_writer.write(DevConsoleAction::ToggleCameraCloseup);
+        action_writer.write(DevConsoleAction::ToggleCoverHidden);
         consumed = Some(KeyCode::Numpad5);
     } else if keyboard.just_pressed(KeyCode::Numpad6) {
-        action_writer.write(DevConsoleAction::ToggleCoverHidden);
+        action_writer.write(DevConsoleAction::ToggleCanopyParts);
         consumed = Some(KeyCode::Numpad6);
     } else if keyboard.just_pressed(KeyCode::Numpad7) {
-        action_writer.write(DevConsoleAction::ToggleCanopyParts);
-        consumed = Some(KeyCode::Numpad7);
-    } else if keyboard.just_pressed(KeyCode::Numpad8) {
         action_writer.write(DevConsoleAction::ToggleCanopyLast);
-        consumed = Some(KeyCode::Numpad8);
+        consumed = Some(KeyCode::Numpad7);
     }
 
     if let Some(key) = consumed {

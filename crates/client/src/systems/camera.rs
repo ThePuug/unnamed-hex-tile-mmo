@@ -1,6 +1,6 @@
 //! The gameplay camera: a pose behind the player that follows the heading,
-//! opens toward the ceiling over open ground, and never frames ground that
-//! is not drawn. No key moves it.
+//! opens toward the ceiling over open ground, and comes down to look up a
+//! climb. No key moves it.
 
 use bevy::{core_pipeline::prepass::DepthPrepass, pbr::{DistanceFog, FogFalloff}, prelude::*};
 use crate::systems::{closeup::CloseupCamera, ease};
@@ -9,8 +9,6 @@ use std::f32::consts::PI;
 
 use bevy::render::view::{ColorGrading, ColorGradingGlobal};
 use crate::plugins::{diagnostics::DiagnosticsState, ink::Ink, vignette::VignetteSettings};
-use crate::resources::{EdgeCenters, SummaryMeshes};
-use crate::systems::world::DrawnGround;
 use common_bevy::{
     components::{heading::{Heading, HEADING_SLOTS}, position::VisualPosition, *},
     resources::map::Map,
@@ -25,13 +23,9 @@ const ORBIT_STEP: f32 = 2.0 * PI / ORBIT_STOPS as f32;
 /// heading's steps blend into one turn, quick enough to lag it by a stop
 /// or two at most.
 const YAW_EASE: f32 = 8.0;
-/// Exponential decay constants of the boom and lens: toward a wanted pose
-/// that is safe the frame moves briskly; toward one that is not it moves
-/// slowly, waiting on ground to land, so regions arriving one by one do
-/// not jog it; tightening to the envelope settles in a third of a second.
-const TIGHTEN_EASE: f32 = 10.0;
-const OPEN_EASE: f32 = 4.0;
-const WAIT_EASE: f32 = 1.5;
+/// Exponential decay constant of the boom and lens easing toward the
+/// wanted pose.
+const POSE_EASE: f32 = 4.0;
 /// Exponential decay constant of the pull's smoothing, so the ground
 /// sampled ahead cannot flick the pose as the player walks.
 const PULL_EASE: f32 = 2.0;
@@ -52,9 +46,8 @@ const REST_FOV: f32 = 15_f32.to_radians();
 /// ground to the haze, with the horizon in its upper part and sky above.
 const CEILING_FOV: f32 = 35_f32.to_radians();
 const CEILING_ELEVATION: f32 = 12_f32.to_radians();
-/// The floor's lens and elevation: the narrowest, from the highest.
-const FLOOR_FOV: f32 = 6_f32.to_radians();
-const FLOOR_ELEVATION: f32 = 55_f32.to_radians();
+/// The highest the boom is lifted to clear what stands on it.
+const LIFT_ELEVATION: f32 = 55_f32.to_radians();
 /// How far below the frame's centre the player stands, as a fraction of
 /// the half-height: the look point is that much ahead on the ground. And
 /// how far above it the crest of a climb stands, the same, so the frame
@@ -102,7 +95,7 @@ pub const HAZE_COLOR: Color = Color::linear_rgb(0.50, 0.66, 0.90);
 /// frontier stands behind full haze.
 const HAZE_END_FRAC: f32 = 0.92;
 
-/// Ground distance at which the haze is complete: the footprint ends here.
+/// Ground distance at which the haze is complete.
 pub fn haze_limit_wu() -> f32 {
     common_bevy::summary::reach_wu() * HAZE_END_FRAC
 }
@@ -126,9 +119,6 @@ fn haze() -> DistanceFog {
 /// looks along the yaw through a lens of `fov` with the player a third of
 /// the way down the frame. The sweep is an ellipse on the plane: the
 /// boom's reach on the ground holds and the height follows the slope.
-/// The frame's top ray dips `pitch - fov / 2`
-/// below the horizontal, which is what decides how far the footprint
-/// reaches.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pose {
     /// Radians counter-clockwise from behind a player facing north.
@@ -159,11 +149,6 @@ impl Pose {
     /// short boom.
     fn close(yaw: f32) -> Self {
         Pose { yaw, fov: CLOSE_FOV, reach: CLOSE_REACH, ..Pose::rest(yaw) }
-    }
-
-    /// The tightest pose.
-    fn floor(yaw: f32) -> Self {
-        Pose { yaw, elevation: FLOOR_ELEVATION, fov: FLOOR_FOV, reach: 1.0 }
     }
 
     /// The pose that holds a climb of `up` ahead: the ceiling's lens, and
@@ -232,11 +217,6 @@ impl Pose {
         self.down(tilt) - PLAYER_DROP * self.fov / 2.0
     }
 
-    /// This pose tightened `t` of the way to the floor.
-    fn tightened(self, t: f32) -> Self {
-        self.toward(Pose::floor(self.yaw), t)
-    }
-
     /// Where the camera stands and looks, for a player whose eye is at
     /// `eye` on ground of `tilt`, before the slide over the shoulder.
     fn transform(&self, eye: Vec3, tilt: Tilt) -> Transform {
@@ -247,14 +227,12 @@ impl Pose {
     }
 }
 
-/// The camera's state between frames: the pose it is at, easing toward a
-/// safe one; the pose the envelope is tightening it onto, while it is; the
-/// smoothed pull of the ground ahead; and the fraction of the boom it
-/// stands at.
+/// The camera's state between frames: the pose it is at, easing toward the
+/// wanted one; the smoothed pull of the ground ahead; and the fraction of
+/// the boom it stands at.
 #[derive(Resource)]
 pub struct CameraPose {
     pub pose: Pose,
-    limit: Option<Pose>,
     /// How steeply the ground ahead climbs, in radians, smoothed.
     pub climb: f32,
     /// The ground's plane under the player, smoothed: what the camera
@@ -285,7 +263,7 @@ fn angle_diff(from: f32, to: f32) -> f32 {
 pub fn setup(
     mut commands: Commands,
 ) {
-    commands.insert_resource(CameraPose { pose: Pose::floor(0.0), limit: None, climb: 0.0, tilt: Vec2::ZERO, clearance: 1.0, closed: 0.0 });
+    commands.insert_resource(CameraPose { pose: Pose::rest(0.0), climb: 0.0, tilt: Vec2::ZERO, clearance: 1.0, closed: 0.0 });
     commands.insert_resource(ClearColor(HAZE_COLOR));
 
     commands.spawn((
@@ -451,107 +429,22 @@ fn lens_to_hold(pose: &Pose, tilt: Tilt, up: f32) -> f32 {
     needed.clamp(pose.fov, HILL_FOV)
 }
 
-/// Frame samples across and down the frame for the footprint.
-const FOOTPRINT_COLUMNS: u32 = 9;
-const FOOTPRINT_ROWS: u32 = 7;
-/// Steps of a ladder tried — toward the floor before the yaw holds, or up
-/// to the floor's elevation over an obstruction — and the halvings that
-/// then bring the first passing step back to the edge it crossed, so the
-/// frame is not moved a whole step past it.
-const TIGHTEN_STEPS: u32 = 16;
-const EDGE_HALVINGS: u32 = 8;
-/// The margin, as a fraction of the ladder, the frame keeps inside the
-/// envelope's edge: it opens only while the pose that much looser is safe
-/// too, and tightens only once its own pose is not, to the edge less the
-/// margin. Between the two it holds, so the edge's flicker as the frame's
-/// samples cross regions moves nothing.
-const HOLD_MARGIN: f32 = 1.0 / 32.0;
-
-/// How far a frame ray is marched against the tiles before the ground is
-/// taken as the plane at the player's feet: the tiles the client holds.
-fn march_reach_wu() -> f32 {
-    common_bevy::chunk::FIXED_STREAM_APOTHEM_WU
-}
-
-/// Depressions below the horizontal, in radians, at which the frame is
-/// sampled again when it spans the horizon: from a camera a few tens of
-/// units up, all the ground from a few kilometres out to the haze limit
-/// lies within a degree of the horizon, a sliver the grid's rows miss.
-const HORIZON_ROWS: [f32; 2] = [1_f32.to_radians(), 3_f32.to_radians()];
-
-/// The footprint of `pose` for a player whose eye is at `eye`: the ground
-/// its frustum covers out to the haze limit, sampled on a grid of the
-/// frame and, where the frame spans the horizon, on rows just below it.
-/// A ray is marched against the loaded tiles first, so a hill in front is
-/// where the ray lands; past them the ground is taken as the plane at the
-/// player's feet, and a ray that lands past the haze limit is read at the
-/// limit. A ray that rises above the horizontal and meets no tile shows
-/// the sky, which needs nothing drawn, and is no sample.
-fn footprint(pose: &Pose, eye: Vec3, tilt: Tilt, aspect: f32, map: &Map, origin: Vec3) -> Vec<Vec2> {
-    let camera = pose.transform(eye, tilt);
-    let ground = eye.y - EYE_HEIGHT;
-    let pitch = pose.pitch(tilt);
-    let half_v = (pose.fov / 2.0).tan();
-    let half_h = half_v * aspect;
-    let limit = haze_limit_wu();
-    let mut rows: Vec<f32> = (0..FOOTPRINT_ROWS).map(|row| row as f32 / (FOOTPRINT_ROWS - 1) as f32 * 2.0 - 1.0).collect();
-    let (top, bottom) = (pitch - pose.fov / 2.0, pitch + pose.fov / 2.0);
-    if top < 0.0 {
-        // The row at which a ray lands on the haze limit, then the horizon rows.
-        let height = camera.translation.y - ground;
-        let at_limit = height.atan2(limit);
-        rows.extend(
-            HORIZON_ROWS.iter().copied().chain(std::iter::once(at_limit))
-                .filter(|&down| down > top && down < bottom)
-                .map(|down| (pitch - down).tan() / half_v),
-        );
-    }
-    let mut points = Vec::with_capacity(rows.len() * FOOTPRINT_COLUMNS as usize);
-    for y in rows {
-        for col in 0..FOOTPRINT_COLUMNS {
-            let x = col as f32 / (FOOTPRINT_COLUMNS - 1) as f32 * 2.0 - 1.0;
-            let dir = (camera.rotation * Vec3::new(x * half_h, y * half_v, -1.0)).normalize();
-            let from = camera.translation;
-            let flat = dir.xz();
-            if flat.length_squared() < 1e-6 { continue; }
-            if let Ok(Some(t)) = march(from, dir, march_reach_wu(), map, origin) {
-                points.push((from + dir * t).xz());
-                continue;
-            }
-            if dir.y >= 0.0 {
-                continue;
-            }
-            let t = (ground - from.y) / dir.y;
-            let landing = from.xz() + flat * t;
-            let hit = (landing.distance(from.xz()) <= limit).then_some(landing);
-            points.push(hit.unwrap_or(from.xz() + flat.normalize() * limit));
-        }
-    }
-    points
-}
-
-/// Whether `pose` is safe: every point of its footprint is drawn. The
-/// footprint is rendered coordinates; the cut is judged in the world's.
-fn footprint_is_drawn(pose: &Pose, eye: Vec3, tilt: Tilt, aspect: f32, map: &Map, origin: Vec3, drawn: &DrawnGround) -> bool {
-    footprint(pose, eye, tilt, aspect, map, origin).into_iter().all(|p| drawn.at(p + origin.xz()))
-}
-
-/// The loosest pose on the ladder from `top` to the floor at its yaw that
-/// passes `test`, or None where not even the floor passes.
-fn loosest(top: Pose, test: impl Fn(&Pose) -> bool) -> Option<Pose> {
-    first_passing(|t| top.tightened(t), test)
-}
-
 /// `pose` raised no further than clears its boom of what stands on it —
 /// the hillside behind a player facing down a slope steeper than the plane
 /// follows — its lens and reach untouched. `pose` itself where the boom is
-/// already clear, or where not even the floor's elevation clears it, since
+/// already clear, or where not even the lift's highest clears it, since
 /// only shortening the boom then can.
 fn lifted(pose: Pose, eye: Vec3, tilt: Tilt, map: &Map, origin: Vec3) -> Pose {
-    let top = pose.elevation.max(FLOOR_ELEVATION);
+    let top = pose.elevation.max(LIFT_ELEVATION);
     let at = |t: f32| Pose { elevation: pose.elevation.lerp(top, t), ..pose };
     first_passing(at, |p| boom_is_clear(p, eye, tilt, map, origin)).unwrap_or(pose)
 }
+
+/// Steps of the ladder a lift tries, and the halvings that then bring the
+/// first passing step back to the edge it crossed, so the camera is not
+/// lifted a whole step past it.
+const LADDER_STEPS: u32 = 16;
+const EDGE_HALVINGS: u32 = 8;
 
 /// The first pose on `ladder`, from `ladder(0.0)` to `ladder(1.0)`, that
 /// passes `test`: the ladder's start where it passes, else the edge it
@@ -559,11 +452,11 @@ fn lifted(pose: Pose, eye: Vec3, tilt: Tilt, map: &Map, origin: Vec3) -> Pose {
 /// last failing step and its first passing one. None where not even its
 /// end passes.
 fn first_passing(at: impl Fn(f32) -> Pose, test: impl Fn(&Pose) -> bool) -> Option<Pose> {
-    let first = (0..=TIGHTEN_STEPS).find(|&i| test(&at(i as f32 / TIGHTEN_STEPS as f32)))?;
+    let first = (0..=LADDER_STEPS).find(|&i| test(&at(i as f32 / LADDER_STEPS as f32)))?;
     if first == 0 {
         return Some(at(0.0));
     }
-    let (mut open, mut held) = ((first - 1) as f32 / TIGHTEN_STEPS as f32, first as f32 / TIGHTEN_STEPS as f32);
+    let (mut open, mut held) = ((first - 1) as f32 / LADDER_STEPS as f32, first as f32 / LADDER_STEPS as f32);
     for _ in 0..EDGE_HALVINGS {
         let mid = (open + held) / 2.0;
         if test(&at(mid)) { held = mid } else { open = mid }
@@ -571,44 +464,16 @@ fn first_passing(at: impl Fn(f32) -> Pose, test: impl Fn(&Pose) -> bool) -> Opti
     Some(at(held))
 }
 
-/// One frame's step of the pose over `dt`. `current` turns toward the
-/// wanted yaw, and opens toward the wanted boom and lens while the step
-/// and the margin beyond it are safe: briskly where the wanted pose itself
-/// is safe, slowly where the frame is waiting on ground to land, so
-/// regions arriving one by one do not jog it. Where the frame's own pose
-/// is unsafe it tightens onto the loosest pose that holds its margin — the
-/// turn with the frame tightened as far as it takes, then the yaw held
-/// with the same, then the floor — and `limit` remembers that pose so the
-/// tightening runs to it rather than stopping where the frame first
-/// scrapes back inside the edge. Otherwise the frame holds its boom and
-/// lens and takes the turn.
-fn step(current: Pose, wanted: Pose, limit: &mut Option<Pose>, dt: f32, safe: impl Fn(&Pose) -> bool) -> Pose {
+/// One frame's step of the pose over `dt`: the yaw turning toward the
+/// wanted one, the boom and lens easing toward the wanted pose.
+fn step(current: Pose, wanted: Pose, dt: f32) -> Pose {
     let diff = angle_diff(current.yaw, wanted.yaw);
     let yaw = if diff.abs() > SNAP_THRESHOLD {
         (current.yaw + diff * (1.0 - (-YAW_EASE * dt).exp())).rem_euclid(2.0 * PI)
     } else {
         wanted.yaw
     };
-    let held = |p: &Pose| safe(p) && safe(&p.tightened(-HOLD_MARGIN));
-    let k = if safe(&wanted) { OPEN_EASE } else { WAIT_EASE };
-    let opened = Pose { yaw, ..current.toward(wanted, 1.0 - (-k * dt).exp()) };
-    if held(&opened) {
-        *limit = None;
-        return opened;
-    }
-    let turned = Pose { yaw, ..current };
-    let tighten = 1.0 - (-TIGHTEN_EASE * dt).exp();
-    if !safe(&turned) {
-        let to = loosest(turned, &held)
-            .or_else(|| loosest(current, &held))
-            .unwrap_or(Pose::floor(current.yaw));
-        *limit = Some(to);
-        return Pose { yaw: to.yaw, ..current.toward(to, tighten) };
-    }
-    match *limit {
-        Some(to) if to.fov < current.fov => Pose { yaw, ..current.toward(to, tighten) },
-        _ => turned,
-    }
+    Pose { yaw, ..current.toward(wanted, 1.0 - (-POSE_EASE * dt).exp()) }
 }
 
 /// Points along the boom at which the ground is read for an obstruction,
@@ -684,8 +549,6 @@ pub fn update(
     mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
     actor: Query<(&VisualPosition, &Heading), (With<crate::components::Viewed>, Without<Camera3d>)>,
     map: Res<Map>,
-    meshes: Res<SummaryMeshes>,
-    edges: Res<EdgeCenters>,
     diagnostics: Res<DiagnosticsState>,
     time: Res<Time>,
     render_origin: Res<crate::resources::RenderOrigin>,
@@ -736,16 +599,10 @@ pub fn update(
     if diagnostics.camera_closeup {
         wanted = Pose { yaw: wanted.yaw, elevation: 0.0, fov: CEILING_FOV, reach: 1.0 };
     }
-    let next = if diagnostics.camera_envelope_off || diagnostics.camera_closeup {
-        step(current, wanted, &mut state.limit, dt, |_| true)
-    } else {
-        let drawn = DrawnGround::new((feet + origin).xz(), &edges.0, &meshes);
-        step(current, wanted, &mut state.limit, dt, |p| footprint_is_drawn(p, eye, tilt, aspect, &map, origin, &drawn))
-    };
+    let next = step(current, wanted, dt);
     // What stands on the boom lifts the camera over it at once, so the
     // camera never enters it; it settles back as the step eases it toward
-    // the wanted pose. Raised, the frame's top only dips further, so a
-    // safe pose stays safe.
+    // the wanted pose.
     let next = if diagnostics.camera_closeup { next } else { lifted(next, eye, tilt, &map, origin) };
 
     // An obstruction no elevation clears shortens the boom: the camera
@@ -770,49 +627,16 @@ mod tests {
 
     const WIDE: f32 = 2.0;
 
-    fn reach_of(pose: &Pose) -> f32 {
-        let player = Vec3::new(300.0, 7.0, -40.0);
-        let map = Map::new(qrz::Map::new(1.0, 0.8));
-        footprint(pose, player, Vec2::ZERO, WIDE, &map, Vec3::ZERO).into_iter()
-            .map(|p| p.distance(player.xz()))
-            .fold(0.0, f32::max)
-    }
-
-    /// The claim the streaming rests on: from rest a turn never waits,
-    /// because the frame stays inside the tiles the client holds.
-    #[test]
-    fn the_resting_footprint_fits_inside_the_streamed_tiles() {
-        let inside = common_bevy::chunk::FIXED_STREAM_APOTHEM_WU;
-        for yaw in [0.0, 1.0, 2.5, 4.0] {
-            assert!(reach_of(&Pose::rest(yaw)) < inside, "rest reaches {} of {inside}", reach_of(&Pose::rest(yaw)));
-            assert!(reach_of(&Pose::floor(yaw)) < reach_of(&Pose::rest(yaw)), "the floor is tighter than rest");
-        }
-    }
-
     /// Among trees the camera stands near, slid over the shoulder, its
-    /// frame's top under the horizon and its footprint inside the tiles the
-    /// client always holds, so closing in never waits on the stream.
+    /// frame's top under the horizon.
     #[test]
-    fn the_close_pose_stands_near_inside_the_streamed_tiles() {
-        let inside = common_bevy::chunk::FIXED_STREAM_APOTHEM_WU;
+    fn the_close_pose_stands_near_over_the_shoulder() {
         for yaw in [0.0, 1.0, 2.5, 4.0] {
             let close = Pose::close(yaw);
             assert!(close.boom() < 0.2 * Pose::rest(yaw).boom(), "boom {}", close.boom());
             assert!(close.shift(close.boom()).length() > 0.5 * SHOULDER_WU, "not over the shoulder");
             assert!(close.pitch(Vec2::ZERO) - close.fov / 2.0 > 0.0, "top ray above the horizon");
-            assert!(reach_of(&close) < inside, "close reaches {} of {inside}", reach_of(&close));
         }
-    }
-
-    /// The ceiling's top ray is at or above the horizontal, so its footprint
-    /// runs to the haze limit and no further.
-    #[test]
-    fn the_ceiling_reaches_the_haze_limit() {
-        let ceiling = Pose::ceiling(0.3);
-        let pitch = ceiling.pitch(Vec2::ZERO);
-        assert!(pitch - ceiling.fov / 2.0 <= 1e-4, "top ray {}", pitch - ceiling.fov / 2.0);
-        let far = reach_of(&ceiling);
-        assert!((far - haze_limit_wu()).abs() < CAMERA_DISTANCE + 1.0, "{far} vs {}", haze_limit_wu());
     }
 
     /// Rising ground ahead opens the lens until the frame's top clears
@@ -875,76 +699,6 @@ mod tests {
         let reach = |p: &Pose| p.offset(tilt).length();
         assert!(reach(&facing_up) < reach(&facing_down), "an ellipse: nearer looking up, farther looking down");
         assert!(facing_up.pitch(tilt) < facing_down.pitch(tilt), "the frame looks up the slope, then down it");
-    }
-
-    /// An envelope on the frame's top ray: safe where it dips at least
-    /// `edge` below the horizontal, which tightening makes monotone.
-    fn dips_past(edge: f32) -> impl Fn(&Pose) -> bool {
-        move |p: &Pose| p.pitch(Vec2::ZERO) - p.fov / 2.0 >= edge
-    }
-
-    /// The loosest passing pose on the ladder is the edge itself, not the
-    /// ladder's step past it; a passing top is its own answer, and a ladder
-    /// whose floor fails has none.
-    #[test]
-    fn the_loosest_pose_is_on_the_edge() {
-        let edge = 10_f32.to_radians();
-        let safe = dips_past(edge);
-        let ceiling = Pose::ceiling(0.0);
-        assert!(!safe(&ceiling) && safe(&Pose::floor(0.0)));
-        let found = loosest(ceiling, &safe).expect("the floor is safe");
-        let top = found.pitch(Vec2::ZERO) - found.fov / 2.0;
-        assert!(safe(&found) && top - edge < 0.1_f32.to_radians(), "top {} for an edge at {edge}", top);
-        assert_eq!(loosest(Pose::rest(0.0), &safe), Some(Pose::rest(0.0)));
-        assert_eq!(loosest(ceiling, |_| false), None);
-    }
-
-    /// Pulled toward the ceiling against an edge that flickers by less
-    /// than the margin, the frame opens until it holds its margin inside
-    /// the edge and then stands still: never thrown back, never chasing
-    /// the flicker. When the edge then moves in past the frame, the frame
-    /// tightens once, to its margin inside the new edge, and stands still
-    /// again; when the edge moves back out, it opens again.
-    #[test]
-    fn the_frame_holds_its_margin_inside_a_flickering_edge() {
-        let edge = 10_f32.to_radians();
-        let flicker = 0.3_f32.to_radians();
-        let flickering = |edge: f32| move |p: &Pose, frame: u32| dips_past(edge + if frame % 2 == 0 { flicker } else { -flicker })(p);
-        let dt = 1.0 / 60.0;
-        let mut pose = Pose::rest(0.0);
-        let mut limit = None;
-        let run = |pose: &mut Pose, limit: &mut Option<Pose>, frames: u32, safe: &dyn Fn(&Pose, u32) -> bool| -> (f32, f32) {
-            let (mut opened, mut closed) = (0.0_f32, 0.0_f32);
-            for frame in 0..frames {
-                let next = step(*pose, Pose::ceiling(0.0), limit, dt, |p| safe(p, frame));
-                let d = next.elevation - pose.elevation;
-                if d < 0.0 { opened = opened.max(-d) } else { closed = closed.max(d) }
-                *pose = next;
-            }
-            (opened, closed)
-        };
-        let sliver = 0.001_f32.to_radians();
-        let top = |p: &Pose| p.pitch(Vec2::ZERO) - p.fov / 2.0;
-
-        let (_, closed) = run(&mut pose, &mut limit, 300, &flickering(edge));
-        assert!(closed < sliver, "opening toward the edge closed the frame by {closed}");
-        assert!(pose.elevation < Pose::rest(0.0).elevation, "the frame opened");
-        assert!(dips_past(edge + flicker)(&pose) && !dips_past(edge + flicker)(&pose.tightened(-2.0 * HOLD_MARGIN)),
-            "the frame holds its margin inside the edge, and no more: top {} for an edge at {edge}", top(&pose));
-        let (opened, closed) = run(&mut pose, &mut limit, 120, &flickering(edge));
-        assert!(opened < sliver && closed < sliver, "the held frame moved: opened {opened} closed {closed}");
-
-        let inward = edge + 6_f32.to_radians();
-        let (opened, _) = run(&mut pose, &mut limit, 300, &flickering(inward));
-        assert!(opened < sliver, "tightening to the new edge opened the frame by {opened}");
-        assert!(dips_past(inward + flicker)(&pose) && !dips_past(inward + flicker)(&pose.tightened(-2.0 * HOLD_MARGIN)),
-            "the frame holds its margin inside the new edge: top {} for an edge at {inward}", top(&pose));
-        let (opened, closed) = run(&mut pose, &mut limit, 120, &flickering(inward));
-        assert!(opened < sliver && closed < sliver, "the held frame moved: opened {opened} closed {closed}");
-
-        let (_, closed) = run(&mut pose, &mut limit, 300, &flickering(edge));
-        assert!(closed < sliver, "opening back out closed the frame by {closed}");
-        assert!(!dips_past(inward)(&pose), "the frame opened back out past the edge that moved away");
     }
 
     /// A climb ahead brings the hill pose down until its crest stands its
@@ -1078,17 +832,5 @@ mod tests {
         let drawn_in = eye_in_frame(&near, Vec2::ZERO);
         assert!(drawn_in.x < -0.1, "left of centre: {drawn_in:?}");
         assert!((drawn_in.y - at_full.y).abs() < 0.02, "same height: {drawn_in:?} vs {at_full:?}");
-    }
-
-    /// Tightening is monotone: each step toward the floor reaches no further
-    /// than the last, so the first safe step of the ladder is the loosest.
-    #[test]
-    fn tightening_never_reaches_further() {
-        let mut last = f32::MAX;
-        for i in 0..=TIGHTEN_STEPS {
-            let far = reach_of(&Pose::ceiling(0.0).tightened(i as f32 / TIGHTEN_STEPS as f32));
-            assert!(far <= last + 1e-3, "step {i} reaches {far} after {last}");
-            last = far;
-        }
     }
 }

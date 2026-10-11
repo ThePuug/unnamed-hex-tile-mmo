@@ -18,7 +18,6 @@ pub enum DevConsoleAction {
     /// Step a field of the held lighting clock's date this many times.
     StepLightingDate(DateField, i32),
     SyncLightingClock,
-    ToggleCameraEnvelope,
     ToggleTerrainHidden,
     ToggleCoverHidden,
     ToggleCameraCloseup,
@@ -113,10 +112,6 @@ pub fn execute_console_actions(
             DevConsoleAction::SyncLightingClock => {
                 state.lighting.sync();
                 info!("Lighting clock: game time");
-            }
-            DevConsoleAction::ToggleCameraEnvelope => {
-                state.camera_envelope_off = !state.camera_envelope_off;
-                info!("Camera envelope: {}", if state.camera_envelope_off { "LIFTED" } else { "ON" });
             }
             DevConsoleAction::ToggleTerrainHidden => {
                 state.terrain_hidden = !state.terrain_hidden;
