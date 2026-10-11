@@ -669,18 +669,17 @@ mod tests {
         }
     }
 
-    /// A summary reads its samples as players left them: a tree felled on
-    /// a tile no part is read at leaves it be, one felled on a sample comes
-    /// off its part's canopy, and a reading taken before the change keeps
-    /// the changes as they stood. Each change is kept fresh, before and
-    /// after, until the summaries take it.
+    /// A summary reads its tiles as players left them: a tree felled on a
+    /// tile no part is read at leaves it be, one felled on a tile a part is
+    /// read at comes off that part's canopy, and a reading taken before the
+    /// change keeps the changes as they stood. Each change is kept fresh,
+    /// before and after, until the summaries take it.
     #[test]
-    fn a_summary_reads_its_samples_as_players_left_them() {
-        let r = 4;
+    fn a_summary_reads_its_tiles_as_players_left_them() {
+        let r = 13;
         let pines = |cell: Option<common::summary::SummaryCell>| -> u16 {
             cell.expect("every sample is there").canopy.iter().map(|part| part.share(Content::Pine)).sum()
         };
-        let a_site = common::cover::CANOPY_WHOLE / common::SITES.len() as u16;
         let generated = pines(summarize(r, 0, 0, &Wood));
         let pine = Cover::NONE.with(0, Content::Pine);
         let mut changes = WorldChanges::default();
@@ -691,7 +690,7 @@ mod tests {
         let before = changes.over(Wood);
         let (dq, dr) = sample_offsets(r)[2];
         changes.set(dq, dr, pine, Cover::NONE);
-        assert_eq!(pines(summarize(r, 0, 0, &changes.over(Wood))), generated - a_site, "the felled sample is off the canopy");
+        assert!(pines(summarize(r, 0, 0, &changes.over(Wood))) < generated, "the felled tile is off its part's canopy");
         assert_eq!(pines(summarize(r, 0, 0, &before)), generated, "a reading already out keeps what it set out with");
         let fresh = changes.take_fresh();
         assert_eq!(fresh.iter().map(|c| (c.q, c.r)).collect::<Vec<_>>(), vec![(1, 1), (dq, dr)]);

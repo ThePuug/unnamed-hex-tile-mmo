@@ -1,13 +1,13 @@
 //! The summary sampling rule: what one height, one water surface and one
 //! outcrop stand for a group of tiles at a distance, read from seven of
-//! them, and what canopy each of its nine parts wears, read at the part's
-//! own tile. Every producer of a summary — the client's map, the server,
-//! the world viewer — reads this one rule, or their silhouettes differ
-//! where they meet.
+//! them, and what canopy each of its nine parts wears, the mean cover of
+//! the tiles the part stands for. Every producer of a summary — the
+//! client's map, the server, the world viewer — reads this one rule, or
+//! their silhouettes differ where they meet.
 
 use serde::{Deserialize, Serialize};
 
-use crate::cover::{Canopy, Cover, Outcrop};
+use crate::cover::{Canopy, Cover, Outcrop, SITES};
 
 /// What a summary is read from: tiles, each giving its height, the water
 /// over it and its cover at once, so a source that materialises a tile
@@ -92,42 +92,84 @@ pub fn part_offsets(r: u32) -> [(i32, i32); PARTS] {
 /// summary's tiles, whose ground is the width's third squared, at a tile's
 /// sites each.
 pub fn part_sites(r: u32) -> u32 {
-    (scale(r) as u32 / 3).pow(2) * crate::cover::SITES.len() as u32
+    (scale(r) as u32 / 3).pow(2) * SITES.len() as u32
 }
 
-/// What stands on each part of a summary players have changed, counted
-/// from its tiles: its pine, deciduous and brush. A part is counted the
-/// first time a change lands in it, from its tiles as generated, which a
-/// change has had built around the player by then; each change after moves
-/// the count by what it took or left, so a part felled whole reads bare. A
-/// part no change has reached is not counted, and wears its tile's reading.
+/// The tiles one part of a summary of radius `r` is read at, as offsets
+/// from the part's own tile: at the first level the tile alone, which is
+/// the part; above it the tiles of the nine parts of the finer summary
+/// whose ground the part is, each read at its own tile. At the level after
+/// the first those are every tile the part holds, so its parts are the
+/// means of the first level's. Past it a part holds 81 tiles, then 729,
+/// and read whole a band would read every tile out to the reach where
+/// [`summarize_ground`] reads nine a summary; so a coarser part is the
+/// mean of the finer parts under it each read at its own tile, nine reads,
+/// which meets the finer level's parts in the mean, not tile for tile.
+pub fn part_samples(r: u32) -> impl Iterator<Item = (i32, i32)> {
+    let finer = ((scale(r) / 3 - 1).max(0) / 2) as u32;
+    part_offsets(finer).into_iter().take(if finer == 0 { 1 } else { PARTS })
+}
+
+/// The pine, deciduous and brush the [`part_samples`] of part `part` of
+/// the summary at `(sq, sr)` on the lattice of radius `r` hold, counted in
+/// their sites. None unless the source has every one.
+pub fn part_counts(r: u32, sq: i32, sr: i32, part: usize, source: &impl SummarySource) -> Option<[u32; 3]> {
+    let (cq, cr) = center_tile(r, sq, sr);
+    let (pq, pr) = part_offsets(r)[part];
+    let mut counts = [0; 3];
+    for (dq, dr) in part_samples(r) {
+        let tally = Canopy::tally(source.sample(cq + pq + dq, cr + pr + dr)?.cover);
+        for kind in 0..3 {
+            counts[kind] += tally[kind];
+        }
+    }
+    Some(counts)
+}
+
+/// What stands on each part of a summary players have changed: its pine,
+/// deciduous and brush over the whole part. A part is counted the first
+/// time a change lands in it, from its reading as generated, each of its
+/// [`part_samples`] standing for as many of its tiles; each change after
+/// moves the count by what it took or left. So a change moves the part's
+/// mean by that tile's share of it and never by more, the first one from
+/// the reading the part wore, and a part felled whole reads bare. A part
+/// no change has reached is not counted, and wears its reading.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PartStats([Option<[u32; 3]>; PARTS]);
 
 impl PartStats {
     /// Moves part `part` of a summary of radius `r` from what `before`
     /// holds to what `after` holds, counting it first by `count` — its
-    /// trees as generated — where it is not counted yet, and answers the
-    /// part's canopy now.
+    /// [`part_counts`] as generated — where it is not counted yet, and
+    /// answers the part's canopy now.
     pub fn change(&mut self, r: u32, part: usize, before: Cover, after: Cover, count: impl FnOnce() -> [u32; 3]) -> Canopy {
-        let counts = self.0[part].get_or_insert_with(count);
+        // Counted in sites over the samples' number, so a sample stands
+        // for its share of the part's tiles exactly, and a changed tile
+        // for one.
+        let reads = part_samples(r).count() as u32;
+        let tiles = part_sites(r) / SITES.len() as u32;
+        let counts = self.0[part].get_or_insert_with(|| count().map(|c| c * tiles));
         let (took, left) = (Canopy::tally(before), Canopy::tally(after));
         for kind in 0..3 {
-            counts[kind] = (counts[kind] + left[kind]).saturating_sub(took[kind]);
+            counts[kind] = (counts[kind] + left[kind] * reads).saturating_sub(took[kind] * reads);
         }
-        Canopy::of_counts(*counts, part_sites(r))
+        Canopy::of_counts(*counts, part_sites(r) * reads)
     }
 }
 
 /// Each part's canopy of the summary at `(sq, sr)` on the lattice of
-/// radius `r`, read at its own tile: what [`summarize`] reads, from a
-/// source that may differ from the one the rest of the summary is read
-/// from. None unless the source has all nine.
+/// radius `r`: the mean cover of the tiles it stands for, read at its
+/// [`part_samples`], so the far ground draws a stand's density rather than
+/// one tile's, and a part wears the mean of the finer parts under it as
+/// those samples read them, the levels meeting in the density they draw.
+/// What [`summarize`] reads, from a source that may differ from the one
+/// the rest of the summary is read from. None unless the source has every
+/// sample.
 pub fn canopy_parts(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Option<[Canopy; PARTS]> {
-    let (cq, cr) = center_tile(r, sq, sr);
+    let sites = (part_samples(r).count() * SITES.len()) as u32;
     let mut canopy = [Canopy::NONE; PARTS];
-    for (part, (dq, dr)) in part_offsets(r).into_iter().enumerate() {
-        canopy[part] = Canopy::of(source.sample(cq + dq, cr + dr)?.cover);
+    for (part, canopy) in canopy.iter_mut().enumerate() {
+        *canopy = Canopy::of_counts(part_counts(r, sq, sr, part, source)?, sites);
     }
     Some(canopy)
 }
@@ -144,15 +186,22 @@ pub fn sampled_by(r: u32, q: i32, rr: i32) -> Option<(i32, i32)> {
     })
 }
 
-/// The summary at `(sq, sr)` on the lattice of radius `r`, read from its
-/// [`part_offsets`] tiles: the water by [`wet_parts`] and each part's
-/// canopy by [`Canopy::of`] from its own tile, and the height and the
-/// outcrop by [`select_center_z`] and [`Outcrop::of`] from the seven
-/// samples, unless the summary holds water: then it stands at the highest
-/// ground its water covers, so the water is drawn on the ground and runs
-/// down its valley on the ground's own corners. None unless the source has
-/// all nine (the client's map while chunks stream in).
+/// The summary at `(sq, sr)` on the lattice of radius `r`: its ground by
+/// [`summarize_ground`] and its canopy by [`canopy_parts`]. None unless the
+/// source has every tile either reads (the client's map while chunks
+/// stream in).
 pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Option<SummaryCell> {
+    Some(SummaryCell { canopy: canopy_parts(r, sq, sr, source)?, ..summarize_ground(r, sq, sr, source)? })
+}
+
+/// The summary at `(sq, sr)` on the lattice of radius `r` with its canopy
+/// bare, read from its [`part_offsets`] tiles: the water by [`wet_parts`],
+/// and the height and the outcrop by [`select_center_z`] and
+/// [`Outcrop::of`] from the seven samples, unless the summary holds water:
+/// then it stands at the highest ground its water covers, so the water is
+/// drawn on the ground and runs down its valley on the ground's own
+/// corners. None unless the source has all nine.
+pub fn summarize_ground(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Option<SummaryCell> {
     let (cq, cr) = center_tile(r, sq, sr);
     let mut read = [None; PARTS];
     for (i, (dq, dr)) in part_offsets(r).into_iter().enumerate() {
@@ -169,12 +218,7 @@ pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Optio
             select_center_z(&zs)
         }
     };
-    Some(SummaryCell {
-        z,
-        wet,
-        canopy: parts.map(|part| Canopy::of(part.cover)),
-        outcrop: Outcrop::of(&covers),
-    })
+    Some(SummaryCell { z, wet, canopy: [Canopy::NONE; PARTS], outcrop: Outcrop::of(&covers) })
 }
 
 /// Which of a summary's parts stand under water above the sea, a bit to
@@ -224,7 +268,7 @@ pub fn select_center_z(tile_zs: &[i32]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cover::Content;
+    use crate::cover::{Content, CANOPY_WHOLE};
 
     /// A source with a hole gives no summary; a whole one gives the three
     /// rules' answers from the seven samples, and a canopy at every part.
@@ -251,6 +295,95 @@ mod tests {
         assert_eq!(cell.canopy, [Canopy::of(Cover::NONE.with(0, Content::Pine)); PARTS]);
         let cell = summarize(1, 0, 0, &Flat(None, true)).expect("every part is there");
         assert_eq!((cell.z, cell.wet), (8, 1 << 1), "the summary stands under its water");
+    }
+
+    /// A stand of every kind and none, a tile's sites drawn by a hash of
+    /// the tile, so no two neighbours need agree.
+    struct Stand;
+    impl SummarySource for Stand {
+        fn sample(&self, q: i32, r: i32) -> Option<TileSample> {
+            let kinds = [Content::Empty, Content::Pine, Content::Pine, Content::Deciduous, Content::Brush];
+            let cover = (0..SITES.len()).fold(Cover::NONE, |cover, k| {
+                let h = (q as u32).wrapping_mul(0x9E37_79B1) ^ (r as u32).wrapping_mul(0x85EB_CA77) ^ (k as u32).wrapping_mul(0xC2B2_AE3D);
+                cover.with(k, kinds[(h ^ h >> 15) as usize % kinds.len()])
+            });
+            Some(TileSample { z: 0, water: None, cover })
+        }
+    }
+
+    /// Each kind's share of the ground the parts hold, over their number:
+    /// their mean, in steps.
+    fn mean(parts: &[Canopy]) -> [f64; 3] {
+        let kinds = [Content::Pine, Content::Deciduous, Content::Brush];
+        kinds.map(|kind| parts.iter().map(|p| p.share(kind) as f64).sum::<f64>() / parts.len() as f64)
+    }
+
+    /// At the first level a part is its tile, exactly.
+    #[test]
+    fn the_first_level_parts_are_their_tiles() {
+        let level = LOD_LEVELS[1];
+        for (sq, sr) in [(0, 0), (5, -3)] {
+            let (cq, cr) = center_tile(level, sq, sr);
+            let tiles = part_offsets(level).map(|(dq, dr)| Canopy::of(Stand.sample(cq + dq, cr + dr).unwrap().cover));
+            assert_eq!(canopy_parts(level, sq, sr, &Stand), Some(tiles));
+        }
+    }
+
+    /// A part is the mean, to the nearest step, of the finer summary under
+    /// it, its nine parts each read at its own tile; at the level after the
+    /// first those readings are the first level's own parts, so the two
+    /// levels agree exactly.
+    #[test]
+    fn a_part_is_the_mean_of_the_finer_parts_under_it() {
+        for i in 2..LOD_LEVELS.len() {
+            let (level, finer) = (LOD_LEVELS[i], LOD_LEVELS[i - 1]);
+            for (sq, sr) in [(0, 0), (2, -1), (-3, 4)] {
+                let (cq, cr) = center_tile(level, sq, sr);
+                let parts = canopy_parts(level, sq, sr, &Stand).expect("the stand has every tile");
+                for (part, (oq, or)) in part_offsets(level).into_iter().enumerate() {
+                    let (fq, fr) = (cq + oq, cr + or);
+                    let (fsq, fsr) = (fq / scale(finer), fr / scale(finer));
+                    let read = part_offsets(finer).map(|(dq, dr)| Canopy::of(Stand.sample(fq + dq, fr + dr).unwrap().cover));
+                    if i == 2 {
+                        assert_eq!(canopy_parts(finer, fsq, fsr, &Stand), Some(read), "the first level's parts are its tiles");
+                    }
+                    let kinds = [Content::Pine, Content::Deciduous, Content::Brush];
+                    for (kind, mean) in kinds.into_iter().zip(mean(&read)) {
+                        let share = parts[part].share(kind) as f64;
+                        assert!((share - mean).abs() <= 0.5, "level {level} part {part} {kind:?}: {share} against {mean}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A revision moves a part by the changed tile's share of it: the
+    /// first change starts from the reading the part wore, a pine felled
+    /// moves the part by its site's share of it give or take the rounding,
+    /// never back up, and the part felled whole reads bare.
+    #[test]
+    fn a_revision_moves_its_part_by_the_tiles_share() {
+        let pines = |n: usize| (0..n).fold(Cover::NONE, |c, k| c.with(k, Content::Pine));
+        for &level in &LOD_LEVELS[1..] {
+            let worn = canopy_parts(level, 1, -1, &Stand).expect("the stand has every tile");
+            let mut stats = PartStats::default();
+            for part in 0..PARTS {
+                let count = || part_counts(level, 1, -1, part, &Stand).expect("the stand has every tile");
+                assert_eq!(stats.change(level, part, Cover::NONE, Cover::NONE, count), worn[part], "level {level} part {part}");
+            }
+            let full = (part_samples(level).count() * SITES.len()) as u32;
+            let site = CANOPY_WHOLE as f64 / part_sites(level) as f64;
+            let mut stats = PartStats::default();
+            let mut now = stats.change(level, 4, pines(3), pines(3), || [full, 0, 0]);
+            assert_eq!(now.share(Content::Pine), CANOPY_WHOLE);
+            for _ in 0..part_sites(level) {
+                let next = stats.change(level, 4, pines(1), Cover::NONE, || unreachable!("counted once"));
+                let fell = now.share(Content::Pine) as f64 - next.share(Content::Pine) as f64;
+                assert!(fell >= 0.0 && fell <= site + 1.0, "level {level}: a pine moved its part {fell} steps, a site being {site}");
+                now = next;
+            }
+            assert!(now.is_empty(), "level {level}: the part felled whole");
+        }
     }
 
     /// Every tile a summary samples names that summary, and no other tile

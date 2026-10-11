@@ -6,7 +6,7 @@ use common_bevy::{
     components::{heading::Heading, Loc},
     geometry::flat_top_tile_center,
     message::{Event, SummaryData, SummaryKey, *},
-    summary::{compute_active_bands, ladder, mesh_region_lattice, part_tiles, sampled_by, summarize, summary_lattice, SummaryCell, SummarySource, LOD_LEVELS},
+    summary::{compute_active_bands, ladder, mesh_region_lattice, sampled_by, summarize_ground, summary_lattice, SummaryCell, SummarySource, LOD_LEVELS},
     summary_mesh::{MeshRegionKey, visible_lod_regions},
 };
 
@@ -236,16 +236,17 @@ pub fn poll_summary_tasks(
 /// stats and so never counts twice; the rest from the world as `laid`,
 /// with the players' changes over its samples.
 fn generate(r: u32, sq: i32, sr: i32, generated: &impl SummarySource, laid: &impl SummarySource) -> SummaryCell {
-    let mut cell = summarize(r, sq, sr, laid).expect("the registry has every tile");
-    cell.canopy = common::summary::canopy_parts(r, sq, sr, generated).expect("the registry has every tile");
-    cell
+    SummaryCell {
+        canopy: common::summary::canopy_parts(r, sq, sr, generated).expect("the registry has every tile"),
+        ..summarize_ground(r, sq, sr, laid).expect("the registry has every tile")
+    }
 }
 
 /// Take every change players made into the summaries. The part holding the
-/// changed tile moves at every level by what the change took or left, a
-/// summary never computed being computed first and a part never changed
-/// counted first from its tiles as generated, which are built around the
-/// player; so no change is missed and none counted twice. Each summary
+/// changed tile moves at every level by the tile's share of what the
+/// change took or left, a summary never computed being computed first and
+/// a part never changed counted first from its reading as generated; so
+/// no change is missed and none counted twice. Each summary
 /// sampling the tile reads its outcrop again, as players left it. A
 /// summary whose drawing moved goes to every client its region was sent to.
 pub fn revise_summaries(
@@ -266,12 +267,7 @@ pub fn revise_summaries(
         for (level, sq, sr, part) in ladder(change.q, change.r) {
             let key = SummaryKey { r: level, sq, sr };
             let (cell, stats) = summary_cache.touch(key, || generate(level, sq, sr, &generated, &laid));
-            let count = || {
-                part_tiles(level, sq, sr, part).into_iter().fold([0; 3], |sum, (q, r)| {
-                    let tally = common::Canopy::tally(generated.sample(q, r).expect("the registry has every tile").cover);
-                    std::array::from_fn(|kind| sum[kind] + tally[kind])
-                })
-            };
+            let count = || common::summary::part_counts(level, sq, sr, part, &generated).expect("the registry has every tile");
             let canopy = stats.change(level, part, change.before, change.after, count);
             if cell.canopy[part] != canopy {
                 cell.canopy[part] = canopy;
@@ -282,7 +278,7 @@ pub fn revise_summaries(
             let Some((sq, sr)) = sampled_by(level, change.q, change.r) else { continue };
             let key = SummaryKey { r: level, sq, sr };
             let Some(cell) = summary_cache.get_mut(&key) else { continue };
-            let outcrop = summarize(level, sq, sr, &laid).expect("the registry has every tile").outcrop;
+            let outcrop = summarize_ground(level, sq, sr, &laid).expect("the registry has every tile").outcrop;
             if cell.outcrop != outcrop {
                 cell.outcrop = outcrop;
                 moved.insert(key);

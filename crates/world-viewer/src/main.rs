@@ -709,9 +709,9 @@ fn orogen_ramp(z: f64) -> (f64, f64, f64) {
 /// parts' wetness, blended across the triangle of parts around a point,
 /// crosses half, as the terrain paints it. What
 /// the band costs is logged: the first tile, which opens the cells, and
-/// then the summaries, each nine tiles.
+/// then the summaries, each nine tiles and its parts' samples.
 fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8> {
-    use common::summary::{part_offsets, scale as summary_scale, summarize};
+    use common::summary::{part_offsets, part_samples, scale as summary_scale, summarize};
     let origin_x = cli.center_x - cli.radius;
     let origin_y = cli.center_y - cli.radius;
     let s = summary_scale(r) as f64;
@@ -740,16 +740,17 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
     let took = t.elapsed();
     let wet = summaries.values().filter(|c| c.wet != 0).count();
     let wooded = summaries.values().filter(|c| c.canopy.iter().any(|part| !part.is_empty())).count();
+    let reads = summaries.len() * common::summary::PARTS * (1 + part_samples(r).count());
     log::info!(
         "LoD r={r} (summaries {s} tiles wide): {} summaries, {} of them water, {} wooded, from {} samples; first tile {:.0} ms, then {:.2} s wall over every core ({:.0} µs per summary, {:.1} per sample)",
         summaries.len(),
         wet,
         wooded,
-        summaries.len() * common::summary::PARTS,
+        reads,
         first.as_secs_f64() * 1e3,
         took.as_secs_f64(),
         took.as_secs_f64() * 1e6 / summaries.len() as f64,
-        took.as_secs_f64() * 1e6 / (summaries.len() * common::summary::PARTS) as f64
+        took.as_secs_f64() * 1e6 / reads as f64
     );
 
     let summaries = &summaries;
