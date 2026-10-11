@@ -318,8 +318,7 @@ fn main() {
         );
     }
 
-    // The tile under each pixel's height, which the hillshade reads across
-    // pixels: at most scales a pixel's neighbouring tile is not in view.
+    // The tile under each pixel's height, which the slope is read across.
     let heights: Vec<f64> = (0..h)
         .flat_map(|py| (0..w).map(move |px| (px, py)))
         .map(|(px, py)| {
@@ -445,24 +444,8 @@ fn main() {
                                 // out to the orogen ceiling at 1,200.
                                 color = orogen_ramp(elevation);
                                 if elevation > 0.0 {
-                                    // Slope from 6 hex neighbors
-                                    let max_diff = [
-                                        (1, 0),
-                                        (-1, 0),
-                                        (0, 1),
-                                        (0, -1),
-                                        (1, -1),
-                                        (-1, 1),
-                                    ]
-                                    .iter()
-                                    .map(|&(dq, dr)| {
-                                        let ne =
-                                            tc.get(&(q + dq, r + dr)).map_or(0.0, |t| t.0);
-                                        (ne - elevation).abs()
-                                    })
-                                    .fold(0.0f64, f64::max);
-
-                                    color = slope_shade(color, max_diff);
+                                    let (dx, dy) = slope_at(heights, w, h, px, py, scale);
+                                    color = slope_shade(color, dx.hypot(dy));
                                 }
                             }
                             Layer::Hillshade => {
@@ -869,14 +852,23 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
         .collect()
 }
 
-/// How lit the ground under a pixel is, from nothing to one, by the light
-/// from the north-west at 45°, its slope read across the pixels either side
-/// at true scale, a z being [`world::RISE`] of a tile's spacing.
-fn hillshade(heights: &[f64], w: usize, h: usize, px: usize, py: usize, scale: f64) -> f64 {
-    let at = |x: usize, y: usize| heights[y.min(h - 1) * w + x.min(w - 1)] * world::RISE;
+/// How steeply the ground under a pixel climbs along x and y, in z per
+/// world unit, read across the pixels either side: at most scales a pixel's
+/// neighbouring tile is not in view, and the pixels' are.
+fn slope_at(heights: &[f64], w: usize, h: usize, px: usize, py: usize, scale: f64) -> (f64, f64) {
+    let at = |x: usize, y: usize| heights[y.min(h - 1) * w + x.min(w - 1)];
     let (x0, x1, y0, y1) = (px.saturating_sub(1), px + 1, py.saturating_sub(1), py + 1);
     let dx = (at(x1, py) - at(x0, py)) / ((x1.min(w - 1) - x0).max(1) as f64 * scale);
     let dy = (at(px, y1) - at(px, y0)) / ((y1.min(h - 1) - y0).max(1) as f64 * scale);
+    (dx, dy)
+}
+
+/// How lit the ground under a pixel is, from nothing to one, by the light
+/// from the north-west at 45°, at true scale, a z being [`world::RISE`] of a
+/// tile's spacing.
+fn hillshade(heights: &[f64], w: usize, h: usize, px: usize, py: usize, scale: f64) -> f64 {
+    let (dx, dy) = slope_at(heights, w, h, px, py, scale);
+    let (dx, dy) = (dx * world::RISE, dy * world::RISE);
     // The light points up and towards the top-left of the image.
     let light = (-0.5, -0.5, std::f64::consts::FRAC_1_SQRT_2);
     let n = (-dx, -dy, 1.0);
