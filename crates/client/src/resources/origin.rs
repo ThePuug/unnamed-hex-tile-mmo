@@ -55,6 +55,13 @@ impl RenderOrigin {
         map.convert(tile - self.tile)
     }
 
+    /// The tile under a rendered point: the tile it is over relative to the
+    /// origin, added to the origin's, so the lookup is exact however far
+    /// out the world is.
+    pub fn tile_at(&self, map: &Map, render: Vec3) -> Qrz {
+        self.tile + map.convert(render)
+    }
+
     /// Where a world vector is drawn. A subtraction of two large vectors,
     /// exact only to the world's own precision: for what already lives as
     /// a vector, never for a position that has a tile.

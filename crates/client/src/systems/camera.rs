@@ -3,6 +3,7 @@
 //! climb. No key moves it.
 
 use bevy::{core_pipeline::prepass::DepthPrepass, pbr::{DistanceFog, FogFalloff}, prelude::*};
+use crate::resources::RenderOrigin;
 use crate::systems::{closeup::CloseupCamera, ease};
 use qrz::{Convert, Qrz};
 use std::f32::consts::PI;
@@ -12,7 +13,7 @@ use crate::plugins::{diagnostics::DiagnosticsState, ink::Ink, vignette::Vignette
 use common_bevy::{
     components::{heading::{Heading, HEADING_SLOTS}, position::VisualPosition, *},
     resources::map::Map,
-    systems::movement::{standing_y, surface_y},
+    systems::movement::{standing_y, surface_y, surface_y_from},
 };
 
 /// Orbit stops: one per heading, so the camera can stand behind any.
@@ -317,15 +318,15 @@ const MARCH_STEPS: u32 = 12;
 /// `Ok(None)` when it flies free, `Err(())` when it crosses ground that
 /// is not loaded before meeting any. Read against the tiles' standing
 /// heights, so a slope reads at the resolution of its tiles. The ray is
-/// in rendered coordinates; `origin` is what the map's are short of them.
-fn march(from: Vec3, dir: Vec3, reach: f32, map: &Map, origin: Vec3) -> Result<Option<f32>, ()> {
+/// in rendered coordinates, read on the map through `origin`.
+fn march(from: Vec3, dir: Vec3, reach: f32, map: &Map, origin: &RenderOrigin) -> Result<Option<f32>, ()> {
     for i in 1..=MARCH_STEPS {
         let f = i as f32 / MARCH_STEPS as f32;
         let t = reach * f * f;
         let at = from + dir * t;
-        let here: Qrz = map.convert(at + origin);
+        let here = origin.tile_at(map, at);
         let Some((floor, _)) = map.get_by_qr(here.q, here.r) else { return Err(()) };
-        if at.y + origin.y <= standing_y(floor, map) {
+        if at.y <= standing_y(floor, map) {
             return Ok(Some(t));
         }
     }
@@ -363,16 +364,16 @@ fn majority_mean(readings: &[f32]) -> f32 {
 /// fitted to the tiles' standing heights on rings around the feet, capped
 /// at the steepest tilt. None where a ring is not loaded. Six directions
 /// on each ring make the fit's normal equations diagonal.
-fn ground_tilt(player: Vec3, rings: [f32; 2], map: &Map, origin: Vec3) -> Option<Tilt> {
+fn ground_tilt(player: Vec3, rings: [f32; 2], map: &Map, origin: &RenderOrigin) -> Option<Tilt> {
     let (mut xh, mut zh, mut xx) = (0.0_f32, 0.0_f32, 0.0_f32);
     for radius in rings {
         for k in 0..6 {
             let angle = k as f32 * std::f32::consts::TAU / 6.0;
             let p = Vec2::from_angle(angle) * radius;
             let at = player + Vec3::new(p.x, 0.0, p.y);
-            let here: Qrz = map.convert(at + origin);
+            let here = origin.tile_at(map, at);
             let (floor, _) = map.get_by_qr(here.q, here.r)?;
-            let h = standing_y(floor, map) - (player.y + origin.y);
+            let h = standing_y(floor, map) - player.y;
             xh += p.x * h;
             zh += p.y * h;
             xx += p.x * p.x;
@@ -389,7 +390,7 @@ fn ground_tilt(player: Vec3, rings: [f32; 2], map: &Map, origin: Vec3) -> Option
 /// most of them on whether there is ground there. Zero where there is
 /// none; None where too little of it is loaded to read. What brings the
 /// camera down to look up it.
-fn climb_ahead(feet: Vec3, heading: Heading, half_width: f32, map: &Map, origin: Vec3) -> Option<f32> {
+fn climb_ahead(feet: Vec3, heading: Heading, half_width: f32, map: &Map, origin: &RenderOrigin) -> Option<f32> {
     let eye = feet + Vec3::Y * EYE_HEIGHT;
     let ahead = heading.to_world_dir();
     let mut grades = Vec::with_capacity((2 * SWEEP_RAYS + 1) as usize);
@@ -434,7 +435,7 @@ fn lens_to_hold(pose: &Pose, tilt: Tilt, up: f32) -> f32 {
 /// follows — its lens and reach untouched. `pose` itself where the boom is
 /// already clear, or where not even the lift's highest clears it, since
 /// only shortening the boom then can.
-fn lifted(pose: Pose, eye: Vec3, tilt: Tilt, map: &Map, origin: Vec3) -> Pose {
+fn lifted(pose: Pose, eye: Vec3, tilt: Tilt, map: &Map, origin: &RenderOrigin) -> Pose {
     let top = pose.elevation.max(LIFT_ELEVATION);
     let at = |t: f32| Pose { elevation: pose.elevation.lerp(top, t), ..pose };
     first_passing(at, |p| boom_is_clear(p, eye, tilt, map, origin)).unwrap_or(pose)
@@ -494,22 +495,21 @@ const STAND_HEIGHT: f32 = 4.0;
 
 /// Whether the ground, within `clearance` of it, or a solid decorator
 /// stands at `at`, a rendered point.
-fn obstructed(at: Vec3, clearance: f32, map: &Map, origin: Vec3) -> bool {
-    let world = at + origin;
-    let here: Qrz = map.convert(world);
+fn obstructed(at: Vec3, clearance: f32, map: &Map, origin: &RenderOrigin) -> bool {
+    let here = origin.tile_at(map, at);
     let Some((floor, _)) = map.get_by_qr(here.q, here.r) else { return false };
     let solid = matches!(
         map.get(here),
         Some(common_bevy::components::entity_type::EntityType::Decorator(d)) if d.is_solid
     );
-    solid || surface_y(world.xz(), floor, map) + clearance > world.y
+    solid || surface_y_from(origin.tile(), at.xz(), floor, map) + clearance > at.y
 }
 
 /// Whether `pose`'s sightline from the player's eye at `eye` on ground of
 /// `tilt` keeps its clearance over the ground all the way to the camera,
 /// and nothing solid stands on it: the rig slid over the shoulder as far
 /// as the pose's own reach slides it.
-fn boom_is_clear(pose: &Pose, eye: Vec3, tilt: Tilt, map: &Map, origin: Vec3) -> bool {
+fn boom_is_clear(pose: &Pose, eye: Vec3, tilt: Tilt, map: &Map, origin: &RenderOrigin) -> bool {
     let shift = pose.shift(pose.boom());
     let (head, foot) = (eye + shift, pose.transform(eye, tilt).translation + shift);
     let rise = (STAND_HEIGHT - BOOM_CLEARANCE) * pose.boom() / CAMERA_DISTANCE;
@@ -524,7 +524,7 @@ fn boom_is_clear(pose: &Pose, eye: Vec3, tilt: Tilt, map: &Map, origin: Vec3) ->
 /// it. Sampled along the boom, then bisected between the last clear point
 /// and the first obstructed one, so the fraction is continuous as the
 /// obstruction moves.
-fn boom_clearance(eye: Vec3, camera: Vec3, map: &Map, origin: Vec3) -> f32 {
+fn boom_clearance(eye: Vec3, camera: Vec3, map: &Map, origin: &RenderOrigin) -> f32 {
     let at = |t: f32| eye + (camera - eye) * t;
     let Some(first) = (1..=BOOM_SAMPLES).find(|&i| obstructed(at(i as f32 / BOOM_SAMPLES as f32), BOOM_CLEARANCE, map, origin)) else {
         return 1.0;
@@ -551,7 +551,7 @@ pub fn update(
     map: Res<Map>,
     diagnostics: Res<DiagnosticsState>,
     time: Res<Time>,
-    render_origin: Res<crate::resources::RenderOrigin>,
+    render_origin: Res<RenderOrigin>,
 ) {
     let Ok((visual, &heading)) = actor.single() else { return };
     let Ok((mut projection, mut c_transform)) = camera.single_mut() else { return };
@@ -559,7 +559,7 @@ pub fn update(
     // drawn at, whichever of the two systems runs first. Everything here is
     // in rendered coordinates; the map is read through the origin.
     let feet = visual.current();
-    let origin = render_origin.world_vec();
+    let origin = &*render_origin;
     let eye = feet + Vec3::Y * EYE_HEIGHT;
     let dt = time.delta_secs();
     let current = state.pose;
@@ -589,7 +589,7 @@ pub fn update(
     wanted.fov = lens_to_hold(&wanted, tilt, state.climb);
 
     // Among trees the camera closes in over the shoulder.
-    let tile: Qrz = map.convert(feet + origin);
+    let tile = origin.tile_at(&map, feet);
     let among = crate::plugins::cover::among_trees(&map, tile.q, tile.r);
     let (to, k) = if among { (1.0, CLOSE_IN_EASE) } else { (0.0, CLOSE_OUT_EASE) };
     state.closed = ease(state.closed, to, k, dt);
@@ -668,9 +668,9 @@ mod tests {
             }
         }
         let feet = map.convert(Qrz { q: 0, r: 0, z: 1 });
-        let plain = climb_ahead(feet, Heading::from_degrees(180.0), 0.5, &map, Vec3::ZERO).expect("loaded");
+        let plain = climb_ahead(feet, Heading::from_degrees(180.0), 0.5, &map, &RenderOrigin::default()).expect("loaded");
         assert_eq!(plain, 0.0);
-        let wall = climb_ahead(feet, Heading::NORTH, 0.5, &map, Vec3::ZERO).expect("loaded");
+        let wall = climb_ahead(feet, Heading::NORTH, 0.5, &map, &RenderOrigin::default()).expect("loaded");
         assert!(wall > 0.0, "climb {wall}");
     }
 
@@ -689,7 +689,7 @@ mod tests {
             }
         }
         let feet = map.convert(Qrz { q: 0, r: 0, z: 1 });
-        let tilt = ground_tilt(feet, TILT_RINGS_WU, &map, Vec3::ZERO).expect("loaded");
+        let tilt = ground_tilt(feet, TILT_RINGS_WU, &map, &RenderOrigin::default()).expect("loaded");
         assert!(tilt.y < -0.2 && tilt.x.abs() < 0.1, "rises toward -z: {tilt:?}");
         let rest = Pose::rest(0.0);
         let facing_up = Pose { yaw: 0.0, ..rest };
@@ -745,11 +745,11 @@ mod tests {
         }
         let feet = map.convert(Qrz { q: 0, r: 0, z: 1 });
         let eye = feet + Vec3::Y * EYE_HEIGHT;
-        let tilt = ground_tilt(feet, TILT_RINGS_WU, &map, Vec3::ZERO).expect("loaded");
-        let clear = |p: &Pose| boom_is_clear(p, eye, tilt, &map, Vec3::ZERO);
+        let tilt = ground_tilt(feet, TILT_RINGS_WU, &map, &RenderOrigin::default()).expect("loaded");
+        let clear = |p: &Pose| boom_is_clear(p, eye, tilt, &map, &RenderOrigin::default());
         let open = Pose::ceiling(0.0);
         assert!(!clear(&open), "the hillside stands on the open pose's boom");
-        let up = lifted(open, eye, tilt, &map, Vec3::ZERO);
+        let up = lifted(open, eye, tilt, &map, &RenderOrigin::default());
         assert!(clear(&up) && up.elevation > open.elevation, "{up:?}");
         assert!(up.fov == open.fov && up.boom() == CAMERA_DISTANCE, "{up:?}");
         let camera = up.transform(eye, tilt).translation;
@@ -759,7 +759,34 @@ mod tests {
         assert!(height >= STAND_HEIGHT - 1e-3, "stands {height} over the ground");
         let lower = Pose { elevation: up.elevation - 1_f32.to_radians(), ..up };
         assert!(!clear(&lower), "lifted past the edge: {up:?}");
-        assert_eq!(lifted(up, eye, tilt, &map, Vec3::ZERO), up, "a clear boom is left alone");
+        assert_eq!(lifted(up, eye, tilt, &map, &RenderOrigin::default()), up, "a clear boom is left alone");
+    }
+
+    /// The camera reads the ground through the origin's tile, so the same
+    /// hillside at the world's origin and millions of tiles out gives the
+    /// same tilt, climb, lift and clearance, bit for bit.
+    #[test]
+    fn the_camera_reads_the_ground_the_same_however_far_out() {
+        use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
+        let read = |at: Qrz| {
+            let map = Map::new(qrz::Map::new(1.0, 0.8));
+            let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
+            for q in -60..=60 {
+                for r in -60..=60 {
+                    map.insert(Qrz { q: at.q + q, r: at.r + r, z: 2 * (r + q / 2) }, ground);
+                }
+            }
+            let mut origin = RenderOrigin::default();
+            origin.rebase(&map, at);
+            let feet = origin.render_tile(&map, Qrz { z: 1, ..at });
+            let eye = feet + Vec3::Y * EYE_HEIGHT;
+            let tilt = ground_tilt(feet, TILT_RINGS_WU, &map, &origin).expect("loaded");
+            let climb = climb_ahead(feet, Heading::NORTH, 0.5, &map, &origin);
+            let up = lifted(Pose::ceiling(0.0), eye, tilt, &map, &origin);
+            let clear = boom_clearance(eye, up.transform(eye, tilt).translation, &map, &origin);
+            (tilt, climb, up, clear)
+        };
+        assert_eq!(read(Qrz { q: 0, r: 0, z: 0 }), read(Qrz { q: -1_600_000, r: 2_400_000, z: 0 }));
     }
 
     /// A stand the pose asks for is one the boom allows: on level ground
@@ -781,7 +808,7 @@ mod tests {
         for yaw in [0.0, 1.0, 2.5] {
             let low = Pose { elevation: 0.0, ..Pose::rest(yaw) };
             let (stand, shift) = (low.transform(eye, Vec2::ZERO), low.shift(low.boom()));
-            let clear = boom_clearance(eye + shift, stand.translation + shift, &map, Vec3::ZERO);
+            let clear = boom_clearance(eye + shift, stand.translation + shift, &map, &RenderOrigin::default());
             assert_eq!(clear, 1.0, "the boom at yaw {yaw} is obstructed at {clear}");
         }
     }
