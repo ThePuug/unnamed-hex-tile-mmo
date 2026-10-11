@@ -22,6 +22,10 @@ pub struct DiagnosticsState {
     /// instead of reading its parts, the two drawn in the same frame for a
     /// measurement of what the parts cost.
     pub canopy_parts_off: bool,
+    /// The last summary level wears no wood: its parts unread, its tint
+    /// and its relief off, the two drawn in the same frame for a
+    /// measurement of what the horizon's wood costs.
+    pub canopy_last_off: bool,
 }
 
 /// The clock the sun and moon keep: game time, or an hour the console

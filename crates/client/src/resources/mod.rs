@@ -99,7 +99,7 @@ pub const ATTRIBUTE_COARSE_SURFACE: MeshVertexAttribute =
 /// crowns' relief comes in between, none nearer than `relief_from` and
 /// all of it from `relief_to`. A level whose `relief_to` is not past its
 /// `relief_from` wears the canopy flat throughout.
-#[derive(Clone, Copy, Debug, Default, ShaderType)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
 pub struct CanopyLook {
     /// Pine, deciduous, scrub: rgb, and the crown's width in world units.
     pub kinds: [Vec4; 3],
@@ -352,7 +352,7 @@ impl TerrainMaterial {
     /// first quarter of the third summary level's band and is worn in full
     /// through the rest of it and out to the horizon. The tiles wear
     /// neither.
-    fn canopy_for(&self, r: u32) -> CanopyLook {
+    pub(crate) fn canopy_for(&self, r: u32) -> CanopyLook {
         use common_bevy::summary::{threshold_horiz, LOD_LEVELS};
         let full = common_bevy::summary_mesh::CANOPY_FULL;
         let Some(kinds) = &self.kinds else { return CanopyLook { full, ..default() } };
