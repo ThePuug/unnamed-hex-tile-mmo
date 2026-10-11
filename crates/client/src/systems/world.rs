@@ -761,32 +761,17 @@ pub fn update_terrain_cut(
     let target = origin.xz();
     advance_edges(&mut edges.0, &bands, target, time.delta_secs(), &summary_meshes);
 
-    // The span the canopy's ground rises over is the cards' own: from the
-    // ring where the models hand over to where the last card is drawn.
-    // It falls away again across the whole of the next level's band, so
-    // the level past that carries none. Every level is given the same
-    // spans, so the ground they draw agrees where their bands meet.
-    let (lift, fall) = {
-        let at = |r: u32| level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz());
-        let ring = at(0);
-        let cards = at(common_bevy::summary::LOD_LEVELS[1]).outer;
-        let third = at(common_bevy::summary::LOD_LEVELS[2]);
-        (ring.outer_center.extend(ring.outer).extend(cards), third.outer_center.extend(third.inner).extend(third.outer))
-    };
-
-    // A material is written only where its cut or lift has moved: a
-    // changed material is prepared again and every region wearing it
-    // specialised again, which for the terrain is every mesh it has.
+    // A material is written only where its cut or its parts' switch has
+    // changed: a changed material is prepared again and every region
+    // wearing it specialised again, which for the terrain is every mesh it
+    // has.
     let mut band = *card_band;
     for (&r, handle) in &terrain_material.by_level {
         let cut = level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz());
         let Some(material) = materials.get(handle) else { continue };
-        let canopy = &material.extension.canopy;
-        if material.extension.cut != cut || canopy.lift != lift || canopy.fall != fall || material.extension.lattice.on != parts_on {
+        if material.extension.cut != cut || material.extension.lattice.on != parts_on {
             if let Some(mut material) = materials.get_mut(handle) {
                 material.extension.cut = cut;
-                material.extension.canopy.lift = lift;
-                material.extension.canopy.fall = fall;
                 material.extension.lattice.on = parts_on;
             }
         }
@@ -1003,7 +988,6 @@ fn collect_and_build_summary_mesh(
         positions: Vec::new(),
         normals: Vec::new(),
         coarse: Vec::new(),
-        rise: Vec::new(),
         canopy: Vec::new(),
         parts: Vec::new(),
         indices: Vec::new(),
@@ -1058,7 +1042,7 @@ fn collect_and_build_summary_mesh(
     // a summary's is painted on its ground from its parts.
     if radius == 0 {
         let tile_water = |q: i32, r: i32| -> Option<i32> { map.water_at(q, r) };
-        return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse, None, None)
+        return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse, None)
             .map_or(empty, |smr| {
                 let mut result = smr_to_result(smr);
                 let w = common_bevy::summary_mesh::build_water_mesh_region(0, region_key, &tile_water);
@@ -1071,7 +1055,7 @@ fn collect_and_build_summary_mesh(
 
     // The level's parts follow the height's provenance: the cached summary
     // where it was sent, else the same reading over the map's tiles. Every
-    // level above the tiles but the last carries its canopy and its water
+    // level above the tiles carries its canopy and, but the last, its water
     // on the ground as a colour — the first stands its trees on that
     // ground as well, from the map's own covers, which reach exactly as
     // far as that level does, so the ground under the trees is the ground
@@ -1081,14 +1065,8 @@ fn collect_and_build_summary_mesh(
     let summary_canopy = |sq: i32, sr: i32| -> Option<[common::Canopy; common_bevy::summary::PARTS]> { summary(sq, sr).map(|c| c.canopy) };
     let canopied: Option<&dyn Fn(i32, i32) -> Option<[common::Canopy; common_bevy::summary::PARTS]>> =
         TerrainMaterial::canopied(radius).then_some(&summary_canopy);
-    // The canopy's rise is read from one level's cells by every level that
-    // draws one.
-    let reading = crate::resources::RISE_LEVEL;
-    let rise_summary = |sq: i32, sr: i32| cached(reading, sq, sr).or_else(|| sampled(reading, sq, sr));
-    let rise: Option<(u32, &dyn Fn(i32, i32) -> Option<common_bevy::summary::SummaryCell>)> =
-        (radius <= reading).then_some((reading, &rise_summary));
 
-    common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse, canopied, rise)
+    common_bevy::summary_mesh::build_summary_mesh_region(radius, region_key, &height, coarse, canopied)
         .map_or(empty, |smr| {
             let mut result = smr_to_result(smr);
             if canopied.is_some() {
@@ -1116,7 +1094,6 @@ fn smr_to_result(smr: common_bevy::summary_mesh::SummaryMeshResult) -> SummaryMe
         positions: smr.positions,
         normals: smr.normals,
         coarse: smr.coarse,
-        rise: smr.rise,
         canopy: smr.canopy,
         parts: Vec::new(),
         indices: smr.indices,
@@ -1128,14 +1105,13 @@ fn smr_to_result(smr: common_bevy::summary_mesh::SummaryMeshResult) -> SummaryMe
 }
 
 /// Build a Bevy Mesh from raw geometry buffers. `coarse` is the ground's
-/// morph target per vertex and the canopy's rise it draws; the water
-/// carries neither. `canopy` is the
+/// morph target per vertex; the water carries none. `canopy` is the
 /// canopy per vertex, as the vertex colour, where the level colours its
 /// ground by it.
 fn build_bevy_mesh(
     positions: &[[f32; 3]],
     normals: &[[f32; 3]],
-    coarse: Option<(&[[f32; 4]], &[[f32; 3]])>,
+    coarse: Option<&[[f32; 4]]>,
     canopy: &[[f32; 4]],
     indices: &[u32],
 ) -> Mesh {
@@ -1159,9 +1135,7 @@ fn build_bevy_mesh(
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norms)
     .with_inserted_indices(Indices::U32(indices.to_vec()));
     let mesh = match coarse {
-        Some((coarse, rise)) => mesh
-            .with_inserted_attribute(crate::resources::ATTRIBUTE_COARSE_SURFACE, coarse.to_vec())
-            .with_inserted_attribute(crate::resources::ATTRIBUTE_RISE, rise.to_vec()),
+        Some(coarse) => mesh.with_inserted_attribute(crate::resources::ATTRIBUTE_COARSE_SURFACE, coarse.to_vec()),
         None => mesh,
     };
     if canopy.is_empty() {
@@ -1211,7 +1185,7 @@ pub fn poll_summary_meshes(
     // Upload meshes, spawn/update entities.
     for (key, build) in builds {
 
-        let mesh = build_bevy_mesh(&build.positions, &build.normals, Some((&build.coarse, &build.rise)), &build.canopy, &build.indices);
+        let mesh = build_bevy_mesh(&build.positions, &build.normals, Some(&build.coarse), &build.canopy, &build.indices);
         let mesh_handle = meshes.add(mesh);
 
         let state = summary_meshes.states.get_mut(&key).unwrap();
