@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::f32::consts::PI;
 
 use bevy::{
-    color::ColorToComponents,
+    color::{ColorToComponents, Luminance},
     image::{ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     math::ops::*,
     mesh::MeshVertexBufferLayoutRef,
-    pbr::{DistanceFog, MaterialPipeline, MaterialPipelineKey},
+    pbr::{DistanceFog, FogFalloff, MaterialPipeline, MaterialPipelineKey},
     prelude::*,
     render::render_resource::{AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError},
     shader::ShaderRef,
@@ -36,7 +36,9 @@ const MOON_ILLUMINANCE: f32 = EARTH_MOON_LUX
 /// The sky: a dome about the camera, past the discs and inside the far
 /// plane, one colour everywhere but toward the sun, where a glow of the
 /// sun's tint sits on the horizon under its bearing. Shaded by
-/// `shaders/sky.wgsl`.
+/// `shaders/sky.wgsl`. The clouds, and the leap season's fireballs in front
+/// of them, are a deck of their own in front of the discs
+/// (`plugins::weather::CloudDeck`).
 #[derive(Component)]
 pub struct SkyDome;
 
@@ -171,6 +173,41 @@ const GLOW_BELOW: f32 = 6_f32.to_radians();
 /// dawn sky stands over a pale land and not a red mist.
 const HAZE_TINT_SHARE: f32 = 0.3;
 
+/// What the weather over the camera does to the light. A full deck takes
+/// this share of the sun's and the moon's direct light and gives this much
+/// more back as the sky's; rain and a storm darken both, and the clouds
+/// grey the haze.
+const CLOUD_SHADE: f32 = 0.85;
+const CLOUD_AMBIENT: f32 = 0.6;
+const RAIN_GLOOM: f32 = 0.3;
+const STORM_GLOOM: f32 = 0.3;
+const CLOUD_GREY: f32 = 0.7;
+/// How far the haze closes in under full mist, rain and storm, as a share
+/// of the clear day's haze limit: mist to a few hundred units.
+const MIST_VISIBILITY: f32 = 0.03;
+const RAIN_VISIBILITY: f32 = 0.4;
+const STORM_VISIBILITY: f32 = 0.7;
+/// How much of the haze's veil full mist and full rain draw over the deck.
+const MIST_VEIL: f32 = 0.95;
+const RAIN_VEIL: f32 = 0.3;
+/// The lightning's flash on the ground and in the haze, at full.
+const FLASH_AMBIENT: f32 = 1_500.;
+const FLASH_HAZE: f32 = 0.3;
+/// A fireball's light, at its steady brightness, on the ground, in the
+/// haze and over the clear sky.
+const BLAZE_AMBIENT: f32 = 600.;
+const BLAZE_HAZE: f32 = 0.06;
+const BLAZE_SKY: f32 = 0.12;
+/// The sunlit cloud against the sun's light, and the shaded underside
+/// against the sky's colour.
+const CLOUD_LIGHT: f32 = 0.95;
+const CLOUD_UNDERSIDE: f32 = 0.6;
+/// The leap season's pall by day: cloud over at least this much of the
+/// sky whatever the fronts, and the light dimmed by this share, so noon is
+/// dusky and the lightning shows. It lifts with the sky's light.
+const OMEN_PALL: f32 = 0.9;
+const OMEN_DUSK: f32 = 0.5;
+
 fn smoothstep(from: f32, to: f32, x: f32) -> f32 {
     let t = ((x - from) / (to - from)).clamp(0., 1.);
     t * t * (3. - 2. * t)
@@ -194,7 +231,10 @@ fn tint(share: f32) -> Color {
 
 use crate::{
     components::{Moon, Sun},
-    plugins::diagnostics::DiagnosticsState,
+    plugins::{
+        diagnostics::DiagnosticsState,
+        weather::{CloudDeck, CloudMaterial, SkyWeather},
+    },
     systems::camera::HAZE_COLOR,
     resources::{
         LodTriangleStats, LoadedChunks,
@@ -242,7 +282,11 @@ pub fn setup(
 
     commands.spawn((
         Mesh3d(meshes.add(Sphere::new(sky_radius_wu()).mesh().ico(3).expect("a sphere subdivides"))),
-        MeshMaterial3d(sky_materials.add(SkyMaterial { bearing: Vec4::X, base: LinearRgba::BLACK, glow: LinearRgba::BLACK })),
+        MeshMaterial3d(sky_materials.add(SkyMaterial {
+            bearing: Vec4::X,
+            base: LinearRgba::BLACK,
+            glow: LinearRgba::BLACK,
+        })),
         Transform::default(),
         NotShadowCaster,
         NotShadowReceiver,
@@ -365,6 +409,7 @@ pub fn update(
     mut disc_materials: ResMut<Assets<DiscMaterial>>,
     q_sky: Query<&MeshMaterial3d<SkyMaterial>, With<SkyDome>>,
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
+    (weather, q_clouds, mut cloud_materials): (Res<SkyWeather>, Query<&MeshMaterial3d<CloudMaterial>, With<CloudDeck>>, ResMut<Assets<CloudMaterial>>),
     server: Res<Server>,
     diagnostics_state: Res<DiagnosticsState>,
     player_query: Query<&Loc, With<crate::components::Viewed>>,
@@ -385,16 +430,30 @@ pub fn update(
     let s_toward = toward(s_orbit, tan(SEASON_SWING) * cos(dty * 2. * PI));
     let s_elevation = elevation(s_toward);
     let s_direct = direct(s_elevation);
+    let sky_bright = smoothstep(-TWILIGHT_BELOW, CLEAR_ABOVE, s_elevation);
+    let sky_tint = tint(smoothstep(-GLOW_BELOW, CLEAR_ABOVE, s_elevation));
+    // The weather over the camera: the deck takes the direct light and
+    // gives some back as the sky's, and rain, a storm and the leap
+    // season's pall darken both.
+    let here = weather.here;
+    let pall = weather.omen * sky_bright;
+    let cover = here.cover.max(OMEN_PALL * pall);
+    let dusk = 1. - OMEN_DUSK * pall;
+    let shaded = 1. - CLOUD_SHADE * cover;
+    let gloom = (1. - RAIN_GLOOM * here.rain - STORM_GLOOM * here.storm) * dusk;
     s_light.color = tint(s_direct);
-    s_light.illuminance = SUN_ILLUMINANCE * s_direct;
+    s_light.illuminance = SUN_ILLUMINANCE * s_direct * shaded * gloom;
     *s_transform = Transform::from_translation(s_toward * 1_000.).looking_at(Vec3::ZERO, Vec3::Y);
 
     // The sky: lit through twilight, reddened around the crossing, and
-    // the ambient is its light on the ground, blue as it is overhead.
-    let sky_bright = smoothstep(-TWILIGHT_BELOW, CLEAR_ABOVE, s_elevation);
-    let sky_tint = tint(smoothstep(-GLOW_BELOW, CLEAR_ABOVE, s_elevation));
-    a_light.brightness = 800. * sky_bright;
-    a_light.color = Color::linear_rgb(0.7 + 0.3 * sky_bright, 0.8 + 0.2 * sky_bright, 1.0);
+    // the ambient is its light on the ground, blue as it is overhead, and
+    // the lightning's and the fireballs' while they burn.
+    let sky_light = Vec3::new(0.7 + 0.3 * sky_bright, 0.8 + 0.2 * sky_bright, 1.0)
+        * (800. * sky_bright * (1. + CLOUD_AMBIENT * cover) * gloom + FLASH_AMBIENT * weather.flash)
+        + BLAZE_AMBIENT * weather.blaze;
+    a_light.brightness = sky_light.max_element();
+    let hue = sky_light / a_light.brightness.max(1e-6);
+    a_light.color = Color::linear_rgb(hue.x, hue.y, hue.z);
 
     // moon
     let (mut m_light, mut m_transform) = q_moon.single_mut().expect("no result in q_moon");
@@ -406,23 +465,61 @@ pub fn update(
     let m_elongation = dtm * 2. * PI;
     let m_lit = (1. + cos(m_elongation)) / 2.;
     let m_phase = 0.1 + 0.9 * m_lit;
-    m_light.illuminance = MOON_ILLUMINANCE * m_phase * direct(elevation(m_toward));
+    let m_clear = MOON_ILLUMINANCE * m_phase * direct(elevation(m_toward));
+    m_light.illuminance = m_clear * shaded * gloom;
     *m_transform = Transform::from_translation(m_toward * 1_000.).looking_at(Vec3::ZERO, Vec3::Y);
 
     // The sky is the sun's light scattered, so it carries the sky's
     // brightness and the moon's share at night, with the sun's tint as a
     // glow toward the sun; the haze carries the brightness and a share
-    // of the tint. Neither stays daylight-grey over a dark ground.
-    let moon = m_light.color.to_linear().to_vec3() * (m_light.illuminance / SUN_ILLUMINANCE);
+    // of the tint. Neither stays daylight-grey over a dark ground. The
+    // clear sky is the same over any weather, seen through its gaps; the
+    // haze is the air about the camera, greyed under the deck, darkened
+    // by the rain and lit by the flash.
+    let moon = m_light.color.to_linear().to_vec3() * (m_clear / SUN_ILLUMINANCE);
     let sky_tint = sky_tint.to_linear().to_vec3();
     let lit = |tint: Vec3| LinearRgba::from_vec3(HAZE_COLOR.to_linear().to_vec3() * (tint * sky_bright + moon));
-    clear.0 = lit(Vec3::ONE).into();
+    let haze = lit(Vec3::ONE.lerp(sky_tint, HAZE_TINT_SHARE)).to_vec3();
+    let grey = LinearRgba::from_vec3(haze).luminance();
+    let haze = LinearRgba::from_vec3(
+        haze.lerp(Vec3::splat(grey), CLOUD_GREY * cover) * gloom
+            + Vec3::splat(FLASH_HAZE * weather.flash * grey.max(0.05))
+            + BLAZE_HAZE * weather.blaze,
+    );
+    clear.0 = haze.into();
     let (camera, mut fog) = q_camera.single_mut().expect("no result in q_camera");
-    fog.color = lit(Vec3::ONE.lerp(sky_tint, HAZE_TINT_SHARE)).into();
+    fog.color = haze.into();
+    let visibility = crate::systems::camera::haze_limit_wu()
+        * (1. - (1. - MIST_VISIBILITY) * here.mist)
+        * (1. - (1. - RAIN_VISIBILITY) * here.rain)
+        * (1. - (1. - STORM_VISIBILITY) * here.storm);
+    fog.falloff = FogFalloff::from_visibility(visibility);
+    let bearing = s_toward.xz().try_normalize().unwrap_or(Vec2::X).extend(0.).extend(0.);
+    let glow = lit(sky_tint) - lit(Vec3::ONE);
     if let Some(mut sky) = q_sky.single().ok().and_then(|m| sky_materials.get_mut(&m.0)) {
-        sky.bearing = s_toward.xz().try_normalize().unwrap_or(Vec2::X).extend(0.).extend(0.);
-        sky.base = lit(Vec3::ONE);
-        sky.glow = lit(sky_tint) - lit(Vec3::ONE);
+        sky.bearing = bearing;
+        sky.base = lit(Vec3::ONE) + LinearRgba::from_vec3(BLAZE_SKY * weather.blaze);
+        sky.glow = glow;
+    }
+
+    // The deck: lit white by the sun and reddened with it, its underside
+    // the sky's own colour shaded; the weather over each place is the
+    // map's.
+    if let Some(mut clouds) = q_clouds.single().ok().and_then(|m| cloud_materials.get_mut(&m.0)) {
+        let light = sky_tint * sky_bright + moon;
+        clouds.light = LinearRgba::from_vec3(light * CLOUD_LIGHT * dusk);
+        clouds.shade = LinearRgba::from_vec3(lit(Vec3::ONE).to_vec3().lerp(light, 0.3) * CLOUD_UNDERSIDE * dusk);
+        clouds.glow = glow;
+        clouds.bearing = bearing;
+        clouds.deck = Vec4::new(weather.deck_height, visibility, weather.flash, OMEN_PALL * pall);
+        clouds.frame = weather.frame;
+        clouds.drift = weather.drift.extend(0.).extend(0.);
+        clouds.veil = LinearRgba { alpha: (MIST_VEIL * here.mist + RAIN_VEIL * here.rain).min(1.), ..haze };
+        clouds.bolts = weather.bolts;
+        clouds.bolt_looks = weather.bolt_looks;
+        clouds.meteor_tails = weather.meteor_tails;
+        clouds.meteor_heads = weather.meteor_heads;
+        clouds.blaze = weather.blaze.extend(0.);
     }
 
     // Each disc faces the camera from its body's direction, in its light's

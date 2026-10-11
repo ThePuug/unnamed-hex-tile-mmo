@@ -8,6 +8,7 @@ pub mod recorder;
 pub mod ui;
 pub mod vignette;
 pub mod water;
+pub mod weather;
 pub mod world_streaming;
 pub mod cover;
 pub mod music;

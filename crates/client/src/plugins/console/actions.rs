@@ -23,6 +23,8 @@ pub enum DevConsoleAction {
     ToggleCameraCloseup,
     ToggleCanopyParts,
     ToggleCanopyLast,
+    /// Hold the sky in the next weather, round again to the forecast.
+    CycleWeather,
 
     // Admin actions
     GotoWorldUnits(f64, f64),
@@ -140,6 +142,10 @@ pub fn execute_console_actions(
             DevConsoleAction::ToggleCanopyLast => {
                 state.canopy_last_off = !state.canopy_last_off;
                 info!("Last level wood: {}", if state.canopy_last_off { "bare" } else { "worn" });
+            }
+            DevConsoleAction::CycleWeather => {
+                state.weather = state.weather.next();
+                info!("Weather: {:?}", state.weather);
             }
 
             DevConsoleAction::GotoWorldUnits(_, _) => {}

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use super::state::{DevConsole, MenuPath};
-use crate::plugins::diagnostics::{DateField, DiagnosticsState};
+use crate::plugins::diagnostics::{DateField, DiagnosticsState, WeatherHold};
 use common_bevy::systems::{Date, SEASONS, WEEKS};
 
 #[derive(Component)]
@@ -150,6 +150,7 @@ pub fn update_console_menu(
                         (format!("5. Cover                    [{}]", if diagnostics_state.cover_hidden { "Hidden" } else { "Shown" }), !diagnostics_state.cover_hidden),
                         (format!("6. Canopy                   [{}]", if diagnostics_state.canopy_parts_off { "Vertices" } else { "Parts" }), !diagnostics_state.canopy_parts_off),
                         (format!("7. Last Level Wood          [{}]", if diagnostics_state.canopy_last_off { "Bare" } else { "Worn" }), !diagnostics_state.canopy_last_off),
+                        (format!("8. Weather                  [{:?}]", diagnostics_state.weather), diagnostics_state.weather == WeatherHold::Forecast),
                     ];
                     for (text, on) in rows {
                         line(parent, text, 16.0, state_color(on));

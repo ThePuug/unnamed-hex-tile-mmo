@@ -17,7 +17,7 @@ use bevy::{prelude::*, render::RenderApp};
 
 #[cfg(feature = "admin")]
 pub use census::RenderCensus;
-pub use config::{DateField, DiagnosticsState, LightingClock};
+pub use config::{DateField, DiagnosticsState, LightingClock, WeatherHold};
 
 pub struct DiagnosticsPlugin;
 

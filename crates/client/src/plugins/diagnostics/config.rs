@@ -5,6 +5,8 @@ use common_bevy::systems::{Date, DAY_MS, HOUR_MS, MINUTE_MS, SEASON_MS, WEEK_MS}
 pub struct DiagnosticsState {
     pub grid_visible: bool,
     pub lighting: LightingClock,
+    /// The weather the sky is held in, or the forecast.
+    pub weather: WeatherHold,
     /// Every terrain mesh is hidden.
     pub terrain_hidden: bool,
     /// Every stand of models and cards is hidden. A stand is an entity of
@@ -114,6 +116,32 @@ impl LightingClock {
             _ => return None,
         };
         (hours < 24 && minutes < 60).then(|| hours * HOUR_MS + minutes * MINUTE_MS)
+    }
+}
+
+/// The weather the console holds the sky in, the same everywhere, so each
+/// can be looked at without waiting for it; or the forecast. Storm and
+/// Meteors hold the leap season's sky, its lightning and its fireballs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WeatherHold {
+    #[default]
+    Forecast,
+    Clear,
+    Overcast,
+    Rain,
+    Snow,
+    Mist,
+    Storm,
+    Meteors,
+}
+
+impl WeatherHold {
+    const ORDER: [Self; 8] = [Self::Forecast, Self::Clear, Self::Overcast, Self::Rain, Self::Snow, Self::Mist, Self::Storm, Self::Meteors];
+
+    /// The hold after this one, round again to the forecast.
+    pub fn next(self) -> Self {
+        let at = Self::ORDER.iter().position(|&hold| hold == self).expect("every hold is in the order");
+        Self::ORDER[(at + 1) % Self::ORDER.len()]
     }
 }
 

@@ -13,5 +13,6 @@ pub mod summary_mesh;
 pub mod surface;
 pub mod systems;
 pub mod tuning;
+pub mod weather;
 
 pub use moment::Moment;

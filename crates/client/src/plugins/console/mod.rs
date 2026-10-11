@@ -23,8 +23,9 @@ pub use state::{DevConsole, MenuPath};
 /// Terrain (1): the grid overlay; the lighting clock, held at an hour
 /// typed as HHMM, scrubbed by the left and right arrows and its day, week
 /// or season stepped by the up and down ones; the terrain and the cover
-/// hidden; the camera close-up; and the canopy drawn
-/// from its parts or its vertices. Goto by world units or q,r (2), added
+/// hidden; the camera close-up; the canopy drawn
+/// from its parts or its vertices; and the weather held in each pattern
+/// in turn, or the forecast. Goto by world units or q,r (2), added
 /// latency (3), a den spawned (5), the view (6), and a party or an
 /// opposition staged (7, 8).
 pub struct DevConsolePlugin;
