@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common_bevy::systems::{Date, DAY_MS, HOUR_MS, MINUTE_MS, SEASON_MS, WEEK_MS};
+use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS, SEASON_MS, WEEK_MS};
 
 #[derive(Resource, Default)]
 pub struct DiagnosticsState {
@@ -86,24 +86,19 @@ impl LightingClock {
         self.held = Some((now + delta).max(EARLIEST as i128) as u128);
     }
 
-    /// Moves the clock `steps` of `field` on, or back, wrapping within the
-    /// span above it — a day within its week, a week within its season, a
-    /// season within its year of four or five — so nothing coarser or finer
-    /// moves. Holds the clock first where it read game time `game` if it
-    /// was not held.
+    /// Moves the clock `steps` whole days, weeks or seasons on, or back,
+    /// never before `EARLIEST`: past the last of its span it carries into
+    /// the next, so seasons step on through each year's leap season and
+    /// into the next year. Every season is the same length, so a step keeps
+    /// the place in it. Holds the clock first where it read game time
+    /// `wall` if it was not held.
     pub fn step(&mut self, wall: u128, field: DateField, steps: i32) {
-        let now = self.at(wall);
-        let (unit, start, span) = match field {
-            DateField::Day => (DAY_MS, now - now % WEEK_MS, WEEK_MS),
-            DateField::Week => (WEEK_MS, Date::season_start(now), SEASON_MS),
-            DateField::Season => {
-                let (start, span) = Date::year(now);
-                (SEASON_MS, start, span)
-            }
+        let unit = match field {
+            DateField::Day => DAY_MS,
+            DateField::Week => WEEK_MS,
+            DateField::Season => SEASON_MS,
         };
-        let count = (span / unit) as i128;
-        let index = (((now - start) / unit) as i128 + steps as i128).rem_euclid(count) as u128;
-        self.held = Some(start + index * unit + (now - start) % unit);
+        self.scrub(wall, steps as i128 * unit as i128);
     }
 
     /// An hour of the day typed as `HHMM` or `HH`, in ms of the day.
@@ -168,6 +163,7 @@ impl DateField {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common_bevy::systems::Date;
 
     /// Held, the clock stands at the hour typed on the day it was on;
     /// synced, it reads game time.
@@ -201,11 +197,11 @@ mod tests {
         assert_eq!(LightingClock::parse_time(""), None);
     }
 
-    /// A stepped field wraps within the span above it and moves nothing
-    /// else — a season within its year of four or five — and from game
-    /// time the step holds the clock where game time was.
+    /// A stepped field carries into the span above it, a season through
+    /// the leap season into the next year, and moves nothing finer; from
+    /// game time the step holds the clock where game time was.
     #[test]
-    fn a_date_field_steps_within_its_span() {
+    fn a_date_field_steps_on_through_the_year() {
         let midnight = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis() as u128;
         // March 2026 has five Mondays, the 2nd its first; April four
         let (march, april) = (midnight(2026, 3, 2), midnight(2026, 4, 6));
@@ -213,18 +209,18 @@ mod tests {
         let mut clock = LightingClock::default();
         clock.hold_at(march + 9 * HOUR_MS);
         clock.step(0, DateField::Day, -1);
-        assert_eq!(Date::of(clock.at(0)), Date { season: 0, week: 0, day: 5 });
+        assert_eq!(Date::of(clock.at(0)), Date { season: 3, week: 6, day: 5 }, "back across the year's start into February's");
         assert_eq!(clock.held_at().as_deref(), Some("09:00"));
+        clock.step(0, DateField::Day, 1);
         clock.step(0, DateField::Week, 8);
-        assert_eq!(Date::of(clock.at(0)), Date { season: 0, week: 1, day: 5 });
-        clock.step(0, DateField::Season, -1);
-        assert_eq!(Date::of(clock.at(0)), Date { season: 4, week: 1, day: 5 }, "March wraps to its leap season");
+        assert_eq!(Date::of(clock.at(0)), Date { season: 1, week: 1, day: 0 }, "on past the season's last week into the next");
+        clock.step(0, DateField::Week, -8);
+        clock.step(0, DateField::Season, 4);
+        assert_eq!(Date::of(clock.at(0)), Date { season: 4, week: 0, day: 0 }, "March's leap season");
         clock.step(0, DateField::Season, 1);
-        assert_eq!(Date::of(clock.at(0)), Date { season: 0, week: 1, day: 5 });
-
-        clock.hold_at(april + 9 * HOUR_MS);
-        clock.step(0, DateField::Season, -1);
-        assert_eq!(Date::of(clock.at(0)), Date { season: 3, week: 0, day: 0 }, "April has four");
+        assert_eq!(clock.at(0), april + 9 * HOUR_MS, "on into April's year");
+        clock.step(0, DateField::Season, 4);
+        assert_eq!(Date::of(clock.at(0)), Date { season: 0, week: 0, day: 0 }, "April has no leap season: on into May's");
 
         clock.sync();
         let game = march + 2 * SEASON_MS + 3 * WEEK_MS + 4 * DAY_MS + 5 * HOUR_MS;

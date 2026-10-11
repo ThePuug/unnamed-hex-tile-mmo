@@ -176,7 +176,7 @@ pub fn update_console_menu(
                     for text in [
                         "Enter HHMM or HH, press Enter (empty = game time)",
                         "Left/Right: rewind / forward, hold to hurry",
-                        "Tab: pick day / week / season, Up/Down: step it",
+                        "Tab: pick day / week / season, Up/Down: step by it",
                     ] {
                         line(parent, text, 12.0, Color::srgb(0.6, 0.6, 0.6));
                     }

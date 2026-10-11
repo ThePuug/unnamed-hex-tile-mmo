@@ -190,7 +190,7 @@ const SCRUB_EASE_SECS: f32 = 3.0;
 /// Digits typed into the lighting hour; Enter holds the clock there, or
 /// with nothing typed returns it to game time. Left and right arrows
 /// rewind and forward it, quickening the longer they are held. Tab picks a
-/// field of the date and up and down step it.
+/// field of the date and up and down step the clock by it.
 fn handle_lighting_time(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
