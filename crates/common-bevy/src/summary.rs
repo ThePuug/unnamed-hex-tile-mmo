@@ -11,7 +11,7 @@ use crate::geometry::hex_ball_tiles;
 
 /// The sampling rule is shared with every producer that has no Bevy, the
 /// world viewer among them.
-pub use common::summary::{part_offsets, sampled_by, select_center_z, summarize, summarize_ground, wet_parts, SummaryCell, SummarySource, TileSample, LOD_LEVELS, PARTS};
+pub use common::summary::{part_offsets, sampled_by, select_center_z, summarize, wet_parts, SummaryCell, SummarySource, TileSample, LOD_LEVELS, PARTS};
 
 // ── Constants ──
 
@@ -446,40 +446,6 @@ mod tests {
                     for (q, r) in tiles {
                         assert_eq!(ladder(q, r)[step], (level, summary.0, summary.1, part), "level {level} tile ({q}, {r})");
                     }
-                }
-            }
-        }
-    }
-
-    /// At the level after the first a part's canopy is the mean of every
-    /// tile it holds by the ladder, each kind within half a step of it.
-    #[test]
-    fn the_second_level_parts_are_the_mean_of_their_tiles() {
-        use common::cover::{Canopy, Content, Cover, SITES};
-        struct Stand;
-        impl SummarySource for Stand {
-            fn sample(&self, q: i32, r: i32) -> Option<TileSample> {
-                let kinds = [Content::Empty, Content::Pine, Content::Deciduous, Content::Brush];
-                let cover = (0..SITES.len()).fold(Cover::NONE, |cover, k| {
-                    let h = (q as u32).wrapping_mul(0x9E37_79B1) ^ (r as u32).wrapping_mul(0x85EB_CA77) ^ (k as u32).wrapping_mul(0xC2B2_AE3D);
-                    cover.with(k, kinds[(h ^ h >> 15) as usize % kinds.len()])
-                });
-                Some(TileSample { z: 0, water: None, cover })
-            }
-        }
-        let level = LOD_LEVELS[2];
-        for (sq, sr) in [(0, 0), (3, -7)] {
-            let parts = common::summary::canopy_parts(level, sq, sr, &Stand).expect("the stand has every tile");
-            for (part, canopy) in parts.iter().enumerate() {
-                let tiles = part_tiles(level, sq, sr, part);
-                let sites = (tiles.len() * SITES.len()) as f64;
-                let counts = tiles.iter().fold([0u32; 3], |sum, &(q, r)| {
-                    let tally = Canopy::tally(Stand.sample(q, r).unwrap().cover);
-                    std::array::from_fn(|kind| sum[kind] + tally[kind])
-                });
-                for (kind, count) in [Content::Pine, Content::Deciduous, Content::Brush].into_iter().zip(counts) {
-                    let mean = count as f64 * common::cover::CANOPY_WHOLE as f64 / sites;
-                    assert!((canopy.share(kind) as f64 - mean).abs() <= 0.5, "part {part} {kind:?}: {} against {mean}", canopy.share(kind));
                 }
             }
         }

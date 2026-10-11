@@ -1,6 +1,6 @@
 //! A tile's cover: what stands in each of its seven slots. And what stands
-//! over many tiles: the canopy the far ground is coloured by, their mean
-//! cover, and the outcrop the far crags are stood from, as seven say.
+//! over many tiles as seven of them say: the canopy the far ground is
+//! coloured by, and the outcrop the far crags are stood from.
 
 use serde::{Deserialize, Serialize};
 
@@ -387,15 +387,12 @@ impl Cover {
     }
 }
 
-/// What stands over one part of a summary's ground: the mean cover of the
-/// tiles the part stands for (`summary::canopy_parts`), as the share of
-/// their growth sites that pine, deciduous and brush hold, in steps of
-/// [`CANOPY_WHOLE`], five bits each, the rest empty. So the far ground
-/// draws a stand's density rather than one tile's, and the levels meet at
-/// their edges in the density they draw. A tile's three sites read
-/// exactly; a part of many tiles rounds each share to the nearest step.
-/// Two bytes on the wire, and the density and the kinds' parts fall out of
-/// it.
+/// What stands over one part of a summary's ground: the share of the
+/// part's growth sites that pine, deciduous and brush hold, in steps of
+/// [`CANOPY_WHOLE`], five bits each, the rest empty. A tile's three sites
+/// read exactly; a part of many tiles rounds each share to the nearest
+/// step. Two bytes on the wire, and the density and the kinds' parts fall
+/// out of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Canopy(u16);
 
