@@ -83,6 +83,7 @@ pub mod dissection;
 pub mod drainage;
 pub mod forest;
 pub mod index;
+pub mod landform;
 pub mod lithology;
 pub mod migration;
 pub mod motion;
@@ -605,6 +606,7 @@ impl Composite {
         composite.add_event(Box::new(thrusting::ThrustingEvent::new()));
         composite.add_event(Box::new(thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(lithology::LithologyEvent::new()));
+        composite.add_event(Box::new(landform::LandformEvent::new()));
         composite.add_event(Box::new(drainage::DrainageEvent::new()));
         composite.add_event(Box::new(migration::MigrationEvent::new()));
         composite.add_event(Box::new(dissection::DissectionEvent::new()));

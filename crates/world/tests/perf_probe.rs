@@ -196,6 +196,7 @@ fn layer_costs() {
             Box::new(ThrustingEvent::new()),
             Box::new(ThickeningEvent::new()),
             Box::new(LithologyEvent::new()),
+            Box::new(world::events::landform::LandformEvent::new()),
             Box::new(DrainageEvent::new()),
             Box::new(MigrationEvent::new()),
             Box::new(DissectionEvent::new()),
@@ -205,14 +206,14 @@ fn layer_costs() {
         }
         c
     };
-    let names = ["plates", "tilt", "motion", "thrusting", "thickening", "lithology", "drainage", "migration", "dissection"];
+    let names = ["plates", "tilt", "motion", "thrusting", "thickening", "lithology", "landform", "drainage", "migration", "dissection"];
     let (sq, sr) = (104_289, -4_677);
     let patch = hexball(sq, sr, 100);
     let next = hexball(sq + 400, sr - 200, 100);
     // A summary's samples: sparse, a stride apart, over a wide reach.
     let sparse: Vec<(i32, i32)> = (0..8).flat_map(|i| (0..8).map(move |j| (sq - 8_000 + i * 2_000, sr - 8_000 + j * 2_000))).collect();
     println!("{:>10} {:>12} {:>14} {:>14} {:>16}", "stack", "first ms", "patch µs/tile", "next µs/tile", "sparse ms/sample");
-    for n in 1..=9 {
+    for n in 1..=names.len() {
         let c = build(n);
         let t = Instant::now();
         c.tile_at(sq, sr);
@@ -253,6 +254,7 @@ fn ground_sample_costs() {
     let (cx, cy) = hex_to_world(104_289, -4_677);
     let coasts = Coasts::in_box(cx, cy, 6_000.0, SEED);
     let outlines = Outlines::in_box(cx, cy, 6_000.0, SEED);
+    let landforms = world::events::landform::Landforms::new();
     let pts: Vec<(f64, f64)> = (0..100).flat_map(|i| (0..100).map(move |j| (cx - 5_000.0 + i as f64 * 100.0, cy - 5_000.0 + j as f64 * 100.0))).collect();
     let n = pts.len() as f64;
     let time = |label: &str, f: &dyn Fn(f64, f64) -> f64| {
@@ -269,7 +271,7 @@ fn ground_sample_costs() {
     time("relief_of", &|x, y| outlines.at(x, y).map_or(0.0, |s| outlines.relief_of(&s)));
     time("plateau", &|x, y| outlines.at(x, y).map_or(0.0, |s| plateau_share_of(s.plate, &s.distances)));
     time("rock_at", &|x, y| outlines.at(x, y).map_or(0.0, |s| rock_at(SEED, s.plate.id, s.plate.age, 60.0, 10.0, 50.0).stand));
-    time("ground_at", &|x, y| ground_at(x, y, SEED, &coasts, &outlines).surface);
+    time("ground_at", &|x, y| ground_at(x, y, SEED, &coasts, &outlines, &landforms).surface);
 }
 
 /// What `Outlines::at` is made of over the same patch: the warp, the seed
