@@ -5,7 +5,6 @@
 use bevy::{core_pipeline::prepass::DepthPrepass, pbr::{DistanceFog, FogFalloff}, prelude::*};
 use crate::resources::RenderOrigin;
 use crate::systems::{closeup::CloseupCamera, ease};
-use qrz::{Convert, Qrz};
 use std::f32::consts::PI;
 
 use bevy::render::view::{ColorGrading, ColorGradingGlobal};
@@ -13,7 +12,7 @@ use crate::plugins::{diagnostics::DiagnosticsState, ink::Ink, vignette::Vignette
 use common_bevy::{
     components::{heading::{Heading, HEADING_SLOTS}, position::VisualPosition, *},
     resources::map::Map,
-    systems::movement::{standing_y, surface_y, surface_y_from},
+    systems::movement::{standing_y, surface_y_from},
 };
 
 /// Orbit stops: one per heading, so the camera can stand behind any.
@@ -624,6 +623,8 @@ pub fn update(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common_bevy::systems::movement::surface_y;
+    use qrz::{Convert, Qrz};
 
     const WIDE: f32 = 2.0;
 
