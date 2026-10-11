@@ -532,6 +532,8 @@ pub struct EventMetricsSnapshot {
 
 pub struct LayerMetricsSnapshot {
     pub name: String,
+    /// The layer's cell radius, in tiles: what one of its cells covers.
+    pub scale: u32,
     /// Cells the layer has deformed: a gauge of its coverage. Nothing is
     /// ever evicted.
     pub indexed: usize,
@@ -955,6 +957,7 @@ impl Composite {
         let layers: Vec<LayerMetricsSnapshot> = self.events.iter().zip(&self.cell_caches).map(|(event, cache)| {
             LayerMetricsSnapshot {
                 name: event.name().to_string(),
+                scale: event.scale(),
                 indexed: cache.cells.len(),
                 cell_hits: cache.metrics.hits(),
                 cell_misses: cache.metrics.misses(),

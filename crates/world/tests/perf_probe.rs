@@ -172,69 +172,56 @@ fn perf_probe() {
     }
 }
 
-/// What each layer costs, by building the stack one layer at a time and
-/// materialising the same fresh patches through each: the first tile is
-/// the cascade, the patch is the steady state, and a second patch a
-/// stride away is what moving on costs. The increments between
-/// stacks are each layer's own.
+/// What each layer costs, cold and warm. Cold: a fresh composite's first
+/// tile at the spawn, each layer's own time across its phases, and that
+/// time over the chunks its deformed cells cover, since a cold layer is
+/// paid once for every chunk its cells serve. Warm: tiles whose cells are
+/// all built, each layer's query time a tile, nothing cascading.
 #[test]
 #[ignore]
 fn layer_costs() {
-    use world::events::drainage::DrainageEvent;
-    use world::events::dissection::DissectionEvent;
-    use world::events::lithology::LithologyEvent;
-    use world::events::migration::MigrationEvent;
-    use world::events::motion::MotionEvent;
-    use world::events::thickening::ThickeningEvent;
-    use world::events::thrusting::ThrustingEvent;
-    let build = |n: usize| -> Composite {
-        let mut c = Composite::new(SEED);
-        let events: Vec<Box<dyn world::events::WorldEvent>> = vec![
-            Box::new(PlateEvent::new()),
-            Box::new(TiltEvent::new()),
-            Box::new(MotionEvent::new()),
-            Box::new(ThrustingEvent::new()),
-            Box::new(ThickeningEvent::new()),
-            Box::new(LithologyEvent::new()),
-            Box::new(world::events::landform::LandformEvent::new()),
-            Box::new(DrainageEvent::new()),
-            Box::new(MigrationEvent::new()),
-            Box::new(DissectionEvent::new()),
-        ];
-        for e in events.into_iter().take(n) {
-            c.add_event(e);
-        }
-        c
-    };
-    let names = ["plates", "tilt", "motion", "thrusting", "thickening", "lithology", "landform", "drainage", "migration", "dissection"];
+    /// The tiles of a chunk, a hex ball of radius 9, as the game streams.
+    const CHUNK_TILES: f64 = 271.0;
     let (sq, sr) = (104_289, -4_677);
-    let patch = hexball(sq, sr, 100);
-    let next = hexball(sq + 400, sr - 200, 100);
-    // A summary's samples: sparse, a stride apart, over a wide reach.
-    let sparse: Vec<(i32, i32)> = (0..8).flat_map(|i| (0..8).map(move |j| (sq - 8_000 + i * 2_000, sr - 8_000 + j * 2_000))).collect();
-    println!("{:>10} {:>12} {:>14} {:>14} {:>16}", "stack", "first ms", "patch µs/tile", "next µs/tile", "sparse ms/sample");
-    for n in 1..=names.len() {
-        let c = build(n);
-        let t = Instant::now();
-        c.tile_at(sq, sr);
-        let first = t.elapsed();
-        let t = Instant::now();
-        for &(q, r) in &patch {
-            c.tile_at(q, r);
-        }
-        let per = t.elapsed().as_secs_f64() * 1e6 / patch.len() as f64;
-        let t = Instant::now();
-        for &(q, r) in &next {
-            c.tile_at(q, r);
-        }
-        let per_next = t.elapsed().as_secs_f64() * 1e6 / next.len() as f64;
-        let c = build(n);
-        let t = Instant::now();
-        for &(q, r) in &sparse {
-            c.tile_at(q, r);
-        }
-        let per_sample = t.elapsed().as_secs_f64() * 1e3 / sparse.len() as f64;
-        println!("{:>10} {:>12.0} {:>14.1} {:>14.1} {:>16.2}", names[n - 1], first.as_secs_f64() * 1e3, per, per_next, per_sample);
+    let c = composite_full();
+    let t = Instant::now();
+    c.tile_at(sq, sr);
+    let first = t.elapsed();
+    let cold = c.drain_metrics();
+    // Every cell under the patch built by one half of its tiles; the other
+    // half, read after, finds them built and pays its queries alone.
+    let patch = hexball(sq, sr, 60);
+    for &(q, r) in patch.iter().filter(|(q, _)| q % 2 == 0) {
+        c.tile_at(q, r);
+    }
+    let before = c.drain_metrics();
+    let warm: Vec<(i32, i32)> = patch.iter().copied().filter(|(q, _)| q % 2 != 0).collect();
+    let t = Instant::now();
+    for &(q, r) in &warm {
+        c.tile_at(q, r);
+    }
+    let wall = t.elapsed();
+    let after = c.drain_metrics();
+    println!("
+cold: first tile {:.0} ms; warm: {} tiles at {:.1} µs a tile", first.as_secs_f64() * 1e3, warm.len(), wall.as_secs_f64() * 1e6 / warm.len() as f64);
+    println!("{:>11} {:>7} {:>9} {:>10} {:>12} {:>13} {:>13}", "layer", "cells", "radius", "chunks", "cold ms", "cold µs/chunk", "warm µs/tile");
+    for ((cl, bl), al) in cold.layers.iter().zip(&before.layers).zip(&after.layers) {
+        let own = (cl.deform.time + cl.prepare.time + cl.query.time).as_secs_f64();
+        let tiles_per_cell = 3.0 * cl.scale as f64 * (cl.scale as f64 + 1.0) + 1.0;
+        let chunks = cl.indexed as f64 * tiles_per_cell / CHUNK_TILES;
+        let warm_query = (al.query.time - bl.query.time).as_secs_f64();
+        let warm_prepare = al.prepare.count - bl.prepare.count;
+        println!(
+            "{:>11} {:>7} {:>9} {:>10.0} {:>12.1} {:>13.2} {:>13.2}{}",
+            cl.name,
+            cl.indexed,
+            cl.scale,
+            chunks,
+            own * 1e3,
+            own * 1e6 / chunks.max(1.0),
+            warm_query * 1e6 / warm.len() as f64,
+            if warm_prepare > 0 { format!("  ({warm_prepare} cells prepared while warm)") } else { String::new() },
+        );
     }
 }
 

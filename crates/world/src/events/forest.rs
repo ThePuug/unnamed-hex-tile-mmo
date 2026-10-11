@@ -54,7 +54,7 @@ use super::index::{CellId, CellIndex, IndexRegistry, Located};
 use super::lithology::rock_on;
 use super::migration::{ChannelIndex, VALLEY_HALF_WIDTH};
 use super::plates::{Coasts, PlateEdgeIndex, COAST_REACH, WARP_SWING};
-use super::thrusting::{outlines_of, rim_of, sheets_of, EdgeOutline, Outlines, RANGE_SPACING, WEDGE_SHEETS};
+use super::thrusting::{outlines_of, rim_of, sheets_of, EdgeOutline, Outlines, OUTLINE_REACH, RANGE_SPACING, WEDGE_SHEETS};
 use super::{footprint_plus_ring, CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 
 const WIND_SEED: u64 = 0x7769_6e64;
@@ -245,9 +245,16 @@ pub const STAND_REACH: f64 = STAND_RADIUS * (1.0 + STAND_SPREAD) * (1.0 + STAND_
 /// ramp, with the swing a chain and the warp take off a coast's line.
 pub const COAST_READ: f64 = COAST_REACH + WARP_SWING + PATH_SWING;
 
-/// The furthest anything a tile of the layer depends on lies from it: a
-/// stand reaching it, or a coast its stand's origin reads.
-pub const FOREST_REACH: f64 = if COAST_READ > STAND_REACH { COAST_READ } else { STAND_REACH };
+/// The furthest anything a stand depends on lies from its origin: the
+/// whole outline of the plate the origin stands in, which its rock, its
+/// crest and the belts' shadow over it are read off, past the coasts it
+/// reads and the stands reaching a tile.
+pub const FOREST_REACH: f64 = max(OUTLINE_REACH, max(COAST_READ, STAND_REACH));
+
+/// The greater of two reaches. A const cannot call `f64::max`.
+const fn max(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
 
 /// The cell scale: one ring holds everything within [`FOREST_REACH`].
 pub const FOREST_CELL_SCALE: u32 = (FOREST_REACH / RING_CLEARANCE) as u32 + 1;
@@ -572,7 +579,7 @@ impl WorldEvent for ForestEvent {
     fn scale(&self) -> u32 { FOREST_CELL_SCALE }
 
     /// A stand reaches its radius from an origin in the cell, and reads
-    /// the coasts out to [`COAST_READ`].
+    /// the whole outline of the plate its origin stands in.
     fn max_influence(&self) -> u32 { FOREST_REACH.ceil() as u32 }
 
     fn register_indexes(&self, registry: &mut IndexRegistry) {
