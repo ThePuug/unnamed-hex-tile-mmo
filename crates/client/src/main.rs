@@ -85,6 +85,8 @@ fn main() {
         MaterialPlugin::<world::SkyMaterial>::default(),
     ));
     app.add_plugins((SettingsPlugin, ShellPlugin, InkPlugin, crate::plugins::cel::CelPlugin, crate::plugins::music::MusicPlugin));
+    #[cfg(target_os = "windows")]
+    app.add_plugins(crate::plugins::window_menu::WindowMenuPlugin);
 
     // wgpu reports a validation error where a draw and its pass disagree,
     // and the default handler quits. A custom draw that misses a frame's

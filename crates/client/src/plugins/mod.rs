@@ -13,3 +13,5 @@ pub mod cover;
 pub mod music;
 pub mod settings;
 pub mod shell;
+#[cfg(target_os = "windows")]
+pub mod window_menu;
