@@ -30,7 +30,9 @@
 //! A tile reads the stands over it from the ring, the treeline from its
 //! own elevation, and its valley from what dissection published, and
 //! fills each of its three sites by a hash against the density it lands
-//! on. Nothing is read from a neighbour.
+//! on. Ground steeper than [`SOIL_GRADE`] holds no soil, so a cliff or a
+//! gorge wall stands bare whatever stand lies over it. Nothing is read from
+//! a neighbour.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -43,7 +45,7 @@ use crate::chains::{Segment, SegmentGrid};
 use crate::lattice::{jittered_centre, nearest_node, PATH_SWING};
 use crate::noise::{hash_channel_f64, hash_f64};
 use crate::tectonic::{Edge, PLATE_SPACING};
-use crate::{hex_to_world, smoothstep, world_to_hex};
+use crate::{hex_to_world, smoothstep, world_to_hex, RISE};
 use super::climate::{temperature, TREELINE, TREELINE_BAND};
 use super::drainage::DrainageIndex;
 use super::index::{CellId, CellIndex, IndexRegistry};
@@ -533,13 +535,27 @@ pub fn cover_of(q: i32, r: i32, ground: Cover, density: f64, trees: f64, tempera
     cover
 }
 
+// ── The soil ────────────────────────────────────────────────────────────────
+
+/// The steepest ground that holds soil, in z-levels per tile: forty-five
+/// degrees, as far up as across. Soil stays under it and a cliff or a
+/// gorge wall above it does not, while a range's talus at repose,
+/// thirty-four degrees, keeps its woods. tan 45° is one.
+pub const SOIL_GRADE: f64 = 1.0 / RISE;
+
 // ── The event ───────────────────────────────────────────────────────────────
 
-#[derive(Default)]
-pub struct ForestEvent;
+pub struct ForestEvent {
+    /// The steepest ground its trees and brush stand on.
+    soil: f64,
+}
 
 impl ForestEvent {
-    pub fn new() -> Self { ForestEvent }
+    pub fn new() -> Self { ForestEvent { soil: SOIL_GRADE } }
+}
+
+impl Default for ForestEvent {
+    fn default() -> Self { Self::new() }
 }
 
 impl WorldEvent for ForestEvent {
@@ -575,7 +591,7 @@ impl WorldEvent for ForestEvent {
         cell: &(dyn Any + Send + Sync),
         seed: u64,
     ) -> Option<TileOutput> {
-        if below.water.is_some() {
+        if below.water.is_some() || below.grade() >= self.soil {
             return None;
         }
         let reach = cell.downcast_ref::<Reach>()?;
@@ -768,5 +784,51 @@ mod tests {
         // Turned round, the foreland is the lee.
         let back = (-wind.0, -wind.1);
         assert!(shadow(fore.0, fore.1, back, &outlines) > shadow(lee.0, lee.1, back, &outlines));
+    }
+
+    /// The standard stack with the forest standing trees up to `soil`.
+    fn stack(soil: f64) -> super::super::Composite {
+        use super::super::*;
+        let mut c = Composite::new(S);
+        c.add_event(Box::new(plates::PlateEvent::new()));
+        c.add_event(Box::new(tilt::TiltEvent::new()));
+        c.add_event(Box::new(motion::MotionEvent::new()));
+        c.add_event(Box::new(thrusting::ThrustingEvent::new()));
+        c.add_event(Box::new(thickening::ThickeningEvent::new()));
+        c.add_event(Box::new(lithology::LithologyEvent::new()));
+        c.add_event(Box::new(landform::LandformEvent::new()));
+        c.add_event(Box::new(drainage::DrainageEvent::new()));
+        c.add_event(Box::new(migration::MigrationEvent::new()));
+        c.add_event(Box::new(dissection::DissectionEvent::new()));
+        c.add_event(Box::new(outcrop::OutcropEvent::new()));
+        c.add_event(Box::new(ForestEvent { soil }));
+        c
+    }
+
+    /// Ground steeper than the soil holds stands no tree and no brush,
+    /// whatever its stand and its sites' hashes; gentler ground stands
+    /// exactly what it would with no limit at all. Read over the haven's
+    /// scarp and the belt about it.
+    #[test]
+    fn steep_ground_holds_no_soil() {
+        let (limited, free) = (stack(SOIL_GRADE), stack(f64::INFINITY));
+        let (q0, r0) = world_to_hex(97_300.0, -1_050.0);
+        let (mut steep, mut stripped, mut gentle) = (0, 0, 0);
+        for dq in (-240..=240).step_by(3) {
+            for dr in (-240..=240).step_by(3) {
+                let (q, r) = (q0 + dq, r0 + dr);
+                let (here, unlimited) = (limited.tile_at(q, r), free.tile_at(q, r));
+                let grown = |cover: Cover| common::Canopy::tally(cover).iter().sum::<u32>();
+                if here.grade() >= SOIL_GRADE {
+                    steep += 1;
+                    assert_eq!(grown(here.cover), 0, "trees on ground at grade {} at ({q}, {r})", here.grade());
+                    if grown(unlimited.cover) > 0 { stripped += 1 }
+                } else {
+                    gentle += 1;
+                    assert_eq!(here.cover, unlimited.cover, "the soil limit changed gentle ground at ({q}, {r})");
+                }
+            }
+        }
+        assert!(steep > 0 && stripped > 0 && gentle > 0, "{steep} steep tiles, {stripped} of them bared, {gentle} gentle");
     }
 }
