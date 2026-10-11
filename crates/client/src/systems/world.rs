@@ -784,14 +784,15 @@ pub fn update_terrain_cut(
             }
         }
         // The ring is the tiles' own outer edge, with their ground's
-        // overlap; the cards have sunk away by the first summary level's.
+        // overlap; the cards dissolve out across the outer half of the
+        // first summary level's band, never narrower than its morph.
         if r == 0 {
             band.center = cut.outer_center;
             band.inner = if cut.fade > 0.0 { cut.outer } else { 0.0 };
             band.overlap = cut.fade;
         }
         if r == common_bevy::summary::LOD_LEVELS[1] {
-            band.sink_to = cut.outer;
+            band.dissolve = cut.outer_center.extend(cut.outer).extend(((cut.outer - cut.inner) / 2.0).max(cut.fade));
             band.far_in = cut.outer_center.extend(cut.outer).extend(cut.fade);
         }
         if r == common_bevy::summary::LOD_LEVELS[2] {

@@ -441,13 +441,14 @@ impl Plugin for CoverDrawPlugin {
 }
 
 /// What every drawing of the cover reads alike: the ring where the models
-/// hand over to the cards — its centre, radius and overlap — the far
-/// cards' band, its inner and outer edge each alike, the foot of what G
-/// will act on with w 1 while there is one, and the radius about the
-/// camera inside which everything fades.
+/// hand over to the cards — its centre, radius and overlap — the edge the
+/// cards dissolve out across, the far cards' band, its inner and outer
+/// edge each alike, the foot of what G will act on with w 1 while there
+/// is one, and the radius about the camera inside which everything fades.
 #[derive(Clone, Copy, Default, ShaderType)]
 struct CoverUniform {
     band: Vec4,
+    dissolve: Vec4,
     far_in: Vec4,
     far_out: Vec4,
     marked: Vec4,
@@ -790,11 +791,11 @@ fn prepare_cover_buffers(
 ) {
     let _t = timers.scope("regions");
     let buffers = buffers.into_inner();
-    let (ring, far_in, far_out) = band.map_or((Vec4::ZERO, Vec4::ZERO, Vec4::ZERO), |b| {
-        (Vec4::new(b.center.x, b.center.y, b.inner, b.overlap), b.far_in, b.far_out)
+    let (ring, dissolve, far_in, far_out) = band.map_or((Vec4::ZERO, Vec4::ZERO, Vec4::ZERO, Vec4::ZERO), |b| {
+        (Vec4::new(b.center.x, b.center.y, b.inner, b.overlap), b.dissolve, b.far_in, b.far_out)
     });
     let marked = marked.and_then(|m| m.0).map_or(Vec4::ZERO, |foot| foot.extend(1.0));
-    buffers.cover.set(CoverUniform { band: ring, far_in, far_out, marked, near_fade: NEAR_FADE_RADIUS });
+    buffers.cover.set(CoverUniform { band: ring, dissolve, far_in, far_out, marked, near_fade: NEAR_FADE_RADIUS });
     buffers.cover.write_buffer(&render_device, &render_queue);
     buffers.frames.set(table.frames.clone());
     buffers.frames.write_buffer(&render_device, &render_queue);
