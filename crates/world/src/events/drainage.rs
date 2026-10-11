@@ -8,7 +8,8 @@
 //! # The surface is a function, plus the plate graph
 //!
 //! The field layers beneath — substrate, tilt, thrusting, thickening,
-//! lithology — sum to one function of position and seed, read off the plate
+//! lithology, and the landforms carved into them — sum to one function of
+//! position and seed, read off the plate
 //! graph: the edges the plate layer published, for the coasts, and the
 //! resolved edges the motion layer published, for the outlines, the two
 //! indexes this deform reads over its window.
@@ -76,7 +77,8 @@ use common::HexLattice;
 use dashmap::DashMap;
 
 use super::index::{CellId, CellIndex, IndexRegistry};
-use super::lithology::rock_at;
+use super::landform::Landforms;
+use super::lithology::{cover_on, rock_at};
 use super::plates::{coasts_of, Coasts};
 use super::thickening::{plateau_share_of, PLATEAU_RISE};
 use super::thrusting::{outlines_of, Outlines};
@@ -203,12 +205,21 @@ pub struct Ground {
     pub erodibility: f64,
 }
 
-/// The ground beneath drainage at a position: the layers summed as the
-/// functions they are, the substrate from the coasts in reach, the tilt,
-/// the ranges and the plateau from the plate outlines in reach, and the
-/// cuesta the rock stands as, the plate looked up once for all of them.
-/// The surface equals the composed tile's elevation at a tile centre.
-pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Ground {
+/// The ground beneath drainage at a position: the envelope, less what the
+/// landforms carve into it, which `landforms` decides and keeps. The
+/// surface equals the composed tile's elevation at a tile centre.
+pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines, landforms: &Landforms) -> Ground {
+    let mut ground = envelope_at(wx, wy, seed, coasts, outlines);
+    ground.surface -= landforms.carve_at(wx, wy, seed, coasts, outlines, ground.surface);
+    ground
+}
+
+/// The envelope at a position: the field layers beneath the landforms
+/// summed as the functions they are, the substrate from the coasts in
+/// reach, the tilt, the ranges and the plateau from the plate outlines in
+/// reach, and the cuesta the rock stands as, the plate looked up once for
+/// all of them. What a landform reads at its site and carves into.
+pub fn envelope_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Ground {
     let substrate = substrate_on(wx, wy, coasts, seed);
     let base = substrate + tilt_at(wx, wy, substrate, seed);
     let Some(at) = outlines.at(wx, wy) else {
@@ -216,13 +227,13 @@ pub fn ground_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlin
     };
     let relief = outlines.relief_of(&at).max(0.0);
     let plateau = PLATEAU_RISE * plateau_share_of(at.plate, &at.distances).max(0.0);
-    let rock = rock_at(wx, wy, seed, at.plate.id, at.plate.age, substrate, relief);
+    let rock = rock_at(seed, at.plate.id, at.plate.age, cover_on(outlines, &at, seed), substrate, outlines.structure_of(&at));
     Ground { surface: base + relief + plateau + rock.stand, age: at.plate.age, erodibility: rock.erodibility }
 }
 
 /// The surface of [`ground_at`] alone.
-pub fn surface_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> f64 {
-    ground_at(wx, wy, seed, coasts, outlines).surface
+pub fn surface_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines, landforms: &Landforms) -> f64 {
+    ground_at(wx, wy, seed, coasts, outlines, landforms).surface
 }
 
 // ── Nodes ───────────────────────────────────────────────────────────────────
@@ -602,11 +613,14 @@ impl Routing {
 pub struct DrainageEvent {
     /// The ground at each node, shared by every window that contains it.
     nodes: DashMap<NodeKey, Ground>,
+    /// The landforms the nodes read, each site decided once for every
+    /// window.
+    landforms: Landforms,
 }
 
 impl DrainageEvent {
     pub fn new() -> Self {
-        Self { nodes: DashMap::new() }
+        Self { nodes: DashMap::new(), landforms: Landforms::new() }
     }
 
     /// The ground at a node.
@@ -616,7 +630,7 @@ impl DrainageEvent {
         }
         let (q, r) = node_site(key);
         let (wx, wy) = hex_to_world(q, r);
-        let g = ground_at(wx, wy, seed, coasts, outlines);
+        let g = ground_at(wx, wy, seed, coasts, outlines, &self.landforms);
         self.nodes.insert(key, g);
         g
     }

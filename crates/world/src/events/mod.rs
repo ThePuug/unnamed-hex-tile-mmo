@@ -4,7 +4,8 @@
 //! - **Deform cascade** (index → index): structural work. Deform reads the
 //!   indexes below and populates its own. Cheap — no tile materialization.
 //! - **Query cascade** (tile → tile): single (q, r) resolves vertically through the
-//!   stack. Each layer's `query()` computes one tile on demand. Framework caches result.
+//!   stack. Each layer's `query()` computes one tile on demand. The framework
+//!   remembers the tiles read lately, never every tile read.
 //!
 //! # Writing an event
 //!
@@ -83,6 +84,7 @@ pub mod dissection;
 pub mod drainage;
 pub mod forest;
 pub mod index;
+pub mod landform;
 pub mod lithology;
 pub mod migration;
 pub mod motion;
@@ -396,6 +398,7 @@ impl HitCounters {
 
 /// Snapshot of event metrics for external consumption.
 pub struct EventMetricsSnapshot {
+    /// Tiles the composite holds, at most [`RECENT_TILES`].
     pub visible: usize,
     pub tile_hits: u64,
     pub tile_misses: u64,
@@ -500,16 +503,9 @@ fn one_ring_clearance(lattice: &HexLattice) -> f64 {
     gap
 }
 
-struct CellEntry {
-    tiles: parking_lot::RwLock<HashMap<(i32, i32), TileOutput>>,
-}
-
 struct CellCache {
-    /// Cell entries. Presence = cell has been deformed (Warm).
-    /// Arc-wrapped so readers clone the Arc and release the DashMap shard lock
-    /// immediately. Eviction removes the DashMap entry; the Arc keeps the data
-    /// alive until all readers finish.
-    cells: DashMap<CellId, Arc<CellEntry>>,
+    /// The cells deformed. Nothing is evicted.
+    cells: DashMap<CellId, ()>,
     /// Per-cell deform serialization locks (double-checked locking).
     deform_locks: DashMap<CellId, Arc<Mutex<()>>>,
     /// What `prepare` built for a cell, kept for every tile in it.
@@ -545,28 +541,17 @@ impl CellCache {
             .clone()
     }
 
-    fn get_tile(&self, cell_id: CellId, q: i32, r: i32) -> Option<TileOutput> {
-        self.cells.get(&cell_id)
-            .and_then(|entry| entry.tiles.read().get(&(q, r)).copied())
-    }
-
-    /// Caches grow unbounded: eviction is unbuilt.
-    fn insert_empty(&self, cell_id: CellId) {
-        self.cells.entry(cell_id).or_insert_with(|| Arc::new(CellEntry {
-            tiles: parking_lot::RwLock::new(HashMap::new()),
-        }));
-    }
-
-    fn insert_tile(&self, cell_id: CellId, q: i32, r: i32, tile: TileOutput) {
-        if let Some(entry) = self.cells.get(&cell_id) {
-            entry.tiles.write().insert((q, r), tile);
-        }
-    }
-
-    fn tile_count(&self) -> usize {
-        self.cells.iter().map(|e| e.tiles.read().len()).sum()
+    fn mark_deformed(&self, cell_id: CellId) {
+        self.cells.insert(cell_id, ());
     }
 }
+
+/// How many composed tiles [`Composite::tile_at`] remembers before it
+/// forgets them all. A tile is read by several accessors in turn, the
+/// height, the water, the cover and the den, while a few thousand are in
+/// flight at once; a whole area read once gains nothing from more, and
+/// every tile kept is memory held for the life of the composite.
+pub const RECENT_TILES: usize = 65_536;
 
 // ── Composite ───────────────────────────────────────────────────────────────
 
@@ -577,6 +562,8 @@ pub struct Composite {
     lattices: Vec<HexLattice>,
     cell_caches: Vec<CellCache>,
     indexes: IndexRegistry,
+    /// The tiles read lately, composed, at most [`RECENT_TILES`] of them.
+    tiles: DashMap<(i32, i32), TileView>,
     /// Tile hits and misses: a tile found cached against one queried.
     metrics: HitCounters,
     seed: u64,
@@ -589,6 +576,7 @@ impl Composite {
             lattices: Vec::new(),
             cell_caches: Vec::new(),
             indexes: IndexRegistry::new(),
+            tiles: DashMap::new(),
             metrics: HitCounters::new(),
             seed,
         }
@@ -605,6 +593,7 @@ impl Composite {
         composite.add_event(Box::new(thrusting::ThrustingEvent::new()));
         composite.add_event(Box::new(thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(lithology::LithologyEvent::new()));
+        composite.add_event(Box::new(landform::LandformEvent::new()));
         composite.add_event(Box::new(drainage::DrainageEvent::new()));
         composite.add_event(Box::new(migration::MigrationEvent::new()));
         composite.add_event(Box::new(dissection::DissectionEvent::new()));
@@ -649,6 +638,12 @@ impl Composite {
     pub fn tile_at(&self, q: i32, r: i32) -> TileView {
         let _span = tracing::info_span!("tile_at").entered();
 
+        if let Some(view) = self.tiles.get(&(q, r)) {
+            self.metrics.record(true);
+            return view.clone();
+        }
+        self.metrics.record(false);
+
         // Phase 1: Deform cascade — ensure all cells containing this tile are deformed.
         {
             let _s = tracing::debug_span!("deform").entered();
@@ -665,32 +660,21 @@ impl Composite {
             let _s = tracing::debug_span!("query").entered();
             for layer in 0..self.events.len() {
                 let cell_id = self.lattices[layer].cell_id(q, r);
-
-                let cached = self.cell_caches[layer].get_tile(cell_id, q, r);
-                let tile_out = if let Some(to) = cached {
-                    self.metrics.record(true);
-                    to
-                } else {
-                    self.metrics.record(false);
-                    // `view` already holds the composite of every layer below,
-                    // which is the whole of what a query may read besides its
-                    // own cell context.
-                    let ctx = self.cell_context(layer, cell_id);
-                    let _s = tracing::debug_span!("event_query", event = self.events[layer].name()).entered();
-                    let result = self.events[layer].query(q, r, &view, &*ctx, self.seed);
-                    // None is cached as an empty output: query is deterministic,
-                    // so "contributes nothing here" is as cacheable as a result.
-                    // Without this, sea/flat tiles re-run every layer's query on
-                    // every repeat access.
-                    let to = result.unwrap_or_default();
-                    self.cell_caches[layer].insert_tile(cell_id, q, r, to);
-                    to
-                };
-
-                view.compose(&tile_out);
+                // `view` already holds the composite of every layer below,
+                // which is the whole of what a query may read besides its
+                // own cell context.
+                let ctx = self.cell_context(layer, cell_id);
+                let _s = tracing::debug_span!("event_query", event = self.events[layer].name()).entered();
+                if let Some(out) = self.events[layer].query(q, r, &view, &*ctx, self.seed) {
+                    view.compose(&out);
+                }
             }
         }
 
+        if self.tiles.len() >= RECENT_TILES {
+            self.tiles.clear();
+        }
+        self.tiles.insert((q, r), view.clone());
         view
     }
 
@@ -742,7 +726,7 @@ impl Composite {
     /// deform. The counters are cumulative lifetime totals and nothing is
     /// drained; the reader computes rates between two snapshots.
     pub fn drain_metrics(&self) -> EventMetricsSnapshot {
-        let visible: usize = self.cell_caches.iter().map(|c| c.tile_count()).sum();
+        let visible = self.tiles.len();
 
         let tile_hits = self.metrics.hits();
         let tile_misses = self.metrics.misses();
@@ -854,8 +838,7 @@ impl Composite {
         };
         self.events[layer].deform(&scope);
 
-        // Mark cell as deformed
-        self.cell_caches[layer].insert_empty(cell_id);
+        self.cell_caches[layer].mark_deformed(cell_id);
     }
 }
 

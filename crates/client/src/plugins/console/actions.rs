@@ -23,6 +23,7 @@ pub enum DevConsoleAction {
     ToggleCoverHidden,
     ToggleCameraCloseup,
     ToggleCanopyParts,
+    ToggleCanopyLast,
 
     // Admin actions
     GotoWorldUnits(f64, f64),
@@ -140,6 +141,10 @@ pub fn execute_console_actions(
             DevConsoleAction::ToggleCanopyParts => {
                 state.canopy_parts_off = !state.canopy_parts_off;
                 info!("Canopy: {}", if state.canopy_parts_off { "vertices" } else { "parts" });
+            }
+            DevConsoleAction::ToggleCanopyLast => {
+                state.canopy_last_off = !state.canopy_last_off;
+                info!("Last level wood: {}", if state.canopy_last_off { "bare" } else { "worn" });
             }
 
             DevConsoleAction::GotoWorldUnits(_, _) => {}

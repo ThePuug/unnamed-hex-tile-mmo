@@ -16,7 +16,7 @@ use bevy::{
 };
 use common::metrics::{self, Cadence, MetricsPacket};
 use common_bevy::{
-    components::{behaviour::PlayerControlled, Actor},
+    components::{behaviour::PlayerControlled, heading::Heading, Actor},
     resources::map::Map,
 };
 use qrz::Convert;
@@ -82,7 +82,8 @@ pub fn publish(
     lod: Res<crate::resources::LodTriangleStats>,
     map: Res<Map>,
     origin: Res<crate::resources::RenderOrigin>,
-    player: Query<&Transform, (With<Actor>, With<PlayerControlled>)>,
+    player: Query<(&Transform, &Heading), (With<Actor>, With<PlayerControlled>)>,
+    camera: Option<Res<crate::systems::camera::CameraPose>>,
 ) {
     let now = time.elapsed_secs_f64();
     if let Some(ms) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.value()) {
@@ -109,7 +110,7 @@ pub fn publish(
     topics.push(("heap", Cadence::Snapshot, super::heap::report()));
 
     let mut world = vec![field("tiles", map.len() as f64)];
-    if let Ok(transform) = player.single() {
+    if let Ok((transform, heading)) = player.single() {
         let qrz: qrz::Qrz = map.convert(origin.world(transform.translation));
         let z = map.get_by_qr(qrz.q, qrz.r).map_or(qrz.z, |(real, _)| real.z);
         let (wx, wy) = common::hex_to_world(qrz.q, qrz.r);
@@ -119,7 +120,15 @@ pub fn publish(
             field("z", z as f64),
             field("wx", wx),
             field("wy", wy),
+            // The player's facing in degrees clockwise from north, and the
+            // camera's yaw in degrees, nought behind a player facing north
+            // and counter-clockwise from there: together they say what a
+            // frame was looking at, so a view can be stood in again.
+            field("heading", heading.degrees()),
         ]);
+        if let Some(camera) = &camera {
+            world.push(field("yaw", camera.pose.yaw.to_degrees()));
+        }
     }
     topics.push(("world", Cadence::Snapshot, world));
 

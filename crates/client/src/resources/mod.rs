@@ -71,20 +71,22 @@ pub struct EdgeCenters(pub HashMap<u32, Vec2>);
 /// Where the tiles' models hand over to the summaries' cards, as the
 /// shaders see it: the ring at the first summary level's edge, its
 /// centre and radius, the width of the overlap inside it over which the
-/// models dither out and the cards dither in, and the distance by which
-/// the cards, sinking from the ring on, have gone wholly under the
-/// ground that wears their colour. And the band the far cards stand in,
-/// the crags a summary past the tiles stands: from the first summary
-/// level's outer edge, where the tiles' own boulders end, to the next
-/// level's, each as its centre, radius and overlap. Rendered coordinates,
-/// as the regions' transforms are; an unset ring shows the models and
-/// hides the cards, and an unset far band hides the far cards.
+/// models dither out and the cards dither in; the edge the cards dissolve
+/// out across, the first summary level's outer edge with the outer half
+/// of that level's band as its overlap, so the cards thin into the ground
+/// that wears their colour over a stretch the eye reads as distance and
+/// never end on a line. And the band the far cards stand in, the crags a
+/// summary past the tiles stands: from the first summary level's outer
+/// edge, where the tiles' own boulders end, to the next level's, each as
+/// its centre, radius and overlap. Rendered coordinates, as the regions'
+/// transforms are; an unset ring shows the models and hides the cards,
+/// and an unset far band hides the far cards.
 #[derive(Resource, Clone, Copy, Default, PartialEq, bevy::render::extract_resource::ExtractResource)]
 pub struct CardBand {
     pub center: Vec2,
     pub inner: f32,
     pub overlap: f32,
-    pub sink_to: f32,
+    pub dissolve: Vec4,
     pub far_in: Vec4,
     pub far_out: Vec4,
 }
@@ -95,47 +97,17 @@ pub struct CardBand {
 pub const ATTRIBUTE_COARSE_SURFACE: MeshVertexAttribute =
     MeshVertexAttribute::new("Terrain_CoarseSurface", 0x7e88_a1c0, VertexFormat::Float32x4);
 
-/// The canopy's rise a terrain vertex draws, as the weights the three
-/// kinds' heights are read by (`summary_mesh::rise_weights`), read from
-/// [`RISE_LEVEL`]'s canopy.
-pub const ATTRIBUTE_RISE: MeshVertexAttribute =
-    MeshVertexAttribute::new("Terrain_Rise", 0x7e88_a1c1, VertexFormat::Float32x3);
-
-/// The level whose canopy the ground's rise is read from, by every level
-/// that draws one: the third, whose band the rise falls away across. The
-/// rise reaches no level past it, and the levels before it draw one
-/// reading of it, so where two meet they stand at one height.
-pub const RISE_LEVEL: u32 = common_bevy::summary::LOD_LEVELS[2];
-
 /// How a level wears its canopy: each kind's colour, the trees' own, and
-/// how wide a grown crown of it stands; and the crowns' relief, full
-/// where the level begins and gone where it ends, so the level past it
-/// wears the canopy flat with no seam. A level declaring no relief at
-/// all wears it flat throughout.
-#[derive(Clone, Copy, Debug, Default, ShaderType)]
+/// how wide a grown crown of it stands; and the ground distances the
+/// crowns' relief comes in between, none nearer than `relief_from` and
+/// all of it from `relief_to`. A level whose `relief_to` is not past its
+/// `relief_from` wears the canopy flat throughout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
 pub struct CanopyLook {
     /// Pine, deciduous, scrub: rgb, and the crown's width in world units.
     pub kinds: [Vec4; 3],
-    /// The same three kinds' grown height, which is how far the ground
-    /// rises where their canopy is closed. The fourth is unused.
-    pub rises: Vec4,
-    /// The circle the canopy's ground rises across: the cards' own centre
-    /// in xy, and in zw the ground distances from it where the rise
-    /// begins and ends — nothing at the ring where the models hand over,
-    /// their whole height where the last card is drawn. Carried rather
-    /// than taken from the view, because the shadow pass's view is the
-    /// sun's: read from there, every pass would lift a different surface
-    /// and the ground would shadow itself from one it never draws.
-    pub lift: Vec4,
-    /// The circle the rise falls away across, as `lift` states its own:
-    /// the third summary level's outer edge's centre in xy, and in zw its
-    /// band, where the rise ends to where the next level begins, so the
-    /// ground under the canopy is bare where those two meet and neither
-    /// draws a rise the other does not.
-    pub fall: Vec4,
-    /// The ground distances the relief is full at and gone by.
-    pub relief_full: f32,
-    pub relief_gone: f32,
+    pub relief_from: f32,
+    pub relief_to: f32,
     /// The density a canopy reads closed from (`summary_mesh::CANOPY_FULL`).
     pub full: f32,
 }
@@ -156,19 +128,18 @@ pub struct CanopyLattice {
 }
 
 /// One kind's look as the tree kit hands it over: the mean colour of its
-/// models, a grown crown's width, and a grown tree's height.
+/// models, and a grown crown's width.
 #[derive(Clone, Copy, Debug)]
 pub struct KindLook {
     pub color: Vec3,
     pub width: f32,
-    pub height: f32,
 }
 
 /// Terrain material extension: elevation colour in the fragment shader,
 /// grass over the ramp's green band and scree over its mountain band on
 /// the tops, stone on the faces, atmospheric fade from the view position,
 /// the band cut, and the canopy where the level carries one, in the
-/// trees' colours with the crowns' relief near and flat far. The shaders
+/// trees' colours, flat near and with the crowns' relief far. The shaders
 /// are shared; the cut and the canopy's look are per material, one
 /// material per LoD level.
 ///
@@ -237,7 +208,6 @@ impl MaterialExtension for TerrainExtension {
             Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
             Mesh::ATTRIBUTE_UV_0.at_shader_location(2),
             ATTRIBUTE_COARSE_SURFACE.at_shader_location(3),
-            ATTRIBUTE_RISE.at_shader_location(5),
         ];
         if layout.0.contains(Mesh::ATTRIBUTE_COLOR) {
             attributes.push(Mesh::ATTRIBUTE_COLOR.at_shader_location(4));
@@ -399,31 +369,24 @@ impl FromWorld for TerrainMaterial {
 
 impl TerrainMaterial {
     /// How level `r` wears its canopy: the kinds' looks, once the kit has
-    /// given them, with the canopy's relief on every level that wears the
-    /// colour, over the same two distances whichever level it is, so no
-    /// seam opens where one hands to the next. It runs full to the end of
-    /// the third level's band and fades over the fourth's, which is as
-    /// far as the colour itself reaches; the tiles wear neither.
-    fn canopy_for(&self, r: u32) -> CanopyLook {
+    /// given them, over the same two relief distances on every summary
+    /// level, so no seam opens where one hands to the next. On the first
+    /// two summary levels' ground the colour is flat and lit on the
+    /// ground's own normal, as the trees are; the relief rises across the
+    /// first quarter of the third summary level's band and is worn in full
+    /// through the rest of it and out to the horizon. The tiles wear
+    /// neither.
+    pub(crate) fn canopy_for(&self, r: u32) -> CanopyLook {
         use common_bevy::summary::{threshold_horiz, LOD_LEVELS};
         let full = common_bevy::summary_mesh::CANOPY_FULL;
         let Some(kinds) = &self.kinds else { return CanopyLook { full, ..default() } };
-        let (relief_full, relief_gone) = if Self::canopied(r) {
-            (threshold_horiz(LOD_LEVELS[2]), threshold_horiz(LOD_LEVELS[3]))
+        let (relief_from, relief_to) = if Self::canopied(r) {
+            let from = threshold_horiz(LOD_LEVELS[2]);
+            (from, from + (threshold_horiz(LOD_LEVELS[3]) - from) / 4.0)
         } else {
             (0.0, 0.0)
         };
-        CanopyLook {
-            kinds: kinds.map(|k| k.color.extend(k.width)),
-            rises: Vec4::new(kinds[0].height, kinds[1].height, kinds[2].height, 0.0),
-            // The span is the band cut's, handed over each frame by
-            // `update_terrain_cut`; until it has run the ground is flat.
-            lift: Vec4::ZERO,
-            fall: Vec4::ZERO,
-            relief_full,
-            relief_gone,
-            full,
-        }
+        CanopyLook { kinds: kinds.map(|k| k.color.extend(k.width)), relief_from, relief_to, full }
     }
 
     /// Hand every level the kinds' looks, from the tree kit once it has
@@ -437,11 +400,9 @@ impl TerrainMaterial {
         }
     }
 
-    /// Whether level `r` wears a canopy: every level above the tiles but
-    /// the last.
+    /// Whether level `r` wears a canopy: every level above the tiles.
     pub fn canopied(r: u32) -> bool {
-        use common_bevy::summary::LOD_LEVELS;
-        r != LOD_LEVELS[0] && r != *LOD_LEVELS.last().expect("a ladder")
+        r != common_bevy::summary::LOD_LEVELS[0]
     }
 
     /// Level `r`'s material, made on first asking, binding `parts`, the
@@ -590,7 +551,6 @@ pub struct SummaryMeshBuildResult {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub coarse: Vec<[f32; 4]>,
-    pub rise: Vec<[f32; 3]>,
     /// The canopy per vertex where the level colours its ground by it,
     /// else empty.
     pub canopy: Vec<[f32; 4]>,
@@ -653,34 +613,6 @@ pub struct RegionData {
 /// A cell and the six around it, as lattice offsets.
 const RING: [(i32, i32); 7] = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
 
-/// The regions of the levels finer than [`RISE_LEVEL`] whose vertices
-/// carry the rise read from its cell `cell`: a part of it stands at the fan
-/// corners of the cells around it, and a finer vertex reads the fan it
-/// lies in. The tiles draw no rise.
-fn finer_regions_reading_rise(cell: (i32, i32)) -> HashSet<MeshRegionKey> {
-    use common_bevy::summary::{part_offsets, summary_lattice, LOD_LEVELS};
-    let scale = summary_lattice(RISE_LEVEL).scale;
-    let region_lat = common_bevy::summary::mesh_region_lattice();
-    let mut regions = HashSet::new();
-    for &finer in LOD_LEVELS.iter().filter(|&&l| l > 0 && l < RISE_LEVEL) {
-        let fine = summary_lattice(finer).scale;
-        for (dq, dr) in RING {
-            let (cq, cr) = ((cell.0 + dq) * scale, (cell.1 + dr) * scale);
-            for (oq, or) in part_offsets(RISE_LEVEL) {
-                // A part stands on a centre of the next finer level, and
-                // so on every finer level's lattice.
-                let (q, r) = (cq + oq, cr + or);
-                let (fq, fr) = (q.div_euclid(fine), r.div_euclid(fine));
-                for (eq, er) in RING {
-                    let (mn, mm) = region_lat.cell_id(fq + eq, fr + er);
-                    regions.insert(MeshRegionKey { r: finer, mn, mm });
-                }
-            }
-        }
-    }
-    regions
-}
-
 impl SummaryCache {
     /// Insert region data, merging into any existing entry. Merge keeps the
     /// union of cells (a partial batch can never erase previously received
@@ -693,13 +625,12 @@ impl SummaryCache {
                 let region_lat = common_bevy::summary::mesh_region_lattice();
                 let mut revised = self.revised.lock().expect("the lock is never poisoned");
                 for (&(sq, sr), cell) in &data.cells {
-                    let Some(held) = existing.cells.get(&(sq, sr)).filter(|held| *held != cell) else { continue };
+                    if existing.cells.get(&(sq, sr)).is_none_or(|held| held == cell) {
+                        continue;
+                    }
                     for (dq, dr) in RING {
                         let (mn, mm) = region_lat.cell_id(sq + dq, sr + dr);
                         revised.insert(MeshRegionKey { r: key.r, mn, mm });
-                    }
-                    if key.r == RISE_LEVEL && (held.canopy != cell.canopy || held.wet != cell.wet) {
-                        revised.extend(finer_regions_reading_rise((sq, sr)));
                     }
                 }
                 drop(revised);
@@ -853,34 +784,5 @@ mod tests {
         // The server stalls and its clock falls 1_750 behind the client's
         server.sync(Moment::from_millis(10_000 + 20_000 - 1_750), 20_000);
         assert_eq!(server.current_time(20_000), 10_000 + 20_000 - 1_750 + server.latency + server.lead());
-    }
-    /// A revised canopy at the rise's level rebuilds every finer region
-    /// whose vertices carry its rise: built over the summaries with and
-    /// without it, a region whose rise differs is one the revision names.
-    #[test]
-    fn a_revised_canopy_names_every_finer_region_carrying_its_rise() {
-        use common::cover::{Canopy, Content, Cover};
-        use common_bevy::summary::{SummaryCell, PARTS};
-        use common_bevy::summary_mesh::build_summary_mesh_region;
-        let pines = Canopy::of(Cover::NONE.with(0, Content::Pine).with(1, Content::Pine));
-        let revised = (1, -1);
-        let bare = |_: i32, _: i32| Some(SummaryCell::default());
-        let wooded = |q: i32, r: i32| Some(SummaryCell { canopy: if (q, r) == revised { [pines; PARTS] } else { [Canopy::NONE; PARTS] }, ..SummaryCell::default() });
-        let flat = |_: i32, _: i32| Some(5);
-        let named = finer_regions_reading_rise(revised);
-        let mut reading = 0;
-        for mn in -3..=3 {
-            for mm in -3..=3 {
-                let key = MeshRegionKey { r: 1, mn, mm };
-                let build = |cells: &dyn Fn(i32, i32) -> Option<SummaryCell>| {
-                    build_summary_mesh_region(1, key, &flat, Some(&flat), None, Some((RISE_LEVEL, cells))).expect("every cell is there").rise
-                };
-                if build(&bare) != build(&wooded) {
-                    reading += 1;
-                    assert!(named.contains(&key), "{key:?} carries the revised rise");
-                }
-            }
-        }
-        assert!(reading > 0, "some region reads it");
     }
 }

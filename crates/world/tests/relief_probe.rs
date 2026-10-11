@@ -598,6 +598,7 @@ fn valley_census() {
     let t = Instant::now();
     let valleys = Valleys::in_box(cx, cy, half, SEED);
     let outlines = Outlines::in_box(cx, cy, half, SEED);
+    let landforms = world::events::landform::Landforms::new();
     let coasts = Coasts::in_box(cx, cy, half, SEED);
     println!("  valleys, outlines and coasts built in {:?}", t.elapsed());
     let n = (2.0 * half / step) as usize + 1;
@@ -611,7 +612,7 @@ fn valley_census() {
     for j in 0..n {
         for i in 0..n {
             let (x, y) = at(i, j);
-            let envelope = surface_at(x, y, SEED, &coasts, &outlines);
+            let envelope = surface_at(x, y, SEED, &coasts, &outlines, &landforms);
             if envelope < 0.0 { continue }
             land += 1;
             let cut = valleys.cut_at(x, y, envelope);
@@ -620,8 +621,8 @@ fn valley_census() {
             in_valley[j * n + i] = true;
             depths.push(cut);
             // The steepest of the two axis gradients at eight tiles, in z per tile.
-            let e8x = surface_at(x + 8.0, y, SEED, &coasts, &outlines);
-            let e8y = surface_at(x, y + 8.0, SEED, &coasts, &outlines);
+            let e8x = surface_at(x + 8.0, y, SEED, &coasts, &outlines, &landforms);
+            let e8y = surface_at(x, y + 8.0, SEED, &coasts, &outlines, &landforms);
             let cx8 = valleys.cut_at(x + 8.0, y, e8x);
             let cy8 = valleys.cut_at(x, y + 8.0, e8y);
             let slope = ((cx8 - cut).abs() / 8.0).max((cy8 - cut).abs() / 8.0);
@@ -641,7 +642,7 @@ fn valley_census() {
     for j in 0..n - 2 {
         for i in 0..n - 2 {
             let (x, y) = at(i + 1, j + 1);
-            if surface_at(x, y, SEED, &coasts, &outlines) < 0.0 { continue }
+            if surface_at(x, y, SEED, &coasts, &outlines, &landforms) < 0.0 { continue }
             views += 1;
             if (0..3).any(|dj| (0..3).any(|di| in_valley[(j + dj) * n + i + di])) { with += 1 }
         }

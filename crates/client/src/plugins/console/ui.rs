@@ -153,6 +153,7 @@ pub fn update_console_menu(
                         (format!("5. Camera Close-up          [{}]", if diagnostics_state.camera_closeup { "On" } else { "Off" }), !diagnostics_state.camera_closeup),
                         (format!("6. Cover                    [{}]", if diagnostics_state.cover_hidden { "Hidden" } else { "Shown" }), !diagnostics_state.cover_hidden),
                         (format!("7. Canopy                   [{}]", if diagnostics_state.canopy_parts_off { "Vertices" } else { "Parts" }), !diagnostics_state.canopy_parts_off),
+                        (format!("8. Last Level Wood          [{}]", if diagnostics_state.canopy_last_off { "Bare" } else { "Worn" }), !diagnostics_state.canopy_last_off),
                     ];
                     for (text, on) in rows {
                         line(parent, text, 16.0, state_color(on));

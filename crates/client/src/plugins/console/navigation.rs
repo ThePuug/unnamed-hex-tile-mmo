@@ -172,6 +172,9 @@ fn handle_terrain_menu(
     } else if keyboard.just_pressed(KeyCode::Numpad7) {
         action_writer.write(DevConsoleAction::ToggleCanopyParts);
         consumed = Some(KeyCode::Numpad7);
+    } else if keyboard.just_pressed(KeyCode::Numpad8) {
+        action_writer.write(DevConsoleAction::ToggleCanopyLast);
+        consumed = Some(KeyCode::Numpad8);
     }
 
     if let Some(key) = consumed {
