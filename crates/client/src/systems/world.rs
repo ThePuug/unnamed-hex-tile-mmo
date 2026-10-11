@@ -491,11 +491,8 @@ const BAND_HYSTERESIS_MARGIN: f32 = 0.08;
 
 /// World-space center of a mesh region.
 fn region_center_world(key: &common_bevy::summary_mesh::MeshRegionKey) -> (f32, f32) {
-    let summary_lat = common_bevy::summary::summary_lattice(key.r);
-    let region_lat = common_bevy::summary::mesh_region_lattice();
-    let region_center = region_lat.cell_center((key.mn, key.mm));
-    let (cq, cr) = summary_lat.cell_center(region_center);
-    common_bevy::geometry::flat_top_tile_center(cq, cr, 1.0)
+    let origin = key.origin();
+    common_bevy::geometry::flat_top_tile_center(origin.q, origin.r, 1.0)
 }
 
 /// Dispatches async builds of the summary mesh regions the bands want,
@@ -632,7 +629,7 @@ pub fn dispatch_summary_tasks(
     const MAX_MESH_TASKS: usize = 16;
     let mut mesh_dispatched = 0;
 
-    let mut ordered: Vec<(f32, common_bevy::summary_mesh::MeshRegionKey, Vec3)> = needed
+    let mut ordered: Vec<(f32, common_bevy::summary_mesh::MeshRegionKey)> = needed
         .iter()
         .map(|region_key| {
             let (wx, wz) = region_center_world(region_key);
@@ -641,12 +638,12 @@ pub fn dispatch_summary_tasks(
                 let dz = wz - pos.z;
                 dx * dx + dz * dz
             });
-            (d2, *region_key, Vec3::new(wx, 0.0, wz))
+            (d2, *region_key)
         })
         .collect();
     ordered.sort_by(|a, b| a.0.total_cmp(&b.0));
 
-    for (d2, region_key, mesh_origin) in ordered {
+    for (d2, region_key) in ordered {
         if mesh_dispatched >= MAX_MESH_TASKS { break; }
         let radius = region_key.r;
 
@@ -699,7 +696,6 @@ pub fn dispatch_summary_tasks(
                     entity: None,
                     mesh_handle: None,
                     tri_count: 0,
-                    mesh_origin,
                     cover: Vec::new(),
                     models_spawned: false,
                     cards_spawned: false,
@@ -976,11 +972,12 @@ fn collect_and_build_summary_mesh(
         parts: Vec::new(),
         indices: Vec::new(),
         tri_count: 0,
-        mesh_origin: Vec3::ZERO,
         water: Default::default(),
         cover: Vec::new(),
     };
 
+    let (origin_x, origin_z) = region_center_world(&region_key);
+    let mesh_origin = Vec3::new(origin_x, 0.0, origin_z);
     let tile_z = |q: i32, r: i32| -> Option<i32> { map.get_by_qr(q, r).map(|(qrz, _)| qrz.z) };
     // The same seven samples over the map's tiles, where every producer's
     // rule reads them; nothing until the tiles are all there.
@@ -1031,8 +1028,8 @@ fn collect_and_build_summary_mesh(
                 let mut result = smr_to_result(smr);
                 let w = common_bevy::summary_mesh::build_water_mesh_region(0, region_key, &tile_water);
                 result.water = crate::resources::WaterGeometry { positions: w.positions, normals: w.normals, indices: w.indices };
-                result.cover = crate::plugins::cover::place_cover(0, region_key, result.mesh_origin, map, &height);
-                result.cover.extend(crate::plugins::cover::place_dens(0, region_key, result.mesh_origin, dens, map, &height));
+                result.cover = crate::plugins::cover::place_cover(0, region_key, mesh_origin, map, &height);
+                result.cover.extend(crate::plugins::cover::place_dens(0, region_key, mesh_origin, dens, map, &height));
                 result
             });
     }
@@ -1057,16 +1054,16 @@ fn collect_and_build_summary_mesh(
                 result.parts = common_bevy::summary_mesh::parts_layer(radius, region_key, &summary).unwrap_or_default();
             }
             if radius == common_bevy::summary::LOD_LEVELS[1] {
-                result.cover = crate::plugins::cover::place_cover(radius, region_key, result.mesh_origin, map, &height);
+                result.cover = crate::plugins::cover::place_cover(radius, region_key, mesh_origin, map, &height);
             }
             // Past the tiles a crag stands from the summaries' own reading
             // of it, the level after the first.
             if radius == common_bevy::summary::LOD_LEVELS[2] {
                 let outcrop = |sq: i32, sr: i32| cached(radius, sq, sr).or_else(|| sampled(radius, sq, sr)).map(|c| c.outcrop);
-                result.cover = crate::plugins::cover::place_crags(radius, region_key, result.mesh_origin, &outcrop, &height);
+                result.cover = crate::plugins::cover::place_crags(radius, region_key, mesh_origin, &outcrop, &height);
             }
             if crate::systems::den::DRAWN_AT.contains(&radius) {
-                result.cover.extend(crate::plugins::cover::place_dens(radius, region_key, result.mesh_origin, dens, map, &height));
+                result.cover.extend(crate::plugins::cover::place_dens(radius, region_key, mesh_origin, dens, map, &height));
             }
             result
         })
@@ -1082,7 +1079,6 @@ fn smr_to_result(smr: common_bevy::summary_mesh::SummaryMeshResult) -> SummaryMe
         parts: Vec::new(),
         indices: smr.indices,
         tri_count: smr.tri_count,
-        mesh_origin: smr.mesh_origin,
         water: Default::default(),
         cover: Vec::new(),
     }
@@ -1136,6 +1132,7 @@ pub fn poll_summary_meshes(
     mut commands: Commands,
     mut summary_meshes: ResMut<SummaryMeshes>,
     origin: Res<crate::resources::RenderOrigin>,
+    map: Res<common_bevy::resources::map::Map>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut tri_stats: ResMut<LodTriangleStats>,
     mut terrain_material: ResMut<TerrainMaterial>,
@@ -1158,7 +1155,6 @@ pub fn poll_summary_meshes(
         let Some(task) = &mut state.task else { continue };
         let Some(mut result) = block_on(future::poll_once(task)) else { continue };
         state.task = None;
-        state.mesh_origin = result.mesh_origin;
         state.cover = std::mem::take(&mut result.cover);
         state.waiting = result.tri_count == 0;
         if result.tri_count > 0 {
@@ -1191,7 +1187,7 @@ pub fn poll_summary_meshes(
                     .spawn((
                         Mesh3d(mesh_handle),
                         MeshMaterial3d(terrain_material.for_level(key.r, &mut materials, parts)),
-                        Transform::from_translation(origin.render_world(state.mesh_origin)),
+                        Transform::from_translation(origin.render_tile(&map, key.origin())),
                         SummaryMesh,
                     ))
                     .id();
@@ -1392,7 +1388,6 @@ mod tests {
                         entity: Some(Entity::from_raw_u32(1).unwrap()),
                         mesh_handle: None,
                         tri_count: 0,
-                        mesh_origin: Vec3::ZERO,
                         cover: Vec::new(),
                         models_spawned: false,
                         cards_spawned: false,
@@ -1434,7 +1429,6 @@ mod tests {
             entity: None,
             mesh_handle: None,
             tri_count: 0,
-            mesh_origin: Vec3::ZERO,
             cover: Vec::new(),
             models_spawned: false,
             cards_spawned: false,

@@ -751,10 +751,11 @@ fn update_cover(
     kit: Res<CoverKit>,
     mut summary_meshes: ResMut<crate::resources::SummaryMeshes>,
     origin: Res<crate::resources::RenderOrigin>,
+    map: Res<common_bevy::resources::map::Map>,
     player_query: Query<&Transform, With<crate::components::Viewed>>,
     band: Res<crate::resources::CardBand>,
 ) {
-    let Some(camera) = player_query.single().ok().map(|t| origin.world(t.translation)) else { return };
+    let Some(player) = player_query.single().ok().map(|t| t.translation) else { return };
     // The ring, or where it will be once the cuts are set.
     let ring = if band.inner > 0.0 { band.inner } else { common_bevy::summary::threshold_horiz(0) };
 
@@ -769,7 +770,7 @@ fn update_cover(
         // its models while it can reach the ring, and a summary's cards
         // stand from the moment its ground does.
         if key.r == 0 {
-            let d = state.mesh_origin.xz().distance(camera.xz());
+            let d = origin.render_tile(&map, key.origin()).xz().distance(player.xz());
             if !state.models_spawned && d <= ring + RING_MARGIN {
                 spawn_models(&mut commands, entity, &state.cover, &kit);
                 state.models_spawned = true;

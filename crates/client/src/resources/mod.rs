@@ -490,7 +490,6 @@ pub struct SummaryMeshState {
     pub entity: Option<Entity>,
     pub mesh_handle: Option<Handle<Mesh>>,
     pub tri_count: u32,
-    pub mesh_origin: Vec3,
     /// The region's cover, placed with the ground and spawned as children
     /// of its entity once the cover kit has loaded.
     pub cover: Vec<crate::plugins::cover::CoverInstance>,
@@ -560,7 +559,6 @@ pub struct SummaryMeshBuildResult {
     pub parts: Vec<u16>,
     pub indices: Vec<u32>,
     pub tri_count: u32,
-    pub mesh_origin: Vec3,
     pub water: WaterGeometry,
     pub cover: Vec<crate::plugins::cover::CoverInstance>,
 }

@@ -62,13 +62,6 @@ impl RenderOrigin {
         self.tile + map.convert(render)
     }
 
-    /// Where a world vector is drawn. A subtraction of two large vectors,
-    /// exact only to the world's own precision: for what already lives as
-    /// a vector, never for a position that has a tile.
-    pub fn render_world(&self, world: Vec3) -> Vec3 {
-        world - self.world
-    }
-
     /// The world vector of a rendered one, for the map.
     pub fn world(&self, render: Vec3) -> Vec3 {
         render + self.world

@@ -127,10 +127,11 @@ pub fn spawn_grid_mesh_task(
     // Extract mesh data from nearby summary mesh regions
     let grid_wu = GRID_RADIUS as f32 * common_bevy::chunk::CHUNK_EXTENT_WU;
     let mut snapshots: Vec<ChunkMeshSnapshot> = Vec::new();
-    for (_, region_state) in summary_meshes.states.iter() {
+    for (key, region_state) in summary_meshes.states.iter() {
+        let origin: Vec3 = map.convert(key.origin());
         if let Some(center) = center_pos {
-            let dx = region_state.mesh_origin.x - center.x;
-            let dz = region_state.mesh_origin.z - center.z;
+            let dx = origin.x - center.x;
+            let dz = origin.z - center.z;
             if (dx * dx + dz * dz).sqrt() > grid_wu {
                 continue;
             }
@@ -151,7 +152,7 @@ pub fn spawn_grid_mesh_task(
         snapshots.push(ChunkMeshSnapshot {
             positions,
             indices,
-            origin: region_state.mesh_origin,
+            origin,
         });
     }
 

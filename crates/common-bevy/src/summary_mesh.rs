@@ -45,6 +45,15 @@ pub struct MeshRegionKey {
     pub mm: i32,
 }
 
+impl MeshRegionKey {
+    /// The tile the region is built and placed about: its centre cell's
+    /// centre, at `z = 0`.
+    pub fn origin(&self) -> qrz::Qrz {
+        let (q, r) = summary_lattice(self.r).cell_center(mesh_region_lattice().cell_center((self.mn, self.mm)));
+        qrz::Qrz { q, r, z: 0 }
+    }
+}
+
 /// Result of building a mesh region.
 pub struct SummaryMeshResult {
     pub positions: Vec<[f32; 3]>,
@@ -59,8 +68,6 @@ pub struct SummaryMeshResult {
     pub canopy: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     pub tri_count: u32,
-    /// World-space origin of this mesh region (for Transform).
-    pub mesh_origin: Vec3,
 }
 
 /// A summary's canopy as a vertex carries it: over its nine parts, the
@@ -199,9 +206,8 @@ pub fn build_summary_mesh_region(
     let region_lat = mesh_region_lattice();
     let region_id = (region_key.mn, region_key.mm);
 
-    let region_center = region_lat.cell_center(region_id);
-    let (origin_cq, origin_cr) = lattice.cell_center(region_center);
-    let (origin_wx, origin_wz) = flat_top_tile_center(origin_cq, origin_cr, 1.0);
+    let origin = region_key.origin();
+    let (origin_wx, origin_wz) = flat_top_tile_center(origin.q, origin.r, 1.0);
     let mesh_origin = Vec3::new(origin_wx, 0.0, origin_wz);
 
     // Heights for the region and its ring — the ring only feeds corners.
@@ -314,7 +320,6 @@ pub fn build_summary_mesh_region(
         coarse: coarse_attr,
         canopy: canopy_attr,
         indices,
-        mesh_origin,
     })
 }
 
@@ -392,9 +397,8 @@ pub fn build_water_mesh_region(
     let region_lat = mesh_region_lattice();
     let region_id = (region_key.mn, region_key.mm);
 
-    let region_center = region_lat.cell_center(region_id);
-    let (origin_cq, origin_cr) = lattice.cell_center(region_center);
-    let (origin_wx, origin_wz) = flat_top_tile_center(origin_cq, origin_cr, 1.0);
+    let origin = region_key.origin();
+    let (origin_wx, origin_wz) = flat_top_tile_center(origin.q, origin.r, 1.0);
     let mesh_origin = Vec3::new(origin_wx, 0.0, origin_wz);
 
     let bias = level_depth_bias(radius);
@@ -462,7 +466,6 @@ pub fn build_water_mesh_region(
         coarse: Vec::new(),
         canopy: Vec::new(),
         indices,
-        mesh_origin,
     }
 }
 
@@ -563,9 +566,7 @@ pub fn visible_mesh_regions_in_band_ungated(
 /// region ready while a tile under it is still missing.
 pub fn region_tiles_loaded(key: MeshRegionKey, loaded_chunks: &HashSet<ChunkId>) -> bool {
     use crate::summary::{mesh_region_extent_wu, summary_width_wu};
-    let region_center = mesh_region_lattice().cell_center((key.mn, key.mm));
-    let (cq, cr) = summary_lattice(key.r).cell_center(region_center);
-    let centre = chunk::loc_to_chunk(qrz::Qrz { q: cq, r: cr, z: 0 });
+    let centre = chunk::loc_to_chunk(key.origin());
     let reach = mesh_region_extent_wu(key.r) / 3.0_f32.sqrt() + summary_width_wu(key.r);
     let radius = (reach / (chunk::CHUNK_EXTENT_WU * chunk::APOTHEM_FACTOR)).ceil() as u8;
     chunk::calculate_visible_chunks(centre, radius).iter().all(|c| loaded_chunks.contains(c))
@@ -652,12 +653,21 @@ mod tests {
     /// Corner vertices of a radius-R hex ball: 6(R+1)².
     const CORNER_VERTICES: usize = 6 * 10 * 10;
 
-    fn fan_vertices(result: &SummaryMeshResult) -> Vec<(Vec3, Vec3)> {
+    /// The world vector of a region's origin tile.
+    fn origin_of(key: MeshRegionKey) -> Vec3 {
+        let o = key.origin();
+        let (x, z) = flat_top_tile_center(o.q, o.r, 1.0);
+        Vec3::new(x, 0.0, z)
+    }
+
+    /// The fan vertices of the region `key` built, in world coordinates.
+    fn fan_vertices(key: MeshRegionKey, result: &SummaryMeshResult) -> Vec<(Vec3, Vec3)> {
+        let origin = origin_of(key);
         result
             .positions
             .iter()
             .zip(&result.normals)
-            .map(|(p, n)| (Vec3::from_array(*p) + result.mesh_origin, Vec3::from_array(*n)))
+            .map(|(p, n)| (Vec3::from_array(*p) + origin, Vec3::from_array(*n)))
             .filter(|(_, n)| n.y.abs() > 1e-3)
             .collect()
     }
@@ -741,7 +751,7 @@ mod tests {
     fn flat_region_is_fans_plus_perimeter_curtains() {
         let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None, None).unwrap();
         assert_eq!(result.tri_count, MESH_REGION_CELLS * 6 + PERIMETER_EDGES * 2);
-        let fans = fan_vertices(&result);
+        let fans = fan_vertices(REGION, &result);
         let y = fans[0].0.y;
         assert!(fans.iter().all(|(p, _)| (p.y - y).abs() < 1e-5), "flat ground is not flat");
         assert!(fans.iter().all(|(_, n)| (n.y - 1.0).abs() < 1e-5), "flat ground normals are not up");
@@ -750,7 +760,7 @@ mod tests {
     #[test]
     fn shared_corners_are_single_vertices() {
         let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None, None).unwrap();
-        assert_eq!(fan_vertices(&result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
+        assert_eq!(fan_vertices(REGION, &result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
     }
 
     #[test]
@@ -810,7 +820,7 @@ mod tests {
         let coarse_lat = summary_lattice(4);
         let mut centres = 0;
         for (p, c) in result.positions.iter().zip(&result.coarse) {
-            let w = Vec3::from_array(*p) + result.mesh_origin;
+            let w = Vec3::from_array(*p) + origin_of(REGION);
             let cell = coarse_lat.cell_at(w.xz());
             let (cq, cr) = coarse_lat.cell_center(cell);
             let (cx, cz) = flat_top_tile_center(cq, cr, 1.0);
@@ -831,9 +841,9 @@ mod tests {
         let field = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
         let a = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
         let b = build_summary_mesh_region(1, MeshRegionKey { r: 1, mn: 1, mm: 0 }, &field, None, None).unwrap();
-        let av = fan_vertices(&a);
+        let av = fan_vertices(REGION, &a);
         let mut shared = 0;
-        for (pb, _) in fan_vertices(&b) {
+        for (pb, _) in fan_vertices(MeshRegionKey { r: 1, mn: 1, mm: 0 }, &b) {
             for (pa, _) in &av {
                 if (pa.x - pb.x).abs() < 1e-3 && (pa.z - pb.z).abs() < 1e-3 {
                     shared += 1;
@@ -851,8 +861,8 @@ mod tests {
         // fan normals at the cliff lean over.
         let field = |q: i32, _r: i32| Some(if q > 0 { 20 } else { 0 });
         let result = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
-        assert_eq!(fan_vertices(&result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
-        let leaning = fan_vertices(&result).iter().filter(|(_, n)| n.y < 0.7).count();
+        assert_eq!(fan_vertices(REGION, &result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
+        let leaning = fan_vertices(REGION, &result).iter().filter(|(_, n)| n.y < 0.7).count();
         assert!(leaning > 0, "a 20-step cliff produced no steep normals");
     }
 
