@@ -1,14 +1,15 @@
-//! World viewer: the event stack, or one event's published index, rendered
-//! to an image.
+//! World viewer: the event stack, one event's published index, or one
+//! event's own output, rendered to an image, with what each layer cost.
 //!
-//! Two kinds of view, and a view is one or the other. A composite view draws
+//! Three kinds of view, and a view is one of them. A composite view draws
 //! what the stack composes at each tile, read through the composite and
 //! nothing else. An index view draws what one event published, read from the
 //! registry through `Composite::with_indexes` once the tiles under the
-//! viewport are materialised. Nothing reads a layer's functions directly
-//! (INV-009). The stack built here is the server's stack, so same seed,
-//! same image. Which views exist, and when one is added or removed, is the
-//! README.
+//! viewport are materialised. A layer view draws what one event's query
+//! returned at each tile, read through `Composite::outputs_at`. Nothing
+//! reads a layer's functions directly (INV-009). The stack built here is the
+//! server's stack, so same seed, same image. Which views exist, and when one
+//! is added or removed, is the README.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -30,6 +31,12 @@ use world::lattice::node_world;
 enum Layer {
     /// Composite: height on the terrain shader's ramp, with slope shading.
     Elevation,
+    /// Composite: the ground lit from the north-west, grey, so a cut a few
+    /// z deep reads where the ramp shows one colour.
+    Hillshade,
+    /// Layer: one event's own height, `--event`'s, red where it raises and
+    /// blue where it cuts, over whatever is drawn beneath.
+    Contribution,
     /// Plate index: every edge of the plate graph along its chain, coasts white and interior edges grey, a dot at each seed.
     Edges,
     /// Motion index: plate boundaries, drawn by what the motion resolves
@@ -54,6 +61,8 @@ enum Layer {
 /// and the error message all read it.
 const LAYERS: &[(&str, Layer)] = &[
     ("elevation", Layer::Elevation),
+    ("hillshade", Layer::Hillshade),
+    ("contribution", Layer::Contribution),
     ("plate-edges", Layer::Edges),
     ("boundaries", Layer::Boundaries),
     ("thrusting-fronts", Layer::Fronts),
@@ -127,6 +136,10 @@ struct Cli {
 
     #[arg(long, default_value = "elevation", help = layer_help())]
     layers: String,
+
+    /// The event the `contribution` view draws, by its name in the stack
+    #[arg(long)]
+    event: Option<String>,
 
     /// Render as the client draws a distance band: summaries of this
     /// radius (0 is the tiles; the ladder is 1, 4, 13, 40), each read from
@@ -252,14 +265,37 @@ fn main() {
     let coords: Vec<(i32, i32)> = tile_set.into_iter().collect();
     log::info!("Materializing {} unique tiles (from {}x{} pixels)...", coords.len(), w, h);
 
-    // Materializing the tiles deforms every layer under them, which is what
-    // fills the indexes the marker layers below read.
-    let views = composite.tiles_at(&coords);
+    // The layer the contribution view reads, by its place in the stack.
+    let contributor = layers.contains(&Layer::Contribution).then(|| {
+        let names: Vec<String> = composite.drain_metrics().layers.into_iter().map(|l| l.name).collect();
+        let Some(name) = &cli.event else {
+            eprintln!("The contribution view needs --event, one of: {}", names.join(", "));
+            std::process::exit(1);
+        };
+        names.iter().position(|n| n == name).unwrap_or_else(|| {
+            eprintln!("Unknown event: {name:?}. The stack: {}", names.join(", "));
+            std::process::exit(1);
+        })
+    });
 
-    let tile_cache: HashMap<(i32, i32), (f64, common::Cover)> = views
-        .into_iter()
-        .map(|((q, r), v)| ((q, r), (v.elevation, v.cover)))
-        .collect();
+    // Materializing the tiles deforms every layer under them, which is what
+    // fills the indexes the marker layers below read. Each tile is the
+    // composed elevation and cover, and the contributor's own height.
+    let tile_cache: HashMap<(i32, i32), (f64, common::Cover, f64)> = match contributor {
+        Some(layer) => coords
+            .iter()
+            .map(|&(q, r)| {
+                let (v, outputs) = composite.outputs_at(q, r);
+                let delta = outputs[layer].1.map_or(0.0, |o| o.elevation_delta);
+                ((q, r), (v.elevation, v.cover, delta))
+            })
+            .collect(),
+        None => composite
+            .tiles_at(&coords)
+            .into_iter()
+            .map(|((q, r), v)| ((q, r), (v.elevation, v.cover, 0.0)))
+            .collect(),
+    };
 
     let tile_secs = lap.elapsed().as_secs_f64();
     log::info!(
@@ -267,6 +303,28 @@ fn main() {
         coords.len(),
         coords.len() as f64 / tile_secs
     );
+    report_cost(&composite);
+
+    // The contribution view's full scale: the largest the layer reaches in view.
+    let full_delta = tile_cache.values().map(|t| t.2.abs()).fold(0.0f64, f64::max);
+    if contributor.is_some() {
+        let (raised, cut) = tile_cache.values().fold((0, 0), |(up, down), t| (up + (t.2 > 0.0) as usize, down + (t.2 < 0.0) as usize));
+        log::info!(
+            "Contribution of {}: {raised} tiles raised, {cut} cut, of {}; full colour at {full_delta:.1} z, by its square root",
+            cli.event.as_deref().unwrap_or_default(),
+            tile_cache.len(),
+        );
+    }
+
+    // The tile under each pixel's height, which the hillshade reads across
+    // pixels: at most scales a pixel's neighbouring tile is not in view.
+    let heights: Vec<f64> = (0..h)
+        .flat_map(|py| (0..w).map(move |px| (px, py)))
+        .map(|(px, py)| {
+            let (q, r) = world::world_to_hex(origin_x + px as f64 * scale, origin_y + py as f64 * scale);
+            tile_cache.get(&(q, r)).map_or(0.0, |t| t.0)
+        })
+        .collect();
 
     // ── Phase 2: Read indexes for marker layers ──
 
@@ -360,6 +418,7 @@ fn main() {
 
     let lap = Instant::now();
     let tc = &tile_cache;
+    let heights = &heights;
     let layer_slice = &layers;
     let seed = cli.seed;
     let pixels: Vec<[u8; 3]> = (0..h)
@@ -371,7 +430,7 @@ fn main() {
                     let wy = origin_y + (py as f64) * scale;
                     let (q, r) = world::world_to_hex(wx, wy);
 
-                    let (elevation, cover) = tc.get(&(q, r)).copied().unwrap_or((0.0, common::Cover::NONE));
+                    let (elevation, cover, delta) = tc.get(&(q, r)).copied().unwrap_or((0.0, common::Cover::NONE, 0.0));
 
                     let mut color = (0.0f64, 0.0, 0.0);
 
@@ -403,6 +462,13 @@ fn main() {
 
                                     color = slope_shade(color, max_diff);
                                 }
+                            }
+                            Layer::Hillshade => {
+                                let lit = hillshade(heights, w, h, px, py, scale);
+                                color = (lit, lit, lit);
+                            }
+                            Layer::Contribution => {
+                                color = contribution_color(color, delta, full_delta);
                             }
                             Layer::Forest => {
                                 color = cover_color(color, cover);
@@ -799,6 +865,66 @@ fn render_summaries(cli: &Cli, w: usize, h: usize, scale: f64, r: u32) -> Vec<u8
                 .collect::<Vec<u8>>()
         })
         .collect()
+}
+
+/// How lit the ground under a pixel is, from nothing to one, by the light
+/// from the north-west at 45°, its slope read across the pixels either side
+/// at true scale, a z being [`world::RISE`] of a tile's spacing.
+fn hillshade(heights: &[f64], w: usize, h: usize, px: usize, py: usize, scale: f64) -> f64 {
+    let at = |x: usize, y: usize| heights[y.min(h - 1) * w + x.min(w - 1)] * world::RISE;
+    let (x0, x1, y0, y1) = (px.saturating_sub(1), px + 1, py.saturating_sub(1), py + 1);
+    let dx = (at(x1, py) - at(x0, py)) / ((x1.min(w - 1) - x0).max(1) as f64 * scale);
+    let dy = (at(px, y1) - at(px, y0)) / ((y1.min(h - 1) - y0).max(1) as f64 * scale);
+    // The light points up and towards the top-left of the image.
+    let light = (-0.5, -0.5, std::f64::consts::FRAC_1_SQRT_2);
+    let n = (-dx, -dy, 1.0);
+    let len = (n.0 * n.0 + n.1 * n.1 + 1.0f64).sqrt();
+    ((n.0 * light.0 + n.1 * light.1 + n.2 * light.2) / len).clamp(0.0, 1.0)
+}
+
+/// One layer's height over the colour beneath it: red where it raises,
+/// blue where it cuts, by the square root of its share of `full`, so a
+/// shallow cut shows beside the layer's deepest. Nothing where it adds
+/// nothing.
+fn contribution_color(ground: (f64, f64, f64), delta: f64, full: f64) -> (f64, f64, f64) {
+    if delta == 0.0 || full == 0.0 {
+        return ground;
+    }
+    let hue = if delta > 0.0 { (0.85, 0.15, 0.10) } else { (0.10, 0.30, 0.90) };
+    lerp_rgb(ground, hue, (delta.abs() / full).sqrt())
+}
+
+/// What each layer of the stack has cost so far: each phase's count and the
+/// time in the layer's own code, and the cells of the layers beneath that
+/// its reads deformed, with the time they took. A layer's cells that no
+/// layer pulled were deformed by the tiles themselves.
+fn report_cost(composite: &Composite) {
+    let m = composite.drain_metrics();
+    let ms = |s: &world::events::Spent| s.time.as_secs_f64() * 1e3;
+    log::info!("Cost by layer, its own code alone (runs, ms):");
+    log::info!("  {:<11} {:>17} {:>17} {:>19}   its reads deformed", "layer", "deform", "prepare", "query");
+    for layer in &m.layers {
+        let pulled: Vec<String> = layer
+            .pulled
+            .iter()
+            .zip(&m.layers)
+            .filter(|(s, _)| s.count > 0)
+            .map(|(s, below)| format!("{} {} cells {:.0} ms", below.name, s.count, ms(s)))
+            .collect();
+        log::info!(
+            "  {:<11} {:>7} {:>9.1} {:>7} {:>9.1} {:>9} {:>9.1}   {}",
+            layer.name,
+            layer.deform.count,
+            ms(&layer.deform),
+            layer.prepare.count,
+            ms(&layer.prepare),
+            layer.query.count,
+            ms(&layer.query),
+            pulled.join(", "),
+        );
+    }
+    let own: f64 = m.layers.iter().map(|l| ms(&l.deform) + ms(&l.prepare) + ms(&l.query)).sum();
+    log::info!("  all layers' own code: {own:.0} ms");
 }
 
 /// A kind's green: pine blue-green, deciduous green, brush olive.
