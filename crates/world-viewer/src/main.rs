@@ -203,7 +203,9 @@ fn boundary_color(seg: &BoundarySegment) -> [u8; 3] {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // The world's tracing spans reach the log where the workspace builds
+    // `tracing` with `log`: one line a tile, unless silenced.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,tracing::span=off")).init();
     let cli = Cli::parse();
     let layers = parse_layers(&cli.layers);
 
