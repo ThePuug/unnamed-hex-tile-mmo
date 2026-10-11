@@ -53,6 +53,13 @@ pub const AGE_SPREAD: f64 = 0.5;
 /// Tuning, not yet judged in the viewer.
 pub const YOUNG_SHARE: f64 = 0.5;
 
+/// What a fully aged plate's age stands for, in millions of years: the
+/// time since the last supercontinent gathered, Pangaea's some three
+/// hundred, within the three to five hundred continents take to gather and
+/// part. A plate's landscape was last made by the collision that joined it,
+/// so the younger of two joined plates dates their suture.
+pub const AGED_MYR: f64 = 300.0;
+
 /// The aged share: what a plate of `age` has done of an aged plate's work.
 pub fn aged(age: f64) -> f64 {
     YOUNG_SHARE + (1.0 - YOUNG_SHARE) * age.clamp(0.0, 1.0)

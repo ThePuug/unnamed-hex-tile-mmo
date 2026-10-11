@@ -150,7 +150,8 @@ fn fade(t: f64) -> f64 {
 /// none up to the last sheet below the rim, and past the rim, or under air
 /// that came over it, the wedge's whole; every other plate's wedge shadows
 /// it where its front lies across the way upwind. A shadow eases in over
-/// one sheet's spacing either side of the rim, so nothing steps there.
+/// one sheet's spacing either side of the rim, so nothing steps there, and
+/// is as deep as the share of the wedge that stands.
 pub fn shadow(wx: f64, wy: f64, wind: (f64, f64), outlines: &Outlines) -> f64 {
     let Some(at) = outlines.at(wx, wy) else { return 0.0 };
     let (ux, uy) = (-wind.0, -wind.1);
@@ -168,7 +169,7 @@ pub fn shadow(wx: f64, wy: f64, wind: (f64, f64), outlines: &Outlines) -> f64 {
         } else {
             0.0
         };
-        passes *= 1.0 - SHADOW_DEPTH * share * sheets / WEDGE_SHEETS;
+        passes *= 1.0 - SHADOW_DEPTH * share * e.standing * sheets / WEDGE_SHEETS;
     }
     for p in outlines.plates() {
         if p.id == at.plate.id {
@@ -179,7 +180,7 @@ pub fn shadow(wx: f64, wy: f64, wind: (f64, f64), outlines: &Outlines) -> f64 {
                 continue;
             }
             if let Some(t) = crossing(e, at.x, at.y, ux, uy, SHADOW_REACH) {
-                passes *= 1.0 - SHADOW_DEPTH * fade(t) * sheets_of(e.converge) / WEDGE_SHEETS;
+                passes *= 1.0 - SHADOW_DEPTH * fade(t) * e.standing * sheets_of(e.converge) / WEDGE_SHEETS;
             }
         }
     }
@@ -764,7 +765,7 @@ mod tests {
         let outlines = Outlines::in_box(sx, sy, PLATE_REACH, S);
         let front = outlines
             .plates()
-            .flat_map(|p| p.edges.iter().filter(|e| e.converge > 0.5).map(move |e| (p, e)))
+            .flat_map(|p| p.edges.iter().filter(|e| e.converge * e.standing > 0.5).map(move |e| (p, e)))
             .min_by(|a, b| {
                 let da = a.1.distance(sx, sy).0;
                 let db = b.1.distance(sx, sy).0;

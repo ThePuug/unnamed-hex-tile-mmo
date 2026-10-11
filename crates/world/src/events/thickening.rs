@@ -19,7 +19,9 @@
 //! override on. Two plates meet at nothing across a quiet edge and the
 //! overriding side of a front climbs from nothing, so nothing steps. A plate
 //! that overrides nowhere stays at the substrate. The plateau stands to a
-//! range's relief as Tibet stands to the Himalaya above it.
+//! range's relief as Tibet stands to the Himalaya above it. Behind a suture
+//! the plateau stands at the share of its height the suture's wedge does:
+//! the root that floated it is eroded with the range above.
 //!
 //! An oceanic plate carries no plateau: thickened oceanic crust makes no
 //! surface, and an island arc is volcanism above the slab, a chain of
@@ -88,7 +90,7 @@ pub fn plateau_share_of(plate: &PlateOutline, distances: &[f64]) -> f64 {
         // Nearness: an edge's own value wins at the edge, and the interior
         // is the blend of every margin's.
         let w = 1.0 / (d * d).max(1.0);
-        weighted += w * e.converge * climb;
+        weighted += w * e.converge * e.standing * climb;
         weight += w;
     }
     if weight <= 0.0 { return 0.0 }

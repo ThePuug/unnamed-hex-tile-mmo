@@ -8,7 +8,8 @@
 //! a soil are what the player stands on, so they go in uncompressed.
 //!
 //! Three steady-state relations, each where hillslopes lower as fast as the
-//! ground beneath them is raised:
+//! ground beneath them is raised, and the decay that follows once the
+//! raising stops ([`standing_after`]):
 //!
 //! - Erosion rises with relief, slowly over low ground and without bound
 //!   toward the relief rock strength allows (Montgomery & Brandon 2002, the
@@ -41,6 +42,19 @@ const RELIEF_EROSION: f64 = 2.5e-4;
 /// without bound toward.
 const RELIEF_LIMIT: f64 = 1_500.0;
 
+/// The share of what erosion takes off a range that its surface falls by:
+/// crust floats on the mantle, so the root rises back by the crust's
+/// density over the mantle's of whatever is taken (Airy).
+const ISOSTATIC_LOWERING: f64 = 1.0 - 2_700.0 / 3_300.0;
+
+/// How long a range's relief takes to fall to a share 1/e of itself once
+/// its convergence stops, in millions of years: relief erodes at what its
+/// height drives over what level ground erodes at, and the surface falls
+/// by [`ISOSTATIC_LOWERING`] of that. Some twenty-two, within the 2.5 to 69
+/// fitted to the world's rivers' loads by orogen age (Pinet & Souriau 1988,
+/// Pazzaglia & Brandon 1996).
+pub const RELIEF_DECAY: f64 = 1.0 / (ISOSTATIC_LOWERING * RELIEF_EROSION * 1_000.0);
+
 /// How readily soil creeps downslope, in square metres a year.
 const TRANSPORT: f64 = 0.0086;
 
@@ -67,6 +81,16 @@ pub fn erosion_rate(relief: f64) -> f64 {
 pub fn crest_curvature(erosion: f64) -> f64 {
     let per_metre = erosion * 1e-3 / (SOIL_DENSITY * TRANSPORT);
     per_metre * TILE_METRES * TILE_METRES / Z_METRES
+}
+
+/// The share of a range's relief standing `myr` million years after its
+/// convergence stopped: falling by e every [`RELIEF_DECAY`]. The relief
+/// limit's term, under a twentieth at a range's height, is left out, so a
+/// range falls that much slower at first. What survives longest is not
+/// height but the contrast between rocks, which lithology and the
+/// landforms carry.
+pub fn standing_after(myr: f64) -> f64 {
+    (-myr.max(0.0) / RELIEF_DECAY).exp()
 }
 
 /// How deep a soil lies where ground erodes at `erosion` millimetres a
@@ -103,6 +127,16 @@ mod tests {
     fn crests_sharpen_with_erosion() {
         let c: Vec<f64> = [0.01, 0.05, 0.1, 0.2].iter().map(|e| crest_curvature(*e)).collect();
         assert!(c.windows(2).all(|w| w[1] > w[0]) && c[0] > 0.0, "{c:?}");
+    }
+
+    /// A stopped range keeps all its relief at once and loses it over time,
+    /// on the order the world's rivers measure.
+    #[test]
+    fn a_stopped_range_falls_on_the_measured_timescale() {
+        assert_eq!(standing_after(0.0), 1.0);
+        let s: Vec<f64> = (0..6).map(|k| standing_after(k as f64 * 20.0)).collect();
+        assert!(s.windows(2).all(|w| w[1] < w[0]) && s[5] > 0.0, "{s:?}");
+        assert!((2.5..=69.0).contains(&RELIEF_DECAY), "{RELIEF_DECAY} Myr");
     }
 
     /// The soil is whole with no relief, thins as erosion climbs, and is

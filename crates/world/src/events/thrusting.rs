@@ -46,6 +46,13 @@
 //! hillslope's, rounded to the curvature its height erodes at
 //! ([`crate::hillslope`]): sharp at a culmination, broad in a saddle.
 //!
+//! A suture carries the wedge its collision built, a full convergence's,
+//! worn down by the time since it closed: its surface stands at the share
+//! of its height that time leaves ([`standing_after`]), the younger of its
+//! two plates dating it, while its structure stays whole, so lithology
+//! strips an old suture to its core and its beds carry what relief it
+//! keeps. The plateau behind it comes down with it.
+//!
 //! The retro-wedge at the plateau's far side is not expressed. Unbuilt.
 //!
 //! # What a tile reads
@@ -101,7 +108,8 @@ use crate::lattice::{nearest_node, node_world, NodeKey, PATH_SWING};
 use crate::tectonic::{edges_of, plate_cell_for, plates_near, PlateId, PLATE_REACH};
 use super::plates::{warp, WARP_SWING};
 use crate::{hex_to_world, smoothstep, RISE, SEA_MAX_DEPTH};
-use crate::hillslope::{crest_curvature, erosion_rate};
+use crate::hillslope::{crest_curvature, erosion_rate, standing_after};
+use crate::tectonic::AGED_MYR;
 use super::index::{CellId, CellIndex, IndexRegistry};
 use super::motion::{resolve, BoundaryRegime, BoundarySegment, PlateBoundaryIndex};
 use super::plates::GRAPH_CELL_SCALE;
@@ -243,11 +251,16 @@ pub const OUTLINE_FAR: f64 = if ESCARPMENT > RANGE_END { ESCARPMENT } else { RAN
 
 /// One edge of a plate's outline, as that plate reads it: its chain facing
 /// into the plate, and the convergence share it carries where the plate is
-/// continental and overrides on it, else none.
+/// continental and overrides on it, else none: a suture's is the full
+/// collision's that closed it.
 pub struct EdgeOutline {
     pub neighbour: PlateId,
     pub segments: Vec<Segment>,
     pub converge: f64,
+    /// The share of its wedge's height and of the plateau behind it that
+    /// stands: whole on an edge that closes, and on a suture what the time
+    /// since it closed leaves ([`standing_after`]).
+    pub standing: f64,
     /// The wedge's cross-section under repose, sheet by sheet at each
     /// plunge, none where the edge carries no wedge.
     pub faces: Option<Faces>,
@@ -412,8 +425,10 @@ impl Outlines {
         let mut plates: HashMap<PlateId, PlateOutline> = HashMap::new();
         for s in resolved {
             let e = &s.edge;
-            let over = if s.regime() == BoundaryRegime::Convergent { Some(s.overriding().id) } else { None };
-            let converge = (s.convergence / CONVERGENCE_FULL).clamp(0.0, 1.0);
+            let suture = s.is_suture();
+            let over = if s.regime() == BoundaryRegime::Convergent || suture { Some(s.overriding().id) } else { None };
+            let converge = if suture { 1.0 } else { (s.convergence / CONVERGENCE_FULL).clamp(0.0, 1.0) };
+            let standing = if suture { standing_after(e.a.age.min(e.b.age) * AGED_MYR) } else { 1.0 };
             for (plate, other) in [(&e.a, &e.b), (&e.b, &e.a)] {
                 let left = Segment::is_left((e.x0, e.y0), (e.x1, e.y1), (plate.wx, plate.wy));
                 let segments: Vec<Segment> = e
@@ -438,10 +453,11 @@ impl Outlines {
                     neighbour: other.id,
                     segments,
                     converge: if carries { converge } else { 0.0 },
+                    standing: if carries { standing } else { 0.0 },
                     faces: carries.then(|| {
                         let sheets = sheets_of(converge);
                         let plunges = (0..sheets.ceil() as usize).map(|j| plunge_seed(plate.id, other.id, j, seed)).collect();
-                        Faces::new(sheets, plunges)
+                        Faces::new(sheets, plunges, standing)
                     }),
                     bounds,
                     line: [e.x0, e.y0, e.x1, e.y1],
@@ -588,8 +604,9 @@ impl Outlines {
 
     /// The height the ranges' structure stands at a position where
     /// [`Outlines::at`] found it standing, in z-levels: the strongest wedge
-    /// as it was built at its plunge, with no scree swept over it. What
-    /// lithology strips the column by.
+    /// as it was built at its plunge, with no scree swept over it, and a
+    /// suture's whole though its surface has worn down, since its beds keep
+    /// the collision's shape. What lithology strips the column by.
     pub fn structure_of(&self, at: &Standing) -> f64 {
         RANGE_RISE * Self::wedges_of(at.plate, &at.distances, |e, faces, d| faces.structure_at(d, e.along(at.x, at.y)))
     }
@@ -815,6 +832,8 @@ pub struct Faces {
     sheets: Vec<Sheet>,
     /// The plunge field's seed for each sheet, as [`Faces::plunge`] reads it.
     plunges: Vec<u64>,
+    /// The share of the wedge's height that stands, as its edge carries it.
+    standing: f64,
 }
 
 /// One sheet of a wedge on the profiles' grid, over the points its
@@ -835,9 +854,10 @@ struct Sheet {
 
 impl Faces {
     /// The faces of a wedge of `sheets`, the sheets plunging by the fields
-    /// `plunges` seeds. A sheet's scree is spent within a scree reach of
-    /// its wedge, so its span ends there.
-    fn new(sheets: f64, plunges: Vec<u64>) -> Self {
+    /// `plunges` seeds, standing at a share `standing` of their height. A
+    /// sheet's scree is spent within a scree reach of its wedge, so its span
+    /// ends there.
+    fn new(sheets: f64, plunges: Vec<u64>, standing: f64) -> Self {
         let full = ((WEDGE_REACH + 2.0 * SCREE_REACH) / REPOSE_STEP).ceil() as usize + 2;
         let reach = (SCREE_REACH / REPOSE_STEP).ceil() as usize + 1;
         let family: Vec<f64> = (0..full).map(|i| family_at(SCREE_START + i as f64 * REPOSE_STEP, sheets)).collect();
@@ -852,15 +872,15 @@ impl Faces {
                 let crest = structure.iter().copied().fold(0.0, f64::max);
                 let mut profiles = Vec::with_capacity(PLUNGE_STEPS * structure.len());
                 for p in 0..PLUNGE_STEPS {
-                    let mut h: Vec<f64> = structure.iter().map(|s| plunge_step(p) * s).collect();
+                    let mut h: Vec<f64> = structure.iter().map(|s| standing * plunge_step(p) * s).collect();
                     sweep(&mut h, &falls);
-                    round(&mut h, crest_rounding(plunge_step(p) * crest * RANGE_RISE));
+                    round(&mut h, crest_rounding(standing * plunge_step(p) * crest * RANGE_RISE));
                     profiles.extend(h);
                 }
                 Some(Sheet { start, structure, crest, profiles })
             })
             .collect();
-        Faces { sheets, plunges }
+        Faces { sheets, plunges, standing }
     }
 
     /// The share of its height sheet `sheet` stands at, `along` its edge's
@@ -919,13 +939,14 @@ impl Faces {
         for j in self.spanning(d) {
             let plunge = self.plunge(j, along);
             let face = self.face(j, d, plunge);
-            if face > best.0 { best = (face, plunge * self.sheets[j].crest) }
+            if face > best.0 { best = (face, self.standing * plunge * self.sheets[j].crest) }
         }
         best.1
     }
 
     /// The wedge's share at a distance `d` from the front, `along` its
-    /// strike, as the structure stands: the sheet there at its plunge.
+    /// strike, as the structure was built: the sheet there at its plunge,
+    /// whole however little of the wedge's surface stands.
     fn structure_at(&self, d: f64, along: f64) -> f64 {
         self.structure_plunged(d, |j| self.plunge(j, along))
     }
@@ -1193,7 +1214,7 @@ mod tests {
     /// The faces of a wedge of `sheets`.
     fn faces_of(sheets: f64) -> Faces {
         let plunges = (0..sheets.ceil() as usize).map(|j| plunge_seed((3, 4), (4, 4), j, S)).collect();
-        Faces::new(sheets, plunges)
+        Faces::new(sheets, plunges, 1.0)
     }
 
     /// A position reads each sheet's profile swept at repose at each
@@ -1204,8 +1225,8 @@ mod tests {
         let faces = faces_of(2.5);
         let whole = |p: usize, i: usize| {
             faces.sheets.iter().map(|sheet| {
-                let mut h = under_repose(&sheet.structure.iter().map(|s| plunge_step(p) * s).collect::<Vec<_>>());
-                round(&mut h, crest_rounding(plunge_step(p) * sheet.crest * RANGE_RISE));
+                let mut h = under_repose(&sheet.structure.iter().map(|s| faces.standing * plunge_step(p) * s).collect::<Vec<_>>());
+                round(&mut h, crest_rounding(faces.standing * plunge_step(p) * sheet.crest * RANGE_RISE));
                 i.checked_sub(sheet.start).and_then(|r| h.get(r).copied()).unwrap_or(0.0)
             }).fold(0.0, f64::max)
         };

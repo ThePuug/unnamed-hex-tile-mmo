@@ -5,8 +5,10 @@
 //! Each plate moves as one rigid body, and every edge between two plates
 //! resolves to what the two motions do there: convergent, divergent or
 //! transform, how hard, and for a convergent edge which plate goes under.
-//! Thrusting reads the result and builds on the convergent edges; nothing
-//! else in the stack places a belt. The layer contributes no elevation.
+//! An edge between two continents that closes no more is a suture, where
+//! the two once collided, and carries a vergence too. Thrusting reads the
+//! result and builds on the convergent edges and the sutures; nothing else
+//! in the stack places a belt. The layer contributes no elevation.
 //!
 //! Velocity is a two-channel simplex field sampled at each plate's seed: a
 //! hash per plate gives an edge field that is pure noise, every edge
@@ -99,8 +101,8 @@ pub struct BoundarySegment {
     /// Magnitude of the along-strike component of `v_a − v_b`.
     pub transform: f64,
     /// Unit vector toward the plate that goes under: the flank a wedge on
-    /// this edge leans onto, the steep short side. Zero when the edge is not
-    /// convergent.
+    /// this edge leans onto, the steep short side. Zero when the edge
+    /// neither closes nor joins two continents, which closed once.
     pub vergence_x: f64,
     pub vergence_y: f64,
     pub margin: MarginClass,
@@ -121,8 +123,15 @@ impl BoundarySegment {
         self.edge.mid()
     }
 
-    /// The plate the wedge stands on, for a convergent edge: the one the
-    /// vergence points away from.
+    /// Whether the edge is a suture: two continents joined where they once
+    /// collided, closing no more. Continents gather by collision, so every
+    /// edge between two that does not close now closed once.
+    pub fn is_suture(&self) -> bool {
+        self.edge.a.continental && self.edge.b.continental && self.regime() != BoundaryRegime::Convergent
+    }
+
+    /// The plate the wedge stands on, for a convergent edge or a suture:
+    /// the one the vergence points away from.
     pub fn overriding(&self) -> &crate::tectonic::Plate {
         let (mx, my) = self.mid();
         let toward_a = (self.edge.a.wx - mx) * self.vergence_x + (self.edge.a.wy - my) * self.vergence_y;
@@ -203,13 +212,16 @@ pub fn resolve(edge: &Edge, seed: u64) -> BoundarySegment {
         Some(_) => MarginClass::Passive,
     };
 
-    let (vergence_x, vergence_y) = if convergence <= 0.0 {
+    let (vergence_x, vergence_y) = if convergence <= 0.0 && !(a.continental && b.continental) {
         (0.0, 0.0)
     } else if let Some(side) = ocean_side {
         (nx * side, ny * side)
     } else {
         // The plate advancing faster in absolute terms goes under: carried
-        // toward b, it is a that drives into the collision.
+        // toward b, it is a that drives into the collision. A suture's
+        // collision is past and its drift is not, but the drift turns over
+        // only across many plates, so a suture verges one way along its
+        // length, as a belt must.
         let (mx, my) = edge.mid();
         let (ddx, ddy) = plate_drift(mx, my, seed);
         let sign = if ddx * nx + ddy * ny >= 0.0 { -1.0 } else { 1.0 };
@@ -274,17 +286,22 @@ mod tests {
     const S: u64 = 0x9E3779B97F4A7C15;
 
     /// A convergent edge's vergence points across the edge toward one of its
-    /// plates, at a coast toward the ocean; a non-convergent edge has none.
+    /// plates, at a coast toward the ocean; so does a suture's, which closed
+    /// once; any other edge has none.
     #[test]
     fn vergence_points_at_the_plate_going_under() {
-        let mut convergent = 0;
+        let (mut convergent, mut sutures) = (0, 0);
         for cq in -8..=8 {
             for cr in -8..=8 {
                 for e in edges_of((cq, cr), S) {
                     let s = resolve(&e, S);
                     let v = s.vergence_x.hypot(s.vergence_y);
+                    if s.is_suture() {
+                        sutures += 1;
+                        assert!((v - 1.0).abs() < 1e-9, "a suture with no vergence");
+                    }
                     if s.convergence <= 0.0 {
-                        assert_eq!(v, 0.0);
+                        if !s.is_suture() { assert_eq!(v, 0.0) }
                         continue;
                     }
                     convergent += 1;
@@ -297,6 +314,6 @@ mod tests {
                 }
             }
         }
-        assert!(convergent > 50, "{convergent} convergent edges");
+        assert!(convergent > 50 && sutures > 10, "{convergent} convergent edges, {sutures} sutures");
     }
 }
