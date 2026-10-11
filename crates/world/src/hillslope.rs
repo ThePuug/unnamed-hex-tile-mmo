@@ -1,12 +1,13 @@
 //! Hillslopes as published fits make them: how fast ground erodes from the
-//! relief it stands in, and how sharp a crest stands at that rate. The
-//! ranges round their crests by it.
+//! relief it stands in, how sharp a crest stands at that rate, and how deep
+//! a soil lies where bedrock makes soil against it. The ranges round their
+//! crests by it and the forest reads the soil it leaves.
 //!
 //! The fits are Earth's, in metres and years. A z-level is 0.8 metres and
-//! tiles lie √3 metres apart, the renderer's unit a metre, and a crest is
-//! what the player stands on, so it goes in uncompressed.
+//! tiles lie √3 metres apart, the renderer's unit a metre, and a crest and
+//! a soil are what the player stands on, so they go in uncompressed.
 //!
-//! Two steady-state relations, each where hillslopes lower as fast as the
+//! Three steady-state relations, each where hillslopes lower as fast as the
 //! ground beneath them is raised:
 //!
 //! - Erosion rises with relief, slowly over low ground and without bound
@@ -15,6 +16,10 @@
 //! - A soil-mantled crest is as curved as erosion is fast over how readily
 //!   soil creeps: C = (ρr/ρs)·E/D (Roering et al. 2007), D calibrated on
 //!   granitic hilltops by Hurst et al. (2012).
+//! - Bedrock turns to soil fastest bare and slower under the soil it has
+//!   made, exponentially with depth (Heimsath et al. 1997), so a soil
+//!   stands where production meets erosion, h₀·ln(P₀/E) deep, and is gone
+//!   where erosion outpaces the bare rate.
 
 use crate::{RISE, SQRT_3};
 
@@ -42,6 +47,12 @@ const TRANSPORT: f64 = 0.0086;
 /// A soil's density as a share of the rock's it was made from.
 const SOIL_DENSITY: f64 = 0.5;
 
+/// The rate bare bedrock turns to soil, in millimetres a year: within the
+/// 0.05 to 2 measured from southeastern Australia to northern California,
+/// set by climate and rock and held one constant here. Tuning, to be judged
+/// by eye.
+pub const SOIL_PRODUCTION: f64 = 0.12;
+
 /// How fast ground standing in `relief` z-levels of relief erodes, in
 /// millimetres a year. The relief is under [`RELIEF_LIMIT`], where the
 /// rate has no bound.
@@ -56,6 +67,14 @@ pub fn erosion_rate(relief: f64) -> f64 {
 pub fn crest_curvature(erosion: f64) -> f64 {
     let per_metre = erosion * 1e-3 / (SOIL_DENSITY * TRANSPORT);
     per_metre * TILE_METRES * TILE_METRES / Z_METRES
+}
+
+/// How deep a soil lies where ground erodes at `erosion` millimetres a
+/// year, as a share of the soil on ground with no relief: one there,
+/// thinning as erosion climbs, nothing where it reaches
+/// [`SOIL_PRODUCTION`]. The depth scale of the production law divides out.
+pub fn soil_share(erosion: f64) -> f64 {
+    ((SOIL_PRODUCTION / erosion).ln() / (SOIL_PRODUCTION / BACKGROUND_EROSION).ln()).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -84,5 +103,16 @@ mod tests {
     fn crests_sharpen_with_erosion() {
         let c: Vec<f64> = [0.01, 0.05, 0.1, 0.2].iter().map(|e| crest_curvature(*e)).collect();
         assert!(c.windows(2).all(|w| w[1] > w[0]) && c[0] > 0.0, "{c:?}");
+    }
+
+    /// The soil is whole with no relief, thins as erosion climbs, and is
+    /// gone where erosion outpaces production.
+    #[test]
+    fn soil_thins_to_nothing_as_erosion_climbs() {
+        assert!((soil_share(BACKGROUND_EROSION) - 1.0).abs() < 1e-12);
+        let s: Vec<f64> = (0..8).map(|k| soil_share(erosion_rate(k as f64 * 80.0))).collect();
+        assert!(s.windows(2).all(|w| w[1] <= w[0]), "{s:?}");
+        assert_eq!(soil_share(SOIL_PRODUCTION), 0.0);
+        assert_eq!(soil_share(2.0 * SOIL_PRODUCTION), 0.0);
     }
 }

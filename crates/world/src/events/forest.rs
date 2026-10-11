@@ -19,13 +19,15 @@
 //!
 //! A stand is a feature: it originates at a point of a jittered lattice,
 //! the cell that point falls in publishes it, and it reaches its radius.
-//! The climate is read once at the origin, with what the rock there keeps
+//! The climate is read once at the origin, with what the soil there keeps
 //! of it and the ground's own water, the valley floor and a flooded basin,
-//! and sets the stand's density and
-//! how many of its slots are trees rather than brush. A stand stands with
-//! the probability its density gives, so between the wet core and the dry
-//! ground the woods are islands with edges: forest and open ground as
-//! alternative states, decided at the origin and never per tile.
+//! and sets the stand's density and how many of its slots are trees rather
+//! than brush. The soil keeps what its rock holds, depth for depth, over
+//! the depth the range it lies on leaves it ([`crate::hillslope`]): thin on
+//! a high range, none where erosion outruns what bare rock makes. A stand
+//! stands with the probability its density gives, so between the wet core
+//! and the dry ground the woods are islands with edges: forest and open
+//! ground as alternative states, decided at the origin and never per tile.
 //!
 //! A tile reads the stands over it from the ring, the treeline from its
 //! own elevation, and its valley from what dissection published, and
@@ -46,6 +48,7 @@ use crate::lattice::{jittered_centre, nearest_node, PATH_SWING};
 use crate::noise::{hash_channel_f64, hash_f64};
 use crate::tectonic::{Edge, PLATE_SPACING};
 use crate::{hex_to_world, smoothstep, world_to_hex, RISE};
+use crate::hillslope::{erosion_rate, soil_share};
 use super::climate::{temperature, TREELINE, TREELINE_BAND};
 use super::drainage::DrainageIndex;
 use super::index::{CellId, CellIndex, IndexRegistry};
@@ -332,9 +335,9 @@ pub fn trees_of(moisture: f64) -> f64 {
     smoothstep((moisture - MOISTURE_TREES) / (MOISTURE_CLOSED - MOISTURE_TREES))
 }
 
-/// The moisture a stand's origin reads: the share of the sky's the rock
+/// The moisture a stand's origin reads: the share of the sky's the soil
 /// keeps, raised toward the closed forest's by how low on the valley's
-/// wall it lies, and to it on a basin's flooded floor, whatever the rock.
+/// wall it lies, and to it on a basin's flooded floor, whatever the soil.
 pub fn ground_moisture(sky: f64, retention: f64, wall: f64, flooded: bool) -> f64 {
     let held = sky * retention;
     if flooded {
@@ -431,7 +434,8 @@ fn stands_of(scope: &CellScope) -> Vec<Stand> {
             .as_ref()
             .and_then(|idx| idx.node(nearest_node(ox, oy)))
             .is_some_and(|n| n.flooded);
-        let retention = rock_on(ox, oy, seed, &coasts, &outline).rock.retention();
+        let relief = outline.at(ox, oy).map_or(0.0, |at| outline.crest_of(&at));
+        let retention = rock_on(ox, oy, seed, &coasts, &outline).rock.retention() * soil_share(erosion_rate(relief));
         let moisture = ground_moisture(sky, retention, wall, flooded);
         let density = density_of(moisture);
         if density <= 0.0 {
@@ -538,9 +542,11 @@ pub fn cover_of(q: i32, r: i32, ground: Cover, density: f64, trees: f64, tempera
 // ── The soil ────────────────────────────────────────────────────────────────
 
 /// The steepest ground that holds soil, in z-levels per tile: forty-five
-/// degrees, as far up as across. Soil stays under it and a cliff or a
-/// gorge wall above it does not, while a range's talus at repose,
-/// thirty-four degrees, keeps its woods. tan 45° is one.
+/// degrees, as far up as across, within the critical gradients soil-mantled
+/// hillslopes are measured at, 0.8 to 1.25 (Hurst et al. 2012, Roering et
+/// al. 1999). Soil stays under it and a cliff or a gorge wall above it does
+/// not, while a range's talus at repose, thirty-four degrees, keeps its
+/// woods. tan 45° is one.
 pub const SOIL_GRADE: f64 = 1.0 / RISE;
 
 // ── The event ───────────────────────────────────────────────────────────────
@@ -808,24 +814,27 @@ mod tests {
     /// Ground steeper than the soil holds stands no tree and no brush,
     /// whatever its stand and its sites' hashes; gentler ground stands
     /// exactly what it would with no limit at all. Read over the haven's
-    /// scarp and the belt about it.
+    /// scarp, whose range erodes too fast to keep a soil, and the gorges
+    /// west of the haven, which keep theirs.
     #[test]
     fn steep_ground_holds_no_soil() {
         let (limited, free) = (stack(SOIL_GRADE), stack(f64::INFINITY));
-        let (q0, r0) = world_to_hex(97_300.0, -1_050.0);
         let (mut steep, mut stripped, mut gentle) = (0, 0, 0);
-        for dq in (-240..=240).step_by(3) {
-            for dr in (-240..=240).step_by(3) {
-                let (q, r) = (q0 + dq, r0 + dr);
-                let (here, unlimited) = (limited.tile_at(q, r), free.tile_at(q, r));
-                let grown = |cover: Cover| common::Canopy::tally(cover).iter().sum::<u32>();
-                if here.grade() >= SOIL_GRADE {
-                    steep += 1;
-                    assert_eq!(grown(here.cover), 0, "trees on ground at grade {} at ({q}, {r})", here.grade());
-                    if grown(unlimited.cover) > 0 { stripped += 1 }
-                } else {
-                    gentle += 1;
-                    assert_eq!(here.cover, unlimited.cover, "the soil limit changed gentle ground at ({q}, {r})");
+        let grown = |cover: Cover| common::Canopy::tally(cover).iter().sum::<u32>();
+        for (x, y) in [(97_300.0, -1_050.0), (91_484.0, -7_275.0)] {
+            let (q0, r0) = world_to_hex(x, y);
+            for dq in (-240..=240).step_by(3) {
+                for dr in (-240..=240).step_by(3) {
+                    let (q, r) = (q0 + dq, r0 + dr);
+                    let (here, unlimited) = (limited.tile_at(q, r), free.tile_at(q, r));
+                    if here.grade() >= SOIL_GRADE {
+                        steep += 1;
+                        assert_eq!(grown(here.cover), 0, "trees on ground at grade {} at ({q}, {r})", here.grade());
+                        if grown(unlimited.cover) > 0 { stripped += 1 }
+                    } else {
+                        gentle += 1;
+                        assert_eq!(here.cover, unlimited.cover, "the soil limit changed gentle ground at ({q}, {r})");
+                    }
                 }
             }
         }

@@ -563,6 +563,16 @@ impl Outlines {
         RANGE_RISE * wedges.max(toes)
     }
 
+    /// The height of the crest of the range a position standing `at` lies
+    /// on, in z-levels, as relief and at its plunge: the hillslope's whole
+    /// height, which it erodes at, from its crest to its toe alike, and
+    /// ended with its wedge. Nothing off the ranges and their scree.
+    pub fn crest_of(&self, at: &Standing) -> f64 {
+        let wedges = Self::wedges_of(at.plate, &at.distances, |e, faces, d| faces.crest_at(d, e.along(at.x, at.y)));
+        let toes = self.toes_on(at.plate, at.x, at.y, SCREE_REACH, |front, faces, d| faces.crest_at(-d, front.along(at.x, at.y)));
+        RANGE_RISE * wedges.max(toes)
+    }
+
     /// How near a position standing `at` lies to the front of a wedge, as a
     /// share: one at a front, falling smoothly to nothing `own` in from it
     /// on the plate whose wedge it is and `under` out from it on any other,
@@ -815,6 +825,9 @@ struct Sheet {
     /// The sheet's structure at full height over its span, nothing off its
     /// own wedge.
     structure: Vec<f64>,
+    /// The height its crest stands at, at full height: one, or a partial
+    /// sheet's share.
+    crest: f64,
     /// The sheet's profile at each plunge, one after another, each as long
     /// as `structure`.
     profiles: Vec<f64>,
@@ -844,7 +857,7 @@ impl Faces {
                     round(&mut h, crest_rounding(plunge_step(p) * crest * RANGE_RISE));
                     profiles.extend(h);
                 }
-                Some(Sheet { start, structure, profiles })
+                Some(Sheet { start, structure, crest, profiles })
             })
             .collect();
         Faces { sheets, plunges }
@@ -895,6 +908,20 @@ impl Faces {
     /// [`Faces::at`] with sheet `j` at the share `plunge(j)` of its height.
     fn at_plunged(&self, d: f64, plunge: impl Fn(usize) -> f64) -> f64 {
         self.spanning(d).map(|j| self.face(j, d, plunge(j))).fold(0.0, f64::max)
+    }
+
+    /// The height of the crest of the sheet standing highest at a distance
+    /// `d` from the front, `along` its strike, as a share of a range's rise
+    /// at its plunge: the relief of the hillslope the position lies on.
+    /// Nothing where no sheet stands.
+    fn crest_at(&self, d: f64, along: f64) -> f64 {
+        let mut best = (0.0, 0.0);
+        for j in self.spanning(d) {
+            let plunge = self.plunge(j, along);
+            let face = self.face(j, d, plunge);
+            if face > best.0 { best = (face, plunge * self.sheets[j].crest) }
+        }
+        best.1
     }
 
     /// The wedge's share at a distance `d` from the front, `along` its
@@ -1178,8 +1205,7 @@ mod tests {
         let whole = |p: usize, i: usize| {
             faces.sheets.iter().map(|sheet| {
                 let mut h = under_repose(&sheet.structure.iter().map(|s| plunge_step(p) * s).collect::<Vec<_>>());
-                let crest = sheet.structure.iter().copied().fold(0.0, f64::max);
-                round(&mut h, crest_rounding(plunge_step(p) * crest * RANGE_RISE));
+                round(&mut h, crest_rounding(plunge_step(p) * sheet.crest * RANGE_RISE));
                 i.checked_sub(sheet.start).and_then(|r| h.get(r).copied()).unwrap_or(0.0)
             }).fold(0.0, f64::max)
         };
