@@ -85,8 +85,8 @@ use std::sync::OnceLock;
 use common::HexLattice;
 
 use crate::chains::{Segment, SegmentGrid};
-use super::drainage::{growth, DrainageCell, DrainageIndex, DrainageNode};
-use super::index::{CellId, CellIndex, IndexRegistry};
+use super::drainage::{growth, DrainageIndex, DrainageNode};
+use super::index::{CellId, CellIndex, IndexRegistry, Located};
 use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 use crate::lattice::{NodeKey, NODE_SPACING, NODE_SWING};
 use crate::noise::{hash_channel, hash_channel_f64};
@@ -647,6 +647,7 @@ impl ChannelIndex {
 
 impl CellIndex for ChannelIndex {
     type Cell = MigrationCell;
+    type Feature = Channel;
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
@@ -655,15 +656,28 @@ impl CellIndex for ChannelIndex {
     fn get(&self, cell: CellId) -> Option<&Self::Cell> {
         self.cells.get(&cell)
     }
+
+    fn features(entry: &Self::Cell) -> impl Iterator<Item = &Channel> {
+        entry.channels.iter()
+    }
 }
 
-/// The channels of the reaches in `cells` whose start node `owns` accepts:
-/// each pair of consecutive nodes along a reach, the last with the node it
-/// joins, looked up across every cell given since a reach's downstream
-/// link may name a node the next cell owns; a link to no published node,
-/// the sea or the window's edge, ends the channel at the last node.
-pub fn channels(cells: &[&DrainageCell], owns: impl Fn(&DrainageNode) -> bool, seed: u64) -> Vec<Channel> {
-    let node = |key: NodeKey| cells.iter().find_map(|c| c.nodes.get(&key));
+/// A channel lies along its flow line.
+impl Located for Channel {
+    fn bounds(&self) -> [f64; 4] {
+        self.axis.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, &(x, y)| [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)])
+    }
+}
+
+/// The channels starting at the nodes among `nodes` that `owns` accepts:
+/// each from its node to the node its channel runs on to, looked up among
+/// every node given since that may be a node the next cell owns; a link to
+/// no node given, the sea's or one past the window, ends the channel at
+/// its node. In the order of the starting nodes' keys, so any reader
+/// builds the same list.
+pub fn channels(nodes: &[&DrainageNode], owns: impl Fn(&DrainageNode) -> bool, seed: u64) -> Vec<Channel> {
+    let by_key: HashMap<NodeKey, &DrainageNode> = nodes.iter().map(|n| (n.key, *n)).collect();
+    let node = |key: NodeKey| by_key.get(&key).copied();
     // The next floor downstream is the node's own base level where its
     // downstream node is unpublished, the sea or the window's edge, and
     // never under that base: a river entering closed ground grades to the
@@ -675,32 +689,26 @@ pub fn channels(cells: &[&DrainageCell], owns: impl Fn(&DrainageNode) -> bool, s
         };
         vigour(n, floor_down.max(n.base), run)
     };
+    let mut starts: Vec<&DrainageNode> = nodes.iter().copied().filter(|p| owns(p)).collect();
+    starts.sort_by_key(|p| p.key);
     let mut out = Vec::new();
-    for c in cells {
-        for reach in &c.reaches {
-            let mut prev: Option<&DrainageNode> = None;
-            for key in reach.nodes.iter().copied().chain(reach.joins) {
-                let Some(n) = node(key) else { break };
-                if let Some(p) = prev.filter(|p| owns(p)) {
-                    let axis = Axis::new(flow_line(p, n));
-                    let mut channel = Channel {
-                        from: p.key,
-                        to: n.key,
-                        axis: Vec::new(),
-                        train: None,
-                        half0: channel_half_width(p.catchment, p.erodibility),
-                        half1: channel_half_width(n.catchment, n.erodibility),
-                        vigour0: vigour_of(p),
-                        vigour1: vigour_of(n),
-                        entry: if n.catchment > 0.0 { (p.catchment / n.catchment).clamp(0.0, 1.0) } else { 1.0 },
-                    };
-                    channel.train = Train::new(&axis, &channel, seed);
-                    channel.axis = axis.pts;
-                    out.push(channel);
-                }
-                prev = Some(n);
-            }
-        }
+    for p in starts {
+        let Some(n) = p.next.and_then(node) else { continue };
+        let axis = Axis::new(flow_line(p, n));
+        let mut channel = Channel {
+            from: p.key,
+            to: n.key,
+            axis: Vec::new(),
+            train: None,
+            half0: channel_half_width(p.catchment, p.erodibility),
+            half1: channel_half_width(n.catchment, n.erodibility),
+            vigour0: vigour_of(p),
+            vigour1: vigour_of(n),
+            entry: if n.catchment > 0.0 { (p.catchment / n.catchment).clamp(0.0, 1.0) } else { 1.0 },
+        };
+        channel.train = Train::new(&axis, &channel, seed);
+        channel.axis = axis.pts;
+        out.push(channel);
     }
     out
 }
@@ -734,7 +742,7 @@ impl WorldEvent for MigrationEvent {
         let cell = scope.cell();
         let channels = scope
             .read::<DrainageIndex>()
-            .map(|idx| channels(&idx.entries().collect::<Vec<_>>(), |p| lattice.cell_id(p.q, p.r) == cell, scope.seed()))
+            .map(|idx| channels(&idx.features().collect::<Vec<_>>(), |p| lattice.cell_id(p.q, p.r) == cell, scope.seed()))
             .unwrap_or_default();
         scope.publish::<ChannelIndex>(MigrationCell { channels });
     }
@@ -764,7 +772,7 @@ mod tests {
     fn node(wx: f64, wy: f64, key: NodeKey, direction: (f64, f64), catchment: f64, age: f64, flooded: bool) -> DrainageNode {
         DrainageNode {
             key, q: 0, r: 0, wx, wy, elevation: 10.0, surface: 10.0, flooded, direction, catchment, base: 0.0,
-            down: None, sill: false, age, erodibility: 1.0, cut: 0.0, floor: 5.0,
+            down: None, next: None, sill: false, age, erodibility: 1.0, cut: 0.0, floor: 5.0,
         }
     }
 
@@ -944,8 +952,9 @@ mod tests {
         let published = DrainageEvent::new().route(&lattice, cell, S, &coasts, &outlines).owned_cell();
         let fine = ChannelIndex::lattice();
         let own = fine.cell_id(104_289, -4_677);
-        let all = channels(&[&published], |_| true, S);
-        let owned = channels(&[&published], |p| fine.cell_id(p.q, p.r) == own, S);
+        let nodes: Vec<&DrainageNode> = published.nodes.values().collect();
+        let all = channels(&nodes, |_| true, S);
+        let owned = channels(&nodes, |p| fine.cell_id(p.q, p.r) == own, S);
         assert!(!all.is_empty() && !owned.is_empty() && owned.len() < all.len());
         let from: HashSet<NodeKey> = all.iter().map(|c| c.from).collect();
         // Every node with its next node in the cell starts a channel, but a

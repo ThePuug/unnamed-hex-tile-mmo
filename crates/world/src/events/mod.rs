@@ -38,6 +38,14 @@
 //! under the footprint plus one ring, so a layer that reads nothing costs
 //! nothing beneath it, and a layer that reads one index pays for that one.
 //!
+//! **A layer sees its neighbourhood and nothing past it.** An entry holds
+//! located features, each lying where it lies, and never a value gathered
+//! over a neighbourhood: a reader of one such entry would hold its
+//! publisher's whole ring. A read yields only the features lying in the
+//! reader's cell and its ring on its own lattice, so a coarser layer's cell
+//! spreading far past that ring hands over none of what lies past it, and a
+//! layer that needs a value further away needs a larger cell scale.
+//!
 //! `prepare(L, C)` reads L's own indexes over C plus exactly one ring, which
 //! the framework guarantees is deformed by then. One ring is the entire budget
 //! — `max_influence` asserts at setup that the cell scale is large enough for
@@ -107,7 +115,7 @@ use common::{den::Habitat, Cover, HexLattice, Rock};
 use crate::hex_to_world;
 use crate::lattice::hex_distance;
 
-pub use index::{CellId, CellIndex, IndexRegistry};
+pub use index::{CellId, CellIndex, IndexRegistry, Located};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // World Event Composite Framework
@@ -216,9 +224,11 @@ pub fn gradient_of(wx: f64, wy: f64, here: f64, f: impl Fn(f64, f64) -> f64) -> 
 /// The cell a layer is being evaluated for, the neighbourhood it may read,
 /// and the only cell it may write.
 ///
-/// Reads reach exactly the neighbourhood: [`CellScope::read`] hands out a
-/// [`Neighbourhood`], never the index, so an entry past the footprint and
-/// its ring cannot be read. Writes reach only the cell: [`CellScope::publish`]
+/// Reads reach exactly the neighbourhood, the cell and its ring on the
+/// layer's own lattice: [`CellScope::read`] hands out a [`Neighbourhood`],
+/// never the index, and a neighbourhood yields the features lying in it and
+/// nothing else, however far past it the cells holding them spread. Writes
+/// reach only the cell: [`CellScope::publish`]
 /// takes no cell id, so a layer physically cannot record an entry against
 /// another cell. It has no way to name one.
 ///
@@ -242,6 +252,11 @@ impl<'a> CellScope<'a> {
     /// This layer's cell lattice, for reaching a neighbourhood of cells.
     pub fn lattice(&self) -> &HexLattice { self.lattice }
 
+    /// Where this cell's reads may land: the cell and its ring.
+    pub fn region(&self) -> Region {
+        Region::of(self.lattice, self.cell)
+    }
+
     /// Read an index over this cell's neighbourhood. A lower layer's cells
     /// under this cell's footprint plus one ring are deformed first, so the
     /// read is complete: a lower layer is deformed on demand by the reads
@@ -249,15 +264,15 @@ impl<'a> CellScope<'a> {
     /// it. This layer's own index is never deformed from here — its ring is
     /// `prepare`'s to read, and it is deformed before `prepare` runs.
     pub fn read<T: CellIndex>(&self) -> Option<Neighbourhood<'_, T>> {
-        let cells = self.source_cells::<T>().into_iter().collect();
-        self.composite.indexes.get::<T>().map(|index| Neighbourhood { index, cells })
+        let cells = self.source_cells::<T>();
+        self.composite.indexes.get::<T>().map(|index| Neighbourhood { index, cells, region: self.region() })
     }
 
-    /// The cells of `T`'s own lattice this cell may read — its footprint plus
-    /// one ring, which is exactly the set the cascade deformed, and the set a
-    /// [`Neighbourhood`] answers for. Asking for it deforms them without
-    /// taking the index's lock, so a layer can deform every index it reads
-    /// before holding any of them.
+    /// The cells of `T`'s own lattice a read may take features from — its
+    /// footprint plus one ring, which is exactly the set the cascade
+    /// deformed. Asking for it deforms them without taking the index's
+    /// lock, so a layer can deform every index it reads before holding any
+    /// of them.
     pub fn source_cells<T: CellIndex>(&self) -> Vec<CellId> {
         self.composite.deform_under::<T>(self.layer, self.lattice, self.cell);
         // The index's lattice is the lattice of the layer that fills it.
@@ -272,26 +287,136 @@ impl<'a> CellScope<'a> {
     }
 }
 
-/// An index as one cell sees it: the entries of the cells its footprint and
-/// one ring translate to on the index's lattice, and no others. A layer
-/// needing a value past the ring needs a larger cell scale.
+/// An index as one cell sees it: the features lying in the cell and its
+/// ring, from the entries of the cells its footprint and one ring translate
+/// to on the index's lattice, and no others. A cell of a coarser layer
+/// spreads far past the reader's ring, and what lies past it is withheld;
+/// a layer needing a value there needs a larger cell scale.
 pub struct Neighbourhood<'a, T: CellIndex> {
     index: MappedRwLockReadGuard<'a, T>,
-    cells: HashSet<CellId>,
+    cells: Vec<CellId>,
+    region: Region,
 }
 
 impl<T: CellIndex> Neighbourhood<'_, T> {
-    /// Every entry in the neighbourhood.
-    pub fn entries(&self) -> impl Iterator<Item = &T::Cell> + '_ {
-        self.cells.iter().filter_map(|&id| self.index.get(id))
+    /// Every feature lying in the neighbourhood.
+    pub fn features(&self) -> impl Iterator<Item = &T::Feature> + '_ {
+        self.cells
+            .iter()
+            .filter_map(|&id| self.index.get(id))
+            .flat_map(|entry| T::features(entry))
+            .filter(|f| self.region.meets(f.bounds()))
     }
 
-    /// One cell's entry. Panics on a cell outside the neighbourhood: that
-    /// read is the one this view exists to refuse.
-    pub fn entry(&self, cell: CellId) -> Option<&T::Cell> {
-        assert!(self.cells.contains(&cell), "cell {cell:?} is outside the neighbourhood");
-        self.index.get(cell)
+    /// The feature `pick` finds in `cell`'s entry, where `cell` is one the
+    /// neighbourhood reads and the feature lies in it: a keyed lookup, for
+    /// an index whose entry finds a feature by key.
+    pub fn find(&self, cell: CellId, pick: impl FnOnce(&T::Cell) -> Option<&T::Feature>) -> Option<&T::Feature> {
+        if !self.cells.contains(&cell) {
+            return None;
+        }
+        self.index.get(cell).and_then(pick).filter(|f| self.region.meets(f.bounds()))
     }
+}
+
+/// A cell and its ring, as the ground their tiles cover: the seven
+/// hexagons of a lattice's neighbourhood, each grown by the half tile a
+/// tile's ground spans past its centre.
+#[derive(Clone, Debug)]
+pub struct Region {
+    hexagons: [Hexagon; 7],
+    centre: (f64, f64),
+    /// Past this from the centre nothing of the region lies.
+    outer: f64,
+}
+
+/// One cell's hexagon: its corners in turn, and its circle and the circle
+/// it holds.
+#[derive(Clone, Copy, Debug)]
+struct Hexagon {
+    corners: [(f64, f64); 6],
+    centre: (f64, f64),
+    inner: f64,
+    outer: f64,
+}
+
+/// The six axial directions in turn around a hexagon.
+const AROUND: [(i32, i32); 6] = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)];
+
+impl Region {
+    /// The neighbourhood of `cell` on `lattice`.
+    pub fn of(lattice: &HexLattice, cell: CellId) -> Self {
+        let hexagon = |id: CellId| {
+            let (cq, cr) = lattice.cell_center(id);
+            let centre = hex_to_world(cq, cr);
+            let r = lattice.radius as f64 + 0.5;
+            let corners = AROUND.map(|(dq, dr)| {
+                let (x, y) = hex_to_world(cq + dq, cr + dr);
+                (centre.0 + (x - centre.0) * r, centre.1 + (y - centre.1) * r)
+            });
+            Hexagon { corners, centre, inner: r * 0.866_025_403_784_438_6, outer: r }
+        };
+        let ring = lattice.neighbor_cells(cell);
+        let hexagons: [Hexagon; 7] = std::array::from_fn(|i| hexagon(if i == 0 { cell } else { ring[i - 1] }));
+        let centre = hexagons[0].centre;
+        let outer = hexagons.iter().map(|h| (h.centre.0 - centre.0).hypot(h.centre.1 - centre.1) + h.outer).fold(0.0, f64::max);
+        Region { hexagons, centre, outer }
+    }
+
+    /// Whether anything of a box `[x0, y0, x1, y1]` lies in the region.
+    pub fn meets(&self, b: [f64; 4]) -> bool {
+        if box_to_point(b, self.centre) > self.outer {
+            return false;
+        }
+        self.hexagons.iter().any(|h| h.meets(b))
+    }
+}
+
+impl Hexagon {
+    fn meets(&self, b: [f64; 4]) -> bool {
+        let near = box_to_point(b, self.centre);
+        if near > self.outer {
+            return false;
+        }
+        if near <= self.inner {
+            return true;
+        }
+        let box_corners = [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])];
+        let inside = |p: (f64, f64)| {
+            let mut sign = 0.0;
+            for i in 0..6 {
+                let (a, c) = (self.corners[i], self.corners[(i + 1) % 6]);
+                let cross = (c.0 - a.0) * (p.1 - a.1) - (c.1 - a.1) * (p.0 - a.0);
+                if cross * sign < 0.0 {
+                    return false;
+                }
+                if cross != 0.0 {
+                    sign = cross;
+                }
+            }
+            true
+        };
+        let in_box = |p: (f64, f64)| p.0 >= b[0] && p.0 <= b[2] && p.1 >= b[1] && p.1 <= b[3];
+        if self.corners.iter().any(|&c| in_box(c)) || box_corners.iter().any(|&c| inside(c)) {
+            return true;
+        }
+        (0..6).any(|i| (0..4).any(|j| segments_cross(self.corners[i], self.corners[(i + 1) % 6], box_corners[j], box_corners[(j + 1) % 4])))
+    }
+}
+
+/// How far a box `[x0, y0, x1, y1]` lies from a point: nothing inside it.
+fn box_to_point(b: [f64; 4], p: (f64, f64)) -> f64 {
+    let dx = (b[0] - p.0).max(p.0 - b[2]).max(0.0);
+    let dy = (b[1] - p.1).max(p.1 - b[3]).max(0.0);
+    dx.hypot(dy)
+}
+
+/// Whether segments `a`–`b` and `c`–`d` share a point, or lie on one line:
+/// a read errs toward the feature it might need.
+fn segments_cross(a: (f64, f64), b: (f64, f64), c: (f64, f64), d: (f64, f64)) -> bool {
+    let turn = |p: (f64, f64), q: (f64, f64), r: (f64, f64)| (q.0 - p.0) * (r.1 - p.1) - (q.1 - p.1) * (r.0 - p.0);
+    let (d1, d2, d3, d4) = (turn(c, d, a), turn(c, d, b), turn(a, b, c), turn(a, b, d));
+    ((d1 > 0.0) != (d2 > 0.0) || d1 == 0.0 || d2 == 0.0) && ((d3 > 0.0) != (d4 > 0.0) || d3 == 0.0 || d4 == 0.0)
 }
 
 // ── WorldEvent trait ────────────────────────────────────────────────────────
@@ -1105,10 +1230,19 @@ mod tests {
     #[derive(Default)]
     struct Marks(HashMap<CellId, ()>);
 
+    /// A mark lies nowhere a box can miss.
+    struct Mark;
+
+    impl Located for Mark {
+        fn bounds(&self) -> [f64; 4] { [f64::MIN, f64::MIN, f64::MAX, f64::MAX] }
+    }
+
     impl CellIndex for Marks {
         type Cell = ();
+        type Feature = Mark;
         fn set(&mut self, cell: CellId, entry: ()) { self.0.insert(cell, entry); }
         fn get(&self, cell: CellId) -> Option<&()> { self.0.get(&cell) }
+        fn features(_entry: &()) -> impl Iterator<Item = &Mark> { std::iter::empty() }
     }
 
     /// Publishes a mark in every cell it deforms.

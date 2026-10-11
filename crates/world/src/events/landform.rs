@@ -68,7 +68,7 @@ use super::index::CellId;
 use super::lithology::{rock_on, Column, FORMATION_MAX};
 use super::outcrop::{SITE_JITTER, SITE_LATTICE};
 use super::plates::{coasts_of, Coasts, GRAPH_CELL_SCALE};
-use super::thrusting::{outlines_for, Outlines, OUTLINE_REACH, REPOSE_GRADE};
+use super::thrusting::{outlines_of, Outlines, OUTLINE_REACH, REPOSE_GRADE};
 use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent};
 
 const LANDFORM_SEED: u64 = 0x4c61_6e64_666f_726d; // "Landform"
@@ -318,7 +318,7 @@ impl WorldEvent for LandformEvent {
     fn deform(&self, _scope: &CellScope) {}
 
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
-        Box::new(Reach { coasts: coasts_of(scope), outlines: outlines_for(scope), landforms: Landforms::new() })
+        Box::new(Reach { coasts: coasts_of(scope), outlines: Arc::new(outlines_of(scope)), landforms: Landforms::new() })
     }
 
     /// What a landform carves at the tile below the envelope, and how

@@ -234,11 +234,12 @@ pub struct Valleys {
 }
 
 impl Valleys {
-    /// Valleys from published channels and the drainage cells their nodes
-    /// are in, keeping the channels with an end `keep` accepts. A channel
-    /// whose node is in no cell given is left out.
-    pub fn new(cells: &[&DrainageCell], channels: &[&Channel], keep: impl Fn(NodeKey) -> bool) -> Self {
-        let node = |key: NodeKey| cells.iter().find_map(|c| c.nodes.get(&key));
+    /// Valleys from published channels and the drainage nodes they run
+    /// between, keeping the channels with an end `keep` accepts. A channel
+    /// whose node is not among those given is left out.
+    pub fn new(nodes: &[&DrainageNode], channels: &[&Channel], keep: impl Fn(NodeKey) -> bool) -> Self {
+        let by_key: HashMap<NodeKey, &DrainageNode> = nodes.iter().map(|n| (n.key, *n)).collect();
+        let node = |key: NodeKey| by_key.get(&key).copied();
         let mut segments = Vec::new();
         let mut subs = Vec::new();
         let mut cuts: Vec<Cut> = Vec::new();
@@ -333,11 +334,11 @@ impl Valleys {
                 event.route(&lattice, cell, seed, &coasts, &outlines).owned_cell()
             })
             .collect();
-        let refs: Vec<&DrainageCell> = cells.iter().collect();
+        let nodes: Vec<&DrainageNode> = cells.iter().flat_map(|c| c.nodes.values()).collect();
         let within = half * std::f64::consts::SQRT_2 + CHANNEL_REACH;
-        let drawn = channels(&refs, |p| (p.wx - cx).hypot(p.wy - cy) <= within, seed);
+        let drawn = channels(&nodes, |p| (p.wx - cx).hypot(p.wy - cy) <= within, seed);
         let channel_refs: Vec<&Channel> = drawn.iter().collect();
-        Self::new(&refs, &channel_refs, |_| true)
+        Self::new(&nodes, &channel_refs, |_| true)
     }
 
     /// The cuts at a position whose envelope is `envelope`, in z-levels: of
@@ -417,9 +418,9 @@ pub fn valleys_of(scope: &CellScope) -> Valleys {
     };
     let centre = scope.lattice().cell_center(scope.cell());
     let keep_within = scope.lattice().radius as i32 + CHANNEL_REACH.ceil() as i32;
-    let cells: Vec<&DrainageCell> = drainage.entries().collect();
-    let drawn: Vec<&Channel> = channels.entries().flat_map(|c| c.channels.iter()).collect();
-    Valleys::new(&cells, &drawn, |key| hex_distance(node_site(key), centre) <= keep_within)
+    let nodes: Vec<&DrainageNode> = drainage.features().collect();
+    let drawn: Vec<&Channel> = channels.features().collect();
+    Valleys::new(&nodes, &drawn, |key| hex_distance(node_site(key), centre) <= keep_within)
 }
 
 // ── The event ───────────────────────────────────────────────────────────────
@@ -506,9 +507,10 @@ mod tests {
                 if !(flooded && channelled) {
                     continue;
                 }
-                let drawn = channels(&[&published], |_| true, S);
+                let nodes: Vec<&DrainageNode> = published.nodes.values().collect();
+                let drawn = channels(&nodes, |_| true, S);
                 let refs: Vec<&Channel> = drawn.iter().collect();
-                let valleys = Valleys::new(&[&published], &refs, |_| true);
+                let valleys = Valleys::new(&nodes, &refs, |_| true);
                 return (published, valleys);
             }
             panic!("no cell within two of the spawn owns closed ground and a channel");
@@ -542,7 +544,7 @@ mod tests {
     fn channel_depth_starts_at_the_head_and_saturates() {
         let node = |catchment: f64, flooded: bool| DrainageNode {
             key: (0, 0), q: 0, r: 0, wx: 0.0, wy: 0.0, elevation: 10.0, surface: 10.0, flooded,
-            direction: (1.0, 0.0), catchment, base: 0.0, down: None, sill: false, age: 1.0, erodibility: 1.0, cut: 0.0, floor: 5.0,
+            direction: (1.0, 0.0), catchment, base: 0.0, down: None, next: None, sill: false, age: 1.0, erodibility: 1.0, cut: 0.0, floor: 5.0,
         };
         assert_eq!(channel_depth(&node(CHANNEL_HEAD, false)), 0.0);
         assert!((channel_depth(&node(CHANNEL_HEAD + 1e-9, false)) - CHANNEL_DEPTH_MIN).abs() < 1e-3);
@@ -564,18 +566,14 @@ mod tests {
     #[test]
     fn floors_never_rise_and_sills_are_cut_as_published() {
         let (published, valleys) = spawn_valleys();
-        assert!(!published.reaches.is_empty());
         let mut cut_nodes = 0;
-        for reach in &published.reaches {
-            let mut last = f64::MAX;
-            for key in &reach.nodes {
-                let n = &published.nodes[key];
-                let floor = n.elevation - depth_at(n);
-                assert!(floor >= n.base - 1e-9, "a floor below base level at {key:?}");
-                assert!(floor <= last + 1e-9, "a floor rising downstream at {key:?}");
-                last = floor;
-                if depth_at(n) > 0.0 { cut_nodes += 1 }
+        for (key, n) in &published.nodes {
+            let floor = n.elevation - depth_at(n);
+            assert!(floor >= n.base - 1e-9, "a floor below base level at {key:?}");
+            if let Some(m) = n.next.and_then(|k| published.nodes.get(&k)) {
+                assert!(m.elevation - depth_at(m) <= floor + 1e-9, "a floor rising downstream at {key:?}");
             }
+            if depth_at(n) > 0.0 { cut_nodes += 1 }
         }
         assert!(cut_nodes > 0, "no node in the spawn cell carries a channel");
         for n in published.nodes.values().filter(|n| n.flooded && n.cut > 0.0) {

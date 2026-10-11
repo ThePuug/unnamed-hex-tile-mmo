@@ -351,22 +351,19 @@ fn main() {
         vec![]
     };
 
-    // A reach as its node positions plus the node it joins, and the catchment
-    // at its last node.
+    // Each node's link to the node its channel runs on to, with the
+    // catchment at the node.
     let reaches: Vec<(Vec<(f64, f64)>, f64)> = if layers.contains(&Layer::Reaches) {
         composite.with_indexes(|indexes| {
             indexes
                 .get::<DrainageIndex>()
                 .map(|idx| {
-                    let at = |k: &(i32, i32)| idx.node(*k).map(|n| (n.wx, n.wy));
                     idx.cells
                         .values()
-                        .flat_map(|c| c.reaches.iter())
-                        .map(|reach| {
-                            let mut pts: Vec<(f64, f64)> = reach.nodes.iter().filter_map(at).collect();
-                            pts.extend(reach.joins.as_ref().and_then(at));
-                            let catchment = reach.nodes.last().and_then(|k| idx.node(*k)).map_or(1.0, |n| n.catchment);
-                            (pts, catchment)
+                        .flat_map(|c| c.nodes.values())
+                        .filter_map(|n| {
+                            let next = idx.node(n.next?)?;
+                            Some((vec![(n.wx, n.wy), (next.wx, next.wy)], n.catchment))
                         })
                         .collect()
                 })

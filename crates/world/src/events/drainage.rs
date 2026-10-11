@@ -1,9 +1,10 @@
 //! DrainageEvent — where water runs on the tectonic surface.
 //!
 //! Routes water over the composed surface on a coarse world-wide lattice of
-//! nodes, and publishes the channel network of every landmass as reaches with
-//! catchment. It moves no ground and its query returns nothing: dissection
-//! cuts along what this publishes.
+//! nodes, and publishes the channel network of every landmass as its nodes,
+//! each linked to the node its channel runs on to, with catchment. It moves
+//! no ground and its query returns nothing: dissection cuts along what this
+//! publishes.
 //!
 //! # The surface is a function, plus the plate graph
 //!
@@ -76,7 +77,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use common::HexLattice;
 use dashmap::DashMap;
 
-use super::index::{CellId, CellIndex, IndexRegistry};
+use super::index::{CellId, CellIndex, IndexRegistry, Located};
 use super::landform::Landforms;
 use super::lithology::{cover_on, rock_at};
 use super::plates::{coasts_of, Coasts};
@@ -318,20 +319,6 @@ fn steepest_facet(
 
 // ── What a cell publishes ───────────────────────────────────────────────────
 
-/// Where a reach's last node sends its water.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Terminus {
-    /// Into another reach: a confluence, or the same channel in the next cell.
-    Continues,
-    Sea,
-    /// At the lowest node of closed ground, the pit: the water gathers
-    /// there and leaves over the sill, but the river ends.
-    Basin,
-    /// Off the edge of the window that routed it. The neighbouring cell's
-    /// window reaches further.
-    Edge,
-}
-
 #[derive(Clone, Debug)]
 pub struct DrainageNode {
     pub key: NodeKey,
@@ -360,6 +347,11 @@ pub struct DrainageNode {
     pub base: f64,
     /// The node taking the larger share of this one's water. None at a sink.
     pub down: Option<NodeKey>,
+    /// The node this one's channel runs on to: its downstream node, but
+    /// none at a basin's pit, whose water leaves over the sill while the
+    /// river ends. A node that is not published, the sea's or one past the
+    /// window, ends the channel too.
+    pub next: Option<NodeKey>,
     /// This node is a basin's outlet: the sill whose height, less its cut,
     /// is the basin's fill. Dissection cuts exactly `cut` here, so the
     /// basin keeps the fill the routing gave it.
@@ -380,20 +372,17 @@ pub struct DrainageNode {
     pub floor: f64,
 }
 
-/// A channel: nodes in downstream order, and where the last one drains.
-#[derive(Clone, Debug)]
-pub struct Reach {
-    pub nodes: Vec<NodeKey>,
-    /// The node the last one drains to. None at a sink, the pit of closed
-    /// ground included: its water leaves over the sill, the river does not.
-    pub joins: Option<NodeKey>,
-    pub end: Terminus,
+/// A node lies at its site.
+impl Located for DrainageNode {
+    fn bounds(&self) -> [f64; 4] {
+        [self.wx, self.wy, self.wx, self.wy]
+    }
 }
 
+/// The nodes a cell owns, by key.
 #[derive(Clone, Debug, Default)]
 pub struct DrainageCell {
     pub nodes: HashMap<NodeKey, DrainageNode>,
-    pub reaches: Vec<Reach>,
 }
 
 #[derive(Default)]
@@ -415,15 +404,17 @@ impl DrainageIndex {
 }
 
 impl Neighbourhood<'_, DrainageIndex> {
-    /// The node, from whichever cell of the neighbourhood owns it.
+    /// The node, from whichever cell owns it, where it lies in the
+    /// neighbourhood.
     pub fn node(&self, key: NodeKey) -> Option<&DrainageNode> {
         let (q, r) = node_site(key);
-        self.entry(DrainageIndex::lattice().cell_id(q, r))?.nodes.get(&key)
+        self.find(DrainageIndex::lattice().cell_id(q, r), |c| c.nodes.get(&key))
     }
 }
 
 impl CellIndex for DrainageIndex {
     type Cell = DrainageCell;
+    type Feature = DrainageNode;
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
@@ -431,6 +422,10 @@ impl CellIndex for DrainageIndex {
 
     fn get(&self, cell: CellId) -> Option<&Self::Cell> {
         self.cells.get(&cell)
+    }
+
+    fn features(entry: &Self::Cell) -> impl Iterator<Item = &DrainageNode> {
+        entry.nodes.values()
     }
 }
 
@@ -490,11 +485,6 @@ struct RoutedBasin {
     outlet: Option<usize>,
 }
 
-struct RoutedReach {
-    nodes: Vec<usize>,
-    end: Terminus,
-}
-
 /// Everything routed over one window. `deform` publishes the owned subset;
 /// the probes read the whole to compare neighbouring windows.
 pub struct Routing {
@@ -535,7 +525,6 @@ pub struct Routing {
     pub floor: Vec<f64>,
     index: HashMap<NodeKey, usize>,
     basins: Vec<RoutedBasin>,
-    reaches: Vec<RoutedReach>,
 }
 
 impl Routing {
@@ -543,10 +532,11 @@ impl Routing {
         self.index.get(&key).copied()
     }
 
-    /// The cell's own share of the window: its nodes and its runs of every
-    /// reach. Every basin in the window says which node is its sill, not
-    /// only the owned ones: a sill is owned by whichever cell holds the rim
-    /// node, and that cell may own no flooded node of the basin it drains.
+    /// The cell's own share of the window: its nodes, each with the node
+    /// its channel runs on to. Every basin in the window says which node is
+    /// its sill, not only the owned ones: a sill is owned by whichever cell
+    /// holds the rim node, and that cell may own no flooded node of the
+    /// basin it drains.
     pub fn owned_cell(&self) -> DrainageCell {
         let sills: HashSet<usize> = self.basins.iter().filter_map(|b| b.outlet).collect();
         let mut nodes = HashMap::new();
@@ -571,6 +561,7 @@ impl Routing {
                     catchment: self.carried[k],
                     base: self.base[k],
                     down: self.down[k].map(|d| self.keys[d]),
+                    next: if is_pit(&self.kind, &self.down, k) { None } else { self.down[k].map(|d| self.keys[d]) },
                     sill: sills.contains(&k),
                     age: self.age[k],
                     erodibility: self.erodibility[k],
@@ -580,31 +571,7 @@ impl Routing {
             );
         }
 
-        let mut reaches = Vec::new();
-        for reach in &self.reaches {
-            let mut run: Vec<usize> = Vec::new();
-            for (pos, &k) in reach.nodes.iter().enumerate() {
-                if self.owned[k] {
-                    run.push(k);
-                }
-                let last = pos + 1 == reach.nodes.len();
-                if (!self.owned[k] || last) && !run.is_empty() {
-                    let tail = *run.last().unwrap();
-                    let end = if last && tail == k { reach.end } else { Terminus::Continues };
-                    // The pit's water leaves over the sill, but the river
-                    // ends at the pit: nothing is drawn from it.
-                    let joins = if end == Terminus::Basin { None } else { self.down[tail].map(|d| self.keys[d]) };
-                    reaches.push(Reach {
-                        nodes: run.iter().map(|&m| self.keys[m]).collect(),
-                        joins,
-                        end,
-                    });
-                    run.clear();
-                }
-            }
-        }
-
-        DrainageCell { nodes, reaches }
+        DrainageCell { nodes }
     }
 }
 
@@ -850,7 +817,8 @@ impl DrainageEvent {
 
     /// Route the window's nodes, whose sites are `site` and neighbours
     /// `nbrs`, over `elevation`: the flood, every node's outflow,
-    /// catchment, basins, base level and reaches. The keys, ownership,
+    /// catchment and the most a reach has carried, basins and base level.
+    /// The keys, ownership,
     /// ages, erodibilities, cuts and floors are left empty; `route` sets
     /// them once the passes are done.
     fn route_over(
@@ -1068,42 +1036,21 @@ impl DrainageEvent {
             }
         }
         let head = |k: usize| matches!(kind[k], Kind::Land | Kind::Basin) && (inflow[k] != 1 || from_pit[k]);
-        let mut reaches = Vec::new();
-        for k in 0..n {
-            if !head(k) {
-                continue;
-            }
-            let mut nodes = vec![k];
-            let mut cur = k;
-            let end = loop {
-                if pit(cur) {
-                    break Terminus::Basin;
-                }
-                let Some(d) = down[cur] else { break Terminus::Edge };
-                match kind[d] {
-                    Kind::Sea => break Terminus::Sea,
-                    Kind::Edge => break Terminus::Edge,
-                    Kind::Land | Kind::Basin => {
-                        if head(d) {
-                            break Terminus::Continues;
-                        }
-                        nodes.push(d);
-                        cur = d;
-                    }
-                }
-            };
-            reaches.push(RoutedReach { nodes, end });
-        }
         // ── The catchment a reach's channel is cut by never falls along it:
         //    water that split away at a node cut the channel above, and the
         //    river below is one river, so a channel is cut by the most water
-        //    that has run down it ──
+        //    that has run down it. A reach runs from its head down to the
+        //    next head, or into its pit, the sea or the window's edge ──
         let mut carried = catchment.clone();
-        for reach in &reaches {
-            let mut most = 0.0f64;
-            for &k in &reach.nodes {
-                most = most.max(catchment[k]);
-                carried[k] = most;
+        for k in (0..n).filter(|&k| head(k)) {
+            let mut most = catchment[k];
+            carried[k] = most;
+            let mut cur = k;
+            while !pit(cur) {
+                let Some(d) = down[cur].filter(|&d| matches!(kind[d], Kind::Land | Kind::Basin) && !head(d)) else { break };
+                most = most.max(catchment[d]);
+                carried[d] = most;
+                cur = d;
             }
         }
 
@@ -1123,7 +1070,6 @@ impl DrainageEvent {
             parent,
             index: HashMap::new(),
             basins,
-            reaches,
             age: Vec::new(),
             erodibility: Vec::new(),
             cut: Vec::new(),

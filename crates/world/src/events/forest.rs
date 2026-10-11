@@ -39,7 +39,6 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::f64::consts::PI;
-use std::sync::Arc;
 
 use common::{Cover, HexLattice, HexSpatialGrid, Content, SITES};
 
@@ -51,11 +50,11 @@ use crate::{hex_to_world, smoothstep, world_to_hex, RISE};
 use crate::hillslope::{erosion_rate, soil_share};
 use super::climate::{temperature, TREELINE, TREELINE_BAND};
 use super::drainage::DrainageIndex;
-use super::index::{CellId, CellIndex, IndexRegistry};
+use super::index::{CellId, CellIndex, IndexRegistry, Located};
 use super::lithology::rock_on;
 use super::migration::{ChannelIndex, VALLEY_HALF_WIDTH};
-use super::plates::{Coasts, PlateEdgeIndex, COAST_REACH, GRAPH_CELL_SCALE, WARP_SWING};
-use super::thrusting::{rim_of, sheets_of, EdgeOutline, OutlineIndex, Outlines, RANGE_SPACING, WEDGE_SHEETS};
+use super::plates::{Coasts, PlateEdgeIndex, COAST_REACH, WARP_SWING};
+use super::thrusting::{outlines_of, rim_of, sheets_of, EdgeOutline, Outlines, RANGE_SPACING, WEDGE_SHEETS};
 use super::{footprint_plus_ring, CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 
 const WIND_SEED: u64 = 0x7769_6e64;
@@ -297,6 +296,7 @@ pub struct StandIndex {
 
 impl CellIndex for StandIndex {
     type Cell = ForestCell;
+    type Feature = Stand;
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
@@ -304,6 +304,18 @@ impl CellIndex for StandIndex {
 
     fn get(&self, cell: CellId) -> Option<&Self::Cell> {
         self.cells.get(&cell)
+    }
+
+    fn features(entry: &Self::Cell) -> impl Iterator<Item = &Stand> {
+        entry.stands.iter()
+    }
+}
+
+/// A stand lies as far as it reaches from its origin.
+impl Located for Stand {
+    fn bounds(&self) -> [f64; 4] {
+        let r = self.reach();
+        [self.wx - r, self.wy - r, self.wx + r, self.wy + r]
     }
 }
 
@@ -370,7 +382,7 @@ fn coasts_of(scope: &CellScope) -> Coasts {
     let within = scope.lattice().radius as f64 + COAST_READ;
     let edges = scope.read::<PlateEdgeIndex>();
     let near = |e: &&Edge| e.is_coast() && Segment::along((e.x0, e.y0), (e.x1, e.y1), true).distance(cx, cy).0 <= within;
-    Coasts::new(edges.iter().flat_map(|idx| idx.entries().flatten()).filter(near), scope.seed())
+    Coasts::new(edges.iter().flat_map(|idx| idx.features()).filter(near), scope.seed())
 }
 
 /// The channel axes in reach of a cell's origins, from the channels
@@ -381,15 +393,13 @@ fn axes_of(scope: &CellScope) -> SegmentGrid {
     let within = scope.lattice().radius as f64 + 2.0 * VALLEY_HALF_WIDTH;
     let mut segments = Vec::new();
     if let Some(idx) = scope.read::<ChannelIndex>() {
-        for c in idx.entries() {
-            for ch in &c.channels {
-                let near = ch.axis.iter().any(|&(x, y)| (x - cx).hypot(y - cy) <= within);
-                if !near {
-                    continue;
-                }
-                for w in ch.axis.windows(2) {
-                    segments.push(Segment::along(w[0], w[1], true));
-                }
+        for ch in idx.features() {
+            let near = ch.axis.iter().any(|&(x, y)| (x - cx).hypot(y - cy) <= within);
+            if !near {
+                continue;
+            }
+            for w in ch.axis.windows(2) {
+                segments.push(Segment::along(w[0], w[1], true));
             }
         }
     }
@@ -409,13 +419,10 @@ fn stands_of(scope: &CellScope) -> Vec<Stand> {
     // held: a read guard held across a lower layer's deform waits on the
     // write that deform needs, and nothing moves.
     let axes = axes_of(scope);
-    scope.source_cells::<OutlineIndex>();
     scope.source_cells::<DrainageIndex>();
     let coasts = coasts_of(scope);
-    let outlines = scope.read::<OutlineIndex>();
+    let outline = outlines_of(scope);
     let drainage = scope.read::<DrainageIndex>();
-    let graph = HexLattice::new(GRAPH_CELL_SCALE);
-    let mut by_graph_cell: HashMap<CellId, Arc<Outlines>> = HashMap::new();
 
     let mut out = Vec::new();
     for id in candidate_origins(lattice, cell) {
@@ -424,11 +431,6 @@ fn stands_of(scope: &CellScope) -> Vec<Stand> {
         if lattice.cell_id(oq, or) != cell {
             continue;
         }
-        let graph_cell = graph.cell_id(oq, or);
-        let outline = by_graph_cell
-            .entry(graph_cell)
-            .or_insert_with(|| outlines.as_ref().and_then(|idx| idx.entry(graph_cell).cloned()).unwrap_or_else(|| Arc::new(Outlines::new(&[], seed))))
-            .clone();
         let sky = sky_moisture(ox, oy, wind, &coasts, &outline);
         let wall = axes.nearest(ox, oy, VALLEY_HALF_WIDTH).map_or(1.0, |n| n.distance / VALLEY_HALF_WIDTH);
         let flooded = drainage
@@ -586,7 +588,7 @@ impl WorldEvent for ForestEvent {
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
         let stands: Vec<Stand> = scope
             .read::<StandIndex>()
-            .map(|idx| idx.entries().flat_map(|c| c.stands.iter().cloned()).collect())
+            .map(|idx| idx.features().cloned().collect())
             .unwrap_or_default();
         Box::new(Reach::new(stands.into_iter()))
     }

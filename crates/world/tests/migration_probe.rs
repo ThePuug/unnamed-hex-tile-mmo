@@ -16,7 +16,7 @@ const SEED: u64 = 0x9E3779B97F4A7C15;
 fn node(wx: f64, key: (i32, i32), catchment: f64) -> DrainageNode {
     DrainageNode {
         key, q: 0, r: 0, wx, wy: 0.0, elevation: 10.0, surface: 10.0, flooded: false, direction: (1.0, 0.0), catchment, base: 0.0,
-        down: None, sill: false, age: 1.0, erodibility: 1.0, cut: 0.0, floor: 5.0,
+        down: None, next: None, sill: false, age: 1.0, erodibility: 1.0, cut: 0.0, floor: 5.0,
     }
 }
 
@@ -129,7 +129,7 @@ fn channels_against_routing() {
     let published = DrainageEvent::new().route(&lattice, cell, SEED, &coasts, &outlines).owned_cell();
     let routed = t1.elapsed();
     let t2 = Instant::now();
-    let all = channels(&[&published], |_| true, SEED);
+    let all = channels(&published.nodes.values().collect::<Vec<_>>(), |_| true, SEED);
     let trained = t2.elapsed();
     let trains = all.iter().filter(|c| c.train.is_some()).count();
     println!(
@@ -163,7 +163,7 @@ fn vigour_over_a_cell() {
         let coasts = Coasts::in_box(cx, cy, window, SEED);
         let outlines = Outlines::in_box(cx, cy, window, SEED);
         let published = DrainageEvent::new().route(&lattice, cell, SEED, &coasts, &outlines).owned_cell();
-        let all = channels(&[&published], |_| true, SEED);
+        let all = channels(&published.nodes.values().collect::<Vec<_>>(), |_| true, SEED);
         let mut bins = [0usize; 6];
         for c in &all {
             let v = c.vigour0.max(c.vigour1);

@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use common::HexLattice;
-use world::events::drainage::{is_pit, DrainageEvent, DrainageIndex, Kind, Terminus, DRAINAGE_CELL_SCALE};
+use world::events::drainage::{is_pit, DrainageEvent, DrainageIndex, Kind, DRAINAGE_CELL_SCALE};
 use world::lattice::{node_site, NODE_SPACING};
 use world::events::motion::MotionEvent;
 use world::events::lithology::LithologyEvent;
@@ -108,9 +108,9 @@ fn every_land_node_drains_to_a_sink() {
     println!("{n} nodes, {land} land: {to_sea} reach the sea, {to_edge} leave the window");
 }
 
-/// Catchment counts every node exactly once at its sink, and along a reach
-/// it never falls below the larger share handed down: a node's water splits
-/// two ways, and a reach follows the bigger one.
+/// Catchment counts every node exactly once at its sink, and along a
+/// channel it never falls below the larger share handed down: a node's
+/// water splits two ways, and a channel follows the bigger one.
 #[test]
 fn catchment_is_conserved_and_grows_downstream() {
     let routing = DrainageEvent::new().route(&lattice(), spawn_cell(), SEED, &coasts_for(spawn_cell()), &outlines_for(spawn_cell()));
@@ -125,21 +125,17 @@ fn catchment_is_conserved_and_grows_downstream() {
     );
 
     let cell = routing.owned_cell();
-    let mut reaches = 0;
-    for reach in &cell.reaches {
-        let mut last = 0.0f64;
-        for key in &reach.nodes {
-            let c = cell.nodes[key].catchment;
-            assert!(c >= 0.5 * last - 1e-9, "catchment fell from {last} to {c} along a reach");
-            last = c;
-        }
-        reaches += 1;
+    let mut links = 0;
+    for node in cell.nodes.values() {
+        let Some(next) = node.next.and_then(|k| cell.nodes.get(&k)) else { continue };
+        assert!(next.catchment >= 0.5 * node.catchment - 1e-9, "catchment fell from {} to {} along a channel", node.catchment, next.catchment);
+        links += 1;
     }
-    println!("{reaches} reaches in the cell; catchment conserved to {at_sinks:.6} of {n}");
+    println!("{links} channel links in the cell; catchment conserved to {at_sinks:.6} of {n}");
 }
 
-/// A cell publishes its own nodes and nothing else, and everything a reach
-/// or a lake names is a node it published.
+/// A cell publishes its own nodes and nothing else, and a channel runs on
+/// from no basin's pit.
 #[test]
 fn the_index_holds_the_owned_share_only() {
     let c = composite();
@@ -153,20 +149,15 @@ fn the_index_holds_the_owned_share_only() {
             assert_eq!(lat.cell_id(node.q, node.r), cell, "node {key:?} is not this cell's");
             assert_eq!(idx.node(*key).map(|n| n.key), Some(*key), "node lookup by key");
         }
-        for reach in &entry.reaches {
-            for key in &reach.nodes {
-                assert!(entry.nodes.contains_key(key), "reach names unpublished node {key:?}");
-            }
-        }
-        // A reach ending at a pit ends: nothing is drawn on from it.
-        for reach in entry.reaches.iter().filter(|r| r.end == Terminus::Basin) {
-            assert!(entry.nodes[reach.nodes.last().unwrap()].flooded, "a reach ends in a basin off closed ground");
-            assert!(reach.joins.is_none(), "a river drawn on from a pit");
+        // A channel ending at a pit ends: nothing is drawn on from it,
+        // though the pit's water leaves over the sill.
+        let ends = entry.nodes.values().filter(|n| n.down.is_some() && n.next.is_none()).count();
+        for node in entry.nodes.values().filter(|n| n.down.is_some() && n.next.is_none()) {
+            assert!(node.flooded, "a channel ends at {:?} off closed ground", node.key);
         }
         println!(
-            "cell {cell:?}: {} nodes, {} reaches, {} on closed ground",
+            "cell {cell:?}: {} nodes, {ends} channels ending at a pit, {} on closed ground",
             entry.nodes.len(),
-            entry.reaches.len(),
             entry.nodes.values().filter(|n| n.flooded).count()
         );
     });
@@ -243,19 +234,22 @@ fn continents_drain_down_their_tilt() {
         }
     }
     let cell = routing.owned_cell();
-    for reach in &cell.reaches {
-        ends[match reach.end {
-            Terminus::Continues => 0,
-            Terminus::Sea => 1,
-            Terminus::Basin => 2,
-            Terminus::Edge => 3,
+    for k in 0..routing.keys.len() {
+        if !routing.owned[k] || !matches!(routing.kind[k], Kind::Land | Kind::Basin) {
+            continue;
+        }
+        ends[match routing.down[k].map(|d| routing.kind[d]) {
+            _ if is_pit(&routing.kind, &routing.down, k) => 2,
+            Some(Kind::Sea) => 1,
+            Some(Kind::Edge) | None => 3,
+            _ => 0,
         }] += 1;
     }
     println!(
         "\n=== drainage against tilt, cell {:?} ===\n\
          {channels} channel nodes (catchment ≥ 10): {with_tilt} run with the tilt ({:.1}%)\n\
          {nodes_to_sea:.0} of {land} land nodes drain to the sea within the window\n\
-         reach ends: {} continue, {} sea, {} basin, {} edge; {} nodes on closed ground",
+         nodes running on: {} inland, {} to the sea, {} ending at a pit, {} off the window; {} nodes on closed ground",
         spawn_cell(),
         100.0 * with_tilt as f64 / channels.max(1) as f64,
         ends[0],

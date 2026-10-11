@@ -49,7 +49,7 @@ use crate::lattice::{node_world, NODE_SPACING};
 use crate::noise::simplex_2d;
 use crate::tectonic::{edges_of, plate_at, plates_near, Edge, PlateId, PLATE_SPACING};
 use crate::{hex_to_world, smoothstep, world_to_hex, CONTINENT_MAX_RISE, CONTINENT_RISE_EXPONENT, SEA_MAX_DEPTH, SHELF_EXPONENT};
-use super::index::{CellId, CellIndex, IndexRegistry};
+use super::index::{CellId, CellIndex, IndexRegistry, Located};
 use super::thrusting::OUTLINE_REACH;
 use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 
@@ -171,6 +171,7 @@ pub struct PlateEdgeIndex {
 
 impl CellIndex for PlateEdgeIndex {
     type Cell = Vec<Edge>;
+    type Feature = Edge;
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
@@ -178,6 +179,21 @@ impl CellIndex for PlateEdgeIndex {
 
     fn get(&self, cell: CellId) -> Option<&Self::Cell> {
         self.cells.get(&cell)
+    }
+
+    fn features(entry: &Self::Cell) -> impl Iterator<Item = &Edge> {
+        entry.iter()
+    }
+}
+
+/// An edge lies where its chain runs, which the straight edge it is drawn
+/// on lies within.
+impl Located for Edge {
+    fn bounds(&self) -> [f64; 4] {
+        self.chain.iter().map(|&n| node_world(n)).chain([(self.x0, self.y0), (self.x1, self.y1)]).fold(
+            [f64::MAX, f64::MAX, f64::MIN, f64::MIN],
+            |b, (x, y)| [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)],
+        )
     }
 }
 
@@ -247,7 +263,7 @@ impl Coasts {
 /// substrate builds once in `prepare`.
 pub fn coasts_of(scope: &CellScope) -> Coasts {
     let edges = scope.read::<PlateEdgeIndex>();
-    Coasts::new(edges.iter().flat_map(|idx| idx.entries().flatten()), scope.seed())
+    Coasts::new(edges.iter().flat_map(|idx| idx.features()), scope.seed())
 }
 
 // ── The substrate ───────────────────────────────────────────────────────────

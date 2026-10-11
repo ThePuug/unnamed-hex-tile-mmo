@@ -36,11 +36,26 @@ pub trait CellIndex: Send + Sync + Default + 'static {
     /// What one cell contributes.
     type Cell: Send + Sync;
 
+    /// One thing a cell's entry holds, where it lies: what a reader is
+    /// handed, and only where it lies within the reader's reach.
+    type Feature: Located;
+
     /// Record a cell's entry, replacing whatever it held.
     fn set(&mut self, cell: CellId, entry: Self::Cell);
 
     /// A cell's entry, where it has one.
     fn get(&self, cell: CellId) -> Option<&Self::Cell>;
+
+    /// Every feature an entry holds. An entry holds features and nothing
+    /// gathered from them: a value built over a neighbourhood would hand
+    /// its reader that neighbourhood whole.
+    fn features(entry: &Self::Cell) -> impl Iterator<Item = &Self::Feature>;
+}
+
+/// Something with a place in the world: the box, in world units, it lies
+/// within, `[x0, y0, x1, y1]`.
+pub trait Located {
+    fn bounds(&self) -> [f64; 4];
 }
 
 // ── IndexRegistry ───────────────────────────────────────────────────────────

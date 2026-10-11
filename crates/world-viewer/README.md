@@ -29,7 +29,7 @@ ignored by git, the way the assets repo keeps its proof sheets.
 | `plate-edges` | plate index | every edge of the plate graph along its chain, drawn where a tile reads it through the warp, coasts white and interior edges grey, a dot at each seed |
 | `boundaries` | motion index | each edge along its chain: hue by regime, width by convergence, a tick toward the plate going under |
 | `thrusting-fronts` | motion index | every convergent edge along its chain, ticks onto the overriding plate, longer for a harder edge: what thrusting builds on |
-| `drainage-reaches` | drainage index | every reach as its node chain, width by catchment; a channel narrower than a pixel is not drawn |
+| `drainage-reaches` | drainage index | every node's link to the node its channel runs on to, width by catchment; a channel narrower than a pixel is not drawn |
 | `channels` | channel index | every channel as its train across its flow line, paler where the river holds the line, width by catchment |
 | `forest` | composite | each tile's cover over what is drawn beneath: the canopy's green by fullness, pine blue-green, deciduous green, scrub olive |
 | `stands` | stand index | the density the stands give each position, in four plain bands (open, thin, half, closed) over what is drawn beneath: where the woods are and where they open, without the tiles' own draws; the treeline and the galleries along channels are the tile's, and not in it |

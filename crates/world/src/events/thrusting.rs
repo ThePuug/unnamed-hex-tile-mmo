@@ -107,10 +107,10 @@ use crate::noise::{hash_channel, simplex_2d};
 use crate::lattice::{nearest_node, node_world, NodeKey, PATH_SWING};
 use crate::tectonic::{edges_of, plate_cell_for, plates_near, PlateId, PLATE_REACH};
 use super::plates::{warp, WARP_SWING};
-use crate::{hex_to_world, smoothstep, RISE, SEA_MAX_DEPTH};
+use crate::{hex_to_world, smoothstep, world_to_hex, RISE, SEA_MAX_DEPTH};
 use crate::hillslope::{crest_curvature, erosion_rate, standing_after};
 use crate::tectonic::AGED_MYR;
-use super::index::{CellId, CellIndex, IndexRegistry};
+use super::index::{CellId, CellIndex, IndexRegistry, Located};
 use super::motion::{resolve, BoundaryRegime, BoundarySegment, PlateBoundaryIndex};
 use super::plates::GRAPH_CELL_SCALE;
 use super::thickening::ESCARPMENT;
@@ -263,7 +263,7 @@ pub struct EdgeOutline {
     pub standing: f64,
     /// The wedge's cross-section under repose, sheet by sheet at each
     /// plunge, none where the edge carries no wedge.
-    pub faces: Option<Faces>,
+    pub faces: Option<Arc<Faces>>,
     /// The chain's bounding box, `[x0, y0, x1, y1]`: what a reader across
     /// the plate asks before measuring the chain.
     pub bounds: [f64; 4],
@@ -416,19 +416,53 @@ pub struct Outlines {
     recent: DashMap<(u64, u64), (PlateId, Vec<f64>, f64, f64)>,
 }
 
+/// What an edge carries for the plate overriding on it, where it carries
+/// a wedge: that plate, the convergence share its wedge is stacked by, and
+/// the share of its height that stands. A convergent edge's or a suture's,
+/// on a continental plate; an oceanic plate carries none, since its crust
+/// has nothing to shorten into sheets, and an island arc is volcanism.
+/// Unbuilt.
+fn carried(s: &BoundarySegment) -> Option<(PlateId, f64, f64)> {
+    let e = &s.edge;
+    let suture = s.is_suture();
+    if s.regime() != BoundaryRegime::Convergent && !suture {
+        return None;
+    }
+    let over = s.overriding();
+    if !over.continental {
+        return None;
+    }
+    let converge = if suture { 1.0 } else { (s.convergence / CONVERGENCE_FULL).clamp(0.0, 1.0) };
+    let standing = if suture { standing_after(e.a.age.min(e.b.age) * AGED_MYR) } else { 1.0 };
+    Some((over.id, converge, standing))
+}
+
+/// The wedge's cross-section an edge carries, where it carries one: its
+/// sheets under repose at every plunge, built once by the cell owning the
+/// edge.
+pub fn faces_of(s: &BoundarySegment, seed: u64) -> Option<Faces> {
+    let (plate, converge, standing) = carried(s)?;
+    let other = if s.edge.a.id == plate { s.edge.b.id } else { s.edge.a.id };
+    let sheets = sheets_of(converge);
+    let plunges = (0..sheets.ceil() as usize).map(|j| plunge_seed(plate, other, j, seed)).collect();
+    Some(Faces::new(sheets, plunges, standing))
+}
+
 impl Outlines {
     /// Outlines from resolved edges: each edge joins both its plates'
     /// outlines, facing each, carrying its convergence for the plate that
-    /// overrides on it. Corners join across each whole outline, so a position
-    /// nearest a plate corner reads the corner's side.
-    pub fn new<'a>(resolved: impl IntoIterator<Item = &'a BoundarySegment>, seed: u64) -> Self {
+    /// overrides on it, with the cross-section `faces` gives the edge.
+    /// Corners join across each whole outline, so a position nearest a
+    /// plate corner reads the corner's side.
+    pub fn new<'a>(
+        resolved: impl IntoIterator<Item = &'a BoundarySegment>,
+        faces: impl Fn(&BoundarySegment) -> Option<Arc<Faces>>,
+        seed: u64,
+    ) -> Self {
         let mut plates: HashMap<PlateId, PlateOutline> = HashMap::new();
         for s in resolved {
             let e = &s.edge;
-            let suture = s.is_suture();
-            let over = if s.regime() == BoundaryRegime::Convergent || suture { Some(s.overriding().id) } else { None };
-            let converge = if suture { 1.0 } else { (s.convergence / CONVERGENCE_FULL).clamp(0.0, 1.0) };
-            let standing = if suture { standing_after(e.a.age.min(e.b.age) * AGED_MYR) } else { 1.0 };
+            let carried = carried(s);
             for (plate, other) in [(&e.a, &e.b), (&e.b, &e.a)] {
                 let left = Segment::is_left((e.x0, e.y0), (e.x1, e.y1), (plate.wx, plate.wy));
                 let segments: Vec<Segment> = e
@@ -446,22 +480,11 @@ impl Outlines {
                     age: plate.age,
                     edges: Vec::new(),
                 });
-                // An oceanic plate carries no wedge: its crust has nothing to
-                // shorten into sheets, and an island arc is volcanism. Unbuilt.
-                let carries = over == Some(plate.id) && plate.continental;
-                outline.edges.push(EdgeOutline {
-                    neighbour: other.id,
-                    segments,
-                    converge: if carries { converge } else { 0.0 },
-                    standing: if carries { standing } else { 0.0 },
-                    faces: carries.then(|| {
-                        let sheets = sheets_of(converge);
-                        let plunges = (0..sheets.ceil() as usize).map(|j| plunge_seed(plate.id, other.id, j, seed)).collect();
-                        Faces::new(sheets, plunges, standing)
-                    }),
-                    bounds,
-                    line: [e.x0, e.y0, e.x1, e.y1],
-                });
+                let (converge, standing, faces) = match carried {
+                    Some((over, converge, standing)) if over == plate.id => (converge, standing, faces(s)),
+                    _ => (0.0, 0.0, None),
+                };
+                outline.edges.push(EdgeOutline { neighbour: other.id, segments, converge, standing, faces, bounds, line: [e.x0, e.y0, e.x1, e.y1] });
             }
         }
         for outline in plates.values_mut() {
@@ -500,7 +523,7 @@ impl Outlines {
                 }
             }
         }
-        Self::new(&resolved, seed)
+        Self::new(&resolved, |s| faces_of(s, seed).map(Arc::new), seed)
     }
 
     pub fn plate(&self, id: PlateId) -> Option<&PlateOutline> {
@@ -1028,16 +1051,31 @@ impl ThrustingEvent {
     pub fn new() -> Self { ThrustingEvent }
 }
 
-/// The outlines each cell of the graph lattice reads, published by the
-/// thrusting layer and read by every layer standing on the outlines, so
-/// one tile's plate is found once for all of them.
+/// A wedge as the cell owning its edge built it: the edge's two plates, its
+/// cross-section, and where the edge lies.
+pub struct Wedge {
+    pub edge: (PlateId, PlateId),
+    pub faces: Arc<Faces>,
+    bounds: [f64; 4],
+}
+
+impl Located for Wedge {
+    fn bounds(&self) -> [f64; 4] {
+        self.bounds
+    }
+}
+
+/// The wedges each cell of the graph lattice builds, one for every edge it
+/// owns that carries one: what a range costs to build is spent once, by the
+/// cell owning the edge, and every layer standing on the outlines reads it.
 #[derive(Default)]
 pub struct OutlineIndex {
-    cells: HashMap<CellId, Arc<Outlines>>,
+    cells: HashMap<CellId, Vec<Wedge>>,
 }
 
 impl CellIndex for OutlineIndex {
-    type Cell = Arc<Outlines>;
+    type Cell = Vec<Wedge>;
+    type Feature = Wedge;
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
@@ -1046,27 +1084,23 @@ impl CellIndex for OutlineIndex {
     fn get(&self, cell: CellId) -> Option<&Self::Cell> {
         self.cells.get(&cell)
     }
-}
 
-/// The outlines a cell of the graph lattice reads: the entry the thrusting
-/// layer published for it. What thrusting itself and every layer above at
-/// the same scale ask in `prepare`.
-pub fn outlines_for(scope: &CellScope) -> Arc<Outlines> {
-    // The entry read is the caller's own cell on the graph lattice. A layer
-    // at any other scale would need the outlines of every graph cell under
-    // its footprint, which this does not gather.
-    debug_assert_eq!(scope.lattice().radius, GRAPH_CELL_SCALE, "outlines_for reads one graph cell: the caller's own");
-    scope
-        .read::<OutlineIndex>()
-        .and_then(|idx| idx.entry(scope.cell()).cloned())
-        .unwrap_or_else(|| Arc::new(Outlines::new(&[], scope.seed())))
+    fn features(entry: &Self::Cell) -> impl Iterator<Item = &Wedge> {
+        entry.iter()
+    }
 }
 
 /// The outlines of every plate a cell's tiles can stand in: the resolved
-/// edges of the graph's cells under the cell and its ring.
+/// edges in the cell's neighbourhood, each with the wedge its owning cell
+/// built. A layer reads them once per cell, in `prepare`, or in `deform`
+/// for what it places.
 pub fn outlines_of(scope: &CellScope) -> Outlines {
+    let wedges: HashMap<(PlateId, PlateId), Arc<Faces>> = scope
+        .read::<OutlineIndex>()
+        .map(|idx| idx.features().map(|w| (w.edge, w.faces.clone())).collect())
+        .unwrap_or_default();
     let resolved = scope.read::<PlateBoundaryIndex>();
-    Outlines::new(resolved.iter().flat_map(|idx| idx.entries().flatten()), scope.seed())
+    Outlines::new(resolved.iter().flat_map(|idx| idx.features()), |s| wedges.get(&s.edge.ids()).cloned(), scope.seed())
 }
 
 impl WorldEvent for ThrustingEvent {
@@ -1081,14 +1115,28 @@ impl WorldEvent for ThrustingEvent {
         registry.pre_register::<OutlineIndex>();
     }
 
-    /// Nothing to place: the ranges are read off the plate graph. The
-    /// cell's outlines are published for every layer that reads them.
+    /// The wedge of every edge the cell owns that carries one.
     fn deform(&self, scope: &CellScope) {
-        scope.publish::<OutlineIndex>(Arc::new(outlines_of(scope)));
+        let (lattice, cell, seed) = (scope.lattice(), scope.cell(), scope.seed());
+        let owned = |s: &&BoundarySegment| {
+            let (mx, my) = s.mid();
+            let (q, r) = world_to_hex(mx, my);
+            lattice.cell_id(q, r) == cell
+        };
+        let wedges: Vec<Wedge> = scope
+            .read::<PlateBoundaryIndex>()
+            .map(|idx| {
+                idx.features()
+                    .filter(owned)
+                    .filter_map(|s| faces_of(s, seed).map(|faces| Wedge { edge: s.edge.ids(), faces: Arc::new(faces), bounds: s.bounds() }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        scope.publish::<OutlineIndex>(wedges);
     }
 
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
-        Box::new(outlines_for(scope))
+        Box::new(Arc::new(outlines_of(scope)))
     }
 
     fn query(

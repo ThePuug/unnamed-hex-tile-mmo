@@ -38,8 +38,9 @@
 use std::collections::HashMap;
 
 use crate::noise::simplex_2d;
+use crate::world_to_hex;
 use crate::tectonic::{Edge, PLATE_SPACING};
-use super::index::{CellId, CellIndex, IndexRegistry};
+use super::index::{CellId, CellIndex, IndexRegistry, Located};
 use super::plates::{PlateEdgeIndex, GRAPH_CELL_SCALE};
 use super::{CellScope, TileOutput, TileView, WorldEvent};
 
@@ -147,6 +148,7 @@ pub struct PlateBoundaryIndex {
 
 impl CellIndex for PlateBoundaryIndex {
     type Cell = Vec<BoundarySegment>;
+    type Feature = BoundarySegment;
 
     fn set(&mut self, cell: CellId, entry: Self::Cell) {
         self.cells.insert(cell, entry);
@@ -154,6 +156,17 @@ impl CellIndex for PlateBoundaryIndex {
 
     fn get(&self, cell: CellId) -> Option<&Self::Cell> {
         self.cells.get(&cell)
+    }
+
+    fn features(entry: &Self::Cell) -> impl Iterator<Item = &BoundarySegment> {
+        entry.iter()
+    }
+}
+
+/// A resolved edge lies where its edge does.
+impl Located for BoundarySegment {
+    fn bounds(&self) -> [f64; 4] {
+        self.edge.bounds()
     }
 }
 
@@ -256,12 +269,16 @@ impl WorldEvent for MotionEvent {
     }
 
     fn deform(&self, scope: &CellScope) {
-        let cell = scope.cell();
-        let edges = scope
+        let (lattice, cell) = (scope.lattice(), scope.cell());
+        let owned = |e: &&Edge| {
+            let (mx, my) = e.mid();
+            let (q, r) = world_to_hex(mx, my);
+            lattice.cell_id(q, r) == cell
+        };
+        let segments: Vec<BoundarySegment> = scope
             .read::<PlateEdgeIndex>()
-            .and_then(|idx| idx.entry(cell).cloned())
+            .map(|idx| idx.features().filter(owned).map(|e| resolve(e, scope.seed())).collect())
             .unwrap_or_default();
-        let segments: Vec<BoundarySegment> = edges.iter().map(|e| resolve(e, scope.seed())).collect();
         scope.publish::<PlateBoundaryIndex>(segments);
     }
 

@@ -60,7 +60,7 @@ use crate::noise::{hash_channel_f64, simplex_2d};
 use crate::tectonic::{aged, PlateId, PLATE_SPACING};
 use crate::{hex_to_world, substrate_on};
 use super::plates::{coasts_of, shore_gate, Coasts, GRAPH_CELL_SCALE};
-use super::thrusting::{outlines_for, Outlines, Standing, OUTLINE_REACH, SCREE_REACH, WEDGE_REACH};
+use super::thrusting::{outlines_of, Outlines, Standing, OUTLINE_REACH, SCREE_REACH, WEDGE_REACH};
 use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent};
 
 const COVER_SEED: u64 = 0x436f_7665_725f_5f5f; // "Cover___"
@@ -302,7 +302,7 @@ impl WorldEvent for LithologyEvent {
     fn deform(&self, _scope: &CellScope) {}
 
     fn prepare(&self, scope: &CellScope) -> Box<dyn Any + Send + Sync> {
-        Box::new(Reach { coasts: coasts_of(scope), outlines: outlines_for(scope) })
+        Box::new(Reach { coasts: coasts_of(scope), outlines: Arc::new(outlines_of(scope)) })
     }
 
     /// What stands at the tile: the cuesta over the envelope beneath, and
