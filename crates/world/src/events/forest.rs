@@ -208,10 +208,15 @@ pub const MOISTURE_BRUSH: f64 = 0.12;
 pub const MOISTURE_TREES: f64 = 0.25;
 pub const MOISTURE_CLOSED: f64 = 0.55;
 
-/// The density a closed stand fills its slots at: well short of every
-/// slot, so a closed forest averages two of its three and refuses about
-/// one tile in five, a maze that is crossed.
-pub const DENSITY_MAX: f64 = 0.6;
+/// The density a closed stand fills its sites at: well short of every
+/// site, so a closed forest stands little more than one thing to a tile.
+pub const DENSITY_MAX: f64 = 0.4;
+
+/// The share of a closed stand's filled sites that are trees, the rest
+/// brush among them: three trees to five tiles, the most a real stand
+/// of trees this size holds, its crowns closing over about seven tenths of
+/// the ground, and about one tile in ten refused.
+pub const TREE_SHARE: f64 = 0.5;
 
 /// The share of a stand's radius its density holds full before tapering
 /// to nothing at the edge.
@@ -350,9 +355,9 @@ pub fn density_of(moisture: f64) -> f64 {
 }
 
 /// The share of a stand's slots that are trees rather than brush, from
-/// the moisture at its origin.
+/// the moisture at its origin, at most [`TREE_SHARE`].
 pub fn trees_of(moisture: f64) -> f64 {
-    smoothstep((moisture - MOISTURE_TREES) / (MOISTURE_CLOSED - MOISTURE_TREES))
+    TREE_SHARE * smoothstep((moisture - MOISTURE_TREES) / (MOISTURE_CLOSED - MOISTURE_TREES))
 }
 
 /// The moisture a stand's origin reads: the share of the sky's the soil
@@ -621,7 +626,7 @@ impl WorldEvent for ForestEvent {
             let g = gallery(wall);
             if g > density {
                 density = g;
-                trees = 1.0;
+                trees = TREE_SHARE;
             }
         }
         let band = smoothstep((t - TREELINE) / TREELINE_BAND);
@@ -659,7 +664,7 @@ mod tests {
             (d, t) = (dd, tt);
         }
         assert!((density_of(1.0) - DENSITY_MAX).abs() < 1e-12);
-        assert_eq!(trees_of(1.0), 1.0);
+        assert_eq!(trees_of(1.0), TREE_SHARE);
     }
 
     /// Stands overlapping are as dense as the densest of them: two thin

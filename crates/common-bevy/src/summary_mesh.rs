@@ -84,7 +84,7 @@ pub fn canopy_vertex(parts: &[Canopy; PARTS]) -> [f32; 4] {
 
 /// The density from which a canopy reads closed: its colour lies over the
 /// ground in full. The terrain shaders read it from the level's material.
-pub const CANOPY_FULL: f32 = 0.5;
+pub const CANOPY_FULL: f32 = 0.33;
 
 /// Cells in a mesh region: the hex ball of `MESH_REGION_RADIUS`.
 pub const MESH_REGION_CELLS: u32 = hex_ball_tiles(crate::summary::MESH_REGION_RADIUS);
