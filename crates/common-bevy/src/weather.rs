@@ -104,7 +104,10 @@ impl Forecast {
             Front { seed: period as u64 + 1, shift: (vx * until, vz * until) },
         ];
         let s = smoothstep(0.0, 1.0, since / FRONT_PERIOD_MS as f64);
-        let weights = ((s * FRAC_PI_2).cos(), (s * FRAC_PI_2).sin());
+        // Square roots round alike on every platform, where a cosine's last
+        // bit may not, so every reader blends to the same bit.
+        let norm = ((1.0 - s) * (1.0 - s) + s * s).sqrt();
+        let weights = ((1.0 - s) / norm, s / norm);
         let start = |k: u128| Date::of(k * FRONT_PERIOD_MS).season;
         let (a, b) = (start(period), start(period + 1));
         let lerp = |x: f64, y: f64| x + (y - x) * s;
