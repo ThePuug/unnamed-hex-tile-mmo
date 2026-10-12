@@ -8,11 +8,8 @@ use std::time::Instant;
 
 use common::Content;
 use world::events::climate::{temperature, TREELINE};
-use world::events::dissection::DissectionEvent;
-use world::events::drainage::DrainageEvent;
 use world::events::forest::ForestEvent;
 use world::events::lithology::LithologyEvent;
-use world::events::migration::MigrationEvent;
 use world::events::motion::MotionEvent;
 use world::events::plates::PlateEvent;
 use world::events::thickening::ThickeningEvent;
@@ -24,7 +21,7 @@ use world::hex_to_world;
 const SEED: u64 = 0x9E3779B97F4A7C15;
 const SPAWN: (i32, i32) = (104289, -4677);
 
-/// The stack to dissection, without the forest: what the layer is
+/// The stack to the scarps, without the forest: what the layer is
 /// measured against.
 fn without_forest() -> Composite {
     let mut c = Composite::new(SEED);
@@ -35,10 +32,6 @@ fn without_forest() -> Composite {
     c.add_event(Box::new(ThickeningEvent::new()));
     c.add_event(Box::new(LithologyEvent::new()));
     c.add_event(Box::new(world::events::scarp::ScarpEvent::new()));
-    c.add_event(Box::new(world::events::ground::GroundEvent::new()));
-    c.add_event(Box::new(DrainageEvent::new()));
-    c.add_event(Box::new(MigrationEvent::new()));
-    c.add_event(Box::new(DissectionEvent::new()));
     c
 }
 

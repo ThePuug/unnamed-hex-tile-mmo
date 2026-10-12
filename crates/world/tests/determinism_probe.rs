@@ -10,7 +10,6 @@ use world::events::tilt::TiltEvent;
 use world::events::motion::MotionEvent;
 use world::events::thickening::ThickeningEvent;
 use world::events::thrusting::ThrustingEvent;
-use world::events::drainage::DrainageEvent;
 
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
@@ -22,8 +21,6 @@ fn composite() -> Composite {
     c.add_event(Box::new(MotionEvent::new()));
     c.add_event(Box::new(ThrustingEvent::new()));
     c.add_event(Box::new(ThickeningEvent::new()));
-    c.add_event(Box::new(world::events::ground::GroundEvent::new()));
-    c.add_event(Box::new(DrainageEvent::new()));
     c
 }
 
@@ -31,7 +28,7 @@ fn composite() -> Composite {
 ///
 /// No layer in this stack folds over a cell of its own that may be cold:
 /// plates and motion resolve their own cell, tilt is a field with an empty
-/// `deform`, and thrusting, thickening and drainage read lower indexes the
+/// `deform`, and thrusting and thickening read lower indexes the
 /// framework deforms under their footprint and ring first. So a tile must
 /// read the same whether the cells around it were already warm or are being
 /// touched for the first time, by construction. One composite for the whole

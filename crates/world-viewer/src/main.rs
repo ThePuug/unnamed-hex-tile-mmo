@@ -21,9 +21,7 @@ use rayon::prelude::*;
 use world::events::Composite;
 use world::events::motion::{BoundaryRegime, BoundarySegment, MarginClass, PlateBoundaryIndex};
 use world::events::thrusting::CONVERGENCE_FULL;
-use world::events::drainage::DrainageIndex;
 use world::events::forest;
-use world::events::migration::ChannelIndex;
 use world::events::plates::{unwarp, PlateEdgeIndex};
 use world::lattice::node_world;
 
@@ -44,11 +42,6 @@ enum Layer {
     Boundaries,
     /// Motion index: the deformation fronts, the convergent edges' chains facing the overriding plate.
     Fronts,
-    /// Drainage index: every reach as its node chain, width by catchment.
-    Reaches,
-    /// Channel index: every channel as its train across its flow line, or
-    /// the line where it holds it, width by catchment.
-    Channels,
     /// Composite: each tile's cover over whatever is drawn beneath, the
     /// canopy's green by how many sites it fills and the kinds' shares.
     Forest,
@@ -66,8 +59,6 @@ const LAYERS: &[(&str, Layer)] = &[
     ("plate-edges", Layer::Edges),
     ("boundaries", Layer::Boundaries),
     ("thrusting-fronts", Layer::Fronts),
-    ("drainage-reaches", Layer::Reaches),
-    ("channels", Layer::Channels),
     ("forest", Layer::Forest),
     ("stands", Layer::Stands),
 ];
@@ -351,28 +342,6 @@ fn main() {
         vec![]
     };
 
-    // Each node's link to the node its channel runs on to, with the
-    // catchment at the node.
-    let reaches: Vec<(Vec<(f64, f64)>, f64)> = if layers.contains(&Layer::Reaches) {
-        composite.with_indexes(|indexes| {
-            indexes
-                .get::<DrainageIndex>()
-                .map(|idx| {
-                    idx.cells
-                        .values()
-                        .flat_map(|c| c.nodes.values())
-                        .filter_map(|n| {
-                            let next = idx.node(n.next?)?;
-                            Some((vec![(n.wx, n.wy), (next.wx, next.wy)], n.catchment))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        })
-    } else {
-        vec![]
-    };
-
     // Every convergent edge the deformed cells resolved, for the overlay:
     // its chain, the way onto the overriding plate, and its convergence.
     let fronts: Vec<(Vec<(f64, f64)>, (f64, f64), f64)> = if layers.contains(&Layer::Fronts) {
@@ -572,68 +541,6 @@ fn main() {
         );
     }
 
-
-    if layers.contains(&Layer::Channels) {
-        // Each channel along its train, or its flow line where the river
-        // holds it; width by the catchment at its start node, as a reach.
-        let drawn: Vec<(Vec<(f64, f64)>, f64, bool)> = composite.with_indexes(|indexes| {
-            let (Some(channels), Some(drainage)) = (indexes.get::<ChannelIndex>(), indexes.get::<DrainageIndex>()) else {
-                return Vec::new();
-            };
-            channels
-                .cells
-                .values()
-                .flat_map(|c| c.channels.iter())
-                .map(|ch| {
-                    let catchment = drainage.node(ch.from).map_or(1.0, |n| n.catchment);
-                    match &ch.train {
-                        Some(train) => (train.pts.clone(), catchment, true),
-                        None => (ch.axis.clone(), catchment, false),
-                    }
-                })
-                .collect()
-        });
-        let mut trains = 0;
-        for (pts, catchment, meanders) in &drawn {
-            let half_width = 2.0 * catchment.sqrt() / scale;
-            if half_width < 0.5 {
-                continue;
-            }
-            trains += *meanders as usize;
-            let hw = half_width.round().min(24.0) as i32;
-            let rgb = if *meanders { [60, 170, 255] } else { [120, 200, 255] };
-            for w in pts.windows(2) {
-                draw_line(&mut buf, w[0].0, w[0].1, w[1].0, w[1].1, hw, 0, rgb);
-            }
-        }
-        log::info!("Channels: {} of which {trains} meander; paler where the river holds its flow line", drawn.len());
-    }
-
-    if layers.contains(&Layer::Reaches) {
-        // Width grows with the square root of catchment, the way a channel's
-        // does with discharge, so a trunk reads as a trunk.
-        let mut largest = 0.0f64;
-        let mut drawn = 0;
-        for (pts, catchment) in &reaches {
-            largest = largest.max(*catchment);
-            let half_width = 2.0 * catchment.sqrt() / scale;
-            // A channel narrower than a pixel is not drawn at this scale.
-            if half_width < 0.5 {
-                continue;
-            }
-            drawn += 1;
-            let hw = half_width.round().min(24.0) as i32;
-            for w in pts.windows(2) {
-                draw_line(&mut buf, w[0].0, w[0].1, w[1].0, w[1].1, hw, 0, [60, 170, 255]);
-            }
-        }
-        log::info!(
-            "Reaches: {} of {} wide enough to draw at this scale; width by catchment, largest {:.0} nodes",
-            drawn,
-            reaches.len(),
-            largest
-        );
-    }
 
     if layers.contains(&Layer::Fronts) {
         // The front as a line, with a tick into the belt so the side reads.

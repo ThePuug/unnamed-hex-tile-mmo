@@ -7,9 +7,7 @@
 //! A landscape is read by its few dramatic places, never by a rule applied
 //! to every slope, and a scarp is one of them: a place on the ground the
 //! layers beneath make, sited as dens and outcrops are and carved with its
-//! own profile. Each such landform is a layer of its own, standing before
-//! drainage where water follows what it cuts, after it where it is cut by
-//! the water. A scarp stands before.
+//! own profile. Each such landform is a layer of its own.
 //!
 //! Sites stand on a sparse jittered lattice, about ten minutes' walk apart,
 //! each a pure function of its lattice cell's hash. Whether a scarp stands
@@ -46,9 +44,7 @@
 //! lattice's ring holds every footprint and stray reaching a tile. The cell
 //! keeps each site's decision, made from the ground at the site the first
 //! time a tile of the cell reads it, so no decision is made per tile and
-//! every tile of a footprint reads the same one. Drainage keeps its own
-//! decisions, made by the same function from the same fields, so the
-//! surface it routes on is the composite's.
+//! every tile of a footprint reads the same one.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -60,12 +56,13 @@ use common::HexLattice;
 use crate::lattice::jittered_centre;
 use crate::tectonic::PlateId;
 use crate::{hex_to_world, smoothstep, world_to_hex, RISE};
-use super::drainage::envelope_at;
 use super::index::CellId;
-use super::lithology::{rock_on, Column, FORMATION_MAX};
+use super::lithology::{cover_on, rock_at, rock_on, Column, FORMATION_MAX};
 use super::outcrop::{SITE_JITTER, SITE_LATTICE};
-use super::plates::{coasts_of, Coasts};
+use super::plates::{coasts_of, substrate_on, Coasts};
+use super::thickening::{plateau_share_of, PLATEAU_RISE};
 use super::thrusting::{outlines_of, Outlines, OUTLINE_REACH, REPOSE_GRADE};
+use super::tilt::tilt_at;
 use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 
 const SCARP_SEED: u64 = 0x4c61_6e64_666f_726d; // "Landform"
@@ -169,6 +166,22 @@ pub fn profile(s: f64, face: f64, debris: f64) -> f64 {
 
 /// How far a scarp of a `face` and a `debris` slope reaches updip of its
 /// contact, in tiles: its face, its debris slope and its wash.
+/// The envelope at a position: the field layers beneath the scarps
+/// summed as the functions they are, the substrate from the coasts in
+/// reach, the tilt, the ranges and the plateau from the plate outlines in
+/// reach, and the cuesta the rock stands as, the plate looked up once for
+/// all of them. What a scarp reads at its site and carves into; it equals
+/// the composed tile's elevation beneath the scarps at a tile centre.
+pub fn envelope_at(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> f64 {
+    let substrate = substrate_on(wx, wy, coasts, seed);
+    let base = substrate + tilt_at(wx, wy, substrate, seed);
+    let Some(at) = outlines.at(wx, wy) else { return base };
+    let relief = outlines.relief_of(&at).max(0.0);
+    let plateau = PLATEAU_RISE * plateau_share_of(at.plate, &at.distances).max(0.0);
+    let rock = rock_at(seed, at.plate.id, at.plate.age, cover_on(outlines, &at, seed), substrate, outlines.structure_of(&at));
+    base + relief + plateau + rock.stand
+}
+
 #[cfg(test)]
 fn extent(face: f64, debris: f64) -> f64 {
     face / CLIFF_GRADE + debris / REPOSE_GRADE + (face + debris) / WASH_GRADE
@@ -199,8 +212,8 @@ pub fn decide(x: f64, y: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -
     if slope <= 1e-6 {
         return None;
     }
-    let envelope = envelope_at(x, y, seed, coasts, outlines).surface;
-    let grade = gradient_of(x, y, envelope, |x, y| envelope_at(x, y, seed, coasts, outlines).surface);
+    let envelope = envelope_at(x, y, seed, coasts, outlines);
+    let grade = gradient_of(x, y, envelope, |x, y| envelope_at(x, y, seed, coasts, outlines));
     if grade.0.hypot(grade.1) >= SCARP_GROUND * REPOSE_GRADE || envelope <= face + debris {
         return None;
     }
@@ -212,7 +225,7 @@ pub fn decide(x: f64, y: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -
     let foot = behind + face / CLIFF_GRADE;
     let (fx, fy) = (x + gradient.0 / slope * foot, y + gradient.1 / slope * foot);
     let deep = rock_on(fx, fy, seed, coasts, outlines).exposed;
-    if deep - contact < face / CLIFF_GRADE * slope || envelope_at(fx, fy, seed, coasts, outlines).surface <= face + debris {
+    if deep - contact < face / CLIFF_GRADE * slope || envelope_at(fx, fy, seed, coasts, outlines) <= face + debris {
         return None;
     }
     Some(Scarp { x, y, plate: at.plate.id, contact, slope, face, debris })
@@ -473,8 +486,8 @@ mod tests {
         for i in -40..40 {
             for j in -40..40 {
                 let (x, y) = (BELT.0 + i as f64 * 97.0, BELT.1 + j as f64 * 89.0);
-                let envelope = envelope_at(x, y, S, &c, &o).surface;
-                let grade = gradient_of(x, y, envelope, |x, y| envelope_at(x, y, S, &c, &o).surface);
+                let envelope = envelope_at(x, y, S, &c, &o);
+                let grade = gradient_of(x, y, envelope, |x, y| envelope_at(x, y, S, &c, &o));
                 let Some(at) = o.at(x, y) else { continue };
                 let bed = Column::of(at.plate.id, S).bed_at(rock_on(x, y, S, &c, &o).exposed).1;
                 if grade.0.hypot(grade.1) >= SCARP_GROUND * REPOSE_GRADE {
@@ -490,9 +503,8 @@ mod tests {
     }
 
     /// Every tile of a scarp's footprint carves what any reader of the
-    /// site decides: the stack through the scarps stands each tile where the
-    /// surface drainage routes on stands, which a fresh reader of the scarps
-    /// computes.
+    /// site decides: the stack through the scarps stands each tile where a
+    /// fresh reader of the scarps carves it.
     #[test]
     fn a_footprint_reads_one_decision() {
         use super::super::{lithology, motion, plates, thickening, thrusting, tilt, Composite};
@@ -512,9 +524,8 @@ mod tests {
             let reach = FOOTPRINT * (k as f64 / 64.0);
             let (q, r) = world_to_hex(scarp.x + reach * angle.cos(), scarp.y + reach * angle.sin());
             let (wx, wy) = hex_to_world(q, r);
-            let fresh = Scarps::new();
-            let ground = super::super::drainage::ground_at(wx, wy, S, &c, &o, &fresh).surface;
-            let envelope = envelope_at(wx, wy, S, &c, &o).surface;
+            let envelope = envelope_at(wx, wy, S, &c, &o);
+            let ground = envelope - Scarps::new().carve_at(wx, wy, S, &c, &o, envelope);
             assert!((composite.tile_at(q, r).elevation - ground).abs() < 1e-9, "the tile at ({q}, {r}) reads another decision");
             if envelope - ground > 1.0 { carved += 1 }
         }

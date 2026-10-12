@@ -94,17 +94,6 @@ impl Segment {
         };
         (d, ex * nx + ey * ny)
     }
-
-    /// Where along the segment a position projects, from 0 at its start to
-    /// 1 at its end, clamped to the segment, and its distance from that
-    /// point: what a reader interpolating a quantity along the segment asks.
-    pub fn project(&self, x: f64, y: f64) -> (f64, f64) {
-        let (dx, dy) = (self.x1 - self.x0, self.y1 - self.y0);
-        let len2 = dx * dx + dy * dy;
-        let t = if len2 > 0.0 { (((x - self.x0) * dx + (y - self.y0) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
-        let (ex, ey) = (x - (self.x0 + t * dx), y - (self.y0 + t * dy));
-        (t, ex.hypot(ey))
-    }
 }
 
 /// Give every segment its corners' normals: at each node, the normalised
@@ -198,37 +187,6 @@ impl SegmentGrid {
             return &[];
         }
         &self.buckets[j as usize * self.nx + i as usize]
-    }
-
-    /// Every segment within `limit` of a position, each with its distance:
-    /// what a reader combining every feature in reach asks, where the nearest
-    /// alone would switch between two along their bisector. A segment
-    /// spanning several buckets is visited once per bucket, so the visit has
-    /// to be idempotent, a max or a set.
-    pub fn for_each_within(&self, x: f64, y: f64, limit: f64, mut visit: impl FnMut(usize, f64)) {
-        if self.segments.is_empty() {
-            return;
-        }
-        let b = self.bucket;
-        let (ci, cj) = ((x / b).floor() as i64, (y / b).floor() as i64);
-        for k in 0i64.. {
-            if (k - 1) as f64 * b >= limit {
-                break;
-            }
-            for j in cj - k..=cj + k {
-                let step = if k > 0 && j != cj - k && j != cj + k { 2 * k } else { 1 };
-                let mut i = ci - k;
-                while i <= ci + k {
-                    for &idx in self.cell(i, j) {
-                        let (distance, _) = self.segments[idx as usize].distance(x, y);
-                        if distance < limit {
-                            visit(idx as usize, distance);
-                        }
-                    }
-                    i += step;
-                }
-            }
-        }
     }
 
     /// The nearest segment within `limit`, and what the position reads off

@@ -394,19 +394,6 @@ pub struct Standing<'a> {
     pub y: f64,
 }
 
-/// The troughs either side of a sheet as a position on it reads them
-/// ([`Outlines::troughs_of`]): the plate's edge whose wedge it is, by its
-/// index in the plate's outline, and the distances from that edge's front
-/// of the position and of the trough toward the front and behind, in the
-/// outline's warped units.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Troughs {
-    pub edge: usize,
-    pub at: f64,
-    pub front: Option<f64>,
-    pub back: Option<f64>,
-}
-
 /// How many reads [`Outlines::at`] remembers before it forgets them all:
 /// a tile is read by the three layers standing on the outlines in turn,
 /// and a few thousand tiles are in flight at once, so the memo needs to
@@ -636,27 +623,6 @@ impl Outlines {
         let near = |d: f64, reach: f64| 1.0 - smoothstep(d.max(0.0) / reach);
         let wedges = Self::wedges_of(at.plate, &at.distances, |_, _, d| near(d, own));
         wedges.max(self.toes_on(at.plate, at.x, at.y, under, |_, _, d| near(d, under)))
-    }
-
-    /// The troughs either side of the sheet standing highest where a
-    /// position stands, on the strongest wedge: that wedge's edge, by its
-    /// index in the plate's outline, the position's distance from its front,
-    /// and the distances of the trough toward the front and the trough
-    /// behind, each where one is: where the next sheet's face meets this
-    /// one's, or the front itself. None off the ranges.
-    pub fn troughs_of(&self, at: &Standing) -> Option<Troughs> {
-        let mut best: Option<(usize, f64)> = None;
-        for (i, (e, d)) in at.plate.edges.iter().zip(&at.distances).enumerate() {
-            let Some(faces) = &e.faces else { continue };
-            let others = at.distances.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, d)| *d).fold(f64::MAX, f64::min);
-            let share = faces.at(*d, e.along(at.x, at.y)) * smoothstep(others / RANGE_END);
-            if share > best.map_or(0.0, |b| b.1) { best = Some((i, share)) }
-        }
-        let (edge, _) = best?;
-        let e = &at.plate.edges[edge];
-        let d = at.distances[edge];
-        let (front, back) = e.faces.as_ref()?.troughs(d, e.along(at.x, at.y))?;
-        Some(Troughs { edge, at: d, front, back })
     }
 
     /// The height the ranges' structure stands at a position where
@@ -999,58 +965,6 @@ impl Faces {
             if face > best.0 { best = (face, self.standing * plunge * self.sheets[j].crest) }
         }
         best.1
-    }
-
-    /// The troughs either side of the sheet standing highest at a distance
-    /// `d` from the front, `along` its strike, as distances from the front:
-    /// toward the front, the last point of the grid before another sheet's
-    /// face stands as high, or the front itself; behind, the same the other
-    /// way. A side where the sheet's face is spent first, onto the plateau
-    /// or ground no sheet stands on, has no trough. None where no sheet
-    /// stands.
-    fn troughs(&self, d: f64, along: f64) -> Option<(Option<f64>, Option<f64>)> {
-        let plunge = |j: usize| self.plunge(j, along);
-        let j = self.spanning(d).map(|j| (j, self.face(j, d, plunge(j)))).filter(|s| s.1 > 0.0).max_by(|a, b| a.1.total_cmp(&b.1))?.0;
-        let sheet = &self.sheets[j];
-        let top = sheet.structure.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1))?.0 + sheet.start;
-        let at = |i: usize| SCREE_START + i as f64 * REPOSE_STEP;
-        // Whether the sheet stands highest at a point, and if not, whether
-        // another sheet's face is what overtops it.
-        let stands = |d: f64| {
-            let own = self.face(j, d, plunge(j));
-            let met = self.spanning(d).filter(|&k| k != j).any(|k| self.face(k, d, plunge(k)) >= own.max(1e-12));
-            (own > 0.0 && !met, met)
-        };
-        let mut front = None;
-        for i in (0..top).rev() {
-            if at(i) <= 0.0 {
-                front = Some(0.0);
-                break;
-            }
-            let (stands, met) = stands(at(i));
-            if !stands {
-                front = met.then_some(at(i + 1));
-                break;
-            }
-        }
-        let mut back = None;
-        for i in top + 1..sheet.start + sheet.structure.len() {
-            let (stands, met) = stands(at(i));
-            if !stands {
-                back = met.then_some(at(i - 1));
-                break;
-            }
-        }
-        Some((front, back))
-    }
-
-    /// The distance from the front of every sheet's crest, where its
-    /// structure peaks: the lines a path across the wedge climbs over.
-    pub fn crests(&self) -> impl Iterator<Item = f64> + '_ {
-        self.sheets.iter().filter_map(|sheet| {
-            let top = sheet.structure.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1))?.0 + sheet.start;
-            Some(SCREE_START + top as f64 * REPOSE_STEP)
-        })
     }
 
     /// The wedge's share at a distance `d` from the front, `along` its

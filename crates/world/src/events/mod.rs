@@ -88,14 +88,10 @@
 
 pub mod climate;
 pub mod den;
-pub mod dissection;
-pub mod drainage;
 pub mod forest;
-pub mod ground;
 pub mod index;
 pub mod scarp;
 pub mod lithology;
-pub mod migration;
 pub mod motion;
 pub mod outcrop;
 pub mod thickening;
@@ -128,17 +124,12 @@ pub struct TileOutput {
     pub elevation_delta: f64,
     /// How steeply `elevation_delta` climbs, in z-levels per world unit
     /// along x and y, where the layer makes ground steep enough to read.
-    /// Composes by the sum, as the deltas do, so a valley cut into a
-    /// range's flank is as steep as the two together.
+    /// Composes by the sum, as the deltas do.
     pub gradient: (f64, f64),
     /// The surface water stands at over this tile, in z-levels, where the
     /// layer puts one. Surfaces compose by the highest: water covers what
     /// lies under it.
     pub water: Option<f64>,
-    /// How far up a valley's wall the tile lies, from nothing across the
-    /// belt the river has swept to one at the divide, where the layer that
-    /// cut the valley says so. Composes by the lowest: the nearer floor.
-    pub valley: Option<f64>,
     /// The rock at the surface, where the layer knows it. A later layer's
     /// replaces an earlier one's.
     pub rock: Option<Rock>,
@@ -162,8 +153,6 @@ pub struct TileView {
     pub gradient: (f64, f64),
     /// The highest water surface any layer below put over this tile.
     pub water: Option<f64>,
-    /// The tile's place up the nearest valley's wall, as [`TileOutput::valley`].
-    pub valley: Option<f64>,
     /// The rock at the surface, as [`TileOutput::rock`].
     pub rock: Option<Rock>,
     /// What stands in the tile's seven slots.
@@ -175,7 +164,7 @@ pub struct TileView {
 impl TileView {
     fn at(q: i32, r: i32) -> Self {
         let (wx, wy) = hex_to_world(q, r);
-        TileView { q, r, wx, wy, elevation: 0.0, gradient: (0.0, 0.0), water: None, valley: None, rock: None, cover: Cover::NONE, den: None }
+        TileView { q, r, wx, wy, elevation: 0.0, gradient: (0.0, 0.0), water: None, rock: None, cover: Cover::NONE, den: None }
     }
 
     fn compose(&mut self, out: &TileOutput) {
@@ -184,9 +173,6 @@ impl TileView {
         self.gradient.1 += out.gradient.1;
         if let Some(w) = out.water {
             self.water = Some(self.water.map_or(w, |v| v.max(w)));
-        }
-        if let Some(u) = out.valley {
-            self.valley = Some(self.valley.map_or(u, |v| v.min(u)));
         }
         if out.rock.is_some() {
             self.rock = out.rock;
@@ -801,10 +787,6 @@ impl Composite {
         composite.add_event(Box::new(thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(lithology::LithologyEvent::new()));
         composite.add_event(Box::new(scarp::ScarpEvent::new()));
-        composite.add_event(Box::new(ground::GroundEvent::new()));
-        composite.add_event(Box::new(drainage::DrainageEvent::new()));
-        composite.add_event(Box::new(migration::MigrationEvent::new()));
-        composite.add_event(Box::new(dissection::DissectionEvent::new()));
         composite.add_event(Box::new(outcrop::OutcropEvent::new()));
         composite.add_event(Box::new(forest::ForestEvent::new()));
         composite.add_event(Box::new(den::DenEvent::new()));

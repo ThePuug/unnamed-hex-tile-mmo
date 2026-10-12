@@ -9,8 +9,7 @@
 //! six around it, as far as a site strays, a tile whether it is one of
 //! them, and nothing is published. A site reads its
 //! habitat from its own tile, as the layers beneath compose it, and from
-//! nothing else: under water or on a valley's floor, where rivers run;
-//! under trees in most of its growth sites; under brush in most of them; on
+//! nothing else: under water; under trees in most of its growth sites; under brush in most of them; on
 //! ground near repose; on rock harder than limestone; else open land. Where
 //! several hold, the first of those does. A site under water keeps its den:
 //! the server finds the dry ground nearest it to stand it on.
@@ -35,9 +34,6 @@ pub const DEN_LATTICE: u32 = 86;
 
 /// How far a site strays from its cell's centre, as a share of the spacing.
 pub const DEN_JITTER: f64 = 0.3;
-
-/// How far up a valley's wall still counts as its floor, where rivers run.
-pub const RIVER_FLOOR: f64 = 0.1;
 
 /// The growth sites of a tile's three that trees or brush must hold for a
 /// den there to be in woods or scrub.
@@ -74,7 +70,7 @@ pub fn sites_near(lattice: &HexLattice, cell: CellId, seed: u64) -> [(i32, i32);
 /// A site's habitat from its own tile, the first that holds.
 pub fn habitat(tile: &TileView) -> Habitat {
     let [pine, deciduous, brush] = Canopy::tally(tile.cover);
-    if tile.water.is_some() || tile.valley.is_some_and(|wall| wall <= RIVER_FLOOR) {
+    if tile.water.is_some() {
         Habitat::River
     } else if pine + deciduous >= GROWN {
         Habitat::Woods
@@ -155,9 +151,6 @@ mod tests {
         assert_eq!(habitat(&tile), Habitat::Scrub);
         tile.cover = grown(Content::Pine, 2);
         assert_eq!(habitat(&tile), Habitat::Woods);
-        tile.valley = Some(0.0);
-        assert_eq!(habitat(&tile), Habitat::River, "a valley floor beats every other");
-        tile.valley = None;
         tile.water = Some(1.0);
         assert_eq!(habitat(&tile), Habitat::River, "under water, it dens on the dry ground nearest");
     }

@@ -225,42 +225,6 @@ cold: first tile {:.0} ms; warm: {} tiles at {:.1} µs a tile", first.as_secs_f6
     }
 }
 
-/// What one ground sample is made of: the envelope's functions timed
-/// apart over a patch of the spawn belt, since a routing is thirty
-/// thousand of them.
-#[test]
-#[ignore]
-fn ground_sample_costs() {
-    use world::events::drainage::ground_at;
-    use world::events::lithology::rock_at;
-    use world::events::plates::{substrate_on, Coasts};
-    use world::events::thickening::plateau_share_of;
-    use world::events::thrusting::Outlines;
-    use world::events::tilt::tilt_at;
-    use world::hex_to_world;
-    let (cx, cy) = hex_to_world(104_289, -4_677);
-    let coasts = Coasts::in_box(cx, cy, 6_000.0, SEED);
-    let outlines = Outlines::in_box(cx, cy, 6_000.0, SEED);
-    let scarps = world::events::scarp::Scarps::new();
-    let pts: Vec<(f64, f64)> = (0..100).flat_map(|i| (0..100).map(move |j| (cx - 5_000.0 + i as f64 * 100.0, cy - 5_000.0 + j as f64 * 100.0))).collect();
-    let n = pts.len() as f64;
-    let time = |label: &str, f: &dyn Fn(f64, f64) -> f64| {
-        let t = Instant::now();
-        let mut acc = 0.0;
-        for &(x, y) in &pts {
-            acc += f(x, y);
-        }
-        println!("{label:>16}: {:6.2} µs  (sum {acc:.0})", t.elapsed().as_secs_f64() * 1e6 / n);
-    };
-    time("substrate", &|x, y| substrate_on(x, y, &coasts, SEED));
-    time("tilt", &|x, y| tilt_at(x, y, 10.0, SEED));
-    time("outlines.at", &|x, y| outlines.at(x, y).map_or(0.0, |s| s.distances[0]));
-    time("relief_of", &|x, y| outlines.at(x, y).map_or(0.0, |s| outlines.relief_of(&s)));
-    time("plateau", &|x, y| outlines.at(x, y).map_or(0.0, |s| plateau_share_of(s.plate, &s.distances)));
-    time("rock_at", &|x, y| outlines.at(x, y).map_or(0.0, |s| rock_at(SEED, s.plate.id, s.plate.age, 60.0, 10.0, 50.0).stand));
-    time("ground_at", &|x, y| ground_at(x, y, SEED, &coasts, &outlines, &scarps).surface);
-}
-
 /// What `Outlines::at` is made of over the same patch: the warp, the seed
 /// contest, the home plate's distances, and how often the home plate is
 /// not the one and its neighbours are tried.

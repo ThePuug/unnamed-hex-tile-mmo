@@ -9,9 +9,6 @@ use std::time::Instant;
 
 use world::events::Composite;
 use world::events::thrusting::Outlines;
-use world::events::drainage::surface_at;
-use world::events::dissection::Valleys;
-use world::events::plates::Coasts;
 use world::{hex_to_world, substrate_elevation_at};
 
 const SEED: u64 = 0x9E3779B97F4A7C15;
@@ -584,70 +581,6 @@ fn haven_candidates() {
         let (q, r) = world::world_to_hex(px, py);
         println!("    world ({px:>7.0}, {py:>7.0}) hex ({q}, {r}): z {e:.0}, range {peak:.0} z at {peak_d:.0} WU, water {water_d:.0} WU");
     }
-}
-
-/// Valley census over the belt window: how much land lies in a valley, how
-/// deep and how steep the valleys are on plains against belts, and how many
-/// views hold one. The cut is read off the valleys directly, against the
-/// envelope the layers beneath dissection sum to.
-#[test]
-#[ignore]
-fn valley_census() {
-    println!("\n=== valley census (the belt window) ===\n");
-    let (cx, cy, half, step) = (98_000.0, -2_000.0, 12_000.0, 250.0);
-    let t = Instant::now();
-    let valleys = Valleys::in_box(cx, cy, half, SEED);
-    let outlines = Outlines::in_box(cx, cy, half, SEED);
-    let scarps = world::events::scarp::Scarps::new();
-    let coasts = Coasts::in_box(cx, cy, half, SEED);
-    println!("  valleys, outlines and coasts built in {:?}", t.elapsed());
-    let n = (2.0 * half / step) as usize + 1;
-    let at = |i: usize, j: usize| (cx - half + i as f64 * step, cy - half + j as f64 * step);
-    let mut land = 0usize;
-    let mut cut_land = 0usize;
-    let mut depths: Vec<f64> = Vec::new();
-    let mut plain_slopes: Vec<f64> = Vec::new();
-    let mut belt_slopes: Vec<f64> = Vec::new();
-    let mut in_valley = vec![false; n * n];
-    for j in 0..n {
-        for i in 0..n {
-            let (x, y) = at(i, j);
-            let envelope = surface_at(x, y, SEED, &coasts, &outlines, &scarps);
-            if envelope < 0.0 { continue }
-            land += 1;
-            let cut = valleys.cut_at(x, y, envelope);
-            if cut <= 0.0 { continue }
-            cut_land += 1;
-            in_valley[j * n + i] = true;
-            depths.push(cut);
-            // The steepest of the two axis gradients at eight tiles, in z per tile.
-            let e8x = surface_at(x + 8.0, y, SEED, &coasts, &outlines, &scarps);
-            let e8y = surface_at(x, y + 8.0, SEED, &coasts, &outlines, &scarps);
-            let cx8 = valleys.cut_at(x + 8.0, y, e8x);
-            let cy8 = valleys.cut_at(x, y + 8.0, e8y);
-            let slope = ((cx8 - cut).abs() / 8.0).max((cy8 - cut).abs() / 8.0);
-            if outlines.relief(x, y) > 0.0 || envelope > 100.0 { belt_slopes.push(slope) } else { plain_slopes.push(slope) }
-        }
-    }
-    let pct = |v: &mut Vec<f64>, p: f64| {
-        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        v.get(((v.len().max(1) - 1) as f64 * p) as usize).copied().unwrap_or(0.0)
-    };
-    println!("  {land} land samples, {cut_land} in a valley ({:.1}%)", 100.0 * cut_land as f64 / land.max(1) as f64);
-    println!("  depth p50 {:.1}  p90 {:.1}  max {:.1} z", pct(&mut depths, 0.5), pct(&mut depths, 0.9), pct(&mut depths, 1.0));
-    println!("  wall slope on plains p50 {:.2}  p90 {:.2}  max {:.2} z/tile ({} samples)", pct(&mut plain_slopes, 0.5), pct(&mut plain_slopes, 0.9), pct(&mut plain_slopes, 1.0), plain_slopes.len());
-    println!("  wall slope in belts  p50 {:.2}  p90 {:.2}  max {:.2} z/tile ({} samples)", pct(&mut belt_slopes, 0.5), pct(&mut belt_slopes, 0.9), pct(&mut belt_slopes, 1.0), belt_slopes.len());
-    // A view is 692 tiles across: three samples. Share of land views holding a valley.
-    let (mut views, mut with) = (0usize, 0usize);
-    for j in 0..n - 2 {
-        for i in 0..n - 2 {
-            let (x, y) = at(i + 1, j + 1);
-            if surface_at(x, y, SEED, &coasts, &outlines, &scarps) < 0.0 { continue }
-            views += 1;
-            if (0..3).any(|dj| (0..3).any(|di| in_valley[(j + dj) * n + i + di])) { with += 1 }
-        }
-    }
-    println!("  land views (692 tiles) holding a valley: {with}/{views} ({:.1}%)", 100.0 * with as f64 / views.max(1) as f64);
 }
 
 /// The ground under the haven: elevation range and the steepest step within

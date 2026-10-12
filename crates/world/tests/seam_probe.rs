@@ -6,8 +6,7 @@
 //! Run: cargo test -p world --release --test seam_probe -- --ignored --nocapture
 
 
-use world::events::dissection::Valleys;
-use world::events::drainage::surface_at;
+use world::events::scarp::envelope_at;
 use world::events::plates::Coasts;
 use world::events::thrusting::Outlines;
 use world::events::Composite;
@@ -30,7 +29,6 @@ fn straight_seams_in_the_belt_window() {
     let outlines = Outlines::in_box(cx, cy, half, SEED);
     let scarps = world::events::scarp::Scarps::new();
     let coasts = Coasts::in_box(cx, cy, half, SEED);
-    let valleys = Valleys::in_box(cx, cy, half, SEED);
     let n = (2.0 * half / step) as usize;
     let mut comp = vec![0.0f64; n * n];
     let mut field = vec![0.0f64; n * n];
@@ -40,8 +38,8 @@ fn straight_seams_in_the_belt_window() {
             let (q, r) = world_to_hex(x, y);
             comp[j * n + i] = c.tile_at(q, r).elevation;
             let (wx, wy) = hex_to_world(q, r);
-            let envelope = surface_at(wx, wy, SEED, &coasts, &outlines, &scarps);
-            field[j * n + i] = envelope - valleys.cut_at(wx, wy, envelope);
+            let envelope = envelope_at(wx, wy, SEED, &coasts, &outlines);
+            field[j * n + i] = envelope - scarps.carve_at(wx, wy, SEED, &coasts, &outlines, envelope);
         }
     }
     let mut jumps = Vec::new();
@@ -64,7 +62,7 @@ fn straight_seams_in_the_belt_window() {
     for (dc, df, m0, m1, x, y) in jumps.iter().take(12) {
         println!("  comp {dc:>7.1}  field {df:>7.1}  diff {m0:>7.1} | {m1:>7.1}  at ({x:>8.0},{y:>8.0})");
     }
-    println!("decomposition either side of the three largest: substrate, tilt, thickening_on, relief, cut");
+    println!("decomposition either side of the three largest: substrate, tilt, thickening_on, relief");
     for (_, _, _, _, x, y) in jumps.iter().take(3) {
         for xx in [*x, x + step] {
             let (q, r) = world_to_hex(xx, *y);
@@ -75,8 +73,7 @@ fn straight_seams_in_the_belt_window() {
             let relief = outlines.relief(wx, wy).max(0.0);
             let thick = world::events::thickening::thickening_on(wx, wy, &outlines).max(0.0);
             let plateau = base + thick;
-            let cut = valleys.cut_at(wx, wy, plateau + relief);
-            println!("  ({wx:>8.0},{wy:>8.0}) substrate {substrate:>7.1}  tilt {tilt:>7.1}  thickening {thick:>7.1}  relief {relief:>7.1}  cut {cut:>7.1}  sum {:>7.1}", plateau + relief - cut);
+            println!("  ({wx:>8.0},{wy:>8.0}) substrate {substrate:>7.1}  tilt {tilt:>7.1}  thickening {thick:>7.1}  relief {relief:>7.1}  sum {:>7.1}", plateau + relief);
         }
     }
 }
@@ -91,7 +88,6 @@ fn fine_seams_in_the_belt_window() {
     let (cx, cy, half, step) = (98_000.0, -2_000.0, 12_000.0, 8.0);
     let outlines = Outlines::in_box(cx, cy, half, SEED);
     let coasts = Coasts::in_box(cx, cy, half, SEED);
-    let valleys = Valleys::in_box(cx, cy, half, SEED);
     let n = (2.0 * half / step) as usize;
     let mut jumps: Vec<(f64, f64, f64)> = Vec::new();
     let mut row = vec![0.0f64; n];
@@ -122,9 +118,8 @@ fn fine_seams_in_the_belt_window() {
             let relief = outlines.relief(wx, wy).max(0.0);
             let thick = world::events::thickening::thickening_on(wx, wy, &outlines).max(0.0);
             let plateau = base + thick;
-            let cut = valleys.cut_at(wx, wy, plateau + relief);
             let room = outlines.at(wx, wy).map_or("none".to_string(), |at| format!("{:?}", at.plate.id));
-            println!("  ({wx:>8.0},{wy:>8.0}) substrate {substrate:>7.1}  tilt {tilt:>7.1}  thickening {thick:>7.1}  relief {relief:>7.1}  cut {cut:>7.1}  plate {room}  sum {:.1}  composite {:.1}", plateau + relief - cut, c.tile_at(q, r).elevation);
+            println!("  ({wx:>8.0},{wy:>8.0}) substrate {substrate:>7.1}  tilt {tilt:>7.1}  thickening {thick:>7.1}  relief {relief:>7.1}  plate {room}  sum {:.1}  composite {:.1}", plateau + relief, c.tile_at(q, r).elevation);
 
         }
     }

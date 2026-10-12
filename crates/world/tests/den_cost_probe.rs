@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use world::events::{den, dissection, drainage, forest, lithology, migration, motion, outcrop, plates, thickening, thrusting, tilt, Composite};
+use world::events::{den, forest, lithology, motion, outcrop, plates, thickening, thrusting, tilt, Composite};
 use world::WORLD_SEED;
 
 const HAVEN: (i32, i32) = (107289, -7677);
@@ -19,10 +19,6 @@ fn without_dens() -> Composite {
     composite.add_event(Box::new(thickening::ThickeningEvent::new()));
     composite.add_event(Box::new(lithology::LithologyEvent::new()));
     composite.add_event(Box::new(world::events::scarp::ScarpEvent::new()));
-    composite.add_event(Box::new(world::events::ground::GroundEvent::new()));
-    composite.add_event(Box::new(drainage::DrainageEvent::new()));
-    composite.add_event(Box::new(migration::MigrationEvent::new()));
-    composite.add_event(Box::new(dissection::DissectionEvent::new()));
     composite.add_event(Box::new(outcrop::OutcropEvent::new()));
     composite.add_event(Box::new(forest::ForestEvent::new()));
     composite

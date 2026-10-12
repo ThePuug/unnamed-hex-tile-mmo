@@ -20,8 +20,7 @@
 //! A stand is a feature: it originates at a point of a jittered lattice,
 //! the cell that point falls in publishes it, and it reaches its radius.
 //! The climate is read once at the origin, with what the soil there keeps
-//! of it and the ground's own water, the valley floor and a flooded basin,
-//! and sets the stand's density and how many of its slots are trees rather
+//! of it, and sets the stand's density and how many of its slots are trees rather
 //! than brush. The soil keeps what its rock holds, depth for depth, over
 //! the depth the range it lies on leaves it ([`crate::hillslope`]): thin on
 //! a high range, none where erosion outruns what bare rock makes. A stand
@@ -29,11 +28,10 @@
 //! and the dry ground the woods are islands with edges: forest and open
 //! ground as alternative states, decided at the origin and never per tile.
 //!
-//! A tile reads the stands over it from the ring, the treeline from its
-//! own elevation, and its valley from what dissection published, and
-//! fills each of its three sites by a hash against the density it lands
-//! on. Ground steeper than [`SOIL_GRADE`] holds no soil, so a cliff or a
-//! gorge wall stands bare whatever stand lies over it. Nothing is read from
+//! A tile reads the stands over it from the ring and the treeline from its
+//! own elevation, and fills each of its three sites by a hash against the density it lands
+//! on. Ground steeper than [`SOIL_GRADE`] holds no soil, so a cliff stands
+//! bare whatever stand lies over it. Nothing is read from
 //! a neighbour.
 
 use std::any::Any;
@@ -42,17 +40,15 @@ use std::f64::consts::PI;
 
 use common::{Cover, HexLattice, HexSpatialGrid, Content, SITES};
 
-use crate::chains::{Segment, SegmentGrid};
-use crate::lattice::{jittered_centre, nearest_node, PATH_SWING};
+use crate::chains::Segment;
+use crate::lattice::{jittered_centre, PATH_SWING};
 use crate::noise::{hash_channel_f64, hash_f64};
 use crate::tectonic::{Edge, PLATE_SPACING};
 use crate::{hex_to_world, smoothstep, world_to_hex, RISE};
 use crate::hillslope::{erosion_rate, soil_share};
 use super::climate::{temperature, TREELINE, TREELINE_BAND};
-use super::drainage::DrainageIndex;
 use super::index::{CellId, CellIndex, IndexRegistry, Located};
 use super::lithology::rock_on;
-use super::migration::{ChannelIndex, VALLEY_HALF_WIDTH};
 use super::plates::{Coasts, PlateEdgeIndex, COAST_REACH, WARP_SWING};
 use super::thrusting::{outlines_of, rim_of, sheets_of, EdgeOutline, Outlines, OUTLINE_REACH, RANGE_SPACING, WEDGE_SHEETS};
 use super::{footprint_plus_ring, CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
@@ -222,10 +218,6 @@ pub const TREE_SHARE: f64 = 0.5;
 /// to nothing at the edge.
 pub const TAPER_FROM: f64 = 0.6;
 
-/// How far up a valley's wall, as a share, the gallery along its channel
-/// reaches from the belt's edge.
-pub const GALLERY_SHARE: f64 = 0.08;
-
 /// The stand lattice's cell radius, in tiles: its centres are the origins,
 /// about a spacing and three quarters of this apart.
 pub const STAND_LATTICE: u32 = 70;
@@ -360,28 +352,10 @@ pub fn trees_of(moisture: f64) -> f64 {
     TREE_SHARE * smoothstep((moisture - MOISTURE_TREES) / (MOISTURE_CLOSED - MOISTURE_TREES))
 }
 
-/// The moisture a stand's origin reads: the share of the sky's the soil
-/// keeps, raised toward the closed forest's by how low on the valley's
-/// wall it lies, and to it on a basin's flooded floor, whatever the soil.
-pub fn ground_moisture(sky: f64, retention: f64, wall: f64, flooded: bool) -> f64 {
-    let held = sky * retention;
-    if flooded {
-        return held.max(MOISTURE_CLOSED);
-    }
-    let foot = (1.0 - wall.clamp(0.0, 1.0)).powi(3);
-    held + (MOISTURE_CLOSED - held).max(0.0) * foot
-}
-
 /// A stand's density at a share `u` of its radius from the origin: full
 /// to [`TAPER_FROM`], then easing to nothing at the edge.
 pub fn taper(u: f64) -> f64 {
     if u < TAPER_FROM { 1.0 } else { smoothstep((1.0 - u) / (1.0 - TAPER_FROM)) }
-}
-
-/// The gallery along a channel at a share `wall` of the way up the
-/// valley's wall: closed across the belt, gone a short way up.
-pub fn gallery(wall: f64) -> f64 {
-    DENSITY_MAX * smoothstep((GALLERY_SHARE - wall) / GALLERY_SHARE)
 }
 
 /// The coasts a cell's origins can read, from the edges plates published
@@ -397,27 +371,6 @@ fn coasts_of(scope: &CellScope) -> Coasts {
     Coasts::new(edges.iter().flat_map(|idx| idx.features()).filter(near), scope.seed())
 }
 
-/// The channel axes in reach of a cell's origins, from the channels
-/// migration published under the cell and its ring.
-fn axes_of(scope: &CellScope) -> SegmentGrid {
-    let (cq, cr) = scope.lattice().cell_center(scope.cell());
-    let (cx, cy) = hex_to_world(cq, cr);
-    let within = scope.lattice().radius as f64 + 2.0 * VALLEY_HALF_WIDTH;
-    let mut segments = Vec::new();
-    if let Some(idx) = scope.read::<ChannelIndex>() {
-        for ch in idx.features() {
-            let near = ch.axis.iter().any(|&(x, y)| (x - cx).hypot(y - cy) <= within);
-            if !near {
-                continue;
-            }
-            for w in ch.axis.windows(2) {
-                segments.push(Segment::along(w[0], w[1], true));
-            }
-        }
-    }
-    SegmentGrid::new(segments, VALLEY_HALF_WIDTH)
-}
-
 /// The stands originating in a cell, each with its climate read at its
 /// origin.
 fn stands_of(scope: &CellScope) -> Vec<Stand> {
@@ -427,14 +380,8 @@ fn stands_of(scope: &CellScope) -> Vec<Stand> {
     let stands = stand_lattice();
     let wind = wind(seed);
 
-    // Every index is deformed under the footprint before any guard is
-    // held: a read guard held across a lower layer's deform waits on the
-    // write that deform needs, and nothing moves.
-    let axes = axes_of(scope);
-    scope.source_cells::<DrainageIndex>();
     let coasts = coasts_of(scope);
     let outline = outlines_of(scope);
-    let drainage = scope.read::<DrainageIndex>();
 
     let mut out = Vec::new();
     for id in candidate_origins(lattice, cell) {
@@ -444,14 +391,9 @@ fn stands_of(scope: &CellScope) -> Vec<Stand> {
             continue;
         }
         let sky = sky_moisture(ox, oy, wind, &coasts, &outline);
-        let wall = axes.nearest(ox, oy, VALLEY_HALF_WIDTH).map_or(1.0, |n| n.distance / VALLEY_HALF_WIDTH);
-        let flooded = drainage
-            .as_ref()
-            .and_then(|idx| idx.node(nearest_node(ox, oy)))
-            .is_some_and(|n| n.flooded);
         let relief = outline.at(ox, oy).map_or(0.0, |at| outline.crest_of(&at));
         let retention = rock_on(ox, oy, seed, &coasts, &outline).rock.retention() * soil_share(erosion_rate(relief));
-        let moisture = ground_moisture(sky, retention, wall, flooded);
+        let moisture = sky * retention;
         let density = density_of(moisture);
         if density <= 0.0 {
             continue;
@@ -621,14 +563,7 @@ impl WorldEvent for ForestEvent {
         if t <= TREELINE {
             return None;
         }
-        let (mut density, mut trees) = reach.at(wx, wy);
-        if let Some(wall) = below.valley {
-            let g = gallery(wall);
-            if g > density {
-                density = g;
-                trees = TREE_SHARE;
-            }
-        }
+        let (density, trees) = reach.at(wx, wy);
         let band = smoothstep((t - TREELINE) / TREELINE_BAND);
         let cover = cover_of(q, r, below.cover, density * band, trees * band, t, seed);
         if cover == below.cover {
@@ -680,19 +615,12 @@ mod tests {
     }
 
     /// The rock sets how much of the sky's water the ground keeps, so
-    /// shale's ground is the wettest and limestone's the driest, while a
-    /// valley's floor and a flooded basin are wet whatever the rock.
+    /// shale's ground is the wettest and limestone's the driest.
     #[test]
     fn the_rock_keeps_the_rain() {
         let rocks = [Rock::Limestone, Rock::Basement, Rock::Sandstone, Rock::Shale];
-        for sky in [0.2, 0.42, 0.7] {
-            let wet: Vec<f64> = rocks.iter().map(|r| ground_moisture(sky, r.retention(), 1.0, false)).collect();
-            assert!(wet.windows(2).all(|w| w[0] <= w[1]), "not ordered by the rock at sky {sky}: {wet:?}");
-            for r in rocks {
-                assert!(ground_moisture(sky, r.retention(), 0.0, false) >= MOISTURE_CLOSED.min(sky));
-                assert!(ground_moisture(sky, r.retention(), 1.0, true) >= MOISTURE_CLOSED);
-            }
-        }
+        let kept: Vec<f64> = rocks.iter().map(|r| r.retention()).collect();
+        assert!(kept.windows(2).all(|w| w[0] <= w[1]), "not ordered by the rock: {kept:?}");
     }
 
     /// No site is filled at no density, every site at a density past
@@ -818,10 +746,6 @@ mod tests {
         c.add_event(Box::new(thickening::ThickeningEvent::new()));
         c.add_event(Box::new(lithology::LithologyEvent::new()));
         c.add_event(Box::new(scarp::ScarpEvent::new()));
-        c.add_event(Box::new(ground::GroundEvent::new()));
-        c.add_event(Box::new(drainage::DrainageEvent::new()));
-        c.add_event(Box::new(migration::MigrationEvent::new()));
-        c.add_event(Box::new(dissection::DissectionEvent::new()));
         c.add_event(Box::new(outcrop::OutcropEvent::new()));
         c.add_event(Box::new(ForestEvent { soil }));
         c
@@ -830,14 +754,14 @@ mod tests {
     /// Ground steeper than the soil holds stands no tree and no brush,
     /// whatever its stand and its sites' hashes; gentler ground stands
     /// exactly what it would with no limit at all. Read over the haven's
-    /// scarp, whose range erodes too fast to keep a soil, and the gorges
-    /// west of the haven, which keep theirs.
+    /// scarp, whose range erodes too fast to keep a soil, and steep ground
+    /// west of the haven that keeps one.
     #[test]
     fn steep_ground_holds_no_soil() {
         let (limited, free) = (stack(SOIL_GRADE), stack(f64::INFINITY));
         let (mut steep, mut stripped, mut gentle) = (0, 0, 0);
         let grown = |cover: Cover| common::Canopy::tally(cover).iter().sum::<u32>();
-        for (x, y) in [(97_300.0, -1_050.0), (91_484.0, -7_275.0)] {
+        for (x, y) in [(97_300.0, -1_050.0), (92_505.0, -4_182.0)] {
             let (q0, r0) = world_to_hex(x, y);
             for dq in (-240..=240).step_by(3) {
                 for dr in (-240..=240).step_by(3) {

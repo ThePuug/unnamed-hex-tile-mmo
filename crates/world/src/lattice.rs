@@ -6,15 +6,6 @@
 //! a vertex. Elevation is not on the lattice: heights are continuous
 //! functions of distance to the chains.
 //!
-//! Drainage's nodes are keyed by the same lattice but do not stand on it:
-//! each stands on its site, the lattice point displaced by a hash of the
-//! key. The key is what the graph is made of, six neighbours by offset and
-//! the same in every window, and nothing searches for a node; the site is
-//! what its water sees, so the six neighbours of a node face six irregular
-//! directions and different ones at every node, and a stream on a tilt
-//! takes a different one at each step instead of the same lattice axis
-//! forever, which combs a plain.
-//!
 //! A straight line between two nodes is drawn as runs along the lattice's
 //! directions. An outline holds a run for [`RUN_MIN`] nodes before it turns
 //! wherever the line is long enough to allow it, so its corners are sparse;
@@ -25,15 +16,12 @@
 use common::HexLattice;
 
 use crate::noise::hash_channel_f64;
-use crate::{hex_to_world, world_to_hex, SQRT_3};
+use crate::{hex_to_world, world_to_hex};
 
 /// A node's lattice coordinates. Its tile is `(i × NODE_SPACING, j × NODE_SPACING)`.
 pub type NodeKey = (i32, i32);
 
-/// Node spacing in tiles: the narrowest valley drainage reads as a valley,
-/// and the finest an outline turns. A sheet spacing holds one and a half of
-/// these, so the trough between two ranges is resolved and their flanks are
-/// not.
+/// Node spacing in tiles: the finest an outline turns.
 pub const NODE_SPACING: i32 = 525;
 
 /// Nodes a coast or a front runs straight before it may turn: five nodes,
@@ -52,44 +40,11 @@ pub const PATH_SWING: f64 = RUN_MIN as f64 * NODE_SPACING as f64 * SIN_60;
 /// sin 60°, the height of a unit step square to a lattice direction.
 const SIN_60: f64 = 0.866_025_403_784_438_6;
 
-/// The six neighbours in angular order, 60° apart from `+x` round to `300°`,
-/// so consecutive entries bound one facet.
+/// The six neighbours in angular order, 60° apart from `+x` round to `300°`.
 pub const DIRECTIONS: [(i32, i32); 6] = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
-
-/// How far a node's site is displaced from its lattice point, as a share
-/// of the spacing along each axis: enough that no two nodes' neighbours
-/// face the same directions, and little enough that a node's six
-/// neighbours stay its nearest six.
-pub const NODE_JITTER: f64 = 0.2;
-
-/// The farthest a site lies from its lattice point, in world units: the
-/// displacement along both axes at once. Every reach that holds a node's
-/// neighbour a spacing away grows by twice this.
-pub const NODE_SWING: f64 = NODE_JITTER * NODE_SPACING as f64 * SQRT_3;
-
-const SITE_Q: u64 = 0x7369_7465_0000_0001;
-const SITE_R: u64 = 0x7369_7465_0000_0002;
-const SITE_SEED: u64 = 0x6c61_7474_6963_6500;
 
 pub fn node_tile(key: NodeKey) -> (i32, i32) {
     (key.0 * NODE_SPACING, key.1 * NODE_SPACING)
-}
-
-/// The tile drainage's node stands on: its lattice point displaced by
-/// [`NODE_JITTER`] of the spacing along each axis, by a hash of the key
-/// alone, so the lattice is one lattice in every world.
-pub fn node_site(key: NodeKey) -> (i32, i32) {
-    let (q, r) = node_tile(key);
-    let swing = NODE_JITTER * NODE_SPACING as f64;
-    let dq = (hash_channel_f64(key.0 as i64, key.1 as i64, SITE_SEED, SITE_Q) * 2.0 - 1.0) * swing;
-    let dr = (hash_channel_f64(key.0 as i64, key.1 as i64, SITE_SEED, SITE_R) * 2.0 - 1.0) * swing;
-    (q + dq.round() as i32, r + dr.round() as i32)
-}
-
-/// A node's site in world units.
-pub fn site_world(key: NodeKey) -> (f64, f64) {
-    let (q, r) = node_site(key);
-    hex_to_world(q, r)
 }
 
 /// A node's position in world units.

@@ -321,7 +321,7 @@ index buffer on cached copies shared by every actor in the same
 combination; no piece hides any of another. `Piece::name` is the asset
 stem.
 
-**Water.** A tile's water is one surface, a z-level, published by dissection
+**Water.** A tile's water is one surface, a z-level, published by a layer
 and rounded once, in `Composite::water_at`: surface and ground round to the
 same steps, a surface's step covers the tiles below it and leaves the tiles
 at it dry, so a dry tile has none. `Map::water_at` holds it apart from the

@@ -47,8 +47,7 @@
 //! against the resistant, held up where a harder bed lies just beneath,
 //! which is what makes the dip slope, and stepped at every contact, which
 //! is what makes the scarp. What stands is added to the envelope, on land,
-//! and the rock's erodibility is what drainage, migration and dissection
-//! read.
+//! and the rock rides on the tile.
 //!
 //! Not lithology's: volcanics; karst; the coastal plain's unconsolidated
 //! wedge. Unbuilt.
@@ -237,8 +236,6 @@ pub const CONTACT_RAMP: f64 = 1.0;
 #[derive(Clone, Copy, Debug)]
 pub struct Ground {
     pub rock: Rock,
-    /// The rock's, as [`Rock::erodibility`].
-    pub erodibility: f64,
     /// How far the ground stands above the vales around it, in z-levels:
     /// what is added to the envelope.
     pub stand: f64,
@@ -259,12 +256,12 @@ pub fn rock_at(seed: u64, plate: PlateId, age: f64, cover: f64, substrate: f64, 
     let exposed = exposed_in(&column, cover, age, structure);
     let (rock, lowering) = column.floor_at(exposed, age);
     let stand = (CUESTA_RELIEF * aged(age) - lowering).max(0.0) * shore_gate(substrate);
-    Ground { rock, erodibility: rock.erodibility(), stand, exposed }
+    Ground { rock, stand, exposed }
 }
 
 /// The ground off any plate: the sea floor, weak and standing nowhere.
 pub fn off_plate() -> Ground {
-    Ground { rock: Rock::Shale, erodibility: 1.0, stand: 0.0, exposed: 0.0 }
+    Ground { rock: Rock::Shale, stand: 0.0, exposed: 0.0 }
 }
 
 /// The rock at a position read through the outlines and coasts a view or
@@ -439,7 +436,6 @@ mod tests {
         for i in 0..200 {
             let g = rock_at(S, plate, 0.7, i as f64 * 1.7 - 60.0, 30.0, i as f64 * 3.0);
             assert!(g.stand >= 0.0 && g.stand <= CUESTA_RELIEF + 1e-9);
-            assert!((g.erodibility - g.rock.erodibility()).abs() < 1e-12);
         }
     }
 }

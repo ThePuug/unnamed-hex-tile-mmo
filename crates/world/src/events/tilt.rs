@@ -3,12 +3,11 @@
 //! A landmass with no regional gradient sheds no trunk rivers: water needs
 //! somewhere to go, over a distance longer than any single feature. Real
 //! continents lean — Australia's divide sheds west across the interior, Africa
-//! tilts toward its basins — and that lean is what the coarse drainage layer
-//! will route against. It has to exist before dissection can route anything.
+//! tilts toward its basins — and that lean is what water runs against.
 //!
 //! It sits **below** orogen for the same reason: a belt landing on a sloping
-//! base takes its absolute height and its drainage direction from where it
-//! lands, so the base has to be there first.
+//! base takes its absolute height and the way it sheds from where it lands,
+//! so the base has to be there first.
 //!
 //! # A field, not a feature
 //!
