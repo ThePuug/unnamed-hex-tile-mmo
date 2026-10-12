@@ -233,7 +233,7 @@ use crate::{
     components::{Moon, Sun},
     plugins::{
         diagnostics::DiagnosticsState,
-        weather::{CloudDeck, CloudMaterial, SkyWeather},
+        weather::{CloudDeck, CloudMaterial, SkyWeather, DECK_HEIGHT},
     },
     systems::camera::HAZE_COLOR,
     resources::{
@@ -511,7 +511,7 @@ pub fn update(
         clouds.shade = LinearRgba::from_vec3(lit(Vec3::ONE).to_vec3().lerp(light, 0.3) * CLOUD_UNDERSIDE * dusk);
         clouds.glow = glow;
         clouds.bearing = bearing;
-        clouds.deck = Vec4::new(weather.deck_height, visibility, weather.flash, OMEN_PALL * pall);
+        clouds.deck = Vec4::new(DECK_HEIGHT, visibility, weather.flash, OMEN_PALL * pall);
         clouds.frame = weather.frame;
         clouds.drift = weather.drift.extend(0.).extend(0.);
         clouds.veil = LinearRgba { alpha: (MIST_VEIL * here.mist + RAIN_VEIL * here.rain).min(1.), ..haze };

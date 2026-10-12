@@ -24,7 +24,10 @@ use bevy_light::{NotShadowCaster, NotShadowReceiver};
 use common::grid::RISE;
 use common_bevy::weather::{self, Forecast, Weather};
 
+use common_bevy::components::Loc;
+
 use crate::{
+    components::Viewed,
     plugins::diagnostics::{DiagnosticsState, WeatherHold},
     resources::{RenderOrigin, Server},
     systems::closeup::CloseupCamera,
@@ -43,10 +46,10 @@ const MAP_CELL_WU: f64 = 750.0;
 /// how smoothly the change shows.
 const MAP_REFRESH_MS: u128 = 250;
 
-/// The cloud deck's base above the sea, over the ranges' crests, and the
-/// least it stands above the camera, so a camera on a peak stays under it.
-const CLOUD_BASE_Y: f32 = 900.0;
-const CLOUD_CLEARANCE: f32 = 250.0;
+/// The cloud deck's height over the camera, wherever the camera stands:
+/// the sky is the same from a valley and from a peak, and climbing never
+/// reaches the clouds. Unbuilt: low cloud lying on the ground.
+pub const DECK_HEIGHT: f32 = 900.0;
 
 /// How quickly the weather over the camera follows the camera's move into
 /// another, in seconds: crossing a front's edge takes a few seconds.
@@ -75,8 +78,6 @@ pub struct SkyWeather {
     pub here: Weather,
     /// How much of the leap season holds, the same everywhere.
     pub omen: f32,
-    /// The deck's height over the camera.
-    pub deck_height: f32,
     /// How much the lightning lights the scene now.
     pub flash: f32,
     /// Each bolt in sight: its bearing from the camera in xz, its top's
@@ -111,7 +112,6 @@ impl FromWorld for SkyWeather {
         Self {
             here: Weather::default(),
             omen: 0.0,
-            deck_height: CLOUD_BASE_Y,
             flash: 0.0,
             bolts: [Vec4::ZERO; BOLTS],
             bolt_looks: [Vec4::ZERO; BOLTS],
@@ -393,7 +393,6 @@ fn read(
         *now += (to - *now) * ease;
     }
     weather.omen = forecast.omen();
-    weather.deck_height = (CLOUD_BASE_Y - camera.translation.y).max(CLOUD_CLEARANCE);
 
     // The map, about the camera's cell.
     let centre = ((x / MAP_CELL_WU).floor() as i64, (z / MAP_CELL_WU).floor() as i64);
@@ -444,7 +443,7 @@ fn read(
         flash += light / (1.0 + (distance / FLASH_REACH_WU).powi(2));
         let haze = (-3.0 * distance / crate::systems::camera::haze_limit_wu()).exp();
         bolts.push((
-            (toward / distance).extend(weather.deck_height.atan2(distance)).extend(light * (0.3 + 0.7 * haze)),
+            (toward / distance).extend(DECK_HEIGHT.atan2(distance)).extend(light * (0.3 + 0.7 * haze)),
             Vec4::new((strike.seed % 1024) as f32, BOLT_WIDTH_WU / distance, 0.0, 0.0),
         ));
     }
@@ -506,8 +505,9 @@ fn strokes(age_ms: f32, seed: u32) -> f32 {
 }
 
 /// Lays the box of drops about the view and lets it fall: rain or snow as
-/// the camera stands over the snow line or under it, as many drops as the
-/// weather over the camera rains.
+/// the ground the viewed actor stands on is over the snow line or under
+/// it, as many drops as the weather over the camera rains.
+#[allow(clippy::too_many_arguments)]
 fn fall(
     time: Res<Time>,
     server: Res<Server>,
@@ -515,6 +515,7 @@ fn fall(
     origin: Res<RenderOrigin>,
     weather: Res<SkyWeather>,
     camera: Query<(&Transform, &DistanceFog), (With<Camera3d>, Without<CloseupCamera>)>,
+    viewed: Query<&Loc, With<Viewed>>,
     precipitation: Query<&MeshMaterial3d<PrecipitationMaterial>, With<Precipitation>>,
     mut materials: ResMut<Assets<PrecipitationMaterial>>,
 ) {
@@ -523,7 +524,10 @@ fn fall(
     let wall_ms = server.wall(server.now(time.elapsed().as_millis()));
     let sky_ms = diagnostics.lighting.at(wall_ms);
     let snow = forecast(diagnostics.weather, sky_ms).1
-        .unwrap_or_else(|| camera.translation.y / RISE > weather::snow_line(sky_ms));
+        .unwrap_or_else(|| {
+            let ground = viewed.single().map_or(camera.translation.y / RISE, |loc| loc.z as f32);
+            ground > weather::snow_line(sky_ms)
+        });
 
     let ahead = camera.forward().as_vec3().with_y(0.0).normalize_or_zero() * BOX_AHEAD;
     let corner = camera.translation + ahead - Vec3::new(BOX.x / 2.0, BOX_BELOW, BOX.z / 2.0);
