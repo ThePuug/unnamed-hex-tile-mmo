@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use super::state::{DevConsole, MenuPath};
 use crate::plugins::diagnostics::{DateField, DiagnosticsState, WeatherHold};
-use common_bevy::systems::{Date, SEASONS, WEEKS};
+use common_bevy::systems::{Date, DAY_MS, HOUR_MS, MINUTE_MS, SEASONS, WEEKS};
 
 #[derive(Component)]
 pub struct DevConsoleRoot;
@@ -13,7 +13,7 @@ pub struct BreadcrumbText;
 #[derive(Component)]
 pub struct MenuItemsContainer;
 
-/// The lighting menu's date row, written every frame while it shows: the
+/// The world clock menu's row, written every frame while it shows: the
 /// game clock moves under it between the key presses that rebuild the menu.
 #[derive(Component)]
 pub struct DateLine;
@@ -106,8 +106,11 @@ pub fn update_console_menu(
     mut breadcrumb_query: Query<&mut Text, (With<BreadcrumbText>, Without<MenuItemsContainer>)>,
     menu_query: Query<(Entity, Option<&Children>), With<MenuItemsContainer>>,
     mut commands: Commands,
+    mut shown: Local<Option<common_bevy::systems::Calendar>>,
 ) {
-    if !console.is_changed() && !diagnostics_state.is_changed() && !added.is_changed() {
+    // The clock's row reads the calendar the server last sent
+    let calendar_changed = shown.replace(server.calendar) != Some(server.calendar);
+    if !console.is_changed() && !diagnostics_state.is_changed() && !added.is_changed() && !calendar_changed {
         return;
     }
 
@@ -138,11 +141,11 @@ pub fn update_console_menu(
                     line(parent, "0. Close Console", 16.0, BACK);
                 }
                 MenuPath::Terrain => {
-                    let held = diagnostics_state.lighting.held_at();
+                    let held = server.calendar.held.map(hour);
                     let rows = [
                         (format!("1. Toggle Grid Overlay      [{}]", on_off(diagnostics_state.grid_visible)), diagnostics_state.grid_visible),
                         (
-                            format!("2. Lighting Time            [{}]", held.as_ref().map_or("Game time".to_string(), |at| format!("Held {at}"))),
+                            format!("2. World Clock              [{}]", held.as_ref().map_or("Running".to_string(), |at| format!("Held {at}"))),
                             held.is_some(),
                         ),
                         (format!("3. Terrain                  [{}]", if diagnostics_state.terrain_hidden { "Hidden" } else { "Shown" }), !diagnostics_state.terrain_hidden),
@@ -158,25 +161,24 @@ pub fn update_console_menu(
                     gap(parent);
                     line(parent, "0. Back to Main Menu", 16.0, BACK);
                 }
-                MenuPath::LightingTime => {
-                    let current = diagnostics_state.lighting.held_at().map_or("Game time".to_string(), |at| format!("Held {at}"));
-                    line(parent, format!("Current: {current}"), 14.0, Color::srgb(0.6, 0.8, 1.0));
-
-                    let buf = &console.lighting_time_buf;
+                MenuPath::WorldClock => {
+                    let buf = &console.clock_buf;
                     let display = if buf.is_empty() { "_" } else { buf };
                     line(parent, format!("Time = {display}"), 16.0, Color::srgb(0.9, 0.9, 0.4));
 
                     parent.spawn((
-                        Text::new(date_line(&console, &diagnostics_state, &server, &time)),
+                        Text::new(date_line(&console, &server, &time)),
                         TextFont { font_size: FontSize::Px(16.0), ..default() },
                         TextColor(Color::srgb(0.9, 0.9, 0.4)),
                         DateLine,
                     ));
 
                     for text in [
-                        "Enter HHMM or HH, press Enter (empty = game time)",
+                        "The world's clock: every player's date, sky and weather",
+                        "Enter HHMM or HH, press Enter (empty = the wall clock)",
                         "Left/Right: rewind / forward, hold to hurry",
                         "Tab: pick day / week / season, Up/Down: step by it",
+                        "Space: hold / run",
                     ] {
                         line(parent, text, 12.0, Color::srgb(0.6, 0.6, 0.6));
                     }
@@ -250,26 +252,31 @@ fn state_color(state: bool) -> Color {
     }
 }
 
-/// The lighting menu's date row: the game clock's date, the picked field
-/// bracketed.
-fn date_line(console: &DevConsole, diagnostics_state: &DiagnosticsState, server: &crate::resources::Server, time: &Time) -> String {
-    let date = Date::of(diagnostics_state.lighting.at(server.wall(server.now(time.elapsed().as_millis()))));
-    format!("Date = {}", picked_date(date, console.lighting_date_field))
+/// A calendar moment's hour of its day, as `HH:MM`.
+fn hour(ms: u128) -> String {
+    format!("{:02}:{:02}", ms % DAY_MS / HOUR_MS, ms % HOUR_MS / MINUTE_MS)
 }
 
-/// Keeps the date row current while the lighting menu shows.
+/// The world clock menu's row: the calendar's hour and date, the picked
+/// field bracketed, and whether it is held.
+fn date_line(console: &DevConsole, server: &crate::resources::Server, time: &Time) -> String {
+    let now = server.wall(server.now(time.elapsed().as_millis()));
+    let held = if server.calendar.held.is_some() { "  held" } else { "" };
+    format!("Now = {} {}{held}", hour(now), picked_date(Date::of(now), console.clock_date_field))
+}
+
+/// Keeps the clock's row current while the world clock menu shows.
 pub fn refresh_date_line(
     console: Res<DevConsole>,
-    diagnostics_state: Res<DiagnosticsState>,
     server: Res<crate::resources::Server>,
     time: Res<Time>,
     mut rows: Query<&mut Text, With<DateLine>>,
 ) {
-    if !console.visible || console.current_menu != MenuPath::LightingTime {
+    if !console.visible || console.current_menu != MenuPath::WorldClock {
         return;
     }
     for mut row in &mut rows {
-        **row = date_line(&console, &diagnostics_state, &server, &time);
+        **row = date_line(&console, &server, &time);
     }
 }
 

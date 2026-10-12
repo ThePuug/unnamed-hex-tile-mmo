@@ -46,7 +46,6 @@ use common_bevy::{
 use crate::{
     components::{ViewHud, Viewed},
     plugins::{
-        diagnostics::DiagnosticsState,
         settings::{Display, Resolution, VideoSettings},
         shell::{self, Entered, Stage},
     },
@@ -72,7 +71,7 @@ impl Plugin for RecorderPlugin {
         info!("recorder: {} of {} shots from {path}", shots.len(), script.shots.len());
 
         let year = Date::year(wall_now()).0;
-        app.insert_resource(Recorder { script, shots, year, index: 0, phase: Phase::Enter, keys: Keys::default(), sink: None });
+        app.insert_resource(Recorder { script, shots, year, index: 0, phase: Phase::Enter, keys: Keys::default(), sink: None, held: None });
         app.init_resource::<Captured>();
         app.add_systems(PreUpdate, press_keys.after(bevy::input::InputSystems).before(input::update_keybits));
         // The path is laid over what the gameplay camera placed, so a shot
@@ -109,6 +108,8 @@ pub struct Recorder {
     keys: Keys,
     /// An inactive camera every UI root is pointed at.
     sink: Option<Entity>,
+    /// The moment the world's clock was last asked to hold at.
+    held: Option<u128>,
 }
 
 impl Recorder {
@@ -291,7 +292,6 @@ fn advance(
     npcs: Query<(Entity, &EntityType, &Loc)>,
     loaded: Res<LoadedChunks>,
     meshes: Res<SummaryMeshes>,
-    mut diagnostics: ResMut<DiagnosticsState>,
     mut exit: MessageWriter<AppExit>,
     viewing: Res<shell::view::Viewing>,
 ) {
@@ -311,7 +311,10 @@ fn advance(
     // under the light it is recorded in, and holds it while a view has no
     // player
     let hours = clock_at(&shot.clock, recorder.t());
-    diagnostics.lighting.hold_at(recorder.year + (hours * HOUR_MS as f64) as u128);
+    let moment = recorder.year + (hours * HOUR_MS as f64) as u128;
+    if recorder.held.replace(moment) != Some(moment) {
+        writer.write(Try { event: Event::ChangeCalendar { change: common_bevy::systems::CalendarChange::HoldAt(moment) } });
+    }
     let now = Instant::now();
 
     // A shot that views its fighter ends with the view: the fighter fell

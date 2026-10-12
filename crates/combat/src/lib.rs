@@ -34,15 +34,15 @@ use common_bevy::tuning::Tuning;
 /// The game's clock: what the server's `Time` has run, in milliseconds,
 /// from `elapsed_offset` (0 live; a test starts it where it likes). A
 /// threat's times, a press and a client's `Init` and `Pong` are all
-/// stamped on it, each a [`Moment`]. The calendar is not: `wall_at_zero`
-/// is the wall-clock moment the clock read 0 at, sent to clients once and
-/// read by the calendar and the sky alone. A moment of the wall clock is
-/// billions of milliseconds; as a float it keeps minutes, so it never
-/// reaches timing.
+/// stamped on it, each a [`Moment`]. The world's calendar is not: it is
+/// read off this clock through `calendar`, which an admin may shift or
+/// hold, sent to every client and read by the date, the sky and the
+/// weather alone. A moment of the calendar is billions of milliseconds; as
+/// a float it keeps minutes, so it never reaches timing.
 #[derive(Default, Resource)]
 pub struct RunTime {
     pub elapsed_offset: u128,
-    pub wall_at_zero: u128,
+    pub calendar: common_bevy::systems::Calendar,
 }
 
 impl RunTime {

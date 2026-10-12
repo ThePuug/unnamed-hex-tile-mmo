@@ -267,12 +267,13 @@ pub struct Server {
     pub early: f64,
     /// How far an arrival strays from `early`, smoothed
     pub spread: f64,
-    /// The wall-clock moment the server's game clock read 0 at, from
-    /// `Init`: the calendar's anchor, read through [`Server::wall`] by the
-    /// date and the sky alone, never by timing. The client's own clock
-    /// until `Init`, so the sky drawn while connecting is about now: the
-    /// calendar cannot read a moment whose season began before the epoch.
-    pub wall_at_zero: u128,
+    /// The world's calendar, from `Init` and from every `Calendar` the
+    /// server sends as an admin changes it: read through [`Server::wall`]
+    /// by the date, the sky and the weather alone, never by timing. The
+    /// client's own clock until `Init`, so the sky drawn while connecting
+    /// is about now: the calendar cannot read a moment whose season began
+    /// before the epoch.
+    pub calendar: common_bevy::systems::Calendar,
 }
 
 impl Default for Server {
@@ -285,7 +286,7 @@ impl Default for Server {
             margin: 40.0,
             early: 40.0,
             spread: 10.0,
-            wall_at_zero: common_bevy::systems::wall_now(),
+            calendar: common_bevy::systems::Calendar::running(common_bevy::systems::wall_now()),
         }
     }
 }
@@ -299,18 +300,12 @@ impl Server {
         self.client_time_at_init = client_now;
     }
 
-    /// Anchors the calendar: `wall` is the wall-clock moment the server's
-    /// clock read 0 at, as `Init` says.
-    pub fn anchor(&mut self, wall: u128) {
-        self.wall_at_zero = wall;
-    }
-
-    /// The wall-clock moment game time `game` is: what the calendar and
-    /// the sky read (`systems::Date`). Billions of milliseconds, so never
-    /// a float and never a timer's operand; the one place a moment is
-    /// counted.
+    /// The calendar's moment at game time `game`: what the date, the sky
+    /// and the weather read (`systems::Date`), held where the world's
+    /// calendar is held. Billions of milliseconds, so never a float and
+    /// never a timer's operand; the one place a moment is counted.
     pub fn wall(&self, game: Moment) -> u128 {
-        self.wall_at_zero.saturating_add(game.since(Moment::ZERO).as_millis())
+        self.calendar.at(game)
     }
 
     /// The game clock as this client lives it, at `client_now`: the

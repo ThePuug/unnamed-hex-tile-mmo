@@ -55,7 +55,7 @@ fn handle(
     // Back key: Numpad0 normally, Escape when numpad digits have other meaning
     let uses_escape_back = matches!(
         console.current_menu,
-        MenuPath::GotoInput | MenuPath::LightingTime
+        MenuPath::GotoInput | MenuPath::WorldClock
     );
 
     let back_pressed = if uses_escape_back {
@@ -71,8 +71,8 @@ fn handle(
             if matches!(console.current_menu, MenuPath::GotoInput) {
                 console.goto_input = None;
             }
-            if matches!(console.current_menu, MenuPath::LightingTime) {
-                console.lighting_time_buf.clear();
+            if matches!(console.current_menu, MenuPath::WorldClock) {
+                console.clock_buf.clear();
             }
             console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
         }
@@ -89,7 +89,7 @@ fn handle(
     match console.current_menu {
         MenuPath::Root => handle_root_menu(keyboard, console),
         MenuPath::Terrain => handle_terrain_menu(keyboard, console, action_writer),
-        MenuPath::LightingTime => handle_lighting_time(keyboard, console, action_writer, dt),
+        MenuPath::WorldClock => handle_world_clock(keyboard, console, action_writer, dt),
         MenuPath::GotoSelect => handle_goto_select_menu(keyboard, console),
         MenuPath::GotoInput => handle_goto_input(keyboard, console, action_writer),
         MenuPath::View => handle_view_menu(keyboard, action_writer),
@@ -154,8 +154,8 @@ fn handle_terrain_menu(
         consumed = Some(KeyCode::Numpad1);
     } else if keyboard.just_pressed(KeyCode::Numpad2) {
         console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::LightingTime;
-        console.lighting_time_buf.clear();
+        console.current_menu = MenuPath::WorldClock;
+        console.clock_buf.clear();
         consumed = Some(KeyCode::Numpad2);
     } else if keyboard.just_pressed(KeyCode::Numpad3) {
         action_writer.write(DevConsoleAction::ToggleTerrainHidden);
@@ -182,68 +182,71 @@ fn handle_terrain_menu(
     }
 }
 
-/// A held arrow scrubs the lighting clock at this many times game time's
+/// A held arrow scrubs the world's clock at this many times game time's
 /// pace, eased up to from that pace over this many seconds of holding.
 const SCRUB_MAX_RATE: f32 = 60.0;
 const SCRUB_EASE_SECS: f32 = 3.0;
 
-/// Digits typed into the lighting hour; Enter holds the clock there, or
-/// with nothing typed returns it to game time. Left and right arrows
-/// rewind and forward it, quickening the longer they are held. Tab picks a
-/// field of the date and up and down step the clock by it.
-fn handle_lighting_time(
+/// The world's clock, for every player: digits typed as an hour and Enter
+/// move the clock to that hour of its day, or with nothing typed run it at
+/// the wall clock again. Left and right arrows rewind and forward it,
+/// quickening the longer they are held. Tab picks a field of the date and
+/// up and down step the clock by it. Space holds it, or lets it run on.
+fn handle_world_clock(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
     action_writer: &mut MessageWriter<DevConsoleAction>,
     dt: f32,
 ) {
-    use crate::plugins::diagnostics::LightingClock;
-
     let dir = keyboard.pressed(KeyCode::ArrowRight) as i32 - keyboard.pressed(KeyCode::ArrowLeft) as i32;
     if dir != 0 {
-        console.lighting_scrub_secs += dt;
-        let eased = (console.lighting_scrub_secs / SCRUB_EASE_SECS).min(1.0);
+        console.clock_scrub_secs += dt;
+        let eased = (console.clock_scrub_secs / SCRUB_EASE_SECS).min(1.0);
         let rate = 1.0 + (SCRUB_MAX_RATE - 1.0) * eased * eased;
-        action_writer.write(DevConsoleAction::ScrubLightingClock((dir as f32 * rate * dt * 1000.0) as i128));
-    } else if console.lighting_scrub_secs != 0.0 {
-        console.lighting_scrub_secs = 0.0;
+        action_writer.write(DevConsoleAction::ShiftClock((dir as f32 * rate * dt * 1000.0) as i64));
+    } else if console.clock_scrub_secs != 0.0 {
+        console.clock_scrub_secs = 0.0;
     }
 
     if keyboard.just_pressed(KeyCode::Tab) {
-        console.lighting_date_field = console.lighting_date_field.next();
+        console.clock_date_field = console.clock_date_field.next();
         keyboard.clear_just_pressed(KeyCode::Tab);
     }
     let steps = keyboard.just_pressed(KeyCode::ArrowUp) as i32 - keyboard.just_pressed(KeyCode::ArrowDown) as i32;
     if steps != 0 {
-        action_writer.write(DevConsoleAction::StepLightingDate(console.lighting_date_field, steps));
+        action_writer.write(DevConsoleAction::ShiftClock(steps as i64 * console.clock_date_field.unit() as i64));
+    }
+    if keyboard.just_pressed(KeyCode::Space) {
+        action_writer.write(DevConsoleAction::ToggleClockHold);
+        keyboard.clear_just_pressed(KeyCode::Space);
     }
 
     if keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::NumpadEnter) {
         keyboard.clear_just_pressed(KeyCode::Enter);
         keyboard.clear_just_pressed(KeyCode::NumpadEnter);
-        let buf = console.lighting_time_buf.trim().to_string();
+        let buf = console.clock_buf.trim().to_string();
         if buf.is_empty() {
-            action_writer.write(DevConsoleAction::SyncLightingClock);
-        } else if let Some(ms_of_day) = LightingClock::parse_time(&buf) {
-            action_writer.write(DevConsoleAction::SetLightingTime(ms_of_day));
+            action_writer.write(DevConsoleAction::ResetClock);
+        } else if let Some(ms_of_day) = crate::plugins::diagnostics::parse_time(&buf) {
+            action_writer.write(DevConsoleAction::SetClockHour(ms_of_day));
         } else {
-            info!("Lighting time: invalid input '{buf}'");
+            info!("World clock: invalid input '{buf}'");
             return;
         }
-        console.lighting_time_buf.clear();
+        console.clock_buf.clear();
         console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
         return;
     }
 
     for &(key, ch) in DIGIT_KEYS {
         if keyboard.just_pressed(key) {
-            console.lighting_time_buf.push(ch);
+            console.clock_buf.push(ch);
             keyboard.clear_just_pressed(key);
         }
     }
 
     if keyboard.just_pressed(KeyCode::Backspace) {
-        console.lighting_time_buf.pop();
+        console.clock_buf.pop();
         keyboard.clear_just_pressed(KeyCode::Backspace);
     }
 }

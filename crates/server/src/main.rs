@@ -72,7 +72,7 @@ fn main() {
         common_bevy::systems::world::try_incremental,
         common_bevy::systems::world::do_incremental,
         input::try_input,
-        actor::try_teleport,
+        (actor::try_teleport, world::try_change_calendar),
         engagement_spawner::try_spawn_party,
         (input::try_respec_attributes, input::try_set_loadout),
         crate::systems::equipment::try_wear,

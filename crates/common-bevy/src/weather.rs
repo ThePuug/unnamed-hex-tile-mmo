@@ -193,8 +193,8 @@ const STRIKE_CELL_WU: f64 = 2_000.0;
 const STRIKE_CHANCE: f64 = STRIKE_SLOT_MS as f64 / 450_000.0;
 
 /// Every strike from `from` to `to` within `radius` of `x`, `z`, under the
-/// storms `forecast` stands, the same for every reader of one forecast. The
-/// strikes keep their own clock: a sky held at one moment still flashes.
+/// storms `forecast` stands, the same for every reader of one forecast. A
+/// held calendar holds them, a stroke stopped as it was.
 pub fn strikes(forecast: &Forecast, from: u128, to: u128, x: f64, z: f64, radius: f64) -> Vec<Strike> {
     let mut found = Vec::new();
     let reach = (radius / STRIKE_CELL_WU).ceil() as i64;
@@ -259,7 +259,7 @@ pub const METEOR_BURNS_MOST_MS: u128 = 6_000;
 /// horizon or burning out before it. It is in the sky, as the sun is, so
 /// every player sees the one arc wherever they stand, and an arc that long
 /// crosses the low sky the camera sees whichever way it faces. Day or
-/// night. The meteors keep their own clock, as the strikes do.
+/// night. A held calendar holds them where they burn.
 pub fn meteors(forecast: &Forecast, from: u128, to: u128) -> Vec<Meteor> {
     let mut found = Vec::new();
     for slot in from / METEOR_SLOT_MS..=to / METEOR_SLOT_MS {

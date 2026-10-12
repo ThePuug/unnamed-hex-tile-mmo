@@ -5,6 +5,9 @@ pub mod targeting;
 pub mod world;
 
 use chrono::Datelike;
+use serde::{Deserialize, Serialize};
+
+use crate::Moment;
 
 // Game time is the server's wall clock in milliseconds since the epoch,
 // under game names: a day of four real hours, a week of six days (a real
@@ -66,6 +69,72 @@ impl std::fmt::Display for Date {
     }
 }
 
+/// The world's calendar: the wall-clock moment the server's clock read 0
+/// at, as an admin has moved it, and the moment it stands held at, if it
+/// is held. The server keeps it and sends it to every client, and every
+/// reading of the date, the sky and the weather goes through it, so every
+/// player reads one moment and a held calendar holds all of it. The game
+/// clock every timer runs on is the server's uptime and never moves with
+/// it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Calendar {
+    pub wall_at_zero: u128,
+    pub held: Option<u128>,
+}
+
+/// An admin's change to the calendar, as `Calendar::change` takes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CalendarChange {
+    /// Move it this many milliseconds on, or back, held or running.
+    Shift(i64),
+    /// Hold it at this moment.
+    HoldAt(u128),
+    /// Let it run on from where it is held.
+    Run,
+    /// Run it at the wall clock again.
+    Reset,
+}
+
+/// The earliest moment the calendar is moved to, 1 January 1971: it reads
+/// no moment whose week or year began before the epoch.
+pub const EARLIEST: u128 = 365 * 86_400_000;
+
+impl Calendar {
+    /// Running at the wall clock, the server's clock having read 0 at
+    /// `wall_at_zero`.
+    pub fn running(wall_at_zero: u128) -> Self {
+        Self { wall_at_zero, held: None }
+    }
+
+    /// The calendar's moment at game time `game`.
+    pub fn at(&self, game: Moment) -> u128 {
+        self.held.unwrap_or(self.wall_at_zero.saturating_add(game.since(Moment::ZERO).as_millis()))
+    }
+
+    /// Takes `change` at game time `game`, the wall clock reading
+    /// `wall_at_zero` at the server's 0 for a reset. Never moves before
+    /// `EARLIEST`.
+    pub fn change(&mut self, change: CalendarChange, game: Moment, wall_at_zero: u128) {
+        let elapsed = game.since(Moment::ZERO).as_millis();
+        match change {
+            CalendarChange::Shift(delta) => {
+                let to = (self.at(game) as i128 + delta as i128).max(EARLIEST as i128) as u128;
+                match self.held {
+                    Some(_) => self.held = Some(to),
+                    None => self.wall_at_zero = to.saturating_sub(elapsed),
+                }
+            }
+            CalendarChange::HoldAt(moment) => self.held = Some(moment.max(EARLIEST)),
+            CalendarChange::Run => {
+                if let Some(held) = self.held.take() {
+                    self.wall_at_zero = held.saturating_sub(elapsed);
+                }
+            }
+            CalendarChange::Reset => *self = Self::running(wall_at_zero),
+        }
+    }
+}
+
 /// The calendar's zone: Eastern European Time, UTC+2 without summer time,
 /// whatever zone the server runs in, so every server keeps one calendar
 /// and no clock jumps an hour at a summer-time change.
@@ -122,5 +191,34 @@ mod tests {
         assert_eq!(april - march, 5 * SEASON_MS);
         assert_eq!(may - april, 4 * SEASON_MS);
         assert_eq!(Date::season_start(march + 3 * WEEK_MS + HOUR_MS), march);
+    }
+
+    /// A running calendar keeps the wall clock, shifted where it was moved;
+    /// a held one stands still; run again, it goes on from where it stood;
+    /// reset, it keeps the wall clock; and nothing moves it before 1971.
+    #[test]
+    fn the_calendar_holds_runs_and_shifts() {
+        let wall = monday(2026, 3, 2);
+        let at = |ms: u64| Moment::from_millis(ms);
+        let mut calendar = Calendar::running(wall);
+        assert_eq!(calendar.at(at(5_000)), wall + 5_000);
+
+        calendar.change(CalendarChange::Shift(DAY_MS as i64), at(5_000), wall);
+        assert_eq!(calendar.at(at(6_000)), wall + DAY_MS + 6_000, "a shift runs on");
+
+        calendar.change(CalendarChange::HoldAt(wall + HOUR_MS), at(6_000), wall);
+        assert_eq!(calendar.at(at(60_000)), wall + HOUR_MS, "held, it stands still");
+        calendar.change(CalendarChange::Shift(-(MINUTE_MS as i64)), at(60_000), wall);
+        assert_eq!(calendar.at(at(90_000)), wall + HOUR_MS - MINUTE_MS, "a shift moves the held moment");
+
+        calendar.change(CalendarChange::Run, at(90_000), wall);
+        assert_eq!(calendar.at(at(91_000)), wall + HOUR_MS - MINUTE_MS + 1_000, "it runs on from where it stood");
+
+        calendar.change(CalendarChange::Reset, at(91_000), wall);
+        assert_eq!(calendar, Calendar::running(wall));
+
+        calendar.change(CalendarChange::Shift(-(wall as i64)), at(0), wall);
+        assert_eq!(calendar.at(at(0)), EARLIEST, "never before 1971");
+        assert!(Date::year(calendar.at(at(0))).1 > 0, "the calendar reads it");
     }
 }

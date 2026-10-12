@@ -43,13 +43,13 @@ pub fn update_keybits(
     dt: Res<Time>,
     server: Res<crate::resources::Server>,
 ) {
-    // The menu and the console's lighting panel, whose arrows scrub the
+    // The menu and the console's world clock, whose arrows scrub the
     // clock, are modal: while one is open every gameplay key reads as
     // released, so the character stops and nothing fires. A panel is not;
     // an open one has the numpad, so the jump on it fires only with none
     // open.
     let modal = menu.open
-        || (console.visible && console.current_menu == crate::plugins::console::MenuPath::LightingTime);
+        || (console.visible && console.current_menu == crate::plugins::console::MenuPath::WorldClock);
     let Ok((ent, mut keybits0, target, held, attrs)) = query.single_mut() else { return };
 
     let delta_ns = dt.delta().as_nanos();

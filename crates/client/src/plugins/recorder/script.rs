@@ -2,7 +2,7 @@
 //!
 //! A shot puts the player on a tile facing a bearing, waits for the world
 //! there to have arrived, then records `seconds` of frames while the camera
-//! runs its path, the lighting clock its keys and the player its keys.
+//! runs its path, the world's clock its keys and the player its keys.
 //! A shot of zero seconds is a still, saved as a PNG.
 
 use std::path::PathBuf;
@@ -43,7 +43,7 @@ pub struct Shot {
     pub settle: f32,
     #[serde(default)]
     pub hide_player: bool,
-    /// The lighting clock: `[t, hours]` keys, hours counted from the start
+    /// The world's clock: `[t, hours]` keys, hours counted from the start
     /// of the year, held linear between keys.
     pub clock: Vec<[f64; 2]>,
     #[serde(default)]
@@ -245,7 +245,7 @@ fn spline(times: &[f32], points: &[Vec3], ease: bool, t: f32) -> Vec3 {
     points[i] * h00 + tangent(i) * (h10 * span) + points[i + 1] * h01 + tangent(i + 1) * (h11 * span)
 }
 
-/// The lighting clock at time `t`, in hours from the start of the year:
+/// The world's clock at time `t`, in hours from the start of the year:
 /// linear between keys, held outside them.
 pub fn clock_at(keys: &[[f64; 2]], t: f32) -> f64 {
     let t = t as f64;

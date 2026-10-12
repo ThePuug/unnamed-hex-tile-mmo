@@ -180,6 +180,7 @@ fn main() {
 
     app.add_systems(Update, (
         world::do_init,
+        world::do_calendar,
         (
             equipment::do_inventory,
             equipment::dress,

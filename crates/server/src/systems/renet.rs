@@ -118,7 +118,7 @@ pub fn do_presence(
 
                 // init client
                 let dt = runtime.now(&time);
-                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Init { ent, dt, wall: runtime.wall_at_zero }});
+                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Init { ent, dt, calendar: runtime.calendar }});
 
                 // Send own Spawn + component states directly to connecting client
                 // AOI will handle discovering nearby entities via Changed<Loc>
@@ -252,8 +252,9 @@ pub fn write_try(
                 Event::Spawn { ent, .. } => {
                     writer.write(Try { event: Event::Spawn { ent, typ: EntityType::Unset, qrz: Qrz::default(), attrs: None }});
                 }
-                // An admin's party stands ahead of whichever actor it names
-                Event::SpawnParty { .. } => {
+                // An admin's party stands ahead of whichever actor it names,
+                // and an admin's calendar is the world's
+                Event::SpawnParty { .. } | Event::ChangeCalendar { .. } => {
                     writer.write(Try { event });
                 }
                 // An auto-attack is the server's to time, never a client's to ask for
@@ -278,26 +279,28 @@ pub fn write_try(
     }
 }
 
-/// Who a `Do` about an entity is sent to, and how.
+/// Who a `Do` is sent to, and how: the clients concerned with the entity
+/// it is about, or every client.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Route {
     /// Every client that has the entity loaded and the one whose lobby
     /// entry it is, in order
-    Seen,
+    Seen(Entity),
     /// The client whose lobby entry the entity is, in order
-    Owner,
+    Owner(Entity),
     /// That client, in no order: chunks and summaries are independent, and
     /// one held back would hold back the rest
-    OwnerUnordered,
+    OwnerUnordered(Entity),
     /// Every client that simulates the entity, unreliably: the latest
     /// wins, and `Loc` repairs a loss
-    Moving,
+    Moving(Entity),
+    /// Every client, in order: what is the same for the whole world
+    Everyone,
 }
 
-/// The entity a `Do` is about and the route it takes, or none for an event
-/// that stays on the server. A `Spawn` is sent where it is made, to the
-/// clients it is for.
-fn route(event: &Event) -> Option<(Entity, Route)> {
+/// The route a `Do` takes, or none for an event that stays on the server.
+/// A `Spawn` is sent where it is made, to the clients it is for.
+fn route(event: &Event) -> Option<Route> {
     match event {
         Event::Incremental { ent, .. }
         | Event::Despawn { ent, .. }
@@ -306,18 +309,19 @@ fn route(event: &Event) -> Option<(Entity, Route)> {
         | Event::ApplyDamage { ent, .. }
         | Event::ClearQueue { ent, .. }
         | Event::Respawn { ent, .. }
-        | Event::UseAbility { ent, .. } => Some((*ent, Route::Seen)),
+        | Event::UseAbility { ent, .. } => Some(Route::Seen(*ent)),
         Event::Confirm { ent, .. }
         | Event::RespecAttributes { ent, .. }
         | Event::SetLoadout { ent, .. }
         | Event::Inventory { ent, .. }
         | Event::CoverChanged { ent, .. }
         | Event::Den { ent, .. }
-        | Event::Loot { ent, .. } => Some((*ent, Route::Owner)),
+        | Event::Loot { ent, .. } => Some(Route::Owner(*ent)),
         Event::ChunkData { ent, .. }
         | Event::EvictChunks { ent, .. }
-        | Event::SummaryBatch { ent, .. } => Some((*ent, Route::OwnerUnordered)),
-        Event::MovementIntent { ent, .. } | Event::Displace { ent, .. } => Some((*ent, Route::Moving)),
+        | Event::SummaryBatch { ent, .. } => Some(Route::OwnerUnordered(*ent)),
+        Event::MovementIntent { ent, .. } | Event::Displace { ent, .. } => Some(Route::Moving(*ent)),
+        Event::Calendar { .. } => Some(Route::Everyone),
         _ => None,
     }
 }
@@ -333,21 +337,25 @@ pub fn send_do(
 ) {
     let mut _t = None;
     for message in reader.read() {
-        let Some((ent, route)) = route(&message.event) else { continue };
+        let Some(route) = route(&message.event) else { continue };
         _t.get_or_insert_with(|| timings.scope("send_do"));
-        let owner = lobby.get_by_right(&ent);
+        let owner = |ent: Entity| lobby.get_by_right(&ent);
         match route {
-            Route::Owner => {
-                if let Some(client_id) = owner {
+            Route::Everyone => {
+                let everyone = conn.clients_id();
+                conn.send_each(everyone, DefaultChannel::ReliableOrdered, message);
+            }
+            Route::Owner(ent) => {
+                if let Some(client_id) = owner(ent) {
                     conn.send(*client_id, DefaultChannel::ReliableOrdered, message);
                 }
             }
-            Route::OwnerUnordered => {
-                if let Some(client_id) = owner {
+            Route::OwnerUnordered(ent) => {
+                if let Some(client_id) = owner(ent) {
                     conn.send(*client_id, DefaultChannel::ReliableUnordered, message);
                 }
             }
-            Route::Seen => {
+            Route::Seen(ent) => {
                 let Ok(loaded_by) = loaded_by_query.get(ent) else {
                     if matches!(message.event, Event::Despawn { .. }) {
                         warn!("SERVER: Cannot send Despawn for entity {:?} - no LoadedBy component", ent);
@@ -356,13 +364,13 @@ pub fn send_do(
                 };
                 // Its owner too: a client viewing the actor sees what befalls it
                 let seeing = loaded_by.players.iter().filter(|&&player| player != ent).filter_map(|player| lobby.get_by_right(player));
-                conn.send_each(owner.into_iter().chain(seeing).copied(), DefaultChannel::ReliableOrdered, message);
+                conn.send_each(owner(ent).into_iter().chain(seeing).copied(), DefaultChannel::ReliableOrdered, message);
             }
-            Route::Moving => {
+            Route::Moving(ent) => {
                 let Ok(loaded_by) = loaded_by_query.get(ent) else { continue };
                 // A client viewing the actor simulates it as any other it sees;
                 // a character's own client predicts it and wants none
-                let viewer = owner.filter(|_| !characters.contains(ent));
+                let viewer = owner(ent).filter(|_| !characters.contains(ent));
                 let simulating = loaded_by.players.iter().filter_map(|player| lobby.get_by_right(player)).chain(viewer);
                 conn.send_each(simulating.copied(), DefaultChannel::Unreliable, message);
             }
@@ -377,10 +385,16 @@ mod tests {
     #[test]
     fn what_only_its_owner_should_know_goes_to_its_owner_alone() {
         let ent = Entity::from_raw_u32(7).unwrap();
-        assert_eq!(route(&Event::Loot { ent, entries: None }), Some((ent, Route::Owner)));
-        assert_eq!(route(&Event::UseAbility { ent, ability: AbilityType::Frenzy, target: None, at: Default::default(), arrived: Default::default() }), Some((ent, Route::Seen)));
-        assert_eq!(route(&Event::Despawn { ent, died: true }), Some((ent, Route::Seen)));
-        assert_eq!(route(&Event::Displace { ent, destination: Qrz::default(), duration_ms: 0, around: None }), Some((ent, Route::Moving)));
+        assert_eq!(route(&Event::Loot { ent, entries: None }), Some(Route::Owner(ent)));
+        assert_eq!(route(&Event::UseAbility { ent, ability: AbilityType::Frenzy, target: None, at: Default::default(), arrived: Default::default() }), Some(Route::Seen(ent)));
+        assert_eq!(route(&Event::Despawn { ent, died: true }), Some(Route::Seen(ent)));
+        assert_eq!(route(&Event::Displace { ent, destination: Qrz::default(), duration_ms: 0, around: None }), Some(Route::Moving(ent)));
+    }
+
+    #[test]
+    fn the_worlds_calendar_goes_to_everyone() {
+        let calendar = common_bevy::systems::Calendar::running(1_000);
+        assert_eq!(route(&Event::Calendar { calendar }), Some(Route::Everyone));
     }
 
     #[test]

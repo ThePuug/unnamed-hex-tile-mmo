@@ -31,9 +31,15 @@ pub enum Event {
         tiles: ArrayVec<[(i32, EntityType, Option<i32>); 272]>,
     },
     /// Server → Client: the client's actor, the game clock `dt` as it was
-    /// sent, and `wall`, the wall-clock moment the clock read 0 at, for
-    /// the calendar and the sky (`systems::Date`).
-    Init { ent: Entity, dt: Moment, wall: u128 },
+    /// sent, and the world's calendar, which the date, the sky and the
+    /// weather are read from (`systems::Calendar`).
+    Init { ent: Entity, dt: Moment, calendar: crate::systems::Calendar },
+    /// Client → Server: change the world's calendar for everyone. An admin
+    /// request, as ungated on the wire as `Teleport` (issue #21).
+    ChangeCalendar { change: crate::systems::CalendarChange },
+    /// Server → Client: the world's calendar as it stands, sent to every
+    /// client when an admin changes it.
+    Calendar { calendar: crate::systems::Calendar },
     /// Client → Server: `dt` milliseconds of input `seq` on the client's own
     /// clock. A new `seq` opens an input; the same `seq` again extends it.
     Input { ent: Entity, key_bits: KeyBits, dt: u16, seq: u8 },
@@ -214,7 +220,13 @@ impl Event {
             | Event::RespecAttributes { ent, .. }
             | Event::SetLoadout { ent, .. }
             | Event::View { ent } => Some(ent),
-            Event::DealDamage { .. } | Event::Ping { .. } | Event::Pong { .. } | Event::Play | Event::Leave => None,
+            Event::DealDamage { .. }
+            | Event::Ping { .. }
+            | Event::Pong { .. }
+            | Event::Play
+            | Event::Leave
+            | Event::ChangeCalendar { .. }
+            | Event::Calendar { .. } => None,
         }
     }
 }

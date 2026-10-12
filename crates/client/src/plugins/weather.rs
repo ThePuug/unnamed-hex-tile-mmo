@@ -3,9 +3,9 @@
 //! [`SkyWeather`] for `world::update` to light the sky, the clouds and the
 //! ground by, and draws the rain or snow falling round the view.
 //!
-//! Two clocks run here. The weather is read at the sky's clock, the
-//! lighting clock the console may hold; the strikes, the meteors, the wind
-//! and the fall keep the wall clock, so a held sky still moves.
+//! Everything here reads the world's calendar (`Server::wall`), which an
+//! admin may shift or hold for every player at once: held, the fronts, the
+//! strikes, the fireballs, the wind and the fall all stand still.
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -351,12 +351,12 @@ fn drops_mesh() -> Mesh {
 /// The forecast the sky shows: the fronts at the sky's moment, or one
 /// weather everywhere where the console holds it. Whether what falls is
 /// snow, where the hold says.
-fn forecast(hold: WeatherHold, sky_ms: u128) -> (Forecast, Option<bool>) {
+fn forecast(hold: WeatherHold, wall_ms: u128) -> (Forecast, Option<bool>) {
     let steady = |cover: f32, rain: f32, mist: f32, storm: f32, omen: f32| {
-        Forecast::steady(sky_ms, Weather { cover, rain, mist, storm }, omen)
+        Forecast::steady(wall_ms, Weather { cover, rain, mist, storm }, omen)
     };
     match hold {
-        WeatherHold::Forecast => (Forecast::at(sky_ms), None),
+        WeatherHold::Forecast => (Forecast::at(wall_ms), None),
         WeatherHold::Clear => (steady(0.0, 0.0, 0.0, 0.0, 0.0), None),
         WeatherHold::Overcast => (steady(1.0, 0.0, 0.0, 0.0, 0.0), None),
         WeatherHold::Rain => (steady(1.0, 1.0, 0.0, 0.0, 0.0), Some(false)),
@@ -381,8 +381,7 @@ fn read(
 ) {
     let Ok(camera) = camera.single() else { return };
     let wall_ms = server.wall(server.now(time.elapsed().as_millis()));
-    let sky_ms = diagnostics.lighting.at(wall_ms);
-    let (forecast, _) = forecast(diagnostics.weather, sky_ms);
+    let (forecast, _) = forecast(diagnostics.weather, wall_ms);
     let world = origin.world(camera.translation);
     let (x, z) = (world.x as f64, world.z as f64);
 
@@ -397,7 +396,7 @@ fn read(
     // The map, about the camera's cell.
     let centre = ((x / MAP_CELL_WU).floor() as i64, (z / MAP_CELL_WU).floor() as i64);
     let due = match weather.read {
-        Some((read_ms, read_centre, hold)) => read_centre != centre || hold != diagnostics.weather || sky_ms.abs_diff(read_ms) >= MAP_REFRESH_MS,
+        Some((read_ms, read_centre, hold)) => read_centre != centre || hold != diagnostics.weather || wall_ms.abs_diff(read_ms) >= MAP_REFRESH_MS,
         None => true,
     };
     if due {
@@ -416,7 +415,7 @@ fn read(
         let corner_world = Vec3::new((i0 as f64 * MAP_CELL_WU) as f32, 0.0, (j0 as f64 * MAP_CELL_WU) as f32);
         let corner = corner_world - origin.world_vec();
         weather.frame = Vec4::new(corner.x, corner.z, MAP_CELLS as f32 * MAP_CELL_WU as f32, 0.0);
-        weather.read = Some((sky_ms, centre, diagnostics.weather));
+        weather.read = Some((wall_ms, centre, diagnostics.weather));
     }
 
     let (dx, dz) = weather::drift(wall_ms);
@@ -522,11 +521,10 @@ fn fall(
     let Ok((camera, fog)) = camera.single() else { return };
     let Some(mut material) = precipitation.single().ok().and_then(|m| materials.get_mut(&m.0)) else { return };
     let wall_ms = server.wall(server.now(time.elapsed().as_millis()));
-    let sky_ms = diagnostics.lighting.at(wall_ms);
-    let snow = forecast(diagnostics.weather, sky_ms).1
+    let snow = forecast(diagnostics.weather, wall_ms).1
         .unwrap_or_else(|| {
             let ground = viewed.single().map_or(camera.translation.y / RISE, |loc| loc.z as f32);
-            ground > weather::snow_line(sky_ms)
+            ground > weather::snow_line(wall_ms)
         });
 
     let ahead = camera.forward().as_vec3().with_y(0.0).normalize_or_zero() * BOX_AHEAD;

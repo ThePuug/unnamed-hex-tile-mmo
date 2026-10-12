@@ -52,12 +52,12 @@ pub struct DevConsole {
     /// Active goto text input (when in GotoInput menu)
     #[cfg(feature = "admin")]
     pub goto_input: Option<GotoInputState>,
-    /// Text buffer for the lighting hour (when in LightingTime menu)
-    pub lighting_time_buf: String,
-    /// How long an arrow has scrubbed the lighting clock, in seconds.
-    pub lighting_scrub_secs: f32,
-    /// The date field Up and Down step (when in LightingTime menu).
-    pub lighting_date_field: DateField,
+    /// Text buffer for the hour typed (when in the WorldClock menu)
+    pub clock_buf: String,
+    /// How long an arrow has scrubbed the world's clock, in seconds.
+    pub clock_scrub_secs: f32,
+    /// The date field Up and Down step (when in the WorldClock menu).
+    pub clock_date_field: DateField,
 }
 
 impl Default for DevConsole {
@@ -68,9 +68,9 @@ impl Default for DevConsole {
             history: Vec::new(),
             #[cfg(feature = "admin")]
             goto_input: None,
-            lighting_time_buf: String::new(),
-            lighting_scrub_secs: 0.0,
-            lighting_date_field: DateField::default(),
+            clock_buf: String::new(),
+            clock_scrub_secs: 0.0,
+            clock_date_field: DateField::default(),
         }
     }
 }
@@ -80,7 +80,7 @@ impl Default for DevConsole {
 pub enum MenuPath {
     Root,
     Terrain,
-    LightingTime,
+    WorldClock,
     #[cfg(feature = "admin")]
     GotoSelect,
     #[cfg(feature = "admin")]
@@ -119,7 +119,7 @@ impl MenuPath {
         match self {
             MenuPath::Root => "Main Menu",
             MenuPath::Terrain => "Terrain Settings",
-            MenuPath::LightingTime => "Lighting Time",
+            MenuPath::WorldClock => "World Clock",
             #[cfg(feature = "admin")]
             MenuPath::GotoSelect => "Goto — Select Coordinates",
             #[cfg(feature = "admin")]

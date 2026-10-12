@@ -406,9 +406,11 @@ points `VisualPosition` at it, `actor::update` renders it.
     A float is made from the difference of two moments, never from one.
     An absolute time is a `Moment` (`common_bevy::moment`), which has no
     float and no count; a length of time is a `Duration`.
-    The wall clock lives in `RunTime::wall_at_zero` and `Server::wall`,
-    read by the calendar (`systems::Date`) and the sky alone; the game
-    clock every timer runs on is the server's uptime, and stays small.
+    The world's calendar (`systems::Calendar`) lives in `RunTime::calendar`
+    and reaches every client, read through `Server::wall` by the date
+    (`systems::Date`), the sky and the weather alone; an admin may shift or
+    hold it for every player at once. The game clock every timer runs on is
+    the server's uptime, never moves with it, and stays small.
 
 ## Writing a world event
 

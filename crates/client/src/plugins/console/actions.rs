@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
-    plugins::diagnostics::{DateField, DiagnosticsState, grid::HexGridOverlay},
+    plugins::diagnostics::{DiagnosticsState, grid::HexGridOverlay},
     components::PlayerOriginDebug,
 };
 use common_bevy::components::Actor;
@@ -11,13 +11,14 @@ use common_bevy::components::Actor;
 pub enum DevConsoleAction {
     // Terrain actions
     ToggleGrid,
-    /// Hold the lighting clock at an hour of the day, in ms.
-    SetLightingTime(u128),
-    /// Move the held lighting clock by this many ms, either way.
-    ScrubLightingClock(i128),
-    /// Step a field of the held lighting clock's date this many times.
-    StepLightingDate(DateField, i32),
-    SyncLightingClock,
+    /// Move the world's clock to an hour of its day, in ms.
+    SetClockHour(u128),
+    /// Move the world's clock this many ms, either way.
+    ShiftClock(i64),
+    /// Hold the world's clock where it is, or let it run on.
+    ToggleClockHold,
+    /// Run the world's clock at the wall clock again.
+    ResetClock,
     ToggleTerrainHidden,
     ToggleCoverHidden,
     ToggleCameraCloseup,
@@ -65,10 +66,7 @@ pub fn execute_console_actions(
             Without<HexGridOverlay>,
         ),
     >,
-    time: Res<Time>,
-    server: Res<crate::resources::Server>,
 ) {
-    let wall = server.wall(server.now(time.elapsed().as_millis()));
     for action in reader.read() {
         match action {
             DevConsoleAction::ToggleGrid => {
@@ -98,22 +96,6 @@ pub fn execute_console_actions(
                 }
 
                 info!("Grid overlay: {}", if state.grid_visible { "ON" } else { "OFF" });
-            }
-            DevConsoleAction::SetLightingTime(ms_of_day) => {
-                state.lighting.hold(wall, *ms_of_day);
-                info!("Lighting clock: held at {}", state.lighting.held_at().unwrap_or_default());
-            }
-            DevConsoleAction::ScrubLightingClock(delta) => {
-                state.lighting.scrub(wall, *delta);
-            }
-            DevConsoleAction::StepLightingDate(field, steps) => {
-                state.lighting.step(wall, *field, *steps);
-                let at = state.lighting.at(wall);
-                info!("Lighting clock: held on {}", common_bevy::systems::Date::of(at));
-            }
-            DevConsoleAction::SyncLightingClock => {
-                state.lighting.sync();
-                info!("Lighting clock: game time");
             }
             DevConsoleAction::ToggleTerrainHidden => {
                 state.terrain_hidden = !state.terrain_hidden;
@@ -152,6 +134,10 @@ pub fn execute_console_actions(
             DevConsoleAction::GotoQR(_, _) => {}
             DevConsoleAction::ViewTarget | DevConsoleAction::StopViewing => {}
             DevConsoleAction::SpawnParty { .. } => {}
+            DevConsoleAction::SetClockHour(_)
+            | DevConsoleAction::ShiftClock(_)
+            | DevConsoleAction::ToggleClockHold
+            | DevConsoleAction::ResetClock => {}
             DevConsoleAction::AddLatency(ms) => {
                 let most = crate::network::AddedLatency::MOST.as_millis() as i64;
                 let total = (added.0.as_millis() as i64 + ms).clamp(0, most);
@@ -190,6 +176,29 @@ pub fn send_view(
             }
             _ => {}
         }
+    }
+}
+
+/// Asks the server to change the world's calendar as the console's clock
+/// keys say, for every player.
+pub fn send_calendar(
+    mut reader: MessageReader<DevConsoleAction>,
+    mut writer: MessageWriter<common_bevy::message::Try>,
+    server: Res<crate::resources::Server>,
+    time: Res<Time>,
+) {
+    use common_bevy::systems::{CalendarChange, DAY_MS};
+    let now = server.wall(server.now(time.elapsed().as_millis()));
+    for action in reader.read() {
+        let change = match *action {
+            DevConsoleAction::SetClockHour(ms_of_day) => CalendarChange::Shift((now - now % DAY_MS + ms_of_day) as i64 - now as i64),
+            DevConsoleAction::ShiftClock(delta) => CalendarChange::Shift(delta),
+            DevConsoleAction::ToggleClockHold if server.calendar.held.is_some() => CalendarChange::Run,
+            DevConsoleAction::ToggleClockHold => CalendarChange::HoldAt(now),
+            DevConsoleAction::ResetClock => CalendarChange::Reset,
+            _ => continue,
+        };
+        writer.write(common_bevy::message::Try { event: common_bevy::message::Event::ChangeCalendar { change } });
     }
 }
 

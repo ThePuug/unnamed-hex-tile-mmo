@@ -20,6 +20,7 @@ use common_bevy::{
 fn get_message_type_name(message: &Do) -> &'static str {
     match &message.event {
         Event::Init { .. } => "Init",
+        Event::Calendar { .. } => "Calendar",
         Event::Spawn { .. } => "Spawn",
         Event::Confirm { .. } => "Confirm",
         Event::Despawn { .. } => "Despawn",
@@ -93,7 +94,7 @@ pub fn write_do(
         match message {
 
             // insert l2r for player
-            Do { event: Event::Init { ent: ent0, dt, wall }} => {
+            Do { event: Event::Init { ent: ent0, dt, calendar }} => {
                 // Create local player entity with markers
                 // Health/Endurance will be inserted by Incremental events from server
                 let ent = commands.spawn((
@@ -107,7 +108,7 @@ pub fn write_do(
                 l2r.insert(ent, ent0);
                 buffers.extend_one((ent, InputQueue {
                     queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into(), ..default() }));
-                do_writer.write(Do { event: Event::Init { ent, dt, wall }});
+                do_writer.write(Do { event: Event::Init { ent, dt, calendar }});
             }
 
             // The client now sees the world as an actor it does not control:
@@ -183,7 +184,7 @@ pub fn write_do(
             Do { event: Event::Den { ent: _, at, den } } => {
                 do_writer.write(Do { event: Event::Den { ent: Entity::PLACEHOLDER, at, den } });
             }
-            Do { event: event @ Event::Pong { .. } } => {
+            Do { event: event @ (Event::Pong { .. } | Event::Calendar { .. }) } => {
                 do_writer.write(Do { event });
             }
             // Every other is about an entity, known here by an id of its
@@ -315,7 +316,7 @@ pub fn send_try(
         let mut event = message.event.clone();
         match event {
             // A spawn is asked for by the server's own id, and these are about no entity
-            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping => {}
+            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping | Event::ChangeCalendar { .. } => {}
             Event::Input { .. }
             | Event::UseAbility { .. }
             | Event::View { .. }

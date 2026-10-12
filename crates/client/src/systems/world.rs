@@ -374,12 +374,23 @@ pub fn do_init(
     time: Res<Time>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::Init { dt, wall, .. } } = message else { continue };
+        let Do { event: Event::Init { dt, calendar, .. } } = message else { continue };
         let dt = *dt;
         let client_now = time.elapsed().as_millis();
         server.sync(dt, client_now);
-        server.anchor(*wall);
+        server.calendar = *calendar;
         server.last_ping_time = client_now;
+    }
+}
+
+/// Takes the world's calendar as an admin changed it.
+pub fn do_calendar(
+    mut reader: MessageReader<Do>,
+    mut server: ResMut<Server>,
+) {
+    for message in reader.read() {
+        let Do { event: Event::Calendar { calendar } } = message else { continue };
+        server.calendar = *calendar;
     }
 }
 
@@ -411,14 +422,13 @@ pub fn update(
     mut sky_materials: ResMut<Assets<SkyMaterial>>,
     (weather, q_clouds, mut cloud_materials): (Res<SkyWeather>, Query<&MeshMaterial3d<CloudMaterial>, With<CloudDeck>>, ResMut<Assets<CloudMaterial>>),
     server: Res<Server>,
-    diagnostics_state: Res<DiagnosticsState>,
     player_query: Query<&Loc, With<crate::components::Viewed>>,
 ) {
     // The sky keeps wall-clock time (`Server::wall`), whole milliseconds
     // until each fraction below. The sun keeps the clock's hour, noon at
     // 12:00; its path swings with the year's phase, and the moon's phase
     // runs once per season.
-    let wall = diagnostics_state.lighting.at(server.wall(server.now(time.elapsed().as_millis())));
+    let wall = server.wall(server.now(time.elapsed().as_millis()));
     let (year_start, year_len) = Date::year(wall);
     let dtd = (wall % DAY_MS) as f32 / DAY_MS as f32;
     let dtm = (wall - Date::season_start(wall)) as f32 / SEASON_MS as f32;

@@ -122,7 +122,26 @@ pub fn setup(
     // clock alone (`systems::Date`): its midnight is the day's, Monday is
     // Mot, a month's first Monday the year's. The game clock stays small.
     let elapsed = time.elapsed().as_millis();
-    runtime.wall_at_zero = wall_now() - elapsed;
+    runtime.calendar = Calendar::running(wall_now() - elapsed);
+}
+
+/// Takes an admin's change to the world's calendar and sends the calendar
+/// as it then stands to every client, so every player's date, sky and
+/// weather move together.
+pub fn try_change_calendar(
+    mut reader: MessageReader<Try>,
+    mut writer: MessageWriter<Do>,
+    mut runtime: ResMut<RunTime>,
+    time: Res<Time>,
+) {
+    for message in reader.read() {
+        let Try { event: Event::ChangeCalendar { change } } = message else { continue };
+        let now = runtime.now(&time);
+        let wall_at_zero = wall_now() - now.since(common_bevy::Moment::ZERO).as_millis();
+        runtime.calendar.change(*change, now, wall_at_zero);
+        info!("calendar: {change:?}, now {}", Date::of(runtime.calendar.at(now)));
+        writer.write(Do { event: Event::Calendar { calendar: runtime.calendar } });
+    }
 }
 
 pub fn try_spawn(

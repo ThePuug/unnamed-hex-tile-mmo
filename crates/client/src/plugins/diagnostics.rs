@@ -1,4 +1,4 @@
-//! The grid, the lighting clock and the milestones in every build; in
+//! The grid, the weather hold and the milestones in every build; in
 //! admin builds, the metrics too, published for the console to read
 //! (`publish`). A player's build measures nothing for no one.
 
@@ -17,7 +17,7 @@ use bevy::{prelude::*, render::RenderApp};
 
 #[cfg(feature = "admin")]
 pub use census::RenderCensus;
-pub use config::{DateField, DiagnosticsState, LightingClock, WeatherHold};
+pub use config::{parse_time, DateField, DiagnosticsState, WeatherHold};
 
 pub struct DiagnosticsPlugin;
 
