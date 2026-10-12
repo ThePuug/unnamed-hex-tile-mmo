@@ -12,7 +12,7 @@ use crate::plugins::{diagnostics::DiagnosticsState, ink::Ink, vignette::Vignette
 use common_bevy::{
     components::{heading::{Heading, HEADING_SLOTS}, position::VisualPosition, *},
     resources::map::Map,
-    systems::movement::{standing_y, surface_y_from},
+    systems::movement::{solid_extent, standing_y, surface_y_from},
 };
 
 /// Orbit stops: one per heading, so the camera can stand behind any.
@@ -29,9 +29,10 @@ const POSE_EASE: f32 = 4.0;
 /// Exponential decay constant of the pull's smoothing, so the ground
 /// sampled ahead cannot flick the pose as the player walks.
 const PULL_EASE: f32 = 2.0;
-/// Exponential decay constant of the boom's clearance letting back out
-/// after an obstruction. Shortening onto one is immediate, so the camera
-/// never enters what stands on the boom.
+/// Exponential decay constants of the boom's clearance drawing in to a
+/// prop and letting back out after an obstruction. Shortening onto the
+/// ground is immediate, so the camera never enters it.
+const SHORTEN_EASE: f32 = 4.0;
 const LENGTHEN_EASE: f32 = 2.0;
 /// Threshold below which the yaw's easing snaps to its target.
 const SNAP_THRESHOLD: f32 = 0.005;
@@ -72,7 +73,8 @@ const SHOULDER_WU: f32 = 1.2;
 /// this share of its length, with this lens, so the frame still looks down
 /// on the player from over the shoulder and never up past the horizon. It
 /// closes in quickly and draws back out slowly, so a gap in a wood does
-/// not pump the boom.
+/// not pump the boom. That share is also the nearest a prop on the boom
+/// draws the camera in.
 const CLOSE_REACH: f32 = 0.075;
 const CLOSE_FOV: f32 = 40_f32.to_radians();
 const CLOSE_IN_EASE: f32 = 3.0;
@@ -429,8 +431,8 @@ fn lens_to_hold(pose: &Pose, tilt: Tilt, up: f32) -> f32 {
     needed.clamp(pose.fov, HILL_FOV)
 }
 
-/// `pose` raised no further than clears its boom of what stands on it —
-/// the hillside behind a player facing down a slope steeper than the plane
+/// `pose` raised no further than clears its boom of the ground — the
+/// hillside behind a player facing down a slope steeper than the plane
 /// follows — its lens and reach untouched. `pose` itself where the boom is
 /// already clear, or where not even the lift's highest clears it, since
 /// only shortening the boom then can.
@@ -492,55 +494,72 @@ const BOOM_CLEARANCE: f32 = 0.3;
 /// between them stays under the frame.
 const STAND_HEIGHT: f32 = 4.0;
 
-/// Whether the ground, within `clearance` of it, or a solid decorator
-/// stands at `at`, a rendered point.
-fn obstructed(at: Vec3, clearance: f32, map: &Map, origin: &RenderOrigin) -> bool {
+/// The heights under `at`, a rendered point: the ground's, and the top of
+/// the props on its tile — the tallest solid object in its slots as it is
+/// drawn, a tree, a stump or a boulder, standing on the ground there —
+/// which is the ground's where none stands. None where it is not loaded.
+fn heights_under(at: Vec3, map: &Map, origin: &RenderOrigin) -> Option<(f32, f32)> {
     let here = origin.tile_at(map, at);
-    let Some((floor, _)) = map.get_by_qr(here.q, here.r) else { return false };
-    let solid = matches!(
-        map.get(here),
-        Some(common_bevy::components::entity_type::EntityType::Decorator(d)) if d.is_solid
-    );
-    solid || surface_y_from(origin.tile(), at.xz(), floor, map) + clearance > at.y
+    let (floor, _) = map.get_by_qr(here.q, here.r)?;
+    let ground = surface_y_from(origin.tile(), at.xz(), floor, map);
+    let cover = map.cover_at(here.q, here.r);
+    let tallest = (0..common::TILE_SLOTS as usize)
+        .filter_map(|k| solid_extent(cover, here.q, here.r, k))
+        .fold(0.0_f32, |top, (_, height)| top.max(height));
+    Some((ground, ground + tallest))
+}
+
+/// Whether `at`, a rendered point, stands within `clearance` of the ground.
+fn grounded(at: Vec3, clearance: f32, map: &Map, origin: &RenderOrigin) -> bool {
+    heights_under(at, map, origin).is_some_and(|(ground, _)| ground + clearance > at.y)
+}
+
+/// Whether `at`, a rendered point, stands within the boom's clearance of
+/// the ground, or among the props on its tile.
+fn obstructed(at: Vec3, map: &Map, origin: &RenderOrigin) -> bool {
+    heights_under(at, map, origin).is_some_and(|(ground, props)| ground + BOOM_CLEARANCE > at.y || props > at.y)
 }
 
 /// Whether `pose`'s sightline from the player's eye at `eye` on ground of
-/// `tilt` keeps its clearance over the ground all the way to the camera,
-/// and nothing solid stands on it: the rig slid over the shoulder as far
-/// as the pose's own reach slides it.
+/// `tilt` keeps its clearance over the ground all the way to the camera:
+/// the rig slid over the shoulder as far as the pose's own reach slides
+/// it. Props are not read: the camera is never lifted over a wood, the
+/// boom is shortened short of it.
 fn boom_is_clear(pose: &Pose, eye: Vec3, tilt: Tilt, map: &Map, origin: &RenderOrigin) -> bool {
     let shift = pose.shift(pose.boom());
     let (head, foot) = (eye + shift, pose.transform(eye, tilt).translation + shift);
     let rise = (STAND_HEIGHT - BOOM_CLEARANCE) * pose.boom() / CAMERA_DISTANCE;
     (1..=BOOM_SAMPLES).all(|i| {
         let t = i as f32 / BOOM_SAMPLES as f32;
-        !obstructed(head + (foot - head) * t, BOOM_CLEARANCE + rise * t, map, origin)
+        !grounded(head + (foot - head) * t, BOOM_CLEARANCE + rise * t, map, origin)
     })
 }
 
-/// The fraction of the boom, from the player's eye to the camera, that is
-/// clear of the ground and of solid decorators: 1 when nothing stands on
-/// it. Sampled along the boom, then bisected between the last clear point
-/// and the first obstructed one, so the fraction is continuous as the
-/// obstruction moves.
-fn boom_clearance(eye: Vec3, camera: Vec3, map: &Map, origin: &RenderOrigin) -> f32 {
+/// The fraction of the boom, from the player's eye to the camera, short
+/// of the first point `blocked` holds: 1 when it holds none. Sampled along
+/// the boom, then bisected between the last clear point and the first
+/// blocked one, so the fraction is continuous as the obstruction moves.
+fn boom_clearance(eye: Vec3, camera: Vec3, blocked: impl Fn(Vec3) -> bool) -> f32 {
     let at = |t: f32| eye + (camera - eye) * t;
-    let Some(first) = (1..=BOOM_SAMPLES).find(|&i| obstructed(at(i as f32 / BOOM_SAMPLES as f32), BOOM_CLEARANCE, map, origin)) else {
+    let Some(first) = (1..=BOOM_SAMPLES).find(|&i| blocked(at(i as f32 / BOOM_SAMPLES as f32))) else {
         return 1.0;
     };
-    let (mut clear, mut blocked) = ((first - 1) as f32 / BOOM_SAMPLES as f32, first as f32 / BOOM_SAMPLES as f32);
+    let (mut clear, mut held) = ((first - 1) as f32 / BOOM_SAMPLES as f32, first as f32 / BOOM_SAMPLES as f32);
     for _ in 0..BOOM_HALVINGS {
-        let mid = (clear + blocked) / 2.0;
-        if obstructed(at(mid), BOOM_CLEARANCE, map, origin) { blocked = mid } else { clear = mid }
+        let mid = (clear + held) / 2.0;
+        if blocked(at(mid)) { held = mid } else { clear = mid }
     }
     clear
 }
 
-/// The boom's clearance this frame, from `current` toward `measured`:
-/// onto an obstruction at once, so the camera never enters what stands
-/// on the boom; back out eased.
-fn clearance_step(current: f32, measured: f32, dt: f32) -> f32 {
-    ease(current, measured, LENGTHEN_EASE, dt).min(measured)
+/// The boom's clearance this frame, from `current` toward `wanted`, the
+/// share clear of the ground and props both: eased in and back out, so a
+/// prop's tile coming onto the boom draws the camera in smoothly; but
+/// never past `ground`, the share clear of the ground alone, onto which
+/// it shortens at once so the camera never enters the ground.
+fn clearance_step(current: f32, wanted: f32, ground: f32, dt: f32) -> f32 {
+    let k = if wanted < current { SHORTEN_EASE } else { LENGTHEN_EASE };
+    ease(current, wanted, k, dt).min(ground)
 }
 
 pub fn update(
@@ -599,18 +618,22 @@ pub fn update(
         wanted = Pose { yaw: wanted.yaw, elevation: 0.0, fov: CEILING_FOV, reach: 1.0 };
     }
     let next = step(current, wanted, dt);
-    // What stands on the boom lifts the camera over it at once, so the
-    // camera never enters it; it settles back as the step eases it toward
-    // the wanted pose.
+    // Ground on the boom lifts the camera over it at once, so the camera
+    // never enters it; it settles back as the step eases it toward the
+    // wanted pose.
     let next = if diagnostics.camera_closeup { next } else { lifted(next, eye, tilt, &map, origin) };
 
-    // An obstruction no elevation clears shortens the boom: the camera
-    // stands just short. The rig's slide over the shoulder follows the
-    // reach the camera has, from the last frame's clearance.
+    // A prop on the boom, or ground no elevation clears, shortens it: the
+    // camera draws in short of it, a prop no nearer than over the
+    // shoulder. The rig's slide over the shoulder follows the reach the
+    // camera has, from the last frame's clearance.
     let stand = next.transform(eye, tilt);
     let shift = next.shift(next.boom() * state.clearance);
     let (head, foot) = (eye + shift, stand.translation + shift);
-    state.clearance = clearance_step(state.clearance, boom_clearance(head, foot, &map, origin), dt);
+    let shoulder = (CLOSE_REACH / next.reach).min(1.0);
+    let wanted = boom_clearance(head, foot, |at| obstructed(at, &map, origin)).max(shoulder);
+    let ground = boom_clearance(head, foot, |at| grounded(at, BOOM_CLEARANCE, &map, origin));
+    state.clearance = clearance_step(state.clearance, wanted, ground, dt);
     let translation = head + (foot - head) * state.clearance;
 
     state.pose = next;
@@ -784,7 +807,7 @@ mod tests {
             let tilt = ground_tilt(feet, TILT_RINGS_WU, &map, &origin).expect("loaded");
             let climb = climb_ahead(feet, Heading::NORTH, 0.5, &map, &origin);
             let up = lifted(Pose::ceiling(0.0), eye, tilt, &map, &origin);
-            let clear = boom_clearance(eye, up.transform(eye, tilt).translation, &map, &origin);
+            let clear = boom_clearance(eye, up.transform(eye, tilt).translation, |at| obstructed(at, &map, &origin));
             (tilt, climb, up, clear)
         };
         assert_eq!(read(Qrz { q: 0, r: 0, z: 0 }), read(Qrz { q: -1_600_000, r: 2_400_000, z: 0 }));
@@ -809,9 +832,38 @@ mod tests {
         for yaw in [0.0, 1.0, 2.5] {
             let low = Pose { elevation: 0.0, ..Pose::rest(yaw) };
             let (stand, shift) = (low.transform(eye, Vec2::ZERO), low.shift(low.boom()));
-            let clear = boom_clearance(eye + shift, stand.translation + shift, &map, &RenderOrigin::default());
+            let clear = boom_clearance(eye + shift, stand.translation + shift, |at| obstructed(at, &map, &RenderOrigin::default()));
             assert_eq!(clear, 1.0, "the boom at yaw {yaw} is obstructed at {clear}");
         }
+    }
+
+    /// A wood standing on the boom behind a player on level ground — the
+    /// bank of a river the player wades up — shortens the boom short of
+    /// it, and never lifts the camera over it.
+    #[test]
+    fn a_wood_behind_shortens_the_boom() {
+        use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
+        let map = Map::new(qrz::Map::new(1.0, 0.8));
+        let wood = (0..common::SITES.len()).fold(common::Cover::NONE, |c, k| c.with(k, common::Content::Pine));
+        for q in -40..=40 {
+            for r in -40..=40 {
+                // A band of pines across the boom, from 15 to 25 units behind
+                // a player facing north.
+                let behind = map.convert(Qrz { q, r, z: 0 }).z;
+                let cover = if (15.0..25.0).contains(&behind) { wood } else { common::Cover::NONE };
+                map.insert(Qrz { q, r, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: false }));
+            }
+        }
+        let origin = RenderOrigin::default();
+        let feet = map.convert(Qrz { q: 0, r: 0, z: 1 });
+        let eye = feet + Vec3::Y * EYE_HEIGHT;
+        let open = Pose::ceiling(0.0);
+        assert_eq!(lifted(open, eye, Vec2::ZERO, &map, &origin), open, "lifted over a wood");
+        let camera = open.transform(eye, Vec2::ZERO).translation;
+        let clear = boom_clearance(eye, camera, |at| obstructed(at, &map, &origin));
+        let stands = eye + (camera - eye) * clear;
+        assert!(clear < 1.0 && !obstructed(stands, &map, &origin), "stands at {clear} of the boom, {stands:?}");
+        assert!(stands.z < 15.0, "stands in or past the wood at {stands:?}");
     }
 
     /// Where the player's eye lands in the frame, as fractions of the
@@ -837,15 +889,18 @@ mod tests {
         assert!(near > far && far > 0.0, "{near} at 4, {far} at 30");
     }
 
-    /// An obstruction shortens the boom at once, so the camera never
-    /// enters what stands on it; the boom lets back out eased.
+    /// Ground on the boom shortens it at once, so the camera never enters
+    /// the ground; a prop draws it in eased, and quicker than it lets back
+    /// out.
     #[test]
-    fn an_obstruction_shortens_the_boom_at_once() {
+    fn the_ground_shortens_the_boom_at_once_a_prop_eased() {
         let dt = 1.0 / 60.0;
-        assert_eq!(clearance_step(1.0, 0.3, dt), 0.3);
-        let out = clearance_step(0.3, 1.0, dt);
+        assert_eq!(clearance_step(1.0, 0.3, 0.3, dt), 0.3);
+        let drawn = clearance_step(1.0, 0.3, 1.0, dt);
+        assert!(drawn > 0.3 && drawn < 1.0, "drawn in to {drawn}");
+        let out = clearance_step(0.3, 1.0, 1.0, dt);
         assert!(out > 0.3 && out < 1.0, "eased out to {out}");
-        assert!(clearance_step(0.9, 0.3, dt) <= 0.3);
+        assert!(1.0 - drawn > out - 0.3, "draws in no quicker than it lets out: {drawn}, {out}");
     }
 
     /// The shoulder moves the player across the frame, not down it: at
