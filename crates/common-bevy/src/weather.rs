@@ -223,29 +223,40 @@ pub fn strikes(forecast: &Forecast, from: u128, to: u128, x: f64, z: f64, radius
 }
 const STRIKE_SEED: u64 = 0x6c69_6768_746e;
 
-/// A meteor: when it lights, how long it burns, and the directions it runs
-/// between across the sky, along the great circle through both.
+/// A meteor: when it lights, how long it burns, and its arc across the
+/// sky: the direction it rises at on the horizon, the pole of the great
+/// circle it runs on, and how far round it runs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Meteor {
     pub at: u128,
     pub burns_ms: u128,
-    pub from: Vec3,
-    pub to: Vec3,
+    pub rises: Vec3,
+    pub pole: Vec3,
+    pub span: f32,
+}
+
+impl Meteor {
+    /// Where it stands after `share` of its run.
+    pub fn along(&self, share: f32) -> Vec3 {
+        let angle = self.span * share;
+        self.rises * angle.cos() + self.pole.cross(self.rises) * angle.sin()
+    }
 }
 
 pub const METEOR_SLOT_MS: u128 = 1_000;
-/// About one fireball every ten seconds over the whole sky in the leap
-/// season.
+/// About one fireball every ten seconds in the leap season.
 const METEOR_CHANCE: f64 = 0.1;
 /// The longest a fireball burns: a reader looking for the ones alight
 /// looks this far back.
-pub const METEOR_BURNS_MOST_MS: u128 = 4_000;
+pub const METEOR_BURNS_MOST_MS: u128 = 6_000;
 
 /// Every meteor lit from `from` to `to` in `forecast`'s leap season: a
-/// fireball, the same over the whole world, burning for seconds on a long
-/// arc that comes down across the sky, from high to the horizon over a
-/// third of the sky's round, so it crosses the low sky the camera sees.
-/// Day or night. The meteors keep their own clock, as the strikes do.
+/// fireball arcing across the sky, rising from the horizon, climbing a
+/// quarter of its way round to its top, and going down toward the far
+/// horizon or burning out before it. It is in the sky, as the sun is, so
+/// every player sees the one arc wherever they stand, and an arc that long
+/// crosses the low sky the camera sees whichever way it faces. Day or
+/// night. The meteors keep their own clock, as the strikes do.
 pub fn meteors(forecast: &Forecast, from: u128, to: u128) -> Vec<Meteor> {
     let mut found = Vec::new();
     for slot in from / METEOR_SLOT_MS..=to / METEOR_SLOT_MS {
@@ -259,12 +270,15 @@ pub fn meteors(forecast: &Forecast, from: u128, to: u128) -> Vec<Meteor> {
             continue;
         }
         let bearing = 2.0 * PI * draw(4);
-        let across = (60.0 + 60.0 * draw(2)) * if draw(6) < 0.5 { -1.0 } else { 1.0 };
+        let turn = if draw(6) < 0.5 { -FRAC_PI_2 } else { FRAC_PI_2 };
+        let rises = direction(bearing, 0.0);
+        let top = direction(bearing + turn, (20.0 + 30.0 * draw(3)).to_radians());
         found.push(Meteor {
             at,
-            burns_ms: 1_500 + (draw(5) * (METEOR_BURNS_MOST_MS - 1_500) as f64) as u128,
-            from: direction(bearing, (25.0 + 20.0 * draw(3)).to_radians()),
-            to: direction(bearing + across.to_radians(), (8.0 * draw(7)).to_radians()),
+            burns_ms: 3_000 + (draw(5) * (METEOR_BURNS_MOST_MS - 3_000) as f64) as u128,
+            rises,
+            pole: rises.cross(top).normalize(),
+            span: (130.0 + 50.0 * draw(2) as f32).to_radians(),
         });
     }
     found
@@ -400,20 +414,27 @@ mod tests {
         assert!(struck > 0, "the leap season's storms strike");
     }
 
-    /// Every fireball comes down across the sky to the horizon, burning no
-    /// longer than a reader looks back for, and they cross every side.
+    /// Every fireball rises from the horizon, climbs to its top a quarter
+    /// of the way round and stays in the sky the whole of its run, burning
+    /// no longer than a reader looks back for; they rise on every side.
     #[test]
-    fn fireballs_come_down_across_every_side() {
+    fn fireballs_arc_across_the_sky_on_every_side() {
         let omen = MARCH + 4 * SEASON_MS + DAY_MS;
         let seen = meteors(&Forecast::at(omen), omen, omen + 30 * 60_000);
         assert!(seen.len() > 50);
         for m in &seen {
-            assert!(m.to.y < m.from.y && m.to.y >= 0.0, "it comes down to the horizon");
-            assert!(m.from.dot(m.to) < 0.6, "across a long arc");
+            assert!(m.rises.y.abs() < 1e-6, "it rises from the horizon");
+            assert!(m.pole.dot(m.rises).abs() < 1e-5, "on a great circle through it");
+            let top = m.along(std::f32::consts::FRAC_PI_2 / m.span);
+            assert!(top.y > 20_f32.to_radians().sin() - 1e-4, "climbing high");
+            for k in 0..=20 {
+                assert!(m.along(k as f32 / 20.0).y > -1e-4, "and staying in the sky");
+            }
+            assert!(m.rises.dot(m.along(1.0)) < -0.6, "across most of the sky");
             assert!(m.burns_ms <= METEOR_BURNS_MOST_MS);
         }
         for (x, z) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
-            assert!(seen.iter().any(|m| m.from.x * x + m.from.z * z > 0.7), "fireballs light toward ({x}, {z})");
+            assert!(seen.iter().any(|m| m.rises.x * x + m.rises.z * z > 0.7), "fireballs rise toward ({x}, {z})");
         }
     }
 

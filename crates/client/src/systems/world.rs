@@ -518,7 +518,7 @@ pub fn update(
         clouds.bolts = weather.bolts;
         clouds.bolt_looks = weather.bolt_looks;
         clouds.meteor_tails = weather.meteor_tails;
-        clouds.meteor_heads = weather.meteor_heads;
+        clouds.meteor_paths = weather.meteor_paths;
         clouds.blaze = weather.blaze.extend(0.);
     }
 

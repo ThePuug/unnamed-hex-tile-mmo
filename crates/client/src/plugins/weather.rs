@@ -84,10 +84,10 @@ pub struct SkyWeather {
     pub bolts: [Vec4; BOLTS],
     /// Each bolt's path seed and its apparent width in radians.
     pub bolt_looks: [Vec4; BOLTS],
-    /// Each fireball alight: its trail's end and its brightness, and its
-    /// head and the seed its flicker is drawn from.
+    /// Each fireball alight: its trail's end and its brightness, and the
+    /// pole of the great circle it runs on and the trail's angle along it.
     pub meteor_tails: [Vec4; METEORS],
-    pub meteor_heads: [Vec4; METEORS],
+    pub meteor_paths: [Vec4; METEORS],
     /// The fireballs' light on the sky, the clouds and the ground.
     pub blaze: Vec3,
     /// The weather map: cover, rain, storm and mist about the camera.
@@ -116,7 +116,7 @@ impl FromWorld for SkyWeather {
             bolts: [Vec4::ZERO; BOLTS],
             bolt_looks: [Vec4::ZERO; BOLTS],
             meteor_tails: [Vec4::ZERO; METEORS],
-            meteor_heads: [Vec4::ZERO; METEORS],
+            meteor_paths: [Vec4::ZERO; METEORS],
             blaze: Vec3::ZERO,
             map,
             frame: Vec4::new(0.0, 0.0, MAP_CELLS as f32 * MAP_CELL_WU as f32, 0.0),
@@ -168,11 +168,11 @@ pub struct CloudMaterial {
     pub bolts: [Vec4; BOLTS],
     #[uniform(0)]
     pub bolt_looks: [Vec4; BOLTS],
-    /// `SkyWeather::meteor_tails`, `meteor_heads` and `blaze`.
+    /// `SkyWeather::meteor_tails`, `meteor_paths` and `blaze`.
     #[uniform(0)]
     pub meteor_tails: [Vec4; METEORS],
     #[uniform(0)]
-    pub meteor_heads: [Vec4; METEORS],
+    pub meteor_paths: [Vec4; METEORS],
     #[uniform(0)]
     pub blaze: Vec4,
     #[texture(1)]
@@ -460,26 +460,25 @@ fn read(
     }
 
     // Fireballs: each from its trail's end, a part of its run behind the
-    // head, to its head, and the light of all of them.
+    // head, along its arc to its head, and the light of all of them.
     weather.meteor_tails = [Vec4::ZERO; METEORS];
-    weather.meteor_heads = [Vec4::ZERO; METEORS];
+    weather.meteor_paths = [Vec4::ZERO; METEORS];
     weather.blaze = Vec3::ZERO;
     let alight = weather::meteors(&forecast, wall_ms.saturating_sub(weather::METEOR_BURNS_MOST_MS), wall_ms)
         .into_iter()
         .filter(|m| wall_ms < m.at + m.burns_ms);
     for (n, meteor) in alight.take(METEORS).enumerate() {
         let burnt = (wall_ms - meteor.at) as f32 / meteor.burns_ms as f32;
-        let head = meteor.from.slerp(meteor.to, burnt);
-        let tail = meteor.from.slerp(meteor.to, (burnt - METEOR_TRAIL).max(0.0));
+        let trailing = (burnt - METEOR_TRAIL).max(0.0);
         let bright = blazing(burnt);
-        weather.meteor_tails[n] = tail.extend(bright);
-        weather.meteor_heads[n] = head.extend((meteor.at % 997) as f32);
+        weather.meteor_tails[n] = meteor.along(trailing).extend(bright);
+        weather.meteor_paths[n] = meteor.pole.extend(meteor.span * (burnt - trailing));
         weather.blaze += BLAZE_COLOR * bright;
     }
 }
 
 /// The share of a fireball's run its trail stands behind the head.
-const METEOR_TRAIL: f32 = 0.35;
+const METEOR_TRAIL: f32 = 0.25;
 /// The colour a fireball lights the world in.
 const BLAZE_COLOR: Vec3 = Vec3::new(1.0, 0.55, 0.2);
 
