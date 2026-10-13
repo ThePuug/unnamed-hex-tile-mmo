@@ -115,7 +115,7 @@ fn score(c: &Composite, q: i32, r: i32, home: &[world::tectonic::PlateId]) -> Op
     }
 
     // Rays: what the eye sees in each bearing.
-    let rise = 0.8;
+    let rise = common::grid::RISE as f64;
     let spacing = 3f64.sqrt();
     let eye = z + EYE;
     let mut per_bearing = Vec::with_capacity(BEARINGS);

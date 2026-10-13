@@ -15,7 +15,8 @@ pub use events::plates::{substrate_elevation_at, substrate_on, Coasts};
 
 // ──── The vertical scale ────
 
-/// Height of one z-level in this crate's horizontal unit, the tile spacing.
+/// Height of one z-level in this crate's horizontal unit, the tile spacing:
+/// tan 34°, so one level per tile climbs at the angle of repose.
 ///
 /// The renderer stands a z-level `common::grid::RISE` of its units tall
 /// and spaces neighbouring tiles √3 of its units apart, while this crate
@@ -25,7 +26,7 @@ pub use events::plates::{substrate_elevation_at, substrate_on, Coasts};
 /// length derived from a vertical one, a sheet spacing from a crust
 /// thickness, a tilt amplitude from a grade, goes through this ratio and
 /// renders at the angle it was designed at.
-pub const RISE: f64 = 0.8 / SQRT_3;
+pub const RISE: f64 = 0.674_508_516_842_426_5;
 
 /// Substrate elevation in z-levels at the abyssal plain, the deepest stop on
 /// the terrain shader's elevation ramp.
@@ -82,6 +83,15 @@ mod tests {
     use super::*;
 
     const DEFAULT_SEED: u64 = 0x9E3779B97F4A7C15;
+
+    /// A z-level here is the renderer's over its tile spacing, and a level per
+    /// tile is the angle of repose.
+    #[test]
+    fn a_level_per_tile_is_repose() {
+        let renderer = common::grid::RISE as f64 / (common::grid::HEX_RADIUS as f64 * SQRT_3);
+        assert!((renderer - RISE).abs() < 1e-6, "the renderer's z-level is {renderer} tiles, this crate's {RISE}");
+        assert!((RISE.atan().to_degrees() - 34.0).abs() < 1e-9);
+    }
 
     /// TILE_SPACING is a claim about `hex_to_world`, so it is checked against
     /// it: all six neighbours sit exactly that far away.

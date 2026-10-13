@@ -9,6 +9,7 @@
 //! no per-call smoothing, no per-step constants that are not scaled by `dt`.
 
 use bevy::prelude::*;
+use common::grid::RISE;
 use qrz::{Convert, Qrz};
 
 use crate::{
@@ -26,11 +27,14 @@ use crate::{
 /// Gravity: how fast a fall gathers speed, in world units per millisecond
 /// squared. A fall must outrun a walk down any slope or an entity that
 /// leaves the ground on a hillside floats to its foot, and a slope's
-/// descent has no bound, so no constant fall speed does.
-pub const GRAVITY: f32 = 2.0e-5;
+/// descent has no bound, so no constant fall speed does. Stated in levels:
+/// a slope is so many levels a tile, and a fall through a level takes the
+/// same time however tall a level stands.
+pub const GRAVITY: f32 = 2.5e-5 * RISE;
 
 /// A jump's ascent: its speed in world units per millisecond, held for
-/// `JUMP_DURATION_MS`, then the fall.
+/// `JUMP_DURATION_MS`, then the fall. A jump climbs one level more than a
+/// step does: a ledge two levels up, never three.
 pub const JUMP_ASCENT: f32 = 0.025;
 
 /// Jump duration in milliseconds
@@ -621,8 +625,9 @@ pub fn calculate_movement(
 mod tests {
     use super::*;
 
+    /// The game's grid: the surface the feet are held to reads its rise.
     fn create_test_map() -> Map {
-        Map::new(qrz::Map::new(1.0, 0.8))
+        Map::new(qrz::Map::new(common::grid::HEX_RADIUS, RISE))
     }
 
     fn create_test_nntree() -> NNTree {
@@ -1203,6 +1208,15 @@ mod tests {
         for (tick, (n, f)) in near.iter().zip(&far).enumerate() {
             assert_eq!(n, f, "tick {tick}: near {n:?}, far {f:?}");
         }
+    }
+
+    /// A jump's top clears a ledge two levels up and falls short of one
+    /// three levels up: one level past what a step climbs.
+    #[test]
+    fn a_jump_climbs_one_level_past_a_step() {
+        let top = JUMP_ASCENT * JUMP_DURATION_MS as f32;
+        assert!(top > 2.0 * RISE, "a jump of {top} misses a two-level ledge");
+        assert!(top < 3.0 * RISE, "a jump of {top} clears a three-level ledge");
     }
 
     /// A rise of two levels is a cliff: the step toward it is refused and

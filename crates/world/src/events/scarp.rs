@@ -446,18 +446,21 @@ mod tests {
         }
     }
 
-    /// The haven's belt, where its scarps stand.
+    /// The haven's belt, where its forelimbs and shales lie.
     const BELT: (f64, f64) = (98_000.0, -2_000.0);
+    /// How far from the belt its scarp sites are taken: wide enough to hold
+    /// scarps, which stand on a few sites in a hundred.
+    const BELT_SITES: f64 = 11_000.0;
 
     /// The sites of the haven's belt.
     fn belt_sites() -> Vec<(f64, f64)> {
         let lattice = scarp_lattice();
         let (q, r) = world_to_hex(BELT.0, BELT.1);
         lattice
-            .cells_within_distance(lattice.cell_id(q, r), 3)
+            .cells_within_distance(lattice.cell_id(q, r), 5)
             .into_iter()
             .map(|id| site_of(&lattice, id, S))
-            .filter(|(x, y)| (x - BELT.0).abs() < 7_000.0 && (y - BELT.1).abs() < 7_000.0)
+            .filter(|(x, y)| (x - BELT.0).abs() < BELT_SITES && (y - BELT.1).abs() < BELT_SITES)
             .collect()
     }
 
@@ -466,7 +469,7 @@ mod tests {
     /// belt stand scarps.
     #[test]
     fn a_site_is_decided_alike_from_any_reach() {
-        let (near_o, near_c) = (Outlines::in_box(BELT.0, BELT.1, 9_000.0, S), Coasts::in_box(BELT.0, BELT.1, 9_000.0, S));
+        let (near_o, near_c) = (Outlines::in_box(BELT.0, BELT.1, BELT_SITES + 2_000.0, S), Coasts::in_box(BELT.0, BELT.1, BELT_SITES + 2_000.0, S));
         let mut scarps = 0;
         for (x, y) in belt_sites() {
             let here = decide(x, y, S, &near_c, &near_o);
@@ -516,7 +519,7 @@ mod tests {
         composite.add_event(Box::new(thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(lithology::LithologyEvent::new()));
         composite.add_event(Box::new(ScarpEvent::new()));
-        let (o, c) = (Outlines::in_box(BELT.0, BELT.1, 9_000.0, S), Coasts::in_box(BELT.0, BELT.1, 9_000.0, S));
+        let (o, c) = (Outlines::in_box(BELT.0, BELT.1, BELT_SITES + 2_000.0, S), Coasts::in_box(BELT.0, BELT.1, BELT_SITES + 2_000.0, S));
         let scarp = belt_sites().into_iter().find_map(|(x, y)| decide(x, y, S, &c, &o)).expect("a scarp on the belt");
         let mut carved = 0;
         for k in 0..64 {

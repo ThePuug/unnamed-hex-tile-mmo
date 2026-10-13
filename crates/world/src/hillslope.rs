@@ -3,9 +3,10 @@
 //! a soil lies where bedrock makes soil against it. The ranges round their
 //! crests by it and the forest reads the soil it leaves.
 //!
-//! The fits are Earth's, in metres and years. A z-level is 0.8 metres and
-//! tiles lie √3 metres apart, the renderer's unit a metre, and a crest and
-//! a soil are what the player stands on, so they go in uncompressed.
+//! The fits are Earth's, in metres and years. A z-level is the renderer's
+//! `RISE`, about 1.17 metres, and tiles lie √3 metres apart, the renderer's
+//! unit a metre, and a crest and a soil are what the player stands on, so
+//! they go in uncompressed.
 //!
 //! Three steady-state relations, each where hillslopes lower as fast as the
 //! ground beneath them is raised, and the decay that follows once the
@@ -105,10 +106,10 @@ pub fn soil_share(erosion: f64) -> f64 {
 mod tests {
     use super::*;
 
-    /// The units: a z-level is 0.8 metres.
+    /// The units: a z-level is the renderer's height of one, in metres.
     #[test]
-    fn a_z_level_is_eight_tenths_of_a_metre() {
-        assert!((Z_METRES - 0.8).abs() < 1e-12);
+    fn a_z_level_is_the_renderers() {
+        assert!((Z_METRES - common::grid::RISE as f64).abs() < 1e-6);
     }
 
     /// Erosion is the background rate with no relief and rises with
