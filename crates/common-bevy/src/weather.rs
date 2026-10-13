@@ -247,8 +247,8 @@ impl Meteor {
 }
 
 pub const METEOR_SLOT_MS: u128 = 1_000;
-/// About one fireball every ten seconds in the leap season.
-const METEOR_CHANCE: f64 = 0.1;
+/// About one fireball a minute in the leap season.
+const METEOR_CHANCE: f64 = 1.0 / 60.0;
 /// The longest a fireball burns: a reader looking for the ones alight
 /// looks this far back.
 pub const METEOR_BURNS_MOST_MS: u128 = 6_000;
@@ -397,7 +397,7 @@ mod tests {
         let (ordinary_sky, omen_sky) = (Forecast::at(ordinary), Forecast::at(omen));
         assert!(strikes(&ordinary_sky, ordinary, ordinary + 600_000, 0.0, 0.0, 16_000.0).is_empty());
         assert!(meteors(&ordinary_sky, ordinary, ordinary + 600_000).is_empty());
-        assert!(!meteors(&omen_sky, omen, omen + 60_000).is_empty());
+        assert!(!meteors(&omen_sky, omen, omen + 600_000).is_empty());
     }
 
     /// A strike falls where a storm stands: never under a clear sky.
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn fireballs_arc_across_the_sky_on_every_side() {
         let omen = MARCH + 4 * SEASON_MS + DAY_MS;
-        let seen = meteors(&Forecast::at(omen), omen, omen + 30 * 60_000);
+        let seen = meteors(&Forecast::at(omen), omen, omen + 180 * 60_000);
         assert!(seen.len() > 50);
         for m in &seen {
             assert!(m.rises.y.abs() < 1e-6, "it rises from the horizon");
