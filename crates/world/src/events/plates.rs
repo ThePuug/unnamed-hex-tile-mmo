@@ -92,6 +92,14 @@ pub const WARP_OCTAVES: [(f64, f64); 2] = [(8_000.0, 700.0), (2_500.0, 180.0)];
 /// reach that folds a chain grows by it.
 pub const WARP_SWING: f64 = WARP_OCTAVES[0].1 + WARP_OCTAVES[1].1;
 
+/// The farthest the warp carries two adjacent tiles apart, one world unit
+/// from each other: the step, and √2 times the most each axis's
+/// displacement changes over it, the octaves' amplitudes over their
+/// wavelengths times 16.6, which bounds `simplex_2d`'s gradient (three
+/// corners, each at most 70 · max(t⁴ + 8t³r²) at t = ½ − r²).
+pub const WARP_STEP: f64 =
+    1.0 + std::f64::consts::SQRT_2 * 16.6 * (WARP_OCTAVES[0].1 / WARP_OCTAVES[0].0 + WARP_OCTAVES[1].1 / WARP_OCTAVES[1].0);
+
 const WARP_SEED_X: u64 = 0x7761_7270_0000_0001;
 const WARP_SEED_Y: u64 = 0x7761_7270_0000_0002;
 

@@ -13,7 +13,12 @@
 //! other site, and never one adjacent to another site's plate: those border
 //! plates are sea on both sides of every site boundary, so two continents
 //! have at least two plates of water between them, farther than the client
-//! draws. A site with too little room for a continent claims nothing.
+//! draws. Nor does it claim one within [`CLAIM_GAP`] of a plate another
+//! site may claim, which keeps two continents' land apart in the ground as
+//! well as in the graph: two plates of water can narrow to one short side
+//! where four seeds lie nearly on a circle, and a side too short for the
+//! lattice is no side of the graph at all. A site with too little room for
+//! a continent claims nothing.
 //!
 //! A subcontinent is one to four plates one plate of water from its
 //! continent: grown the same way from a plate two steps out from the
@@ -33,8 +38,11 @@ use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
 
+use crate::events::plates::WARP_STEP;
+use crate::events::thrusting::SCREE_REACH;
+use crate::lattice::CHAIN_SWING;
 use crate::noise::hash_channel_f64;
-use crate::tectonic::{cell_for, cells_around, lattice_point, neighbours_of, plate_cell_for, seed_point, PlateId, PLATE_SPACING};
+use crate::tectonic::{cell_for, cells_around, lattice_point, neighbours_of, plate_cell_for, polygon, seed_point, PlateId, PLATE_SPACING};
 
 /// Site spacing in world units: the dial for the ocean between continents
 /// and for the land share, which is about a continent's plates over the
@@ -57,6 +65,18 @@ pub const SUBCONTINENT_SIZE: (usize, usize) = (1, 4);
 
 /// The share of sites that hash a subcontinent.
 pub const SUBCONTINENT_SHARE: f64 = 0.5;
+
+/// How far apart two sites' claimed plates stand at least, between their
+/// polygons, in the coordinates the plates are drawn in. Land stands past a
+/// continental plate only within two chain swings of its polygon: a coast
+/// decides which side is land within a swing of itself, an outline stands a
+/// position on its plate only within a swing of the plate's sides, a toe
+/// rests within its reach of a front, and every chain lies within a swing
+/// of its plate's side. Twice that, and the farthest the warp carries two adjacent tiles
+/// apart, and no land tile of one continent lies beside one of another.
+pub const CLAIM_GAP: f64 = 4.0 * CHAIN_SWING + WARP_STEP;
+
+const _: () = assert!(SCREE_REACH <= CHAIN_SWING, "a toe can rest farther past its front than the claim gap allows");
 
 /// The most each lobe of the claim's measure stretches or shrinks the
 /// radius, as a share of it. Two lobes, second and third harmonic, so the
@@ -167,16 +187,19 @@ pub fn claim(id: SiteId, seed: u64) -> Arc<Claim> {
 }
 
 /// The plate graph around one site as its claim grows over it, the
-/// neighbours of each plate read once.
+/// neighbours and polygon of each plate read once, and whether the site
+/// may claim it decided once.
 struct Growth {
     site: Site,
     seed: u64,
     neighbours: HashMap<PlateId, Vec<PlateId>>,
+    polygons: HashMap<PlateId, Vec<((f64, f64), PlateId)>>,
+    decided: HashMap<PlateId, bool>,
 }
 
 impl Growth {
     fn new(site: Site, seed: u64) -> Self {
-        Self { site, seed, neighbours: HashMap::new() }
+        Self { site, seed, neighbours: HashMap::new(), polygons: HashMap::new(), decided: HashMap::new() }
     }
 
     fn neighbours(&mut self, id: PlateId) -> &[PlateId] {
@@ -184,20 +207,69 @@ impl Growth {
         self.neighbours.entry(id).or_insert_with(|| neighbours_of(id, seed))
     }
 
-    fn owned(&self, id: PlateId) -> bool {
+    fn polygon(&mut self, id: PlateId) -> &[((f64, f64), PlateId)] {
+        let seed = self.seed;
+        self.polygons.entry(id).or_insert_with(|| polygon(id, seed))
+    }
+
+    fn site_of(&self, id: PlateId) -> SiteId {
         let (px, py) = seed_point(id, self.seed);
-        nearest_site(px, py, self.seed) == self.site.id
+        nearest_site(px, py, self.seed)
+    }
+
+    fn owned(&self, id: PlateId) -> bool {
+        self.site_of(id) == self.site.id
+    }
+
+    /// Whether the site nearest a plate's seed may claim it by the plate
+    /// graph: no neighbour nearer to another site. What one site asks of
+    /// another's plates without growing the other's claim.
+    fn eligible(&mut self, id: PlateId) -> bool {
+        let site = self.site_of(id);
+        let neighbours = self.neighbours(id).to_vec();
+        neighbours.iter().all(|&n| self.site_of(n) == site)
     }
 
     /// Whether the site may claim a plate: nearer to this site than any
-    /// other, and no neighbour nearer to another. The border plates this
-    /// excludes are what keep two claims apart.
+    /// other, no neighbour nearer to another, and no plate another site may
+    /// claim by the graph within [`CLAIM_GAP`]. The border plates the second
+    /// excludes keep two claims apart in the graph; the third keeps them a
+    /// gap apart in the ground, since every plate another site claims is
+    /// one it may claim by the graph.
     fn claimable(&mut self, id: PlateId) -> bool {
-        if !self.owned(id) {
-            return false;
+        if let Some(&known) = self.decided.get(&id) {
+            return known;
         }
-        let neighbours = self.neighbours(id).to_vec();
-        neighbours.iter().all(|&n| self.owned(n))
+        let may = self.owned(id) && self.eligible(id) && self.clear(id);
+        self.decided.insert(id, may);
+        may
+    }
+
+    /// Whether no plate another site may claim by the graph lies within
+    /// [`CLAIM_GAP`] of a plate, between their polygons. The plates within
+    /// the gap are found outward from it, over the plates round each, since
+    /// the shortest line to any of them crosses only plates within the gap.
+    fn clear(&mut self, id: PlateId) -> bool {
+        let own: Vec<(f64, f64)> = self.polygon(id).iter().map(|c| c.0).collect();
+        let mut seen = HashSet::from([id]);
+        let mut queue = vec![id];
+        while let Some(p) = queue.pop() {
+            let round: Vec<PlateId> = self.polygon(p).iter().map(|c| c.1).collect();
+            for q in round {
+                if !seen.insert(q) {
+                    continue;
+                }
+                let corners: Vec<(f64, f64)> = self.polygon(q).iter().map(|c| c.0).collect();
+                if polygon_gap(&own, &corners) > CLAIM_GAP {
+                    continue;
+                }
+                if !self.owned(q) && self.eligible(q) {
+                    return false;
+                }
+                queue.push(q);
+            }
+        }
+        true
     }
 
     fn measure(&self, id: PlateId) -> f64 {
@@ -293,6 +365,22 @@ impl Growth {
     }
 }
 
+/// The least distance between two convex polygons that do not overlap:
+/// the least from a corner of either to a side of the other.
+fn polygon_gap(a: &[(f64, f64)], b: &[(f64, f64)]) -> f64 {
+    let to_side = |p: (f64, f64), s0: (f64, f64), s1: (f64, f64)| {
+        let (dx, dy) = (s1.0 - s0.0, s1.1 - s0.1);
+        let len2 = dx * dx + dy * dy;
+        let t = if len2 > 0.0 { (((p.0 - s0.0) * dx + (p.1 - s0.1) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+        (p.0 - s0.0 - t * dx).hypot(p.1 - s0.1 - t * dy)
+    };
+    let one_way = |a: &[(f64, f64)], b: &[(f64, f64)]| {
+        let sides = || (0..b.len()).map(|i| (b[i], b[(i + 1) % b.len()]));
+        a.iter().flat_map(|&p| sides().map(move |(s0, s1)| to_side(p, s0, s1))).fold(f64::MAX, f64::min)
+    };
+    one_way(a, b).min(one_way(b, a))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,11 +451,13 @@ mod tests {
 
     /// A subcontinent stands one plate of water from its continent; two
     /// continents stand two or more apart; a subcontinent and any other
-    /// landmass one or more.
+    /// landmass one or more; and two sites' plates stand the claim gap
+    /// apart.
     #[test]
     fn water_between_landmasses() {
         for seed in SEEDS {
             let claims: Vec<(SiteId, Arc<Claim>)> = sites(3).into_iter().map(|id| (id, claim(id, seed))).collect();
+            let corners = |p: PlateId| -> Vec<(f64, f64)> { polygon(p, seed).into_iter().map(|c| c.0).collect() };
             for (id, c) in &claims {
                 if !c.subcontinent.is_empty() {
                     assert_eq!(graph_distance(&c.subcontinent, &c.continent, seed, 3), 2, "site {id:?}");
@@ -375,6 +465,12 @@ mod tests {
                 for (other, o) in &claims {
                     if other == id {
                         continue;
+                    }
+                    for &p in c.continent.iter().chain(&c.subcontinent) {
+                        for &q in o.continent.iter().chain(&o.subcontinent) {
+                            let gap = polygon_gap(&corners(p), &corners(q));
+                            assert!(gap > CLAIM_GAP, "plates {p:?} of {id:?} and {q:?} of {other:?} stand {gap:.0} apart");
+                        }
                     }
                     if !c.continent.is_empty() && !o.continent.is_empty() {
                         assert!(graph_distance(&c.continent, &o.continent, seed, 3) >= 3, "continents {id:?} and {other:?} within two plates");
