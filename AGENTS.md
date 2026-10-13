@@ -3,7 +3,7 @@
 Read before changing code. Constraints that prevent known bugs, and the house
 style for comments.
 
-Design specs live in the `unnamed-indie-studio-internal` repo, sibling checkout,
+Design specs live in the `yasnogames/internal` repo, sibling checkout `../internal`,
 `projects/unnamed-hex-tile-mmo/`. This repo carries only what binds the code.
 Assets and their generators (texgen, modelgen) live in the private
 `unnamed-hex-tile-mmo-assets` repo, mounted here as the `assets/` submodule; its

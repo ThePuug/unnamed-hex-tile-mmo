@@ -1,6 +1,6 @@
 # Contributing
 
-How to build and run the project. Not architecture or design — see `AGENTS.md` for codebase constraints and conventions, and `design/` in the `unnamed-indie-studio-internal` repo (sibling checkout, `projects/unnamed-hex-tile-mmo/`) for system specs.
+How to build and run the project. Not architecture or design — see `AGENTS.md` for codebase constraints and conventions, and `design/` in the `yasnogames/internal` repo (sibling checkout `../internal`, `projects/unnamed-hex-tile-mmo/`) for system specs.
 
 ## Prerequisites
 
