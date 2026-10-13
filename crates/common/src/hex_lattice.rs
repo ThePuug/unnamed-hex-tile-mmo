@@ -17,7 +17,7 @@ pub struct HexLattice {
     pub radius: u32,
     pub v1: (i32, i32),
     pub v2: (i32, i32),
-    det: i32,
+    det: i64,
     // Inverse matrix numerator coefficients (divide by det)
     inv_a: i32,
     inv_b: i32,
@@ -30,8 +30,9 @@ impl HexLattice {
         let r = radius as i32;
         let v1 = (r + 1, r);
         let v2 = (-r, 2 * r + 1);
-        let det = v1.0 * v2.1 - v1.1 * v2.0;
-        debug_assert_eq!(det, 3 * r * r + 3 * r + 1);
+        // i64 because the count overflows an i32 past a radius of 26,754.
+        let det = v1.0 as i64 * v2.1 as i64 - v1.1 as i64 * v2.0 as i64;
+        debug_assert_eq!(det, 3 * r as i64 * r as i64 + 3 * r as i64 + 1);
 
         Self {
             radius,
@@ -46,8 +47,8 @@ impl HexLattice {
     }
 
     /// Number of tiles per cell: 3R² + 3R + 1.
-    pub fn tiles_per_cell(&self) -> u32 {
-        self.det as u32
+    pub fn tiles_per_cell(&self) -> u64 {
+        self.det as u64
     }
 
     /// Cell ID for a tile at (q, r). O(1) via inverse lattice transform.
@@ -132,11 +133,25 @@ mod tests {
 
     #[test]
     fn determinant_equals_tile_count() {
-        for radius in [1, 2, 5, 9, 64, 128] {
+        for radius in [1u32, 2, 5, 9, 64, 128, 30_000] {
             let lat = HexLattice::new(radius);
-            let expected = 3 * radius * radius + 3 * radius + 1;
+            let r = radius as u64;
+            let expected = 3 * r * r + 3 * r + 1;
             assert_eq!(lat.tiles_per_cell(), expected,
                 "radius {radius}: det={} expected={expected}", lat.tiles_per_cell());
+        }
+    }
+
+    /// A cell too large for its tile count to fit an i32 still holds every
+    /// tile it is asked for within its radius.
+    #[test]
+    fn a_large_cell_holds_its_tiles() {
+        let lat = HexLattice::new(30_000);
+        for (q, r) in [(97_837, -1_115), (-150_000, 40_000), (0, 0), (1_000_000, -2_000_000)] {
+            let (cq, cr) = lat.cell_center(lat.cell_id(q, r));
+            let (dq, dr) = (q - cq, r - cr);
+            let dist = dq.abs().max(dr.abs()).max((dq + dr).abs());
+            assert!(dist <= 30_000, "tile ({q}, {r}) lies {dist} from its cell's centre");
         }
     }
 
