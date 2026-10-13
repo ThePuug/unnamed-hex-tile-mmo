@@ -856,13 +856,18 @@ fn predict(par: &Level, i: i64, j: i64) -> (f64, Vec<f64>) {
 }
 
 /// Corner meet values and routing heights for every cell of a mask whose
-/// sharers are all built, and each cell's six corner values.
+/// sharers are all built, and the six corner values of each cell, and of
+/// every cell outside the mask reading a corner met here, so a cell's
+/// corners never wait on a request that names it.
 fn corners_over(lv: &mut Level, mask: &[bool]) {
     let nn = lv.n * lv.n;
+    // Every cell of the mask, and every cell reading a corner met here.
+    let mut draw: Vec<usize> = Vec::new();
     for c in 0..mask.len() {
         if !mask[c] || !lv.exists[c] || !lv.built[c] {
             continue;
         }
+        draw.push(c);
         let (i, j) = lv.ij(c);
         let (a, b, ready_a, ready_b) = lv.meet_at(i, j, &lv.z, &lv.built);
         lv.elev[c] = lv.z[c];
@@ -875,9 +880,14 @@ fn corners_over(lv: &mut Level, mask: &[bool]) {
             lv.elev[2 * nn + c] = lowest(b);
         }
         lv.corners[c] = ready_a && ready_b;
+        if ready_a || ready_b {
+            draw.extend([(i + 1, j - 1), (i + 1, j), (i, j + 1)].iter().filter_map(|&(x, y)| lv.idx(x, y)));
+        }
     }
-    for c in 0..mask.len() {
-        if mask[c] && lv.exists[c] && lv.built[c] {
+    draw.sort_unstable();
+    draw.dedup();
+    for c in draw {
+        if lv.exists[c] && lv.built[c] {
             let (i, j) = lv.ij(c);
             lv.cc[c] = lv.corner_values(i, j);
         }

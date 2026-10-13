@@ -87,29 +87,46 @@ fn drawn(lv: &Level, i: i64, j: i64) -> bool {
     [(i, j), (i - 1, j + 1), (i - 1, j), (i, j - 1)].iter().all(|&(a, b)| lv.idx(a, b).is_none_or(|c| !lv.exists[c] || lv.corners[c]))
 }
 
-/// Whether two ladders hold a cell of level k alike: its height, corners,
-/// and every vertex's routing.
-fn alike(a: &Level, b: &Level, i: i64, j: i64) -> bool {
-    let (Some(ca), Some(cb)) = (a.idx(i, j), b.idx(i, j)) else { return false };
+/// What two ladders hold differently at a cell of level k: its height,
+/// corners, and every vertex's routing, each named with its vertex.
+fn differs(a: &Level, b: &Level, i: i64, j: i64) -> Vec<String> {
+    let (Some(ca), Some(cb)) = (a.idx(i, j), b.idx(i, j)) else { return vec!["held".into()] };
     let (na, nb) = (a.n * a.n, b.n * b.n);
-    let mut ok = true;
-    if a.built[ca] && b.built[cb] {
-        ok &= same(a.z[ca], b.z[cb]);
+    let mut bad = Vec::new();
+    if a.built[ca] && b.built[cb] && !same(a.z[ca], b.z[cb]) {
+        bad.push(format!("z {} / {}", a.z[ca], b.z[cb]));
     }
-    if drawn(a, i, j) && drawn(b, i, j) {
-        ok &= (0..6).all(|s| same(a.cc[ca][s], b.cc[cb][s]));
+    if drawn(a, i, j) && drawn(b, i, j) && !(0..6).all(|s| same(a.cc[ca][s], b.cc[cb][s])) {
+        bad.push(format!("cc {:?} / {:?}", a.cc[ca], b.cc[cb]));
     }
     for t in 0..3 {
         let (va, vb) = (t * na + ca, t * nb + cb);
-        if a.corners[ca] && b.corners[cb] {
-            ok &= same(a.elev[va], b.elev[vb]);
+        if a.corners[ca] && b.corners[cb] && !same(a.elev[va], b.elev[vb]) {
+            bad.push(format!("elev{t} {} / {}", a.elev[va], b.elev[vb]));
         }
-        ok &= same(a.gelev[va], b.gelev[vb]) && a.trough[va] == b.trough[vb] && same(a.acc[va], b.acc[vb]) && same(a.floor[va], b.floor[vb]);
+        if !same(a.gelev[va], b.gelev[vb]) {
+            bad.push(format!("gelev{t} {} / {}", a.gelev[va], b.gelev[vb]));
+        }
+        if a.trough[va] != b.trough[vb] {
+            bad.push(format!("trough{t} {} / {}", a.trough[va], b.trough[vb]));
+        }
+        if !same(a.acc[va], b.acc[vb]) {
+            bad.push(format!("acc{t} {} / {}", a.acc[va], b.acc[vb]));
+        }
+        if !same(a.floor[va], b.floor[vb]) {
+            bad.push(format!("floor{t} {} / {}", a.floor[va], b.floor[vb]));
+        }
         // A receiver is a vertex index in each ladder's own arrays.
         let r = |lv: &Level, v: i64| (v >= 0).then(|| lv.vertex(v as usize));
-        ok &= r(a, a.rec[va]) == r(b, b.rec[vb]);
+        if r(a, a.rec[va]) != r(b, b.rec[vb]) {
+            bad.push(format!("rec{t} {:?} / {:?}", r(a, a.rec[va]), r(b, b.rec[vb])));
+        }
     }
-    ok
+    bad
+}
+
+fn alike(a: &Level, b: &Level, i: i64, j: i64) -> bool {
+    differs(a, b, i, j).is_empty()
 }
 
 fn exact<G: Ground>(ground: &G, whole: &Ladder<G>, p: Params, out: &mut String) {
@@ -142,8 +159,10 @@ fn exact<G: Ground>(ground: &G, whole: &Ladder<G>, p: Params, out: &mut String) 
                     if lv.routed[cc] {
                         let (i, j) = lv.ij(cc);
                         cells += 1;
-                        if !alike(lv, wl, i, j) {
+                        let bad = differs(lv, wl, i, j);
+                        if !bad.is_empty() {
                             seams += 1;
+                            out.push_str(&format!("   seam w={w} cell ({i}, {j}): {}\n", bad.join("; ")));
                         }
                     }
                 }
