@@ -244,11 +244,11 @@ struct Side {
     chain: Vec<NodeKey>,
 }
 
-/// The sides of one plate: its Voronoi polygon, clipped by the bisector of
-/// every seed within three rings, read for which neighbour makes each side.
-/// Geometry alone, from the seeds: what a claim grows over, so it never
-/// asks what a plate is.
-fn sides(id: PlateId, seed: u64) -> Vec<Side> {
+/// The plates round one plate's Voronoi polygon, in order: the polygon
+/// clipped by the bisector of every seed within three rings, read for which
+/// neighbour makes each side. Geometry alone, from the seeds: what a claim
+/// grows over, so it never asks what a plate is.
+fn around(id: PlateId, seed: u64) -> Vec<PlateId> {
     let (sx, sy) = seed_point(id, seed);
     // A square far past any vertex; every side of it is clipped away.
     let big = 3.0 * PLATE_SPACING;
@@ -289,14 +289,29 @@ fn sides(id: PlateId, seed: u64) -> Vec<Side> {
         side = new_side;
         if pts.is_empty() { return Vec::new() }
     }
+    debug_assert!(side.iter().all(Option::is_some), "a plate polygon side survived from the initial square");
+    side.into_iter().flatten().collect()
+}
 
-    let n = pts.len();
+/// A plate's Voronoi polygon, every side kept however short: each corner in
+/// order, the circumcentre of the plate and the two neighbours meeting
+/// there, with the neighbour across the side from it to the next corner.
+/// What the ground stands on, where [`neighbours_of`] keeps only the sides
+/// the lattice can draw.
+pub fn polygon(id: PlateId, seed: u64) -> Vec<((f64, f64), PlateId)> {
+    let ring = around(id, seed);
+    let n = ring.len();
+    (0..n).map(|k| (circumcentre([id, ring[(k + n - 1) % n], ring[k]], seed), ring[k])).collect()
+}
+
+/// The sides of one plate, each against the neighbour across it, with its
+/// chain on the lattice.
+fn sides(id: PlateId, seed: u64) -> Vec<Side> {
+    let ring = around(id, seed);
+    let n = ring.len();
     let mut sides = Vec::with_capacity(n);
     for k in 0..n {
-        let (Some(prev), Some(this), Some(next)) = (side[(k + n - 1) % n], side[k], side[(k + 1) % n]) else {
-            debug_assert!(false, "a plate polygon side survived from the initial square");
-            continue;
-        };
+        let (prev, this, next) = (ring[(k + n - 1) % n], ring[k], ring[(k + 1) % n]);
         // The side ending at vertex k is against `this`; its ends are the
         // vertices shared with the sides before and after.
         let v0 = circumcentre([id, prev, this], seed);

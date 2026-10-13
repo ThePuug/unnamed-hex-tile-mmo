@@ -105,7 +105,7 @@ use dashmap::DashMap;
 use crate::chains::{join_at_nodes, Segment};
 use crate::noise::{hash_channel, simplex_2d};
 use crate::lattice::{nearest_node, node_world, NodeKey, CHAIN_SWING};
-use crate::tectonic::{edges_of, plate_cell_for, plates_near, PlateId, PLATE_REACH};
+use crate::tectonic::{edges_of, plate_cell_for, plates_near, polygon, seed_point, PlateId, PLATE_REACH};
 use super::plates::{warp, WARP_SWING};
 use crate::{hex_to_world, smoothstep, world_to_hex, RISE, SEA_MAX_DEPTH};
 use crate::hillslope::{crest_curvature, erosion_rate, standing_after};
@@ -333,9 +333,21 @@ pub struct PlateOutline {
     /// The plate's age, as `tectonic::Plate::age`.
     pub age: f64,
     pub edges: Vec<EdgeOutline>,
+    /// The plate's seed, and the seed of every plate round its Voronoi
+    /// polygon, the sides too short to draw included: the cell a position
+    /// lies in by its nearest seed, read without the seed contest.
+    pub seed: (f64, f64),
+    pub around: Vec<(f64, f64)>,
 }
 
 impl PlateOutline {
+    /// Whether a position lies in the plate's Voronoi cell: no seed round
+    /// the plate nearer than its own.
+    pub fn holds(&self, x: f64, y: f64) -> bool {
+        let own = (x - self.seed.0).powi(2) + (y - self.seed.1).powi(2);
+        self.around.iter().all(|s| (x - s.0).powi(2) + (y - s.1).powi(2) >= own)
+    }
+
     /// Distance from a position to each edge, and whether the position lies
     /// inside the outline: on the inner side of the nearest segment, or on
     /// it. A chain runs through tile centres and lattice nodes, and a
@@ -484,6 +496,8 @@ impl Outlines {
                     continental: plate.continental,
                     age: plate.age,
                     edges: Vec::new(),
+                    seed: (plate.wx, plate.wy),
+                    around: polygon(plate.id, seed).into_iter().map(|(_, q)| seed_point(q, seed)).collect(),
                 });
                 let (converge, standing, faces) = match carried {
                     Some((over, converge, standing)) if over == plate.id => (converge, standing, faces(s)),
@@ -542,10 +556,11 @@ impl Outlines {
     /// The plate a position stands in, by its outline, with the position's
     /// distance to each of its edges, all read at the position the warp
     /// carries it to. The plate of the position's own lattice cell first,
-    /// then its neighbours, then theirs: the outline decides, so the first
-    /// guess need not be the nearest seed's, only usually right, and the
-    /// cell costs no hash where the seed contest costs a score of them. A
-    /// chain swings off its straight edge, so a position near an edge can
+    /// then its neighbours, then theirs: within a chain's swing of the
+    /// plate's sides the outline decides ([`Outlines::stands`]), so the
+    /// first guess need not be the nearest seed's, only usually right, and
+    /// the cell costs no hash where the seed contest costs a score of them.
+    /// A chain swings off its straight edge, so a position near an edge can
     /// stand across it, and where two corners lie within a swing of each
     /// other it can stand across two.
     pub fn at(&self, wx: f64, wy: f64) -> Option<Standing<'_>> {
@@ -569,14 +584,16 @@ impl Outlines {
         let (x, y) = warp(wx, wy, self.seed);
         let home = plate_cell_for(x, y);
         let first = self.plates.get(&home)?;
-        let (distances, inside) = first.distances(x, y);
-        if inside { return Some(Standing { wx, wy, plate: first, distances, x, y }) }
+        if let Some(distances) = self.stands(first, x, y) {
+            return Some(Standing { wx, wy, plate: first, distances, x, y });
+        }
         let mut tried = vec![home];
         for e in &first.edges {
             let Some(p) = self.plates.get(&e.neighbour) else { continue };
             tried.push(p.id);
-            let (distances, inside) = p.distances(x, y);
-            if inside { return Some(Standing { wx, wy, plate: p, distances, x, y }) }
+            if let Some(distances) = self.stands(p, x, y) {
+                return Some(Standing { wx, wy, plate: p, distances, x, y });
+            }
         }
         for e in &first.edges {
             let Some(p) = self.plates.get(&e.neighbour) else { continue };
@@ -584,11 +601,27 @@ impl Outlines {
                 if tried.contains(&e.neighbour) { continue }
                 let Some(p) = self.plates.get(&e.neighbour) else { continue };
                 tried.push(p.id);
-                let (distances, inside) = p.distances(x, y);
-                if inside { return Some(Standing { wx, wy, plate: p, distances, x, y }) }
+                if let Some(distances) = self.stands(p, x, y) {
+                    return Some(Standing { wx, wy, plate: p, distances, x, y });
+                }
             }
         }
         None
+    }
+
+    /// Whether a position the warp carried to `(x, y)` stands in a plate,
+    /// and if so its distance to each of the plate's edges: inside its
+    /// outline within [`CHAIN_SWING`] of one of the plate's straight sides,
+    /// and past that in the plate's Voronoi cell. Past a swing every sound
+    /// outline says what the cell does; where two of a plate's chains
+    /// overlap, their copies of a segment face opposite ways, and the side
+    /// read off either is wrong as far out as that segment stays the
+    /// nearest.
+    fn stands(&self, plate: &PlateOutline, x: f64, y: f64) -> Option<Vec<f64>> {
+        let (distances, inner) = plate.distances(x, y);
+        let near = plate.edges.iter().any(|e| e.off_line(x, y) <= CHAIN_SWING);
+        let inside = if near { inner } else { plate.holds(x, y) };
+        inside.then_some(distances)
     }
     /// Elevation the ranges add at a position, in z-levels: the strongest
     /// of the wedges of the plate the position stands in and the toes of
@@ -1529,8 +1562,9 @@ mod tests {
         assert!(fronts > 0 && toes > 0, "{fronts} fronts in the box, {toes} with scree at the front");
     }
 
-    /// Every position stands in exactly the plate whose outline encloses it,
-    /// found from the nearest seed's plate or one of its neighbours.
+    /// Every position stands in exactly one plate, by the outline within a
+    /// chain's swing of it and by the seed past that, found from the nearest
+    /// seed's plate or one of its neighbours.
     #[test]
     fn every_position_stands_in_one_plate() {
         let outlines = Outlines::in_box(0.0, 0.0, 20_000.0, S);
@@ -1540,7 +1574,7 @@ mod tests {
                 let (x, y) = (i as f64 * 500.0 - 20_000.0, j as f64 * 500.0 - 20_000.0);
                 let at = outlines.at(x, y).expect("a position with no plate");
                 if at.plate.id != plate_at(at.x, at.y, S).id { swapped += 1 }
-                let inside: Vec<PlateId> = outlines.plates().filter(|p| p.distances(at.x, at.y).1).map(|p| p.id).collect();
+                let inside: Vec<PlateId> = outlines.plates().filter(|p| outlines.stands(p, at.x, at.y).is_some()).map(|p| p.id).collect();
                 assert_eq!(inside.len(), 1, "position ({x}, {y}) inside {inside:?}");
                 assert_eq!(inside[0], at.plate.id);
             }

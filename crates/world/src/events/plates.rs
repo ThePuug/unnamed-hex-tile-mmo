@@ -241,12 +241,18 @@ impl Coasts {
 
     /// How far up the substrate's ramp a position stands, as a share of
     /// [`COAST_REACH`], and whether on the land side: the nearest coast in
-    /// reach of the position the warp carries it to, and past the reach of
-    /// every coast the plate it lies in decides which flat it is on.
+    /// reach of the position the warp carries it to. The coast's side
+    /// decides within [`CHAIN_SWING`] of it; past that the plate the
+    /// position lies in decides, which agrees with every sound coast and
+    /// keeps land within two swings of a continental plate where chains
+    /// overlap and a coast's side reads wrong.
     pub fn shore(&self, x: f64, y: f64) -> (f64, bool) {
         let (x, y) = warp(x, y, self.seed);
         match self.grid.nearest(x, y, COAST_REACH) {
-            Some(n) => ((n.distance / COAST_REACH).clamp(0.0, 1.0), n.side > 0.0),
+            Some(n) => {
+                let land = if n.distance <= CHAIN_SWING { n.side > 0.0 } else { plate_at(x, y, self.seed).continental };
+                ((n.distance / COAST_REACH).clamp(0.0, 1.0), land)
+            }
             None => (1.0, plate_at(x, y, self.seed).continental),
         }
     }
