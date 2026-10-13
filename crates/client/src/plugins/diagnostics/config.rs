@@ -41,7 +41,7 @@ pub fn parse_time(text: &str) -> Option<u128> {
 /// The weather the console holds the sky in, the same everywhere, so each
 /// can be looked at without waiting for it; or the forecast. Storm and
 /// Meteors hold the leap season's sky, its lightning and its fireballs.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 pub enum WeatherHold {
     #[default]
     Forecast,

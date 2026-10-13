@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use bevy::prelude::*;
 use serde::Deserialize;
 
+use crate::plugins::diagnostics::WeatherHold;
+
 #[derive(Deserialize, Debug)]
 pub struct Script {
     /// Frames per second of the recorded video, and of the game while it
@@ -25,6 +27,10 @@ pub struct Script {
     /// Quit the client once the last shot is written.
     #[serde(default)]
     pub exit: bool,
+    /// The weather every shot is held in, as the console holds it; the
+    /// forecast when not given.
+    #[serde(default)]
+    pub weather: WeatherHold,
     pub shots: Vec<Shot>,
 }
 

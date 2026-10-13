@@ -46,6 +46,7 @@ use common_bevy::{
 use crate::{
     components::{ViewHud, Viewed},
     plugins::{
+        diagnostics::DiagnosticsState,
         settings::{Display, Resolution, VideoSettings},
         shell::{self, Entered, Stage},
     },
@@ -71,6 +72,8 @@ impl Plugin for RecorderPlugin {
         info!("recorder: {} of {} shots from {path}", shots.len(), script.shots.len());
 
         let year = Date::year(wall_now()).0;
+        let weather = script.weather;
+        app.add_systems(Startup, move |mut diagnostics: ResMut<DiagnosticsState>| diagnostics.weather = weather);
         app.insert_resource(Recorder { script, shots, year, index: 0, phase: Phase::Enter, keys: Keys::default(), sink: None, held: None });
         app.init_resource::<Captured>();
         app.add_systems(PreUpdate, press_keys.after(bevy::input::InputSystems).before(input::update_keybits));
