@@ -960,8 +960,9 @@ fn ladder_bake() {
 /// and r centred on the haven, from a fresh ladder at the defaults and from
 /// `Composite::standard`'s `elevation_at` on one thread, rows by r then q:
 /// `ladder_z.bin` and `stack_z.bin`, heights in levels as little-endian
-/// i16; `ladder_bed.bin`, a byte, 1 where a tile lies in a channel bed;
-/// and `meta.json`.
+/// i16; `ladder_dry_z.bin`, the ladder with water off, alike;
+/// `ladder_bed.bin`, a byte, 1 where a tile lies in a channel bed; and
+/// `meta.json`.
 #[test]
 #[ignore]
 fn ladder_export() {
@@ -1003,6 +1004,13 @@ fn ladder_export() {
     };
     std::fs::write(format!("{dir}/ladder_z.bin"), i16s(&mut cells.iter().map(|c| lv.z[at(c)]))).expect("ladder_z");
     std::fs::write(format!("{dir}/ladder_bed.bin"), cells.iter().map(|c| lv.bed[at(c)] as u8).collect::<Vec<u8>>()).expect("ladder_bed");
+    status("the ladder's tiles with water off");
+    let started = Instant::now();
+    let mut dry = Ladder::new(&g, &ext, Params { water: false, ..Params::default() });
+    dry.request(k, &cells);
+    let dry_s = started.elapsed().as_secs_f64();
+    let dl = &dry.levels[k];
+    std::fs::write(format!("{dir}/ladder_dry_z.bin"), i16s(&mut cells.iter().map(|&(q, r)| dl.z[dl.idx(q, r).unwrap()]))).expect("ladder_dry_z");
     status("the game's tiles");
     let started = Instant::now();
     let game = Composite::standard(WORLD_SEED);
@@ -1028,7 +1036,7 @@ fn ladder_export() {
     );
     std::fs::write(format!("{dir}/meta.json"), meta).expect("meta");
     let beds = lv.bed.iter().zip(&lv.built).filter(|(b, x)| **b && **x).count();
-    let out = format!("export: {SIDE} by {SIDE} tiles; ladder {ladder_s:.1} s, game {stack_s:.1} s; {beds} tiles in a bed
+    let out = format!("export: {SIDE} by {SIDE} tiles; ladder {ladder_s:.1} s, dry {dry_s:.1} s, game {stack_s:.1} s; {beds} tiles in a bed
 {}", channels(&ladder));
     print!("{out}");
     std::fs::write(format!("{dir}/export.txt"), out).expect("the export log");

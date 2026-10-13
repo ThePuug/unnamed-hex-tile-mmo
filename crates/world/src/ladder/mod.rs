@@ -853,11 +853,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
     }
 
     /// A level finer than [`LAST_WATER`] built over a mask: its ground, the
-    /// cut handed down unchanged, and at the tiles the channels the level
-    /// above holds, met by it.
+    /// cut handed down unchanged, and at the tiles, where water cuts, the
+    /// channels met by it.
     fn ensure_dry(&mut self, k: usize, need: &[bool]) {
         self.ensure_supplied(k, need);
-        if self.levels[k].w == 1 {
+        if self.levels[k].w == 1 && self.p.water {
             self.ensure_channels(k, need);
         }
         let started = Instant::now();
