@@ -1,18 +1,17 @@
-//! The tiles' rivers. At [`LAST_WATER`] each river is drawn as a smooth
-//! curve through the midpoints of its edges, bending at its vertices and
-//! meandering within [`MEANDER`] tiles of it, and sampled into banks: a
-//! bed as wide as its catchment makes it, at its floor, with walls rising at
-//! water's slope in the rock at its river vertex. The levels below hand the
-//! banks down unchanged, each cell holding those lying in it, and the tiles
+//! The tiles' rivers: [`LAST_WATER`]'s rivers, each drawn when the tiles
+//! read it as a smooth curve through the midpoints of its edges, bending at
+//! its vertices and meandering within [`MEANDER`] tiles of it, and sampled
+//! into banks: a bed as wide as its catchment makes it, at its floor, with
+//! walls rising at water's slope in the rock at its river vertex. The tiles
 //! cut each bank's channel where it is below the surface [`LAST_WATER`]
 //! drew, out to [`channel_reach`] tiles; the ground's finer detail outside
-//! that zone stands.
+//! that zone stands. Nothing of a curve is kept.
 //!
 //! A vertex owns the curve through it, from the midpoint of each edge in
 //! to the midpoint of its edge out, and a vertex the rivers end at owns
 //! their last half edges: every bank lies within half an edge and the
-//! meander of the vertex owning it, so a cell's banks are its own and its
-//! ring's work. A curve's floor runs between its vertices' floors the way
+//! meander of the vertex owning it, so a cell's banks are drawn from its
+//! routing over the cell and its ring. A curve's floor runs between its vertices' floors the way
 //! its position does, so it falls wherever they fall. The meander is read
 //! from where the curve runs, so a river bends alike whichever request
 //! draws it.
@@ -183,23 +182,13 @@ impl Drawn {
     }
 }
 
-/// The banks of `par`'s cells around a cell of `lv`, the level below it,
-/// that lie in the cell: the cell's parent and its ring hold every one.
-pub(super) fn handed_banks(lv: &Level, par: &Level, i: i64, j: i64) -> Vec<Bank> {
-    let (a, b, _, _) = super::geom::parent_of(i, j);
-    let mut out = Vec::new();
-    for (da, db) in std::iter::once((0, 0)).chain(super::geom::NB) {
-        let Some(pc) = par.idx(a + da, b + db) else { continue };
-        out.extend(par.banks[pc].iter().filter(|bk| cell_of(bk.x, bk.y, lv.w as f64) == (i, j)));
-    }
-    out
-}
-
 /// A tile's channels: their surface there, infinite where none reaches; and
 /// where it is below [`LAST_WATER`]'s drawn surface, how far off the bank
 /// governing it lies, and whether that is at the reach, with the river.
 pub(super) struct Reach {
     pub surface: f64,
+    /// How far below the drawn surface the channel is.
+    pub below: f64,
     pub governing: Option<(usize, f64)>,
     pub capped: bool,
 }
@@ -213,24 +202,21 @@ struct Held {
     bed: f64,
 }
 
-/// The banks the level above the tiles holds under a mask, bucketed for the
-/// tiles' search, nearest buckets first.
+/// Banks bucketed for the tiles' search, nearest buckets first.
 pub(super) struct Index {
     buckets: HashMap<(i64, i64), Held>,
     order: Vec<(i64, i64)>,
 }
 
 impl Index {
-    pub(super) fn new(par: &Level, mask: &[bool], reach: f64) -> Self {
+    pub(super) fn new(banks: impl IntoIterator<Item = Bank>, reach: f64) -> Self {
         let mut buckets: HashMap<(i64, i64), Held> = HashMap::new();
-        for c in (0..mask.len()).filter(|&c| mask[c]) {
-            for b in &par.banks[c] {
-                let held = buckets.entry(cell_of(b.x, b.y, BUCKET)).or_insert(Held { banks: Vec::new(), floor: f64::INFINITY, slope: f64::INFINITY, bed: 0.0 });
-                held.banks.push(*b);
-                held.floor = held.floor.min(b.floor);
-                held.slope = held.slope.min(b.slope);
-                held.bed = held.bed.max(b.bed);
-            }
+        for b in banks {
+            let held = buckets.entry(cell_of(b.x, b.y, BUCKET)).or_insert(Held { banks: Vec::new(), floor: f64::INFINITY, slope: f64::INFINITY, bed: 0.0 });
+            held.banks.push(b);
+            held.floor = held.floor.min(b.floor);
+            held.slope = held.slope.min(b.slope);
+            held.bed = held.bed.max(b.bed);
         }
         let k = (reach / BUCKET).ceil() as i64 + 2;
         let mut order: Vec<(i64, i64)> = (-k..=k).flat_map(|a| (-k..=k).map(move |b| (a, b))).collect();
@@ -271,6 +257,6 @@ impl Index {
                 }
             }
         }
-        Reach { surface: best, governing, capped: governing.is_some_and(|(_, d)| d > reach - 1.0) }
+        Reach { surface: best, below: drawn - best, governing, capped: governing.is_some_and(|(_, d)| d > reach - 1.0) }
     }
 }

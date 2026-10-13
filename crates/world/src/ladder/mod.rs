@@ -33,8 +33,8 @@
 //!
 //! Lines, routing and water's valleys stop at [`LAST_WATER`]. A level finer
 //! than that is its prediction and the ground's own detail, its cut handed
-//! down unchanged. [`LAST_WATER`] draws its rivers' channels, the levels
-//! below hand them down, and the tiles cut them ([`channel`]).
+//! down unchanged. The tiles cut channels along [`LAST_WATER`]'s rivers,
+//! drawn from its routing when they read it ([`channel`]).
 //!
 //! Every layer, water among them, writes its value averaged over the
 //! level's cell; its raise there is that less what the level above handed
@@ -150,8 +150,7 @@ pub enum Pass {
     Ground = 0,
     Water = 1,
     Route = 2,
-    /// The channels: cut at the tiles, as far as they reach; drawn and
-    /// handed down a cell at a time above them.
+    /// The channels, cut at the tiles as far as they reach.
     Channel = 3,
 }
 
@@ -311,10 +310,6 @@ pub struct Level {
     /// Whether each cell's six corner values are final: its own corners met,
     /// and the four its neighbours own, where those exist.
     pub finished: Vec<bool>,
-    /// The channels' banks each cell holds: at [`LAST_WATER`] those its
-    /// vertices own, below it those lying in it.
-    pub banks: Vec<Vec<channel::Bank>>,
-    pub banked: Vec<bool>,
     /// Each pass's deform cell of each cell.
     pub blocks: [Vec<(i64, i64)>; 4],
     /// Deforms run by each pass, and cells built.
@@ -389,8 +384,6 @@ impl Level {
             routed: vec![false; cells],
             corners: vec![false; cells],
             finished: vec![false; cells],
-            banks: vec![Vec::new(); cells],
-            banked: vec![false; cells],
             blocks,
             cost: [0; 5],
         }
@@ -560,9 +553,12 @@ pub struct Ladder<'g, G: Ground> {
     /// The channel curves drawn, those whose floor rose, and the tiles a
     /// channel lowered.
     pub channel_stats: [u64; 3],
-    /// How far from its governing bank each tile a channel reaches lies, in
-    /// tiles: where it is below [`LAST_WATER`]'s drawn surface.
-    pub channel_reach: Vec<f64>,
+    /// Each tile a channel reaches, where it is below [`LAST_WATER`]'s drawn
+    /// surface: how far from its governing bank it lies, in tiles, and how
+    /// far below that surface the channel is, in steps.
+    pub channel_reach: Vec<[f64; 2]>,
+    /// The most a channel lowers a tile at the edge of the zone it cuts in.
+    pub channel_edge: f64,
     /// The rivers whose walls reached [`channel::channel_reach`] still below
     /// [`LAST_WATER`]'s drawn surface, as vertices of its level: the tiles
     /// where they did, and the largest step left there.
@@ -599,6 +595,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             route_stats: vec![[0; 4]; count],
             channel_stats: [0; 3],
             channel_reach: Vec::new(),
+            channel_edge: 0.0,
             channel_capped: HashMap::new(),
             timing: vec![[0.0; 8]; count],
         };
@@ -877,31 +874,63 @@ impl<'g, G: Ground> Ladder<'g, G> {
     }
 
     /// The tiles of a mask cut by their channels, a channel deform cell at a
-    /// time: the level above's banks under its footprint and one ring read,
-    /// each tile the lower of its ground and the channels reaching it.
+    /// time: [`LAST_WATER`]'s rivers under its footprint and one ring of that
+    /// level's cells drawn, routed a ring past those so each curve's
+    /// neighbours are read, and each tile the lower of its ground and the
+    /// channels below [`LAST_WATER`]'s drawn surface there.
     fn ensure_channels(&mut self, k: usize, need: &[bool]) {
         let lv = &self.levels[k];
         let pend = lv.pending(Pass::Channel, need);
         let fp = lv.footprint(Pass::Channel, &pend);
-        let pmask = self.under(k, &fp);
-        self.ensure_banks(k - 1, &pmask);
+        let s = self.levels.iter().position(|l| l.w == LAST_WATER).expect("a level water stops at");
+        let (src, up) = (&self.levels[s], (k - s) as u32);
+        let mut under = vec![false; src.exists.len()];
+        for c in (0..fp.len()).filter(|&c| fp[c]) {
+            let (i, j) = lv.ij(c);
+            let (a, b) = ancestor(i, j, up);
+            if let Some(d) = src.idx(a, b) {
+                under[d] = true;
+            }
+        }
+        let keep = |m: Vec<bool>| -> Vec<bool> { m.iter().zip(&src.exists).map(|(a, b)| *a && *b).collect() };
+        let (draw, read) = (keep(src.dilate(&under, 1)), keep(src.dilate(&under, 2)));
+        self.ensure_routed(s, &read);
         let started = Instant::now();
         let lv = &self.levels[k];
         let cells: Vec<usize> = (0..need.len()).filter(|&c| need[c] && !lv.built[c]).collect();
         let reached = {
-            let (lv, par) = (&self.levels[k], &self.levels[k - 1]);
-            let src = &self.levels[self.levels.iter().position(|l| l.w == LAST_WATER).expect("a level water stops at")];
+            let (lv, src, p) = (&self.levels[k], &self.levels[s], &self.p);
             let reach = channel::channel_reach();
-            let index = channel::Index::new(par, &pmask, reach);
+            let owners: Vec<usize> = (0..draw.len()).filter(|&c| draw[c]).collect();
+            let drawn = water::in_parallel(&owners, |c| channel::own_banks(src, c, p));
+            for (_, curves, rising) in &drawn {
+                self.channel_stats[0] += curves;
+                self.channel_stats[1] += rising;
+            }
+            let index = channel::Index::new(drawn.into_iter().flat_map(|(banks, _, _)| banks), reach);
             water::in_parallel(&cells, |c| {
                 let (i, j) = lv.ij(c);
                 index.at(i as f64, j as f64, src.surface_at(i as f64, j as f64), reach)
             })
         };
-        let s = self.levels.iter().position(|l| l.w == LAST_WATER).expect("a level water stops at");
+        // The zone a channel cuts in, and how much it lowers each tile there.
+        let lowered: HashMap<usize, f64> = cells
+            .iter()
+            .zip(&reached)
+            .filter(|(_, at)| at.governing.is_some())
+            .map(|(&c, at)| (c, (self.levels[k].ground[c] - at.surface).max(0.0)))
+            .collect();
+        let done: HashSet<usize> = cells.iter().copied().collect();
+        for (&c, &lower) in &lowered {
+            let (i, j) = self.levels[k].ij(c);
+            let edge = NB.iter().filter_map(|&(di, dj)| self.levels[k].idx(i + di, j + dj)).any(|d| done.contains(&d) && !lowered.contains_key(&d));
+            if edge {
+                self.channel_edge = self.channel_edge.max(lower);
+            }
+        }
         for (&c, at) in cells.iter().zip(&reached) {
             let Some((river, d)) = at.governing else { continue };
-            self.channel_reach.push(d);
+            self.channel_reach.push([d, at.below]);
             let step = self.levels[k].ground[c] - at.surface;
             self.channel_stats[2] += (step > 0.0) as u64;
             if at.capped {
@@ -922,77 +951,6 @@ impl<'g, G: Ground> Ladder<'g, G> {
         lv.cost[4] += cells.len() as u64;
         lv.cost[Pass::Channel as usize] += pend.len() as u64;
         self.timing[k][Stage::Channel as usize] += started.elapsed().as_secs_f64();
-    }
-
-    /// The cells of level k-1 under a mask of level k and one ring of them.
-    fn under(&self, k: usize, mask: &[bool]) -> Vec<bool> {
-        let (lv, par) = (&self.levels[k], &self.levels[k - 1]);
-        let mut pmask = vec![false; par.exists.len()];
-        for c in 0..mask.len() {
-            if mask[c] {
-                let (i, j) = lv.ij(c);
-                let (pi, pj, _, _) = parent_of(i, j);
-                if let Some(pc) = par.idx(pi, pj) {
-                    pmask[pc] = true;
-                }
-            }
-        }
-        par.dilate(&pmask, 1).iter().zip(&par.exists).map(|(a, b)| *a && *b).collect()
-    }
-
-    /// The channels' banks over a mask of level k: at [`LAST_WATER`] those
-    /// its cells' vertices own, drawn from its routing over the cell and its
-    /// ring; below it those of the level above's cells around each lying in
-    /// it.
-    fn ensure_banks(&mut self, k: usize, mask: &[bool]) {
-        let lv = &self.levels[k];
-        let need: Vec<bool> = (0..mask.len()).map(|c| mask[c] && lv.exists[c] && !lv.banked[c]).collect();
-        let cells: Vec<usize> = (0..need.len()).filter(|&c| need[c]).collect();
-        if cells.is_empty() {
-            return;
-        }
-        if lv.w == LAST_WATER {
-            let ring: Vec<bool> = lv.dilate(&need, 1).iter().zip(&lv.exists).map(|(a, b)| *a && *b).collect();
-            self.ensure_routed(k, &ring);
-            self.read_layers(k, &need);
-        } else {
-            let pmask = self.under(k, &need);
-            self.ensure_banks(k - 1, &pmask);
-        }
-        let started = Instant::now();
-        let p = self.p;
-        let (above, rest) = self.levels.split_at_mut(k);
-        let lv = &mut rest[0];
-        let view: &Level = lv;
-        let drawn: Vec<(Vec<channel::Bank>, u64, u64)> = if view.w == LAST_WATER {
-            water::in_parallel(&cells, |c| channel::own_banks(view, c, &p))
-        } else {
-            let par = &above[k - 1];
-            water::in_parallel(&cells, |c| {
-                let (i, j) = view.ij(c);
-                (channel::handed_banks(view, par, i, j), 0, 0)
-            })
-        };
-        for (&c, (banks, curves, rising)) in cells.iter().zip(drawn) {
-            lv.banks[c] = banks;
-            lv.banked[c] = true;
-            self.channel_stats[0] += curves;
-            self.channel_stats[1] += rising;
-        }
-        self.timing[k][Stage::Channel as usize] += started.elapsed().as_secs_f64();
-    }
-
-    /// The channels' banks over cells of level k drawn and kept, as a bake
-    /// keeps them for the levels below.
-    pub fn draw_banks(&mut self, k: usize, cells: &[(i64, i64)]) {
-        let lv = &self.levels[k];
-        let mut mask = vec![false; lv.exists.len()];
-        for &(i, j) in cells {
-            if let Some(c) = lv.idx(i, j) {
-                mask[c] = lv.exists[c];
-            }
-        }
-        self.ensure_banks(k, &mask);
     }
 
     /// For the probes: the cut at each of `cells` of level k from every river

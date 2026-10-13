@@ -77,6 +77,24 @@ impl Draw {
     }
 }
 
+/// What the running probe is doing.
+static STATUS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// Says what the probe is doing now, and starts the heartbeat that prints
+/// it with the time every 30 seconds, so a run never goes quiet.
+fn status(now: &str) {
+    static BEAT: std::sync::Once = std::sync::Once::new();
+    *STATUS.lock().unwrap() = now.to_string();
+    println!("progress: {now}");
+    BEAT.call_once(|| {
+        let started = Instant::now();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            println!("progress {:.0}s: {}", started.elapsed().as_secs_f64(), STATUS.lock().unwrap());
+        });
+    });
+}
+
 fn same(a: f64, b: f64) -> bool {
     a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
 }
@@ -137,6 +155,7 @@ fn exact<G: Ground>(ground: &G, whole: &Ladder<G>, p: Params, out: &mut String) 
         let h = region(w) / w;
         let (mut identical, mut seams, mut cells) = (true, 0u64, 0u64);
         let started = Instant::now();
+        status(&format!("exact checks at {w}"));
         for _ in 0..3 {
             let c = (draw.range(-h / 2, h / 2 + 1), draw.range(-h / 2, h / 2 + 1));
             let mut one = Ladder::new(ground, &ext, p);
@@ -247,12 +266,17 @@ fn dump(dir: &str, lv: &Level) {
 /// whose walls reached the reach still below the ground, with the tiles
 /// where they did and the largest step left there.
 fn channels<G: Ground>(ladder: &Ladder<G>) -> String {
-    let mut reach = ladder.channel_reach.clone();
+    let mut reach: Vec<f64> = ladder.channel_reach.iter().map(|r| r[0]).collect();
     reach.sort_by(f64::total_cmp);
     let pct = |q: f64| if reach.is_empty() { f64::NAN } else { reach[((reach.len() - 1) as f64 * q).round() as usize] };
+    // The reach counting only tiles where the channel is a whole step or
+    // more below the drawn surface.
+    let mut deep: Vec<f64> = ladder.channel_reach.iter().filter(|r| r[1] >= 1.0).map(|r| r[0]).collect();
+    deep.sort_by(f64::total_cmp);
+    let dpct = |q: f64| if deep.is_empty() { f64::NAN } else { deep[((deep.len() - 1) as f64 * q).round() as usize] };
+    let under_half = ladder.channel_reach.iter().filter(|r| r[1] < 0.5).count();
     let mut out = format!(
-        "channels: {} curves, {} with a rising floor; {} tiles reached, {} lowered; reach p50 {:.1} p99 {:.1} max {:.1} tiles of {:.1}; {} rivers at the reach
-",
+        "channels: {} curves, {} with a rising floor; {} tiles reached, {} lowered; reach p50 {:.1} p99 {:.1} max {:.1} tiles of {:.1}; largest step at the zone's edge {:.1}; {} rivers at the reach\n",
         ladder.channel_stats[0],
         ladder.channel_stats[1],
         reach.len(),
@@ -261,13 +285,20 @@ fn channels<G: Ground>(ladder: &Ladder<G>) -> String {
         pct(0.99),
         pct(1.0),
         world::ladder::channel::channel_reach(),
+        ladder.channel_edge,
         ladder.channel_capped.len()
     );
     let mut capped: Vec<_> = ladder.channel_capped.iter().collect();
     capped.sort_by(|a, b| b.1 .1.total_cmp(&a.1 .1));
+    out.push_str(&format!(
+        "   reached tiles under half a step below the drawn surface: {under_half}; a step or more below: {} tiles, reach p50 {:.1} p99 {:.1} max {:.1}\n",
+        deep.len(),
+        dpct(0.5),
+        dpct(0.99),
+        dpct(1.0)
+    ));
     for (river, (tiles, step)) in capped {
-        out.push_str(&format!("   at the reach: river {river:?}, {tiles} tiles, step left up to {step:.1}
-"));
+        out.push_str(&format!("   at the reach: river {river:?}, {tiles} tiles, step left up to {step:.1}\n"));
     }
     out
 }
@@ -280,13 +311,17 @@ fn truth<G: Ground>(ladder: &Ladder<G>) -> String {
     let Some(k) = ladder.levels.iter().position(|lv| lv.w == LAST_WATER) else { return String::new() };
     let lv = &ladder.levels[k];
     let h = region(lv.w) / lv.w / 2;
+    // Every built cell in the middle half, or a sample of them where they
+    // are more.
+    let mut cells: Vec<(i64, i64)> = (-h..=h).flat_map(|i| (-h..=h).map(move |j| (i, j))).filter(|&(i, j)| lv.idx(i, j).is_some_and(|x| lv.built[x])).collect();
     let mut draw = Draw(23);
-    let mut cells = Vec::new();
-    while cells.len() < 2000 {
-        let c = (draw.range(-h, h + 1), draw.range(-h, h + 1));
-        if lv.idx(c.0, c.1).is_some_and(|x| lv.built[x]) && !cells.contains(&c) {
-            cells.push(c);
-        }
+    for x in (1..cells.len()).rev() {
+        let y = draw.range(0, x as i64 + 1) as usize;
+        cells.swap(x, y);
+    }
+    cells.truncate(2000);
+    if cells.is_empty() {
+        return String::new();
     }
     let whole = ladder.unlimited_cut(k, &cells);
     let (mut steps, mut cuts) = (Vec::new(), Vec::new());
@@ -297,8 +332,7 @@ fn truth<G: Ground>(ladder: &Ladder<G>) -> String {
         let off = (lv.z[c] - (dry + t + 0.5).floor()).abs();
         if off > 3.0 {
             far.push(format!(
-                "   ({i}, {j}): {off} steps; cut {:.1}, every river's {t:.1}, handed down {:.1}; governing river {:.2} cells off, fading {}
-",
+                "   ({i}, {j}): {off} steps; cut {:.1}, every river's {t:.1}, handed down {:.1}; governing river {:.2} cells off, fading {}\n",
                 lv.cut[c], lv.wpred[c], lv.wdist[c], lv.wfade[c]
             ));
         }
@@ -317,14 +351,14 @@ fn truth<G: Ground>(ladder: &Ladder<G>) -> String {
         pct(&mut steps, 1.0),
         pct(&mut cuts, 0.99),
         pct(&mut cuts, 1.0)
-    ) + &format!("   cells over 3 steps: {}
-", far.len())
+    ) + &format!("   cells over 3 steps: {}\n", far.len())
         + &far.concat()
 }
 
 fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
     let ext = extents();
     let started = Instant::now();
+    status("building the top");
     let mut ladder = Ladder::new(ground, &ext, p);
     log.push_str(&format!("top {:.1}s\n", started.elapsed().as_secs_f64()));
     let only: Option<i64> = std::env::var("LADDER_SMALL_REGION").ok().and_then(|s| s.parse().ok());
@@ -335,6 +369,7 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
             Some(_) => continue,
             None => region_cells(ext[k].0),
         };
+        status(&format!("requesting level {}", ext[k].0));
         ladder.request(k, &cells);
         let line = format!("built w={} {:.1}s\n", ext[k].0, t.elapsed().as_secs_f64());
         print!("{line}");
@@ -349,10 +384,12 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
     }
     log.push_str(&timing(&ladder.levels, &ladder.timing));
     log.push_str(&channels(&ladder));
+    status("checking 27 against every river");
     log.push_str(&truth(&ladder));
     if std::env::var("LADDER_EXACT").is_ok_and(|v| v == "1") {
         exact(ground, &ladder, p, log);
     }
+    status("writing the dumps");
     for lv in &ladder.levels {
         dump(dir, lv);
     }
@@ -383,14 +420,12 @@ fn ladder_gate() {
         Ok("A") => (1_500.0, 40_000.0),
         _ => (13_122.0, 1_102_500.0),
     };
-    let mut log = format!("ground layered, thrust averaged {depth} levels down, water {water}
-");
+    let mut log = format!("ground layered, thrust averaged {depth} levels down, water {water}\n");
     let g = Layered::new(&c, HAVEN, outline_half(), WORLD_SEED, depth);
     // How far water reads, in cells: the deform cell's ring unless a test
     // widens it.
     let ring = std::env::var("LADDER_RING").ok().and_then(|r| r.parse().ok()).unwrap_or(world::ladder::RING);
-    log.push_str(&format!("cut from {cut_from} full at {cut_full}, ring {ring}
-"));
+    log.push_str(&format!("cut from {cut_from} full at {cut_full}, ring {ring}\n"));
     run(&g, Params { water, cut_from, cut_full, ring, ..Params::default() }, &dir, &mut log);
     print!("{log}");
     std::fs::write(format!("{dir}/log.txt"), log).expect("the log");
@@ -405,8 +440,7 @@ fn ladder_averaging() {
     let c = stack(WORLD_SEED);
     let g = Layered::new(&c, HAVEN, outline_half(), WORLD_SEED, 0);
     let mut draw = Draw(11);
-    let mut out = String::from("w depth samples err_p50 err_p99 err_max us_per_cell (levels; whole = every tile)
-");
+    let mut out = String::from("w depth samples err_p50 err_p99 err_max us_per_cell (levels; whole = every tile)\n");
     for &(w, reach) in &LEVELS {
         let full = w.ilog(3);
         let h = (region(w).min(reach)) / w;
@@ -428,8 +462,7 @@ fn ladder_averaging() {
             let us = started.elapsed().as_secs_f64() * 1e6 / cells.len() as f64;
             errs.sort_by(f64::total_cmp);
             let n = errs.len();
-            let line = format!("{w} {depth} {} {:.2} {:.2} {:.2} {:.0}
-", 9u64.pow(depth), errs[n / 2], errs[(n * 99 / 100).min(n - 1)], errs[n - 1], us);
+            let line = format!("{w} {depth} {} {:.2} {:.2} {:.2} {:.0}\n", 9u64.pow(depth), errs[n / 2], errs[(n * 99 / 100).min(n - 1)], errs[n - 1], us);
             print!("{line}");
             out.push_str(&line);
         }
@@ -617,6 +650,7 @@ fn ladder_area_speed() {
     let mut out = format!("area {across} x {across} tiles ({} tiles), threads {threads}\n", cells.len());
     let mut cold = None;
     for run in ["cold", "fresh"] {
+        status(&format!("the area, {run}"));
         let mut ladder = None;
         let (top_wall, top_cpu) = timed(&mut || ladder = Some(Ladder::new(&g, &ext, Params::default())));
         let mut ladder = ladder.unwrap();
@@ -634,21 +668,19 @@ fn ladder_area_speed() {
         }
     }
     let mut cold = cold.unwrap();
+    status("the area again");
     let before: f64 = cold.timing.iter().flatten().sum();
     let (wall, cpu) = timed(&mut || cold.request(k, &cells));
     let more = cold.timing.iter().flatten().sum::<f64>() - before;
     out.push_str(&format!("again: the area {wall:.4} s wall, {cpu:.3} s CPU; stage time added {more:.4} s\n"));
-    // The levels to LAST_WATER over every cell the cold run built there.
+    // The levels to LAST_WATER over every cell the cold run routed or built
+    // there.
     let s = ext.iter().position(|e| e.0 == LAST_WATER).unwrap();
+    status("the area from a bake");
     let mut baked = Ladder::new(&g, &ext, Params::default());
     let src = &cold.levels[s];
-    let bake_cells: Vec<(i64, i64)> = (0..src.n * src.n).filter(|&c| src.built[c]).map(|c| src.ij(c)).collect();
-    let bank_cells: Vec<(i64, i64)> = (0..src.n * src.n).filter(|&c| src.banked[c]).map(|c| src.ij(c)).collect();
-    let (bwall, _) = timed(&mut || {
-        baked.request(s, &bake_cells);
-    baked.draw_banks(s, &bank_cells);
-        baked.draw_banks(s, &bank_cells);
-    });
+    let bake_cells: Vec<(i64, i64)> = (0..src.n * src.n).filter(|&c| src.built[c] || src.routed[c]).map(|c| src.ij(c)).collect();
+    let (bwall, _) = timed(&mut || baked.request(s, &bake_cells));
     let start = baked.timing.clone();
     let (wall, cpu) = timed(&mut || baked.request(k, &cells));
     out.push_str(&format!("baked: the levels to {LAST_WATER} over {} of its cells in {bwall:.1} s; then the area {wall:.3} s wall, {cpu:.2} s CPU\n", bake_cells.len()));
@@ -662,6 +694,7 @@ fn ladder_area_speed() {
     let differ = cells.iter().filter(|&&(i, j)| !same(a.z[a.idx(i, j).unwrap()], b.z[b.idx(i, j).unwrap()])).count();
     out.push_str(&format!("   tiles differing from the cold run: {differ}\n"));
     // The same bake on a ground read afresh: the levels below read cold.
+    status("the area from a bake, its ground read cold");
     let fresh = Layered::new(&c, HAVEN, outline_half(), WORLD_SEED, 2);
     let mut baked = Ladder::new(&fresh, &ext, Params::default());
     baked.request(s, &bake_cells);
@@ -673,25 +706,29 @@ fn ladder_area_speed() {
     let b = &baked.levels[k];
     let differ = cells.iter().filter(|&&(i, j)| !same(a.z[a.idx(i, j).unwrap()], b.z[b.idx(i, j).unwrap()])).count();
     out.push_str(&format!("   tiles differing from the cold run: {differ}\n"));
-    // The game's tiles over the same area: the standard stack, fresh, each
-    // tile composed by `tile_at`, on every thread and on one.
+    // The game's tiles over the same area, each composed by `tile_at`: on
+    // one thread on a fresh standard stack, then on every thread on another
+    // fresh one, then on every thread again on that one.
     let tiles: Vec<(i32, i32)> = cells.iter().map(|&(i, j)| (HAVEN.0 + i as i32, HAVEN.1 + j as i32)).collect();
-    let game = Composite::standard(WORLD_SEED);
-    let chunk = tiles.len().div_ceil(threads);
-    let (wall, cpu) = timed(&mut || {
-        std::thread::scope(|sc| {
-            for part in tiles.chunks(chunk) {
-                let game = &game;
-                sc.spawn(move || part.iter().map(|&(q, r)| game.tile_at(q, r).elevation).sum::<f64>());
-            }
-        })
-    });
-    out.push_str(&format!("game: Composite::standard, tile_at over the area on {threads} threads: {wall:.3} s wall, {cpu:.2} s CPU\n"));
+    status("the game's tiles");
     let game = Composite::standard(WORLD_SEED);
     let (wall, cpu) = timed(&mut || {
         let _: f64 = tiles.iter().map(|&(q, r)| game.tile_at(q, r).elevation).sum();
     });
-    out.push_str(&format!("game: the same on one thread: {wall:.3} s wall, {cpu:.2} s CPU\n"));
+    out.push_str(&format!("game: Composite::standard fresh, tile_at over the area on one thread: {wall:.3} s wall, {cpu:.2} s CPU\n"));
+    let game = Composite::standard(WORLD_SEED);
+    let chunk = tiles.len().div_ceil(threads);
+    for run in ["fresh", "again"] {
+        let (wall, cpu) = timed(&mut || {
+            std::thread::scope(|sc| {
+                for part in tiles.chunks(chunk) {
+                    let game = &game;
+                    sc.spawn(move || part.iter().map(|&(q, r)| game.tile_at(q, r).elevation).sum::<f64>());
+                }
+            })
+        });
+        out.push_str(&format!("game: Composite::standard {run}, tile_at over the area on {threads} threads: {wall:.3} s wall, {cpu:.2} s CPU\n"));
+    }
     print!("{out}");
     if let Ok(dir) = std::env::var("LADDER_OUT") {
         std::fs::write(format!("{dir}/area_{across}.txt"), out).expect("the area table");
@@ -719,20 +756,21 @@ const WORKING: usize = {
 type Kept = (&'static str, usize, bool);
 
 /// What a level finer than water reads of a baked `LAST_WATER` level, per
-/// cell: the prediction's heights, corners and handed-down values. Its
-/// channels' banks are counted apart.
-const KEEP_LAST: [Kept; 6] = [
+/// cell: the prediction's heights, corners and handed-down values, the rock,
+/// and each vertex's river the channels are drawn from.
+const KEEP_LAST: [Kept; 11] = [
     ("z", 1, true),
     ("a3 (meet values at corner A)", 3, true),
     ("b3 (meet values at corner B)", 3, true),
     ("cc (six corner values)", 6, true),
     ("layers", 2, false),
     ("cut", 1, false),
+    ("erod", 1, false),
+    ("river: kind (line, born, none) x3", 3, false),
+    ("river: receiver x3", 3, false),
+    ("river: floor x3", 3, true),
+    ("river: catchment x3", 3, false),
 ];
-
-/// A bank's values: its position, floor, bed's half width, walls' slope and
-/// owning river.
-const BANK: [Kept; 6] = [("x", 1, false), ("y", 1, false), ("floor", 1, true), ("bed", 1, false), ("slope", 1, false), ("river", 1, false)];
 
 /// What a level that routes and cuts water reads of a baked level above it:
 /// the prediction's, the ground and cut its water term reads, and every
@@ -790,6 +828,7 @@ fn ladder_bake() {
     let g = Layered::new(&c, HAVEN, outline_half(), WORLD_SEED, 2);
     let top = LEVELS[0];
     let half = top.1 / top.0 + 2;
+    status("the landmass");
     let alone = Ladder::new(&g, &[(top.0, -half, half + 1)], Params::default());
     let lv = &alone.levels[0];
     let mut land = vec![false; lv.n * lv.n];
@@ -848,6 +887,7 @@ fn ladder_bake() {
     let picks: Vec<(i64, i64)> = (0..samples).map(|s| at[(s + 1) * at.len() / (samples + 1)]).collect();
     let mut peak = 0usize;
     for &(a, b) in &picks {
+        status(&format!("block ({a}, {b})"));
         let mut ladder = Ladder::new(&g, &ext, Params::default());
         let cells = under(&ladder.levels[k], &|x, y| (x, y) == (a, b));
         let (t, _) = timed(&mut || ladder.request(k, &cells));
@@ -875,15 +915,13 @@ fn ladder_bake() {
     out.push_str(&format!("   working arrays {WORKING} B a cell; peak over the blocks {:.0} MB\n", peak as f64 / 1e6));
 
     // The whole landmass in one ladder.
+    status(&format!("the bake to {finest}"));
     let before = memory();
     let (t0, c0) = (Instant::now(), cpu_seconds());
     let mut ladder = Ladder::new(&g, &ext, Params::default());
     let top_s = t0.elapsed().as_secs_f64();
     let cells = under(&ladder.levels[k], &|x, y| alone.levels[0].idx(x, y).is_some_and(|d| land[d]));
     ladder.request(k, &cells);
-    if finest == LAST_WATER {
-        ladder.draw_banks(k, &cells);
-    }
     let (wall, cpu) = (t0.elapsed().as_secs_f64(), cpu_seconds() - c0);
     out.push_str(&format!("bake 729 -> {finest} in one ladder: {} cells requested at {finest}; top {top_s:.1} s; {wall:.1} s wall, {cpu:.0} s CPU\n", cells.len()));
     let after = memory();
@@ -898,21 +936,6 @@ fn ladder_bake() {
     let (table, wide, narrow) =
         if finest == LAST_WATER { kept_table("the last water level, read by the dry levels and the channels", &KEEP_LAST) } else { kept_table("a level read by water's levels below it", &KEEP_ABOVE) };
     out.push_str(&table);
-    if finest == LAST_WATER {
-        let lv = &ladder.levels[k];
-        let held: Vec<usize> = (0..lv.n * lv.n).filter(|&c| lv.banked[c]).collect();
-        let banks: usize = held.iter().map(|&c| lv.banks[c].len()).sum();
-        let (bt, bw, bn) = kept_table("a channel bank", &BANK);
-        out.push_str(&bt);
-        out.push_str(&format!(
-            "   banks: {banks} over {} cells ({:.1} a cell): {:.1} MB at 8 B, {:.1} MB quantized
-",
-            held.len(),
-            banks as f64 / held.len() as f64,
-            (banks * bw) as f64 / 1e6,
-            (banks * bn) as f64 / 1e6
-        ));
-    }
     let mut all = (0usize, 0usize);
     for lv in &ladder.levels {
         let built = lv.built.iter().filter(|&&b| b).count();
