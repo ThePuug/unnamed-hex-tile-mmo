@@ -82,7 +82,7 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { channel_head: 1500.0, catchment_full: 40_000.0, cut_from: 1500.0, cut_full: 40_000.0, wall: 1.0, ring: RING, water: true }
+        Params { channel_head: 1500.0, catchment_full: 40_000.0, cut_from: 13_122.0, cut_full: 1_102_500.0, wall: 1.0, ring: RING, water: true }
     }
 }
 

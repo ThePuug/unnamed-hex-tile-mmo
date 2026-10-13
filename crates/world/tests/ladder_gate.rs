@@ -298,7 +298,8 @@ fn ladder_gate() {
     let (cut_from, cut_full) = match std::env::var("LADDER_CUT").as_deref() {
         Ok("B") => (13_122.0, 1_102_500.0),
         Ok("C") => (1_102_500.0, 13_230_000.0),
-        _ => (1_500.0, 40_000.0),
+        Ok("A") => (1_500.0, 40_000.0),
+        _ => (13_122.0, 1_102_500.0),
     };
     let mut log = format!("ground layered, thrust averaged {depth} levels down, water {water}
 ");
