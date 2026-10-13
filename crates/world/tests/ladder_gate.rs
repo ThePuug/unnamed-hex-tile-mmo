@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use world::events::{lithology, motion, plates, thickening, thrusting, tilt, Composite};
 use world::ladder::ground::Layered;
-use world::ladder::{Ground, Ladder, Level, Params};
+use world::ladder::{Ground, Ladder, Level, Params, LAST_WATER};
 use world::WORLD_SEED;
 
 /// The haven's tile, as `common_bevy::haven::HAVEN_LOCATION` holds it.
@@ -156,7 +156,8 @@ fn exact<G: Ground>(ground: &G, whole: &Ladder<G>, p: Params, out: &mut String) 
             for m in [&one, &apart] {
                 let lv = &m.levels[k];
                 for cc in 0..lv.n * lv.n {
-                    if lv.routed[cc] {
+                    // A level finer than water keeps no routing: its built cells.
+                    if lv.routed[cc] || (lv.w < LAST_WATER && lv.built[cc]) {
                         let (i, j) = lv.ij(cc);
                         cells += 1;
                         let bad = differs(lv, wl, i, j);
@@ -199,9 +200,7 @@ fn dump(dir: &str, lv: &Level) {
         ("ground", &lv.ground),
         ("wpred", &lv.wpred),
         ("cut", &lv.cut),
-        ("wshift", &lv.wshift),
         ("wfull", &lv.wfull),
-        ("wpar", &lv.wpar),
         ("wdist", &lv.wdist),
         ("age", &lv.age),
         ("uelev", &lv.uelev),
@@ -243,6 +242,85 @@ fn dump(dir: &str, lv: &Level) {
     }
 }
 
+/// The tiles' channels: curves drawn and those whose floor rose; how far
+/// from its governing bank each tile a channel cut lies; and every river
+/// whose walls reached the reach still below the ground, with the tiles
+/// where they did and the largest step left there.
+fn channels<G: Ground>(ladder: &Ladder<G>) -> String {
+    let mut reach = ladder.channel_reach.clone();
+    reach.sort_by(f64::total_cmp);
+    let pct = |q: f64| if reach.is_empty() { f64::NAN } else { reach[((reach.len() - 1) as f64 * q).round() as usize] };
+    let mut out = format!(
+        "channels: {} curves, {} with a rising floor; {} tiles cut, reach p50 {:.1} p99 {:.1} max {:.1} tiles of {:.1}; {} rivers at the reach
+",
+        ladder.channel_stats[0],
+        ladder.channel_stats[1],
+        reach.len(),
+        pct(0.5),
+        pct(0.99),
+        pct(1.0),
+        world::ladder::channel::channel_reach(),
+        ladder.channel_capped.len()
+    );
+    let mut capped: Vec<_> = ladder.channel_capped.iter().collect();
+    capped.sort_by(|a, b| b.1 .1.total_cmp(&a.1 .1));
+    for (river, (tiles, step)) in capped {
+        out.push_str(&format!("   at the reach: river {river:?}, {tiles} tiles, step left up to {step:.1}
+"));
+    }
+    out
+}
+
+/// Water at `LAST_WATER` against the valley from every river the level
+/// routed, however far: over a sample of its cells in the middle half of
+/// its region, the height's difference from the dry ground met by that
+/// valley, rounded, and the cut's before rounding.
+fn truth<G: Ground>(ladder: &Ladder<G>) -> String {
+    let Some(k) = ladder.levels.iter().position(|lv| lv.w == LAST_WATER) else { return String::new() };
+    let lv = &ladder.levels[k];
+    let h = region(lv.w) / lv.w / 2;
+    let mut draw = Draw(23);
+    let mut cells = Vec::new();
+    while cells.len() < 2000 {
+        let c = (draw.range(-h, h + 1), draw.range(-h, h + 1));
+        if lv.idx(c.0, c.1).is_some_and(|x| lv.built[x]) && !cells.contains(&c) {
+            cells.push(c);
+        }
+    }
+    let whole = ladder.unlimited_cut(k, &cells);
+    let (mut steps, mut cuts) = (Vec::new(), Vec::new());
+    let mut far = Vec::new();
+    for (&(i, j), &t) in cells.iter().zip(&whole) {
+        let c = lv.idx(i, j).unwrap();
+        let dry = lv.ground[c] - lv.wpred[c];
+        let off = (lv.z[c] - (dry + t + 0.5).floor()).abs();
+        if off > 3.0 {
+            far.push(format!(
+                "   ({i}, {j}): {off} steps; cut {:.1}, every river's {t:.1}, handed down {:.1}; governing river {:.2} cells off, fading {}
+",
+                lv.cut[c], lv.wpred[c], lv.wdist[c], lv.wfade[c]
+            ));
+        }
+        steps.push(off);
+        cuts.push((lv.cut[c] - t).abs());
+    }
+    let pct = |v: &mut Vec<f64>, q: f64| {
+        v.sort_by(f64::total_cmp);
+        v[((v.len() - 1) as f64 * q).round() as usize]
+    };
+    format!(
+        "truth w={}: {} cells against min(dry ground, valley from every river): height p99 {} max {} steps; cut p99 {:.2} max {:.2}\n",
+        lv.w,
+        cells.len(),
+        pct(&mut steps, 0.99),
+        pct(&mut steps, 1.0),
+        pct(&mut cuts, 0.99),
+        pct(&mut cuts, 1.0)
+    ) + &format!("   cells over 3 steps: {}
+", far.len())
+        + &far.concat()
+}
+
 fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
     let ext = extents();
     let started = Instant::now();
@@ -268,6 +346,8 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
             lv.w, ladder.line_stats[k], ladder.route_stats[k], lv.cost
         ));
     }
+    log.push_str(&channels(&ladder));
+    log.push_str(&truth(&ladder));
     if std::env::var("LADDER_EXACT").is_ok_and(|v| v == "1") {
         exact(ground, &ladder, p, log);
     }

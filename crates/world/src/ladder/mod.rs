@@ -31,6 +31,11 @@
 //! Water comes last and reads the level's lines and its births, never the
 //! other way: routing reads only the ground.
 //!
+//! Lines, routing and water's valleys stop at [`LAST_WATER`]. A level finer
+//! than that is its prediction and the ground's own detail, its cut handed
+//! down unchanged. [`LAST_WATER`] draws its rivers' channels, the levels
+//! below hand them down, and the tiles cut them ([`channel`]).
+//!
 //! Every layer, water among them, writes its value averaged over the
 //! level's cell; its raise there is that less what the level above handed
 //! down, the level above's values predicted at the cell ([`handed_down`]).
@@ -47,6 +52,7 @@
 //! as requests reach it, and never read in place of a recomputation that
 //! would differ.
 
+pub mod channel;
 pub mod geom;
 #[cfg(feature = "inspect")]
 pub mod ground;
@@ -114,6 +120,8 @@ pub const ROUTE_REACH: f64 = 11.0;
 /// A line's corridor, either side of the level above's line, in cells of
 /// the level: one cell of the level above.
 pub const CORRIDOR: f64 = 3.0;
+/// The finest level that routes, draws lines and cuts water's valleys.
+pub const LAST_WATER: i64 = 27;
 
 /// The passes that deform in cells of their own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -121,7 +129,12 @@ pub enum Pass {
     Ground = 0,
     Water = 1,
     Route = 2,
+    /// The channels: cut at the tiles, as far as they reach; drawn and
+    /// handed down a cell at a time above them.
+    Channel = 3,
 }
+
+const PASSES: [Pass; 4] = [Pass::Ground, Pass::Water, Pass::Route, Pass::Channel];
 
 /// The catchment a trough carries at a level: a level resolves a trough two
 /// of its cells wide.
@@ -136,6 +149,8 @@ pub fn reach(pass: Pass, w: i64) -> f64 {
             Pass::Ground => 0.0,
             Pass::Water => RING,
             Pass::Route => ROUTE_REACH,
+            Pass::Channel if w == 1 => channel::channel_reach(),
+            Pass::Channel => 0.0,
         }
 }
 
@@ -211,14 +226,9 @@ pub struct Level {
     pub wpred: Vec<f64>,
     /// Water's value: its cut below the uncut ground, never above it.
     pub cut: Vec<f64>,
-    /// What of water's correction at a cell the lines' moving makes: the
-    /// valley from this level's lines averaged over the level above's cells
-    /// and handed down, less the level above's from its own. NaN where no
-    /// correction is made.
-    pub wshift: Vec<f64>,
     /// Water's correction before it fades: the level's valley averaged over
-    /// the cell less the level above's averaged over its cells and handed
-    /// down. NaN where none is made.
+    /// the cell less what the level above handed down. NaN where none is
+    /// made.
     pub wfull: Vec<f64>,
     /// How far each cell lies from the line governing its valley, in its
     /// cells; infinite past the ring.
@@ -229,12 +239,8 @@ pub struct Level {
     /// The river vertex whose valley governs each cell's correction, as an
     /// index of the level; -1 where none does.
     pub wgov: Vec<i64>,
-    /// The level above's term in each cell's correction less what the
-    /// level above handed down: nothing where the term reproduces what the
-    /// level above wrote, which only rivers outside the ring may break.
-    pub wpar: Vec<f64>,
-    /// Whether any river water read at each cell, its own or the level
-    /// above's, runs where the correction fades.
+    /// Whether any river water read at each cell runs where the correction
+    /// fades and changes it.
     pub wfade: Vec<bool>,
     pub z: Vec<f64>,
     pub a3: Vec<[f64; 3]>,
@@ -281,10 +287,14 @@ pub struct Level {
     pub built: Vec<bool>,
     pub routed: Vec<bool>,
     pub corners: Vec<bool>,
+    /// The channels' banks each cell holds: at [`LAST_WATER`] those its
+    /// vertices own, below it those lying in it.
+    pub banks: Vec<Vec<channel::Bank>>,
+    pub banked: Vec<bool>,
     /// Each pass's deform cell of each cell.
-    pub blocks: [Vec<(i64, i64)>; 3],
+    pub blocks: [Vec<(i64, i64)>; 4],
     /// Deforms run by each pass, and cells built.
-    pub cost: [u64; 4],
+    pub cost: [u64; 5],
 }
 
 const NONE: (i64, i64) = (i64::MIN, i64::MIN);
@@ -294,8 +304,8 @@ impl Level {
         let n = (hi - lo) as usize;
         let cells = n * n;
         let nan = |k: usize| vec![f64::NAN; k];
-        let mut blocks: [Vec<(i64, i64)>; 3] = [vec![NONE; cells], vec![NONE; cells], vec![NONE; cells]];
-        for (b, pass) in [Pass::Ground, Pass::Water, Pass::Route].into_iter().enumerate() {
+        let mut blocks: [Vec<(i64, i64)>; 4] = std::array::from_fn(|_| vec![NONE; cells]);
+        for (b, pass) in PASSES.into_iter().enumerate() {
             let m = if top { 0 } else { (cell_size(pass, w, ring) / w).ilog(3) };
             for c in 0..cells {
                 if exists[c] {
@@ -316,12 +326,10 @@ impl Level {
             ground: nan(cells),
             wpred: nan(cells),
             cut: nan(cells),
-            wshift: nan(cells),
             wfull: nan(cells),
             wdist: nan(cells),
             wborn: vec![-1; cells],
             wgov: vec![-1; cells],
-            wpar: nan(cells),
             wfade: vec![false; cells],
             z: nan(cells),
             a3: vec![[f64::NAN; 3]; cells],
@@ -356,8 +364,10 @@ impl Level {
             built: vec![false; cells],
             routed: vec![false; cells],
             corners: vec![false; cells],
+            banks: vec![Vec::new(); cells],
+            banked: vec![false; cells],
             blocks,
-            cost: [0; 4],
+            cost: [0; 5],
         }
     }
 
@@ -522,6 +532,15 @@ pub struct Ladder<'g, G: Ground> {
     /// Per level: born troughs whose upstream reached the read edge, vertices
     /// that did, own vertices left undecided, own vertices in a cycle.
     pub route_stats: Vec<[u64; 4]>,
+    /// The channel curves drawn, and those whose floor rose.
+    pub channel_stats: [u64; 2],
+    /// How far from its governing bank each tile a channel cut lies, in
+    /// tiles.
+    pub channel_reach: Vec<f64>,
+    /// The rivers whose walls reached [`channel::channel_reach`] still below
+    /// the ground, as vertices of [`LAST_WATER`]'s level: the tiles where
+    /// they did, and the largest step left there.
+    pub channel_capped: HashMap<(u8, i64, i64), (u64, f64)>,
 }
 
 impl<'g, G: Ground> Ladder<'g, G> {
@@ -543,7 +562,16 @@ impl<'g, G: Ground> Ladder<'g, G> {
             levels.push(Level::new(w, lo, hi, exists, k == 0, ground.layers(), p.ring));
         }
         let count = levels.len();
-        let mut ladder = Ladder { levels, ground, p, line_stats: vec![[0; 3]; count], route_stats: vec![[0; 4]; count] };
+        let mut ladder = Ladder {
+            levels,
+            ground,
+            p,
+            line_stats: vec![[0; 3]; count],
+            route_stats: vec![[0; 4]; count],
+            channel_stats: [0; 2],
+            channel_reach: Vec::new(),
+            channel_capped: HashMap::new(),
+        };
         ladder.build_top();
         ladder
     }
@@ -645,7 +673,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
     }
 
     fn ensure_routed(&mut self, k: usize, mask: &[bool]) {
-        if k == 0 {
+        if k == 0 || self.levels[k].w < LAST_WATER {
             return;
         }
         let lv = &self.levels[k];
@@ -743,37 +771,22 @@ impl<'g, G: Ground> Ladder<'g, G> {
         if !need.iter().any(|&x| x) {
             return;
         }
+        if lv.w < LAST_WATER {
+            self.ensure_dry(k, &need);
+            return;
+        }
+        let lv = &self.levels[k];
         let sel: Vec<bool> = (0..need.len()).map(|c| need[c] && !lv.watered[c]).collect();
         if sel.iter().any(|&x| x) {
             let pend = lv.pending(Pass::Water, &sel);
             let fp = lv.footprint(Pass::Water, &pend);
             self.ensure_supplied(k, &fp);
             self.ensure_routed(k, &fp);
-            let (above, rest) = self.levels.split_at_mut(k);
-            let lv = &mut rest[0];
-            let par = &above[k - 1];
-            let mut own = water::line_edges(lv, &fp, head_of(par.w, &self.p), false);
+            let head = head_of(self.levels[k - 1].w, &self.p);
+            let lv = &mut self.levels[k];
+            let mut own = water::line_edges(lv, &fp, head);
             own.extend(water::born_edges(lv, &fp));
-            // The level above's lines over the cells under the footprint: the
-            // top's troughs, or a level's lines carrying its own level above's head.
-            let theirs = if k == 1 {
-                water::trough_edges(par, head_of(par.w, &self.p))
-            } else {
-                let mut pmask = vec![false; par.exists.len()];
-                for c in 0..fp.len() {
-                    if fp[c] {
-                        let (i, j) = lv.ij(c);
-                        let (pi, pj, _, _) = parent_of(i, j);
-                        if let Some(pc) = par.idx(pi, pj) {
-                            pmask[pc] = true;
-                        }
-                    }
-                }
-                let mut edges = water::line_edges(par, &pmask, head_of(3 * par.w, &self.p), true);
-                edges.extend(water::born_edges(par, &pmask));
-                edges
-            };
-            water::level_cut(lv, par, &own, &theirs, &pend, &self.p);
+            water::level_cut(lv, &own, &pend, &self.p);
             lv.cost[Pass::Water as usize] += pend.len() as u64;
         }
         self.ensure_supplied(k, &need);
@@ -787,8 +800,142 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 built += 1;
             }
         }
-        lv.cost[3] += built;
+        lv.cost[4] += built;
         assert!((0..need.len()).all(|c| !need[c] || lv.built[c]), "a built cell read something its deform did not cover");
+    }
+
+    /// A level finer than [`LAST_WATER`] built over a mask: its ground, the
+    /// cut handed down unchanged, and at the tiles the channels the level
+    /// above holds, met by it.
+    fn ensure_dry(&mut self, k: usize, need: &[bool]) {
+        self.ensure_supplied(k, need);
+        if self.levels[k].w == 1 {
+            self.ensure_channels(k, need);
+        }
+        let lv = &mut self.levels[k];
+        let mut built = 0;
+        for c in 0..need.len() {
+            if need[c] && !lv.built[c] {
+                lv.cut[c] = lv.wpred[c];
+                lv.z[c] = (lv.ground[c] + 0.5).floor();
+                lv.watered[c] = true;
+                lv.built[c] = true;
+                built += 1;
+            }
+        }
+        lv.cost[4] += built;
+    }
+
+    /// The tiles of a mask cut by their channels, a channel deform cell at a
+    /// time: the level above's banks under its footprint and one ring read,
+    /// each tile the lower of its ground and the channels reaching it.
+    fn ensure_channels(&mut self, k: usize, need: &[bool]) {
+        let lv = &self.levels[k];
+        let pend = lv.pending(Pass::Channel, need);
+        let fp = lv.footprint(Pass::Channel, &pend);
+        let pmask = self.under(k, &fp);
+        self.ensure_banks(k - 1, &pmask);
+        let lv = &self.levels[k];
+        let cells: Vec<usize> = (0..need.len()).filter(|&c| need[c] && !lv.built[c]).collect();
+        let reached = {
+            let (lv, par) = (&self.levels[k], &self.levels[k - 1]);
+            let reach = channel::channel_reach();
+            let index = channel::Index::new(par, &pmask, reach);
+            water::in_parallel(&cells, |c| {
+                let (i, j) = lv.ij(c);
+                index.at(i as f64, j as f64, lv.ground[c], reach)
+            })
+        };
+        let s = self.levels.iter().position(|l| l.w == LAST_WATER).expect("a level water stops at");
+        for (&c, at) in cells.iter().zip(&reached) {
+            let Some((river, d)) = at.governing else { continue };
+            self.channel_reach.push(d);
+            if at.capped {
+                let step = self.levels[k].ground[c] - at.surface;
+                let e = self.channel_capped.entry(self.levels[s].vertex(river)).or_insert((0, 0.0));
+                e.0 += 1;
+                e.1 = e.1.max(step);
+            }
+        }
+        let lv = &mut self.levels[k];
+        for (&c, at) in cells.iter().zip(&reached) {
+            let ground = lv.ground[c];
+            let low = ground.min(at.surface);
+            lv.cut[c] = lv.wpred[c] + low - ground;
+            lv.z[c] = (low + 0.5).floor();
+            lv.watered[c] = true;
+            lv.built[c] = true;
+        }
+        lv.cost[4] += cells.len() as u64;
+        lv.cost[Pass::Channel as usize] += pend.len() as u64;
+    }
+
+    /// The cells of level k-1 under a mask of level k and one ring of them.
+    fn under(&self, k: usize, mask: &[bool]) -> Vec<bool> {
+        let (lv, par) = (&self.levels[k], &self.levels[k - 1]);
+        let mut pmask = vec![false; par.exists.len()];
+        for c in 0..mask.len() {
+            if mask[c] {
+                let (i, j) = lv.ij(c);
+                let (pi, pj, _, _) = parent_of(i, j);
+                if let Some(pc) = par.idx(pi, pj) {
+                    pmask[pc] = true;
+                }
+            }
+        }
+        par.dilate(&pmask, 1).iter().zip(&par.exists).map(|(a, b)| *a && *b).collect()
+    }
+
+    /// The channels' banks over a mask of level k: at [`LAST_WATER`] those
+    /// its cells' vertices own, drawn from its routing over the cell and its
+    /// ring; below it those of the level above's cells around each lying in
+    /// it.
+    fn ensure_banks(&mut self, k: usize, mask: &[bool]) {
+        let lv = &self.levels[k];
+        let need: Vec<bool> = (0..mask.len()).map(|c| mask[c] && lv.exists[c] && !lv.banked[c]).collect();
+        let cells: Vec<usize> = (0..need.len()).filter(|&c| need[c]).collect();
+        if cells.is_empty() {
+            return;
+        }
+        if lv.w == LAST_WATER {
+            let ring: Vec<bool> = lv.dilate(&need, 1).iter().zip(&lv.exists).map(|(a, b)| *a && *b).collect();
+            self.ensure_routed(k, &ring);
+            self.read_layers(k, &need);
+        } else {
+            let pmask = self.under(k, &need);
+            self.ensure_banks(k - 1, &pmask);
+        }
+        let p = self.p;
+        let (above, rest) = self.levels.split_at_mut(k);
+        let lv = &mut rest[0];
+        let view: &Level = lv;
+        let drawn: Vec<(Vec<channel::Bank>, u64, u64)> = if view.w == LAST_WATER {
+            water::in_parallel(&cells, |c| channel::own_banks(view, c, &p))
+        } else {
+            let par = &above[k - 1];
+            water::in_parallel(&cells, |c| {
+                let (i, j) = view.ij(c);
+                (channel::handed_banks(view, par, i, j), 0, 0)
+            })
+        };
+        for (&c, (banks, curves, rising)) in cells.iter().zip(drawn) {
+            lv.banks[c] = banks;
+            lv.banked[c] = true;
+            self.channel_stats[0] += curves;
+            self.channel_stats[1] += rising;
+        }
+    }
+
+    /// For the probes: the cut at each of `cells` of level k from every river
+    /// the level has routed, however far, where its water reads only its
+    /// ring.
+    #[cfg(feature = "inspect")]
+    pub fn unlimited_cut(&self, k: usize, cells: &[(i64, i64)]) -> Vec<f64> {
+        let lv = &self.levels[k];
+        let mut edges = water::line_edges(lv, &lv.routed, head_of(self.levels[k - 1].w, &self.p));
+        edges.extend(water::born_edges(lv, &lv.routed));
+        let at: Vec<usize> = cells.iter().map(|&(i, j)| lv.idx(i, j).expect("a cell the level holds")).collect();
+        water::whole_cut(lv, &edges, &at, &self.p)
     }
 }
 

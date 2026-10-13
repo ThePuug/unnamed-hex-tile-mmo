@@ -4,20 +4,16 @@
 //! where they meet the ground.
 //!
 //! The top cuts its valley, met by its ground and averaged over each cell,
-//! wholly. A level below hands that down and corrects it: its own valley
-//! averaged over its cells less the level above's valley averaged over the
-//! level above's cells and handed down, each from the rivers running within
-//! a corridor inside the ring, `Params::ring` cells, of the cell, a river
-//! in or out by where the level above's line runs, so a line and the level
-//! above's line are read together. The level above's term reads what the
-//! level above wrote, its ground, lines and slopes, so it reproduces it but
-//! for rivers outside the ring. The correction stands whole to [`FADE`]
-//! cells inside where rivers are read from where the river governing the
-//! valley at the cell runs, fades to nothing across the last [`FADE`], and
-//! past that the surface handed down stands.
+//! wholly. A level below corrects what the level above handed down toward
+//! its own valley averaged over its cells, from the rivers running within a
+//! corridor inside the ring, `Params::ring` cells, of the cell, a river in
+//! or out by where the level above's line runs. The correction stands
+//! whole to [`FADE`] cells inside where rivers are read from where the
+//! river governing the valley at the cell runs, fades to nothing across
+//! the last [`FADE`], and past that the surface handed down stands.
 
-use super::geom::{cube_round, descendants, hex_offsets, parent_of, pos3, NB};
-use super::{handed_down, wall_slope, Level, Params, Pass, CORRIDOR, FADE};
+use super::geom::{cube_round, descendants, hex_offsets, pos3};
+use super::{wall_slope, Level, Params, Pass, CORRIDOR, FADE};
 use crate::SQRT_3;
 
 /// A trough edge the valley is read along: its ends' positions in tiles,
@@ -36,7 +32,7 @@ pub(super) struct Edge {
     /// The width of the level the edge is drawn at, which spaces its samples.
     w: i64,
     /// Where the river runs at each end, in world units a tile apart: on
-    /// the level above's line for a line that has one, else the edge's own.
+    /// the level above's line for a line, else the edge's own.
     anchors: ([f64; 2], [f64; 2]),
 }
 
@@ -55,10 +51,9 @@ fn own_anchor(lv: &Level, v: usize) -> [f64; 2] {
 
 /// A level's lines over a mask, where they carry `head` and have a floor:
 /// a trough born at the level runs in its ground, and a line has none
-/// offshore. Each is in or out of water's ring by where
-/// the level above's line runs, or, read as the level above's own rivers
-/// by the level below (`own`), by where it runs itself.
-pub(super) fn line_edges(lv: &Level, mask: &[bool], head: f64, own: bool) -> Vec<Edge> {
+/// offshore. Each is in or out of water's ring by where the level above's
+/// line runs.
+pub(super) fn line_edges(lv: &Level, mask: &[bool], head: f64) -> Vec<Edge> {
     let nn = lv.n * lv.n;
     (0..3 * nn)
         .filter(|&v| lv.line_on[v] && lv.line_rec[v] >= 0 && mask[v % nn] && lv.line_acc[v] >= head && lv.line_fl[v].is_finite())
@@ -66,7 +61,6 @@ pub(super) fn line_edges(lv: &Level, mask: &[bool], head: f64, own: bool) -> Vec
             let to = lv.line_rec[v] as usize;
             let ends = lv.line_on[to] && lv.line_fl[to].is_finite();
             let (f1, a1) = if ends { (lv.line_fl[to], lv.line_anchor[to]) } else { (lv.line_fl[v], lv.line_anchor[v]) };
-            let anchors = if own { (own_anchor(lv, v), own_anchor(lv, to)) } else { (lv.line_anchor[v], a1) };
             Edge {
                 from: tiles(lv, v),
                 to: tiles(lv, to),
@@ -76,7 +70,7 @@ pub(super) fn line_edges(lv: &Level, mask: &[bool], head: f64, own: bool) -> Vec
                 erod: rock(lv, v),
                 src: v,
                 w: lv.w,
-                anchors,
+                anchors: (lv.line_anchor[v], a1),
             }
         })
         .collect()
@@ -196,7 +190,8 @@ impl Beds {
     }
 
     /// Every sample whose river runs within `ring` tiles of a position in
-    /// tiles, the samples themselves read as far as `reach`.
+    /// tiles, the samples themselves read as far as `reach`; all of them for
+    /// an infinite reach.
     fn within(&self, lv: &Level, q: f64, r: f64, ring: f64, reach: f64) -> Vec<Sample> {
         let wf = self.w as f64;
         let (ci, cj) = cube_round(q / wf, r / wf);
@@ -269,19 +264,16 @@ pub(super) fn top_cut(lv: &mut Level, edges: &[Edge], p: &Params) {
 struct Correction {
     cut: f64,
     whole: f64,
-    moved: f64,
     off: f64,
     born: i64,
     river: usize,
-    parity: f64,
     fading: bool,
 }
 
 /// The cut over each pending water cell's own cells: what the level above
-/// handed down, corrected near the lines.
-pub(super) fn level_cut(lv: &mut Level, par: &Level, own: &[Edge], above: &[Edge], pend: &[(i64, i64)], p: &Params) {
+/// handed down, corrected near the lines toward the level's own valley.
+pub(super) fn level_cut(lv: &mut Level, own: &[Edge], pend: &[(i64, i64)], p: &Params) {
     let mine = Beds::new(lv, own, p);
-    let theirs = Beds::new(lv, above, p);
     let lists = lv.block_lists(Pass::Water, pend);
     let cells: Vec<usize> = lists.iter().flat_map(|(o, _)| o.iter().copied()).collect();
     let w = lv.w;
@@ -290,7 +282,7 @@ pub(super) fn level_cut(lv: &mut Level, par: &Level, own: &[Edge], above: &[Edge
     let found = in_parallel(&cells, |c| {
         let (i, j) = view.ij(c);
         let carried = view.wpred[c];
-        let none = Correction { cut: carried, whole: f64::NAN, moved: f64::NAN, off: f64::INFINITY, born: -1, river: usize::MAX, parity: f64::NAN, fading: false };
+        let none = Correction { cut: carried, whole: f64::NAN, off: f64::INFINITY, born: -1, river: usize::MAX, fading: false };
         if !p.water {
             return Correction { cut: 0.0, ..none };
         }
@@ -306,51 +298,45 @@ pub(super) fn level_cut(lv: &mut Level, par: &Level, own: &[Edge], above: &[Edge
         }
         let ground = view.ground[c] - carried;
         let here = cut_of(&near, w, i, j, ground);
-        // The level above's cells around this one, each its valley from
-        // `beds` met by its ground, averaged over it, and handed down here.
-        let handed = |beds: &[Sample]| {
-            let (a, b, _, _) = parent_of(i, j);
-            let mut cuts = std::collections::HashMap::new();
-            for (pa, pb) in std::iter::once((a, b)).chain(NB.iter().map(|&(da, db)| (a + da, b + db))) {
-                let cut = par.idx(pa, pb).filter(|&pc| par.exists[pc] && par.built[pc]).map_or(f64::NAN, |pc| {
-                    cut_of(beds, par.w, pa, pb, par.ground[pc] - par.wpred[pc])
-                });
-                cuts.insert((pa, pb), cut);
-            }
-            handed_down(i, j, |pa, pb| cuts.get(&(pa, pb)).copied().unwrap_or(f64::NAN))
-        };
-        let theirs_near = theirs.within(view, q, r, river_in * wf, radius);
-        let from_above = handed(&theirs_near);
-        let whole = here - from_above;
+        let whole = here - carried;
         if !whole.is_finite() {
             return Correction { off, ..none };
         }
-        let moved = handed(&near) - from_above;
         // Whether rivers where the correction fades change the cell: its
-        // terms read again without them.
+        // valley read again without them.
         let (x, y) = world(q, r);
         let core = |s: &&Sample| (s.ax - x).hypot(s.ay - y) / wf <= river_in - FADE;
         let near_core: Vec<Sample> = near.iter().filter(core).copied().collect();
-        let theirs_core: Vec<Sample> = theirs_near.iter().filter(core).copied().collect();
-        let fading = near_core.len() < near.len() && cut_of(&near_core, w, i, j, ground) != here
-            || theirs_core.len() < theirs_near.len() && handed(&theirs_core) != from_above;
-        Correction { cut: (carried + share * whole).min(0.0), whole, moved, off, born: governing.born, river: governing.src, parity: from_above - carried, fading }
+        let fading = near_core.len() < near.len() && cut_of(&near_core, w, i, j, ground) != here;
+        Correction { cut: (carried + share * whole).min(0.0), whole, off, born: governing.born, river: governing.src, fading }
     });
     for (&c, k) in cells.iter().zip(found) {
         lv.cut[c] = k.cut;
         lv.wfull[c] = k.whole;
-        lv.wshift[c] = k.moved;
         lv.wdist[c] = k.off;
         lv.wborn[c] = k.born;
         lv.wgov[c] = if k.river == usize::MAX { -1 } else { k.river as i64 };
-        lv.wpar[c] = k.parity;
         lv.wfade[c] = k.fading;
         lv.watered[c] = true;
     }
 }
 
+/// The cut at each of `cells` from every river of `edges`, however far: the
+/// valley a level would cut with no ring, met by its uncut ground and
+/// averaged over the cell.
+#[cfg(feature = "inspect")]
+pub(super) fn whole_cut(lv: &Level, edges: &[Edge], cells: &[usize], p: &Params) -> Vec<f64> {
+    let beds = Beds::new(lv, edges, p);
+    let all: Vec<Sample> = beds.samples.iter().flatten().copied().collect();
+    let w = lv.w;
+    in_parallel(cells, |c| {
+        let (i, j) = lv.ij(c);
+        cut_of(&all, w, i, j, lv.ground[c] - lv.wpred[c])
+    })
+}
+
 /// `f` over every item, on every thread, in order.
-fn in_parallel<T: Send>(items: &[usize], f: impl Fn(usize) -> T + Sync) -> Vec<T> {
+pub(super) fn in_parallel<T: Send>(items: &[usize], f: impl Fn(usize) -> T + Sync) -> Vec<T> {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let chunk = items.len().div_ceil(threads).max(1);
     std::thread::scope(|s| {
