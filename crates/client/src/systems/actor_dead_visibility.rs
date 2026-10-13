@@ -7,13 +7,21 @@ use common_bevy::message::{Do, Event};
 use common_bevy::moment::Moment;
 use crate::components::{DeathMarker, Viewed};
 
+/// A body [`respawn`] hid until it is alive again. Only these are shown
+/// by [`update_dead_visibility`]: a living actor hidden for any other
+/// reason stays hidden.
+#[derive(Component)]
+pub struct Respawning;
+
 /// Shows an actor hidden by its respawn ([`respawn`]) once it is alive
 pub fn update_dead_visibility(
-    mut query: Query<(&Health, &mut Visibility), (With<Actor>, Without<DeathMarker>)>,
+    mut commands: Commands,
+    mut query: Query<(Entity, &Health, &mut Visibility), (With<Actor>, With<Respawning>, Without<DeathMarker>)>,
 ) {
-    for (health, mut visibility) in &mut query {
-        if health.state > 0.0 && *visibility == Visibility::Hidden {
+    for (ent, health, mut visibility) in &mut query {
+        if health.state > 0.0 {
             *visibility = Visibility::Visible;
+            commands.entity(ent).remove::<Respawning>();
         }
     }
 }
@@ -37,7 +45,7 @@ pub fn respawn(
         transform.rotation = Quat::IDENTITY;
         commands.entity(*ent)
             .remove::<(DeathMarker, Status)>()
-            .insert((Visibility::Hidden, Loc::new(*qrz), Position::at_tile(*qrz), VisualPosition::at(at)));
+            .insert((Visibility::Hidden, Respawning, Loc::new(*qrz), Position::at_tile(*qrz), VisualPosition::at(at)));
     }
 }
 
@@ -93,6 +101,20 @@ mod tests {
 
         let visibility = world.get::<Visibility>(entity).unwrap();
         assert_eq!(*visibility, Visibility::Visible);
+    }
+
+    #[test]
+    fn a_living_actor_hidden_by_anything_but_its_respawn_stays_hidden() {
+        let mut world = World::new();
+        let hidden = world.spawn((
+            Actor,
+            Health { max: 100.0, state: 100.0 },
+            Visibility::Hidden,
+        )).id();
+
+        world.run_system_once(update_dead_visibility).unwrap();
+
+        assert_eq!(*world.get::<Visibility>(hidden).unwrap(), Visibility::Hidden);
     }
 
     #[test]
