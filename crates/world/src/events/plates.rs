@@ -45,9 +45,9 @@ use std::sync::Arc;
 use dashmap::DashMap;
 
 use crate::chains::{join_at_nodes, Segment, SegmentGrid};
-use crate::lattice::{node_world, NODE_SPACING};
+use crate::lattice::{node_world, CHAIN_SWING, NODE_SPACING};
 use crate::noise::simplex_2d;
-use crate::tectonic::{edges_of, plate_at, plates_near, Edge, PlateId, PLATE_SPACING};
+use crate::tectonic::{edges_of, plate_at, plates_near, Edge, PlateId, PLATE_REACH, PLATE_SPACING};
 use crate::{hex_to_world, smoothstep, world_to_hex, CONTINENT_MAX_RISE, CONTINENT_RISE_EXPONENT, SEA_MAX_DEPTH, SHELF_EXPONENT};
 use super::index::{CellId, CellIndex, IndexRegistry, Located};
 use super::thrusting::OUTLINE_REACH;
@@ -58,12 +58,10 @@ use super::{CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 pub const COAST_REACH: f64 = 0.5 * PLATE_SPACING;
 
 /// The farthest any node of an edge's chain lies from the edge's midpoint,
-/// in world units.
-///
-/// EMPIRICAL, measured by `edge_reach_is_bounded` over thousands of edges:
-/// half the longest edge plus the widest the lattice path swings from the
-/// straight line, with margin.
-pub const EDGE_REACH: f64 = 10_000.0;
+/// in world units: half the edge, which the plate reach bounds since both
+/// its corners lie within it of either plate's seed, and the chain's swing
+/// off the edge.
+pub const EDGE_REACH: f64 = PLATE_REACH + CHAIN_SWING;
 
 /// The farthest an edge's influence reaches from its midpoint: its chain,
 /// the substrate's ramp from the coast the chain draws, and the warp a

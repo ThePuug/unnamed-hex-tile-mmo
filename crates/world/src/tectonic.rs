@@ -65,13 +65,13 @@ pub fn aged(age: f64) -> f64 {
     YOUNG_SHARE + (1.0 - YOUNG_SHARE) * age.clamp(0.0, 1.0)
 }
 
-/// The farthest any ground of a plate lies from its seed, in world units.
-///
-/// EMPIRICAL, measured by `plate_reach_is_bounded` over thousands of plates
-/// at this jitter: the largest seed-to-vertex distance found, with margin.
+/// The farthest any ground of a plate lies from its seed, in world units: a
+/// position's nearest lattice point lies within a lattice cell's
+/// circumradius, a spacing over √3, and that point's seed within the
+/// jitter's diagonal of it, so the position's own seed lies no farther.
 /// Bounds how far a plate's edges can lie from its seed, which is what every
 /// gather of plates around a position is sized by.
-pub const PLATE_REACH: f64 = 12_000.0;
+pub const PLATE_REACH: f64 = (0.5 / ROW + PLATE_JITTER * std::f64::consts::SQRT_2) * PLATE_SPACING;
 
 pub(crate) const ROW: f64 = 0.866_025_403_784_438_6;
 const JITTER_SEED_X: u64 = 0x506C_6174_655F_5F58; // "Plate__X"

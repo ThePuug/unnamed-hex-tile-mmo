@@ -37,6 +37,12 @@ pub const RUN_MIN: i32 = 5;
 /// plate edge.
 pub const PATH_SWING: f64 = RUN_MIN as f64 * NODE_SPACING as f64 * SIN_60;
 
+/// The farthest a chain lies from the straight edge it is drawn for: the
+/// path's swing off the line between its end nodes, and each end node's
+/// distance from the corner it stands for, the corner's tile and then the
+/// node nearest that tile, each at most its spacing over √3 away.
+pub const CHAIN_SWING: f64 = PATH_SWING + (NODE_SPACING as f64 + 1.0) / (2.0 * SIN_60);
+
 /// sin 60°, the height of a unit step square to a lattice direction.
 const SIN_60: f64 = 0.866_025_403_784_438_6;
 

@@ -104,7 +104,7 @@ use dashmap::DashMap;
 
 use crate::chains::{join_at_nodes, Segment};
 use crate::noise::{hash_channel, simplex_2d};
-use crate::lattice::{nearest_node, node_world, NodeKey, PATH_SWING};
+use crate::lattice::{nearest_node, node_world, NodeKey, CHAIN_SWING};
 use crate::tectonic::{edges_of, plate_cell_for, plates_near, PlateId, PLATE_REACH};
 use super::plates::{warp, WARP_SWING};
 use crate::{hex_to_world, smoothstep, world_to_hex, RISE, SEA_MAX_DEPTH};
@@ -235,11 +235,12 @@ pub const WEDGE_REACH: f64 = WEDGE_SHEETS * RANGE_SPACING;
 pub const RANGE_END: f64 = RANGE_SPACING;
 
 /// The farthest a plate's outline lies from a position standing in the
-/// plate, in world units: the plate's reach from its seed twice over, plus
-/// the swing a chain takes off its straight edge, plus the warp the
-/// position reads it through. What every reader of outlines has to be
-/// able to see from a tile.
-pub const OUTLINE_REACH: f64 = 2.0 * PLATE_REACH + PATH_SWING + WARP_SWING;
+/// plate, in world units: the position stands within a chain's swing of the
+/// plate's polygon and the plate's chains lie within a swing of it, each
+/// within the plate's reach of its seed, and the warp the position reads it
+/// through. What every reader of outlines has to be able to see from a
+/// tile.
+pub const OUTLINE_REACH: f64 = 2.0 * (PLATE_REACH + CHAIN_SWING) + WARP_SWING;
 
 // ── Outlines ────────────────────────────────────────────────────────────────
 
@@ -303,12 +304,16 @@ impl EdgeOutline {
     /// and its distance to the straight edge less the swing a chain takes
     /// off it.
     pub fn at_least(&self, x: f64, y: f64) -> f64 {
+        box_distance(self.bounds, x, y).max(self.off_line(x, y) - CHAIN_SWING)
+    }
+
+    /// Distance from a position to the straight edge the chain is drawn on.
+    pub fn off_line(&self, x: f64, y: f64) -> f64 {
         let [x0, y0, x1, y1] = self.line;
         let (dx, dy) = (x1 - x0, y1 - y0);
         let len2 = dx * dx + dy * dy;
         let t = if len2 > 0.0 { (((x - x0) * dx + (y - y0) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
-        let off_line = (x - x0 - t * dx).hypot(y - y0 - t * dy) - PATH_SWING;
-        box_distance(self.bounds, x, y).max(off_line)
+        (x - x0 - t * dx).hypot(y - y0 - t * dy)
     }
 }
 

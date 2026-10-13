@@ -41,7 +41,7 @@ use std::f64::consts::PI;
 use common::{Cover, HexLattice, HexSpatialGrid, Content, SITES};
 
 use crate::chains::Segment;
-use crate::lattice::{jittered_centre, PATH_SWING};
+use crate::lattice::{jittered_centre, CHAIN_SWING};
 use crate::noise::{hash_channel_f64, hash_f64};
 use crate::tectonic::{Edge, PLATE_SPACING};
 use crate::{hex_to_world, smoothstep, world_to_hex, RISE};
@@ -240,7 +240,7 @@ pub const STAND_REACH: f64 = STAND_RADIUS * (1.0 + STAND_SPREAD) * (1.0 + STAND_
 
 /// The furthest from its origin a stand reads the coasts: the shore
 /// ramp, with the swing a chain and the warp take off a coast's line.
-pub const COAST_READ: f64 = COAST_REACH + WARP_SWING + PATH_SWING;
+pub const COAST_READ: f64 = COAST_REACH + WARP_SWING + CHAIN_SWING;
 
 /// The furthest anything a stand depends on lies from its origin: the
 /// whole outline of the plate the origin stands in, which its rock, its
@@ -253,8 +253,9 @@ const fn max(a: f64, b: f64) -> f64 {
     if a > b { a } else { b }
 }
 
-/// The cell scale: one ring holds everything within [`FOREST_REACH`].
-pub const FOREST_CELL_SCALE: u32 = (FOREST_REACH / RING_CLEARANCE) as u32 + 1;
+/// The cell scale: one ring holds everything within [`FOREST_REACH`],
+/// rounded up to the whole tile the event declares as its influence.
+pub const FOREST_CELL_SCALE: u32 = ((FOREST_REACH as u32 + 1) as f64 / RING_CLEARANCE) as u32 + 1;
 
 /// A stand of trees: where it originates, how far it reaches and which way
 /// it is drawn out, how densely it fills its slots, and how many of them
