@@ -121,6 +121,8 @@ fn segments(lv: &Level, par: &Level, pmask: &[bool]) -> (Vec<Segment>, Vec<End>)
         }
         let Some((_, vid, _)) = place(y) else { continue };
         let (acc, fl, base) = value(y);
+        // A line's catchment never falls: its end carries what runs into it.
+        let acc = preds[&y].iter().map(|&x| par.acc[x]).fold(acc, f64::max);
         ends.push(End { vid, acc, fl, base, born: par.born[y], hollow: par.rec[y] < 0 && par.elev[y] >= 0.0 });
     }
     (segs, ends)
