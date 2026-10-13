@@ -440,7 +440,7 @@ fn read(
         let toward = Vec2::new((strike.x - x) as f32, (strike.z - z) as f32);
         let distance = toward.length().max(1.0);
         flash += light / (1.0 + (distance / FLASH_REACH_WU).powi(2));
-        let haze = (-3.0 * distance / crate::systems::camera::haze_limit_wu()).exp();
+        let haze = (-crate::systems::camera::haze_density() * distance).exp();
         bolts.push((
             (toward / distance).extend(DECK_HEIGHT.atan2(distance)).extend(light * (0.3 + 0.7 * haze)),
             Vec4::new((strike.seed % 1024) as f32, BOLT_WIDTH_WU / distance, 0.0, 0.0),

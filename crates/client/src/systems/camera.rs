@@ -89,28 +89,30 @@ const CLOSE_TILT_RINGS_WU: [f32; 2] = [2.0 * TILE_ACROSS_WU, 3.0 * TILE_ACROSS_W
 const TILE_ACROSS_WU: f32 = 1.732_050_8 * common::grid::HEX_RADIUS;
 
 /// The haze at noon: one colour that distance fades everything toward, and
-/// the sky above the horizon, so the frontier at the reach never shows.
+/// the sky at the horizon, so the frontier at the reach never shows.
 /// `world::update` lights both by the sun and moon through the day, the
 /// sky in the sun's tint and the haze in a share of it.
 pub const HAZE_COLOR: Color = Color::linear_rgb(0.50, 0.66, 0.90);
-/// Where the haze completes, as a fraction of the reach: inside it, so the
-/// frontier stands behind full haze.
-const HAZE_END_FRAC: f32 = 0.92;
+/// The share of a surface's own colour the clear day's haze leaves at the
+/// reach: under one step of an 8-bit channel where the land differs most
+/// from the haze, so the frontier, where the drawn world ends, never shows.
+const HAZE_LEFT_AT_REACH: f32 = 0.01;
 
-/// Ground distance at which the haze is complete.
-pub fn haze_limit_wu() -> f32 {
-    common_bevy::summary::reach_wu() * HAZE_END_FRAC
+/// The clear day's haze density, per world unit: a surface `d` off keeps
+/// `exp(-density·d)` of its own colour, and the haze has the rest.
+pub fn haze_density() -> f32 {
+    -HAZE_LEFT_AT_REACH.ln() / common_bevy::summary::reach_wu()
 }
 
 /// Distance fog to the haze, for the camera: deepening steadily with the
-/// distance and complete at the haze limit, so each hill further off
+/// distance and all but complete at the reach, so each hill further off
 /// stands paler and bluer than the one before it. As the square of the
-/// distance it would lay under half a percent on a hill two thousand units
-/// off, and the whole view short of the reach would stand in clear air.
+/// distance it would lay almost nothing on a hill two thousand units off,
+/// and the whole view short of the reach would stand in clear air.
 fn haze() -> DistanceFog {
     DistanceFog {
         color: HAZE_COLOR,
-        falloff: FogFalloff::from_visibility(haze_limit_wu()),
+        falloff: FogFalloff::Exponential { density: haze_density() },
         ..default()
     }
 }

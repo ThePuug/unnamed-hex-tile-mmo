@@ -35,7 +35,8 @@ const MOON_ILLUMINANCE: f32 = EARTH_MOON_LUX
 
 /// The sky: a dome about the camera, past the discs and inside the far
 /// plane, one colour everywhere but toward the sun, where a glow of the
-/// sun's tint sits on the horizon under its bearing. Shaded by
+/// sun's tint sits low under its bearing, and the haze at the horizon,
+/// behind the frontier where the drawn world ends. Shaded by
 /// `shaders/sky.wgsl`. The clouds, and the leap season's fireballs in front
 /// of them, are a deck of their own in front of the discs
 /// (`plugins::weather::CloudDeck`).
@@ -51,6 +52,9 @@ pub struct SkyMaterial {
     pub base: LinearRgba,
     #[uniform(0)]
     pub glow: LinearRgba,
+    /// The camera's fog colour, which the sky is at the horizon.
+    #[uniform(0)]
+    pub haze: LinearRgba,
 }
 
 impl Material for SkyMaterial {
@@ -183,7 +187,8 @@ const RAIN_GLOOM: f32 = 0.3;
 const STORM_GLOOM: f32 = 0.3;
 const CLOUD_GREY: f32 = 0.7;
 /// How far the haze closes in under full mist, rain and storm, as a share
-/// of the clear day's haze limit: mist to a few hundred units.
+/// of every distance the clear day's haze reaches: mist to a few hundred
+/// units.
 const MIST_VISIBILITY: f32 = 0.03;
 const RAIN_VISIBILITY: f32 = 0.4;
 const STORM_VISIBILITY: f32 = 0.7;
@@ -286,6 +291,7 @@ pub fn setup(
             bearing: Vec4::X,
             base: LinearRgba::BLACK,
             glow: LinearRgba::BLACK,
+            haze: LinearRgba::BLACK,
         })),
         Transform::default(),
         NotShadowCaster,
@@ -499,17 +505,17 @@ pub fn update(
     clear.0 = haze.into();
     let (camera, mut fog) = q_camera.single_mut().expect("no result in q_camera");
     fog.color = haze.into();
-    let visibility = crate::systems::camera::haze_limit_wu()
-        * (1. - (1. - MIST_VISIBILITY) * here.mist)
+    let visibility = (1. - (1. - MIST_VISIBILITY) * here.mist)
         * (1. - (1. - RAIN_VISIBILITY) * here.rain)
         * (1. - (1. - STORM_VISIBILITY) * here.storm);
-    fog.falloff = FogFalloff::from_visibility(visibility);
+    fog.falloff = FogFalloff::Exponential { density: crate::systems::camera::haze_density() / visibility };
     let bearing = s_toward.xz().try_normalize().unwrap_or(Vec2::X).extend(0.).extend(0.);
     let glow = lit(sky_tint) - lit(Vec3::ONE);
     if let Some(mut sky) = q_sky.single().ok().and_then(|m| sky_materials.get_mut(&m.0)) {
         sky.bearing = bearing;
         sky.base = lit(Vec3::ONE) + LinearRgba::from_vec3(BLAZE_SKY * weather.blaze);
         sky.glow = glow;
+        sky.haze = haze;
     }
 
     // The deck: lit white by the sun and reddened with it, its underside

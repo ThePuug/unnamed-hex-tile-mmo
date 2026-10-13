@@ -3,13 +3,16 @@
 //! writes that depth, so the terrain, the wood and the actors are lined by
 //! one rule and none of them carries a line of its own. A camera takes the
 //! lines by carrying [`Ink`] and a `DepthPrepass`; the lines' look — width,
-//! threshold, fade and colour — is the shader's, `shaders/ink.wgsl`.
+//! threshold, fade and colour — is the shader's, `shaders/ink.wgsl`. A
+//! line is hazed with the surface it lies on, by the camera's fog, so the
+//! frontier where the drawn world ends is never lined.
 
 use bevy::{
     core_pipeline::{
         fullscreen_material::fullscreen_material_system, prepass::ViewPrepassTextures,
         tonemapping::tonemapping, Core3d, Core3dSystems, FullscreenShader,
     },
+    pbr::{DistanceFog, FogFalloff},
     prelude::*,
     render::{
         camera::ExtractedCamera,
@@ -71,10 +74,14 @@ impl Plugin for InkPlugin {
 pub struct Ink;
 
 /// What the shader needs of the camera: its near plane, which turns the
-/// reverse-z depth into a distance.
+/// reverse-z depth into a depth along the view; the haze's density, zero
+/// without an exponential fog; and the tangents of the half field of view
+/// across and up, which turn a pixel's depth into its distance.
 #[derive(Component, Clone, Copy, ShaderType)]
 pub struct InkUniform {
     near: f32,
+    haze: f32,
+    ray: Vec2,
 }
 
 impl SyncComponent for Ink {
@@ -82,13 +89,20 @@ impl SyncComponent for Ink {
 }
 
 impl ExtractComponent for Ink {
-    type QueryData = &'static Projection;
+    type QueryData = (&'static Projection, Option<&'static DistanceFog>);
     type QueryFilter = With<Ink>;
     type Out = InkUniform;
 
-    fn extract_component(projection: &Projection) -> Option<InkUniform> {
+    fn extract_component((projection, fog): (&Projection, Option<&DistanceFog>)) -> Option<InkUniform> {
+        let haze = match fog.map(|f| &f.falloff) {
+            Some(&FogFalloff::Exponential { density }) => density,
+            _ => 0.0,
+        };
         match projection {
-            Projection::Perspective(p) => Some(InkUniform { near: p.near }),
+            Projection::Perspective(p) => {
+                let up = (p.fov / 2.0).tan();
+                Some(InkUniform { near: p.near, haze, ray: Vec2::new(up * p.aspect_ratio, up) })
+            }
             _ => None,
         }
     }
