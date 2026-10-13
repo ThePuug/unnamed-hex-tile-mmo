@@ -335,7 +335,8 @@ pub(super) fn line_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], fp: 
                     lv.line_on[v] = true;
                     lv.line_rec[v] = vids[path[m_ + 1]] as i64;
                     lv.line_acc[v] = acc;
-                    lv.line_fl[v] = (fl + 0.5).floor();
+                    // No floor offshore: a line's floor ends at the coast.
+                    lv.line_fl[v] = if lv.gelev[v] < 0.0 { f64::NAN } else { (fl + 0.5).floor() };
                     lv.line_base[v] = base;
                     lv.line_born[v] = born;
                     lv.line_anchor[v] = anchor;
@@ -368,7 +369,7 @@ pub(super) fn line_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], fp: 
             lv.line_on[e.vid] = true;
             lv.line_rec[e.vid] = -1;
             lv.line_acc[e.vid] = e.acc;
-            lv.line_fl[e.vid] = (e.fl + 0.5).floor();
+            lv.line_fl[e.vid] = if lv.gelev[e.vid] < 0.0 { f64::NAN } else { (e.fl + 0.5).floor() };
             lv.line_base[e.vid] = e.base;
             lv.line_born[e.vid] = e.born;
             let (t, i, j) = lv.vertex(e.vid);

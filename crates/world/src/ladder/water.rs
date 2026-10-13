@@ -53,17 +53,19 @@ fn own_anchor(lv: &Level, v: usize) -> [f64; 2] {
     [x, y]
 }
 
-/// A level's lines over a mask, where they carry `head`: a trough born at
-/// the level runs in its ground. Each is in or out of water's ring by where
+/// A level's lines over a mask, where they carry `head` and have a floor:
+/// a trough born at the level runs in its ground, and a line has none
+/// offshore. Each is in or out of water's ring by where
 /// the level above's line runs, or, read as the level above's own rivers
 /// by the level below (`own`), by where it runs itself.
 pub(super) fn line_edges(lv: &Level, mask: &[bool], head: f64, own: bool) -> Vec<Edge> {
     let nn = lv.n * lv.n;
     (0..3 * nn)
-        .filter(|&v| lv.line_on[v] && lv.line_rec[v] >= 0 && mask[v % nn] && lv.line_acc[v] >= head)
+        .filter(|&v| lv.line_on[v] && lv.line_rec[v] >= 0 && mask[v % nn] && lv.line_acc[v] >= head && lv.line_fl[v].is_finite())
         .map(|v| {
             let to = lv.line_rec[v] as usize;
-            let (f1, a1) = if lv.line_on[to] { (lv.line_fl[to], lv.line_anchor[to]) } else { (lv.line_fl[v], lv.line_anchor[v]) };
+            let ends = lv.line_on[to] && lv.line_fl[to].is_finite();
+            let (f1, a1) = if ends { (lv.line_fl[to], lv.line_anchor[to]) } else { (lv.line_fl[v], lv.line_anchor[v]) };
             let anchors = if own { (own_anchor(lv, v), own_anchor(lv, to)) } else { (lv.line_anchor[v], a1) };
             Edge {
                 from: tiles(lv, v),
