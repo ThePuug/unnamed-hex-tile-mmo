@@ -557,14 +557,15 @@ pub struct Ladder<'g, G: Ground> {
     /// Per level: born troughs whose upstream reached the read edge, vertices
     /// that did, own vertices left undecided, own vertices in a cycle.
     pub route_stats: Vec<[u64; 4]>,
-    /// The channel curves drawn, and those whose floor rose.
-    pub channel_stats: [u64; 2],
-    /// How far from its governing bank each tile a channel cut lies, in
-    /// tiles.
+    /// The channel curves drawn, those whose floor rose, and the tiles a
+    /// channel lowered.
+    pub channel_stats: [u64; 3],
+    /// How far from its governing bank each tile a channel reaches lies, in
+    /// tiles: where it is below [`LAST_WATER`]'s drawn surface.
     pub channel_reach: Vec<f64>,
     /// The rivers whose walls reached [`channel::channel_reach`] still below
-    /// the ground, as vertices of [`LAST_WATER`]'s level: the tiles where
-    /// they did, and the largest step left there.
+    /// [`LAST_WATER`]'s drawn surface, as vertices of its level: the tiles
+    /// where they did, and the largest step left there.
     pub channel_capped: HashMap<(u8, i64, i64), (u64, f64)>,
     /// Per level, the wall time each stage took there, in seconds, nested
     /// work at other levels not counted.
@@ -596,7 +597,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             p,
             line_stats: vec![[0; 3]; count],
             route_stats: vec![[0; 4]; count],
-            channel_stats: [0; 2],
+            channel_stats: [0; 3],
             channel_reach: Vec::new(),
             channel_capped: HashMap::new(),
             timing: vec![[0.0; 8]; count],
@@ -889,22 +890,24 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let cells: Vec<usize> = (0..need.len()).filter(|&c| need[c] && !lv.built[c]).collect();
         let reached = {
             let (lv, par) = (&self.levels[k], &self.levels[k - 1]);
+            let src = &self.levels[self.levels.iter().position(|l| l.w == LAST_WATER).expect("a level water stops at")];
             let reach = channel::channel_reach();
             let index = channel::Index::new(par, &pmask, reach);
             water::in_parallel(&cells, |c| {
                 let (i, j) = lv.ij(c);
-                index.at(i as f64, j as f64, lv.ground[c], reach)
+                index.at(i as f64, j as f64, src.surface_at(i as f64, j as f64), reach)
             })
         };
         let s = self.levels.iter().position(|l| l.w == LAST_WATER).expect("a level water stops at");
         for (&c, at) in cells.iter().zip(&reached) {
             let Some((river, d)) = at.governing else { continue };
             self.channel_reach.push(d);
+            let step = self.levels[k].ground[c] - at.surface;
+            self.channel_stats[2] += (step > 0.0) as u64;
             if at.capped {
-                let step = self.levels[k].ground[c] - at.surface;
                 let e = self.channel_capped.entry(self.levels[s].vertex(river)).or_insert((0, 0.0));
                 e.0 += 1;
-                e.1 = e.1.max(step);
+                e.1 = e.1.max(step.max(0.0));
             }
         }
         let lv = &mut self.levels[k];

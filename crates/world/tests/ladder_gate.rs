@@ -251,11 +251,12 @@ fn channels<G: Ground>(ladder: &Ladder<G>) -> String {
     reach.sort_by(f64::total_cmp);
     let pct = |q: f64| if reach.is_empty() { f64::NAN } else { reach[((reach.len() - 1) as f64 * q).round() as usize] };
     let mut out = format!(
-        "channels: {} curves, {} with a rising floor; {} tiles cut, reach p50 {:.1} p99 {:.1} max {:.1} tiles of {:.1}; {} rivers at the reach
+        "channels: {} curves, {} with a rising floor; {} tiles reached, {} lowered; reach p50 {:.1} p99 {:.1} max {:.1} tiles of {:.1}; {} rivers at the reach
 ",
         ladder.channel_stats[0],
         ladder.channel_stats[1],
         reach.len(),
+        ladder.channel_stats[2],
         pct(0.5),
         pct(0.99),
         pct(1.0),

@@ -4,8 +4,9 @@
 //! bed as wide as its catchment makes it, at its floor, with walls rising at
 //! water's slope in the rock at its river vertex. The levels below hand the
 //! banks down unchanged, each cell holding those lying in it, and the tiles
-//! cut each bank's channel until its walls meet the ground, or
-//! [`channel_reach`] tiles out.
+//! cut each bank's channel where it is below the surface [`LAST_WATER`]
+//! drew, out to [`channel_reach`] tiles; the ground's finer detail outside
+//! that zone stands.
 //!
 //! A vertex owns the curve through it, from the midpoint of each edge in
 //! to the midpoint of its edge out, and a vertex the rivers end at owns
@@ -195,8 +196,8 @@ pub(super) fn handed_banks(lv: &Level, par: &Level, i: i64, j: i64) -> Vec<Bank>
 }
 
 /// A tile's channels: their surface there, infinite where none reaches; and
-/// where it is below the ground, how far off the bank governing it lies, and
-/// whether that is at the reach, with the river.
+/// where it is below [`LAST_WATER`]'s drawn surface, how far off the bank
+/// governing it lies, and whether that is at the reach, with the river.
 pub(super) struct Reach {
     pub surface: f64,
     pub governing: Option<(usize, f64)>,
@@ -241,11 +242,12 @@ impl Index {
         Index { buckets, order }
     }
 
-    /// The channels at tile (q, r) over `ground`: the lowest of every
-    /// bank's floor and the wall rising from its bed's edge, out to
+    /// The channels at tile (q, r) under `drawn`, [`LAST_WATER`]'s drawn
+    /// surface there: the lowest of every bank's floor and the wall
+    /// rising from its bed's edge, where it is below that surface, out to
     /// `reach`. A bucket whose banks cannot come below the lower of that and
-    /// the ground is passed over.
-    pub(super) fn at(&self, q: f64, r: f64, ground: f64, reach: f64) -> Reach {
+    /// the surface is passed over.
+    pub(super) fn at(&self, q: f64, r: f64, drawn: f64, reach: f64) -> Reach {
         let (ci, cj) = cube_round(q / BUCKET, r / BUCKET);
         let (x, y) = world(q, r);
         let rad = BUCKET / SQRT_3;
@@ -255,21 +257,20 @@ impl Index {
             let Some(held) = self.buckets.get(&(ci + di, cj + dj)) else { continue };
             let (cx, cy) = world(((ci + di) as f64) * BUCKET, ((cj + dj) as f64) * BUCKET);
             let nearest = ((cx - x).hypot(cy - y) - rad).max(0.0);
-            if nearest > reach || held.floor + held.slope * (nearest - held.bed).max(0.0) >= best.min(ground) {
+            if nearest > reach || held.floor + held.slope * (nearest - held.bed).max(0.0) >= best.min(drawn) {
                 continue;
             }
             for b in &held.banks {
                 let d = (b.x - x).hypot(b.y - y);
                 if d <= reach {
                     let v = b.floor + b.slope * (d - b.bed).max(0.0);
-                    if v < best {
+                    if v < best && v < drawn {
                         best = v;
                         governing = Some((b.river, d));
                     }
                 }
             }
         }
-        let governing = governing.filter(|_| best < ground);
         Reach { surface: best, governing, capped: governing.is_some_and(|(_, d)| d > reach - 1.0) }
     }
 }
