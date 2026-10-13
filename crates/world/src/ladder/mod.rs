@@ -62,6 +62,7 @@ mod top;
 mod water;
 
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use geom::*;
 
@@ -122,6 +123,26 @@ pub const ROUTE_REACH: f64 = 11.0;
 pub const CORRIDOR: f64 = 3.0;
 /// The finest level that routes, draws lines and cuts water's valleys.
 pub const LAST_WATER: i64 = 27;
+
+/// The stages a level's work is timed by.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Stage {
+    /// Each layer's value read from the ground.
+    Read = 0,
+    /// The prediction and the layers' changes.
+    Supply = 1,
+    Lines = 2,
+    Route = 3,
+    Water = 4,
+    /// Heights rounded.
+    Build = 5,
+    /// Corners met and drawn.
+    Corners = 6,
+    /// Channels: drawn at [`LAST_WATER`], handed down, cut at the tiles.
+    Channel = 7,
+}
+
+pub const STAGES: [&str; 8] = ["read", "supply", "lines", "route", "water", "build", "corners", "channel"];
 
 /// The passes that deform in cells of their own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -287,6 +308,9 @@ pub struct Level {
     pub built: Vec<bool>,
     pub routed: Vec<bool>,
     pub corners: Vec<bool>,
+    /// Whether each cell's six corner values are final: its own corners met,
+    /// and the four its neighbours own, where those exist.
+    pub finished: Vec<bool>,
     /// The channels' banks each cell holds: at [`LAST_WATER`] those its
     /// vertices own, below it those lying in it.
     pub banks: Vec<Vec<channel::Bank>>,
@@ -364,6 +388,7 @@ impl Level {
             built: vec![false; cells],
             routed: vec![false; cells],
             corners: vec![false; cells],
+            finished: vec![false; cells],
             banks: vec![Vec::new(); cells],
             banked: vec![false; cells],
             blocks,
@@ -541,6 +566,9 @@ pub struct Ladder<'g, G: Ground> {
     /// the ground, as vertices of [`LAST_WATER`]'s level: the tiles where
     /// they did, and the largest step left there.
     pub channel_capped: HashMap<(u8, i64, i64), (u64, f64)>,
+    /// Per level, the wall time each stage took there, in seconds, nested
+    /// work at other levels not counted.
+    pub timing: Vec<[f64; 8]>,
 }
 
 impl<'g, G: Ground> Ladder<'g, G> {
@@ -571,6 +599,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             channel_stats: [0; 2],
             channel_reach: Vec::new(),
             channel_capped: HashMap::new(),
+            timing: vec![[0.0; 8]; count],
         };
         ladder.build_top();
         ladder
@@ -583,6 +612,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         if todo.is_empty() {
             return;
         }
+        let started = Instant::now();
         let (w, layers, ground) = (lv.w, self.ground.layers(), self.ground);
         let cells: Vec<(i64, i64)> = todo.iter().map(|&c| lv.ij(c)).collect();
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
@@ -612,6 +642,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             lv.erod[c] = erod;
             lv.age[c] = age;
         }
+        self.timing[k][Stage::Read as usize] += started.elapsed().as_secs_f64();
     }
 
     /// The top: the sum of the layers over its cells, rounded to steps,
@@ -641,6 +672,9 @@ impl<'g, G: Ground> Ladder<'g, G> {
         for c in 0..lv.exists.len() {
             lv.z[c] = (lv.ground[c] + lv.cut[c] + 0.5).floor();
         }
+        // The cut moved every height, so every corner is met again.
+        lv.corners.fill(false);
+        lv.finished.fill(false);
         corners_over(lv, &all);
     }
 
@@ -654,7 +688,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 mask[c] = lv.exists[c];
             }
         }
-        if k == 0 {
+        // A request for cells already finished reads what is kept.
+        if k == 0 || (0..mask.len()).all(|c| !mask[c] || lv.finished[c]) {
             return;
         }
         self.ensure_routed(k, &mask);
@@ -669,7 +704,9 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let one: Vec<bool> = one.iter().zip(&lv.exists).map(|(a, b)| *a && *b).collect();
         let two: Vec<bool> = two.iter().zip(&lv.exists).map(|(a, b)| *a && *b).collect();
         self.ensure_built(k, &two);
+        let started = Instant::now();
         corners_over(&mut self.levels[k], &one);
+        self.timing[k][Stage::Corners as usize] += started.elapsed().as_secs_f64();
     }
 
     fn ensure_routed(&mut self, k: usize, mask: &[bool]) {
@@ -684,6 +721,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let pend = lv.pending(Pass::Route, &need);
         let fp = lv.footprint(Pass::Route, &pend);
         self.ensure_lines(k, &fp);
+        let started = Instant::now();
         let (above, rest) = self.levels.split_at_mut(k);
         let lv = &mut rest[0];
         ground_fields(lv, &above[k - 1], &fp);
@@ -692,6 +730,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             *a += b;
         }
         lv.cost[Pass::Route as usize] += pend.len() as u64;
+        self.timing[k][Stage::Route as usize] += started.elapsed().as_secs_f64();
     }
 
     /// The level above under a mask and a ring of its cells: read, routed,
@@ -726,6 +765,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let fp = lv.footprint(Pass::Ground, &pend);
         self.parent_over(k, &fp);
         self.read_layers(k, &fp);
+        let started = Instant::now();
         let (above, rest) = self.levels.split_at_mut(k);
         let lv = &mut rest[0];
         let par = &above[k - 1];
@@ -744,6 +784,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             lv.supplied[c] = true;
         }
         lv.cost[Pass::Ground as usize] += pend.len() as u64;
+        self.timing[k][Stage::Supply as usize] += started.elapsed().as_secs_f64();
     }
 
     fn ensure_lines(&mut self, k: usize, mask: &[bool]) {
@@ -756,6 +797,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let fp = lv.footprint(Pass::Route, &pend);
         self.ensure_supplied(k, &fp);
         self.parent_over(k, &fp);
+        let started = Instant::now();
         let (above, rest) = self.levels.split_at_mut(k);
         let lv = &mut rest[0];
         ground_fields(lv, &above[k - 1], &fp);
@@ -763,6 +805,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         for (a, b) in self.line_stats[k].iter_mut().zip(stats) {
             *a += b;
         }
+        self.timing[k][Stage::Lines as usize] += started.elapsed().as_secs_f64();
     }
 
     fn ensure_built(&mut self, k: usize, mask: &[bool]) {
@@ -782,14 +825,17 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let fp = lv.footprint(Pass::Water, &pend);
             self.ensure_supplied(k, &fp);
             self.ensure_routed(k, &fp);
+            let started = Instant::now();
             let head = head_of(self.levels[k - 1].w, &self.p);
             let lv = &mut self.levels[k];
             let mut own = water::line_edges(lv, &fp, head);
             own.extend(water::born_edges(lv, &fp));
             water::level_cut(lv, &own, &pend, &self.p);
             lv.cost[Pass::Water as usize] += pend.len() as u64;
+            self.timing[k][Stage::Water as usize] += started.elapsed().as_secs_f64();
         }
         self.ensure_supplied(k, &need);
+        let started = Instant::now();
         let lv = &mut self.levels[k];
         let mut built = 0;
         for c in 0..need.len() {
@@ -802,6 +848,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         }
         lv.cost[4] += built;
         assert!((0..need.len()).all(|c| !need[c] || lv.built[c]), "a built cell read something its deform did not cover");
+        self.timing[k][Stage::Build as usize] += started.elapsed().as_secs_f64();
     }
 
     /// A level finer than [`LAST_WATER`] built over a mask: its ground, the
@@ -812,6 +859,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         if self.levels[k].w == 1 {
             self.ensure_channels(k, need);
         }
+        let started = Instant::now();
         let lv = &mut self.levels[k];
         let mut built = 0;
         for c in 0..need.len() {
@@ -824,6 +872,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             }
         }
         lv.cost[4] += built;
+        self.timing[k][Stage::Build as usize] += started.elapsed().as_secs_f64();
     }
 
     /// The tiles of a mask cut by their channels, a channel deform cell at a
@@ -835,6 +884,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let fp = lv.footprint(Pass::Channel, &pend);
         let pmask = self.under(k, &fp);
         self.ensure_banks(k - 1, &pmask);
+        let started = Instant::now();
         let lv = &self.levels[k];
         let cells: Vec<usize> = (0..need.len()).filter(|&c| need[c] && !lv.built[c]).collect();
         let reached = {
@@ -868,6 +918,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         }
         lv.cost[4] += cells.len() as u64;
         lv.cost[Pass::Channel as usize] += pend.len() as u64;
+        self.timing[k][Stage::Channel as usize] += started.elapsed().as_secs_f64();
     }
 
     /// The cells of level k-1 under a mask of level k and one ring of them.
@@ -905,6 +956,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let pmask = self.under(k, &need);
             self.ensure_banks(k - 1, &pmask);
         }
+        let started = Instant::now();
         let p = self.p;
         let (above, rest) = self.levels.split_at_mut(k);
         let lv = &mut rest[0];
@@ -924,6 +976,20 @@ impl<'g, G: Ground> Ladder<'g, G> {
             self.channel_stats[0] += curves;
             self.channel_stats[1] += rising;
         }
+        self.timing[k][Stage::Channel as usize] += started.elapsed().as_secs_f64();
+    }
+
+    /// The channels' banks over cells of level k drawn and kept, as a bake
+    /// keeps them for the levels below.
+    pub fn draw_banks(&mut self, k: usize, cells: &[(i64, i64)]) {
+        let lv = &self.levels[k];
+        let mut mask = vec![false; lv.exists.len()];
+        for &(i, j) in cells {
+            if let Some(c) = lv.idx(i, j) {
+                mask[c] = lv.exists[c];
+            }
+        }
+        self.ensure_banks(k, &mask);
     }
 
     /// For the probes: the cut at each of `cells` of level k from every river
@@ -1015,6 +1081,9 @@ fn corners_over(lv: &mut Level, mask: &[bool]) {
             continue;
         }
         draw.push(c);
+        if lv.corners[c] {
+            continue;
+        }
         let (i, j) = lv.ij(c);
         let (a, b, ready_a, ready_b) = lv.meet_at(i, j, &lv.z, &lv.built);
         lv.elev[c] = lv.z[c];
@@ -1034,9 +1103,12 @@ fn corners_over(lv: &mut Level, mask: &[bool]) {
     draw.sort_unstable();
     draw.dedup();
     for c in draw {
-        if lv.exists[c] && lv.built[c] {
+        if lv.exists[c] && lv.built[c] && !lv.finished[c] {
             let (i, j) = lv.ij(c);
             lv.cc[c] = lv.corner_values(i, j);
+            lv.finished[c] = [(i, j), (i - 1, j + 1), (i - 1, j), (i, j - 1)]
+                .iter()
+                .all(|&(a, b)| lv.idx(a, b).is_none_or(|d| !lv.exists[d] || lv.corners[d]));
         }
     }
 }

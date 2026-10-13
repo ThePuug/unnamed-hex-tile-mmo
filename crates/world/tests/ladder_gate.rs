@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use world::events::{lithology, motion, plates, thickening, thrusting, tilt, Composite};
 use world::ladder::ground::Layered;
-use world::ladder::{Ground, Ladder, Level, Params, LAST_WATER};
+use world::ladder::{Ground, Ladder, Level, Params, LAST_WATER, STAGES};
 use world::WORLD_SEED;
 
 /// The haven's tile, as `common_bevy::haven::HAVEN_LOCATION` holds it.
@@ -346,6 +346,7 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
             lv.w, ladder.line_stats[k], ladder.route_stats[k], lv.cost
         ));
     }
+    log.push_str(&timing(&ladder.levels, &ladder.timing));
     log.push_str(&channels(&ladder));
     log.push_str(&truth(&ladder));
     if std::env::var("LADDER_EXACT").is_ok_and(|v| v == "1") {
@@ -544,14 +545,67 @@ fn cpu_seconds() -> f64 {
     f64::NAN
 }
 
-/// What an area of tiles costs: `LADDER_AREA` tiles across (81 by default),
-/// centred on the haven, requested at tiles on a fresh ladder, cold (the
-/// ground first read in this process) and then warm on another fresh ladder:
-/// wall and CPU time, the threads, and each level's deforms and cells built.
+/// This process's working set now and at its peak, and its private memory
+/// at its peak, in bytes.
+#[cfg(windows)]
+fn memory() -> (usize, usize, usize) {
+    #[repr(C)]
+    #[derive(Default)]
+    struct Counters {
+        cb: u32,
+        faults: u32,
+        peak_working: usize,
+        working: usize,
+        quota: [usize; 4],
+        private: usize,
+        peak_private: usize,
+    }
+    extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn K32GetProcessMemoryInfo(h: isize, counters: *mut Counters, cb: u32) -> i32;
+    }
+    let mut m = Counters { cb: std::mem::size_of::<Counters>() as u32, ..Default::default() };
+    // SAFETY: the pseudo-handle of the current process and a live, sized out-parameter.
+    unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut m, m.cb) };
+    (m.working, m.peak_working, m.peak_private)
+}
+
+#[cfg(not(windows))]
+fn memory() -> (usize, usize, usize) {
+    (0, 0, 0)
+}
+
+/// Each level's wall time by stage, in seconds, nested work at other
+/// levels not counted.
+fn timing(levels: &[Level], times: &[[f64; 8]]) -> String {
+    let mut out = format!("   {:>5} {}\n", "w", STAGES.iter().map(|s| format!("{s:>8}")).collect::<String>());
+    for (lv, t) in levels.iter().zip(times) {
+        out.push_str(&format!("   {:>5} {} total {:.2}\n", lv.w, t.iter().map(|x| format!("{x:>8.2}")).collect::<String>(), t.iter().sum::<f64>()));
+    }
+    out
+}
+
+fn timed(f: &mut dyn FnMut()) -> (f64, f64) {
+    let (t, c) = (Instant::now(), cpu_seconds());
+    f();
+    (t.elapsed().as_secs_f64(), cpu_seconds() - c)
+}
+
+/// What an area of tiles costs: `LADDER_AREA` tiles across (243 by
+/// default), centred on the haven, requested at tiles four ways, each with
+/// its wall and CPU time and each level's time by stage:
+///
+/// - cold: a fresh ladder, the ground first read in this process;
+/// - fresh: another fresh ladder, the ground's reads kept, so every level
+///   is computed again but nothing is read;
+/// - again: the same request on the cold run's ladder, which keeps it;
+/// - baked: a ladder whose levels to `LAST_WATER` were built beforehand
+///   over the cells the area needs, the levels below computed, the ground's
+///   reads kept: the budget. Its tiles must equal the cold run's.
 #[test]
 #[ignore]
 fn ladder_area_speed() {
-    let across: i64 = std::env::var("LADDER_AREA").ok().and_then(|a| a.parse().ok()).unwrap_or(81);
+    let across: i64 = std::env::var("LADDER_AREA").ok().and_then(|a| a.parse().ok()).unwrap_or(243);
     let c = stack(WORLD_SEED);
     let g = Layered::new(&c, HAVEN, outline_half(), WORLD_SEED, 2);
     let ext = extents();
@@ -560,21 +614,320 @@ fn ladder_area_speed() {
     let cells: Vec<(i64, i64)> = (-h..=h).flat_map(|i| (-h..=h).map(move |j| (i, j))).collect();
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut out = format!("area {across} x {across} tiles ({} tiles), threads {threads}\n", cells.len());
-    for run in ["cold", "warm"] {
-        let (t0, c0) = (Instant::now(), cpu_seconds());
-        let mut ladder = Ladder::new(&g, &ext, Params::default());
-        let (top_wall, top_cpu) = (t0.elapsed().as_secs_f64(), cpu_seconds() - c0);
-        let (t1, c1) = (Instant::now(), cpu_seconds());
-        ladder.request(k, &cells);
-        let (wall, cpu) = (t1.elapsed().as_secs_f64(), cpu_seconds() - c1);
-        out.push_str(&format!("{run}: top {top_wall:.1} s wall, {top_cpu:.1} s CPU; the area {wall:.1} s wall, {cpu:.1} s CPU\n"));
+    let mut cold = None;
+    for run in ["cold", "fresh"] {
+        let mut ladder = None;
+        let (top_wall, top_cpu) = timed(&mut || ladder = Some(Ladder::new(&g, &ext, Params::default())));
+        let mut ladder = ladder.unwrap();
+        let (wall, cpu) = timed(&mut || ladder.request(k, &cells));
+        out.push_str(&format!("{run}: top {top_wall:.2} s wall, {top_cpu:.1} s CPU; the area {wall:.2} s wall, {cpu:.1} s CPU\n"));
         for lv in &ladder.levels[1..] {
             let built = lv.built.iter().filter(|&&b| b).count();
             out.push_str(&format!("   w={}: deforms ground {} water {} route {}; cells built {built}\n", lv.w, lv.cost[0], lv.cost[1], lv.cost[2]));
         }
+        out.push_str(&timing(&ladder.levels, &ladder.timing));
+        out.push_str(&channels(&ladder));
+        print!("{out}");
+        if cold.is_none() {
+            cold = Some(ladder);
+        }
     }
+    let mut cold = cold.unwrap();
+    let before: f64 = cold.timing.iter().flatten().sum();
+    let (wall, cpu) = timed(&mut || cold.request(k, &cells));
+    let more = cold.timing.iter().flatten().sum::<f64>() - before;
+    out.push_str(&format!("again: the area {wall:.4} s wall, {cpu:.3} s CPU; stage time added {more:.4} s\n"));
+    // The levels to LAST_WATER over every cell the cold run built there.
+    let s = ext.iter().position(|e| e.0 == LAST_WATER).unwrap();
+    let mut baked = Ladder::new(&g, &ext, Params::default());
+    let src = &cold.levels[s];
+    let bake_cells: Vec<(i64, i64)> = (0..src.n * src.n).filter(|&c| src.built[c]).map(|c| src.ij(c)).collect();
+    let bank_cells: Vec<(i64, i64)> = (0..src.n * src.n).filter(|&c| src.banked[c]).map(|c| src.ij(c)).collect();
+    let (bwall, _) = timed(&mut || {
+        baked.request(s, &bake_cells);
+    baked.draw_banks(s, &bank_cells);
+        baked.draw_banks(s, &bank_cells);
+    });
+    let start = baked.timing.clone();
+    let (wall, cpu) = timed(&mut || baked.request(k, &cells));
+    out.push_str(&format!("baked: the levels to {LAST_WATER} over {} of its cells in {bwall:.1} s; then the area {wall:.3} s wall, {cpu:.2} s CPU\n", bake_cells.len()));
+    let fine: Vec<[f64; 8]> = baked.timing.iter().zip(&start).map(|(f, b)| std::array::from_fn(|x| f[x] - b[x])).collect();
+    out.push_str(&timing(&baked.levels, &fine));
+    for lv in &baked.levels[s + 1..] {
+        let built = lv.built.iter().filter(|&&b| b).count();
+        out.push_str(&format!("   w={}: cells built {built}\n", lv.w));
+    }
+    let (a, b) = (&cold.levels[k], &baked.levels[k]);
+    let differ = cells.iter().filter(|&&(i, j)| !same(a.z[a.idx(i, j).unwrap()], b.z[b.idx(i, j).unwrap()])).count();
+    out.push_str(&format!("   tiles differing from the cold run: {differ}\n"));
+    // The same bake on a ground read afresh: the levels below read cold.
+    let fresh = Layered::new(&c, HAVEN, outline_half(), WORLD_SEED, 2);
+    let mut baked = Ladder::new(&fresh, &ext, Params::default());
+    baked.request(s, &bake_cells);
+    let start = baked.timing.clone();
+    let (wall, cpu) = timed(&mut || baked.request(k, &cells));
+    out.push_str(&format!("baked, ground read cold below {LAST_WATER}: the area {wall:.3} s wall, {cpu:.2} s CPU\n"));
+    let fine: Vec<[f64; 8]> = baked.timing.iter().zip(&start).map(|(f, b)| std::array::from_fn(|x| f[x] - b[x])).collect();
+    out.push_str(&timing(&baked.levels, &fine));
+    let b = &baked.levels[k];
+    let differ = cells.iter().filter(|&&(i, j)| !same(a.z[a.idx(i, j).unwrap()], b.z[b.idx(i, j).unwrap()])).count();
+    out.push_str(&format!("   tiles differing from the cold run: {differ}\n"));
+    // The game's tiles over the same area: the standard stack, fresh, each
+    // tile composed by `tile_at`, on every thread and on one.
+    let tiles: Vec<(i32, i32)> = cells.iter().map(|&(i, j)| (HAVEN.0 + i as i32, HAVEN.1 + j as i32)).collect();
+    let game = Composite::standard(WORLD_SEED);
+    let chunk = tiles.len().div_ceil(threads);
+    let (wall, cpu) = timed(&mut || {
+        std::thread::scope(|sc| {
+            for part in tiles.chunks(chunk) {
+                let game = &game;
+                sc.spawn(move || part.iter().map(|&(q, r)| game.tile_at(q, r).elevation).sum::<f64>());
+            }
+        })
+    });
+    out.push_str(&format!("game: Composite::standard, tile_at over the area on {threads} threads: {wall:.3} s wall, {cpu:.2} s CPU\n"));
+    let game = Composite::standard(WORLD_SEED);
+    let (wall, cpu) = timed(&mut || {
+        let _: f64 = tiles.iter().map(|&(q, r)| game.tile_at(q, r).elevation).sum();
+    });
+    out.push_str(&format!("game: the same on one thread: {wall:.3} s wall, {cpu:.2} s CPU\n"));
     print!("{out}");
     if let Ok(dir) = std::env::var("LADDER_OUT") {
         std::fs::write(format!("{dir}/area_{across}.txt"), out).expect("the area table");
+    }
+}
+
+/// What a level holds in the ladder's working arrays, in bytes per cell:
+/// each cell's values, and each of its three vertices'.
+const WORKING: usize = {
+    let cell = 2 * 8 // layers
+        + 9 * 8 // erod, age, p, ground, wpred, cut, wfull, wdist, z
+        + 2 * 8 // wborn, wgov
+        + 6 * 8 + 6 * 8 // a3, b3; cc
+        + 3 * 16 // blocks
+        + 10; // wfade and the nine progress flags
+    let vertex = 12 * 8 // elev, psurf, gelev, uelev, base, floor, acc, line_acc, line_fl, line_base, line_dev, line_pin
+        + 5 * 8 // born, rec, line_rec, line_born, line_corr
+        + 2 * 8 // line_anchor
+        + 4; // trough, line_on, line_wall, line_hollow
+    cell + 3 * vertex
+};
+
+/// One field a baked level keeps: its name, values per cell, and whether
+/// it is a height or a floor, which fits two bytes.
+type Kept = (&'static str, usize, bool);
+
+/// What a level finer than water reads of a baked `LAST_WATER` level, per
+/// cell: the prediction's heights, corners and handed-down values. Its
+/// channels' banks are counted apart.
+const KEEP_LAST: [Kept; 6] = [
+    ("z", 1, true),
+    ("a3 (meet values at corner A)", 3, true),
+    ("b3 (meet values at corner B)", 3, true),
+    ("cc (six corner values)", 6, true),
+    ("layers", 2, false),
+    ("cut", 1, false),
+];
+
+/// A bank's values: its position, floor, bed's half width, walls' slope and
+/// owning river.
+const BANK: [Kept; 6] = [("x", 1, false), ("y", 1, false), ("floor", 1, true), ("bed", 1, false), ("slope", 1, false), ("river", 1, false)];
+
+/// What a level that routes and cuts water reads of a baked level above it:
+/// the prediction's, the ground and cut its water term reads, and every
+/// vertex's trough and line.
+const KEEP_ABOVE: [Kept; 22] = [
+    ("z", 1, true),
+    ("a3", 3, true),
+    ("b3", 3, true),
+    ("cc", 6, true),
+    ("layers", 2, false),
+    ("cut", 1, false),
+    ("ground", 1, true),
+    ("wpred", 1, false),
+    ("erod", 1, false),
+    ("age", 1, false),
+    ("trough, line_on x3", 3, false),
+    ("rec x3", 3, false),
+    ("acc x3", 3, false),
+    ("floor x3", 3, true),
+    ("base x3", 3, true),
+    ("born x3", 3, false),
+    ("elev x3", 3, true),
+    ("line_rec x3", 3, false),
+    ("line_acc x3", 3, false),
+    ("line_fl x3", 3, true),
+    ("line_base x3", 3, true),
+    ("line_born x3", 3, false),
+];
+
+fn kept_table(name: &str, fields: &[Kept]) -> (String, usize, usize) {
+    let mut out = format!("   kept per cell, {name}:\n");
+    let (mut wide, mut narrow) = (0, 0);
+    for &(field, n, height) in fields {
+        let q = if height { 2 } else { 8 };
+        out.push_str(&format!("      {field:<36} {n:>2} values: {:>4} B at 8 B, {:>4} B quantized\n", 8 * n, q * n));
+        wide += 8 * n;
+        narrow += q * n;
+    }
+    out.push_str(&format!("      {:<36}           {wide:>4} B at 8 B, {narrow:>4} B quantized\n", "total"));
+    (out, wide, narrow)
+}
+
+/// What baking the levels to `LADDER_BAKE` (81 by default) costs over the
+/// haven's landmass: the top's land joined to the haven's cell and its box,
+/// then every cell of the finest level under that land requested in one
+/// ladder, timed by stage; what the finest level keeps, by field; and what a
+/// bake made block by block, one top cell at a time, holds at its peak,
+/// measured on `LADDER_BAKE_SAMPLES` blocks (3 by default) each requested on
+/// a fresh ladder: every cell any level read, in working arrays, and the
+/// top kept whole.
+#[test]
+#[ignore]
+fn ladder_bake() {
+    let c = stack(WORLD_SEED);
+    let g = Layered::new(&c, HAVEN, outline_half(), WORLD_SEED, 2);
+    let top = LEVELS[0];
+    let half = top.1 / top.0 + 2;
+    let alone = Ladder::new(&g, &[(top.0, -half, half + 1)], Params::default());
+    let lv = &alone.levels[0];
+    let mut land = vec![false; lv.n * lv.n];
+    let mut todo = vec![lv.idx(0, 0).unwrap()];
+    while let Some(c) = todo.pop() {
+        if land[c] || lv.z[c] < 0.0 {
+            continue;
+        }
+        land[c] = true;
+        let (i, j) = lv.ij(c);
+        for (di, dj) in world::ladder::geom::NB {
+            if let Some(d) = lv.idx(i + di, j + dj) {
+                todo.push(d);
+            }
+        }
+    }
+    let at: Vec<(i64, i64)> = (0..land.len()).filter(|&c| land[c]).map(|c| lv.ij(c)).collect();
+    let (ilo, ihi) = (at.iter().map(|a| a.0).min().unwrap(), at.iter().map(|a| a.0).max().unwrap());
+    let (jlo, jhi) = (at.iter().map(|a| a.1).min().unwrap(), at.iter().map(|a| a.1).max().unwrap());
+    let touches = at.iter().any(|&(i, j)| i.abs() >= half - 1 || j.abs() >= half - 1);
+    let mut out = format!(
+        "landmass: {} cells of 729, {:.0} tiles, box i {ilo}..{ihi} j {jlo}..{jhi} (cells of 729); reaches the top's edge: {touches}\n",
+        at.len(),
+        at.len() as f64 * 729.0 * 729.0
+    );
+    print!("{out}");
+    if std::env::var("LADDER_BAKE_SIZE_ONLY").is_ok() {
+        return;
+    }
+    let finest: i64 = std::env::var("LADDER_BAKE").ok().and_then(|f| f.parse().ok()).unwrap_or(81);
+    let samples: usize = std::env::var("LADDER_BAKE_SAMPLES").ok().and_then(|f| f.parse().ok()).unwrap_or(3);
+    // Each level's cells cover the box and the reach of the levels below.
+    let ext: Vec<(i64, i64, i64)> = [729i64, 243, 81, 27]
+        .iter()
+        .filter(|&&w| w >= finest)
+        .map(|&w| {
+            let m = 729 / w;
+            let pad = if w == 729 { 2 } else { 40 };
+            (w, ilo.min(jlo) * m - pad, (ihi.max(jhi) + 1) * m + pad)
+        })
+        .collect();
+    let k = ext.len() - 1;
+    let under = |fl: &Level, top_cells: &dyn Fn(i64, i64) -> bool| -> Vec<(i64, i64)> {
+        (0..fl.n * fl.n)
+            .map(|c| fl.ij(c))
+            .filter(|&(i, j)| {
+                let (a, b) = world::ladder::geom::ancestor(i, j, k as u32);
+                top_cells(a, b)
+            })
+            .collect()
+    };
+    let top_cells = alone.levels[0].n * alone.levels[0].n;
+
+    // Block by block: one top cell's area at a time on a fresh ladder.
+    out.push_str(&format!("block by block, one top cell ({} cells of {finest}) a block, {samples} blocks measured:\n", (729 / finest).pow(2)));
+    let picks: Vec<(i64, i64)> = (0..samples).map(|s| at[(s + 1) * at.len() / (samples + 1)]).collect();
+    let mut peak = 0usize;
+    for &(a, b) in &picks {
+        let mut ladder = Ladder::new(&g, &ext, Params::default());
+        let cells = under(&ladder.levels[k], &|x, y| (x, y) == (a, b));
+        let (t, _) = timed(&mut || ladder.request(k, &cells));
+        let mut held = 0usize;
+        let mut row = String::new();
+        for lv in &ladder.levels[1..] {
+            let read = (0..lv.n * lv.n).filter(|&c| !lv.layers[0][c].is_nan() || lv.supplied[c]).count();
+            let built = lv.built.iter().filter(|&&x| x).count();
+            held += read;
+            row.push_str(&format!(" w={} read {read} built {built};", lv.w));
+        }
+        let bytes = (held + top_cells) * WORKING;
+        peak = peak.max(bytes);
+        out.push_str(&format!(
+            "   block ({a}, {b}): {:.1} s; cells requested {}, built at {finest} {} ({:.1}x);{row} peak {:.0} MB (the top {:.0} MB of it)\n",
+            t,
+            cells.len(),
+            ladder.levels[k].built.iter().filter(|&&x| x).count(),
+            ladder.levels[k].built.iter().filter(|&&x| x).count() as f64 / cells.len() as f64,
+            bytes as f64 / 1e6,
+            (top_cells * WORKING) as f64 / 1e6
+        ));
+        print!("{out}");
+    }
+    out.push_str(&format!("   working arrays {WORKING} B a cell; peak over the blocks {:.0} MB\n", peak as f64 / 1e6));
+
+    // The whole landmass in one ladder.
+    let before = memory();
+    let (t0, c0) = (Instant::now(), cpu_seconds());
+    let mut ladder = Ladder::new(&g, &ext, Params::default());
+    let top_s = t0.elapsed().as_secs_f64();
+    let cells = under(&ladder.levels[k], &|x, y| alone.levels[0].idx(x, y).is_some_and(|d| land[d]));
+    ladder.request(k, &cells);
+    if finest == LAST_WATER {
+        ladder.draw_banks(k, &cells);
+    }
+    let (wall, cpu) = (t0.elapsed().as_secs_f64(), cpu_seconds() - c0);
+    out.push_str(&format!("bake 729 -> {finest} in one ladder: {} cells requested at {finest}; top {top_s:.1} s; {wall:.1} s wall, {cpu:.0} s CPU\n", cells.len()));
+    let after = memory();
+    out.push_str(&format!(
+        "   memory: working set before the bake {:.2} GB, after {:.2} GB; process peak working set {:.2} GB, peak private {:.2} GB\n",
+        before.0 as f64 / 1e9,
+        after.0 as f64 / 1e9,
+        after.1 as f64 / 1e9,
+        after.2 as f64 / 1e9
+    ));
+    out.push_str(&timing(&ladder.levels, &ladder.timing));
+    let (table, wide, narrow) =
+        if finest == LAST_WATER { kept_table("the last water level, read by the dry levels and the channels", &KEEP_LAST) } else { kept_table("a level read by water's levels below it", &KEEP_ABOVE) };
+    out.push_str(&table);
+    if finest == LAST_WATER {
+        let lv = &ladder.levels[k];
+        let held: Vec<usize> = (0..lv.n * lv.n).filter(|&c| lv.banked[c]).collect();
+        let banks: usize = held.iter().map(|&c| lv.banks[c].len()).sum();
+        let (bt, bw, bn) = kept_table("a channel bank", &BANK);
+        out.push_str(&bt);
+        out.push_str(&format!(
+            "   banks: {banks} over {} cells ({:.1} a cell): {:.1} MB at 8 B, {:.1} MB quantized
+",
+            held.len(),
+            banks as f64 / held.len() as f64,
+            (banks * bw) as f64 / 1e6,
+            (banks * bn) as f64 / 1e6
+        ));
+    }
+    let mut all = (0usize, 0usize);
+    for lv in &ladder.levels {
+        let built = lv.built.iter().filter(|&&b| b).count();
+        all.0 += built * wide;
+        all.1 += built * narrow;
+        out.push_str(&format!(
+            "   w={}: {built} cells built; at the table's rate {:.1} MB at 8 B, {:.1} MB quantized; working arrays held {:.0} MB\n",
+            lv.w,
+            (built * wide) as f64 / 1e6,
+            (built * narrow) as f64 / 1e6,
+            (lv.n * lv.n * WORKING) as f64 / 1e6
+        ));
+    }
+    out.push_str(&format!("   every level at the table's rate: {:.1} MB at 8 B, {:.1} MB quantized\n", all.0 as f64 / 1e6, all.1 as f64 / 1e6));
+    print!("{out}");
+    if let Ok(dir) = std::env::var("LADDER_OUT") {
+        std::fs::write(format!("{dir}/bake_{finest}.txt"), out).expect("the bake table");
     }
 }
