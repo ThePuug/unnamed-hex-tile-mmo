@@ -325,8 +325,8 @@ stem.
 and rounded once, in `Composite::water_at`: surface and ground round to the
 same steps, a surface's step covers the tiles below it and leaves the tiles
 at it dry, so a dry tile has none. `Map::water_at` holds it apart from the
-ground so either may arrive first; `movement::is_deep_water` is the one entry
-rule. Water at zero is never built: the sea is the client's one plane, and a
+ground so either may arrive first; movement never reads it, and any water is
+walked through. Water at zero is never built: the sea is the client's one plane, and a
 channel or lake surface at zero is under it.
 
 ## Pinned system ordering

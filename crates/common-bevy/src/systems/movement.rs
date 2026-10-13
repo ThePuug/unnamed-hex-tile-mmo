@@ -86,19 +86,6 @@ pub const TURN_RESTED_MS: u16 = i16::MAX as u16;
 /// Maximum entity count per tile before considering it solid
 pub const MAX_ENTITIES_PER_TILE: usize = 7;
 
-/// The depth of water a walker wades, in z-levels: one, the same step that
-/// bounds a climb. Deeper water is not entered; crossing it, by swimming, a
-/// ford, a bridge or a boat, is undesigned, so it blocks.
-pub const WADE_DEPTH: i32 = 1;
-
-/// Whether a tile stands under more water than a walker wades.
-pub fn is_deep_water(map: &Map, q: i32, r: i32) -> bool {
-    match (map.water_at(q, r), map.get_by_qr(q, r)) {
-        (Some(surface), Some((floor, _))) => surface - floor.z > WADE_DEPTH,
-        _ => false,
-    }
-}
-
 /// The fullness at which a tile refuses entry: more than half its
 /// [`common::TILE_SLOTS`] held by solid things, so two trees close it.
 pub const COVER_FULL: u8 = 4;
@@ -210,8 +197,9 @@ pub struct MovementOutput {
 /// entity whose feet stand `y` over the level of `tile`, the tile its walk
 /// is measured from. Refused by a rise of more than one level unless
 /// airborne at or above its standing height, by a solid decorator with no
-/// floor, by a tile at its entity capacity, by water deeper than a walker
-/// wades, and by trees in every slot.
+/// floor, by a tile at its entity capacity, and by trees in every slot.
+/// Water never refuses a step: crossing deep water is undesigned, so it is
+/// walked as ground.
 pub fn is_tile_blocked(
     tile: Qrz,
     here_floor: Option<Qrz>,
@@ -236,7 +224,7 @@ pub fn is_tile_blocked(
         _ => nntree.locate_all_at_point(&Loc::new(next)).count() >= MAX_ENTITIES_PER_TILE,
     };
 
-    cliff || (solid && next_floor.is_none()) || is_deep_water(map, next.q, next.r) || is_full_cover(map, next.q, next.r)
+    cliff || (solid && next_floor.is_none()) || is_full_cover(map, next.q, next.r)
 }
 
 /// How far short of a refused face a walk stops, in world units: a hair, so
@@ -1237,29 +1225,6 @@ mod tests {
         let centre: Vec3 = map.convert(Qrz { q: 0, r: 0, z: 1 });
         let where_it_stands: Qrz = map.convert(centre + cliff.position.offset);
         assert_eq!((where_it_stands.q, where_it_stands.r), (0, 0), "held at the cliff: {:?}", cliff.position.offset);
-    }
-
-    /// A step of water is waded and deeper water blocks: the next tile
-    /// under one step of water is entered, under two it is not, and a dry
-    /// tile beside a flooded one is unaffected.
-    #[test]
-    fn deep_water_blocks_and_shallow_water_is_waded() {
-        let map = create_test_map();
-        flat_ground(&map, 3);
-        let nntree = create_test_nntree();
-        map.set_water(1, 0, Some(1));
-        map.set_water(2, 0, Some(2));
-        assert!(!is_deep_water(&map, 1, 0), "a step of water is waded");
-        assert!(is_deep_water(&map, 2, 0), "two steps of water block");
-        assert!(!is_deep_water(&map, -1, 0), "dry ground is dry");
-
-        let east = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
-        let wade = calculate_movement(walking(east, true), 250, &map, &nntree);
-        assert!(wade.position.offset.x > 0.5, "walks into a step of water");
-
-        map.set_water(1, 0, Some(2));
-        let blocked = calculate_movement(walking(east, true), 250, &map, &nntree);
-        assert!(blocked.position.offset.x < wade.position.offset.x, "held back by deep water");
     }
 
     #[test]
