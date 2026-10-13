@@ -955,3 +955,81 @@ fn ladder_bake() {
         std::fs::write(format!("{dir}/bake_{finest}.txt"), out).expect("the bake table");
     }
 }
+
+/// The ladder's tiles beside the game's over 512 by 512 tiles in axial q
+/// and r centred on the haven, from a fresh ladder at the defaults and from
+/// `Composite::standard`'s `elevation_at` on one thread, rows by r then q:
+/// `ladder_z.bin` and `stack_z.bin`, heights in levels as little-endian
+/// i16; `ladder_bed.bin`, a byte, 1 where a tile lies in a channel bed;
+/// and `meta.json`.
+#[test]
+#[ignore]
+fn ladder_export() {
+    let dir = std::env::var("LADDER_OUT").expect("LADDER_OUT names the directory to write to");
+    std::fs::create_dir_all(&dir).expect("the output directory");
+    const SIDE: i64 = 512;
+    let half = SIDE / 2;
+    let c = stack(WORLD_SEED);
+    let g = Layered::new(&c, HAVEN, outline_half(), WORLD_SEED, 2);
+    // Each level below 27 reaches past the area by what the levels below it
+    // read: the tiles' channel deform cell and its ring, and one ring above.
+    let margin = [0, 0, 0, 0, 1_500, 1_000, 900];
+    let ext: Vec<(i64, i64, i64)> = LEVELS
+        .iter()
+        .zip(margin)
+        .map(|(&(w, reach), m)| {
+            let h = reach.max(half + m) / w + 2;
+            (w, -h, h + 1)
+        })
+        .collect();
+    status("building the top");
+    let started = Instant::now();
+    let mut ladder = Ladder::new(&g, &ext, Params::default());
+    let k = ext.len() - 1;
+    // Rows by r then q; a cell (i, j) of the tiles is the tile the haven
+    // plus (q, r) = (i, j).
+    let cells: Vec<(i64, i64)> = (-half..half).flat_map(|r| (-half..half).map(move |q| (q, r))).collect();
+    status(&format!("the ladder's {} tiles", cells.len()));
+    ladder.request(k, &cells);
+    let ladder_s = started.elapsed().as_secs_f64();
+    let lv = &ladder.levels[k];
+    let at = |&(q, r): &(i64, i64)| lv.idx(q, r).expect("a tile the ladder holds");
+    let i16s = |v: &mut dyn Iterator<Item = f64>| -> Vec<u8> {
+        v.flat_map(|z| {
+            assert!(z.abs() < 32_767.0, "a height {z} past i16");
+            (z as i16).to_le_bytes()
+        })
+        .collect()
+    };
+    std::fs::write(format!("{dir}/ladder_z.bin"), i16s(&mut cells.iter().map(|c| lv.z[at(c)]))).expect("ladder_z");
+    std::fs::write(format!("{dir}/ladder_bed.bin"), cells.iter().map(|c| lv.bed[at(c)] as u8).collect::<Vec<u8>>()).expect("ladder_bed");
+    status("the game's tiles");
+    let started = Instant::now();
+    let game = Composite::standard(WORLD_SEED);
+    let stack_z: Vec<u8> = i16s(&mut cells.iter().map(|&(q, r)| game.elevation_at(HAVEN.0 + q as i32, HAVEN.1 + r as i32) as f64));
+    std::fs::write(format!("{dir}/stack_z.bin"), stack_z).expect("stack_z");
+    let stack_s = started.elapsed().as_secs_f64();
+    let meta = format!(
+        "{{
+  \"haven\": {{\"q\": {}, \"r\": {}}},
+  \"origin\": {{\"q\": {}, \"r\": {}}},
+  \"size\": {{\"q\": {SIDE}, \"r\": {SIDE}}},
+  \"order\": \"rows by r, then q\",
+  \"rise\": {},
+  \"rise_unit\": \"a level's height in tile spacings, centre to centre\",
+  \"orientation\": \"flat-top\"
+}}
+",
+        HAVEN.0,
+        HAVEN.1,
+        HAVEN.0 as i64 - half,
+        HAVEN.1 as i64 - half,
+        world::RISE
+    );
+    std::fs::write(format!("{dir}/meta.json"), meta).expect("meta");
+    let beds = lv.bed.iter().zip(&lv.built).filter(|(b, x)| **b && **x).count();
+    let out = format!("export: {SIDE} by {SIDE} tiles; ladder {ladder_s:.1} s, game {stack_s:.1} s; {beds} tiles in a bed
+{}", channels(&ladder));
+    print!("{out}");
+    std::fs::write(format!("{dir}/export.txt"), out).expect("the export log");
+}

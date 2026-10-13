@@ -307,6 +307,8 @@ pub struct Level {
     pub built: Vec<bool>,
     pub routed: Vec<bool>,
     pub corners: Vec<bool>,
+    /// Whether each tile lies in a channel's bed; the tiles only.
+    pub bed: Vec<bool>,
     /// Whether each cell's six corner values are final: its own corners met,
     /// and the four its neighbours own, where those exist.
     pub finished: Vec<bool>,
@@ -383,6 +385,7 @@ impl Level {
             built: vec![false; cells],
             routed: vec![false; cells],
             corners: vec![false; cells],
+            bed: vec![false; cells],
             finished: vec![false; cells],
             blocks,
             cost: [0; 5],
@@ -945,6 +948,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let low = ground.min(at.surface);
             lv.cut[c] = lv.wpred[c] + low - ground;
             lv.z[c] = (low + 0.5).floor();
+            lv.bed[c] = at.in_bed;
             lv.watered[c] = true;
             lv.built[c] = true;
         }

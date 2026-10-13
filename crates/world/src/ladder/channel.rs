@@ -189,6 +189,8 @@ pub(super) struct Reach {
     pub surface: f64,
     /// How far below the drawn surface the channel is.
     pub below: f64,
+    /// Whether the tile lies in a channel's bed.
+    pub in_bed: bool,
     pub governing: Option<(usize, f64)>,
     pub capped: bool,
 }
@@ -239,6 +241,7 @@ impl Index {
         let rad = BUCKET / SQRT_3;
         let mut best = f64::INFINITY;
         let mut governing: Option<(usize, f64)> = None;
+        let mut in_bed = false;
         for &(di, dj) in &self.order {
             let Some(held) = self.buckets.get(&(ci + di, cj + dj)) else { continue };
             let (cx, cy) = world(((ci + di) as f64) * BUCKET, ((cj + dj) as f64) * BUCKET);
@@ -250,6 +253,7 @@ impl Index {
                 let d = (b.x - x).hypot(b.y - y);
                 if d <= reach {
                     let v = b.floor + b.slope * (d - b.bed).max(0.0);
+                    in_bed |= d <= b.bed && b.floor < drawn;
                     if v < best && v < drawn {
                         best = v;
                         governing = Some((b.river, d));
@@ -257,6 +261,6 @@ impl Index {
                 }
             }
         }
-        Reach { surface: best, below: drawn - best, governing, capped: governing.is_some_and(|(_, d)| d > reach - 1.0) }
+        Reach { surface: best, below: drawn - best, in_bed, governing, capped: governing.is_some_and(|(_, d)| d > reach - 1.0) }
     }
 }
