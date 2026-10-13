@@ -752,7 +752,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let (above, rest) = self.levels.split_at_mut(k);
             let lv = &mut rest[0];
             let par = &above[k - 1];
-            let mut own = water::line_edges(lv, &fp, head_of(par.w, &self.p));
+            let mut own = water::line_edges(lv, &fp, head_of(par.w, &self.p), false);
             own.extend(water::born_edges(lv, &fp));
             // The level above's lines over the cells under the footprint: the
             // top's troughs, or a level's lines carrying its own level above's head.
@@ -769,7 +769,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
                         }
                     }
                 }
-                let mut edges = water::line_edges(par, &pmask, head_of(3 * par.w, &self.p));
+                let mut edges = water::line_edges(par, &pmask, head_of(3 * par.w, &self.p), true);
                 edges.extend(water::born_edges(par, &pmask));
                 edges
             };
