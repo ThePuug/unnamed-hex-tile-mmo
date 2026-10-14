@@ -13,7 +13,7 @@ use bevy::ui::UiTransform;
 
 use common_bevy::{
     components::{ally_target::AllyTarget, heading::*, position::VisualPosition, target::Target},
-    haven::HAVEN_LOCATION,
+    haven::Haven,
     resources::map::Map,
     systems::targeting::STRIDE_ARC,
 };
@@ -264,6 +264,7 @@ pub fn update(
     camera: Res<CameraPose>,
     map: Res<Map>,
     origin: Res<RenderOrigin>,
+    haven: Res<Haven>,
     viewed: Query<(&Heading, &VisualPosition, &Target, Option<&AllyTarget>), With<Viewed>>,
     positions: Query<&VisualPosition>,
     mut marks: Query<(&Mark, &mut Node, &mut Visibility)>,
@@ -285,7 +286,7 @@ pub fn update(
                     .map(VisualPosition::current),
             ),
             Mark::Den(tile) => toward(Some(origin.render_tile(&map, tile))),
-            Mark::Haven => toward(Some(origin.render_tile(&map, HAVEN_LOCATION))),
+            Mark::Haven => toward(Some(origin.render_tile(&map, haven.0))),
         };
         let Some(rel) = rel else {
             *visibility = Visibility::Hidden;

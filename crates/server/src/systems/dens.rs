@@ -36,8 +36,7 @@ use common_bevy::{
     message::{Do, Event},
     moment::Moment,
     chunk::{calculate_visible_chunks, loc_to_chunk, ChunkId},
-    components::{behaviour::Side, ActorAttributes, Loc},
-    haven::HAVEN_LOCATION,
+    components::{behaviour::Side, resources::SpawnPoint, ActorAttributes, Loc},
     resources::map::Map,
     tuning::Tuning,
 };
@@ -157,10 +156,10 @@ pub struct EngagementEnded {
 }
 
 /// The level of a den on a site `tile`, for a player of `level`: its
-/// distance from the haven over [`STRETCH`], never within [`MARGIN`] of the
-/// player's.
-pub fn den_level(tile: Qrz, level: u32) -> u8 {
-    let far = (tile.flat_distance(&HAVEN_LOCATION) / STRETCH).max(0) as u32;
+/// distance from the `haven` over [`STRETCH`], never within [`MARGIN`] of
+/// the player's.
+pub fn den_level(tile: Qrz, haven: Qrz, level: u32) -> u8 {
+    let far = (tile.flat_distance(&haven) / STRETCH).max(0) as u32;
     far.min(level.saturating_sub(MARGIN)).min(u8::MAX as u32) as u8
 }
 
@@ -204,6 +203,7 @@ pub fn tend_dens(
     tuning: Res<Tuning>,
     time: Res<Time>,
     dice: Res<combat::dice::Dice>,
+    haven: Res<SpawnPoint>,
     mut next: Local<Moment>,
     mut commands: Commands,
 ) {
@@ -229,7 +229,7 @@ pub fn tend_dens(
                 let den = site.den.get_or_insert_with(|| {
                     // The spec's den: one at its level, or two three below
                     // it, rolled by the site so a seed pairs the same dens
-                    let level = den_level(site.tile, level);
+                    let level = den_level(site.tile, haven.0, level);
                     let pair = dice.roll(("pair", site.tile)).pick(2) == 0 && level >= 3;
                     Den {
                         archetype: EnemyArchetype::denning_on(site.habitat),
@@ -369,11 +369,12 @@ mod tests {
 
     #[test]
     fn a_den_is_deeper_the_further_from_the_haven_and_never_near_the_players_level() {
-        let at = |tiles: i32| Qrz { q: HAVEN_LOCATION.q + tiles, r: HAVEN_LOCATION.r, z: 0 };
-        assert_eq!(den_level(at(0), 15), 0, "at the haven, the weakest");
-        assert!(den_level(at(STRETCH * 4), 15) > den_level(at(STRETCH), 15), "further out, deeper");
-        assert_eq!(den_level(at(STRETCH * 100), 15), 10, "never within the margin of the player's level");
-        assert_eq!(den_level(at(STRETCH * 100), 3), 0, "and a player below the margin meets the weakest");
+        let haven = Qrz { q: 107289, r: -7677, z: 0 };
+        let at = |tiles: i32| Qrz { q: haven.q + tiles, r: haven.r, z: 0 };
+        assert_eq!(den_level(at(0), haven, 15), 0, "at the haven, the weakest");
+        assert!(den_level(at(STRETCH * 4), haven, 15) > den_level(at(STRETCH), haven, 15), "further out, deeper");
+        assert_eq!(den_level(at(STRETCH * 100), haven, 15), 10, "never within the margin of the player's level");
+        assert_eq!(den_level(at(STRETCH * 100), haven, 3), 0, "and a player below the margin meets the weakest");
     }
 
     #[test]

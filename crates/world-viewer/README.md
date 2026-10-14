@@ -25,7 +25,11 @@ ignored by git, the way the assets repo keeps its proof sheets.
 cargo run --bin world-viewer -- 3d
 cargo run --bin world-viewer -- 3d --centre 107289,-7677 --radius 384 --level 9 --surface dry
 cargo run --bin world-viewer -- 3d --look 107345,-7665 --bearing 120 --pitch 40 --distance 200 --shot slope.png
+HAVEN=<q>,<r> cargo run --bin world-viewer -- 3d
 ```
+
+The view centres on the haven, which `HAVEN` moves for the viewer as for
+the server; `--centre` names another tile.
 
 A live window on the world's ground round a tile (the haven by default),
 `--radius` tiles either way, each ladder level drawn as its own hex cells by

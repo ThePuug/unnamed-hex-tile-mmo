@@ -37,9 +37,10 @@ const LEVELS: [i64; 5] = [1, 3, 9, 27, 81];
 #[derive(Parser)]
 #[command(name = "world-viewer 3d", about = "The world's ground in 3D, a ladder level at a time")]
 struct Cli {
-    /// The tile the view is centred on, as q,r: the haven by default.
-    #[arg(long, default_value = "107289,-7677", allow_hyphen_values = true)]
-    centre: String,
+    /// The tile the view is centred on, as q,r: the haven by default, which
+    /// `HAVEN=<q>,<r>` moves as it moves the server's.
+    #[arg(long, allow_hyphen_values = true)]
+    centre: Option<String>,
     /// How far the view reaches either way of its centre, in tiles.
     #[arg(long, default_value_t = 384)]
     radius: i32,
@@ -233,7 +234,8 @@ struct Launched(Instant);
 pub fn run(args: Vec<String>) {
     let launched = Instant::now();
     let cli = Cli::parse_from(args);
-    let centre = pair(&cli.centre);
+    let haven = common_bevy::haven::launch();
+    let centre = cli.centre.as_deref().map_or((haven.q, haven.r), pair);
     let params = read_params(&cli.params);
     let worlds = Arc::new(Worlds { world: Composite::standard_with(cli.seed, params), stack: Composite::stack_alone(cli.seed), params });
     let (tx, rx) = channel();

@@ -32,6 +32,7 @@ say in the proposal why neither did.
 cargo build
 cargo run --bin server             # separate processes
 cargo run --bin client
+HAVEN=<q>,<r> cargo run --bin server   # the haven and the spawn elsewhere; the viewer's centre follows it too
 cargo run --bin music-player       # needs a SoundFont: $SOUNDFONT or ~/soundfonts/GeneralUser.sf2
 cargo run --bin arena               # archetype v archetype balance, headless; keys in arena/src/main.rs
 cargo run --bin arena -- tune screen|balance|minds|settle|loop|show|apply   # searches; bounds in arena/src/tune.toml

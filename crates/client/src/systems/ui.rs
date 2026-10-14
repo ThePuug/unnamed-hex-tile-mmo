@@ -5,7 +5,7 @@ use crate::{
 };
 use common_bevy::{
     components::Loc,
-    haven::HAVEN_LOCATION,
+    haven::Haven,
     systems::*,
 };
 
@@ -55,6 +55,7 @@ pub fn update(
     mut query: Query<(&mut Text, &Info)>,
     player_query: Query<&Loc, With<crate::components::Viewed>>,
     server: Res<Server>,
+    haven: Res<Haven>,
     time: Res<Time>,
     mut time_cache: Local<Option<u128>>,
     mut dist_cache: Local<Option<i32>>,
@@ -72,7 +73,7 @@ pub fn update(
             }
             Info::DistanceIndicator => {
                 if let Ok(player_loc) = player_query.single() {
-                    let distance = HAVEN_LOCATION.flat_distance(&**player_loc);
+                    let distance = haven.0.flat_distance(&**player_loc);
                     if *dist_cache == Some(distance) { continue; }
                     *dist_cache = Some(distance);
                     **span = format!("Haven: {} tiles", distance);

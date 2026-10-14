@@ -107,7 +107,8 @@ fn main() {
     app.init_resource::<input::InputGuards>();
     // One definition of where the world starts: the difficulty origin and the
     // spawn are the same place, and the z comes from the terrain there.
-    let haven = common_bevy::haven::HAVEN_LOCATION;
+    let haven = common_bevy::haven::launch();
+    info!("the haven stands at ({}, {})", haven.q, haven.r);
     let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED);
     {
         let (cache, dens) = crate::systems::warming::around(&registry, (haven.q, haven.r));
