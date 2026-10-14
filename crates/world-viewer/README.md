@@ -45,11 +45,9 @@ and kept per level and surface until the parameters are reloaded.
 | R | the ladder's parameters read again from `--params` (`ladder.params`) and the world built anew |
 | P | a screenshot to `proofs/world-viewer/` |
 
-The ladder's top is kept on disk (`LADDER_CACHE`, else the system's
-temporary directory), named by everything it is made of, so a relaunch or a
-reload under the same parameters reads it back instead of building it.
-`--shot` takes the first view and exits; with `--then-reload <file>` it
-reloads from that file first, for timing a reload.
+The ladder's top is built at launch and at every reload. `--shot` takes
+the first view and exits; with `--then-reload <file>` it reloads from that
+file first, for timing a reload.
 
 ## Views
 

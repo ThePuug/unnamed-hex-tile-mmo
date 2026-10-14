@@ -7,8 +7,7 @@
 //!
 //! An area is built when it is first shown and kept per level and surface;
 //! the ladder's parameters are read from a file, and reloading it builds
-//! the world again, its top read from where it is kept while its inputs
-//! stand.
+//! the world again, its top with it.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

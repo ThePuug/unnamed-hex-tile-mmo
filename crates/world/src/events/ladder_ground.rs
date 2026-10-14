@@ -18,7 +18,7 @@ use super::{lithology, motion, plates, thickening, thrusting, tilt, Composite};
 use crate::continents::{self, SiteId};
 use crate::ladder::geom::{cube_round, descendants};
 use crate::ladder::terrain::{Cell, Terrain};
-use crate::ladder::{store, Bounds, Ground, Ladder, Level, Params};
+use crate::ladder::{Bounds, Ground, Ladder, Level, Params};
 use crate::{hex_to_world, world_to_hex};
 
 /// A cell's centre and the midpoints of its six edges, as tile offsets.
@@ -138,8 +138,8 @@ pub const TOP_REACH: i64 = 142_884;
 pub const AREA_PAD: i64 = 240;
 
 /// The ladder of a continent's site: the top over [`TOP_REACH`] either way
-/// of the site, kept on disk while its inputs stand, and every level below
-/// over the box of the land the site claims, each built where it is read.
+/// of the site, built whole, and every level below over the box of the land
+/// the site claims, each built where it is read.
 pub struct Laddered {
     terrain: Terrain<'static, StackGround>,
 }
@@ -157,7 +157,7 @@ impl Laddered {
         // The ground lives as long as the process: the ladder reads it.
         let ground: &'static StackGround = Box::leak(Box::new(StackGround::new(seed, centre, half, 2)));
         let top_bounds = top_bounds(centre);
-        let top = Ladder::top(ground, top_bounds, p, &store::key(seed, id, &top_bounds, &p, ground));
+        let top = Ladder::top(ground, top_bounds, p);
         let bounds = landmass_bounds(&top, seed, id);
         Laddered { terrain: Terrain::from_ladder(Ladder::with_top(ground, &bounds, p, Some(top))) }
     }

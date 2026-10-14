@@ -48,24 +48,6 @@ impl<T: Clone> Paged<T> {
         (0..self.len).map(move |i| &self[i])
     }
 
-    pub fn default_value(&self) -> &T {
-        &self.default
-    }
-
-    /// The page holding `first`, a page's first index, where it is written.
-    pub fn page(&self, first: usize) -> Option<&[T]> {
-        let page = first / PAGE;
-        self.chunks[page / CHUNK].as_ref().and_then(|chunk| chunk[page % CHUNK].as_deref())
-    }
-
-    /// The page starting at `first` set to `values`, a page's worth.
-    pub fn set_page(&mut self, first: usize, values: Box<[T]>) {
-        assert_eq!(values.len(), PAGE, "a page's worth of values");
-        let page = first / PAGE;
-        let chunk = self.chunks[page / CHUNK].get_or_insert_with(|| vec![None; CHUNK].into_boxed_slice());
-        chunk[page % CHUNK] = Some(values);
-    }
-
     /// The pages written, as the index of their first value, in order.
     pub fn written(&self) -> impl Iterator<Item = usize> + '_ {
         self.chunks.iter().enumerate().filter_map(|(k, c)| c.as_ref().map(|c| (k, c))).flat_map(|(k, chunk)| {

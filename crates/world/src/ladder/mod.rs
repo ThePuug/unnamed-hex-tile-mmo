@@ -57,7 +57,6 @@
 pub mod geom;
 pub mod mask;
 pub mod paged;
-pub mod store;
 pub mod terrain;
 mod lines;
 mod route;
@@ -630,17 +629,9 @@ impl<'g, G: Ground> Ladder<'g, G> {
         Ladder::with_top(ground, bounds, p, None)
     }
 
-    /// The top over `bounds` of `ground`: kept under `key` where it is,
-    /// else built and kept there.
-    pub fn top(ground: &'g G, bounds: Bounds, p: Params, key: &str) -> Level {
-        let (w, lo, hi) = bounds;
-        let mut top = Level::new(w, lo, hi, true, ground.layers(), p.ring);
-        if store::read(key, &mut top) {
-            return top;
-        }
-        let top = Ladder::new_box(ground, &[bounds], p).levels.remove(0);
-        store::write(key, &top);
-        top
+    /// The top over `bounds` of `ground`, built.
+    pub fn top(ground: &'g G, bounds: Bounds, p: Params) -> Level {
+        Ladder::new_box(ground, &[bounds], p).levels.remove(0)
     }
 
     /// A ladder over `bounds` whose top is `top`, built over `bounds[0]`
