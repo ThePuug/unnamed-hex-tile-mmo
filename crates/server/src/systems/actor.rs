@@ -83,6 +83,15 @@ impl ChunkTaskQueue {
         self.waiters.remove(&chunk_id).unwrap_or_default().into_iter().filter(|&ent| holds(ent)).collect()
     }
 
+    /// Queues `chunk_id` for no one, ahead of need: it is generated after
+    /// every chunk a player waits on, and kept for whoever asks for it.
+    pub fn prefetch(&mut self, chunk_id: ChunkId) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = self.waiters.entry(chunk_id) {
+            slot.insert(Vec::new());
+            self.pending.push(chunk_id);
+        }
+    }
+
     /// Chunks waiting on a task slot. What the queue is behind by: the
     /// in-flight count only says the budget is spent.
     pub fn pending_len(&self) -> usize { self.pending.len() }
@@ -197,10 +206,11 @@ pub fn do_incremental(
 
 /// Generate a chunk of terrain tiles, and the den sites among them (pure
 /// computation, no ECS access).
-fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> (TerrainChunk, Vec<(Qrz, Habitat)>) {
+pub(crate) fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> (TerrainChunk, Vec<(Qrz, Habitat)>) {
     let mut tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>); 272]> = tinyvec::ArrayVec::new();
     let mut dens = Vec::new();
     let coords: Vec<(i32, i32)> = chunk::chunk_tiles(chunk_id).collect();
+    registry.warm(&coords);
 
     for &(q, r) in &coords {
         let z = registry.elevation_at(q, r);

@@ -54,7 +54,7 @@ fn own_anchor(lv: &Level, v: usize) -> [f64; 2] {
 /// offshore. Each is in or out of water's ring by where the level above's
 /// line runs.
 pub(super) fn line_edges(lv: &Level, mask: &[bool], head: f64) -> Vec<Edge> {
-    let nn = lv.n * lv.n;
+    let nn = lv.cap();
     (0..3 * nn)
         .filter(|&v| lv.line_on[v] && lv.line_rec[v] >= 0 && mask[v % nn] && lv.line_acc[v] >= head && lv.line_fl[v].is_finite())
         .map(|v| {
@@ -100,7 +100,7 @@ pub(super) fn trough_edges(lv: &Level, head: f64) -> Vec<Edge> {
 /// The troughs born at a level over a mask, each at the floor it was born
 /// with: a river of its own.
 pub(super) fn born_edges(lv: &Level, mask: &[bool]) -> Vec<Edge> {
-    let nn = lv.n * lv.n;
+    let nn = lv.cap();
     (0..3 * nn)
         .filter(|&v| lv.trough[v] && !lv.line_on[v] && lv.rec[v] >= 0 && mask[v % nn])
         .map(|v| {
@@ -122,7 +122,7 @@ pub(super) fn born_edges(lv: &Level, mask: &[bool]) -> Vec<Edge> {
 
 /// The erodibility of the rock under a vertex, its cell's.
 fn rock(lv: &Level, v: usize) -> f64 {
-    let e = lv.erod[v % (lv.n * lv.n)];
+    let e = lv.erod[v % (lv.cap())];
     if e.is_nan() { 1.0 } else { e }
 }
 
@@ -162,13 +162,13 @@ struct Sample {
 /// held by the cell it falls in.
 struct Beds {
     w: i64,
-    samples: Vec<Vec<Sample>>,
+    samples: super::paged::Paged<Vec<Sample>>,
 }
 
 impl Beds {
     fn new(lv: &Level, edges: &[Edge], p: &Params) -> Self {
         let wf = lv.w as f64;
-        let mut samples = vec![Vec::new(); lv.n * lv.n];
+        let mut samples = super::paged::Paged::new(Vec::new(), lv.cap());
         for e in edges {
             let ((q0, r0), (q1, r1)) = (e.from, e.to);
             let (x0, y0) = world(q0, r0);
@@ -198,7 +198,7 @@ impl Beds {
         let (x, y) = world(q, r);
         let keep = |s: &&Sample| (s.x - x).hypot(s.y - y) <= reach && (s.ax - x).hypot(s.ay - y) <= ring;
         let k = (reach / wf).ceil() as i64 + 1;
-        if k as usize >= lv.n {
+        if k as usize >= lv.n.max(lv.n_j) {
             // A reach past the level's whole extent reads all of it.
             return self.samples.iter().flatten().filter(keep).copied().collect();
         }

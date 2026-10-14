@@ -43,7 +43,7 @@ struct End {
 }
 
 fn segments(lv: &Level, par: &Level, pmask: &[bool]) -> (Vec<Segment>, Vec<End>) {
-    let pnn = par.n * par.n;
+    let pnn = par.cap();
     let mut nxt: HashMap<usize, usize> = HashMap::new();
     for u in 0..3 * pnn {
         if par.trough[u] && par.rec[u] >= 0 && pmask[u % pnn] {
@@ -54,12 +54,11 @@ fn segments(lv: &Level, par: &Level, pmask: &[bool]) -> (Vec<Segment>, Vec<End>)
     for (&x, &y) in &nxt {
         preds.entry(y).or_default().push(x);
     }
-    let blocks = &lv.blocks[Pass::Route as usize];
     let place = |p: usize| -> Option<((i64, i64), usize, (i64, i64))> {
         let (t, i, j) = par.vertex(p);
         let (q3, r3) = pos3(t, i, j, par.w);
         let v = lv.vid_at(q3, r3)?;
-        Some(((q3, r3), v, blocks[v % (lv.n * lv.n)]))
+        Some(((q3, r3), v, lv.block(Pass::Route, v % lv.cap())))
     };
     let path_cells = |p: usize| -> Option<Vec<(i64, i64)>> {
         let ((qu, ru), _, _) = place(p)?;
@@ -67,7 +66,7 @@ fn segments(lv: &Level, par: &Level, pmask: &[bool]) -> (Vec<Segment>, Vec<End>)
         let mut out = Vec::new();
         for f in 0..4 {
             let v = lv.vid_at(qu + f * (qv - qu) / 3, ru + f * (rv - ru) / 3)?;
-            let c = blocks[v % (lv.n * lv.n)];
+            let c = lv.block(Pass::Route, v % lv.cap());
             if !out.contains(&c) {
                 out.push(c);
             }
@@ -133,8 +132,8 @@ fn segments(lv: &Level, par: &Level, pmask: &[bool]) -> (Vec<Segment>, Vec<End>)
 /// through, the lines stalled, and the segments whose pins lay outside the
 /// footprint.
 pub(super) fn line_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], fp: &[bool]) -> [u64; 3] {
-    let nn = lv.n * lv.n;
-    let mut pmask = vec![false; par.n * par.n];
+    let nn = lv.cap();
+    let mut pmask = vec![false; par.cap()];
     for c in 0..fp.len() {
         if fp[c] {
             let (i, j) = lv.ij(c);
@@ -152,8 +151,8 @@ pub(super) fn line_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], fp: 
     order.sort_by(|&a, &b| segs[b].acc[0].total_cmp(&segs[a].acc[0]).then((segs[a].q3[0], segs[a].r3[0]).cmp(&(segs[b].q3[0], segs[b].r3[0]))));
     let lists = lv.block_lists(Pass::Route, pend);
     let mut stats = [0u64; 3];
-    let mut loc: Vec<i64> = vec![-1; 3 * nn];
-    let mut stamp: Vec<u32> = vec![0; nn];
+    let mut loc = super::paged::Paged::new(-1i64, 3 * nn);
+    let mut stamp = super::paged::Paged::new(0u32, nn);
     let half = CORRIDOR * lv.w as f64;
     let w = lv.w;
     for (b, &key) in pend.iter().enumerate() {
@@ -167,7 +166,7 @@ pub(super) fn line_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], fp: 
             loc[v] = x as i64;
         }
         let nv = vids.len();
-        let local = |v: usize, loc: &[i64]| -> Option<usize> { (loc[v] >= 0).then(|| loc[v] as usize) };
+        let local = |v: usize, loc: &super::paged::Paged<i64>| -> Option<usize> { (loc[v] >= 0).then(|| loc[v] as usize) };
         let mut known = vec![false; nv];
         let mut key_of = vec![(0.0f64, 0.0f64, 0i64, 0i64); nv];
         let mut at = vec![(0.0f64, 0.0f64); nv];
@@ -212,7 +211,7 @@ pub(super) fn line_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], fp: 
                 for i in i0..=i1 {
                     for j in j0..=j1 {
                         let Some(c) = lv.idx(i, j) else { continue };
-                        if stamp[c] != cur || !sg.cells.contains(&lv.blocks[Pass::Route as usize][c]) {
+                        if stamp[c] != cur || !sg.cells.contains(&lv.block(Pass::Route, c)) {
                             continue;
                         }
                         for t in 0..3 {
@@ -323,7 +322,7 @@ pub(super) fn line_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], fp: 
                     let v = vids[x];
                     let fl = fl_up + (fl_dn - fl_up) * along[m_] / length;
                     let c = v % nn;
-                    if lv.blocks[Pass::Route as usize][c] != key {
+                    if lv.block(Pass::Route, c) != key {
                         continue;
                     }
                     let (t, i, j) = lv.vertex(v);
@@ -347,7 +346,7 @@ pub(super) fn line_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], fp: 
             }
             for &x in &members {
                 let v = vids[x];
-                if vseg[x] == s && lv.blocks[Pass::Route as usize][v % nn] == key {
+                if vseg[x] == s && lv.block(Pass::Route, v % nn) == key {
                     lv.line_corr[v] = sg.start as i64;
                 }
             }
@@ -365,7 +364,7 @@ pub(super) fn line_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], fp: 
     // Where a trough ends, on cells this call lined.
     let mine: std::collections::HashSet<(i64, i64)> = pend.iter().copied().collect();
     for e in ends {
-        if mine.contains(&lv.blocks[Pass::Route as usize][e.vid % nn]) {
+        if mine.contains(&lv.block(Pass::Route, e.vid % nn)) {
             lv.line_on[e.vid] = true;
             lv.line_rec[e.vid] = -1;
             lv.line_acc[e.vid] = e.acc;

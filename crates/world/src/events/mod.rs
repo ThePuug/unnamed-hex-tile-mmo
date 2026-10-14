@@ -90,6 +90,7 @@ pub mod climate;
 pub mod den;
 pub mod forest;
 pub mod index;
+pub mod ladder_ground;
 pub mod scarp;
 pub mod lithology;
 pub mod motion;
@@ -760,6 +761,10 @@ pub struct Composite {
     /// Tile hits and misses: a tile found cached against one queried.
     metrics: HitCounters,
     seed: u64,
+    /// The terrain ladder, where the world's heights and water are the
+    /// ladder's: a tile's height and water are its, its cover and den the
+    /// stack's, and a summary is the ladder's cell.
+    ladder: Option<std::sync::Arc<ladder_ground::Laddered>>,
 }
 
 impl Composite {
@@ -772,6 +777,49 @@ impl Composite {
             tiles: DashMap::new(),
             metrics: HitCounters::new(),
             seed,
+            ladder: None,
+        }
+    }
+
+    /// The world's stack with its heights and water from the terrain ladder,
+    /// built over the landmass around the tile `centre`.
+    pub fn standard_ladder(seed: u64, centre: (i32, i32)) -> Self {
+        let mut composite = Self::standard(seed);
+        composite.ladder = Some(std::sync::Arc::new(ladder_ground::Laddered::new(seed, centre)));
+        composite
+    }
+
+    /// Whether the world's heights are the terrain ladder's.
+    pub fn is_laddered(&self) -> bool {
+        self.ladder.is_some()
+    }
+
+    /// The tiles of `coords` made ready together, where reading them one by
+    /// one would repeat work: the ladder's, for a chunk.
+    pub fn warm(&self, coords: &[(i32, i32)]) {
+        if let Some(ladder) = &self.ladder {
+            ladder.warm(coords);
+        }
+    }
+
+    /// The cells of a summary level `w` tiles wide, centred on tiles
+    /// `(i, j)·w`: the terrain ladder's, where it holds them, each one's
+    /// height and its water's surface where the level holds water.
+    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>)>> {
+        match &self.ladder {
+            Some(ladder) => ladder.level(w, cells),
+            None => vec![None; cells.len()],
+        }
+    }
+
+    /// The summaries `w` tiles wide at `cells` made ready together, as
+    /// [`SummarySource::cell`](common::summary::SummarySource::cell) reads
+    /// them: their cells, and their parts' where those hold water.
+    pub fn warm_level(&self, w: i64, cells: &[(i64, i64)]) {
+        self.level(w, cells);
+        if crate::ladder::fine::FINE.contains(&(w / 3)) {
+            let parts: Vec<(i64, i64)> = cells.iter().flat_map(|&ij| summary_parts(w, ij)).collect();
+            self.level(w / 3, &parts);
         }
     }
 
@@ -826,6 +874,16 @@ impl Composite {
     /// reads the world (INV-009). Lazily triggers deform + query cascades.
     /// Thread-safe: no global lock. Per-cell deform locks serialize cold cells.
     pub fn tile_at(&self, q: i32, r: i32) -> TileView {
+        let mut view = self.stack_tile(q, r);
+        if let Some(cell) = self.ladder.as_ref().and_then(|ladder| ladder.tile(q, r)) {
+            view.elevation = cell.z;
+            view.water = cell.water;
+        }
+        view
+    }
+
+    /// The tile as the stack composes it, the heights and water its own.
+    fn stack_tile(&self, q: i32, r: i32) -> TileView {
         let _span = tracing::info_span!("tile_at").entered();
 
         if let Some(view) = self.tiles.get(&(q, r)) {
@@ -911,12 +969,12 @@ impl Composite {
 
     /// What stands in a tile's slots.
     pub fn cover_at(&self, q: i32, r: i32) -> Cover {
-        self.tile_at(q, r).cover
+        self.stack_tile(q, r).cover
     }
 
     /// The habitat of the den whose site is this tile, where one is.
     pub fn den_at(&self, q: i32, r: i32) -> Option<Habitat> {
-        self.tile_at(q, r).den
+        self.stack_tile(q, r).den
     }
 
     /// Access the IndexRegistry directly (no lock needed — interior
@@ -1096,6 +1154,34 @@ impl common::summary::SummarySource for Composite {
         let view = self.tile_at(q, r);
         Some(common::summary::TileSample { z: view.elevation.round() as i32, water: Self::water_of(&view), cover: view.cover })
     }
+
+    fn cover(&self, q: i32, r: i32) -> Option<Cover> {
+        Some(self.cover_at(q, r))
+    }
+
+    fn cell(&self, r: u32, sq: i32, sr: i32) -> Option<(i32, u16)> {
+        let w = common::summary::scale(r) as i64;
+        if w < 3 {
+            return None;
+        }
+        let (z, _) = self.level(w, &[(sq as i64, sr as i64)]).pop().flatten()?;
+        if !crate::ladder::fine::FINE.contains(&(w / 3)) {
+            return Some((z.round() as i32, 0));
+        }
+        let parts = self.level(w / 3, &summary_parts(w, (sq as i64, sr as i64)));
+        // The sea is one plane drawn to the horizon: a part under it alone
+        // is not wet here.
+        let wet = parts.iter().enumerate().filter(|(_, p)| p.is_some_and(|(_, water)| water.is_some_and(|s| s > 0.0))).fold(0, |wet, (i, _)| wet | 1 << i);
+        Some((z.round() as i32, wet))
+    }
+}
+
+/// A summary's parts as cells of the level a third its width
+/// (`common::summary::part_offsets`), in their order.
+fn summary_parts(w: i64, (i, j): (i64, i64)) -> [(i64, i64); common::summary::PARTS] {
+    let r = ((w - 1) / 2) as u32;
+    let d = w / 3;
+    common::summary::part_offsets(r).map(|(dq, dr)| (3 * i + dq as i64 / d, 3 * j + dr as i64 / d))
 }
 
 #[cfg(test)]

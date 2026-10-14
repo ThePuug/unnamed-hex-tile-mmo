@@ -61,7 +61,7 @@ impl Point {
 
 /// A point of a channel's bed: its position in world units a tile apart,
 /// its floor, its half width, its walls' slope, and the river vertex of
-/// [`LAST_WATER`]'s level that owns it.
+/// [`LAST_WATER`]'s level that owns it, as its kind and cell.
 #[derive(Clone, Copy, Debug)]
 pub struct Bank {
     pub x: f64,
@@ -69,7 +69,13 @@ pub struct Bank {
     pub floor: f64,
     pub bed: f64,
     pub slope: f64,
-    pub river: usize,
+    pub river: (u8, i64, i64),
+}
+
+/// How deep a channel's water stands over its bed, in levels: a level, and
+/// a level more for each two tiles of its bed's half width past the first.
+pub fn depth(bed: f64) -> f64 {
+    1.0 + ((bed - 1.0) / 2.0).max(0.0).floor()
 }
 
 fn world(q: f64, r: f64) -> (f64, f64) {
@@ -101,7 +107,7 @@ fn river(src: &Level, v: usize, p: &Params) -> Option<(usize, f64, f64)> {
 /// of those rose.
 pub(super) fn own_banks(src: &Level, c: usize, p: &Params) -> (Vec<Bank>, u64, u64) {
     debug_assert_eq!(src.w, LAST_WATER);
-    let nn = src.n * src.n;
+    let nn = src.cap();
     let at = |v: usize, floor: f64, acc: f64| {
         let (t, i, j) = src.vertex(v);
         let (q3, r3) = pos3(t, i, j, src.w);
@@ -127,10 +133,10 @@ pub(super) fn own_banks(src: &Level, c: usize, p: &Params) -> (Vec<Bank>, u64, u
                 let there = river(src, x, p).map_or(at(x, fv, av), |(_, fx, ax)| at(x, fx, ax));
                 let out = Point::mid(here, there);
                 if ins.is_empty() {
-                    drawn.curve(here, here, out, slope, v, p);
+                    drawn.curve(here, here, out, slope, src.vertex(v), p);
                 }
                 for &(u, fu, au) in &ins {
-                    drawn.curve(Point::mid(at(u, fu, au), here), here, out, slope, v, p);
+                    drawn.curve(Point::mid(at(u, fu, au), here), here, out, slope, src.vertex(v), p);
                 }
             }
             // The rivers ending here run on to it at their own floors.
@@ -140,7 +146,7 @@ pub(super) fn own_banks(src: &Level, c: usize, p: &Params) -> (Vec<Bank>, u64, u
                     let from = Point::mid(at(u, fu, au), end);
                     let ue = src.erod[u % nn];
                     let slope = wall_slope(if ue.is_nan() { 1.0 } else { ue }, p.wall);
-                    drawn.curve(from, Point::mid(from, end), end, slope, u, p);
+                    drawn.curve(from, Point::mid(from, end), end, slope, src.vertex(u), p);
                 }
             }
         }
@@ -157,7 +163,7 @@ struct Drawn {
 impl Drawn {
     /// A curve from `a` through control `b` to `c`, sampled no more than
     /// half a tile apart and meandered across its course.
-    fn curve(&mut self, a: Point, b: Point, c: Point, slope: f64, river: usize, p: &Params) {
+    fn curve(&mut self, a: Point, b: Point, c: Point, slope: f64, river: (u8, i64, i64), p: &Params) {
         let len = (b.x - a.x).hypot(b.y - a.y) + (c.x - b.x).hypot(c.y - b.y);
         let ns = 2usize.max((len / 0.5).ceil() as usize + 1);
         let mut last = f64::INFINITY;
@@ -191,7 +197,10 @@ pub(super) struct Reach {
     pub below: f64,
     /// Whether the tile lies in a channel's bed.
     pub in_bed: bool,
-    pub governing: Option<(usize, f64)>,
+    /// The water's surface over the tile where it lies in a bed: the
+    /// lowest bed's floor, rounded, and its depth.
+    pub water: Option<f64>,
+    pub governing: Option<((u8, i64, i64), f64)>,
     pub capped: bool,
 }
 
@@ -234,14 +243,17 @@ impl Index {
     /// surface there: the lowest of every bank's floor and the wall
     /// rising from its bed's edge, where it is below that surface, out to
     /// `reach`. A bucket whose banks cannot come below the lower of that and
-    /// the surface is passed over.
-    pub(super) fn at(&self, q: f64, r: f64, drawn: f64, reach: f64) -> Reach {
+    /// the surface is passed over. The bed and its water are those of any
+    /// bed within `widen` of the tile: none for a tile, half its width for
+    /// a coarser cell centred there.
+    pub(super) fn at(&self, q: f64, r: f64, drawn: f64, reach: f64, widen: f64) -> Reach {
         let (ci, cj) = cube_round(q / BUCKET, r / BUCKET);
         let (x, y) = world(q, r);
         let rad = BUCKET / SQRT_3;
         let mut best = f64::INFINITY;
-        let mut governing: Option<(usize, f64)> = None;
+        let mut governing: Option<((u8, i64, i64), f64)> = None;
         let mut in_bed = false;
+        let mut water: Option<f64> = None;
         for &(di, dj) in &self.order {
             let Some(held) = self.buckets.get(&(ci + di, cj + dj)) else { continue };
             let (cx, cy) = world(((ci + di) as f64) * BUCKET, ((cj + dj) as f64) * BUCKET);
@@ -253,7 +265,11 @@ impl Index {
                 let d = (b.x - x).hypot(b.y - y);
                 if d <= reach {
                     let v = b.floor + b.slope * (d - b.bed).max(0.0);
-                    in_bed |= d <= b.bed && b.floor < drawn;
+                    if d <= b.bed + widen && b.floor < drawn {
+                        in_bed = true;
+                        let surface = (b.floor + 0.5).floor() + depth(b.bed);
+                        water = Some(water.map_or(surface, |w: f64| w.min(surface)));
+                    }
                     if v < best && v < drawn {
                         best = v;
                         governing = Some((b.river, d));
@@ -261,6 +277,6 @@ impl Index {
                 }
             }
         }
-        Reach { surface: best, below: drawn - best, in_bed, governing, capped: governing.is_some_and(|(_, d)| d > reach - 1.0) }
+        Reach { surface: best, below: drawn - best, in_bed, water, governing, capped: governing.is_some_and(|(_, d)| d > reach - 1.0) }
     }
 }

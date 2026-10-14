@@ -13,9 +13,10 @@
 //!
 //! Below the top a level runs its passes in order:
 //!
-//! - **ground**: the level above's surface predicted at each centre, and
-//!   every layer's change there: each layer's value at the cell less its
-//!   own value predicted from the level above.
+//! - **ground**: the level above's dry surface predicted at each centre,
+//!   every layer's change there, each layer's value at the cell less its
+//!   own value predicted from the level above, and the cut the level above
+//!   handed down.
 //! - **lines**: each trough of the level above routed again on the ground,
 //!   inside a corridor [`CORRIDOR`] cells either side, pinned where the level
 //!   above's line has a source, a junction or an end, or crosses a route
@@ -34,7 +35,9 @@
 //! Lines, routing and water's valleys stop at [`LAST_WATER`]. A level finer
 //! than that is its prediction and the ground's own detail, its cut handed
 //! down unchanged. The tiles cut channels along [`LAST_WATER`]'s rivers,
-//! drawn from its routing when they read it ([`channel`]).
+//! drawn from its routing when they read it ([`channel`]). This ladder holds
+//! the levels to [`LAST_WATER`] over a landmass; the finer ones are
+//! computed a cell at a time as they are read ([`fine`]).
 //!
 //! Every layer, water among them, writes its value averaged over the
 //! level's cell; its raise there is that less what the level above handed
@@ -53,18 +56,19 @@
 //! would differ.
 
 pub mod channel;
+pub mod fine;
 pub mod geom;
-#[cfg(feature = "inspect")]
-pub mod ground;
+pub mod paged;
 mod lines;
 mod route;
 mod top;
 mod water;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::time::Instant;
 
 use geom::*;
+use paged::{Paged, PAGE};
 
 /// How the water layer cuts.
 #[derive(Clone, Copy, Debug)]
@@ -230,90 +234,97 @@ pub fn wall_slope(erodibility: f64, wall: f64) -> f64 {
 /// One level: its cells over a square of indices, and everything it keeps.
 pub struct Level {
     pub w: i64,
+    /// The first cell along i and how many, and along j; held in pages of
+    /// 64 by 64 (`idx`).
     pub lo: i64,
     pub n: usize,
+    pub lo_j: i64,
+    pub n_j: usize,
     pub exists: Vec<bool>,
     /// Each layer's value at each cell, NaN until read.
-    pub layers: Vec<Vec<f64>>,
-    pub erod: Vec<f64>,
-    pub age: Vec<f64>,
+    pub layers: Vec<Paged<f64>>,
+    pub erod: Paged<f64>,
+    pub age: Paged<f64>,
     /// The level above's surface at each centre.
-    pub p: Vec<f64>,
+    pub p: Paged<f64>,
     /// The ground: the prediction and every layer's change but water's.
-    pub ground: Vec<f64>,
+    pub ground: Paged<f64>,
     /// Water's value as the level above handed it down, predicted at each
     /// centre: what of the prediction is the level above's cut.
-    pub wpred: Vec<f64>,
+    pub wpred: Paged<f64>,
     /// Water's value: its cut below the uncut ground, never above it.
-    pub cut: Vec<f64>,
+    pub cut: Paged<f64>,
     /// Water's correction before it fades: the level's valley averaged over
     /// the cell less what the level above handed down. NaN where none is
     /// made.
-    pub wfull: Vec<f64>,
+    pub wfull: Paged<f64>,
     /// How far each cell lies from the line governing its valley, in its
     /// cells; infinite past the ring.
-    pub wdist: Vec<f64>,
+    pub wdist: Paged<f64>,
     /// The width of the level the line governing each cell's valley was
     /// born at; -1 where none does.
-    pub wborn: Vec<i64>,
+    pub wborn: Paged<i64>,
     /// The river vertex whose valley governs each cell's correction, as an
     /// index of the level; -1 where none does.
-    pub wgov: Vec<i64>,
+    pub wgov: Paged<i64>,
     /// Whether any river water read at each cell runs where the correction
     /// fades and changes it.
-    pub wfade: Vec<bool>,
-    pub z: Vec<f64>,
-    pub a3: Vec<[f64; 3]>,
-    pub b3: Vec<[f64; 3]>,
-    pub cc: Vec<[f64; 6]>,
+    pub wfade: Paged<bool>,
+    pub z: Paged<f64>,
+    /// Each cell's dry height: its ground before any cut, rounded. The level
+    /// below predicts its ground from these, drawn by the corner rule, and
+    /// takes the cut as handed down, so water never raises a cell: the meet
+    /// rule is not linear, and a cut drawn through it lifts a valley's rims.
+    pub zd: Paged<f64>,
+    pub a3: Paged<[f64; 3]>,
+    pub b3: Paged<[f64; 3]>,
+    pub cc: Paged<[f64; 6]>,
     // Each vertex: a cell's centre, its corner A and its corner B.
-    pub elev: Vec<f64>,
-    pub psurf: Vec<f64>,
-    pub gelev: Vec<f64>,
+    pub elev: Paged<f64>,
+    pub psurf: Paged<f64>,
+    pub gelev: Paged<f64>,
     /// The uncut ground at each vertex: a centre's own, a corner the mean of
     /// its sharers'. What drainage's floor is read from.
-    pub uelev: Vec<f64>,
+    pub uelev: Paged<f64>,
     /// The level water at each vertex runs down to: the sea, or the pit of
     /// the closed ground it drains into.
-    pub base: Vec<f64>,
+    pub base: Paged<f64>,
     /// The width of the level a trough at each vertex was born at; -1 off
     /// the troughs.
-    pub born: Vec<i64>,
-    pub rec: Vec<i64>,
-    pub trough: Vec<bool>,
-    pub acc: Vec<f64>,
-    pub floor: Vec<f64>,
-    pub line_on: Vec<bool>,
-    pub line_rec: Vec<i64>,
-    pub line_acc: Vec<f64>,
-    pub line_fl: Vec<f64>,
-    pub line_base: Vec<f64>,
-    pub line_born: Vec<i64>,
+    pub born: Paged<i64>,
+    pub rec: Paged<i64>,
+    pub trough: Paged<bool>,
+    pub acc: Paged<f64>,
+    pub floor: Paged<f64>,
+    pub line_on: Paged<bool>,
+    pub line_rec: Paged<i64>,
+    pub line_acc: Paged<f64>,
+    pub line_fl: Paged<f64>,
+    pub line_base: Paged<f64>,
+    pub line_born: Paged<i64>,
     /// Where each line vertex lies along the level above's line, the point
     /// it was measured from, in world units a tile apart: where its river
     /// is, which decides whether water reads it.
-    pub line_anchor: Vec<[f64; 2]>,
+    pub line_anchor: Paged<[f64; 2]>,
     /// The corridor a vertex was shared to: its segment's start, as a vertex
     /// index of the level.
-    pub line_corr: Vec<i64>,
-    pub line_dev: Vec<f64>,
-    pub line_pin: Vec<f64>,
-    pub line_wall: Vec<bool>,
-    pub line_hollow: Vec<bool>,
-    pub predicted: Vec<bool>,
-    pub supplied: Vec<bool>,
-    pub lined: Vec<bool>,
-    pub watered: Vec<bool>,
-    pub built: Vec<bool>,
-    pub routed: Vec<bool>,
-    pub corners: Vec<bool>,
-    /// Whether each tile lies in a channel's bed; the tiles only.
-    pub bed: Vec<bool>,
+    pub line_corr: Paged<i64>,
+    pub line_dev: Paged<f64>,
+    pub line_pin: Paged<f64>,
+    pub line_wall: Paged<bool>,
+    pub line_hollow: Paged<bool>,
+    pub predicted: Paged<bool>,
+    pub supplied: Paged<bool>,
+    pub lined: Paged<bool>,
+    pub watered: Paged<bool>,
+    pub built: Paged<bool>,
+    pub routed: Paged<bool>,
+    pub corners: Paged<bool>,
     /// Whether each cell's six corner values are final: its own corners met,
     /// and the four its neighbours own, where those exist.
-    pub finished: Vec<bool>,
-    /// Each pass's deform cell of each cell.
-    pub blocks: [Vec<(i64, i64)>; 4],
+    pub finished: Paged<bool>,
+    /// How many levels up each pass's deform cell lies.
+    pub deform: [u32; 4],
     /// Deforms run by each pass, and cells built.
     pub cost: [u64; 5],
 }
@@ -321,24 +332,20 @@ pub struct Level {
 const NONE: (i64, i64) = (i64::MIN, i64::MIN);
 
 impl Level {
-    fn new(w: i64, lo: i64, hi: i64, exists: Vec<bool>, top: bool, layers: usize, ring: f64) -> Self {
-        let n = (hi - lo) as usize;
-        let cells = n * n;
-        let nan = |k: usize| vec![f64::NAN; k];
-        let mut blocks: [Vec<(i64, i64)>; 4] = std::array::from_fn(|_| vec![NONE; cells]);
-        for (b, pass) in PASSES.into_iter().enumerate() {
-            let m = if top { 0 } else { (cell_size(pass, w, ring) / w).ilog(3) };
-            for c in 0..cells {
-                if exists[c] {
-                    let (i, j) = (lo + (c / n) as i64, lo + (c % n) as i64);
-                    blocks[b][c] = ancestor(i, j, m);
-                }
-            }
-        }
+    /// A level of cells `lo.0..hi.0` along i and `lo.1..hi.1` along j;
+    /// `exists` over its index space (`Level::space`).
+    fn new(w: i64, lo: (i64, i64), hi: (i64, i64), exists: Vec<bool>, top: bool, layers: usize, ring: f64) -> Self {
+        let (n, n_j) = ((hi.0 - lo.0) as usize, (hi.1 - lo.1) as usize);
+        let cells = Level::space(n, n_j);
+        assert_eq!(exists.len(), cells, "existence over the level's index space");
+        let nan = |k: usize| Paged::new(f64::NAN, k);
+        let deform = PASSES.map(|pass| if top { 0 } else { (cell_size(pass, w, ring) / w).ilog(3) });
         Level {
             w,
-            lo,
+            lo: lo.0,
             n,
+            lo_j: lo.1,
+            n_j,
             exists,
             layers: (0..layers).map(|_| nan(cells)).collect(),
             erod: nan(cells),
@@ -349,68 +356,95 @@ impl Level {
             cut: nan(cells),
             wfull: nan(cells),
             wdist: nan(cells),
-            wborn: vec![-1; cells],
-            wgov: vec![-1; cells],
-            wfade: vec![false; cells],
+            wborn: Paged::new(-1, cells),
+            wgov: Paged::new(-1, cells),
+            wfade: Paged::new(false, cells),
             z: nan(cells),
-            a3: vec![[f64::NAN; 3]; cells],
-            b3: vec![[f64::NAN; 3]; cells],
-            cc: vec![[f64::NAN; 6]; cells],
+            zd: nan(cells),
+            a3: Paged::new([f64::NAN; 3], cells),
+            b3: Paged::new([f64::NAN; 3], cells),
+            cc: Paged::new([f64::NAN; 6], cells),
             elev: nan(3 * cells),
             psurf: nan(3 * cells),
             gelev: nan(3 * cells),
             uelev: nan(3 * cells),
             base: nan(3 * cells),
-            born: vec![-1; 3 * cells],
-            rec: vec![-1; 3 * cells],
-            trough: vec![false; 3 * cells],
-            acc: vec![0.0; 3 * cells],
+            born: Paged::new(-1, 3 * cells),
+            rec: Paged::new(-1, 3 * cells),
+            trough: Paged::new(false, 3 * cells),
+            acc: Paged::new(0.0, 3 * cells),
             floor: nan(3 * cells),
-            line_on: vec![false; 3 * cells],
-            line_rec: vec![-1; 3 * cells],
+            line_on: Paged::new(false, 3 * cells),
+            line_rec: Paged::new(-1, 3 * cells),
             line_acc: nan(3 * cells),
             line_fl: nan(3 * cells),
             line_base: nan(3 * cells),
-            line_born: vec![-1; 3 * cells],
-            line_anchor: vec![[f64::NAN; 2]; 3 * cells],
-            line_corr: vec![-1; 3 * cells],
+            line_born: Paged::new(-1, 3 * cells),
+            line_anchor: Paged::new([f64::NAN; 2], 3 * cells),
+            line_corr: Paged::new(-1, 3 * cells),
             line_dev: nan(3 * cells),
             line_pin: nan(3 * cells),
-            line_wall: vec![false; 3 * cells],
-            line_hollow: vec![false; 3 * cells],
-            predicted: vec![false; cells],
-            supplied: vec![false; cells],
-            lined: vec![false; cells],
-            watered: vec![false; cells],
-            built: vec![false; cells],
-            routed: vec![false; cells],
-            corners: vec![false; cells],
-            bed: vec![false; cells],
-            finished: vec![false; cells],
-            blocks,
+            line_wall: Paged::new(false, 3 * cells),
+            line_hollow: Paged::new(false, 3 * cells),
+            predicted: Paged::new(false, cells),
+            supplied: Paged::new(false, cells),
+            lined: Paged::new(false, cells),
+            watered: Paged::new(false, cells),
+            built: Paged::new(false, cells),
+            routed: Paged::new(false, cells),
+            corners: Paged::new(false, cells),
+            finished: Paged::new(false, cells),
+            deform,
             cost: [0; 5],
         }
     }
 
-    /// A cell's index, where the level holds it.
-    pub fn idx(&self, i: i64, j: i64) -> Option<usize> {
-        let (a, b) = (i - self.lo, j - self.lo);
-        (a >= 0 && b >= 0 && (a as usize) < self.n && (b as usize) < self.n).then(|| a as usize * self.n + b as usize)
+    /// The size of the index space of a level `n` by `n_j` cells: whole
+    /// pages of 64 by 64 cells.
+    pub fn space(n: usize, n_j: usize) -> usize {
+        n.div_ceil(64) * n_j.div_ceil(64) * PAGE
     }
 
-    /// A cell's indices from its index.
+    /// The number of cell indices, the stride between vertex kinds.
+    pub fn cap(&self) -> usize {
+        Level::space(self.n, self.n_j)
+    }
+
+    /// A cell's index, where the level holds it: its page of 64 by 64
+    /// cells, then its place on the page.
+    pub fn idx(&self, i: i64, j: i64) -> Option<usize> {
+        let (a, b) = (i - self.lo, j - self.lo_j);
+        if a < 0 || b < 0 || a as usize >= self.n || b as usize >= self.n_j {
+            return None;
+        }
+        let (a, b) = (a as usize, b as usize);
+        let side = self.n_j.div_ceil(64);
+        Some(((a >> 6) * side + (b >> 6)) * PAGE + ((a & 63) << 6) + (b & 63))
+    }
+
+    /// A cell's indices from its index; past the level's side for the
+    /// padding of its last pages.
     pub fn ij(&self, c: usize) -> (i64, i64) {
-        (self.lo + (c / self.n) as i64, self.lo + (c % self.n) as i64)
+        Level::cell_at(self.n_j, (self.lo, self.lo_j), c)
+    }
+
+    /// The cell at index `c` of a level `n_j` cells along j from `lo`.
+    fn cell_at(n_j: usize, lo: (i64, i64), c: usize) -> (i64, i64) {
+        let side = n_j.div_ceil(64);
+        let (page, at) = (c / PAGE, c % PAGE);
+        let a = (page / side) * 64 + (at >> 6);
+        let b = (page % side) * 64 + (at & 63);
+        (lo.0 + a as i64, lo.1 + b as i64)
     }
 
     /// A vertex's index, where the level holds its cell.
     pub fn vid(&self, t: u8, i: i64, j: i64) -> Option<usize> {
-        self.idx(i, j).map(|c| t as usize * self.n * self.n + c)
+        self.idx(i, j).map(|c| t as usize * self.cap() + c)
     }
 
     /// A vertex's kind and cell from its index.
     pub fn vertex(&self, v: usize) -> (u8, i64, i64) {
-        let nn = self.n * self.n;
+        let nn = self.cap();
         let (i, j) = self.ij(v % nn);
         ((v / nn) as u8, i, j)
     }
@@ -421,16 +455,36 @@ impl Level {
         self.vid(t, i, j)
     }
 
-    fn height(&self, i: i64, j: i64, of: &[f64], done: &[bool]) -> f64 {
+    fn height(&self, i: i64, j: i64, of: &Paged<f64>, done: &Paged<bool>) -> f64 {
         match self.idx(i, j) {
             Some(c) if self.exists[c] && done[c] => of[c],
             _ => f64::NAN,
         }
     }
 
+    /// A cell's deform cell of a pass; none for a cell the level does not
+    /// hold.
+    pub fn block(&self, pass: Pass, c: usize) -> (i64, i64) {
+        if !self.exists[c] {
+            return NONE;
+        }
+        let (i, j) = self.ij(c);
+        ancestor(i, j, self.deform[pass as usize])
+    }
+
+    /// The cells of a deform cell of a pass the level holds: its
+    /// descendants down to the level.
+    fn block_cells(&self, pass: Pass, (a, b): (i64, i64)) -> Vec<usize> {
+        let mut cells = vec![(a, b)];
+        for _ in 0..self.deform[pass as usize] {
+            cells = cells.iter().flat_map(|&(x, y)| CHILD_OFFSETS.iter().map(move |&(oi, oj)| (3 * x + oi, 3 * y + oj))).collect();
+        }
+        cells.into_iter().filter_map(|(i, j)| self.idx(i, j)).filter(|&c| self.exists[c]).collect()
+    }
+
     /// The pending deform cells of a pass over a mask.
     fn pending(&self, pass: Pass, mask: &[bool]) -> Vec<(i64, i64)> {
-        let mut s: Vec<(i64, i64)> = mask.iter().enumerate().filter(|(_, &m)| m).map(|(c, _)| self.blocks[pass as usize][c]).collect();
+        let mut s: Vec<(i64, i64)> = mask.iter().enumerate().filter(|(_, &m)| m).map(|(c, _)| self.block(pass, c)).collect();
         s.sort_unstable();
         s.dedup();
         s.retain(|&b| b != NONE);
@@ -446,26 +500,24 @@ impl Level {
                 keys.insert((a + da, b + db));
             }
         }
-        self.blocks[pass as usize].iter().map(|b| keys.contains(b)).collect()
+        let mut fp = vec![false; self.cap()];
+        for key in keys {
+            for c in self.block_cells(pass, key) {
+                fp[c] = true;
+            }
+        }
+        fp
     }
 
     /// For each pending deform cell of a pass, its own cells and its
     /// footprint's.
     fn block_lists(&self, pass: Pass, pend: &[(i64, i64)]) -> Vec<(Vec<usize>, Vec<usize>)> {
-        let mut by: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
-        for (c, b) in self.blocks[pass as usize].iter().enumerate() {
-            if *b != NONE {
-                by.entry(*b).or_default().push(c);
-            }
-        }
         pend.iter()
             .map(|&(a, b)| {
-                let own = by.get(&(a, b)).cloned().unwrap_or_default();
+                let own = self.block_cells(pass, (a, b));
                 let mut fp = own.clone();
                 for (da, db) in NB {
-                    if let Some(v) = by.get(&(a + da, b + db)) {
-                        fp.extend(v);
-                    }
+                    fp.extend(self.block_cells(pass, (a + da, b + db)));
                 }
                 (own, fp)
             })
@@ -495,7 +547,7 @@ impl Level {
     /// The meet values at a cell's own corners A and B, from the heights the
     /// cells sharing each hold, NaN for a missing cell; each ready where every
     /// cell there that exists has its height.
-    fn meet_at(&self, i: i64, j: i64, of: &[f64], done: &[bool]) -> ([f64; 3], [f64; 3], bool, bool) {
+    fn meet_at(&self, i: i64, j: i64, of: &Paged<f64>, done: &Paged<bool>) -> ([f64; 3], [f64; 3], bool, bool) {
         let w = self.w as f64;
         let h = |a: i64, b: i64| self.height(a, b, of, done);
         let present = |a: i64, b: i64| self.idx(a, b).is_some_and(|c| self.exists[c]);
@@ -523,9 +575,18 @@ impl Level {
     /// The level's drawn surface at a position in tiles: the fan triangle of
     /// the cell under it, from the cell's centre to two of its corners.
     pub fn surface_at(&self, q: f64, r: f64) -> f64 {
-        let (u, v) = (q / self.w as f64, r / self.w as f64);
-        let (i, j) = cube_round(u, v);
+        let (i, j) = cube_round(q / self.w as f64, r / self.w as f64);
         let Some(c) = self.idx(i, j) else { return f64::NAN };
+        fan_at(self.w, i, j, self.z[c], &self.cc[c], q, r)
+    }
+}
+
+/// A drawn surface at a position in tiles over cell (i, j) of a level `w`
+/// wide, its height `z` and six corner values `cc`: the fan triangle under
+/// it, from the cell's centre to two of its corners.
+pub(crate) fn fan_at(w: i64, i: i64, j: i64, z: f64, cc: &[f64; 6], q: f64, r: f64) -> f64 {
+    {
+        let (u, v) = (q / w as f64, r / w as f64);
         let (du, dv) = (u - i as f64, v - j as f64);
         let (px, py) = (1.5 * du, crate::SQRT_3 * (dv + du / 2.0));
         let sixth = std::f64::consts::PI / 3.0;
@@ -538,9 +599,13 @@ impl Level {
         let l1 = (px * c1y - py * c1x) / det;
         let l2 = (c0x * py - c0y * px) / det;
         let l0 = 1.0 - l1 - l2;
-        l0 * self.z[c] + l1 * self.cc[c][s] + l2 * self.cc[c][s1]
+        l0 * z + l1 * cc[s] + l2 * cc[s1]
     }
 }
+
+/// A level's width, and its cells' first index and one past its last along
+/// i and along j.
+pub type Bounds = (i64, (i64, i64), (i64, i64));
 
 /// The ladder: the top, built once, and the levels below on request.
 pub struct Ladder<'g, G: Ground> {
@@ -553,19 +618,6 @@ pub struct Ladder<'g, G: Ground> {
     /// Per level: born troughs whose upstream reached the read edge, vertices
     /// that did, own vertices left undecided, own vertices in a cycle.
     pub route_stats: Vec<[u64; 4]>,
-    /// The channel curves drawn, those whose floor rose, and the tiles a
-    /// channel lowered.
-    pub channel_stats: [u64; 3],
-    /// Each tile a channel reaches, where it is below [`LAST_WATER`]'s drawn
-    /// surface: how far from its governing bank it lies, in tiles, and how
-    /// far below that surface the channel is, in steps.
-    pub channel_reach: Vec<[f64; 2]>,
-    /// The most a channel lowers a tile at the edge of the zone it cuts in.
-    pub channel_edge: f64,
-    /// The rivers whose walls reached [`channel::channel_reach`] still below
-    /// [`LAST_WATER`]'s drawn surface, as vertices of its level: the tiles
-    /// where they did, and the largest step left there.
-    pub channel_capped: HashMap<(u8, i64, i64), (u64, f64)>,
     /// Per level, the wall time each stage took there, in seconds, nested
     /// work at other levels not counted.
     pub timing: Vec<[f64; 8]>,
@@ -575,18 +627,29 @@ impl<'g, G: Ground> Ladder<'g, G> {
     /// A ladder over `extents`, each level's width and its cells' index range
     /// `lo..hi` on both axes, coarsest first; the top built over all of its.
     pub fn new(ground: &'g G, extents: &[(i64, i64, i64)], p: Params) -> Self {
+        let boxes: Vec<Bounds> = extents.iter().map(|&(w, lo, hi)| (w, (lo, lo), (hi, hi))).collect();
+        Ladder::new_box(ground, &boxes, p)
+    }
+
+    /// A ladder over `bounds`, each level's width and its cells' index range
+    /// along i and along j, coarsest first; the top built over all of its.
+    pub fn new_box(ground: &'g G, bounds: &[Bounds], p: Params) -> Self {
         let mut levels: Vec<Level> = Vec::new();
-        for (k, &(w, lo, hi)) in extents.iter().enumerate() {
-            let n = (hi - lo) as usize;
-            let mut exists = vec![true; n * n];
-            if k > 0 {
-                let par = &levels[k - 1];
-                for c in 0..n * n {
-                    let (i, j) = (lo + (c / n) as i64, lo + (c % n) as i64);
-                    let (pi, pj, _, _) = parent_of(i, j);
-                    exists[c] = par.idx(pi, pj).is_some_and(|pc| par.exists[pc]);
-                }
-            }
+        for (k, &(w, lo, hi)) in bounds.iter().enumerate() {
+            let (n, n_j) = ((hi.0 - lo.0) as usize, (hi.1 - lo.1) as usize);
+            let exists: Vec<bool> = (0..Level::space(n, n_j))
+                .map(|c| {
+                    let (i, j) = Level::cell_at(n_j, lo, c);
+                    if i >= hi.0 || j >= hi.1 {
+                        return false;
+                    }
+                    k == 0 || {
+                        let par = &levels[k - 1];
+                        let (pi, pj, _, _) = parent_of(i, j);
+                        par.idx(pi, pj).is_some_and(|pc| par.exists[pc])
+                    }
+                })
+                .collect();
             levels.push(Level::new(w, lo, hi, exists, k == 0, ground.layers(), p.ring));
         }
         let count = levels.len();
@@ -596,10 +659,6 @@ impl<'g, G: Ground> Ladder<'g, G> {
             p,
             line_stats: vec![[0; 3]; count],
             route_stats: vec![[0; 4]; count],
-            channel_stats: [0; 3],
-            channel_reach: Vec::new(),
-            channel_edge: 0.0,
-            channel_capped: HashMap::new(),
             timing: vec![[0.0; 8]; count],
         };
         ladder.build_top();
@@ -659,13 +718,14 @@ impl<'g, G: Ground> Ladder<'g, G> {
             lv.ground[c] = h;
             lv.wpred[c] = 0.0;
             lv.z[c] = (h + 0.5).floor();
+            lv.zd[c] = lv.z[c];
         }
-        lv.predicted.iter_mut().for_each(|x| *x = true);
-        lv.supplied.iter_mut().for_each(|x| *x = true);
-        lv.built.iter_mut().for_each(|x| *x = true);
+        lv.predicted.fill(true);
+        lv.supplied.fill(true);
+        lv.built.fill(true);
         corners_over(lv, &all);
         top::route_top(lv, &p);
-        lv.routed.iter_mut().for_each(|x| *x = true);
+        lv.routed.fill(true);
         // The top's own valleys, cut along its troughs into the ground it
         // routed over.
         let edges = water::trough_edges(lv, head_of(lv.w, &p));
@@ -683,15 +743,15 @@ impl<'g, G: Ground> Ladder<'g, G> {
     /// corners, which its neighbours' heights decide.
     pub fn request(&mut self, k: usize, cells: &[(i64, i64)]) {
         let lv = &self.levels[k];
+        // A request for cells already finished reads what is kept.
+        if k == 0 || cells.iter().all(|&(i, j)| lv.idx(i, j).is_none_or(|c| !lv.exists[c] || lv.finished[c])) {
+            return;
+        }
         let mut mask = vec![false; lv.exists.len()];
         for &(i, j) in cells {
             if let Some(c) = lv.idx(i, j) {
                 mask[c] = lv.exists[c];
             }
-        }
-        // A request for cells already finished reads what is kept.
-        if k == 0 || (0..mask.len()).all(|c| !mask[c] || lv.finished[c]) {
-            return;
         }
         self.ensure_routed(k, &mask);
         self.drawn(k, &mask);
@@ -779,8 +839,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
             lv.p[c] = pred;
             let layers = lv.layers.len();
             let change: f64 = (0..layers).map(|l| lv.layers[l][c] - layer_pred[l]).sum();
-            lv.ground[c] = pred + change;
             lv.wpred[c] = layer_pred[layers];
+            lv.ground[c] = pred + change + lv.wpred[c];
             lv.predicted[c] = true;
             lv.supplied[c] = true;
         }
@@ -815,11 +875,6 @@ impl<'g, G: Ground> Ladder<'g, G> {
         if !need.iter().any(|&x| x) {
             return;
         }
-        if lv.w < LAST_WATER {
-            self.ensure_dry(k, &need);
-            return;
-        }
-        let lv = &self.levels[k];
         let sel: Vec<bool> = (0..need.len()).map(|c| need[c] && !lv.watered[c]).collect();
         if sel.iter().any(|&x| x) {
             let pend = lv.pending(Pass::Water, &sel);
@@ -843,6 +898,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             if need[c] && lv.supplied[c] && lv.watered[c] {
                 let uncut = lv.ground[c] - lv.wpred[c];
                 lv.z[c] = (uncut + lv.cut[c] + 0.5).floor();
+                lv.zd[c] = (uncut + 0.5).floor();
                 lv.built[c] = true;
                 built += 1;
             }
@@ -852,119 +908,17 @@ impl<'g, G: Ground> Ladder<'g, G> {
         self.timing[k][Stage::Build as usize] += started.elapsed().as_secs_f64();
     }
 
-    /// A level finer than [`LAST_WATER`] built over a mask: its ground, the
-    /// cut handed down unchanged, and at the tiles, where water cuts, the
-    /// channels met by it.
-    fn ensure_dry(&mut self, k: usize, need: &[bool]) {
-        self.ensure_supplied(k, need);
-        if self.levels[k].w == 1 && self.p.water {
-            self.ensure_channels(k, need);
-        }
-        let started = Instant::now();
-        let lv = &mut self.levels[k];
-        let mut built = 0;
-        for c in 0..need.len() {
-            if need[c] && !lv.built[c] {
-                lv.cut[c] = lv.wpred[c];
-                lv.z[c] = (lv.ground[c] + 0.5).floor();
-                lv.watered[c] = true;
-                lv.built[c] = true;
-                built += 1;
-            }
-        }
-        lv.cost[4] += built;
-        self.timing[k][Stage::Build as usize] += started.elapsed().as_secs_f64();
-    }
-
-    /// The tiles of a mask cut by their channels, a channel deform cell at a
-    /// time: [`LAST_WATER`]'s rivers under its footprint and one ring of that
-    /// level's cells drawn, routed a ring past those so each curve's
-    /// neighbours are read, and each tile the lower of its ground and the
-    /// channels below [`LAST_WATER`]'s drawn surface there.
-    fn ensure_channels(&mut self, k: usize, need: &[bool]) {
-        let lv = &self.levels[k];
-        let pend = lv.pending(Pass::Channel, need);
-        let fp = lv.footprint(Pass::Channel, &pend);
-        let s = self.levels.iter().position(|l| l.w == LAST_WATER).expect("a level water stops at");
-        let (src, up) = (&self.levels[s], (k - s) as u32);
-        let mut under = vec![false; src.exists.len()];
-        for c in (0..fp.len()).filter(|&c| fp[c]) {
-            let (i, j) = lv.ij(c);
-            let (a, b) = ancestor(i, j, up);
-            if let Some(d) = src.idx(a, b) {
-                under[d] = true;
-            }
-        }
-        let keep = |m: Vec<bool>| -> Vec<bool> { m.iter().zip(&src.exists).map(|(a, b)| *a && *b).collect() };
-        let (draw, read) = (keep(src.dilate(&under, 1)), keep(src.dilate(&under, 2)));
-        self.ensure_routed(s, &read);
-        let started = Instant::now();
-        let lv = &self.levels[k];
-        let cells: Vec<usize> = (0..need.len()).filter(|&c| need[c] && !lv.built[c]).collect();
-        let reached = {
-            let (lv, src, p) = (&self.levels[k], &self.levels[s], &self.p);
-            let reach = channel::channel_reach();
-            let owners: Vec<usize> = (0..draw.len()).filter(|&c| draw[c]).collect();
-            let drawn = water::in_parallel(&owners, |c| channel::own_banks(src, c, p));
-            for (_, curves, rising) in &drawn {
-                self.channel_stats[0] += curves;
-                self.channel_stats[1] += rising;
-            }
-            let index = channel::Index::new(drawn.into_iter().flat_map(|(banks, _, _)| banks), reach);
-            water::in_parallel(&cells, |c| {
-                let (i, j) = lv.ij(c);
-                index.at(i as f64, j as f64, src.surface_at(i as f64, j as f64), reach)
-            })
-        };
-        // The zone a channel cuts in, and how much it lowers each tile there.
-        let lowered: HashMap<usize, f64> = cells
-            .iter()
-            .zip(&reached)
-            .filter(|(_, at)| at.governing.is_some())
-            .map(|(&c, at)| (c, (self.levels[k].ground[c] - at.surface).max(0.0)))
-            .collect();
-        let done: HashSet<usize> = cells.iter().copied().collect();
-        for (&c, &lower) in &lowered {
-            let (i, j) = self.levels[k].ij(c);
-            let edge = NB.iter().filter_map(|&(di, dj)| self.levels[k].idx(i + di, j + dj)).any(|d| done.contains(&d) && !lowered.contains_key(&d));
-            if edge {
-                self.channel_edge = self.channel_edge.max(lower);
-            }
-        }
-        for (&c, at) in cells.iter().zip(&reached) {
-            let Some((river, d)) = at.governing else { continue };
-            self.channel_reach.push([d, at.below]);
-            let step = self.levels[k].ground[c] - at.surface;
-            self.channel_stats[2] += (step > 0.0) as u64;
-            if at.capped {
-                let e = self.channel_capped.entry(self.levels[s].vertex(river)).or_insert((0, 0.0));
-                e.0 += 1;
-                e.1 = e.1.max(step.max(0.0));
-            }
-        }
-        let lv = &mut self.levels[k];
-        for (&c, at) in cells.iter().zip(&reached) {
-            let ground = lv.ground[c];
-            let low = ground.min(at.surface);
-            lv.cut[c] = lv.wpred[c] + low - ground;
-            lv.z[c] = (low + 0.5).floor();
-            lv.bed[c] = at.in_bed;
-            lv.watered[c] = true;
-            lv.built[c] = true;
-        }
-        lv.cost[4] += cells.len() as u64;
-        lv.cost[Pass::Channel as usize] += pend.len() as u64;
-        self.timing[k][Stage::Channel as usize] += started.elapsed().as_secs_f64();
-    }
-
     /// For the probes: the cut at each of `cells` of level k from every river
-    /// the level has routed, however far, where its water reads only its
+    /// the level has drawn, however far, where its water reads only its
     /// ring.
     #[cfg(feature = "inspect")]
     pub fn unlimited_cut(&self, k: usize, cells: &[(i64, i64)]) -> Vec<f64> {
         let lv = &self.levels[k];
-        let mut edges = water::line_edges(lv, &lv.routed, head_of(self.levels[k - 1].w, &self.p));
-        edges.extend(water::born_edges(lv, &lv.routed));
+        // Lines where they were drawn, births where the level was routed.
+        let lined: Vec<bool> = lv.lined.iter().copied().collect();
+        let routed: Vec<bool> = lv.routed.iter().copied().collect();
+        let mut edges = water::line_edges(lv, &lined, head_of(self.levels[k - 1].w, &self.p));
+        edges.extend(water::born_edges(lv, &routed));
         let at: Vec<usize> = cells.iter().map(|&(i, j)| lv.idx(i, j).expect("a cell the level holds")).collect();
         water::whole_cut(lv, &edges, &at, &self.p)
     }
@@ -1004,15 +958,22 @@ pub fn handed_down(i: i64, j: i64, at: impl Fn(i64, i64) -> f64) -> f64 {
     }
 }
 
-/// A child cell's prediction from the level above's drawn surface, and each
-/// layer's own value predicted from the level above's, water's cut last: at
-/// the parent's centre, a fan's centroid, or a corner. A layer's corner is
-/// the mean of the cells sharing it; the surface's, the median of their
-/// meet values there.
-fn predict(par: &Level, i: i64, j: i64) -> (f64, Vec<f64>) {
+/// A child cell's prediction from the level above's dry surface, drawn by
+/// the corner rule, and each layer's own value predicted from the level
+/// above's, water's cut last: at the parent's centre, a fan's centroid, or a
+/// corner. A layer's corner is the mean of the cells sharing it; the
+/// surface's, the median of their meet values there.
+pub(crate) fn predict(par: &impl Above, i: i64, j: i64) -> (f64, Vec<f64>) {
     let (a, b, oi, oj) = parent_of(i, j);
-    let pc = par.idx(a, b).expect("a parent held by the level above");
-    let zc = par.z[pc];
+    let zc = par.dry(a, b);
+    let dry = |x: i64, y: i64| par.dry(x, y);
+    // The meet values at the parent's corner k, and the parent's own there.
+    let met = |k: usize| meet(corner_cells(a, b, k).map(|(x, y)| dry(x, y)), par.width() as f64);
+    let own = |k: usize| {
+        let at = corner_cells(a, b, k).iter().position(|&x| x == (a, b)).expect("the parent shares its corner");
+        let v = met(k)[at];
+        if v.is_nan() { zc } else { v }
+    };
     let median = |v: [f64; 3]| -> f64 {
         let mut s: Vec<f64> = v.into_iter().filter(|x| !x.is_nan()).collect();
         s.sort_by(f64::total_cmp);
@@ -1021,16 +982,45 @@ fn predict(par: &Level, i: i64, j: i64) -> (f64, Vec<f64>) {
     };
     let drawn = match (oi, oj) {
         (0, 0) => zc,
-        (1, 1) => median(par.a3[pc]),
-        (2, -1) => median(par.b3[pc]),
+        (1, 1) => median(met(1)),
+        (2, -1) => median(met(0)),
         _ => {
             let (ca, cb) = axis_fan(oi, oj).expect("an axis child");
-            (zc + par.cc[pc][ca] + par.cc[pc][cb]) / 3.0
+            (zc + own(ca) + own(cb)) / 3.0
         }
     };
-    let fields = par.layers.iter().map(|l| l.as_slice()).chain([par.cut.as_slice()]);
-    let layers = fields.map(|f| handed_down(i, j, |x, y| par.idx(x, y).map_or(f64::NAN, |c| f[c]))).collect();
+    let layers = (0..=par.layer_count()).map(|l| handed_down(i, j, |x, y| par.field(l, x, y))).collect();
     (drawn, layers)
+}
+
+/// What a level hands the level below it: its width, each built cell's dry
+/// height, and each layer's value at a cell, water's cut after the layers;
+/// NaN where it holds none.
+pub(crate) trait Above {
+    fn width(&self) -> i64;
+    fn layer_count(&self) -> usize;
+    fn dry(&self, i: i64, j: i64) -> f64;
+    /// Layer `l`'s value at cell (i, j); `layer_count()` is water's cut.
+    fn field(&self, l: usize, i: i64, j: i64) -> f64;
+}
+
+impl Above for Level {
+    fn width(&self) -> i64 {
+        self.w
+    }
+
+    fn layer_count(&self) -> usize {
+        self.layers.len()
+    }
+
+    fn dry(&self, i: i64, j: i64) -> f64 {
+        self.idx(i, j).filter(|&c| self.exists[c] && self.built[c]).map_or(f64::NAN, |c| self.zd[c])
+    }
+
+    fn field(&self, l: usize, i: i64, j: i64) -> f64 {
+        let f = if l < self.layers.len() { &self.layers[l] } else { &self.cut };
+        self.idx(i, j).map_or(f64::NAN, |c| f[c])
+    }
 }
 
 /// Corner meet values and routing heights for every cell of a mask whose
@@ -1038,7 +1028,7 @@ fn predict(par: &Level, i: i64, j: i64) -> (f64, Vec<f64>) {
 /// every cell outside the mask reading a corner met here, so a cell's
 /// corners never wait on a request that names it.
 fn corners_over(lv: &mut Level, mask: &[bool]) {
-    let nn = lv.n * lv.n;
+    let nn = lv.cap();
     // Every cell of the mask, and every cell reading a corner met here.
     let mut draw: Vec<usize> = Vec::new();
     for c in 0..mask.len() {
@@ -1082,7 +1072,7 @@ fn corners_over(lv: &mut Level, mask: &[bool]) {
 /// each: a centre's own, a corner the lowest its sharers reach by the meet
 /// rule.
 fn ground_fields(lv: &mut Level, par: &Level, mask: &[bool]) {
-    let nn = lv.n * lv.n;
+    let nn = lv.cap();
     for c in 0..mask.len() {
         if !mask[c] || !lv.exists[c] {
             continue;

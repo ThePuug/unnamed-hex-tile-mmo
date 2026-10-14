@@ -14,6 +14,21 @@ use crate::cover::{Canopy, Cover, Outcrop};
 /// serves all three from one. None where the source has no tile yet.
 pub trait SummarySource {
     fn sample(&self, q: i32, r: i32) -> Option<TileSample>;
+
+    /// What stands on a tile alone, where the height and water need not be
+    /// read.
+    fn cover(&self, q: i32, r: i32) -> Option<Cover> {
+        self.sample(q, r).map(|s| s.cover)
+    }
+
+    /// The summary at `(sq, sr)` on the lattice of radius `r`, where the
+    /// source holds the summary's own cell rather than its tiles, as the
+    /// terrain ladder does at 3, 9, 27 and 81 wide: its height, and which of
+    /// its parts stand under water above the sea, a bit to each, as
+    /// [`wet_parts`] marks them.
+    fn cell(&self, _r: u32, _sq: i32, _sr: i32) -> Option<(i32, u16)> {
+        None
+    }
 }
 
 /// One tile as a summary reads it.
@@ -127,7 +142,7 @@ pub fn canopy_parts(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Op
     let (cq, cr) = center_tile(r, sq, sr);
     let mut canopy = [Canopy::NONE; PARTS];
     for (part, (dq, dr)) in part_offsets(r).into_iter().enumerate() {
-        canopy[part] = Canopy::of(source.sample(cq + dq, cr + dr)?.cover);
+        canopy[part] = Canopy::of(source.cover(cq + dq, cr + dr)?);
     }
     Some(canopy)
 }
@@ -150,10 +165,20 @@ pub fn sampled_by(r: u32, q: i32, rr: i32) -> Option<(i32, i32)> {
 /// outcrop by [`select_center_z`] and [`Outcrop::of`] from the seven
 /// samples, unless the summary holds water: then it stands at the highest
 /// ground its water covers, so the water is drawn on the ground and runs
-/// down its valley on the ground's own corners. None unless the source has
-/// all nine (the client's map while chunks stream in).
+/// down its valley on the ground's own corners. Where the source holds the
+/// summary's own cell ([`SummarySource::cell`]), the height and the water
+/// are the cell's, and only the covers are read from the tiles. None unless
+/// the source has all nine (the client's map while chunks stream in).
 pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Option<SummaryCell> {
     let (cq, cr) = center_tile(r, sq, sr);
+    if let Some((z, wet)) = source.cell(r, sq, sr) {
+        let mut covers = [Cover::default(); PARTS];
+        for (i, (dq, dr)) in part_offsets(r).into_iter().enumerate() {
+            covers[i] = source.cover(cq + dq, cr + dr)?;
+        }
+        let samples: [Cover; SAMPLES] = std::array::from_fn(|i| covers[i]);
+        return Some(SummaryCell { z, wet, canopy: covers.map(Canopy::of), outcrop: Outcrop::of(&samples) });
+    }
     let mut read = [None; PARTS];
     for (i, (dq, dr)) in part_offsets(r).into_iter().enumerate() {
         read[i] = Some(source.sample(cq + dq, cr + dr)?);

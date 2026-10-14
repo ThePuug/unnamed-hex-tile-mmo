@@ -34,7 +34,7 @@ impl PartialOrd for Waiting {
 /// in a spread rather than a comb of parallel streams; along a trough it goes
 /// whole to the flood's receiver, so a trough never thins.
 pub(super) fn route_top(lv: &mut Level, p: &Params) {
-    let nn = lv.n * lv.n;
+    let nn = lv.cap();
     let count = 3 * nn;
     let mut nbr = vec![[-1i64; 6]; count];
     let mut pos = vec![(0.0, 0.0); count];

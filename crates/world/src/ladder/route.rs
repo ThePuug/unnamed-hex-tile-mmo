@@ -21,13 +21,13 @@ use super::{drained, head_of, Level, Params, Pass};
 /// whose upstream reached the footprint's edge, the own vertices that did,
 /// own vertices left undecided, and own vertices in a cycle.
 pub(super) fn route_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], p: &Params, births: bool) -> [u64; 4] {
-    let nn = lv.n * lv.n;
+    let nn = lv.cap();
     let w = lv.w;
     let head = if births { head_of(w, p) } else { f64::INFINITY };
     let cap = head_of(par.w, p);
     let lists = lv.block_lists(Pass::Route, pend);
-    let mut stamp = vec![0u32; nn];
-    let mut loc = vec![-1i64; 3 * nn];
+    let mut stamp = super::paged::Paged::new(0u32, nn);
+    let mut loc = super::paged::Paged::new(-1i64, 3 * nn);
     let mut stats = [0u64; 4];
     for (b, (own, fpl)) in lists.iter().enumerate() {
         let cur = b as u32 + 1;

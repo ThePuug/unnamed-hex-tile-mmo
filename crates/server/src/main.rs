@@ -105,10 +105,20 @@ fn main() {
     app.init_resource::<crate::systems::gathering::Piles>();
     app.init_resource::<InputQueues>();
     app.init_resource::<input::InputGuards>();
-    let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED);
     // One definition of where the world starts: the difficulty origin and the
     // spawn are the same place, and the z comes from the terrain there.
     let haven = common_bevy::haven::HAVEN_LOCATION;
+    // `TERRAIN=ladder` takes the world's heights and water from the terrain
+    // ladder over the haven's landmass, and draws and walks the tiles by the
+    // corner rule; unset, the stack's, by the mean of three.
+    let laddered = std::env::var("TERRAIN").is_ok_and(|v| v == "ladder");
+    common_bevy::surface::set_corner_rule(laddered);
+    let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED, laddered.then_some((haven.q, haven.r)));
+    if laddered {
+        let (cache, dens) = crate::systems::warming::around(&registry, (haven.q, haven.r));
+        app.insert_resource(cache);
+        app.insert_resource(dens);
+    }
     // `CLEARING=<radius>[@<q>,<r>][~]` fells and mines every tile that far
     // round the tile named, or the haven, before anything is served: a
     // fixture for seeing changes from afar. With `~` it thins out toward its

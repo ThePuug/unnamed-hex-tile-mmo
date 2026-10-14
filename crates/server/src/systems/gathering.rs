@@ -202,6 +202,14 @@ impl<S: SummarySource> SummarySource for LaidOver<S> {
         }
         Some(sample)
     }
+
+    fn cover(&self, q: i32, r: i32) -> Option<common::Cover> {
+        self.tiles.get(&(q, r)).copied().or_else(|| self.source.cover(q, r))
+    }
+
+    fn cell(&self, r: u32, sq: i32, sr: i32) -> Option<(i32, u16)> {
+        self.source.cell(r, sq, sr)
+    }
 }
 
 /// A pile a player left: what it holds, and the player whose open window

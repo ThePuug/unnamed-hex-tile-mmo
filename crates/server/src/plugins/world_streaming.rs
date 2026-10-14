@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use common_bevy::chunk::WorldDiscoveryCache;
-use crate::systems::{actor, summary, world};
+use crate::systems::{actor, summary, warming, world};
 
 /// Plugin for server-side terrain streaming.
 
@@ -13,6 +13,7 @@ impl Plugin for WorldStreamingPlugin {
         app.init_resource::<WorldDiscoveryCache>();
         app.init_resource::<actor::ChunkTaskQueue>();
         app.init_resource::<summary::SummaryTaskQueue>();
+        app.init_resource::<warming::Warming>();
 
         app.add_systems(Startup, world::setup);
 
@@ -24,6 +25,7 @@ impl Plugin for WorldStreamingPlugin {
             summary::dispatch_summary_tasks,
             summary::poll_summary_tasks,
             summary::revise_summaries,
+            warming::warm_ahead,
         ));
     }
 }

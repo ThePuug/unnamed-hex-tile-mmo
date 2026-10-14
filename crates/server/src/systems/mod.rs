@@ -8,4 +8,5 @@ pub mod gathering;
 pub mod input;
 pub mod renet;
 pub mod summary;
+pub mod warming;
 pub mod world;

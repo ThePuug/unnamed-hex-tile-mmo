@@ -1125,6 +1125,11 @@ fn collect_and_build_summary_mesh(
             if let Some(cell) = cached(level, sq, sr) {
                 return Some(cell.z);
             }
+            // The ladder's summaries are its cells, which the tiles do not
+            // hold: they are only ever the server's.
+            if common_bevy::surface::corner_rule() && level >= common_bevy::summary::LOD_LEVELS[1] {
+                return None;
+            }
             sampled(level, sq, sr).map(|c| c.z)
         }
     };

@@ -77,9 +77,21 @@ pub fn pass_summary_regions(
     mut writer: MessageWriter<Do>,
     mut query: Query<(Entity, &Loc, &Heading, &mut VisibleSummaryCache)>,
     summary_cache: Res<SummaryCache>,
+    registry: Res<EventRegistry>,
     timings: Res<crate::plugins::metrics::SystemTimings>,
 ) {
     let _t = timings.scope("summary_pass");
+    // Where the ground is the ladder's, its summaries are its cells, which
+    // no client reads from tiles: those are sent from the tiles' band out,
+    // as the finer levels' morph targets too.
+    let laddered = registry.is_laddered();
+    let regions = |bands: &[common_bevy::summary::Band], wx: f32, wz: f32, rings: u32| -> HashSet<MeshRegionKey> {
+        let mut set = visible_lod_regions(bands, wx, wz, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU, rings);
+        if laddered {
+            set.extend(visible_lod_regions(bands, wx, wz, 0.0, rings).into_iter().filter(|rk| rk.r >= LOD_LEVELS[1]));
+        }
+        set
+    };
     let region_lat = mesh_region_lattice();
     let bands = compute_active_bands(common_bevy::summary::reach_wu());
     for (ent, loc, heading, mut vis_cache) in query.iter_mut() {
@@ -91,13 +103,13 @@ pub fn pass_summary_regions(
 
         let (cam_wx, cam_wz) = flat_top_tile_center(loc.q, loc.r, 1.0);
         let facing = heading.to_world_dir();
-        let visible_regions = visible_lod_regions(&bands, cam_wx, cam_wz, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU, 0);
+        let visible_regions = regions(&bands, cam_wx, cam_wz, 0);
 
         // A region sent is taken back once it lies a ring past every band's
         // reach, whatever the heading (INV-005): the client holds exactly
         // what was sent and not taken back, and comes back to a region as
         // to one never seen.
-        let kept = visible_lod_regions(&bands, cam_wx, cam_wz, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU, KEEP_RINGS);
+        let kept = regions(&bands, cam_wx, cam_wz, KEEP_RINGS);
         let removals: Vec<MeshRegionKey> = vis_cache.sent_regions.iter().filter(|rk| !kept.contains(rk)).copied().collect();
         if !removals.is_empty() {
             vis_cache.sent_regions.retain(|rk| kept.contains(rk));
@@ -176,6 +188,8 @@ pub fn dispatch_summary_tasks(
             let task = AsyncComputeTaskPool::get().spawn(async move {
                 let start = std::time::Instant::now();
                 let rl = mesh_region_lattice();
+                let cells: Vec<(i64, i64)> = rl.tiles_in_cell((rk.mn, rk.mm)).map(|(sq, sr)| (sq as i64, sr as i64)).collect();
+                generated.warm_level(common::summary::scale(rk.r) as i64, &cells);
                 let data: Vec<SummaryData> = rl.tiles_in_cell((rk.mn, rk.mm))
                     .map(|(sq, sr)| SummaryData { r: rk.r, sq, sr, cell: generate(rk.r, sq, sr, &generated, &laid) })
                     .collect();
