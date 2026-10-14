@@ -48,7 +48,7 @@ pub struct ServerNet {
 
 impl ServerNet {
     fn new() -> Self {
-        let public_addr = "0.0.0.0:5000".parse().unwrap();
+        let public_addr = format!("0.0.0.0:{}", common::network::port()).parse().unwrap();
         let socket = UdpSocket::bind(public_addr).unwrap();
         let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
         let server_config = ServerConfig {

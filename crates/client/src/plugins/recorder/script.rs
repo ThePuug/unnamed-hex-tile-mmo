@@ -31,6 +31,10 @@ pub struct Script {
     /// forecast when not given.
     #[serde(default)]
     pub weather: WeatherHold,
+    /// Once the last shot is written, every tile the client holds written
+    /// here, a line `q r z water` each, water `-` where dry.
+    #[serde(default)]
+    pub dump: Option<PathBuf>,
     pub shots: Vec<Shot>,
 }
 

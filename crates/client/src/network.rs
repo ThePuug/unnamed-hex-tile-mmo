@@ -100,7 +100,7 @@ impl Drop for ClientNet {
 
 impl ClientNet {
     fn new() -> Result<Self, String> {
-        let server_addr = "127.0.0.1:5000".parse().unwrap();
+        let server_addr = format!("127.0.0.1:{}", common::network::port()).parse().unwrap();
         let socket = UdpSocket::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
         let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
         let client_id = current_time.as_millis() as u64;

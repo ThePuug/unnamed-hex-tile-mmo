@@ -138,6 +138,11 @@ impl Map {
         self.solids.get(&(q, r)).map_or(Vec::new(), |held| held.clone())
     }
 
+    /// Every tile's height held, as `(q, r, z)`, in no order.
+    pub fn heights(&self) -> Vec<(i32, i32, i32)> {
+        self.flat.iter().map(|e| (e.key().0, e.key().1, *e.value())).collect()
+    }
+
     /// The surface water stands at over a tile, or None where it is dry.
     pub fn water_at(&self, q: i32, r: i32) -> Option<i32> {
         self.water.get(&(q, r)).map(|w| *w)

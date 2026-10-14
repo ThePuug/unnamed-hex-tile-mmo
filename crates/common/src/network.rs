@@ -51,3 +51,9 @@ pub const HEALTH_CHECK_INTERVAL: f32 = 1.0;
 
 /// Disconnect when available memory falls below this fraction of max.
 pub const HEALTH_THRESHOLD: f32 = 0.2;
+
+/// The UDP port the server listens on and the client connects to: 5000,
+/// or `PORT` where set, so a second server can run beside one already up.
+pub fn port() -> u16 {
+    std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(5000)
+}

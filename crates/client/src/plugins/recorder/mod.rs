@@ -297,12 +297,25 @@ fn advance(
     meshes: Res<SummaryMeshes>,
     mut exit: MessageWriter<AppExit>,
     viewing: Res<shell::view::Viewing>,
+    map: Res<common_bevy::resources::map::Map>,
 ) {
     if matches!(recorder.phase, Phase::Enter | Phase::Rejoin | Phase::Done) {
         return;
     }
     let Some(shot) = recorder.shot().cloned() else {
         recorder.phase = Phase::Done;
+        if let Some(path) = &recorder.script.dump {
+            let mut lines = String::new();
+            for (q, r, z) in map.heights() {
+                let water = map.water_at(q, r).map_or("-".to_string(), |w| w.to_string());
+                lines.push_str(&format!("{q} {r} {z} {water}
+"));
+            }
+            match std::fs::write(path, lines) {
+                Ok(()) => info!("milestone: recorder dumped {} tiles to {}", map.len(), path.display()),
+                Err(e) => warn!("the recorder could not write its tile dump to {}: {e}", path.display()),
+            }
+        }
         info!("milestone: recorder done");
         if recorder.script.exit {
             exit.write(AppExit::Success);
@@ -352,6 +365,15 @@ fn advance(
     let Some(&ent) = buffers.entities().next() else { return };
     let Ok((loc, heading, position, mut visibility)) = player.get_mut(ent) else { return };
     visibility.set_if_neq(if shot.hide_player { Visibility::Hidden } else { Visibility::Inherited });
+
+    // A second of video at a time, how much of the stream round the player
+    // has arrived: a moving shot shows whether streaming keeps up
+    if let Phase::Roll(roll) = &recorder.phase {
+        if roll.frame % fps as u64 == 0 && roll.frame < roll.frames {
+            let (have, want) = shell::chunks_streamed(loc, &loaded);
+            info!("recorder: shot {} at {}s: ({}, {}), {have}/{want} chunks", shot.name, roll.frame / fps as u64, loc.q, loc.r);
+        }
+    }
 
     let recorder = &mut *recorder;
     let mut skip = false;
