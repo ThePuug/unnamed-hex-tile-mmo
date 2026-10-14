@@ -9,10 +9,6 @@
 //! drawn position lies within `WARP_STEP` inside the reach: a band of no
 //! land is land that never leaves.
 //!
-//! With `TOP_MARGIN=1` it also reads every tile the top holds past the
-//! site's land reach, its sea margin, for land: an islet standing wholly
-//! past the reach, which the band cannot see.
-//!
 //! `TOP_SITES="i,j;i,j"` names the sites, the haven's by default.
 //!
 //! Run: `cargo test --release -p world --features inspect --test top_probe -- --ignored --nocapture`
@@ -32,6 +28,20 @@ const HAVEN: (i32, i32) = (107289, -7677);
 
 /// Tiles a side of the blocks the band is sought in.
 const BLOCK: i32 = 27;
+
+/// Prints how many of `total` rows a scan has done every 30 seconds, until
+/// it has done them all.
+fn heartbeat<'s>(s: &'s std::thread::Scope<'s, '_>, done: &'s AtomicUsize, total: usize, what: String) {
+    s.spawn(move || {
+        let started = Instant::now();
+        while done.load(Ordering::Relaxed) < total {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if started.elapsed().as_secs() % 30 == 0 {
+                println!("progress {:.0}s: {what}, {} of {total} block rows", started.elapsed().as_secs_f64(), done.load(Ordering::Relaxed));
+            }
+        }
+    });
+}
 
 #[test]
 #[ignore]
@@ -91,9 +101,9 @@ fn top_probe() {
         let examples = std::sync::Mutex::new(Vec::new());
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         std::thread::scope(|s| {
+            heartbeat(s, &done, rows.len(), format!("site {id:?} band"));
             for part in rows.chunks(rows.len().div_ceil(threads)) {
                 let (land, base, band, wet, out, done, examples, held) = (&land, &base, &band, &wet, &out, &done, &examples, &held);
-                let count = rows.len();
                 s.spawn(move || {
                     for &br in part {
                         for bq in (q0..q1).step_by(BLOCK as usize) {
@@ -122,10 +132,7 @@ fn top_probe() {
                                 }
                             }
                         }
-                        let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                        if n % 200 == 0 {
-                            println!("progress: site {id:?}, {n} of {count} block rows");
-                        }
+                        done.fetch_add(1, Ordering::Relaxed);
                     }
                 });
             }
@@ -138,56 +145,6 @@ fn top_probe() {
             "site {id:?}: edge band, every tile drawn within {WARP_STEP:.1} inside the land reach {LAND_REACH:.0}: {band} tiles; on land {wet}; outside the top {out}{first}"
         );
         seams += wet + out;
-
-        if std::env::var("TOP_MARGIN").is_ok_and(|v| v == "1") {
-            progress(&format!("site {id:?}: reading the sea margin"));
-            let (sea, islets, done) = (AtomicU64::new(0), AtomicU64::new(0), AtomicUsize::new(0));
-            let found = std::sync::Mutex::new(Vec::new());
-            std::thread::scope(|s| {
-                for part in rows.chunks(rows.len().div_ceil(threads)) {
-                    let (land, base, sea, islets, done, found, held) = (&land, &base, &sea, &islets, &done, &found, &held);
-                    let count = rows.len();
-                    s.spawn(move || {
-                        for &br in part {
-                            for bq in (q0..q1).step_by(BLOCK as usize) {
-                                let (cx, cy) = hex_to_world(bq + BLOCK / 2, br + BLOCK / 2);
-                                let (dx, dy) = warp(cx, cy, WORLD_SEED);
-                                if land.gap(dx, dy) < LAND_REACH - spread {
-                                    continue;
-                                }
-                                for r in br..br + BLOCK {
-                                    for q in bq..bq + BLOCK {
-                                        if !held(q, r) {
-                                            continue;
-                                        }
-                                        let (wx, wy) = hex_to_world(q, r);
-                                        let (x, y) = warp(wx, wy, WORLD_SEED);
-                                        if land.gap(x, y) <= LAND_REACH {
-                                            continue;
-                                        }
-                                        sea.fetch_add(1, Ordering::Relaxed);
-                                        if base.elevation_at(q, r) >= 0 {
-                                            islets.fetch_add(1, Ordering::Relaxed);
-                                            found.lock().unwrap().push((q, r));
-                                        }
-                                    }
-                                }
-                            }
-                            let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                            if n % 100 == 0 {
-                                println!("progress: site {id:?} margin, {n} of {count} block rows");
-                            }
-                        }
-                    });
-                }
-            });
-            let (sea, islets) = (sea.into_inner(), islets.into_inner());
-            let mut found = found.into_inner().unwrap();
-            found.sort();
-            let first = if found.is_empty() { String::new() } else { format!("; first {:?}", &found[..found.len().min(8)]) };
-            println!("site {id:?}: sea margin, every tile the top holds past the land reach: {sea} tiles; on land {islets}{first}");
-            seams += islets;
-        }
     }
     println!("done in {:.1} s", started.elapsed().as_secs_f64());
     assert_eq!(seams, 0, "land at the edge of a site's reach, or a band tile outside its top");
