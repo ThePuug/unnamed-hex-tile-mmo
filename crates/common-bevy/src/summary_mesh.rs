@@ -898,9 +898,10 @@ mod tests {
 
     #[test]
     fn adjacent_regions_agree_on_shared_vertices() {
-        // A varying field: every vertex the two regions both place must be
-        // at the same height, or the seam between them opens.
-        let field = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
+        // A varying field whose cells all reach each other, so every corner
+        // is met: every vertex the two regions both place must be at the
+        // same height, or the seam between them opens.
+        let field = |q: i32, r: i32| Some((q * 7 + r * 3).rem_euclid(3));
         let a = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
         let b = build_summary_mesh_region(1, MeshRegionKey { r: 1, mn: 1, mm: 0 }, &field, None, None).unwrap();
         let av = fan_vertices(REGION, &a);
@@ -917,15 +918,18 @@ mod tests {
     }
 
     #[test]
-    fn steep_neighbours_make_steep_triangles_not_gaps() {
-        // A cliff: half the field 20 steps higher. Every triangle still
-        // shares its vertices (no vertex duplicated among the fans), and the
-        // fan normals at the cliff lean over.
+    fn a_cliff_out_of_reach_is_a_wall() {
+        // A cliff: half the field 20 steps higher, far past a 3-wide cell's
+        // reach. Each side keeps its own corners, and a wall hangs from the
+        // high side's down to the low side's.
         let field = |q: i32, _r: i32| Some(if q > 0 { 20 } else { 0 });
         let result = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
-        assert_eq!(fan_vertices(REGION, &result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
-        let leaning = fan_vertices(REGION, &result).iter().filter(|(_, n)| n.y < 0.7).count();
-        assert!(leaning > 0, "a 20-step cliff produced no steep normals");
+        let bias = level_depth_bias(1);
+        let (top, foot) = (height_y(20.0) - bias, height_y(0.0) - bias);
+        let wall = |y: f32| result.positions.iter().zip(&result.normals).any(|(p, n)| n[1].abs() < 1e-3 && (p[1] - y).abs() < 1e-3);
+        assert!(wall(top) && wall(foot), "no wall spans the cliff from {top} to {foot}");
+        let between = result.positions.iter().zip(&result.normals).filter(|(p, n)| n[1].abs() > 1e-3 && p[1] > foot + 0.5 && p[1] < top - 0.5).count();
+        assert_eq!(between, 0, "a fan vertex stands partway down the cliff");
     }
 
     /// A region's layer puts every part of its cells and ring on a texel of
