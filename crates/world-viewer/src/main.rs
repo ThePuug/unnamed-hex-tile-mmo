@@ -25,6 +25,8 @@ use world::events::forest;
 use world::events::plates::{unwarp, PlateEdgeIndex};
 use world::lattice::node_world;
 
+mod view3d;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layer {
     /// Composite: height on the terrain shader's ramp, with slope shading.
@@ -194,6 +196,13 @@ fn boundary_color(seg: &BoundarySegment) -> [u8; 3] {
 }
 
 fn main() {
+    // `world-viewer 3d …` is the live view (`view3d`), which brings its own
+    // log.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("3d") {
+        let rest = std::iter::once(args[0].clone()).chain(args[2..].iter().cloned()).collect();
+        return view3d::run(rest);
+    }
     // The world's tracing spans reach the log where the workspace builds
     // `tracing` with `log`: one line a tile, unless silenced.
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,tracing::span=off")).init();

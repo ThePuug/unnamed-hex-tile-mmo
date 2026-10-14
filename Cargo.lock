@@ -9265,8 +9265,10 @@ dependencies = [
 name = "world-viewer"
 version = "0.1.0"
 dependencies = [
+ "bevy",
  "clap",
  "common",
+ "common-bevy",
  "env_logger",
  "image",
  "log",

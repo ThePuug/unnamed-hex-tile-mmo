@@ -3,9 +3,16 @@ name = "world-viewer"
 version = "0.1.0"
 edition = "2021"
 
+# Bevy's dynamic_linking speeds up iteration builds (see common-bevy).
+[features]
+default = ["dynamic"]
+dynamic = ["bevy/dynamic_linking", "common-bevy/dynamic"]
+
 [dependencies]
 world = { path = "../world", features = ["inspect"] }
 common = { path = "../common" }
+common-bevy = { path = "../common-bevy" }
+bevy = "0.19"
 image = "0"
 rapid-qoi = "0"
 clap = { version = "4", features = ["derive"] }
