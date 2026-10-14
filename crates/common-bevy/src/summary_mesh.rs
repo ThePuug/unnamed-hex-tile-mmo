@@ -30,7 +30,7 @@ use crate::{
         mesh_region_lattice, summary_lattice,
     },
     surface::{
-        CORNER_NEIGHBOURS, centre_normal, corner_normal, corner_offsets, corner_z, fan_weights,
+        CORNER_NEIGHBOURS, centre_normal, corner_normal, corner_offsets, fan_weights, own_corner_z,
         height_y,
     },
 };
@@ -95,8 +95,8 @@ pub const CURTAIN_DEPTH_WU: f32 = 24.0;
 
 /// A cell's fan as its level draws it: the centre in XZ from the centre of
 /// the frame's tile, centre and corner heights in world Y before the
-/// level's depth bias, and the vertex normals. Corners are the mean of the
-/// three cells meeting there.
+/// level's depth bias, and the vertex normals. Corners are the cell's own
+/// by [`own_corner_z`] at the level's width.
 pub struct Fan {
     pub centre: Vec2,
     pub centre_y: f32,
@@ -136,7 +136,8 @@ pub fn cell_fan(
         let [a, b] = CORNER_NEIGHBOURS[i];
         let na = (cell.0 + a.0, cell.1 + a.1);
         let nb = (cell.0 + b.0, cell.1 + b.1);
-        let cz = corner_z([Some(z), Some(height(na.0, na.1)?), Some(height(nb.0, nb.1)?)])?;
+        let cells = [Some(z), Some(height(na.0, na.1)?), Some(height(nb.0, nb.1)?)];
+        let cz = own_corner_z(cells, lattice.scale)?;
         corner_y[i] = height_y(cz);
         corner_pos[i] = Vec3::new(centre.x + offsets[i].x, corner_y[i], centre.y + offsets[i].y);
         corner_n[i] = corner_normal([centre_3d(cell), centre_3d(na), centre_3d(nb)]);
@@ -252,7 +253,11 @@ pub fn build_summary_mesh_region(
     let mut coarse_attr: Vec<[f32; 4]> = Vec::new();
     let mut canopy_attr: Vec<[f32; 4]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
-    let mut corner_index: HashMap<(i32, i32), u32> = HashMap::new();
+    // A corner vertex is shared by the cells that hold the same height there:
+    // all of them, but where the corner rule leaves a face.
+    let mut corner_index: HashMap<((i32, i32), u32), u32> = HashMap::new();
+    let faces = crate::surface::corner_rule();
+    let span = lattice.scale as f64;
 
     let mut push = |p: Vec3, n: Vec3, target: (f32, Vec3), canopy: [f32; 4]| -> u32 {
         let (ty, tn) = target;
@@ -278,7 +283,7 @@ pub fn build_summary_mesh_region(
             let p = Vec3::new(fan.centre.x + offsets[i].x, fan.corner_y[i] - bias, fan.centre.y + offsets[i].y);
             corner_pos[i] = p;
             corner_target[i] = target(p, fan.corner_n[i])?;
-            let id = canonical_vertex_id(cell.0, cell.1, i);
+            let id = (canonical_vertex_id(cell.0, cell.1, i), fan.corner_y[i].to_bits());
             corner_idx[i] = *corner_index.entry(id).or_insert_with(|| {
                 let [a, b] = CORNER_NEIGHBOURS[i];
                 let (ca, cb) = (canopy_of((cell.0 + a.0, cell.1 + a.1)), canopy_of((cell.0 + b.0, cell.1 + b.1)));
@@ -292,6 +297,41 @@ pub fn build_summary_mesh_region(
         for i in 0..6 {
             let j = (i + 1) % 6;
             indices.extend([ci, corner_idx[j], corner_idx[i]]);
+        }
+
+        // Faces: down each edge to a neighbour whose own corners there stand
+        // lower, a wall from this cell's corners to the neighbour's.
+        if faces {
+            let z = heights[&cell];
+            for i in 0..6 {
+                let j = (i + 1) % 6;
+                let d = CORNER_NEIGHBOURS[i][0];
+                let facing = (cell.0 + d.0, cell.1 + d.1);
+                let (Some(&zd), Some(&zi), Some(&zj)) = (
+                    heights.get(&facing),
+                    heights.get(&(cell.0 + CORNER_NEIGHBOURS[i][1].0, cell.1 + CORNER_NEIGHBOURS[i][1].1)),
+                    heights.get(&(cell.0 + CORNER_NEIGHBOURS[j][0].0, cell.1 + CORNER_NEIGHBOURS[j][0].1)),
+                ) else {
+                    continue;
+                };
+                // The neighbour's own heights at this edge's two corners: it
+                // is the first sharer of corner i and the second of corner j.
+                let low_i = common::corner::meet([z as f64, zd as f64, zi as f64], span)[1] as f32;
+                let low_j = common::corner::meet([z as f64, zj as f64, zd as f64], span)[2] as f32;
+                let (yi, yj) = (height_y(low_i) - bias, height_y(low_j) - bias);
+                let (top0, top1) = (corner_pos[i], corner_pos[j]);
+                if top0.y <= yi + 1e-4 && top1.y <= yj + 1e-4 {
+                    continue;
+                }
+                let (bot0, bot1) = (Vec3::new(top0.x, yi.min(top0.y), top0.z), Vec3::new(top1.x, yj.min(top1.y), top1.z));
+                let outward = (top1 - top0).normalize_or_zero().cross(Vec3::NEG_Y).normalize_or_zero();
+                let n = if outward.length_squared() > 0.5 { outward } else { Vec3::Z };
+                let base = push(top0, n, target(top0, n)?, centre_canopy);
+                push(top1, n, target(top1, n)?, centre_canopy);
+                push(bot1, n, target(bot1, n)?, centre_canopy);
+                push(bot0, n, target(bot0, n)?, centre_canopy);
+                indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+            }
         }
 
         // Curtains under edges facing the ring: cells this mesh does not build.

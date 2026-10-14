@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod corner;
 pub mod cover;
 pub mod den;
 pub mod gathering;

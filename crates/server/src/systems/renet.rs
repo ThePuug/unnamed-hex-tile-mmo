@@ -118,7 +118,7 @@ pub fn do_presence(
 
                 // init client
                 let dt = runtime.now(&time);
-                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Init { ent, dt, calendar: runtime.calendar }});
+                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Init { ent, dt, calendar: runtime.calendar, corner_rule: common_bevy::surface::corner_rule() }});
 
                 // Send own Spawn + component states directly to connecting client
                 // AOI will handle discovering nearby entities via Changed<Loc>

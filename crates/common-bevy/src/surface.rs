@@ -7,6 +7,14 @@
 //! their heights. Adjacent cells share corners and edges, so the surface is
 //! watertight by construction; a large height difference between neighbours
 //! is a steep triangle, not a gap.
+//!
+//! Where the world's heights are the terrain ladder's ([`set_corner_rule`]),
+//! a tile's corner is instead its own value by the corner rule
+//! (`common::corner`): tiles within a step of each other meet, and tiles out
+//! of reach each keep their own height there, so a face between them is a
+//! cliff, in the mesh and in physics alike.
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
@@ -45,6 +53,36 @@ pub fn height_y(z: f32) -> f32 {
     (z + 1.0) * RISE
 }
 
+/// Whether the tiles' corners follow the corner rule: the world's heights
+/// are the terrain ladder's. One world a process, set once as it learns its
+/// world: the server from its setting, the client from the server.
+static CORNER_RULE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_corner_rule(on: bool) {
+    CORNER_RULE.store(on, Ordering::Relaxed);
+}
+
+pub fn corner_rule() -> bool {
+    CORNER_RULE.load(Ordering::Relaxed)
+}
+
+/// A cell's own height at a corner from the cells meeting there, in z
+/// units, the cell itself first, on a lattice `w` tiles wide: the corner
+/// rule's value at that width where it holds ([`corner_rule`]), else the
+/// mean of those present ([`corner_z`]). None when none is present.
+pub fn own_corner_z(cells: [Option<i32>; 3], w: i32) -> Option<f32> {
+    if !corner_rule() {
+        return corner_z(cells);
+    }
+    let h = cells.map(|c| c.map_or(f64::NAN, |z| z as f64));
+    let met = common::corner::meet(h, w as f64);
+    if met[0].is_nan() {
+        // Without the tile itself, the others meet among themselves.
+        return corner_z(cells);
+    }
+    Some(met[0] as f32)
+}
+
 /// Height of a corner from the cells meeting there, in z units: the mean of
 /// those present. A cell can be absent at the edge of the loaded tiles;
 /// physics and the tile outlines then take the mean of the rest, while the
@@ -57,9 +95,9 @@ pub fn corner_z(cells: [Option<i32>; 3]) -> Option<f32> {
     (n > 0).then(|| sum as f32 / n as f32)
 }
 
-/// The six corner heights of a cell, in z units, from a height lookup over
-/// its lattice. A corner with no present cell (the owner is absent too) is
-/// None.
+/// The six corner heights of a tile, in z units, from a height lookup over
+/// the tiles ([`own_corner_z`]). A corner with no present tile (the owner
+/// is absent too) is None.
 pub fn cell_corner_zs(
     cell: (i32, i32),
     mut height: impl FnMut(i32, i32) -> Option<i32>,
@@ -67,7 +105,7 @@ pub fn cell_corner_zs(
     let own = height(cell.0, cell.1);
     std::array::from_fn(|i| {
         let [a, b] = CORNER_NEIGHBOURS[i];
-        corner_z([own, height(cell.0 + a.0, cell.1 + a.1), height(cell.0 + b.0, cell.1 + b.1)])
+        own_corner_z([own, height(cell.0 + a.0, cell.1 + a.1), height(cell.0 + b.0, cell.1 + b.1)], 1)
     })
 }
 

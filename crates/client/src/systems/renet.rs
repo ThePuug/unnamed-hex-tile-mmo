@@ -94,7 +94,8 @@ pub fn write_do(
         match message {
 
             // insert l2r for player
-            Do { event: Event::Init { ent: ent0, dt, calendar }} => {
+            Do { event: Event::Init { ent: ent0, dt, calendar, corner_rule }} => {
+                common_bevy::surface::set_corner_rule(corner_rule);
                 // Create local player entity with markers
                 // Health/Endurance will be inserted by Incremental events from server
                 let ent = commands.spawn((
@@ -108,7 +109,7 @@ pub fn write_do(
                 l2r.insert(ent, ent0);
                 buffers.extend_one((ent, InputQueue {
                     queue: [Event::Input { ent, key_bits: default(), dt: 0, seq: 1 }].into(), ..default() }));
-                do_writer.write(Do { event: Event::Init { ent, dt, calendar }});
+                do_writer.write(Do { event: Event::Init { ent, dt, calendar, corner_rule }});
             }
 
             // The client now sees the world as an actor it does not control:
