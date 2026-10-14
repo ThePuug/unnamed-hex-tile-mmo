@@ -50,6 +50,16 @@
 //! that ground and that cut, rounded to whole steps. Nothing makes it
 //! walkable: a step past walkable is a face.
 //!
+//! **Prediction is apart from drawing.** A level hands its shape to the
+//! level below as its prediction surface ([`handed_down`]): sloped fans
+//! through its cells, a centre the cell's value, a corner the mean of the
+//! three cells sharing it, linear between, nothing clamped, met or rounded.
+//! Everything in the ladder that reads a surface reads that one: the dry
+//! ground, water's cut handed down, every layer, lines, routing, floors.
+//! The corner rule, faces as walls, is the drawing's alone: meshes, physics
+//! and summaries draw a level's cells by it (`common::corner`), and nothing
+//! here reads it.
+//!
 //! Every value is a function of its position: what a level keeps is filled
 //! as requests reach it, and never read in place of a recomputation that
 //! would differ.
@@ -138,7 +148,7 @@ pub enum Stage {
     Water = 4,
     /// Heights rounded.
     Build = 5,
-    /// Corners met and drawn.
+    /// The prediction surface's corners.
     Corners = 6,
 }
 
@@ -269,14 +279,14 @@ pub struct Level {
     pub wdepth: Paged<f64>,
     pub z: Paged<f64>,
     /// Each cell's dry height: its ground before any cut, rounded. The level
-    /// below predicts its ground from these, drawn by the corner rule, and
-    /// takes the cut as handed down, so water never raises a cell: the meet
-    /// rule is not linear, and a cut drawn through it lifts a valley's rims.
+    /// below predicts its ground from these and takes the cut as handed
+    /// down.
     pub zd: Paged<f64>,
-    pub a3: Paged<[f64; 3]>,
-    pub b3: Paged<[f64; 3]>,
+    /// Each cell's six corners on the prediction surface of its heights.
     pub cc: Paged<[f64; 6]>,
     // Each vertex: a cell's centre, its corner A and its corner B.
+    /// The prediction surface of the heights at each vertex: a centre's
+    /// own, a corner the mean of the cells sharing it.
     pub elev: Paged<f64>,
     pub psurf: Paged<f64>,
     pub gelev: Paged<f64>,
@@ -316,9 +326,11 @@ pub struct Level {
     pub watered: Paged<bool>,
     pub built: Paged<bool>,
     pub routed: Paged<bool>,
+    /// Whether each cell's own two corners are final: every cell sharing
+    /// them built.
     pub corners: Paged<bool>,
-    /// Whether each cell's six corner values are final: its own corners met,
-    /// and the four its neighbours own, where those exist.
+    /// Whether each cell's six corner values are final: its own two, and
+    /// the four its neighbours own, where those exist.
     pub finished: Paged<bool>,
     /// How many levels up each pass's deform cell lies.
     pub deform: [u32; 3],
@@ -358,8 +370,6 @@ impl Level {
             wdepth: nan(cells),
             z: nan(cells),
             zd: nan(cells),
-            a3: Paged::new([f64::NAN; 3], cells),
-            b3: Paged::new([f64::NAN; 3], cells),
             cc: Paged::new([f64::NAN; 6], cells),
             elev: nan(3 * cells),
             psurf: nan(3 * cells),
@@ -536,36 +546,35 @@ impl Level {
         Mask::new(all)
     }
 
-    /// The meet values at a cell's own corners A and B, from the heights the
-    /// cells sharing each hold, NaN for a missing cell; each ready where every
-    /// cell there that exists has its height.
-    fn meet_at(&self, i: i64, j: i64, of: &Paged<f64>, done: &Paged<bool>) -> ([f64; 3], [f64; 3], bool, bool) {
-        let w = self.w as f64;
+    /// The prediction surface's values at a cell's own corners A and B: the
+    /// mean of what the cells sharing each hold; each ready where every cell
+    /// there that exists holds its value.
+    fn corner_means(&self, i: i64, j: i64, of: &Paged<f64>, done: &Paged<bool>) -> (f64, f64, bool, bool) {
         let h = |a: i64, b: i64| self.height(a, b, of, done);
         let present = |a: i64, b: i64| self.idx(a, b).is_some_and(|c| self.exists[c]);
         let ready = |cells: [(i64, i64); 3]| cells.iter().all(|&(x, y)| !present(x, y) || !h(x, y).is_nan());
+        let mean = |cells: [(i64, i64); 3]| {
+            let v: Vec<f64> = cells.iter().map(|&(x, y)| h(x, y)).filter(|v| !v.is_nan()).collect();
+            v.iter().sum::<f64>() / v.len() as f64
+        };
         let (ca, cb) = ([(i, j), (i + 1, j), (i, j + 1)], [(i, j), (i + 1, j - 1), (i + 1, j)]);
-        (meet(ca.map(|(x, y)| h(x, y)), w), meet(cb.map(|(x, y)| h(x, y)), w), ready(ca), ready(cb))
+        (mean(ca), mean(cb), ready(ca), ready(cb))
     }
 
-    /// A cell's six corner values: its own A and B, and the four its
-    /// neighbours own; its height where a corner has none.
+    /// A cell's six corner values on the prediction surface of its heights:
+    /// its own A and B, and the four its neighbours own; its height where a
+    /// corner has none.
     fn corner_values(&self, i: i64, j: i64) -> [f64; 6] {
-        let get = |a: i64, b: i64, f: &dyn Fn(usize) -> f64| self.idx(a, b).map_or(f64::NAN, f);
+        let nn = self.cap();
+        let get = |a: i64, b: i64, t: usize| self.idx(a, b).map_or(f64::NAN, |c| self.elev[t * nn + c]);
         let z = self.idx(i, j).map_or(f64::NAN, |c| self.z[c]);
-        let cc = [
-            get(i, j, &|c| self.b3[c][0]),
-            get(i, j, &|c| self.a3[c][0]),
-            get(i - 1, j + 1, &|c| self.b3[c][1]),
-            get(i - 1, j, &|c| self.a3[c][1]),
-            get(i - 1, j, &|c| self.b3[c][2]),
-            get(i, j - 1, &|c| self.a3[c][2]),
-        ];
+        let cc = [get(i, j, 2), get(i, j, 1), get(i - 1, j + 1, 2), get(i - 1, j, 1), get(i - 1, j, 2), get(i, j - 1, 1)];
         cc.map(|v| if v.is_nan() { z } else { v })
     }
 
-    /// The level's drawn surface at a position in tiles: the fan triangle of
-    /// the cell under it, from the cell's centre to two of its corners.
+    /// The level's prediction surface at a position in tiles: the fan
+    /// triangle of the cell under it, from the cell's centre to two of its
+    /// corners.
     pub fn surface_at(&self, q: f64, r: f64) -> f64 {
         let (i, j) = cube_round(q / self.w as f64, r / self.w as f64);
         let Some(c) = self.idx(i, j) else { return f64::NAN };
@@ -573,7 +582,7 @@ impl Level {
     }
 }
 
-/// A drawn surface at a position in tiles over cell (i, j) of a level `w`
+/// A surface of fans at a position in tiles over cell (i, j) of a level `w`
 /// wide, its height `z` and six corner values `cc`: the fan triangle under
 /// it, from the cell's centre to two of its corners.
 pub(crate) fn fan_at(w: i64, i: i64, j: i64, z: f64, cc: &[f64; 6], q: f64, r: f64) -> f64 {
@@ -745,14 +754,14 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 lv.water[c] = f64::NAN;
             }
         }
-        // The cut moved every height, so every corner is met again.
+        // The cut moved every height, so every corner is made again.
         lv.corners.fill(false);
         lv.finished.fill(false);
         corners_over(lv, &all);
     }
 
-    /// Each requested cell's level k routed and built, and drawn: its
-    /// corners, which its neighbours' heights decide.
+    /// Each requested cell's level k routed and built, and its corners,
+    /// which its neighbours' heights decide.
     pub fn request(&mut self, k: usize, cells: &[(i64, i64)]) {
         let lv = &self.levels[k];
         // A request for cells already finished reads what is kept.
@@ -761,12 +770,12 @@ impl<'g, G: Ground> Ladder<'g, G> {
         }
         let mask = Mask::new(cells.iter().filter_map(|&(i, j)| lv.idx(i, j)).filter(|&c| lv.exists[c]));
         self.ensure_routed(k, &mask);
-        self.drawn(k, &mask);
+        self.cornered(k, &mask);
     }
 
-    /// Level k built two rings past a mask and its corners drawn one ring
-    /// past it, so every corner of every cell of the mask is drawn.
-    fn drawn(&mut self, k: usize, mask: &Mask) {
+    /// Level k built two rings past a mask and its corners one ring past
+    /// it, so every corner of every cell of the mask is final.
+    fn cornered(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
         let (one, two) = (lv.dilate(mask, 1), lv.dilate(mask, 2));
         self.ensure_built(k, &two);
@@ -800,7 +809,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
     }
 
     /// The level above under a mask and a ring of its cells: read, routed,
-    /// built and drawn.
+    /// built and cornered.
     fn parent_over(&mut self, k: usize, mask: &Mask) {
         let (lv, par) = (&self.levels[k], &self.levels[k - 1]);
         let under = Mask::new(mask.iter().filter_map(|c| {
@@ -812,7 +821,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         self.read_layers(k - 1, &pmask);
         if k - 1 > 0 {
             self.ensure_routed(k - 1, &pmask);
-            self.drawn(k - 1, &pmask);
+            self.cornered(k - 1, &pmask);
         }
     }
 
@@ -961,46 +970,19 @@ pub fn handed_down(i: i64, j: i64, at: impl Fn(i64, i64) -> f64) -> f64 {
     }
 }
 
-/// A child cell's prediction from the level above's dry surface, drawn by
-/// the corner rule, and each layer's own value predicted from the level
-/// above's, water's cut last: at the parent's centre, a fan's centroid, or a
-/// corner. A layer's corner is the mean of the cells sharing it; the
-/// surface's, the median of their meet values there.
+/// A child cell's prediction: the level above's dry ground, and each
+/// layer's own value, water's cut last, each read off the level above's
+/// prediction surface ([`handed_down`]).
 pub(crate) fn predict(par: &impl Above, i: i64, j: i64) -> (f64, Vec<f64>) {
-    let (a, b, oi, oj) = parent_of(i, j);
-    let zc = par.dry(a, b);
-    let dry = |x: i64, y: i64| par.dry(x, y);
-    // The meet values at the parent's corner k, and the parent's own there.
-    let met = |k: usize| meet(corner_cells(a, b, k).map(|(x, y)| dry(x, y)), par.width() as f64);
-    let own = |k: usize| {
-        let at = corner_cells(a, b, k).iter().position(|&x| x == (a, b)).expect("the parent shares its corner");
-        let v = met(k)[at];
-        if v.is_nan() { zc } else { v }
-    };
-    let median = |v: [f64; 3]| -> f64 {
-        let mut s: Vec<f64> = v.into_iter().filter(|x| !x.is_nan()).collect();
-        s.sort_by(f64::total_cmp);
-        let m = s.len();
-        if m % 2 == 1 { s[m / 2] } else { (s[m / 2 - 1] + s[m / 2]) / 2.0 }
-    };
-    let drawn = match (oi, oj) {
-        (0, 0) => zc,
-        (1, 1) => median(met(1)),
-        (2, -1) => median(met(0)),
-        _ => {
-            let (ca, cb) = axis_fan(oi, oj).expect("an axis child");
-            (zc + own(ca) + own(cb)) / 3.0
-        }
-    };
+    let dry = handed_down(i, j, |x, y| par.dry(x, y));
     let layers = (0..=par.layer_count()).map(|l| handed_down(i, j, |x, y| par.field(l, x, y))).collect();
-    (drawn, layers)
+    (dry, layers)
 }
 
-/// What a level hands the level below it: its width, each built cell's dry
-/// height, and each layer's value at a cell, water's cut after the layers;
-/// NaN where it holds none.
+/// What a level hands the level below it: each built cell's dry height, and
+/// each layer's value at a cell, water's cut after the layers; NaN where it
+/// holds none.
 pub(crate) trait Above {
-    fn width(&self) -> i64;
     fn layer_count(&self) -> usize;
     fn dry(&self, i: i64, j: i64) -> f64;
     /// Layer `l`'s value at cell (i, j); `layer_count()` is water's cut.
@@ -1008,10 +990,6 @@ pub(crate) trait Above {
 }
 
 impl Above for Level {
-    fn width(&self) -> i64 {
-        self.w
-    }
-
     fn layer_count(&self) -> usize {
         self.layers.len()
     }
@@ -1026,13 +1004,13 @@ impl Above for Level {
     }
 }
 
-/// Corner meet values and routing heights for every cell of a mask whose
-/// sharers are all built, and the six corner values of each cell, and of
-/// every cell outside the mask reading a corner met here, so a cell's
-/// corners never wait on a request that names it.
+/// The prediction surface of the heights at the corners of every cell of a
+/// mask whose sharers are all built, and the six corner values of each
+/// cell, and of every cell outside the mask reading a corner made here, so
+/// a cell's corners never wait on a request that names it.
 fn corners_over(lv: &mut Level, mask: &Mask) {
     let nn = lv.cap();
-    // Every cell of the mask, and every cell reading a corner met here.
+    // Every cell of the mask, and every cell reading a corner made here.
     let mut draw: Vec<usize> = Vec::new();
     for c in mask.iter() {
         if !lv.exists[c] || !lv.built[c] {
@@ -1043,15 +1021,13 @@ fn corners_over(lv: &mut Level, mask: &Mask) {
             continue;
         }
         let (i, j) = lv.ij(c);
-        let (a, b, ready_a, ready_b) = lv.meet_at(i, j, &lv.z, &lv.built);
+        let (a, b, ready_a, ready_b) = lv.corner_means(i, j, &lv.z, &lv.built);
         lv.elev[c] = lv.z[c];
         if ready_a {
-            lv.a3[c] = a;
-            lv.elev[nn + c] = lowest(a);
+            lv.elev[nn + c] = a;
         }
         if ready_b {
-            lv.b3[c] = b;
-            lv.elev[2 * nn + c] = lowest(b);
+            lv.elev[2 * nn + c] = b;
         }
         lv.corners[c] = ready_a && ready_b;
         if ready_a || ready_b {
@@ -1071,9 +1047,9 @@ fn corners_over(lv: &mut Level, mask: &Mask) {
     }
 }
 
-/// The level above's surface at every vertex of a mask, and the ground at
-/// each: a centre's own, a corner the lowest its sharers reach by the meet
-/// rule.
+/// The level above's prediction surface at every vertex of a mask, and the
+/// ground's at each: a centre's own, a corner the mean of the cells sharing
+/// it.
 fn ground_fields(lv: &mut Level, par: &Level, mask: &Mask) {
     let nn = lv.cap();
     for c in mask.iter() {
@@ -1090,12 +1066,12 @@ fn ground_fields(lv: &mut Level, par: &Level, mask: &Mask) {
         }
         if lv.supplied[c] {
             lv.gelev[c] = lv.ground[c];
-            let (a, b, ready_a, ready_b) = lv.meet_at(i, j, &lv.ground, &lv.supplied);
+            let (a, b, ready_a, ready_b) = lv.corner_means(i, j, &lv.ground, &lv.supplied);
             if ready_a {
-                lv.gelev[nn + c] = lowest(a);
+                lv.gelev[nn + c] = a;
             }
             if ready_b {
-                lv.gelev[2 * nn + c] = lowest(b);
+                lv.gelev[2 * nn + c] = b;
             }
             lv.uelev[c] = lv.ground[c] - lv.wpred[c];
             for t in 1..3u8 {
@@ -1112,9 +1088,4 @@ fn ground_fields(lv: &mut Level, par: &Level, mask: &Mask) {
             }
         }
     }
-}
-
-/// The lowest of a corner's values, where water stands at the foot of a face.
-fn lowest(v: [f64; 3]) -> f64 {
-    v.iter().copied().filter(|x| !x.is_nan()).fold(f64::INFINITY, f64::min)
 }

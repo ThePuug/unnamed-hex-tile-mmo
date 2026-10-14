@@ -15,7 +15,8 @@ use std::time::Instant;
 
 use world::events::ladder_ground::{StackGround, AREA_PAD};
 use world::events::Composite;
-use world::ladder::geom::{cube_round, meet};
+use common::corner::meet;
+use world::ladder::geom::cube_round;
 use world::ladder::terrain::{Cell, Terrain};
 use world::ladder::{Bounds, Ground, Ladder, Level, Params, STAGES};
 use world::WORLD_SEED;

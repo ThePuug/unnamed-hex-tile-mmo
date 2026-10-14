@@ -1,6 +1,6 @@
 //! The ladder's lattice: each level's cells on the world's axial tiles, `w`
 //! tiles apart, nested aperture-nine in one orientation; a level's vertices,
-//! its cells' centres and corners; the corner rule; and the drawn surface.
+//! its cells' centres and corners.
 
 use crate::SQRT_3;
 
@@ -118,7 +118,6 @@ pub fn vertex_cells(t: u8, i: i64, j: i64) -> ([(i64, i64); 3], usize) {
     }
 }
 
-pub use common::corner::meet;
 
 /// The nearest cell to fractional cell coordinates.
 pub fn cube_round(u: f64, v: f64) -> (i64, i64) {
