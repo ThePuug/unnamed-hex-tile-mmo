@@ -324,10 +324,9 @@ pub fn area_bounds(centre: (i32, i32), radius: i64, widths: &[i64]) -> Vec<Bound
         .collect()
 }
 
-/// Each level's bounds: the top's, over [`TOP_REACH`] either way of the
-/// site, and every level below over the box of the top's land the site
-/// claims, nearest it of every site, and a margin for what its passes read
-/// past it.
+/// Each level's bounds: the top's, and every level below over the box of
+/// the top's land that is the site's (`continents::land_site`), and a
+/// margin for what its passes read past it.
 pub fn landmass_bounds(top: &Level, seed: u64, id: SiteId) -> Vec<Bounds> {
     let w = top.w;
     let land: Vec<(i64, i64)> = (0..top.cap())
