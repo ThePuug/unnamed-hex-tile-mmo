@@ -326,7 +326,8 @@ pub fn area_bounds(centre: (i32, i32), radius: i64, widths: &[i64]) -> Vec<Bound
 
 /// Each level's bounds: the top's, and every level below over the box of
 /// the top's land that is the site's (`continents::land_site`), and a
-/// margin for what its passes read past it.
+/// margin for what its passes read past it, never past the level above,
+/// which holds every cell's parent.
 pub fn landmass_bounds(top: &Level, seed: u64, id: SiteId) -> Vec<Bounds> {
     let w = top.w;
     let land: Vec<(i64, i64)> = (0..top.cap())
@@ -344,7 +345,12 @@ pub fn landmass_bounds(top: &Level, seed: u64, id: SiteId) -> Vec<Bounds> {
     for lw in [243i64, 81, 27, 9, 3, 1] {
         let m = w / lw;
         let pad = 40;
-        bounds.push((lw, (ilo * m - pad, jlo * m - pad), ((ihi + 1) * m + pad, (jhi + 1) * m + pad)));
+        // A child lies at most one cell back and two on of three times its
+        // parent's index, so these are the cells whose parents are all held.
+        let (_, plo, phi) = *bounds.last().expect("the top");
+        let lo = ((ilo * m - pad).max(3 * plo.0 + 2), (jlo * m - pad).max(3 * plo.1 + 2));
+        let hi = (((ihi + 1) * m + pad).min(3 * phi.0 - 3), ((jhi + 1) * m + pad).min(3 * phi.1 - 3));
+        bounds.push((lw, lo, hi));
     }
     bounds
 }
