@@ -77,19 +77,15 @@ pub fn pass_summary_regions(
     mut writer: MessageWriter<Do>,
     mut query: Query<(Entity, &Loc, &Heading, &mut VisibleSummaryCache)>,
     summary_cache: Res<SummaryCache>,
-    registry: Res<EventRegistry>,
     timings: Res<crate::plugins::metrics::SystemTimings>,
 ) {
     let _t = timings.scope("summary_pass");
-    // Where the ground is the ladder's, its summaries are its cells, which
-    // no client reads from tiles: those are sent from the tiles' band out,
-    // as the finer levels' morph targets too.
-    let laddered = registry.is_laddered();
+    // A summary is the ladder's cell, which no client reads from tiles: they
+    // are sent from the tiles' band out, as the finer levels' morph targets
+    // too.
     let regions = |bands: &[common_bevy::summary::Band], wx: f32, wz: f32, rings: u32| -> HashSet<MeshRegionKey> {
         let mut set = visible_lod_regions(bands, wx, wz, common_bevy::chunk::FIXED_STREAM_APOTHEM_WU, rings);
-        if laddered {
-            set.extend(visible_lod_regions(bands, wx, wz, 0.0, rings).into_iter().filter(|rk| rk.r >= LOD_LEVELS[1]));
-        }
+        set.extend(visible_lod_regions(bands, wx, wz, 0.0, rings).into_iter().filter(|rk| rk.r >= LOD_LEVELS[1]));
         set
     };
     let region_lat = mesh_region_lattice();

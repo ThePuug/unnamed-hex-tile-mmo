@@ -8,13 +8,10 @@
 //! watertight by construction; a large height difference between neighbours
 //! is a steep triangle, not a gap.
 //!
-//! Where the world's heights are the terrain ladder's ([`set_corner_rule`]),
-//! a tile's corner is instead its own value by the corner rule
-//! (`common::corner`): tiles within a step of each other meet, and tiles out
-//! of reach each keep their own height there, so a face between them is a
-//! cliff, in the mesh and in physics alike.
-
-use std::sync::atomic::{AtomicBool, Ordering};
+//! A cell's corner is its own value by the corner rule (`common::corner`):
+//! cells within a walkable span of each other meet, and cells out of reach
+//! each keep their own height there, so a face between them is a cliff, in
+//! the mesh and in physics alike.
 
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
@@ -53,27 +50,11 @@ pub fn height_y(z: f32) -> f32 {
     (z + 1.0) * RISE
 }
 
-/// Whether the tiles' corners follow the corner rule: the world's heights
-/// are the terrain ladder's. One world a process, set once as it learns its
-/// world: the server from its setting, the client from the server.
-static CORNER_RULE: AtomicBool = AtomicBool::new(false);
-
-pub fn set_corner_rule(on: bool) {
-    CORNER_RULE.store(on, Ordering::Relaxed);
-}
-
-pub fn corner_rule() -> bool {
-    CORNER_RULE.load(Ordering::Relaxed)
-}
-
 /// A cell's own height at a corner from the cells meeting there, in z
 /// units, the cell itself first, on a lattice `w` tiles wide: the corner
-/// rule's value at that width where it holds ([`corner_rule`]), else the
-/// mean of those present ([`corner_z`]). None when none is present.
+/// rule's value at that width. Without the cell itself, the mean of those
+/// present ([`corner_z`]); None when none is present.
 pub fn own_corner_z(cells: [Option<i32>; 3], w: i32) -> Option<f32> {
-    if !corner_rule() {
-        return corner_z(cells);
-    }
     let h = cells.map(|c| c.map_or(f64::NAN, |z| z as f64));
     let met = common::corner::meet(h, w as f64);
     if met[0].is_nan() {

@@ -256,7 +256,6 @@ pub fn build_summary_mesh_region(
     // A corner vertex is shared by the cells that hold the same height there:
     // all of them, but where the corner rule leaves a face.
     let mut corner_index: HashMap<((i32, i32), u32), u32> = HashMap::new();
-    let faces = crate::surface::corner_rule();
     let span = lattice.scale as f64;
 
     let mut push = |p: Vec3, n: Vec3, target: (f32, Vec3), canopy: [f32; 4]| -> u32 {
@@ -301,7 +300,7 @@ pub fn build_summary_mesh_region(
 
         // Faces: down each edge to a neighbour whose own corners there stand
         // lower, a wall from this cell's corners to the neighbour's.
-        if faces {
+        {
             let z = heights[&cell];
             for i in 0..6 {
                 let j = (i + 1) % 6;

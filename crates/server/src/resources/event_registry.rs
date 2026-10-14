@@ -11,19 +11,8 @@ pub struct EventRegistry {
 }
 
 impl EventRegistry {
-    /// The world's stack; with `ladder_at`, its heights and water from the
-    /// terrain ladder over the landmass around that tile.
-    pub fn new(seed: u64, ladder_at: Option<(i32, i32)>) -> Self {
-        let composite = match ladder_at {
-            Some(centre) => Composite::standard_ladder(seed, centre),
-            None => Composite::standard(seed),
-        };
-        Self { composite: std::sync::Arc::new(composite) }
-    }
-
-    /// Whether the world's heights are the terrain ladder's.
-    pub fn is_laddered(&self) -> bool {
-        self.composite.is_laddered()
+    pub fn new(seed: u64) -> Self {
+        Self { composite: std::sync::Arc::new(Composite::standard(seed)) }
     }
 
     /// The tiles of `coords` made ready together, as a chunk reads them.

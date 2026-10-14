@@ -31,10 +31,9 @@ pub enum Event {
         tiles: ArrayVec<[(i32, EntityType, Option<i32>); 272]>,
     },
     /// Server → Client: the client's actor, the game clock `dt` as it was
-    /// sent, the world's calendar, which the date, the sky and the weather
-    /// are read from (`systems::Calendar`), and whether the tiles' corners
-    /// follow the corner rule (`surface::set_corner_rule`).
-    Init { ent: Entity, dt: Moment, calendar: crate::systems::Calendar, corner_rule: bool },
+    /// sent, and the world's calendar, which the date, the sky and the
+    /// weather are read from (`systems::Calendar`).
+    Init { ent: Entity, dt: Moment, calendar: crate::systems::Calendar },
     /// Client → Server: change the world's calendar for everyone. An admin
     /// request, as ungated on the wire as `Teleport` (issue #21).
     ChangeCalendar { change: crate::systems::CalendarChange },
