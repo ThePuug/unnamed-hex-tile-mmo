@@ -507,6 +507,11 @@ impl Outlines {
             }
         }
         for outline in plates.values_mut() {
+            // One order whatever order the edges came in: a reader sums over
+            // them, and a float sum's order is part of its value.
+            outline.edges.sort_by(|a, b| {
+                a.neighbour.cmp(&b.neighbour).then_with(|| a.line.iter().zip(&b.line).map(|(x, y)| x.total_cmp(y)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal))
+            });
             let mut all: Vec<Segment> = outline.edges.iter().flat_map(|e| e.segments.iter().copied()).collect();
             let nodes: Vec<(NodeKey, NodeKey)> = all
                 .iter()
