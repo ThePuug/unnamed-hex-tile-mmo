@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use world::events::ladder_ground::{StackGround, AREA_PAD};
 use world::events::Composite;
-use world::ladder::geom::cube_round;
+use world::ladder::geom::{cube_round, meet};
 use world::ladder::terrain::{Cell, Terrain};
 use world::ladder::{Bounds, Ground, Ladder, Level, Params, STAGES};
 use world::WORLD_SEED;
@@ -325,6 +325,59 @@ fn floating<G: Ground>(ladder: &Ladder<G>) -> String {
     out
 }
 
+/// Faces in each level's drawn surface over its region: of the edges
+/// between two built cells, those where the corner rule leaves the two apart
+/// at either end, and of the corners, those it splits.
+fn faces<G: Ground>(ladder: &Ladder<G>) -> String {
+    let mut out = String::from("faces in the drawn surface: w: edges with a face of edges; corners split of corners
+");
+    for lv in &ladder.levels[1..] {
+        let h = region(lv.w) / lv.w;
+        let (ci, cj) = haven_cell(lv.w);
+        let z = |i: i64, j: i64| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built[c]).map_or(f64::NAN, |c| lv.z[c]);
+        let met = |cells: [(i64, i64); 3]| meet(cells.map(|(i, j)| z(i, j)), lv.w as f64);
+        // A corner's cells, and whether two of them part there.
+        let apart = |cells: [(i64, i64); 3], x: usize, y: usize| {
+            let m = met(cells);
+            !m[x].is_nan() && !m[y].is_nan() && m[x] != m[y]
+        };
+        let (mut edges, mut faced, mut corners, mut split) = (0u64, 0u64, 0u64, 0u64);
+        for a in -h..=h {
+            for b in -h..=h {
+                let (i, j) = (ci + a, cj + b);
+                if z(i, j).is_nan() {
+                    continue;
+                }
+                let ca = [(i, j), (i + 1, j), (i, j + 1)];
+                let cb = [(i, j), (i + 1, j - 1), (i + 1, j)];
+                for cells in [ca, cb] {
+                    if cells.iter().all(|&(x, y)| !z(x, y).is_nan()) {
+                        corners += 1;
+                        let m = met(cells);
+                        split += (m[0] != m[1] || m[1] != m[2]) as u64;
+                    }
+                }
+                // Each edge forward of the cell, by the corners at its ends.
+                let ends = [
+                    ((i + 1, j), (ca, 0, 1), (cb, 0, 2)),
+                    ((i, j + 1), (ca, 0, 2), ([(i - 1, j + 1), (i, j), (i, j + 1)], 1, 2)),
+                    ((i + 1, j - 1), (cb, 0, 1), ([(i, j - 1), (i + 1, j - 1), (i, j)], 2, 1)),
+                ];
+                for ((x, y), (c0, x0, y0), (c1, x1, y1)) in ends {
+                    if z(x, y).is_nan() {
+                        continue;
+                    }
+                    edges += 1;
+                    faced += (apart(c0, x0, y0) || apart(c1, x1, y1)) as u64;
+                }
+            }
+        }
+        out.push_str(&format!("   {}: {faced} of {edges}; {split} of {corners}
+", lv.w));
+    }
+    out
+}
+
 fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
     let started = Instant::now();
     status("building the top");
@@ -352,11 +405,12 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
             log.push_str(&format!("stats w={} lines={:?} route={:?} cost={:?}\n", lv.w, ladder.line_stats[k], ladder.route_stats[k], lv.cost));
         }
         log.push_str(&timing(&ladder.levels, &ladder.timing));
-        for w in [27, 9, 3, 1] {
+        for w in [243, 81, 27, 9, 3, 1] {
             status(&format!("checking {w} against every river"));
             log.push_str(&truth(&ladder, w));
         }
         log.push_str(&floating(&ladder));
+        log.push_str(&faces(&ladder));
     }
     if std::env::var("LADDER_EXACT").is_ok_and(|v| v == "1") {
         exact(ground, &terrain, p, log);
