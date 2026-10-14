@@ -885,9 +885,17 @@ impl Composite {
     /// Thread-safe: no global lock. Per-cell deform locks serialize cold cells.
     pub fn tile_at(&self, q: i32, r: i32) -> TileView {
         let mut view = self.stack_tile(q, r);
-        if let Some(cell) = self.ladders.as_ref().and_then(|ladders| ladders.tile(q, r)) {
-            view.elevation = cell.z;
-            view.water = cell.water;
+        if let Some(ladders) = &self.ladders {
+            match ladders.tile(q, r) {
+                Some(cell) => {
+                    view.elevation = cell.z;
+                    view.water = cell.water;
+                }
+                // Every land tile is one site's, inside that site's top: one
+                // that is not is a seam.
+                None if view.elevation >= 0.0 => ladders.landless(q, r),
+                None => {}
+            }
         }
         view
     }

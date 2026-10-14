@@ -19,7 +19,7 @@ use crate::continents::{self, SiteId};
 use crate::ladder::geom::{cube_round, descendants};
 use crate::ladder::terrain::{Cell, Terrain};
 use crate::ladder::{Bounds, Ground, Ladder, Level, Params};
-use crate::{hex_to_world, world_to_hex};
+use crate::hex_to_world;
 
 /// A cell's centre and the midpoints of its six edges, as tile offsets.
 fn samples(w: i64) -> Vec<(i64, i64)> {
@@ -128,18 +128,18 @@ impl Ground for StackGround {
     }
 }
 
-/// How far either way of its site the ladder's top reaches, in tiles: a
-/// landmass lies within it (`terrain-generation.md`, "Continents").
-pub const TOP_REACH: i64 = 142_884;
+/// How many of the top's cells of sea a site's top holds past every tile
+/// its land may reach, the outlet its routing drains to.
+pub const SEA_MARGIN: i64 = 2;
 
 /// How far past an area a level below the top reaches, in its own cells:
 /// room for the deform cells and rings its passes read, and the reads of
 /// the level below it.
 pub const AREA_PAD: i64 = 240;
 
-/// The ladder of a continent's site: the top over [`TOP_REACH`] either way
-/// of the site, built whole, and every level below over the box of the land
-/// the site claims, each built where it is read.
+/// The ladder of a continent's site: the top over its land and a margin of
+/// sea ([`top_bounds`]), built whole, and every level below over the box of
+/// the top's land, each built where it is read.
 pub struct Laddered {
     terrain: Terrain<'static, StackGround>,
 }
@@ -149,14 +149,12 @@ impl Laddered {
         Laddered::with(seed, id, Params::default())
     }
 
-    /// The ladder of a site under parameters `p`.
+    /// The ladder of a site with land under parameters `p`.
     pub fn with(seed: u64, id: SiteId, p: Params) -> Self {
-        let site = continents::site(id, seed);
-        let centre = world_to_hex(site.wx, site.wy);
-        let half = (TOP_REACH + 3 * 729) as f64;
+        let top_bounds = top_bounds(seed, id).expect("a site with land");
+        let (centre, half) = outlines_box(&top_bounds);
         // The ground lives as long as the process: the ladder reads it.
         let ground: &'static StackGround = Box::leak(Box::new(StackGround::new(seed, centre, half, 2)));
-        let top_bounds = top_bounds(centre);
         let top = Ladder::top(ground, top_bounds, p);
         let bounds = landmass_bounds(&top, seed, id);
         Laddered { terrain: Terrain::from_ladder(Ladder::with_top(ground, &bounds, p, Some(top))) }
@@ -186,27 +184,44 @@ impl Laddered {
 }
 
 /// Every continent's ladder, each built the first time one of its tiles or
-/// cells is read: a tile's is its nearest site's
-/// (`continents::nearest_site`), a cell's that of the tile at its centre.
+/// cells is read: a tile's is the site whose land it may be
+/// (`continents::land_site`), a cell's that of the tile at its centre. A
+/// tile no site's land reaches is open sea, and no ladder's.
 pub struct Ladders {
     seed: u64,
     p: Params,
     sites: DashMap<SiteId, std::sync::Arc<std::sync::OnceLock<Laddered>>>,
+    /// Land tiles read that no site's ladder holds.
+    landless: std::sync::atomic::AtomicU64,
 }
 
 impl Ladders {
     pub fn new(seed: u64, p: Params) -> Self {
-        Ladders { seed, p, sites: DashMap::new() }
+        Ladders { seed, p, sites: DashMap::new(), landless: std::sync::atomic::AtomicU64::new(0) }
     }
 
     pub fn params(&self) -> Params {
         self.p
     }
 
-    /// The site whose ladder holds the tile at (q, r).
-    pub fn site_of(&self, q: i32, r: i32) -> SiteId {
+    /// A land tile no site's ladder holds, counted and logged: a seam, an
+    /// error. The log thins to the counts that are powers of two.
+    pub fn landless(&self, q: i32, r: i32) {
+        let n = self.landless.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n.is_power_of_two() {
+            tracing::error!("land tile ({q}, {r}) lies in no site's top: {n} such tiles read");
+        }
+    }
+
+    /// How many land tiles read lay in no site's top.
+    pub fn landless_count(&self) -> u64 {
+        self.landless.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The site whose ladder holds the tile at (q, r); none over open sea.
+    pub fn site_of(&self, q: i32, r: i32) -> Option<SiteId> {
         let (wx, wy) = hex_to_world(q, r);
-        continents::nearest_site(wx, wy, self.seed)
+        continents::land_site(wx, wy, self.seed)
     }
 
     /// `f` over a site's ladder, built first where it is not yet.
@@ -215,16 +230,18 @@ impl Ladders {
         f(slot.get_or_init(|| Laddered::with(self.seed, id, self.p)))
     }
 
-    /// The ladder's tile at (q, r), where its site's ladder reaches it.
+    /// The ladder's tile at (q, r), where a site's ladder holds it.
     pub fn tile(&self, q: i32, r: i32) -> Option<Cell> {
-        self.with(self.site_of(q, r), |l| l.tile(q, r))
+        self.with(self.site_of(q, r)?, |l| l.tile(q, r))
     }
 
     /// The tiles of `coords` computed together, a site at a time.
     pub fn warm(&self, coords: &[(i32, i32)]) {
         let mut by: std::collections::HashMap<SiteId, Vec<(i32, i32)>> = std::collections::HashMap::new();
         for &(q, r) in coords {
-            by.entry(self.site_of(q, r)).or_default().push((q, r));
+            if let Some(id) = self.site_of(q, r) {
+                by.entry(id).or_default().push((q, r));
+            }
         }
         for (id, tiles) in by {
             self.with(id, |l| l.warm(&tiles));
@@ -236,7 +253,9 @@ impl Ladders {
     pub fn cells(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<Cell>> {
         let mut by: std::collections::HashMap<SiteId, Vec<usize>> = std::collections::HashMap::new();
         for (x, &(i, j)) in cells.iter().enumerate() {
-            by.entry(self.site_of((i * w) as i32, (j * w) as i32)).or_default().push(x);
+            if let Some(id) = self.site_of((i * w) as i32, (j * w) as i32) {
+                by.entry(id).or_default().push(x);
+            }
         }
         let mut out = vec![None; cells.len()];
         for (id, at) in by {
@@ -256,12 +275,40 @@ impl Ladders {
     }
 }
 
-/// The top's bounds: [`TOP_REACH`] either way of a site.
-pub fn top_bounds(centre: (i32, i32)) -> Bounds {
-    let top = 729i64;
-    let (ci, cj) = cube_round(centre.0 as f64 / top as f64, centre.1 as f64 / top as f64);
-    let h = TOP_REACH / top + 2;
-    (top, (ci - h, cj - h), (ci + h + 1, cj + h + 1))
+/// The top's bounds over a site's land: every cell holding a tile
+/// `continents::land_site` can give the site, one whose position as the
+/// plates are drawn lies within [`continents::LAND_REACH`] of a plate it
+/// claimed, so within the warp's reach of that as the tiles stand
+/// ([`plates::WARP_REACH`]), and [`SEA_MARGIN`] cells of sea past those,
+/// the outlet. None for a site that claimed nothing.
+pub fn top_bounds(seed: u64, id: SiteId) -> Option<Bounds> {
+    let land = continents::land(id, seed);
+    if land.polygons.is_empty() {
+        return None;
+    }
+    let pad = continents::LAND_REACH + plates::WARP_REACH;
+    let (x0, y0, x1, y1) = (land.lo.0 - pad, land.lo.1 - pad, land.hi.0 + pad, land.hi.1 + pad);
+    // A tile's axial position is linear in the world's, so the box's
+    // corners hold its least and greatest.
+    let axial = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)].map(|(x, y)| (x - y / crate::SQRT_3, 2.0 * y / crate::SQRT_3));
+    let top = 729.0;
+    let (lo_q, hi_q) = axial.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |a, p| (a.0.min(p.0), a.1.max(p.0)));
+    let (lo_r, hi_r) = axial.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |a, p| (a.0.min(p.1), a.1.max(p.1)));
+    // A tile rounds to a cell at most one either way of its quotient's.
+    let m = SEA_MARGIN + 1;
+    let lo = ((lo_q / top).floor() as i64 - m, (lo_r / top).floor() as i64 - m);
+    let hi = ((hi_q / top).ceil() as i64 + m + 1, (hi_r / top).ceil() as i64 + m + 1);
+    Some((729, lo, hi))
+}
+
+/// The tile at the middle of a top's bounds and how far either way of it,
+/// in tiles, its thrust outlines are built: past every cell's tiles.
+fn outlines_box(&(w, lo, hi): &Bounds) -> ((i32, i32), f64) {
+    let corners = [(lo.0, lo.1), (hi.0, lo.1), (lo.0, hi.1), (hi.0, hi.1)].map(|(i, j)| hex_to_world((i * w) as i32, (j * w) as i32));
+    let (x0, x1) = corners.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |a, c| (a.0.min(c.0), a.1.max(c.0)));
+    let (y0, y1) = corners.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |a, c| (a.0.min(c.1), a.1.max(c.1)));
+    let centre = crate::world_to_hex((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    (centre, (x1 - x0).max(y1 - y0) / 2.0 + w as f64)
 }
 
 /// The bounds of levels `widths` wide over an area `radius` tiles either
@@ -288,7 +335,7 @@ pub fn landmass_bounds(top: &Level, seed: u64, id: SiteId) -> Vec<Bounds> {
         .map(|c| top.ij(c))
         .filter(|&(i, j)| {
             let (wx, wy) = hex_to_world((i * w) as i32, (j * w) as i32);
-            continents::nearest_site(wx, wy, seed) == id
+            continents::land_site(wx, wy, seed) == Some(id)
         })
         .collect();
     let (ci, cj) = (top.lo + top.n as i64 / 2, top.lo_j + top.n_j as i64 / 2);

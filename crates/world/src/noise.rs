@@ -62,7 +62,13 @@ fn grad_index(ix: i64, iy: i64, seed: u64) -> usize {
     (h as usize) % 12
 }
 
-/// 2D simplex noise. Returns a value in approximately [-1, 1].
+/// The most [`simplex_2d`] returns either way: each of its three corners
+/// adds at most `(0.5 - d²)⁴ · d` for a unit gradient at distance `d`, which
+/// peaks at `d² = 1/18`, and the sum is scaled by 70.
+pub(crate) const SIMPLEX_BOUND: f64 = 1.932;
+
+/// 2D simplex noise. Returns a value in approximately [-1, 1], never past
+/// [`SIMPLEX_BOUND`].
 pub(crate) fn simplex_2d(x: f64, y: f64, seed: u64) -> f64 {
     let s = (x + y) * F2;
     let i = (x + s).floor() as i64;

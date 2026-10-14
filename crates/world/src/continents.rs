@@ -27,6 +27,15 @@
 //! every other landmass too. A one-plate strait is a subcontinent's strait
 //! and nothing else's.
 //!
+//! # Land
+//!
+//! A site's land stands within [`LAND_REACH`] of the plates it claimed, as
+//! the plates are drawn (`plates::warp`), and [`CLAIM_GAP`] keeps any two
+//! claims farther apart than twice that, so a position is the land of one
+//! site at most ([`land_site`]), and none over open sea. The reach is
+//! [`CLAIM_GAP`]'s own argument, not a proof: `top_probe` reads every tile
+//! at its edge for land.
+//!
 //! # Exactness
 //!
 //! A claim is a function of the seed and the site alone, memoised; a plate
@@ -38,7 +47,7 @@ use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
 
-use crate::events::plates::WARP_STEP;
+use crate::events::plates::{warp, WARP_STEP};
 use crate::events::thrusting::SCREE_REACH;
 use crate::lattice::CHAIN_SWING;
 use crate::noise::hash_channel_f64;
@@ -77,6 +86,12 @@ pub const SUBCONTINENT_SHARE: f64 = 0.5;
 pub const CLAIM_GAP: f64 = 4.0 * CHAIN_SWING + WARP_STEP;
 
 const _: () = assert!(SCREE_REACH <= CHAIN_SWING, "a toe can rest farther past its front than the claim gap allows");
+
+/// How far past its claimed plates a site's land may stand, as the plates
+/// are drawn: the two chain swings [`CLAIM_GAP`] allows each side.
+pub const LAND_REACH: f64 = 2.0 * CHAIN_SWING;
+
+const _: () = assert!(2.0 * LAND_REACH < CLAIM_GAP, "two sites' land could meet");
 
 /// The most each lobe of the claim's measure stretches or shrinks the
 /// radius, as a share of it. Two lobes, second and third harmonic, so the
@@ -128,6 +143,55 @@ impl Site {
 pub struct Claim {
     pub continent: Vec<PlateId>,
     pub subcontinent: Vec<PlateId>,
+}
+
+/// A site's claimed plates, continent and subcontinent, as the ground
+/// stands on them: each one's polygon, and the box of every corner, as the
+/// plates are drawn. No polygons where the site claimed nothing.
+pub struct Land {
+    pub polygons: Vec<Vec<(f64, f64)>>,
+    pub lo: (f64, f64),
+    pub hi: (f64, f64),
+}
+
+impl Land {
+    /// Whether a position, as the plates are drawn, lies within
+    /// [`LAND_REACH`] of a claimed plate.
+    pub fn reaches(&self, x: f64, y: f64) -> bool {
+        let r = LAND_REACH;
+        x >= self.lo.0 - r && x <= self.hi.0 + r && y >= self.lo.1 - r && y <= self.hi.1 + r && self.gap(x, y) <= r
+    }
+
+    /// How far a position, as the plates are drawn, lies from the nearest
+    /// claimed plate: none on one.
+    pub fn gap(&self, x: f64, y: f64) -> f64 {
+        self.polygons.iter().map(|p| point_gap((x, y), p)).fold(f64::INFINITY, f64::min)
+    }
+}
+
+/// A site's land, computed once per site and seed.
+pub fn land(id: SiteId, seed: u64) -> Arc<Land> {
+    static LANDS: OnceLock<DashMap<(u64, SiteId), Arc<Land>>> = OnceLock::new();
+    let lands = LANDS.get_or_init(DashMap::new);
+    if let Some(l) = lands.get(&(seed, id)) {
+        return l.value().clone();
+    }
+    let c = claim(id, seed);
+    let polygons: Vec<Vec<(f64, f64)>> =
+        c.continent.iter().chain(&c.subcontinent).map(|&p| polygon(p, seed).into_iter().map(|corner| corner.0).collect()).collect();
+    let corners = || polygons.iter().flatten();
+    let lo = corners().fold((f64::INFINITY, f64::INFINITY), |a, &(x, y)| (a.0.min(x), a.1.min(y)));
+    let hi = corners().fold((f64::NEG_INFINITY, f64::NEG_INFINITY), |a, &(x, y)| (a.0.max(x), a.1.max(y)));
+    let l = Arc::new(Land { polygons, lo, hi });
+    lands.entry((seed, id)).or_insert(l).value().clone()
+}
+
+/// The site whose land a world position may be: the one whose claimed
+/// plates lie within [`LAND_REACH`] of where the plates are drawn there.
+/// None over open sea.
+pub fn land_site(wx: f64, wy: f64, seed: u64) -> Option<SiteId> {
+    let (x, y) = warp(wx, wy, seed);
+    cells_around(site_cell_for(x, y), 1).into_iter().find(|&id| land(id, seed).reaches(x, y))
 }
 
 /// The site lattice cell whose undisplaced centre is nearest a position.
@@ -365,15 +429,31 @@ impl Growth {
     }
 }
 
+/// The distance from a point to a segment.
+fn to_side(p: (f64, f64), s0: (f64, f64), s1: (f64, f64)) -> f64 {
+    let (dx, dy) = (s1.0 - s0.0, s1.1 - s0.1);
+    let len2 = dx * dx + dy * dy;
+    let t = if len2 > 0.0 { (((p.0 - s0.0) * dx + (p.1 - s0.1) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+    (p.0 - s0.0 - t * dx).hypot(p.1 - s0.1 - t * dy)
+}
+
+/// How far a point lies from a convex polygon: none inside it, else the
+/// least distance to a side.
+fn point_gap(p: (f64, f64), poly: &[(f64, f64)]) -> f64 {
+    let n = poly.len();
+    let side = |k: usize| {
+        let (a, b) = (poly[k], poly[(k + 1) % n]);
+        (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
+    };
+    if (0..n).all(|k| side(k) >= 0.0) || (0..n).all(|k| side(k) <= 0.0) {
+        return 0.0;
+    }
+    (0..n).map(|k| to_side(p, poly[k], poly[(k + 1) % n])).fold(f64::MAX, f64::min)
+}
+
 /// The least distance between two convex polygons that do not overlap:
 /// the least from a corner of either to a side of the other.
 fn polygon_gap(a: &[(f64, f64)], b: &[(f64, f64)]) -> f64 {
-    let to_side = |p: (f64, f64), s0: (f64, f64), s1: (f64, f64)| {
-        let (dx, dy) = (s1.0 - s0.0, s1.1 - s0.1);
-        let len2 = dx * dx + dy * dy;
-        let t = if len2 > 0.0 { (((p.0 - s0.0) * dx + (p.1 - s0.1) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
-        (p.0 - s0.0 - t * dx).hypot(p.1 - s0.1 - t * dy)
-    };
     let one_way = |a: &[(f64, f64)], b: &[(f64, f64)]| {
         let sides = || (0..b.len()).map(|i| (b[i], b[(i + 1) % b.len()]));
         a.iter().flat_map(|&p| sides().map(move |(s0, s1)| to_side(p, s0, s1))).fold(f64::MAX, f64::min)

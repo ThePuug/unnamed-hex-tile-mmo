@@ -92,6 +92,11 @@ pub const WARP_OCTAVES: [(f64, f64); 2] = [(8_000.0, 700.0), (2_500.0, 180.0)];
 /// reach that folds a chain grows by it.
 pub const WARP_SWING: f64 = WARP_OCTAVES[0].1 + WARP_OCTAVES[1].1;
 
+/// The farthest the warp can carry a position along either axis, by the
+/// noise's bound rather than its usual range: what a reach that must hold
+/// without exception allows for.
+pub const WARP_REACH: f64 = crate::noise::SIMPLEX_BOUND * WARP_SWING;
+
 /// The farthest the warp carries two adjacent tiles apart, one world unit
 /// from each other: the step, and √2 times the most each axis's
 /// displacement changes over it, the octaves' amplitudes over their

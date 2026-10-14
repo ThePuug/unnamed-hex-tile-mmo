@@ -595,7 +595,7 @@ fn build(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64, surface: Surf
 /// receiver at the line's floor, in the view's frame.
 fn lines(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64) -> Vec<[Vec3; 2]> {
     let ladders = worlds.world.ladders().expect("the standard stack's ladders");
-    let site = ladders.site_of(centre.0, centre.1);
+    let Some(site) = ladders.site_of(centre.0, centre.1) else { return Vec::new() };
     ladders.with(site, |l| {
         let ladder = l.terrain().ladder();
         let Some(lv) = ladder.levels.iter().find(|lv| lv.w == w) else { return Vec::new() };
@@ -662,7 +662,7 @@ fn read_tile(worlds: &Worlds, (q, r): (i32, i32)) -> String {
     let stack = worlds.stack.tile_at(q, r).elevation;
     let mut out = format!("tile ({q}, {r}); the stack alone {stack:.0}\n  w      cell        z    dry    cut  handed  water  governing line: floor, catchment, born at\n");
     let Some(ladders) = worlds.world.ladders() else { return out };
-    let site = ladders.site_of(q, r);
+    let Some(site) = ladders.site_of(q, r) else { return out + "  open sea: no ladder holds it\n" };
     ladders.with(site, |l| {
         let ladder = l.terrain().ladder();
         for lv in &ladder.levels {
