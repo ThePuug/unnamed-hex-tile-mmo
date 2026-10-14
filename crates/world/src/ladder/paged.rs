@@ -1,48 +1,76 @@
 //! A level's values over its whole index space, held a page at a time: a
 //! page is allocated the first time one of its values is written, and an
-//! unwritten value reads as the default. A level spans a landmass, and a
-//! request touches a few of its pages.
+//! unwritten value reads as the default. A level spans a landmass down to
+//! the tiles, and a request touches a few of its pages, so the table of
+//! pages is itself in chunks, each allocated as a page in it is written.
 
 use std::ops::{Index, IndexMut};
 
 /// Values on a page: a level's cells are paged 64 by 64 (`Level::idx`).
 pub const PAGE: usize = 4096;
 
+/// Pages to a chunk of the page table.
+const CHUNK: usize = 4096;
+
+type Chunk<T> = Box<[Option<Box<[T]>>]>;
+
 #[derive(Clone)]
 pub struct Paged<T: Clone> {
     default: T,
-    pages: Vec<Option<Box<[T]>>>,
+    len: usize,
+    chunks: Vec<Option<Chunk<T>>>,
 }
 
 impl<T: Clone> Paged<T> {
     /// `len` values, all `default`; `len` a whole number of pages.
     pub fn new(default: T, len: usize) -> Self {
         assert_eq!(len % PAGE, 0, "a paged length is whole pages");
-        Paged { default, pages: vec![None; len / PAGE] }
+        Paged { default, len, chunks: vec![None; (len / PAGE).div_ceil(CHUNK)] }
     }
 
     pub fn len(&self) -> usize {
-        self.pages.len() * PAGE
+        self.len
     }
 
     pub fn is_empty(&self) -> bool {
-        self.pages.is_empty()
+        self.len == 0
     }
 
     /// Every value set to `value`, the pages released.
     pub fn fill(&mut self, value: T) {
         self.default = value;
-        self.pages.iter_mut().for_each(|p| *p = None);
+        self.chunks.iter_mut().for_each(|c| *c = None);
     }
 
-    /// Every value in order, unwritten ones as the default.
+    /// Every value in order, unwritten ones as the default: for a level
+    /// small enough to read whole.
     pub fn iter(&self) -> impl Iterator<Item = &T> + '_ {
-        (0..self.len()).map(move |i| &self[i])
+        (0..self.len).map(move |i| &self[i])
     }
 
-    /// The pages written, as the index of their first value.
+    pub fn default_value(&self) -> &T {
+        &self.default
+    }
+
+    /// The page holding `first`, a page's first index, where it is written.
+    pub fn page(&self, first: usize) -> Option<&[T]> {
+        let page = first / PAGE;
+        self.chunks[page / CHUNK].as_ref().and_then(|chunk| chunk[page % CHUNK].as_deref())
+    }
+
+    /// The page starting at `first` set to `values`, a page's worth.
+    pub fn set_page(&mut self, first: usize, values: Box<[T]>) {
+        assert_eq!(values.len(), PAGE, "a page's worth of values");
+        let page = first / PAGE;
+        let chunk = self.chunks[page / CHUNK].get_or_insert_with(|| vec![None; CHUNK].into_boxed_slice());
+        chunk[page % CHUNK] = Some(values);
+    }
+
+    /// The pages written, as the index of their first value, in order.
     pub fn written(&self) -> impl Iterator<Item = usize> + '_ {
-        self.pages.iter().enumerate().filter(|(_, p)| p.is_some()).map(|(k, _)| k * PAGE)
+        self.chunks.iter().enumerate().filter_map(|(k, c)| c.as_ref().map(|c| (k, c))).flat_map(|(k, chunk)| {
+            chunk.iter().enumerate().filter(|(_, p)| p.is_some()).map(move |(g, _)| (k * CHUNK + g) * PAGE)
+        })
     }
 }
 
@@ -50,8 +78,12 @@ impl<T: Clone> Index<usize> for Paged<T> {
     type Output = T;
 
     fn index(&self, i: usize) -> &T {
-        match &self.pages[i / PAGE] {
-            Some(page) => &page[i % PAGE],
+        let page = i / PAGE;
+        match &self.chunks[page / CHUNK] {
+            Some(chunk) => match &chunk[page % CHUNK] {
+                Some(values) => &values[i % PAGE],
+                None => &self.default,
+            },
             None => &self.default,
         }
     }
@@ -59,9 +91,11 @@ impl<T: Clone> Index<usize> for Paged<T> {
 
 impl<T: Clone> IndexMut<usize> for Paged<T> {
     fn index_mut(&mut self, i: usize) -> &mut T {
+        let page = i / PAGE;
         let default = &self.default;
-        let page = self.pages[i / PAGE].get_or_insert_with(|| vec![default.clone(); PAGE].into_boxed_slice());
-        &mut page[i % PAGE]
+        let chunk = self.chunks[page / CHUNK].get_or_insert_with(|| vec![None; CHUNK].into_boxed_slice());
+        let values = chunk[page % CHUNK].get_or_insert_with(|| vec![default.clone(); PAGE].into_boxed_slice());
+        &mut values[i % PAGE]
     }
 }
 
@@ -79,5 +113,14 @@ mod tests {
         assert_eq!(p.written().collect::<Vec<_>>(), vec![PAGE]);
         p.fill(0.0);
         assert_eq!(p[PAGE + 7], 0.0);
+    }
+
+    #[test]
+    fn a_page_past_the_first_chunk_is_held_alone() {
+        let mut p = Paged::new(0u8, (CHUNK + 2) * PAGE);
+        p[(CHUNK + 1) * PAGE + 3] = 9;
+        assert_eq!(p[(CHUNK + 1) * PAGE + 3], 9);
+        assert_eq!(p[3], 0);
+        assert_eq!(p.written().collect::<Vec<_>>(), vec![(CHUNK + 1) * PAGE]);
     }
 }

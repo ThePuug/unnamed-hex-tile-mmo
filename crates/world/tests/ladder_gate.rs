@@ -1,6 +1,6 @@
 //! The ladder over the real ground around the haven, its lattice anchored
 //! at the world's origin: every level requested over a region, identity and
-//! seams checked, and the levels to 27 written for the measures. The ground
+//! seams checked, and every level written for the measures. The ground
 //! is the base layers read by `StackGround`, thrust's relief averaged over
 //! each cell's descendants `LADDER_DEPTH` levels down (default 2).
 //! `LADDER_EXACT=1` checks identity by position and seams between requests
@@ -13,11 +13,11 @@
 use std::io::Write;
 use std::time::Instant;
 
-use world::events::ladder_ground::{landmass_bounds, StackGround};
+use world::events::ladder_ground::{StackGround, AREA_PAD};
 use world::events::Composite;
-use world::ladder::fine::{Cell, ChannelStats, Terrain, FINE};
 use world::ladder::geom::cube_round;
-use world::ladder::{Bounds, Ground, Ladder, Level, Params, LAST_WATER, STAGES};
+use world::ladder::terrain::{Cell, Terrain};
+use world::ladder::{Bounds, Ground, Ladder, Level, Params, STAGES};
 use world::WORLD_SEED;
 
 /// The haven's tile, as `common_bevy::haven::HAVEN_LOCATION` holds it.
@@ -26,6 +26,10 @@ const HAVEN: (i32, i32) = (107289, -7677);
 /// Each level to 27 wide and how far its cells reach from the haven, in
 /// tiles.
 const COARSE: [(i64, i64); 4] = [(729, 142_884), (243, 57_591), (81, 19_197), (27, 6_399)];
+
+/// The levels finer than 27, which reach [`AREA_PAD`] of their cells past
+/// their region.
+const FINE: [i64; 3] = [9, 3, 1];
 
 /// Each level's request: a rhombus of cells around the haven's, this many
 /// tiles either way.
@@ -45,13 +49,16 @@ fn haven_cell(w: i64) -> (i64, i64) {
 }
 
 /// The levels to 27 as far as [`COARSE`] reaches either way of the haven's
-/// cell; `LADDER_SMALL` gives every level below the top the same reach in
-/// tiles, for a test.
+/// cell, the finer ones [`AREA_PAD`] of their cells past their region;
+/// `LADDER_SMALL` gives every level below the top the same reach in tiles,
+/// for a test.
 fn bounds() -> Vec<Bounds> {
     let small: Option<i64> = std::env::var("LADDER_SMALL").ok().and_then(|s| s.parse().ok());
     COARSE
         .iter()
-        .map(|&(w, reach)| {
+        .copied()
+        .chain(FINE.iter().map(|&w| (w, region(w) + AREA_PAD * w)))
+        .map(|(w, reach)| {
             let reach = match small {
                 Some(s) if w < 729 => s,
                 _ => reach,
@@ -90,7 +97,6 @@ fn same_cell(a: &Option<Cell>, b: &Option<Cell>) -> bool {
             same(a.z, b.z)
                 && same(a.zd, b.zd)
                 && same(a.cut, b.cut)
-                && a.bed == b.bed
                 && a.water.map(f64::to_bits) == b.water.map(f64::to_bits)
                 && a.layers.iter().zip(b.layers.iter()).all(|(x, y)| same(*x, *y))
         }
@@ -102,7 +108,7 @@ fn same_cell(a: &Option<Cell>, b: &Option<Cell>) -> bool {
 fn exact<G: Ground>(ground: &G, whole: &Terrain<G>, p: Params, out: &mut String) {
     let bounds = bounds();
     let mut draw = Draw(5);
-    let held = whole.coarse();
+    let held = whole.ladder();
     for (k, &(w, _, _)) in bounds.iter().enumerate().skip(1) {
         let h = region(w) / w;
         let (ci, cj) = haven_cell(w);
@@ -112,7 +118,7 @@ fn exact<G: Ground>(ground: &G, whole: &Terrain<G>, p: Params, out: &mut String)
         for _ in 0..3 {
             let c = (ci + draw.range(-h / 2, h / 2 + 1), cj + draw.range(-h / 2, h / 2 + 1));
             let one = Terrain::new_box(ground, &bounds, p);
-            one.coarse().request(k, &[c]);
+            one.ladder().request(k, &[c]);
             let mut block: Vec<(i64, i64)> = (-4..=4).flat_map(|a| (-4..=4).map(move |b| (c.0 + a, c.1 + b))).collect();
             for x in (1..block.len()).rev() {
                 let y = draw.range(0, x as i64 + 1) as usize;
@@ -120,10 +126,10 @@ fn exact<G: Ground>(ground: &G, whole: &Terrain<G>, p: Params, out: &mut String)
             }
             let apart = Terrain::new_box(ground, &bounds, p);
             for &cell in &block {
-                apart.coarse().request(k, &[cell]);
+                apart.ladder().request(k, &[cell]);
             }
             let wl = &held.levels[k];
-            let (one, apart) = (one.coarse(), apart.coarse());
+            let (one, apart) = (one.ladder(), apart.ladder());
             identical &= alike(&one.levels[k], wl, c.0, c.1) && alike(&apart.levels[k], wl, c.0, c.1);
             for m in [&one, &apart] {
                 let lv = &m.levels[k];
@@ -137,36 +143,6 @@ fn exact<G: Ground>(ground: &G, whole: &Terrain<G>, p: Params, out: &mut String)
                             out.push_str(&format!("   seam w={w} cell ({i}, {j}): {}\n", bad.join("; ")));
                         }
                     }
-                }
-            }
-        }
-        let line = format!("exact w={w} identical={identical} seam_disagreements={seams} of {cells} cells ({:.1}s)\n", started.elapsed().as_secs_f64());
-        print!("{line}");
-        out.push_str(&line);
-    }
-    drop(held);
-    for w in FINE {
-        let h = region(w) / w;
-        let (ci, cj) = haven_cell(w);
-        let (mut identical, mut seams, mut cells) = (true, 0u64, 0u64);
-        let started = Instant::now();
-        status(&format!("exact checks at {w}"));
-        for _ in 0..3 {
-            let c = (ci + draw.range(-h / 2, h / 2 + 1), cj + draw.range(-h / 2, h / 2 + 1));
-            let one = Terrain::new_box(ground, &bounds, p);
-            identical &= same_cell(&one.cells(w, &[c])[0], &whole.kept(w, c.0, c.1));
-            let mut block: Vec<(i64, i64)> = (-4..=4).flat_map(|a| (-4..=4).map(move |b| (c.0 + a, c.1 + b))).collect();
-            for x in (1..block.len()).rev() {
-                let y = draw.range(0, x as i64 + 1) as usize;
-                block.swap(x, y);
-            }
-            let apart = Terrain::new_box(ground, &bounds, p);
-            for &cell in &block {
-                let got = apart.cells(w, &[cell]).pop().flatten();
-                cells += 1;
-                if !same_cell(&got, &whole.kept(w, cell.0, cell.1)) {
-                    seams += 1;
-                    out.push_str(&format!("   seam w={w} cell ({}, {})\n", cell.0, cell.1));
                 }
             }
         }
@@ -205,6 +181,8 @@ fn dump(dir: &str, lv: &Level) {
         ("cut", cells(&|c| lv.cut[c])),
         ("wfull", cells(&|c| lv.wfull[c])),
         ("wdist", cells(&|c| lv.wdist[c])),
+        ("water", cells(&|c| lv.water[c])),
+        ("wdepth", cells(&|c| lv.wdepth[c])),
         ("age", cells(&|c| lv.age[c])),
         ("p", cells(&|c| lv.p[c])),
         ("erod", cells(&|c| lv.erod[c])),
@@ -264,49 +242,13 @@ fn dump(dir: &str, lv: &Level) {
     }
 }
 
-/// The tiles' channels: curves drawn and those whose floor rose; how far
-/// from its governing bank each tile a channel reaches lies; and every
-/// river whose walls reached the reach still below 27's drawn surface, with
-/// the tiles where they did and the largest step left there.
-fn channels(stats: &ChannelStats) -> String {
-    let mut reach: Vec<f64> = stats.reach.iter().map(|r| r[0]).collect();
-    reach.sort_by(f64::total_cmp);
-    let pct = |v: &Vec<f64>, q: f64| if v.is_empty() { f64::NAN } else { v[((v.len() - 1) as f64 * q).round() as usize] };
-    let mut deep: Vec<f64> = stats.reach.iter().filter(|r| r[1] >= 1.0).map(|r| r[0]).collect();
-    deep.sort_by(f64::total_cmp);
-    let mut out = format!(
-        "channels: {} curves, {} with a rising floor; {} tiles reached, {} lowered; reach p50 {:.1} p99 {:.1} max {:.1} tiles of {:.1}; {} rivers at the reach\n",
-        stats.curves,
-        stats.rising,
-        reach.len(),
-        stats.lowered,
-        pct(&reach, 0.5),
-        pct(&reach, 0.99),
-        pct(&reach, 1.0),
-        world::ladder::channel::channel_reach(),
-        stats.capped.len()
-    );
-    out.push_str(&format!(
-        "   a step or more below 27's surface: {} tiles, reach p50 {:.1} p99 {:.1} max {:.1}\n",
-        deep.len(),
-        pct(&deep, 0.5),
-        pct(&deep, 0.99),
-        pct(&deep, 1.0)
-    ));
-    let mut capped: Vec<_> = stats.capped.iter().collect();
-    capped.sort_by(|a, b| b.1 .1.total_cmp(&a.1 .1));
-    for (river, (tiles, step)) in capped {
-        out.push_str(&format!("   at the reach: river {river:?}, {tiles} tiles, step left up to {step:.1}\n"));
-    }
-    out
-}
-
-/// Water at 27 against the valley from every river the level routed,
-/// however far: over every built cell in the middle half of its region, or
-/// a sample of 2000 where they are more, the height's difference from the
-/// dry ground met by that valley, rounded, and the cut's before rounding.
-fn truth<G: Ground>(ladder: &Ladder<G>) -> String {
-    let k = index_of(ladder, LAST_WATER);
+/// Water at the level `w` wide against the valley from every river the
+/// level routed, however far: over every built cell in the middle half of
+/// its region, or a sample of 2000 where they are more, the height's
+/// difference from the dry ground met by that valley, rounded, and the
+/// cut's before rounding.
+fn truth<G: Ground>(ladder: &Ladder<G>, w: i64) -> String {
+    let k = index_of(ladder, w);
     let lv = &ladder.levels[k];
     let h = region(lv.w) / lv.w / 2;
     let (ci, cj) = haven_cell(lv.w);
@@ -354,13 +296,43 @@ fn truth<G: Ground>(ladder: &Ladder<G>) -> String {
     ) + &far.concat()
 }
 
+/// Water floating over its ground at each level: over the built cells of
+/// its region, those whose water stands more than its bed's depth above the
+/// cell's own height, the largest excess, and the ten nearest the haven.
+fn floating<G: Ground>(ladder: &Ladder<G>) -> String {
+    let mut out = String::from("floating water: w: wet cells; floating (water more than its bed's depth above the cell); largest excess in levels\n");
+    for lv in &ladder.levels[1..] {
+        let h = region(lv.w) / lv.w;
+        let (ci, cj) = haven_cell(lv.w);
+        let (mut wet, mut float, mut worst) = (0u64, Vec::new(), 0.0f64);
+        for a in -h..=h {
+            for b in -h..=h {
+                let Some(c) = lv.idx(ci + a, cj + b).filter(|&c| lv.built[c] && !lv.water[c].is_nan()) else { continue };
+                wet += 1;
+                let excess = lv.water[c] - lv.z[c] - lv.wdepth[c];
+                if excess > 0.0 {
+                    worst = worst.max(excess);
+                    float.push((a.abs().max(b.abs()).max((a + b).abs()), ci + a, cj + b, excess));
+                }
+            }
+        }
+        out.push_str(&format!("   {}: {wet}; {}; {worst}\n", lv.w, float.len()));
+        float.sort_by_key(|f| f.0);
+        for &(_, i, j, e) in float.iter().take(10) {
+            out.push_str(&format!("      cell ({i}, {j}), tile ({}, {}): {e} over\n", i * lv.w, j * lv.w));
+        }
+    }
+    out
+}
+
 fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
     let started = Instant::now();
     status("building the top");
     let terrain = Terrain::new_box(ground, &bounds(), p);
     log.push_str(&format!("top {:.1}s\n", started.elapsed().as_secs_f64()));
     let only: Option<i64> = std::env::var("LADDER_SMALL_REGION").ok().and_then(|s| s.parse().ok());
-    for &w in FINE.iter().rev() {
+    let widths: Vec<i64> = FINE.iter().rev().copied().chain(COARSE[1..].iter().rev().map(|&(w, _)| w)).collect();
+    for w in widths {
         let t = Instant::now();
         let cells = match only {
             Some(r) if w == 1 => (-r..=r).flat_map(|i| (-r..=r).map(move |j| (HAVEN.0 as i64 + i, HAVEN.1 as i64 + j))).collect(),
@@ -373,35 +345,24 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
         print!("{line}");
         log.push_str(&line);
     }
-    if only.is_none() {
-        for &(w, _) in COARSE[1..].iter().rev() {
-            let t = Instant::now();
-            status(&format!("requesting level {w}"));
-            let mut ladder = terrain.coarse();
-            let k = index_of(&ladder, w);
-            ladder.request(k, &region_cells(w));
-            let line = format!("built w={w} {:.1}s\n", t.elapsed().as_secs_f64());
-            print!("{line}");
-            log.push_str(&line);
-        }
-    }
     log.push_str(&format!("build_seconds {:.1}\n", started.elapsed().as_secs_f64()));
     {
-        let ladder = terrain.coarse();
+        let ladder = terrain.ladder();
         for (k, lv) in ladder.levels.iter().enumerate() {
             log.push_str(&format!("stats w={} lines={:?} route={:?} cost={:?}\n", lv.w, ladder.line_stats[k], ladder.route_stats[k], lv.cost));
         }
         log.push_str(&timing(&ladder.levels, &ladder.timing));
-        log.push_str(&format!("fine cells held (9, 3, tiles): {:?}\n", terrain.held()));
+        for w in [27, 9, 3, 1] {
+            status(&format!("checking {w} against every river"));
+            log.push_str(&truth(&ladder, w));
+        }
+        log.push_str(&floating(&ladder));
     }
-    log.push_str(&channels(&terrain.channel_stats()));
-    status("checking 27 against every river");
-    log.push_str(&truth(&terrain.coarse()));
     if std::env::var("LADDER_EXACT").is_ok_and(|v| v == "1") {
         exact(ground, &terrain, p, log);
     }
     status("writing the dumps");
-    let ladder = terrain.coarse();
+    let ladder = terrain.ladder();
     for lv in &ladder.levels {
         dump(dir, lv);
     }
@@ -632,7 +593,7 @@ fn memory() -> (usize, usize, usize) {
 
 /// Each level's wall time by stage, in seconds, nested work at other
 /// levels not counted.
-fn timing(levels: &[Level], times: &[[f64; 8]]) -> String {
+fn timing(levels: &[Level], times: &[[f64; 7]]) -> String {
     let mut out = format!("   {:>5} {}\n", "w", STAGES.iter().map(|s| format!("{s:>8}")).collect::<String>());
     for (lv, t) in levels.iter().zip(times) {
         out.push_str(&format!("   {:>5} {} total {:.2}\n", lv.w, t.iter().map(|x| format!("{x:>8.2}")).collect::<String>(), t.iter().sum::<f64>()));
@@ -647,231 +608,13 @@ fn timed(f: &mut dyn FnMut()) -> (f64, f64) {
 }
 
 
-/// One field a baked level keeps: its name, values per cell, and whether
-/// it is a height or a floor, which fits two bytes.
-type Kept = (&'static str, usize, bool);
-
-/// What a level finer than water reads of a baked `LAST_WATER` level, per
-/// cell: the prediction's heights, corners and handed-down values, the rock,
-/// and each vertex's river the channels are drawn from.
-const KEEP_LAST: [Kept; 11] = [
-    ("z", 1, true),
-    ("a3 (meet values at corner A)", 3, true),
-    ("b3 (meet values at corner B)", 3, true),
-    ("cc (six corner values)", 6, true),
-    ("layers", 2, false),
-    ("cut", 1, false),
-    ("erod", 1, false),
-    ("river: kind (line, born, none) x3", 3, false),
-    ("river: receiver x3", 3, false),
-    ("river: floor x3", 3, true),
-    ("river: catchment x3", 3, false),
-];
-
-fn kept_table(name: &str, fields: &[Kept]) -> (String, usize, usize) {
-    let mut out = format!("   kept per cell, {name}:\n");
-    let (mut wide, mut narrow) = (0, 0);
-    for &(field, n, height) in fields {
-        let q = if height { 2 } else { 8 };
-        out.push_str(&format!("      {field:<36} {n:>2} values: {:>4} B at 8 B, {:>4} B quantized\n", 8 * n, q * n));
-        wide += 8 * n;
-        narrow += q * n;
-    }
-    out.push_str(&format!("      {:<36}           {wide:>4} B at 8 B, {narrow:>4} B quantized\n", "total"));
-    (out, wide, narrow)
-}
-
-
-/// What an area of tiles costs: `LADDER_AREA` tiles across (243 by
-/// default), centred on the haven, requested at tiles five ways, each with
-/// its wall and CPU time:
-///
-/// - cold: a fresh ladder, the ground first read in this process;
-/// - fresh: another fresh ladder, the ground's reads kept;
-/// - again: the same request on the cold run's ladder, which keeps it;
-/// - baked: a ladder whose levels to 27 were built beforehand over the cells
-///   the cold run built or routed there, the ground's reads kept: the
-///   budget; and the same on a ground read afresh. Their tiles must equal
-///   the cold run's.
-///
-/// Then the game's `tile_at` over the same tiles on a fresh standard stack,
-/// on one thread, then on every thread on another, then again on that one.
-#[test]
-#[ignore]
-fn ladder_area_speed() {
-    let across: i64 = std::env::var("LADDER_AREA").ok().and_then(|a| a.parse().ok()).unwrap_or(243);
-    let g = ground(2);
-    let bounds = bounds();
-    let h = across / 2;
-    let cells: Vec<(i64, i64)> = (-h..=h).flat_map(|i| (-h..=h).map(move |j| (HAVEN.0 as i64 + i, HAVEN.1 as i64 + j))).collect();
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let mut out = format!("area {across} x {across} tiles ({} tiles), threads {threads}\n", cells.len());
-    let mut cold = None;
-    for run in ["cold", "fresh"] {
-        status(&format!("the area, {run}"));
-        let mut terrain = None;
-        let (top_wall, top_cpu) = timed(&mut || terrain = Some(Terrain::new_box(&g, &bounds, Params::default())));
-        let terrain = terrain.unwrap();
-        let (wall, cpu) = timed(&mut || {
-            terrain.cells(1, &cells);
-        });
-        out.push_str(&format!("{run}: top {top_wall:.2} s wall, {top_cpu:.1} s CPU; the area {wall:.2} s wall, {cpu:.1} s CPU\n"));
-        {
-            let ladder = terrain.coarse();
-            out.push_str(&timing(&ladder.levels, &ladder.timing));
-        }
-        out.push_str(&format!("   fine cells held (9, 3, tiles): {:?}\n", terrain.held()));
-        out.push_str(&channels(&terrain.channel_stats()));
-        print!("{out}");
-        if cold.is_none() {
-            cold = Some(terrain);
-        }
-    }
-    let cold = cold.unwrap();
-    status("the area again");
-    let (wall, cpu) = timed(&mut || {
-        cold.cells(1, &cells);
-    });
-    out.push_str(&format!("again: the area {wall:.4} s wall, {cpu:.3} s CPU\n"));
-    let bake_cells: Vec<(i64, i64)> = {
-        let ladder = cold.coarse();
-        let src = &ladder.levels[index_of(&ladder, LAST_WATER)];
-        (0..src.cap()).filter(|&c| src.built[c] || src.routed[c]).map(|c| src.ij(c)).collect()
-    };
-    let reference: Vec<Option<Cell>> = cold.cells(1, &cells);
-    for (label, fresh) in [("baked", false), ("baked, ground read cold below 27", true)] {
-        status(&format!("the area {label}"));
-        let other;
-        let gr: &StackGround = if fresh {
-            other = ground(2);
-            &other
-        } else {
-            &g
-        };
-        let baked = Terrain::new_box(gr, &bounds, Params::default());
-        let (bwall, _) = timed(&mut || {
-            let mut ladder = baked.coarse();
-            let k = index_of(&ladder, LAST_WATER);
-            ladder.request(k, &bake_cells);
-        });
-        let mut got = Vec::new();
-        let (wall, cpu) = timed(&mut || got = baked.cells(1, &cells));
-        let differ = got.iter().zip(&reference).filter(|(a, b)| !same_cell(a, b)).count();
-        out.push_str(&format!(
-            "{label}: the levels to {LAST_WATER} over {} of its cells in {bwall:.1} s; then the area {wall:.3} s wall, {cpu:.2} s CPU; tiles differing from the cold run: {differ}\n",
-            bake_cells.len()
-        ));
-        print!("{out}");
-    }
-    status("the game's tiles");
-    let tiles: Vec<(i32, i32)> = cells.iter().map(|&(q, r)| (q as i32, r as i32)).collect();
-    let game = Composite::standard(WORLD_SEED);
-    let (wall, cpu) = timed(&mut || {
-        let _: f64 = tiles.iter().map(|&(q, r)| game.tile_at(q, r).elevation).sum();
-    });
-    out.push_str(&format!("game: Composite::standard fresh, tile_at over the area on one thread: {wall:.3} s wall, {cpu:.2} s CPU\n"));
-    let game = Composite::standard(WORLD_SEED);
-    let chunk = tiles.len().div_ceil(threads);
-    for run in ["fresh", "again"] {
-        let (wall, cpu) = timed(&mut || {
-            std::thread::scope(|sc| {
-                for part in tiles.chunks(chunk) {
-                    let game = &game;
-                    sc.spawn(move || part.iter().map(|&(q, r)| game.tile_at(q, r).elevation).sum::<f64>());
-                }
-            })
-        });
-        out.push_str(&format!("game: Composite::standard {run}, tile_at over the area on {threads} threads: {wall:.3} s wall, {cpu:.2} s CPU\n"));
-    }
-    print!("{out}");
-    if let Ok(dir) = std::env::var("LADDER_OUT") {
-        std::fs::write(format!("{dir}/area_{across}.txt"), out).expect("the area table");
-    }
-}
-
-/// What baking the levels to 27 costs over the haven's landmass, the
-/// game's bounds (`landmass_bounds`): every cell of 27 under the land
-/// requested in one ladder, timed by stage; what 27 keeps, by field; and
-/// memory.
-#[test]
-#[ignore]
-fn ladder_bake() {
-    let g = ground(2);
-    status("the landmass");
-    let bounds = landmass_bounds(&g, HAVEN);
-    let mut out = String::from("bounds (w, lo, hi along i and j):\n");
-    for b in &bounds {
-        out.push_str(&format!("   {b:?}\n"));
-    }
-    print!("{out}");
-    let before = memory();
-    let (t0, c0) = (Instant::now(), cpu_seconds());
-    status("the bake to 27");
-    let mut ladder = Ladder::new_box(&g, &bounds, Params::default());
-    let top_s = t0.elapsed().as_secs_f64();
-    let top = &ladder.levels[0];
-    // The land: the top's cells at or above the sea joined to the haven's.
-    let mut land = vec![false; top.cap()];
-    let (hi, hj) = haven_cell(729);
-    let mut todo: Vec<usize> = top.idx(hi, hj).into_iter().collect();
-    while let Some(c) = todo.pop() {
-        if land[c] || !top.exists[c] || top.z[c] < 0.0 {
-            continue;
-        }
-        land[c] = true;
-        let (i, j) = top.ij(c);
-        for (di, dj) in world::ladder::geom::NB {
-            if let Some(d) = top.idx(i + di, j + dj) {
-                todo.push(d);
-            }
-        }
-    }
-    let k = index_of(&ladder, LAST_WATER);
-    let fl = &ladder.levels[k];
-    let cells: Vec<(i64, i64)> = (0..fl.cap())
-        .filter(|&c| fl.exists[c])
-        .map(|c| fl.ij(c))
-        .filter(|&(i, j)| {
-            let (a, b) = world::ladder::geom::ancestor(i, j, k as u32);
-            ladder.levels[0].idx(a, b).is_some_and(|d| land[d])
-        })
-        .collect();
-    ladder.request(k, &cells);
-    let (wall, cpu) = (t0.elapsed().as_secs_f64(), cpu_seconds() - c0);
-    out.push_str(&format!("bake 729 -> 27 in one ladder: {} cells requested at 27; top {top_s:.1} s; {wall:.1} s wall, {cpu:.0} s CPU\n", cells.len()));
-    let after = memory();
-    out.push_str(&format!(
-        "   memory: working set before the bake {:.2} GB, after {:.2} GB; process peak working set {:.2} GB, peak private {:.2} GB\n",
-        before.0 as f64 / 1e9,
-        after.0 as f64 / 1e9,
-        after.1 as f64 / 1e9,
-        after.2 as f64 / 1e9
-    ));
-    out.push_str(&timing(&ladder.levels, &ladder.timing));
-    let (table, wide, narrow) = kept_table("the last water level, read by the fine levels and the channels", &KEEP_LAST);
-    out.push_str(&table);
-    for lv in &ladder.levels {
-        let built = (0..lv.cap()).filter(|&c| lv.built[c]).count();
-        out.push_str(&format!(
-            "   w={}: {built} cells built; at the table's rate {:.1} MB at 8 B, {:.1} MB quantized\n",
-            lv.w,
-            (built * wide) as f64 / 1e6,
-            (built * narrow) as f64 / 1e6
-        ));
-    }
-    print!("{out}");
-    if let Ok(dir) = std::env::var("LADDER_OUT") {
-        std::fs::write(format!("{dir}/bake_27.txt"), out).expect("the bake table");
-    }
-}
-
 /// The ladder's tiles beside the game's over 512 by 512 tiles in axial q
 /// and r centred on the haven, rows by r then q, heights in levels as
 /// little-endian i16: `ladder_z.bin` from a fresh ladder at the defaults;
 /// `ladder_dry_z.bin`, the same with water off; `game_z.bin`, the same
-/// tiles through `Composite::standard_ladder`, the game's path, which must
+/// tiles through `Composite::standard`, the game's path, which must
 /// equal `ladder_z`; `stack_z.bin` from `Composite::standard`; and
-/// `ladder_bed.bin`, a byte, 1 where a tile lies in a channel bed;
+/// `ladder_bed.bin`, a byte, 1 where water stands over a tile;
 /// `ladder_water.bin`, its water's surface as i16, -32768 where none; and
 /// `meta.json`.
 #[test]
@@ -898,7 +641,7 @@ fn ladder_export() {
     let tiles: Vec<Cell> = terrain.cells(1, &cells).into_iter().map(|c| c.expect("a tile the ladder holds")).collect();
     let ladder_s = started.elapsed().as_secs_f64();
     std::fs::write(format!("{dir}/ladder_z.bin"), i16s(&mut tiles.iter().map(|c| c.z))).expect("ladder_z");
-    std::fs::write(format!("{dir}/ladder_bed.bin"), tiles.iter().map(|c| c.bed as u8).collect::<Vec<u8>>()).expect("ladder_bed");
+    std::fs::write(format!("{dir}/ladder_bed.bin"), tiles.iter().map(|c| c.water.is_some() as u8).collect::<Vec<u8>>()).expect("ladder_bed");
     std::fs::write(
         format!("{dir}/ladder_water.bin"),
         tiles.iter().flat_map(|c| c.water.map_or(i16::MIN, |w| w as i16).to_le_bytes()).collect::<Vec<u8>>(),
@@ -913,7 +656,7 @@ fn ladder_export() {
     let higher = tiles.iter().zip(&dry_tiles).filter(|(w, d)| w.z > d.z).count();
     status("the game's tiles, laddered");
     let started = Instant::now();
-    let game = Composite::standard_ladder(WORLD_SEED, HAVEN);
+    let game = Composite::standard(WORLD_SEED);
     let coords: Vec<(i32, i32)> = cells.iter().map(|&(q, r)| (q as i32, r as i32)).collect();
     game.warm(&coords);
     let game_z: Vec<f64> = coords.iter().map(|&(q, r)| game.elevation_at(q, r) as f64).collect();
@@ -935,10 +678,9 @@ fn ladder_export() {
         world::RISE
     );
     std::fs::write(format!("{dir}/meta.json"), meta).expect("meta");
-    let beds = tiles.iter().filter(|c| c.bed).count();
+    let beds = tiles.iter().filter(|c| c.water.is_some()).count();
     let out = format!(
-        "export: {SIDE} by {SIDE} tiles; ladder {ladder_s:.1} s, dry {dry_s:.1} s, game (laddered) {game_s:.1} s, stack {stack_s:.1} s; {beds} tiles in a bed; tiles higher wet than dry: {higher}; game against ladder, largest difference: {off}\n{}",
-        channels(&terrain.channel_stats())
+        "export: {SIDE} by {SIDE} tiles; ladder {ladder_s:.1} s, dry {dry_s:.1} s, game (laddered) {game_s:.1} s, stack {stack_s:.1} s; {beds} tiles under water; tiles higher wet than dry: {higher}; game against ladder, largest difference: {off}\n"
     );
     print!("{out}");
     std::fs::write(format!("{dir}/export.txt"), out).expect("the export log");
@@ -962,7 +704,7 @@ fn ladder_wet_dry() {
     dry.cells(1, &cells);
     let mut out = String::from("w: cells both built; higher wet\n");
     {
-        let (a, b) = (wet.coarse(), dry.coarse());
+        let (a, b) = (wet.ladder(), dry.ladder());
         for k in 1..a.levels.len() {
             let (la, lb) = (&a.levels[k], &b.levels[k]);
             let (mut both, mut up) = (0, 0);
@@ -974,15 +716,6 @@ fn ladder_wet_dry() {
             }
             out.push_str(&format!("{}: {both}; {up}\n", la.w));
         }
-    }
-    for w in FINE {
-        let hw = region(w) / w;
-        let (ci, cj) = haven_cell(w);
-        let fine: Vec<(i64, i64)> = (-hw..=hw).flat_map(|a| (-hw..=hw).map(move |b| (ci + a, cj + b))).collect();
-        let (a, b) = (wet.cells(w, &fine), dry.cells(w, &fine));
-        let both = a.iter().zip(&b).filter(|(x, y)| x.is_some() && y.is_some()).count();
-        let up = a.iter().zip(&b).filter(|(x, y)| matches!((x, y), (Some(x), Some(y)) if x.z > y.z)).count();
-        out.push_str(&format!("{w}: {both}; {up}\n"));
     }
     print!("{out}");
     if let Ok(dir) = std::env::var("LADDER_OUT") {
@@ -1000,17 +733,7 @@ fn ladder_bands() {
     let g = ground(2);
     let terrain = Terrain::new_box(&g, &bounds(), Params::default());
     let mut out = String::from("coarse fine: pairs; |difference| / coarse span p50 p99 max (steps max)\n");
-    let z_of = |w: i64, cells: &[(i64, i64)]| -> Vec<Option<f64>> {
-        if FINE.contains(&w) {
-            terrain.cells(w, cells).into_iter().map(|c| c.map(|c| c.z)).collect()
-        } else {
-            let mut ladder = terrain.coarse();
-            let k = index_of(&ladder, w);
-            ladder.request(k, cells);
-            let lv = &ladder.levels[k];
-            cells.iter().map(|&(i, j)| lv.idx(i, j).filter(|&c| lv.built[c]).map(|c| lv.z[c])).collect()
-        }
-    };
+    let z_of = |w: i64, cells: &[(i64, i64)]| -> Vec<Option<f64>> { terrain.cells(w, cells).into_iter().map(|c| c.map(|c| c.z)).collect() };
     for (coarse, fine) in [(3i64, 1i64), (9, 3), (27, 9), (81, 27)] {
         status(&format!("bands {coarse} against {fine}"));
         let h = (region(1).max(coarse * 8)) / coarse;

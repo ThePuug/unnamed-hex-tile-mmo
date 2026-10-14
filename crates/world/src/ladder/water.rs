@@ -11,8 +11,12 @@
 //! whole to [`FADE`] cells inside where rivers are read from where the
 //! river governing the valley at the cell runs, fades to nothing across
 //! the last [`FADE`], and past that the surface handed down stands.
+//!
+//! Water stands where a level's beds cross a cell: over the lowest of them,
+//! its floor rounded and [`depth`] above it.
 
 use super::geom::{cube_round, descendants, hex_offsets, pos3};
+use super::mask::Mask;
 use super::{wall_slope, Level, Params, Pass, CORRIDOR, FADE};
 use crate::SQRT_3;
 
@@ -53,10 +57,11 @@ fn own_anchor(lv: &Level, v: usize) -> [f64; 2] {
 /// a trough born at the level runs in its ground, and a line has none
 /// offshore. Each is in or out of water's ring by where the level above's
 /// line runs.
-pub(super) fn line_edges(lv: &Level, mask: &[bool], head: f64) -> Vec<Edge> {
+pub(super) fn line_edges(lv: &Level, mask: &Mask, head: f64) -> Vec<Edge> {
     let nn = lv.cap();
-    (0..3 * nn)
-        .filter(|&v| lv.line_on[v] && lv.line_rec[v] >= 0 && mask[v % nn] && lv.line_acc[v] >= head && lv.line_fl[v].is_finite())
+    (0..3)
+        .flat_map(|t| mask.iter().map(move |c| t * nn + c))
+        .filter(|&v| lv.line_on[v] && lv.line_rec[v] >= 0 && lv.line_acc[v] >= head && lv.line_fl[v].is_finite())
         .map(|v| {
             let to = lv.line_rec[v] as usize;
             let ends = lv.line_on[to] && lv.line_fl[to].is_finite();
@@ -99,10 +104,11 @@ pub(super) fn trough_edges(lv: &Level, head: f64) -> Vec<Edge> {
 
 /// The troughs born at a level over a mask, each at the floor it was born
 /// with: a river of its own.
-pub(super) fn born_edges(lv: &Level, mask: &[bool]) -> Vec<Edge> {
+pub(super) fn born_edges(lv: &Level, mask: &Mask) -> Vec<Edge> {
     let nn = lv.cap();
-    (0..3 * nn)
-        .filter(|&v| lv.trough[v] && !lv.line_on[v] && lv.rec[v] >= 0 && mask[v % nn])
+    (0..3)
+        .flat_map(|t| mask.iter().map(move |c| t * nn + c))
+        .filter(|&v| lv.trough[v] && !lv.line_on[v] && lv.rec[v] >= 0)
         .map(|v| {
             let to = lv.rec[v] as usize;
             Edge {
@@ -137,6 +143,30 @@ fn world(q: f64, r: f64) -> (f64, f64) {
 /// the way a channel's width grows with discharge.
 pub fn bed(catchment: f64, p: &Params) -> f64 {
     0.6 + 0.9 * (catchment / p.catchment_full).max(0.0).sqrt()
+}
+
+/// How deep a bed's water stands over its floor, in levels: a level, and a
+/// level more for each two tiles of its half width past the first.
+pub fn depth(bed: f64) -> f64 {
+    1.0 + ((bed - 1.0) / 2.0).max(0.0).floor()
+}
+
+/// The water standing at a position in tiles over the beds within `widen`
+/// tiles of it: the lowest such bed's floor rounded, and its depth above
+/// that. None where no bed reaches.
+fn standing(beds: &[Sample], q: f64, r: f64, widen: f64) -> Option<(f64, f64)> {
+    let (x, y) = world(q, r);
+    beds.iter()
+        .filter(|s| (s.x - x).hypot(s.y - y) <= s.bed + widen)
+        .map(|s| ((s.floor + 0.5).floor() + depth(s.bed), depth(s.bed)))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+/// How far past a bed's edge a cell of a level `w` wide still holds its
+/// water: none at the tiles, half its width above, so a bed crossing a cell
+/// anywhere wets it.
+fn widen(w: i64) -> f64 {
+    (w / 2) as f64
 }
 
 /// A point of a trough's bed: its position in world units a tile apart,
@@ -244,18 +274,20 @@ pub(super) fn top_cut(lv: &mut Level, edges: &[Edge], p: &Params) {
     let beds = Beds::new(lv, edges, p);
     let w = lv.w;
     let radius = p.ring * w as f64;
-    let cells: Vec<usize> = (0..lv.exists.len()).filter(|&c| lv.exists[c]).collect();
+    let cells: Vec<usize> = (0..lv.cap()).filter(|&c| lv.exists[c]).collect();
     let view: &Level = lv;
     let cuts = in_parallel(&cells, |c| {
         let (i, j) = view.ij(c);
         if !p.water {
-            return 0.0;
+            return (0.0, None);
         }
-        let near = beds.within(view, (i * w) as f64, (j * w) as f64, radius, radius);
-        cut_of(&near, w, i, j, view.ground[c])
+        let (q, r) = ((i * w) as f64, (j * w) as f64);
+        let near = beds.within(view, q, r, radius, radius);
+        (cut_of(&near, w, i, j, view.ground[c]), standing(&near, q, r, widen(w)))
     });
-    for (&c, cut) in cells.iter().zip(cuts) {
+    for (&c, (cut, wet)) in cells.iter().zip(cuts) {
         lv.cut[c] = cut;
+        (lv.water[c], lv.wdepth[c]) = wet.unwrap_or((f64::NAN, f64::NAN));
         lv.watered[c] = true;
     }
 }
@@ -268,6 +300,8 @@ struct Correction {
     born: i64,
     river: usize,
     fading: bool,
+    /// The water standing over the cell and its depth.
+    water: Option<(f64, f64)>,
 }
 
 /// The cut over each pending water cell's own cells: what the level above
@@ -282,13 +316,14 @@ pub(super) fn level_cut(lv: &mut Level, own: &[Edge], pend: &[(i64, i64)], p: &P
     let found = in_parallel(&cells, |c| {
         let (i, j) = view.ij(c);
         let carried = view.wpred[c];
-        let none = Correction { cut: carried, whole: f64::NAN, off: f64::INFINITY, born: -1, river: usize::MAX, fading: false };
+        let dry = Correction { cut: carried, whole: f64::NAN, off: f64::INFINITY, born: -1, river: usize::MAX, fading: false, water: None };
         if !p.water {
-            return Correction { cut: 0.0, ..none };
+            return Correction { cut: 0.0, ..dry };
         }
         let (q, r) = ((i * w) as f64, (j * w) as f64);
         let (radius, river_in) = (p.ring * wf, p.ring - CORRIDOR);
         let near = mine.within(view, q, r, river_in * wf, radius);
+        let none = Correction { water: standing(&near, q, r, widen(w)), ..dry };
         let Some((_, governing, _)) = valley(&near, q, r) else { return none };
         let (x, y) = world(q, r);
         let off = (governing.ax - x).hypot(governing.ay - y) / wf;
@@ -308,7 +343,7 @@ pub(super) fn level_cut(lv: &mut Level, own: &[Edge], pend: &[(i64, i64)], p: &P
         let core = |s: &&Sample| (s.ax - x).hypot(s.ay - y) / wf <= river_in - FADE;
         let near_core: Vec<Sample> = near.iter().filter(core).copied().collect();
         let fading = near_core.len() < near.len() && cut_of(&near_core, w, i, j, ground) != here;
-        Correction { cut: (carried + share * whole).min(0.0), whole, off, born: governing.born, river: governing.src, fading }
+        Correction { cut: (carried + share * whole).min(0.0), whole, off, born: governing.born, river: governing.src, fading, ..none }
     });
     for (&c, k) in cells.iter().zip(found) {
         lv.cut[c] = k.cut;
@@ -317,6 +352,7 @@ pub(super) fn level_cut(lv: &mut Level, own: &[Edge], pend: &[(i64, i64)], p: &P
         lv.wborn[c] = k.born;
         lv.wgov[c] = if k.river == usize::MAX { -1 } else { k.river as i64 };
         lv.wfade[c] = k.fading;
+        (lv.water[c], lv.wdepth[c]) = k.water.unwrap_or((f64::NAN, f64::NAN));
         lv.watered[c] = true;
     }
 }

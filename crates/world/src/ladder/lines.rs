@@ -17,6 +17,7 @@
 use std::collections::HashMap;
 
 use super::geom::{pos3, project, vertex_cells, vnbr, xy};
+use super::mask::Mask;
 use super::{Level, Pass, CORRIDOR};
 
 struct Segment {
@@ -42,11 +43,11 @@ struct End {
     hollow: bool,
 }
 
-fn segments(lv: &Level, par: &Level, pmask: &[bool]) -> (Vec<Segment>, Vec<End>) {
+fn segments(lv: &Level, par: &Level, pmask: &Mask) -> (Vec<Segment>, Vec<End>) {
     let pnn = par.cap();
     let mut nxt: HashMap<usize, usize> = HashMap::new();
-    for u in 0..3 * pnn {
-        if par.trough[u] && par.rec[u] >= 0 && pmask[u % pnn] {
+    for u in (0..3).flat_map(|t| pmask.iter().map(move |c| t * pnn + c)) {
+        if par.trough[u] && par.rec[u] >= 0 {
             nxt.insert(u, par.rec[u] as usize);
         }
     }
@@ -131,19 +132,14 @@ fn segments(lv: &Level, par: &Level, pmask: &[bool]) -> (Vec<Segment>, Vec<End>)
 /// holds part of and writes its own vertices. Returns the lines with no way
 /// through, the lines stalled, and the segments whose pins lay outside the
 /// footprint.
-pub(super) fn line_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], fp: &[bool]) -> [u64; 3] {
+pub(super) fn line_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], fp: &Mask) -> [u64; 3] {
     let nn = lv.cap();
-    let mut pmask = vec![false; par.cap()];
-    for c in 0..fp.len() {
-        if fp[c] {
-            let (i, j) = lv.ij(c);
-            let (pi, pj, _, _) = super::geom::parent_of(i, j);
-            if let Some(pc) = par.idx(pi, pj) {
-                pmask[pc] = true;
-            }
-        }
-    }
-    let pmask: Vec<bool> = par.dilate(&pmask, 1).iter().zip(&par.exists).map(|(a, b)| *a && *b).collect();
+    let under = Mask::new(fp.iter().filter_map(|c| {
+        let (i, j) = lv.ij(c);
+        let (pi, pj, _, _) = super::geom::parent_of(i, j);
+        par.idx(pi, pj)
+    }));
+    let pmask = par.dilate(&under, 1);
     let (segs, ends) = segments(lv, par, &pmask);
     // Corridors are shared out in one order everywhere: the larger catchment
     // first, then position.

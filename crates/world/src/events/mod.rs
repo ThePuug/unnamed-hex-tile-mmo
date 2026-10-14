@@ -761,10 +761,10 @@ pub struct Composite {
     /// Tile hits and misses: a tile found cached against one queried.
     metrics: HitCounters,
     seed: u64,
-    /// The terrain ladder, where the world's heights and water are the
-    /// ladder's: a tile's height and water are its, its cover and den the
-    /// stack's, and a summary is the ladder's cell.
-    ladder: Option<std::sync::Arc<ladder_ground::Laddered>>,
+    /// The terrain ladder the stack's ground is composed by: a tile's height
+    /// and water are its, its cover and den the layers', and a summary is
+    /// the ladder's cell. None in a stack of other layers.
+    ladders: Option<std::sync::Arc<ladder_ground::Ladders>>,
 }
 
 impl Composite {
@@ -777,28 +777,31 @@ impl Composite {
             tiles: DashMap::new(),
             metrics: HitCounters::new(),
             seed,
-            ladder: None,
+            ladders: None,
         }
     }
 
-    /// The world's stack with its heights and water from the terrain ladder,
-    /// built over the landmass around the tile `centre`.
-    pub fn standard_ladder(seed: u64, centre: (i32, i32)) -> Self {
-        let mut composite = Self::standard(seed);
-        composite.ladder = Some(std::sync::Arc::new(ladder_ground::Laddered::new(seed, centre)));
-        composite
+    /// The ladder each continent's ground is composed by, for the world
+    /// viewer and the probes, never the game (INV-009).
+    #[cfg(feature = "inspect")]
+    pub fn ladders(&self) -> Option<&ladder_ground::Ladders> {
+        self.ladders.as_deref()
     }
 
-    /// Whether the world's heights are the terrain ladder's.
-    pub fn is_laddered(&self) -> bool {
-        self.ladder.is_some()
+    /// The stack's layers alone, its ground theirs, not the ladder's: for
+    /// the world viewer to set beside the world, never the game.
+    #[cfg(feature = "inspect")]
+    pub fn stack_alone(seed: u64) -> Self {
+        let mut composite = Self::standard(seed);
+        composite.ladders = None;
+        composite
     }
 
     /// The tiles of `coords` made ready together, where reading them one by
     /// one would repeat work: the ladder's, for a chunk.
     pub fn warm(&self, coords: &[(i32, i32)]) {
-        if let Some(ladder) = &self.ladder {
-            ladder.warm(coords);
+        if let Some(ladders) = &self.ladders {
+            ladders.warm(coords);
         }
     }
 
@@ -806,18 +809,18 @@ impl Composite {
     /// `(i, j)·w`: the terrain ladder's, where it holds them, each one's
     /// height and its water's surface where the level holds water.
     pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>)>> {
-        match &self.ladder {
-            Some(ladder) => ladder.level(w, cells),
+        match &self.ladders {
+            Some(ladders) => ladders.level(w, cells),
             None => vec![None; cells.len()],
         }
     }
 
     /// The summaries `w` tiles wide at `cells` made ready together, as
     /// [`SummarySource::cell`](common::summary::SummarySource::cell) reads
-    /// them: their cells, and their parts' where those hold water.
+    /// them: their cells and their parts', a level finer.
     pub fn warm_level(&self, w: i64, cells: &[(i64, i64)]) {
         self.level(w, cells);
-        if crate::ladder::fine::FINE.contains(&(w / 3)) {
+        if w >= 3 {
             let parts: Vec<(i64, i64)> = cells.iter().flat_map(|&ij| summary_parts(w, ij)).collect();
             self.level(w / 3, &parts);
         }
@@ -827,7 +830,14 @@ impl Composite {
     /// whole world build it here, so what any of them reads is what the
     /// world generates.
     pub fn standard(seed: u64) -> Self {
+        Self::standard_with(seed, crate::ladder::Params::default())
+    }
+
+    /// The world's stack, its ladder cutting by `p`: for the world viewer's
+    /// parameters, read from a file.
+    pub fn standard_with(seed: u64, p: crate::ladder::Params) -> Self {
         let mut composite = Self::new(seed);
+        composite.ladders = Some(std::sync::Arc::new(ladder_ground::Ladders::new(seed, p)));
         composite.add_event(Box::new(plates::PlateEvent::new()));
         composite.add_event(Box::new(tilt::TiltEvent::new()));
         composite.add_event(Box::new(motion::MotionEvent::new()));
@@ -875,7 +885,7 @@ impl Composite {
     /// Thread-safe: no global lock. Per-cell deform locks serialize cold cells.
     pub fn tile_at(&self, q: i32, r: i32) -> TileView {
         let mut view = self.stack_tile(q, r);
-        if let Some(cell) = self.ladder.as_ref().and_then(|ladder| ladder.tile(q, r)) {
+        if let Some(cell) = self.ladders.as_ref().and_then(|ladders| ladders.tile(q, r)) {
             view.elevation = cell.z;
             view.water = cell.water;
         }
@@ -1165,9 +1175,6 @@ impl common::summary::SummarySource for Composite {
             return None;
         }
         let (z, _) = self.level(w, &[(sq as i64, sr as i64)]).pop().flatten()?;
-        if !crate::ladder::fine::FINE.contains(&(w / 3)) {
-            return Some((z.round() as i32, 0));
-        }
         let parts = self.level(w / 3, &summary_parts(w, (sq as i64, sr as i64)));
         // The sea is one plane drawn to the horizon: a part under it alone
         // is not wet here.

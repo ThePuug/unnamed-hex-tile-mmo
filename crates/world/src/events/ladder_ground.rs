@@ -15,10 +15,11 @@ use dashmap::DashMap;
 
 use super::thrusting::Outlines;
 use super::{lithology, motion, plates, thickening, thrusting, tilt, Composite};
-use crate::hex_to_world;
-use crate::ladder::fine::{Cell, Terrain, FINE};
-use crate::ladder::geom::{cube_round, descendants, NB};
-use crate::ladder::{Bounds, Ground, Ladder, Params};
+use crate::continents::{self, SiteId};
+use crate::ladder::geom::{cube_round, descendants};
+use crate::ladder::terrain::{Cell, Terrain};
+use crate::ladder::{store, Bounds, Ground, Ladder, Level, Params};
+use crate::{hex_to_world, world_to_hex};
 
 /// A cell's centre and the midpoints of its six edges, as tile offsets.
 fn samples(w: i64) -> Vec<(i64, i64)> {
@@ -131,20 +132,39 @@ impl Ground for StackGround {
 /// landmass lies within it (`terrain-generation.md`, "Continents").
 pub const TOP_REACH: i64 = 142_884;
 
-/// The ladder over the landmass around a site: the top over [`TOP_REACH`]
-/// either way, the levels below over the box of the land joined to the
-/// site's top cell, and the finer levels wherever they are read.
+/// How far past an area a level below the top reaches, in its own cells:
+/// room for the deform cells and rings its passes read, and the reads of
+/// the level below it.
+pub const AREA_PAD: i64 = 240;
+
+/// The ladder of a continent's site: the top over [`TOP_REACH`] either way
+/// of the site, kept on disk while its inputs stand, and every level below
+/// over the box of the land the site claims, each built where it is read.
 pub struct Laddered {
     terrain: Terrain<'static, StackGround>,
 }
 
 impl Laddered {
-    pub fn new(seed: u64, centre: (i32, i32)) -> Self {
+    pub fn new(seed: u64, id: SiteId) -> Self {
+        Laddered::with(seed, id, Params::default())
+    }
+
+    /// The ladder of a site under parameters `p`.
+    pub fn with(seed: u64, id: SiteId, p: Params) -> Self {
+        let site = continents::site(id, seed);
+        let centre = world_to_hex(site.wx, site.wy);
         let half = (TOP_REACH + 3 * 729) as f64;
         // The ground lives as long as the process: the ladder reads it.
         let ground: &'static StackGround = Box::leak(Box::new(StackGround::new(seed, centre, half, 2)));
-        let bounds = landmass_bounds(ground, centre);
-        Laddered { terrain: Terrain::new_box(ground, &bounds, Params::default()) }
+        let top_bounds = top_bounds(centre);
+        let top = Ladder::top(ground, top_bounds, p, &store::key(seed, id, &top_bounds, &p, ground));
+        let bounds = landmass_bounds(&top, seed, id);
+        Laddered { terrain: Terrain::from_ladder(Ladder::with_top(ground, &bounds, p, Some(top))) }
+    }
+
+    /// The ladder behind its lock, for a reader that walks its levels.
+    pub fn terrain(&self) -> &Terrain<'static, StackGround> {
+        &self.terrain
     }
 
     /// The ladder's tile, where the ladder reaches it.
@@ -159,56 +179,126 @@ impl Laddered {
     }
 
     /// The cells of the level `w` wide, where the ladder holds them: each
-    /// one's height, and its water's surface where the level is fine enough
-    /// to hold water above its cells.
+    /// one's height, and the surface of the water standing over it.
     pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>)>> {
-        if FINE.contains(&w) {
-            return self.terrain.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.water))).collect();
-        }
-        let mut ladder = self.terrain.coarse();
-        let Some(k) = ladder.levels.iter().position(|l| l.w == w) else { return vec![None; cells.len()] };
-        let lv = &ladder.levels[k];
-        let held: Vec<(i64, i64)> = cells.iter().copied().filter(|&(i, j)| lv.idx(i, j).is_some_and(|c| lv.exists[c])).collect();
-        if k > 0 && !held.is_empty() {
-            ladder.request(k, &held);
-        }
-        let lv = &ladder.levels[k];
-        cells.iter().map(|&(i, j)| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built[c]).map(|c| (lv.z[c], None))).collect()
+        self.terrain.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.water))).collect()
     }
 }
 
-/// Each level's bounds: the top over [`TOP_REACH`] either way of the site,
-/// and the levels below over the box of the land joined to the site's top
-/// cell, and a margin for what their passes read past it.
-pub fn landmass_bounds(ground: &StackGround, centre: (i32, i32)) -> Vec<Bounds> {
+/// Every continent's ladder, each built the first time one of its tiles or
+/// cells is read: a tile's is its nearest site's
+/// (`continents::nearest_site`), a cell's that of the tile at its centre.
+pub struct Ladders {
+    seed: u64,
+    p: Params,
+    sites: DashMap<SiteId, std::sync::Arc<std::sync::OnceLock<Laddered>>>,
+}
+
+impl Ladders {
+    pub fn new(seed: u64, p: Params) -> Self {
+        Ladders { seed, p, sites: DashMap::new() }
+    }
+
+    pub fn params(&self) -> Params {
+        self.p
+    }
+
+    /// The site whose ladder holds the tile at (q, r).
+    pub fn site_of(&self, q: i32, r: i32) -> SiteId {
+        let (wx, wy) = hex_to_world(q, r);
+        continents::nearest_site(wx, wy, self.seed)
+    }
+
+    /// `f` over a site's ladder, built first where it is not yet.
+    pub fn with<R>(&self, id: SiteId, f: impl FnOnce(&Laddered) -> R) -> R {
+        let slot = self.sites.entry(id).or_default().clone();
+        f(slot.get_or_init(|| Laddered::with(self.seed, id, self.p)))
+    }
+
+    /// The ladder's tile at (q, r), where its site's ladder reaches it.
+    pub fn tile(&self, q: i32, r: i32) -> Option<Cell> {
+        self.with(self.site_of(q, r), |l| l.tile(q, r))
+    }
+
+    /// The tiles of `coords` computed together, a site at a time.
+    pub fn warm(&self, coords: &[(i32, i32)]) {
+        let mut by: std::collections::HashMap<SiteId, Vec<(i32, i32)>> = std::collections::HashMap::new();
+        for &(q, r) in coords {
+            by.entry(self.site_of(q, r)).or_default().push((q, r));
+        }
+        for (id, tiles) in by {
+            self.with(id, |l| l.warm(&tiles));
+        }
+    }
+
+    /// The cells of the level `w` wide, built where not yet, each read from
+    /// the ladder of the site of its centre tile.
+    pub fn cells(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<Cell>> {
+        let mut by: std::collections::HashMap<SiteId, Vec<usize>> = std::collections::HashMap::new();
+        for (x, &(i, j)) in cells.iter().enumerate() {
+            by.entry(self.site_of((i * w) as i32, (j * w) as i32)).or_default().push(x);
+        }
+        let mut out = vec![None; cells.len()];
+        for (id, at) in by {
+            let mine: Vec<(i64, i64)> = at.iter().map(|&x| cells[x]).collect();
+            let got = self.with(id, |l| l.terrain.cells(w, &mine));
+            for (x, v) in at.into_iter().zip(got) {
+                out[x] = v;
+            }
+        }
+        out
+    }
+
+    /// Each cell's height and the surface of the water standing over it
+    /// ([`Ladders::cells`]).
+    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>)>> {
+        self.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.water))).collect()
+    }
+}
+
+/// The top's bounds: [`TOP_REACH`] either way of a site.
+pub fn top_bounds(centre: (i32, i32)) -> Bounds {
     let top = 729i64;
     let (ci, cj) = cube_round(centre.0 as f64 / top as f64, centre.1 as f64 / top as f64);
     let h = TOP_REACH / top + 2;
-    let top_bounds: Bounds = (top, (ci - h, cj - h), (ci + h + 1, cj + h + 1));
-    let alone = Ladder::new_box(ground, &[top_bounds], Params::default());
-    let lv = &alone.levels[0];
-    let mut land = vec![false; lv.cap()];
-    let mut todo: Vec<usize> = lv.idx(ci, cj).into_iter().collect();
-    while let Some(c) = todo.pop() {
-        if land[c] || !lv.exists[c] || lv.z[c] < 0.0 {
-            continue;
-        }
-        land[c] = true;
-        let (i, j) = lv.ij(c);
-        for (di, dj) in NB {
-            if let Some(d) = lv.idx(i + di, j + dj) {
-                todo.push(d);
-            }
-        }
-    }
-    let cells: Vec<(i64, i64)> = (0..land.len()).filter(|&c| land[c]).map(|c| lv.ij(c)).collect();
-    let (ilo, ihi) = (cells.iter().map(|c| c.0).min().unwrap_or(ci), cells.iter().map(|c| c.0).max().unwrap_or(ci));
-    let (jlo, jhi) = (cells.iter().map(|c| c.1).min().unwrap_or(cj), cells.iter().map(|c| c.1).max().unwrap_or(cj));
-    let mut bounds = vec![top_bounds];
-    for w in [243i64, 81, 27] {
-        let m = top / w;
+    (top, (ci - h, cj - h), (ci + h + 1, cj + h + 1))
+}
+
+/// The bounds of levels `widths` wide over an area `radius` tiles either
+/// way of `centre`, each [`AREA_PAD`] of its cells past it.
+pub fn area_bounds(centre: (i32, i32), radius: i64, widths: &[i64]) -> Vec<Bounds> {
+    widths
+        .iter()
+        .map(|&w| {
+            let (ci, cj) = cube_round(centre.0 as f64 / w as f64, centre.1 as f64 / w as f64);
+            let h = radius / w + AREA_PAD;
+            (w, (ci - h, cj - h), (ci + h + 1, cj + h + 1))
+        })
+        .collect()
+}
+
+/// Each level's bounds: the top's, over [`TOP_REACH`] either way of the
+/// site, and every level below over the box of the top's land the site
+/// claims, nearest it of every site, and a margin for what its passes read
+/// past it.
+pub fn landmass_bounds(top: &Level, seed: u64, id: SiteId) -> Vec<Bounds> {
+    let w = top.w;
+    let land: Vec<(i64, i64)> = (0..top.cap())
+        .filter(|&c| top.exists[c] && top.z[c] >= 0.0)
+        .map(|c| top.ij(c))
+        .filter(|&(i, j)| {
+            let (wx, wy) = hex_to_world((i * w) as i32, (j * w) as i32);
+            continents::nearest_site(wx, wy, seed) == id
+        })
+        .collect();
+    let (ci, cj) = (top.lo + top.n as i64 / 2, top.lo_j + top.n_j as i64 / 2);
+    let (ilo, ihi) = (land.iter().map(|c| c.0).min().unwrap_or(ci), land.iter().map(|c| c.0).max().unwrap_or(ci));
+    let (jlo, jhi) = (land.iter().map(|c| c.1).min().unwrap_or(cj), land.iter().map(|c| c.1).max().unwrap_or(cj));
+    let mut bounds = vec![(w, (top.lo, top.lo_j), (top.lo + top.n as i64, top.lo_j + top.n_j as i64))];
+    for lw in [243i64, 81, 27, 9, 3, 1] {
+        let m = w / lw;
         let pad = 40;
-        bounds.push((w, (ilo * m - pad, jlo * m - pad), ((ihi + 1) * m + pad, (jhi + 1) * m + pad)));
+        bounds.push((lw, (ilo * m - pad, jlo * m - pad), ((ihi + 1) * m + pad, (jhi + 1) * m + pad)));
     }
     bounds
 }

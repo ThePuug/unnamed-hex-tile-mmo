@@ -32,12 +32,11 @@
 //! Water comes last and reads the level's lines and its births, never the
 //! other way: routing reads only the ground.
 //!
-//! Lines, routing and water's valleys stop at [`LAST_WATER`]. A level finer
-//! than that is its prediction and the ground's own detail, its cut handed
-//! down unchanged. The tiles cut channels along [`LAST_WATER`]'s rivers,
-//! drawn from its routing when they read it ([`channel`]). This ladder holds
-//! the levels to [`LAST_WATER`] over a landmass; the finer ones are
-//! computed a cell at a time as they are read ([`fine`]).
+//! Every level below the top runs all four, down to the tiles. A level
+//! holds water where its own beds cross a cell: a level over the bed's
+//! floor, a level more for each two tiles of its half width past the first
+//! ([`water::depth`]). [`terrain::Terrain`] holds the ladder for readers on
+//! many threads.
 //!
 //! Every layer, water among them, writes its value averaged over the
 //! level's cell; its raise there is that less what the level above handed
@@ -55,10 +54,11 @@
 //! as requests reach it, and never read in place of a recomputation that
 //! would differ.
 
-pub mod channel;
-pub mod fine;
 pub mod geom;
+pub mod mask;
 pub mod paged;
+pub mod store;
+pub mod terrain;
 mod lines;
 mod route;
 mod top;
@@ -68,6 +68,7 @@ use std::collections::HashSet;
 use std::time::Instant;
 
 use geom::*;
+use mask::{Exists, Mask};
 use paged::{Paged, PAGE};
 
 /// How the water layer cuts.
@@ -125,8 +126,6 @@ pub const ROUTE_REACH: f64 = 11.0;
 /// A line's corridor, either side of the level above's line, in cells of
 /// the level: one cell of the level above.
 pub const CORRIDOR: f64 = 3.0;
-/// The finest level that routes, draws lines and cuts water's valleys.
-pub const LAST_WATER: i64 = 27;
 
 /// The stages a level's work is timed by.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -142,11 +141,9 @@ pub enum Stage {
     Build = 5,
     /// Corners met and drawn.
     Corners = 6,
-    /// Channels: drawn at [`LAST_WATER`], handed down, cut at the tiles.
-    Channel = 7,
 }
 
-pub const STAGES: [&str; 8] = ["read", "supply", "lines", "route", "water", "build", "corners", "channel"];
+pub const STAGES: [&str; 7] = ["read", "supply", "lines", "route", "water", "build", "corners"];
 
 /// The passes that deform in cells of their own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -154,11 +151,9 @@ pub enum Pass {
     Ground = 0,
     Water = 1,
     Route = 2,
-    /// The channels, cut at the tiles as far as they reach.
-    Channel = 3,
 }
 
-const PASSES: [Pass; 4] = [Pass::Ground, Pass::Water, Pass::Route, Pass::Channel];
+const PASSES: [Pass; 3] = [Pass::Ground, Pass::Water, Pass::Route];
 
 /// The catchment a trough carries at a level: a level resolves a trough two
 /// of its cells wide.
@@ -173,8 +168,6 @@ pub fn reach(pass: Pass, w: i64) -> f64 {
             Pass::Ground => 0.0,
             Pass::Water => RING,
             Pass::Route => ROUTE_REACH,
-            Pass::Channel if w == 1 => channel::channel_reach(),
-            Pass::Channel => 0.0,
         }
 }
 
@@ -240,7 +233,7 @@ pub struct Level {
     pub n: usize,
     pub lo_j: i64,
     pub n_j: usize,
-    pub exists: Vec<bool>,
+    pub exists: Exists,
     /// Each layer's value at each cell, NaN until read.
     pub layers: Vec<Paged<f64>>,
     pub erod: Paged<f64>,
@@ -270,6 +263,11 @@ pub struct Level {
     /// Whether any river water read at each cell runs where the correction
     /// fades and changes it.
     pub wfade: Paged<bool>,
+    /// The surface of the water standing over each cell, in levels, where
+    /// one of the level's beds crosses it and it stands above the cell; NaN
+    /// where none. And how deep that bed's water stands over its floor.
+    pub water: Paged<f64>,
+    pub wdepth: Paged<f64>,
     pub z: Paged<f64>,
     /// Each cell's dry height: its ground before any cut, rounded. The level
     /// below predicts its ground from these, drawn by the corner rule, and
@@ -324,7 +322,7 @@ pub struct Level {
     /// and the four its neighbours own, where those exist.
     pub finished: Paged<bool>,
     /// How many levels up each pass's deform cell lies.
-    pub deform: [u32; 4],
+    pub deform: [u32; 3],
     /// Deforms run by each pass, and cells built.
     pub cost: [u64; 5],
 }
@@ -332,12 +330,10 @@ pub struct Level {
 const NONE: (i64, i64) = (i64::MIN, i64::MIN);
 
 impl Level {
-    /// A level of cells `lo.0..hi.0` along i and `lo.1..hi.1` along j;
-    /// `exists` over its index space (`Level::space`).
-    fn new(w: i64, lo: (i64, i64), hi: (i64, i64), exists: Vec<bool>, top: bool, layers: usize, ring: f64) -> Self {
+    /// A level of cells `lo.0..hi.0` along i and `lo.1..hi.1` along j.
+    fn new(w: i64, lo: (i64, i64), hi: (i64, i64), top: bool, layers: usize, ring: f64) -> Self {
         let (n, n_j) = ((hi.0 - lo.0) as usize, (hi.1 - lo.1) as usize);
         let cells = Level::space(n, n_j);
-        assert_eq!(exists.len(), cells, "existence over the level's index space");
         let nan = |k: usize| Paged::new(f64::NAN, k);
         let deform = PASSES.map(|pass| if top { 0 } else { (cell_size(pass, w, ring) / w).ilog(3) });
         Level {
@@ -346,7 +342,7 @@ impl Level {
             n,
             lo_j: lo.1,
             n_j,
-            exists,
+            exists: Exists { n, n_j },
             layers: (0..layers).map(|_| nan(cells)).collect(),
             erod: nan(cells),
             age: nan(cells),
@@ -359,6 +355,8 @@ impl Level {
             wborn: Paged::new(-1, cells),
             wgov: Paged::new(-1, cells),
             wfade: Paged::new(false, cells),
+            water: nan(cells),
+            wdepth: nan(cells),
             z: nan(cells),
             zd: nan(cells),
             a3: Paged::new([f64::NAN; 3], cells),
@@ -483,8 +481,8 @@ impl Level {
     }
 
     /// The pending deform cells of a pass over a mask.
-    fn pending(&self, pass: Pass, mask: &[bool]) -> Vec<(i64, i64)> {
-        let mut s: Vec<(i64, i64)> = mask.iter().enumerate().filter(|(_, &m)| m).map(|(c, _)| self.block(pass, c)).collect();
+    fn pending(&self, pass: Pass, mask: &Mask) -> Vec<(i64, i64)> {
+        let mut s: Vec<(i64, i64)> = mask.iter().map(|c| self.block(pass, c)).collect();
         s.sort_unstable();
         s.dedup();
         s.retain(|&b| b != NONE);
@@ -492,7 +490,7 @@ impl Level {
     }
 
     /// Cells whose deform cell of a pass is one of `pend` or in its ring.
-    fn footprint(&self, pass: Pass, pend: &[(i64, i64)]) -> Vec<bool> {
+    fn footprint(&self, pass: Pass, pend: &[(i64, i64)]) -> Mask {
         let mut keys = HashSet::new();
         for &(a, b) in pend {
             keys.insert((a, b));
@@ -500,13 +498,7 @@ impl Level {
                 keys.insert((a + da, b + db));
             }
         }
-        let mut fp = vec![false; self.cap()];
-        for key in keys {
-            for c in self.block_cells(pass, key) {
-                fp[c] = true;
-            }
-        }
-        fp
+        Mask::new(keys.into_iter().flat_map(|key| self.block_cells(pass, key)))
     }
 
     /// For each pending deform cell of a pass, its own cells and its
@@ -524,24 +516,25 @@ impl Level {
             .collect()
     }
 
-    /// Grows a mask by `k` rings of cells.
-    fn dilate(&self, mask: &[bool], k: usize) -> Vec<bool> {
-        let mut m = mask.to_vec();
+    /// Grows a mask by `k` rings of the level's cells.
+    fn dilate(&self, mask: &Mask, k: usize) -> Mask {
+        let mut all: mask::Cells = mask.iter().collect();
+        let mut ring: Vec<usize> = mask.iter().collect();
         for _ in 0..k {
-            let prev = m.clone();
-            for c in 0..prev.len() {
-                if !prev[c] {
-                    continue;
-                }
+            let mut next = Vec::new();
+            for c in ring {
                 let (i, j) = self.ij(c);
                 for (di, dj) in NB {
                     if let Some(d) = self.idx(i + di, j + dj) {
-                        m[d] = true;
+                        if all.insert(d) {
+                            next.push(d);
+                        }
                     }
                 }
             }
+            ring = next;
         }
-        m
+        Mask::new(all)
     }
 
     /// The meet values at a cell's own corners A and B, from the heights the
@@ -620,7 +613,7 @@ pub struct Ladder<'g, G: Ground> {
     pub route_stats: Vec<[u64; 4]>,
     /// Per level, the wall time each stage took there, in seconds, nested
     /// work at other levels not counted.
-    pub timing: Vec<[f64; 8]>,
+    pub timing: Vec<[f64; 7]>,
 }
 
 impl<'g, G: Ground> Ladder<'g, G> {
@@ -634,23 +627,40 @@ impl<'g, G: Ground> Ladder<'g, G> {
     /// A ladder over `bounds`, each level's width and its cells' index range
     /// along i and along j, coarsest first; the top built over all of its.
     pub fn new_box(ground: &'g G, bounds: &[Bounds], p: Params) -> Self {
+        Ladder::with_top(ground, bounds, p, None)
+    }
+
+    /// The top over `bounds` of `ground`: kept under `key` where it is,
+    /// else built and kept there.
+    pub fn top(ground: &'g G, bounds: Bounds, p: Params, key: &str) -> Level {
+        let (w, lo, hi) = bounds;
+        let mut top = Level::new(w, lo, hi, true, ground.layers(), p.ring);
+        if store::read(key, &mut top) {
+            return top;
+        }
+        let top = Ladder::new_box(ground, &[bounds], p).levels.remove(0);
+        store::write(key, &top);
+        top
+    }
+
+    /// A ladder over `bounds` whose top is `top`, built over `bounds[0]`
+    /// with the same ground and parameters, or built here without one.
+    pub fn with_top(ground: &'g G, bounds: &[Bounds], p: Params, top: Option<Level>) -> Self {
         let mut levels: Vec<Level> = Vec::new();
         for (k, &(w, lo, hi)) in bounds.iter().enumerate() {
-            let (n, n_j) = ((hi.0 - lo.0) as usize, (hi.1 - lo.1) as usize);
-            let exists: Vec<bool> = (0..Level::space(n, n_j))
-                .map(|c| {
-                    let (i, j) = Level::cell_at(n_j, lo, c);
-                    if i >= hi.0 || j >= hi.1 {
-                        return false;
-                    }
-                    k == 0 || {
-                        let par = &levels[k - 1];
-                        let (pi, pj, _, _) = parent_of(i, j);
-                        par.idx(pi, pj).is_some_and(|pc| par.exists[pc])
-                    }
-                })
-                .collect();
-            levels.push(Level::new(w, lo, hi, exists, k == 0, ground.layers(), p.ring));
+            // A cell is the level's within its bounds, its parent the level
+            // above's: every cell's parent lies inside the level above.
+            if k > 0 {
+                let par = &levels[k - 1];
+                let edge = (lo.0..hi.0)
+                    .flat_map(|i| [(i, lo.1), (i, hi.1 - 1)])
+                    .chain((lo.1..hi.1).flat_map(|j| [(lo.0, j), (hi.0 - 1, j)]));
+                for (i, j) in edge {
+                    let (pi, pj, _, _) = parent_of(i, j);
+                    assert!(par.idx(pi, pj).is_some(), "level {w}'s cell ({i}, {j}) lies past the level above's bounds");
+                }
+            }
+            levels.push(Level::new(w, lo, hi, k == 0, ground.layers(), p.ring));
         }
         let count = levels.len();
         let mut ladder = Ladder {
@@ -659,16 +669,23 @@ impl<'g, G: Ground> Ladder<'g, G> {
             p,
             line_stats: vec![[0; 3]; count],
             route_stats: vec![[0; 4]; count],
-            timing: vec![[0.0; 8]; count],
+            timing: vec![[0.0; 7]; count],
         };
-        ladder.build_top();
+        match top {
+            Some(top) => {
+                let lv = &ladder.levels[0];
+                assert_eq!((top.w, top.lo, top.n, top.lo_j, top.n_j), (lv.w, lv.lo, lv.n, lv.lo_j, lv.n_j), "a top over the ladder's top bounds");
+                ladder.levels[0] = top;
+            }
+            None => ladder.build_top(),
+        }
         ladder
     }
 
     /// Reads each layer's value at every cell of a mask not yet read.
-    fn read_layers(&mut self, k: usize, mask: &[bool]) {
+    fn read_layers(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let todo: Vec<usize> = (0..mask.len()).filter(|&c| mask[c] && lv.exists[c] && lv.layers[0][c].is_nan()).collect();
+        let todo: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.layers[0][c].is_nan()).collect();
         if todo.is_empty() {
             return;
         }
@@ -708,11 +725,12 @@ impl<'g, G: Ground> Ladder<'g, G> {
     /// The top: the sum of the layers over its cells, rounded to steps,
     /// routed once from its edge and the sea.
     fn build_top(&mut self) {
-        let all = vec![true; self.levels[0].exists.len()];
+        let top = &self.levels[0];
+        let all = Mask::new((0..top.cap()).filter(|&c| top.exists[c]));
         self.read_layers(0, &all);
         let p = self.p;
         let lv = &mut self.levels[0];
-        for c in 0..lv.exists.len() {
+        for c in 0..lv.cap() {
             let h: f64 = lv.layers.iter().map(|l| l[c]).sum();
             lv.p[c] = h;
             lv.ground[c] = h;
@@ -730,8 +748,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
         // routed over.
         let edges = water::trough_edges(lv, head_of(lv.w, &p));
         water::top_cut(lv, &edges, &p);
-        for c in 0..lv.exists.len() {
+        for c in 0..lv.cap() {
             lv.z[c] = (lv.ground[c] + lv.cut[c] + 0.5).floor();
+            if lv.water[c] <= lv.z[c] {
+                lv.water[c] = f64::NAN;
+            }
         }
         // The cut moved every height, so every corner is met again.
         lv.corners.fill(false);
@@ -747,36 +768,29 @@ impl<'g, G: Ground> Ladder<'g, G> {
         if k == 0 || cells.iter().all(|&(i, j)| lv.idx(i, j).is_none_or(|c| !lv.exists[c] || lv.finished[c])) {
             return;
         }
-        let mut mask = vec![false; lv.exists.len()];
-        for &(i, j) in cells {
-            if let Some(c) = lv.idx(i, j) {
-                mask[c] = lv.exists[c];
-            }
-        }
+        let mask = Mask::new(cells.iter().filter_map(|&(i, j)| lv.idx(i, j)).filter(|&c| lv.exists[c]));
         self.ensure_routed(k, &mask);
         self.drawn(k, &mask);
     }
 
     /// Level k built two rings past a mask and its corners drawn one ring
     /// past it, so every corner of every cell of the mask is drawn.
-    fn drawn(&mut self, k: usize, mask: &[bool]) {
+    fn drawn(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
         let (one, two) = (lv.dilate(mask, 1), lv.dilate(mask, 2));
-        let one: Vec<bool> = one.iter().zip(&lv.exists).map(|(a, b)| *a && *b).collect();
-        let two: Vec<bool> = two.iter().zip(&lv.exists).map(|(a, b)| *a && *b).collect();
         self.ensure_built(k, &two);
         let started = Instant::now();
         corners_over(&mut self.levels[k], &one);
         self.timing[k][Stage::Corners as usize] += started.elapsed().as_secs_f64();
     }
 
-    fn ensure_routed(&mut self, k: usize, mask: &[bool]) {
-        if k == 0 || self.levels[k].w < LAST_WATER {
+    fn ensure_routed(&mut self, k: usize, mask: &Mask) {
+        if k == 0 {
             return;
         }
         let lv = &self.levels[k];
-        let need: Vec<bool> = (0..mask.len()).map(|c| mask[c] && !lv.routed[c] && lv.exists[c]).collect();
-        if !need.iter().any(|&x| x) {
+        let need = mask.filter(|c| !lv.routed[c] && lv.exists[c]);
+        if need.is_empty() {
             return;
         }
         let pend = lv.pending(Pass::Route, &need);
@@ -796,19 +810,14 @@ impl<'g, G: Ground> Ladder<'g, G> {
 
     /// The level above under a mask and a ring of its cells: read, routed,
     /// built and drawn.
-    fn parent_over(&mut self, k: usize, mask: &[bool]) {
+    fn parent_over(&mut self, k: usize, mask: &Mask) {
         let (lv, par) = (&self.levels[k], &self.levels[k - 1]);
-        let mut pmask = vec![false; par.exists.len()];
-        for c in 0..mask.len() {
-            if mask[c] {
-                let (i, j) = lv.ij(c);
-                let (pi, pj, _, _) = parent_of(i, j);
-                if let Some(pc) = par.idx(pi, pj) {
-                    pmask[pc] = true;
-                }
-            }
-        }
-        let pmask: Vec<bool> = par.dilate(&pmask, 1).iter().zip(&par.exists).map(|(a, b)| *a && *b).collect();
+        let under = Mask::new(mask.iter().filter_map(|c| {
+            let (i, j) = lv.ij(c);
+            let (pi, pj, _, _) = parent_of(i, j);
+            par.idx(pi, pj)
+        }));
+        let pmask = par.dilate(&under, 1);
         self.read_layers(k - 1, &pmask);
         if k - 1 > 0 {
             self.ensure_routed(k - 1, &pmask);
@@ -816,10 +825,10 @@ impl<'g, G: Ground> Ladder<'g, G> {
         }
     }
 
-    fn ensure_supplied(&mut self, k: usize, mask: &[bool]) {
+    fn ensure_supplied(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let need: Vec<bool> = (0..mask.len()).map(|c| mask[c] && !lv.supplied[c] && lv.exists[c]).collect();
-        if !need.iter().any(|&x| x) {
+        let need = mask.filter(|c| !lv.supplied[c] && lv.exists[c]);
+        if need.is_empty() {
             return;
         }
         let pend = lv.pending(Pass::Ground, &need);
@@ -830,8 +839,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let (above, rest) = self.levels.split_at_mut(k);
         let lv = &mut rest[0];
         let par = &above[k - 1];
-        for c in 0..fp.len() {
-            if !fp[c] || !lv.exists[c] || lv.supplied[c] {
+        for c in fp.iter() {
+            if !lv.exists[c] || lv.supplied[c] {
                 continue;
             }
             let (i, j) = lv.ij(c);
@@ -848,10 +857,10 @@ impl<'g, G: Ground> Ladder<'g, G> {
         self.timing[k][Stage::Supply as usize] += started.elapsed().as_secs_f64();
     }
 
-    fn ensure_lines(&mut self, k: usize, mask: &[bool]) {
+    fn ensure_lines(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let need: Vec<bool> = (0..mask.len()).map(|c| mask[c] && !lv.lined[c] && lv.exists[c]).collect();
-        if !need.iter().any(|&x| x) {
+        let need = mask.filter(|c| !lv.lined[c] && lv.exists[c]);
+        if need.is_empty() {
             return;
         }
         let pend = lv.pending(Pass::Route, &need);
@@ -869,14 +878,14 @@ impl<'g, G: Ground> Ladder<'g, G> {
         self.timing[k][Stage::Lines as usize] += started.elapsed().as_secs_f64();
     }
 
-    fn ensure_built(&mut self, k: usize, mask: &[bool]) {
+    fn ensure_built(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let need: Vec<bool> = (0..mask.len()).map(|c| mask[c] && !lv.built[c] && lv.exists[c]).collect();
-        if !need.iter().any(|&x| x) {
+        let need = mask.filter(|c| !lv.built[c] && lv.exists[c]);
+        if need.is_empty() {
             return;
         }
-        let sel: Vec<bool> = (0..need.len()).map(|c| need[c] && !lv.watered[c]).collect();
-        if sel.iter().any(|&x| x) {
+        let sel = need.filter(|c| !lv.watered[c]);
+        if !sel.is_empty() {
             let pend = lv.pending(Pass::Water, &sel);
             let fp = lv.footprint(Pass::Water, &pend);
             self.ensure_supplied(k, &fp);
@@ -894,17 +903,20 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let started = Instant::now();
         let lv = &mut self.levels[k];
         let mut built = 0;
-        for c in 0..need.len() {
-            if need[c] && lv.supplied[c] && lv.watered[c] {
+        for c in need.iter() {
+            if lv.supplied[c] && lv.watered[c] {
                 let uncut = lv.ground[c] - lv.wpred[c];
                 lv.z[c] = (uncut + lv.cut[c] + 0.5).floor();
                 lv.zd[c] = (uncut + 0.5).floor();
+                if lv.water[c] <= lv.z[c] {
+                    lv.water[c] = f64::NAN;
+                }
                 lv.built[c] = true;
                 built += 1;
             }
         }
         lv.cost[4] += built;
-        assert!((0..need.len()).all(|c| !need[c] || lv.built[c]), "a built cell read something its deform did not cover");
+        assert!(need.iter().all(|c| lv.built[c]), "a built cell read something its deform did not cover");
         self.timing[k][Stage::Build as usize] += started.elapsed().as_secs_f64();
     }
 
@@ -915,8 +927,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
     pub fn unlimited_cut(&self, k: usize, cells: &[(i64, i64)]) -> Vec<f64> {
         let lv = &self.levels[k];
         // Lines where they were drawn, births where the level was routed.
-        let lined: Vec<bool> = lv.lined.iter().copied().collect();
-        let routed: Vec<bool> = lv.routed.iter().copied().collect();
+        let set = |of: &Paged<bool>| Mask::new(of.written().flat_map(|first| first..first + PAGE).filter(|&c| of[c]));
+        let (lined, routed) = (set(&lv.lined), set(&lv.routed));
         let mut edges = water::line_edges(lv, &lined, head_of(self.levels[k - 1].w, &self.p));
         edges.extend(water::born_edges(lv, &routed));
         let at: Vec<usize> = cells.iter().map(|&(i, j)| lv.idx(i, j).expect("a cell the level holds")).collect();
@@ -1027,12 +1039,12 @@ impl Above for Level {
 /// sharers are all built, and the six corner values of each cell, and of
 /// every cell outside the mask reading a corner met here, so a cell's
 /// corners never wait on a request that names it.
-fn corners_over(lv: &mut Level, mask: &[bool]) {
+fn corners_over(lv: &mut Level, mask: &Mask) {
     let nn = lv.cap();
     // Every cell of the mask, and every cell reading a corner met here.
     let mut draw: Vec<usize> = Vec::new();
-    for c in 0..mask.len() {
-        if !mask[c] || !lv.exists[c] || !lv.built[c] {
+    for c in mask.iter() {
+        if !lv.exists[c] || !lv.built[c] {
             continue;
         }
         draw.push(c);
@@ -1071,10 +1083,10 @@ fn corners_over(lv: &mut Level, mask: &[bool]) {
 /// The level above's surface at every vertex of a mask, and the ground at
 /// each: a centre's own, a corner the lowest its sharers reach by the meet
 /// rule.
-fn ground_fields(lv: &mut Level, par: &Level, mask: &[bool]) {
+fn ground_fields(lv: &mut Level, par: &Level, mask: &Mask) {
     let nn = lv.cap();
-    for c in 0..mask.len() {
-        if !mask[c] || !lv.exists[c] {
+    for c in mask.iter() {
+        if !lv.exists[c] {
             continue;
         }
         let (i, j) = lv.ij(c);
