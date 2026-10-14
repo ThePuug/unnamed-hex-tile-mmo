@@ -79,6 +79,10 @@ struct Cli {
     /// for timing a reload.
     #[arg(long)]
     then_reload: Option<PathBuf>,
+    /// A tile read into the panel once the first view is up, as a click
+    /// on it reads it, as q,r.
+    #[arg(long, allow_hyphen_values = true)]
+    read: Option<String>,
     #[arg(long, default_value_t = world::WORLD_SEED)]
     seed: u64,
 }
@@ -198,6 +202,7 @@ struct View {
     shot: Option<PathBuf>,
     shot_wait: u32,
     then_reload: Option<PathBuf>,
+    read: Option<(i32, i32)>,
 }
 
 #[derive(Resource)]
@@ -255,6 +260,7 @@ pub fn run(args: Vec<String>) {
         shot: cli.shot.clone(),
         shot_wait: 0,
         then_reload: cli.then_reload.clone(),
+        read: cli.read.as_deref().map(pair),
     };
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -727,6 +733,11 @@ fn text(view: Res<View>, mut status: Query<&mut Text, (With<StatusText>, Without
 /// With `--shot`, the first view taken once it has drawn a few frames, and
 /// the viewer closed.
 fn shoot(mut view: ResMut<View>, mut commands: Commands, mut exit: MessageWriter<AppExit>) {
+    if view.shown.is_some() {
+        if let Some(tile) = view.read.take() {
+            view.inspect = read_tile(&view.worlds, tile);
+        }
+    }
     let Some(path) = view.shot.clone() else { return };
     if view.shown.is_none() {
         return;

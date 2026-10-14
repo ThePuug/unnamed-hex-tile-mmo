@@ -19,6 +19,38 @@ QOI to `world.qoi` (`--format png` writes `world.png`), view `elevation`.
 Renders made for review land under `proofs/world-viewer/` at the repo root,
 ignored by git, the way the assets repo keeps its proof sheets.
 
+## 3D
+
+```bash
+cargo run --bin world-viewer -- 3d
+cargo run --bin world-viewer -- 3d --centre 107289,-7677 --radius 384 --level 9 --surface dry
+cargo run --bin world-viewer -- 3d --look 107345,-7665 --bearing 120 --pitch 40 --distance 200 --shot slope.png
+```
+
+A live window on the world's ground round a tile (the haven by default),
+`--radius` tiles either way, each ladder level drawn as its own hex cells by
+the game's mesh builders: the corner rule, faces as walls, water as the
+game draws it. A level is built over the area the first time it is shown,
+and kept per level and surface until the parameters are reloaded.
+
+| Control | Does |
+|---------|------|
+| 1–5 | the level: tiles, 3, 9, 27, 81 |
+| Z | the surface: the ladder, the ladder dry, the stack alone |
+| X | water on or off |
+| C | faces highlighted red |
+| L | the level's lines overlaid, each at its floor |
+| left click | a tile read at every level: its cell, height, dry height, cut, the cut handed down, water, and the line governing its valley with its floor, catchment and the level it was born at |
+| right drag, middle drag, wheel | orbit, pan, zoom; WASD pan, Q and E turn |
+| R | the ladder's parameters read again from `--params` (`ladder.params`) and the world built anew |
+| P | a screenshot to `proofs/world-viewer/` |
+
+The ladder's top is kept on disk (`LADDER_CACHE`, else the system's
+temporary directory), named by everything it is made of, so a relaunch or a
+reload under the same parameters reads it back instead of building it.
+`--shot` takes the first view and exits; with `--then-reload <file>` it
+reloads from that file first, for timing a reload.
+
 ## Views
 
 | View | Reads | Draws |
