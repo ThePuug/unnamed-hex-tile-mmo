@@ -1,8 +1,9 @@
 //! Cel light for what glTF scenes bring: each material a scene spawns with —
 //! an actor, what it wears, what it drops — is swapped for the same
 //! material extended by the cel light, so an actor is shaded by the rule
-//! the ground and the cover are (`shaders/cel.wgsl`). A material built in
-//! code, the water and the markers, keeps the standard light.
+//! the ground and the cover are (`shaders/cel.wgsl`). The water builds its
+//! own cel material (`plugins::water`); the markers, built in code, keep
+//! the standard light.
 
 use bevy::{
     pbr::{ExtendedMaterial, MaterialExtension},

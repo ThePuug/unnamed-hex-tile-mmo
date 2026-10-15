@@ -8,6 +8,7 @@
 //! terrain pipeline and drawn with the material this plugin owns.
 
 use bevy::prelude::*;
+use crate::plugins::cel::{Cel, CelMaterial};
 use crate::systems::closeup::CloseupCamera;
 use bevy_camera::visibility::NoFrustumCulling;
 use bevy_light::NotShadowCaster;
@@ -34,9 +35,10 @@ fn water_extent() -> f32 {
 struct WaterSurface;
 
 /// The one material every water surface is drawn with: the sea's, shared
-/// by the lakes and rivers the mesh regions build.
+/// by the lakes and rivers the mesh regions build, lit by the cel light as
+/// the ground is, so it holds its blue from every angle.
 #[derive(Resource)]
-pub struct WaterMaterial(pub Handle<StandardMaterial>);
+pub struct WaterMaterial(pub Handle<CelMaterial>);
 
 pub struct WaterPlugin;
 
@@ -52,20 +54,20 @@ impl Plugin for WaterPlugin {
 fn setup_water_surface(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<CelMaterial>>,
 ) {
     let mesh = meshes.add(Plane3d::default().mesh().size(water_extent(), water_extent()));
 
-    let material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.07, 0.26, 0.42, 0.78),
-        perceptual_roughness: 0.12,
-        metallic: 0.0,
-        reflectance: 0.4,
-        alpha_mode: AlphaMode::Blend,
-        // Seen from below when the camera dips under the waterline.
-        double_sided: true,
-        cull_mode: None,
-        ..default()
+    let material = materials.add(CelMaterial {
+        base: StandardMaterial {
+            base_color: Color::srgba(0.07, 0.26, 0.42, 0.78),
+            alpha_mode: AlphaMode::Blend,
+            // Seen from below when the camera dips under the waterline.
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        },
+        extension: Cel {},
     });
     commands.insert_resource(WaterMaterial(material.clone()));
 
