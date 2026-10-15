@@ -19,6 +19,19 @@ QOI to `world.qoi` (`--format png` writes `world.png`), view `elevation`.
 Renders made for review land under `proofs/world-viewer/` at the repo root,
 ignored by git, the way the assets repo keeps its proof sheets.
 
+## Summaries
+
+```bash
+cargo run --bin world-viewer -- summaries
+cargo run --bin world-viewer -- summaries 106898,-7785
+```
+
+Makes the summaries the server sends a player standing at a tile, the
+haven by default, as the server makes them: each band's regions round the
+tile, a region's cells made ready together and then read, the finest band
+first. It prints how long each band took and how many of its summaries
+hold water, for timing what the ladder's far levels cost.
+
 ## 3D
 
 ```bash

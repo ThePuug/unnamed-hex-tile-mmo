@@ -25,6 +25,7 @@ use world::events::forest;
 use world::events::plates::{unwarp, PlateEdgeIndex};
 use world::lattice::node_world;
 
+mod summaries;
 mod view3d;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -202,6 +203,9 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("3d") {
         let rest = std::iter::once(args[0].clone()).chain(args[2..].iter().cloned()).collect();
         return view3d::run(rest);
+    }
+    if args.get(1).map(String::as_str) == Some("summaries") {
+        return summaries::run(&args[2..]);
     }
     // The world's tracing spans reach the log where the workspace builds
     // `tracing` with `log`: one line a tile, unless silenced.
