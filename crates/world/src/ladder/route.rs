@@ -206,6 +206,8 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     let mut recg = vec![-1i64; nv];
     // Where water short of the head goes, and the first's share.
     let mut split: Vec<Option<(usize, Option<usize>, f64)>> = vec![None; nv];
+    // How steep each vertex's downslope is, in steps per tile.
+    let mut slope = vec![0.0f64; nv];
     for x in 0..nv {
         if sink[x] || !known[x] {
             continue;
@@ -238,7 +240,8 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         }
         decided[x] = true;
         let Some(y) = best else { continue };
-        if let Some((a, bb, share)) = facet(&mut around) {
+        if let Some((a, bb, share, fall)) = facet(&mut around) {
+            slope[x] = fall * crate::SQRT_3;
             let ok_a = less(a, x) && share > 1e-12;
             let ok_b = less(bb, x) && share < 1.0 - 1e-12;
             split[x] = match (ok_a, ok_b) {
@@ -493,8 +496,9 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         let v = vids[x];
         let c = v % nn;
         let area = if v < nn && lv.exists[c] { (w * w) as f64 } else { 0.0 };
-        val[x] = (area + inflow[x]).min(head_of(par.w, lv.erod[c], p));
-        let headed = births && val[x] >= head_of(w, lv.erod[c], p);
+        let (head, above) = (head_of(w, lv.erod[c], slope[x], p), head_of(par.w, lv.erod[c], slope[x], p));
+        val[x] = (area + inflow[x]).min(above);
+        let headed = births && head < above && val[x] >= head;
         trough[x] = !sink[x] && (headed || !src_acc[x].is_nan() || fed[x]);
         acc[x] = val[x];
         if trough[x] {

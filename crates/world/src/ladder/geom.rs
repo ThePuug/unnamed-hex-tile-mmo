@@ -157,10 +157,11 @@ pub fn ring_clearance(w: i64) -> f64 {
 
 /// Where water leaving a vertex goes: the two neighbours bracketing its
 /// steepest downslope, and the share of it the first takes, or one
-/// neighbour wholly where the downslope points straight at it. Each of
-/// `around` is a neighbour's offset from the vertex, its height less the
-/// vertex's, and its id. None where nothing lies below.
-pub fn facet(around: &mut [(f64, f64, f64, usize)]) -> Option<(usize, usize, f64)> {
+/// neighbour wholly where the downslope points straight at it, and how
+/// steep it is, height lost per unit of offset. Each of `around` is a
+/// neighbour's offset from the vertex, its height less the vertex's, and
+/// its id. None where nothing lies below.
+pub fn facet(around: &mut [(f64, f64, f64, usize)]) -> Option<(usize, usize, f64, f64)> {
     around.sort_by(|a, b| a.1.atan2(a.0).total_cmp(&b.1.atan2(b.0)));
     let m = around.len();
     let (mut best, mut pick) = (1e-12, None);
@@ -189,7 +190,7 @@ pub fn facet(around: &mut [(f64, f64, f64, usize)]) -> Option<(usize, usize, f64
         }
         if cand > best {
             best = cand;
-            pick = Some((a, b, share));
+            pick = Some((a, b, share, cand));
         }
     }
     pick

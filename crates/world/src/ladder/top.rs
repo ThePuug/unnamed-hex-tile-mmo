@@ -109,6 +109,8 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     let mut r1 = rec.clone();
     let mut r2 = vec![-1i64; count];
     let mut w1 = vec![1.0f64; count];
+    // How steep each vertex's downslope is, in steps per tile.
+    let mut slope = vec![0.0f64; count];
     for v in 0..count {
         if sink[v] || rec[v] < 0 {
             continue;
@@ -121,7 +123,8 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
                 (pos[u].0 - pos[v].0, pos[u].1 - pos[v].1, filled[u] - filled[v], u)
             })
             .collect();
-        let Some((a, b, share_a)) = facet(&mut around) else { continue };
+        let Some((a, b, share_a, fall)) = facet(&mut around) else { continue };
+        slope[v] = fall * crate::SQRT_3;
         let ok_a = at[a] < at[v] && share_a > 1e-12;
         let ok_b = at[b] < at[v] && share_a < 1.0 - 1e-12;
         if ok_a && ok_b {
@@ -135,15 +138,21 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         }
     }
 
-    // Catchment over the flood's order, upstream first.
-    let head = |v: usize| head_of(lv.w, lv.erod[v % nn], p);
+    // Catchment and troughs over the flood's order, upstream first: a
+    // trough is born where the catchment reaches the head, and whatever a
+    // trough drains into is a trough.
+    let head = |v: usize| head_of(lv.w, lv.erod[v % nn], slope[v], p);
     let mut acc: Vec<f64> = (0..count).map(|v| if v < nn && live[v] { (lv.w * lv.w) as f64 } else { 0.0 }).collect();
+    let mut trough = vec![false; count];
     for &v in order.iter().rev() {
         if rec[v] < 0 {
             continue;
         }
-        if acc[v] >= head(v) {
-            acc[rec[v] as usize] += acc[v];
+        trough[v] = trough[v] || acc[v] >= head(v);
+        if trough[v] {
+            let r = rec[v] as usize;
+            acc[r] += acc[v];
+            trough[r] = true;
         } else if r2[v] >= 0 {
             acc[r1[v] as usize] += w1[v] * acc[v];
             acc[r2[v] as usize] += (1.0 - w1[v]) * acc[v];
@@ -186,7 +195,7 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     // Each trough's room: how far its hillslopes run to the nearer divide,
     // on each side of its flow the farthest any vertex entering the troughs
     // within two steps lies from where it enters, the nearer side's.
-    let trough: Vec<bool> = (0..count).map(|v| rec[v] >= 0 && acc[v] >= head(v) && !sink[v]).collect();
+    let trough: Vec<bool> = (0..count).map(|v| trough[v] && rec[v] >= 0).collect();
     let mut entry = vec![usize::MAX; count];
     for &v in &order {
         entry[v] = if trough[v] { v } else if rec[v] >= 0 { entry[rec[v] as usize] } else { usize::MAX };
@@ -248,7 +257,7 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     for v in 0..count {
         lv.rec[v] = rec[v];
         lv.acc[v] = acc[v];
-        lv.trough[v] = rec[v] >= 0 && acc[v] >= head(v) && !sink[v];
+        lv.trough[v] = trough[v];
         lv.floor[v] = (floor[v] + 0.5).floor();
         lv.base[v] = base[v];
         lv.born[v] = if lv.trough[v] { lv.w } else { -1 };

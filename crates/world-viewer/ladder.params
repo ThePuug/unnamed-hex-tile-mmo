@@ -4,8 +4,8 @@
 # the values here are those defaults.
 
 # Calibration: the catchment, in tiles, at which a channel begins to cut in
-# the softest rock, and a trough is born, and at which it has cut its full
-# share.
+# the softest rock on a slope of a step per tile, and a trough is born, and
+# at which it has cut its full share.
 cut_from = 4000
 cut_full = 118098
 

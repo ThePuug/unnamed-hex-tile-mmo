@@ -96,8 +96,8 @@ pub struct Params {
     /// The catchment at which a trough's bed is a trunk's, in tiles.
     pub catchment_full: f64,
     /// The catchment at which a channel begins to cut, and a trough is born,
-    /// in the softest rock, and at which it has cut its full share, in
-    /// tiles.
+    /// in the softest rock on a slope of [`HEAD_SLOPE`], and at which it has
+    /// cut its full share, in tiles.
     pub cut_from: f64,
     pub cut_full: f64,
     /// A wall's slope in the softest rock, in steps per tile: walkable.
@@ -135,6 +135,9 @@ pub const RING: f64 = 15.588_457_268_119_896;
 pub const HARDEST: f64 = 0.3;
 /// The steepest a wall stands, in the hardest rock, in steps per tile.
 pub const WALL_HARDEST: f64 = 3.0;
+/// The slope at which a channel begins at [`cut_head`]'s catchment, in
+/// steps per tile: a walkable wall in the softest rock.
+pub const HEAD_SLOPE: f64 = 1.0;
 /// How far upstream a trough born at a level may gather, in its cells.
 pub const ROUTE_REACH: f64 = 11.0;
 
@@ -166,11 +169,13 @@ pub enum Pass {
 const PASSES: [Pass; 3] = [Pass::Ground, Pass::Water, Pass::Route];
 
 /// The catchment at which a trough is born at a level, on rock of
-/// `erodibility`: where a channel begins to cut there ([`cut_head`]), and
-/// never less than two of the level's cells, the narrowest trough a level
-/// resolves.
-pub fn head_of(w: i64, erodibility: f64, p: &Params) -> f64 {
-    cut_head(erodibility, p).max(2.0 * (w * w) as f64)
+/// `erodibility` falling `slope` steps per tile: where a channel begins
+/// there, [`cut_head`] at [`HEAD_SLOPE`] and growing as the square of how
+/// much flatter the ground is, since a channel begins where catchment ×
+/// slope² reaches a threshold; and never less than two of the level's
+/// cells, the narrowest trough a level resolves.
+pub fn head_of(w: i64, erodibility: f64, slope: f64, p: &Params) -> f64 {
+    (cut_head(erodibility, p) * (HEAD_SLOPE / slope.max(1e-9)).powi(2)).max(2.0 * (w * w) as f64)
 }
 
 /// The catchment at which a channel begins to cut on rock of
@@ -903,7 +908,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
 /// Whether troughs are born at a level: only where its head is below the
 /// level above's.
 fn births(par: &Level, lv: &Level, p: &Params) -> bool {
-    head_of(lv.w, 1.0, p) < head_of(par.w, 1.0, p)
+    head_of(lv.w, 1.0, HEAD_SLOPE, p) < head_of(par.w, 1.0, HEAD_SLOPE, p)
 }
 
 /// The cells sharing parent corner `k` of cell (a, b), as
