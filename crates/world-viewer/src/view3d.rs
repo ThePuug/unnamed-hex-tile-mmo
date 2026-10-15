@@ -582,7 +582,7 @@ fn build(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64, surface: Surf
         let origin = key.origin();
         let (x, z) = flat_top_tile_center(origin.q - centre.0, origin.r - centre.1, 1.0);
         let wet = |a: i32, b: i32| water.get(&(a, b)).copied();
-        let water = (!water.is_empty()).then(|| build_water_mesh_region(r, key, &wet)).filter(|m| !m.indices.is_empty());
+        let water = (!water.is_empty()).then(|| build_water_mesh_region(r, key, &wet, &height)).filter(|m| !m.indices.is_empty());
         built.push(Region {
             offset: Vec3::new(x, 0.0, z),
             ground: (ground.positions, ground.normals, ground.indices),

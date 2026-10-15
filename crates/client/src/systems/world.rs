@@ -1146,7 +1146,7 @@ fn collect_and_build_summary_mesh(
         return common_bevy::summary_mesh::build_summary_mesh_region(0, region_key, &height, coarse, None)
             .map_or(empty, |smr| {
                 let mut result = smr_to_result(smr);
-                let w = common_bevy::summary_mesh::build_water_mesh_region(0, region_key, &tile_water);
+                let w = common_bevy::summary_mesh::build_water_mesh_region(0, region_key, &tile_water, &height);
                 result.water = crate::resources::WaterGeometry { positions: w.positions, normals: w.normals, indices: w.indices };
                 result.cover = crate::plugins::cover::place_cover(0, region_key, map, &height);
                 result.cover.extend(crate::plugins::cover::place_dens(0, region_key, dens, map, &height));
