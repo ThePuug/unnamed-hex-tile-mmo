@@ -3,6 +3,8 @@
 //! climb. No key moves it.
 
 use bevy::{core_pipeline::prepass::DepthPrepass, pbr::{DistanceFog, FogFalloff}, prelude::*};
+use crate::plugins::water::SEA_LEVEL_Y;
+use common_bevy::surface::height_y;
 use crate::resources::RenderOrigin;
 use crate::systems::{closeup::CloseupCamera, ease};
 use std::f32::consts::PI;
@@ -496,11 +498,13 @@ const BOOM_CLEARANCE: f32 = 0.3;
 /// between them stays under the frame.
 const STAND_HEIGHT: f32 = 4.0;
 
-/// The heights under `at`, a rendered point: the ground's, and the top of
-/// the props on its tile — the tallest solid object in its slots as it is
+/// The heights under `at`, a rendered point: the ground's; the top of the
+/// props on its tile — the tallest solid object in its slots as it is
 /// drawn, a tree, a stump or a boulder, standing on the ground there —
-/// which is the ground's where none stands. None where it is not loaded.
-fn heights_under(at: Vec3, map: &Map, origin: &RenderOrigin) -> Option<(f32, f32)> {
+/// which is the ground's where none stands; and the water's surface over
+/// it, as it is drawn, the sea's where no river or lake stands higher.
+/// None where it is not loaded.
+fn heights_under(at: Vec3, map: &Map, origin: &RenderOrigin) -> Option<(f32, f32, f32)> {
     let here = origin.tile_at(map, at);
     let (floor, _) = map.get_by_qr(here.q, here.r)?;
     let ground = surface_y_from(origin.tile(), at.xz(), floor, map);
@@ -508,33 +512,44 @@ fn heights_under(at: Vec3, map: &Map, origin: &RenderOrigin) -> Option<(f32, f32
     let tallest = (0..common::TILE_SLOTS as usize)
         .filter_map(|k| solid_extent(cover, here.q, here.r, k))
         .fold(0.0_f32, |top, (_, height)| top.max(height));
-    Some((ground, ground + tallest))
+    let water = map.water_at(here.q, here.r).map_or(SEA_LEVEL_Y, |w| height_y(w as f32 - 0.5).max(SEA_LEVEL_Y));
+    Some((ground, ground + tallest, water))
 }
 
 /// Whether `at`, a rendered point, stands within `clearance` of the ground.
 fn grounded(at: Vec3, clearance: f32, map: &Map, origin: &RenderOrigin) -> bool {
-    heights_under(at, map, origin).is_some_and(|(ground, _)| ground + clearance > at.y)
+    heights_under(at, map, origin).is_some_and(|(ground, _, _)| ground + clearance > at.y)
 }
 
 /// Whether `at`, a rendered point, stands within the boom's clearance of
-/// the ground, or among the props on its tile.
+/// the water's surface.
+fn submerged(at: Vec3, map: &Map, origin: &RenderOrigin) -> bool {
+    heights_under(at, map, origin).is_some_and(|(_, _, water)| water + BOOM_CLEARANCE > at.y)
+}
+
+/// Whether `at`, a rendered point, stands within the boom's clearance of
+/// the ground or the water, or among the props on its tile.
 fn obstructed(at: Vec3, map: &Map, origin: &RenderOrigin) -> bool {
-    heights_under(at, map, origin).is_some_and(|(ground, props)| ground + BOOM_CLEARANCE > at.y || props > at.y)
+    heights_under(at, map, origin)
+        .is_some_and(|(ground, props, water)| ground.max(water) + BOOM_CLEARANCE > at.y || props > at.y)
 }
 
 /// Whether `pose`'s sightline from the player's eye at `eye` on ground of
-/// `tilt` keeps its clearance over the ground all the way to the camera:
-/// the rig slid over the shoulder as far as the pose's own reach slides
-/// it. Props are not read: the camera is never lifted over a wood, the
-/// boom is shortened short of it.
+/// `tilt` keeps its clearance over the ground all the way to the camera,
+/// and the camera its clearance over the water: the rig slid over the
+/// shoulder as far as the pose's own reach slides it. Water is flat and
+/// hides nothing on the way, so only the camera is held over it. Props are
+/// not read: the camera is never lifted over a wood, the boom is shortened
+/// short of it.
 fn boom_is_clear(pose: &Pose, eye: Vec3, tilt: Tilt, map: &Map, origin: &RenderOrigin) -> bool {
     let shift = pose.shift(pose.boom());
     let (head, foot) = (eye + shift, pose.transform(eye, tilt).translation + shift);
     let rise = (STAND_HEIGHT - BOOM_CLEARANCE) * pose.boom() / CAMERA_DISTANCE;
-    (1..=BOOM_SAMPLES).all(|i| {
-        let t = i as f32 / BOOM_SAMPLES as f32;
-        !grounded(head + (foot - head) * t, BOOM_CLEARANCE + rise * t, map, origin)
-    })
+    !submerged(foot, map, origin)
+        && (1..=BOOM_SAMPLES).all(|i| {
+            let t = i as f32 / BOOM_SAMPLES as f32;
+            !grounded(head + (foot - head) * t, BOOM_CLEARANCE + rise * t, map, origin)
+        })
 }
 
 /// The fraction of the boom, from the player's eye to the camera, short
@@ -625,9 +640,9 @@ pub fn update(
     // wanted pose.
     let next = if diagnostics.camera_closeup { next } else { lifted(next, eye, tilt, &map, origin) };
 
-    // A prop on the boom, or ground no elevation clears, shortens it: the
-    // camera draws in short of it, a prop no nearer than over the
-    // shoulder. The rig's slide over the shoulder follows the reach the
+    // A prop or water on the boom, or ground no elevation clears, shortens
+    // it: the camera draws in short of it, a prop or water no nearer than
+    // over the shoulder. The rig's slide over the shoulder follows the reach the
     // camera has, from the last frame's clearance.
     let stand = next.transform(eye, tilt);
     let shift = next.shift(next.boom() * state.clearance);
@@ -752,6 +767,31 @@ mod tests {
         let up = 25_f32.to_radians();
         let rising_ahead = Vec2::new(0.0, -0.4);
         assert!(Pose::hill(0.0, up, rising_ahead).elevation > Pose::hill(0.0, up, Vec2::ZERO).elevation, "the plane does part of the work");
+    }
+
+    /// Wading in a lake with the boom level with the eye, the camera would
+    /// stand in the water: it is lifted until it stands its clearance over
+    /// the surface, its boom at its full length.
+    #[test]
+    fn the_camera_is_lifted_out_of_the_water() {
+        use common_bevy::components::entity_type::{decorator::Decorator, EntityType};
+        let map = Map::new(qrz::Map::new(common::grid::HEX_RADIUS, common::grid::RISE));
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
+        for q in -60..=60 {
+            for r in -60..=60 {
+                map.insert(Qrz { q, r, z: 0 }, ground);
+                map.set_water(q, r, Some(2));
+            }
+        }
+        let origin = RenderOrigin::default();
+        let feet = map.convert(Qrz { q: 0, r: 0, z: 0 });
+        let eye = feet + Vec3::Y * EYE_HEIGHT;
+        let level = Pose { elevation: 0.0, ..Pose::ceiling(0.0) };
+        assert!(!boom_is_clear(&level, eye, Vec2::ZERO, &map, &origin), "level with the eye, the camera stands in the water");
+        let up = lifted(level, eye, Vec2::ZERO, &map, &origin);
+        let camera = up.transform(eye, Vec2::ZERO).translation + up.shift(up.boom());
+        assert!(up.elevation > 0.0 && up.boom() == level.boom(), "{up:?}");
+        assert!(!submerged(camera, &map, &origin), "the camera stands at {} over water at {}", camera.y, height_y(1.5));
     }
 
     /// Facing down ground that rises behind the player more steeply than
