@@ -807,8 +807,9 @@ impl Composite {
 
     /// The cells of a summary level `w` tiles wide, centred on tiles
     /// `(i, j)·w`: the terrain ladder's, where it holds them, each one's
-    /// height and its water's surface where the level holds water.
-    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>)>> {
+    /// height, its water's surface where the level holds water, and which
+    /// of its nine parts stand under water above the sea, a bit to each.
+    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>, u16)>> {
         match &self.ladders {
             Some(ladders) => ladders.level(w, cells),
             None => vec![None; cells.len()],
@@ -817,13 +818,9 @@ impl Composite {
 
     /// The summaries `w` tiles wide at `cells` made ready together, as
     /// [`SummarySource::cell`](common::summary::SummarySource::cell) reads
-    /// them: their cells and their parts', a level finer.
+    /// them.
     pub fn warm_level(&self, w: i64, cells: &[(i64, i64)]) {
         self.level(w, cells);
-        if w >= 3 {
-            let parts: Vec<(i64, i64)> = cells.iter().flat_map(|&ij| summary_parts(w, ij)).collect();
-            self.level(w / 3, &parts);
-        }
     }
 
     /// The world's stack. The server, the viewer and every probe of the
@@ -1182,25 +1179,26 @@ impl common::summary::SummarySource for Composite {
         if w < 3 {
             return None;
         }
-        let (z, _) = self.level(w, &[(sq as i64, sr as i64)]).pop().flatten()?;
-        let parts = self.level(w / 3, &summary_parts(w, (sq as i64, sr as i64)));
-        // The sea is one plane drawn to the horizon: a part under it alone
-        // is not wet here.
-        let wet = parts.iter().enumerate().filter(|(_, p)| p.is_some_and(|(_, water)| water.is_some_and(|s| s > 0.0))).fold(0, |wet, (i, _)| wet | 1 << i);
+        // A summary's parts are its cell's children, in the same order
+        // (`summary_parts_are_the_ladders_children`).
+        let (z, _, wet) = self.level(w, &[(sq as i64, sr as i64)]).pop().flatten()?;
         Some((z.round() as i32, wet))
     }
 }
 
-/// A summary's parts as cells of the level a third its width
-/// (`common::summary::part_offsets`), in their order.
-fn summary_parts(w: i64, (i, j): (i64, i64)) -> [(i64, i64); common::summary::PARTS] {
-    let r = ((w - 1) / 2) as u32;
-    let d = w / 3;
-    common::summary::part_offsets(r).map(|(dq, dr)| (3 * i + dq as i64 / d, 3 * j + dr as i64 / d))
-}
-
 #[cfg(test)]
 mod tests {
+    /// A summary's parts are the ladder's children of its cell, in the
+    /// ladder's order, so the ladder's wet bits are the summary's.
+    #[test]
+    fn summary_parts_are_the_ladders_children() {
+        for r in [1, 4, 13, 40] {
+            let d = common::summary::scale(r) as i64 / 3;
+            let parts = common::summary::part_offsets(r).map(|(dq, dr)| (dq as i64, dr as i64));
+            assert_eq!(parts, crate::ladder::geom::CHILD_OFFSETS.map(|(oi, oj)| (oi * d, oj * d)), "the parts at r={r}");
+        }
+    }
+
     use super::*;
 
     /// Where the ground is steeper than a step, the gradient the layers

@@ -178,27 +178,20 @@ fn dump(dir: &str, lv: &Level) {
         ("z", cells(&|c| lv.z[c])),
         ("zd", cells(&|c| lv.zd[c])),
         ("ground", cells(&|c| lv.ground[c])),
-        ("wpred", cells(&|c| lv.wpred[c])),
         ("cut", cells(&|c| lv.cut[c])),
-        ("wfull", cells(&|c| lv.wfull[c])),
+        ("wgfloor", cells(&|c| lv.wgfloor[c])),
         ("wdist", cells(&|c| lv.wdist[c])),
         ("water", cells(&|c| lv.water[c])),
         ("wdepth", cells(&|c| lv.wdepth[c])),
         ("age", cells(&|c| lv.age[c])),
         ("p", cells(&|c| lv.p[c])),
         ("erod", cells(&|c| lv.erod[c])),
-        ("uelev", verts(&|v| lv.uelev[v])),
         ("base", verts(&|v| lv.base[v])),
-        ("line_base", verts(&|v| lv.line_base[v])),
         ("elev", verts(&|v| lv.elev[v])),
         ("psurf", verts(&|v| lv.psurf[v])),
         ("gelev", verts(&|v| lv.gelev[v])),
         ("acc", verts(&|v| lv.acc[v])),
         ("floor", verts(&|v| lv.floor[v])),
-        ("line_acc", verts(&|v| lv.line_acc[v])),
-        ("line_fl", verts(&|v| lv.line_fl[v])),
-        ("line_dev", verts(&|v| lv.line_dev[v])),
-        ("line_pin", verts(&|v| lv.line_pin[v])),
     ] {
         dump_f64(&p(name), v.into_iter());
     }
@@ -217,27 +210,22 @@ fn dump(dir: &str, lv: &Level) {
     };
     for (name, v) in [
         ("rec", vi(&|v| rowed(lv.rec[v]))),
-        ("line_rec", vi(&|v| rowed(lv.line_rec[v]))),
-        ("line_corr", vi(&|v| rowed(lv.line_corr[v]))),
         ("born", vi(&|v| lv.born[v])),
-        ("line_born", vi(&|v| lv.line_born[v])),
     ] {
         dump_i64(&p(name), v.into_iter());
     }
     dump_i64(&p("wborn"), order.iter().map(|&c| lv.wborn[c]));
-    dump_i64(&p("wgov"), order.iter().map(|&c| rowed(lv.wgov[c])));
+    dump_i64(&p("wsrc"), order.iter().map(|&c| lv.wsrc[c]));
+    dump_i64(&p("wwet"), order.iter().map(|&c| rowed(lv.wwet[c])));
+    // A governing river read from a coarser level is a vertex of that level.
+    dump_i64(&p("wgov"), order.iter().map(|&c| if lv.wsrc[c] == lv.w { rowed(lv.wgov[c]) } else { -2 }));
     let vb = |f: &dyn Fn(usize) -> bool| (0..3).flat_map(|t| order.iter().map(move |&c| t * cap + c)).map(f).collect::<Vec<bool>>();
     dump_bool(&p("trough"), vb(&|v| lv.trough[v]).into_iter());
-    dump_bool(&p("line_on"), vb(&|v| lv.line_on[v]).into_iter());
-    dump_bool(&p("line_wall"), vb(&|v| lv.line_wall[v]).into_iter());
-    dump_bool(&p("line_hollow"), vb(&|v| lv.line_hollow[v]).into_iter());
     for (name, f) in [
         ("exists", &|c: usize| lv.exists[c] as u8 != 0),
         ("routed", &|c: usize| lv.routed[c]),
         ("built", &|c: usize| lv.built[c]),
-        ("lined", &|c: usize| lv.lined[c]),
-        ("wfade", &|c: usize| lv.wfade[c]),
-    ] as [(&str, &dyn Fn(usize) -> bool); 5]
+    ] as [(&str, &dyn Fn(usize) -> bool); 3]
     {
         dump_bool(&p(name), order.iter().map(|&c| f(c)));
     }
@@ -270,12 +258,12 @@ fn truth<G: Ground>(ladder: &Ladder<G>, w: i64) -> String {
     let (mut steps, mut cuts, mut far) = (Vec::new(), Vec::new(), Vec::new());
     for (&(i, j), &t) in cells.iter().zip(&whole) {
         let c = lv.idx(i, j).unwrap();
-        let dry = lv.ground[c] - lv.wpred[c];
+        let dry = lv.ground[c];
         let off = (lv.z[c] - (dry + t + 0.5).floor()).abs();
         if off > 3.0 {
             far.push(format!(
-                "   ({i}, {j}): {off} steps; cut {:.1}, every river's {t:.1}, handed down {:.1}; governing river {:.2} cells off, fading {}\n",
-                lv.cut[c], lv.wpred[c], lv.wdist[c], lv.wfade[c]
+                "   ({i}, {j}): {off} steps; cut {:.1}, every river's {t:.1}; governing river read at {}, {:.2} cells off\n",
+                lv.cut[c], lv.wsrc[c], lv.wdist[c]
             ));
         }
         steps.push(off);
@@ -403,7 +391,7 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
     {
         let ladder = terrain.ladder();
         for (k, lv) in ladder.levels.iter().enumerate() {
-            log.push_str(&format!("stats w={} lines={:?} route={:?} cost={:?}\n", lv.w, ladder.line_stats[k], ladder.route_stats[k], lv.cost));
+            log.push_str(&format!("stats w={} route={:?} cost={:?}\n", lv.w, ladder.route_stats[k], lv.cost));
         }
         log.push_str(&timing(&ladder.levels, &ladder.timing));
         for w in [243, 81, 27, 9, 3, 1] {
@@ -438,7 +426,7 @@ fn ladder_gate() {
     let (cut_from, cut_full) = match std::env::var("LADDER_CUT").as_deref() {
         Ok("C") => (1_102_500.0, 13_230_000.0),
         Ok("A") => (1_500.0, 40_000.0),
-        _ => (13_122.0, 1_102_500.0),
+        _ => (Params::default().cut_from, Params::default().cut_full),
     };
     let mut log = format!("ground stack, thrust averaged {depth} levels down, water {water}\n");
     let g = ground(depth);
@@ -648,7 +636,7 @@ fn memory() -> (usize, usize, usize) {
 
 /// Each level's wall time by stage, in seconds, nested work at other
 /// levels not counted.
-fn timing(levels: &[Level], times: &[[f64; 7]]) -> String {
+fn timing(levels: &[Level], times: &[[f64; 6]]) -> String {
     let mut out = format!("   {:>5} {}\n", "w", STAGES.iter().map(|s| format!("{s:>8}")).collect::<String>());
     for (lv, t) in levels.iter().zip(times) {
         out.push_str(&format!("   {:>5} {} total {:.2}\n", lv.w, t.iter().map(|x| format!("{x:>8.2}")).collect::<String>(), t.iter().sum::<f64>()));

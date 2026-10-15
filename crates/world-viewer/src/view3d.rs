@@ -29,7 +29,7 @@ use common_bevy::summary_mesh::{build_summary_mesh_region, build_water_mesh_regi
 use common_bevy::surface::height_y;
 use world::events::Composite;
 use world::ladder::geom::{cube_round, pos3};
-use world::ladder::Params;
+use world::ladder::{Params, STAGES};
 
 /// The levels a view shows, finest first, as their width in tiles.
 const LEVELS: [i64; 5] = [1, 3, 9, 27, 81];
@@ -106,7 +106,6 @@ fn read_params(path: &PathBuf) -> Params {
         let (name, value) = (name.trim(), value.trim());
         let num = || value.parse::<f64>().unwrap_or_else(|_| panic!("{name} = {value}: a number"));
         match name {
-            "channel_head" => p.channel_head = num(),
             "catchment_full" => p.catchment_full = num(),
             "cut_from" => p.cut_from = num(),
             "cut_full" => p.cut_full = num(),
@@ -572,6 +571,9 @@ fn build(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64, surface: Surf
                     }
                 }
             }
+            if let Some(site) = ladders.site_of(centre.0, centre.1) {
+                info!("{}", ladders.with(site, |l| timings(&l.terrain().ladder())));
+            }
         }
     }
     let mut built = Vec::new();
@@ -591,6 +593,41 @@ fn build(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64, surface: Surf
     }
     let lines = if surface == Surface::Stack { Vec::new() } else { lines(worlds, centre, radius, w) };
     Built { level: w, surface, generation, regions: built, heights, lines, seconds: started.elapsed().as_secs_f64() }
+}
+
+/// The seconds each level of the site's ladder has spent in each stage,
+/// summed over every build since it was made, the cells each stage has
+/// filled, and a digest of every routed vertex's values: two builds that
+/// route alike digest alike.
+fn timings<G: world::ladder::Ground>(ladder: &world::ladder::Ladder<'_, G>) -> String {
+    use world::ladder::paged::{Paged, PAGE};
+    fn count<T: Clone>(of: &Paged<T>, set: impl Fn(&T) -> bool) -> usize {
+        of.written().flat_map(|first| first..first + PAGE).filter(|&c| set(&of[c])).count()
+    }
+    let mut out = format!(
+        "ladder timings, s, cells read, routed, watered, and the routing's digest:\n{:>6}{}",
+        "w",
+        STAGES.iter().map(|s| format!("{s:>9}")).collect::<String>()
+    );
+    for (lv, t) in ladder.levels.iter().zip(&ladder.timing) {
+        let cells = [count(&lv.layers[0], |v| !v.is_nan()), count(&lv.routed, |&b| b), count(&lv.watered, |&b| b)];
+        let nn = lv.cap();
+        let mut digest = 0xcbf2_9ce4_8422_2325u64;
+        for c in lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed[c]) {
+            for v in [c, nn + c, 2 * nn + c] {
+                for word in [v as u64, lv.rec[v] as u64, lv.trough[v] as u64, lv.acc[v].to_bits(), lv.floor[v].to_bits(), lv.base[v].to_bits(), lv.born[v] as u64] {
+                    digest = (digest ^ word).wrapping_mul(0x100_0000_01b3);
+                }
+            }
+        }
+        out += &format!(
+            "\n{:>6}{}{}  {digest:016x}",
+            lv.w,
+            t.iter().map(|s| format!("{s:>9.1}")).collect::<String>(),
+            cells.iter().map(|n| format!("{n:>10}")).collect::<String>()
+        );
+    }
+    out
 }
 
 /// The level's lines within the view, each a segment from a vertex to its
@@ -616,9 +653,9 @@ fn lines(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64) -> Vec<[Vec3;
                 let Some(c) = lv.idx(ci + a, cj + b) else { continue };
                 for t in 0..3 {
                     let v = t * nn + c;
-                    if lv.line_on[v] && lv.line_rec[v] >= 0 {
-                        let u = lv.line_rec[v] as usize;
-                        out.push([place(v, lv.line_fl[v]), place(u, lv.line_fl[u])]);
+                    if lv.trough[v] && lv.rec[v] >= 0 {
+                        let u = lv.rec[v] as usize;
+                        out.push([place(v, lv.floor[v]), place(u, lv.floor[u])]);
                     }
                 }
             }
@@ -629,7 +666,7 @@ fn lines(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64) -> Vec<[Vec3;
 
 /// A left click reads the tile under the cursor: its cell at every level,
 /// the height, dry height and cut each made, the governing line and its
-/// floor, and the water's surface.
+/// floor, and the water's surface, into the panel and the log.
 fn inspect(
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
@@ -658,11 +695,12 @@ fn inspect(
     let Some(p) = hit else { return };
     let tile = summary_lattice(0).cell_from(view.centre, p.xz());
     view.inspect = read_tile(&view.worlds, tile);
+    info!("{}", view.inspect);
 }
 
 fn read_tile(worlds: &Worlds, (q, r): (i32, i32)) -> String {
     let stack = worlds.stack.tile_at(q, r).elevation;
-    let mut out = format!("tile ({q}, {r}); the stack alone {stack:.0}\n  w      cell        z    dry    cut  handed  water  governing line: floor, catchment, born at\n");
+    let mut out = format!("tile ({q}, {r}); the stack alone {stack:.0}\n  w      cell        z    dry    cut  water  governing line: read at, vertex, floor, catchment, born at\n");
     let Some(ladders) = worlds.world.ladders() else { return out };
     let Some(site) = ladders.site_of(q, r) else { return out + "  open sea: no ladder holds it\n" };
     ladders.with(site, |l| {
@@ -675,24 +713,23 @@ fn read_tile(worlds: &Worlds, (q, r): (i32, i32)) -> String {
                 continue;
             };
             let water = if lv.water[c].is_nan() { "-".to_string() } else { format!("{:.0}", lv.water[c]) };
-            let line = match lv.wgov[c] {
-                g if g >= 0 => {
+            // The governing river is a vertex of the level it was read from.
+            let source = ladder.levels.iter().find(|s| s.w == lv.wsrc[c]);
+            let line = match (lv.wgov[c], source) {
+                (g, Some(s)) if g >= 0 => {
                     let v = g as usize;
-                    let fl = if lv.line_on[v] { lv.line_fl[v] } else { lv.floor[v] };
-                    let acc = if lv.line_on[v] { lv.line_acc[v] } else { lv.acc[v] };
-                    let born = if lv.line_on[v] { lv.line_born[v] } else { lv.born[v] };
-                    let (t, vi, vj) = lv.vertex(v);
-                    format!("{t}:({vi}, {vj}) {fl:.1}, {acc:.0}, {born}")
+                    let (acc, born) = (s.acc[v], s.born[v]);
+                    let (t, vi, vj) = s.vertex(v);
+                    format!("{}: {t}:({vi}, {vj}) {:.1}, {acc:.0}, {born}", s.w, s.floor[v])
                 }
                 _ => "-".to_string(),
             };
             out.push_str(&format!(
-                "{w:>4} {:>11} {:>6.0} {:>6.0} {:>6.1} {:>7.1} {:>6}  {line}\n",
+                "{w:>4} {:>11} {:>6.0} {:>6.0} {:>6.1} {:>6}  {line}\n",
                 format!("({i}, {j})"),
                 lv.z[c],
                 lv.zd[c],
                 lv.cut[c],
-                lv.wpred[c],
                 water
             ));
         }
@@ -737,6 +774,7 @@ fn shoot(mut view: ResMut<View>, mut commands: Commands, mut exit: MessageWriter
     if view.shown.is_some() {
         if let Some(tile) = view.read.take() {
             view.inspect = read_tile(&view.worlds, tile);
+            info!("{}", view.inspect);
         }
     }
     let Some(path) = view.shot.clone() else { return };

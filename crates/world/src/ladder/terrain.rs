@@ -17,6 +17,9 @@ pub struct Cell {
     pub layers: Box<[f64]>,
     /// The surface of the water standing over the cell, in levels.
     pub water: Option<f64>,
+    /// Which of its nine children stand under its level's water above the
+    /// sea, a bit to each ([`super::Level::wparts`]).
+    pub wet_parts: u16,
 }
 
 /// The ladder behind a lock.
@@ -72,5 +75,6 @@ fn cell(lv: &super::Level, c: usize) -> Cell {
         cut: lv.cut[c],
         layers: lv.layers.iter().map(|l| l[c]).collect(),
         water: Some(lv.water[c]).filter(|w| !w.is_nan()),
+        wet_parts: lv.wparts[c],
     }
 }

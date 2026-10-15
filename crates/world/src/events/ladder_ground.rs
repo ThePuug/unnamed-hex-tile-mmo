@@ -177,9 +177,10 @@ impl Laddered {
     }
 
     /// The cells of the level `w` wide, where the ladder holds them: each
-    /// one's height, and the surface of the water standing over it.
-    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>)>> {
-        self.terrain.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.water))).collect()
+    /// one's height, the surface of the water standing over it, and which
+    /// of its children stand under water ([`Cell::wet_parts`]).
+    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>, u16)>> {
+        self.terrain.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.water, c.wet_parts))).collect()
     }
 }
 
@@ -268,10 +269,10 @@ impl Ladders {
         out
     }
 
-    /// Each cell's height and the surface of the water standing over it
-    /// ([`Ladders::cells`]).
-    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>)>> {
-        self.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.water))).collect()
+    /// Each cell's height, the surface of the water standing over it, and
+    /// which of its children stand under water ([`Ladders::cells`]).
+    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>, u16)>> {
+        self.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.water, c.wet_parts))).collect()
     }
 }
 

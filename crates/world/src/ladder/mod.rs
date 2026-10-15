@@ -7,47 +7,58 @@
 //! work reads, and its deform cell is the smallest ladder width whose ring
 //! clears that ([`geom::ring_clearance`]). A deform reads its cell and ring
 //! at its level, the passes before it there, and the level above under the
-//! same footprint and one ring of the level above's cells; it writes its
-//! own cell only. Deform cascades upward to the top, built once over the
-//! whole domain, its edge and the sea the outlet, and kept.
+//! same footprint and one ring of the level above's cells. It writes its
+//! own cell only. Deform cascades upward to the top, built once over the whole
+//! domain, its edge and the sea the outlet, and kept.
 //!
 //! Below the top a level runs its passes in order:
 //!
 //! - **ground**: the level above's dry surface predicted at each centre,
-//!   every layer's change there, each layer's value at the cell less its
-//!   own value predicted from the level above, and the cut the level above
-//!   handed down.
-//! - **lines**: each trough of the level above routed again on the ground,
-//!   inside a corridor [`CORRIDOR`] cells either side, pinned where the level
-//!   above's line has a source, a junction or an end, or crosses a route
-//!   cell; between pins it goes downhill, never farther from its end.
+//!   and every layer's change there, each layer's value at the cell less its
+//!   own value predicted from the level above: the level's dry ground. Over
+//!   it the level above's carve predicted the same way: its carved ground.
+//! - **route**: every vertex's receiver downhill on the carved ground, its
+//!   catchment, and the level's troughs: the level above's rivers run on
+//!   from its nodes, and troughs born at the level ([`route`]). A trough's
+//!   floor is the level's own dry ground less a share of its height above
+//!   the level its water ends at, growing with the catchment it carries,
+//!   the plate's age and the rock's erodibility ([`drained`]), and never
+//!   above the floors draining into it.
 //! - **water**: one target surface, the valley drainage's law cuts: a floor
-//!   along each line, walls rising from it at water's slope, steeper in hard
-//!   rock, out to where they meet the ground. A line's floor is the ground
-//!   less a share of its height above base level growing with catchment,
-//!   the plate's age and the rock's erodibility ([`drained`]).
-//! - **route**: every vertex's receiver on the ground, every trough's
-//!   catchment and floor, and the troughs born at the level.
+//!   along each trough, walls rising from it at water's slope, steeper in
+//!   hard rock, out to where they meet the carved ground.
 //!
-//! Water comes last and reads the level's lines and its births, never the
-//! other way: routing reads only the ground.
+//! Water comes last and reads the level's troughs, never the other way:
+//! routing reads only the ground.
 //!
-//! Every level below the top runs all four, down to the tiles. A level
+//! Every level below the top runs all three, down to the tiles. A level
 //! holds water where its own beds cross a cell: a level over the bed's
 //! floor, a level more for each two tiles of its half width past the first
 //! ([`water::depth`]). [`terrain::Terrain`] holds the ladder for readers on
 //! many threads.
 //!
-//! Every layer, water among them, writes its value averaged over the
-//! level's cell; its raise there is that less what the level above handed
-//! down, the level above's values predicted at the cell ([`handed_down`]).
-//! Water's value is its cut below the ground its layers make: the valley
-//! drawn from the level's own lines, met by that ground, averaged over the
-//! cell, less the ground. A wall far from the channel is a plane, which
-//! averages to itself, so it belongs to the coarse levels, which hold it
-//! within a few cells; a level below writes its own valley near its lines
-//! and hands the rest down unchanged. A level is
-//! that ground and that cut, rounded to whole steps. Nothing makes it
+//! Every layer writes its value averaged over the level's cell; its raise
+//! there is that less what the level above handed down, the level above's
+//! values predicted at the cell ([`handed_down`]).
+//!
+//! **A river is handed down as where it is and what it carries, never its
+//! course.** The level above hands down its trough vertices, each with its
+//! catchment and the level it was born at; each is one of the level's
+//! vertices, since levels nest, and the level's own water runs the river on
+//! from there, downhill, wherever its ground leads; a river starts once,
+//! where it first comes into reach. Where troughs are born, routing picks
+//! between the two neighbours bracketing the downslope by chance weighted
+//! by the slope, so on even ground they wander and join as drainage does;
+//! below, a river follows its valley. Water never climbs ([`route`]).
+//!
+//! **A level carves into what the level above carved.** It is handed the
+//! dry ground's prediction and the carve's: routing reads the carved
+//! ground, so water gathers into the valleys above; floors read the dry
+//! ground, so no floor deepens by what the level above already cut. A
+//! level's height is its own troughs' valleys within its ring met by its
+//! carved ground, averaged over the cell and rounded to whole steps: a
+//! valley is an absolute height, so a river the level above cut to its
+//! floor is not cut again. Its water fills that carve. Nothing makes it
 //! walkable: a step past walkable is a face.
 //!
 //! **Prediction is apart from drawing.** A level hands its shape to the
@@ -55,7 +66,7 @@
 //! through its cells, a centre the cell's value, a corner the mean of the
 //! three cells sharing it, linear between, nothing clamped, met or rounded.
 //! Everything in the ladder that reads a surface reads that one: the dry
-//! ground, water's cut handed down, every layer, lines, routing, floors.
+//! ground, every layer, routing.
 //! The corner rule, faces as walls, is the drawing's alone: meshes, physics
 //! and summaries draw a level's cells by it (`common::corner`), and nothing
 //! here reads it.
@@ -68,7 +79,6 @@ pub mod geom;
 pub mod mask;
 pub mod paged;
 pub mod terrain;
-mod lines;
 mod route;
 mod top;
 mod water;
@@ -83,13 +93,11 @@ use paged::{Paged, PAGE};
 /// How the water layer cuts.
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
-    /// The least catchment a trough carries, in tiles, and the catchment at
-    /// which a channel begins to cut, in the softest rock.
-    pub channel_head: f64,
     /// The catchment at which a trough's bed is a trunk's, in tiles.
     pub catchment_full: f64,
-    /// The catchment at which a channel begins to cut, in the softest rock,
-    /// and at which it has cut its full share, in tiles.
+    /// The catchment at which a channel begins to cut, and a trough is born,
+    /// in the softest rock, and at which it has cut its full share, in
+    /// tiles.
     pub cut_from: f64,
     pub cut_full: f64,
     /// A wall's slope in the softest rock, in steps per tile: walkable.
@@ -103,7 +111,7 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { channel_head: 1500.0, catchment_full: 40_000.0, cut_from: 13_122.0, cut_full: 1_102_500.0, wall: 1.0, ring: RING, water: true }
+        Params { catchment_full: 400_000.0, cut_from: 4_000.0, cut_full: 118_098.0, wall: 1.0, ring: RING, water: true }
     }
 }
 
@@ -123,18 +131,12 @@ pub trait Ground: Sync {
 /// How far water reads lines from a cell, in cells of the level: what one
 /// ring of its deform cell, 27 of the level's cells wide, clears.
 pub const RING: f64 = 15.588_457_268_119_896;
-/// How far inside the ring water's correction fades to nothing, in cells
-/// of the level, so it never stops dead.
-pub const FADE: f64 = 3.0;
 /// The least erodible rock, whose walls stand at [`WALL_HARDEST`].
 pub const HARDEST: f64 = 0.3;
 /// The steepest a wall stands, in the hardest rock, in steps per tile.
 pub const WALL_HARDEST: f64 = 3.0;
 /// How far upstream a trough born at a level may gather, in its cells.
 pub const ROUTE_REACH: f64 = 11.0;
-/// A line's corridor, either side of the level above's line, in cells of
-/// the level: one cell of the level above.
-pub const CORRIDOR: f64 = 3.0;
 
 /// The stages a level's work is timed by.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -143,16 +145,15 @@ pub enum Stage {
     Read = 0,
     /// The prediction and the layers' changes.
     Supply = 1,
-    Lines = 2,
-    Route = 3,
-    Water = 4,
+    Route = 2,
+    Water = 3,
     /// Heights rounded.
-    Build = 5,
+    Build = 4,
     /// The prediction surface's corners.
-    Corners = 6,
+    Corners = 5,
 }
 
-pub const STAGES: [&str; 7] = ["read", "supply", "lines", "route", "water", "build", "corners"];
+pub const STAGES: [&str; 6] = ["read", "supply", "route", "water", "build", "corners"];
 
 /// The passes that deform in cells of their own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -164,10 +165,18 @@ pub enum Pass {
 
 const PASSES: [Pass; 3] = [Pass::Ground, Pass::Water, Pass::Route];
 
-/// The catchment a trough carries at a level: a level resolves a trough two
-/// of its cells wide.
-pub fn head_of(w: i64, p: &Params) -> f64 {
-    p.channel_head.max(2.0 * (w * w) as f64)
+/// The catchment at which a trough is born at a level, on rock of
+/// `erodibility`: where a channel begins to cut there ([`cut_head`]), and
+/// never less than two of the level's cells, the narrowest trough a level
+/// resolves.
+pub fn head_of(w: i64, erodibility: f64, p: &Params) -> f64 {
+    cut_head(erodibility, p).max(2.0 * (w * w) as f64)
+}
+
+/// The catchment at which a channel begins to cut on rock of
+/// `erodibility`: a hard rock needs proportionally more water.
+pub fn cut_head(erodibility: f64, p: &Params) -> f64 {
+    p.cut_from / erodibility.max(0.05)
 }
 
 /// How far from a cell a pass's work there reads, in tiles.
@@ -199,10 +208,9 @@ pub const RELIEF_SHARE_MAX: f64 = 0.7;
 /// How far past the channel head on rock of `erodibility` a catchment of
 /// `catchment` tiles has grown, as the square root of its share of the way
 /// to a full trunk, the way a channel's width and depth grow with
-/// discharge: a hard rock needs proportionally more water before a channel
-/// gathers. Nothing below the head.
+/// discharge. Nothing below the head ([`cut_head`]).
 pub fn growth(catchment: f64, erodibility: f64, p: &Params) -> f64 {
-    let head = p.cut_from / erodibility.max(0.05);
+    let head = cut_head(erodibility, p);
     if catchment <= head {
         return 0.0;
     }
@@ -251,36 +259,41 @@ pub struct Level {
     pub p: Paged<f64>,
     /// The ground: the prediction and every layer's change but water's.
     pub ground: Paged<f64>,
-    /// Water's value as the level above handed it down, predicted at each
-    /// centre: what of the prediction is the level above's cut.
-    pub wpred: Paged<f64>,
-    /// Water's value: its cut below the uncut ground, never above it.
+    /// The carved ground: the ground with the level above's carve, its
+    /// heights less its dry heights, predicted at the cell.
+    pub carved: Paged<f64>,
+    /// The level's carve: its valleys met by its carved ground, averaged
+    /// over the cell, less the ground; never above the carved ground.
     pub cut: Paged<f64>,
-    /// Water's correction before it fades: the level's valley averaged over
-    /// the cell less what the level above handed down. NaN where none is
-    /// made.
-    pub wfull: Paged<f64>,
-    /// How far each cell lies from the line governing its valley, in its
-    /// cells; infinite past the ring.
+    /// How far each cell lies from the river governing its valley, in its
+    /// cells; infinite where none reaches it.
     pub wdist: Paged<f64>,
-    /// The width of the level the line governing each cell's valley was
-    /// born at; -1 where none does.
+    /// The width of the level the river governing each cell's valley was
+    /// born at, and of the level it was read from; -1 where none does.
     pub wborn: Paged<i64>,
-    /// The river vertex whose valley governs each cell's correction, as an
-    /// index of the level; -1 where none does.
+    pub wsrc: Paged<i64>,
+    /// The river vertex whose valley governs each cell, as an index of the
+    /// level it was read from; -1 where none does. And that river's floor
+    /// there.
     pub wgov: Paged<i64>,
-    /// Whether any river water read at each cell runs where the correction
-    /// fades and changes it.
-    pub wfade: Paged<bool>,
+    pub wgfloor: Paged<f64>,
+    /// The river vertex whose bed the water over each cell stands in, as an
+    /// index of the level; -1 where none does, as over a lake.
+    pub wwet: Paged<i64>,
     /// The surface of the water standing over each cell, in levels, where
     /// one of the level's beds crosses it and it stands above the cell; NaN
     /// where none. And how deep that bed's water stands over its floor.
     pub water: Paged<f64>,
     pub wdepth: Paged<f64>,
+    /// Which of each cell's nine children ([`CHILD_OFFSETS`]) stand under
+    /// the level's water above the sea, a bit to each in that order: under
+    /// a bed covering the child's centre at least as wide as the child. A
+    /// level's own rivers mark them, so the finer level is never built for
+    /// them.
+    pub wparts: Paged<u16>,
     pub z: Paged<f64>,
-    /// Each cell's dry height: its ground before any cut, rounded. The level
-    /// below predicts its ground from these and takes the cut as handed
-    /// down.
+    /// Each cell's dry height: its ground before the carve, rounded, what
+    /// the level below predicts its own dry ground from.
     pub zd: Paged<f64>,
     /// Each cell's six corners on the prediction surface of its heights.
     pub cc: Paged<[f64; 6]>,
@@ -289,10 +302,12 @@ pub struct Level {
     /// own, a corner the mean of the cells sharing it.
     pub elev: Paged<f64>,
     pub psurf: Paged<f64>,
+    /// The carved ground at each vertex: a centre's own, a corner the mean
+    /// of its sharers'. What lines and routing are read from.
     pub gelev: Paged<f64>,
-    /// The uncut ground at each vertex: a centre's own, a corner the mean of
-    /// its sharers'. What drainage's floor is read from.
-    pub uelev: Paged<f64>,
+    /// The dry ground at each vertex, the same way: what drainage's floor
+    /// is read from.
+    pub gdry: Paged<f64>,
     /// The level water at each vertex runs down to: the sea, or the pit of
     /// the closed ground it drains into.
     pub base: Paged<f64>,
@@ -303,26 +318,8 @@ pub struct Level {
     pub trough: Paged<bool>,
     pub acc: Paged<f64>,
     pub floor: Paged<f64>,
-    pub line_on: Paged<bool>,
-    pub line_rec: Paged<i64>,
-    pub line_acc: Paged<f64>,
-    pub line_fl: Paged<f64>,
-    pub line_base: Paged<f64>,
-    pub line_born: Paged<i64>,
-    /// Where each line vertex lies along the level above's line, the point
-    /// it was measured from, in world units a tile apart: where its river
-    /// is, which decides whether water reads it.
-    pub line_anchor: Paged<[f64; 2]>,
-    /// The corridor a vertex was shared to: its segment's start, as a vertex
-    /// index of the level.
-    pub line_corr: Paged<i64>,
-    pub line_dev: Paged<f64>,
-    pub line_pin: Paged<f64>,
-    pub line_wall: Paged<bool>,
-    pub line_hollow: Paged<bool>,
     pub predicted: Paged<bool>,
     pub supplied: Paged<bool>,
-    pub lined: Paged<bool>,
     pub watered: Paged<bool>,
     pub built: Paged<bool>,
     pub routed: Paged<bool>,
@@ -359,43 +356,32 @@ impl Level {
             age: nan(cells),
             p: nan(cells),
             ground: nan(cells),
-            wpred: nan(cells),
+            carved: nan(cells),
             cut: nan(cells),
-            wfull: nan(cells),
             wdist: nan(cells),
             wborn: Paged::new(-1, cells),
+            wsrc: Paged::new(-1, cells),
             wgov: Paged::new(-1, cells),
-            wfade: Paged::new(false, cells),
+            wgfloor: nan(cells),
+            wwet: Paged::new(-1, cells),
             water: nan(cells),
             wdepth: nan(cells),
+            wparts: Paged::new(0, cells),
             z: nan(cells),
             zd: nan(cells),
             cc: Paged::new([f64::NAN; 6], cells),
             elev: nan(3 * cells),
             psurf: nan(3 * cells),
             gelev: nan(3 * cells),
-            uelev: nan(3 * cells),
+            gdry: nan(3 * cells),
             base: nan(3 * cells),
             born: Paged::new(-1, 3 * cells),
             rec: Paged::new(-1, 3 * cells),
             trough: Paged::new(false, 3 * cells),
             acc: Paged::new(0.0, 3 * cells),
             floor: nan(3 * cells),
-            line_on: Paged::new(false, 3 * cells),
-            line_rec: Paged::new(-1, 3 * cells),
-            line_acc: nan(3 * cells),
-            line_fl: nan(3 * cells),
-            line_base: nan(3 * cells),
-            line_born: Paged::new(-1, 3 * cells),
-            line_anchor: Paged::new([f64::NAN; 2], 3 * cells),
-            line_corr: Paged::new(-1, 3 * cells),
-            line_dev: nan(3 * cells),
-            line_pin: nan(3 * cells),
-            line_wall: Paged::new(false, 3 * cells),
-            line_hollow: Paged::new(false, 3 * cells),
             predicted: Paged::new(false, cells),
             supplied: Paged::new(false, cells),
-            lined: Paged::new(false, cells),
             watered: Paged::new(false, cells),
             built: Paged::new(false, cells),
             routed: Paged::new(false, cells),
@@ -613,15 +599,12 @@ pub struct Ladder<'g, G: Ground> {
     pub levels: Vec<Level>,
     ground: &'g G,
     pub p: Params,
-    /// Per level: lines with no way through their corridor, lines stalled,
-    /// segments whose pins lay outside the footprint.
-    pub line_stats: Vec<[u64; 3]>,
-    /// Per level: born troughs whose upstream reached the read edge, vertices
+    /// Per level: troughs whose upstream reached the read edge, vertices
     /// that did, own vertices left undecided, own vertices in a cycle.
     pub route_stats: Vec<[u64; 4]>,
     /// Per level, the wall time each stage took there, in seconds, nested
     /// work at other levels not counted.
-    pub timing: Vec<[f64; 7]>,
+    pub timing: Vec<[f64; 6]>,
 }
 
 impl<'g, G: Ground> Ladder<'g, G> {
@@ -667,9 +650,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
             levels,
             ground,
             p,
-            line_stats: vec![[0; 3]; count],
             route_stats: vec![[0; 4]; count],
-            timing: vec![[0.0; 7]; count],
+            timing: vec![[0.0; 6]; count],
         };
         match top {
             Some(top) => {
@@ -734,7 +716,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let h: f64 = lv.layers.iter().map(|l| l[c]).sum();
             lv.p[c] = h;
             lv.ground[c] = h;
-            lv.wpred[c] = 0.0;
+            lv.carved[c] = h;
             lv.z[c] = (h + 0.5).floor();
             lv.zd[c] = lv.z[c];
         }
@@ -746,7 +728,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         lv.routed.fill(true);
         // The top's own valleys, cut along its troughs into the ground it
         // routed over.
-        let edges = water::trough_edges(lv, head_of(lv.w, &p));
+        let edges = water::trough_edges(lv, &all);
         water::top_cut(lv, &edges, &p);
         for c in 0..lv.cap() {
             lv.z[c] = (lv.ground[c] + lv.cut[c] + 0.5).floor();
@@ -795,7 +777,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
         }
         let pend = lv.pending(Pass::Route, &need);
         let fp = lv.footprint(Pass::Route, &pend);
-        self.ensure_lines(k, &fp);
+        self.ensure_supplied(k, &fp);
+        self.parent_over(k, &fp);
         let started = Instant::now();
         let (above, rest) = self.levels.split_at_mut(k);
         let lv = &mut rest[0];
@@ -848,34 +831,13 @@ impl<'g, G: Ground> Ladder<'g, G> {
             lv.p[c] = pred;
             let layers = lv.layers.len();
             let change: f64 = (0..layers).map(|l| lv.layers[l][c] - layer_pred[l]).sum();
-            lv.wpred[c] = layer_pred[layers];
-            lv.ground[c] = pred + change + lv.wpred[c];
+            lv.ground[c] = pred + change;
+            lv.carved[c] = lv.ground[c] + handed_down(i, j, |x, y| par.carve(x, y));
             lv.predicted[c] = true;
             lv.supplied[c] = true;
         }
         lv.cost[Pass::Ground as usize] += pend.len() as u64;
         self.timing[k][Stage::Supply as usize] += started.elapsed().as_secs_f64();
-    }
-
-    fn ensure_lines(&mut self, k: usize, mask: &Mask) {
-        let lv = &self.levels[k];
-        let need = mask.filter(|c| !lv.lined[c] && lv.exists[c]);
-        if need.is_empty() {
-            return;
-        }
-        let pend = lv.pending(Pass::Route, &need);
-        let fp = lv.footprint(Pass::Route, &pend);
-        self.ensure_supplied(k, &fp);
-        self.parent_over(k, &fp);
-        let started = Instant::now();
-        let (above, rest) = self.levels.split_at_mut(k);
-        let lv = &mut rest[0];
-        ground_fields(lv, &above[k - 1], &fp);
-        let stats = lines::line_blocks(lv, &above[k - 1], &pend, &fp);
-        for (a, b) in self.line_stats[k].iter_mut().zip(stats) {
-            *a += b;
-        }
-        self.timing[k][Stage::Lines as usize] += started.elapsed().as_secs_f64();
     }
 
     fn ensure_built(&mut self, k: usize, mask: &Mask) {
@@ -888,14 +850,15 @@ impl<'g, G: Ground> Ladder<'g, G> {
         if !sel.is_empty() {
             let pend = lv.pending(Pass::Water, &sel);
             let fp = lv.footprint(Pass::Water, &pend);
+            // Routed a ring past the footprint, so each line's next vertex
+            // has its floor.
+            let routed = lv.dilate(&fp, 1);
             self.ensure_supplied(k, &fp);
-            self.ensure_routed(k, &fp);
+            self.ensure_routed(k, &routed);
             let started = Instant::now();
-            let head = head_of(self.levels[k - 1].w, &self.p);
             let lv = &mut self.levels[k];
-            let mut own = water::line_edges(lv, &fp, head);
-            own.extend(water::born_edges(lv, &fp));
-            water::level_cut(lv, &own, &pend, &self.p);
+            let band = water::Band::new(lv.w, &water::trough_edges(lv, &fp), -1.0, self.p.ring * lv.w as f64, &self.p);
+            water::level_cut(lv, &band, &pend, &self.p);
             lv.cost[Pass::Water as usize] += pend.len() as u64;
             self.timing[k][Stage::Water as usize] += started.elapsed().as_secs_f64();
         }
@@ -905,11 +868,15 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let mut built = 0;
         for c in need.iter() {
             if lv.supplied[c] && lv.watered[c] {
-                let uncut = lv.ground[c] - lv.wpred[c];
-                lv.z[c] = (uncut + lv.cut[c] + 0.5).floor();
-                lv.zd[c] = (uncut + 0.5).floor();
+                lv.z[c] = (lv.ground[c] + lv.cut[c] + 0.5).floor();
+                lv.zd[c] = (lv.ground[c] + 0.5).floor();
                 if lv.water[c] <= lv.z[c] {
                     lv.water[c] = f64::NAN;
+                }
+                // A lake, water standing over no river's bed, covers the
+                // whole cell.
+                if !lv.water[c].is_nan() && lv.wwet[c] < 0 {
+                    lv.wparts[c] = (1 << CHILD_OFFSETS.len()) - 1;
                 }
                 lv.built[c] = true;
                 built += 1;
@@ -926,11 +893,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
     #[cfg(feature = "inspect")]
     pub fn unlimited_cut(&self, k: usize, cells: &[(i64, i64)]) -> Vec<f64> {
         let lv = &self.levels[k];
-        // Lines where they were drawn, births where the level was routed.
-        let set = |of: &Paged<bool>| Mask::new(of.written().flat_map(|first| first..first + PAGE).filter(|&c| of[c]));
-        let (lined, routed) = (set(&lv.lined), set(&lv.routed));
-        let mut edges = water::line_edges(lv, &lined, head_of(self.levels[k - 1].w, &self.p));
-        edges.extend(water::born_edges(lv, &routed));
+        let routed = Mask::new(lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed[c]));
+        let edges = water::trough_edges(lv, &routed);
         let at: Vec<usize> = cells.iter().map(|&(i, j)| lv.idx(i, j).expect("a cell the level holds")).collect();
         water::whole_cut(lv, &edges, &at, &self.p)
     }
@@ -939,7 +903,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
 /// Whether troughs are born at a level: only where its head is below the
 /// level above's.
 fn births(par: &Level, lv: &Level, p: &Params) -> bool {
-    head_of(lv.w, p) < head_of(par.w, p)
+    head_of(lv.w, 1.0, p) < head_of(par.w, 1.0, p)
 }
 
 /// The cells sharing parent corner `k` of cell (a, b), as
@@ -971,21 +935,23 @@ pub fn handed_down(i: i64, j: i64, at: impl Fn(i64, i64) -> f64) -> f64 {
 }
 
 /// A child cell's prediction: the level above's dry ground, and each
-/// layer's own value, water's cut last, each read off the level above's
-/// prediction surface ([`handed_down`]).
+/// layer's own value, each read off the level above's prediction surface
+/// ([`handed_down`]).
 pub(crate) fn predict(par: &impl Above, i: i64, j: i64) -> (f64, Vec<f64>) {
     let dry = handed_down(i, j, |x, y| par.dry(x, y));
-    let layers = (0..=par.layer_count()).map(|l| handed_down(i, j, |x, y| par.field(l, x, y))).collect();
+    let layers = (0..par.layer_count()).map(|l| handed_down(i, j, |x, y| par.field(l, x, y))).collect();
     (dry, layers)
 }
 
-/// What a level hands the level below it: each built cell's dry height, and
-/// each layer's value at a cell, water's cut after the layers; NaN where it
+/// What a level hands the level below it of its heights: each built cell's
+/// dry height and its carve, and each layer's value at a cell; NaN where it
 /// holds none.
 pub(crate) trait Above {
     fn layer_count(&self) -> usize;
     fn dry(&self, i: i64, j: i64) -> f64;
-    /// Layer `l`'s value at cell (i, j); `layer_count()` is water's cut.
+    /// The carve at cell (i, j): its height less its dry height.
+    fn carve(&self, i: i64, j: i64) -> f64;
+    /// Layer `l`'s value at cell (i, j).
     fn field(&self, l: usize, i: i64, j: i64) -> f64;
 }
 
@@ -998,9 +964,12 @@ impl Above for Level {
         self.idx(i, j).filter(|&c| self.exists[c] && self.built[c]).map_or(f64::NAN, |c| self.zd[c])
     }
 
+    fn carve(&self, i: i64, j: i64) -> f64 {
+        self.idx(i, j).filter(|&c| self.exists[c] && self.built[c]).map_or(f64::NAN, |c| self.z[c] - self.zd[c])
+    }
+
     fn field(&self, l: usize, i: i64, j: i64) -> f64 {
-        let f = if l < self.layers.len() { &self.layers[l] } else { &self.cut };
-        self.idx(i, j).map_or(f64::NAN, |c| f[c])
+        self.idx(i, j).map_or(f64::NAN, |c| self.layers[l][c])
     }
 }
 
@@ -1048,8 +1017,8 @@ fn corners_over(lv: &mut Level, mask: &Mask) {
 }
 
 /// The level above's prediction surface at every vertex of a mask, and the
-/// ground's at each: a centre's own, a corner the mean of the cells sharing
-/// it.
+/// carved and dry ground's at each: a centre's own, a corner the mean of
+/// the cells sharing it.
 fn ground_fields(lv: &mut Level, par: &Level, mask: &Mask) {
     let nn = lv.cap();
     for c in mask.iter() {
@@ -1065,26 +1034,17 @@ fn ground_fields(lv: &mut Level, par: &Level, mask: &Mask) {
             }
         }
         if lv.supplied[c] {
-            lv.gelev[c] = lv.ground[c];
-            let (a, b, ready_a, ready_b) = lv.corner_means(i, j, &lv.ground, &lv.supplied);
+            lv.gelev[c] = lv.carved[c];
+            lv.gdry[c] = lv.ground[c];
+            let (a, b, ready_a, ready_b) = lv.corner_means(i, j, &lv.carved, &lv.supplied);
+            let (da, db, _, _) = lv.corner_means(i, j, &lv.ground, &lv.supplied);
             if ready_a {
                 lv.gelev[nn + c] = a;
+                lv.gdry[nn + c] = da;
             }
             if ready_b {
                 lv.gelev[2 * nn + c] = b;
-            }
-            lv.uelev[c] = lv.ground[c] - lv.wpred[c];
-            for t in 1..3u8 {
-                let (cells, _) = vertex_cells(t, i, j);
-                let uncut: Vec<f64> = cells
-                    .iter()
-                    .filter_map(|&(x, y)| lv.idx(x, y))
-                    .filter(|&d| lv.exists[d])
-                    .map(|d| if lv.supplied[d] { lv.ground[d] - lv.wpred[d] } else { f64::NAN })
-                    .collect();
-                if uncut.iter().all(|u| !u.is_nan()) {
-                    lv.uelev[t as usize * nn + c] = uncut.iter().sum::<f64>() / uncut.len() as f64;
-                }
+                lv.gdry[2 * nn + c] = db;
             }
         }
     }

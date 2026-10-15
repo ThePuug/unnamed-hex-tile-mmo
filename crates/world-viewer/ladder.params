@@ -1,11 +1,13 @@
 # The ladder's parameters for `world-viewer 3d`; R in the viewer reads this
 # file again and builds the world with it. A name left out keeps its default
-# (`world::ladder::Params`).
+# (`world::ladder::Params`), which the server and every probe build with;
+# the values here are those defaults.
 
 # Calibration: the catchment, in tiles, at which a channel begins to cut in
-# the softest rock, and at which it has cut its full share.
-cut_from = 13122
-cut_full = 1102500
+# the softest rock, and a trough is born, and at which it has cut its full
+# share.
+cut_from = 4000
+cut_full = 118098
 
 # A wall's slope in the softest rock, in steps per tile; the hardest rock's
 # is fixed at 3.
@@ -14,9 +16,8 @@ wall = 1
 # How far water reads lines from a cell, in cells of its level.
 ring = 15.588457268119896
 
-# The least catchment a trough carries, and a trunk's, in tiles.
-channel_head = 1500
-catchment_full = 40000
+# The catchment at which a trough's bed is a trunk's, in tiles.
+catchment_full = 400000
 
 # Whether water cuts at all.
 water = true

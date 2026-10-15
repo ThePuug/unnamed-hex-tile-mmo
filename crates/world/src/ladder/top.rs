@@ -136,13 +136,13 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     }
 
     // Catchment over the flood's order, upstream first.
-    let head = head_of(lv.w, p);
+    let head = |v: usize| head_of(lv.w, lv.erod[v % nn], p);
     let mut acc: Vec<f64> = (0..count).map(|v| if v < nn && live[v] { (lv.w * lv.w) as f64 } else { 0.0 }).collect();
     for &v in order.iter().rev() {
         if rec[v] < 0 {
             continue;
         }
-        if acc[v] >= head {
+        if acc[v] >= head(v) {
             acc[rec[v] as usize] += acc[v];
         } else if r2[v] >= 0 {
             acc[r1[v] as usize] += w1[v] * acc[v];
@@ -186,7 +186,7 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     // Each trough's room: how far its hillslopes run to the nearer divide,
     // on each side of its flow the farthest any vertex entering the troughs
     // within two steps lies from where it enters, the nearer side's.
-    let trough: Vec<bool> = (0..count).map(|v| rec[v] >= 0 && acc[v] >= head && !sink[v]).collect();
+    let trough: Vec<bool> = (0..count).map(|v| rec[v] >= 0 && acc[v] >= head(v) && !sink[v]).collect();
     let mut entry = vec![usize::MAX; count];
     for &v in &order {
         entry[v] = if trough[v] { v } else if rec[v] >= 0 { entry[rec[v] as usize] } else { usize::MAX };
@@ -227,24 +227,28 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         }
         if best[0] > 0.0 && best[1] > 0.0 { best[0].min(best[1]) } else { best[0].max(best[1]) }
     };
-    // Floors: drainage's under each vertex, held to its room, running down
-    // the receivers and never rising.
+    // Floors: drainage's under each vertex, toward its outlet's level and
+    // held to its room; along a trough never above the floors draining into
+    // it, upstream first.
     let mut floor: Vec<f64> = (0..count)
         .map(|v| {
             let c = v % nn;
             drained(lv.elev[v], base[v], acc[v], lv.age[c], lv.erod[c], room(v), p)
         })
         .collect();
+    let mut low = vec![f64::INFINITY; count];
     for &v in order.iter().rev() {
-        if rec[v] >= 0 {
-            let r = rec[v] as usize;
-            floor[r] = floor[r].min(floor[v]);
+        if !trough[v] {
+            continue;
         }
+        floor[v] = floor[v].min(low[v]);
+        let r = rec[v] as usize;
+        low[r] = low[r].min(floor[v]);
     }
     for v in 0..count {
         lv.rec[v] = rec[v];
         lv.acc[v] = acc[v];
-        lv.trough[v] = rec[v] >= 0 && acc[v] >= head && !sink[v];
+        lv.trough[v] = rec[v] >= 0 && acc[v] >= head(v) && !sink[v];
         lv.floor[v] = (floor[v] + 0.5).floor();
         lv.base[v] = base[v];
         lv.born[v] = if lv.trough[v] { lv.w } else { -1 };
