@@ -1,8 +1,8 @@
 //! The ladder over the real ground around the haven, its lattice anchored
 //! at the world's origin: every level requested over a region, identity and
 //! seams checked, and every level written for the measures. The ground
-//! is the base layers read by `StackGround`, thrust's relief averaged over
-//! each cell's descendants `LADDER_DEPTH` levels down (default 2).
+//! is the base layers read by `StackGround`, each cell at its nine
+//! children's centres.
 //! `LADDER_EXACT=1` checks identity by position and seams between requests
 //! made apart; `LADDER_WATER=0` runs it dry.
 //!
@@ -83,8 +83,8 @@ fn outline_half() -> f64 {
     (COARSE[0].1 + 3 * COARSE[0].0) as f64
 }
 
-fn ground(depth: u32) -> StackGround {
-    StackGround::new(WORLD_SEED, HAVEN, outline_half(), depth)
+fn ground() -> StackGround {
+    StackGround::new(WORLD_SEED, HAVEN, outline_half())
 }
 
 fn index_of(ladder: &Ladder<impl Ground>, w: i64) -> usize {
@@ -420,7 +420,6 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
 #[ignore]
 fn ladder_gate() {
     let dir = std::env::var("LADDER_OUT").expect("LADDER_OUT names the directory to write to");
-    let depth: u32 = std::env::var("LADDER_DEPTH").ok().and_then(|d| d.parse().ok()).unwrap_or(2);
     std::fs::create_dir_all(&dir).expect("the output directory");
     let water = std::env::var("LADDER_WATER").map_or(true, |v| v != "0");
     let (cut_from, cut_full) = match std::env::var("LADDER_CUT").as_deref() {
@@ -428,53 +427,13 @@ fn ladder_gate() {
         Ok("A") => (1_500.0, 40_000.0),
         _ => (Params::default().cut_from, Params::default().cut_full),
     };
-    let mut log = format!("ground stack, thrust averaged {depth} levels down, water {water}\n");
-    let g = ground(depth);
+    let mut log = format!("ground stack, water {water}\n");
+    let g = ground();
     let ring = std::env::var("LADDER_RING").ok().and_then(|r| r.parse().ok()).unwrap_or(world::ladder::RING);
     log.push_str(&format!("cut from {cut_from} full at {cut_full}, ring {ring}\n"));
     run(&g, Params { water, cut_from, cut_full, ring, ..Params::default() }, &dir, &mut log);
     print!("{log}");
     std::fs::write(format!("{dir}/log.txt"), log).expect("the log");
-}
-
-/// For cells drawn across each level's region: thrust's relief averaged at
-/// each depth, against the whole cell's average (its every tile, or seven
-/// levels down at the top), and what each depth costs a cell.
-#[test]
-#[ignore]
-fn ladder_averaging() {
-    let g = ground(0);
-    let mut draw = Draw(11);
-    let mut out = String::from("w depth samples err_p50 err_p99 err_max us_per_cell (levels; whole = every tile)\n");
-    for w in [729i64, 243, 81, 27, 9, 3, 1] {
-        let full = w.ilog(3);
-        let h = region(w) / w;
-        let (ci, cj) = haven_cell(w);
-        let mut cells = Vec::new();
-        while cells.len() < 24 {
-            let cell = (ci + draw.range(-h, h + 1), cj + draw.range(-h, h + 1));
-            if g.thrust_mean(w, cell.0, cell.1, 1) > 1.0 {
-                cells.push(cell);
-            }
-            if cells.is_empty() && draw.next() % 1000 == 0 {
-                break;
-            }
-        }
-        let whole: Vec<f64> = cells.iter().map(|&(i, j)| g.thrust_mean(w, i, j, full)).collect();
-        for depth in 0..full {
-            let started = Instant::now();
-            let mut errs: Vec<f64> = cells.iter().zip(&whole).map(|(&(i, j), &f)| (g.thrust_mean(w, i, j, depth) - f).abs()).collect();
-            let us = started.elapsed().as_secs_f64() * 1e6 / cells.len() as f64;
-            errs.sort_by(f64::total_cmp);
-            let n = errs.len();
-            let line = format!("{w} {depth} {} {:.2} {:.2} {:.2} {:.0}\n", 9u64.pow(depth), errs[n / 2], errs[(n * 99 / 100).min(n - 1)], errs[n - 1], us);
-            print!("{line}");
-            out.push_str(&line);
-        }
-    }
-    if let Ok(dir) = std::env::var("LADDER_OUT") {
-        std::fs::write(format!("{dir}/averaging.txt"), out).expect("the averaging table");
-    }
 }
 
 /// A small deterministic generator for the cells the exact checks pick.
@@ -667,7 +626,7 @@ fn ladder_export() {
     std::fs::create_dir_all(&dir).expect("the output directory");
     const SIDE: i64 = 512;
     let half = SIDE / 2;
-    let g = ground(2);
+    let g = ground();
     let bounds = bounds();
     let (hq, hr) = (HAVEN.0 as i64, HAVEN.1 as i64);
     let cells: Vec<(i64, i64)> = (-half..half).flat_map(|r| (-half..half).map(move |q| (hq + q, hr + r))).collect();
@@ -735,7 +694,7 @@ fn ladder_export() {
 #[test]
 #[ignore]
 fn ladder_wet_dry() {
-    let g = ground(2);
+    let g = ground();
     let bounds = bounds();
     let h = region(1);
     let cells: Vec<(i64, i64)> = (-h..=h).flat_map(|i| (-h..=h).map(move |j| (HAVEN.0 as i64 + i, HAVEN.1 as i64 + j))).collect();
@@ -773,7 +732,7 @@ fn ladder_wet_dry() {
 #[test]
 #[ignore]
 fn ladder_bands() {
-    let g = ground(2);
+    let g = ground();
     let terrain = Terrain::new_box(&g, &bounds(), Params::default());
     let mut out = String::from("coarse fine: pairs; |difference| / coarse span p50 p99 max (steps max)\n");
     let z_of = |w: i64, cells: &[(i64, i64)]| -> Vec<Option<f64>> { terrain.cells(w, cells).into_iter().map(|c| c.map(|c| c.z)).collect() };

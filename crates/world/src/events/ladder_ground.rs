@@ -1,15 +1,17 @@
-//! The stack read as the ladder's ground ([`crate::ladder::Ground`]): two
-//! layers, thrusting's relief averaged over a cell, and the rest of the base
-//! layers, plates through lithology, as they compose, the mean over the
-//! cell's centre and the midpoints of its edges. The ladder is built on
-//! these and never sees a layer's index or output (INV-009).
+//! The stack read as the ladder's ground ([`crate::ladder::Ground`]): one
+//! layer, the base layers, plates through lithology, as they compose. A
+//! cell reads the stack at nine points, the centres of its nine children,
+//! the points a summary reads its parts at (`common::summary::part_offsets`),
+//! and holds their mean: its height, its rock's erodibility and its plate's
+//! age alike. A tile reads itself. Coarse is coarse: no cell reads finer
+//! than its children.
+//! The ladder is built on this and never sees a layer's index or output
+//! (INV-009).
 //!
 //! Cell (i, j) of a level `w` tiles wide is centred on tile `(i, j)·w`, so
 //! the world's origin is a centre at every level, as a summary's is
 //! (`common::summary::center_tile`), and a summary of a level is that
-//! level's cell. A cell's tiles are its descendants, the nine children of
-//! each cell down to the tiles; its rock and its plate are those at its
-//! centre.
+//! level's cell.
 
 use dashmap::DashMap;
 
@@ -21,27 +23,20 @@ use crate::ladder::terrain::{Cell, Terrain};
 use crate::ladder::{Bounds, Ground, Ladder, Level, Params};
 use crate::hex_to_world;
 
-/// A cell's centre and the midpoints of its six edges, as tile offsets.
+/// The points a cell of a level `w` wide reads, as tile offsets from its
+/// centre: its nine children's centres; a tile's own.
 fn samples(w: i64) -> Vec<(i64, i64)> {
-    if w == 1 {
-        return vec![(0, 0)];
-    }
-    let h = w / 2;
-    vec![(0, 0), (h, 0), (-h, 0), (0, h), (0, -h), (h, -h), (-h, h)]
+    descendants(w, u32::from(w >= 3))
 }
 
-/// What a cell read once: each layer's value, the rock's erodibility and
+/// What a cell read once: the ground's height, the rock's erodibility and
 /// the plate's age.
-type Read = (Vec<f64>, f64, f64);
+type Read = (f64, f64, f64);
 
-/// The base layers as the ladder's two.
+/// The base layers as the ladder's one.
 pub struct StackGround {
     base: Composite,
     outlines: Outlines,
-    /// How many levels down thrust's relief is averaged over: at most
-    /// `9^depth` reads a cell, the tiles themselves where the cell has
-    /// fewer.
-    depth: u32,
     memo: DashMap<(i64, i64, i64), Read>,
 }
 
@@ -60,26 +55,14 @@ impl Composite {
 }
 
 impl StackGround {
-    /// The base layers' ground, thrust's outlines built over a box `half`
-    /// tiles across either way of the tile `centre`.
-    pub fn new(seed: u64, centre: (i32, i32), half: f64, depth: u32) -> Self {
+    /// The base layers' ground and thrust's outlines built over a box `half` tiles across either way of the tile `centre`.
+    pub fn new(seed: u64, centre: (i32, i32), half: f64) -> Self {
         let (cx, cy) = hex_to_world(centre.0, centre.1);
-        StackGround { base: Composite::base(seed), outlines: Outlines::in_box(cx, cy, half, seed), depth, memo: DashMap::new() }
-    }
-
-    /// Thrust's relief at a tile.
-    fn relief(&self, q: i64, r: i64) -> f64 {
-        let (wx, wy) = hex_to_world(q as i32, r as i32);
-        self.outlines.at(wx, wy).map_or(0.0, |at| self.outlines.relief_of(&at))
-    }
-
-    /// Thrust's relief averaged over cell (i, j) of the level `w` wide, read
-    /// at its descendants `depth` levels down, or at its tiles where those
-    /// are fewer.
-    pub fn thrust_mean(&self, w: i64, i: i64, j: i64, depth: u32) -> f64 {
-        let depth = depth.min(w.ilog(3));
-        let offs = descendants(w, depth);
-        offs.iter().map(|&(dq, dr)| self.relief(i * w + dq, j * w + dr)).sum::<f64>() / offs.len() as f64
+        StackGround {
+            base: Composite::base(seed),
+            outlines: Outlines::in_box(cx, cy, half, seed),
+            memo: DashMap::new(),
+        }
     }
 
     fn cell(&self, w: i64, i: i64, j: i64) -> Read {
@@ -88,23 +71,22 @@ impl StackGround {
         }
         let (q, r) = (i * w, j * w);
         let offs = samples(w);
-        let thrusting = self.base.events.iter().position(|e| e.name() == "thrusting").expect("the base holds thrusting");
-        let (mut fields, mut erod) = (0.0, 1.0);
+        let mut sum = [0.0; 3];
         for &(dq, dr) in &offs {
-            let mut own = 0.0;
-            let view = self.base.compose((q + dq) as i32, (r + dr) as i32, |layer, out| {
-                if layer == thrusting {
-                    own = out.map_or(0.0, |o| o.elevation_delta);
-                }
-            });
-            fields += view.elevation - own;
-            if (dq, dr) == (0, 0) {
-                erod = view.rock.map_or(1.0, |rock| rock.erodibility());
+            let (pq, pr) = ((q + dq) as i32, (r + dr) as i32);
+            let view = self.base.compose(pq, pr, |_, _| {});
+            let (wx, wy) = hex_to_world(pq, pr);
+            let at = [
+                view.elevation,
+                view.rock.map_or(1.0, |rock| rock.erodibility()),
+                self.outlines.at(wx, wy).map_or(0.0, |at| at.plate.age),
+            ];
+            for (s, v) in sum.iter_mut().zip(at) {
+                *s += v;
             }
         }
-        let (wx, wy) = hex_to_world(q as i32, r as i32);
-        let age = self.outlines.at(wx, wy).map_or(0.0, |at| at.plate.age);
-        let read = (vec![fields / offs.len() as f64, self.thrust_mean(w, i, j, self.depth)], erod, age);
+        let n = offs.len() as f64;
+        let read = (sum[0] / n, sum[1] / n, sum[2] / n);
         self.memo.insert((w, i, j), read.clone());
         read
     }
@@ -112,11 +94,11 @@ impl StackGround {
 
 impl Ground for StackGround {
     fn layers(&self) -> usize {
-        2
+        1
     }
 
     fn read(&self, w: i64, i: i64, j: i64, out: &mut [f64]) {
-        out.copy_from_slice(&self.cell(w, i, j).0);
+        out[0] = self.cell(w, i, j).0;
     }
 
     fn erodibility(&self, w: i64, i: i64, j: i64) -> f64 {
@@ -154,7 +136,7 @@ impl Laddered {
         let top_bounds = top_bounds(seed, id).expect("a site with land");
         let (centre, half) = outlines_box(&top_bounds);
         // The ground lives as long as the process: the ladder reads it.
-        let ground: &'static StackGround = Box::leak(Box::new(StackGround::new(seed, centre, half, 2)));
+        let ground: &'static StackGround = Box::leak(Box::new(StackGround::new(seed, centre, half)));
         let top = Ladder::top(ground, top_bounds, p);
         let bounds = landmass_bounds(&top, seed, id);
         Laddered { terrain: Terrain::from_ladder(Ladder::with_top(ground, &bounds, p, Some(top))) }
