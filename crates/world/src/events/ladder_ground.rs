@@ -1,5 +1,5 @@
 //! The stack read as the ladder's ground ([`crate::ladder::Ground`]): one
-//! layer, the base layers, plates through lithology, as they compose. A
+//! layer, the base layers, plates through the scarps, as they compose. A
 //! cell reads the stack at nine points, the centres of its nine children,
 //! the points a summary reads its parts at (`common::summary::part_offsets`),
 //! and holds their mean: its height, its rock's erodibility, its plate's age
@@ -17,7 +17,7 @@ use dashmap::DashMap;
 
 use super::plates::Coasts;
 use super::thrusting::Outlines;
-use super::{forest, lithology, motion, plates, thickening, thrusting, tilt, Composite};
+use super::{forest, lithology, motion, plates, scarp, thickening, thrusting, tilt, Composite};
 use crate::continents::{self, SiteId};
 use crate::ladder::geom::{cube_round, descendants};
 use crate::ladder::terrain::{Cell, Terrain};
@@ -44,7 +44,8 @@ pub struct StackGround {
 }
 
 impl Composite {
-    /// The layers the ladder is built on: plates through lithology.
+    /// The layers the ladder is built on: plates through the scarps, every
+    /// layer that shapes the ground before water cuts it.
     pub fn base(seed: u64) -> Self {
         let mut composite = Self::new(seed);
         composite.add_event(Box::new(plates::PlateEvent::new()));
@@ -53,6 +54,7 @@ impl Composite {
         composite.add_event(Box::new(thrusting::ThrustingEvent::new()));
         composite.add_event(Box::new(thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(lithology::LithologyEvent::new()));
+        composite.add_event(Box::new(scarp::ScarpEvent::new()));
         composite
     }
 }
