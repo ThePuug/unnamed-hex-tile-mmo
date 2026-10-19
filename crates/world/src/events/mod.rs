@@ -146,6 +146,9 @@ pub struct TileOutput {
 pub struct TileView {
     pub q: i32,
     pub r: i32,
+    /// The width of the ladder level the read stands on, the level whose
+    /// cell is centred on the tile: 1 for the tile's own ground.
+    pub w: i64,
     pub wx: f64,
     pub wy: f64,
     pub elevation: f64,
@@ -163,9 +166,9 @@ pub struct TileView {
 }
 
 impl TileView {
-    fn at(q: i32, r: i32) -> Self {
+    fn on(w: i64, q: i32, r: i32) -> Self {
         let (wx, wy) = hex_to_world(q, r);
-        TileView { q, r, wx, wy, elevation: 0.0, gradient: (0.0, 0.0), water: None, rock: None, cover: Cover::NONE, den: None }
+        TileView { q, r, w, wx, wy, elevation: 0.0, gradient: (0.0, 0.0), water: None, rock: None, cover: Cover::NONE, den: None }
     }
 
     fn compose(&mut self, out: &TileOutput) {
@@ -757,7 +760,7 @@ pub struct Composite {
     cell_caches: Vec<CellCache>,
     indexes: IndexRegistry,
     /// The tiles read lately, composed, at most [`RECENT_TILES`] of them.
-    tiles: DashMap<(i32, i32), TileView>,
+    tiles: DashMap<(i64, i32, i32), TileView>,
     /// Tile hits and misses: a tile found cached against one queried.
     metrics: HitCounters,
     seed: u64,
@@ -792,9 +795,7 @@ impl Composite {
     /// the world viewer to set beside the world, never the game.
     #[cfg(feature = "inspect")]
     pub fn stack_alone(seed: u64) -> Self {
-        let mut composite = Self::standard(seed);
-        composite.ladders = None;
-        composite
+        Self::layered(seed, None)
     }
 
     /// The tiles of `coords` made ready together, where reading them one by
@@ -833,8 +834,14 @@ impl Composite {
     /// The world's stack, its ladder cutting by `p`: for the world viewer's
     /// parameters, read from a file.
     pub fn standard_with(seed: u64, p: crate::ladder::Params) -> Self {
+        Self::layered(seed, Some(std::sync::Arc::new(ladder_ground::Ladders::new(seed, p))))
+    }
+
+    /// The world's layers, the ground composed by `ladders` where there is
+    /// one: it stands after every layer that shapes the ground and before
+    /// those that stand on it.
+    fn layered(seed: u64, ladders: Option<std::sync::Arc<ladder_ground::Ladders>>) -> Self {
         let mut composite = Self::new(seed);
-        composite.ladders = Some(std::sync::Arc::new(ladder_ground::Ladders::new(seed, p)));
         composite.add_event(Box::new(plates::PlateEvent::new()));
         composite.add_event(Box::new(tilt::TiltEvent::new()));
         composite.add_event(Box::new(motion::MotionEvent::new()));
@@ -842,6 +849,10 @@ impl Composite {
         composite.add_event(Box::new(thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(lithology::LithologyEvent::new()));
         composite.add_event(Box::new(scarp::ScarpEvent::new()));
+        if let Some(ladders) = &ladders {
+            composite.add_event(Box::new(ladder_ground::LadderEvent::new(ladders.clone())));
+        }
+        composite.ladders = ladders;
         composite.add_event(Box::new(outcrop::OutcropEvent::new()));
         composite.add_event(Box::new(forest::ForestEvent::new()));
         composite.add_event(Box::new(den::DenEvent::new()));
@@ -881,37 +892,28 @@ impl Composite {
     /// reads the world (INV-009). Lazily triggers deform + query cascades.
     /// Thread-safe: no global lock. Per-cell deform locks serialize cold cells.
     pub fn tile_at(&self, q: i32, r: i32) -> TileView {
-        let mut view = self.stack_tile(q, r);
-        if let Some(ladders) = &self.ladders {
-            match ladders.tile(q, r) {
-                Some(cell) => {
-                    view.elevation = cell.z;
-                    view.water = cell.water;
-                }
-                // Every land tile is one site's, inside that site's top: one
-                // that is not is a seam.
-                None if view.elevation >= 0.0 => ladders.landless(q, r),
-                None => {}
-            }
-        }
-        view
+        self.tile_on(1, q, r)
     }
 
-    /// The tile as the stack composes it, the heights and water its own.
-    fn stack_tile(&self, q: i32, r: i32) -> TileView {
+    /// The tile at (q, r) standing on the ground of the ladder's level `w`
+    /// wide, whose cell is centred there: what a summary three times as
+    /// wide reads its part at, so a far summary's cover stands on the
+    /// ground it is drawn at and never builds the tiles under it. (q, r)
+    /// is a centre of the level; at `w` = 1 this is [`Composite::tile_at`].
+    pub fn tile_on(&self, w: i64, q: i32, r: i32) -> TileView {
         let _span = tracing::info_span!("tile_at").entered();
 
-        if let Some(view) = self.tiles.get(&(q, r)) {
+        if let Some(view) = self.tiles.get(&(w, q, r)) {
             self.metrics.record(true);
             return view.clone();
         }
         self.metrics.record(false);
 
-        let view = self.compose(q, r, |_, _| {});
+        let view = self.compose(w, q, r, |_, _| {});
         if self.tiles.len() >= RECENT_TILES {
             self.tiles.clear();
         }
-        self.tiles.insert((q, r), view.clone());
+        self.tiles.insert((w, q, r), view.clone());
         view
     }
 
@@ -923,14 +925,14 @@ impl Composite {
     #[cfg(feature = "inspect")]
     pub fn outputs_at(&self, q: i32, r: i32) -> (TileView, Vec<(&str, Option<TileOutput>)>) {
         let mut outputs = Vec::with_capacity(self.events.len());
-        let view = self.compose(q, r, |layer, out| outputs.push((self.events[layer].name(), out)));
+        let view = self.compose(1, q, r, |layer, out| outputs.push((self.events[layer].name(), out)));
         (view, outputs)
     }
 
-    /// The tile at (q, r) through the stack: every layer's neighbourhood
-    /// deformed, then each layer queried over the composite of those
-    /// below it, `each` handed what it returned.
-    fn compose(&self, q: i32, r: i32, mut each: impl FnMut(usize, Option<TileOutput>)) -> TileView {
+    /// The tile at (q, r) on the level `w` wide through the stack: every
+    /// layer's neighbourhood deformed, then each layer queried over the
+    /// composite of those below it, `each` handed what it returned.
+    fn compose(&self, w: i64, q: i32, r: i32, mut each: impl FnMut(usize, Option<TileOutput>)) -> TileView {
         {
             let _s = tracing::debug_span!("deform").entered();
             for layer in 0..self.events.len() {
@@ -939,7 +941,7 @@ impl Composite {
             }
         }
 
-        let mut view = TileView::at(q, r);
+        let mut view = TileView::on(w, q, r);
         let _s = tracing::debug_span!("query").entered();
         for layer in 0..self.events.len() {
             let cell_id = self.lattices[layer].cell_id(q, r);
@@ -984,12 +986,18 @@ impl Composite {
 
     /// What stands in a tile's slots.
     pub fn cover_at(&self, q: i32, r: i32) -> Cover {
-        self.stack_tile(q, r).cover
+        self.tile_at(q, r).cover
+    }
+
+    /// What stands in a tile's slots on the ground of the level `w` wide
+    /// ([`Composite::tile_on`]).
+    pub fn cover_on(&self, w: i64, q: i32, r: i32) -> Cover {
+        self.tile_on(w, q, r).cover
     }
 
     /// The habitat of the den whose site is this tile, where one is.
     pub fn den_at(&self, q: i32, r: i32) -> Option<Habitat> {
-        self.stack_tile(q, r).den
+        self.tile_at(q, r).den
     }
 
     /// Access the IndexRegistry directly (no lock needed — interior
@@ -1170,8 +1178,8 @@ impl common::summary::SummarySource for Composite {
         Some(common::summary::TileSample { z: view.elevation.round() as i32, water: Self::water_of(&view), cover: view.cover })
     }
 
-    fn cover(&self, q: i32, r: i32) -> Option<Cover> {
-        Some(self.cover_at(q, r))
+    fn cover(&self, w: i64, q: i32, r: i32) -> Option<Cover> {
+        Some(self.cover_on(w, q, r))
     }
 
     fn cell(&self, r: u32, sq: i32, sr: i32) -> Option<(i32, u16)> {
@@ -1201,38 +1209,37 @@ mod tests {
 
     use super::*;
 
-    /// Where the ground is steeper than a step, the gradient the layers
-    /// report reads the slope between a tile's neighbours along the
-    /// steepest axis, though no layer read a neighbour. Not everywhere: a
-    /// cuesta's contact is a step no layer reports, and a tile at a brink
-    /// reads the slope above it.
+    /// The grade a read reports is the slope of the ground drawn at its
+    /// level: the plane through the heights of its six neighbours on that
+    /// level, `w` apart, at the tiles and at a coarser level alike.
     #[test]
-    fn the_grade_reads_the_slope_between_neighbours() {
+    fn the_grade_is_the_plane_through_the_neighbours_drawn() {
         let c = Composite::standard(0x9E3779B97F4A7C15);
-        let axes = [(1, 0), (0, 1), (-1, 1)];
-        let (mut steep, mut close) = (0, 0);
-        for dq in (-120..=120).step_by(11) {
-            for dr in (-120..=120).step_by(11) {
-                let (q, r) = (104_289 + dq, -4_677 + dr);
-                let v = c.tile_at(q, r);
-                if v.water.is_some() {
-                    continue;
-                }
-                let (fd, along) = axes.iter().map(|&(aq, ar)| {
-                    let (ux, uy) = hex_to_world(aq, ar);
-                    let d = (c.tile_at(q + aq, r + ar).elevation - c.tile_at(q - aq, r - ar).elevation) / 2.0;
-                    (d, v.gradient.0 * ux + v.gradient.1 * uy)
-                }).max_by(|a, b| a.0.abs().total_cmp(&b.0.abs())).unwrap();
-                if fd.abs() > 1.0 {
-                    steep += 1;
-                    if (along - fd).abs() < 0.1 * fd.abs() {
-                        close += 1;
+        let mut steep = 0;
+        for w in [1i64, 27] {
+            for dq in (-120..=120).step_by(11) {
+                for dr in (-120..=120).step_by(11) {
+                    let (q, r) = (((104_289 + dq * w as i32) / w as i32) * w as i32, ((-4_677 + dr * w as i32) / w as i32) * w as i32);
+                    let v = c.tile_on(w, q, r);
+                    let (mut gx, mut gy) = (0.0, 0.0);
+                    for (aq, ar) in crate::lattice::DIRECTIONS {
+                        let (dx, dy) = hex_to_world(aq * w as i32, ar * w as i32);
+                        let dz = c.tile_on(w, q + aq * w as i32, r + ar * w as i32).elevation - v.elevation;
+                        gx += dz * dx;
+                        gy += dz * dy;
                     }
+                    let spread = 3.0 * (w * w) as f64;
+                    let plane = (gx / spread, gy / spread);
+                    assert!(
+                        (v.gradient.0 - plane.0).abs() < 1e-9 && (v.gradient.1 - plane.1).abs() < 1e-9,
+                        "({q}, {r}) at {w}: grade {:?}, the neighbours' plane {plane:?}",
+                        v.gradient
+                    );
+                    steep += usize::from(plane.0.hypot(plane.1) > 0.5);
                 }
             }
         }
-        assert!(steep > 50, "only {steep} steep tiles about the spawn");
-        assert!(close * 10 >= steep * 9, "{close} of {steep} steep tiles read within a tenth");
+        assert!(steep > 50, "only {steep} reads about the spawn climb half a step a tile");
     }
 
     /// The translation onto another lattice holds every cell touching the

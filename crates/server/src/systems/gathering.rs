@@ -203,8 +203,8 @@ impl<S: SummarySource> SummarySource for LaidOver<S> {
         Some(sample)
     }
 
-    fn cover(&self, q: i32, r: i32) -> Option<common::Cover> {
-        self.tiles.get(&(q, r)).copied().or_else(|| self.source.cover(q, r))
+    fn cover(&self, w: i64, q: i32, r: i32) -> Option<common::Cover> {
+        self.tiles.get(&(q, r)).copied().or_else(|| self.source.cover(w, q, r))
     }
 
     fn cell(&self, r: u32, sq: i32, sr: i32) -> Option<(i32, u16)> {

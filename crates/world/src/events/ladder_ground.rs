@@ -17,12 +17,13 @@ use dashmap::DashMap;
 
 use super::plates::Coasts;
 use super::thrusting::Outlines;
-use super::{forest, lithology, motion, plates, scarp, thickening, thrusting, tilt, Composite};
+use super::{forest, lithology, motion, plates, scarp, thickening, thrusting, tilt, Composite, TileOutput, TileView, WorldEvent};
 use crate::continents::{self, SiteId};
 use crate::ladder::geom::{cube_round, descendants};
 use crate::ladder::terrain::{Cell, Terrain};
 use crate::ladder::{Bounds, Ground, Ladder, Level, Params};
 use crate::hex_to_world;
+use crate::lattice::DIRECTIONS;
 
 /// The points a cell of a level `w` wide reads, as tile offsets from its
 /// centre: its nine children's centres; a tile's own.
@@ -82,7 +83,7 @@ impl StackGround {
         let mut sum = [0.0; 4];
         for &(dq, dr) in &offs {
             let (pq, pr) = ((q + dq) as i32, (r + dr) as i32);
-            let view = self.base.compose(pq, pr, |_, _| {});
+            let view = self.base.compose(1, pq, pr, |_, _| {});
             let (wx, wy) = hex_to_world(pq, pr);
             let at = [
                 view.elevation,
@@ -264,10 +265,78 @@ impl Ladders {
         out
     }
 
+    /// The cell of the level `w` wide centred on tile (q, r), where a site's
+    /// ladder holds it, and how steeply that level's ground climbs there, in
+    /// z-levels per world unit along x and y: the plane through its six
+    /// neighbouring cells' heights, a neighbour the site's ladder does not
+    /// hold read as level with it. (q, r) is a centre of the level: a tile
+    /// at `w` = 1.
+    pub fn ground(&self, w: i64, q: i32, r: i32) -> Option<(Cell, (f64, f64))> {
+        let site = self.site_of(q, r)?;
+        let (i, j) = (q as i64 / w, r as i64 / w);
+        debug_assert!(i * w == q as i64 && j * w == r as i64, "({q}, {r}) is no centre of the level {w} wide");
+        let at: Vec<(i64, i64)> = std::iter::once((0, 0)).chain(DIRECTIONS).map(|(di, dj)| (i + di as i64, j + dj as i64)).collect();
+        let mut got = self.with(site, |l| l.terrain.cells(w, &at)).into_iter();
+        let cell = got.next().flatten()?;
+        // Over a hex ring of neighbours `w` apart Σdx² = Σdy² = 3w² and
+        // Σdx·dy = 0, so the least squares plane's slope is each sum over
+        // 3w².
+        let (mut gx, mut gy) = (0.0, 0.0);
+        for (&(di, dj), n) in DIRECTIONS.iter().zip(got) {
+            let dz = n.map_or(0.0, |n| n.z - cell.z);
+            let (dx, dy) = hex_to_world(di * w as i32, dj * w as i32);
+            gx += dz * dx;
+            gy += dz * dy;
+        }
+        let spread = 3.0 * (w * w) as f64;
+        Some((cell, (gx / spread, gy / spread)))
+    }
+
     /// Each cell's height, the surface of the water standing over it, and
     /// which of its children stand under water ([`Ladders::cells`]).
     pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>, u16)>> {
         self.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.water, c.wet_parts))).collect()
+    }
+}
+
+/// The ladder as a layer of the stack: a read on the level `w` wide
+/// ([`TileView::w`]) stands at that level's cell centred on the tile, its
+/// height, the water the ladder stands over it and the slope of the
+/// level's ground; a tile's read is the tile's. Every layer above stands
+/// on the ground the game draws at the level it is read at. A tile no
+/// site's ladder holds keeps the ground beneath, open sea; a land tile
+/// that is so is a seam, counted ([`Ladders::landless`]).
+pub struct LadderEvent {
+    ladders: std::sync::Arc<Ladders>,
+}
+
+impl LadderEvent {
+    pub fn new(ladders: std::sync::Arc<Ladders>) -> Self {
+        LadderEvent { ladders }
+    }
+}
+
+impl WorldEvent for LadderEvent {
+    fn name(&self) -> &str { "ladder" }
+
+    /// Nothing is resolved per cell: a read is the ladder's.
+    fn scale(&self) -> u32 { 81 }
+
+    fn deform(&self, _scope: &super::CellScope) {}
+
+    fn query(&self, q: i32, r: i32, below: &TileView, _cell: &(dyn std::any::Any + Send + Sync), _seed: u64) -> Option<TileOutput> {
+        let Some((cell, gradient)) = self.ladders.ground(below.w, q, r) else {
+            if below.elevation >= 0.0 {
+                self.ladders.landless(q, r);
+            }
+            return None;
+        };
+        Some(TileOutput {
+            elevation_delta: cell.z - below.elevation,
+            gradient: (gradient.0 - below.gradient.0, gradient.1 - below.gradient.1),
+            water: cell.water,
+            ..TileOutput::default()
+        })
     }
 }
 

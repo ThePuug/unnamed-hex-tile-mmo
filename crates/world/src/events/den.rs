@@ -130,7 +130,7 @@ mod tests {
     use common::{Content, Cover, Rock};
 
     fn ground() -> TileView {
-        let mut tile = TileView::at(0, 0);
+        let mut tile = TileView::on(1, 0, 0);
         tile.rock = Some(Rock::Shale);
         tile
     }

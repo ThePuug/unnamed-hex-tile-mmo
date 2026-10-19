@@ -57,8 +57,8 @@ impl common::summary::SummarySource for EventRegistry {
         self.composite.sample(q, r)
     }
 
-    fn cover(&self, q: i32, r: i32) -> Option<Cover> {
-        self.composite.cover(q, r)
+    fn cover(&self, w: i64, q: i32, r: i32) -> Option<Cover> {
+        self.composite.cover(w, q, r)
     }
 
     fn cell(&self, r: u32, sq: i32, sr: i32) -> Option<(i32, u16)> {

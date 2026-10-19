@@ -16,8 +16,11 @@ pub trait SummarySource {
     fn sample(&self, q: i32, r: i32) -> Option<TileSample>;
 
     /// What stands on a tile alone, where the height and water need not be
-    /// read.
-    fn cover(&self, q: i32, r: i32) -> Option<Cover> {
+    /// read, standing on the ground of the level `w` wide whose cell is
+    /// centred on it: a summary's part is a cell of the level a third its
+    /// width, and its cover stands on that cell's ground. A source holding
+    /// only tiles answers the tile's.
+    fn cover(&self, _w: i64, q: i32, r: i32) -> Option<Cover> {
         self.sample(q, r).map(|s| s.cover)
     }
 
@@ -103,6 +106,12 @@ pub fn part_offsets(r: u32) -> [(i32, i32); PARTS] {
     [a, b, c, e, f, g, h, (d, d), (2 * d, -d)]
 }
 
+/// The width of the level a part of a summary of radius `r` is a cell of:
+/// a third of the summary's.
+pub fn part_width(r: u32) -> i64 {
+    scale(r) as i64 / 3
+}
+
 /// The growth sites one part of a summary of radius `r` holds: a finer
 /// summary's tiles, whose ground is the width's third squared, at a tile's
 /// sites each.
@@ -142,7 +151,7 @@ pub fn canopy_parts(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Op
     let (cq, cr) = center_tile(r, sq, sr);
     let mut canopy = [Canopy::NONE; PARTS];
     for (part, (dq, dr)) in part_offsets(r).into_iter().enumerate() {
-        canopy[part] = Canopy::of(source.cover(cq + dq, cr + dr)?);
+        canopy[part] = Canopy::of(source.cover(part_width(r), cq + dq, cr + dr)?);
     }
     Some(canopy)
 }
@@ -174,7 +183,7 @@ pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Optio
     if let Some((z, wet)) = source.cell(r, sq, sr) {
         let mut covers = [Cover::default(); PARTS];
         for (i, (dq, dr)) in part_offsets(r).into_iter().enumerate() {
-            covers[i] = source.cover(cq + dq, cr + dr)?;
+            covers[i] = source.cover(part_width(r), cq + dq, cr + dr)?;
         }
         let samples: [Cover; SAMPLES] = std::array::from_fn(|i| covers[i]);
         return Some(SummaryCell { z, wet, canopy: covers.map(Canopy::of), outcrop: Outcrop::of(&samples) });
