@@ -84,12 +84,13 @@ impl Ord for Flood {
 }
 
 /// What routing decided for one of a block's own vertices: its receiver,
-/// whether it is a trough, its catchment, floor, base level and birth.
+/// whether it is a trough, its catchment, flow, floor, base level and birth.
 struct Decided {
     v: usize,
     rec: i64,
     trough: bool,
     acc: f64,
+    flow: f64,
     floor: f64,
     base: f64,
     born: i64,
@@ -145,6 +146,7 @@ pub(super) fn route_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], p: 
             lv.rec[d.v] = d.rec;
             lv.trough[d.v] = d.trough;
             lv.acc[d.v] = d.acc;
+            lv.flow[d.v] = d.flow;
             lv.floor[d.v] = d.floor;
             lv.base[d.v] = d.base;
             lv.born[d.v] = d.born;
@@ -357,6 +359,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     };
     let mut placed: HashMap<usize, usize> = HashMap::new();
     let mut src_acc = vec![f64::NAN; nv];
+    let mut src_flow = vec![f64::NAN; nv];
     let mut src_born = vec![-1i64; nv];
     while let Some(u) = ready.pop() {
         let xu = at_node[&u];
@@ -400,6 +403,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         placed.insert(u, x);
         if !sink[x] {
             src_acc[x] = src_acc[x].max(par.acc[u]);
+            src_flow[x] = src_flow[x].max(par.flow[u]);
             src_born[x] = src_born[x].max(par.born[u]);
         }
         let r = par.rec[u];
@@ -473,8 +477,10 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             _ => [(rec[x], 1.0), (None, 0.0), (None, 0.0)],
         }
     };
-    // Catchment and troughs over the footprint in flow order: what a
-    // trough drains into is a trough, carrying its catchment and birth.
+    // Catchment, flow and troughs over the footprint in flow order: what a
+    // trough drains into is a trough, carrying its catchment, flow and
+    // birth. Catchment past the level above's head is the level above's
+    // trough's to carry; the flow is held back in the same proportion.
     let mut indeg = vec![0u32; nv];
     for x in 0..nv {
         for y in succ(x).into_iter().flatten() {
@@ -483,11 +489,15 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     }
     let mut val = vec![0.0f64; nv];
     let mut inflow = vec![0.0f64; nv];
+    let mut wet = vec![0.0f64; nv];
+    let mut wet_in = vec![0.0f64; nv];
     let mut trough = vec![false; nv];
     let mut acc = vec![0.0f64; nv];
+    let mut flow = vec![0.0f64; nv];
     let mut born = vec![-1i64; nv];
     let mut fed = vec![false; nv];
     let mut fed_acc = vec![0.0f64; nv];
+    let mut fed_flow = vec![0.0f64; nv];
     let mut fed_born = vec![-1i64; nv];
     let mut order = Vec::with_capacity(nv);
     let mut stack: Vec<usize> = (0..nv).filter(|&x| indeg[x] == 0).collect();
@@ -497,23 +507,30 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         let c = v % nn;
         let area = if v < nn && lv.exists[c] { (w * w) as f64 } else { 0.0 };
         let (head, above) = (head_of(w, lv.erod[c], slope[x], p), head_of(par.w, lv.erod[c], slope[x], p));
-        val[x] = (area + inflow[x]).min(above);
+        let gathered = area + inflow[x];
+        val[x] = gathered.min(above);
+        let kept = if gathered > 0.0 { val[x] / gathered } else { 0.0 };
+        wet[x] = (if area > 0.0 { area * lv.rain[c] } else { 0.0 } + wet_in[x]) * kept;
         let headed = births && head < above && val[x] >= head;
         trough[x] = !sink[x] && (headed || !src_acc[x].is_nan() || fed[x]);
         acc[x] = val[x];
+        flow[x] = wet[x];
         if trough[x] {
             acc[x] = val[x].max(fed_acc[x]).max(if src_acc[x].is_nan() { 0.0 } else { src_acc[x] });
+            flow[x] = wet[x].max(fed_flow[x]).max(if src_flow[x].is_nan() { 0.0 } else { src_flow[x] });
             born[x] = (if headed { w } else { -1 }).max(src_born[x]).max(fed_born[x]);
         }
         for (y, frac) in shares(x, trough[x]) {
             let Some(y) = y else { continue };
             inflow[y] += frac * val[x];
+            wet_in[y] += frac * wet[x];
             if trunc[x] && frac > 0.0 {
                 trunc[y] = true;
             }
             if trough[x] && frac > 0.0 {
                 fed[y] = true;
                 fed_acc[y] = fed_acc[y].max(acc[x]);
+                fed_flow[y] = fed_flow[y].max(flow[x]);
                 fed_born[y] = fed_born[y].max(born[x]);
             }
         }
@@ -644,6 +661,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             rec: if sink[x] { -1 } else { recg[x] },
             trough: trough[x],
             acc: acc[x],
+            flow: flow[x],
             floor: (flo[x] + 0.5).floor(),
             base: base[x],
             born: if trough[x] { born[x] } else { -1 },

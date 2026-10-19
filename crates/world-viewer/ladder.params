@@ -16,7 +16,7 @@ wall = 1
 # How far water reads lines from a cell, in cells of its level.
 ring = 15.588457268119896
 
-# The catchment at which a trough's bed is a trunk's, in tiles.
+# The flow at which a trough's bed is a trunk's, in tiles of full rain.
 catchment_full = 400000
 
 # Whether water cuts at all.

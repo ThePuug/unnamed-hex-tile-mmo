@@ -138,11 +138,12 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         }
     }
 
-    // Catchment and troughs over the flood's order, upstream first: a
+    // Catchment, flow and troughs over the flood's order, upstream first: a
     // trough is born where the catchment reaches the head, and whatever a
     // trough drains into is a trough.
     let head = |v: usize| head_of(lv.w, lv.erod[v % nn], slope[v], p);
     let mut acc: Vec<f64> = (0..count).map(|v| if v < nn && live[v] { (lv.w * lv.w) as f64 } else { 0.0 }).collect();
+    let mut flow: Vec<f64> = (0..count).map(|v| if v < nn && live[v] { acc[v] * lv.rain[v] } else { 0.0 }).collect();
     let mut trough = vec![false; count];
     for &v in order.iter().rev() {
         if rec[v] < 0 {
@@ -152,12 +153,16 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         if trough[v] {
             let r = rec[v] as usize;
             acc[r] += acc[v];
+            flow[r] += flow[v];
             trough[r] = true;
         } else if r2[v] >= 0 {
             acc[r1[v] as usize] += w1[v] * acc[v];
             acc[r2[v] as usize] += (1.0 - w1[v]) * acc[v];
+            flow[r1[v] as usize] += w1[v] * flow[v];
+            flow[r2[v] as usize] += (1.0 - w1[v]) * flow[v];
         } else {
             acc[r1[v] as usize] += acc[v];
+            flow[r1[v] as usize] += flow[v];
         }
     }
     // Base levels, outlets first: the sea, or the pit of the closed ground a
@@ -257,6 +262,7 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     for v in 0..count {
         lv.rec[v] = rec[v];
         lv.acc[v] = acc[v];
+        lv.flow[v] = flow[v];
         lv.trough[v] = trough[v];
         lv.floor[v] = (floor[v] + 0.5).floor();
         lv.base[v] = base[v];

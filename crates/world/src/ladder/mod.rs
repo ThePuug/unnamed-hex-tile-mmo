@@ -19,7 +19,13 @@
 //!   it the level above's carve predicted the same way: its carved ground.
 //! - **route**: every vertex's receiver downhill on the carved ground, its
 //!   catchment, and the level's troughs: the level above's rivers run on
-//!   from its nodes, and troughs born at the level ([`route`]). A trough's
+//!   from its nodes, and troughs born at the level ([`route`]). A
+//!   catchment is the land a vertex drains, in tiles, and everything that
+//!   cuts reads it: floods do the cutting, and a dry country's floods run
+//!   as high as a wet one's. Its flow is the rain that land gathers, each
+//!   tile adding the sky's moisture over it ([`Ground::moisture`]), and
+//!   only the water drawn reads it, a dry country's river narrower in the
+//!   same valley. A trough's
 //!   floor is the level's own dry ground less a share of its height above
 //!   the level its water ends at, growing with the catchment it carries,
 //!   the plate's age and the rock's erodibility ([`drained`]), and never
@@ -93,7 +99,7 @@ use paged::{Paged, PAGE};
 /// How the water layer cuts.
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
-    /// The catchment at which a trough's bed is a trunk's, in tiles.
+    /// The flow at which a trough's bed is a trunk's, in tiles of full rain.
     pub catchment_full: f64,
     /// The catchment at which a channel begins to cut, and a trough is born,
     /// in the softest rock on a slope of [`HEAD_SLOPE`], and at which it has
@@ -126,6 +132,9 @@ pub trait Ground: Sync {
     fn erodibility(&self, w: i64, i: i64, j: i64) -> f64;
     /// The age of the plate at the cell's centre, 0 to 1.
     fn age(&self, w: i64, i: i64, j: i64) -> f64;
+    /// The sky's moisture at the cell's centre: the rain each of its tiles
+    /// adds to the water draining from it, one the shore's lowland's.
+    fn moisture(&self, w: i64, i: i64, j: i64) -> f64;
 }
 
 /// How far water reads lines from a cell, in cells of the level: what one
@@ -260,6 +269,9 @@ pub struct Level {
     pub layers: Vec<Paged<f64>>,
     pub erod: Paged<f64>,
     pub age: Paged<f64>,
+    /// The rain each of a cell's tiles adds to the flow, the sky's moisture
+    /// there.
+    pub rain: Paged<f64>,
     /// The level above's surface at each centre.
     pub p: Paged<f64>,
     /// The ground: the prediction and every layer's change but water's.
@@ -321,7 +333,11 @@ pub struct Level {
     pub born: Paged<i64>,
     pub rec: Paged<i64>,
     pub trough: Paged<bool>,
+    /// The land each vertex drains, in tiles: what cuts.
     pub acc: Paged<f64>,
+    /// The rain that land gathers, in tiles of full rain: what the water
+    /// drawn carries.
+    pub flow: Paged<f64>,
     pub floor: Paged<f64>,
     pub predicted: Paged<bool>,
     pub supplied: Paged<bool>,
@@ -359,6 +375,7 @@ impl Level {
             layers: (0..layers).map(|_| nan(cells)).collect(),
             erod: nan(cells),
             age: nan(cells),
+            rain: nan(cells),
             p: nan(cells),
             ground: nan(cells),
             carved: nan(cells),
@@ -384,6 +401,7 @@ impl Level {
             rec: Paged::new(-1, 3 * cells),
             trough: Paged::new(false, 3 * cells),
             acc: Paged::new(0.0, 3 * cells),
+            flow: Paged::new(0.0, 3 * cells),
             floor: nan(3 * cells),
             predicted: Paged::new(false, cells),
             supplied: Paged::new(false, cells),
@@ -681,7 +699,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let cells: Vec<(i64, i64)> = todo.iter().map(|&c| lv.ij(c)).collect();
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         let chunk = cells.len().div_ceil(threads).max(1);
-        let read: Vec<(Vec<f64>, f64, f64)> = std::thread::scope(|s| {
+        let read: Vec<(Vec<f64>, f64, f64, f64)> = std::thread::scope(|s| {
             let handles: Vec<_> = cells
                 .chunks(chunk)
                 .map(|part| {
@@ -690,7 +708,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
                             .map(|&(i, j)| {
                                 let mut out = vec![0.0; layers];
                                 ground.read(w, i, j, &mut out);
-                                (out, ground.erodibility(w, i, j), ground.age(w, i, j))
+                                (out, ground.erodibility(w, i, j), ground.age(w, i, j), ground.moisture(w, i, j))
                             })
                             .collect::<Vec<_>>()
                     })
@@ -699,12 +717,13 @@ impl<'g, G: Ground> Ladder<'g, G> {
             handles.into_iter().flat_map(|h| h.join().expect("a reading thread")).collect()
         });
         let lv = &mut self.levels[k];
-        for (&c, (vals, erod, age)) in todo.iter().zip(read) {
+        for (&c, (vals, erod, age, rain)) in todo.iter().zip(read) {
             for (l, v) in vals.into_iter().enumerate() {
                 lv.layers[l][c] = v;
             }
             lv.erod[c] = erod;
             lv.age[c] = age;
+            lv.rain[c] = rain;
         }
         self.timing[k][Stage::Read as usize] += started.elapsed().as_secs_f64();
     }

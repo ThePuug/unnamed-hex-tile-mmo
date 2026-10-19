@@ -32,13 +32,13 @@ use super::{wall_slope, Level, Params, Pass};
 use crate::SQRT_3;
 
 /// A trough edge the valley is read along: its ends' positions in tiles,
-/// their floors, its catchment and the width of the level its trough was
+/// their floors, its flow and the width of the level its trough was
 /// born at.
 pub(super) struct Edge {
     from: (f64, f64),
     to: (f64, f64),
     floors: (f64, f64),
-    acc: f64,
+    flow: f64,
     born: i64,
     /// The erodibility of the rock at the vertex the edge leaves.
     erod: f64,
@@ -66,7 +66,7 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask) -> Vec<Edge> {
                 from: tiles(lv, v),
                 to: tiles(lv, to),
                 floors: (lv.floor[v], lv.floor[to]),
-                acc: lv.acc[v],
+                flow: lv.flow[v],
                 born: lv.born[v],
                 erod: rock(lv, v),
                 src: v,
@@ -88,10 +88,10 @@ fn world(q: f64, r: f64) -> (f64, f64) {
 }
 
 /// The half width of a trough's bed, in tiles: growing as the square root
-/// of the catchment, the way a channel's width grows with discharge, a tile
-/// and a half at a trunk's catchment.
-pub fn bed(catchment: f64, p: &Params) -> f64 {
-    1.5 * (catchment / p.catchment_full).max(0.0).sqrt()
+/// of its flow, the way a channel's width grows with discharge, a tile and
+/// a half at a trunk's.
+pub fn bed(flow: f64, p: &Params) -> f64 {
+    1.5 * (flow / p.catchment_full).max(0.0).sqrt()
 }
 
 /// How deep a river's water stands, in levels, its channel cut that far
@@ -165,7 +165,7 @@ impl Band {
                     x,
                     y,
                     floor,
-                    bed: bed(e.acc, p),
+                    bed: bed(e.flow, p),
                     born: e.born,
                     slope: wall_slope(e.erod, p.wall),
                     src: e.src,

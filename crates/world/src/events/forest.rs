@@ -13,7 +13,7 @@
 //! less what every belt between a position and the wind has wrung out. A
 //! belt shadows the ground downwind of its rim by its height, fading as
 //! the air takes up water again; its windward flank has the rain the
-//! climb wrings out and no shadow. Every belt is a convergent edge's
+//! climb wrings out, more the higher it stands, and no shadow. Every belt is a convergent edge's
 //! wedge, read off the plate outlines thrusting published, so the shadow
 //! is the belt's and never a field's.
 //!
@@ -50,7 +50,7 @@ use super::climate::{temperature, TREELINE, TREELINE_BAND};
 use super::index::{CellId, CellIndex, IndexRegistry, Located};
 use super::lithology::rock_on;
 use super::plates::{Coasts, PlateEdgeIndex, COAST_REACH, WARP_SWING};
-use super::thrusting::{outlines_of, rim_of, sheets_of, EdgeOutline, Outlines, OUTLINE_REACH, RANGE_SPACING, WEDGE_SHEETS};
+use super::thrusting::{outlines_of, rim_of, sheets_of, EdgeOutline, Outlines, OUTLINE_REACH, RANGE_RISE, RANGE_SPACING, WEDGE_SHEETS};
 use super::{footprint_plus_ring, CellScope, TileOutput, TileView, WorldEvent, RING_CLEARANCE};
 
 const WIND_SEED: u64 = 0x7769_6e64;
@@ -182,10 +182,18 @@ pub fn shadow(wx: f64, wy: f64, wind: (f64, f64), outlines: &Outlines) -> f64 {
     1.0 - passes
 }
 
+/// How much more than the lowland before it a range's full height wrings
+/// out of the air climbing it: the windward flanks of mid-latitude ranges
+/// take two to four times their lowland's rain.
+pub const LIFT: f64 = 2.0;
+
 /// What the sky gives a position: the sea's moisture less the belts'
-/// shadow.
+/// shadow, and more as the ground lifts the air, by [`LIFT`] at a full
+/// range's rise; one is the shore's lowland, and a range's flanks take
+/// more.
 pub fn sky_moisture(wx: f64, wy: f64, wind: (f64, f64), coasts: &Coasts, outlines: &Outlines) -> f64 {
-    sea_moisture(wx, wy, coasts) * (1.0 - shadow(wx, wy, wind, outlines))
+    let lift = outlines.at(wx, wy).map_or(1.0, |at| 1.0 + LIFT * outlines.relief_of(&at) / RANGE_RISE);
+    sea_moisture(wx, wy, coasts) * (1.0 - shadow(wx, wy, wind, outlines)) * lift
 }
 
 // ── The kinds ───────────────────────────────────────────────────────────────

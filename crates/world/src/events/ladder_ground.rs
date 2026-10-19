@@ -2,9 +2,9 @@
 //! layer, the base layers, plates through lithology, as they compose. A
 //! cell reads the stack at nine points, the centres of its nine children,
 //! the points a summary reads its parts at (`common::summary::part_offsets`),
-//! and holds their mean: its height, its rock's erodibility and its plate's
-//! age alike. A tile reads itself. Coarse is coarse: no cell reads finer
-//! than its children.
+//! and holds their mean: its height, its rock's erodibility, its plate's age
+//! and the sky's moisture over it (forest's `sky_moisture`) alike. A tile
+//! reads itself. Coarse is coarse: no cell reads finer than its children.
 //! The ladder is built on this and never sees a layer's index or output
 //! (INV-009).
 //!
@@ -15,8 +15,9 @@
 
 use dashmap::DashMap;
 
+use super::plates::Coasts;
 use super::thrusting::Outlines;
-use super::{lithology, motion, plates, thickening, thrusting, tilt, Composite};
+use super::{forest, lithology, motion, plates, thickening, thrusting, tilt, Composite};
 use crate::continents::{self, SiteId};
 use crate::ladder::geom::{cube_round, descendants};
 use crate::ladder::terrain::{Cell, Terrain};
@@ -29,14 +30,16 @@ fn samples(w: i64) -> Vec<(i64, i64)> {
     descendants(w, u32::from(w >= 3))
 }
 
-/// What a cell read once: the ground's height, the rock's erodibility and
-/// the plate's age.
-type Read = (f64, f64, f64);
+/// What a cell read once: the ground's height, the rock's erodibility, the
+/// plate's age and the sky's moisture.
+type Read = (f64, f64, f64, f64);
 
 /// The base layers as the ladder's one.
 pub struct StackGround {
     base: Composite,
     outlines: Outlines,
+    coasts: Coasts,
+    wind: (f64, f64),
     memo: DashMap<(i64, i64, i64), Read>,
 }
 
@@ -55,12 +58,15 @@ impl Composite {
 }
 
 impl StackGround {
-    /// The base layers' ground and thrust's outlines built over a box `half` tiles across either way of the tile `centre`.
+    /// The base layers' ground, thrust's outlines and the coasts built over
+    /// a box `half` tiles across either way of the tile `centre`.
     pub fn new(seed: u64, centre: (i32, i32), half: f64) -> Self {
         let (cx, cy) = hex_to_world(centre.0, centre.1);
         StackGround {
             base: Composite::base(seed),
             outlines: Outlines::in_box(cx, cy, half, seed),
+            coasts: Coasts::in_box(cx, cy, half, seed),
+            wind: forest::wind(seed),
             memo: DashMap::new(),
         }
     }
@@ -71,7 +77,7 @@ impl StackGround {
         }
         let (q, r) = (i * w, j * w);
         let offs = samples(w);
-        let mut sum = [0.0; 3];
+        let mut sum = [0.0; 4];
         for &(dq, dr) in &offs {
             let (pq, pr) = ((q + dq) as i32, (r + dr) as i32);
             let view = self.base.compose(pq, pr, |_, _| {});
@@ -80,13 +86,14 @@ impl StackGround {
                 view.elevation,
                 view.rock.map_or(1.0, |rock| rock.erodibility()),
                 self.outlines.at(wx, wy).map_or(0.0, |at| at.plate.age),
+                forest::sky_moisture(wx, wy, self.wind, &self.coasts, &self.outlines),
             ];
             for (s, v) in sum.iter_mut().zip(at) {
                 *s += v;
             }
         }
         let n = offs.len() as f64;
-        let read = (sum[0] / n, sum[1] / n, sum[2] / n);
+        let read = (sum[0] / n, sum[1] / n, sum[2] / n, sum[3] / n);
         self.memo.insert((w, i, j), read.clone());
         read
     }
@@ -107,6 +114,10 @@ impl Ground for StackGround {
 
     fn age(&self, w: i64, i: i64, j: i64) -> f64 {
         self.cell(w, i, j).2
+    }
+
+    fn moisture(&self, w: i64, i: i64, j: i64) -> f64 {
+        self.cell(w, i, j).3
     }
 }
 

@@ -191,6 +191,7 @@ fn dump(dir: &str, lv: &Level) {
         ("psurf", verts(&|v| lv.psurf[v])),
         ("gelev", verts(&|v| lv.gelev[v])),
         ("acc", verts(&|v| lv.acc[v])),
+        ("flow", verts(&|v| lv.flow[v])),
         ("floor", verts(&|v| lv.floor[v])),
     ] {
         dump_f64(&p(name), v.into_iter());
@@ -505,6 +506,9 @@ fn differs(a: &Level, b: &Level, i: i64, j: i64) -> Vec<String> {
         }
         if !same(a.acc[va], b.acc[vb]) {
             bad.push(format!("acc{t} {} / {}", a.acc[va], b.acc[vb]));
+        }
+        if !same(a.flow[va], b.flow[vb]) {
+            bad.push(format!("flow{t} {} / {}", a.flow[va], b.flow[vb]));
         }
         if !same(a.floor[va], b.floor[vb]) {
             bad.push(format!("floor{t} {} / {}", a.floor[va], b.floor[vb]));
