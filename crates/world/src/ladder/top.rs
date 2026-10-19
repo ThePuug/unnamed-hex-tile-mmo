@@ -6,7 +6,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use super::geom::{facet, pos3, vnbr, xy};
-use super::{drained, head_of, Level, Params};
+use super::{drained, graded_slope, head_of, Level, Params};
 
 /// A vertex waiting in the flood, lowest first, earliest pushed first among
 /// equals.
@@ -27,7 +27,7 @@ impl PartialOrd for Waiting {
     }
 }
 
-/// Every vertex's receiver, the top's catchment, base levels and floors. Water drains from
+/// Every vertex's receiver, the top's catchment, graded profiles and floors. Water drains from
 /// the sinks, the sea and the domain's edge, by a priority flood; off a
 /// trough a vertex's water splits between the two neighbours bracketing its
 /// downslope, both nearer the outlet in the flood's order, so a slope drains
@@ -165,38 +165,8 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
             flow[r1[v] as usize] += flow[v];
         }
     }
-    // Base levels, outlets first: the sea, or the pit of the closed ground a
-    // vertex drains into, its lowest ground.
+    // A vertex in closed ground stands under the water filling it.
     let flooded = |v: usize| filled[v] > e[v];
-    // A basin is named by the vertex it spills over.
-    let mut basin = vec![usize::MAX; count];
-    let mut pits: Vec<f64> = Vec::new();
-    let mut spills: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-    for &v in &order {
-        if rec[v] >= 0 && flooded(v) {
-            let r = rec[v] as usize;
-            basin[v] = if basin[r] != usize::MAX {
-                basin[r]
-            } else {
-                *spills.entry(r).or_insert_with(|| {
-                    pits.push(f64::INFINITY);
-                    pits.len() - 1
-                })
-            };
-            pits[basin[v]] = pits[basin[v]].min(lv.elev[v]);
-        }
-    }
-    let mut base = vec![0.0f64; count];
-    for &v in &order {
-        base[v] = if basin[v] != usize::MAX {
-            pits[basin[v]]
-        } else if rec[v] >= 0 {
-            let r = rec[v] as usize;
-            if basin[r] != usize::MAX { pits[basin[r]] } else { base[r] }
-        } else {
-            0.0
-        };
-    }
     // Each trough's room: how far its hillslopes run to the nearer divide,
     // on each side of its flow the farthest any vertex entering the troughs
     // within two steps lies from where it enters, the nearer side's.
@@ -241,13 +211,30 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         }
         if best[0] > 0.0 && best[1] > 0.0 { best[0].min(best[1]) } else { best[0].max(best[1]) }
     };
-    // Floors: drainage's under each vertex, toward its outlet's level and
+    // Each vertex's graded profile, outlets first: the sea's level at the
+    // sea, a lake's surface over closed ground, and up from its receiver by
+    // its channel's graded slope over the way between. Land at the domain's
+    // edge drains where the top cannot see: its profile is not known.
+    let mut graded = vec![f64::NAN; count];
+    for &v in &order {
+        let c = v % nn;
+        graded[v] = if rec[v] < 0 {
+            if lv.elev[v] < 0.0 { 0.0 } else { f64::NAN }
+        } else if flooded(v) {
+            filled[v]
+        } else {
+            let r = rec[v] as usize;
+            let tiles = (pos[v].0 - pos[r].0).hypot(pos[v].1 - pos[r].1) / crate::SQRT_3;
+            graded[r] + graded_slope(acc[v], lv.erod[c], p) * tiles
+        };
+    }
+    // Floors: drainage's under each vertex, toward its graded profile and
     // held to its room; along a trough never above the floors draining into
     // it, upstream first.
     let mut floor: Vec<f64> = (0..count)
         .map(|v| {
             let c = v % nn;
-            drained(lv.elev[v], base[v], acc[v], lv.age[c], lv.erod[c], room(v), p)
+            drained(lv.elev[v], graded[v], lv.age[c], lv.erod[c], room(v), p)
         })
         .collect();
     let mut low = vec![f64::INFINITY; count];
@@ -262,10 +249,10 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     for v in 0..count {
         lv.rec[v] = rec[v];
         lv.acc[v] = acc[v];
+        lv.graded[v] = graded[v];
         lv.flow[v] = flow[v];
         lv.trough[v] = trough[v];
         lv.floor[v] = (floor[v] + 0.5).floor();
-        lv.base[v] = base[v];
         lv.born[v] = if lv.trough[v] { lv.w } else { -1 };
         lv.psurf[v] = tb[v];
     }

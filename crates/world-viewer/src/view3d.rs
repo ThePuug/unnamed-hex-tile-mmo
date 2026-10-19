@@ -108,7 +108,6 @@ fn read_params(path: &PathBuf) -> Params {
         match name {
             "catchment_full" => p.catchment_full = num(),
             "cut_from" => p.cut_from = num(),
-            "cut_full" => p.cut_full = num(),
             "wall" => p.wall = num(),
             "ring" => p.ring = num(),
             "water" => p.water = value == "true",
@@ -615,7 +614,7 @@ fn timings<G: world::ladder::Ground>(ladder: &world::ladder::Ladder<'_, G>) -> S
         let mut digest = 0xcbf2_9ce4_8422_2325u64;
         for c in lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed[c]) {
             for v in [c, nn + c, 2 * nn + c] {
-                for word in [v as u64, lv.rec[v] as u64, lv.trough[v] as u64, lv.acc[v].to_bits(), lv.flow[v].to_bits(), lv.floor[v].to_bits(), lv.base[v].to_bits(), lv.born[v] as u64] {
+                for word in [v as u64, lv.rec[v] as u64, lv.trough[v] as u64, lv.acc[v].to_bits(), lv.flow[v].to_bits(), lv.graded[v].to_bits(), lv.floor[v].to_bits(), lv.born[v] as u64] {
                     digest = (digest ^ word).wrapping_mul(0x100_0000_01b3);
                 }
             }
@@ -745,14 +744,13 @@ fn text(view: Res<View>, mut status: Query<&mut Text, (With<StatusText>, Without
     };
     let p = view.worlds.params;
     let line = format!(
-        "level {} (1-5)  surface {} (Z)  water {} (X)  faces {} (C)  lines {} (L)  reload R  shot P\nparams: cut {}..{}, wall {}, ring {:.2}, water {}  [{}]\n{}{}",
+        "level {} (1-5)  surface {} (Z)  water {} (X)  faces {} (C)  lines {} (L)  reload R  shot P\nparams: cut {}, wall {}, ring {:.2}, water {}  [{}]\n{}{}",
         view.level,
         view.surface.name(),
         on(view.water),
         on(view.faces),
         on(view.lines),
         p.cut_from,
-        p.cut_full,
         p.wall,
         p.ring,
         p.water,

@@ -186,7 +186,7 @@ fn dump(dir: &str, lv: &Level) {
         ("age", cells(&|c| lv.age[c])),
         ("p", cells(&|c| lv.p[c])),
         ("erod", cells(&|c| lv.erod[c])),
-        ("base", verts(&|v| lv.base[v])),
+        ("graded", verts(&|v| lv.graded[v])),
         ("elev", verts(&|v| lv.elev[v])),
         ("psurf", verts(&|v| lv.psurf[v])),
         ("gelev", verts(&|v| lv.gelev[v])),
@@ -423,16 +423,16 @@ fn ladder_gate() {
     let dir = std::env::var("LADDER_OUT").expect("LADDER_OUT names the directory to write to");
     std::fs::create_dir_all(&dir).expect("the output directory");
     let water = std::env::var("LADDER_WATER").map_or(true, |v| v != "0");
-    let (cut_from, cut_full) = match std::env::var("LADDER_CUT").as_deref() {
-        Ok("C") => (1_102_500.0, 13_230_000.0),
-        Ok("A") => (1_500.0, 40_000.0),
-        _ => (Params::default().cut_from, Params::default().cut_full),
+    let cut_from = match std::env::var("LADDER_CUT").as_deref() {
+        Ok("C") => 1_102_500.0,
+        Ok("A") => 1_500.0,
+        _ => Params::default().cut_from,
     };
     let mut log = format!("ground stack, water {water}\n");
     let g = ground();
     let ring = std::env::var("LADDER_RING").ok().and_then(|r| r.parse().ok()).unwrap_or(world::ladder::RING);
-    log.push_str(&format!("cut from {cut_from} full at {cut_full}, ring {ring}\n"));
-    run(&g, Params { water, cut_from, cut_full, ring, ..Params::default() }, &dir, &mut log);
+    log.push_str(&format!("cut from {cut_from}, ring {ring}\n"));
+    run(&g, Params { water, cut_from, ring, ..Params::default() }, &dir, &mut log);
     print!("{log}");
     std::fs::write(format!("{dir}/log.txt"), log).expect("the log");
 }

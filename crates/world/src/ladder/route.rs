@@ -1,6 +1,6 @@
 //! Routing below the top: every vertex's receiver over a route cell and its
-//! ring, on the level's carved ground, every trough's catchment, base
-//! level and floor.
+//! ring, on the level's carved ground, every trough's catchment, graded
+//! profile and floor.
 //!
 //! Every vertex goes to its lowest neighbour in the strict order (height,
 //! the level above's surface, tilt, position), so water never climbs. Where
@@ -11,7 +11,7 @@
 //! a slope the nearer side wins. Below, a river follows its valley.
 //!
 //! The level above hands its rivers down as nodes, its trough vertices,
-//! each with its catchment, and no course: levels nest, so each node is one
+//! each with its catchment and its graded profile, and no course: levels nest, so each node is one
 //! of the level's vertices, and a river's course is the level's own water
 //! running downhill from it. Nodes are taken upstream first. The level's
 //! water from the node upstream is followed until it comes within half a
@@ -46,7 +46,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::geom::{facet, parent_of, pos3, vertex_cells, vnbr, xy};
 use super::mask::Mask;
 use super::paged::Paged;
-use super::{drained, head_of, Level, Params, Pass};
+use super::{drained, graded_slope, head_of, Level, Params, Pass};
 
 const WALK_SEED: u64 = 0x5761_6c6b_5f5f_5f5f; // "Walk____"
 
@@ -84,15 +84,16 @@ impl Ord for Flood {
 }
 
 /// What routing decided for one of a block's own vertices: its receiver,
-/// whether it is a trough, its catchment, flow, floor, base level and birth.
+/// whether it is a trough, its catchment, flow, graded profile, floor and
+/// birth.
 struct Decided {
     v: usize,
     rec: i64,
     trough: bool,
     acc: f64,
     flow: f64,
+    graded: f64,
     floor: f64,
-    base: f64,
     born: i64,
 }
 
@@ -147,8 +148,8 @@ pub(super) fn route_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], p: 
             lv.trough[d.v] = d.trough;
             lv.acc[d.v] = d.acc;
             lv.flow[d.v] = d.flow;
+            lv.graded[d.v] = d.graded;
             lv.floor[d.v] = d.floor;
-            lv.base[d.v] = d.base;
             lv.born[d.v] = d.born;
         }
         for (a, b) in stats.iter_mut().zip(block.stats) {
@@ -360,6 +361,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     let mut placed: HashMap<usize, usize> = HashMap::new();
     let mut src_acc = vec![f64::NAN; nv];
     let mut src_flow = vec![f64::NAN; nv];
+    let mut src_graded = vec![f64::NAN; nv];
     let mut src_born = vec![-1i64; nv];
     while let Some(u) = ready.pop() {
         let xu = at_node[&u];
@@ -404,6 +406,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         if !sink[x] {
             src_acc[x] = src_acc[x].max(par.acc[u]);
             src_flow[x] = src_flow[x].max(par.flow[u]);
+            src_graded[x] = src_graded[x].min(par.graded[u]);
             src_born[x] = src_born[x].max(par.born[u]);
         }
         let r = par.rec[u];
@@ -541,25 +544,6 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             }
         }
     }
-    // Base levels, outlets first: the level water runs down to, the sea or
-    // a lake's surface. A vertex's is its receiver's, a lake's own vertex's
-    // its surface, the footprint's edge counts as the sea, and a vertex
-    // with nowhere lower to go stands in a pit at its own ground.
-    let mut base = vec![f64::NAN; nv];
-    for &x in order.iter().rev() {
-        let v = vids[x];
-        base[x] = if sink[x] {
-            0.0
-        } else if !lake[x].is_nan() {
-            lake[x]
-        } else if let Some(y) = rec[x] {
-            base[y]
-        } else if decided[x] {
-            lv.gelev[v]
-        } else {
-            f64::NAN
-        };
-    }
     // Each trough's room: how far its hillslopes run to the nearer
     // divide, on each side of its flow the farthest any vertex entering
     // the troughs within two steps lies from where it enters, the nearer
@@ -607,11 +591,32 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         }
         if best[0] > 0.0 && best[1] > 0.0 { best[0].min(best[1]) } else { best[0].max(best[1]) }
     };
+    // Each vertex's graded profile, outlets first: a lake's its surface,
+    // the sea's its level, and up from its receiver by its channel's graded
+    // slope over the way between, never rising downstream. A node holds its
+    // river to the level above's grading where that stands lower, and never
+    // below its receiver's. Water leaving by the footprint's edge or the
+    // level's runs to an outlet the block cannot see: its profile is not
+    // known, and it cuts nothing.
+    let mut graded = vec![f64::NAN; nv];
+    for &x in order.iter().rev() {
+        let v = vids[x];
+        graded[x] = if !lake[x].is_nan() {
+            lake[x]
+        } else if let Some(y) = rec[x] {
+            let tiles = (at[x].0 - at[y].0).hypot(at[x].1 - at[y].1) / crate::SQRT_3;
+            let up = graded[y] + graded_slope(acc[x], lv.erod[v % nn], p) * tiles;
+            src_graded[x].min(up).max(graded[y])
+        } else if sink[x] && lv.gdry[v] < 0.0 {
+            0.0
+        } else {
+            f64::NAN
+        };
+    }
     // Floors: drainage's under the level's own dry ground at each
-    // vertex, by the catchment it carries, toward the level its water
-    // ends at and held to the room its hillslopes give; along a trough
-    // never above the floors draining into it, upstream first. A lake's
-    // floor is its surface.
+    // vertex, toward its graded profile and held to the room its
+    // hillslopes give; along a trough never above the floors draining
+    // into it, upstream first. A lake's floor is its surface.
     let mut flo: Vec<f64> = (0..nv)
         .map(|x| {
             if !lake[x].is_nan() {
@@ -619,7 +624,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             }
             let v = vids[x];
             let c = v % nn;
-            drained(lv.gdry[v], base[x], acc[x], lv.age[c], lv.erod[c], room(x), p)
+            drained(lv.gdry[v], graded[x], lv.age[c], lv.erod[c], room(x), p)
         })
         .collect();
     let mut low = vec![f64::INFINITY; nv];
@@ -662,8 +667,8 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             trough: trough[x],
             acc: acc[x],
             flow: flow[x],
+            graded: graded[x],
             floor: (flo[x] + 0.5).floor(),
-            base: base[x],
             born: if trough[x] { born[x] } else { -1 },
         });
     }

@@ -25,11 +25,13 @@
 //!   as high as a wet one's. Its flow is the rain that land gathers, each
 //!   tile adding the sky's moisture over it ([`Ground::moisture`]), and
 //!   only the water drawn reads it, a dry country's river narrower in the
-//!   same valley. A trough's
-//!   floor is the level's own dry ground less a share of its height above
-//!   the level its water ends at, growing with the catchment it carries,
-//!   the plate's age and the rock's erodibility ([`drained`]), and never
-//!   above the floors draining into it.
+//!   same valley. Every vertex's graded profile is the height its channel
+//!   stands at graded down its course: its outlet's level, the sea's or a
+//!   lake's, or a node's as the level above graded it, with the channel's
+//!   graded slope integrated up from there ([`graded_slope`]). A trough's
+//!   floor is the level's own dry ground cut toward that profile as far as
+//!   the plate's age has carried erosion ([`drained`]), and never above the
+//!   floors draining into it.
 //! - **water**: one target surface, the valley drainage's law cuts: a floor
 //!   along each trough, walls rising from it at water's slope, steeper in
 //!   hard rock, out to where they meet the carved ground.
@@ -49,7 +51,7 @@
 //!
 //! **A river is handed down as where it is and what it carries, never its
 //! course.** The level above hands down its trough vertices, each with its
-//! catchment and the level it was born at; each is one of the level's
+//! catchment, its graded profile and the level it was born at; each is one of the level's
 //! vertices, since levels nest, and the level's own water runs the river on
 //! from there, downhill, wherever its ground leads; a river starts once,
 //! where it first comes into reach. Where troughs are born, routing picks
@@ -102,10 +104,9 @@ pub struct Params {
     /// The flow at which a trough's bed is a trunk's, in tiles of full rain.
     pub catchment_full: f64,
     /// The catchment at which a channel begins to cut, and a trough is born,
-    /// in the softest rock on a slope of [`HEAD_SLOPE`], and at which it has
-    /// cut its full share, in tiles.
+    /// in the softest rock on a slope of [`HEAD_SLOPE`], in tiles: where
+    /// every channel's graded profile falls from ([`graded_slope`]).
     pub cut_from: f64,
-    pub cut_full: f64,
     /// A wall's slope in the softest rock, in steps per tile: walkable.
     pub wall: f64,
     /// How far water reads lines from a cell, in cells of the level.
@@ -117,7 +118,7 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { catchment_full: 400_000.0, cut_from: 4_000.0, cut_full: 118_098.0, wall: 1.0, ring: RING, water: true }
+        Params { catchment_full: 400_000.0, cut_from: 4_000.0, wall: 1.0, ring: RING, water: true }
     }
 }
 
@@ -214,37 +215,26 @@ pub fn cell_size(pass: Pass, w: i64, ring: f64) -> i64 {
     cell
 }
 
-/// The share of its height above base level a full trunk on a fully aged
-/// plate has removed in the softest rock: the Grand Canyon's 1.6 km cut
-/// through a 2.3 km plateau. The rest is the fall that keeps it flowing.
-pub const RELIEF_SHARE_MAX: f64 = 0.7;
-
-/// How far past the channel head on rock of `erodibility` a catchment of
-/// `catchment` tiles has grown, as the square root of its share of the way
-/// to a full trunk, the way a channel's width and depth grow with
-/// discharge. Nothing below the head ([`cut_head`]).
-pub fn growth(catchment: f64, erodibility: f64, p: &Params) -> f64 {
+/// How steeply a channel carrying `catchment` tiles falls at grade on rock
+/// of `erodibility`, in steps per tile: the channel head's law, catchment
+/// × slope² at [`cut_head`], held along the whole course, so a channel
+/// falls at [`HEAD_SLOPE`] where it begins and flattens as the square root
+/// of the water it gathers, steeper in harder rock (stream power at steady
+/// state, a concavity of one half).
+pub fn graded_slope(catchment: f64, erodibility: f64, p: &Params) -> f64 {
     let head = cut_head(erodibility, p);
-    if catchment <= head {
-        return 0.0;
-    }
-    ((catchment - head) / (p.cut_full - head).max(1.0)).min(1.0).sqrt()
+    HEAD_SLOPE * (head / catchment.max(head)).sqrt()
 }
 
-/// The share of its height above base level a channel has cut: growing
-/// with its catchment past the head, with its plate's age from a young
-/// plate's share of the work to the whole, and with the rock, the whole in
-/// shale and three tenths in basement.
-pub fn relief_share(catchment: f64, age: f64, erodibility: f64, p: &Params) -> f64 {
-    RELIEF_SHARE_MAX * growth(catchment, erodibility, p) * crate::tectonic::aged(age) * erodibility
-}
-
-/// Drainage's floor under ground at `elevation`: the ground less its
-/// share of the height above `base`, the level its water runs down to, and
-/// never deeper than a wall at the rock's slope climbs over `room` tiles,
-/// the distance to the divide of the basin it drains.
-pub fn drained(elevation: f64, base: f64, catchment: f64, age: f64, erodibility: f64, room: f64, p: &Params) -> f64 {
-    let cut = (elevation - base).max(0.0) * relief_share(catchment, age, erodibility, p);
+/// Drainage's floor under dry ground at `elevation`: cut toward its
+/// river's graded profile `graded` as far as its plate's age has carried
+/// erosion, never above the ground, and never deeper than a wall at the
+/// rock's slope climbs over `room` tiles, the distance to the divide of the
+/// basin it drains. Where the profile stands above the ground the river is
+/// at grade and cuts nothing: the lowland's. A profile not known cuts
+/// nothing.
+pub fn drained(elevation: f64, graded: f64, age: f64, erodibility: f64, room: f64, p: &Params) -> f64 {
+    let cut = (elevation - graded).max(0.0) * crate::tectonic::aged(age);
     elevation - cut.min(wall_slope(erodibility, p.wall) * room)
 }
 
@@ -325,9 +315,6 @@ pub struct Level {
     /// The dry ground at each vertex, the same way: what drainage's floor
     /// is read from.
     pub gdry: Paged<f64>,
-    /// The level water at each vertex runs down to: the sea, or the pit of
-    /// the closed ground it drains into.
-    pub base: Paged<f64>,
     /// The width of the level a trough at each vertex was born at; -1 off
     /// the troughs.
     pub born: Paged<i64>,
@@ -335,6 +322,11 @@ pub struct Level {
     pub trough: Paged<bool>,
     /// The land each vertex drains, in tiles: what cuts.
     pub acc: Paged<f64>,
+    /// Each vertex's graded profile: the level its water ends at, with its
+    /// channel's graded slope ([`graded_slope`]) integrated up its course
+    /// from there, read from no ground. What its floor cuts toward, and
+    /// what a river hands down at its nodes with its catchment.
+    pub graded: Paged<f64>,
     /// The rain that land gathers, in tiles of full rain: what the water
     /// drawn carries.
     pub flow: Paged<f64>,
@@ -396,11 +388,11 @@ impl Level {
             psurf: nan(3 * cells),
             gelev: nan(3 * cells),
             gdry: nan(3 * cells),
-            base: nan(3 * cells),
             born: Paged::new(-1, 3 * cells),
             rec: Paged::new(-1, 3 * cells),
             trough: Paged::new(false, 3 * cells),
             acc: Paged::new(0.0, 3 * cells),
+            graded: nan(3 * cells),
             flow: Paged::new(0.0, 3 * cells),
             floor: nan(3 * cells),
             predicted: Paged::new(false, cells),
@@ -1071,5 +1063,39 @@ fn ground_fields(lv: &mut Level, par: &Level, mask: &Mask) {
                 lv.gdry[2 * nn + c] = db;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A channel falls at the head's slope where it begins, flatter the more
+    /// water it gathers, and steeper in harder rock.
+    #[test]
+    fn a_graded_channel_flattens_downstream_and_stands_steeper_in_hard_rock() {
+        let p = Params::default();
+        assert_eq!(graded_slope(cut_head(1.0, &p), 1.0, &p), HEAD_SLOPE);
+        assert_eq!(graded_slope(1.0, 1.0, &p), HEAD_SLOPE);
+        let mut last = HEAD_SLOPE;
+        for catchment in [1e4, 1e5, 1e6, 1e7, 1e8] {
+            let s = graded_slope(catchment, 1.0, &p);
+            assert!(s < last, "{catchment} tiles fall at {s}, no flatter than {last}");
+            assert!(graded_slope(catchment, HARDEST, &p) > s);
+            last = s;
+        }
+    }
+
+    /// A floor never stands above its ground, cuts nothing where the river
+    /// is at grade, cuts deeper the older its plate, and no deeper than its
+    /// walls climb from the nearer divide.
+    #[test]
+    fn a_floor_cuts_toward_its_profile_by_age_and_within_its_room() {
+        let p = Params::default();
+        assert_eq!(drained(40.0, 50.0, 1.0, 1.0, 100.0, &p), 40.0);
+        assert_eq!(drained(40.0, f64::NAN, 1.0, 1.0, 100.0, &p), 40.0);
+        let (young, old) = (drained(200.0, 20.0, 0.0, 1.0, 1e9, &p), drained(200.0, 20.0, 1.0, 1.0, 1e9, &p));
+        assert!(old < young && young < 200.0 && old >= 20.0);
+        assert_eq!(drained(200.0, 20.0, 1.0, 1.0, 5.0, &p), 200.0 - wall_slope(1.0, p.wall) * 5.0);
     }
 }
