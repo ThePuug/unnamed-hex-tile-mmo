@@ -45,11 +45,11 @@ pub(super) struct Edge {
     erod: f64,
     /// The vertex the edge leaves, as an index of its level.
     src: usize,
-    /// That vertex's catchment, in tiles, its plate's age, and how far its
-    /// hillslopes run to the nearer divide, in tiles.
-    acc: f64,
-    age: f64,
-    room: f64,
+    /// The half width of the plain at each end ([`plain`]), what a floor's
+    /// width runs between along the edge.
+    plains: (f64, f64),
+    /// The graded slope of the channel the edge leaves, in steps a tile.
+    fall: f64,
     /// The width of the level the edge is drawn at, which spaces its samples.
     w: i64,
 }
@@ -61,8 +61,15 @@ fn tiles(lv: &Level, v: usize) -> (f64, f64) {
 }
 
 /// A level's troughs over a mask, each edge to its receiver.
-pub(super) fn trough_edges(lv: &Level, mask: &Mask) -> Vec<Edge> {
+pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
     let nn = lv.cap();
+    // A vertex's plain, held to its room where routing measured one.
+    let plain_at = |u: usize| {
+        let half = bed(lv.flow[u], p);
+        let room = lv.room[u];
+        let wide = plain(half, lv.acc[u], rock(lv, u), lv.age[u % nn], p);
+        if room.is_nan() { wide } else { wide.min(room.max(half)) }
+    };
     (0..3)
         .flat_map(|t| mask.iter().map(move |c| t * nn + c))
         .filter(|&v| lv.trough[v] && lv.rec[v] >= 0)
@@ -78,9 +85,8 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask) -> Vec<Edge> {
                 born: lv.born[v],
                 erod: rock(lv, v),
                 src: v,
-                acc: lv.acc[v],
-                age: lv.age[v % nn],
-                room: lv.room[v],
+                plains: (plain_at(v), plain_at(to)),
+                fall: super::graded_slope(lv.acc[v], rock(lv, v), p),
                 w: lv.w,
             }
         })
@@ -152,7 +158,11 @@ pub const CLIFF: f64 = 20.0;
 /// show a shelf; coarser, it rises evenly.
 fn profile(s: &Sample, d: f64, w: i64) -> f64 {
     let channel = s.floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
-    let rise = s.slope * (d - s.plain).max(0.0);
+    // The plain rises from its river faster than the river falls, so a
+    // point of it stands on the river beside it, never on a floor far
+    // downstream whose plain reaches it.
+    let across = (2.0 * s.fall + 0.01) * d.min(s.plain);
+    let rise = across + s.slope * (d - s.plain).max(0.0);
     let shelved = s.slope > 1.0 && CLIFF / s.slope >= 2.0 * w as f64;
     let rise = if shelved { CLIFF * (rise / CLIFF).floor() } else { rise };
     channel.min(s.floor + 1.0 + rise)
@@ -170,6 +180,8 @@ struct Sample {
     bed: f64,
     /// The half width of its flat floor, the bed's or wider.
     plain: f64,
+    /// How far the river falls a tile along its course at grade, in steps.
+    fall: f64,
     born: i64,
     /// Its wall's slope: the rock's at its river vertex.
     slope: f64,
@@ -192,15 +204,24 @@ pub(super) struct Band {
 
 impl Band {
     /// The beds of `edges`, of a level `w` wide, read from a cell past
-    /// `near` tiles and out to `far`.
-    pub(super) fn new(w: i64, edges: &[Edge], near: f64, far: f64, p: &Params) -> Self {
+    /// `near` tiles and out to `far`, as the level `read` wide reads them.
+    pub(super) fn new(w: i64, edges: &[Edge], near: f64, far: f64, read: i64, p: &Params) -> Self {
         let wf = w as f64;
         let mut cells: BTreeMap<(i64, i64), Vec<Sample>> = BTreeMap::new();
         for e in edges {
             let ((q0, r0), (q1, r1)) = (e.from, e.to);
             let (x0, y0) = world(q0, r0);
             let (x1, y1) = world(q1, r1);
-            let ns = 2usize.max(((x1 - x0).hypot(y1 - y0) / (0.5 * e.w as f64)).ceil() as usize + 1);
+            // A level's own beds at half its width; a coarser level's at a
+            // quarter of the plain they bound, so a floor's edge follows
+            // its river, and never closer than half the reader's width or
+            // two tiles, nor sparser than its own.
+            let spacing = if read >= e.w {
+                0.5 * e.w as f64
+            } else {
+                (0.25 * e.plains.0.min(e.plains.1)).max(0.5 * read as f64).max(2.0).min(0.5 * e.w as f64)
+            };
+            let ns = 2usize.max(((x1 - x0).hypot(y1 - y0) / spacing).ceil() as usize + 1);
             for s in 0..ns {
                 let f = s as f64 / (ns - 1) as f64;
                 let (q, r) = (q0 + (q1 - q0) * f, r0 + (r1 - r0) * f);
@@ -211,7 +232,8 @@ impl Band {
                     y,
                     floor,
                     bed: bed(e.flow, p),
-                    plain: plain(bed(e.flow, p), e.acc, e.erod, e.age, p).min(e.room.max(bed(e.flow, p))),
+                    plain: e.plains.0 + (e.plains.1 - e.plains.0) * f,
+                    fall: e.fall,
                     born: e.born,
                     slope: wall_slope(e.erod, p.wall),
                     src: e.src,
@@ -360,11 +382,69 @@ fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)>
     bed.map(|(surface, depth, river)| (surface.min(z + depth), depth, river))
 }
 
+/// The carved ground at each vertex of `cells` of a level: its ground met
+/// by the valleys of every coarser level's rivers in `bands`, each band
+/// read out to its own reach, the valleys drawn at the level's own width.
+/// The cells are taken by the water pass's deform cells, each reading once
+/// the beds whose valleys may reach below its highest ground.
+pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<[f64; 3]> {
+    let w = lv.w;
+    let wf = w as f64;
+    let mut by: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+    for (x, &c) in cells.iter().enumerate() {
+        by.entry(lv.block(Pass::Water, c)).or_default().push(x);
+    }
+    let groups: Vec<Vec<usize>> = by.into_values().collect();
+    let mut group_of = vec![0usize; cells.len()];
+    for (g, xs) in groups.iter().enumerate() {
+        for &x in xs {
+            group_of[x] = g;
+        }
+    }
+    let each: Vec<usize> = (0..groups.len()).collect();
+    let lists: Vec<Vec<Sample>> = in_parallel(&each, |found, g| {
+        let at: Vec<(f64, f64)> = groups[g].iter().map(|&x| lv.ij(cells[x])).map(|(i, j)| ((i * w) as f64, (j * w) as f64)).collect();
+        let (cq, cr) = at.iter().fold((0.0, 0.0), |a, &(q, r)| (a.0 + q, a.1 + r));
+        let (cq, cr) = (cq / at.len() as f64, cr / at.len() as f64);
+        let (cx, cy) = world(cq, cr);
+        let radius = at.iter().map(|&(q, r)| world(q, r)).map(|(x, y)| (x - cx).hypot(y - cy)).fold(0.0, f64::max) + wf;
+        let high = groups[g]
+            .iter()
+            .flat_map(|&x| lv.own_vertices(cells[x]).map(|(_, v)| lv.ground[v]).collect::<Vec<_>>())
+            .filter(|h| h.is_finite())
+            .fold(f64::NEG_INFINITY, f64::max);
+        let mut list = Vec::new();
+        for band in bands {
+            band.within(cq, cr, band.far + radius, found);
+            list.extend(found.iter().filter(|s| {
+                let d = (s.x - cx).hypot(s.y - cy);
+                d - radius <= s.far && profile(s, (d - radius).max(0.0), w) < high
+            }));
+        }
+        list
+    });
+    let index: Vec<usize> = (0..cells.len()).collect();
+    in_parallel(&index, |near, x| {
+        let c = cells[x];
+        let (i, j) = lv.ij(c);
+        let mut out = [f64::NAN; 3];
+        for (t, v) in lv.own_vertices(c) {
+            let (q, r) = vertex_tiles(t, i, j, w);
+            let (px, py) = world(q, r);
+            near.clear();
+            near.extend(lists[group_of[x]].iter().filter(|s| (s.x - px).hypot(s.y - py) <= s.far));
+            let low = valley(near, q, r, w).map_or(lv.ground[v], |(h, _, _)| h.min(lv.ground[v]));
+            out[t as usize] = low;
+        }
+        out
+    })
+}
+
 /// The top's cut at every vertex: its valley wholly.
 pub(super) fn top_cut(lv: &mut Level, edges: &[Edge], p: &Params) {
     let w = lv.w;
     let radius = p.ring * w as f64;
-    let beds = Band::new(w, edges, -1.0, radius, p);
+    let beds = Band::new(w, edges, -1.0, radius, w, p);
     let cells: Vec<usize> = (0..lv.cap()).filter(|&c| lv.exists[c]).collect();
     let view: &Level = lv;
     let cuts = in_parallel(&cells, |near, c| {
@@ -502,7 +582,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
 /// carved ground.
 #[cfg(feature = "inspect")]
 pub(super) fn whole_cut(lv: &Level, edges: &[Edge], cells: &[usize], p: &Params) -> Vec<f64> {
-    let all = Band::new(lv.w, edges, -1.0, f64::INFINITY, p).all();
+    let all = Band::new(lv.w, edges, -1.0, f64::INFINITY, lv.w, p).all();
     in_parallel(cells, |_, c| {
         let (i, j) = lv.ij(c);
         let (q, r) = vertex_tiles(0, i, j, lv.w);

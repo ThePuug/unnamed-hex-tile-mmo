@@ -14,8 +14,8 @@
 //! Below the top a level runs its passes in order:
 //!
 //! - **ground**: the ground read at each vertex, a cell's centre and its
-//!   corners A and B ([`Ground::at`]): the level's dry ground. Over it the
-//!   level above's carve there ([`Level::carved_at`]): its carved ground.
+//!   corners A and B ([`Ground::at`]): the level's dry ground. Met by the
+//!   valleys of every coarser level's rivers there: its carved ground.
 //! - **route**: every vertex's receiver downhill on the carved ground, its
 //!   catchment, and the level's troughs: the level above's rivers run on
 //!   from its nodes, and troughs born at the level ([`route`]). A
@@ -54,9 +54,9 @@
 //! by the slope, so on even ground they wander and join as drainage does;
 //! below, a river follows its valley. Water never climbs ([`route`]).
 //!
-//! **A level carves into what the level above carved.** It is handed the
-//! level above's carve: routing reads the carved ground, so water gathers
-//! into the valleys above; floors read the dry ground, so no floor deepens
+//! **A level carves into what the levels above carved.** It reads their
+//! rivers' valleys at its own vertices: routing reads the carved ground,
+//! so water gathers into the valleys above; floors read the dry ground, so no floor deepens
 //! by what the level above already cut. A level's height at each vertex is
 //! its own troughs' valleys within its ring met by its carved ground there,
 //! rounded to whole steps: a valley is an absolute height, so a river the
@@ -65,11 +65,12 @@
 //!
 //! **Nothing is averaged.** Every vertex of a level coarser than the tiles
 //! is a child's centre, a whole tile, and reads the ground there; a tile's
-//! corners lie between tiles and take the mean of the three around each. A
-//! level hands its carve down as flat triangles from each cell's centre to
-//! two of its corners, every vertex its own value, linear between
-//! ([`Level::carved_at`]), so a triangle never dips below its corners and a
-//! river along its edges reaches the level below at its full depth.
+//! corners lie between tiles and take the mean of the three around each.
+//! **A level hands its rivers down as shapes, never as heights at its
+//! vertices:** a finer level reads every coarser level's beds, each out to
+//! that level's ring, and draws their valleys at its own vertices and its
+//! own width, so a bend or a shelf smaller than a coarse level's spacing
+//! reaches every level fine enough to show it.
 //! The corner rule, faces as walls, is the drawing's alone: meshes, physics
 //! and summaries draw a level's cells by it (`common::corner`) from their
 //! centres, and nothing here reads it.
@@ -271,8 +272,8 @@ pub struct Level {
     /// there ([`Ground::at`]). A tile's corners lie between tiles, and take
     /// the mean of the three tiles sharing each.
     pub ground: Paged<f64>,
-    /// The carved ground at each vertex: its ground with the level above's
-    /// carve there ([`Level::carved_at`]). What routing reads.
+    /// The carved ground at each vertex: its ground met by the valleys of
+    /// every coarser level's rivers there. What routing reads.
     pub carved: Paged<f64>,
     /// The level's carve at each vertex: its valleys met by its carved
     /// ground, less the ground; never above the carved ground.
@@ -546,65 +547,12 @@ impl Level {
         (mean(ca), mean(cb), ready(ca), ready(cb))
     }
 
-    /// Cell (i, j)'s six corners in [`fan_at`]'s order, its own B and A and
-    /// the four its neighbours own, each where its owner is built.
-    fn corner_vertices(&self, i: i64, j: i64) -> [Option<usize>; 6] {
-        let nn = self.cap();
-        [(i, j, 2), (i, j, 1), (i - 1, j + 1, 2), (i - 1, j, 1), (i - 1, j, 2), (i, j - 1, 1)]
-            .map(|(a, b, t)| self.idx(a, b).filter(|&c| self.exists[c] && self.built[c]).map(|c| t * nn + c))
-    }
-
-    /// What the level hands the level below of its carve, at a position
-    /// in tiles where the level below's ground stands at `ground`: that
-    /// ground lowered by the level's cut there, its heights less its dry
-    /// heights, but never below the level's own carved height there, nor
-    /// below the ground. A valley is an absolute height: a finer level's
-    /// ground lower than this level's dry ground is never cut deeper for
-    /// it. Both surfaces are flat across the triangles from the centre of
-    /// the cell under the position to two of its corners, the centre's
-    /// where a corner has none. NaN where the level has not built that
-    /// cell.
-    pub fn carved_at(&self, q: f64, r: f64, ground: f64) -> f64 {
-        let (i, j) = cube_round(q / self.w as f64, r / self.w as f64);
-        let Some(c) = self.idx(i, j).filter(|&c| self.exists[c] && self.built[c]) else { return f64::NAN };
-        let corners = self.corner_vertices(i, j);
-        let surface = |of: &Paged<f64>| {
-            let centre = of[c];
-            let cc = corners.map(|v| v.map(|v| of[v]).filter(|h| !h.is_nan()).unwrap_or(centre));
-            fan_at(self.w, i, j, centre, &cc, q, r)
-        };
-        let (carved, dry) = (surface(&self.z), surface(&self.zd));
-        (carved + ground - dry).max(carved.min(ground))
-    }
-
     /// The vertices of cell `c` the level holds values at: its centre and
     /// its corners A and B, but a tile's corners lie between tiles and are
     /// its neighbours' as much as its own.
     fn own_vertices(&self, c: usize) -> impl Iterator<Item = (u8, usize)> {
         let nn = self.cap();
         (0..if self.w >= 3 { 3u8 } else { 1 }).map(move |t| (t, t as usize * nn + c))
-    }
-}
-
-/// A surface of fans at a position in tiles over cell (i, j) of a level `w`
-/// wide, its height `z` and six corner values `cc`: the fan triangle under
-/// it, from the cell's centre to two of its corners.
-pub(crate) fn fan_at(w: i64, i: i64, j: i64, z: f64, cc: &[f64; 6], q: f64, r: f64) -> f64 {
-    {
-        let (u, v) = (q / w as f64, r / w as f64);
-        let (du, dv) = (u - i as f64, v - j as f64);
-        let (px, py) = (1.5 * du, crate::SQRT_3 * (dv + du / 2.0));
-        let sixth = std::f64::consts::PI / 3.0;
-        let ang = py.atan2(px).rem_euclid(2.0 * std::f64::consts::PI);
-        let s = ((ang / sixth).floor() as usize) % 6;
-        let s1 = (s + 1) % 6;
-        let (c0x, c0y) = ((s as f64 * sixth).cos(), (s as f64 * sixth).sin());
-        let (c1x, c1y) = ((s1 as f64 * sixth).cos(), (s1 as f64 * sixth).sin());
-        let det = c0x * c1y - c0y * c1x;
-        let l1 = (px * c1y - py * c1x) / det;
-        let l2 = (c0x * py - c0y * px) / det;
-        let l0 = 1.0 - l1 - l2;
-        l0 * z + l1 * cc[s] + l2 * cc[s1]
     }
 }
 
@@ -751,7 +699,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         lv.routed.fill(true);
         // The top's own valleys, cut along its troughs into the ground it
         // routed over.
-        let edges = water::trough_edges(lv, &all);
+        let edges = water::trough_edges(lv, &all, &p);
         water::top_cut(lv, &edges, &p);
         for &v in &vertices {
             lv.z[v] = (lv.ground[v] + lv.cut[v] + 0.5).floor();
@@ -840,24 +788,48 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let fp = lv.footprint(Pass::Ground, &pend);
         self.parent_over(k, &fp);
         self.read_ground(k, &fp);
+        let bands = self.rivers_above(k, &fp);
         let started = Instant::now();
-        let (above, rest) = self.levels.split_at_mut(k);
-        let lv = &mut rest[0];
-        let par = &above[k - 1];
-        for c in fp.iter() {
-            if !lv.exists[c] || lv.supplied[c] {
-                continue;
-            }
-            let (i, j) = lv.ij(c);
+        let lv = &mut self.levels[k];
+        let todo: Vec<usize> = fp.iter().filter(|&c| lv.exists[c] && !lv.supplied[c]).collect();
+        let carved = water::carved_over(lv, &bands, &todo);
+        for (&c, at) in todo.iter().zip(carved) {
             let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
             for (t, v) in vertices {
-                let (q3, r3) = pos3(t, i, j, lv.w);
-                lv.carved[v] = par.carved_at(q3 as f64 / 3.0, r3 as f64 / 3.0, lv.ground[v]);
+                lv.carved[v] = at[t as usize];
             }
             lv.supplied[c] = true;
         }
         lv.cost[Pass::Ground as usize] += pend.len() as u64;
         self.timing[k][Stage::Supply as usize] += started.elapsed().as_secs_f64();
+    }
+
+    /// Every coarser level's rivers within reach of a mask of level k, a
+    /// band to each: its troughs over its ring of cells past the mask, read
+    /// out to its ring.
+    fn rivers_above(&mut self, k: usize, mask: &Mask) -> Vec<water::Band> {
+        let mut bands = Vec::with_capacity(k);
+        for j in 0..k {
+            let (lv, up) = (&self.levels[k], &self.levels[j]);
+            let under = Mask::new(mask.iter().filter_map(|c| {
+                let (i, jj) = lv.ij(c);
+                let (a, b) = ancestor(i, jj, (k - j) as u32);
+                up.idx(a, b)
+            }));
+            // Rings of cells a ring's reach in tiles past the mask, its
+            // cell's half width beside: k rings stand k·√3/2 of the
+            // level's width out at their nearest.
+            let rings = ((self.p.ring + 1.0) * 2.0 / crate::SQRT_3).ceil() as usize + 1;
+            let reach = up.dilate(&under, rings);
+            // Routed a ring past what is read, so each trough's receiver
+            // has its floor and its plain.
+            let routed = up.dilate(&reach, 1);
+            self.ensure_routed(j, &routed);
+            let up = &self.levels[j];
+            let read = self.levels[k].w;
+            bands.push(water::Band::new(up.w, &water::trough_edges(up, &reach, &self.p), -1.0, self.p.ring * up.w as f64, read, &self.p));
+        }
+        bands
     }
 
     fn ensure_built(&mut self, k: usize, mask: &Mask) {
@@ -877,7 +849,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             self.ensure_routed(k, &routed);
             let started = Instant::now();
             let lv = &mut self.levels[k];
-            let band = water::Band::new(lv.w, &water::trough_edges(lv, &fp), -1.0, self.p.ring * lv.w as f64, &self.p);
+            let band = water::Band::new(lv.w, &water::trough_edges(lv, &fp, &self.p), -1.0, self.p.ring * lv.w as f64, lv.w, &self.p);
             water::level_cut(lv, &band, &pend, &self.p);
             lv.cost[Pass::Water as usize] += pend.len() as u64;
             self.timing[k][Stage::Water as usize] += started.elapsed().as_secs_f64();
@@ -917,7 +889,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
     pub fn unlimited_cut(&self, k: usize, cells: &[(i64, i64)]) -> Vec<f64> {
         let lv = &self.levels[k];
         let routed = Mask::new(lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed[c]));
-        let edges = water::trough_edges(lv, &routed);
+        let edges = water::trough_edges(lv, &routed, &self.p);
         let at: Vec<usize> = cells.iter().map(|&(i, j)| lv.idx(i, j).expect("a cell the level holds")).collect();
         water::whole_cut(lv, &edges, &at, &self.p)
     }
