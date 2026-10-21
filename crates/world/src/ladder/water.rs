@@ -230,7 +230,9 @@ impl Band {
         let wf = self.w as f64;
         let (ci, cj) = cube_round(q / wf, r / wf);
         let (x, y) = world(q, r);
-        let k = (reach / wf).ceil() as i64 + 1;
+        // k rings of cells stand k·√3/2 of the level's width out at their
+        // nearest, and a sample lies within half a cell of its own.
+        let k = (reach / (wf * SQRT_3 / 2.0)).ceil() as i64 + 1;
         out.clear();
         for (di, dj, _) in hex_offsets(k) {
             let Some(samples) = self.cells.get(&(ci + di, cj + dj)) else { continue };
