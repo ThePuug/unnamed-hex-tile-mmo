@@ -28,9 +28,13 @@
 //! over the lowest point of its rim at the level it filled to, and water
 //! that would end in a hollow takes the flood's way out instead. A vertex
 //! the flood reached above its own ground stands in the lake at that level.
-//! Water above a lake runs down to its surface, and a lake's floor is its
-//! surface, so nothing cuts below it and its rim stands. The water drawn
-//! over a lake is the water pass's, measured on the cells.
+//! The river leaving a lake cuts its outlet as it cuts any floor: the
+//! lake's surface is lowered toward its outlet's graded profile, as far
+//! as the plate's age has carried erosion, and a vertex the lowered
+//! surface no longer covers is dry. A lake is the base level of the
+//! rivers above it, and its floor is its surface; the floors below never
+//! stand above it, so the outlet is cut to it. The water drawn over a lake is the water
+//! pass's, measured on the cells.
 //!
 //! A vertex gathers what drains into it, capped at the level above's head
 //! in its rock, since what it could carry past that the level above carries
@@ -593,31 +597,54 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         }
         if best[0] > 0.0 && best[1] > 0.0 { best[0].min(best[1]) } else { best[0].max(best[1]) }
     };
-    // Each vertex's graded profile, outlets first: a lake's its surface,
-    // the sea's its level, and up from its receiver by its channel's graded
+    // Each vertex's graded profile, outlets first: the sea's its level, a
+    // lake's its surface, and up from its receiver by its channel's graded
     // slope over the way between, never rising downstream. A node holds its
-    // river to the level above's grading where that stands lower, and never
-    // below its receiver's. Water leaving by the footprint's edge or the
-    // level's runs to an outlet the block cannot see: its profile is not
-    // known, and it cuts nothing.
-    // The sea is every river's base level: a lake below it is the sea's. A
-    // profile not known stays unknown.
+    // river to the level above's grading where that stands lower, and
+    // never below its receiver's. Water leaving by the footprint's edge or
+    // the level's runs to an outlet the block cannot see: its profile is
+    // not known, and it cuts nothing. The sea is every river's base level.
     let above_sea = |g: f64| if g < 0.0 { 0.0 } else { g };
-    let mut graded = vec![f64::NAN; nv];
+    let grade = |lake: &[f64]| {
+        let mut graded = vec![f64::NAN; nv];
+        for &x in order.iter().rev() {
+            let v = vids[x];
+            graded[x] = if !lake[x].is_nan() {
+                above_sea(lake[x])
+            } else if let Some(y) = rec[x] {
+                let tiles = (at[x].0 - at[y].0).hypot(at[x].1 - at[y].1) / crate::SQRT_3;
+                let up = graded[y] + graded_slope(acc[x], lv.erod[v % nn], p) * tiles;
+                above_sea(src_graded[x].min(up).max(graded[y]))
+            } else if sink[x] && lv.ground[v] < 0.0 {
+                0.0
+            } else {
+                f64::NAN
+            };
+        }
+        graded
+    };
+    // Each lake lowered as the river leaving it cuts its outlet, the first
+    // vertex downstream it does not cover: the lake's surface cut toward
+    // the outlet's graded profile the way a floor is, in the outlet's rock
+    // and plate, so a lake holds one level. A vertex the lowered lake no
+    // longer covers is dry, and the rivers above a lake grade to it.
+    let mut graded = grade(&lake);
+    let mut outlet: Vec<Option<usize>> = vec![None; nv];
     for &x in order.iter().rev() {
-        let v = vids[x];
-        graded[x] = if !lake[x].is_nan() {
-            above_sea(lake[x])
-        } else if let Some(y) = rec[x] {
-            let tiles = (at[x].0 - at[y].0).hypot(at[x].1 - at[y].1) / crate::SQRT_3;
-            let up = graded[y] + graded_slope(acc[x], lv.erod[v % nn], p) * tiles;
-            above_sea(src_graded[x].min(up).max(graded[y]))
-        } else if sink[x] && lv.ground[v] < 0.0 {
-            0.0
-        } else {
-            f64::NAN
-        };
+        if lake[x].is_nan() {
+            continue;
+        }
+        outlet[x] = rec[x].and_then(|y| if lake[y].is_nan() { Some(y) } else { outlet[y] });
     }
+    let mut lowered = lake.clone();
+    for x in 0..nv {
+        let Some(o) = outlet[x] else { continue };
+        let c = vids[o] % nn;
+        let level = above_sea(drained(lake[x], graded[o], lv.age[c], lv.erod[c], room(o), p));
+        lowered[x] = if level > key[x].0 { level } else { f64::NAN };
+    }
+    let lake = lowered;
+    graded = grade(&lake);
     // Floors: drainage's under the level's own dry ground at each
     // vertex, toward its graded profile and held to the room its
     // hillslopes give; along a trough never above the floors draining
