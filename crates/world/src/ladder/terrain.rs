@@ -13,8 +13,6 @@ pub struct Cell {
     pub zd: f64,
     /// Water's cut below the dry ground.
     pub cut: f64,
-    /// Each layer's value at the cell.
-    pub layers: Box<[f64]>,
     /// The surface of the water standing over the cell, in levels.
     pub water: Option<f64>,
     /// Which of its nine children stand under its level's water above the
@@ -73,7 +71,6 @@ fn cell(lv: &super::Level, c: usize) -> Cell {
         z: lv.z[c],
         zd: lv.zd[c],
         cut: lv.cut[c],
-        layers: lv.layers.iter().map(|l| l[c]).collect(),
         water: Some(lv.water[c]).filter(|w| !w.is_nan()),
         wet_parts: lv.wparts[c],
     }

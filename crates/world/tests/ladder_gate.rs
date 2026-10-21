@@ -99,7 +99,6 @@ fn same_cell(a: &Option<Cell>, b: &Option<Cell>) -> bool {
                 && same(a.zd, b.zd)
                 && same(a.cut, b.cut)
                 && a.water.map(f64::to_bits) == b.water.map(f64::to_bits)
-                && a.layers.iter().zip(b.layers.iter()).all(|(x, y)| same(*x, *y))
         }
         (None, None) => true,
         _ => false,
@@ -184,22 +183,17 @@ fn dump(dir: &str, lv: &Level) {
         ("water", cells(&|c| lv.water[c])),
         ("wdepth", cells(&|c| lv.wdepth[c])),
         ("age", cells(&|c| lv.age[c])),
-        ("p", cells(&|c| lv.p[c])),
         ("erod", cells(&|c| lv.erod[c])),
         ("graded", verts(&|v| lv.graded[v])),
-        ("elev", verts(&|v| lv.elev[v])),
-        ("psurf", verts(&|v| lv.psurf[v])),
-        ("gelev", verts(&|v| lv.gelev[v])),
+        ("elev", verts(&|v| lv.z[v])),
+        ("gelev", verts(&|v| lv.carved[v])),
+        ("gdry", verts(&|v| lv.ground[v])),
         ("acc", verts(&|v| lv.acc[v])),
         ("flow", verts(&|v| lv.flow[v])),
         ("floor", verts(&|v| lv.floor[v])),
     ] {
         dump_f64(&p(name), v.into_iter());
     }
-    for (l, layer) in lv.layers.iter().enumerate() {
-        dump_f64(&p(&format!("layer{l}")), order.iter().map(|&c| layer[c]));
-    }
-    dump_f64(&p("cc"), order.iter().flat_map(|&c| lv.cc[c]));
     let vi = |f: &dyn Fn(usize) -> i64| (0..3).flat_map(|t| order.iter().map(move |&c| t * cap + c)).map(f).collect::<Vec<i64>>();
     // A vertex index as the measures number it: rows along i, each along j.
     let rowed = |v: i64| -> i64 {
@@ -412,7 +406,7 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
     }
     let mut meta = String::from("w lo n layers lo_j n_j\n");
     for lv in &ladder.levels {
-        meta.push_str(&format!("{} {} {} {} {} {}\n", lv.w, lv.lo, lv.n, lv.layers.len(), lv.lo_j, lv.n_j));
+        meta.push_str(&format!("{} {} {} {} {} {}\n", lv.w, lv.lo, lv.n, 1, lv.lo_j, lv.n_j));
     }
     std::fs::write(format!("{dir}/levels.txt"), meta).expect("the levels");
 }
@@ -475,14 +469,8 @@ fn same(a: f64, b: f64) -> bool {
     a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
 }
 
-/// Whether all six of a cell's corners are drawn: its own two and the four
-/// its neighbours own, where those exist.
-fn drawn(lv: &Level, i: i64, j: i64) -> bool {
-    [(i, j), (i - 1, j + 1), (i - 1, j), (i, j - 1)].iter().all(|&(a, b)| lv.idx(a, b).is_none_or(|c| !lv.exists[c] || lv.corners[c]))
-}
-
 /// What two ladders hold differently at a cell of level k: its height,
-/// corners, and every vertex's routing, each named with its vertex.
+/// each vertex's height, carved ground and routing, each named with its vertex.
 fn differs(a: &Level, b: &Level, i: i64, j: i64) -> Vec<String> {
     let (Some(ca), Some(cb)) = (a.idx(i, j), b.idx(i, j)) else { return vec!["held".into()] };
     let (na, nb) = (a.cap(), b.cap());
@@ -490,16 +478,13 @@ fn differs(a: &Level, b: &Level, i: i64, j: i64) -> Vec<String> {
     if a.built[ca] && b.built[cb] && !same(a.z[ca], b.z[cb]) {
         bad.push(format!("z {} / {}", a.z[ca], b.z[cb]));
     }
-    if drawn(a, i, j) && drawn(b, i, j) && !(0..6).all(|s| same(a.cc[ca][s], b.cc[cb][s])) {
-        bad.push(format!("cc {:?} / {:?}", a.cc[ca], b.cc[cb]));
-    }
     for t in 0..3 {
         let (va, vb) = (t * na + ca, t * nb + cb);
-        if a.corners[ca] && b.corners[cb] && !same(a.elev[va], b.elev[vb]) {
-            bad.push(format!("elev{t} {} / {}", a.elev[va], b.elev[vb]));
+        if a.built[ca] && b.built[cb] && !same(a.z[va], b.z[vb]) {
+            bad.push(format!("z{t} {} / {}", a.z[va], b.z[vb]));
         }
-        if !same(a.gelev[va], b.gelev[vb]) {
-            bad.push(format!("gelev{t} {} / {}", a.gelev[va], b.gelev[vb]));
+        if !same(a.carved[va], b.carved[vb]) {
+            bad.push(format!("carved{t} {} / {}", a.carved[va], b.carved[vb]));
         }
         if a.trough[va] != b.trough[vb] {
             bad.push(format!("trough{t} {} / {}", a.trough[va], b.trough[vb]));

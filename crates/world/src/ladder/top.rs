@@ -54,21 +54,18 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         }
         let (q3, r3) = pos3(t, i, j, lv.w);
         pos[v] = xy(q3, r3);
-        // Flats break by the ground's own height: a centre's, a corner's the
-        // mean of the cells sharing it.
-        let (cells, m) = super::geom::vertex_cells(t, i, j);
-        let hs: Vec<f64> = cells[..m].iter().filter_map(|&(a, b)| lv.idx(a, b)).filter(|&c| lv.exists[c]).map(|c| lv.ground[c]).collect();
-        tb[v] = hs.iter().sum::<f64>() / hs.len().max(1) as f64;
+        // Flats break by the ground's own height there.
+        tb[v] = lv.ground[v];
     }
     let e: Vec<f64> = (0..count)
         .map(|v| {
             let (t, i, j) = lv.vertex(v);
             let (q3, r3) = pos3(t, i, j, lv.w);
-            lv.elev[v] + 1e-4 * tb[v] + 1e-7 * (r3 as f64 / 3.0 + q3 as f64 / 6.0)
+            lv.z[v] + 1e-4 * tb[v] + 1e-7 * (r3 as f64 / 3.0 + q3 as f64 / 6.0)
         })
         .collect();
-    let live: Vec<bool> = (0..count).map(|v| lv.exists[v % nn] && !lv.elev[v].is_nan()).collect();
-    let sink: Vec<bool> = (0..count).map(|v| live[v] && (nbr[v].iter().any(|&u| u < 0) || lv.elev[v] < 0.0)).collect();
+    let live: Vec<bool> = (0..count).map(|v| lv.exists[v % nn] && !lv.z[v].is_nan()).collect();
+    let sink: Vec<bool> = (0..count).map(|v| live[v] && (nbr[v].iter().any(|&u| u < 0) || lv.z[v] < 0.0)).collect();
 
     // The flood.
     let mut rec = vec![-1i64; count];
@@ -219,7 +216,7 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     for &v in &order {
         let c = v % nn;
         graded[v] = if rec[v] < 0 {
-            if lv.elev[v] < 0.0 { 0.0 } else { f64::NAN }
+            if lv.z[v] < 0.0 { 0.0 } else { f64::NAN }
         } else if flooded(v) {
             filled[v]
         } else {
@@ -234,7 +231,7 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     let mut floor: Vec<f64> = (0..count)
         .map(|v| {
             let c = v % nn;
-            drained(lv.elev[v], graded[v], lv.age[c], lv.erod[c], room(v), p)
+            drained(lv.z[v], graded[v], lv.age[c], lv.erod[c], room(v), p)
         })
         .collect();
     let mut low = vec![f64::INFINITY; count];
@@ -254,6 +251,5 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         lv.trough[v] = trough[v];
         lv.floor[v] = (floor[v] + 0.5).floor();
         lv.born[v] = if lv.trough[v] { lv.w } else { -1 };
-        lv.psurf[v] = tb[v];
     }
 }

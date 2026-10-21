@@ -1,12 +1,10 @@
-//! The stack read as the ladder's ground ([`crate::ladder::Ground`]): one
-//! layer, the base layers, plates through the scarps, as they compose. A
-//! cell reads the stack at nine points, the centres of its nine children,
-//! the points a summary reads its parts at (`common::summary::part_offsets`),
-//! and holds their mean: its height, its rock's erodibility, its plate's age
-//! and the sky's moisture over it (forest's `sky_moisture`) alike. A tile
-//! reads itself. Coarse is coarse: no cell reads finer than its children.
-//! The ladder is built on this and never sees a layer's index or output
-//! (INV-009).
+//! The stack read as the ladder's ground ([`crate::ladder::Ground`]): the
+//! base layers, plates through the scarps, as they compose at a tile, its
+//! height, its rock's erodibility, its plate's age and the sky's moisture
+//! over it (forest's `sky_moisture`). The ladder reads it at its vertices,
+//! a cell's centre and its corners, each the centre of one of its children,
+//! so no cell reads finer than its children. The ladder is built on this
+//! and never sees a layer's index or output (INV-009).
 //!
 //! Cell (i, j) of a level `w` tiles wide is centred on tile `(i, j)·w`, so
 //! the world's origin is a centre at every level, as a summary's is
@@ -19,21 +17,11 @@ use super::plates::Coasts;
 use super::thrusting::Outlines;
 use super::{forest, lithology, motion, plates, scarp, thickening, thrusting, tilt, Composite, TileOutput, TileView, WorldEvent};
 use crate::continents::{self, SiteId};
-use crate::ladder::geom::{cube_round, descendants};
+use crate::ladder::geom::cube_round;
 use crate::ladder::terrain::{Cell, Terrain};
-use crate::ladder::{Bounds, Ground, Ladder, Level, Params};
+use crate::ladder::{Bounds, Ground, Ladder, Level, Params, Point};
 use crate::hex_to_world;
 use crate::lattice::DIRECTIONS;
-
-/// The points a cell of a level `w` wide reads, as tile offsets from its
-/// centre: its nine children's centres; a tile's own.
-fn samples(w: i64) -> Vec<(i64, i64)> {
-    descendants(w, u32::from(w >= 3))
-}
-
-/// What a cell read once: the ground's height, the rock's erodibility, the
-/// plate's age and the sky's moisture.
-type Read = (f64, f64, f64, f64);
 
 /// The base layers as the ladder's one.
 pub struct StackGround {
@@ -41,7 +29,9 @@ pub struct StackGround {
     outlines: Outlines,
     coasts: Coasts,
     wind: (f64, f64),
-    memo: DashMap<(i64, i64, i64), Read>,
+    /// Every tile read, kept: a coarse level's corner is a finer level's
+    /// centre.
+    memo: DashMap<(i64, i64), Point>,
 }
 
 impl Composite {
@@ -74,53 +64,24 @@ impl StackGround {
         }
     }
 
-    fn cell(&self, w: i64, i: i64, j: i64) -> Read {
-        if let Some(hit) = self.memo.get(&(w, i, j)) {
-            return hit.clone();
-        }
-        let (q, r) = (i * w, j * w);
-        let offs = samples(w);
-        let mut sum = [0.0; 4];
-        for &(dq, dr) in &offs {
-            let (pq, pr) = ((q + dq) as i32, (r + dr) as i32);
-            let view = self.base.compose(1, pq, pr, |_, _| {});
-            let (wx, wy) = hex_to_world(pq, pr);
-            let at = [
-                view.elevation,
-                view.rock.map_or(1.0, |rock| rock.erodibility()),
-                self.outlines.at(wx, wy).map_or(0.0, |at| at.plate.age),
-                forest::sky_moisture(wx, wy, self.wind, &self.coasts, &self.outlines),
-            ];
-            for (s, v) in sum.iter_mut().zip(at) {
-                *s += v;
-            }
-        }
-        let n = offs.len() as f64;
-        let read = (sum[0] / n, sum[1] / n, sum[2] / n, sum[3] / n);
-        self.memo.insert((w, i, j), read.clone());
-        read
-    }
 }
 
 impl Ground for StackGround {
-    fn layers(&self) -> usize {
-        1
-    }
-
-    fn read(&self, w: i64, i: i64, j: i64, out: &mut [f64]) {
-        out[0] = self.cell(w, i, j).0;
-    }
-
-    fn erodibility(&self, w: i64, i: i64, j: i64) -> f64 {
-        self.cell(w, i, j).1
-    }
-
-    fn age(&self, w: i64, i: i64, j: i64) -> f64 {
-        self.cell(w, i, j).2
-    }
-
-    fn moisture(&self, w: i64, i: i64, j: i64) -> f64 {
-        self.cell(w, i, j).3
+    fn at(&self, q: i64, r: i64) -> Point {
+        if let Some(hit) = self.memo.get(&(q, r)) {
+            return *hit;
+        }
+        let (q32, r32) = (q as i32, r as i32);
+        let view = self.base.compose(1, q32, r32, |_, _| {});
+        let (wx, wy) = hex_to_world(q32, r32);
+        let point = Point {
+            height: view.elevation,
+            erodibility: view.rock.map_or(1.0, |rock| rock.erodibility()),
+            age: self.outlines.at(wx, wy).map_or(0.0, |at| at.plate.age),
+            moisture: forest::sky_moisture(wx, wy, self.wind, &self.coasts, &self.outlines),
+        };
+        self.memo.insert((q, r), point);
+        point
     }
 }
 

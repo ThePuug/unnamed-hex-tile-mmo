@@ -13,17 +13,16 @@
 //!
 //! Below the top a level runs its passes in order:
 //!
-//! - **ground**: the level above's dry surface predicted at each centre,
-//!   and every layer's change there, each layer's value at the cell less its
-//!   own value predicted from the level above: the level's dry ground. Over
-//!   it the level above's carve predicted the same way: its carved ground.
+//! - **ground**: the ground read at each vertex, a cell's centre and its
+//!   corners A and B ([`Ground::at`]): the level's dry ground. Over it the
+//!   level above's carve there ([`Level::carve_at`]): its carved ground.
 //! - **route**: every vertex's receiver downhill on the carved ground, its
 //!   catchment, and the level's troughs: the level above's rivers run on
 //!   from its nodes, and troughs born at the level ([`route`]). A
 //!   catchment is the land a vertex drains, in tiles, and everything that
 //!   cuts reads it: floods do the cutting, and a dry country's floods run
 //!   as high as a wet one's. Its flow is the rain that land gathers, each
-//!   tile adding the sky's moisture over it ([`Ground::moisture`]), and
+//!   tile adding the sky's moisture over it ([`Point::moisture`]), and
 //!   only the water drawn reads it, a dry country's river narrower in the
 //!   same valley. Every vertex's graded profile is the height its channel
 //!   stands at graded down its course: its outlet's level, the sea's or a
@@ -45,10 +44,6 @@
 //! ([`water::depth`]). [`terrain::Terrain`] holds the ladder for readers on
 //! many threads.
 //!
-//! Every layer writes its value averaged over the level's cell; its raise
-//! there is that less what the level above handed down, the level above's
-//! values predicted at the cell ([`handed_down`]).
-//!
 //! **A river is handed down as where it is and what it carries, never its
 //! course.** The level above hands down its trough vertices, each with its
 //! catchment, its graded profile and the level it was born at; each is one of the level's
@@ -60,24 +55,24 @@
 //! below, a river follows its valley. Water never climbs ([`route`]).
 //!
 //! **A level carves into what the level above carved.** It is handed the
-//! dry ground's prediction and the carve's: routing reads the carved
-//! ground, so water gathers into the valleys above; floors read the dry
-//! ground, so no floor deepens by what the level above already cut. A
-//! level's height is its own troughs' valleys within its ring met by its
-//! carved ground, averaged over the cell and rounded to whole steps: a
-//! valley is an absolute height, so a river the level above cut to its
-//! floor is not cut again. Its water fills that carve. Nothing makes it
-//! walkable: a step past walkable is a face.
+//! level above's carve: routing reads the carved ground, so water gathers
+//! into the valleys above; floors read the dry ground, so no floor deepens
+//! by what the level above already cut. A level's height at each vertex is
+//! its own troughs' valleys within its ring met by its carved ground there,
+//! rounded to whole steps: a valley is an absolute height, so a river the
+//! level above cut to its floor is not cut again. Its water fills that
+//! carve. Nothing makes it walkable: a step past walkable is a face.
 //!
-//! **Prediction is apart from drawing.** A level hands its shape to the
-//! level below as its prediction surface ([`handed_down`]): sloped fans
-//! through its cells, a centre the cell's value, a corner the mean of the
-//! three cells sharing it, linear between, nothing clamped, met or rounded.
-//! Everything in the ladder that reads a surface reads that one: the dry
-//! ground, every layer, routing.
+//! **Nothing is averaged.** Every vertex of a level coarser than the tiles
+//! is a child's centre, a whole tile, and reads the ground there; a tile's
+//! corners lie between tiles and take the mean of the three around each. A
+//! level hands its carve down as flat triangles from each cell's centre to
+//! two of its corners, every vertex its own value, linear between
+//! ([`Level::carve_at`]), so a triangle never dips below its corners and a
+//! river along its edges reaches the level below at its full depth.
 //! The corner rule, faces as walls, is the drawing's alone: meshes, physics
-//! and summaries draw a level's cells by it (`common::corner`), and nothing
-//! here reads it.
+//! and summaries draw a level's cells by it (`common::corner`) from their
+//! centres, and nothing here reads it.
 //!
 //! Every value is a function of its position: what a level keeps is filled
 //! as requests reach it, and never read in place of a recomputation that
@@ -122,20 +117,23 @@ impl Default for Params {
     }
 }
 
-/// What the ladder is seeded with: each layer's value over a cell of any
-/// level, in steps, and the rock and the plate at a cell's centre.
+/// What the ladder reads of the ground at one tile.
+#[derive(Clone, Copy, Debug)]
+pub struct Point {
+    /// The ground's height, in steps.
+    pub height: f64,
+    /// The erodibility of the rock.
+    pub erodibility: f64,
+    /// The age of the plate, 0 to 1.
+    pub age: f64,
+    /// The sky's moisture: the rain each tile adds to the water draining
+    /// from it, one the shore's lowland's.
+    pub moisture: f64,
+}
+
+/// What the ladder is seeded with: the ground at any tile.
 pub trait Ground: Sync {
-    /// How many layers the ground is made of.
-    fn layers(&self) -> usize;
-    /// Each layer's value over cell (i, j) of the level `w` tiles wide.
-    fn read(&self, w: i64, i: i64, j: i64, out: &mut [f64]);
-    /// The erodibility of the rock at the cell's centre.
-    fn erodibility(&self, w: i64, i: i64, j: i64) -> f64;
-    /// The age of the plate at the cell's centre, 0 to 1.
-    fn age(&self, w: i64, i: i64, j: i64) -> f64;
-    /// The sky's moisture at the cell's centre: the rain each of its tiles
-    /// adds to the water draining from it, one the shore's lowland's.
-    fn moisture(&self, w: i64, i: i64, j: i64) -> f64;
+    fn at(&self, q: i64, r: i64) -> Point;
 }
 
 /// How far water reads lines from a cell, in cells of the level: what one
@@ -255,22 +253,22 @@ pub struct Level {
     pub lo_j: i64,
     pub n_j: usize,
     pub exists: Exists,
-    /// Each layer's value at each cell, NaN until read.
-    pub layers: Vec<Paged<f64>>,
+    /// The rock's erodibility and the plate's age at each cell's centre.
     pub erod: Paged<f64>,
     pub age: Paged<f64>,
     /// The rain each of a cell's tiles adds to the flow, the sky's moisture
-    /// there.
+    /// at its centre.
     pub rain: Paged<f64>,
-    /// The level above's surface at each centre.
-    pub p: Paged<f64>,
-    /// The ground: the prediction and every layer's change but water's.
+    // Each vertex: a cell's centre, its corner A and its corner B.
+    /// The dry ground at each vertex, NaN until read: the ground's height
+    /// there ([`Ground::at`]). A tile's corners lie between tiles, and take
+    /// the mean of the three tiles sharing each.
     pub ground: Paged<f64>,
-    /// The carved ground: the ground with the level above's carve, its
-    /// heights less its dry heights, predicted at the cell.
+    /// The carved ground at each vertex: its ground with the level above's
+    /// carve there ([`Level::carve_at`]). What routing reads.
     pub carved: Paged<f64>,
-    /// The level's carve: its valleys met by its carved ground, averaged
-    /// over the cell, less the ground; never above the carved ground.
+    /// The level's carve at each vertex: its valleys met by its carved
+    /// ground, less the ground; never above the carved ground.
     pub cut: Paged<f64>,
     /// How far each cell lies from the river governing its valley, in its
     /// cells; infinite where none reaches it.
@@ -298,23 +296,11 @@ pub struct Level {
     /// level's own rivers mark them, so the finer level is never built for
     /// them.
     pub wparts: Paged<u16>,
+    /// Each vertex's height, its ground and its cut rounded to whole steps,
+    /// and its dry height, its ground rounded: what the level below is
+    /// handed. A cell's own is its centre's. A tile's corners have none.
     pub z: Paged<f64>,
-    /// Each cell's dry height: its ground before the carve, rounded, what
-    /// the level below predicts its own dry ground from.
     pub zd: Paged<f64>,
-    /// Each cell's six corners on the prediction surface of its heights.
-    pub cc: Paged<[f64; 6]>,
-    // Each vertex: a cell's centre, its corner A and its corner B.
-    /// The prediction surface of the heights at each vertex: a centre's
-    /// own, a corner the mean of the cells sharing it.
-    pub elev: Paged<f64>,
-    pub psurf: Paged<f64>,
-    /// The carved ground at each vertex: a centre's own, a corner the mean
-    /// of its sharers'. What lines and routing are read from.
-    pub gelev: Paged<f64>,
-    /// The dry ground at each vertex, the same way: what drainage's floor
-    /// is read from.
-    pub gdry: Paged<f64>,
     /// The width of the level a trough at each vertex was born at; -1 off
     /// the troughs.
     pub born: Paged<i64>,
@@ -331,15 +317,11 @@ pub struct Level {
     /// drawn carries.
     pub flow: Paged<f64>,
     pub floor: Paged<f64>,
-    pub predicted: Paged<bool>,
     pub supplied: Paged<bool>,
     pub watered: Paged<bool>,
     pub built: Paged<bool>,
     pub routed: Paged<bool>,
-    /// Whether each cell's own two corners are final: every cell sharing
-    /// them built.
-    pub corners: Paged<bool>,
-    /// Whether each cell's six corner values are final: its own two, and
+    /// Whether each cell's six corners are final: built, its own two and
     /// the four its neighbours own, where those exist.
     pub finished: Paged<bool>,
     /// How many levels up each pass's deform cell lies.
@@ -352,7 +334,7 @@ const NONE: (i64, i64) = (i64::MIN, i64::MIN);
 
 impl Level {
     /// A level of cells `lo.0..hi.0` along i and `lo.1..hi.1` along j.
-    fn new(w: i64, lo: (i64, i64), hi: (i64, i64), top: bool, layers: usize, ring: f64) -> Self {
+    fn new(w: i64, lo: (i64, i64), hi: (i64, i64), top: bool, ring: f64) -> Self {
         let (n, n_j) = ((hi.0 - lo.0) as usize, (hi.1 - lo.1) as usize);
         let cells = Level::space(n, n_j);
         let nan = |k: usize| Paged::new(f64::NAN, k);
@@ -364,14 +346,12 @@ impl Level {
             lo_j: lo.1,
             n_j,
             exists: Exists { n, n_j },
-            layers: (0..layers).map(|_| nan(cells)).collect(),
             erod: nan(cells),
             age: nan(cells),
             rain: nan(cells),
-            p: nan(cells),
-            ground: nan(cells),
-            carved: nan(cells),
-            cut: nan(cells),
+            ground: nan(3 * cells),
+            carved: nan(3 * cells),
+            cut: nan(3 * cells),
             wdist: nan(cells),
             wborn: Paged::new(-1, cells),
             wsrc: Paged::new(-1, cells),
@@ -381,13 +361,8 @@ impl Level {
             water: nan(cells),
             wdepth: nan(cells),
             wparts: Paged::new(0, cells),
-            z: nan(cells),
-            zd: nan(cells),
-            cc: Paged::new([f64::NAN; 6], cells),
-            elev: nan(3 * cells),
-            psurf: nan(3 * cells),
-            gelev: nan(3 * cells),
-            gdry: nan(3 * cells),
+            z: nan(3 * cells),
+            zd: nan(3 * cells),
             born: Paged::new(-1, 3 * cells),
             rec: Paged::new(-1, 3 * cells),
             trough: Paged::new(false, 3 * cells),
@@ -395,12 +370,10 @@ impl Level {
             graded: nan(3 * cells),
             flow: Paged::new(0.0, 3 * cells),
             floor: nan(3 * cells),
-            predicted: Paged::new(false, cells),
             supplied: Paged::new(false, cells),
             watered: Paged::new(false, cells),
             built: Paged::new(false, cells),
             routed: Paged::new(false, cells),
-            corners: Paged::new(false, cells),
             finished: Paged::new(false, cells),
             deform,
             cost: [0; 5],
@@ -547,9 +520,9 @@ impl Level {
         Mask::new(all)
     }
 
-    /// The prediction surface's values at a cell's own corners A and B: the
-    /// mean of what the cells sharing each hold; each ready where every cell
-    /// there that exists holds its value.
+    /// The mean of a cell field over the cells sharing a cell's own corners
+    /// A and B; each ready where every cell there that exists holds its
+    /// value.
     fn corner_means(&self, i: i64, j: i64, of: &Paged<f64>, done: &Paged<bool>) -> (f64, f64, bool, bool) {
         let h = |a: i64, b: i64| self.height(a, b, of, done);
         let present = |a: i64, b: i64| self.idx(a, b).is_some_and(|c| self.exists[c]);
@@ -562,24 +535,34 @@ impl Level {
         (mean(ca), mean(cb), ready(ca), ready(cb))
     }
 
-    /// A cell's six corner values on the prediction surface of its heights:
-    /// its own A and B, and the four its neighbours own; its height where a
-    /// corner has none.
-    fn corner_values(&self, i: i64, j: i64) -> [f64; 6] {
+    /// Cell (i, j)'s six corners in [`fan_at`]'s order, its own B and A and
+    /// the four its neighbours own, each where its owner is built.
+    fn corner_vertices(&self, i: i64, j: i64) -> [Option<usize>; 6] {
         let nn = self.cap();
-        let get = |a: i64, b: i64, t: usize| self.idx(a, b).map_or(f64::NAN, |c| self.elev[t * nn + c]);
-        let z = self.idx(i, j).map_or(f64::NAN, |c| self.z[c]);
-        let cc = [get(i, j, 2), get(i, j, 1), get(i - 1, j + 1, 2), get(i - 1, j, 1), get(i - 1, j, 2), get(i, j - 1, 1)];
-        cc.map(|v| if v.is_nan() { z } else { v })
+        [(i, j, 2), (i, j, 1), (i - 1, j + 1, 2), (i - 1, j, 1), (i - 1, j, 2), (i, j - 1, 1)]
+            .map(|(a, b, t)| self.idx(a, b).filter(|&c| self.exists[c] && self.built[c]).map(|c| t * nn + c))
     }
 
-    /// The level's prediction surface at a position in tiles: the fan
-    /// triangle of the cell under it, from the cell's centre to two of its
-    /// corners.
-    pub fn surface_at(&self, q: f64, r: f64) -> f64 {
+    /// The level's carve at a position in tiles, what it hands the level
+    /// below: each vertex's height less its dry height, flat across the
+    /// triangles from the centre of the cell under it to two of its
+    /// corners, the centre's where a corner has none. NaN where the level
+    /// has not built that cell.
+    pub fn carve_at(&self, q: f64, r: f64) -> f64 {
         let (i, j) = cube_round(q / self.w as f64, r / self.w as f64);
-        let Some(c) = self.idx(i, j) else { return f64::NAN };
-        fan_at(self.w, i, j, self.z[c], &self.cc[c], q, r)
+        let Some(c) = self.idx(i, j).filter(|&c| self.exists[c] && self.built[c]) else { return f64::NAN };
+        let carve = |v: usize| self.z[v] - self.zd[v];
+        let centre = carve(c);
+        let cc = self.corner_vertices(i, j).map(|v| v.map(carve).filter(|h| !h.is_nan()).unwrap_or(centre));
+        fan_at(self.w, i, j, centre, &cc, q, r)
+    }
+
+    /// The vertices of cell `c` the level holds values at: its centre and
+    /// its corners A and B, but a tile's corners lie between tiles and are
+    /// its neighbours' as much as its own.
+    fn own_vertices(&self, c: usize) -> impl Iterator<Item = (u8, usize)> {
+        let nn = self.cap();
+        (0..if self.w >= 3 { 3u8 } else { 1 }).map(move |t| (t, t as usize * nn + c))
     }
 }
 
@@ -658,7 +641,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
                     assert!(par.idx(pi, pj).is_some(), "level {w}'s cell ({i}, {j}) lies past the level above's bounds");
                 }
             }
-            levels.push(Level::new(w, lo, hi, k == 0, ground.layers(), p.ring));
+            levels.push(Level::new(w, lo, hi, k == 0, p.ring));
         }
         let count = levels.len();
         let mut ladder = Ladder {
@@ -679,28 +662,34 @@ impl<'g, G: Ground> Ladder<'g, G> {
         ladder
     }
 
-    /// Reads each layer's value at every cell of a mask not yet read.
-    fn read_layers(&mut self, k: usize, mask: &Mask) {
+    /// Reads the ground at each vertex of every cell of a mask not yet read
+    /// ([`Level::own_vertices`]), and the rock, the plate and the sky at
+    /// its centre.
+    fn read_ground(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let todo: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.layers[0][c].is_nan()).collect();
+        let todo: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.ground[c].is_nan()).collect();
         if todo.is_empty() {
             return;
         }
         let started = Instant::now();
-        let (w, layers, ground) = (lv.w, self.ground.layers(), self.ground);
-        let cells: Vec<(i64, i64)> = todo.iter().map(|&c| lv.ij(c)).collect();
+        let (ground, level): (&G, &Level) = (self.ground, lv);
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-        let chunk = cells.len().div_ceil(threads).max(1);
-        let read: Vec<(Vec<f64>, f64, f64, f64)> = std::thread::scope(|s| {
-            let handles: Vec<_> = cells
+        let chunk = todo.len().div_ceil(threads).max(1);
+        let read: Vec<Vec<Point>> = std::thread::scope(|s| {
+            let handles: Vec<_> = todo
                 .chunks(chunk)
                 .map(|part| {
                     s.spawn(move || {
                         part.iter()
-                            .map(|&(i, j)| {
-                                let mut out = vec![0.0; layers];
-                                ground.read(w, i, j, &mut out);
-                                (out, ground.erodibility(w, i, j), ground.age(w, i, j), ground.moisture(w, i, j))
+                            .map(|&c| {
+                                let (i, j) = level.ij(c);
+                                level
+                                    .own_vertices(c)
+                                    .map(|(t, _)| {
+                                        let (q3, r3) = pos3(t, i, j, level.w);
+                                        ground.at(q3 / 3, r3 / 3)
+                                    })
+                                    .collect::<Vec<_>>()
                             })
                             .collect::<Vec<_>>()
                     })
@@ -709,52 +698,49 @@ impl<'g, G: Ground> Ladder<'g, G> {
             handles.into_iter().flat_map(|h| h.join().expect("a reading thread")).collect()
         });
         let lv = &mut self.levels[k];
-        for (&c, (vals, erod, age, rain)) in todo.iter().zip(read) {
-            for (l, v) in vals.into_iter().enumerate() {
-                lv.layers[l][c] = v;
+        for (&c, points) in todo.iter().zip(read) {
+            let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
+            for ((_, v), point) in vertices.into_iter().zip(&points) {
+                lv.ground[v] = point.height;
             }
-            lv.erod[c] = erod;
-            lv.age[c] = age;
-            lv.rain[c] = rain;
+            lv.erod[c] = points[0].erodibility;
+            lv.age[c] = points[0].age;
+            lv.rain[c] = points[0].moisture;
         }
         self.timing[k][Stage::Read as usize] += started.elapsed().as_secs_f64();
     }
 
-    /// The top: the sum of the layers over its cells, rounded to steps,
-    /// routed once from its edge and the sea.
+    /// The top: the ground at its vertices, rounded to steps, routed once
+    /// from its edge and the sea.
     fn build_top(&mut self) {
         let top = &self.levels[0];
         let all = Mask::new((0..top.cap()).filter(|&c| top.exists[c]));
-        self.read_layers(0, &all);
+        self.read_ground(0, &all);
         let p = self.p;
         let lv = &mut self.levels[0];
-        for c in 0..lv.cap() {
-            let h: f64 = lv.layers.iter().map(|l| l[c]).sum();
-            lv.p[c] = h;
-            lv.ground[c] = h;
-            lv.carved[c] = h;
-            lv.z[c] = (h + 0.5).floor();
-            lv.zd[c] = lv.z[c];
+        let vertices: Vec<usize> = all.iter().flat_map(|c| lv.own_vertices(c).map(|(_, v)| v).collect::<Vec<_>>()).collect();
+        for &v in &vertices {
+            let h = lv.ground[v];
+            lv.carved[v] = h;
+            lv.z[v] = (h + 0.5).floor();
+            lv.zd[v] = lv.z[v];
         }
-        lv.predicted.fill(true);
         lv.supplied.fill(true);
         lv.built.fill(true);
-        corners_over(lv, &all);
         top::route_top(lv, &p);
         lv.routed.fill(true);
         // The top's own valleys, cut along its troughs into the ground it
         // routed over.
         let edges = water::trough_edges(lv, &all);
         water::top_cut(lv, &edges, &p);
-        for c in 0..lv.cap() {
-            lv.z[c] = (lv.ground[c] + lv.cut[c] + 0.5).floor();
+        for &v in &vertices {
+            lv.z[v] = (lv.ground[v] + lv.cut[v] + 0.5).floor();
+        }
+        for c in all.iter() {
             if lv.water[c] <= lv.z[c] {
                 lv.water[c] = f64::NAN;
             }
         }
-        // The cut moved every height, so every corner is made again.
-        lv.corners.fill(false);
-        lv.finished.fill(false);
         corners_over(lv, &all);
     }
 
@@ -798,7 +784,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let started = Instant::now();
         let (above, rest) = self.levels.split_at_mut(k);
         let lv = &mut rest[0];
-        ground_fields(lv, &above[k - 1], &fp);
+        tile_corners(lv, &fp);
         let stats = route::route_blocks(lv, &above[k - 1], &pend, &self.p, births(&above[k - 1], lv, &self.p));
         for (a, b) in self.route_stats[k].iter_mut().zip(stats) {
             *a += b;
@@ -817,7 +803,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             par.idx(pi, pj)
         }));
         let pmask = par.dilate(&under, 1);
-        self.read_layers(k - 1, &pmask);
+        self.read_ground(k - 1, &pmask);
         if k - 1 > 0 {
             self.ensure_routed(k - 1, &pmask);
             self.cornered(k - 1, &pmask);
@@ -833,7 +819,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let pend = lv.pending(Pass::Ground, &need);
         let fp = lv.footprint(Pass::Ground, &pend);
         self.parent_over(k, &fp);
-        self.read_layers(k, &fp);
+        self.read_ground(k, &fp);
         let started = Instant::now();
         let (above, rest) = self.levels.split_at_mut(k);
         let lv = &mut rest[0];
@@ -843,13 +829,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 continue;
             }
             let (i, j) = lv.ij(c);
-            let (pred, layer_pred) = predict(par, i, j);
-            lv.p[c] = pred;
-            let layers = lv.layers.len();
-            let change: f64 = (0..layers).map(|l| lv.layers[l][c] - layer_pred[l]).sum();
-            lv.ground[c] = pred + change;
-            lv.carved[c] = lv.ground[c] + handed_down(i, j, |x, y| par.carve(x, y));
-            lv.predicted[c] = true;
+            let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
+            for (t, v) in vertices {
+                let (q3, r3) = pos3(t, i, j, lv.w);
+                lv.carved[v] = lv.ground[v] + par.carve_at(q3 as f64 / 3.0, r3 as f64 / 3.0);
+            }
             lv.supplied[c] = true;
         }
         lv.cost[Pass::Ground as usize] += pend.len() as u64;
@@ -884,8 +868,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let mut built = 0;
         for c in need.iter() {
             if lv.supplied[c] && lv.watered[c] {
-                lv.z[c] = (lv.ground[c] + lv.cut[c] + 0.5).floor();
-                lv.zd[c] = (lv.ground[c] + 0.5).floor();
+                let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
+                for (_, v) in vertices {
+                    lv.z[v] = (lv.ground[v] + lv.cut[v] + 0.5).floor();
+                    lv.zd[v] = (lv.ground[v] + 0.5).floor();
+                }
                 if lv.water[c] <= lv.z[c] {
                     lv.water[c] = f64::NAN;
                 }
@@ -922,146 +909,53 @@ fn births(par: &Level, lv: &Level, p: &Params) -> bool {
     head_of(lv.w, 1.0, HEAD_SLOPE, p) < head_of(par.w, 1.0, HEAD_SLOPE, p)
 }
 
-/// The cells sharing parent corner `k` of cell (a, b), as
-/// [`Level::corner_values`] numbers them.
-fn corner_cells(a: i64, b: i64, k: usize) -> [(i64, i64); 3] {
-    let (t, ci, cj) = [(2, a, b), (1, a, b), (2, a - 1, b + 1), (1, a - 1, b), (2, a - 1, b), (1, a, b - 1)][k];
-    vertex_cells(t, ci, cj).0
-}
-
-/// A value the level above holds at each of its cells, `at`, handed down to
-/// child cell (i, j): the parent's own at its centre, a corner's the mean
-/// of the cells sharing it that hold one, an axis child's the mean of its
-/// fan's centre and two corners.
-pub fn handed_down(i: i64, j: i64, at: impl Fn(i64, i64) -> f64) -> f64 {
-    let (a, b, oi, oj) = parent_of(i, j);
-    let corner = |k: usize| {
-        let vals: Vec<f64> = corner_cells(a, b, k).iter().map(|&(x, y)| at(x, y)).filter(|v| !v.is_nan()).collect();
-        vals.iter().sum::<f64>() / vals.len() as f64
-    };
-    match (oi, oj) {
-        (0, 0) => at(a, b),
-        (1, 1) => corner(1),
-        (2, -1) => corner(0),
-        _ => {
-            let (ca, cb) = axis_fan(oi, oj).expect("an axis child");
-            (at(a, b) + corner(ca) + corner(cb)) / 3.0
-        }
-    }
-}
-
-/// A child cell's prediction: the level above's dry ground, and each
-/// layer's own value, each read off the level above's prediction surface
-/// ([`handed_down`]).
-pub(crate) fn predict(par: &impl Above, i: i64, j: i64) -> (f64, Vec<f64>) {
-    let dry = handed_down(i, j, |x, y| par.dry(x, y));
-    let layers = (0..par.layer_count()).map(|l| handed_down(i, j, |x, y| par.field(l, x, y))).collect();
-    (dry, layers)
-}
-
-/// What a level hands the level below it of its heights: each built cell's
-/// dry height and its carve, and each layer's value at a cell; NaN where it
-/// holds none.
-pub(crate) trait Above {
-    fn layer_count(&self) -> usize;
-    fn dry(&self, i: i64, j: i64) -> f64;
-    /// The carve at cell (i, j): its height less its dry height.
-    fn carve(&self, i: i64, j: i64) -> f64;
-    /// Layer `l`'s value at cell (i, j).
-    fn field(&self, l: usize, i: i64, j: i64) -> f64;
-}
-
-impl Above for Level {
-    fn layer_count(&self) -> usize {
-        self.layers.len()
-    }
-
-    fn dry(&self, i: i64, j: i64) -> f64 {
-        self.idx(i, j).filter(|&c| self.exists[c] && self.built[c]).map_or(f64::NAN, |c| self.zd[c])
-    }
-
-    fn carve(&self, i: i64, j: i64) -> f64 {
-        self.idx(i, j).filter(|&c| self.exists[c] && self.built[c]).map_or(f64::NAN, |c| self.z[c] - self.zd[c])
-    }
-
-    fn field(&self, l: usize, i: i64, j: i64) -> f64 {
-        self.idx(i, j).map_or(f64::NAN, |c| self.layers[l][c])
-    }
-}
-
-/// The prediction surface of the heights at the corners of every cell of a
-/// mask whose sharers are all built, and the six corner values of each
-/// cell, and of every cell outside the mask reading a corner made here, so
-/// a cell's corners never wait on a request that names it.
+/// Every built cell of a mask, and every cell outside it with a corner the
+/// mask owns, marked finished where all six of its corners are built, so a
+/// cell's corners never wait on a request that names it.
 fn corners_over(lv: &mut Level, mask: &Mask) {
-    let nn = lv.cap();
-    // Every cell of the mask, and every cell reading a corner made here.
     let mut draw: Vec<usize> = Vec::new();
     for c in mask.iter() {
         if !lv.exists[c] || !lv.built[c] {
             continue;
         }
-        draw.push(c);
-        if lv.corners[c] {
-            continue;
-        }
         let (i, j) = lv.ij(c);
-        let (a, b, ready_a, ready_b) = lv.corner_means(i, j, &lv.z, &lv.built);
-        lv.elev[c] = lv.z[c];
-        if ready_a {
-            lv.elev[nn + c] = a;
-        }
-        if ready_b {
-            lv.elev[2 * nn + c] = b;
-        }
-        lv.corners[c] = ready_a && ready_b;
-        if ready_a || ready_b {
-            draw.extend([(i + 1, j - 1), (i + 1, j), (i, j + 1)].iter().filter_map(|&(x, y)| lv.idx(x, y)));
-        }
+        draw.push(c);
+        draw.extend([(i + 1, j - 1), (i + 1, j), (i, j + 1)].iter().filter_map(|&(x, y)| lv.idx(x, y)));
     }
     draw.sort_unstable();
     draw.dedup();
     for c in draw {
         if lv.exists[c] && lv.built[c] && !lv.finished[c] {
             let (i, j) = lv.ij(c);
-            lv.cc[c] = lv.corner_values(i, j);
-            lv.finished[c] = [(i, j), (i - 1, j + 1), (i - 1, j), (i, j - 1)]
+            lv.finished[c] = [(i - 1, j + 1), (i - 1, j), (i, j - 1)]
                 .iter()
-                .all(|&(a, b)| lv.idx(a, b).is_none_or(|d| !lv.exists[d] || lv.corners[d]));
+                .all(|&(a, b)| lv.idx(a, b).is_none_or(|d| !lv.exists[d] || lv.built[d]));
         }
     }
 }
 
-/// The level above's prediction surface at every vertex of a mask, and the
-/// carved and dry ground's at each: a centre's own, a corner the mean of
-/// the cells sharing it.
-fn ground_fields(lv: &mut Level, par: &Level, mask: &Mask) {
+/// A tile's corners over a mask: the dry and the carved ground of each the
+/// mean of the three tiles sharing it, where all three are supplied. A
+/// corner of a coarser level is read where it stands.
+fn tile_corners(lv: &mut Level, mask: &Mask) {
+    if lv.w >= 3 {
+        return;
+    }
     let nn = lv.cap();
     for c in mask.iter() {
-        if !lv.exists[c] {
+        if !lv.exists[c] || !lv.supplied[c] {
             continue;
         }
         let (i, j) = lv.ij(c);
-        for t in 0..3u8 {
-            let v = t as usize * nn + c;
-            if lv.psurf[v].is_nan() {
-                let (q3, r3) = pos3(t, i, j, lv.w);
-                lv.psurf[v] = par.surface_at(q3 as f64 / 3.0, r3 as f64 / 3.0);
-            }
+        let (a, b, ready_a, ready_b) = lv.corner_means(i, j, &lv.carved, &lv.supplied);
+        let (da, db, _, _) = lv.corner_means(i, j, &lv.ground, &lv.supplied);
+        if ready_a {
+            lv.carved[nn + c] = a;
+            lv.ground[nn + c] = da;
         }
-        if lv.supplied[c] {
-            lv.gelev[c] = lv.carved[c];
-            lv.gdry[c] = lv.ground[c];
-            let (a, b, ready_a, ready_b) = lv.corner_means(i, j, &lv.carved, &lv.supplied);
-            let (da, db, _, _) = lv.corner_means(i, j, &lv.ground, &lv.supplied);
-            if ready_a {
-                lv.gelev[nn + c] = a;
-                lv.gdry[nn + c] = da;
-            }
-            if ready_b {
-                lv.gelev[2 * nn + c] = b;
-                lv.gdry[2 * nn + c] = db;
-            }
+        if ready_b {
+            lv.carved[2 * nn + c] = b;
+            lv.ground[2 * nn + c] = db;
         }
     }
 }

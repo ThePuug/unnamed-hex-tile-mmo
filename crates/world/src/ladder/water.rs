@@ -6,12 +6,12 @@
 //! out over the bed and up the walls to where they climb to it, so it
 //! meets its banks at its own height.
 //!
-//! The top cuts its valley wholly, met by its ground and averaged over each
-//! cell. A level below carves its own troughs' valleys within
-//! `Params::ring` of its cells into its carved ground, the level above's
-//! carve handed down, met by that and averaged over the cell. A valley is an absolute
-//! height, so where the level above already cut a river to its floor the
-//! level's own valley of it cuts nothing more.
+//! The top cuts its valley wholly, met by its ground at each vertex. A
+//! level below carves its own troughs' valleys within `Params::ring` of its
+//! cells into its carved ground, the level above's carve handed down, met
+//! by that at each vertex. A valley is an absolute height, so where the
+//! level above already cut a river to its floor the level's own valley of
+//! it cuts nothing more.
 //!
 //! Water stands on a cell where a bed covers its centre and is as wide as
 //! the cell, corner to corner: a river is wet at a level once its catchment
@@ -26,7 +26,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 
-use super::geom::{cube_round, descendants, hex_offsets, pos3, CHILD_OFFSETS, NB};
+use super::geom::{cube_round, hex_offsets, pos3, CHILD_OFFSETS, NB};
 use super::mask::Mask;
 use super::{wall_slope, Level, Params, Pass};
 use crate::SQRT_3;
@@ -214,15 +214,16 @@ fn valley(beds: &[Sample], q: f64, r: f64) -> Option<(f64, Sample, f64)> {
     best
 }
 
-/// The valley met by `carved` and averaged over cell (i, j) of a level `w`
-/// wide, at its centre and its children's, less `ground`: a cut.
-fn cut_of(beds: &[Sample], w: i64, i: i64, j: i64, carved: f64, ground: f64) -> f64 {
-    let offs = descendants(w, if w >= 3 { 1 } else { 0 });
-    let sum: f64 = offs
-        .iter()
-        .map(|&(dq, dr)| valley(beds, (i * w + dq) as f64, (j * w + dr) as f64).map_or(carved, |v| v.0.min(carved)))
-        .sum();
-    sum / offs.len() as f64 - ground
+/// The valley at a position in tiles met by `carved`, the carved ground
+/// there, less `ground`, the dry ground there: a cut.
+fn cut_at(beds: &[Sample], q: f64, r: f64, carved: f64, ground: f64) -> f64 {
+    valley(beds, q, r).map_or(carved, |v| v.0.min(carved)) - ground
+}
+
+/// A vertex's position in tiles.
+fn vertex_tiles(t: u8, i: i64, j: i64, w: i64) -> (f64, f64) {
+    let (q3, r3) = pos3(t, i, j, w);
+    (q3 as f64 / 3.0, r3 as f64 / 3.0)
 }
 
 /// Which of cell (i, j)'s nine children, of a level `w` wide, stand under
@@ -311,7 +312,7 @@ fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)>
     bed.map(|(surface, depth, river)| (surface.min(z + depth), depth, river))
 }
 
-/// The top's cut over every cell: its valley wholly.
+/// The top's cut at every vertex: its valley wholly.
 pub(super) fn top_cut(lv: &mut Level, edges: &[Edge], p: &Params) {
     let w = lv.w;
     let radius = p.ring * w as f64;
@@ -320,17 +321,24 @@ pub(super) fn top_cut(lv: &mut Level, edges: &[Edge], p: &Params) {
     let view: &Level = lv;
     let cuts = in_parallel(&cells, |near, c| {
         let (i, j) = view.ij(c);
+        let mut cuts = [0.0; 3];
         if !p.water {
-            return (0.0, None, 0);
+            return (cuts, None, 0);
         }
-        let (q, r) = ((i * w) as f64, (j * w) as f64);
+        let (q, r) = vertex_tiles(0, i, j, w);
         beds.within(q, r, radius, near);
         let near: &[Sample] = near;
-        let cut = cut_of(near, w, i, j, view.ground[c], view.ground[c]);
-        (cut, on_carve(standing(near, q, r, w), (view.ground[c] + cut + 0.5).floor()), wet_children(near, w, i, j))
+        for (t, v) in view.own_vertices(c) {
+            let (vq, vr) = vertex_tiles(t, i, j, w);
+            cuts[t as usize] = cut_at(near, vq, vr, view.ground[v], view.ground[v]);
+        }
+        (cuts, on_carve(standing(near, q, r, w), (view.ground[c] + cuts[0] + 0.5).floor()), wet_children(near, w, i, j))
     });
-    for (&c, (cut, wet, parts)) in cells.iter().zip(cuts) {
-        lv.cut[c] = cut;
+    for (&c, (cuts, wet, parts)) in cells.iter().zip(cuts) {
+        let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
+        for (t, v) in vertices {
+            lv.cut[v] = cuts[t as usize];
+        }
         lv.wparts[c] = parts;
         (lv.water[c], lv.wdepth[c]) = wet.map_or((f64::NAN, f64::NAN), |w| (w.0, w.1));
         lv.wwet[c] = wet.map_or(-1, |w| w.2 as i64);
@@ -340,7 +348,8 @@ pub(super) fn top_cut(lv: &mut Level, edges: &[Edge], p: &Params) {
 
 /// What a level's carve at one cell came to.
 struct Carve {
-    cut: f64,
+    /// The cut at each of its vertices.
+    cut: [f64; 3],
     /// The sample governing the cell's valley, and how far off, in tiles.
     governing: Option<(Sample, f64)>,
     /// The water standing over the cell, its depth, and the river vertex
@@ -368,7 +377,11 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             let (cq, cr) = (cq / at.len().max(1) as f64, cr / at.len().max(1) as f64);
             let (cx, cy) = world(cq, cr);
             let radius = at.iter().map(|&(q, r)| world(q, r)).map(|(x, y)| (x - cx).hypot(y - cy)).fold(0.0, f64::max) + wf;
-            let high = own.iter().map(|&c| view.ground[c]).filter(|g| g.is_finite()).fold(f64::NEG_INFINITY, f64::max);
+            let high = own
+                .iter()
+                .flat_map(|&c| view.own_vertices(c).map(|(_, v)| view.ground[v]).collect::<Vec<_>>())
+                .filter(|g| g.is_finite())
+                .fold(f64::NEG_INFINITY, f64::max);
             let mut beds = Vec::new();
             band.within(cq, cr, band.far + radius, &mut beds);
             beds.retain(|s| {
@@ -385,11 +398,13 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
     let found = in_parallel(&index, |near, x| {
         let (b, c) = jobs[x];
         let (i, j) = view.ij(c);
-        let none = Carve { cut: 0.0, governing: None, water: None, parts: 0 };
+        let none = Carve { cut: [0.0; 3], governing: None, water: None, parts: 0 };
         if !p.water {
             return none;
         }
-        let (q, r) = ((i * w) as f64, (j * w) as f64);
+        // Every vertex of a cell reads the beds its centre reads: the reach
+        // a deform clears is measured from the cells it holds.
+        let (q, r) = vertex_tiles(0, i, j, w);
         let (x, y) = world(q, r);
         near.clear();
         near.extend(blocks[b].1.iter().filter(|s| {
@@ -397,6 +412,11 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             d > s.near && d <= s.far
         }));
         let near: &[Sample] = near;
+        let mut cut = [0.0; 3];
+        for (t, v) in view.own_vertices(c) {
+            let (vq, vr) = vertex_tiles(t, i, j, w);
+            cut[t as usize] = cut_at(near, vq, vr, view.carved[v], view.ground[v]);
+        }
         let (ground, carved) = (view.ground[c], view.carved[c]);
         let bed = standing(&near, q, r, w);
         let parts = wet_children(&near, w, i, j);
@@ -408,13 +428,15 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             }
         };
         let Some((_, governing, d)) = valley(&near, q, r) else {
-            return Carve { cut: carved - ground, water: water((carved + 0.5).floor()), parts, ..none };
+            return Carve { cut, water: water((carved + 0.5).floor()), parts, ..none };
         };
-        let cut = cut_of(&near, w, i, j, carved, ground);
-        Carve { cut, governing: Some((governing, d)), water: water((ground + cut + 0.5).floor()), parts }
+        Carve { cut, governing: Some((governing, d)), water: water((ground + cut[0] + 0.5).floor()), parts }
     });
     for (&(_, c), k) in jobs.iter().zip(found) {
-        lv.cut[c] = k.cut;
+        let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
+        for (t, v) in vertices {
+            lv.cut[v] = k.cut[t as usize];
+        }
         lv.wdist[c] = k.governing.map_or(f64::INFINITY, |(_, d)| d / wf);
         lv.wborn[c] = k.governing.map_or(-1, |(s, _)| s.born);
         lv.wsrc[c] = k.governing.map_or(-1, |(s, _)| s.w);
@@ -427,16 +449,16 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
     }
 }
 
-/// The cut at each of `cells` from every river of `edges`, however far: the
-/// valley a level would cut with no ring, met by its carved ground and
-/// averaged over the cell.
+/// The cut at the centre of each of `cells` from every river of `edges`,
+/// however far: the valley a level would cut with no ring, met by its
+/// carved ground.
 #[cfg(feature = "inspect")]
 pub(super) fn whole_cut(lv: &Level, edges: &[Edge], cells: &[usize], p: &Params) -> Vec<f64> {
     let all = Band::new(lv.w, edges, -1.0, f64::INFINITY, p).all();
-    let w = lv.w;
     in_parallel(cells, |_, c| {
         let (i, j) = lv.ij(c);
-        cut_of(&all, w, i, j, lv.carved[c], lv.ground[c])
+        let (q, r) = vertex_tiles(0, i, j, lv.w);
+        cut_at(&all, q, r, lv.carved[c], lv.ground[c])
     })
 }
 

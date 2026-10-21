@@ -25,20 +25,6 @@ pub fn descendants(w: i64, depth: u32) -> Vec<(i64, i64)> {
 /// The neighbours of a cell.
 pub const NB: [(i64, i64); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
 
-/// An axis child sits at the centroid of the fan between these two of its
-/// parent's corners.
-pub fn axis_fan(oi: i64, oj: i64) -> Option<(usize, usize)> {
-    match (oi, oj) {
-        (1, 0) => Some((0, 1)),
-        (0, 1) => Some((1, 2)),
-        (-1, 1) => Some((2, 3)),
-        (-1, 0) => Some((3, 4)),
-        (0, -1) => Some((4, 5)),
-        (1, -1) => Some((5, 0)),
-        _ => None,
-    }
-}
-
 /// A cell's parent one level up and its offset from three times that parent.
 /// The nine offsets fall in the nine residue pairs mod 3, one each.
 pub fn parent_of(i: i64, j: i64) -> (i64, i64, i64, i64) {

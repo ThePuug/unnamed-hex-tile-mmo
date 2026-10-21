@@ -58,7 +58,7 @@ const FOLLOW: usize = 12;
 /// highest ground on the way from an outlet, then its own key.
 struct Flood {
     level: f64,
-    key: (f64, f64, i64, i64),
+    key: (f64, i64, i64),
     x: usize,
 }
 
@@ -79,7 +79,7 @@ impl PartialOrd for Flood {
 impl Ord for Flood {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let (a, b) = (self.key, other.key);
-        self.level.total_cmp(&other.level).then(a.0.total_cmp(&b.0)).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)).then(a.3.cmp(&b.3))
+        self.level.total_cmp(&other.level).then(a.0.total_cmp(&b.0)).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2))
     }
 }
 
@@ -185,7 +185,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     let mut known = vec![false; nv];
     let mut sink = vec![false; nv];
     let mut decided = vec![false; nv];
-    let mut key = vec![(0.0f64, 0.0f64, 0i64, 0i64); nv];
+    let mut key = vec![(0.0f64, 0i64, 0i64); nv];
     let mut at = vec![(0.0f64, 0.0f64); nv];
     let mut pos = vec![(0i64, 0i64); nv];
     for (x, &v) in vids.iter().enumerate() {
@@ -193,17 +193,17 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         let (cells, m) = vertex_cells(t, i, j);
         known[x] = cells[..m].iter().all(|&(a, bb)| lv.idx(a, bb).is_none_or(|c| stamp[c] == cur && lv.supplied[c]));
         let (q3, r3) = pos3(t, i, j, w);
-        key[x] = (lv.gelev[v], lv.psurf[v], 2 * r3 + q3, q3);
+        key[x] = (lv.carved[v], 2 * r3 + q3, q3);
         at[x] = xy(q3, r3);
         pos[x] = (q3, r3);
-        if known[x] && lv.gdry[v] < 0.0 {
+        if known[x] && lv.ground[v] < 0.0 {
             sink[x] = true;
             decided[x] = true;
         }
     }
     let less = |a: usize, b: usize| -> bool {
         let (x, y) = (key[a], key[b]);
-        x.0.total_cmp(&y.0).then(x.1.total_cmp(&y.1)).then(x.2.cmp(&y.2)).then(x.3.cmp(&y.3)).is_lt()
+        x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)).then(x.2.cmp(&y.2)).is_lt()
     };
     let mut rec: Vec<Option<usize>> = vec![None; nv];
     let mut recg = vec![-1i64; nv];
@@ -607,7 +607,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             let tiles = (at[x].0 - at[y].0).hypot(at[x].1 - at[y].1) / crate::SQRT_3;
             let up = graded[y] + graded_slope(acc[x], lv.erod[v % nn], p) * tiles;
             src_graded[x].min(up).max(graded[y])
-        } else if sink[x] && lv.gdry[v] < 0.0 {
+        } else if sink[x] && lv.ground[v] < 0.0 {
             0.0
         } else {
             f64::NAN
@@ -624,7 +624,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             }
             let v = vids[x];
             let c = v % nn;
-            drained(lv.gdry[v], graded[x], lv.age[c], lv.erod[c], room(x), p)
+            drained(lv.ground[v], graded[x], lv.age[c], lv.erod[c], room(x), p)
         })
         .collect();
     let mut low = vec![f64::INFINITY; nv];

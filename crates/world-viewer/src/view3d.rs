@@ -609,7 +609,7 @@ fn timings<G: world::ladder::Ground>(ladder: &world::ladder::Ladder<'_, G>) -> S
         STAGES.iter().map(|s| format!("{s:>9}")).collect::<String>()
     );
     for (lv, t) in ladder.levels.iter().zip(&ladder.timing) {
-        let cells = [count(&lv.layers[0], |v| !v.is_nan()), count(&lv.routed, |&b| b), count(&lv.watered, |&b| b)];
+        let cells = [count(&lv.erod, |v| !v.is_nan()), count(&lv.routed, |&b| b), count(&lv.watered, |&b| b)];
         let nn = lv.cap();
         let mut digest = 0xcbf2_9ce4_8422_2325u64;
         for c in lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed[c]) {
