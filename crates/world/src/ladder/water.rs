@@ -122,6 +122,38 @@ pub fn plain(bed: f64, catchment: f64, erodibility: f64, age: f64, p: &Params) -
     bed * gentler.max(1.0) * crate::tectonic::aged(age)
 }
 
+/// How many half bends a trough edge winds in and how far its bed swings
+/// to either side, in tiles, as a finer level reads it: none but where its
+/// trough was born at the edge's level, since a river winds once and every
+/// level below follows the valley it reads. A river's meander is eleven
+/// channel widths long, so the edge bends a whole number of half meanders,
+/// at least one, zero at both ends; it swings a quarter meander, no further
+/// than its plain leaves room beside the bed, than half a bend's length or
+/// than a cell of its level, the margin a reader routes it past its reach,
+/// so a gorge, whose plain is its bed, runs straight. Which way the first
+/// bend turns, and how far of that it swings, is drawn from the edge's
+/// start. A level's own beds run
+/// straight between its vertices, which are too far apart to show a bend.
+fn meander(e: &Edge, length: f64, bed: f64, plain: f64) -> (u32, f64) {
+    if e.born != e.w || length <= 0.0 {
+        return (0, 0.0);
+    }
+    let wave = 11.0 * 2.0 * bed;
+    let bows = ((length / (0.5 * wave)).round() as u32).max(1);
+    let swing = (0.25 * wave).min(plain - bed).min(0.5 * length / bows as f64).min(e.w as f64);
+    if swing <= 0.0 {
+        return (0, 0.0);
+    }
+    let start = ((3.0 * e.from.0).round() as i64, (3.0 * e.from.1).round() as i64);
+    let draw = crate::noise::hash_f64(start.0, start.1, MEANDER_SEED);
+    // Which way it turns, and how far of its room it swings, half to all.
+    let turn = if draw < 0.5 { 1.0 } else { -1.0 };
+    let share = 0.5 + (2.0 * draw).fract() * 0.5;
+    (bows, turn * share * swing)
+}
+
+const MEANDER_SEED: u64 = 0x4d65_616e_6465_7273; // "Meanders"
+
 /// How deep a river's water stands, in levels, its channel cut that far
 /// below its floor: a level, and a level more for each two tiles of its
 /// half width past the first.
@@ -216,16 +248,24 @@ impl Band {
             // quarter of the plain they bound, so a floor's edge follows
             // its river, and never closer than half the reader's width or
             // two tiles, nor sparser than its own.
-            let spacing = if read >= e.w {
+            let length = (x1 - x0).hypot(y1 - y0);
+            let (bows, swing) = if read < e.w { meander(e, length, bed(e.flow, p), e.plains.0.min(e.plains.1)) } else { (0, 0.0) };
+            let mut spacing = if read >= e.w {
                 0.5 * e.w as f64
             } else {
                 (0.25 * e.plains.0.min(e.plains.1)).max(0.5 * read as f64).max(2.0).min(0.5 * e.w as f64)
             };
-            let ns = 2usize.max(((x1 - x0).hypot(y1 - y0) / spacing).ceil() as usize + 1);
+            if bows > 0 {
+                spacing = spacing.min(length / (4.0 * bows as f64));
+            }
+            let ns = 2usize.max((length / spacing).ceil() as usize + 1);
+            let (px, py) = if length > 0.0 { (-(y1 - y0) / length, (x1 - x0) / length) } else { (0.0, 0.0) };
             for s in 0..ns {
                 let f = s as f64 / (ns - 1) as f64;
-                let (q, r) = (q0 + (q1 - q0) * f, r0 + (r1 - r0) * f);
-                let (x, y) = world(q, r);
+                let off = swing * (std::f64::consts::PI * bows as f64 * f).sin();
+                let (x, y) = (x0 + (x1 - x0) * f + px * off, y0 + (y1 - y0) * f + py * off);
+                let q = x * 2.0 / SQRT_3;
+                let r = y - q / 2.0;
                 let floor = e.floors.0 + (e.floors.1 - e.floors.0) * f;
                 cells.entry(cube_round(q / wf, r / wf)).or_default().push(Sample {
                     x,
