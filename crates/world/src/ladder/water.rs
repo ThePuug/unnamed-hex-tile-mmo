@@ -178,18 +178,18 @@ impl Band {
         Band { w, far, cells }
     }
 
-    /// Every sample within `reach` tiles of a position in tiles.
-    fn within(&self, q: f64, r: f64, reach: f64) -> Vec<Sample> {
+    /// Every sample within `reach` tiles of a position in tiles, in place
+    /// of what `out` held.
+    fn within(&self, q: f64, r: f64, reach: f64, out: &mut Vec<Sample>) {
         let wf = self.w as f64;
         let (ci, cj) = cube_round(q / wf, r / wf);
         let (x, y) = world(q, r);
         let k = (reach / wf).ceil() as i64 + 1;
-        let mut out = Vec::new();
+        out.clear();
         for (di, dj, _) in hex_offsets(k) {
             let Some(samples) = self.cells.get(&(ci + di, cj + dj)) else { continue };
             out.extend(samples.iter().filter(|s| (s.x - x).hypot(s.y - y) <= reach));
         }
-        out
     }
 
     fn all(&self) -> Vec<Sample> {
@@ -318,15 +318,16 @@ pub(super) fn top_cut(lv: &mut Level, edges: &[Edge], p: &Params) {
     let beds = Band::new(w, edges, -1.0, radius, p);
     let cells: Vec<usize> = (0..lv.cap()).filter(|&c| lv.exists[c]).collect();
     let view: &Level = lv;
-    let cuts = in_parallel(&cells, |c| {
+    let cuts = in_parallel(&cells, |near, c| {
         let (i, j) = view.ij(c);
         if !p.water {
             return (0.0, None, 0);
         }
         let (q, r) = ((i * w) as f64, (j * w) as f64);
-        let near = beds.within(q, r, radius);
-        let cut = cut_of(&near, w, i, j, view.ground[c], view.ground[c]);
-        (cut, on_carve(standing(&near, q, r, w), (view.ground[c] + cut + 0.5).floor()), wet_children(&near, w, i, j))
+        beds.within(q, r, radius, near);
+        let near: &[Sample] = near;
+        let cut = cut_of(near, w, i, j, view.ground[c], view.ground[c]);
+        (cut, on_carve(standing(near, q, r, w), (view.ground[c] + cut + 0.5).floor()), wet_children(near, w, i, j))
     });
     for (&c, (cut, wet, parts)) in cells.iter().zip(cuts) {
         lv.cut[c] = cut;
@@ -368,22 +369,20 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             let (cx, cy) = world(cq, cr);
             let radius = at.iter().map(|&(q, r)| world(q, r)).map(|(x, y)| (x - cx).hypot(y - cy)).fold(0.0, f64::max) + wf;
             let high = own.iter().map(|&c| view.ground[c]).filter(|g| g.is_finite()).fold(f64::NEG_INFINITY, f64::max);
-            let beds: Vec<Sample> = band
-                .within(cq, cr, band.far + radius)
-                .into_iter()
-                .filter(|s| {
-                    let d = (s.x - cx).hypot(s.y - cy);
-                    d + radius > s.near && d - radius <= s.far && s.floor - depth(s.bed) + s.slope * (d - radius - s.bed).max(0.0) < high
-                })
-                .collect();
+            let mut beds = Vec::new();
+            band.within(cq, cr, band.far + radius, &mut beds);
+            beds.retain(|s| {
+                let d = (s.x - cx).hypot(s.y - cy);
+                d + radius > s.near && d - radius <= s.far && s.floor - depth(s.bed) + s.slope * (d - radius - s.bed).max(0.0) < high
+            });
             (own.clone(), beds)
         })
         .collect();
     let each: Vec<usize> = (0..lists.len()).collect();
-    let lakes = in_parallel(&each, |b| cell_lakes(view, &lists[b].1));
+    let lakes = in_parallel(&each, |_, b| cell_lakes(view, &lists[b].1));
     let jobs: Vec<(usize, usize)> = blocks.iter().enumerate().flat_map(|(b, (own, _))| own.iter().map(move |&c| (b, c))).collect();
     let index: Vec<usize> = (0..jobs.len()).collect();
-    let found = in_parallel(&index, |x| {
+    let found = in_parallel(&index, |near, x| {
         let (b, c) = jobs[x];
         let (i, j) = view.ij(c);
         let none = Carve { cut: 0.0, governing: None, water: None, parts: 0 };
@@ -392,15 +391,12 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
         }
         let (q, r) = ((i * w) as f64, (j * w) as f64);
         let (x, y) = world(q, r);
-        let near: Vec<Sample> = blocks[b]
-            .1
-            .iter()
-            .filter(|s| {
-                let d = (s.x - x).hypot(s.y - y);
-                d > s.near && d <= s.far
-            })
-            .copied()
-            .collect();
+        near.clear();
+        near.extend(blocks[b].1.iter().filter(|s| {
+            let d = (s.x - x).hypot(s.y - y);
+            d > s.near && d <= s.far
+        }));
+        let near: &[Sample] = near;
         let (ground, carved) = (view.ground[c], view.carved[c]);
         let bed = standing(&near, q, r, w);
         let parts = wet_children(&near, w, i, j);
@@ -438,18 +434,28 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
 pub(super) fn whole_cut(lv: &Level, edges: &[Edge], cells: &[usize], p: &Params) -> Vec<f64> {
     let all = Band::new(lv.w, edges, -1.0, f64::INFINITY, p).all();
     let w = lv.w;
-    in_parallel(cells, |c| {
+    in_parallel(cells, |_, c| {
         let (i, j) = lv.ij(c);
         cut_of(&all, w, i, j, lv.carved[c], lv.ground[c])
     })
 }
 
-/// `f` over every item, on every thread, in order.
-pub(super) fn in_parallel<T: Send>(items: &[usize], f: impl Fn(usize) -> T + Sync) -> Vec<T> {
+/// `f` over every item, on every thread, in order, each thread handing it
+/// one list for the beds near an item, kept from item to item: Windows'
+/// heap queues a list that size from every thread behind one lock.
+fn in_parallel<T: Send>(items: &[usize], f: impl Fn(&mut Vec<Sample>, usize) -> T + Sync) -> Vec<T> {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let chunk = items.len().div_ceil(threads).max(1);
     std::thread::scope(|s| {
-        let handles: Vec<_> = items.chunks(chunk).map(|part| s.spawn(|| part.iter().map(|&c| f(c)).collect::<Vec<T>>())).collect();
+        let handles: Vec<_> = items
+            .chunks(chunk)
+            .map(|part| {
+                s.spawn(|| {
+                    let mut near = Vec::new();
+                    part.iter().map(|&c| f(&mut near, c)).collect::<Vec<T>>()
+                })
+            })
+            .collect();
         handles.into_iter().flat_map(|h| h.join().expect("a water thread")).collect()
     })
 }
