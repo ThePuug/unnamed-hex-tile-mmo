@@ -15,7 +15,7 @@
 //!
 //! - **ground**: the ground read at each vertex, a cell's centre and its
 //!   corners A and B ([`Ground::at`]): the level's dry ground. Over it the
-//!   level above's carve there ([`Level::carve_at`]): its carved ground.
+//!   level above's carve there ([`Level::carved_at`]): its carved ground.
 //! - **route**: every vertex's receiver downhill on the carved ground, its
 //!   catchment, and the level's troughs: the level above's rivers run on
 //!   from its nodes, and troughs born at the level ([`route`]). A
@@ -68,7 +68,7 @@
 //! corners lie between tiles and take the mean of the three around each. A
 //! level hands its carve down as flat triangles from each cell's centre to
 //! two of its corners, every vertex its own value, linear between
-//! ([`Level::carve_at`]), so a triangle never dips below its corners and a
+//! ([`Level::carved_at`]), so a triangle never dips below its corners and a
 //! river along its edges reaches the level below at its full depth.
 //! The corner rule, faces as walls, is the drawing's alone: meshes, physics
 //! and summaries draw a level's cells by it (`common::corner`) from their
@@ -265,7 +265,7 @@ pub struct Level {
     /// the mean of the three tiles sharing each.
     pub ground: Paged<f64>,
     /// The carved ground at each vertex: its ground with the level above's
-    /// carve there ([`Level::carve_at`]). What routing reads.
+    /// carve there ([`Level::carved_at`]). What routing reads.
     pub carved: Paged<f64>,
     /// The level's carve at each vertex: its valleys met by its carved
     /// ground, less the ground; never above the carved ground.
@@ -543,18 +543,27 @@ impl Level {
             .map(|(a, b, t)| self.idx(a, b).filter(|&c| self.exists[c] && self.built[c]).map(|c| t * nn + c))
     }
 
-    /// The level's carve at a position in tiles, what it hands the level
-    /// below: each vertex's height less its dry height, flat across the
-    /// triangles from the centre of the cell under it to two of its
-    /// corners, the centre's where a corner has none. NaN where the level
-    /// has not built that cell.
-    pub fn carve_at(&self, q: f64, r: f64) -> f64 {
+    /// What the level hands the level below of its carve, at a position
+    /// in tiles where the level below's ground stands at `ground`: that
+    /// ground lowered by the level's cut there, its heights less its dry
+    /// heights, but never below the level's own carved height there, nor
+    /// below the ground. A valley is an absolute height: a finer level's
+    /// ground lower than this level's dry ground is never cut deeper for
+    /// it. Both surfaces are flat across the triangles from the centre of
+    /// the cell under the position to two of its corners, the centre's
+    /// where a corner has none. NaN where the level has not built that
+    /// cell.
+    pub fn carved_at(&self, q: f64, r: f64, ground: f64) -> f64 {
         let (i, j) = cube_round(q / self.w as f64, r / self.w as f64);
         let Some(c) = self.idx(i, j).filter(|&c| self.exists[c] && self.built[c]) else { return f64::NAN };
-        let carve = |v: usize| self.z[v] - self.zd[v];
-        let centre = carve(c);
-        let cc = self.corner_vertices(i, j).map(|v| v.map(carve).filter(|h| !h.is_nan()).unwrap_or(centre));
-        fan_at(self.w, i, j, centre, &cc, q, r)
+        let corners = self.corner_vertices(i, j);
+        let surface = |of: &Paged<f64>| {
+            let centre = of[c];
+            let cc = corners.map(|v| v.map(|v| of[v]).filter(|h| !h.is_nan()).unwrap_or(centre));
+            fan_at(self.w, i, j, centre, &cc, q, r)
+        };
+        let (carved, dry) = (surface(&self.z), surface(&self.zd));
+        (carved + ground - dry).max(carved.min(ground))
     }
 
     /// The vertices of cell `c` the level holds values at: its centre and
@@ -832,7 +841,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
             for (t, v) in vertices {
                 let (q3, r3) = pos3(t, i, j, lv.w);
-                lv.carved[v] = lv.ground[v] + par.carve_at(q3 as f64 / 3.0, r3 as f64 / 3.0);
+                lv.carved[v] = par.carved_at(q3 as f64 / 3.0, r3 as f64 / 3.0, lv.ground[v]);
             }
             lv.supplied[c] = true;
         }
