@@ -93,6 +93,7 @@ struct Decided {
     acc: f64,
     flow: f64,
     graded: f64,
+    room: f64,
     floor: f64,
     born: i64,
 }
@@ -149,6 +150,7 @@ pub(super) fn route_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], p: 
             lv.acc[d.v] = d.acc;
             lv.flow[d.v] = d.flow;
             lv.graded[d.v] = d.graded;
+            lv.room[d.v] = d.room;
             lv.floor[d.v] = d.floor;
             lv.born[d.v] = d.born;
         }
@@ -671,6 +673,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             acc: acc[x],
             flow: flow[x],
             graded: graded[x],
+            room: room(x),
             floor: (flo[x] + 0.5).floor(),
             born: if trough[x] { born[x] } else { -1 },
         });

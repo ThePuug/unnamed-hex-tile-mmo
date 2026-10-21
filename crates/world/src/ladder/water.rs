@@ -1,8 +1,9 @@
 //! Water: one target surface, the valley drainage's law cuts: a channel
 //! along each trough, as wide as its catchment makes it, its water standing
-//! at the trough's floor and its bed cut [`depth`] below that, and walls
-//! rising from the bed at water's slope in the rock they stand in, out to
-//! where they meet the ground. The water fills its valley to the floor:
+//! at the trough's floor and its bed cut [`depth`] below that, walls rising
+//! from the bed at water's slope in the rock they stand in, the plain a
+//! step above the water out to its own width ([`plain`]), and walls rising
+//! from there to where they meet the ground. The water fills its valley to the floor:
 //! out over the bed and up the walls to where they climb to it, so it
 //! meets its banks at its own height.
 //!
@@ -44,6 +45,11 @@ pub(super) struct Edge {
     erod: f64,
     /// The vertex the edge leaves, as an index of its level.
     src: usize,
+    /// That vertex's catchment, in tiles, its plate's age, and how far its
+    /// hillslopes run to the nearer divide, in tiles.
+    acc: f64,
+    age: f64,
+    room: f64,
     /// The width of the level the edge is drawn at, which spaces its samples.
     w: i64,
 }
@@ -65,11 +71,16 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask) -> Vec<Edge> {
             Edge {
                 from: tiles(lv, v),
                 to: tiles(lv, to),
-                floors: (lv.floor[v], lv.floor[to]),
+                // The sea is every river's base level: a floor running out
+                // over the sea floor stands at the sea.
+                floors: (lv.floor[v].max(0.0), lv.floor[to].max(0.0)),
                 flow: lv.flow[v],
                 born: lv.born[v],
                 erod: rock(lv, v),
                 src: v,
+                acc: lv.acc[v],
+                age: lv.age[v % nn],
+                room: lv.room[v],
                 w: lv.w,
             }
         })
@@ -94,6 +105,17 @@ pub fn bed(flow: f64, p: &Params) -> f64 {
     1.5 * (flow / p.catchment_full).max(0.0).sqrt()
 }
 
+/// The half width of a river's flat floor, in tiles: its bed's, times
+/// how much gentler its graded fall is than a channel head's, times how
+/// far its plate's age has carried erosion. A river cuts down as fast as
+/// it falls and wanders sideways at a pace its fall does not slow, so a
+/// steep one cuts a gorge no wider than its bed and a gentle one planes a
+/// floor many beds wide.
+pub fn plain(bed: f64, catchment: f64, erodibility: f64, age: f64, p: &Params) -> f64 {
+    let gentler = super::HEAD_SLOPE / super::graded_slope(catchment, erodibility, p);
+    bed * gentler.max(1.0) * crate::tectonic::aged(age)
+}
+
 /// How deep a river's water stands, in levels, its channel cut that far
 /// below its floor: a level, and a level more for each two tiles of its
 /// half width past the first.
@@ -115,6 +137,16 @@ fn standing(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, f64, usize)
         .min_by(|a, b| a.0.total_cmp(&b.0))
 }
 
+/// A bed's valley `d` tiles from it: the channel, its walls rising from
+/// the bed, and its plain, a step above the river's water out to the
+/// plain's width with walls rising from there, whichever stands lower. A
+/// plain no wider than the bed leaves the channel's walls running on up.
+fn profile(s: &Sample, d: f64) -> f64 {
+    let channel = s.floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
+    let plain = s.floor + 1.0 + s.slope * (d - s.plain).max(0.0);
+    channel.min(plain)
+}
+
 /// A point of a trough's bed: its position in world units a tile apart,
 /// its floor, its half width, the width of the level its trough was born
 /// at and of the level it was read from, and how far from a cell that
@@ -125,6 +157,8 @@ struct Sample {
     y: f64,
     floor: f64,
     bed: f64,
+    /// The half width of its flat floor, the bed's or wider.
+    plain: f64,
     born: i64,
     /// Its wall's slope: the rock's at its river vertex.
     slope: f64,
@@ -166,6 +200,7 @@ impl Band {
                     y,
                     floor,
                     bed: bed(e.flow, p),
+                    plain: plain(bed(e.flow, p), e.acc, e.erod, e.age, p).min(e.room.max(bed(e.flow, p))),
                     born: e.born,
                     slope: wall_slope(e.erod, p.wall),
                     src: e.src,
@@ -206,7 +241,7 @@ fn valley(beds: &[Sample], q: f64, r: f64) -> Option<(f64, Sample, f64)> {
     let mut best: Option<(f64, Sample, f64)> = None;
     for s in beds {
         let d = (s.x - x).hypot(s.y - y);
-        let v = s.floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
+        let v = profile(s, d);
         if best.is_none_or(|b| v < b.0) {
             best = Some((v, *s, d));
         }
@@ -386,7 +421,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             band.within(cq, cr, band.far + radius, &mut beds);
             beds.retain(|s| {
                 let d = (s.x - cx).hypot(s.y - cy);
-                d + radius > s.near && d - radius <= s.far && s.floor - depth(s.bed) + s.slope * (d - radius - s.bed).max(0.0) < high
+                d + radius > s.near && d - radius <= s.far && profile(s, (d - radius).max(0.0)) < high
             });
             (own.clone(), beds)
         })

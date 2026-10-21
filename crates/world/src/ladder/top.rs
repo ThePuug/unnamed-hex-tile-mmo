@@ -249,6 +249,7 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         lv.rec[v] = rec[v];
         lv.acc[v] = acc[v];
         lv.graded[v] = graded[v];
+        lv.room[v] = room(v);
         lv.flow[v] = flow[v];
         lv.trough[v] = trough[v];
         lv.floor[v] = (floor[v] + 0.5).floor();

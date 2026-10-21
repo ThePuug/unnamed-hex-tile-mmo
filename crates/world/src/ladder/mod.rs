@@ -313,6 +313,9 @@ pub struct Level {
     /// from there, read from no ground. What its floor cuts toward, and
     /// what a river hands down at its nodes with its catchment.
     pub graded: Paged<f64>,
+    /// How far each vertex's hillslopes run to the nearer divide, in
+    /// tiles: what a floor may widen into.
+    pub room: Paged<f64>,
     /// The rain that land gathers, in tiles of full rain: what the water
     /// drawn carries.
     pub flow: Paged<f64>,
@@ -368,6 +371,7 @@ impl Level {
             trough: Paged::new(false, 3 * cells),
             acc: Paged::new(0.0, 3 * cells),
             graded: nan(3 * cells),
+            room: nan(3 * cells),
             flow: Paged::new(0.0, 3 * cells),
             floor: nan(3 * cells),
             supplied: Paged::new(false, cells),
