@@ -218,7 +218,9 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         graded[v] = if rec[v] < 0 {
             if lv.z[v] < 0.0 { 0.0 } else { f64::NAN }
         } else if flooded(v) {
-            filled[v]
+            // The sea is every river's base level: ground flooded below it
+            // drains to the sea's.
+            filled[v].max(0.0)
         } else {
             let r = rec[v] as usize;
             let tiles = (pos[v].0 - pos[r].0).hypot(pos[v].1 - pos[r].1) / crate::SQRT_3;

@@ -598,15 +598,18 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     // below its receiver's. Water leaving by the footprint's edge or the
     // level's runs to an outlet the block cannot see: its profile is not
     // known, and it cuts nothing.
+    // The sea is every river's base level: a lake below it is the sea's. A
+    // profile not known stays unknown.
+    let above_sea = |g: f64| if g < 0.0 { 0.0 } else { g };
     let mut graded = vec![f64::NAN; nv];
     for &x in order.iter().rev() {
         let v = vids[x];
         graded[x] = if !lake[x].is_nan() {
-            lake[x]
+            above_sea(lake[x])
         } else if let Some(y) = rec[x] {
             let tiles = (at[x].0 - at[y].0).hypot(at[x].1 - at[y].1) / crate::SQRT_3;
             let up = graded[y] + graded_slope(acc[x], lv.erod[v % nn], p) * tiles;
-            src_graded[x].min(up).max(graded[y])
+            above_sea(src_graded[x].min(up).max(graded[y]))
         } else if sink[x] && lv.ground[v] < 0.0 {
             0.0
         } else {
@@ -620,7 +623,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     let mut flo: Vec<f64> = (0..nv)
         .map(|x| {
             if !lake[x].is_nan() {
-                return lake[x];
+                return above_sea(lake[x]);
             }
             let v = vids[x];
             let c = v % nn;
