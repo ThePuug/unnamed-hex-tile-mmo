@@ -228,9 +228,10 @@ pub fn exposed_in(column: &Column, cover: f64, age: f64, structure: f64) -> f64 
 pub const CUESTA_RELIEF: f64 = 8.0;
 
 /// The column depth over which the lowering steps at a contact, in
-/// z-levels: at the platform's dip that is a scarp a few tens of tiles
-/// across, steeper where the beds dip harder.
-pub const CONTACT_RAMP: f64 = 1.0;
+/// z-levels: a sliver, so a hard bed's edge stands as a cliff the height of
+/// its lowering against the weak bed above, along the line the contact
+/// crosses the surface, as a cuesta's caprock does.
+pub const CONTACT_RAMP: f64 = 0.05;
 
 /// The rock at a position, and what it does to the ground there.
 #[derive(Clone, Copy, Debug)]
@@ -354,13 +355,17 @@ mod tests {
     #[test]
     fn weak_rock_is_lowered_and_held_up_by_hard_rock_beneath() {
         let c = Column::of((3, 4), S);
+        let contacts: Vec<f64> = c.beds.iter().scan(0.0, |top, b| { *top += b.1; Some(*top) }).collect();
         let mut last = c.lowering(0.0);
         let mut steps = 0;
         let mut d = 0.0;
         while d < c.total + 20.0 {
             let l = c.lowering(d);
             assert!(l >= 0.0 && l <= CUESTA_RELIEF + 1e-9, "lowering {l} at {d}");
-            assert!((l - last).abs() < 0.6, "a step of {} in the lowering at {d}", (l - last).abs());
+            // Off a contact the lowering runs on; at one it may step, a cliff.
+            if !contacts.iter().any(|&t| (d - t).abs() < 0.1 + CONTACT_RAMP || (d - 0.1 - t).abs() < 0.1 + CONTACT_RAMP) {
+                assert!((l - last).abs() < 0.6, "a step of {} in the lowering at {d} off any contact", (l - last).abs());
+            }
             last = l;
             d += 0.1;
             steps += 1;
