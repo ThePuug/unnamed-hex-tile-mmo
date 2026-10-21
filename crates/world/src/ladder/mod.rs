@@ -180,11 +180,18 @@ const PASSES: [Pass; 3] = [Pass::Ground, Pass::Water, Pass::Route];
 /// `erodibility` falling `slope` steps per tile: where a channel begins
 /// there, [`cut_head`] at [`HEAD_SLOPE`] and growing as the square of how
 /// much flatter the ground is, since a channel begins where catchment ×
-/// slope² reaches a threshold; and never less than two of the level's
-/// cells, the narrowest trough a level resolves.
+/// slope² reaches a threshold, but no flatter than [`FLAT_SLOPE`]; and
+/// never less than two of the level's cells, the narrowest trough a level
+/// resolves.
 pub fn head_of(w: i64, erodibility: f64, slope: f64, p: &Params) -> f64 {
-    (cut_head(erodibility, p) * (HEAD_SLOPE / slope.max(1e-9)).powi(2)).max(2.0 * (w * w) as f64)
+    (cut_head(erodibility, p) * (HEAD_SLOPE / slope.max(FLAT_SLOPE)).powi(2)).max(2.0 * (w * w) as f64)
 }
+
+/// The slope below which a channel begins at the catchment it would at
+/// this one, in steps per tile, a gradient of about a tenth: on flatter
+/// ground water gathers until the ground is saturated, and a channel
+/// begins where enough land drains, whatever the slope.
+pub const FLAT_SLOPE: f64 = 0.2;
 
 /// The catchment at which a channel begins to cut on rock of
 /// `erodibility`: a hard rock needs proportionally more water.
