@@ -137,14 +137,25 @@ fn standing(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, f64, usize)
         .min_by(|a, b| a.0.total_cmp(&b.0))
 }
 
-/// A bed's valley `d` tiles from it: the channel, its walls rising from
-/// the bed, and its plain, a step above the river's water out to the
-/// plain's width with walls rising from there, whichever stands lower. A
-/// plain no wider than the bed leaves the channel's walls running on up.
-fn profile(s: &Sample, d: f64) -> f64 {
+/// How tall a cliff band stands in rock that holds a wall steeper than
+/// the angle of repose, in steps: the thinnest formation of a rock column,
+/// each holding its face over a shelf cut back into the weak bed below.
+pub const CLIFF: f64 = 20.0;
+
+/// A bed's valley `d` tiles from it, as a level `w` wide draws it: the
+/// channel, its walls rising from the bed, and its plain, a step above the
+/// river's water out to the plain's width with walls rising from there,
+/// whichever stands lower. A plain no wider than the bed leaves the
+/// channel's walls running on up. A wall in rock that holds steeper than
+/// repose rises as cliff bands [`CLIFF`] tall over flat shelves, keeping
+/// its slope on the whole, where the level's points are close enough to
+/// show a shelf; coarser, it rises evenly.
+fn profile(s: &Sample, d: f64, w: i64) -> f64 {
     let channel = s.floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
-    let plain = s.floor + 1.0 + s.slope * (d - s.plain).max(0.0);
-    channel.min(plain)
+    let rise = s.slope * (d - s.plain).max(0.0);
+    let shelved = s.slope > 1.0 && CLIFF / s.slope >= 2.0 * w as f64;
+    let rise = if shelved { CLIFF * (rise / CLIFF).floor() } else { rise };
+    channel.min(s.floor + 1.0 + rise)
 }
 
 /// A point of a trough's bed: its position in world units a tile apart,
@@ -236,12 +247,12 @@ impl Band {
 /// bed, cut [`depth`] below its floor, and the wall rising from its edge
 /// at the slope of the rock at its river vertex, and the sample governing
 /// it and how far off, in tiles. None over no beds.
-fn valley(beds: &[Sample], q: f64, r: f64) -> Option<(f64, Sample, f64)> {
+fn valley(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, Sample, f64)> {
     let (x, y) = world(q, r);
     let mut best: Option<(f64, Sample, f64)> = None;
     for s in beds {
         let d = (s.x - x).hypot(s.y - y);
-        let v = profile(s, d);
+        let v = profile(s, d, w);
         if best.is_none_or(|b| v < b.0) {
             best = Some((v, *s, d));
         }
@@ -251,8 +262,8 @@ fn valley(beds: &[Sample], q: f64, r: f64) -> Option<(f64, Sample, f64)> {
 
 /// The valley at a position in tiles met by `carved`, the carved ground
 /// there, less `ground`, the dry ground there: a cut.
-fn cut_at(beds: &[Sample], q: f64, r: f64, carved: f64, ground: f64) -> f64 {
-    valley(beds, q, r).map_or(carved, |v| v.0.min(carved)) - ground
+fn cut_at(beds: &[Sample], q: f64, r: f64, w: i64, carved: f64, ground: f64) -> f64 {
+    valley(beds, q, r, w).map_or(carved, |v| v.0.min(carved)) - ground
 }
 
 /// A vertex's position in tiles.
@@ -365,7 +376,7 @@ pub(super) fn top_cut(lv: &mut Level, edges: &[Edge], p: &Params) {
         let near: &[Sample] = near;
         for (t, v) in view.own_vertices(c) {
             let (vq, vr) = vertex_tiles(t, i, j, w);
-            cuts[t as usize] = cut_at(near, vq, vr, view.ground[v], view.ground[v]);
+            cuts[t as usize] = cut_at(near, vq, vr, w, view.ground[v], view.ground[v]);
         }
         (cuts, on_carve(standing(near, q, r, w), (view.ground[c] + cuts[0] + 0.5).floor()), wet_children(near, w, i, j))
     });
@@ -421,7 +432,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             band.within(cq, cr, band.far + radius, &mut beds);
             beds.retain(|s| {
                 let d = (s.x - cx).hypot(s.y - cy);
-                d + radius > s.near && d - radius <= s.far && profile(s, (d - radius).max(0.0)) < high
+                d + radius > s.near && d - radius <= s.far && profile(s, (d - radius).max(0.0), w) < high
             });
             (own.clone(), beds)
         })
@@ -450,7 +461,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
         let mut cut = [0.0; 3];
         for (t, v) in view.own_vertices(c) {
             let (vq, vr) = vertex_tiles(t, i, j, w);
-            cut[t as usize] = cut_at(near, vq, vr, view.carved[v], view.ground[v]);
+            cut[t as usize] = cut_at(near, vq, vr, w, view.carved[v], view.ground[v]);
         }
         let (ground, carved) = (view.ground[c], view.carved[c]);
         let bed = standing(&near, q, r, w);
@@ -462,7 +473,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
                 _ => river,
             }
         };
-        let Some((_, governing, d)) = valley(&near, q, r) else {
+        let Some((_, governing, d)) = valley(&near, q, r, w) else {
             return Carve { cut, water: water((carved + 0.5).floor()), parts, ..none };
         };
         Carve { cut, governing: Some((governing, d)), water: water((ground + cut[0] + 0.5).floor()), parts }
@@ -493,7 +504,7 @@ pub(super) fn whole_cut(lv: &Level, edges: &[Edge], cells: &[usize], p: &Params)
     in_parallel(cells, |_, c| {
         let (i, j) = lv.ij(c);
         let (q, r) = vertex_tiles(0, i, j, lv.w);
-        cut_at(&all, q, r, lv.carved[c], lv.ground[c])
+        cut_at(&all, q, r, lv.w, lv.carved[c], lv.ground[c])
     })
 }
 
