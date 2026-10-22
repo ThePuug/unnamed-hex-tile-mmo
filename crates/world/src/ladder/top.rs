@@ -5,7 +5,8 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use super::geom::{facet, pos3, vnbr, xy};
+use super::geom::{facet, pos3, vnbr, wander, xy};
+use super::route::WALK_SEED;
 use super::{drained, graded_slope, head_of, Level, Params};
 
 /// A vertex waiting in the flood, lowest first, earliest pushed first among
@@ -32,7 +33,7 @@ impl PartialOrd for Waiting {
 /// trough a vertex's water splits between the two neighbours bracketing its
 /// downslope, both nearer the outlet in the flood's order, so a slope drains
 /// in a spread rather than a comb of parallel streams; along a trough it goes
-/// whole to the flood's receiver, so a trough never thins.
+/// whole to its receiver, so a trough never thins.
 pub(super) fn route_top(lv: &mut Level, p: &Params) {
     let nn = lv.cap();
     let count = 3 * nn;
@@ -99,6 +100,28 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     let mut at = vec![usize::MAX; count];
     for (k, &v) in order.iter().enumerate() {
         at[v] = k;
+    }
+    // Each vertex's water wanders: to a neighbour nearer the outlet in the
+    // flood's order, drawn from its position weighted by how steeply the
+    // filled ground falls to each, so on even ground two troughs that meet
+    // are one. Water standing in closed ground leaves by the flood's way.
+    for v in 0..count {
+        if sink[v] || rec[v] < 0 {
+            continue;
+        }
+        let around: Vec<(f64, f64, f64, usize)> = nbr[v]
+            .iter()
+            .filter(|&&u| u >= 0 && live[u as usize] && at[u as usize] < at[v])
+            .map(|&u| {
+                let u = u as usize;
+                (pos[u].0 - pos[v].0, pos[u].1 - pos[v].1, filled[u] - filled[v], u)
+            })
+            .collect();
+        let (t, i, j) = lv.vertex(v);
+        let (q3, r3) = pos3(t, i, j, lv.w);
+        if let Some(u) = wander(&around, crate::noise::hash_f64(q3, r3, WALK_SEED)) {
+            rec[v] = u as i64;
+        }
     }
 
     // Each vertex's split, between two neighbours both nearer the outlet in

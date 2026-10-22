@@ -182,6 +182,33 @@ pub fn facet(around: &mut [(f64, f64, f64, usize)]) -> Option<(usize, usize, f64
     pick
 }
 
+/// One of a vertex's lower neighbours, chosen by `draw` in [0, 1) weighted
+/// by how steeply the ground falls to each, height lost per unit of offset.
+/// Each of `around` is a neighbour's offset from the vertex, its height
+/// less the vertex's, and its id, every one a neighbour water may take;
+/// their order fixes the choice. None where none falls.
+pub fn wander(around: &[(f64, f64, f64, usize)], draw: f64) -> Option<usize> {
+    let fall = |&(dx, dy, dh, _): &(f64, f64, f64, usize)| (-dh / dx.hypot(dy)).max(0.0);
+    let total: f64 = around.iter().map(fall).sum();
+    if total <= 0.0 {
+        return None;
+    }
+    let mut left = draw * total;
+    let mut last = None;
+    for n in around {
+        let f = fall(n);
+        if f <= 0.0 {
+            continue;
+        }
+        last = Some(n.3);
+        if left < f {
+            break;
+        }
+        left -= f;
+    }
+    last
+}
+
 /// The nearest point of a segment to a point: its share along the segment and
 /// its distance, in tiles.
 pub fn project(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
@@ -246,6 +273,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Water wandering down a plane takes every lower neighbour, the
+    /// steeper more often, and never one above it.
+    #[test]
+    fn wandering_water_takes_the_steeper_more_often() {
+        let around: Vec<(f64, f64, f64, usize)> = (0..6)
+            .map(|k| {
+                let a = k as f64 * std::f64::consts::PI / 3.0;
+                (a.cos(), a.sin(), -a.cos(), k)
+            })
+            .collect();
+        let mut taken = [0usize; 6];
+        for n in 0..1000 {
+            taken[wander(&around, n as f64 / 1000.0).expect("a lower neighbour")] += 1;
+        }
+        assert!(taken[0] > taken[1] && taken[1] > 0 && taken[5] > 0, "{taken:?}");
+        assert_eq!(taken[2] + taken[3] + taken[4], 0, "{taken:?}");
+        assert_eq!(wander(&[(1.0, 0.0, 0.0, 0), (0.0, 1.0, 2.0, 1)], 0.5), None);
     }
 
     /// One ring of cells `w` tiles wide clears w/√3 tiles.

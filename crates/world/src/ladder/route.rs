@@ -4,11 +4,12 @@
 //!
 //! Every vertex goes to its lowest neighbour in the strict order (height,
 //! the level above's surface, tilt, position), so water never climbs. Where
-//! troughs are born, it goes instead to one of the two neighbours
-//! bracketing its steepest downslope, both lower, by a draw from its
-//! position weighted by how near the downslope each lies: on even ground
-//! born troughs wander and two that meet are one, as drainage branches; on
-//! a slope the nearer side wins. Below, a river follows its valley.
+//! troughs are born, it goes instead to one of its lower neighbours by a
+//! draw from its position weighted by how steeply the ground falls to
+//! each: on even ground born troughs wander and two that meet are one, as
+//! drainage branches, where a lattice's steepest way would run them side
+//! by side forever; in a valley its walls leave only the way down. Below,
+//! a river follows its valley.
 //!
 //! The level above hands its rivers down as nodes, its trough vertices,
 //! each with its catchment and its graded profile, and no course: levels nest, so each node is one
@@ -26,7 +27,8 @@
 //! A hollow holds a lake: the footprint is flooded from its outlets, the
 //! sea and its edge, lowest water first, so the flood leaves each hollow
 //! over the lowest point of its rim at the level it filled to, and water
-//! that would end in a hollow takes the flood's way out instead. A vertex
+//! that would end in a hollow takes the flood's way out from where it
+//! reaches the lake. A vertex
 //! the flood reached above its own ground stands in the lake at that level.
 //! The river leaving a lake cuts its outlet as it cuts any floor: the
 //! lake's surface is lowered toward its outlet's graded profile, as far
@@ -47,12 +49,12 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::geom::{facet, parent_of, pos3, vertex_cells, vnbr, xy};
+use super::geom::{facet, parent_of, pos3, vertex_cells, vnbr, wander, xy};
 use super::mask::Mask;
 use super::paged::Paged;
 use super::{drained, graded_slope, head_of, Level, Params, Pass};
 
-const WALK_SEED: u64 = 0x5761_6c6b_5f5f_5f5f; // "Walk____"
+pub(super) const WALK_SEED: u64 = 0x5761_6c6b_5f5f_5f5f; // "Walk____"
 
 /// How many of the level's steps the water from the node upstream is
 /// followed looking for a node: four steps of the level above.
@@ -260,11 +262,11 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
                 (false, false) => None,
             };
         }
-        let pick = match split[x] {
-            Some((a, Some(bb), share)) if births => {
-                if crate::noise::hash_f64(pos[x].0, pos[x].1, WALK_SEED) < share { a } else { bb }
-            }
-            _ => y,
+        let pick = if births {
+            around.retain(|n| less(n.3, x));
+            wander(&around, crate::noise::hash_f64(pos[x].0, pos[x].1, WALK_SEED)).unwrap_or(y)
+        } else {
+            y
         };
         rec[x] = Some(pick);
         recg[x] = vids[pick] as i64;
@@ -299,8 +301,9 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     }
     // Where each vertex's water ends going downhill: its own index in a
     // hollow, `usize::MAX` at an outlet or past what was routed. Water
-    // ending in a hollow takes the flood's way out, each step to ground
-    // flooded earlier, so it reaches an outlet.
+    // ending in a hollow takes the flood's way out from where it stands in
+    // the lake or enters it, each step to ground flooded earlier, so it
+    // reaches an outlet; above the lake it keeps its own way down.
     let mut end = vec![usize::MAX - 1; nv];
     for x0 in 0..nv {
         let mut chain = Vec::new();
@@ -320,7 +323,8 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         }
     }
     for x in 0..nv {
-        if end[x] >= nv || came[x] == usize::MAX {
+        let above_lake = lake[x].is_nan() && rec[x].is_none_or(|y| lake[y].is_nan());
+        if end[x] >= nv || came[x] == usize::MAX || above_lake {
             continue;
         }
         rec[x] = Some(came[x]);
