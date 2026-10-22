@@ -323,10 +323,15 @@ fn valley(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, Sample, f64)>
     best
 }
 
-/// The valley at a position in tiles met by `carved`, the carved ground
-/// there, less `ground`, the dry ground there: a cut.
-fn cut_at(beds: &[Sample], q: f64, r: f64, w: i64, carved: f64, ground: f64) -> f64 {
-    valley(beds, q, r, w).map_or(carved, |v| v.0.min(carved)) - ground
+/// The valley at a position in tiles, each bed's at its lowest within
+/// half a step of it, a step the distance between the level's points, met
+/// by `sunk`, the sunk ground there, less `ground`, the dry ground there:
+/// a cut. A point stands for the ground about it, so a valley narrower
+/// than the level's steps draws as a trench, never a row of pits.
+fn cut_at(beds: &[Sample], q: f64, r: f64, w: i64, sunk: f64, ground: f64) -> f64 {
+    let (x, y) = world(q, r);
+    let half_step = w as f64 / SQRT_3 / 2.0;
+    beds.iter().map(|s| profile(s, ((s.x - x).hypot(s.y - y) - half_step).max(0.0), w)).fold(sunk, f64::min) - ground
 }
 
 /// A vertex's position in tiles.
@@ -499,7 +504,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             let (cq, cr) = at.iter().fold((0.0, 0.0), |a, &(q, r)| (a.0 + q, a.1 + r));
             let (cq, cr) = (cq / at.len().max(1) as f64, cr / at.len().max(1) as f64);
             let (cx, cy) = world(cq, cr);
-            let radius = at.iter().map(|&(q, r)| world(q, r)).map(|(x, y)| (x - cx).hypot(y - cy)).fold(0.0, f64::max) + wf;
+            let radius = at.iter().map(|&(q, r)| world(q, r)).map(|(x, y)| (x - cx).hypot(y - cy)).fold(0.0, f64::max) + wf + wf / SQRT_3 / 2.0;
             let high = own
                 .iter()
                 .flat_map(|&c| view.own_vertices(c).map(|(_, v)| view.ground[v]).collect::<Vec<_>>())
@@ -536,7 +541,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
         let mut cut = [0.0; 3];
         for (t, v) in view.own_vertices(c) {
             let (vq, vr) = vertex_tiles(t, i, j, w);
-            cut[t as usize] = cut_at(near, vq, vr, w, view.carved[v], view.ground[v]);
+            cut[t as usize] = cut_at(near, vq, vr, w, view.sunk[v], view.ground[v]);
         }
         let (ground, carved) = (view.ground[c], view.carved[c]);
         let bed = standing(&near, q, r, w);
@@ -580,7 +585,7 @@ pub(super) fn whole_cut(lv: &Level, edges: &[Edge], cells: &[usize], p: &Params)
     in_parallel(cells, |_, c| {
         let (i, j) = lv.ij(c);
         let (q, r) = vertex_tiles(0, i, j, lv.w);
-        cut_at(&all, q, r, lv.w, lv.carved[c], lv.ground[c])
+        cut_at(&all, q, r, lv.w, lv.sunk[c], lv.ground[c])
     })
 }
 

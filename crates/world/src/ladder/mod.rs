@@ -281,8 +281,9 @@ pub struct Level {
     /// routing reads, so a valley narrower than the level's steps runs on
     /// as a course, never a row of hollows.
     pub sunk: Paged<f64>,
-    /// The level's carve at each vertex: its valleys met by its carved
-    /// ground, less the ground; never above the carved ground.
+    /// The level's carve at each vertex: its valleys, each at its lowest
+    /// within half a step, met by its sunk ground, less the ground; never
+    /// above the sunk ground.
     pub cut: Paged<f64>,
     /// How far each cell lies from the river governing its valley, in its
     /// cells; infinite where none reaches it.
