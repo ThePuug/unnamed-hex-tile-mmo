@@ -32,6 +32,11 @@ use crate::{
 /// same time however tall a level stands.
 pub const GRAVITY: f32 = 2.5e-5 * RISE;
 
+/// The fastest a fall drops, in world units per millisecond: gravity
+/// gathers speed to it and no further. Stated in levels, as [`GRAVITY`]
+/// is, and well past a walk down any slope a tile may be entered from.
+pub const TERMINAL_SPEED: f32 = 0.04 * RISE;
+
 /// A jump's ascent: its speed in world units per millisecond, held for
 /// `JUMP_DURATION_MS`, then the fall. A jump climbs one level more than a
 /// step does: a ledge two levels up, never three.
@@ -117,17 +122,24 @@ pub fn is_full_cover(map: &Map, q: i32, r: i32) -> bool {
 }
 
 /// How far a fall `fallen_ms` old drops over its next `dt` milliseconds:
-/// the integral of the speed gravity has built, so a fall sliced any way
-/// drops the same.
+/// the integral of the speed gravity has built up to [`TERMINAL_SPEED`], so
+/// a fall sliced any way drops the same.
 pub fn fall(fallen_ms: f32, dt: f32) -> f32 {
-    GRAVITY * (fallen_ms * dt + dt * dt / 2.0)
+    let gathering = (TERMINAL_SPEED / GRAVITY - fallen_ms).clamp(0.0, dt);
+    GRAVITY * (fallen_ms * gathering + gathering * gathering / 2.0) + TERMINAL_SPEED * (dt - gathering)
 }
 
 /// How long a fall `fallen_ms` old takes to drop `height` more, in
 /// milliseconds.
 pub fn fall_time(height: f32, fallen_ms: f32) -> f32 {
+    let height = height.max(0.0);
+    let gathering = (TERMINAL_SPEED / GRAVITY - fallen_ms).max(0.0);
+    let gathered = fall(fallen_ms, gathering);
+    if height > gathered {
+        return gathering + (height - gathered) / TERMINAL_SPEED;
+    }
     let v = GRAVITY * fallen_ms;
-    ((v * v + 2.0 * GRAVITY * height.max(0.0)).sqrt() - v) / GRAVITY
+    ((v * v + 2.0 * GRAVITY * height).sqrt() - v) / GRAVITY
 }
 
 /// World height of the standing level over `floor`: one z-level up.
@@ -1122,6 +1134,22 @@ mod tests {
         assert!(landed_at < 1500, "landed after {landed_at} ms");
         let where_: Qrz = map.convert(input.position.to_world(&map));
         assert!(where_.q >= 2, "landed on tile {where_:?}, not down the slope");
+    }
+
+    /// A fall gathers speed and then holds it: each equal slice drops more
+    /// than the last until the speed is reached, then the same; however it
+    /// is sliced it drops the same; and `fall_time` answers `fall`.
+    #[test]
+    fn a_fall_gathers_speed_to_its_terminal() {
+        let slices: Vec<f32> = (0..60).map(|k| fall(k as f32 * 50.0, 50.0)).collect();
+        let reached = slices.iter().position(|&d| (d - TERMINAL_SPEED * 50.0).abs() < 1e-5).expect("never reached its terminal speed");
+        assert!(reached > 0 && slices[..reached].windows(2).all(|w| w[1] > w[0]), "gathered: {slices:?}");
+        assert!(slices[reached..].iter().all(|&d| (d - TERMINAL_SPEED * 50.0).abs() < 1e-5), "held: {slices:?}");
+        for (age, t) in [(0.0, 3000.0), (500.0, 2000.0), (1000.0, 100.0), (5000.0, 700.0)] {
+            let split = fall(age, t / 3.0) + fall(age + t / 3.0, 2.0 * t / 3.0);
+            assert!((fall(age, t) - split).abs() < 1e-3, "age {age}, {t} ms: {} whole, {split} split", fall(age, t));
+            assert!((fall_time(fall(age, t), age) - t).abs() < 1e-2, "age {age}, {t} ms: fall_time {}", fall_time(fall(age, t), age));
+        }
     }
 
     /// Standing still on a slope a level a tile, near the corner where two
