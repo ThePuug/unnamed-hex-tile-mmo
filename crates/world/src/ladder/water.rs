@@ -26,7 +26,7 @@
 
 use std::collections::BTreeMap;
 
-use super::geom::{cube_round, hex_offsets, pos3, vnbr, CHILD_OFFSETS};
+use super::geom::{cube_round, hex_offsets, parent_of, pos3, vnbr, CHILD_OFFSETS};
 use super::mask::Mask;
 use super::{wall_slope, Level, Params, Pass};
 use crate::SQRT_3;
@@ -532,45 +532,86 @@ fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)>
 /// half a step of the vertex: a valley rises from its river, so there it
 /// stands half a step nearer.
 /// The cells are taken by the water pass's deform cells, each reading once
-/// the beds whose valleys may reach below its highest ground, lowest the
-/// valley can stand in it first, so a vertex stops at the first bed that
-/// cannot go below what it has found.
+/// the beds whose valleys may reach below its highest ground, and then by
+/// each coarser cell's children, lowest the valley can stand among them
+/// first, so a vertex stops at the first bed that cannot go below what it
+/// has found.
 pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([f64; 3], [f64; 3])> {
     let w = lv.w;
     let wf = w as f64;
     let half_step = wf / SQRT_3 / 2.0;
-    let mut by: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
-    for (x, &c) in cells.iter().enumerate() {
-        by.entry(lv.block(Pass::Water, c)).or_default().push(x);
-    }
-    let groups: Vec<Vec<usize>> = by.into_values().collect();
-    let mut group_of = vec![0usize; cells.len()];
-    for (g, xs) in groups.iter().enumerate() {
-        for &x in xs {
-            group_of[x] = g;
-        }
-    }
-    let each: Vec<usize> = (0..groups.len()).collect();
-    let lists: Vec<Vec<(f64, Sample)>> = in_parallel(&each, |found, g| {
-        let at: Vec<(f64, f64)> = groups[g].iter().map(|&x| lv.ij(cells[x])).map(|(i, j)| ((i * w) as f64, (j * w) as f64)).collect();
+    // A group of the cells: its centre in tiles and in world units, how
+    // far its vertices reach from that, and its highest ground.
+    let span = |xs: &[usize]| {
+        let at: Vec<(f64, f64)> = xs.iter().map(|&x| lv.ij(cells[x])).map(|(i, j)| ((i * w) as f64, (j * w) as f64)).collect();
         let (cq, cr) = at.iter().fold((0.0, 0.0), |a, &(q, r)| (a.0 + q, a.1 + r));
         let (cq, cr) = (cq / at.len() as f64, cr / at.len() as f64);
         let (cx, cy) = world(cq, cr);
         let radius = at.iter().map(|&(q, r)| world(q, r)).map(|(x, y)| (x - cx).hypot(y - cy)).fold(0.0, f64::max) + wf + half_step;
-        let high = groups[g]
+        let high = xs
             .iter()
             .flat_map(|&x| lv.own_vertices(cells[x]).map(|(_, v)| lv.ground[v]).collect::<Vec<_>>())
             .filter(|h| h.is_finite())
             .fold(f64::NEG_INFINITY, f64::max);
+        ((cq, cr), (cx, cy), radius, high)
+    };
+    // The beds a group may read, each with the lowest its valley stands in
+    // the group: within reach and below the group's highest ground.
+    let reaching = |s: &Sample, (cx, cy): (f64, f64), radius: f64, high: f64| {
+        let lowest = profile(s, (cx, cy), radius, w);
+        ((s.x - cx).hypot(s.y - cy) - radius <= s.far && lowest < high).then_some((lowest, *s))
+    };
+    let mut by: BTreeMap<(i64, i64), BTreeMap<(i64, i64), Vec<usize>>> = BTreeMap::new();
+    for (x, &c) in cells.iter().enumerate() {
+        let (i, j) = lv.ij(c);
+        let (pi, pj, _, _) = parent_of(i, j);
+        by.entry(lv.block(Pass::Water, c)).or_default().entry((pi, pj)).or_default().push(x);
+    }
+    let groups: Vec<Vec<Vec<usize>>> = by.into_values().map(|g| g.into_values().collect()).collect();
+    let each: Vec<usize> = (0..groups.len()).collect();
+    let lists: Vec<Vec<(f64, Sample)>> = in_parallel(&each, |found, g| {
+        let xs: Vec<usize> = groups[g].iter().flatten().copied().collect();
+        let ((cq, cr), centre, radius, high) = span(&xs);
         let mut list = Vec::new();
         for band in bands {
             band.within(cq, cr, band.far + radius, found);
-            list.extend(found.iter().filter_map(|s| {
-                let d = (s.x - cx).hypot(s.y - cy);
-                let lowest = profile(s, (cx, cy), radius, w);
-                (d - radius <= s.far && lowest < high).then_some((lowest, *s))
-            }));
+            list.extend(found.iter().filter_map(|s| reaching(s, centre, radius, high)));
         }
+        list.sort_by(|a, b| a.0.total_cmp(&b.0));
+        list
+    });
+    // Each coarser cell's children read their group's beds again, nearer:
+    // lowest the valley can stand among them first. No vertex of theirs
+    // stands above a bed's valley at their far side, so a bed whose valley
+    // cannot come below the least of those is passed by, and the rest
+    // after it.
+    let subs: Vec<(usize, &Vec<usize>)> = groups.iter().enumerate().flat_map(|(g, subs)| subs.iter().map(move |xs| (g, xs))).collect();
+    let mut sub_of = vec![0usize; cells.len()];
+    for (k, (_, xs)) in subs.iter().enumerate() {
+        for &x in xs.iter() {
+            sub_of[x] = k;
+        }
+    }
+    let each: Vec<usize> = (0..subs.len()).collect();
+    let near_lists: Vec<Vec<(f64, Sample)>> = in_parallel(&each, |_, k| {
+        let (g, xs) = subs[k];
+        let (_, centre, radius, high) = span(xs);
+        let mut ceiling = high;
+        let mut list: Vec<(f64, Sample)> = Vec::new();
+        for (lowest, s) in &lists[g] {
+            if *lowest >= ceiling {
+                break;
+            }
+            if let Some(near) = reaching(s, centre, radius, ceiling) {
+                if (s.x - centre.0).hypot(s.y - centre.1) + radius <= s.far {
+                    ceiling = ceiling.min(profile(s, centre, -radius, w));
+                }
+                list.push(near);
+            }
+        }
+        // A banded wall stands level at its bands, so the bed that set the
+        // ceiling may stand at it everywhere.
+        list.retain(|n| n.0 <= ceiling);
         list.sort_by(|a, b| a.0.total_cmp(&b.0));
         list
     });
@@ -584,7 +625,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
             let (px, py) = world(q, r);
             let ground = if lv.ground[v].is_nan() { f64::INFINITY } else { lv.ground[v] };
             let (mut low, mut near) = (ground, ground);
-            for (lowest, s) in &lists[group_of[x]] {
+            for (lowest, s) in &near_lists[sub_of[x]] {
                 if *lowest >= low {
                     break;
                 }
