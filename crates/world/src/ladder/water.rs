@@ -215,15 +215,28 @@ pub fn depth(bed: f64) -> f64 {
 /// The water standing over the centre of a cell of a level `w` wide, at a
 /// position in tiles, from the beds at least as wide as the cell, out to
 /// its corners, whose water reaches it: over the bed, or up the wall to
-/// where it climbs to the floor. The lowest such bed's floor rounded, its
-/// depth, and the river vertex it stands over. None where none reaches.
+/// where it climbs to the floor, measured as the level draws the channel,
+/// from the bed's stretch and half a step nearer ([`cut_at`]). The lowest
+/// such bed's floor there rounded, its depth, and the river vertex it
+/// stands over. None where none reaches.
 fn standing(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, f64, usize)> {
-    let (x, y) = world(q, r);
+    let at = world(q, r);
     let corner = w as f64 / SQRT_3;
+    let half_step = w as f64 / SQRT_3 / 2.0;
     beds.iter()
-        .filter(|s| s.bed >= corner && (s.x - x).hypot(s.y - y) <= s.bed + depth(s.bed) / s.slope)
-        .map(|s| ((s.floor + 0.5).floor(), depth(s.bed), s.src))
+        .filter(|s| s.bed >= corner)
+        .filter_map(|s| {
+            let (floor, d) = on_stretch(s, (s.x, s.y), s.on, at, half_step);
+            (d <= s.bed + depth(s.bed) / s.slope).then(|| ((floor + 0.5).floor(), depth(s.bed), s.src))
+        })
         .min_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+/// A bed's floor at the point of a stretch, from `from` on by `on`, nearest
+/// a position, and how far that lies, taken `nearer` tiles shorter.
+fn on_stretch(s: &Sample, from: (f64, f64), on: (f64, f64), (x, y): (f64, f64), nearer: f64) -> (f64, f64) {
+    let (f, d) = project((x, y), from, (from.0 + on.0, from.1 + on.1));
+    (s.floor + f * s.down, (d * SQRT_3 - nearer).max(0.0))
 }
 
 /// How tall a cliff band stands in rock that holds a wall steeper than
@@ -244,12 +257,8 @@ pub const CLIFF: f64 = 20.0;
 /// points are close enough to show a shelf; coarser, it rises evenly. It
 /// never falls as either distance grows.
 fn profile(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> f64 {
-    let to_stretch = |(fx, fy): (f64, f64), (dx, dy): (f64, f64)| {
-        let (f, d) = project((x, y), (fx, fy), (fx + dx, fy + dy));
-        (s.floor + f * s.down, (d * SQRT_3 - nearer).max(0.0))
-    };
-    let (floor, d) = to_stretch((s.x, s.y), s.on);
-    let (level, off) = if (s.ax, s.ay) == (s.x, s.y) { (floor, d) } else { to_stretch((s.ax, s.ay), s.along) };
+    let (floor, d) = on_stretch(s, (s.x, s.y), s.on, (x, y), nearer);
+    let (level, off) = if (s.ax, s.ay) == (s.x, s.y) { (floor, d) } else { on_stretch(s, (s.ax, s.ay), s.along, (x, y), nearer) };
     let channel = floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
     // The plain rises from its river faster than the river falls, so a
     // point of it stands on the river beside it, never on a floor far
