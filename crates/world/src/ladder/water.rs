@@ -426,7 +426,9 @@ fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)>
 /// by the valleys of every coarser level's rivers in `bands`, each band
 /// read out to its own reach, the valleys drawn at the level's own width.
 /// The cells are taken by the water pass's deform cells, each reading once
-/// the beds whose valleys may reach below its highest ground.
+/// the beds whose valleys may reach below its highest ground, lowest the
+/// valley can stand in it first, so a vertex stops at the first bed that
+/// cannot go below what it has found.
 pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<[f64; 3]> {
     let w = lv.w;
     let wf = w as f64;
@@ -442,7 +444,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<[f
         }
     }
     let each: Vec<usize> = (0..groups.len()).collect();
-    let lists: Vec<Vec<Sample>> = in_parallel(&each, |found, g| {
+    let lists: Vec<Vec<(f64, Sample)>> = in_parallel(&each, |found, g| {
         let at: Vec<(f64, f64)> = groups[g].iter().map(|&x| lv.ij(cells[x])).map(|(i, j)| ((i * w) as f64, (j * w) as f64)).collect();
         let (cq, cr) = at.iter().fold((0.0, 0.0), |a, &(q, r)| (a.0 + q, a.1 + r));
         let (cq, cr) = (cq / at.len() as f64, cr / at.len() as f64);
@@ -456,25 +458,34 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<[f
         let mut list = Vec::new();
         for band in bands {
             band.within(cq, cr, band.far + radius, found);
-            list.extend(found.iter().filter(|s| {
+            list.extend(found.iter().filter_map(|s| {
                 let d = (s.x - cx).hypot(s.y - cy);
-                d - radius <= s.far && profile(s, (d - radius).max(0.0), w) < high
+                let lowest = profile(s, (d - radius).max(0.0), w);
+                (d - radius <= s.far && lowest < high).then_some((lowest, *s))
             }));
         }
+        list.sort_by(|a, b| a.0.total_cmp(&b.0));
         list
     });
     let index: Vec<usize> = (0..cells.len()).collect();
-    in_parallel(&index, |near, x| {
+    in_parallel(&index, |_, x| {
         let c = cells[x];
         let (i, j) = lv.ij(c);
         let mut out = [f64::NAN; 3];
         for (t, v) in lv.own_vertices(c) {
             let (q, r) = vertex_tiles(t, i, j, w);
             let (px, py) = world(q, r);
-            near.clear();
-            near.extend(lists[group_of[x]].iter().filter(|s| (s.x - px).hypot(s.y - py) <= s.far));
-            let low = valley(near, q, r, w).map_or(lv.ground[v], |(h, _, _)| h.min(lv.ground[v]));
-            out[t as usize] = low;
+            let mut low = if lv.ground[v].is_nan() { f64::INFINITY } else { lv.ground[v] };
+            for (lowest, s) in &lists[group_of[x]] {
+                if *lowest >= low {
+                    break;
+                }
+                let d = (s.x - px).hypot(s.y - py);
+                if d <= s.far {
+                    low = low.min(profile(s, d, w));
+                }
+            }
+            out[t as usize] = if low.is_infinite() { lv.ground[v] } else { low };
         }
         out
     })
