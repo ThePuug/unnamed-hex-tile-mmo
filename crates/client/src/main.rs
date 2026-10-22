@@ -221,6 +221,7 @@ fn main() {
     app.init_resource::<gathering::LootWindow>();
     app.init_resource::<crate::systems::focus::NumpadFocus>();
     app.init_resource::<crate::systems::help::Help>();
+    app.init_resource::<camera::Look>();
     app.add_systems(Startup, crate::systems::help::setup);
     app.add_systems(Update, crate::systems::help::show);
     app.init_resource::<hiding::HiddenMeshes>();

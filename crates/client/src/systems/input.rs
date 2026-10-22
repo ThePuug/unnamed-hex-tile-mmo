@@ -22,6 +22,8 @@ pub const KEYCODE_UP: KeyCode = KeyCode::ArrowUp;
 pub const KEYCODE_DOWN: KeyCode = KeyCode::ArrowDown;
 pub const KEYCODE_LEFT: KeyCode = KeyCode::ArrowLeft;
 pub const KEYCODE_RIGHT: KeyCode = KeyCode::ArrowRight;
+/// Held, the arrows look about instead of moving: the character stands.
+pub const KEYCODE_LOOK: KeyCode = KeyCode::ControlLeft;
 
 /// Milliseconds an input stays open before a new one is opened for the same
 /// keys, so the server confirms at least this often.
@@ -42,6 +44,7 @@ pub fn update_keybits(
     mut buffers: ResMut<InputQueues>,
     dt: Res<Time>,
     server: Res<crate::resources::Server>,
+    mut look: ResMut<crate::systems::camera::Look>,
 ) {
     // The menu and the console's world clock, whose arrows scrub the
     // clock, are modal: while one is open every gameplay key reads as
@@ -71,10 +74,19 @@ pub fn update_keybits(
         }
 
         keybits.set_pressed([KB_JUMP], focus.is_empty() && keys.pressed(KEYCODE_JUMP, "Jump"));
-        keybits.set_pressed([KB_FORWARD], keys.held(KEYCODE_UP, "Move forward"));
-        keybits.set_pressed([KB_BACK], keys.held(KEYCODE_DOWN, "Move back, facing ahead"));
-        keybits.set_pressed([KB_LEFT], keys.held(KEYCODE_LEFT, "Turn left"));
-        keybits.set_pressed([KB_RIGHT], keys.held(KEYCODE_RIGHT, "Turn right"));
+        if keys.held(KEYCODE_LOOK, "Hold to look around: the arrows look instead of moving") {
+            let right = keys.held(KEYCODE_RIGHT, "Look right") as i32 - keys.held(KEYCODE_LEFT, "Look left") as i32;
+            let up = keys.held(KEYCODE_UP, "Look up") as i32 - keys.held(KEYCODE_DOWN, "Look down") as i32;
+            *look = look.moved(Vec2::new(right as f32, up as f32), dt.delta_secs());
+        } else {
+            *look = default();
+            keybits.set_pressed([KB_FORWARD], keys.held(KEYCODE_UP, "Move forward"));
+            keybits.set_pressed([KB_BACK], keys.held(KEYCODE_DOWN, "Move back, facing ahead"));
+            keybits.set_pressed([KB_LEFT], keys.held(KEYCODE_LEFT, "Turn left"));
+            keybits.set_pressed([KB_RIGHT], keys.held(KEYCODE_RIGHT, "Turn right"));
+        }
+    } else {
+        *look = default();
     }
 
     // A new input opens when the keys change, or after INPUT_ROLL_MS so the

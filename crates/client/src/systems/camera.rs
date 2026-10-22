@@ -1,6 +1,7 @@
 //! The gameplay camera: a pose behind the player that follows the heading,
 //! opens toward the ceiling over open ground, and comes down to look up a
-//! climb. No key moves it.
+//! climb. Only a glance moves it: the [`Look`] laid over that pose while
+//! the look key is held, gone when it is let go.
 
 use bevy::{core_pipeline::prepass::DepthPrepass, pbr::{DistanceFog, FogFalloff}, prelude::*};
 use crate::plugins::water::SEA_LEVEL_Y;
@@ -81,6 +82,15 @@ const CLOSE_REACH: f32 = 0.075;
 const CLOSE_FOV: f32 = 40_f32.to_radians();
 const CLOSE_IN_EASE: f32 = 3.0;
 const CLOSE_OUT_EASE: f32 = 0.4;
+/// The glance: how fast the held look keys turn and raise the view, in
+/// radians a second; the highest a lowered look stands the camera over the
+/// player; and, raised past the eye, the further rise over which the lens
+/// opens to the hill's and the player sinks toward the frame's bottom edge.
+const LOOK_TURN_RATE: f32 = 120_f32.to_radians();
+const LOOK_RAISE_RATE: f32 = 60_f32.to_radians();
+const LOOK_OVERHEAD: f32 = 70_f32.to_radians();
+const LOOK_SKY: f32 = 20_f32.to_radians();
+const LOOK_DROP: f32 = 0.85;
 /// Ground distances around the player at which the plane is fitted, in
 /// world units, in each of six directions; and, closed in among trees,
 /// two and three tiles out, since a boom that short stands on the ground
@@ -133,6 +143,9 @@ pub struct Pose {
     pub fov: f32,
     /// The boom's length as a share of its full length.
     pub reach: f32,
+    /// How far below the frame's centre the player stands, as a fraction
+    /// of the half-height.
+    pub drop: f32,
 }
 
 /// The ground's plane under the player as a gradient: its rise per unit
@@ -142,13 +155,13 @@ pub type Tilt = Vec2;
 impl Pose {
     /// The widest pose: the frame's top ray above the horizontal.
     fn ceiling(yaw: f32) -> Self {
-        Pose { yaw, elevation: CEILING_ELEVATION, fov: CEILING_FOV, reach: 1.0 }
+        Pose { yaw, elevation: CEILING_ELEVATION, fov: CEILING_FOV, reach: 1.0, drop: PLAYER_DROP }
     }
 
     /// The pose from the height the ladder and the streamed tiles are
     /// measured by, the lens narrow: the elevation the close pose keeps.
     fn rest(yaw: f32) -> Self {
-        Pose { yaw, elevation: (camera_height(MAX_GAMEPLAY_FOV) / CAMERA_DISTANCE).atan(), fov: REST_FOV, reach: 1.0 }
+        Pose { yaw, elevation: (camera_height(MAX_GAMEPLAY_FOV) / CAMERA_DISTANCE).atan(), fov: REST_FOV, reach: 1.0, drop: PLAYER_DROP }
     }
 
     /// The pose among trees: rest's elevation, over the shoulder on a
@@ -165,7 +178,7 @@ impl Pose {
     /// climb asks less.
     fn hill(yaw: f32, up: f32, tilt: Tilt) -> Self {
         let open = Pose::ceiling(yaw);
-        let crest = (PLAYER_DROP + CREST_RISE) * open.fov / 2.0;
+        let crest = (open.drop + CREST_RISE) * open.fov / 2.0;
         let elevation = ((crest - up).tan() - tilt.dot(open.back())).atan().clamp(0.0, open.elevation);
         Pose { elevation, ..open }
     }
@@ -176,6 +189,29 @@ impl Pose {
             elevation: self.elevation.lerp(to.elevation, t),
             fov: self.fov.lerp(to.fov, t),
             reach: self.reach.lerp(to.reach, t),
+            drop: self.drop.lerp(to.drop, t),
+            ..self
+        }
+    }
+
+    /// The raises a look may lay over this pose, lowest first: down to
+    /// the camera overhead, up past the eye by the sky's rise.
+    fn raises(&self) -> (f32, f32) {
+        (self.elevation - LOOK_OVERHEAD.max(self.elevation), self.elevation + LOOK_SKY)
+    }
+
+    /// This pose looked `raise` up from, negative down, within
+    /// [`Self::raises`]: the boom lowered toward the eye, and past it the
+    /// lens opening toward the hill's and the player sinking toward the
+    /// frame's bottom edge, so the frame turns up to the sky; or raised
+    /// toward overhead, looking down on the ground about the player.
+    fn looked(self, raise: f32) -> Self {
+        let elevation = self.elevation - raise;
+        let past = (-elevation / LOOK_SKY).clamp(0.0, 1.0);
+        Pose {
+            elevation: elevation.max(0.0),
+            fov: self.fov.lerp(HILL_FOV.max(self.fov), past),
+            drop: self.drop.lerp(LOOK_DROP, past),
             ..self
         }
     }
@@ -217,10 +253,10 @@ impl Pose {
         offset.y.atan2(offset.xz().length())
     }
 
-    /// The frame's tilt below the horizontal: the player a third of the
+    /// The frame's tilt below the horizontal: the player its drop of the
     /// way from the frame's centre to its bottom edge.
     fn pitch(&self, tilt: Tilt) -> f32 {
-        self.down(tilt) - PLAYER_DROP * self.fov / 2.0
+        self.down(tilt) - self.drop * self.fov / 2.0
     }
 
     /// Where the camera stands and looks, for a player whose eye is at
@@ -258,6 +294,30 @@ pub const NEAR_FADE_RADIUS: f32 = 2.5;
 /// player facing north, counter-clockwise from there.
 fn stop_yaw(heading: Heading) -> f32 {
     ((ORBIT_STOPS - heading.slot() as usize) % ORBIT_STOPS) as f32 * ORBIT_STEP
+}
+
+/// The glance laid over the pose while the look key is held: the view
+/// turned and raised from the one the camera takes of itself. Released, it
+/// is nothing at once, and the camera eases back at its own pace.
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    /// Radians the view is turned from behind the heading, counter-clockwise
+    /// as the yaw, within half a turn either way.
+    pub yaw: f32,
+    /// Radians the view is raised, negative lowered: the camera holds it
+    /// to what its pose allows (`Pose::raises`).
+    pub raise: f32,
+}
+
+impl Look {
+    /// The look turned and raised by the held look keys over `dt`
+    /// seconds: `keys.x` right, `keys.y` up, each -1, 0 or 1.
+    pub fn moved(self, keys: Vec2, dt: f32) -> Self {
+        Look {
+            yaw: angle_diff(0.0, self.yaw - keys.x * LOOK_TURN_RATE * dt),
+            raise: self.raise + keys.y * LOOK_RAISE_RATE * dt,
+        }
+    }
 }
 
 /// Shortest signed angle from `from` to `to` on the unit circle.
@@ -389,15 +449,15 @@ fn ground_tilt(player: Vec3, rings: [f32; 2], map: &Map, origin: &RenderOrigin) 
 }
 
 /// How steeply the ground ahead climbs, in radians above the horizontal,
-/// read by rays from the eye across a sweep about the heading: the
+/// read by rays from the eye across a sweep about `ahead`, the unit
+/// ground direction the view looks along: the
 /// steepest elevation at which a ray still meets the ground, over the rays
 /// inside the frame's horizontal half-angle `half_width` that agree with
 /// most of them on whether there is ground there. Zero where there is
 /// none; None where too little of it is loaded to read. What brings the
 /// camera down to look up it.
-fn climb_ahead(feet: Vec3, heading: Heading, half_width: f32, map: &Map, origin: &RenderOrigin) -> Option<f32> {
+fn climb_ahead(feet: Vec3, ahead: Vec2, half_width: f32, map: &Map, origin: &RenderOrigin) -> Option<f32> {
     let eye = feet + Vec3::Y * EYE_HEIGHT;
-    let ahead = heading.to_world_dir();
     let mut grades = Vec::with_capacity((2 * SWEEP_RAYS + 1) as usize);
     for k in -SWEEP_RAYS..=SWEEP_RAYS {
         let yaw = k as f32 * SWEEP_STEP;
@@ -431,7 +491,7 @@ fn lens_to_hold(pose: &Pose, tilt: Tilt, up: f32) -> f32 {
     if up <= 0.0 {
         return pose.fov;
     }
-    let needed = 2.0 * (pose.down(tilt) + up) / (1.0 + PLAYER_DROP);
+    let needed = 2.0 * (pose.down(tilt) + up) / (1.0 + pose.drop);
     needed.clamp(pose.fov, HILL_FOV)
 }
 
@@ -583,6 +643,7 @@ pub fn update(
     mut state: ResMut<CameraPose>,
     mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
     actor: Query<(&VisualPosition, &Heading), (With<crate::components::Viewed>, Without<Camera3d>)>,
+    mut look: ResMut<Look>,
     map: Res<Map>,
     diagnostics: Res<DiagnosticsState>,
     time: Res<Time>,
@@ -599,17 +660,18 @@ pub fn update(
     let dt = time.delta_secs();
     let current = state.pose;
 
-    // The yaw follows the heading. The ground ahead pulls the pose: open
-    // ground leaves it at the ceiling, a climb brings it down to the pose
-    // that holds it, and the lens opens as far as it takes for what is
-    // left. The pull is smoothed so the ground sampled ahead cannot flick
-    // the pose; unloaded ground holds it.
+    // The yaw follows the heading, turned by the look. The ground ahead of
+    // the view pulls the pose: open ground leaves it at the ceiling, a
+    // climb brings it down to the pose that holds it, and the lens opens as
+    // far as it takes for what is left. The pull is smoothed so the ground
+    // sampled ahead cannot flick the pose; unloaded ground holds it.
+    let yaw = (stop_yaw(heading) + look.yaw).rem_euclid(2.0 * PI);
     let aspect = match &*projection {
         Projection::Perspective(p) => p.aspect_ratio,
         _ => 1.0,
     };
     let half_width = (aspect * (current.fov / 2.0).tan()).atan();
-    if let Some(climb) = climb_ahead(feet, heading, half_width, &map, origin) {
+    if let Some(climb) = climb_ahead(feet, -Pose::ceiling(yaw).back(), half_width, &map, origin) {
         state.climb = ease(state.climb, climb, PULL_EASE, dt);
     }
     // The plane the camera sweeps on follows the ground under the player.
@@ -619,7 +681,6 @@ pub fn update(
         state.tilt = state.tilt.lerp(tilt, k);
     }
     let tilt = state.tilt;
-    let yaw = stop_yaw(heading);
     let mut wanted = Pose::ceiling(yaw).toward(Pose::hill(yaw, state.climb, tilt), (state.climb / HILL_GRADE).min(1.0));
     wanted.fov = lens_to_hold(&wanted, tilt, state.climb);
 
@@ -630,9 +691,14 @@ pub fn update(
     state.closed = ease(state.closed, to, k, dt);
     wanted = wanted.toward(Pose::close(wanted.yaw), state.closed);
 
+    // The look raises or lowers the view from there, as far as it allows.
+    let (lowest, highest) = wanted.raises();
+    look.raise = look.raise.clamp(lowest, highest);
+    wanted = wanted.looked(look.raise);
+
     // The close-up holds the boom level with the eye whatever the ground says.
     if diagnostics.camera_closeup {
-        wanted = Pose { yaw: wanted.yaw, elevation: 0.0, fov: CEILING_FOV, reach: 1.0 };
+        wanted = Pose { yaw: wanted.yaw, elevation: 0.0, fov: CEILING_FOV, reach: 1.0, drop: PLAYER_DROP };
     }
     let next = step(current, wanted, dt);
     // Ground on the boom lifts the camera over it at once, so the camera
@@ -709,9 +775,9 @@ mod tests {
             }
         }
         let feet = map.convert(Qrz { q: 0, r: 0, z: 1 });
-        let plain = climb_ahead(feet, Heading::from_degrees(180.0), 0.5, &map, &RenderOrigin::default()).expect("loaded");
+        let plain = climb_ahead(feet, Heading::from_degrees(180.0).to_world_dir(), 0.5, &map, &RenderOrigin::default()).expect("loaded");
         assert_eq!(plain, 0.0);
-        let wall = climb_ahead(feet, Heading::NORTH, 0.5, &map, &RenderOrigin::default()).expect("loaded");
+        let wall = climb_ahead(feet, Heading::NORTH.to_world_dir(), 0.5, &map, &RenderOrigin::default()).expect("loaded");
         assert!(wall > 0.0, "climb {wall}");
     }
 
@@ -847,7 +913,7 @@ mod tests {
             let feet = origin.render_tile(&map, Qrz { z: 1, ..at });
             let eye = feet + Vec3::Y * EYE_HEIGHT;
             let tilt = ground_tilt(feet, TILT_RINGS_WU, &map, &origin).expect("loaded");
-            let climb = climb_ahead(feet, Heading::NORTH, 0.5, &map, &origin);
+            let climb = climb_ahead(feet, Heading::NORTH.to_world_dir(), 0.5, &map, &origin);
             let up = lifted(Pose::ceiling(0.0), eye, tilt, &map, &origin);
             let clear = boom_clearance(eye, up.transform(eye, tilt).translation, |at| obstructed(at, &map, &origin));
             (tilt, climb, up, clear)
@@ -906,6 +972,44 @@ mod tests {
         let stands = eye + (camera - eye) * clear;
         assert!(clear < 1.0 && !obstructed(stands, &map, &origin), "stands at {clear} of the boom, {stands:?}");
         assert!(stands.z < 15.0, "stands in or past the wood at {stands:?}");
+    }
+
+    /// The view behind each heading looks along it, so the sensor reads
+    /// the ground ahead of the player while the look is nothing; turned,
+    /// it stays within half a turn either way.
+    #[test]
+    fn the_view_looks_along_the_heading_and_the_look_turns_it() {
+        for slot in 0..ORBIT_STOPS as u8 {
+            let heading = Heading::from_slot(slot);
+            let ahead = -Pose::ceiling(stop_yaw(heading)).back();
+            assert!((ahead - heading.to_world_dir()).length() < 1e-5, "slot {slot}: {ahead:?}");
+        }
+        let behind = Look { yaw: PI, raise: 0.0 };
+        let wrapped = behind.moved(-Vec2::X, 0.1);
+        assert!(wrapped.yaw.abs() <= PI, "within half a turn: {wrapped:?}");
+    }
+
+    /// Looking up lowers the camera to the eye and then turns the frame up
+    /// past it, the player kept in the frame; looking down raises it
+    /// toward overhead. The frame's top climbs the whole way up.
+    #[test]
+    fn a_raised_look_turns_the_frame_up_to_the_sky() {
+        for base in [Pose::ceiling(0.3), Pose::rest(0.3), Pose::close(0.3)] {
+            let (lowest, highest) = base.raises();
+            assert!(lowest < 0.0 && highest > 0.0, "{base:?}");
+            let top = |p: &Pose| p.fov / 2.0 - p.pitch(Vec2::ZERO);
+            let mut last = f32::MIN;
+            for i in 0..=40 {
+                let raise = lowest + (highest - lowest) * i as f32 / 40.0;
+                let looked = base.looked(raise);
+                assert!(looked.elevation >= 0.0 && looked.drop < 1.0, "{looked:?}");
+                assert!(top(&looked) >= last - 1e-5, "the top fell at {raise}: {looked:?}");
+                last = top(&looked);
+            }
+            assert!((base.looked(lowest).elevation - LOOK_OVERHEAD.max(base.elevation)).abs() < 1e-5, "overhead: {:?}", base.looked(lowest));
+            assert!(top(&base.looked(highest)) > 45_f32.to_radians(), "the sky: {:?}", base.looked(highest));
+            assert_eq!(base.looked(0.0), base);
+        }
     }
 
     /// Where the player's eye lands in the frame, as fractions of the
