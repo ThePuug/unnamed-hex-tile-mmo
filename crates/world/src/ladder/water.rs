@@ -26,14 +26,15 @@
 
 use std::collections::BTreeMap;
 
-use super::geom::{cube_round, hex_offsets, pos3, CHILD_OFFSETS};
+use super::geom::{cube_round, hex_offsets, pos3, vnbr, CHILD_OFFSETS};
 use super::mask::Mask;
 use super::{wall_slope, Level, Params, Pass};
 use crate::SQRT_3;
 
 /// A trough edge the valley is read along: its ends' positions in tiles,
 /// their floors, its flow and the width of the level its trough was
-/// born at.
+/// born at, whether it begins its river, and the edge its river runs on
+/// along.
 pub(super) struct Edge {
     from: (f64, f64),
     to: (f64, f64),
@@ -51,6 +52,24 @@ pub(super) struct Edge {
     fall: f64,
     /// The width of the level the edge is drawn at, which spaces its samples.
     w: i64,
+    /// Whether no trough drains into the vertex the edge leaves.
+    head: bool,
+    /// The edge leaving the vertex this one reaches, where its river runs
+    /// on and that vertex's receiver is routed.
+    next: Option<Next>,
+}
+
+/// The edge a river runs on along: where it reaches, the floor and plain
+/// there, and its own flow, birth, rock, vertex and fall.
+struct Next {
+    to: (f64, f64),
+    floor: f64,
+    plain: f64,
+    flow: f64,
+    born: i64,
+    erod: f64,
+    src: usize,
+    fall: f64,
 }
 
 fn tiles(lv: &Level, v: usize) -> (f64, f64) {
@@ -59,9 +78,20 @@ fn tiles(lv: &Level, v: usize) -> (f64, f64) {
     (q3 as f64 / 3.0, r3 as f64 / 3.0)
 }
 
-/// A level's troughs over a mask, each edge to its receiver.
+/// A level's troughs over a mask, each edge to its receiver. The mask's
+/// cells and the next two rings must be routed, so each edge knows
+/// whether its river begins there and where it runs on.
 pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
     let nn = lv.cap();
+    let runs = |v: usize| lv.trough[v] && lv.rec[v] >= 0;
+    let head = |v: usize| {
+        let (t, i, j) = lv.vertex(v);
+        !(0..6).filter_map(|k| {
+            let (tt, a, b) = vnbr(t, i, j, k);
+            lv.vid(tt, a, b)
+        })
+        .any(|u| runs(u) && lv.rec[u] == v as i64)
+    };
     // A vertex's plain, held to its room where routing measured one.
     let plain_at = |u: usize| {
         let half = bed(lv.flow[u], p);
@@ -71,9 +101,22 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
     };
     (0..3)
         .flat_map(|t| mask.iter().map(move |c| t * nn + c))
-        .filter(|&v| lv.trough[v] && lv.rec[v] >= 0)
+        .filter(|&v| runs(v))
         .map(|v| {
             let to = lv.rec[v] as usize;
+            let next = (runs(to) && lv.routed[lv.rec[to] as usize % nn]).then(|| {
+                let on = lv.rec[to] as usize;
+                Next {
+                    to: tiles(lv, on),
+                    floor: lv.floor[on].max(0.0),
+                    plain: plain_at(on),
+                    flow: lv.flow[to],
+                    born: lv.born[to],
+                    erod: rock(lv, to),
+                    src: to,
+                    fall: super::graded_slope(lv.acc[to], rock(lv, to), p),
+                }
+            });
             Edge {
                 from: tiles(lv, v),
                 to: tiles(lv, to),
@@ -87,6 +130,8 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
                 plains: (plain_at(v), plain_at(to)),
                 fall: super::graded_slope(lv.acc[v], rock(lv, v), p),
                 w: lv.w,
+                head: head(v),
+                next,
             }
         })
         .collect()
@@ -131,8 +176,8 @@ pub fn plain(bed: f64, catchment: f64, erodibility: f64, age: f64, p: &Params) -
 /// than a cell of its level, the margin a reader routes it past its reach,
 /// so a gorge, whose plain is its bed, runs straight. Which way the first
 /// bend turns, and how far of that it swings, is drawn from the edge's
-/// start. A level's own beds run
-/// straight between its vertices, which are too far apart to show a bend.
+/// start. A level's own beds bend only at its vertices, which are too far
+/// apart to show a meander.
 fn meander(e: &Edge, length: f64, bed: f64, plain: f64) -> (u32, f64) {
     if e.born != e.w || length <= 0.0 {
         return (0, 0.0);
@@ -223,6 +268,113 @@ struct Sample {
     far: f64,
 }
 
+/// What a stretch of a river carries: its flow, birth, rock, vertex and
+/// fall.
+#[derive(Clone, Copy)]
+struct River {
+    flow: f64,
+    born: i64,
+    erod: f64,
+    src: usize,
+    fall: f64,
+}
+
+/// The way an edge's river is drawn, in world units a tile apart: from the
+/// edge's middle round the vertex it reaches to the next edge's middle, a
+/// curve with that vertex its control, and from the edge's start where
+/// its river begins there. Where it runs on no further, to the vertex.
+/// So a river bends at its vertices rather than turning at them, and the
+/// ways of rivers meeting join where their trunk's begins. Within half a
+/// step of its vertices.
+struct Way {
+    /// The head's straight run, its length, and the curve's points by
+    /// length along it, what a distance along the way is found by.
+    head: Option<((f64, f64), f64)>,
+    curve: Vec<((f64, f64), f64, f64)>,
+    length: f64,
+    ends: [(f64, f64); 3],
+    floors: [f64; 4],
+    plains: [f64; 4],
+    rivers: [River; 2],
+}
+
+impl Way {
+    /// Points along the curve its length is measured by.
+    const SPAN: usize = 16;
+
+    fn of(e: &Edge) -> Self {
+        let a = world(e.from.0, e.from.1);
+        let b = world(e.to.0, e.to.1);
+        let mid = |p: (f64, f64), q: (f64, f64)| ((p.0 + q.0) / 2.0, (p.1 + q.1) / 2.0);
+        let m1 = mid(a, b);
+        let own = River { flow: e.flow, born: e.born, erod: e.erod, src: e.src, fall: e.fall };
+        let (m2, f2, p2, on) = match &e.next {
+            Some(n) => (mid(b, world(n.to.0, n.to.1)), (e.floors.1 + n.floor) / 2.0, (e.plains.1 + n.plain) / 2.0, River { flow: n.flow, born: n.born, erod: n.erod, src: n.src, fall: n.fall }),
+            None => (b, e.floors.1, e.plains.1, own),
+        };
+        let head = e.head.then(|| (a, (m1.0 - a.0).hypot(m1.1 - a.1)));
+        let start = head.map_or(0.0, |h| h.1);
+        let mut curve = Vec::with_capacity(Self::SPAN + 1);
+        let mut run = start;
+        let mut last = m1;
+        for k in 0..=Self::SPAN {
+            let t = k as f64 / Self::SPAN as f64;
+            let pt = quad(m1, b, m2, t);
+            run += (pt.0 - last.0).hypot(pt.1 - last.1);
+            curve.push((pt, t, run));
+            last = pt;
+        }
+        Way {
+            head,
+            length: run,
+            curve,
+            ends: [m1, b, m2],
+            floors: [e.floors.0, (e.floors.0 + e.floors.1) / 2.0, e.floors.1, f2],
+            plains: [e.plains.0, (e.plains.0 + e.plains.1) / 2.0, e.plains.1, p2],
+            rivers: [own, on],
+        }
+    }
+
+    /// The point `s` along the way, the unit normal to its left, and its
+    /// floor, plain and river there.
+    fn at(&self, s: f64) -> ((f64, f64), (f64, f64), (f64, f64, River)) {
+        let normal = |d: (f64, f64)| {
+            let l = d.0.hypot(d.1);
+            if l > 0.0 { (-d.1 / l, d.0 / l) } else { (0.0, 0.0) }
+        };
+        let lerp = |a: f64, b: f64, f: f64| a + (b - a) * f;
+        if let Some((a, len)) = self.head {
+            if s < len {
+                let f = s / len;
+                let [m1, ..] = self.ends;
+                let pt = (lerp(a.0, m1.0, f), lerp(a.1, m1.1, f));
+                let at = (lerp(self.floors[0], self.floors[1], f), lerp(self.plains[0], self.plains[1], f), self.rivers[0]);
+                return (pt, normal((m1.0 - a.0, m1.1 - a.1)), at);
+            }
+        }
+        let k = self.curve.partition_point(|c| c.2 < s).clamp(1, Self::SPAN);
+        let ((_, t0, s0), (_, t1, s1)) = (self.curve[k - 1], self.curve[k]);
+        let t = if s1 > s0 { lerp(t0, t1, ((s - s0) / (s1 - s0)).clamp(0.0, 1.0)) } else { t1 };
+        let [m1, b, m2] = self.ends;
+        let pt = quad(m1, b, m2, t);
+        let d = (2.0 * (1.0 - t) * (b.0 - m1.0) + 2.0 * t * (m2.0 - b.0), 2.0 * (1.0 - t) * (b.1 - m1.1) + 2.0 * t * (m2.1 - b.1));
+        let at = if t <= 0.5 {
+            let f = 2.0 * t;
+            (lerp(self.floors[1], self.floors[2], f), lerp(self.plains[1], self.plains[2], f), self.rivers[0])
+        } else {
+            let f = 2.0 * t - 1.0;
+            (lerp(self.floors[2], self.floors[3], f), lerp(self.plains[2], self.plains[3], f), self.rivers[1])
+        };
+        (pt, normal(d), at)
+    }
+}
+
+/// The quadratic from `a` to `c` with control `b` at `t` in [0, 1].
+fn quad(a: (f64, f64), b: (f64, f64), c: (f64, f64), t: f64) -> (f64, f64) {
+    let (u, v, w) = ((1.0 - t) * (1.0 - t), 2.0 * t * (1.0 - t), t * t);
+    (u * a.0 + v * b.0 + w * c.0, u * a.1 + v * b.1 + w * c.1)
+}
+
 /// One level's rivers: their beds sampled no more than half a cell apart,
 /// each sample held by the cell of the level it falls in, in one order, so
 /// a tie between samples falls the same way in every process; and how far
@@ -240,14 +392,12 @@ impl Band {
         let wf = w as f64;
         let mut cells: BTreeMap<(i64, i64), Vec<Sample>> = BTreeMap::new();
         for e in edges {
-            let ((q0, r0), (q1, r1)) = (e.from, e.to);
-            let (x0, y0) = world(q0, r0);
-            let (x1, y1) = world(q1, r1);
+            let way = Way::of(e);
             // A level's own beds at half its width; a coarser level's at a
             // quarter of the plain they bound, so a floor's edge follows
             // its river, and never closer than half the reader's width or
             // two tiles, nor sparser than its own.
-            let length = (x1 - x0).hypot(y1 - y0);
+            let length = way.length;
             let (bows, swing) = if read < e.w { meander(e, length, bed(e.flow, p), e.plains.0.min(e.plains.1)) } else { (0, 0.0) };
             let mut spacing = if read >= e.w {
                 0.5 * e.w as f64
@@ -258,24 +408,24 @@ impl Band {
                 spacing = spacing.min(length / (4.0 * bows as f64));
             }
             let ns = 2usize.max((length / spacing).ceil() as usize + 1);
-            let (px, py) = if length > 0.0 { (-(y1 - y0) / length, (x1 - x0) / length) } else { (0.0, 0.0) };
             for s in 0..ns {
                 let f = s as f64 / (ns - 1) as f64;
                 let off = swing * (std::f64::consts::PI * bows as f64 * f).sin();
-                let (x, y) = (x0 + (x1 - x0) * f + px * off, y0 + (y1 - y0) * f + py * off);
+                let ((x, y), (px, py), at) = way.at(f * length);
+                let (x, y) = (x + px * off, y + py * off);
                 let q = x * 2.0 / SQRT_3;
                 let r = y - q / 2.0;
-                let floor = e.floors.0 + (e.floors.1 - e.floors.0) * f;
+                let (floor, plain, river) = at;
                 cells.entry(cube_round(q / wf, r / wf)).or_default().push(Sample {
                     x,
                     y,
                     floor,
-                    bed: bed(e.flow, p),
-                    plain: e.plains.0 + (e.plains.1 - e.plains.0) * f,
-                    fall: e.fall,
-                    born: e.born,
-                    slope: wall_slope(e.erod, p.wall),
-                    src: e.src,
+                    bed: bed(river.flow, p),
+                    plain,
+                    fall: river.fall,
+                    born: river.born,
+                    slope: wall_slope(river.erod, p.wall),
+                    src: river.src,
                     w: e.w,
                     near,
                     far,

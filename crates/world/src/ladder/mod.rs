@@ -837,9 +837,9 @@ impl<'g, G: Ground> Ladder<'g, G> {
             // width out at their nearest.
             let rings = ((self.p.ring + 2.0) * 2.0 / crate::SQRT_3).ceil() as usize + 1;
             let reach = up.dilate(&under, rings);
-            // Routed a ring past what is read, so each trough's receiver
-            // has its floor and its plain.
-            let routed = up.dilate(&reach, 1);
+            // Routed two rings past what is read, so each trough's
+            // receiver has its floor and its plain, and its receiver's.
+            let routed = up.dilate(&reach, 2);
             self.ensure_routed(j, &routed);
             let up = &self.levels[j];
             let read = self.levels[k].w;
@@ -858,9 +858,9 @@ impl<'g, G: Ground> Ladder<'g, G> {
         if !sel.is_empty() {
             let pend = lv.pending(Pass::Water, &sel);
             let fp = lv.footprint(Pass::Water, &pend);
-            // Routed a ring past the footprint, so each line's next vertex
-            // has its floor.
-            let routed = lv.dilate(&fp, 1);
+            // Routed two rings past the footprint, so each line's next
+            // vertex has its floor, and that vertex's next.
+            let routed = lv.dilate(&fp, 2);
             self.ensure_supplied(k, &fp);
             self.ensure_routed(k, &routed);
             let started = Instant::now();
