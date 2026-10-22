@@ -264,10 +264,10 @@ fn profile(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> f64 {
     // point of it stands on the river beside it, never on a floor far
     // downstream whose plain reaches it.
     let across = (2.0 * s.fall + 0.01) * off.min(s.plain);
-    let rise = across + s.slope * (off - s.plain).max(0.0);
+    let wall = s.slope * (off - s.plain).max(0.0);
     let shelved = s.slope > 1.0 && CLIFF / s.slope >= 2.0 * w as f64;
-    let rise = if shelved { CLIFF * (rise / CLIFF).floor() } else { rise };
-    channel.min(level + 1.0 + rise)
+    let wall = if shelved { CLIFF * (wall / CLIFF).floor() } else { wall };
+    channel.min(level + 1.0 + across + wall)
 }
 
 /// The least [`profile`] over a disc `radius` tiles round a position: its
