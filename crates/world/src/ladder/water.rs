@@ -224,21 +224,26 @@ fn standing(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, f64, usize)
 /// each holding its face over a shelf cut back into the weak bed below.
 pub const CLIFF: f64 = 20.0;
 
-/// A bed's valley `d` tiles from it, as a level `w` wide draws it: the
+/// A bed's valley at a position in world units a tile apart, as a level
+/// `w` wide draws it, each distance taken `nearer` tiles shorter: the
 /// channel, its walls rising from the bed, and its plain, a step above the
-/// river's water out to the plain's width with walls rising from there,
-/// whichever stands lower. A plain no wider than the bed leaves the
-/// channel's walls running on up. A wall in rock that holds steeper than
-/// repose rises as cliff bands [`CLIFF`] tall over flat shelves, keeping
-/// its slope on the whole, where the level's points are close enough to
-/// show a shelf; coarser, it rises evenly.
-fn profile(s: &Sample, d: f64, w: i64) -> f64 {
+/// river's water out to the plain's width from the valley's axis with
+/// walls rising from there, whichever stands lower, so the bed winds
+/// within its plain and the plain's edge runs with the valley. A plain no
+/// wider than the bed leaves the channel's walls running on up. A wall in
+/// rock that holds steeper than repose rises as cliff bands [`CLIFF`] tall
+/// over flat shelves, keeping its slope on the whole, where the level's
+/// points are close enough to show a shelf; coarser, it rises evenly. It
+/// never falls as either distance grows.
+fn profile(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> f64 {
+    let d = ((s.x - x).hypot(s.y - y) - nearer).max(0.0);
+    let off = if (s.ax, s.ay) == (s.x, s.y) { d } else { ((s.ax - x).hypot(s.ay - y) - nearer).max(0.0) };
     let channel = s.floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
     // The plain rises from its river faster than the river falls, so a
     // point of it stands on the river beside it, never on a floor far
     // downstream whose plain reaches it.
-    let across = (2.0 * s.fall + 0.01) * d.min(s.plain);
-    let rise = across + s.slope * (d - s.plain).max(0.0);
+    let across = (2.0 * s.fall + 0.01) * off.min(s.plain);
+    let rise = across + s.slope * (off - s.plain).max(0.0);
     let shelved = s.slope > 1.0 && CLIFF / s.slope >= 2.0 * w as f64;
     let rise = if shelved { CLIFF * (rise / CLIFF).floor() } else { rise };
     channel.min(s.floor + 1.0 + rise)
@@ -252,6 +257,10 @@ fn profile(s: &Sample, d: f64, w: i64) -> f64 {
 struct Sample {
     x: f64,
     y: f64,
+    /// Where its valley's axis lies beside it: the bed before its meander
+    /// swings it.
+    ax: f64,
+    ay: f64,
     floor: f64,
     bed: f64,
     /// The half width of its flat floor, the bed's or wider.
@@ -411,14 +420,16 @@ impl Band {
             for s in 0..ns {
                 let f = s as f64 / (ns - 1) as f64;
                 let off = swing * (std::f64::consts::PI * bows as f64 * f).sin();
-                let ((x, y), (px, py), at) = way.at(f * length);
-                let (x, y) = (x + px * off, y + py * off);
+                let ((ax, ay), (px, py), at) = way.at(f * length);
+                let (x, y) = (ax + px * off, ay + py * off);
                 let q = x * 2.0 / SQRT_3;
                 let r = y - q / 2.0;
                 let (floor, plain, river) = at;
                 cells.entry(cube_round(q / wf, r / wf)).or_default().push(Sample {
                     x,
                     y,
+                    ax,
+                    ay,
                     floor,
                     bed: bed(river.flow, p),
                     plain,
@@ -465,7 +476,7 @@ fn valley(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, Sample, f64)>
     let mut best: Option<(f64, Sample, f64)> = None;
     for s in beds {
         let d = (s.x - x).hypot(s.y - y);
-        let v = profile(s, d, w);
+        let v = profile(s, (x, y), 0.0, w);
         if best.is_none_or(|b| v < b.0) {
             best = Some((v, *s, d));
         }
@@ -481,7 +492,7 @@ fn valley(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, Sample, f64)>
 fn cut_at(beds: &[Sample], q: f64, r: f64, w: i64, sunk: f64, ground: f64) -> f64 {
     let (x, y) = world(q, r);
     let half_step = w as f64 / SQRT_3 / 2.0;
-    beds.iter().map(|s| profile(s, ((s.x - x).hypot(s.y - y) - half_step).max(0.0), w)).fold(sunk, f64::min) - ground
+    beds.iter().map(|s| profile(s, (x, y), half_step, w)).fold(sunk, f64::min) - ground
 }
 
 /// A vertex's position in tiles.
@@ -556,7 +567,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
             band.within(cq, cr, band.far + radius, found);
             list.extend(found.iter().filter_map(|s| {
                 let d = (s.x - cx).hypot(s.y - cy);
-                let lowest = profile(s, (d - radius).max(0.0), w);
+                let lowest = profile(s, (cx, cy), radius, w);
                 (d - radius <= s.far && lowest < high).then_some((lowest, *s))
             }));
         }
@@ -579,8 +590,8 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
                 }
                 let d = (s.x - px).hypot(s.y - py);
                 if d <= s.far {
-                    low = low.min(profile(s, d, w));
-                    near = near.min(profile(s, (d - half_step).max(0.0), w));
+                    low = low.min(profile(s, (px, py), 0.0, w));
+                    near = near.min(profile(s, (px, py), half_step, w));
                 }
             }
             out[t as usize] = if low.is_infinite() { lv.ground[v] } else { low };
@@ -664,7 +675,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             band.within(cq, cr, band.far + radius, &mut beds);
             beds.retain(|s| {
                 let d = (s.x - cx).hypot(s.y - cy);
-                d + radius > s.near && d - radius <= s.far && profile(s, (d - radius).max(0.0), w) < high
+                d + radius > s.near && d - radius <= s.far && profile(s, (cx, cy), radius, w) < high
             });
             (own.clone(), beds)
         })
