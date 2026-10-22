@@ -266,6 +266,11 @@ const FACES_PER_WALK: usize = 16;
 /// with the tiles taken relative to `tile`, so the geometry is exact
 /// however far out the tile is; only the lookups name the tiles
 /// themselves. `y` is the feet's height over the level of `tile`.
+///
+/// A grounded walk leaves the ground where it first passes into a tile
+/// more than a level below, as [`is_tile_blocked`] refuses one more than a
+/// level above: the second value is then the reach spent getting there and
+/// the surface's height at that point, the edge. The walk carries on past it.
 fn walk(
     tile: Qrz,
     from: Vec2,
@@ -278,8 +283,14 @@ fn walk(
     collides: bool,
     map: &Map,
     nntree: &NNTree,
-) -> Vec2 {
+) -> (Vec2, Option<(f32, f32)>) {
     let footprints = |here: Qrz| if collides { footprints(tile, here, map) } else { Vec::new() };
+    let drops = |from: Option<Qrz>, to: Option<Qrz>| match (from, to) {
+        (Some(from), Some(to)) => from.z - to.z > 1,
+        (Some(_), None) => true,
+        (None, _) => false,
+    };
+    let mut leaves = None;
     let mut pos = from;
     let mut left = reach;
     let mut dir = heading;
@@ -316,8 +327,14 @@ fn walk(
                 if is_tile_blocked(tile, floor, at, y, airtime, map, nntree) {
                     break;
                 }
+                // Where the round passes the face is not solved for, so a
+                // round over a drop leaves the ground at the contact.
+                let at_floor = map.get_by_qr(at.q, at.r).map(|(floor, _)| floor);
+                if airtime.is_none() && leaves.is_none() && drops(floor, at_floor) {
+                    leaves = floor.map(|floor| (reach - left, surface_y_from(tile, pos, floor, map)));
+                }
                 here = at;
-                floor = map.get_by_qr(at.q, at.r).map(|(floor, _)| floor);
+                floor = at_floor;
                 pace_here = pace(map.cover_at(at.q, at.r).fullness());
                 about = footprints(here);
             }
@@ -348,15 +365,19 @@ fn walk(
         } else {
             pos += dir * to_face;
             left -= to_face / speed;
+            let next_floor = map.get_by_qr(next.q, next.r).map(|(floor, _)| floor);
+            if airtime.is_none() && leaves.is_none() && drops(floor, next_floor) {
+                leaves = floor.map(|floor| (reach - left, surface_y_from(tile, pos, floor, map)));
+            }
             here = next;
-            floor = map.get_by_qr(next.q, next.r).map(|(floor, _)| floor);
+            floor = next_floor;
             pace_here = pace(map.cover_at(next.q, next.r).fullness());
             about = footprints(here);
             dir = heading;
             rate = 1.0;
         }
     }
-    pos - from
+    (pos - from, leaves)
 }
 
 /// How far a walker keeps from what it walks round: the half-width of the
@@ -602,17 +623,31 @@ pub fn calculate_movement(
             }
         }
 
-        // After the apex split, which may have shortened the sub-step.
-        since_step_ms = since_step_ms.saturating_add(dt as u16).min(TURN_RESTED_MS);
-
         if input.moving {
-            let moved = walk(
-                tile, offset.xz(), dir, input.movement_speed * input.pace * pace * dt as f32,
+            let per_ms = input.movement_speed * input.pace * pace;
+            let step = |dt: i16| walk(
+                tile, offset.xz(), dir, per_ms * dt as f32,
                 here, floor, offset.y, airtime, input.collides, map, nntree,
             );
+            let (mut moved, leaves) = step(dt);
+            if let Some((spent, edge)) = leaves {
+                // Split at the first whole millisecond past the edge, so the
+                // fall starts on the same one however the time is sliced.
+                let ms = ((spent / per_ms).ceil() as i16).max(1);
+                if ms < dt {
+                    dt0 += dt - ms;
+                    dt = ms;
+                    moved = step(dt).0;
+                }
+                offset.y = edge;
+                airtime = Some(0);
+            }
             offset.x += moved.x;
             offset.z += moved.y;
         }
+
+        // After the apex and edge splits, which may have shortened the sub-step.
+        since_step_ms = since_step_ms.saturating_add(dt as u16).min(TURN_RESTED_MS);
 
         let here: Qrz = tile + map.convert(offset);
         if let Some((floor, _)) = map.get_by_qr(here.q, here.r) {
@@ -1134,6 +1169,67 @@ mod tests {
         assert!(landed_at < 1500, "landed after {landed_at} ms");
         let where_: Qrz = map.convert(input.position.to_world(&map));
         assert!(where_.q >= 2, "landed on tile {where_:?}, not down the slope");
+    }
+
+    /// A walk off a ledge four levels high falls: the feet leave the
+    /// ground at the edge and reach the foot only after the fall's time,
+    /// never at the step that crosses the face.
+    #[test]
+    fn a_walk_off_a_ledge_falls() {
+        let (map, nntree, input) = ledge();
+        let mut input = input;
+        let (mut airborne, mut y) = (0, input.position.offset.y);
+        for tick in 0..80 {
+            let out = calculate_movement(input, 16, &map, &nntree);
+            if out.airtime.is_some() {
+                airborne += 1;
+            }
+            assert!(y - out.position.offset.y < RISE, "dropped more than a level in one tick at tick {tick}");
+            y = out.position.offset.y;
+            input.position = out.position;
+            input.airtime = out.airtime;
+        }
+        assert!(airborne > 10, "stepped down four levels in {airborne} ticks of air");
+        assert_eq!(input.airtime, None, "still falling: {:?}", input.position);
+        assert!((input.position.offset.y + 4.0 * RISE).abs() < 1e-3, "never reached the foot: {:?}", input.position);
+    }
+
+    /// The walk leaves the ledge, and the fall drops, at the same moments
+    /// however the time is sliced.
+    #[test]
+    fn a_fall_off_a_ledge_is_independent_of_partition() {
+        let (map, nntree, start) = ledge();
+        let at = |slice: i16| {
+            let mut input = start;
+            for _ in 0..400 / slice {
+                let out = calculate_movement(input, slice, &map, &nntree);
+                input.position = out.position;
+                input.airtime = out.airtime;
+            }
+            (input.position.offset, input.airtime)
+        };
+        let whole = at(400);
+        assert!(whole.1.is_some_and(|air| air < 0), "mid-fall at 400 ms: {whole:?}");
+        for slice in [8, 16, 25, 50, 100] {
+            let sliced = at(slice);
+            assert!((whole.0 - sliced.0).length() < 1e-3, "{slice} ms slices: {sliced:?}, whole: {whole:?}");
+            assert_eq!(whole.1, sliced.1, "{slice} ms slices");
+        }
+    }
+
+    /// Ground four levels high to the west of q = 1 and low past it, and a
+    /// walk east from the high ground's centre.
+    fn ledge() -> (Map, NNTree, MovementInput) {
+        let map = create_test_map();
+        let ground = EntityType::Decorator(Decorator { cover: common::Cover::NONE, is_solid: false });
+        for q in -3..=6 {
+            for r in -3..=3 {
+                map.insert(Qrz { q, r, z: if q <= 0 { 4 } else { 0 } }, ground);
+            }
+        }
+        let east = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
+        let input = MovementInput { position: Position::at_tile(Qrz { q: 0, r: 0, z: 5 }), ..walking(east, true) };
+        (map, create_test_nntree(), input)
     }
 
     /// A fall gathers speed and then holds it: each equal slice drops more
