@@ -243,11 +243,6 @@ fn on_stretch(s: &Sample, from: (f64, f64), on: (f64, f64), (x, y): (f64, f64), 
     (s.floor + f * s.down, (d * SQRT_3 - nearer).max(0.0))
 }
 
-/// How tall a cliff band stands in rock that holds a wall steeper than
-/// the angle of repose, in steps: the thinnest formation of a rock column,
-/// each holding its face over a shelf cut back into the weak bed below.
-pub const CLIFF: f64 = 20.0;
-
 /// A bed's valley at a position in world units a tile apart, as a level
 /// `w` wide draws it, each distance to its stretch taken `nearer` tiles
 /// shorter: the
@@ -255,20 +250,18 @@ pub const CLIFF: f64 = 20.0;
 /// river's water out to the plain's width from the valley's axis with
 /// walls rising from there, whichever stands lower, so the bed winds
 /// within its plain and the plain's edge runs with the valley. A plain no
-/// wider than the bed leaves the channel's walls running on up. A wall in
-/// rock that holds steeper than repose rises as cliff bands [`CLIFF`] tall
-/// over flat shelves, keeping its slope on the whole, where the level's
-/// points are close enough to show a shelf; coarser, it rises evenly. It
-/// never falls as either distance grows.
-fn profile(s: &Sample, at: (f64, f64), nearer: f64, w: i64) -> f64 {
-    let (channel, banks) = parts(s, at, nearer, w);
+/// wider than the bed leaves the channel's walls running on up. The walls
+/// beside a plain lean back ([`lean`]). It never falls as either distance
+/// grows.
+fn profile(s: &Sample, at: (f64, f64), nearer: f64) -> f64 {
+    let (channel, banks) = parts(s, at, nearer);
     channel.min(banks)
 }
 
 /// A bed's valley as [`profile`] draws it, in two: its channel, and its
 /// banks, the plain and the walls beside the bed, never lower than the
 /// channel's walls where it has no plain.
-fn parts(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> (f64, f64) {
+fn parts(s: &Sample, (x, y): (f64, f64), nearer: f64) -> (f64, f64) {
     let (floor, d) = on_stretch(s, (s.x, s.y), s.on, (x, y), nearer);
     let (level, off) = if (s.ax, s.ay) == (s.x, s.y) { (floor, d) } else { on_stretch(s, (s.ax, s.ay), s.along, (x, y), nearer) };
     let channel = floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
@@ -276,23 +269,31 @@ fn parts(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> (f64, f64) {
     // point of it stands on the river beside it, never on a floor far
     // downstream whose plain reaches it.
     let across = (2.0 * s.fall + 0.01) * off.min(s.plain);
-    let wall = s.slope * (off - s.plain).max(0.0);
-    let shelved = s.slope > 1.0 && CLIFF / s.slope >= 2.0 * w as f64;
-    let wall = if shelved { CLIFF * (wall / CLIFF).floor() } else { wall };
+    let wall = lean(s) * (off - s.plain).max(0.0);
     (channel, level + 1.0 + across + wall)
+}
+
+/// The slope of a valley's walls beside its plain, in steps a tile: the
+/// rock's over a gorge, whose plain is its bed, leaning back toward repose,
+/// one step a tile, as many times as the plain is wider than the bed. The
+/// river cuts a wall's foot only while it runs against it; the wider it
+/// wanders, the longer each wall has stood to weather back under its scree.
+fn lean(s: &Sample) -> f64 {
+    let wider = if s.plain > s.bed { s.plain / s.bed } else { 1.0 };
+    (s.slope / wider).max(1.0)
 }
 
 /// The least [`profile`] over a disc `radius` tiles round a position: its
 /// distance from the disc's nearest point, its floor wherever along the
 /// stretch.
-fn lowest_over(s: &Sample, at: (f64, f64), radius: f64, w: i64) -> f64 {
-    profile(s, at, radius, w) - s.down.abs()
+fn lowest_over(s: &Sample, at: (f64, f64), radius: f64) -> f64 {
+    profile(s, at, radius) - s.down.abs()
 }
 
 /// The most a bed's banks stand over a disc `radius` tiles round a
 /// position, never below its [`profile`] there.
-fn highest_over(s: &Sample, at: (f64, f64), radius: f64, w: i64) -> f64 {
-    parts(s, at, -radius, w).1 + s.down.abs()
+fn highest_over(s: &Sample, at: (f64, f64), radius: f64) -> f64 {
+    parts(s, at, -radius).1 + s.down.abs()
 }
 
 /// A point of a trough's bed and the stretch of it to the next point,
@@ -544,12 +545,12 @@ impl Band {
 /// bed, cut [`depth`] below its floor, and the wall rising from its edge
 /// at the slope of the rock at its river vertex, and the sample governing
 /// it and how far off, in tiles. None over no beds.
-fn valley(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, Sample, f64)> {
+fn valley(beds: &[Sample], q: f64, r: f64) -> Option<(f64, Sample, f64)> {
     let (x, y) = world(q, r);
     let mut best: Option<(f64, Sample, f64)> = None;
     for s in beds {
         let d = (s.x - x).hypot(s.y - y);
-        let v = profile(s, (x, y), 0.0, w);
+        let v = profile(s, (x, y), 0.0);
         if best.is_none_or(|b| v < b.0) {
             best = Some((v, *s, d));
         }
@@ -565,7 +566,7 @@ fn valley(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, Sample, f64)>
 fn cut_at(beds: &[Sample], q: f64, r: f64, w: i64, sunk: f64, ground: f64) -> f64 {
     let (x, y) = world(q, r);
     let half_step = w as f64 / SQRT_3 / 2.0;
-    beds.iter().map(|s| profile(s, (x, y), half_step, w)).fold(sunk, f64::min) - ground
+    beds.iter().map(|s| profile(s, (x, y), half_step)).fold(sunk, f64::min) - ground
 }
 
 /// A vertex's position in tiles.
@@ -631,7 +632,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
     // The beds a group may read, each with the lowest its valley stands in
     // the group: within reach and below the group's highest ground.
     let reaching = |s: &Sample, (cx, cy): (f64, f64), radius: f64, high: f64| {
-        let lowest = lowest_over(s, (cx, cy), radius, w);
+        let lowest = lowest_over(s, (cx, cy), radius);
         ((s.x - cx).hypot(s.y - cy) - radius <= s.far && lowest < high).then_some((lowest, *s))
     };
     let mut by: BTreeMap<(i64, i64), BTreeMap<(i64, i64), Vec<usize>>> = BTreeMap::new();
@@ -677,13 +678,11 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
             }
             if let Some(near) = reaching(s, centre, radius, ceiling) {
                 if (s.x - centre.0).hypot(s.y - centre.1) + radius <= s.far {
-                    ceiling = ceiling.min(highest_over(s, centre, radius, w));
+                    ceiling = ceiling.min(highest_over(s, centre, radius));
                 }
                 list.push(near);
             }
         }
-        // A banded wall stands level at its bands, so the bed that set the
-        // ceiling may stand at it everywhere.
         list.retain(|n| n.0 <= ceiling);
         list.sort_by(|a, b| a.0.total_cmp(&b.0));
         list
@@ -706,8 +705,8 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
                 }
                 let d = (s.x - px).hypot(s.y - py);
                 if d <= s.far {
-                    low = low.min(parts(s, (px, py), 0.0, w).1);
-                    near = near.min(parts(s, (px, py), half_step, w).1);
+                    low = low.min(parts(s, (px, py), 0.0).1);
+                    near = near.min(parts(s, (px, py), half_step).1);
                 }
             }
             out[t as usize] = if low.is_infinite() { lv.ground[v] } else { low };
@@ -791,7 +790,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             band.within(cq, cr, band.far + radius, &mut beds);
             beds.retain(|s| {
                 let d = (s.x - cx).hypot(s.y - cy);
-                d + radius > s.near && d - radius <= s.far && lowest_over(s, (cx, cy), radius, w) < high
+                d + radius > s.near && d - radius <= s.far && lowest_over(s, (cx, cy), radius) < high
             });
             (own.clone(), beds)
         })
@@ -835,7 +834,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
                 _ => river,
             }
         };
-        let Some((_, governing, d)) = valley(&near, q, r, w) else {
+        let Some((_, governing, d)) = valley(&near, q, r) else {
             return Carve { cut, water: water((carved + 0.5).floor()), parts, ..none };
         };
         Carve { cut, governing: Some((governing, d)), water: water((ground + cut[0] + 0.5).floor()), parts }

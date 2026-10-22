@@ -70,9 +70,9 @@
 //! **A level hands its rivers down as shapes, never as heights at its
 //! vertices:** a finer level reads every coarser level's beds, each out to
 //! that level's ring, and draws their valleys' plains and walls at its own
-//! vertices and its own width, so a bend or a shelf smaller than a coarse
-//! level's spacing reaches every level fine enough to show it. Their
-//! channels it cuts itself, along its own courses: a river is drawn once.
+//! vertices and its own width, so a bend or a plain's edge smaller than
+//! a coarse level's spacing reaches every level fine enough to show it.
+//! Their channels it cuts itself, along its own courses: a river is drawn once.
 //! The corner rule, faces as walls, is the drawing's alone: meshes, physics
 //! and summaries draw a level's cells by it (`common::corner`) from their
 //! centres, and nothing here reads it.
