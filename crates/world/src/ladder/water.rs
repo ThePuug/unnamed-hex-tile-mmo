@@ -26,7 +26,7 @@
 
 use std::collections::BTreeMap;
 
-use super::geom::{cube_round, hex_offsets, parent_of, pos3, vnbr, CHILD_OFFSETS};
+use super::geom::{cube_round, hex_offsets, parent_of, pos3, project, vnbr, CHILD_OFFSETS};
 use super::mask::Mask;
 use super::{wall_slope, Level, Params, Pass};
 use crate::SQRT_3;
@@ -225,7 +225,8 @@ fn standing(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, f64, usize)
 pub const CLIFF: f64 = 20.0;
 
 /// A bed's valley at a position in world units a tile apart, as a level
-/// `w` wide draws it, each distance taken `nearer` tiles shorter: the
+/// `w` wide draws it, each distance to its stretch taken `nearer` tiles
+/// shorter: the
 /// channel, its walls rising from the bed, and its plain, a step above the
 /// river's water out to the plain's width from the valley's axis with
 /// walls rising from there, whichever stands lower, so the bed winds
@@ -236,8 +237,9 @@ pub const CLIFF: f64 = 20.0;
 /// points are close enough to show a shelf; coarser, it rises evenly. It
 /// never falls as either distance grows.
 fn profile(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> f64 {
-    let d = ((s.x - x).hypot(s.y - y) - nearer).max(0.0);
-    let off = if (s.ax, s.ay) == (s.x, s.y) { d } else { ((s.ax - x).hypot(s.ay - y) - nearer).max(0.0) };
+    let to_stretch = |(fx, fy): (f64, f64), (dx, dy): (f64, f64)| project((x, y), (fx, fy), (fx + dx, fy + dy)).1 * SQRT_3;
+    let d = (to_stretch((s.x, s.y), s.on) - nearer).max(0.0);
+    let off = if (s.ax, s.ay) == (s.x, s.y) { d } else { (to_stretch((s.ax, s.ay), s.along) - nearer).max(0.0) };
     let channel = s.floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
     // The plain rises from its river faster than the river falls, so a
     // point of it stands on the river beside it, never on a floor far
@@ -249,18 +251,24 @@ fn profile(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> f64 {
     channel.min(s.floor + 1.0 + rise)
 }
 
-/// A point of a trough's bed: its position in world units a tile apart,
+/// A point of a trough's bed and the stretch of it to the next point,
+/// which it stands for, so the channel runs unbroken however far apart
+/// the points lie: its position in world units a tile apart,
 /// its floor, its half width, the width of the level its trough was born
 /// at and of the level it was read from, and how far from a cell that
-/// level's rivers are read: past `near`, out to `far`, in tiles.
+/// level's rivers are read: past `near`, out to `far`, in tiles, from the
+/// point.
 #[derive(Clone, Copy)]
 struct Sample {
     x: f64,
     y: f64,
+    /// The way to the next point of its bed.
+    on: (f64, f64),
     /// Where its valley's axis lies beside it: the bed before its meander
-    /// swings it.
+    /// swings it, and the way to the axis beside the next point.
     ax: f64,
     ay: f64,
+    along: (f64, f64),
     floor: f64,
     bed: f64,
     /// The half width of its flat floor, the bed's or wider.
@@ -417,19 +425,26 @@ impl Band {
                 spacing = spacing.min(length / (4.0 * bows as f64));
             }
             let ns = 2usize.max((length / spacing).ceil() as usize + 1);
-            for s in 0..ns {
-                let f = s as f64 / (ns - 1) as f64;
-                let off = swing * (std::f64::consts::PI * bows as f64 * f).sin();
-                let ((ax, ay), (px, py), at) = way.at(f * length);
-                let (x, y) = (ax + px * off, ay + py * off);
+            let points: Vec<_> = (0..ns)
+                .map(|s| {
+                    let f = s as f64 / (ns - 1) as f64;
+                    let off = swing * (std::f64::consts::PI * bows as f64 * f).sin();
+                    let ((ax, ay), (px, py), at) = way.at(f * length);
+                    ((ax + px * off, ay + py * off), (ax, ay), at)
+                })
+                .collect();
+            for (s, &((x, y), (ax, ay), at)) in points.iter().enumerate() {
+                let (on, along) = points.get(s + 1).map_or(((0.0, 0.0), (0.0, 0.0)), |&((nx, ny), (nax, nay), _)| ((nx - x, ny - y), (nax - ax, nay - ay)));
                 let q = x * 2.0 / SQRT_3;
                 let r = y - q / 2.0;
                 let (floor, plain, river) = at;
                 cells.entry(cube_round(q / wf, r / wf)).or_default().push(Sample {
                     x,
                     y,
+                    on,
                     ax,
                     ay,
+                    along,
                     floor,
                     bed: bed(river.flow, p),
                     plain,
