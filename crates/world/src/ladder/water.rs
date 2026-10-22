@@ -237,10 +237,13 @@ pub const CLIFF: f64 = 20.0;
 /// points are close enough to show a shelf; coarser, it rises evenly. It
 /// never falls as either distance grows.
 fn profile(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> f64 {
-    let to_stretch = |(fx, fy): (f64, f64), (dx, dy): (f64, f64)| project((x, y), (fx, fy), (fx + dx, fy + dy)).1 * SQRT_3;
-    let d = (to_stretch((s.x, s.y), s.on) - nearer).max(0.0);
-    let off = if (s.ax, s.ay) == (s.x, s.y) { d } else { (to_stretch((s.ax, s.ay), s.along) - nearer).max(0.0) };
-    let channel = s.floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
+    let to_stretch = |(fx, fy): (f64, f64), (dx, dy): (f64, f64)| {
+        let (f, d) = project((x, y), (fx, fy), (fx + dx, fy + dy));
+        (s.floor + f * s.down, (d * SQRT_3 - nearer).max(0.0))
+    };
+    let (floor, d) = to_stretch((s.x, s.y), s.on);
+    let (level, off) = if (s.ax, s.ay) == (s.x, s.y) { (floor, d) } else { to_stretch((s.ax, s.ay), s.along) };
+    let channel = floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
     // The plain rises from its river faster than the river falls, so a
     // point of it stands on the river beside it, never on a floor far
     // downstream whose plain reaches it.
@@ -248,7 +251,19 @@ fn profile(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> f64 {
     let rise = across + s.slope * (off - s.plain).max(0.0);
     let shelved = s.slope > 1.0 && CLIFF / s.slope >= 2.0 * w as f64;
     let rise = if shelved { CLIFF * (rise / CLIFF).floor() } else { rise };
-    channel.min(s.floor + 1.0 + rise)
+    channel.min(level + 1.0 + rise)
+}
+
+/// The least [`profile`] over a disc `radius` tiles round a position: its
+/// distance from the disc's nearest point, its floor wherever along the
+/// stretch.
+fn lowest_over(s: &Sample, at: (f64, f64), radius: f64, w: i64) -> f64 {
+    profile(s, at, radius, w) - s.down.abs()
+}
+
+/// The most [`profile`] over a disc `radius` tiles round a position.
+fn highest_over(s: &Sample, at: (f64, f64), radius: f64, w: i64) -> f64 {
+    profile(s, at, -radius, w) + s.down.abs()
 }
 
 /// A point of a trough's bed and the stretch of it to the next point,
@@ -269,7 +284,10 @@ struct Sample {
     ax: f64,
     ay: f64,
     along: (f64, f64),
+    /// Its floor, and how far that falls to the next point's along the
+    /// stretch.
     floor: f64,
+    down: f64,
     bed: f64,
     /// The half width of its flat floor, the bed's or wider.
     plain: f64,
@@ -341,12 +359,16 @@ impl Way {
             curve.push((pt, t, run));
             last = pt;
         }
+        // On a level floor its water runs on downstream, to where the
+        // river carries more.
+        let gathered = |flow: f64| -FLAT_FALL * flow.max(1.0).ln();
+        let (g1, g2) = (gathered(own.flow), gathered(on.flow));
         Way {
             head,
             length: run,
             curve,
             ends: [m1, b, m2],
-            floors: [e.floors.0, (e.floors.0 + e.floors.1) / 2.0, e.floors.1, f2],
+            floors: [e.floors.0 + g1, (e.floors.0 + e.floors.1) / 2.0 + g1, e.floors.1 + (g1 + g2) / 2.0, f2 + g2],
             plains: [e.plains.0, (e.plains.0 + e.plains.1) / 2.0, e.plains.1, p2],
             rivers: [own, on],
         }
@@ -385,6 +407,11 @@ impl Way {
         (pt, normal(d), at)
     }
 }
+
+/// How far a river's floor falls, in steps, for each e-fold its flow
+/// grows: too little to draw, enough that water on a floor its river
+/// holds level runs on downstream rather than by the lattice.
+const FLAT_FALL: f64 = 1e-6;
 
 /// The quadratic from `a` to `c` with control `b` at `t` in [0, 1].
 fn quad(a: (f64, f64), b: (f64, f64), c: (f64, f64), t: f64) -> (f64, f64) {
@@ -434,10 +461,10 @@ impl Band {
                 })
                 .collect();
             for (s, &((x, y), (ax, ay), at)) in points.iter().enumerate() {
-                let (on, along) = points.get(s + 1).map_or(((0.0, 0.0), (0.0, 0.0)), |&((nx, ny), (nax, nay), _)| ((nx - x, ny - y), (nax - ax, nay - ay)));
+                let (floor, plain, river) = at;
+                let (on, along, down) = points.get(s + 1).map_or(((0.0, 0.0), (0.0, 0.0), 0.0), |&((nx, ny), (nax, nay), (next, _, _))| ((nx - x, ny - y), (nax - ax, nay - ay), next - floor));
                 let q = x * 2.0 / SQRT_3;
                 let r = y - q / 2.0;
-                let (floor, plain, river) = at;
                 cells.entry(cube_round(q / wf, r / wf)).or_default().push(Sample {
                     x,
                     y,
@@ -446,6 +473,7 @@ impl Band {
                     ay,
                     along,
                     floor,
+                    down,
                     bed: bed(river.flow, p),
                     plain,
                     fall: river.fall,
@@ -573,7 +601,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
     // The beds a group may read, each with the lowest its valley stands in
     // the group: within reach and below the group's highest ground.
     let reaching = |s: &Sample, (cx, cy): (f64, f64), radius: f64, high: f64| {
-        let lowest = profile(s, (cx, cy), radius, w);
+        let lowest = lowest_over(s, (cx, cy), radius, w);
         ((s.x - cx).hypot(s.y - cy) - radius <= s.far && lowest < high).then_some((lowest, *s))
     };
     let mut by: BTreeMap<(i64, i64), BTreeMap<(i64, i64), Vec<usize>>> = BTreeMap::new();
@@ -619,7 +647,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
             }
             if let Some(near) = reaching(s, centre, radius, ceiling) {
                 if (s.x - centre.0).hypot(s.y - centre.1) + radius <= s.far {
-                    ceiling = ceiling.min(profile(s, centre, -radius, w));
+                    ceiling = ceiling.min(highest_over(s, centre, radius, w));
                 }
                 list.push(near);
             }
@@ -731,7 +759,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             band.within(cq, cr, band.far + radius, &mut beds);
             beds.retain(|s| {
                 let d = (s.x - cx).hypot(s.y - cy);
-                d + radius > s.near && d - radius <= s.far && profile(s, (cx, cy), radius, w) < high
+                d + radius > s.near && d - radius <= s.far && lowest_over(s, (cx, cy), radius, w) < high
             });
             (own.clone(), beds)
         })
