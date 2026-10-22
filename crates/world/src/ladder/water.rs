@@ -22,7 +22,10 @@
 //! carved lower, so water stands on the carve, never over it. A cell under a lake takes
 //! the lake's surface rounded where it stands higher, over the whole cell:
 //! the lake is the one routing keeps over the cell's centre, its outlet cut
-//! as far as erosion has carried it.
+//! as far as erosion has carried it. A lake is as deep as its surface
+//! stands over the ground routing found it on, both rounded, and stands
+//! on the carve as a river does, so a lake that rounds to its own ground
+//! covers nothing.
 
 use std::collections::BTreeMap;
 
@@ -811,7 +814,11 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
         let water = |z: f64| {
             let river = on_carve(bed, z);
             let lake = view.lake[c];
-            match (lake > 0.0).then(|| ((lake + 0.5).floor(), 0.0, usize::MAX)) {
+            let lake = (lake > 0.0).then(|| {
+                let surface = (lake + 0.5).floor();
+                (surface, surface - (view.sunk[c] + 0.5).floor(), usize::MAX)
+            });
+            match on_carve(lake, z) {
                 Some(lake) if river.is_none_or(|r| lake.0 > r.0) => Some(lake),
                 _ => river,
             }
