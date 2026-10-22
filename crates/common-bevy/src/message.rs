@@ -104,6 +104,10 @@ pub enum Event {
     /// request; the server decides the height and answers with the tile
     /// update every client already treats as a teleport.
     Teleport { ent: Entity, q: i32, r: i32 },
+    /// Client → Server: the client's camera looks `steps` heading steps
+    /// clockwise of the actor's heading, nothing but the far view streamed
+    /// around that bearing; sent as it changes, 0 once the glance ends.
+    Look { ent: Entity, steps: u8 },
     /// Client → Server: place a party of `size` `archetype`s at `level`
     /// ahead of the actor `ent`: on the wild side, beyond the range its
     /// pack acquires a target from, a den; or with `engage`, on a side of
@@ -204,6 +208,7 @@ impl Event {
             | Event::MovementIntent { ent, .. }
             | Event::Displace { ent, .. }
             | Event::Teleport { ent, .. }
+            | Event::Look { ent, .. }
             | Event::SpawnParty { ent, .. }
             | Event::EvictChunks { ent, .. }
             | Event::SummaryBatch { ent, .. }

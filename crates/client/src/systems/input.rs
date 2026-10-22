@@ -45,6 +45,7 @@ pub fn update_keybits(
     dt: Res<Time>,
     server: Res<crate::resources::Server>,
     mut look: ResMut<crate::systems::camera::Look>,
+    mut looked_steps: Local<u8>,
 ) {
     // The menu and the console's world clock, whose arrows scrub the
     // clock, are modal: while one is open every gameplay key reads as
@@ -87,6 +88,11 @@ pub fn update_keybits(
         }
     } else {
         *look = default();
+    }
+    // The far view streams around where the camera looks.
+    if look.steps() != *looked_steps {
+        *looked_steps = look.steps();
+        writer.write(Try { event: Event::Look { ent, steps: *looked_steps } });
     }
 
     // A new input opens when the keys change, or after INPUT_ROLL_MS so the

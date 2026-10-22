@@ -21,6 +21,7 @@ impl Plugin for WorldStreamingPlugin {
             actor::do_spawn_discover,
             actor::try_discover_chunk,
             actor::poll_chunk_tasks,
+            summary::try_look,
             summary::pass_summary_regions,
             summary::dispatch_summary_tasks,
             summary::poll_summary_tasks,

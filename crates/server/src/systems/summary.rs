@@ -23,9 +23,33 @@ pub struct VisibleSummaryCache {
     /// Regions this client wants that are not computed yet, nearest first;
     /// the feeder takes from the front as task slots free up.
     pending: Vec<MeshRegionKey>,
-    /// The chunk and heading the last pass was made for. A pass is made
+    /// The chunk and bearing the last pass was made for. A pass is made
     /// again only when either changes.
     passed_for: Option<(common_bevy::chunk::ChunkId, Heading)>,
+    /// Heading steps clockwise of the heading the client's camera looks
+    /// (`Event::Look`): the far view streams around the heading so turned.
+    look: u8,
+}
+
+impl VisibleSummaryCache {
+    /// The bearing the far view streams around for an actor heading
+    /// `heading`: where its client's camera looks.
+    fn facing(&self, heading: Heading) -> Heading {
+        heading.turned(self.look as i32)
+    }
+}
+
+/// Takes the bearing each client's camera looks along from its heading.
+pub fn try_look(
+    mut reader: MessageReader<Try>,
+    mut query: Query<&mut VisibleSummaryCache>,
+) {
+    for message in reader.read() {
+        let Try { event: Event::Look { ent, steps } } = message else { continue };
+        if let Ok(mut vis_cache) = query.get_mut(*ent) {
+            vis_cache.look = *steps;
+        }
+    }
 }
 
 /// In-flight async summary computation tasks (one per mesh region), and
@@ -45,7 +69,7 @@ pub const MAX_SUMMARY_TASKS: usize = 16;
 
 /// The level whose band, and everything inside it, streams all round the
 /// player for context; beyond its outer edge only the sector around the
-/// heading streams. The level past the first summary level, as far as a
+/// bearing its camera looks along streams. The level past the first summary level, as far as a
 /// den is drawn (`dens::sight`).
 const CONTEXT_LEVEL: u32 = LOD_LEVELS[2];
 
@@ -69,7 +93,8 @@ fn in_stream(key: &MeshRegionKey, px: f32, pz: f32, dir: Vec2) -> bool {
     to.normalize().dot(dir) >= (common::camera::STREAM_SECTOR_HALF_ANGLE + slack).cos()
 }
 
-/// Rebuild what each player wants when their chunk or heading changes:
+/// Rebuild what each player wants when their chunk or the bearing its
+/// camera looks along changes:
 /// the regions in stream that are not sent, sent at once from the cache
 /// where every summary is computed, queued as pending otherwise, nearest
 /// first. Standing still costs nothing.
@@ -91,14 +116,15 @@ pub fn pass_summary_regions(
     let region_lat = mesh_region_lattice();
     let bands = compute_active_bands(common_bevy::summary::reach_wu());
     for (ent, loc, heading, mut vis_cache) in query.iter_mut() {
-        let here = (common_bevy::chunk::loc_to_chunk(**loc), *heading);
+        let bearing = vis_cache.facing(*heading);
+        let here = (common_bevy::chunk::loc_to_chunk(**loc), bearing);
         if vis_cache.passed_for == Some(here) {
             continue;
         }
         vis_cache.passed_for = Some(here);
 
         let (cam_wx, cam_wz) = flat_top_tile_center(loc.q, loc.r, 1.0);
-        let facing = heading.to_world_dir();
+        let facing = bearing.to_world_dir();
         let visible_regions = regions(&bands, cam_wx, cam_wz, 0);
 
         // A region sent is taken back once it lies a ring past every band's
@@ -348,6 +374,22 @@ mod tests {
     use super::*;
     use common_bevy::summary::{compute_active_bands, reach_wu, threshold_horiz};
     use common_bevy::summary_mesh::visible_lod_regions;
+
+    /// The far view streams around the bearing the client's camera looks
+    /// along: the heading until a look turns it.
+    #[test]
+    fn the_far_view_streams_where_the_camera_looks() {
+        let heading = Heading::from_slot(5);
+        assert_eq!(VisibleSummaryCache::default().facing(heading), heading);
+        let mut app = App::new();
+        app.add_message::<Try>();
+        app.add_systems(Update, try_look);
+        let player = app.world_mut().spawn(VisibleSummaryCache::default()).id();
+        app.world_mut().write_message(Try { event: Event::Look { ent: player, steps: 12 } });
+        app.update();
+        let vis_cache = app.world().get::<VisibleSummaryCache>(player).expect("cache");
+        assert_eq!(vis_cache.facing(heading), heading.reversed());
+    }
 
     /// Everything inside the context radius streams whatever the heading;
     /// beyond it the sector keeps the share of the ring its angle covers.

@@ -318,6 +318,12 @@ impl Look {
             raise: self.raise + keys.y * LOOK_RAISE_RATE * dt,
         }
     }
+
+    /// The heading steps clockwise of the heading the view looks along,
+    /// the nearest: the bearing the far view streams around.
+    pub fn steps(&self) -> u8 {
+        (-(self.yaw / ORBIT_STEP).round() as i32).rem_euclid(ORBIT_STOPS as i32) as u8
+    }
 }
 
 /// Shortest signed angle from `from` to `to` on the unit circle.
@@ -976,7 +982,7 @@ mod tests {
 
     /// The view behind each heading looks along it, so the sensor reads
     /// the ground ahead of the player while the look is nothing; turned,
-    /// it stays within half a turn either way.
+    /// the view streams round the heading step it looks along.
     #[test]
     fn the_view_looks_along_the_heading_and_the_look_turns_it() {
         for slot in 0..ORBIT_STOPS as u8 {
@@ -984,7 +990,11 @@ mod tests {
             let ahead = -Pose::ceiling(stop_yaw(heading)).back();
             assert!((ahead - heading.to_world_dir()).length() < 1e-5, "slot {slot}: {ahead:?}");
         }
+        assert_eq!(Look::default().steps(), 0);
+        let right = Look::default().moved(Vec2::X, ORBIT_STEP / LOOK_TURN_RATE);
+        assert_eq!(right.steps(), 1, "a look right is a step clockwise: {right:?}");
         let behind = Look { yaw: PI, raise: 0.0 };
+        assert_eq!(behind.steps(), ORBIT_STOPS as u8 / 2);
         let wrapped = behind.moved(-Vec2::X, 0.1);
         assert!(wrapped.yaw.abs() <= PI, "within half a turn: {wrapped:?}");
     }

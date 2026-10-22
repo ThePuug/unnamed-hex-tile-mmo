@@ -50,6 +50,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::SummaryBatch { .. } => "SummaryBatch",
         Event::Inventory { .. } => "Inventory",
         Event::Gather { .. } => "Gather",
+        Event::Look { .. } => "Look",
         Event::CoverChanged { .. } => "CoverChanged",
         Event::Den { .. } => "Den",
         Event::Loot { .. } => "Loot",
@@ -327,6 +328,7 @@ pub fn send_try(
             | Event::Drop { .. }
             | Event::Wear { .. }
             | Event::Teleport { .. }
+            | Event::Look { .. }
             | Event::SpawnParty { .. }
             | Event::RespecAttributes { .. }
             | Event::SetLoadout { .. } => {
