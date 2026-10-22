@@ -12,9 +12,11 @@
 //! a river follows its valley.
 //!
 //! The level above hands its rivers down as nodes, its trough vertices,
-//! each with its catchment and its graded profile, and no course: levels nest, so each node is one
-//! of the level's vertices, and a river's course is the level's own water
-//! running downhill from it. Nodes are taken upstream first. The level's
+//! each with its catchment and its graded profile, and no course. A node
+//! stands where the level above draws its river, which passes half way
+//! from each trough vertex to its receiver, at the level's vertex nearest
+//! there, and a river's course is the level's own water running downhill
+//! from it. Nodes are taken upstream first. The level's
 //! water from the node upstream is followed until it comes within half a
 //! cell of the level above, or for [`FOLLOW`] steps, and the node's
 //! catchment joins it where it stops: the node is that river already, and
@@ -49,7 +51,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::geom::{facet, parent_of, pos3, vertex_cells, vnbr, wander, xy};
+use super::geom::{facet, nearest_vertex, parent_of, pos3, vertex_cells, vnbr, wander, xy};
 use super::mask::Mask;
 use super::paged::Paged;
 use super::{drained, graded_slope, head_of, Level, Params, Pass};
@@ -334,7 +336,8 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         split[x] = None;
     }
     // The level above's nodes over the footprint, upstream first: where
-    // each one's river is on the level, its catchment and its birth.
+    // each one's river is on the level, its catchment and its birth. A
+    // node stands where its river is drawn: half way to its receiver.
     let under = Mask::new(fpl.iter().filter_map(|&c| {
         let (i, j) = lv.ij(c);
         let (pi, pj, _, _) = parent_of(i, j);
@@ -349,6 +352,14 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             }
             let (ut, ui, uj) = par.vertex(u);
             let (q3, r3) = pos3(ut, ui, uj, par.w);
+            let (q3, r3) = match par.rec[u] {
+                r if r >= 0 => {
+                    let (rt, ri, rj) = par.vertex(r as usize);
+                    let (rq, rr) = pos3(rt, ri, rj, par.w);
+                    nearest_vertex(((q3 + rq) as f64 / 2.0, (r3 + rr) as f64 / 2.0), lv.w)
+                }
+                _ => (q3, r3),
+            };
             if let Some(x) = lv.vid_at(q3, r3).and_then(local) {
                 nodes.push((u, x));
             }
