@@ -324,6 +324,10 @@ pub struct Level {
     /// How far each vertex's hillslopes run to the nearer divide, in
     /// tiles: what a floor may widen into.
     pub room: Paged<f64>,
+    /// The surface of the lake routing keeps over each vertex, its outlet
+    /// cut as far as the plate's age has carried erosion, in levels; NaN
+    /// where none stands. What the level draws as a lake.
+    pub lake: Paged<f64>,
     /// The rain that land gathers, in tiles of full rain: what the water
     /// drawn carries.
     pub flow: Paged<f64>,
@@ -380,6 +384,7 @@ impl Level {
             acc: Paged::new(0.0, 3 * cells),
             graded: nan(3 * cells),
             room: nan(3 * cells),
+            lake: nan(3 * cells),
             flow: Paged::new(0.0, 3 * cells),
             floor: nan(3 * cells),
             supplied: Paged::new(false, cells),

@@ -35,8 +35,8 @@
 //! as the plate's age has carried erosion, and a vertex the lowered
 //! surface no longer covers is dry. A lake is the base level of the
 //! rivers above it, and its floor is its surface; the floors below never
-//! stand above it, so the outlet is cut to it. The water drawn over a lake is the water
-//! pass's, measured on the cells.
+//! stand above it, so the outlet is cut to it. A level draws the lake it
+//! keeps over a cell's centre.
 //!
 //! A vertex gathers what drains into it, capped at the level above's head
 //! in its rock, since what it could carry past that the level above carries
@@ -100,6 +100,7 @@ struct Decided {
     flow: f64,
     graded: f64,
     room: f64,
+    lake: f64,
     floor: f64,
     born: i64,
 }
@@ -157,6 +158,7 @@ pub(super) fn route_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], p: 
             lv.flow[d.v] = d.flow;
             lv.graded[d.v] = d.graded;
             lv.room[d.v] = d.room;
+            lv.lake[d.v] = d.lake;
             lv.floor[d.v] = d.floor;
             lv.born[d.v] = d.born;
         }
@@ -705,6 +707,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             flow: flow[x],
             graded: graded[x],
             room: room(x),
+            lake: lake[x],
             floor: (flo[x] + 0.5).floor(),
             born: if trough[x] { born[x] } else { -1 },
         });

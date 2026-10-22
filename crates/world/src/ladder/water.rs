@@ -21,13 +21,12 @@
 //! ground the river drains, and never more than [`depth`] over a cell
 //! carved lower, so water stands on the carve, never over it. A cell under a lake takes
 //! the lake's surface rounded where it stands higher, over the whole cell:
-//! the lake is measured on the level's cells ([`cell_lakes`]), the heights
-//! it draws.
+//! the lake is the one routing keeps over the cell's centre, its outlet cut
+//! as far as erosion has carried it.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
+use std::collections::BTreeMap;
 
-use super::geom::{cube_round, hex_offsets, pos3, CHILD_OFFSETS, NB};
+use super::geom::{cube_round, hex_offsets, pos3, CHILD_OFFSETS};
 use super::mask::Mask;
 use super::{wall_slope, Level, Params, Pass};
 use crate::SQRT_3;
@@ -353,68 +352,6 @@ fn wet_children(beds: &[Sample], w: i64, i: i64, j: i64) -> u16 {
     })
 }
 
-/// A cell the flood reached, at the water level it was reached at, the
-/// highest carved ground on the way from an outlet.
-struct Filling {
-    level: f64,
-    c: usize,
-}
-
-impl PartialEq for Filling {
-    fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == std::cmp::Ordering::Equal
-    }
-}
-
-impl Eq for Filling {}
-
-impl PartialOrd for Filling {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Filling {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.level.total_cmp(&other.level).then(self.c.cmp(&other.c))
-    }
-}
-
-/// The lakes over a footprint's cells, each cell's surface where a lake
-/// stands over it above the sea: the footprint flooded on its carved cells
-/// from its outlets, the sea and the cells at its edge, lowest water first,
-/// so a hollow fills to the lowest cell of its rim, and a cell the flood
-/// reached above its own carved height lies under that lake. Measured on
-/// the cells the level draws, never on their corners, which stand higher
-/// than a valley's cells.
-fn cell_lakes(lv: &Level, fp: &[usize]) -> HashMap<usize, f64> {
-    let inside: HashSet<usize> = fp.iter().copied().collect();
-    let mut seen: HashSet<usize> = HashSet::new();
-    let mut heap = BinaryHeap::new();
-    for &c in fp {
-        let (i, j) = lv.ij(c);
-        let edge = NB.iter().any(|&(di, dj)| lv.idx(i + di, j + dj).is_none_or(|d| !inside.contains(&d)));
-        if edge || lv.carved[c] < 0.0 {
-            seen.insert(c);
-            heap.push(Reverse(Filling { level: lv.carved[c], c }));
-        }
-    }
-    let mut lakes = HashMap::new();
-    while let Some(Reverse(f)) = heap.pop() {
-        if f.level > lv.carved[f.c] && f.level > 0.0 {
-            lakes.insert(f.c, f.level);
-        }
-        let (i, j) = lv.ij(f.c);
-        for (di, dj) in NB {
-            let Some(d) = lv.idx(i + di, j + dj) else { continue };
-            if inside.contains(&d) && seen.insert(d) {
-                heap.push(Reverse(Filling { level: f.level.max(lv.carved[d]), c: d }));
-            }
-        }
-    }
-    lakes
-}
-
 /// The water a cell's bed puts over it, `(surface, depth, river)`: at the
 /// bed's floor, and never more than its depth over the cell's carved height
 /// `z`.
@@ -570,8 +507,6 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             (own.clone(), beds)
         })
         .collect();
-    let each: Vec<usize> = (0..lists.len()).collect();
-    let lakes = in_parallel(&each, |_, b| cell_lakes(view, &lists[b].1));
     let jobs: Vec<(usize, usize)> = blocks.iter().enumerate().flat_map(|(b, (own, _))| own.iter().map(move |&c| (b, c))).collect();
     let index: Vec<usize> = (0..jobs.len()).collect();
     let found = in_parallel(&index, |near, x| {
@@ -601,7 +536,8 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
         let parts = wet_children(&near, w, i, j);
         let water = |z: f64| {
             let river = on_carve(bed, z);
-            match lakes[b].get(&c).map(|&lake| ((lake + 0.5).floor(), 0.0, usize::MAX)) {
+            let lake = view.lake[c];
+            match (lake > 0.0).then(|| ((lake + 0.5).floor(), 0.0, usize::MAX)) {
                 Some(lake) if river.is_none_or(|r| lake.0 > r.0) => Some(lake),
                 _ => river,
             }
