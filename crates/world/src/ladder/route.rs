@@ -385,6 +385,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     let mut src_acc = vec![f64::NAN; nv];
     let mut src_flow = vec![f64::NAN; nv];
     let mut src_graded = vec![f64::NAN; nv];
+    let mut src_floor = vec![f64::NAN; nv];
     let mut src_born = vec![-1i64; nv];
     while let Some(u) = ready.pop() {
         let xu = at_node[&u];
@@ -430,6 +431,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             src_acc[x] = src_acc[x].max(par.acc[u]);
             src_flow[x] = src_flow[x].max(par.flow[u]);
             src_graded[x] = src_graded[x].min(par.graded[u]);
+            src_floor[x] = src_floor[x].min(par.floor[u]);
             src_born[x] = src_born[x].max(par.born[u]);
         }
         let r = par.rec[u];
@@ -664,7 +666,8 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     graded = grade(&lake);
     // Floors: drainage's under the level's own dry ground at each
     // vertex, toward its graded profile and held to the room its
-    // hillslopes give; along a trough never above the floors draining
+    // hillslopes give, and never above the level above's where a node
+    // hands its river down; along a trough never above the floors draining
     // into it, upstream first. A lake's floor is its surface.
     let mut flo: Vec<f64> = (0..nv)
         .map(|x| {
@@ -673,7 +676,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             }
             let v = vids[x];
             let c = v % nn;
-            drained(lv.ground[v], graded[x], lv.age[c], lv.erod[c], room(x), p)
+            drained(lv.ground[v], graded[x], lv.age[c], lv.erod[c], room(x), p).min(src_floor[x])
         })
         .collect();
     let mut low = vec![f64::INFINITY; nv];
