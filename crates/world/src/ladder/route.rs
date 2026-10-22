@@ -203,7 +203,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         let (cells, m) = vertex_cells(t, i, j);
         known[x] = cells[..m].iter().all(|&(a, bb)| lv.idx(a, bb).is_none_or(|c| stamp[c] == cur && lv.supplied[c]));
         let (q3, r3) = pos3(t, i, j, w);
-        key[x] = (lv.carved[v], 2 * r3 + q3, q3);
+        key[x] = (lv.sunk[v], 2 * r3 + q3, q3);
         at[x] = xy(q3, r3);
         pos[x] = (q3, r3);
         if known[x] && lv.ground[v] < 0.0 {

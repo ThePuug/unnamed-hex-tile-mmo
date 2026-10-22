@@ -273,8 +273,14 @@ pub struct Level {
     /// the mean of the three tiles sharing each.
     pub ground: Paged<f64>,
     /// The carved ground at each vertex: its ground met by the valleys of
-    /// every coarser level's rivers there. What routing reads.
+    /// every coarser level's rivers there.
     pub carved: Paged<f64>,
+    /// The lowest the carved ground falls within half a step of each
+    /// vertex, a step the distance between the level's points: its ground
+    /// met by every coarser level's valleys at their nearest there. What
+    /// routing reads, so a valley narrower than the level's steps runs on
+    /// as a course, never a row of hollows.
+    pub sunk: Paged<f64>,
     /// The level's carve at each vertex: its valleys met by its carved
     /// ground, less the ground; never above the carved ground.
     pub cut: Paged<f64>,
@@ -366,6 +372,7 @@ impl Level {
             rain: nan(cells),
             ground: nan(3 * cells),
             carved: nan(3 * cells),
+            sunk: nan(3 * cells),
             cut: nan(3 * cells),
             wdist: nan(cells),
             wborn: Paged::new(-1, cells),
@@ -695,6 +702,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         for &v in &vertices {
             let h = lv.ground[v];
             lv.carved[v] = h;
+            lv.sunk[v] = h;
             lv.z[v] = (h + 0.5).floor();
             lv.zd[v] = lv.z[v];
         }
@@ -798,10 +806,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let lv = &mut self.levels[k];
         let todo: Vec<usize> = fp.iter().filter(|&c| lv.exists[c] && !lv.supplied[c]).collect();
         let carved = water::carved_over(lv, &bands, &todo);
-        for (&c, at) in todo.iter().zip(carved) {
+        for (&c, (at, near)) in todo.iter().zip(carved) {
             let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
             for (t, v) in vertices {
                 lv.carved[v] = at[t as usize];
+                lv.sunk[v] = near[t as usize];
             }
             lv.supplied[c] = true;
         }
@@ -932,8 +941,8 @@ fn corners_over(lv: &mut Level, mask: &Mask) {
     }
 }
 
-/// A tile's corners over a mask: the dry and the carved ground of each the
-/// mean of the three tiles sharing it, where all three are supplied. A
+/// A tile's corners over a mask: the dry, the carved and the sunk ground of
+/// each the mean of the three tiles sharing it, where all three are supplied. A
 /// corner of a coarser level is read where it stands.
 fn tile_corners(lv: &mut Level, mask: &Mask) {
     if lv.w >= 3 {
@@ -947,13 +956,16 @@ fn tile_corners(lv: &mut Level, mask: &Mask) {
         let (i, j) = lv.ij(c);
         let (a, b, ready_a, ready_b) = lv.corner_means(i, j, &lv.carved, &lv.supplied);
         let (da, db, _, _) = lv.corner_means(i, j, &lv.ground, &lv.supplied);
+        let (sa, sb, _, _) = lv.corner_means(i, j, &lv.sunk, &lv.supplied);
         if ready_a {
             lv.carved[nn + c] = a;
             lv.ground[nn + c] = da;
+            lv.sunk[nn + c] = sa;
         }
         if ready_b {
             lv.carved[2 * nn + c] = b;
             lv.ground[2 * nn + c] = db;
+            lv.sunk[2 * nn + c] = sb;
         }
     }
 }

@@ -361,14 +361,18 @@ fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)>
 
 /// The carved ground at each vertex of `cells` of a level: its ground met
 /// by the valleys of every coarser level's rivers in `bands`, each band
-/// read out to its own reach, the valleys drawn at the level's own width.
+/// read out to its own reach, the valleys drawn at the level's own width;
+/// and its sunk ground, the same with each valley at its lowest within
+/// half a step of the vertex: a valley rises from its river, so there it
+/// stands half a step nearer.
 /// The cells are taken by the water pass's deform cells, each reading once
 /// the beds whose valleys may reach below its highest ground, lowest the
 /// valley can stand in it first, so a vertex stops at the first bed that
 /// cannot go below what it has found.
-pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<[f64; 3]> {
+pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([f64; 3], [f64; 3])> {
     let w = lv.w;
     let wf = w as f64;
+    let half_step = wf / SQRT_3 / 2.0;
     let mut by: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
     for (x, &c) in cells.iter().enumerate() {
         by.entry(lv.block(Pass::Water, c)).or_default().push(x);
@@ -386,7 +390,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<[f
         let (cq, cr) = at.iter().fold((0.0, 0.0), |a, &(q, r)| (a.0 + q, a.1 + r));
         let (cq, cr) = (cq / at.len() as f64, cr / at.len() as f64);
         let (cx, cy) = world(cq, cr);
-        let radius = at.iter().map(|&(q, r)| world(q, r)).map(|(x, y)| (x - cx).hypot(y - cy)).fold(0.0, f64::max) + wf;
+        let radius = at.iter().map(|&(q, r)| world(q, r)).map(|(x, y)| (x - cx).hypot(y - cy)).fold(0.0, f64::max) + wf + half_step;
         let high = groups[g]
             .iter()
             .flat_map(|&x| lv.own_vertices(cells[x]).map(|(_, v)| lv.ground[v]).collect::<Vec<_>>())
@@ -408,11 +412,12 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<[f
     in_parallel(&index, |_, x| {
         let c = cells[x];
         let (i, j) = lv.ij(c);
-        let mut out = [f64::NAN; 3];
+        let (mut out, mut sunk) = ([f64::NAN; 3], [f64::NAN; 3]);
         for (t, v) in lv.own_vertices(c) {
             let (q, r) = vertex_tiles(t, i, j, w);
             let (px, py) = world(q, r);
-            let mut low = if lv.ground[v].is_nan() { f64::INFINITY } else { lv.ground[v] };
+            let ground = if lv.ground[v].is_nan() { f64::INFINITY } else { lv.ground[v] };
+            let (mut low, mut near) = (ground, ground);
             for (lowest, s) in &lists[group_of[x]] {
                 if *lowest >= low {
                     break;
@@ -420,11 +425,13 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<[f
                 let d = (s.x - px).hypot(s.y - py);
                 if d <= s.far {
                     low = low.min(profile(s, d, w));
+                    near = near.min(profile(s, (d - half_step).max(0.0), w));
                 }
             }
             out[t as usize] = if low.is_infinite() { lv.ground[v] } else { low };
+            sunk[t as usize] = if near.is_infinite() { lv.ground[v] } else { near };
         }
-        out
+        (out, sunk)
     })
 }
 
