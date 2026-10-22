@@ -259,7 +259,15 @@ pub const CLIFF: f64 = 20.0;
 /// over flat shelves, keeping its slope on the whole, where the level's
 /// points are close enough to show a shelf; coarser, it rises evenly. It
 /// never falls as either distance grows.
-fn profile(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> f64 {
+fn profile(s: &Sample, at: (f64, f64), nearer: f64, w: i64) -> f64 {
+    let (channel, banks) = parts(s, at, nearer, w);
+    channel.min(banks)
+}
+
+/// A bed's valley as [`profile`] draws it, in two: its channel, and its
+/// banks, the plain and the walls beside the bed, never lower than the
+/// channel's walls where it has no plain.
+fn parts(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> (f64, f64) {
     let (floor, d) = on_stretch(s, (s.x, s.y), s.on, (x, y), nearer);
     let (level, off) = if (s.ax, s.ay) == (s.x, s.y) { (floor, d) } else { on_stretch(s, (s.ax, s.ay), s.along, (x, y), nearer) };
     let channel = floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
@@ -270,7 +278,7 @@ fn profile(s: &Sample, (x, y): (f64, f64), nearer: f64, w: i64) -> f64 {
     let wall = s.slope * (off - s.plain).max(0.0);
     let shelved = s.slope > 1.0 && CLIFF / s.slope >= 2.0 * w as f64;
     let wall = if shelved { CLIFF * (wall / CLIFF).floor() } else { wall };
-    channel.min(level + 1.0 + across + wall)
+    (channel, level + 1.0 + across + wall)
 }
 
 /// The least [`profile`] over a disc `radius` tiles round a position: its
@@ -280,9 +288,10 @@ fn lowest_over(s: &Sample, at: (f64, f64), radius: f64, w: i64) -> f64 {
     profile(s, at, radius, w) - s.down.abs()
 }
 
-/// The most [`profile`] over a disc `radius` tiles round a position.
+/// The most a bed's banks stand over a disc `radius` tiles round a
+/// position, never below its [`profile`] there.
 fn highest_over(s: &Sample, at: (f64, f64), radius: f64, w: i64) -> f64 {
-    profile(s, at, -radius, w) + s.down.abs()
+    parts(s, at, -radius, w).1 + s.down.abs()
 }
 
 /// A point of a trough's bed and the stretch of it to the next point,
@@ -591,15 +600,17 @@ fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)>
 /// The carved ground at each vertex of `cells` of a level: its ground met
 /// by the valleys of every coarser level's rivers in `bands`, each band
 /// read out to its own reach, the valleys drawn at the level's own width;
-/// and its sunk ground, the same with each valley at its lowest within
+/// its sunk ground, the same with each valley at its lowest within
 /// half a step of the vertex: a valley rises from its river, so there it
-/// stands half a step nearer.
+/// stands half a step nearer; and its banks, its ground met by those
+/// valleys' banks alone ([`parts`]), the ground they leave beside their
+/// beds.
 /// The cells are taken by the water pass's deform cells, each reading once
 /// the beds whose valleys may reach below its highest ground, and then by
 /// each coarser cell's children, lowest the valley can stand among them
 /// first, so a vertex stops at the first bed that cannot go below what it
 /// has found.
-pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([f64; 3], [f64; 3])> {
+pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([f64; 3], [f64; 3], [f64; 3])> {
     let w = lv.w;
     let wf = w as f64;
     let half_step = wf / SQRT_3 / 2.0;
@@ -682,26 +693,32 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
     in_parallel(&index, |_, x| {
         let c = cells[x];
         let (i, j) = lv.ij(c);
-        let (mut out, mut sunk) = ([f64::NAN; 3], [f64::NAN; 3]);
+        let (mut out, mut sunk, mut banks) = ([f64::NAN; 3], [f64::NAN; 3], [f64::NAN; 3]);
         for (t, v) in lv.own_vertices(c) {
             let (q, r) = vertex_tiles(t, i, j, w);
             let (px, py) = world(q, r);
             let ground = if lv.ground[v].is_nan() { f64::INFINITY } else { lv.ground[v] };
-            let (mut low, mut near) = (ground, ground);
+            let (mut low, mut near, mut beside) = (ground, ground, ground);
+            // No bed's banks stand below its profile, nor its profile below
+            // the least it can come to, and the banks stand above the valley.
             for (lowest, s) in &near_lists[sub_of[x]] {
-                if *lowest >= low {
+                if *lowest >= beside {
                     break;
                 }
                 let d = (s.x - px).hypot(s.y - py);
                 if d <= s.far {
-                    low = low.min(profile(s, (px, py), 0.0, w));
+                    let (channel, bank) = parts(s, (px, py), 0.0, w);
+                    low = low.min(channel.min(bank));
+                    beside = beside.min(bank);
                     near = near.min(profile(s, (px, py), half_step, w));
                 }
             }
-            out[t as usize] = if low.is_infinite() { lv.ground[v] } else { low };
-            sunk[t as usize] = if near.is_infinite() { lv.ground[v] } else { near };
+            let held = |h: f64| if h.is_infinite() { lv.ground[v] } else { h };
+            out[t as usize] = held(low);
+            sunk[t as usize] = held(near);
+            banks[t as usize] = held(beside);
         }
-        (out, sunk)
+        (out, sunk, banks)
     })
 }
 
