@@ -39,6 +39,8 @@ pub(super) struct Edge {
     from: (f64, f64),
     to: (f64, f64),
     floors: (f64, f64),
+    /// The graded profile at each end.
+    graded: (f64, f64),
     flow: f64,
     born: i64,
     /// The erodibility of the rock at the vertex the edge leaves.
@@ -64,6 +66,7 @@ pub(super) struct Edge {
 struct Next {
     to: (f64, f64),
     floor: f64,
+    graded: f64,
     plain: f64,
     flow: f64,
     born: i64,
@@ -92,6 +95,8 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
         })
         .any(|u| runs(u) && lv.rec[u] == v as i64)
     };
+    // A vertex's graded profile, its floor where routing could not grade it.
+    let graded_at = |u: usize| if lv.graded[u].is_nan() { lv.floor[u].max(0.0) } else { lv.graded[u].max(0.0) };
     // A vertex's plain, held to its room where routing measured one.
     let plain_at = |u: usize| {
         let half = bed(lv.flow[u], p);
@@ -109,6 +114,7 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
                 Next {
                     to: tiles(lv, on),
                     floor: lv.floor[on].max(0.0),
+                    graded: graded_at(on),
                     plain: plain_at(on),
                     flow: lv.flow[to],
                     born: lv.born[to],
@@ -123,6 +129,7 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
                 // The sea is every river's base level: a floor running out
                 // over the sea floor stands at the sea.
                 floors: (lv.floor[v].max(0.0), lv.floor[to].max(0.0)),
+                graded: (graded_at(v), graded_at(to)),
                 flow: lv.flow[v],
                 born: lv.born[v],
                 erod: rock(lv, v),
@@ -359,16 +366,16 @@ impl Way {
             curve.push((pt, t, run));
             last = pt;
         }
-        // On a level floor its water runs on downstream, to where the
-        // river carries more.
-        let gathered = |flow: f64| -FLAT_FALL * flow.max(1.0).ln();
-        let (g1, g2) = (gathered(own.flow), gathered(on.flow));
+        // On a level floor its water runs on downstream, the way its
+        // graded profile falls.
+        let g2 = e.next.as_ref().map_or(e.graded.1, |n| (e.graded.1 + n.graded) / 2.0);
+        let [g0, gm, g1, g2] = [e.graded.0, (e.graded.0 + e.graded.1) / 2.0, e.graded.1, g2].map(|g| FLAT_FALL * g);
         Way {
             head,
             length: run,
             curve,
             ends: [m1, b, m2],
-            floors: [e.floors.0 + g1, (e.floors.0 + e.floors.1) / 2.0 + g1, e.floors.1 + (g1 + g2) / 2.0, f2 + g2],
+            floors: [e.floors.0 + g0, (e.floors.0 + e.floors.1) / 2.0 + gm, e.floors.1 + g1, f2 + g2],
             plains: [e.plains.0, (e.plains.0 + e.plains.1) / 2.0, e.plains.1, p2],
             rivers: [own, on],
         }
@@ -408,9 +415,10 @@ impl Way {
     }
 }
 
-/// How far a river's floor falls, in steps, for each e-fold its flow
-/// grows: too little to draw, enough that water on a floor its river
-/// holds level runs on downstream rather than by the lattice.
+/// How far a river's floor stands above itself, in steps, for each step
+/// of its graded profile: too little to draw, enough that water on a floor
+/// its river holds level runs on downstream rather than by the lattice,
+/// since the graded profile falls wherever the river runs.
 const FLAT_FALL: f64 = 1e-6;
 
 /// The quadratic from `a` to `c` with control `b` at `t` in [0, 1].
