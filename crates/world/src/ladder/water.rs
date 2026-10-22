@@ -9,10 +9,11 @@
 //!
 //! The top cuts its valley wholly, met by its ground at each vertex. A
 //! level below carves its own troughs' valleys within `Params::ring` of its
-//! cells into its carved ground, the level above's carve handed down, met
-//! by that at each vertex. A valley is an absolute height, so where the
-//! level above already cut a river to its floor the level's own valley of
-//! it cuts nothing more.
+//! cells into its carved ground: its ground met by the plains and walls of
+//! every coarser level's valleys, never their channels. A river's channel
+//! is cut by each level that routes it, along its own course, so it is
+//! drawn once at the tiles; the coarser levels hand down the valley it
+//! runs in.
 //!
 //! Water stands on a cell where a bed covers its centre and is as wide as
 //! the cell, corner to corner: a river is wet at a level once its catchment
@@ -598,19 +599,17 @@ fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)>
 }
 
 /// The carved ground at each vertex of `cells` of a level: its ground met
-/// by the valleys of every coarser level's rivers in `bands`, each band
-/// read out to its own reach, the valleys drawn at the level's own width;
-/// its sunk ground, the same with each valley at its lowest within
-/// half a step of the vertex: a valley rises from its river, so there it
-/// stands half a step nearer; and its banks, its ground met by those
-/// valleys' banks alone ([`parts`]), the ground they leave beside their
-/// beds.
+/// by the plains and walls of every coarser level's valleys in `bands`,
+/// never their channels ([`parts`]), each band read out to its own reach,
+/// the valleys drawn at the level's own width; and its sunk ground, the
+/// same with each valley at its lowest within half a step of the vertex: a
+/// valley rises from its river, so there it stands half a step nearer.
 /// The cells are taken by the water pass's deform cells, each reading once
 /// the beds whose valleys may reach below its highest ground, and then by
 /// each coarser cell's children, lowest the valley can stand among them
 /// first, so a vertex stops at the first bed that cannot go below what it
 /// has found.
-pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([f64; 3], [f64; 3], [f64; 3])> {
+pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([f64; 3], [f64; 3])> {
     let w = lv.w;
     let wf = w as f64;
     let half_step = wf / SQRT_3 / 2.0;
@@ -693,32 +692,28 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
     in_parallel(&index, |_, x| {
         let c = cells[x];
         let (i, j) = lv.ij(c);
-        let (mut out, mut sunk, mut banks) = ([f64::NAN; 3], [f64::NAN; 3], [f64::NAN; 3]);
+        let (mut out, mut sunk) = ([f64::NAN; 3], [f64::NAN; 3]);
         for (t, v) in lv.own_vertices(c) {
             let (q, r) = vertex_tiles(t, i, j, w);
             let (px, py) = world(q, r);
             let ground = if lv.ground[v].is_nan() { f64::INFINITY } else { lv.ground[v] };
-            let (mut low, mut near, mut beside) = (ground, ground, ground);
-            // No bed's banks stand below its profile, nor its profile below
-            // the least it can come to, and the banks stand above the valley.
+            let (mut low, mut near) = (ground, ground);
+            // A bed's banks never stand below its profile, so the least the
+            // profile can come to bounds them too.
             for (lowest, s) in &near_lists[sub_of[x]] {
-                if *lowest >= beside {
+                if *lowest >= low {
                     break;
                 }
                 let d = (s.x - px).hypot(s.y - py);
                 if d <= s.far {
-                    let (channel, bank) = parts(s, (px, py), 0.0, w);
-                    low = low.min(channel.min(bank));
-                    beside = beside.min(bank);
-                    near = near.min(profile(s, (px, py), half_step, w));
+                    low = low.min(parts(s, (px, py), 0.0, w).1);
+                    near = near.min(parts(s, (px, py), half_step, w).1);
                 }
             }
-            let held = |h: f64| if h.is_infinite() { lv.ground[v] } else { h };
-            out[t as usize] = held(low);
-            sunk[t as usize] = held(near);
-            banks[t as usize] = held(beside);
+            out[t as usize] = if low.is_infinite() { lv.ground[v] } else { low };
+            sunk[t as usize] = if near.is_infinite() { lv.ground[v] } else { near };
         }
-        (out, sunk, banks)
+        (out, sunk)
     })
 }
 

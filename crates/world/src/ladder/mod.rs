@@ -15,7 +15,8 @@
 //!
 //! - **ground**: the ground read at each vertex, a cell's centre and its
 //!   corners A and B ([`Ground::at`]): the level's dry ground. Met by the
-//!   valleys of every coarser level's rivers there: its carved ground.
+//!   plains and walls of every coarser level's valleys there, never their
+//!   channels: its carved ground.
 //! - **route**: every vertex's receiver downhill on the carved ground, its
 //!   catchment, and the level's troughs: the level above's rivers run on
 //!   from its nodes, and troughs born at the level ([`route`]). A
@@ -28,7 +29,7 @@
 //!   stands at graded down its course: its outlet's level, the sea's or a
 //!   lake's, or a node's as the level above graded it, with the channel's
 //!   graded slope integrated up from there ([`graded_slope`]). A trough's
-//!   floor is the level's own dry ground cut toward that profile as far as
+//!   floor is the level's carved ground cut toward that profile as far as
 //!   the plate's age has carried erosion ([`drained`]), and never above the
 //!   floors draining into it.
 //! - **water**: one target surface, the valley drainage's law cuts: a floor
@@ -68,9 +69,10 @@
 //! corners lie between tiles and take the mean of the three around each.
 //! **A level hands its rivers down as shapes, never as heights at its
 //! vertices:** a finer level reads every coarser level's beds, each out to
-//! that level's ring, and draws their valleys at its own vertices and its
-//! own width, so a bend or a shelf smaller than a coarse level's spacing
-//! reaches every level fine enough to show it.
+//! that level's ring, and draws their valleys' plains and walls at its own
+//! vertices and its own width, so a bend or a shelf smaller than a coarse
+//! level's spacing reaches every level fine enough to show it. Their
+//! channels it cuts itself, along its own courses: a river is drawn once.
 //! The corner rule, faces as walls, is the drawing's alone: meshes, physics
 //! and summaries draw a level's cells by it (`common::corner`) from their
 //! centres, and nothing here reads it.
@@ -272,8 +274,10 @@ pub struct Level {
     /// there ([`Ground::at`]). A tile's corners lie between tiles, and take
     /// the mean of the three tiles sharing each.
     pub ground: Paged<f64>,
-    /// The carved ground at each vertex: its ground met by the valleys of
-    /// every coarser level's rivers there.
+    /// The carved ground at each vertex: its ground met by the plains and
+    /// walls of every coarser level's valleys there, never their channels,
+    /// which each level cuts for itself. What its floors are cut from, so a
+    /// river crossing a plain a coarser river planed cuts into that plain.
     pub carved: Paged<f64>,
     /// The lowest the carved ground falls within half a step of each
     /// vertex, a step the distance between the level's points: its ground
@@ -281,12 +285,6 @@ pub struct Level {
     /// routing reads, so a valley narrower than the level's steps runs on
     /// as a course, never a row of hollows.
     pub sunk: Paged<f64>,
-    /// The ground beside the beds at each vertex: its ground met by every
-    /// coarser level's valleys without their channels, their plains and
-    /// walls alone. What its rivers' floors are cut from, so a river
-    /// crossing a plain a coarser river planed cuts into that plain, and a
-    /// river in its own coarser channel cuts no deeper than that river.
-    pub banks: Paged<f64>,
     /// The level's carve at each vertex: its valleys, each at its lowest
     /// within half a step, met by its sunk ground, less the ground; never
     /// above the sunk ground.
@@ -380,7 +378,6 @@ impl Level {
             ground: nan(3 * cells),
             carved: nan(3 * cells),
             sunk: nan(3 * cells),
-            banks: nan(3 * cells),
             cut: nan(3 * cells),
             wdist: nan(cells),
             wborn: Paged::new(-1, cells),
@@ -711,7 +708,6 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let h = lv.ground[v];
             lv.carved[v] = h;
             lv.sunk[v] = h;
-            lv.banks[v] = h;
             lv.z[v] = (h + 0.5).floor();
             lv.zd[v] = lv.z[v];
         }
@@ -815,12 +811,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let lv = &mut self.levels[k];
         let todo: Vec<usize> = fp.iter().filter(|&c| lv.exists[c] && !lv.supplied[c]).collect();
         let carved = water::carved_over(lv, &bands, &todo);
-        for (&c, (at, near, beside)) in todo.iter().zip(carved) {
+        for (&c, (at, near)) in todo.iter().zip(carved) {
             let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
             for (t, v) in vertices {
                 lv.carved[v] = at[t as usize];
                 lv.sunk[v] = near[t as usize];
-                lv.banks[v] = beside[t as usize];
             }
             lv.supplied[c] = true;
         }
@@ -951,9 +946,9 @@ fn corners_over(lv: &mut Level, mask: &Mask) {
     }
 }
 
-/// A tile's corners over a mask: the dry, the carved and the sunk ground
-/// and the banks of each the mean of the three tiles sharing it, where all
-/// three are supplied. A corner of a coarser level is read where it stands.
+/// A tile's corners over a mask: the dry, the carved and the sunk ground of
+/// each the mean of the three tiles sharing it, where all three are supplied. A
+/// corner of a coarser level is read where it stands.
 fn tile_corners(lv: &mut Level, mask: &Mask) {
     if lv.w >= 3 {
         return;
@@ -967,18 +962,15 @@ fn tile_corners(lv: &mut Level, mask: &Mask) {
         let (a, b, ready_a, ready_b) = lv.corner_means(i, j, &lv.carved, &lv.supplied);
         let (da, db, _, _) = lv.corner_means(i, j, &lv.ground, &lv.supplied);
         let (sa, sb, _, _) = lv.corner_means(i, j, &lv.sunk, &lv.supplied);
-        let (ba, bb, _, _) = lv.corner_means(i, j, &lv.banks, &lv.supplied);
         if ready_a {
             lv.carved[nn + c] = a;
             lv.ground[nn + c] = da;
             lv.sunk[nn + c] = sa;
-            lv.banks[nn + c] = ba;
         }
         if ready_b {
             lv.carved[2 * nn + c] = b;
             lv.ground[2 * nn + c] = db;
             lv.sunk[2 * nn + c] = sb;
-            lv.banks[2 * nn + c] = bb;
         }
     }
 }
