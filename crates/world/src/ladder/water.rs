@@ -24,7 +24,9 @@
 //! carved lower, so water stands on the carve, never over it. A cell under a lake takes
 //! the lake's surface rounded where it stands higher, over the whole cell:
 //! the lake is the one routing keeps over the cell's centre, its outlet cut
-//! as far as erosion has carried it. A lake is as deep as its surface
+//! as far as erosion has carried it, or the one the level above keeps over
+//! the cell's parent, so a lake wider than a level's routing reads stands
+//! at every level below the one that found it. A lake is as deep as its surface
 //! stands over the ground routing found it on, both rounded, and stands
 //! on the carve as a river does, so a lake that rounds to its own ground
 //! covers nothing.
@@ -807,9 +809,9 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
         let parts = wet_children(&near, w, i, j) | view.held_parts[c];
         let water = |z: f64| {
             let river = on_carve(bed, z);
-            let lake = view.lake[c];
+            let lake = lakes(view, c);
             let lake = (lake > 0.0).then(|| {
-                let surface = (lake + 0.5).floor();
+                let surface = lake;
                 (surface, surface - (view.sunk[c] + 0.5).floor(), usize::MAX)
             });
             match on_carve(lake, z) {
@@ -835,8 +837,16 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
         (lv.water[c], lv.wdepth[c]) = k.water.map_or((f64::NAN, f64::NAN), |w| (w.0, w.1));
         lv.wwet[c] = k.water.map_or(-1, |w| w.2 as i64);
         lv.wparts[c] = k.parts;
+        lv.lakes[c] = lakes(lv, c);
         lv.watered[c] = true;
     }
+}
+
+/// The surface of the lake over a cell, rounded: routing's over its
+/// centre, or the one the level above hands down, whichever stands
+/// higher; NaN where none.
+pub(super) fn lakes(lv: &Level, c: usize) -> f64 {
+    (lv.lake[c] + 0.5).floor().max(lv.lake_above[c])
 }
 
 /// The cut at the centre of each of `cells` from every river of `edges`,

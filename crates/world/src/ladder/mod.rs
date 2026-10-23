@@ -325,6 +325,15 @@ pub struct Level {
     pub held_depth: Paged<f64>,
     pub held_src: Paged<i64>,
     pub held_parts: Paged<u16>,
+    /// The surface of the lake over each cell's parent, rounded; NaN where
+    /// none. A lake wider than a level's routing reads is found by a
+    /// coarser level, and stands over every finer cell of it below its
+    /// surface.
+    pub lake_above: Paged<f64>,
+    /// The surface of the lake over each cell, rounded, whether or not it
+    /// stands above the cell: routing's over its centre, or the level
+    /// above's; NaN where none. What the level below is handed.
+    pub lakes: Paged<f64>,
     /// Which of each cell's nine children ([`CHILD_OFFSETS`]) stand under
     /// the level's water above the sea, a bit to each in that order: under
     /// a bed covering the child's centre at least as wide as the child. A
@@ -407,6 +416,8 @@ impl Level {
             held_depth: nan(cells),
             held_src: Paged::new(-1, cells),
             held_parts: Paged::new(0, cells),
+            lake_above: nan(cells),
+            lakes: nan(cells),
             wparts: Paged::new(0, cells),
             z: nan(3 * cells),
             zd: nan(3 * cells),
@@ -828,7 +839,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
         self.read_ground(k, &fp);
         let bands = self.rivers_above(k, &fp);
         let started = Instant::now();
-        let lv = &mut self.levels[k];
+        let (above, rest) = self.levels.split_at_mut(k);
+        let (par, lv) = (&above[k - 1], &mut rest[0]);
         let todo: Vec<usize> = fp.iter().filter(|&c| lv.exists[c] && !lv.supplied[c]).collect();
         let carved = water::carved_over(lv, &bands, &todo);
         for (&c, found) in todo.iter().zip(carved) {
@@ -841,6 +853,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 (lv.held[c], lv.held_depth[c], lv.held_src[c]) = (surface, depth, src as i64);
             }
             lv.held_parts[c] = found.parts;
+            let (i, j) = lv.ij(c);
+            let (pi, pj, _, _) = parent_of(i, j);
+            if let Some(pc) = par.idx(pi, pj) {
+                lv.lake_above[c] = par.lakes[pc];
+            }
             lv.supplied[c] = true;
         }
         lv.cost[Pass::Ground as usize] += pend.len() as u64;
