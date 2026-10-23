@@ -144,6 +144,10 @@ pub struct Point {
 /// What the ladder is seeded with: the ground at any tile.
 pub trait Ground: Sync {
     fn at(&self, q: i64, r: i64) -> Point;
+    /// The ground's height alone, where nothing else of the point is read.
+    fn height(&self, q: i64, r: i64) -> f64 {
+        self.at(q, r).height
+    }
 }
 
 /// How far water reads lines from a cell, in cells of the level: what one
@@ -687,9 +691,9 @@ impl<'g, G: Ground> Ladder<'g, G> {
         ladder
     }
 
-    /// Reads the ground at each vertex of every cell of a mask not yet read
-    /// ([`Level::own_vertices`]), and the rock, the plate and the sky at
-    /// its centre.
+    /// Reads the ground's height at each vertex of every cell of a mask not
+    /// yet read ([`Level::own_vertices`]), and the rock, the plate and the
+    /// sky at its centre.
     fn read_ground(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
         let todo: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.ground[c].is_nan()).collect();
@@ -712,7 +716,10 @@ impl<'g, G: Ground> Ladder<'g, G> {
                                     .own_vertices(c)
                                     .map(|(t, _)| {
                                         let (q3, r3) = pos3(t, i, j, level.w);
-                                        ground.at(q3 / 3, r3 / 3)
+                                        match t {
+                                            0 => ground.at(q3 / 3, r3 / 3),
+                                            _ => Point { height: ground.height(q3 / 3, r3 / 3), erodibility: f64::NAN, age: f64::NAN, moisture: f64::NAN },
+                                        }
                                     })
                                     .collect::<Vec<_>>()
                             })

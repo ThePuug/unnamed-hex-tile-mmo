@@ -30,7 +30,8 @@ pub struct StackGround {
     coasts: Coasts,
     wind: (f64, f64),
     /// Every tile read, kept: a coarse level's corner is a finer level's
-    /// centre.
+    /// centre. A tile whose height alone was read keeps no plate age or
+    /// sky.
     memo: DashMap<(i64, i64), Point>,
 }
 
@@ -67,22 +68,37 @@ impl StackGround {
 
 }
 
+impl StackGround {
+    /// The stack at a tile: its height and its rock's erodibility.
+    fn stack(&self, q: i64, r: i64) -> Point {
+        let view = self.base.compose(1, q as i32, r as i32, |_, _| {});
+        Point { height: view.elevation, erodibility: view.rock.map_or(1.0, |rock| rock.erodibility()), age: f64::NAN, moisture: f64::NAN }
+    }
+}
+
 impl Ground for StackGround {
     fn at(&self, q: i64, r: i64) -> Point {
-        if let Some(hit) = self.memo.get(&(q, r)) {
-            return *hit;
+        let read = self.memo.get(&(q, r)).map(|hit| *hit);
+        if let Some(hit) = read.filter(|p| !p.moisture.is_nan()) {
+            return hit;
         }
-        let (q32, r32) = (q as i32, r as i32);
-        let view = self.base.compose(1, q32, r32, |_, _| {});
-        let (wx, wy) = hex_to_world(q32, r32);
+        let (wx, wy) = hex_to_world(q as i32, r as i32);
         let point = Point {
-            height: view.elevation,
-            erodibility: view.rock.map_or(1.0, |rock| rock.erodibility()),
             age: self.outlines.at(wx, wy).map_or(0.0, |at| at.plate.age),
             moisture: forest::sky_moisture(wx, wy, self.wind, &self.coasts, &self.outlines),
+            ..read.unwrap_or_else(|| self.stack(q, r))
         };
         self.memo.insert((q, r), point);
         point
+    }
+
+    fn height(&self, q: i64, r: i64) -> f64 {
+        if let Some(hit) = self.memo.get(&(q, r)) {
+            return hit.height;
+        }
+        let point = self.stack(q, r);
+        self.memo.insert((q, r), point);
+        point.height
     }
 }
 
