@@ -838,11 +838,10 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 let (a, b) = ancestor(i, jj, (k - j) as u32);
                 up.idx(a, b)
             }));
-            // Rings of cells a ring's reach in tiles past the mask, a cell's
-            // half width beside and a cell more for a meander's swing
-            // ([`water::meander`]): k rings stand k·√3/2 of the level's
-            // width out at their nearest.
-            let rings = ((self.p.ring + 2.0) * 2.0 / crate::SQRT_3).ceil() as usize + 1;
+            // Rings of cells a ring's reach in tiles past the mask and a
+            // cell beside, where a course strays from its vertices: k rings
+            // stand k·√3/2 of the level's width out at their nearest.
+            let rings = ((self.p.ring + 1.0) * 2.0 / crate::SQRT_3).ceil() as usize + 1;
             let reach = up.dilate(&under, rings);
             // Routed two rings past what is read, so each trough's
             // receiver has its floor and its plain, and its receiver's.

@@ -177,38 +177,6 @@ pub fn plain(bed: f64, catchment: f64, erodibility: f64, age: f64, p: &Params) -
     bed * gentler.max(1.0) * crate::tectonic::aged(age)
 }
 
-/// How many half bends a trough edge winds in and how far its bed swings
-/// to either side, in tiles, as a finer level reads it: none but where its
-/// trough was born at the edge's level, since a river winds once and every
-/// level below follows the valley it reads. A river's meander is eleven
-/// channel widths long, so the edge bends a whole number of half meanders,
-/// at least one, zero at both ends; it swings a quarter meander, no further
-/// than its plain leaves room beside the bed, than half a bend's length or
-/// than a cell of its level, the margin a reader routes it past its reach,
-/// so a gorge, whose plain is its bed, runs straight. Which way the first
-/// bend turns, and how far of that it swings, is drawn from the edge's
-/// start. A level's own beds bend only at its vertices, which are too far
-/// apart to show a meander.
-fn meander(e: &Edge, length: f64, bed: f64, plain: f64) -> (u32, f64) {
-    if e.born != e.w || length <= 0.0 {
-        return (0, 0.0);
-    }
-    let wave = 11.0 * 2.0 * bed;
-    let bows = ((length / (0.5 * wave)).round() as u32).max(1);
-    let swing = (0.25 * wave).min(plain - bed).min(0.5 * length / bows as f64).min(e.w as f64);
-    if swing <= 0.0 {
-        return (0, 0.0);
-    }
-    let start = ((3.0 * e.from.0).round() as i64, (3.0 * e.from.1).round() as i64);
-    let draw = crate::noise::hash_f64(start.0, start.1, MEANDER_SEED);
-    // Which way it turns, and how far of its room it swings, half to all.
-    let turn = if draw < 0.5 { 1.0 } else { -1.0 };
-    let share = 0.5 + (2.0 * draw).fract() * 0.5;
-    (bows, turn * share * swing)
-}
-
-const MEANDER_SEED: u64 = 0x4d65_616e_6465_7273; // "Meanders"
-
 /// How deep a river's water stands, in levels, its channel cut that far
 /// below its floor: a level, and a level more for each two tiles of its
 /// half width past the first.
@@ -247,10 +215,8 @@ fn on_stretch(s: &Sample, from: (f64, f64), on: (f64, f64), (x, y): (f64, f64), 
 /// `w` wide draws it, each distance to its stretch taken `nearer` tiles
 /// shorter: the
 /// channel, its walls rising from the bed, and its plain, a step above the
-/// river's water out to the plain's width from the valley's axis with
-/// walls rising from there, whichever stands lower, so the bed winds
-/// within its plain and the plain's edge runs with the valley. A plain no
-/// wider than the bed leaves the channel's walls running on up. The walls
+/// river's water out to the plain's width from the bed with walls rising
+/// from there, whichever stands lower. A plain no wider than the bed leaves the channel's walls running on up. The walls
 /// beside a plain lean back ([`lean`]). It never falls as either distance
 /// grows.
 fn profile(s: &Sample, at: (f64, f64), nearer: f64) -> f64 {
@@ -263,14 +229,13 @@ fn profile(s: &Sample, at: (f64, f64), nearer: f64) -> f64 {
 /// channel's walls where it has no plain.
 fn parts(s: &Sample, (x, y): (f64, f64), nearer: f64) -> (f64, f64) {
     let (floor, d) = on_stretch(s, (s.x, s.y), s.on, (x, y), nearer);
-    let (level, off) = if (s.ax, s.ay) == (s.x, s.y) { (floor, d) } else { on_stretch(s, (s.ax, s.ay), s.along, (x, y), nearer) };
     let channel = floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
     // The plain rises from its river faster than the river falls, so a
     // point of it stands on the river beside it, never on a floor far
     // downstream whose plain reaches it.
-    let across = (2.0 * s.fall + 0.01) * off.min(s.plain);
-    let wall = lean(s) * (off - s.plain).max(0.0);
-    (channel, level + 1.0 + across + wall)
+    let across = (2.0 * s.fall + 0.01) * d.min(s.plain);
+    let wall = lean(s) * (d - s.plain).max(0.0);
+    (channel, floor + 1.0 + across + wall)
 }
 
 /// The slope of a valley's walls beside its plain, in steps a tile: the
@@ -309,11 +274,6 @@ struct Sample {
     y: f64,
     /// The way to the next point of its bed.
     on: (f64, f64),
-    /// Where its valley's axis lies beside it: the bed before its meander
-    /// swings it, and the way to the axis beside the next point.
-    ax: f64,
-    ay: f64,
-    along: (f64, f64),
     /// Its floor, and how far that falls to the next point's along the
     /// stretch.
     floor: f64,
@@ -404,13 +364,8 @@ impl Way {
         }
     }
 
-    /// The point `s` along the way, the unit normal to its left, and its
-    /// floor, plain and river there.
-    fn at(&self, s: f64) -> ((f64, f64), (f64, f64), (f64, f64, River)) {
-        let normal = |d: (f64, f64)| {
-            let l = d.0.hypot(d.1);
-            if l > 0.0 { (-d.1 / l, d.0 / l) } else { (0.0, 0.0) }
-        };
+    /// The point `s` along the way, and its floor, plain and river there.
+    fn at(&self, s: f64) -> ((f64, f64), (f64, f64, River)) {
         let lerp = |a: f64, b: f64, f: f64| a + (b - a) * f;
         if let Some((a, len)) = self.head {
             if s < len {
@@ -418,7 +373,7 @@ impl Way {
                 let [m1, ..] = self.ends;
                 let pt = (lerp(a.0, m1.0, f), lerp(a.1, m1.1, f));
                 let at = (lerp(self.floors[0], self.floors[1], f), lerp(self.plains[0], self.plains[1], f), self.rivers[0]);
-                return (pt, normal((m1.0 - a.0, m1.1 - a.1)), at);
+                return (pt, at);
             }
         }
         let k = self.curve.partition_point(|c| c.2 < s).clamp(1, Self::SPAN);
@@ -426,7 +381,6 @@ impl Way {
         let t = if s1 > s0 { lerp(t0, t1, ((s - s0) / (s1 - s0)).clamp(0.0, 1.0)) } else { t1 };
         let [m1, b, m2] = self.ends;
         let pt = quad(m1, b, m2, t);
-        let d = (2.0 * (1.0 - t) * (b.0 - m1.0) + 2.0 * t * (m2.0 - b.0), 2.0 * (1.0 - t) * (b.1 - m1.1) + 2.0 * t * (m2.1 - b.1));
         let at = if t <= 0.5 {
             let f = 2.0 * t;
             (lerp(self.floors[1], self.floors[2], f), lerp(self.plains[1], self.plains[2], f), self.rivers[0])
@@ -434,7 +388,7 @@ impl Way {
             let f = 2.0 * t - 1.0;
             (lerp(self.floors[2], self.floors[3], f), lerp(self.plains[2], self.plains[3], f), self.rivers[1])
         };
-        (pt, normal(d), at)
+        (pt, at)
     }
 }
 
@@ -473,36 +427,22 @@ impl Band {
             // its river, and never closer than half the reader's width or
             // two tiles, nor sparser than its own.
             let length = way.length;
-            let (bows, swing) = if read < e.w { meander(e, length, bed(e.flow, p), e.plains.0.min(e.plains.1)) } else { (0, 0.0) };
-            let mut spacing = if read >= e.w {
+            let spacing = if read >= e.w {
                 0.5 * e.w as f64
             } else {
                 (0.25 * e.plains.0.min(e.plains.1)).max(0.5 * read as f64).max(2.0).min(0.5 * e.w as f64)
             };
-            if bows > 0 {
-                spacing = spacing.min(length / (4.0 * bows as f64));
-            }
             let ns = 2usize.max((length / spacing).ceil() as usize + 1);
-            let points: Vec<_> = (0..ns)
-                .map(|s| {
-                    let f = s as f64 / (ns - 1) as f64;
-                    let off = swing * (std::f64::consts::PI * bows as f64 * f).sin();
-                    let ((ax, ay), (px, py), at) = way.at(f * length);
-                    ((ax + px * off, ay + py * off), (ax, ay), at)
-                })
-                .collect();
-            for (s, &((x, y), (ax, ay), at)) in points.iter().enumerate() {
+            let points: Vec<_> = (0..ns).map(|s| way.at(s as f64 / (ns - 1) as f64 * length)).collect();
+            for (s, &((x, y), at)) in points.iter().enumerate() {
                 let (floor, plain, river) = at;
-                let (on, along, down) = points.get(s + 1).map_or(((0.0, 0.0), (0.0, 0.0), 0.0), |&((nx, ny), (nax, nay), (next, _, _))| ((nx - x, ny - y), (nax - ax, nay - ay), next - floor));
+                let (on, down) = points.get(s + 1).map_or(((0.0, 0.0), 0.0), |&((nx, ny), (next, _, _))| ((nx - x, ny - y), next - floor));
                 let q = x * 2.0 / SQRT_3;
                 let r = y - q / 2.0;
                 cells.entry(cube_round(q / wf, r / wf)).or_default().push(Sample {
                     x,
                     y,
                     on,
-                    ax,
-                    ay,
-                    along,
                     floor,
                     down,
                     bed: bed(river.flow, p),
