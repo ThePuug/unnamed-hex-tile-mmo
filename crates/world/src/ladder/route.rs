@@ -347,7 +347,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     for pc in under.iter() {
         for t in 0..3 {
             let u = t * pnn + pc;
-            let Some(way) = course_of(par, u, w, p) else { continue };
+            let Some(way) = course_of(par, lv, u, p) else { continue };
             let r = par.rec[u] as usize;
             let steps = way.len() - 1;
             for k in 0..steps {
@@ -670,7 +670,9 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
 /// A triangle's middle is the bend of one edge only: the largest river
 /// among those wanting it, so no two ways share a vertex but where rivers
 /// meet. None where `u` runs nowhere.
-fn course_of(par: &Level, u: usize, w: i64, p: &Params) -> Option<Vec<(i64, i64)>> {
+fn course_of(par: &Level, lv: &Level, u: usize, p: &Params) -> Option<Vec<(i64, i64)>> {
+    let w = lv.w;
+    let sunk = |(q3, r3): (i64, i64)| lv.vid_at(q3, r3).map_or(f64::NAN, |v| lv.sunk[v]);
     let want = |u: usize| -> Option<((i64, i64), (i64, i64), Option<(i64, i64)>)> {
         if !par.trough[u] || par.rec[u] < 0 {
             return None;
@@ -679,23 +681,20 @@ fn course_of(par: &Level, u: usize, w: i64, p: &Params) -> Option<Vec<(i64, i64)
         let (rt, ri, rj) = par.vertex(par.rec[u] as usize);
         let (a, b) = (pos3(t, i, j, par.w), pos3(rt, ri, rj, par.w));
         let e = ((b.0 - a.0) / 3, (b.1 - a.1) / 3);
-        let nn = par.cap();
-        let half = water::bed(par.flow[u], p);
-        let room = {
-            let wide = water::plain(half, par.acc[u], par.erod[u % nn], par.age[u % nn], p);
-            let wide = if par.room[u].is_nan() { wide } else { wide.min(par.room[u].max(half)) };
-            wide - half
-        };
-        // The middle of a triangle stands half the level's width from the
-        // edge; a level finer than draws the channel would bend it within
-        // its own width.
-        let bend = if room >= w as f64 / 2.0 && w >= water::drawn_at(half) {
+        // A level finer than draws the channel would bend it within its own
+        // width.
+        let bend = if w >= water::drawn_at(water::bed(par.flow[u], p)) {
             let draw = crate::noise::hash_f64(a.0 + 7 * b.0, a.1 + 7 * b.1, BEND_SEED);
             let turn = if draw < 1.0 / 3.0 { Some((-e.1, e.0 + e.1)) } else if draw >= 2.0 / 3.0 { Some((e.0 + e.1, -e.0)) } else { None };
             turn.map(|f| (a.0 + e.0 + f.0, a.1 + e.1 + f.1))
         } else {
             None
         };
+        // The middle of a triangle stands half the level's width from the
+        // edge: the river bends there only where the ground rises less
+        // than half a step a tile from its way, never up a valley's wall.
+        let way = sunk((a.0 + e.0, a.1 + e.1)).max(sunk((a.0 + 2 * e.0, a.1 + 2 * e.1)));
+        let bend = bend.filter(|&m| sunk(m) < way + w as f64 / 4.0);
         Some((a, e, bend))
     };
     let (a, e, bend) = want(u)?;
