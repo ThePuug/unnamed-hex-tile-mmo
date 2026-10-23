@@ -680,14 +680,16 @@ fn course_of(par: &Level, u: usize, w: i64, p: &Params) -> Option<Vec<(i64, i64)
         let (a, b) = (pos3(t, i, j, par.w), pos3(rt, ri, rj, par.w));
         let e = ((b.0 - a.0) / 3, (b.1 - a.1) / 3);
         let nn = par.cap();
+        let half = water::bed(par.flow[u], p);
         let room = {
-            let half = water::bed(par.flow[u], p);
             let wide = water::plain(half, par.acc[u], par.erod[u % nn], par.age[u % nn], p);
             let wide = if par.room[u].is_nan() { wide } else { wide.min(par.room[u].max(half)) };
             wide - half
         };
-        // The middle of a triangle stands half the level's width from the edge.
-        let bend = if room >= w as f64 / 2.0 {
+        // The middle of a triangle stands half the level's width from the
+        // edge; a level finer than draws the channel would bend it within
+        // its own width.
+        let bend = if room >= w as f64 / 2.0 && w >= water::drawn_at(half) {
             let draw = crate::noise::hash_f64(a.0 + 7 * b.0, a.1 + 7 * b.1, BEND_SEED);
             let turn = if draw < 1.0 / 3.0 { Some((-e.1, e.0 + e.1)) } else if draw >= 2.0 / 3.0 { Some((e.0 + e.1, -e.0)) } else { None };
             turn.map(|f| (a.0 + e.0 + f.0, a.1 + e.1 + f.1))
@@ -712,9 +714,30 @@ fn course_of(par: &Level, u: usize, w: i64, p: &Params) -> Option<Vec<(i64, i64)
         })
     });
     let step = |k: i64| (a.0 + k * e.0, a.1 + k * e.1);
+    // Where the river turns sharply at its receiver, its main stream cuts
+    // the corner, a step of the level from the vertex to the next edge's.
+    let r = par.rec[u] as usize;
+    let end = match par.rec[r] {
+        n if par.trough[r] && n >= 0 => {
+            let (nt, ni, nj) = par.vertex(n as usize);
+            let (rq, rr) = step(3);
+            let (nq, nr) = pos3(nt, ni, nj, par.w);
+            let f = ((nq - rq) / 3, (nr - rr) / 3);
+            let sharp = f == (-e.0 - e.1, e.0) || f == (e.1, -e.0 - e.1);
+            let (t, i, j) = par.vertex(r);
+            let main = (0..6).filter_map(|k| {
+                let (tt, a, b) = vnbr(t, i, j, k);
+                par.vid(tt, a, b)
+            })
+            .filter(|&k| par.trough[k] && par.rec[k] == r as i64)
+            .all(|k| (par.acc[k], k) <= mine);
+            if sharp && main { (rq + f.0, rr + f.1) } else { (rq, rr) }
+        }
+        _ => step(3),
+    };
     Some(match bend {
-        Some(m) => vec![a, step(1), m, step(2), step(3)],
-        None => vec![a, step(1), step(2), step(3)],
+        Some(m) => vec![a, step(1), m, step(2), end],
+        None => vec![a, step(1), step(2), end],
     })
 }
 

@@ -15,11 +15,12 @@
 //!
 //! - **ground**: the ground read at each vertex, a cell's centre and its
 //!   corners A and B ([`Ground::at`]): the level's dry ground. Met by the
-//!   plains and walls of every coarser level's valleys there, never their
-//!   channels: its carved ground.
+//!   plains and walls of every coarser level's valleys there, and the
+//!   channels of the rivers too wide for the level to draw: its carved
+//!   ground.
 //! - **route**: every vertex's receiver downhill on the carved ground, its
-//!   catchment, and the level's troughs: the level above's rivers run on
-//!   from its nodes, and troughs born at the level ([`route`]). A
+//!   catchment, and the level's troughs: the level above's rivers laid
+//!   along their courses, and troughs born at the level ([`route`]). A
 //!   catchment is the land a vertex drains, in tiles, and everything that
 //!   cuts reads it: floods do the cutting, and a dry country's floods run
 //!   as high as a wet one's. Its flow is the rain that land gathers, each
@@ -75,7 +76,10 @@
 //! that level's ring, and draws their valleys' plains and walls at its own
 //! vertices and its own width, so a bend or a plain's edge smaller than
 //! a coarse level's spacing reaches every level fine enough to show it.
-//! Their channels it cuts itself, along its own courses: a river is drawn once.
+//! A river's channel and its water are drawn by the finest level whose
+//! steps are as long as the channel is wide, along its course there, and
+//! read from it by every finer level: a river is drawn once, never
+//! sharper than it can bend.
 //! The corner rule, faces as walls, is the drawing's alone: meshes, physics
 //! and summaries draw a level's cells by it (`common::corner`) from their
 //! centres, and nothing here reads it.
@@ -312,6 +316,15 @@ pub struct Level {
     /// where none. And how deep that bed's water stands over its floor.
     pub water: Paged<f64>,
     pub wdepth: Paged<f64>,
+    /// The water a coarser level's channel puts over each cell's centre,
+    /// where that level draws a river the level routes
+    /// ([`water::drawn_at`]): its surface, depth and river vertex, as an
+    /// index of that level; NaN and -1 where none. And which of the cell's
+    /// children it covers.
+    pub held: Paged<f64>,
+    pub held_depth: Paged<f64>,
+    pub held_src: Paged<i64>,
+    pub held_parts: Paged<u16>,
     /// Which of each cell's nine children ([`CHILD_OFFSETS`]) stand under
     /// the level's water above the sea, a bit to each in that order: under
     /// a bed covering the child's centre at least as wide as the child. A
@@ -390,6 +403,10 @@ impl Level {
             wwet: Paged::new(-1, cells),
             water: nan(cells),
             wdepth: nan(cells),
+            held: nan(cells),
+            held_depth: nan(cells),
+            held_src: Paged::new(-1, cells),
+            held_parts: Paged::new(0, cells),
             wparts: Paged::new(0, cells),
             z: nan(3 * cells),
             zd: nan(3 * cells),
@@ -814,12 +831,16 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let lv = &mut self.levels[k];
         let todo: Vec<usize> = fp.iter().filter(|&c| lv.exists[c] && !lv.supplied[c]).collect();
         let carved = water::carved_over(lv, &bands, &todo);
-        for (&c, (at, near)) in todo.iter().zip(carved) {
+        for (&c, found) in todo.iter().zip(carved) {
             let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
             for (t, v) in vertices {
-                lv.carved[v] = at[t as usize];
-                lv.sunk[v] = near[t as usize];
+                lv.carved[v] = found.carved[t as usize];
+                lv.sunk[v] = found.sunk[t as usize];
             }
+            if let Some((surface, depth, src)) = found.water {
+                (lv.held[c], lv.held_depth[c], lv.held_src[c]) = (surface, depth, src as i64);
+            }
+            lv.held_parts[c] = found.parts;
             lv.supplied[c] = true;
         }
         lv.cost[Pass::Ground as usize] += pend.len() as u64;

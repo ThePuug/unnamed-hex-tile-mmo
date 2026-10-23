@@ -10,10 +10,11 @@
 //! The top cuts its valley wholly, met by its ground at each vertex. A
 //! level below carves its own troughs' valleys within `Params::ring` of its
 //! cells into its carved ground: its ground met by the plains and walls of
-//! every coarser level's valleys, never their channels. A river's channel
-//! is cut by each level that routes it, along its own course, so it is
-//! drawn once at the tiles; the coarser levels hand down the valley it
-//! runs in.
+//! every coarser level's valleys. A river's channel and its water are drawn
+//! by the finest level whose steps are as long as the channel is wide
+//! ([`drawn_at`]), along that level's course, so it bends no sharper than
+//! the river can; the levels coarser draw their own, and the finer levels
+//! route the river but read its channel and its water from that one.
 //!
 //! Water stands on a cell where a bed covers its centre and is as wide as
 //! the cell, corner to corner: a river is wet at a level once its catchment
@@ -184,6 +185,25 @@ pub fn depth(bed: f64) -> f64 {
     1.0 + ((bed - 1.0) / 2.0).max(0.0).floor()
 }
 
+/// The width of the level that draws a channel `bed` tiles in half width:
+/// the finest whose steps are as long as the channel is wide, so the curve
+/// it is drawn along bends no sharper than the river can. A finer level
+/// routes the river but reads its channel and its water from that one.
+pub(super) fn drawn_at(bed: f64) -> i64 {
+    let mut w = 1;
+    while (w as f64) < 2.0 * SQRT_3 * bed {
+        w *= 3;
+    }
+    w
+}
+
+/// A bed's valley as a level `w` wide draws it ([`profile`]): its channel
+/// only where the level is as coarse as the level that draws it
+/// ([`drawn_at`]), its banks alone where a coarser level draws the channel.
+fn drawn(s: &Sample, at: (f64, f64), nearer: f64, w: i64) -> f64 {
+    if drawn_at(s.bed) <= w { profile(s, at, nearer) } else { parts(s, at, nearer).1 }
+}
+
 /// The water standing over the centre of a cell of a level `w` wide, at a
 /// position in tiles, from the beds at least as wide as the cell, out to
 /// its corners, whose water reaches it: over the bed, or up the wall to
@@ -196,7 +216,7 @@ fn standing(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, f64, usize)
     let corner = w as f64 / SQRT_3;
     let half_step = w as f64 / SQRT_3 / 2.0;
     beds.iter()
-        .filter(|s| s.bed >= corner)
+        .filter(|s| s.bed >= corner && drawn_at(s.bed) <= s.w.max(w))
         .filter_map(|s| {
             let (floor, d) = on_stretch(s, (s.x, s.y), s.on, at, half_step);
             (d <= s.bed + depth(s.bed) / s.slope).then(|| ((floor + 0.5).floor(), depth(s.bed), s.src))
@@ -506,7 +526,7 @@ fn valley(beds: &[Sample], q: f64, r: f64) -> Option<(f64, Sample, f64)> {
 fn cut_at(beds: &[Sample], q: f64, r: f64, w: i64, sunk: f64, ground: f64) -> f64 {
     let (x, y) = world(q, r);
     let half_step = w as f64 / SQRT_3 / 2.0;
-    beds.iter().map(|s| profile(s, (x, y), half_step)).fold(sunk, f64::min) - ground
+    beds.iter().map(|s| drawn(s, (x, y), half_step, w)).fold(sunk, f64::min) - ground
 }
 
 /// A vertex's position in tiles.
@@ -541,7 +561,9 @@ fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)>
 
 /// The carved ground at each vertex of `cells` of a level: its ground met
 /// by the plains and walls of every coarser level's valleys in `bands`,
-/// never their channels ([`parts`]), each band read out to its own reach,
+/// and their channels where that level draws them ([`drawn_at`]), never
+/// the channels a finer level draws ([`parts`]), each band read out to its
+/// own reach,
 /// the valleys drawn at the level's own width; and its sunk ground, the
 /// same with each valley at its lowest within half a step of the vertex: a
 /// valley rises from its river, so there it stands half a step nearer.
@@ -550,7 +572,7 @@ fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)>
 /// each coarser cell's children, lowest the valley can stand among them
 /// first, so a vertex stops at the first bed that cannot go below what it
 /// has found.
-pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([f64; 3], [f64; 3])> {
+pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<Carved> {
     let w = lv.w;
     let wf = w as f64;
     let half_step = wf / SQRT_3 / 2.0;
@@ -632,6 +654,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
         let c = cells[x];
         let (i, j) = lv.ij(c);
         let (mut out, mut sunk) = ([f64::NAN; 3], [f64::NAN; 3]);
+        let mut held: Vec<Sample> = Vec::new();
         for (t, v) in lv.own_vertices(c) {
             let (q, r) = vertex_tiles(t, i, j, w);
             let (px, py) = world(q, r);
@@ -645,15 +668,31 @@ pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<([
                 }
                 let d = (s.x - px).hypot(s.y - py);
                 if d <= s.far {
-                    low = low.min(parts(s, (px, py), 0.0).1);
-                    near = near.min(parts(s, (px, py), half_step).1);
+                    let own = drawn_at(s.bed) == s.w;
+                    let at = |nearer: f64| if own { profile(s, (px, py), nearer) } else { parts(s, (px, py), nearer).1 };
+                    low = low.min(at(0.0));
+                    near = near.min(at(half_step));
+                    if own && t == 0 {
+                        held.push(*s);
+                    }
                 }
             }
             out[t as usize] = if low.is_infinite() { lv.ground[v] } else { low };
             sunk[t as usize] = if near.is_infinite() { lv.ground[v] } else { near };
         }
-        (out, sunk)
+        let (q, r) = vertex_tiles(0, i, j, w);
+        Carved { carved: out, sunk, water: standing(&held, q, r, w), parts: wet_children(&held, w, i, j) }
     })
+}
+
+/// What [`carved_over`] finds at a cell: the carved and the sunk ground at
+/// each of its vertices, and the water a coarser level's channel puts over
+/// its centre and its children, where that level draws the river.
+pub(super) struct Carved {
+    pub carved: [f64; 3],
+    pub sunk: [f64; 3],
+    pub water: Option<(f64, f64, usize)>,
+    pub parts: u16,
 }
 
 /// The top's cut at every vertex: its valley wholly.
@@ -760,8 +799,12 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             cut[t as usize] = cut_at(near, vq, vr, w, view.sunk[v], view.ground[v]);
         }
         let (ground, carved) = (view.ground[c], view.carved[c]);
-        let bed = standing(&near, q, r, w);
-        let parts = wet_children(&near, w, i, j);
+        let held = (!view.held[c].is_nan()).then(|| (view.held[c], view.held_depth[c], view.held_src[c] as usize));
+        let bed = match (standing(&near, q, r, w), held) {
+            (Some(a), Some(b)) => Some(if b.0 < a.0 { b } else { a }),
+            (a, b) => a.or(b),
+        };
+        let parts = wet_children(&near, w, i, j) | view.held_parts[c];
         let water = |z: f64| {
             let river = on_carve(bed, z);
             let lake = view.lake[c];
