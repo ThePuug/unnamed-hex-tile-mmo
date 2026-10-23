@@ -45,15 +45,18 @@
 //! ([`water::depth`]). [`terrain::Terrain`] holds the ladder for readers on
 //! many threads.
 //!
-//! **A river is handed down as where it is and what it carries, never its
-//! course.** The level above hands down its trough vertices, each with its
-//! catchment, its graded profile and the level it was born at; each is one of the level's
-//! vertices, since levels nest, and the level's own water runs the river on
-//! from there, downhill, wherever its ground leads; a river starts once,
-//! where it first comes into reach. Where troughs are born, routing picks
-//! between the two neighbours bracketing the downslope by chance weighted
-//! by the slope, so on even ground they wander and join as drainage does;
-//! below, a river follows its valley. Water never climbs ([`route`]).
+//! **A river is handed down with its course, and each level bends it.**
+//! The level above hands down its trough edges, each with its catchment,
+//! its graded profile, its floor and the level it was born at; levels
+//! nest, so each edge is three of the level's steps, and the level lays
+//! the river along it, straight or bent through the middle of the triangle
+//! on either side where the river's plain leaves room, so a river winds at
+//! every scale its plain allows and every level's copy of it runs through
+//! the same points at the same floors. Where troughs are born, routing
+//! picks between the two neighbours bracketing the downslope by chance
+//! weighted by the slope, so on even ground they wander and join as
+//! drainage does. Water never climbs: a river's floor falls along its
+//! course however its ground lies ([`route`]).
 //!
 //! **A level carves into what the levels above carved.** It reads their
 //! rivers' valleys at its own vertices: routing reads the carved ground,

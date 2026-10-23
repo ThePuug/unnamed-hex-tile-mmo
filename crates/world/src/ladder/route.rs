@@ -2,29 +2,27 @@
 //! ring, on the level's carved ground, every trough's catchment, graded
 //! profile and floor.
 //!
-//! Every vertex goes to its lowest neighbour in the strict order (height,
-//! the level above's surface, tilt, position), so water never climbs. Where
+//! Every vertex off the rivers handed down goes to its lowest neighbour in
+//! the strict order (height, position), so water never climbs. Where
 //! troughs are born, it goes instead to one of its lower neighbours by a
 //! draw from its position weighted by how steeply the ground falls to
 //! each: on even ground born troughs wander and two that meet are one, as
 //! drainage branches, where a lattice's steepest way would run them side
-//! by side forever; in a valley its walls leave only the way down. Below,
-//! a river follows its valley.
+//! by side forever; in a valley its walls leave only the way down.
 //!
-//! The level above hands its rivers down as nodes, its trough vertices,
-//! each with its catchment and its graded profile, and no course. A node
-//! stands where the level above draws its river, which passes half way
-//! from each trough vertex to its receiver, at the level's vertex nearest
-//! there, and a river's course is the level's own water running downhill
-//! from it. Nodes are taken upstream first. The level's
-//! water from the node upstream is followed until it comes within half a
-//! cell of the level above, or for [`FOLLOW`] steps, and the node's
-//! catchment joins it where it stops: the node is that river already, and
-//! a river that drifts is never started twice. Where that water ends short
-//! of the node, at the sea or the footprint's edge, and where no node lies
-//! upstream in reach, the river starts at the node. Whatever a
-//! trough drains into is a trough, carrying the larger catchment, so a
-//! river runs on to its outlet wherever the level's ground takes it.
+//! The level above hands its rivers down with their courses: each of its
+//! trough edges is three of the level's steps, and the level lays the
+//! river along it, straight, or through the middle of the triangle on one
+//! side where the river's plain is wider than its bed by half the level's
+//! width, so it bends at every level whose steps its plain has room for.
+//! Which side, or none, is drawn from the edge; a triangle's middle bends
+//! the largest river wanting it, so two courses meet only where rivers
+//! do. Along the way the river carries its catchment, flow and birth, and
+//! its graded profile and floor fall from one end's to the other's: a
+//! river is cut once, where it is born, and every level's copy of it
+//! stands at the same floors. Whatever a trough drains into is a trough,
+//! carrying the larger catchment, so a river born at the level runs on to
+//! where it meets one handed down, or to its outlet.
 //!
 //! A hollow holds a lake: the footprint is flooded from its outlets, the
 //! sea and its edge, lowest water first, so the flood leaves each hollow
@@ -48,19 +46,15 @@
 //! a slope drains in a spread; a trough goes whole to its receiver.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::BinaryHeap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::geom::{facet, nearest_vertex, parent_of, pos3, vertex_cells, vnbr, wander, xy};
+use super::geom::{facet, parent_of, pos3, vertex_cells, vnbr, wander, xy};
 use super::mask::Mask;
 use super::paged::Paged;
-use super::{drained, graded_slope, head_of, Level, Params, Pass};
+use super::{drained, graded_slope, head_of, water, Level, Params, Pass};
 
 pub(super) const WALK_SEED: u64 = 0x5761_6c6b_5f5f_5f5f; // "Walk____"
-
-/// How many of the level's steps the water from the node upstream is
-/// followed looking for a node: four steps of the level above.
-const FOLLOW: usize = 12;
 
 /// A vertex the flood reached: the water level it was reached at, the
 /// highest ground on the way from an outlet, then its own key.
@@ -335,111 +329,43 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         recg[x] = vids[came[x]] as i64;
         split[x] = None;
     }
-    // The level above's nodes over the footprint, upstream first: where
-    // each one's river is on the level, its catchment and its birth. A
-    // node stands where its river is drawn: half way to its receiver.
+    // The level above's rivers laid on the level's lattice: each of its
+    // trough edges is three of the level's steps, and runs straight or
+    // bends through the middle of the triangle on either side
+    // ([`course_of`]), carrying its catchment, flow and birth, its graded
+    // profile and floor shared out along the way.
     let under = Mask::new(fpl.iter().filter_map(|&c| {
         let (i, j) = lv.ij(c);
         let (pi, pj, _, _) = parent_of(i, j);
         par.idx(pi, pj)
     }));
-    let mut nodes: Vec<(usize, usize)> = Vec::new();
-    for pc in under.iter() {
-        for t in 0..3 {
-            let u = t * pnn + pc;
-            if !par.trough[u] {
-                continue;
-            }
-            let (ut, ui, uj) = par.vertex(u);
-            let (q3, r3) = pos3(ut, ui, uj, par.w);
-            let (q3, r3) = match par.rec[u] {
-                r if r >= 0 => {
-                    let (rt, ri, rj) = par.vertex(r as usize);
-                    let (rq, rr) = pos3(rt, ri, rj, par.w);
-                    nearest_vertex(((q3 + rq) as f64 / 2.0, (r3 + rr) as f64 / 2.0), lv.w)
-                }
-                _ => (q3, r3),
-            };
-            if let Some(x) = lv.vid_at(q3, r3).and_then(local) {
-                nodes.push((u, x));
-            }
-        }
-    }
-    let at_node: HashMap<usize, usize> = nodes.iter().copied().collect();
-    let mut upstream: HashMap<usize, Vec<usize>> = HashMap::new();
-    let mut indeg_n: HashMap<usize, u32> = nodes.iter().map(|&(u, _)| (u, 0)).collect();
-    for &(u, _) in &nodes {
-        let r = par.rec[u];
-        if r >= 0 && at_node.contains_key(&(r as usize)) {
-            upstream.entry(r as usize).or_default().push(u);
-            *indeg_n.get_mut(&(r as usize)).expect("a node") += 1;
-        }
-    }
-    let mut ready: Vec<usize> = indeg_n.iter().filter(|&(_, &d)| d == 0).map(|(&u, _)| u).collect();
-    ready.sort_unstable();
-    let reach2 = {
-        let r = 0.5 * par.w as f64 * crate::SQRT_3;
-        r * r
-    };
-    let mut placed: HashMap<usize, usize> = HashMap::new();
     let mut src_acc = vec![f64::NAN; nv];
     let mut src_flow = vec![f64::NAN; nv];
     let mut src_graded = vec![f64::NAN; nv];
     let mut src_floor = vec![f64::NAN; nv];
     let mut src_born = vec![-1i64; nv];
-    while let Some(u) = ready.pop() {
-        let xu = at_node[&u];
-        let mut ups = upstream.get(&u).cloned().unwrap_or_default();
-        ups.sort_unstable();
-        let near = |y: usize| {
-            let (dx, dy) = (at[y].0 - at[xu].0, at[y].1 - at[xu].1);
-            dx * dx + dy * dy <= reach2
-        };
-        // Where the water from upstream comes near the node; else where
-        // following it stopped while it still runs; else, where it ran
-        // out short of the node, at the node.
-        let (mut hit, mut stop) = (None, None);
-        for q in &ups {
-            let mut y = placed[q];
-            let mut ended = false;
-            for _ in 0..FOLLOW {
-                if near(y) {
-                    hit = Some(y);
-                    break;
+    for pc in under.iter() {
+        for t in 0..3 {
+            let u = t * pnn + pc;
+            let Some(way) = course_of(par, u, w, p) else { continue };
+            let r = par.rec[u] as usize;
+            let steps = way.len() - 1;
+            for k in 0..steps {
+                let Some(x) = lv.vid_at(way[k].0, way[k].1).and_then(local) else { continue };
+                if sink[x] {
+                    continue;
                 }
-                match rec[y] {
-                    Some(z) => y = z,
-                    None => {
-                        ended = true;
-                        break;
-                    }
-                }
-            }
-            if hit.is_none() && near(y) {
-                hit = Some(y);
-            }
-            if hit.is_some() {
-                break;
-            }
-            if !ended {
-                stop = stop.or(Some(y));
-            }
-        }
-        let x = hit.or(stop).unwrap_or(xu);
-        placed.insert(u, x);
-        if !sink[x] {
-            src_acc[x] = src_acc[x].max(par.acc[u]);
-            src_flow[x] = src_flow[x].max(par.flow[u]);
-            src_graded[x] = src_graded[x].min(par.graded[u]);
-            src_floor[x] = src_floor[x].min(par.floor[u]);
-            src_born[x] = src_born[x].max(par.born[u]);
-        }
-        let r = par.rec[u];
-        if r >= 0 {
-            if let Some(d) = indeg_n.get_mut(&(r as usize)) {
-                *d -= 1;
-                if *d == 0 {
-                    ready.push(r as usize);
+                let f = k as f64 / steps as f64;
+                let lerp = |a: f64, b: f64| a + (b - a) * f;
+                src_acc[x] = par.acc[u];
+                src_flow[x] = par.flow[u];
+                src_born[x] = par.born[u];
+                src_graded[x] = lerp(par.graded[u], par.graded[r]);
+                src_floor[x] = lerp(par.floor[u], par.floor[r]);
+                if let Some(y) = lv.vid_at(way[k + 1].0, way[k + 1].1).and_then(local) {
+                    rec[x] = Some(y);
+                    recg[x] = vids[y] as i64;
+                    split[x] = None;
                 }
             }
         }
@@ -675,9 +601,12 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             if !lake[x].is_nan() {
                 return above_sea(lake[x]);
             }
+            if !src_floor[x].is_nan() {
+                return src_floor[x];
+            }
             let v = vids[x];
             let c = v % nn;
-            drained(lv.ground[v], graded[x], lv.age[c], lv.erod[c], room(x), p).min(lv.carved[v]).min(src_floor[x])
+            drained(lv.ground[v], graded[x], lv.age[c], lv.erod[c], room(x), p).min(lv.carved[v])
         })
         .collect();
     let mut low = vec![f64::INFINITY; nv];
@@ -732,3 +661,61 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     }
     Block { decided: out, stats }
 }
+
+/// The way a trough edge of the level above, from vertex `u` to its
+/// receiver, runs on the level `w` wide below it, as positions in thirds of
+/// a tile from `u` to the receiver: three steps straight, or four, bending
+/// through the middle of the triangle on one side, where the river's plain
+/// leaves it room beside its bed, which side or none drawn from the edge.
+/// A triangle's middle is the bend of one edge only: the largest river
+/// among those wanting it, so no two ways share a vertex but where rivers
+/// meet. None where `u` runs nowhere.
+fn course_of(par: &Level, u: usize, w: i64, p: &Params) -> Option<Vec<(i64, i64)>> {
+    let want = |u: usize| -> Option<((i64, i64), (i64, i64), Option<(i64, i64)>)> {
+        if !par.trough[u] || par.rec[u] < 0 {
+            return None;
+        }
+        let (t, i, j) = par.vertex(u);
+        let (rt, ri, rj) = par.vertex(par.rec[u] as usize);
+        let (a, b) = (pos3(t, i, j, par.w), pos3(rt, ri, rj, par.w));
+        let e = ((b.0 - a.0) / 3, (b.1 - a.1) / 3);
+        let nn = par.cap();
+        let room = {
+            let half = water::bed(par.flow[u], p);
+            let wide = water::plain(half, par.acc[u], par.erod[u % nn], par.age[u % nn], p);
+            let wide = if par.room[u].is_nan() { wide } else { wide.min(par.room[u].max(half)) };
+            wide - half
+        };
+        // The middle of a triangle stands half the level's width from the edge.
+        let bend = if room >= w as f64 / 2.0 {
+            let draw = crate::noise::hash_f64(a.0 + 7 * b.0, a.1 + 7 * b.1, BEND_SEED);
+            let turn = if draw < 1.0 / 3.0 { Some((-e.1, e.0 + e.1)) } else if draw >= 2.0 / 3.0 { Some((e.0 + e.1, -e.0)) } else { None };
+            turn.map(|f| (a.0 + e.0 + f.0, a.1 + e.1 + f.1))
+        } else {
+            None
+        };
+        Some((a, e, bend))
+    };
+    let (a, e, bend) = want(u)?;
+    let mine = (par.acc[u], u);
+    // The other edges of the triangle this one would bend through.
+    let bend = bend.filter(|&m| {
+        let r = (3 * m.0 - 2 * a.0 - 3 * e.0, 3 * m.1 - 2 * a.1 - 3 * e.1);
+        let q = (a.0 + 3 * e.0, a.1 + 3 * e.1);
+        let ends = [(a, r), (q, r)];
+        ends.iter().all(|&(x, y)| {
+            [(x, y), (y, x)].iter().all(|&(from, to)| {
+                let Some(k) = par.vid_at(from.0, from.1) else { return true };
+                let runs_to = par.rec[k] >= 0 && par.vid_at(to.0, to.1) == Some(par.rec[k] as usize);
+                !runs_to || want(k).and_then(|o| o.2) != Some(m) || (par.acc[k], k) < mine
+            })
+        })
+    });
+    let step = |k: i64| (a.0 + k * e.0, a.1 + k * e.1);
+    Some(match bend {
+        Some(m) => vec![a, step(1), m, step(2), step(3)],
+        None => vec![a, step(1), step(2), step(3)],
+    })
+}
+
+const BEND_SEED: u64 = 0x4265_6e64_5f5f_5f5f; // "Bend____"

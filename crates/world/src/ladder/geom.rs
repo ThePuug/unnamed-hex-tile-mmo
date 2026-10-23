@@ -85,29 +85,6 @@ pub fn vertex_at(q3: i64, r3: i64, w: i64) -> (u8, i64, i64) {
     (t, (a - t as i64).div_euclid(3), (b - tr).div_euclid(3))
 }
 
-/// The position of a level's vertex nearest a position, both in thirds of
-/// a tile; of two as near, the first along q, then r. A level's vertices
-/// stand at whole multiples of its width whose two counts agree modulo 3.
-pub fn nearest_vertex((q3, r3): (f64, f64), w: i64) -> (i64, i64) {
-    let wf = w as f64;
-    let (a0, b0) = ((q3 / wf).floor() as i64, (r3 / wf).floor() as i64);
-    let (px, py) = (1.5 * q3 / 3.0, SQRT_3 * (r3 / 3.0 + q3 / 6.0));
-    let mut best: Option<(f64, (i64, i64))> = None;
-    for a in a0 - 1..=a0 + 2 {
-        for b in b0 - 1..=b0 + 2 {
-            if (a - b).rem_euclid(3) != 0 {
-                continue;
-            }
-            let (x, y) = xy(a * w, b * w);
-            let d = (x - px).hypot(y - py);
-            if best.is_none_or(|(e, _)| d < e) {
-                best = Some((d, (a * w, b * w)));
-            }
-        }
-    }
-    best.expect("a vertex within a step").1
-}
-
 /// A vertex's six neighbours on the fan graph: a centre's six corners, a
 /// corner's three centres and three corners.
 pub fn vnbr(t: u8, i: i64, j: i64, k: usize) -> (u8, i64, i64) {
@@ -244,21 +221,6 @@ pub fn project(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
 
 #[cfg(test)]
 mod tests {
-    /// The nearest vertex is one of the level's, and a vertex's own
-    /// position finds itself.
-    #[test]
-    fn the_nearest_vertex_is_the_levels() {
-        for w in [1i64, 3, 9] {
-            for (t, i, j) in [(0u8, 0i64, 0i64), (1, 2, -1), (2, -3, 4)] {
-                let (q3, r3) = pos3(t, i, j, w);
-                assert_eq!(nearest_vertex((q3 as f64, r3 as f64), w), (q3, r3));
-                let near = nearest_vertex((q3 as f64 + 0.4 * w as f64, r3 as f64 - 0.3 * w as f64), w);
-                let (t2, i2, j2) = vertex_at(near.0, near.1, w);
-                assert_eq!(pos3(t2, i2, j2, w), near);
-            }
-        }
-    }
-
     /// A cell's descendants are its tiles once the depth reaches them: `w²`
     /// distinct tiles.
     #[test]
