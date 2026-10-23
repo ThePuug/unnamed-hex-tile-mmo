@@ -1,10 +1,9 @@
 //! Water: one target surface, the valley drainage's law cuts: a channel
 //! along each trough, as wide as its catchment makes it, its water standing
 //! at the trough's floor and its bed cut [`depth`] below that, walls rising
-//! from the bed at water's slope in the rock they stand in, its banks a
-//! step above the water, flat at the river and steepening evenly across
-//! its plain ([`plain`]) to the walls' lean at its edge, and walls rising
-//! on from there to where they meet the ground. The water fills its valley to the floor:
+//! from the bed at water's slope in the rock they stand in, the plain a
+//! step above the water out to its own width ([`plain`]), and walls rising
+//! from there to where they meet the ground. The water fills its valley to the floor:
 //! out over the bed and up the walls to where they climb to it, so it
 //! meets its banks at its own height.
 //!
@@ -170,13 +169,12 @@ pub fn bed(flow: f64, p: &Params) -> f64 {
     1.5 * (flow / p.catchment_full).max(0.0).sqrt()
 }
 
-/// The half width of a river's plain, in tiles, across which its banks
-/// steepen from flat to its walls' lean: its bed's, times
+/// The half width of a river's flat floor, in tiles: its bed's, times
 /// how much gentler its graded fall is than a channel head's, times how
 /// far its plate's age has carried erosion. A river cuts down as fast as
 /// it falls and wanders sideways at a pace its fall does not slow, so a
-/// steep one cuts a gorge no wider than its bed and a gentle one wears a
-/// broad valley many beds wide.
+/// steep one cuts a gorge no wider than its bed and a gentle one planes a
+/// floor many beds wide.
 pub fn plain(bed: f64, catchment: f64, erodibility: f64, age: f64, p: &Params) -> f64 {
     let gentler = super::HEAD_SLOPE / super::graded_slope(catchment, erodibility, p);
     bed * gentler.max(1.0) * crate::tectonic::aged(age)
@@ -237,11 +235,12 @@ fn on_stretch(s: &Sample, from: (f64, f64), on: (f64, f64), (x, y): (f64, f64), 
 
 /// A bed's valley at a position in world units a tile apart, as a level
 /// `w` wide draws it, each distance to its stretch taken `nearer` tiles
-/// shorter: the channel, its walls rising from the bed, and its banks, a
-/// step above the river's water and steepening across the plain to the
-/// walls' lean ([`lean`]) at its edge, whichever stands lower. A plain no
-/// wider than the bed leaves the channel's walls running on up. It never
-/// falls as either distance grows.
+/// shorter: the
+/// channel, its walls rising from the bed, and its plain, a step above the
+/// river's water out to the plain's width from the bed with walls rising
+/// from there, whichever stands lower. A plain no wider than the bed leaves the channel's walls running on up. The walls
+/// beside a plain lean back ([`lean`]). It never falls as either distance
+/// grows.
 fn profile(s: &Sample, at: (f64, f64), nearer: f64) -> f64 {
     let (channel, banks) = parts(s, at, nearer);
     channel.min(banks)
@@ -257,8 +256,8 @@ fn parts(s: &Sample, (x, y): (f64, f64), nearer: f64) -> (f64, f64) {
     // point of it stands on the river beside it, never on a floor far
     // downstream whose plain reaches it.
     let across = (2.0 * s.fall + 0.01) * d.min(s.plain);
-    let rise = if d < s.plain { d * d / (2.0 * s.plain) } else { d - s.plain / 2.0 };
-    (channel, floor + 1.0 + across + lean(s) * rise)
+    let wall = lean(s) * (d - s.plain).max(0.0);
+    (channel, floor + 1.0 + across + wall)
 }
 
 /// The slope of a valley's walls beside its plain, in steps a tile: the
@@ -302,7 +301,7 @@ struct Sample {
     floor: f64,
     down: f64,
     bed: f64,
-    /// The half width of its plain ([`plain`]), the bed's or wider.
+    /// The half width of its flat floor, the bed's or wider.
     plain: f64,
     /// How far the river falls a tile along its course at grade, in steps.
     fall: f64,
