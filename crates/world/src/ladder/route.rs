@@ -25,7 +25,10 @@
 //! where it meets one handed down, or to its outlet.
 //!
 //! A hollow holds a lake: the footprint is flooded from its outlets, the
-//! sea and its edge, lowest water first, so the flood leaves each hollow
+//! sea and its edge, lowest water first, its ground under a lake the level
+//! above hands down standing at that lake's surface as the level's own
+//! ground holds it ([`flood_zone`]), so every block reads one surface for
+//! a lake however far it spreads; the flood leaves each hollow
 //! over the lowest point of its rim at the level it filled to, and water
 //! that would end in a hollow takes the flood's way out from where it
 //! reaches the lake. A vertex
@@ -46,7 +49,7 @@
 //! a slope drains in a spread; a trough goes whole to its receiver.
 
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::geom::{facet, parent_of, pos3, vertex_cells, vnbr, wander, xy};
@@ -270,15 +273,17 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         recg[x] = vids[pick] as i64;
     }
     // Lakes: the footprint flooded from its outlets, lowest water first:
-    // the sea, and the vertices at its edge it cannot route.
+    // the sea, and the vertices at its edge it cannot route; the ground
+    // under a lake handed down filled to its surface.
     let mut came = vec![usize::MAX; nv];
     let mut lake = vec![f64::NAN; nv];
     let mut seen = vec![false; nv];
     let mut heap = BinaryHeap::new();
+    let base: Vec<f64> = (0..nv).map(|x| key[x].0.max(lv.lake_zone[vids[x]])).collect();
     for x in 0..nv {
         if known[x] && (sink[x] || !decided[x]) {
             seen[x] = true;
-            heap.push(Reverse(Flood { level: key[x].0, key: key[x], x }));
+            heap.push(Reverse(Flood { level: base[x], key: key[x], x }));
         }
     }
     while let Some(Reverse(f)) = heap.pop() {
@@ -294,7 +299,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             }
             seen[y] = true;
             came[y] = f.x;
-            heap.push(Reverse(Flood { level: f.level.max(key[y].0), key: key[y], x: y }));
+            heap.push(Reverse(Flood { level: f.level.max(base[y]), key: key[y], x: y }));
         }
     }
     // Where each vertex's water ends going downhill: its own index in a
@@ -581,9 +586,10 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         }
         outlet[x] = rec[x].and_then(|y| if lake[y].is_nan() { Some(y) } else { outlet[y] });
     }
+    // A lake handed down was cut by the level that found it.
     let mut lowered = lake.clone();
     for x in 0..nv {
-        let Some(o) = outlet[x] else { continue };
+        let Some(o) = outlet[x].filter(|_| lv.lake_zone[vids[x]].is_nan()) else { continue };
         let c = vids[o] % nn;
         let level = above_sea(drained(lake[x], graded[o], lv.age[c], lv.erod[c], room(o), p));
         lowered[x] = if level > key[x].0 { level } else { f64::NAN };
@@ -738,6 +744,77 @@ fn course_of(par: &Level, lv: &Level, u: usize, p: &Params) -> Option<Vec<(i64, 
         Some(m) => vec![a, step(1), m, step(2), end],
         None => vec![a, step(1), step(2), end],
     })
+}
+
+/// The lakes the level above hands down over `zone`, cells of a level
+/// whose parent or a cell beside it lies under the level above's lake,
+/// joined to every such cell beside them: the zone's vertices flooded
+/// together from the ground round it, lowest water first, so a lake
+/// stands at one surface wherever it is read, as high as the level's own
+/// ground holds it and never above the lake handed down over it. Where
+/// the level's ground opens a hollow the level above found closed, the
+/// lake drains to that opening. Every cell of the zone, and the cells
+/// round it, supplied.
+pub(super) fn flood_zone(lv: &mut Level, zone: &HashSet<usize>) {
+    let nn = lv.cap();
+    let w = lv.w;
+    let key = |lv: &Level, v: usize| {
+        let (t, i, j) = lv.vertex(v);
+        let (q3, r3) = pos3(t, i, j, w);
+        (lv.sunk[v], 2 * r3 + q3, q3)
+    };
+    let inside = |v: usize| zone.contains(&(v % nn));
+    let mut heap = BinaryHeap::new();
+    let mut seen: HashSet<usize> = HashSet::new();
+    let mut vertices = Vec::new();
+    for &c in zone {
+        for t in 0..3u8 {
+            let v = t as usize * nn + c;
+            if lv.sunk[v].is_nan() {
+                continue;
+            }
+            vertices.push(v);
+            let (t, i, j) = lv.vertex(v);
+            let mut outlet = lv.ground[v] < 0.0;
+            for k in 0..6 {
+                let (tt, ni, nj) = vnbr(t, i, j, k);
+                match lv.idx(ni, nj).filter(|&d| lv.exists[d]) {
+                    None => outlet = true,
+                    Some(d) => {
+                        let u = tt as usize * nn + d;
+                        if !inside(u) && !lv.sunk[u].is_nan() && seen.insert(u) {
+                            heap.push(Reverse(Flood { level: lv.sunk[u], key: key(lv, u), x: u }));
+                        }
+                    }
+                }
+            }
+            if outlet && seen.insert(v) {
+                heap.push(Reverse(Flood { level: lv.sunk[v], key: key(lv, v), x: v }));
+            }
+        }
+    }
+    let mut level: HashMap<usize, f64> = HashMap::new();
+    while let Some(Reverse(f)) = heap.pop() {
+        if inside(f.x) {
+            level.insert(f.x, f.level);
+        }
+        let (t, i, j) = lv.vertex(f.x);
+        for k in 0..6 {
+            let (tt, ni, nj) = vnbr(t, i, j, k);
+            let Some(d) = lv.idx(ni, nj).filter(|&d| lv.exists[d]) else { continue };
+            let u = tt as usize * nn + d;
+            if inside(u) && !lv.sunk[u].is_nan() && seen.insert(u) {
+                heap.push(Reverse(Flood { level: f.level.max(lv.sunk[u]), key: key(lv, u), x: u }));
+            }
+        }
+    }
+    for v in vertices {
+        let surface = level.get(&v).map_or(f64::NAN, |&s| s.min(lv.lake_above[v % nn]));
+        lv.lake_zone[v] = if surface > lv.sunk[v] { surface } else { f64::NAN };
+    }
+    for &c in zone {
+        lv.zoned[c] = true;
+    }
 }
 
 const BEND_SEED: u64 = 0x4265_6e64_5f5f_5f5f; // "Bend____"

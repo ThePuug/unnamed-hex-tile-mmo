@@ -24,9 +24,11 @@
 //! carved lower, so water stands on the carve, never over it. A cell under a lake takes
 //! the lake's surface rounded where it stands higher, over the whole cell:
 //! the lake is the one routing keeps over the cell's centre, its outlet cut
-//! as far as erosion has carried it, or the one the level above keeps over
-//! the cell's parent, so a lake wider than a level's routing reads stands
-//! at every level below the one that found it. A lake is as deep as its surface
+//! as far as erosion has carried it, or the lake the level above hands
+//! down, flooded whole at the level ([`super::route::flood_zone`]), so a
+//! lake wider than a level's routing reads stands at every level below the
+//! one that found it, at one surface, as high as each level's own ground
+//! holds it. A lake is as deep as its surface
 //! stands over the ground routing found it on, both rounded, and stands
 //! on the carve as a river does, so a lake that rounds to its own ground
 //! covers nothing.
@@ -842,11 +844,10 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
     }
 }
 
-/// The surface of the lake over a cell, rounded: routing's over its
-/// centre, or the one the level above hands down, whichever stands
-/// higher; NaN where none.
+/// The surface of the lake routing keeps over a cell's centre, rounded;
+/// NaN where none.
 pub(super) fn lakes(lv: &Level, c: usize) -> f64 {
-    (lv.lake[c] + 0.5).floor().max(lv.lake_above[c])
+    (lv.lake[c] + 0.5).floor()
 }
 
 /// The cut at the centre of each of `cells` from every river of `edges`,

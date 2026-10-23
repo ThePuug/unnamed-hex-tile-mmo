@@ -328,14 +328,18 @@ pub struct Level {
     /// The surface of the lake over each cell's parent or a cell beside
     /// it, the highest, rounded, where it stands over that cell's dry
     /// ground; NaN where none: a shore lies within a cell of the level
-    /// above's lake. A lake in a
-    /// basin wider than a level's routing reads is found by a coarser
-    /// level, and stands over every finer cell of it below its surface; a
-    /// hollow only the carve makes is the level's own to find.
+    /// above's lake. A lake in a basin wider than routing reads is found
+    /// by a coarser level; the cells it marks are its zone at this level.
     pub lake_above: Paged<f64>,
-    /// The surface of the lake over each cell, rounded, whether or not it
-    /// stands above the cell: routing's over its centre, or the level
-    /// above's; NaN where none. What the level below is handed.
+    /// The surface of the lake handed down at each vertex of its zone, as
+    /// the level's own ground holds it ([`route::flood_zone`]); NaN where
+    /// it stands over none. Routing reads the ground under it as filled.
+    pub lake_zone: Paged<f64>,
+    /// Whether each cell's zone, if it lies in one, has been flooded.
+    pub zoned: Paged<bool>,
+    /// The surface of the lake routing keeps over each cell's centre,
+    /// rounded, whether or not it stands above the cell; NaN where none.
+    /// What the level below is handed.
     pub lakes: Paged<f64>,
     /// Which of each cell's nine children ([`CHILD_OFFSETS`]) stand under
     /// the level's water above the sea, a bit to each in that order: under
@@ -420,6 +424,8 @@ impl Level {
             held_src: Paged::new(-1, cells),
             held_parts: Paged::new(0, cells),
             lake_above: nan(cells),
+            lake_zone: nan(3 * cells),
+            zoned: Paged::new(false, cells),
             lakes: nan(cells),
             wparts: Paged::new(0, cells),
             z: nan(3 * cells),
@@ -801,6 +807,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let fp = lv.footprint(Pass::Route, &pend);
         self.ensure_supplied(k, &fp);
         self.parent_over(k, &fp);
+        self.zone_lakes(k, &fp);
         let started = Instant::now();
         let (above, rest) = self.levels.split_at_mut(k);
         let lv = &mut rest[0];
@@ -811,6 +818,63 @@ impl<'g, G: Ground> Ladder<'g, G> {
         }
         lv.cost[Pass::Route as usize] += pend.len() as u64;
         self.timing[k][Stage::Route as usize] += started.elapsed().as_secs_f64();
+    }
+
+    /// Every lake the level above hands down over a mask of level k
+    /// flooded whole ([`route::flood_zone`]): each zone grown from the mask
+    /// through every cell beside it the lake marks, supplied as it is
+    /// found, with the ring of cells round it.
+    fn zone_lakes(&mut self, k: usize, mask: &Mask) {
+        let lv = &self.levels[k];
+        let starts: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.supplied[c] && !lv.zoned[c] && !lv.lake_above[c].is_nan()).collect();
+        for start in starts {
+            if self.levels[k].zoned[start] {
+                continue;
+            }
+            let mut zone: HashSet<usize> = HashSet::from([start]);
+            let mut round: HashSet<usize> = HashSet::new();
+            let mut queue = vec![start];
+            loop {
+                let mut ask = Vec::new();
+                let lv = &self.levels[k];
+                while let Some(c) = queue.pop() {
+                    let (i, j) = lv.ij(c);
+                    for (di, dj) in NB {
+                        let Some(d) = lv.idx(i + di, j + dj).filter(|&d| lv.exists[d]) else { continue };
+                        if zone.contains(&d) || round.contains(&d) {
+                            continue;
+                        }
+                        if !lv.supplied[d] {
+                            ask.push(d);
+                        } else if lv.lake_above[d].is_nan() {
+                            round.insert(d);
+                        } else {
+                            zone.insert(d);
+                            queue.push(d);
+                        }
+                    }
+                }
+                if ask.is_empty() {
+                    break;
+                }
+                ask.sort_unstable();
+                ask.dedup();
+                self.ensure_supplied(k, &Mask::new(ask.iter().copied()));
+                let lv = &self.levels[k];
+                for d in ask {
+                    if lv.lake_above[d].is_nan() {
+                        round.insert(d);
+                    } else if zone.insert(d) {
+                        queue.push(d);
+                    }
+                }
+            }
+            let started = Instant::now();
+            let lv = &mut self.levels[k];
+            tile_corners(lv, &Mask::new(zone.iter().chain(&round).copied()));
+            route::flood_zone(lv, &zone);
+            self.timing[k][Stage::Route as usize] += started.elapsed().as_secs_f64();
+        }
     }
 
     /// The level above under a mask and a ring of its cells: read, routed,
