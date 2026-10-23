@@ -636,6 +636,9 @@ pub struct Ladder<'g, G: Ground> {
     /// the widths of the two: every edge sampled once, however many
     /// requests read it.
     bands: std::collections::HashMap<(i64, i64), water::Band>,
+    /// The cells of the coarser level whose ring each band holds, by the
+    /// same widths: a request reads only what the cells it adds reach.
+    covered: std::collections::HashMap<(i64, i64), HashSet<usize>>,
 }
 
 impl<'g, G: Ground> Ladder<'g, G> {
@@ -684,6 +687,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             route_stats: vec![[0; 4]; count],
             timing: vec![[0.0; 6]; count],
             bands: std::collections::HashMap::new(),
+            covered: std::collections::HashMap::new(),
         };
         match top {
             Some(top) => {
@@ -949,15 +953,22 @@ impl<'g, G: Ground> Ladder<'g, G> {
 
     /// Every coarser level's rivers within reach of a mask of level k in
     /// its band as level k reads it ([`Ladder::bands`]): its troughs over
-    /// its ring of cells past the mask, read out to its ring.
+    /// its ring of cells past each of its cells over the mask the band
+    /// does not cover yet, read out to its ring.
     fn rivers_above(&mut self, k: usize, mask: &Mask) {
         for j in 0..k {
             let (lv, up) = (&self.levels[k], &self.levels[j]);
+            let (read, far) = (lv.w, self.p.ring * up.w as f64);
+            self.bands.entry((up.w, read)).or_insert_with(|| water::Band::empty(up.w, -1.0, far, read));
+            let covered = self.covered.entry((up.w, read)).or_default();
             let under = Mask::new(mask.iter().filter_map(|c| {
                 let (i, jj) = lv.ij(c);
                 let (a, b) = ancestor(i, jj, (k - j) as u32);
                 up.idx(a, b)
-            }));
+            }).filter(|&u| covered.insert(u)));
+            if under.is_empty() {
+                continue;
+            }
             // Rings of cells a ring's reach in tiles past the mask and a
             // cell beside, where a course strays from its vertices: k rings
             // stand k·√3/2 of the level's width out at their nearest.
@@ -967,11 +978,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
             // receiver has its floor and its plain, and its receiver's.
             let routed = up.dilate(&reach, 2);
             self.ensure_routed(j, &routed);
-            let up = &self.levels[j];
-            let read = self.levels[k].w;
-            let edges = water::trough_edges(up, &reach, &self.p);
-            let far = self.p.ring * up.w as f64;
-            self.bands.entry((up.w, read)).or_insert_with(|| water::Band::empty(up.w, -1.0, far, read)).add(&edges, &self.p);
+            let edges = water::trough_edges(&self.levels[j], &reach, &self.p);
+            self.bands.get_mut(&(self.levels[j].w, read)).expect("the band made above").add(&edges, &self.p);
         }
     }
 
