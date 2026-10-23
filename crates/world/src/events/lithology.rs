@@ -308,14 +308,14 @@ impl WorldEvent for LithologyEvent {
     fn query(
         &self,
         q: i32, r: i32,
-        _below: &TileView,
+        below: &TileView,
         cell: &(dyn Any + Send + Sync),
         seed: u64,
     ) -> Option<TileOutput> {
         let reach = cell.downcast_ref::<Reach>()?;
         let (wx, wy) = hex_to_world(q, r);
         let ground = rock_on(wx, wy, seed, &reach.coasts, &reach.outlines);
-        let gradient = gradient_of(wx, wy, ground.stand, |x, y| rock_on(x, y, seed, &reach.coasts, &reach.outlines).stand);
+        let gradient = if below.slopes { gradient_of(wx, wy, ground.stand, |x, y| rock_on(x, y, seed, &reach.coasts, &reach.outlines).stand) } else { (0.0, 0.0) };
         Some(TileOutput { elevation_delta: ground.stand, gradient, rock: Some(ground.rock), ..TileOutput::default() })
     }
 }

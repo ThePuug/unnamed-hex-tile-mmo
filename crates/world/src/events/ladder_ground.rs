@@ -46,6 +46,7 @@ impl Composite {
         composite.add_event(Box::new(thickening::ThickeningEvent::new()));
         composite.add_event(Box::new(lithology::LithologyEvent::new()));
         composite.add_event(Box::new(scarp::ScarpEvent::new()));
+        composite.slopes = false;
         composite
     }
 }

@@ -1185,7 +1185,7 @@ impl WorldEvent for ThrustingEvent {
     fn query(
         &self,
         q: i32, r: i32,
-        _below: &TileView,
+        below: &TileView,
         cell: &(dyn Any + Send + Sync),
         _seed: u64,
     ) -> Option<TileOutput> {
@@ -1193,7 +1193,7 @@ impl WorldEvent for ThrustingEvent {
         let (wx, wy) = hex_to_world(q, r);
         let rise = outlines.relief(wx, wy);
         if rise <= 0.0 { return None }
-        let gradient = gradient_of(wx, wy, rise, |x, y| outlines.relief(x, y));
+        let gradient = if below.slopes { gradient_of(wx, wy, rise, |x, y| outlines.relief(x, y)) } else { (0.0, 0.0) };
         Some(TileOutput { elevation_delta: rise, gradient, ..TileOutput::default() })
     }
 }

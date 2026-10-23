@@ -354,7 +354,7 @@ impl WorldEvent for ScarpEvent {
         if cut <= 0.0 {
             return None;
         }
-        let gradient = gradient_of(wx, wy, -cut, |x, y| -carve(x, y));
+        let gradient = if below.slopes { gradient_of(wx, wy, -cut, |x, y| -carve(x, y)) } else { (0.0, 0.0) };
         Some(TileOutput { elevation_delta: -cut, gradient, ..TileOutput::default() })
     }
 }

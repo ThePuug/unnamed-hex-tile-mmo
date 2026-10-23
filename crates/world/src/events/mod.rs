@@ -155,6 +155,11 @@ pub struct TileView {
     /// How steeply the ground climbs, as [`TileOutput::gradient`], summed
     /// over the layers beneath.
     pub gradient: (f64, f64),
+    /// Whether a layer's slope reaches any reader: not in a stack whose
+    /// ground the ladder draws, its slope standing in for theirs, nor in
+    /// the ground the ladder reads, heights alone. A layer whose slope
+    /// would reach no one reports none.
+    pub slopes: bool,
     /// The highest water surface any layer below put over this tile.
     pub water: Option<f64>,
     /// The rock at the surface, as [`TileOutput::rock`].
@@ -168,7 +173,7 @@ pub struct TileView {
 impl TileView {
     fn on(w: i64, q: i32, r: i32) -> Self {
         let (wx, wy) = hex_to_world(q, r);
-        TileView { q, r, w, wx, wy, elevation: 0.0, gradient: (0.0, 0.0), water: None, rock: None, cover: Cover::NONE, den: None }
+        TileView { q, r, w, wx, wy, elevation: 0.0, gradient: (0.0, 0.0), slopes: true, water: None, rock: None, cover: Cover::NONE, den: None }
     }
 
     fn compose(&mut self, out: &TileOutput) {
@@ -768,6 +773,8 @@ pub struct Composite {
     /// and water are its, its cover and den the layers', and a summary is
     /// the ladder's cell. None in a stack of other layers.
     ladders: Option<std::sync::Arc<ladder_ground::Ladders>>,
+    /// Whether its layers' slopes reach any reader ([`TileView::slopes`]).
+    slopes: bool,
 }
 
 impl Composite {
@@ -781,6 +788,7 @@ impl Composite {
             metrics: HitCounters::new(),
             seed,
             ladders: None,
+            slopes: true,
         }
     }
 
@@ -852,6 +860,7 @@ impl Composite {
         if let Some(ladders) = &ladders {
             composite.add_event(Box::new(ladder_ground::LadderEvent::new(ladders.clone())));
         }
+        composite.slopes = ladders.is_none();
         composite.ladders = ladders;
         composite.add_event(Box::new(outcrop::OutcropEvent::new()));
         composite.add_event(Box::new(forest::ForestEvent::new()));
@@ -942,6 +951,7 @@ impl Composite {
         }
 
         let mut view = TileView::on(w, q, r);
+        view.slopes = self.slopes;
         let _s = tracing::debug_span!("query").entered();
         for layer in 0..self.events.len() {
             let cell_id = self.lattices[layer].cell_id(q, r);

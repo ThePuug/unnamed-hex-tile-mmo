@@ -131,7 +131,7 @@ impl WorldEvent for ThickeningEvent {
     fn query(
         &self,
         q: i32, r: i32,
-        _below: &TileView,
+        below: &TileView,
         cell: &(dyn Any + Send + Sync),
         _seed: u64,
     ) -> Option<TileOutput> {
@@ -139,7 +139,7 @@ impl WorldEvent for ThickeningEvent {
         let (wx, wy) = hex_to_world(q, r);
         let rise = thickening_on(wx, wy, outlines);
         if rise <= 0.0 { return None }
-        let gradient = gradient_of(wx, wy, rise, |x, y| thickening_on(x, y, outlines));
+        let gradient = if below.slopes { gradient_of(wx, wy, rise, |x, y| thickening_on(x, y, outlines)) } else { (0.0, 0.0) };
         Some(TileOutput { elevation_delta: rise, gradient, ..TileOutput::default() })
     }
 }
