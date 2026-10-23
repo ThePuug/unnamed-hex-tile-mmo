@@ -325,10 +325,13 @@ pub struct Level {
     pub held_depth: Paged<f64>,
     pub held_src: Paged<i64>,
     pub held_parts: Paged<u16>,
-    /// The surface of the lake over each cell's parent, rounded; NaN where
-    /// none. A lake wider than a level's routing reads is found by a
-    /// coarser level, and stands over every finer cell of it below its
-    /// surface.
+    /// The surface of the lake over each cell's parent or a cell beside
+    /// it, the highest, rounded, where it stands over that cell's dry
+    /// ground; NaN where none: a shore lies within a cell of the level
+    /// above's lake. A lake in a
+    /// basin wider than a level's routing reads is found by a coarser
+    /// level, and stands over every finer cell of it below its surface; a
+    /// hollow only the carve makes is the level's own to find.
     pub lake_above: Paged<f64>,
     /// The surface of the lake over each cell, rounded, whether or not it
     /// stands above the cell: routing's over its centre, or the level
@@ -855,9 +858,12 @@ impl<'g, G: Ground> Ladder<'g, G> {
             lv.held_parts[c] = found.parts;
             let (i, j) = lv.ij(c);
             let (pi, pj, _, _) = parent_of(i, j);
-            if let Some(pc) = par.idx(pi, pj) {
-                lv.lake_above[c] = par.lakes[pc];
-            }
+            lv.lake_above[c] = std::iter::once((0, 0))
+                .chain(NB)
+                .filter_map(|(di, dj)| par.idx(pi + di, pj + dj))
+                .filter(|&pc| par.lakes[pc] > par.zd[pc])
+                .map(|pc| par.lakes[pc])
+                .fold(f64::NAN, f64::max);
             lv.supplied[c] = true;
         }
         lv.cost[Pass::Ground as usize] += pend.len() as u64;
