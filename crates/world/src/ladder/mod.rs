@@ -632,6 +632,10 @@ pub struct Ladder<'g, G: Ground> {
     /// Per level, the wall time each stage took there, in seconds, nested
     /// work at other levels not counted.
     pub timing: Vec<[f64; 6]>,
+    /// Each level's rivers as each level as fine or finer reads them, by
+    /// the widths of the two: every edge sampled once, however many
+    /// requests read it.
+    bands: std::collections::HashMap<(i64, i64), water::Band>,
 }
 
 impl<'g, G: Ground> Ladder<'g, G> {
@@ -679,6 +683,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             p,
             route_stats: vec![[0; 4]; count],
             timing: vec![[0.0; 6]; count],
+            bands: std::collections::HashMap::new(),
         };
         match top {
             Some(top) => {
@@ -911,10 +916,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let fp = lv.footprint(Pass::Ground, &pend);
         self.parent_over(k, &fp);
         self.read_ground(k, &fp);
-        let bands = self.rivers_above(k, &fp);
+        self.rivers_above(k, &fp);
         let started = Instant::now();
         let (above, rest) = self.levels.split_at_mut(k);
         let (par, lv) = (&above[k - 1], &mut rest[0]);
+        let bands: Vec<&water::Band> = above.iter().map(|up| &self.bands[&(up.w, lv.w)]).collect();
         let todo: Vec<usize> = fp.iter().filter(|&c| lv.exists[c] && !lv.supplied[c]).collect();
         let carved = water::carved_over(lv, &bands, &todo);
         for (&c, found) in todo.iter().zip(carved) {
@@ -941,11 +947,10 @@ impl<'g, G: Ground> Ladder<'g, G> {
         self.timing[k][Stage::Supply as usize] += started.elapsed().as_secs_f64();
     }
 
-    /// Every coarser level's rivers within reach of a mask of level k, a
-    /// band to each: its troughs over its ring of cells past the mask, read
-    /// out to its ring.
-    fn rivers_above(&mut self, k: usize, mask: &Mask) -> Vec<water::Band> {
-        let mut bands = Vec::with_capacity(k);
+    /// Every coarser level's rivers within reach of a mask of level k in
+    /// its band as level k reads it ([`Ladder::bands`]): its troughs over
+    /// its ring of cells past the mask, read out to its ring.
+    fn rivers_above(&mut self, k: usize, mask: &Mask) {
         for j in 0..k {
             let (lv, up) = (&self.levels[k], &self.levels[j]);
             let under = Mask::new(mask.iter().filter_map(|c| {
@@ -964,9 +969,10 @@ impl<'g, G: Ground> Ladder<'g, G> {
             self.ensure_routed(j, &routed);
             let up = &self.levels[j];
             let read = self.levels[k].w;
-            bands.push(water::Band::new(up.w, &water::trough_edges(up, &reach, &self.p), -1.0, self.p.ring * up.w as f64, read, &self.p));
+            let edges = water::trough_edges(up, &reach, &self.p);
+            let far = self.p.ring * up.w as f64;
+            self.bands.entry((up.w, read)).or_insert_with(|| water::Band::empty(up.w, -1.0, far, read)).add(&edges, &self.p);
         }
-        bands
     }
 
     fn ensure_built(&mut self, k: usize, mask: &Mask) {
@@ -986,8 +992,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
             self.ensure_routed(k, &routed);
             let started = Instant::now();
             let lv = &mut self.levels[k];
-            let band = water::Band::new(lv.w, &water::trough_edges(lv, &fp, &self.p), -1.0, self.p.ring * lv.w as f64, lv.w, &self.p);
-            water::level_cut(lv, &band, &pend, &self.p);
+            let edges = water::trough_edges(lv, &fp, &self.p);
+            let far = self.p.ring * lv.w as f64;
+            let band = self.bands.entry((lv.w, lv.w)).or_insert_with(|| water::Band::empty(lv.w, -1.0, far, lv.w));
+            band.add(&edges, &self.p);
+            water::level_cut(lv, band, &pend, &self.p);
             lv.cost[Pass::Water as usize] += pend.len() as u64;
             self.timing[k][Stage::Water as usize] += started.elapsed().as_secs_f64();
         }

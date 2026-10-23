@@ -33,7 +33,7 @@
 //! on the carve as a river does, so a lake that rounds to its own ground
 //! covers nothing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use super::geom::{cube_round, hex_offsets, parent_of, pos3, project, vnbr, CHILD_OFFSETS};
 use super::mask::Mask;
@@ -315,6 +315,10 @@ struct Sample {
     w: i64,
     near: f64,
     far: f64,
+    /// Where it stands among its band's samples: the vertex its edge
+    /// leaves, then how far along it; a tie between samples falls in this
+    /// order.
+    rank: (usize, u32),
 }
 
 /// What a stretch of a river carries: its flow, birth, rock, vertex and
@@ -428,23 +432,51 @@ fn quad(a: (f64, f64), b: (f64, f64), c: (f64, f64), t: f64) -> (f64, f64) {
     (u * a.0 + v * b.0 + w * c.0, u * a.1 + v * b.1 + w * c.1)
 }
 
-/// One level's rivers: their beds sampled no more than half a cell apart,
-/// each sample held by the cell of the level it falls in, in one order, so
-/// a tie between samples falls the same way in every process; and how far
-/// from a cell they are read, in tiles.
+/// One level's rivers as a level `read` wide reads them: their beds
+/// sampled no more than half a cell apart, each edge once however often it
+/// is asked for, each sample held by the cell of the level it falls in, in
+/// one order ([`Sample::rank`]), so a tie between samples falls the same
+/// way in every process whatever was asked for first; and how far from a
+/// cell they are read, in tiles. A reader takes the samples within its
+/// reach, so a band holding rivers past a reader's reach reads as one
+/// holding only those within it.
 pub(super) struct Band {
     w: i64,
+    near: f64,
     far: f64,
+    read: i64,
     cells: BTreeMap<(i64, i64), Vec<Sample>>,
+    /// The edges sampled, by the vertex each leaves.
+    sampled: HashSet<usize>,
 }
 
 impl Band {
     /// The beds of `edges`, of a level `w` wide, read from a cell past
     /// `near` tiles and out to `far`, as the level `read` wide reads them.
     pub(super) fn new(w: i64, edges: &[Edge], near: f64, far: f64, read: i64, p: &Params) -> Self {
+        let mut band = Band::empty(w, near, far, read);
+        band.add(edges, p);
+        band
+    }
+
+    /// No beds yet, of a level `w` wide, read from a cell past `near`
+    /// tiles and out to `far`, as the level `read` wide reads them.
+    pub(super) fn empty(w: i64, near: f64, far: f64, read: i64) -> Self {
+        Band { w, near, far, read, cells: BTreeMap::new(), sampled: HashSet::new() }
+    }
+
+    /// The beds of `edges` the band does not hold yet sampled into it. An
+    /// edge's samples are final once its level has routed its vertex, its
+    /// receiver and the vertices round both, as [`trough_edges`] reads
+    /// them.
+    pub(super) fn add(&mut self, edges: &[Edge], p: &Params) {
+        let (w, near, far, read) = (self.w, self.near, self.far, self.read);
         let wf = w as f64;
-        let mut cells: BTreeMap<(i64, i64), Vec<Sample>> = BTreeMap::new();
+        let mut touched = Vec::new();
         for e in edges {
+            if !self.sampled.insert(e.src) {
+                continue;
+            }
             let way = Way::of(e);
             // A level's own beds at half its width; a coarser level's at a
             // quarter of the plain they bound, so a floor's edge follows
@@ -463,7 +495,9 @@ impl Band {
                 let (on, down) = points.get(s + 1).map_or(((0.0, 0.0), 0.0), |&((nx, ny), (next, _, _))| ((nx - x, ny - y), next - floor));
                 let q = x * 2.0 / SQRT_3;
                 let r = y - q / 2.0;
-                cells.entry(cube_round(q / wf, r / wf)).or_default().push(Sample {
+                let at = cube_round(q / wf, r / wf);
+                touched.push(at);
+                self.cells.entry(at).or_default().push(Sample {
                     x,
                     y,
                     on,
@@ -478,10 +512,17 @@ impl Band {
                     w: e.w,
                     near,
                     far,
+                    rank: (e.src, s as u32),
                 });
             }
         }
-        Band { w, far, cells }
+        touched.sort_unstable();
+        touched.dedup();
+        for at in touched {
+            if let Some(samples) = self.cells.get_mut(&at) {
+                samples.sort_by_key(|s| s.rank);
+            }
+        }
     }
 
     /// Every sample within `reach` tiles of a position in tiles, in place
@@ -576,7 +617,7 @@ fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)>
 /// each coarser cell's children, lowest the valley can stand among them
 /// first, so a vertex stops at the first bed that cannot go below what it
 /// has found.
-pub(super) fn carved_over(lv: &Level, bands: &[Band], cells: &[usize]) -> Vec<Carved> {
+pub(super) fn carved_over(lv: &Level, bands: &[&Band], cells: &[usize]) -> Vec<Carved> {
     let w = lv.w;
     let wf = w as f64;
     let half_step = wf / SQRT_3 / 2.0;
