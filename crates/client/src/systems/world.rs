@@ -741,6 +741,7 @@ pub fn dispatch_summary_tasks(
     let pool = bevy::tasks::AsyncComputeTaskPool::get();
     const MAX_MESH_TASKS: usize = 16;
     let mut mesh_dispatched = 0;
+    let mut queued = 0;
 
     let mut ordered: Vec<(f32, common_bevy::summary_mesh::MeshRegionKey)> = needed
         .iter()
@@ -757,7 +758,6 @@ pub fn dispatch_summary_tasks(
     ordered.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     for (d2, region_key) in ordered {
-        if mesh_dispatched >= MAX_MESH_TASKS { break; }
         let radius = region_key.r;
 
         // Built regions are final: their heights are durable. A region
@@ -785,6 +785,11 @@ pub fn dispatch_summary_tasks(
             if !is_local {
                 continue;
             }
+        }
+
+        if mesh_dispatched >= MAX_MESH_TASKS {
+            queued += 1;
+            continue;
         }
 
         let rk = region_key;
@@ -822,10 +827,9 @@ pub fn dispatch_summary_tasks(
         mesh_dispatched += 1;
     }
 
-    // Budget exhausted with regions possibly still undispatched.
-    if mesh_dispatched >= MAX_MESH_TASKS {
-        *backlog = true;
-    }
+    // Regions left undispatched with the budget spent are picked up next frame.
+    summary_meshes.queued = queued;
+    *backlog = queued > 0;
 }
 
 /// Active bands out to the reach, the same bound the server's producer

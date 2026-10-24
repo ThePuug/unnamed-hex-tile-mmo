@@ -588,6 +588,9 @@ pub struct SummaryMeshes {
     /// Counts the dispatch runs that found new map or summary data. A
     /// waiting region is retried while its build's epoch is behind it.
     pub epoch: u64,
+    /// Regions owed a build that the last dispatch run left for a later
+    /// frame, its task budget spent.
+    pub queued: usize,
 }
 
 impl SummaryMeshes {

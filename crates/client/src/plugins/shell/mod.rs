@@ -88,7 +88,7 @@ const QUIET_FRAMES: u32 = 10;
 pub struct Loading {
     /// Chunks streamed of those the server streams around the player.
     pub chunks: (usize, usize),
-    /// Terrain builds in flight.
+    /// Terrain builds in flight or waiting their turn.
     pub building: usize,
     /// The most builds seen in flight at once, which `building` counts down from.
     pub building_peak: usize,
@@ -200,7 +200,7 @@ fn track_loading(
     if let Some(loc) = player {
         loading.chunks = chunks_streamed(loc, &loaded);
     }
-    loading.building = meshes.states.values().filter(|s| s.task.is_some()).count();
+    loading.building = meshes.states.values().filter(|s| s.task.is_some()).count() + meshes.queued;
     loading.building_peak = loading.building_peak.max(loading.building);
 
     let (have, want) = loading.chunks;
