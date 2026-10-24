@@ -134,7 +134,7 @@ impl Laddered {
         Laddered { terrain: Terrain::from_ladder(Ladder::with_top(ground, &bounds, p, Some(top))) }
     }
 
-    /// The ladder behind its lock, for a reader that walks its levels.
+    /// The ladder, for a reader that walks its levels.
     pub fn terrain(&self) -> &Terrain<'static, StackGround> {
         &self.terrain
     }

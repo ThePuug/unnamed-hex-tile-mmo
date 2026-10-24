@@ -34,6 +34,7 @@
 //! covers nothing.
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::RwLock;
 
 use super::geom::{cube_round, hex_offsets, parent_of, pos3, project, vnbr, CHILD_OFFSETS};
 use super::mask::Mask;
@@ -118,7 +119,7 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
         .filter(|&v| runs(v))
         .map(|v| {
             let to = lv.rec.get(v) as usize;
-            let next = (runs(to) && lv.routed.get(lv.rec.get(to) as usize % nn)).then(|| {
+            let next = (runs(to) && lv.routed.done(lv.rec.get(to) as usize % nn)).then(|| {
                 let on = lv.rec.get(to) as usize;
                 Next {
                     to: tiles(lv, on),
@@ -700,7 +701,7 @@ fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)>
 /// each coarser cell's children, lowest the valley can stand among them
 /// first, so a vertex stops at the first bed that cannot go below what it
 /// has found.
-pub(super) fn carved_over(lv: &Level, bands: &[&Band], cells: &[usize]) -> Vec<Carved> {
+pub(super) fn carved_over(lv: &Level, bands: &[&RwLock<Band>], cells: &[usize]) -> Vec<Carved> {
     let w = lv.w;
     let wf = w as f64;
     let half_step = wf / SQRT_3 / 2.0;
@@ -738,6 +739,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[&Band], cells: &[usize]) -> Vec<C
         let ((cq, cr), _, radius, high) = span(&xs);
         let (mut list, mut found) = (Vec::new(), Vec::new());
         for band in bands {
+            let band = band.read().expect("a band of rivers");
             band.below(cq, cr, band.far + radius, radius, high, &mut found);
             list.append(&mut found);
         }
@@ -855,7 +857,7 @@ pub(super) fn top_cut(lv: &mut Level, edges: &[Edge], p: &Params) {
         lv.water.set(c, water);
         lv.wdepth.set(c, depth);
         lv.wwet.set(c, wet.map_or(-1, |w| w.2 as i64));
-        lv.watered.set(c, true);
+        lv.watered.finish(c);
     }
 }
 
@@ -875,13 +877,14 @@ struct Carve {
 /// The carve over each pending water cell's own cells, and the water
 /// standing in it: the valley of every river in `band` within its reach,
 /// met by the cell's carved ground.
-pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Params) {
+pub(super) fn level_cut(lv: &Level, band: &RwLock<Band>, pend: &[(i64, i64)], p: &Params) {
     let lists = lv.block_lists(Pass::Water, pend);
     let w = lv.w;
     let wf = w as f64;
     let view: &Level = lv;
     // Each deform cell's beds read once: those whose walls may reach its
     // highest ground from where they lie.
+    let band = band.read().expect("a band of rivers");
     let blocks: Vec<(Vec<usize>, Vec<Sample>)> = lists
         .iter()
         .map(|(own, _)| {
@@ -904,6 +907,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             (own.clone(), beds)
         })
         .collect();
+    drop(band);
     let jobs: Vec<(usize, usize)> = blocks.iter().enumerate().flat_map(|(b, (own, _))| own.iter().map(move |&c| (b, c))).collect();
     let index: Vec<usize> = (0..jobs.len()).collect();
     let found = in_parallel(&index, |near, x| {
@@ -968,7 +972,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
         lv.wwet.set(c, k.water.map_or(-1, |w| w.2 as i64));
         lv.wparts.set(c, k.parts);
         lv.lakes.set(c, lakes(lv, c));
-        lv.watered.set(c, true);
+        lv.watered.finish(c);
     }
 }
 

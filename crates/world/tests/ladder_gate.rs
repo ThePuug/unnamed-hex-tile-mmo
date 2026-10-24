@@ -134,7 +134,7 @@ fn exact<G: Ground>(ground: &G, whole: &Terrain<G>, p: Params, out: &mut String)
             for m in [&one, &apart] {
                 let lv = &m.levels[k];
                 for cc in 0..lv.cap() {
-                    if lv.routed.get(cc) {
+                    if lv.routed.done(cc) {
                         let (i, j) = lv.ij(cc);
                         cells += 1;
                         let bad = differs(lv, wl, i, j);
@@ -218,8 +218,8 @@ fn dump(dir: &str, lv: &Level) {
     dump_bool(&p("trough"), vb(&|v| lv.trough.get(v)).into_iter());
     for (name, f) in [
         ("exists", &|c: usize| lv.exists[c] as u8 != 0),
-        ("routed", &|c: usize| lv.routed.get(c)),
-        ("built", &|c: usize| lv.built.get(c)),
+        ("routed", &|c: usize| lv.routed.done(c)),
+        ("built", &|c: usize| lv.built.done(c)),
     ] as [(&str, &dyn Fn(usize) -> bool); 3]
     {
         dump_bool(&p(name), order.iter().map(|&c| f(c)));
@@ -238,7 +238,7 @@ fn truth<G: Ground>(ladder: &Ladder<G>, w: i64) -> String {
     let (ci, cj) = haven_cell(lv.w);
     let mut cells: Vec<(i64, i64)> = (-h..=h)
         .flat_map(|a| (-h..=h).map(move |b| (ci + a, cj + b)))
-        .filter(|&(i, j)| lv.idx(i, j).is_some_and(|x| lv.built.get(x)))
+        .filter(|&(i, j)| lv.idx(i, j).is_some_and(|x| lv.built.done(x)))
         .collect();
     let mut draw = Draw(23);
     for x in (1..cells.len()).rev() {
@@ -291,7 +291,7 @@ fn floating<G: Ground>(ladder: &Ladder<G>) -> String {
         let (mut wet, mut float, mut worst) = (0u64, Vec::new(), 0.0f64);
         for a in -h..=h {
             for b in -h..=h {
-                let Some(c) = lv.idx(ci + a, cj + b).filter(|&c| lv.built.get(c) && !lv.water.get(c).is_nan()) else { continue };
+                let Some(c) = lv.idx(ci + a, cj + b).filter(|&c| lv.built.done(c) && !lv.water.get(c).is_nan()) else { continue };
                 wet += 1;
                 let excess = lv.water.get(c) - lv.z.get(c) - lv.wdepth.get(c);
                 if excess > 0.0 {
@@ -318,7 +318,7 @@ fn faces<G: Ground>(ladder: &Ladder<G>) -> String {
     for lv in &ladder.levels[1..] {
         let h = region(lv.w) / lv.w;
         let (ci, cj) = haven_cell(lv.w);
-        let z = |i: i64, j: i64| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built.get(c)).map_or(f64::NAN, |c| lv.z.get(c));
+        let z = |i: i64, j: i64| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built.done(c)).map_or(f64::NAN, |c| lv.z.get(c));
         let met = |cells: [(i64, i64); 3]| meet(cells.map(|(i, j)| z(i, j)), lv.w as f64);
         // A corner's cells, and whether two of them part there.
         let apart = |cells: [(i64, i64); 3], x: usize, y: usize| {
@@ -386,9 +386,9 @@ fn run<G: Ground>(ground: &G, p: Params, dir: &str, log: &mut String) {
     {
         let ladder = terrain.ladder();
         for (k, lv) in ladder.levels.iter().enumerate() {
-            log.push_str(&format!("stats w={} route={:?} cost={:?}\n", lv.w, ladder.route_stats[k], lv.cost));
+            log.push_str(&format!("stats w={} route={:?} cost={:?}\n", lv.w, ladder.route_stats()[k], lv.cost()));
         }
-        log.push_str(&timing(&ladder.levels, &ladder.timing));
+        log.push_str(&timing(&ladder.levels, &ladder.timing()));
         for w in [243, 81, 27, 9, 3, 1] {
             status(&format!("checking {w} against every river"));
             log.push_str(&truth(&ladder, w));
@@ -475,12 +475,12 @@ fn differs(a: &Level, b: &Level, i: i64, j: i64) -> Vec<String> {
     let (Some(ca), Some(cb)) = (a.idx(i, j), b.idx(i, j)) else { return vec!["held".into()] };
     let (na, nb) = (a.cap(), b.cap());
     let mut bad = Vec::new();
-    if a.built.get(ca) && b.built.get(cb) && !same(a.z.get(ca), b.z.get(cb)) {
+    if a.built.done(ca) && b.built.done(cb) && !same(a.z.get(ca), b.z.get(cb)) {
         bad.push(format!("z {} / {}", a.z.get(ca), b.z.get(cb)));
     }
     for t in 0..3 {
         let (va, vb) = (t * na + ca, t * nb + cb);
-        if a.built.get(ca) && b.built.get(cb) && !same(a.z.get(va), b.z.get(vb)) {
+        if a.built.done(ca) && b.built.done(cb) && !same(a.z.get(va), b.z.get(vb)) {
             bad.push(format!("z{t} {} / {}", a.z.get(va), b.z.get(vb)));
         }
         if !same(a.carved.get(va), b.carved.get(vb)) {
@@ -700,7 +700,7 @@ fn ladder_wet_dry() {
             let (la, lb) = (&a.levels[k], &b.levels[k]);
             let (mut both, mut up) = (0, 0);
             for c in 0..la.cap() {
-                if la.built.get(c) && lb.built.get(c) {
+                if la.built.done(c) && lb.built.done(c) {
                     both += 1;
                     up += (la.z.get(c) > lb.z.get(c)) as u64;
                 }

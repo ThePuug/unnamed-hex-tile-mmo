@@ -125,22 +125,21 @@ struct Scratch {
 ///
 /// A block reads the level's ground and the level above, never what
 /// another block decides, so blocks are routed apart, on every thread.
-pub(super) fn route_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], p: &Params, births: bool) -> [u64; 4] {
+pub(super) fn route_blocks(lv: &Level, par: &Level, pend: &[(i64, i64)], p: &Params, births: bool) -> [u64; 4] {
     let lists = lv.block_lists(Pass::Route, pend);
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(lists.len());
     let next = AtomicUsize::new(0);
-    let shown: &Level = lv;
     let blocks: Vec<Block> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..threads)
             .map(|_| {
                 s.spawn(|| {
-                    let nn = shown.cap();
+                    let nn = lv.cap();
                     let mut scratch = Scratch { stamp: Paged::new(0, nn), loc: Paged::new(-1, 3 * nn) };
                     let mut out = Vec::new();
                     loop {
                         let b = next.fetch_add(1, Ordering::Relaxed);
                         let Some(block) = lists.get(b) else { break };
-                        out.push(route_block(shown, par, p, births, b, block, &mut scratch));
+                        out.push(route_block(lv, par, p, births, b, block, &mut scratch));
                     }
                     out
                 })
@@ -167,7 +166,7 @@ pub(super) fn route_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], p: 
     }
     for (own, _) in &lists {
         for &c in own {
-            lv.routed.set(c, true);
+            lv.routed.finish(c);
         }
     }
     stats
@@ -200,7 +199,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     for (x, &v) in vids.iter().enumerate() {
         let (t, i, j) = lv.vertex(v);
         let (cells, m) = vertex_cells(t, i, j);
-        known[x] = cells[..m].iter().all(|&(a, bb)| lv.idx(a, bb).is_none_or(|c| stamp.get(c) == cur && lv.supplied.get(c)));
+        known[x] = cells[..m].iter().all(|&(a, bb)| lv.idx(a, bb).is_none_or(|c| stamp.get(c) == cur && lv.supplied.done(c)));
         let (q3, r3) = pos3(t, i, j, w);
         key[x] = (lv.sunk.get(v), 2 * r3 + q3, q3);
         at[x] = xy(q3, r3);
@@ -755,7 +754,7 @@ fn course_of(par: &Level, lv: &Level, u: usize, p: &Params) -> Option<Vec<(i64, 
 /// the level's ground opens a hollow the level above found closed, the
 /// lake drains to that opening. Every cell of the zone, and the cells
 /// round it, supplied.
-pub(super) fn flood_zone(lv: &mut Level, zone: &HashSet<usize>) {
+pub(super) fn flood_zone(lv: &Level, zone: &HashSet<usize>) {
     let nn = lv.cap();
     let w = lv.w;
     let key = |lv: &Level, v: usize| {
@@ -813,7 +812,7 @@ pub(super) fn flood_zone(lv: &mut Level, zone: &HashSet<usize>) {
         lv.lake_zone.set(v, if surface > lv.sunk.get(v) { surface } else { f64::NAN });
     }
     for &c in zone {
-        lv.zoned.set(c, true);
+        lv.zoned.finish(c);
     }
 }
 

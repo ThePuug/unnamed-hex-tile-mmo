@@ -599,20 +599,23 @@ fn build(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64, surface: Surf
 /// filled, and a digest of every routed vertex's values: two builds that
 /// route alike digest alike.
 fn timings<G: world::ladder::Ground>(ladder: &world::ladder::Ladder<'_, G>) -> String {
-    use world::ladder::paged::{Atom, Paged, PAGE};
+    use world::ladder::paged::{Atom, Paged, Progress, PAGE};
     fn count<T: Atom>(of: &Paged<T>, set: impl Fn(T) -> bool) -> usize {
         of.written().flat_map(|first| first..first + PAGE).filter(|&c| set(of.get(c))).count()
+    }
+    fn done(of: &Progress) -> usize {
+        of.written().flat_map(|first| first..first + PAGE).filter(|&c| of.done(c)).count()
     }
     let mut out = format!(
         "ladder timings, s, cells read, routed, watered, and the routing's digest:\n{:>6}{}",
         "w",
         STAGES.iter().map(|s| format!("{s:>9}")).collect::<String>()
     );
-    for (lv, t) in ladder.levels.iter().zip(&ladder.timing) {
-        let cells = [count(&lv.erod, |v| !v.is_nan()), count(&lv.routed, |b| b), count(&lv.watered, |b| b)];
+    for (lv, t) in ladder.levels.iter().zip(&ladder.timing()) {
+        let cells = [count(&lv.erod, |v| !v.is_nan()), done(&lv.routed), done(&lv.watered)];
         let nn = lv.cap();
         let mut digest = 0xcbf2_9ce4_8422_2325u64;
-        for c in lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed.get(c)) {
+        for c in lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed.done(c)) {
             for v in [c, nn + c, 2 * nn + c] {
                 for word in [v as u64, lv.rec.get(v) as u64, lv.trough.get(v) as u64, lv.acc.get(v).to_bits(), lv.flow.get(v).to_bits(), lv.graded.get(v).to_bits(), lv.floor.get(v).to_bits(), lv.born.get(v) as u64] {
                     digest = (digest ^ word).wrapping_mul(0x100_0000_01b3);
@@ -707,7 +710,7 @@ fn read_tile(worlds: &Worlds, (q, r): (i32, i32)) -> String {
         for lv in &ladder.levels {
             let w = lv.w;
             let (i, j) = cube_round(q as f64 / w as f64, r as f64 / w as f64);
-            let Some(c) = lv.idx(i, j).filter(|&c| lv.built.get(c)) else {
+            let Some(c) = lv.idx(i, j).filter(|&c| lv.built.done(c)) else {
                 out.push_str(&format!("{w:>4} ({i}, {j}) not built\n"));
                 continue;
             };

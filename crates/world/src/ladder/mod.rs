@@ -97,11 +97,13 @@ mod top;
 mod water;
 
 use std::collections::HashSet;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use geom::*;
 use mask::{Exists, Mask};
-use paged::{Paged, PAGE};
+use paged::{Claim, Paged, Progress, PAGE};
 
 /// How the water layer cuts.
 #[derive(Clone, Copy, Debug)]
@@ -274,6 +276,9 @@ pub struct Level {
     pub lo_j: i64,
     pub n_j: usize,
     pub exists: Exists,
+    /// Which cells' ground is read: each vertex's height, and its rock,
+    /// plate and sky.
+    pub read: Progress,
     /// The rock's erodibility and the plate's age at each cell's centre.
     pub erod: Paged<f64>,
     pub age: Paged<f64>,
@@ -340,7 +345,7 @@ pub struct Level {
     /// it stands over none. Routing reads the ground under it as filled.
     pub lake_zone: Paged<f64>,
     /// Whether each cell's zone, if it lies in one, has been flooded.
-    pub zoned: Paged<bool>,
+    pub zoned: Progress,
     /// The surface of the lake routing keeps over each cell's centre,
     /// rounded, whether or not it stands above the cell; NaN where none.
     /// What the level below is handed.
@@ -379,17 +384,17 @@ pub struct Level {
     /// drawn carries.
     pub flow: Paged<f64>,
     pub floor: Paged<f64>,
-    pub supplied: Paged<bool>,
-    pub watered: Paged<bool>,
-    pub built: Paged<bool>,
-    pub routed: Paged<bool>,
+    pub supplied: Progress,
+    pub watered: Progress,
+    pub built: Progress,
+    pub routed: Progress,
     /// Whether each cell's six corners are final: built, its own two and
     /// the four its neighbours own, where those exist.
-    pub finished: Paged<bool>,
+    pub finished: Progress,
     /// How many levels up each pass's deform cell lies.
     pub deform: [u32; 3],
     /// Deforms run by each pass, and cells built.
-    pub cost: [u64; 5],
+    cost: [AtomicU64; 5],
 }
 
 const NONE: (i64, i64) = (i64::MIN, i64::MIN);
@@ -408,6 +413,7 @@ impl Level {
             lo_j: lo.1,
             n_j,
             exists: Exists { n, n_j },
+            read: Progress::new(cells),
             erod: nan(cells),
             age: nan(cells),
             rain: nan(cells),
@@ -429,7 +435,7 @@ impl Level {
             held_parts: Paged::new(0, cells),
             lake_above: nan(cells),
             lake_zone: nan(3 * cells),
-            zoned: Paged::new(false, cells),
+            zoned: Progress::new(cells),
             lakes: nan(cells),
             wparts: Paged::new(0, cells),
             z: nan(3 * cells),
@@ -443,13 +449,13 @@ impl Level {
             lake: nan(3 * cells),
             flow: Paged::new(0.0, 3 * cells),
             floor: nan(3 * cells),
-            supplied: Paged::new(false, cells),
-            watered: Paged::new(false, cells),
-            built: Paged::new(false, cells),
-            routed: Paged::new(false, cells),
-            finished: Paged::new(false, cells),
+            supplied: Progress::new(cells),
+            watered: Progress::new(cells),
+            built: Progress::new(cells),
+            routed: Progress::new(cells),
+            finished: Progress::new(cells),
             deform,
-            cost: [0; 5],
+            cost: Default::default(),
         }
     }
 
@@ -509,9 +515,18 @@ impl Level {
         self.vid(t, i, j)
     }
 
-    fn height(&self, i: i64, j: i64, of: &Paged<f64>, done: &Paged<bool>) -> f64 {
+    /// Deforms run by each pass, and cells built.
+    pub fn cost(&self) -> [u64; 5] {
+        self.cost.each_ref().map(|n| n.load(Ordering::Relaxed))
+    }
+
+    fn spent(&self, what: usize, n: u64) {
+        self.cost[what].fetch_add(n, Ordering::Relaxed);
+    }
+
+    fn height(&self, i: i64, j: i64, of: &Paged<f64>, done: &Progress) -> f64 {
         match self.idx(i, j) {
-            Some(c) if self.exists[c] && done.get(c) => of.get(c),
+            Some(c) if self.exists[c] && done.done(c) => of.get(c),
             _ => f64::NAN,
         }
     }
@@ -557,6 +572,13 @@ impl Level {
         Mask::new(keys.into_iter().flat_map(|key| self.block_cells(pass, key)))
     }
 
+    /// Of pending deform cells of a pass, those this thread claims in
+    /// `progress`, each by its first own cell: the thread claiming it
+    /// builds every one of its cells.
+    fn claim_blocks(&self, pass: Pass, progress: &Progress, pend: &[(i64, i64)]) -> Vec<(i64, i64)> {
+        pend.iter().copied().filter(|&b| self.block_cells(pass, b).first().is_some_and(|&c| progress.claim(c) == Claim::Mine)).collect()
+    }
+
     /// For each pending deform cell of a pass, its own cells and its
     /// footprint's.
     fn block_lists(&self, pass: Pass, pend: &[(i64, i64)]) -> Vec<(Vec<usize>, Vec<usize>)> {
@@ -596,7 +618,7 @@ impl Level {
     /// The mean of a cell field over the cells sharing a cell's own corners
     /// A and B; each ready where every cell there that exists holds its
     /// value.
-    fn corner_means(&self, i: i64, j: i64, of: &Paged<f64>, done: &Paged<bool>) -> (f64, f64, bool, bool) {
+    fn corner_means(&self, i: i64, j: i64, of: &Paged<f64>, done: &Progress) -> (f64, f64, bool, bool) {
         let h = |a: i64, b: i64| self.height(a, b, of, done);
         let present = |a: i64, b: i64| self.idx(a, b).is_some_and(|c| self.exists[c]);
         let ready = |cells: [(i64, i64); 3]| cells.iter().all(|&(x, y)| !present(x, y) || !h(x, y).is_nan());
@@ -622,23 +644,38 @@ impl Level {
 pub type Bounds = (i64, (i64, i64), (i64, i64));
 
 /// The ladder: the top, built once, and the levels below on request.
+///
+/// Requests run on many threads at once. Each stage claims what it builds
+/// at a level, a cell or a deform cell at a time ([`Progress`]), once
+/// what it reads is built, and a request that needs what another thread
+/// has claimed waits for it. A thread never waits holding a claim, so
+/// every claim is finished. A value is a function of its position, so
+/// which thread builds it changes nothing.
 pub struct Ladder<'g, G: Ground> {
     pub levels: Vec<Level>,
     ground: &'g G,
     pub p: Params,
     /// Per level: troughs whose upstream reached the read edge, vertices
     /// that did, own vertices left undecided, own vertices in a cycle.
-    pub route_stats: Vec<[u64; 4]>,
-    /// Per level, the wall time each stage took there, in seconds, nested
-    /// work at other levels not counted.
-    pub timing: Vec<[f64; 6]>,
-    /// Each level's rivers as each level as fine or finer reads them, by
-    /// the widths of the two: every edge sampled once, however many
-    /// requests read it.
-    bands: std::collections::HashMap<(i64, i64), water::Band>,
-    /// The cells of the coarser level whose ring each band holds, by the
-    /// same widths: a request reads only what the cells it adds reach.
-    covered: std::collections::HashMap<(i64, i64), HashSet<usize>>,
+    route_stats: Mutex<Vec<[u64; 4]>>,
+    /// Per level, the time each stage took there, in seconds, summed over
+    /// the threads building it, nested work at other levels not counted.
+    timing: Mutex<Vec<[f64; 6]>>,
+    /// Each level's rivers as each level as fine or finer reads them, the
+    /// level reading first: every edge sampled once, however many requests
+    /// read it.
+    bands: Vec<Vec<RwLock<water::Band>>>,
+    /// The cells of the coarser level whose ring each band of a coarser
+    /// level's rivers holds, by the same levels: a request reads only what
+    /// the cells it adds reach.
+    covered: Vec<Vec<Progress>>,
+    /// Woken as any thread finishes what it claimed, and how many times
+    /// one has.
+    settle: (Mutex<()>, Condvar),
+    finishes: AtomicU64,
+    /// Whether a thread building the ladder panicked, its claims never to
+    /// be finished.
+    broken: AtomicBool,
 }
 
 impl<'g, G: Ground> Ladder<'g, G> {
@@ -680,14 +717,22 @@ impl<'g, G: Ground> Ladder<'g, G> {
             levels.push(Level::new(w, lo, hi, k == 0, p.ring));
         }
         let count = levels.len();
+        let bands = levels
+            .iter()
+            .map(|read| levels.iter().take_while(|up| up.w >= read.w).map(|up| RwLock::new(water::Band::empty(up.w, -1.0, p.ring * up.w as f64, read.w))).collect())
+            .collect();
+        let covered = (0..count).map(|k| levels[..k].iter().map(|up| Progress::new(up.cap())).collect()).collect();
         let mut ladder = Ladder {
             levels,
             ground,
             p,
-            route_stats: vec![[0; 4]; count],
-            timing: vec![[0.0; 6]; count],
-            bands: std::collections::HashMap::new(),
-            covered: std::collections::HashMap::new(),
+            route_stats: Mutex::new(vec![[0; 4]; count]),
+            timing: Mutex::new(vec![[0.0; 6]; count]),
+            bands,
+            covered,
+            settle: (Mutex::new(()), Condvar::new()),
+            finishes: AtomicU64::new(0),
+            broken: AtomicBool::new(false),
         };
         match top {
             Some(top) => {
@@ -700,55 +745,106 @@ impl<'g, G: Ground> Ladder<'g, G> {
         ladder
     }
 
+    /// Per level: troughs whose upstream reached the read edge, vertices
+    /// that did, own vertices left undecided, own vertices in a cycle.
+    pub fn route_stats(&self) -> Vec<[u64; 4]> {
+        self.route_stats.lock().expect("the route counts").clone()
+    }
+
+    /// Per level, the time each stage took there, in seconds, summed over
+    /// the threads building it, nested work at other levels not counted.
+    pub fn timing(&self) -> Vec<[f64; 6]> {
+        self.timing.lock().expect("the stage times").clone()
+    }
+
+    fn timed(&self, k: usize, stage: Stage, started: Instant) {
+        self.timing.lock().expect("the stage times")[k][stage as usize] += started.elapsed().as_secs_f64();
+    }
+
+    /// Watches the claims a thread is about to make: should it panic before
+    /// finishing them, every thread waiting on the ladder panics too.
+    fn claiming(&self) -> Claiming<'_> {
+        Claiming { broken: &self.broken, settle: &self.settle }
+    }
+
+    /// Wakes the threads waiting on what this one finished.
+    fn settled(&self) {
+        self.finishes.fetch_add(1, Ordering::Release);
+        let _held = self.settle.0.lock().expect("the ladder's waiting room");
+        self.settle.1.notify_all();
+    }
+
+    /// Waits until `ready`, as other threads finish what they claimed:
+    /// `ready` is asked outside the waiting room, again after each finish,
+    /// so a waiter never holds up a thread finishing.
+    fn wait_for(&self, ready: impl Fn() -> bool) {
+        loop {
+            let seen = self.finishes.load(Ordering::Acquire);
+            if ready() {
+                return;
+            }
+            assert!(!self.broken.load(Ordering::Acquire), "a thread building the ladder panicked");
+            let held = self.settle.0.lock().expect("the ladder's waiting room");
+            if self.finishes.load(Ordering::Acquire) == seen {
+                drop(self.settle.1.wait_timeout(held, Duration::from_millis(50)).expect("the ladder's waiting room"));
+            }
+        }
+    }
+
     /// Reads the ground's height at each vertex of every cell of a mask not
     /// yet read ([`Level::own_vertices`]), and the rock, the plate and the
     /// sky at its centre.
-    fn read_ground(&mut self, k: usize, mask: &Mask) {
+    fn read_ground(&self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let todo: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.ground.get(c).is_nan()).collect();
-        if todo.is_empty() {
+        let need: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && !lv.read.done(c)).collect();
+        if need.is_empty() {
             return;
         }
-        let started = Instant::now();
-        let (ground, level): (&G, &Level) = (self.ground, lv);
-        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-        let chunk = todo.len().div_ceil(threads).max(1);
-        let read: Vec<Vec<Point>> = std::thread::scope(|s| {
-            let handles: Vec<_> = todo
-                .chunks(chunk)
-                .map(|part| {
-                    s.spawn(move || {
-                        part.iter()
-                            .map(|&c| {
-                                let (i, j) = level.ij(c);
-                                level
-                                    .own_vertices(c)
-                                    .map(|(t, _)| {
-                                        let (q3, r3) = pos3(t, i, j, level.w);
-                                        match t {
-                                            0 => ground.at(q3 / 3, r3 / 3),
-                                            _ => Point { height: ground.height(q3 / 3, r3 / 3), erodibility: f64::NAN, age: f64::NAN, moisture: f64::NAN },
-                                        }
-                                    })
-                                    .collect::<Vec<_>>()
-                            })
-                            .collect::<Vec<_>>()
+        let claims = self.claiming();
+        let todo: Vec<usize> = need.iter().copied().filter(|&c| lv.read.claim(c) == Claim::Mine).collect();
+        if !todo.is_empty() {
+            let started = Instant::now();
+            let ground = self.ground;
+            let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+            let chunk = todo.len().div_ceil(threads).max(1);
+            let read: Vec<Vec<Point>> = std::thread::scope(|s| {
+                let handles: Vec<_> = todo
+                    .chunks(chunk)
+                    .map(|part| {
+                        s.spawn(move || {
+                            part.iter()
+                                .map(|&c| {
+                                    let (i, j) = lv.ij(c);
+                                    lv.own_vertices(c)
+                                        .map(|(t, _)| {
+                                            let (q3, r3) = pos3(t, i, j, lv.w);
+                                            match t {
+                                                0 => ground.at(q3 / 3, r3 / 3),
+                                                _ => Point { height: ground.height(q3 / 3, r3 / 3), erodibility: f64::NAN, age: f64::NAN, moisture: f64::NAN },
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                                .collect::<Vec<_>>()
+                        })
                     })
-                })
-                .collect();
-            handles.into_iter().flat_map(|h| h.join().expect("a reading thread")).collect()
-        });
-        let lv = &mut self.levels[k];
-        for (&c, points) in todo.iter().zip(read) {
-            let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
-            for ((_, v), point) in vertices.into_iter().zip(&points) {
-                lv.ground.set(v, point.height);
+                    .collect();
+                handles.into_iter().flat_map(|h| h.join().expect("a reading thread")).collect()
+            });
+            for (&c, points) in todo.iter().zip(read) {
+                for ((_, v), point) in lv.own_vertices(c).zip(&points) {
+                    lv.ground.set(v, point.height);
+                }
+                lv.erod.set(c, points[0].erodibility);
+                lv.age.set(c, points[0].age);
+                lv.rain.set(c, points[0].moisture);
+                lv.read.finish(c);
             }
-            lv.erod.set(c, points[0].erodibility);
-            lv.age.set(c, points[0].age);
-            lv.rain.set(c, points[0].moisture);
+            self.timed(k, Stage::Read, started);
+            self.settled();
         }
-        self.timing[k][Stage::Read as usize] += started.elapsed().as_secs_f64();
+        drop(claims);
+        self.wait_for(|| need.iter().all(|&c| lv.read.done(c)));
     }
 
     /// The top: the ground at its vertices, rounded to steps, routed once
@@ -767,10 +863,10 @@ impl<'g, G: Ground> Ladder<'g, G> {
             lv.z.set(v, (h + 0.5).floor());
             lv.zd.set(v, lv.z.get(v));
         }
-        lv.supplied.fill(true);
-        lv.built.fill(true);
+        lv.supplied.fill_done();
+        lv.built.fill_done();
         top::route_top(lv, &p);
-        lv.routed.fill(true);
+        lv.routed.fill_done();
         // The top's own valleys, cut along its troughs into the ground it
         // routed over.
         let edges = water::trough_edges(lv, &all, &p);
@@ -788,10 +884,10 @@ impl<'g, G: Ground> Ladder<'g, G> {
 
     /// Each requested cell's level k routed and built, and its corners,
     /// which its neighbours' heights decide.
-    pub fn request(&mut self, k: usize, cells: &[(i64, i64)]) {
+    pub fn request(&self, k: usize, cells: &[(i64, i64)]) {
         let lv = &self.levels[k];
         // A request for cells already finished reads what is kept.
-        if k == 0 || cells.iter().all(|&(i, j)| lv.idx(i, j).is_none_or(|c| !lv.exists[c] || lv.finished.get(c))) {
+        if k == 0 || cells.iter().all(|&(i, j)| lv.idx(i, j).is_none_or(|c| !lv.exists[c] || lv.finished.done(c))) {
             return;
         }
         let mask = Mask::new(cells.iter().filter_map(|&(i, j)| lv.idx(i, j)).filter(|&c| lv.exists[c]));
@@ -801,21 +897,21 @@ impl<'g, G: Ground> Ladder<'g, G> {
 
     /// Level k built two rings past a mask and its corners one ring past
     /// it, so every corner of every cell of the mask is final.
-    fn cornered(&mut self, k: usize, mask: &Mask) {
+    fn cornered(&self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
         let (one, two) = (lv.dilate(mask, 1), lv.dilate(mask, 2));
         self.ensure_built(k, &two);
         let started = Instant::now();
-        corners_over(&mut self.levels[k], &one);
-        self.timing[k][Stage::Corners as usize] += started.elapsed().as_secs_f64();
+        corners_over(lv, &one);
+        self.timed(k, Stage::Corners, started);
     }
 
-    fn ensure_routed(&mut self, k: usize, mask: &Mask) {
+    fn ensure_routed(&self, k: usize, mask: &Mask) {
         if k == 0 {
             return;
         }
         let lv = &self.levels[k];
-        let need = mask.filter(|c| !lv.routed.get(c) && lv.exists[c]);
+        let need = mask.filter(|c| lv.exists[c] && !lv.routed.done(c));
         if need.is_empty() {
             return;
         }
@@ -824,27 +920,34 @@ impl<'g, G: Ground> Ladder<'g, G> {
         self.ensure_supplied(k, &fp);
         self.parent_over(k, &fp);
         self.zone_lakes(k, &fp);
-        let started = Instant::now();
-        let (above, rest) = self.levels.split_at_mut(k);
-        let lv = &mut rest[0];
-        tile_corners(lv, &fp);
-        let stats = route::route_blocks(lv, &above[k - 1], &pend, &self.p, births(&above[k - 1], lv, &self.p));
-        for (a, b) in self.route_stats[k].iter_mut().zip(stats) {
-            *a += b;
+        let claims = self.claiming();
+        let mine = lv.claim_blocks(Pass::Route, &lv.routed, &pend);
+        if !mine.is_empty() {
+            let started = Instant::now();
+            let par = &self.levels[k - 1];
+            tile_corners(lv, &lv.footprint(Pass::Route, &mine));
+            let stats = route::route_blocks(lv, par, &mine, &self.p, births(par, lv, &self.p));
+            for (a, b) in self.route_stats.lock().expect("the route counts")[k].iter_mut().zip(stats) {
+                *a += b;
+            }
+            lv.spent(Pass::Route as usize, mine.len() as u64);
+            self.timed(k, Stage::Route, started);
+            self.settled();
         }
-        lv.cost[Pass::Route as usize] += pend.len() as u64;
-        self.timing[k][Stage::Route as usize] += started.elapsed().as_secs_f64();
+        drop(claims);
+        self.wait_for(|| need.iter().all(|c| lv.routed.done(c)));
     }
 
     /// Every lake the level above hands down over a mask of level k
     /// flooded whole ([`route::flood_zone`]): each zone grown from the mask
     /// through every cell beside it the lake marks, supplied as it is
-    /// found, with the ring of cells round it.
-    fn zone_lakes(&mut self, k: usize, mask: &Mask) {
+    /// found, with the ring of cells round it. Two threads may flood one
+    /// zone at once, each to the same surface.
+    fn zone_lakes(&self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let starts: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.supplied.get(c) && !lv.zoned.get(c) && !lv.lake_above.get(c).is_nan()).collect();
+        let starts: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.supplied.done(c) && !lv.zoned.done(c) && !lv.lake_above.get(c).is_nan()).collect();
         for start in starts {
-            if self.levels[k].zoned.get(start) {
+            if lv.zoned.done(start) {
                 continue;
             }
             let mut zone: HashSet<usize> = HashSet::from([start]);
@@ -852,7 +955,6 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let mut queue = vec![start];
             loop {
                 let mut ask = Vec::new();
-                let lv = &self.levels[k];
                 while let Some(c) = queue.pop() {
                     let (i, j) = lv.ij(c);
                     for (di, dj) in NB {
@@ -860,7 +962,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
                         if zone.contains(&d) || round.contains(&d) {
                             continue;
                         }
-                        if !lv.supplied.get(d) {
+                        if !lv.supplied.done(d) {
                             ask.push(d);
                         } else if lv.lake_above.get(d).is_nan() {
                             round.insert(d);
@@ -876,7 +978,6 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 ask.sort_unstable();
                 ask.dedup();
                 self.ensure_supplied(k, &Mask::new(ask.iter().copied()));
-                let lv = &self.levels[k];
                 for d in ask {
                     if lv.lake_above.get(d).is_nan() {
                         round.insert(d);
@@ -886,16 +987,15 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 }
             }
             let started = Instant::now();
-            let lv = &mut self.levels[k];
             tile_corners(lv, &Mask::new(zone.iter().chain(&round).copied()));
             route::flood_zone(lv, &zone);
-            self.timing[k][Stage::Route as usize] += started.elapsed().as_secs_f64();
+            self.timed(k, Stage::Route, started);
         }
     }
 
     /// The level above under a mask and a ring of its cells: read, routed,
     /// built and cornered.
-    fn parent_over(&mut self, k: usize, mask: &Mask) {
+    fn parent_over(&self, k: usize, mask: &Mask) {
         let (lv, par) = (&self.levels[k], &self.levels[k - 1]);
         let under = Mask::new(mask.iter().filter_map(|c| {
             let (i, j) = lv.ij(c);
@@ -910,9 +1010,9 @@ impl<'g, G: Ground> Ladder<'g, G> {
         }
     }
 
-    fn ensure_supplied(&mut self, k: usize, mask: &Mask) {
+    fn ensure_supplied(&self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let need = mask.filter(|c| !lv.supplied.get(c) && lv.exists[c]);
+        let need = mask.filter(|c| lv.exists[c] && !lv.supplied.done(c));
         if need.is_empty() {
             return;
         }
@@ -921,53 +1021,56 @@ impl<'g, G: Ground> Ladder<'g, G> {
         self.parent_over(k, &fp);
         self.read_ground(k, &fp);
         self.rivers_above(k, &fp);
-        let started = Instant::now();
-        let (above, rest) = self.levels.split_at_mut(k);
-        let (par, lv) = (&above[k - 1], &mut rest[0]);
-        let bands: Vec<&water::Band> = above.iter().map(|up| &self.bands[&(up.w, lv.w)]).collect();
-        let todo: Vec<usize> = fp.iter().filter(|&c| lv.exists[c] && !lv.supplied.get(c)).collect();
-        let carved = water::carved_over(lv, &bands, &todo);
-        for (&c, found) in todo.iter().zip(carved) {
-            let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
-            for (t, v) in vertices {
-                lv.carved.set(v, found.carved[t as usize]);
-                lv.sunk.set(v, found.sunk[t as usize]);
+        let claims = self.claiming();
+        let todo: Vec<usize> = fp.iter().filter(|&c| lv.exists[c] && lv.supplied.claim(c) == Claim::Mine).collect();
+        if !todo.is_empty() {
+            let started = Instant::now();
+            let par = &self.levels[k - 1];
+            let bands: Vec<&RwLock<water::Band>> = self.bands[k][..k].iter().collect();
+            let carved = water::carved_over(lv, &bands, &todo);
+            for (&c, found) in todo.iter().zip(carved) {
+                for (t, v) in lv.own_vertices(c) {
+                    lv.carved.set(v, found.carved[t as usize]);
+                    lv.sunk.set(v, found.sunk[t as usize]);
+                }
+                if let Some((surface, depth, src)) = found.water {
+                    lv.held.set(c, surface);
+                    lv.held_depth.set(c, depth);
+                    lv.held_src.set(c, src as i64);
+                }
+                lv.held_parts.set(c, found.parts);
+                let (i, j) = lv.ij(c);
+                let (pi, pj, _, _) = parent_of(i, j);
+                lv.lake_above.set(c, std::iter::once((0, 0))
+                    .chain(NB)
+                    .filter_map(|(di, dj)| par.idx(pi + di, pj + dj))
+                    .filter(|&pc| par.lakes.get(pc) > par.zd.get(pc))
+                    .map(|pc| par.lakes.get(pc))
+                    .fold(f64::NAN, f64::max));
+                lv.supplied.finish(c);
             }
-            if let Some((surface, depth, src)) = found.water {
-                lv.held.set(c, surface);
-                lv.held_depth.set(c, depth);
-                lv.held_src.set(c, src as i64);
-            }
-            lv.held_parts.set(c, found.parts);
-            let (i, j) = lv.ij(c);
-            let (pi, pj, _, _) = parent_of(i, j);
-            lv.lake_above.set(c, std::iter::once((0, 0))
-                .chain(NB)
-                .filter_map(|(di, dj)| par.idx(pi + di, pj + dj))
-                .filter(|&pc| par.lakes.get(pc) > par.zd.get(pc))
-                .map(|pc| par.lakes.get(pc))
-                .fold(f64::NAN, f64::max));
-            lv.supplied.set(c, true);
+            lv.spent(Pass::Ground as usize, todo.len() as u64);
+            self.timed(k, Stage::Supply, started);
+            self.settled();
         }
-        lv.cost[Pass::Ground as usize] += pend.len() as u64;
-        self.timing[k][Stage::Supply as usize] += started.elapsed().as_secs_f64();
+        drop(claims);
+        self.wait_for(|| need.iter().all(|c| lv.supplied.done(c)));
     }
 
     /// Every coarser level's rivers within reach of a mask of level k in
     /// its band as level k reads it ([`Ladder::bands`]): its troughs over
     /// its ring of cells past each of its cells over the mask the band
     /// does not cover yet, read out to its ring.
-    fn rivers_above(&mut self, k: usize, mask: &Mask) {
+    fn rivers_above(&self, k: usize, mask: &Mask) {
+        let lv = &self.levels[k];
         for j in 0..k {
-            let (lv, up) = (&self.levels[k], &self.levels[j]);
-            let (read, far) = (lv.w, self.p.ring * up.w as f64);
-            self.bands.entry((up.w, read)).or_insert_with(|| water::Band::empty(up.w, -1.0, far, read));
-            let covered = self.covered.entry((up.w, read)).or_default();
+            let up = &self.levels[j];
+            let covered = &self.covered[k][j];
             let under = Mask::new(mask.iter().filter_map(|c| {
                 let (i, jj) = lv.ij(c);
                 let (a, b) = ancestor(i, jj, (k - j) as u32);
                 up.idx(a, b)
-            }).filter(|&u| covered.insert(u)));
+            }).filter(|&u| !covered.done(u)));
             if under.is_empty() {
                 continue;
             }
@@ -975,49 +1078,61 @@ impl<'g, G: Ground> Ladder<'g, G> {
             // cell beside, where a course strays from its vertices: k rings
             // stand k·√3/2 of the level's width out at their nearest.
             let rings = ((self.p.ring + 1.0) * 2.0 / crate::SQRT_3).ceil() as usize + 1;
-            let reach = up.dilate(&under, rings);
             // Routed two rings past what is read, so each trough's
             // receiver has its floor and its plain, and its receiver's.
-            let routed = up.dilate(&reach, 2);
-            self.ensure_routed(j, &routed);
-            let edges = water::trough_edges(&self.levels[j], &reach, &self.p);
-            self.bands.get_mut(&(self.levels[j].w, read)).expect("the band made above").add(&edges, &self.p);
+            self.ensure_routed(j, &up.dilate(&up.dilate(&under, rings), 2));
+            let claims = self.claiming();
+            let mine = Mask::new(under.iter().filter(|&u| covered.claim(u) == Claim::Mine));
+            if !mine.is_empty() {
+                let edges = water::trough_edges(up, &up.dilate(&mine, rings), &self.p);
+                self.bands[k][j].write().expect("a band of rivers").add(&edges, &self.p);
+                for u in mine.iter() {
+                    covered.finish(u);
+                }
+                self.settled();
+            }
+            drop(claims);
+            self.wait_for(|| under.iter().all(|u| covered.done(u)));
         }
     }
 
-    fn ensure_built(&mut self, k: usize, mask: &Mask) {
+    fn ensure_built(&self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let need = mask.filter(|c| !lv.built.get(c) && lv.exists[c]);
+        let need = mask.filter(|c| lv.exists[c] && !lv.built.done(c));
         if need.is_empty() {
             return;
         }
-        let sel = need.filter(|c| !lv.watered.get(c));
+        let sel = need.filter(|c| !lv.watered.done(c));
         if !sel.is_empty() {
             let pend = lv.pending(Pass::Water, &sel);
             let fp = lv.footprint(Pass::Water, &pend);
             // Routed two rings past the footprint, so each line's next
             // vertex has its floor, and that vertex's next.
-            let routed = lv.dilate(&fp, 2);
             self.ensure_supplied(k, &fp);
-            self.ensure_routed(k, &routed);
-            let started = Instant::now();
-            let lv = &mut self.levels[k];
-            let edges = water::trough_edges(lv, &fp, &self.p);
-            let far = self.p.ring * lv.w as f64;
-            let band = self.bands.entry((lv.w, lv.w)).or_insert_with(|| water::Band::empty(lv.w, -1.0, far, lv.w));
-            band.add(&edges, &self.p);
-            water::level_cut(lv, band, &pend, &self.p);
-            lv.cost[Pass::Water as usize] += pend.len() as u64;
-            self.timing[k][Stage::Water as usize] += started.elapsed().as_secs_f64();
+            self.ensure_routed(k, &lv.dilate(&fp, 2));
+            let claims = self.claiming();
+            let mine = lv.claim_blocks(Pass::Water, &lv.watered, &pend);
+            if !mine.is_empty() {
+                let started = Instant::now();
+                let edges = water::trough_edges(lv, &lv.footprint(Pass::Water, &mine), &self.p);
+                let band = &self.bands[k][k];
+                band.write().expect("a band of rivers").add(&edges, &self.p);
+                water::level_cut(lv, band, &mine, &self.p);
+                lv.spent(Pass::Water as usize, mine.len() as u64);
+                self.timed(k, Stage::Water, started);
+                self.settled();
+            }
+            drop(claims);
+            self.wait_for(|| sel.iter().all(|c| lv.watered.done(c)));
         }
         self.ensure_supplied(k, &need);
-        let started = Instant::now();
-        let lv = &mut self.levels[k];
-        let mut built = 0;
-        for c in need.iter() {
-            if lv.supplied.get(c) && lv.watered.get(c) {
-                let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
-                for (_, v) in vertices {
+        let claims = self.claiming();
+        let mine: Vec<usize> = need.iter().filter(|&c| lv.built.claim(c) == Claim::Mine).collect();
+        if !mine.is_empty() {
+            let started = Instant::now();
+            for &c in &mine {
+                assert!(lv.supplied.done(c) && lv.watered.done(c), "a built cell read something its deform did not cover");
+                for (_, v) in lv.own_vertices(c) {
                     lv.z.set(v, (lv.ground.get(v) + lv.cut.get(v) + 0.5).floor());
                     lv.zd.set(v, (lv.ground.get(v) + 0.5).floor());
                 }
@@ -1029,13 +1144,14 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 if !lv.water.get(c).is_nan() && lv.wwet.get(c) < 0 {
                     lv.wparts.set(c, (1 << CHILD_OFFSETS.len()) - 1);
                 }
-                lv.built.set(c, true);
-                built += 1;
+                lv.built.finish(c);
             }
+            lv.spent(4, mine.len() as u64);
+            self.timed(k, Stage::Build, started);
+            self.settled();
         }
-        lv.cost[4] += built;
-        assert!(need.iter().all(|c| lv.built.get(c)), "a built cell read something its deform did not cover");
-        self.timing[k][Stage::Build as usize] += started.elapsed().as_secs_f64();
+        drop(claims);
+        self.wait_for(|| need.iter().all(|c| lv.built.done(c)));
     }
 
     /// For the probes: the cut at each of `cells` of level k from every river
@@ -1044,10 +1160,28 @@ impl<'g, G: Ground> Ladder<'g, G> {
     #[cfg(feature = "inspect")]
     pub fn unlimited_cut(&self, k: usize, cells: &[(i64, i64)]) -> Vec<f64> {
         let lv = &self.levels[k];
-        let routed = Mask::new(lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed.get(c)));
+        let routed = Mask::new(lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed.done(c)));
         let edges = water::trough_edges(lv, &routed, &self.p);
         let at: Vec<usize> = cells.iter().map(|&(i, j)| lv.idx(i, j).expect("a cell the level holds")).collect();
         water::whole_cut(lv, &edges, &at, &self.p)
+    }
+}
+
+/// A thread's claims in the making: dropped as the thread panics, it marks
+/// the ladder broken and wakes every thread waiting on it, which would
+/// otherwise wait on those claims for ever.
+struct Claiming<'a> {
+    broken: &'a AtomicBool,
+    settle: &'a (Mutex<()>, Condvar),
+}
+
+impl Drop for Claiming<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.broken.store(true, Ordering::Release);
+            let _held = self.settle.0.lock();
+            self.settle.1.notify_all();
+        }
     }
 }
 
@@ -1060,10 +1194,10 @@ fn births(par: &Level, lv: &Level, p: &Params) -> bool {
 /// Every built cell of a mask, and every cell outside it with a corner the
 /// mask owns, marked finished where all six of its corners are built, so a
 /// cell's corners never wait on a request that names it.
-fn corners_over(lv: &mut Level, mask: &Mask) {
+fn corners_over(lv: &Level, mask: &Mask) {
     let mut draw: Vec<usize> = Vec::new();
     for c in mask.iter() {
-        if !lv.exists[c] || !lv.built.get(c) {
+        if !lv.exists[c] || !lv.built.done(c) {
             continue;
         }
         let (i, j) = lv.ij(c);
@@ -1073,11 +1207,12 @@ fn corners_over(lv: &mut Level, mask: &Mask) {
     draw.sort_unstable();
     draw.dedup();
     for c in draw {
-        if lv.exists[c] && lv.built.get(c) && !lv.finished.get(c) {
+        if lv.exists[c] && lv.built.done(c) && !lv.finished.done(c) {
             let (i, j) = lv.ij(c);
-            lv.finished.set(c, [(i - 1, j + 1), (i - 1, j), (i, j - 1)]
-                .iter()
-                .all(|&(a, b)| lv.idx(a, b).is_none_or(|d| !lv.exists[d] || lv.built.get(d))));
+            let built = |&(a, b): &(i64, i64)| lv.idx(a, b).is_none_or(|d| !lv.exists[d] || lv.built.done(d));
+            if [(i - 1, j + 1), (i - 1, j), (i, j - 1)].iter().all(built) {
+                lv.finished.finish(c);
+            }
         }
     }
 }
@@ -1085,13 +1220,13 @@ fn corners_over(lv: &mut Level, mask: &Mask) {
 /// A tile's corners over a mask: the dry, the carved and the sunk ground of
 /// each the mean of the three tiles sharing it, where all three are supplied. A
 /// corner of a coarser level is read where it stands.
-fn tile_corners(lv: &mut Level, mask: &Mask) {
+fn tile_corners(lv: &Level, mask: &Mask) {
     if lv.w >= 3 {
         return;
     }
     let nn = lv.cap();
     for c in mask.iter() {
-        if !lv.exists[c] || !lv.supplied.get(c) {
+        if !lv.exists[c] || !lv.supplied.done(c) {
             continue;
         }
         let (i, j) = lv.ij(c);

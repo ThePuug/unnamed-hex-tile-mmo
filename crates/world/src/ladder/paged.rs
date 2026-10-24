@@ -4,8 +4,10 @@
 //! the tiles, and a request touches a few of its pages, so the table of
 //! pages is itself in chunks, each allocated as a page in it is written.
 //!
-//! Every value is an atomic, so threads may share a level: a value is
-//! read and written on its own, with no order against another.
+//! Every value is an atomic, so threads building apart share a level: a
+//! value is read and written on its own, with no order against another,
+//! and what orders a stage's values before its readers is the stage's
+//! [`Progress`] at the cell.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU16, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::OnceLock;
@@ -129,6 +131,69 @@ impl<T: Atom> Paged<T> {
     }
 }
 
+/// How far a stage has come at each of a level's cells: to do, being done
+/// by one thread, or done. A cell is done once every value the stage
+/// writes for it is written, and a reader that finds it done reads them
+/// all.
+pub struct Progress {
+    states: Paged<u8>,
+}
+
+const TODO: u8 = 0;
+const BUSY: u8 = 1;
+const DONE: u8 = 2;
+
+/// What a claim on a cell found.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Claim {
+    /// The cell is the claimant's to do.
+    Mine,
+    /// Another thread is doing it.
+    Busy,
+    Done,
+}
+
+impl Progress {
+    /// `len` cells, all to do; `len` a whole number of pages.
+    pub fn new(len: usize) -> Self {
+        Progress { states: Paged::new(TODO, len) }
+    }
+
+    /// Every cell done.
+    pub fn fill_done(&mut self) {
+        self.states.fill(DONE);
+    }
+
+    pub fn done(&self, c: usize) -> bool {
+        self.states.held(c).map_or(self.states.default, |a| a.load(Ordering::Acquire)) == DONE
+    }
+
+    /// The cell taken to do, where no thread has.
+    pub fn claim(&self, c: usize) -> Claim {
+        if self.done(c) {
+            return Claim::Done;
+        }
+        match self.states.atom(c).compare_exchange(TODO, BUSY, Ordering::Acquire, Ordering::Acquire) {
+            Ok(_) => Claim::Mine,
+            Err(DONE) => Claim::Done,
+            Err(_) => Claim::Busy,
+        }
+    }
+
+    /// A cell done: every value written for it before this is read by a
+    /// reader that finds it done. A stage that may run twice over a cell,
+    /// each time writing the same, finishes it unclaimed.
+    pub fn finish(&self, c: usize) {
+        self.states.atom(c).store(DONE, Ordering::Release);
+    }
+
+    /// The pages holding a cell claimed or done, as the index of their
+    /// first cell, in order.
+    pub fn written(&self) -> impl Iterator<Item = usize> + '_ {
+        self.states.written()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +217,16 @@ mod tests {
         assert_eq!(p.get((CHUNK + 1) * PAGE + 3), 9);
         assert_eq!(p.get(3), 0);
         assert_eq!(p.written().collect::<Vec<_>>(), vec![(CHUNK + 1) * PAGE]);
+    }
+
+    #[test]
+    fn a_cell_is_claimed_once_and_done_once_finished() {
+        let p = Progress::new(PAGE);
+        assert_eq!(p.claim(4), Claim::Mine);
+        assert_eq!(p.claim(4), Claim::Busy);
+        assert!(!p.done(4));
+        p.finish(4);
+        assert_eq!(p.claim(4), Claim::Done);
+        assert_eq!(p.claim(5), Claim::Mine);
     }
 }
