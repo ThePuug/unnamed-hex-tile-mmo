@@ -398,19 +398,34 @@ pub fn poll_chunk_tasks(
 /// Puts a player on the ground at the tile it asks for, as a spawn does:
 /// standing on the terrain there, whatever the map holds yet, and the tile
 /// broadcast so the stream, the area of interest and every client follow.
-/// Any connection may move its own entity; there is no admin identity on
-/// the wire.
+/// The ground there is read off the frame, so the player moves once it is:
+/// ground no one has stood near can take the world's generator longer to
+/// build than a connection waits on a frame. It is read on a thread of its
+/// own, never queued behind the chunks and summaries the stream has asked
+/// for. A player's later ask for another tile replaces one still waiting;
+/// an ask for the same tile leaves it be. Any connection may move its own
+/// entity; there is no admin identity on the wire.
 pub fn try_teleport(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
     mut query: Query<(&mut Loc, &mut Position, &mut AirTime), With<PlayerControlled>>,
     registry: Res<EventRegistry>,
+    mut waiting: Local<std::collections::HashMap<Entity, ((i32, i32), std::thread::JoinHandle<Qrz>)>>,
 ) {
     for message in reader.read() {
         let Try { event: Event::Teleport { ent, q, r } } = message else { continue };
         let (ent, q, r) = (*ent, *q, *r);
+        if !query.contains(ent) || waiting.get(&ent).is_some_and(|(to, _)| *to == (q, r)) {
+            continue;
+        }
+        let registry = registry.clone();
+        waiting.insert(ent, ((q, r), std::thread::spawn(move || Qrz { q, r, z: registry.elevation_at(q, r) + 1 })));
+    }
+    let landed: Vec<Entity> = waiting.iter().filter(|(_, (_, read))| read.is_finished()).map(|(&ent, _)| ent).collect();
+    for ent in landed {
+        let (_, read) = waiting.remove(&ent).expect("a landed teleport is waiting");
+        let qrz = read.join().expect("the teleport's ground read");
         let Ok((mut loc, mut position, mut airtime)) = query.get_mut(ent) else { continue };
-        let qrz = Qrz { q, r, z: registry.elevation_at(q, r) + 1 };
         *loc = Loc::new(qrz);
         *position = Position::at_tile(qrz);
         airtime.state = None;
