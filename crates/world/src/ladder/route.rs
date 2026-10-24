@@ -597,19 +597,21 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     graded = grade(&lake);
     // Floors: drainage's under each vertex's dry ground, toward its graded
     // profile and held to the room its hillslopes give, and never above its
-    // carved ground, nor the level above's where a node hands its river
-    // down: cut once from the dry ground, never again from what a coarser
-    // level already cut; along a trough never above the floors draining
-    // into it, upstream first. A lake's floor is its surface.
+    // carved ground; where a node hands its river down, the level above's,
+    // cut once from the dry ground and never again, but never above the
+    // ground every coarser valley left with each channel full, so a river
+    // laid across another's valley runs down into it rather than over it;
+    // along a trough never above the floors draining into it, upstream
+    // first. A lake's floor is its surface.
     let mut flo: Vec<f64> = (0..nv)
         .map(|x| {
             if !lake[x].is_nan() {
                 return above_sea(lake[x]);
             }
-            if !src_floor[x].is_nan() {
-                return src_floor[x];
-            }
             let v = vids[x];
+            if !src_floor[x].is_nan() {
+                return src_floor[x].min(lv.brim.get(v));
+            }
             let c = v % nn;
             drained(lv.ground.get(v), graded[x], lv.age.get(c), lv.erod.get(c), room(x), p).min(lv.carved.get(v))
         })
