@@ -748,7 +748,8 @@ fn course_of(par: &Level, lv: &Level, u: usize, p: &Params) -> Option<Vec<(i64, 
 /// The lakes the level above hands down over `zone`, cells of a level
 /// whose parent or a cell beside it lies under the level above's lake,
 /// joined to every such cell beside them: the zone's vertices flooded
-/// together from the ground round it, lowest water first, so a lake
+/// together from the ground round it ([`Level::brim`]: a river's channel
+/// spills at its water, never its bed), lowest water first, so a lake
 /// stands at one surface wherever it is read, as high as the level's own
 /// ground holds it and never above the lake handed down over it. Where
 /// the level's ground opens a hollow the level above found closed, the
@@ -760,7 +761,7 @@ pub(super) fn flood_zone(lv: &Level, zone: &HashSet<usize>) {
     let key = |lv: &Level, v: usize| {
         let (t, i, j) = lv.vertex(v);
         let (q3, r3) = pos3(t, i, j, w);
-        (lv.sunk.get(v), 2 * r3 + q3, q3)
+        (lv.brim.get(v), 2 * r3 + q3, q3)
     };
     let inside = |v: usize| zone.contains(&(v % nn));
     let mut heap = BinaryHeap::new();
@@ -769,7 +770,7 @@ pub(super) fn flood_zone(lv: &Level, zone: &HashSet<usize>) {
     for &c in zone {
         for t in 0..3u8 {
             let v = t as usize * nn + c;
-            if lv.sunk.get(v).is_nan() {
+            if lv.brim.get(v).is_nan() {
                 continue;
             }
             vertices.push(v);
@@ -781,14 +782,14 @@ pub(super) fn flood_zone(lv: &Level, zone: &HashSet<usize>) {
                     None => outlet = true,
                     Some(d) => {
                         let u = tt as usize * nn + d;
-                        if !inside(u) && !lv.sunk.get(u).is_nan() && seen.insert(u) {
-                            heap.push(Reverse(Flood { level: lv.sunk.get(u), key: key(lv, u), x: u }));
+                        if !inside(u) && !lv.brim.get(u).is_nan() && seen.insert(u) {
+                            heap.push(Reverse(Flood { level: lv.brim.get(u), key: key(lv, u), x: u }));
                         }
                     }
                 }
             }
             if outlet && seen.insert(v) {
-                heap.push(Reverse(Flood { level: lv.sunk.get(v), key: key(lv, v), x: v }));
+                heap.push(Reverse(Flood { level: lv.brim.get(v), key: key(lv, v), x: v }));
             }
         }
     }
@@ -802,8 +803,8 @@ pub(super) fn flood_zone(lv: &Level, zone: &HashSet<usize>) {
             let (tt, ni, nj) = vnbr(t, i, j, k);
             let Some(d) = lv.idx(ni, nj).filter(|&d| lv.exists[d]) else { continue };
             let u = tt as usize * nn + d;
-            if inside(u) && !lv.sunk.get(u).is_nan() && seen.insert(u) {
-                heap.push(Reverse(Flood { level: f.level.max(lv.sunk.get(u)), key: key(lv, u), x: u }));
+            if inside(u) && !lv.brim.get(u).is_nan() && seen.insert(u) {
+                heap.push(Reverse(Flood { level: f.level.max(lv.brim.get(u)), key: key(lv, u), x: u }));
             }
         }
     }

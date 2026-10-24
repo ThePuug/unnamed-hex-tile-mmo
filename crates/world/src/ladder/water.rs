@@ -783,17 +783,17 @@ pub(super) fn carved_over(lv: &Level, bands: &[&RwLock<Band>], cells: &[usize]) 
     in_parallel(&index, |_, x| {
         let c = cells[x];
         let (i, j) = lv.ij(c);
-        let (mut out, mut sunk) = ([f64::NAN; 3], [f64::NAN; 3]);
+        let (mut out, mut sunk, mut brim) = ([f64::NAN; 3], [f64::NAN; 3], [f64::NAN; 3]);
         let mut held: Vec<Sample> = Vec::new();
         for (t, v) in lv.own_vertices(c) {
             let (q, r) = vertex_tiles(t, i, j, w);
             let (px, py) = world(q, r);
             let ground = if lv.ground.get(v).is_nan() { f64::INFINITY } else { lv.ground.get(v) };
-            let (mut low, mut near) = (ground, ground);
+            let (mut low, mut near, mut full) = (ground, ground, ground);
             // A bed's banks never stand below its profile, so the least the
-            // profile can come to bounds them too.
+            // profile can come to bounds them too, and its channel full.
             for (lowest, s) in &near_lists[sub_of[x]] {
-                if *lowest >= low {
+                if *lowest >= low.max(full) {
                     break;
                 }
                 let d = (s.x - px).hypot(s.y - py);
@@ -802,6 +802,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[&RwLock<Band>], cells: &[usize]) 
                     let at = |nearer: f64| if own { profile(s, (px, py), nearer) } else { parts(s, (px, py), nearer).1 };
                     low = low.min(at(0.0));
                     near = near.min(at(half_step));
+                    full = full.min(if own { brimming(s, (px, py), half_step) } else { at(half_step) });
                     if own && t == 0 {
                         held.push(*s);
                     }
@@ -809,18 +810,30 @@ pub(super) fn carved_over(lv: &Level, bands: &[&RwLock<Band>], cells: &[usize]) 
             }
             out[t as usize] = if low.is_infinite() { lv.ground.get(v) } else { low };
             sunk[t as usize] = if near.is_infinite() { lv.ground.get(v) } else { near };
+            brim[t as usize] = if full.is_infinite() { lv.ground.get(v) } else { full };
         }
         let (q, r) = vertex_tiles(0, i, j, w);
-        Carved { carved: out, sunk, water: standing(&held, q, r, w), parts: wet_children(&held, w, i, j) }
+        Carved { carved: out, sunk, brim, water: standing(&held, q, r, w), parts: wet_children(&held, w, i, j) }
     })
 }
 
+/// A bed's valley as [`profile`] draws it with its channel full to its
+/// floor, where its water stands: what water spilling across the channel
+/// must rise over.
+fn brimming(s: &Sample, at: (f64, f64), nearer: f64) -> f64 {
+    let (floor, _) = on_stretch(s, (s.x, s.y), s.on, at, nearer);
+    let (channel, banks) = parts(s, at, nearer);
+    channel.max(floor).min(banks)
+}
+
 /// What [`carved_over`] finds at a cell: the carved and the sunk ground at
-/// each of its vertices, and the water a coarser level's channel puts over
-/// its centre and its children, where that level draws the river.
+/// each of its vertices and the sunk ground with every channel full, and
+/// the water a coarser level's channel puts over its centre and its
+/// children, where that level draws the river.
 pub(super) struct Carved {
     pub carved: [f64; 3],
     pub sunk: [f64; 3],
+    pub brim: [f64; 3],
     pub water: Option<(f64, f64, usize)>,
     pub parts: u16,
 }

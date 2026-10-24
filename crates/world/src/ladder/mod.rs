@@ -301,6 +301,11 @@ pub struct Level {
     /// routing reads, so a valley narrower than the level's steps runs on
     /// as a course, never a row of hollows.
     pub sunk: Paged<f64>,
+    /// The sunk ground with every coarser river's channel full to its
+    /// floor, where its water stands: what a lake handed down is flooded
+    /// over, so it spills where a river's water runs out, never down to
+    /// the bed beneath it.
+    pub brim: Paged<f64>,
     /// The level's carve at each vertex: its valleys, each at its lowest
     /// within half a step, met by its sunk ground, less the ground; never
     /// above the sunk ground.
@@ -420,6 +425,7 @@ impl Level {
             ground: nan(3 * cells),
             carved: nan(3 * cells),
             sunk: nan(3 * cells),
+            brim: nan(3 * cells),
             cut: nan(3 * cells),
             wdist: nan(cells),
             wborn: Paged::new(-1, cells),
@@ -860,6 +866,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let h = lv.ground.get(v);
             lv.carved.set(v, h);
             lv.sunk.set(v, h);
+            lv.brim.set(v, h);
             lv.z.set(v, (h + 0.5).floor());
             lv.zd.set(v, lv.z.get(v));
         }
@@ -1032,6 +1039,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 for (t, v) in lv.own_vertices(c) {
                     lv.carved.set(v, found.carved[t as usize]);
                     lv.sunk.set(v, found.sunk[t as usize]);
+                    lv.brim.set(v, found.brim[t as usize]);
                 }
                 if let Some((surface, depth, src)) = found.water {
                     lv.held.set(c, surface);
@@ -1217,8 +1225,8 @@ fn corners_over(lv: &Level, mask: &Mask) {
     }
 }
 
-/// A tile's corners over a mask: the dry, the carved and the sunk ground of
-/// each the mean of the three tiles sharing it, where all three are supplied. A
+/// A tile's corners over a mask: the dry, the carved, the sunk and the
+/// brimming ground of each the mean of the three tiles sharing it, where all three are supplied. A
 /// corner of a coarser level is read where it stands.
 fn tile_corners(lv: &Level, mask: &Mask) {
     if lv.w >= 3 {
@@ -1233,15 +1241,18 @@ fn tile_corners(lv: &Level, mask: &Mask) {
         let (a, b, ready_a, ready_b) = lv.corner_means(i, j, &lv.carved, &lv.supplied);
         let (da, db, _, _) = lv.corner_means(i, j, &lv.ground, &lv.supplied);
         let (sa, sb, _, _) = lv.corner_means(i, j, &lv.sunk, &lv.supplied);
+        let (ba, bb, _, _) = lv.corner_means(i, j, &lv.brim, &lv.supplied);
         if ready_a {
             lv.carved.set(nn + c, a);
             lv.ground.set(nn + c, da);
             lv.sunk.set(nn + c, sa);
+            lv.brim.set(nn + c, ba);
         }
         if ready_b {
             lv.carved.set(2 * nn + c, b);
             lv.ground.set(2 * nn + c, db);
             lv.sunk.set(2 * nn + c, sb);
+            lv.brim.set(2 * nn + c, bb);
         }
     }
 }
