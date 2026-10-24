@@ -719,6 +719,17 @@ impl Outlines {
         best
     }
 
+    /// Every edge carrying a wedge of a plate other than `plate` whose
+    /// chain's bounding box lies within `reach` of `(x, y)`, in one order
+    /// whatever order the plates came in: by plate, then by its place in
+    /// the plate's outline.
+    pub fn fronts_within(&self, plate: PlateId, x: f64, y: f64, reach: f64) -> impl Iterator<Item = &EdgeOutline> {
+        self.fronts
+            .iter()
+            .filter(move |&&(id, _, bounds)| id != plate && box_distance(bounds, x, y) <= reach)
+            .map(|&(id, k, _)| &self.plates[&id].edges[k])
+    }
+
     /// The highest toe at a position standing outside the plate whose
     /// wedge it is, as `share` reads each front at the position's distance
     /// out past it: every wedge of every other plate whose front lies

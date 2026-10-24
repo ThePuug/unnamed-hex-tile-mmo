@@ -166,17 +166,9 @@ pub fn shadow(wx: f64, wy: f64, wind: (f64, f64), outlines: &Outlines) -> f64 {
         };
         passes *= 1.0 - SHADOW_DEPTH * share * e.standing * sheets / WEDGE_SHEETS;
     }
-    for p in outlines.plates() {
-        if p.id == at.plate.id {
-            continue;
-        }
-        for e in &p.edges {
-            if e.converge <= 0.0 {
-                continue;
-            }
-            if let Some(t) = crossing(e, at.x, at.y, ux, uy, SHADOW_REACH) {
-                passes *= 1.0 - SHADOW_DEPTH * fade(t) * e.standing * sheets_of(e.converge) / WEDGE_SHEETS;
-            }
+    for e in outlines.fronts_within(at.plate.id, at.x, at.y, SHADOW_REACH) {
+        if let Some(t) = crossing(e, at.x, at.y, ux, uy, SHADOW_REACH) {
+            passes *= 1.0 - SHADOW_DEPTH * fade(t) * e.standing * sheets_of(e.converge) / WEDGE_SHEETS;
         }
     }
     1.0 - passes
