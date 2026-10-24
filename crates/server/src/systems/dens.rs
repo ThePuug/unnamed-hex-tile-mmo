@@ -190,7 +190,9 @@ pub fn dry_ground_near(map: &Map, site: Qrz) -> Option<Qrz> {
 
 /// Hears every frame how packs ended, and each [`TEND`] raises a den on
 /// every site near a player that has none, brings back the pack of a
-/// standing den that has none, and lets a decayed den go.
+/// standing den that has none, and lets a decayed den go. A pack stands on
+/// the ground the map holds, never read from the world's generator, which
+/// may be busy building elsewhere for longer than a frame.
 #[allow(clippy::too_many_arguments)]
 pub fn tend_dens(
     mut dens: ResMut<Dens>,
@@ -199,7 +201,6 @@ pub fn tend_dens(
     players: Query<(&Loc, Option<&ActorAttributes>)>,
     engagements: Query<(), With<Engagement>>,
     map: Res<Map>,
-    registry: Res<EventRegistry>,
     tuning: Res<Tuning>,
     time: Res<Time>,
     dice: Res<combat::dice::Dice>,
@@ -249,9 +250,11 @@ pub fn tend_dens(
                     info!("den of {} {:?} at level {} on {:?} ground at ({}, {})", den.size, den.archetype, den.level, site.habitat, at.q, at.r);
                 }
                 den.at = Some(at);
+                // A member on a tile the map does not hold yet stands level
+                // with the den's own.
                 let pack = combat::engagement::spawn_engagement(
                     &tuning, at, den.archetype, Side::WILD, den.level, den.size,
-                    |q, r| registry.elevation_at(q, r), &mut commands, &time,
+                    |q, r| map.get_by_qr(q, r).map_or(at.z - 1, |(floor, _)| floor.z), &mut commands, &time,
                 );
                 den.state = DenState::Standing { pack: Some(pack) };
             }
