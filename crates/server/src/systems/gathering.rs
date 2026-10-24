@@ -290,7 +290,8 @@ pub struct Ground<'w, 's> {
 }
 
 impl Ground<'_, '_> {
-    fn cover(&self, q: i32, r: i32) -> Option<common::Cover> {
+    /// What stands in tile `(q, r)`'s slots, where the map holds it.
+    pub fn cover(&self, q: i32, r: i32) -> Option<common::Cover> {
         match self.map.get_by_qr(q, r)? {
             (_, EntityType::Decorator(decorator)) => Some(decorator.cover),
             _ => None,
@@ -309,7 +310,9 @@ impl Ground<'_, '_> {
         self.changed.write(TileChanged { q, r });
     }
 
-    fn put(&mut self, writer: &mut MessageWriter<Do>, q: i32, r: i32, cover: common::Cover) {
+    /// Lays `cover` over tile `(q, r)`, where the map holds it, for every
+    /// client holding its chunk.
+    pub fn put(&mut self, writer: &mut MessageWriter<Do>, q: i32, r: i32, cover: common::Cover) {
         let Some((qrz, EntityType::Decorator(decorator))) = self.map.get_by_qr(q, r) else { return };
         self.map.insert(qrz, EntityType::Decorator(Decorator { cover, ..decorator }));
         self.changes.set(q, r, decorator.cover, cover);
@@ -318,17 +321,6 @@ impl Ground<'_, '_> {
             if cache.sent.contains(&chunk) {
                 writer.write(Do { event: Event::CoverChanged { ent: holder, q, r, cover } });
             }
-        }
-    }
-
-    /// Lays `cover` over tile `(q, r)` whether or not it is on the map
-    /// yet: one not yet materialized is built from `generated`, its cover
-    /// as the world made it, with this laid over.
-    pub fn lay(&mut self, writer: &mut MessageWriter<Do>, q: i32, r: i32, cover: common::Cover, generated: common::Cover) {
-        if self.cover(q, r).is_some() {
-            self.put(writer, q, r, cover);
-        } else {
-            self.changes.set(q, r, generated, cover);
         }
     }
 }

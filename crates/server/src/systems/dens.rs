@@ -18,10 +18,13 @@
 //! archetype's model, active or cleared, its seed and turn its site's:
 //! its pieces' circles stand on the map for every walker to go round, the
 //! ground it stands on and [`OPEN`] tiles past it is cleared of all that
-//! grew or lay there as long as it stands, thinning back into what the
-//! world made over [`THIN`] more, so the den is seen over the wood round
-//! it, and every player within [`sight`] is told of it as it is
-//! (`show_dens`).
+//! grew or lay there as long as it stands, thinning back into what stood
+//! there over [`THIN`] more, so the den is seen over the wood round it,
+//! and every player within [`sight`] is told of it as it is
+//! (`show_dens`). A den is drawn once the map holds all the ground it
+//! clears, which is cleared from the map's tiles, never read from the
+//! world's generator: that may be busy building elsewhere for longer than
+//! a frame.
 
 use std::{collections::HashMap, time::Duration};
 
@@ -42,7 +45,7 @@ use common_bevy::{
 };
 
 use crate::{
-    resources::{event_registry::EventRegistry, Lobby},
+    resources::Lobby,
     systems::gathering::{roll, Ground},
 };
 
@@ -292,72 +295,91 @@ fn cleared_ground(at: Qrz, look: &DenLook) -> impl Iterator<Item = (Qrz, u32)> {
     (0..=look.clearing() + OPEN + THIN).flat_map(move |k| home.ring(k).into_iter().map(move |tile| (tile, k)))
 }
 
-/// What a den leaves of `generated`, tile `(q, r)`'s cover as the world
-/// made it, `ring` tiles out from the den's own where its ground stays
-/// open out to `open`: nothing there, then each growth and boulder kept
-/// by its own roll, the more the further out, all of it past the thinning.
-fn cleared_cover(generated: common::Cover, (q, r): (i32, i32), ring: u32, open: u32) -> common::Cover {
+/// What a den leaves of `stood`, tile `(q, r)`'s cover before it, `ring`
+/// tiles out from the den's own where its ground stays open out to
+/// `open`: nothing there, then each growth and boulder kept by its own
+/// roll, the more the further out, all of it past the thinning.
+fn cleared_cover(stood: common::Cover, (q, r): (i32, i32), ring: u32, open: u32) -> common::Cover {
     let cut = 1.0 - ring.saturating_sub(open) as f64 / (THIN + 1) as f64;
-    let kept = common::Cover::NONE.with_rock(generated.rock());
-    let kept = generated.filled().filter(|&(site, _)| roll(q, r, site) >= cut).fold(kept, |cover, (site, growth)| cover.with(site, growth));
+    let kept = common::Cover::NONE.with_rock(stood.rock());
+    let kept = stood.filled().filter(|&(site, _)| roll(q, r, site) >= cut).fold(kept, |cover, (site, growth)| cover.with(site, growth));
     let sites = common::SITES.len();
-    generated.boulders().filter(|&k| roll(q, r, sites + k) >= cut).fold(kept, |cover, k| cover.with_boulder(k))
+    stood.boulders().filter(|&k| roll(q, r, sites + k) >= cut).fold(kept, |cover, k| cover.with_boulder(k))
 }
 
-/// Stands every den's circles on the map as it now is, clears the ground
-/// of each that has come to stand and lays back what the world made under
-/// each that is gone, and tells each player of every den within its
-/// [`sight`] it has not been told of as it is, and of each it was told of
-/// that is gone or out of sight.
-#[allow(clippy::too_many_arguments)]
+/// A den drawn on the map: how, and the cover it took from each tile of
+/// its ground it cleared, laid back when it goes.
+pub struct Drawn {
+    look: DenLook,
+    took: Vec<((i32, i32), common::Cover)>,
+}
+
+/// Lays back what each den gone from the map took and takes its circles
+/// off, stands every den's circles on the map as it now is, clears the
+/// ground of each that has come to stand once the map holds all of it,
+/// and tells each player of every den drawn within its [`sight`] it has
+/// not been told of as it is, and of each it was told of that is gone or
+/// out of sight.
 pub fn show_dens(
     dens: Res<Dens>,
     map: Res<Map>,
-    registry: Res<EventRegistry>,
     mut ground: Ground,
     lobby: Res<Lobby>,
     players: Query<&Loc>,
-    mut stood: Local<HashMap<Qrz, DenLook>>,
+    mut drawn: Local<HashMap<Qrz, Drawn>>,
     mut told: Local<HashMap<Entity, HashMap<Qrz, DenLook>>>,
     mut writer: MessageWriter<Do>,
 ) {
     let now: HashMap<Qrz, DenLook> = dens.sites.values().flatten().filter_map(shown).collect();
-    for (&at, look) in &now {
-        if stood.get(&at) != Some(look) {
-            map.set_solids((at.q, at.r), &look.circles());
+    drawn.retain(|at, den| {
+        if now.contains_key(at) {
+            return true;
         }
-        if !stood.contains_key(&at) {
-            let open = look.clearing() + OPEN;
-            for (tile, ring) in cleared_ground(at, look) {
-                let generated = registry.cover_at(tile.q, tile.r);
-                let cleared = cleared_cover(generated, (tile.q, tile.r), ring, open);
-                if cleared != generated {
-                    ground.lay(&mut writer, tile.q, tile.r, cleared, generated);
-                }
+        map.set_solids((at.q, at.r), &[]);
+        for &((q, r), cover) in &den.took {
+            ground.put(&mut writer, q, r, cover);
+        }
+        false
+    });
+    for (&at, &look) in &now {
+        if let Some(den) = drawn.get_mut(&at) {
+            if den.look != look {
+                map.set_solids((at.q, at.r), &look.circles());
+                den.look = look;
+            }
+            continue;
+        }
+        let Some(standing) = cleared_ground(at, &look)
+            .map(|(tile, ring)| Some((tile, ring, ground.cover(tile.q, tile.r)?)))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        map.set_solids((at.q, at.r), &look.circles());
+        let open = look.clearing() + OPEN;
+        let mut took = Vec::new();
+        for (tile, ring, stood) in standing {
+            let cleared = cleared_cover(stood, (tile.q, tile.r), ring, open);
+            if cleared != stood {
+                ground.put(&mut writer, tile.q, tile.r, cleared);
+                took.push(((tile.q, tile.r), stood));
             }
         }
+        drawn.insert(at, Drawn { look, took });
     }
-    for (&at, look) in stood.iter().filter(|(at, _)| !now.contains_key(at)) {
-        map.set_solids((at.q, at.r), &[]);
-        for (tile, _) in cleared_ground(at, look) {
-            let generated = registry.cover_at(tile.q, tile.r);
-            ground.lay(&mut writer, tile.q, tile.r, generated, generated);
-        }
-    }
-    *stood = now;
 
     let sight = sight();
     told.retain(|player, _| lobby.get_by_right(player).is_some());
     for &player in lobby.right_values() {
         let Ok(loc) = players.get(player) else { continue };
         let known = told.entry(player).or_default();
-        for (&at, &look) in stood.iter().filter(|(at, _)| at.flat_distance(loc) <= sight) {
+        for (&at, look) in drawn.iter().map(|(at, den)| (at, den.look)).filter(|(at, _)| at.flat_distance(loc) <= sight) {
             if known.insert(at, look) != Some(look) {
                 writer.write(Do { event: Event::Den { ent: player, at, den: Some(look) } });
             }
         }
         known.retain(|at, _| {
-            let still = stood.contains_key(at) && at.flat_distance(loc) <= sight;
+            let still = drawn.contains_key(at) && at.flat_distance(loc) <= sight;
             if !still {
                 writer.write(Do { event: Event::Den { ent: player, at: *at, den: None } });
             }
