@@ -221,6 +221,7 @@ fn main() {
     app.init_resource::<crate::resources::RenderOrigin>();
     app.init_resource::<common_bevy::haven::Haven>();
     app.init_resource::<gathering::LootWindow>();
+    app.init_resource::<movement::Corrections>();
     app.init_resource::<crate::systems::focus::NumpadFocus>();
     app.init_resource::<crate::systems::help::Help>();
     app.init_resource::<camera::Look>();

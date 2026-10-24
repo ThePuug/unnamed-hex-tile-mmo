@@ -4,17 +4,21 @@
 //! cross the wire; the heading is what the server makes of them.
 
 use bevy::prelude::*;
+use qrz::Convert;
 
 use crate::*;
 use common_bevy::{
     components::{
         keybits::*,
         position::Position,
+        status::Status,
         target::Target,
-        AirTime, Turn,
+        ActorAttributes, AirTime, Turn,
     },
     message::{Event, *},
-    resources::*,
+    plugins::nntree::NNTree,
+    resources::{map::Map, *},
+    systems::movement::MOVEMENT_SPEED,
 };
 
 pub const KEYCODE_JUMP: KeyCode = KeyCode::Numpad0;
@@ -157,7 +161,10 @@ pub fn tick(
 pub fn do_confirm(
     mut reader: MessageReader<Do>,
     mut buffers: ResMut<InputQueues>,
-    mut query: Query<(&mut Position, &mut AirTime, &mut Turn)>,
+    mut query: Query<(&mut Position, &mut AirTime, &mut Turn, Option<&ActorAttributes>, Option<&Status>)>,
+    map: Res<Map>,
+    nntree: Res<NNTree>,
+    mut corrections: ResMut<crate::systems::movement::Corrections>,
 ) {
     for message in reader.read() {
         let Do { event: Event::Confirm { ent, seq, position, airtime, turn } } = message else { continue };
@@ -173,7 +180,11 @@ pub fn do_confirm(
         let Event::Input { seq: seq0, .. } = removed else { panic!("not input") };
         assert!(seq == seq0, "Seq mismatch: expected {seq0}, got {seq}");
 
-        if let Ok((mut pos, mut air, mut turn0)) = query.get_mut(ent) {
+        if let Ok((mut pos, mut air, mut turn0, attrs, status)) = query.get_mut(ent) {
+            let speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
+            let predicted = crate::systems::movement::replay(&removed, *pos, *turn0, air.state, speed, status, &map, &nntree).position;
+            let off = map.convert(position.tile - predicted.tile) + position.offset - predicted.offset;
+            corrections.furthest = corrections.furthest.max(off.length());
             *pos = *position;
             air.state = *airtime;
             *turn0 = *turn;

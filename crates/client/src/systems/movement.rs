@@ -22,8 +22,16 @@ use common_bevy::{
     moment::Moment,
     plugins::nntree::NNTree,
     resources::{map::Map, InputQueues},
-    systems::movement::{calculate_movement, MovementInput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
+    systems::movement::{calculate_movement, MovementInput, MovementOutput, JUMP_DURATION_MS, MOVEMENT_SPEED, TURN_REPEAT_MS},
 };
+
+/// How far the server moved the local player off its prediction since the
+/// metrics last read it: the furthest a `Confirm` put the player from where
+/// its client predicted that input to leave it.
+#[derive(Resource, Default)]
+pub struct Corrections {
+    pub furthest: f32,
+}
 
 /// Interpolation span in fixed ticks. One tick completes inside a single
 /// frame and reintroduces jitter on direction changes as the predicted point
@@ -58,28 +66,13 @@ pub fn predict_local_player(
     for (ent, buffer) in buffers.iter() {
         assert!(!buffer.queue.is_empty(), "Queue invariant violation: entity {ent} has empty queue");
         let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, status)) = query.get_mut(ent) else { continue; };
-        let (movement_speed, pace) = (attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()), Status::pace_of(status));
+        let movement_speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
 
         let (mut offset, mut air) = (position.offset, airtime.state);
         let (mut facing, mut since_step_ms) = (turn.heading, turn.since_step_ms);
         for input in buffer.queue.iter().rev() {
-            let Event::Input { key_bits, dt, .. } = input else { unreachable!() };
-            // A held player's keys do nothing, as on the server
-            let key_bits = if Status::holds(status) { KeyBits::default() } else { *key_bits };
-            let key_bits = &key_bits;
-            if key_bits.is_pressed(KB_JUMP) && air.is_none() { air = Some(JUMP_DURATION_MS); }
-            let out = calculate_movement(MovementInput {
-                position: Position::new(position.tile, offset),
-                heading: facing,
-                moving: key_bits.moving(),
-                back: key_bits.back(),
-                turn: key_bits.turn(),
-                since_step_ms,
-                airtime: air,
-                movement_speed,
-                pace,
-                collides: true,
-            }, *dt as i16, &map, &nntree);
+            let turn = Turn { heading: facing, since_step_ms };
+            let out = replay(input, Position::new(position.tile, offset), turn, air, movement_speed, status, &map, &nntree);
             (offset, air, facing, since_step_ms) = (out.position.offset, out.airtime, out.heading, out.since_step_ms);
         }
 
@@ -88,6 +81,37 @@ pub fn predict_local_player(
         let predicted = origin.render(&map, &Position::new(position.tile, offset));
         visual.interpolate_toward(predicted, tick * VISUAL_TICKS);
     }
+}
+
+/// The local player's state after `input`, run from `position` with `turn`
+/// and `air` as the server runs it.
+#[allow(clippy::too_many_arguments)]
+pub fn replay(
+    input: &Event,
+    position: Position,
+    turn: Turn,
+    mut air: Option<i16>,
+    movement_speed: f32,
+    status: Option<&Status>,
+    map: &Map,
+    nntree: &NNTree,
+) -> MovementOutput {
+    let Event::Input { key_bits, dt, .. } = input else { unreachable!() };
+    // A held player's keys do nothing, as on the server
+    let key_bits = if Status::holds(status) { KeyBits::default() } else { *key_bits };
+    if key_bits.is_pressed(KB_JUMP) && air.is_none() { air = Some(JUMP_DURATION_MS); }
+    calculate_movement(MovementInput {
+        position,
+        heading: turn.heading,
+        moving: key_bits.moving(),
+        back: key_bits.back(),
+        turn: key_bits.turn(),
+        since_step_ms: turn.since_step_ms,
+        airtime: air,
+        movement_speed,
+        pace: Status::pace_of(status),
+        collides: true,
+    }, *dt as i16, map, nntree)
 }
 
 /// Advances every remote entity by the fixed tick with the physics the

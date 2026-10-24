@@ -85,6 +85,7 @@ pub fn publish(
     player: Query<(&Transform, &Heading), (With<Actor>, With<PlayerControlled>)>,
     camera: Option<Res<crate::systems::camera::CameraPose>>,
     view: Query<&Transform, (With<Camera3d>, Without<crate::systems::closeup::CloseupCamera>)>,
+    mut corrections: ResMut<crate::systems::movement::Corrections>,
 ) {
     let now = time.elapsed_secs_f64();
     if let Some(ms) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME).and_then(|d| d.value()) {
@@ -184,6 +185,15 @@ pub fn publish(
     }
     groups.push(field("total/triangles", census.total_triangles() as f64));
     topics.push(("census", Cadence::Snapshot, groups));
+
+    // The server's corrections to the local player since the last
+    // publication, read once and cleared.
+    let corrected = std::mem::take(&mut *corrections);
+    topics.push((
+        "movement",
+        Cadence::Snapshot,
+        vec![field("correction_max", corrected.furthest)],
+    ));
 
     topics.push((
         "network",
