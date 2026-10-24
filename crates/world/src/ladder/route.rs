@@ -593,8 +593,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         let level = above_sea(drained(lake[x], graded[o], lv.age.get(c), lv.erod.get(c), room(o), p));
         lowered[x] = if level > key[x].0 { level } else { f64::NAN };
     }
-    let lake = lowered;
-    graded = grade(&lake);
+    let mut lake = lowered;
     // Floors: drainage's under each vertex's dry ground, toward its graded
     // profile and held to the room its hillslopes give, and never above its
     // carved ground; where a node hands its river down, the level above's,
@@ -602,30 +601,65 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     // ground every coarser valley left with each channel full, so a river
     // laid across another's valley runs down into it rather than over it;
     // along a trough never above the floors draining into it, upstream
-    // first. A lake's floor is its surface.
-    let mut flo: Vec<f64> = (0..nv)
-        .map(|x| {
-            if !lake[x].is_nan() {
-                return above_sea(lake[x]);
+    // first, through a lake as anywhere: a lake's floor is its surface,
+    // and a river reaching it cut lower lowers the whole lake to its floor,
+    // the rivers above grading to the lowered lake, until none is lowered.
+    let mut flo: Vec<f64>;
+    loop {
+        graded = grade(&lake);
+        flo = (0..nv)
+            .map(|x| {
+                if !lake[x].is_nan() {
+                    return above_sea(lake[x]);
+                }
+                let v = vids[x];
+                if !src_floor[x].is_nan() {
+                    return src_floor[x].min(lv.brim.get(v));
+                }
+                let c = v % nn;
+                drained(lv.ground.get(v), graded[x], lv.age.get(c), lv.erod.get(c), room(x), p).min(lv.carved.get(v))
+            })
+            .collect();
+        let mut low = vec![f64::INFINITY; nv];
+        let mut under: Vec<(usize, f64)> = Vec::new();
+        for &x in &order {
+            if !trough[x] {
+                continue;
             }
-            let v = vids[x];
-            if !src_floor[x].is_nan() {
-                return src_floor[x].min(lv.brim.get(v));
+            if lake[x].is_nan() {
+                flo[x] = flo[x].min(low[x]);
+            } else if low[x] < lake[x] {
+                under.push((x, low[x]));
             }
-            let c = v % nn;
-            drained(lv.ground.get(v), graded[x], lv.age.get(c), lv.erod.get(c), room(x), p).min(lv.carved.get(v))
-        })
-        .collect();
-    let mut low = vec![f64::INFINITY; nv];
-    for &x in &order {
-        if !trough[x] {
-            continue;
+            if let Some(y) = rec[x] {
+                low[y] = low[y].min(flo[x]);
+            }
         }
-        if lake[x].is_nan() {
-            flo[x] = flo[x].min(low[x]);
+        if under.is_empty() {
+            break;
         }
-        if let Some(y) = rec[x] {
-            low[y] = low[y].min(flo[x]);
+        // Each lake reached below its surface, every vertex joined to it at
+        // that surface, lowered to the lowest floor reaching it; a vertex it
+        // no longer covers is dry.
+        let mut level: Vec<f64> = lake.clone();
+        for (x, floor) in under {
+            let surface = lake[x];
+            let mut joined = vec![x];
+            let mut seen = HashSet::from([x]);
+            while let Some(y) = joined.pop() {
+                level[y] = level[y].min(floor);
+                let (t, i, j) = lv.vertex(vids[y]);
+                for k in 0..6 {
+                    let (tt, ni, nj) = vnbr(t, i, j, k);
+                    let Some(z) = lv.idx(ni, nj).and_then(|c| local(tt as usize * nn + c)) else { continue };
+                    if lake[z] == surface && seen.insert(z) {
+                        joined.push(z);
+                    }
+                }
+            }
+        }
+        for x in 0..nv {
+            lake[x] = if level[x] > key[x].0 { level[x] } else { f64::NAN };
         }
     }
     let mut done = vec![false; nv];
