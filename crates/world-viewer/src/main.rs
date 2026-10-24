@@ -292,7 +292,7 @@ fn main() {
             .iter()
             .map(|&(q, r)| {
                 let (v, outputs) = composite.outputs_at(q, r);
-                let delta = outputs[layer].1.map_or(0.0, |o| o.elevation_delta);
+                let delta = outputs[layer].1.as_ref().map_or(0.0, |o| o.elevation_delta);
                 ((q, r), (v.elevation, v.cover, delta))
             })
             .collect(),

@@ -137,7 +137,8 @@ impl WorldEvent for ThickeningEvent {
     ) -> Option<TileOutput> {
         let outlines = cell.downcast_ref::<Arc<Outlines>>()?;
         let (wx, wy) = hex_to_world(q, r);
-        let rise = thickening_on(wx, wy, outlines);
+        let at = outlines.stood(wx, wy, below.stand.as_ref()?)?;
+        let rise = PLATEAU_RISE * plateau_share_of(at.plate, &at.distances);
         if rise <= 0.0 { return None }
         let gradient = if below.slopes { gradient_of(wx, wy, rise, |x, y| thickening_on(x, y, outlines)) } else { (0.0, 0.0) };
         Some(TileOutput { elevation_delta: rise, gradient, ..TileOutput::default() })

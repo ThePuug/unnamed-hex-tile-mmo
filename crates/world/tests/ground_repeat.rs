@@ -28,7 +28,7 @@ fn read(base: &Composite, tiles: &[(i32, i32)]) -> Vec<String> {
         .iter()
         .map(|&(q, r)| {
             let (view, outputs) = base.outputs_at(q, r);
-            let layers: Vec<String> = outputs.iter().map(|(name, o)| format!("{name}={:?}", o.map(|o| o.elevation_delta))).collect();
+            let layers: Vec<String> = outputs.iter().map(|(name, o)| format!("{name}={:?}", o.as_ref().map(|o| o.elevation_delta))).collect();
             format!("sample ({q}, {r}) elevation={:?} {}", view.elevation, layers.join(" "))
         })
         .collect()

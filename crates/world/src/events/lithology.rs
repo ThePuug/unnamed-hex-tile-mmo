@@ -268,9 +268,15 @@ pub fn off_plate() -> Ground {
 /// The rock at a position read through the outlines and coasts a view or
 /// a probe built: what the event's own query reads through its cell.
 pub fn rock_on(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines) -> Ground {
+    rock_standing(wx, wy, seed, coasts, outlines, outlines.at(wx, wy).as_ref())
+}
+
+/// [`rock_on`] where the plate the position stands in was found already,
+/// or found to be none.
+fn rock_standing(wx: f64, wy: f64, seed: u64, coasts: &Coasts, outlines: &Outlines, at: Option<&Standing>) -> Ground {
+    let Some(at) = at else { return off_plate() };
     let substrate = substrate_on(wx, wy, coasts, seed);
-    let Some(at) = outlines.at(wx, wy) else { return off_plate() };
-    rock_at(seed, at.plate.id, at.plate.age, cover_on(outlines, &at, seed), substrate, outlines.structure_of(&at))
+    rock_at(seed, at.plate.id, at.plate.age, cover_on(outlines, at, seed), substrate, outlines.structure_of(at))
 }
 
 // ── The event ───────────────────────────────────────────────────────────────
@@ -314,7 +320,8 @@ impl WorldEvent for LithologyEvent {
     ) -> Option<TileOutput> {
         let reach = cell.downcast_ref::<Reach>()?;
         let (wx, wy) = hex_to_world(q, r);
-        let ground = rock_on(wx, wy, seed, &reach.coasts, &reach.outlines);
+        let at = below.stand.as_ref().and_then(|stand| reach.outlines.stood(wx, wy, stand));
+        let ground = rock_standing(wx, wy, seed, &reach.coasts, &reach.outlines, at.as_ref());
         let gradient = if below.slopes { gradient_of(wx, wy, ground.stand, |x, y| rock_on(x, y, seed, &reach.coasts, &reach.outlines).stand) } else { (0.0, 0.0) };
         Some(TileOutput { elevation_delta: ground.stand, gradient, rock: Some(ground.rock), ..TileOutput::default() })
     }

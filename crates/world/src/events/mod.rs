@@ -120,7 +120,7 @@ pub use index::{CellId, CellIndex, IndexRegistry, Located};
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Per-tile output from a single event's query.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub struct TileOutput {
     pub elevation_delta: f64,
     /// How steeply `elevation_delta` climbs, in z-levels per world unit
@@ -139,6 +139,9 @@ pub struct TileOutput {
     pub cover: Cover,
     /// The habitat of a den whose site is this tile, where a layer says so
     pub den: Option<Habitat>,
+    /// Where the tile stands among the plates, where a layer found it. A
+    /// later layer's replaces an earlier one's.
+    pub(crate) stand: Option<thrusting::Stand>,
 }
 
 /// Read-only composite view at a single tile.
@@ -168,12 +171,16 @@ pub struct TileView {
     pub cover: Cover,
     /// The habitat of a den whose site is this tile, as [`TileOutput::den`].
     pub den: Option<Habitat>,
+    /// Where the tile stands among the plates, as [`TileOutput::stand`]:
+    /// for the layers above the one that found it, so a plate is looked up
+    /// once a tile.
+    pub(crate) stand: Option<thrusting::Stand>,
 }
 
 impl TileView {
     fn on(w: i64, q: i32, r: i32) -> Self {
         let (wx, wy) = hex_to_world(q, r);
-        TileView { q, r, w, wx, wy, elevation: 0.0, gradient: (0.0, 0.0), slopes: true, water: None, rock: None, cover: Cover::NONE, den: None }
+        TileView { q, r, w, wx, wy, elevation: 0.0, gradient: (0.0, 0.0), slopes: true, water: None, rock: None, cover: Cover::NONE, den: None, stand: None }
     }
 
     fn compose(&mut self, out: &TileOutput) {
@@ -191,6 +198,9 @@ impl TileView {
         }
         if out.den.is_some() {
             self.den = out.den;
+        }
+        if out.stand.is_some() {
+            self.stand.clone_from(&out.stand);
         }
     }
 }
@@ -1398,7 +1408,7 @@ mod tests {
         let (view, outputs) = c.outputs_at(5, -3);
         assert_eq!(outputs.iter().map(|(name, _)| *name).collect::<Vec<_>>(), ["marker", "mark-reader"]);
         assert!(outputs[0].1.is_none());
-        assert_eq!(outputs[1].1.map(|o| o.elevation_delta), Some(1.0));
+        assert_eq!(outputs[1].1.as_ref().map(|o| o.elevation_delta), Some(1.0));
         assert_eq!(view.elevation, c.tile_at(5, -3).elevation);
     }
 

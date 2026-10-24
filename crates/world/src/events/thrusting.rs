@@ -411,8 +411,29 @@ pub struct Standing<'a> {
     pub y: f64,
 }
 
+impl Standing<'_> {
+    /// Where the position stands, apart from the outlines it was read in.
+    pub fn stand(&self) -> Stand {
+        Stand { plate: self.plate.id, distances: self.distances.clone(), x: self.x, y: self.y }
+    }
+}
+
+/// A [`Standing`] apart from the outlines it was read in: the plate's id
+/// for its outline. The thrusting layer puts one on every tile it finds a
+/// plate under ([`TileView::stand`](super::TileView::stand)), and the
+/// layers above it at the graph's cell scale, whose outlines over a tile
+/// are built as its are, read it back ([`Outlines::stood`]) rather than
+/// find the plate again.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Stand {
+    pub plate: PlateId,
+    pub distances: Vec<f64>,
+    pub x: f64,
+    pub y: f64,
+}
+
 /// How many reads [`Outlines::at`] remembers before it forgets them all:
-/// a tile is read by the three layers standing on the outlines in turn,
+/// a position read again, as a gradient's samples and a scarp's site are,
 /// and a few thousand tiles are in flight at once, so the memo needs to
 /// hold that many and no more.
 const RECENT_READS: usize = 16_384;
@@ -427,10 +448,8 @@ pub struct Outlines {
     /// reach costs no lookup.
     fronts: Vec<(PlateId, usize, [f64; 4])>,
     seed: u64,
-    /// The last reads by position: the plate found, its distances, and the
-    /// warped position. The layers above thrusting read one tile in turn,
-    /// so the second and third reads of it are lookups.
-    recent: DashMap<(u64, u64), (PlateId, Vec<f64>, f64, f64)>,
+    /// The last reads by position.
+    recent: DashMap<(u64, u64), Stand>,
 }
 
 /// What an edge carries for the plate overriding on it, where it carries
@@ -571,17 +590,22 @@ impl Outlines {
     pub fn at(&self, wx: f64, wy: f64) -> Option<Standing<'_>> {
         let key = (wx.to_bits(), wy.to_bits());
         if let Some(hit) = self.recent.get(&key) {
-            let (id, distances, x, y) = &*hit;
-            return self.plates.get(id).map(|plate| Standing { wx, wy, plate, distances: distances.clone(), x: *x, y: *y });
+            return self.stood(wx, wy, &hit);
         }
         let found = self.find(wx, wy);
         if let Some(at) = &found {
             if self.recent.len() >= RECENT_READS {
                 self.recent.clear();
             }
-            self.recent.insert(key, (at.plate.id, at.distances.clone(), at.x, at.y));
+            self.recent.insert(key, at.stand());
         }
         found
+    }
+
+    /// The standing `stand` records of position `(wx, wy)`, in these
+    /// outlines; none where they hold no outline of its plate.
+    pub fn stood(&self, wx: f64, wy: f64, stand: &Stand) -> Option<Standing<'_>> {
+        self.plates.get(&stand.plate).map(|plate| Standing { wx, wy, plate, distances: stand.distances.clone(), x: stand.x, y: stand.y })
     }
 
     /// [`Outlines::at`] without the memo.
@@ -1191,10 +1215,12 @@ impl WorldEvent for ThrustingEvent {
     ) -> Option<TileOutput> {
         let outlines = cell.downcast_ref::<Arc<Outlines>>()?;
         let (wx, wy) = hex_to_world(q, r);
-        let rise = outlines.relief(wx, wy);
-        if rise <= 0.0 { return None }
+        let at = outlines.at(wx, wy)?;
+        let stand = Some(at.stand());
+        let rise = outlines.relief_of(&at);
+        if rise <= 0.0 { return Some(TileOutput { stand, ..TileOutput::default() }) }
         let gradient = if below.slopes { gradient_of(wx, wy, rise, |x, y| outlines.relief(x, y)) } else { (0.0, 0.0) };
-        Some(TileOutput { elevation_delta: rise, gradient, ..TileOutput::default() })
+        Some(TileOutput { elevation_delta: rise, gradient, stand, ..TileOutput::default() })
     }
 }
 
