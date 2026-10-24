@@ -7,13 +7,13 @@ use bevy::{core_pipeline::prepass::DepthPrepass, pbr::{DistanceFog, FogFalloff},
 use crate::plugins::water::SEA_LEVEL_Y;
 use common_bevy::surface::height_y;
 use crate::resources::RenderOrigin;
-use crate::systems::{closeup::CloseupCamera, ease};
+use crate::systems::{closeup::CloseupCamera, ease, following_turn};
 use std::f32::consts::PI;
 
 use bevy::render::view::{ColorGrading, ColorGradingGlobal};
 use crate::plugins::{diagnostics::DiagnosticsState, ink::Ink, vignette::VignetteSettings};
 use common_bevy::{
-    components::{heading::{Heading, HEADING_SLOTS}, position::VisualPosition, *},
+    components::{heading::{Heading, HEADING_SLOTS}, position::VisualPosition, status::Status, *},
     resources::map::Map,
     systems::movement::{solid_extent, standing_y, surface_y_from},
 };
@@ -22,9 +22,9 @@ use common_bevy::{
 pub const ORBIT_STOPS: usize = HEADING_SLOTS as usize;
 /// Angular separation between orbit stops.
 const ORBIT_STEP: f32 = 2.0 * PI / ORBIT_STOPS as f32;
-/// Exponential decay constant of the yaw's easing: slow enough that the
-/// heading's steps blend into one turn, quick enough to lag it by a stop
-/// or two at most.
+/// Exponential decay constant of the yaw's easing at whole turn pace: slow
+/// enough that the heading's steps blend into one turn, quick enough to lag
+/// it by a stop or two at most ([`following_turn`]).
 const YAW_EASE: f32 = 8.0;
 /// Exponential decay constant of the boom and lens easing toward the
 /// wanted pose.
@@ -537,11 +537,12 @@ fn first_passing(at: impl Fn(f32) -> Pose, test: impl Fn(&Pose) -> bool) -> Opti
 }
 
 /// One frame's step of the pose over `dt`: the yaw turning toward the
-/// wanted one, the boom and lens easing toward the wanted pose.
-fn step(current: Pose, wanted: Pose, dt: f32) -> Pose {
+/// wanted one as fast as the viewed actor's `turn_pace` steps its heading,
+/// the boom and lens easing toward the wanted pose.
+fn step(current: Pose, wanted: Pose, turn_pace: f32, dt: f32) -> Pose {
     let diff = angle_diff(current.yaw, wanted.yaw);
     let yaw = if diff.abs() > SNAP_THRESHOLD {
-        (current.yaw + diff * (1.0 - (-YAW_EASE * dt).exp())).rem_euclid(2.0 * PI)
+        (current.yaw + diff * (1.0 - (-following_turn(YAW_EASE, turn_pace) * dt).exp())).rem_euclid(2.0 * PI)
     } else {
         wanted.yaw
     };
@@ -648,14 +649,14 @@ fn clearance_step(current: f32, wanted: f32, ground: f32, dt: f32) -> f32 {
 pub fn update(
     mut state: ResMut<CameraPose>,
     mut camera: Query<(&mut Projection, &mut Transform), (With<Camera3d>, Without<CloseupCamera>)>,
-    actor: Query<(&VisualPosition, &Heading), (With<crate::components::Viewed>, Without<Camera3d>)>,
+    actor: Query<(&VisualPosition, &Heading, Option<&Status>), (With<crate::components::Viewed>, Without<Camera3d>)>,
     mut look: ResMut<Look>,
     map: Res<Map>,
     diagnostics: Res<DiagnosticsState>,
     time: Res<Time>,
     render_origin: Res<RenderOrigin>,
 ) {
-    let Ok((visual, &heading)) = actor.single() else { return };
+    let Ok((visual, &heading, status)) = actor.single() else { return };
     let Ok((mut projection, mut c_transform)) = camera.single_mut() else { return };
     // The visual, not the actor's Transform: the same value the actor is
     // drawn at, whichever of the two systems runs first. Everything here is
@@ -706,7 +707,7 @@ pub fn update(
     if diagnostics.camera_closeup {
         wanted = Pose { yaw: wanted.yaw, elevation: 0.0, fov: CEILING_FOV, reach: 1.0, drop: PLAYER_DROP };
     }
-    let next = step(current, wanted, dt);
+    let next = step(current, wanted, Status::turn_pace_of(status), dt);
     // Ground on the boom lifts the camera over it at once, so the camera
     // never enters it; it settles back as the step eases it toward the
     // wanted pose.

@@ -2,13 +2,14 @@ use std::time::Duration;
 
 use bevy::{gltf::GltfNode, prelude::*, world_serialization::WorldInstanceReady};
 
-use crate::{components::*, systems::animator::{Clip, Clips, Rig}};
+use crate::{components::*, systems::{following_turn, animator::{Clip, Clips, Rig}}};
 use common_bevy::{
     components::{
         entity_type::{ actor::*, * },
         heading::*, keybits::*,
         position::{Position, VisualPosition},
         reaction_queue::ReactionQueue,
+        status::Status,
         *
     },
     message::{ Event, * },
@@ -69,8 +70,9 @@ pub(crate) fn animate(
         .insert(clips);
 }
 
-/// Exponential decay constant of the facing's easing between headings: a
-/// heading steps by a bearing at a time, and the body turns through it.
+/// Exponential decay constant of the facing's easing between headings at
+/// whole turn pace: a heading steps by a bearing at a time, and the body
+/// turns through it ([`following_turn`]).
 const FACING_EASE: f32 = 15.0;
 /// Radians short of the heading at which the facing lands on it. Eased all
 /// the way, the slerp never arrives: its last steps are a lerp and a
@@ -80,30 +82,31 @@ const FACING_EASE: f32 = 15.0;
 const FACING_SNAP: f32 = 0.001;
 
 /// The facing after `dt` seconds of turning from `current` toward
-/// `heading`: eased, and landed exactly once within the snap.
-pub fn face(current: Quat, heading: Heading, dt: f32) -> Quat {
+/// `heading` at `turn_pace`, the share of its turn the actor keeps
+/// (`Status::turn_pace`): eased, and landed exactly once within the snap.
+pub fn face(current: Quat, heading: Heading, turn_pace: f32, dt: f32) -> Quat {
     let facing: Quat = heading.into();
     if current.angle_between(facing) < FACING_SNAP {
         return facing;
     }
-    current.slerp(facing, 1.0 - (-FACING_EASE * dt).exp())
+    current.slerp(facing, 1.0 - (-following_turn(FACING_EASE, turn_pace) * dt).exp())
 }
 
 /// Places each actor where it is drawn, turned toward its heading — or,
 /// sliding round a target, toward the way it goes, so it runs round rather
 /// than sideways; the heading takes the turn back as the slide ends.
 pub fn update(
-    mut query: Query<(&Heading, &mut Transform, &VisualPosition, Option<&Displacing>), (With<Loc>, Without<DeathMarker>)>,
+    mut query: Query<(&Heading, &mut Transform, &VisualPosition, Option<&Displacing>, Option<&Status>), (With<Loc>, Without<DeathMarker>)>,
     time: Res<Time>,
 ) {
-    for (&heading, mut transform0, vis, displacing) in &mut query {
+    for (&heading, mut transform0, vis, displacing, status) in &mut query {
         // The visual, not the position: the same value the camera reads,
         // whichever runs first
         let final_pos = vis.current();
 
         let circling = displacing.filter(|d| d.around.is_some())
             .and_then(|_| Heading::toward(vis.from, vis.to));
-        let turned = face(transform0.rotation, circling.unwrap_or(heading), time.delta_secs());
+        let turned = face(transform0.rotation, circling.unwrap_or(heading), Status::turn_pace_of(status), time.delta_secs());
         // Written only when it moves: the same value written again marks
         // the whole rig changed and the skin is re-extracted for nothing.
         if transform0.translation != final_pos || transform0.rotation != turned {
@@ -242,6 +245,7 @@ pub fn spawn_debug_sphere(
 #[cfg(test)]
 mod facing_tests {
     use super::*;
+    use common_bevy::systems::movement::turn_interval_ms;
 
     /// A turn eases in and then lands: the facing becomes the heading's
     /// rotation bit for bit and never moves again.
@@ -251,13 +255,30 @@ mod facing_tests {
         let target: Quat = heading.into();
         let mut facing = Quat::IDENTITY;
         for _ in 0..600 {
-            facing = face(facing, heading, 1.0 / 60.0);
+            facing = face(facing, heading, 1.0, 1.0 / 60.0);
         }
         assert_eq!(facing, target);
         for _ in 0..600 {
-            let next = face(facing, heading, 1.0 / 60.0);
+            let next = face(facing, heading, 1.0, 1.0 / 60.0);
             assert_eq!(next, facing);
             facing = next;
+        }
+    }
+
+    /// A slower turn eases as much slower: when its next step is due, the
+    /// body is as far through the last as it is at whole pace, so it never
+    /// lands and rests between steps.
+    #[test]
+    fn the_facing_keeps_pace_with_the_turn() {
+        let heading = Heading::from_degrees(15.0);
+        let target: Quat = heading.into();
+        let left = |pace: f32| {
+            let interval = turn_interval_ms(pace).unwrap() as f32 / 1000.0;
+            face(Quat::IDENTITY, heading, pace, interval).angle_between(target)
+        };
+        let whole = left(1.0);
+        for pace in [0.6, 0.2, 2.0] {
+            assert!((left(pace) - whole).abs() < 1e-3, "pace {pace}: {} left against {whole}", left(pace));
         }
     }
 }

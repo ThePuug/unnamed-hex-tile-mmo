@@ -45,3 +45,12 @@ pub mod world;
 pub fn ease(from: f32, to: f32, k: f32, dt: f32) -> f32 {
     from + (to - from) * (1.0 - (-k * dt).exp())
 }
+
+/// The decay constant `k`, set to follow a held turn's heading steps at
+/// whole pace, scaled to the steps of a turn at `turn_pace`
+/// (`Status::turn_pace`): what follows is as far through each step when the
+/// next comes, so a slower turn is as smooth. At no pace, `k` itself.
+pub fn following_turn(k: f32, turn_pace: f32) -> f32 {
+    use common_bevy::systems::movement::{turn_interval_ms, TURN_REPEAT_MS};
+    turn_interval_ms(turn_pace).map_or(k, |interval| k * TURN_REPEAT_MS as f32 / interval as f32)
+}
