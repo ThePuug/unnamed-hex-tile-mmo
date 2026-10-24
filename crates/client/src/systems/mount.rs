@@ -19,7 +19,7 @@ use crate::{
     components::Animates,
     systems::{
         actor::{actor_name, animate},
-        animator::{Clip, Clips, Jumping, Lope, Rig},
+        animator::{Clip, Clips, Jumping, Rig},
         equipment::{rig, Worn},
     },
 };
@@ -108,7 +108,7 @@ pub fn saddle(
                 }
                 commands.entity(mount.horse).despawn();
                 // The gait and the jump were the horse's
-                commands.entity(actor).remove::<(Mount, Jumping, Lope)>();
+                commands.entity(actor).remove::<(Mount, Jumping)>();
                 info!("mount: {actor} got down");
             }
             _ => {}
@@ -164,7 +164,7 @@ pub fn seat(
         // point, expressed under the socket
         let upright = Mat4::from_translation(saddle.w_axis.truncate() - seat.w_axis.truncate()) * standing.to_matrix();
         commands.entity(rider).insert((ChildOf(socket), Transform::from_matrix(saddle.inverse() * upright)));
-        commands.entity(actor).remove::<(Jumping, Lope)>();
+        commands.entity(actor).remove::<Jumping>();
         mount.seated = Some(Seated { player, rider, parent: parent.parent(), standing });
         info!("mount: {actor} seated");
     }

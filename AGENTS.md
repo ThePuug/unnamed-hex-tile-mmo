@@ -308,9 +308,9 @@ the walk or the run, declares its `stride` and `seconds` there too;
 `Clips::gait` plays the one whose rate keeps the feet planted at the drawn
 speed nearest its authored pace. A lofted gait also declares its
 `flights`, each moment no foot is down; faster than its pace it keeps its
-footfall (`Stride::lope`): a contact plays at the rate, a flight as
-authored, and each flight's top is held while the physics carries the
-actor on, so a cycle lasts as authored. A gait with no flight spins its
+footfall (`Stride::lope`): a contact plays at the rate, and every
+flight slower by the time that saves, so a cycle lasts as authored while
+the physics carries the actor on through the air. A gait with no flight spins its
 feet to match the ground. Moving back against its facing, an actor plays
 its `back` gait forward where it has one, else its gait ahead reversed.
 
