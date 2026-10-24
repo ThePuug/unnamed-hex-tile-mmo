@@ -20,8 +20,9 @@ pub struct VisibleSummaryCache {
     /// Regions sent to this client, whole: a region is the unit, its
     /// summaries never sent apart.
     sent_regions: HashSet<MeshRegionKey>,
-    /// Regions this client wants that are not computed yet, nearest first;
-    /// the feeder takes from the front as task slots free up.
+    /// Regions this client wants that are not computed yet, those its
+    /// screen can show first, each nearest first; the feeder takes from the
+    /// front as task slots free up.
     pending: Vec<MeshRegionKey>,
     /// The chunk and bearing the last pass was made for. A pass is made
     /// again only when either changes.
@@ -80,13 +81,22 @@ const KEEP_RINGS: u32 = 1;
 
 /// Whether a region is streamed for a player at `(px, pz)` heading `dir`:
 /// inside the context radius always, beyond it when any of it can lie in
-/// the sector, its centre judged with the slack of its own circumradius.
+/// the sector.
 fn in_stream(key: &MeshRegionKey, px: f32, pz: f32, dir: Vec2) -> bool {
+    let (wx, wz) = region_center(key);
+    let circum = common_bevy::summary::mesh_region_extent_wu(key.r) / 3.0_f32.sqrt();
+    Vec2::new(wx - px, wz - pz).length() <= common_bevy::summary::threshold_horiz(CONTEXT_LEVEL) + circum || in_sector(key, px, pz, dir)
+}
+
+/// Whether any of a region can lie in the sector a player at `(px, pz)`
+/// looks along `dir`, its centre judged with the slack of its own
+/// circumradius: what of the far view the player's screen can show.
+fn in_sector(key: &MeshRegionKey, px: f32, pz: f32, dir: Vec2) -> bool {
     let (wx, wz) = region_center(key);
     let to = Vec2::new(wx - px, wz - pz);
     let dist = to.length();
     let circum = common_bevy::summary::mesh_region_extent_wu(key.r) / 3.0_f32.sqrt();
-    if dist <= common_bevy::summary::threshold_horiz(CONTEXT_LEVEL) + circum {
+    if dist <= circum {
         return true;
     }
     let slack = (circum / dist).min(1.0).asin();
@@ -96,8 +106,9 @@ fn in_stream(key: &MeshRegionKey, px: f32, pz: f32, dir: Vec2) -> bool {
 /// Rebuild what each player wants when their chunk or the bearing its
 /// camera looks along changes:
 /// the regions in stream that are not sent, sent at once from the cache
-/// where every summary is computed, queued as pending otherwise, nearest
-/// first. Standing still costs nothing.
+/// where every summary is computed, queued as pending otherwise, those in
+/// the sector the camera looks along first, each nearest first. Standing
+/// still costs nothing.
 pub fn pass_summary_regions(
     mut writer: MessageWriter<Do>,
     mut query: Query<(Entity, &Loc, &Heading, &mut VisibleSummaryCache)>,
@@ -158,10 +169,15 @@ pub fn pass_summary_regions(
                 None => pending.push(*rk),
             }
         }
+        // What the screen can show first, then what streams round the
+        // player for context, each nearest first.
         pending.sort_by(|a, b| {
-            region_distance_sq(a, cam_wx, cam_wz)
-                .partial_cmp(&region_distance_sq(b, cam_wx, cam_wz))
-                .unwrap_or(std::cmp::Ordering::Equal)
+            let behind = |rk: &MeshRegionKey| !in_sector(rk, cam_wx, cam_wz, facing);
+            behind(a).cmp(&behind(b)).then_with(|| {
+                region_distance_sq(a, cam_wx, cam_wz)
+                    .partial_cmp(&region_distance_sq(b, cam_wx, cam_wz))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
         });
         vis_cache.pending = pending;
 
