@@ -445,9 +445,60 @@ pub(super) struct Band {
     near: f64,
     far: f64,
     read: i64,
-    cells: BTreeMap<(i64, i64), Vec<Sample>>,
+    cells: BTreeMap<(i64, i64), Bucket>,
     /// The edges sampled, by the vertex each leaves.
     sampled: HashSet<usize>,
+}
+
+/// The samples a cell of a band's level holds, and what bounds the valley
+/// any of them stands over a disc: the cell's centre, how far its samples
+/// and their stretches reach from it, and the least a valley can stand
+/// ([`Bucket::lowest_over`]).
+#[derive(Default)]
+struct Bucket {
+    samples: Vec<Sample>,
+    centre: (f64, f64),
+    /// How far its farthest sample lies from the centre, and the longest
+    /// stretch one runs on.
+    spread: f64,
+    stretch: f64,
+    /// The least any sample's valley stands at its bed, its floor fallen by
+    /// its stretch's fall, and the gentlest any climbs past its plain, and
+    /// the widest plain.
+    base: f64,
+    climb: f64,
+    plain: f64,
+}
+
+impl Bucket {
+    /// Its centre and its bounds, read again from every sample it holds.
+    fn bound(&mut self, centre: (f64, f64)) {
+        self.centre = centre;
+        let (mut spread, mut stretch, mut base, mut climb, mut plain) = (0.0f64, 0.0f64, f64::INFINITY, f64::INFINITY, 0.0f64);
+        for s in &self.samples {
+            spread = spread.max((s.x - centre.0).hypot(s.y - centre.1));
+            stretch = stretch.max(s.on.0.hypot(s.on.1));
+            // Its floor along the stretch is never below its own less the
+            // whole fall; its channel stands `depth` below that, its banks a
+            // step above less what a plain falling back toward its river
+            // loses across it.
+            let floor = s.floor - 2.0 * s.down.abs();
+            base = base.min(floor + (-depth(s.bed)).min(1.0 + (2.0 * s.fall + 0.01).min(0.0) * s.plain));
+            climb = climb.min(s.slope.min(lean(s)).max(0.0));
+            plain = plain.max(s.plain);
+        }
+        (self.spread, self.stretch, self.base, self.climb, self.plain) = (spread, stretch, base, climb, plain);
+    }
+
+    /// No more than the least any of its samples' valleys stands over a
+    /// disc `radius` tiles round `at`, [`lowest_over`]: past its plain a
+    /// valley climbs at least at its channel's walls or its banks', and a
+    /// sample's stretch lies no nearer the disc than the bucket's centre
+    /// less its spread and the stretch.
+    fn lowest_over(&self, at: (f64, f64), radius: f64) -> f64 {
+        let d = ((at.0 - self.centre.0).hypot(at.1 - self.centre.1) - self.spread - self.stretch - radius).max(0.0);
+        self.base + self.climb * (d - self.plain).max(0.0)
+    }
 }
 
 impl Band {
@@ -497,7 +548,7 @@ impl Band {
                 let r = y - q / 2.0;
                 let at = cube_round(q / wf, r / wf);
                 touched.push(at);
-                self.cells.entry(at).or_default().push(Sample {
+                self.cells.entry(at).or_default().samples.push(Sample {
                     x,
                     y,
                     on,
@@ -519,8 +570,9 @@ impl Band {
         touched.sort_unstable();
         touched.dedup();
         for at in touched {
-            if let Some(samples) = self.cells.get_mut(&at) {
-                samples.sort_by_key(|s| s.rank);
+            if let Some(bucket) = self.cells.get_mut(&at) {
+                bucket.samples.sort_by_key(|s| s.rank);
+                bucket.bound(world((at.0 * w) as f64, (at.1 * w) as f64));
             }
         }
     }
@@ -536,13 +588,44 @@ impl Band {
         let k = (reach / (wf * SQRT_3 / 2.0)).ceil() as i64 + 1;
         out.clear();
         for (di, dj, _) in hex_offsets(k) {
-            let Some(samples) = self.cells.get(&(ci + di, cj + dj)) else { continue };
-            out.extend(samples.iter().filter(|s| (s.x - x).hypot(s.y - y) <= reach));
+            let Some(bucket) = self.cells.get(&(ci + di, cj + dj)) else { continue };
+            out.extend(bucket.samples.iter().filter(|s| (s.x - x).hypot(s.y - y) <= reach));
+        }
+    }
+
+    /// Every sample within `reach` tiles of a position in tiles, within its
+    /// own reach of a disc `radius` tiles round it, whose valley can stand
+    /// below `high` over the disc, with the least it can stand there
+    /// ([`lowest_over`]), in place of what `out` held, in the order
+    /// [`Band::within`] finds them: a cell whose every valley stands at or
+    /// above `high` over the disc is passed by.
+    fn below(&self, q: f64, r: f64, reach: f64, radius: f64, high: f64, out: &mut Vec<(f64, Sample)>) {
+        let wf = self.w as f64;
+        let (ci, cj) = cube_round(q / wf, r / wf);
+        let (x, y) = world(q, r);
+        let k = (reach / (wf * SQRT_3 / 2.0)).ceil() as i64 + 1;
+        out.clear();
+        for (di, dj, _) in hex_offsets(k) {
+            let Some(bucket) = self.cells.get(&(ci + di, cj + dj)) else { continue };
+            // A margin past rounding: the bound is the least valley exactly.
+            if bucket.lowest_over((x, y), radius) >= high + 1e-6 * (1.0 + high.abs()) {
+                continue;
+            }
+            for s in &bucket.samples {
+                let away = (s.x - x).hypot(s.y - y);
+                if away > reach || away - radius > s.far {
+                    continue;
+                }
+                let lowest = lowest_over(s, (x, y), radius);
+                if lowest < high {
+                    out.push((lowest, *s));
+                }
+            }
         }
     }
 
     fn all(&self) -> Vec<Sample> {
-        self.cells.values().flatten().copied().collect()
+        self.cells.values().flat_map(|bucket| &bucket.samples).copied().collect()
     }
 }
 
@@ -650,13 +733,13 @@ pub(super) fn carved_over(lv: &Level, bands: &[&Band], cells: &[usize]) -> Vec<C
     }
     let groups: Vec<Vec<Vec<usize>>> = by.into_values().map(|g| g.into_values().collect()).collect();
     let each: Vec<usize> = (0..groups.len()).collect();
-    let lists: Vec<Vec<(f64, Sample)>> = in_parallel(&each, |found, g| {
+    let lists: Vec<Vec<(f64, Sample)>> = in_parallel(&each, |_, g| {
         let xs: Vec<usize> = groups[g].iter().flatten().copied().collect();
-        let ((cq, cr), centre, radius, high) = span(&xs);
-        let mut list = Vec::new();
+        let ((cq, cr), _, radius, high) = span(&xs);
+        let (mut list, mut found) = (Vec::new(), Vec::new());
         for band in bands {
-            band.within(cq, cr, band.far + radius, found);
-            list.extend(found.iter().filter_map(|s| reaching(s, centre, radius, high)));
+            band.below(cq, cr, band.far + radius, radius, high, &mut found);
+            list.append(&mut found);
         }
         list.sort_by(|a, b| a.0.total_cmp(&b.0));
         list
