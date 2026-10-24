@@ -141,7 +141,7 @@ impl Laddered {
 
     /// The ladder's tile, where the ladder reaches it.
     pub fn tile(&self, q: i32, r: i32) -> Option<Cell> {
-        self.terrain.kept(1, q as i64, r as i64).or_else(|| self.terrain.cells(1, &[(q as i64, r as i64)]).pop().flatten())
+        self.terrain.cells(1, &[(q as i64, r as i64)]).pop().flatten()
     }
 
     /// The tiles of `coords` computed together.

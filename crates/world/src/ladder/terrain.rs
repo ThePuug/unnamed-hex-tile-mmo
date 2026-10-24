@@ -1,9 +1,14 @@
 //! The ladder for readers on many threads: one lock round it, every level
-//! built on request down to the tiles, a cell read as it was built.
+//! built on request down to the tiles, a cell read as it was built. A cell
+//! once finished never changes, so the cells read lately are kept beside
+//! the lock, and a read that finds all it asks for there never waits on a
+//! build.
 
 use std::sync::{Mutex, MutexGuard};
 
-use super::{Bounds, Ground, Ladder, Params};
+use dashmap::DashMap;
+
+use super::{Bounds, Ground, Ladder, Params, NB};
 
 /// A cell of any level as a reader takes it.
 #[derive(Clone, Debug)]
@@ -20,9 +25,17 @@ pub struct Cell {
     pub wet_parts: u16,
 }
 
+/// How many cells read lately are kept beside the lock before they are
+/// all forgotten: every cell a few score summary regions and chunks in
+/// flight read at once, each with its ring.
+pub const RECENT_CELLS: usize = 1 << 19;
+
 /// The ladder behind a lock.
 pub struct Terrain<'g, G: Ground> {
     ladder: Mutex<Ladder<'g, G>>,
+    /// Cells read lately by level width and index, each finished, or none
+    /// where the ladder does not hold it.
+    recent: DashMap<(i64, i64, i64), Option<Cell>>,
 }
 
 impl<'g, G: Ground> Terrain<'g, G> {
@@ -32,7 +45,7 @@ impl<'g, G: Ground> Terrain<'g, G> {
     }
 
     pub fn from_ladder(ladder: Ladder<'g, G>) -> Self {
-        Terrain { ladder: Mutex::new(ladder) }
+        Terrain { ladder: Mutex::new(ladder), recent: DashMap::new() }
     }
 
     /// The ladder, for a request or a reading of it.
@@ -45,8 +58,13 @@ impl<'g, G: Ground> Terrain<'g, G> {
     }
 
     /// Cells of the level `w` wide, built where not yet; none where the
-    /// ladder has no such level or does not hold the cell.
+    /// ladder has no such level or does not hold the cell. Each cell asked
+    /// for is kept, with each of its ring finished by then.
     pub fn cells(&self, w: i64, at: &[(i64, i64)]) -> Vec<Option<Cell>> {
+        let kept: Option<Vec<Option<Cell>>> = at.iter().map(|&(i, j)| self.recent.get(&(w, i, j)).map(|c| c.clone())).collect();
+        if let Some(kept) = kept {
+            return kept;
+        }
         let mut ladder = self.ladder();
         let Some(k) = ladder.levels.iter().position(|l| l.w == w) else { return vec![None; at.len()] };
         let lv = &ladder.levels[k];
@@ -55,14 +73,21 @@ impl<'g, G: Ground> Terrain<'g, G> {
             ladder.request(k, &held);
         }
         let lv = &ladder.levels[k];
-        at.iter().map(|&(i, j)| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built[c]).map(|c| cell(lv, c))).collect()
-    }
-
-    /// A cell already finished.
-    pub fn kept(&self, w: i64, i: i64, j: i64) -> Option<Cell> {
-        let ladder = self.ladder();
-        let lv = ladder.levels.iter().find(|l| l.w == w)?;
-        lv.idx(i, j).filter(|&c| lv.exists[c] && lv.finished[c]).map(|c| cell(lv, c))
+        let read: Vec<Option<Cell>> = at.iter().map(|&(i, j)| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built[c]).map(|c| cell(lv, c))).collect();
+        if self.recent.len() + 7 * at.len() > RECENT_CELLS {
+            self.recent.clear();
+        }
+        for &(i, j) in at {
+            for (di, dj) in std::iter::once((0, 0)).chain(NB) {
+                let (i, j) = (i + di, j + dj);
+                match lv.idx(i, j).filter(|&c| lv.exists[c]) {
+                    Some(c) if lv.finished[c] => self.recent.insert((w, i, j), Some(cell(lv, c))),
+                    Some(_) => None,
+                    None => self.recent.insert((w, i, j), None),
+                };
+            }
+        }
+        read
     }
 }
 
