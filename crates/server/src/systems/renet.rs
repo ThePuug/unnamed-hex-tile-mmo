@@ -268,6 +268,7 @@ pub fn write_try(
                 | Event::RespecAttributes { .. }
                 | Event::SetLoadout { .. }
                 | Event::Wear { .. }
+                | Event::Mount { .. }
                 | Event::Look { .. }
                 | Event::Teleport { .. } => {
                     let (Some(character), Some(ent)) = (character, event.ent_mut()) else { continue };

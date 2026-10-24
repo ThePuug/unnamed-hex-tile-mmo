@@ -38,13 +38,14 @@ pub enum Clip {
     Chop,
     Mine,
     Pickup,
+    Mounted,
 }
 
 impl Clip {
-    pub const ALL: [Clip; 15] = [
+    pub const ALL: [Clip; 16] = [
         Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Back, Clip::Jump, Clip::Attack, Clip::Counter,
         Clip::Frenzy, Clip::Parry, Clip::Rattle, Clip::Disengage,
-        Clip::Chop, Clip::Mine, Clip::Pickup,
+        Clip::Chop, Clip::Mine, Clip::Pickup, Clip::Mounted,
     ];
 
     /// The one-shots an ability plays, each held until it ends.
@@ -75,6 +76,7 @@ impl Clip {
             Clip::Chop => "chop",
             Clip::Mine => "mine",
             Clip::Pickup => "pickup",
+            Clip::Mounted => "mounted",
         }
     }
 
@@ -462,13 +464,13 @@ fn time_to_land(world: Vec3, fallen_ms: f32, map: &Map) -> Option<f32> {
 
 pub fn update(
     mut commands: Commands,
-    mut query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading, &Transform, Option<&mut Jumping>, Option<&crate::systems::gathering::Gathering>, Option<&mut Lope>)>,
+    mut query: Query<(Entity, &AirTime, &Animates, &VisualPosition, &Heading, &Transform, Option<&mut Jumping>, Option<&crate::systems::gathering::Gathering>, Option<&mut Lope>, Option<&crate::systems::mount::Mount>)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions, &Clips)>,
     map: Res<Map>,
     origin: Res<crate::resources::RenderOrigin>,
     time: Res<Time>,
 ) {
-    for (entity, &airtime, &animates, vis_pos, &heading, transform, jumping, gathering, mut lope) in &mut query {
+    for (entity, &airtime, &animates, vis_pos, &heading, transform, jumping, gathering, mut lope, mount) in &mut query {
         // Entity is moving if VisualPosition is actively interpolating
         let travel = vis_pos.to - vis_pos.from;
         let is_moving = !vis_pos.is_complete() && travel.length_squared() > 0.001;
@@ -478,8 +480,10 @@ pub fn update(
         // Moving against the facing plays the gait in reverse.
         let direction = if travel.xz().dot(heading.to_world_dir()) < 0.0 { -1. } else { 1. };
 
-        let Ok((mut player, mut transitions, clips)) = q_anim.get_mut(animates.0) else { continue };
-        let (Some(idle), Some(walk)) = (clips.node(Clip::Idle), clips.node(Clip::Walk)) else { continue };
+        // A rider's horse carries the gaits and the jump.
+        let driven = mount.and_then(|m| m.driven()).unwrap_or(animates.0);
+        let Ok((mut player, mut transitions, clips)) = q_anim.get_mut(driven) else { continue };
+        let Some(idle) = clips.node(Clip::Idle) else { continue };
         let main = transitions.get_main_animation();
 
         // The jump: started as the actor leaves the ground, held at its
@@ -546,12 +550,10 @@ pub fn update(
             // Moving back, an actor with a gait for it plays that forward;
             // one without plays its gait ahead in reverse.
             let back = if direction < 0.0 { clips.back(ground_speed, transform.scale.y) } else { None };
-            let (gait, rate, direction) = match back {
-                Some((node, rate)) => (node, rate, 1.0),
-                None => {
-                    let (gait, rate) = clips.gait(ground_speed, transform.scale.y, current).unwrap_or((walk, 1.0));
-                    (gait, rate, direction)
-                }
+            let (gait, rate, direction) = match back.or_else(|| clips.gait(ground_speed, transform.scale.y, current)) {
+                Some((node, rate)) if back.is_some() => (node, rate, 1.0),
+                Some((node, rate)) => (node, rate, direction),
+                None => continue,
             };
             if main != Some(gait) {
                 // The gaits all land the same foot at the start of their

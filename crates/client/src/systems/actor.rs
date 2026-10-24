@@ -42,18 +42,31 @@ pub(crate) fn ready(
                 warn!("{} has no Gltf asset loaded; its actor stays unanimated", get_asset(typ));
                 continue;
             };
-            let (graph, clips) = Clips::from_gltf(gltf, &nodes);
-            let handle = AnimationGraphHandle(graphs.add(graph));
-            let mut transitions = AnimationTransitions::new();
-            if let Some(idle) = clips.node(Clip::Idle) {
-                transitions.play(&mut player, idle, Duration::ZERO).set_speed(1.).repeat();
-            }
-            commands.entity(child)
-                .insert(handle)
-                .insert(transitions)
-                .insert(clips);
+            animate(child, &mut player, gltf, &nodes, &mut graphs, &mut commands);
         }
     }
+}
+
+/// Gives the scene's `AnimationPlayer`, on `child`, a graph of every clip
+/// `gltf` holds, the idle playing.
+pub(crate) fn animate(
+    child: Entity,
+    player: &mut AnimationPlayer,
+    gltf: &Gltf,
+    nodes: &Assets<GltfNode>,
+    graphs: &mut Assets<AnimationGraph>,
+    commands: &mut Commands,
+) {
+    let (graph, clips) = Clips::from_gltf(gltf, nodes);
+    let handle = AnimationGraphHandle(graphs.add(graph));
+    let mut transitions = AnimationTransitions::new();
+    if let Some(idle) = clips.node(Clip::Idle) {
+        transitions.play(player, idle, Duration::ZERO).set_speed(1.).repeat();
+    }
+    commands.entity(child)
+        .insert(handle)
+        .insert(transitions)
+        .insert(clips);
 }
 
 /// Exponential decay constant of the facing's easing between headings: a

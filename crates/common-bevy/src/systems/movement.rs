@@ -249,8 +249,8 @@ pub fn is_tile_blocked(
 /// the time is sliced.
 const FACE_MARGIN: f32 = 0.01;
 
-/// Faces one walk may meet. A sub-step is shorter than a tile, so a few
-/// crossings and slides cover it; the cap only ends the bounce between the
+/// Faces one walk may meet. A sub-step crosses at most a tile or two,
+/// mounted, so a few crossings and slides cover it; the cap only ends the bounce between the
 /// two walls of a concave corner, which makes no progress.
 const FACES_PER_WALK: usize = 16;
 

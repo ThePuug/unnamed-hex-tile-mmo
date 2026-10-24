@@ -26,6 +26,7 @@ pub mod hiding;
 pub mod input;
 pub mod keycap;
 pub mod loot_window;
+pub mod mount;
 pub mod movement;
 pub mod renet;
 pub mod resolved_threats; // Resolved threats stack below threat queue

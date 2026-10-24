@@ -32,7 +32,7 @@ use crate::{
         water::WaterPlugin,
     },
     resources::*,
-    systems::{actor, actor_dead_visibility, animator, camera, combat, equipment, gathering, ghost, hiding, input, movement, renet, struck, targeting, world}
+    systems::{actor, actor_dead_visibility, animator, camera, combat, equipment, gathering, ghost, hiding, input, mount, movement, renet, struck, targeting, world}
 };
 #[cfg(feature = "admin")]
 use crate::plugins::recorder;
@@ -201,6 +201,8 @@ fn main() {
         gathering::do_loot,
         gathering::do_activity,
         (equipment::hold, equipment::bind_held).chain(),
+        mount::request,
+        (mount::saddle, mount::seat).chain(),
         crate::systems::focus::track,
         crate::systems::loot_window::update,
         common_bevy::systems::movement::update_burden,

@@ -35,6 +35,9 @@ pub struct Status {
     pub held: Option<Timed>,
     /// Carrying past the bag's burden limit
     pub burden: bool,
+    /// On its horse, which carries it at [`MOUNTED_PACE`] of its speed
+    /// until it fights, uses a skill or gathers
+    pub mounted: bool,
     /// Taxed, in an Intimidating foe's zone: every skill it uses costs
     /// `pace` times its price, for `remaining` seconds ([`Status::tax`])
     pub toll: Option<Timed>,
@@ -80,11 +83,16 @@ impl Timed {
 /// gait plays the walk, which the actors' walk stride sets.
 pub const BURDENED_PACE: f32 = 0.2;
 
+/// The share of its speed a mounted actor moves at, its horse's run against
+/// its own.
+pub const MOUNTED_PACE: f32 = 2.0;
+
 impl Status {
     /// The share of its speed the actor moves at under every effect on it
     pub fn pace(&self) -> f32 {
         let burden = if self.burden { BURDENED_PACE } else { 1.0 };
-        Timed::pace(self.slow) * Timed::pace(self.root) * Timed::pace(self.stride) * Timed::pace(self.perfect_stride) * Timed::pace(self.held) * burden
+        let mount = if self.mounted { MOUNTED_PACE } else { 1.0 };
+        Timed::pace(self.slow) * Timed::pace(self.root) * Timed::pace(self.stride) * Timed::pace(self.perfect_stride) * Timed::pace(self.held) * burden * mount
     }
 
     /// The pace of an actor with `status`, whole with none
@@ -313,6 +321,8 @@ mod tests {
         assert!((both.pace() - slowed.pace() * stumbling.pace()).abs() < 1e-6, "effects multiply");
         let burdened = Status { burden: true, ..both };
         assert!(burdened.pace() < both.pace());
+        let mounted = Status { mounted: true, ..both };
+        assert!(mounted.pace() > both.pace());
         assert_eq!(Status::pace_of(None), 1.0);
     }
 

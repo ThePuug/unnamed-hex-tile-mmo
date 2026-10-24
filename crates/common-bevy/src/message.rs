@@ -135,6 +135,9 @@ pub enum Event {
     },
     /// Client → Server (Try): wear an item from the bag, or take it off
     Wear { ent: Entity, item: Item, on: bool },
+    /// Client → Server (Try): get on the player's horse, or off it; the
+    /// server answers with the actor's `Status`
+    Mount { ent: Entity, on: bool },
     /// Server → Client: the bag, sent to its owner only
     Inventory { ent: Entity, bag: Inventory },
     /// Client → Server (Try): gather what stands in `slot` of tile `(q, r)`
@@ -213,6 +216,7 @@ impl Event {
             | Event::EvictChunks { ent, .. }
             | Event::SummaryBatch { ent, .. }
             | Event::Wear { ent, .. }
+            | Event::Mount { ent, .. }
             | Event::Inventory { ent, .. }
             | Event::Gather { ent, .. }
             | Event::CoverChanged { ent, .. }

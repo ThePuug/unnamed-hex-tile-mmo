@@ -6,6 +6,7 @@ pub mod engagement_spawner;
 pub mod equipment;
 pub mod gathering;
 pub mod input;
+pub mod mount;
 pub mod renet;
 pub mod summary;
 pub mod warming;
