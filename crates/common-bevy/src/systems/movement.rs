@@ -76,8 +76,9 @@ pub fn update_burden(
 /// Milliseconds of input time between steps of a held turn key at whole
 /// pace, and the least time between any two steps: a tap after a rest turns
 /// at once, and a hammered key turns no faster than a held one. A pace
-/// scales it ([`turn_interval_ms`]).
-pub const TURN_REPEAT_MS: u16 = 80;
+/// scales it ([`turn_interval_ms`]). Longer than a tap is held, or a tap
+/// turns two steps.
+pub const TURN_REPEAT_MS: u16 = 150;
 
 /// Milliseconds between steps of a held turn at `pace`, the share of its
 /// speed an actor's status effects leave it ([`Status::pace`]): a slowed
