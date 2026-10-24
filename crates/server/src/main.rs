@@ -21,7 +21,15 @@ fn main() {
     app.add_plugins((
         // Without a wait the runner spins a core. Physics is FixedUpdate, so
         // the wait only bounds how long a Try or Do sits before Update runs.
-        MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0))),
+        // Half the cores build terrain for the far view and the chunks, each
+        // task on its own thread, where the ladder builds separate areas at
+        // once; the frame keeps a quarter.
+        MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0))).set(TaskPoolPlugin {
+            task_pool_options: TaskPoolOptions {
+                async_compute: bevy::app::TaskPoolThreadAssignmentPolicy { min_threads: 1, max_threads: usize::MAX, percent: 0.5, on_thread_spawn: None, on_thread_destroy: None },
+                ..default()
+            },
+        }),
         LogPlugin {
             level: bevy::log::Level::TRACE,
             // world=warn keeps the terrain pipeline's per-tile tracing spans
