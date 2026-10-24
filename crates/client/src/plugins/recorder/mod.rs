@@ -388,7 +388,7 @@ fn advance(
                 skip = true;
             } else if asked.is_none_or(|a| now - a > ASK_AGAIN) {
                 *asked = Some(now);
-                writer.write(Try { event: Event::Teleport { ent, q: shot.at[0], r: shot.at[1] } });
+                writer.write(Try { event: Event::Teleport { ent, qrz: qrz::Qrz { q: shot.at[0], r: shot.at[1], z: 0 } } });
             }
         }
         Phase::Turn { since } => {

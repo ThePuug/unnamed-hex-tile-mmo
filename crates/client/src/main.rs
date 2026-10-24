@@ -176,6 +176,7 @@ fn main() {
         // A Loc that arrives with a slide must see the Displacing marker the
         // slide inserted, so the slide handler runs (and its commands apply) first.
         movement::do_loc.after(movement::apply_displace),
+        movement::do_teleport,
     ));
 
     app.add_systems(Update, (

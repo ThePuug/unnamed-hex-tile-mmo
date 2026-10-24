@@ -215,7 +215,7 @@ pub fn send_goto(
             _ => continue,
         };
         let Ok(ent) = player.single() else { continue };
-        writer.write(common_bevy::message::Try { event: common_bevy::message::Event::Teleport { ent, q, r } });
+        writer.write(common_bevy::message::Try { event: common_bevy::message::Event::Teleport { ent, qrz: qrz::Qrz { q, r, z: 0 } } });
         info!("Goto: qr ({q}, {r})");
     }
 }

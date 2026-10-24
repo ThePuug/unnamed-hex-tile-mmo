@@ -100,10 +100,11 @@ pub enum Event {
     /// ability (lunge, knockback), arriving after `duration_ms`; round the
     /// tile `around` on its ring when given (a flank), else the straight way.
     Displace { ent: Entity, destination: Qrz, duration_ms: u16, around: Option<Qrz> },
-    /// Client → Server: put the entity on the ground at this tile. An admin
-    /// request; the server decides the height and answers with the tile
-    /// update every client already treats as a teleport.
-    Teleport { ent: Entity, q: i32, r: i32 },
+    /// Client → Server (Try): put the entity on the ground at `qrz`'s
+    /// column, an admin request; its z is unread, the server decides the
+    /// height. Server → Client (Do): the entity now stands at `qrz`,
+    /// wherever it was, and is drawn there at once.
+    Teleport { ent: Entity, qrz: Qrz },
     /// Client → Server: the client's camera looks `steps` heading steps
     /// clockwise of the actor's heading, nothing but the far view streamed
     /// around that bearing; sent as it changes, 0 once the glance ends.

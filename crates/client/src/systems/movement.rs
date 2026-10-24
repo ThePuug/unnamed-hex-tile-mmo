@@ -38,9 +38,6 @@ pub struct Corrections {
 /// shifts; two smooths it.
 const VISUAL_TICKS: f32 = 2.0;
 
-/// A `Loc` this many tiles from the previous one is a teleport.
-const TELEPORT_THRESHOLD_HEXES: i32 = 2;
-
 /// A simulated remote entity further than this many tile spacings from its
 /// authoritative tile is snapped to it.
 const DRIFT_LIMIT_TILES: f32 = 1.5;
@@ -263,11 +260,12 @@ pub fn end_displace(time: Res<Time>, mut commands: Commands, query: Query<(Entit
 
 /// Applies a `Loc` update to the entity's position and visual. A slide in
 /// progress re-anchors the position when its destination arrives, leaving
-/// what is drawn to the slide, and ignores tiles short of it;
-/// a jump of two tiles or more snaps; a simulated remote entity is re-anchored
-/// to the tile, keeping its world position unless it has drifted; the local
-/// player keeps its confirmed position, which carries its own tile; and an
-/// entity nothing drives settles to the tile centre.
+/// what is drawn to the slide, and ignores tiles short of it; a simulated
+/// remote entity is re-anchored to the tile, keeping its world position
+/// unless it has drifted; the local player keeps its confirmed position,
+/// which carries its own tile; and an entity nothing drives settles to the
+/// tile centre. However far it is from the last, a `Loc` is a step: only a
+/// `Teleport` jumps ([`do_teleport`]).
 pub fn do_loc(
     mut reader: MessageReader<Do>,
     mut query: Query<(&mut Loc, &mut Position, &mut VisualPosition, Option<&Displacing>, Option<&RemoteMotion>)>,
@@ -289,9 +287,6 @@ pub fn do_loc(
             if loc.flat_distance(&displacing.destination) == 0 {
                 *position = Position::at_tile(*loc);
             }
-        } else if loc0.flat_distance(&loc) >= TELEPORT_THRESHOLD_HEXES {
-            *position = Position::at_tile(*loc);
-            visual.snap_to(centre);
         } else if motion.is_some() {
             let mut rebased = *position;
             rebased.rebase(*loc, &map);
@@ -307,5 +302,23 @@ pub fn do_loc(
         }
 
         *loc0 = loc;
+    }
+}
+
+/// Stands each entity the server teleported at its tile, drawn there at
+/// once. A `Loc` comes with it, which [`do_loc`] takes as a step, so the
+/// two agree in either order.
+pub fn do_teleport(
+    mut reader: MessageReader<Do>,
+    mut query: Query<(&mut Loc, &mut Position, &mut VisualPosition)>,
+    map: Res<Map>,
+    origin: Res<RenderOrigin>,
+) {
+    for message in reader.read() {
+        let Do { event: Event::Teleport { ent, qrz } } = message else { continue };
+        let Ok((mut loc, mut position, mut visual)) = query.get_mut(*ent) else { continue };
+        *loc = Loc::new(*qrz);
+        *position = Position::at_tile(*qrz);
+        visual.snap_to(origin.render_tile(&map, *qrz));
     }
 }

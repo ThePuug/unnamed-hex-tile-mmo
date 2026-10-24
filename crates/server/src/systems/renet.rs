@@ -311,6 +311,7 @@ fn route(event: &Event) -> Option<Route> {
         | Event::ApplyDamage { ent, .. }
         | Event::ClearQueue { ent, .. }
         | Event::Respawn { ent, .. }
+        | Event::Teleport { ent, .. }
         | Event::UseAbility { ent, .. } => Some(Route::Seen(*ent)),
         Event::Confirm { ent, .. }
         | Event::RespecAttributes { ent, .. }

@@ -46,6 +46,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Pong { .. } => "Pong",
         Event::MovementIntent { .. } => "MovementIntent",
         Event::Displace { .. } => "Displace",
+        Event::Teleport { .. } => "Teleport",
         Event::EvictChunks { .. } => "EvictChunks",
         Event::SummaryBatch { .. } => "SummaryBatch",
         Event::Inventory { .. } => "Inventory",
@@ -196,6 +197,7 @@ pub fn write_do(
             Do { event: mut event @ (
                 Event::Confirm { .. }
                 | Event::Respawn { .. }
+                | Event::Teleport { .. }
                 | Event::Incremental { .. }
                 | Event::Inventory { .. }
                 | Event::Loot { .. }

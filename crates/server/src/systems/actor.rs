@@ -413,8 +413,8 @@ pub fn try_teleport(
     mut waiting: Local<std::collections::HashMap<Entity, ((i32, i32), std::thread::JoinHandle<Qrz>)>>,
 ) {
     for message in reader.read() {
-        let Try { event: Event::Teleport { ent, q, r } } = message else { continue };
-        let (ent, q, r) = (*ent, *q, *r);
+        let Try { event: Event::Teleport { ent, qrz } } = message else { continue };
+        let (ent, q, r) = (*ent, qrz.q, qrz.r);
         if !query.contains(ent) || waiting.get(&ent).is_some_and(|(to, _)| *to == (q, r)) {
             continue;
         }
@@ -431,6 +431,7 @@ pub fn try_teleport(
         airtime.state = None;
         info!("teleport: {ent} to {qrz:?}");
         writer.write(Do { event: Event::Incremental { ent, component: Component::Loc(*loc) } });
+        writer.write(Do { event: Event::Teleport { ent, qrz } });
     }
 }
 
