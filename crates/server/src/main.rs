@@ -118,11 +118,6 @@ fn main() {
     let haven = common_bevy::haven::launch();
     info!("the haven stands at ({}, {})", haven.q, haven.r);
     let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED);
-    {
-        let (cache, dens) = crate::systems::warming::around(&registry, (haven.q, haven.r));
-        app.insert_resource(cache);
-        app.insert_resource(dens);
-    }
     // `CLEARING=<radius>[@<q>,<r>][~]` fells and mines every tile that far
     // round the tile named, or the haven, before anything is served: a
     // fixture for seeing changes from afar. With `~` it thins out toward its
