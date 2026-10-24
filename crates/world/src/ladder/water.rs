@@ -854,6 +854,11 @@ pub(super) fn carved_over(lv: &Level, bands: &[&RwLock<Band>], cells: &[usize]) 
             if *lowest >= ceiling {
                 break;
             }
+            // A stretch starting downstream of the whole disc by more than
+            // half a step reaches none of its vertices.
+            if back(s, centre) - radius > half_step {
+                continue;
+            }
             if let Some(near) = reaching(s, centre, radius, ceiling) {
                 ceiling = ceiling.min(ceiling_of(s));
                 list.push(near);
