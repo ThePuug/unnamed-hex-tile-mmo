@@ -75,13 +75,13 @@ pub fn update_burden(
 
 /// Milliseconds of input time between steps of a held turn key at whole
 /// pace, and the least time between any two steps: a tap after a rest turns
-/// at once, and a hammered key turns no faster than a held one. A pace
+/// at once, and a hammered key turns no faster than a held one. A turn pace
 /// scales it ([`turn_interval_ms`]). Longer than a tap is held, or a tap
 /// turns two steps.
 pub const TURN_REPEAT_MS: u16 = 150;
 
 /// Milliseconds between steps of a held turn at `pace`, the share of its
-/// speed an actor's status effects leave it ([`Status::pace`]): a slowed
+/// turn an actor's status effects leave it ([`Status::turn_pace`]): a slowed
 /// actor turns as much slower as it walks. None at no pace, a root or a
 /// hold, which leave it no turning. Never longer than [`TURN_RESTED_MS`].
 pub fn turn_interval_ms(pace: f32) -> Option<u16> {
@@ -192,10 +192,11 @@ pub struct MovementInput {
     /// Its own speed, in world units per millisecond, before its pace
     pub movement_speed: f32,
     /// The share of its speed its status effects leave it
-    /// ([`Status::pace_of`]). It scales the walk and the turn clock alike,
-    /// so the server, the owner's prediction and every remote simulation
-    /// agree on both.
+    /// ([`Status::pace_of`]); it scales the walk
     pub pace: f32,
+    /// The share of its turn its status effects leave it
+    /// ([`Status::turn_pace_of`]); it scales the turn clock
+    pub turn_pace: f32,
     /// Whether the walker is a player's pill, which goes round the
     /// footprints of what stands in a tile; anything else walks through
     /// them, and only a tile's own rules stop it.
@@ -571,7 +572,7 @@ pub fn calculate_movement(
     let mut airtime = input.airtime;
     let mut heading = input.heading;
     let mut since_step_ms = input.since_step_ms;
-    let interval = turn_interval_ms(input.pace);
+    let interval = turn_interval_ms(input.turn_pace);
 
     while dt0 > 0 {
         let mut dt = dt0.min(PHYSICS_TIMESTEP_MS);
@@ -702,6 +703,7 @@ mod tests {
             airtime: None,
             movement_speed: MOVEMENT_SPEED,
             pace: 1.0,
+            turn_pace: 1.0,
             collides: true,
         }
     }
@@ -937,12 +939,12 @@ mod tests {
         let pace = 0.5;
         let interval = turn_interval_ms(pace).unwrap();
         assert!(interval > TURN_REPEAT_MS, "slower than at whole pace");
-        let held = MovementInput { turn: 1, pace, ..walking(Heading::NORTH, false) };
+        let held = MovementInput { turn: 1, turn_pace: pace, ..walking(Heading::NORTH, false) };
         let short = calculate_movement(held, interval as i16, &map, &nntree);
         assert_eq!(short.heading, Heading::NORTH.turned(1), "one step, the rested one, before a whole interval passes");
         let long = calculate_movement(held, interval as i16 * 2 + 1, &map, &nntree);
         assert_eq!(long.heading, Heading::NORTH.turned(3), "then once per interval at its pace");
-        let whole = calculate_movement(MovementInput { pace: 1.0, ..held }, interval as i16 * 2 + 1, &map, &nntree);
+        let whole = calculate_movement(MovementInput { turn_pace: 1.0, ..held }, interval as i16 * 2 + 1, &map, &nntree);
         assert!(whole.heading.turn_toward(Heading::NORTH).1 > long.heading.turn_toward(Heading::NORTH).1, "at whole pace it turns further");
     }
 
@@ -955,11 +957,11 @@ mod tests {
         let nntree = create_test_nntree();
         let rooted = Status { root: Some(crate::components::status::Timed { pace: 0.0, remaining: 1.0 }), ..default() }.pace();
         assert_eq!(turn_interval_ms(rooted), None);
-        let input = MovementInput { turn: 1, since_step_ms: 0, pace: rooted, ..walking(Heading::NORTH, true) };
+        let input = MovementInput { turn: 1, since_step_ms: 0, pace: rooted, turn_pace: rooted, ..walking(Heading::NORTH, true) };
         let out = calculate_movement(input, 500, &map, &nntree);
         assert_eq!(out.heading, Heading::NORTH);
         assert_eq!(out.position.offset.xz(), Vec2::ZERO);
-        let freed = calculate_movement(MovementInput { pace: 1.0, ..carried(input, &out) }, 1, &map, &nntree);
+        let freed = calculate_movement(MovementInput { pace: 1.0, turn_pace: 1.0, ..carried(input, &out) }, 1, &map, &nntree);
         assert_eq!(freed.heading, Heading::NORTH.turned(1));
     }
 
@@ -970,7 +972,7 @@ mod tests {
         let map = create_test_map();
         flat_ground(&map, 3);
         let nntree = create_test_nntree();
-        let input = MovementInput { turn: 1, since_step_ms: 30, pace: 0.7, ..walking(Heading::from_slot(6), true) };
+        let input = MovementInput { turn: 1, since_step_ms: 30, pace: 0.7, turn_pace: 0.7, ..walking(Heading::from_slot(6), true) };
         let whole = calculate_movement(input, 500, &map, &nntree);
         assert_ne!(whole.heading, input.heading);
         for dt in [7, 50, 125] {

@@ -4,11 +4,12 @@ use serde::{Deserialize, Serialize};
 /// The status effects that slow or hold an actor, one of each kind, a
 /// fresh one replacing the one it lands on. Each is a share of its speed,
 /// and its pace is all of them together: every caller of the physics takes
-/// it through [`Status::pace_of`], and it scales the walk and the turn
-/// alike, so the server, the owner's prediction and every remote simulation
-/// agree. At no pace, a root or a hold, an actor neither walks nor turns; a
-/// hold stops more: a held actor does not jump or swing either
-/// ([`Status::holds`]).
+/// it through [`Status::pace_of`] and [`Status::turn_pace_of`], so the
+/// server, the owner's prediction and every remote simulation agree. Every
+/// effect scales the walk and the turn alike but the horse, which runs
+/// faster and turns slower. At no pace, a root or a hold, an actor neither
+/// walks nor turns; a hold stops more: a held actor does not jump or swing
+/// either ([`Status::holds`]).
 ///
 /// The server sends the whole of it whenever an ability changes it, and
 /// both sides count its timed effects down, so a client moves an actor at
@@ -35,8 +36,9 @@ pub struct Status {
     pub held: Option<Timed>,
     /// Carrying past the bag's burden limit
     pub burden: bool,
-    /// On its horse, which carries it at [`MOUNTED_PACE`] of its speed
-    /// until it fights, uses a skill or gathers
+    /// On its horse, which carries it at [`MOUNTED_PACE`] of its speed and
+    /// turns at [`MOUNTED_TURN`] of its turn, until it fights, uses a skill
+    /// or gathers
     pub mounted: bool,
     /// Taxed, in an Intimidating foe's zone: every skill it uses costs
     /// `pace` times its price, for `remaining` seconds ([`Status::tax`])
@@ -87,17 +89,35 @@ pub const BURDENED_PACE: f32 = 0.2;
 /// its own.
 pub const MOUNTED_PACE: f32 = 2.0;
 
+/// The share of its turn a mounted actor keeps: a horse at the run turns
+/// slower than its rider afoot, so it rides a wider circle than it walks.
+pub const MOUNTED_TURN: f32 = 0.6;
+
 impl Status {
     /// The share of its speed the actor moves at under every effect on it
     pub fn pace(&self) -> f32 {
-        let burden = if self.burden { BURDENED_PACE } else { 1.0 };
-        let mount = if self.mounted { MOUNTED_PACE } else { 1.0 };
-        Timed::pace(self.slow) * Timed::pace(self.root) * Timed::pace(self.stride) * Timed::pace(self.perfect_stride) * Timed::pace(self.held) * burden * mount
+        self.effects() * if self.mounted { MOUNTED_PACE } else { 1.0 }
     }
 
     /// The pace of an actor with `status`, whole with none
     pub fn pace_of(status: Option<&Status>) -> f32 {
         status.map_or(1.0, Status::pace)
+    }
+
+    /// The share of its turn the actor keeps under every effect on it
+    pub fn turn_pace(&self) -> f32 {
+        self.effects() * if self.mounted { MOUNTED_TURN } else { 1.0 }
+    }
+
+    /// The turn pace of an actor with `status`, whole with none
+    pub fn turn_pace_of(status: Option<&Status>) -> f32 {
+        status.map_or(1.0, Status::turn_pace)
+    }
+
+    /// Every effect that scales the walk and the turn alike
+    fn effects(&self) -> f32 {
+        let burden = if self.burden { BURDENED_PACE } else { 1.0 };
+        Timed::pace(self.slow) * Timed::pace(self.root) * Timed::pace(self.stride) * Timed::pace(self.perfect_stride) * Timed::pace(self.held) * burden
     }
 
     /// Whether a Perfect Stride holds now
@@ -321,9 +341,12 @@ mod tests {
         assert!((both.pace() - slowed.pace() * stumbling.pace()).abs() < 1e-6, "effects multiply");
         let burdened = Status { burden: true, ..both };
         assert!(burdened.pace() < both.pace());
+        assert_eq!(burdened.turn_pace(), burdened.pace(), "an effect slows the turn as it does the walk");
         let mounted = Status { mounted: true, ..both };
-        assert!(mounted.pace() > both.pace());
+        assert!(mounted.pace() > both.pace(), "the horse runs faster");
+        assert!(mounted.turn_pace() < both.turn_pace(), "and turns slower");
         assert_eq!(Status::pace_of(None), 1.0);
+        assert_eq!(Status::turn_pace_of(None), 1.0);
     }
 
     #[test]

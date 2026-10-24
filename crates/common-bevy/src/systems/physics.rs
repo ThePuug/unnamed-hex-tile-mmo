@@ -23,7 +23,8 @@ pub enum Walk {
 /// Advance an NPC by `dt` milliseconds as a player's keys would carry it,
 /// through `movement::calculate_movement`, the canonical physics: the
 /// heading in `turn` steps toward `goal` on the turn clock `turn` carries,
-/// no faster than a held turn key at its `pace`, and stops there; the NPC takes its
+/// no faster than a held turn key at its `pace`, which an NPC, never
+/// mounted, turns at as it walks, and stops there; the NPC takes its
 /// `walk` only while the heading is within [`WALK_ARC`] of the goal, so
 /// running from what it faces costs the turn. Returns the new offset from
 /// `position.tile` and the new airborne state.
@@ -62,6 +63,7 @@ pub fn steer(
             airtime,
             movement_speed,
             pace,
+            turn_pace: pace,
             collides: false,
         }, slice, map, nntree);
         position.offset = output.position.offset;
@@ -186,7 +188,7 @@ mod tests {
             steer(standing(), &mut turn, Heading::NORTH.reversed(), Walk::Still, None, MOVEMENT_SPEED, 1.0, dt, &map, &nntree);
             let held = movement::calculate_movement(movement::MovementInput {
                 position: standing(), heading: Heading::NORTH, moving: false, back: false, turn: 1,
-                since_step_ms: movement::TURN_REPEAT_MS, airtime: None, movement_speed: MOVEMENT_SPEED, pace: 1.0, collides: false,
+                since_step_ms: movement::TURN_REPEAT_MS, airtime: None, movement_speed: MOVEMENT_SPEED, pace: 1.0, turn_pace: 1.0, collides: false,
             }, dt, &map, &nntree);
             let goal_steps = HEADING_SLOTS / 2;
             assert_eq!(turn.heading.slot(), held.heading.slot().min(goal_steps), "after {dt}ms, stopping at the goal");
@@ -203,7 +205,7 @@ mod tests {
             steer(standing(), &mut turn, Heading::NORTH.reversed(), Walk::Still, None, MOVEMENT_SPEED, pace, dt, &map, &nntree);
             let held = movement::calculate_movement(movement::MovementInput {
                 position: standing(), heading: Heading::NORTH, moving: false, back: false, turn: 1,
-                since_step_ms: movement::TURN_REPEAT_MS, airtime: None, movement_speed: MOVEMENT_SPEED, pace, collides: false,
+                since_step_ms: movement::TURN_REPEAT_MS, airtime: None, movement_speed: MOVEMENT_SPEED, pace, turn_pace: pace, collides: false,
             }, dt, &map, &nntree);
             assert_eq!(turn.heading.slot(), held.heading.slot().min(HEADING_SLOTS / 2), "pace {pace}, after {dt}ms");
         }

@@ -107,6 +107,7 @@ pub fn replay(
         airtime: air,
         movement_speed,
         pace: Status::pace_of(status),
+        turn_pace: Status::turn_pace_of(status),
         collides: true,
     }, *dt as i16, map, nntree)
 }
@@ -148,6 +149,7 @@ pub fn simulate_remote(
                 airtime: airtime.state,
                 movement_speed: attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()),
                 pace: Status::pace_of(status),
+                turn_pace: Status::turn_pace_of(status),
                 collides: player,
             }, dt as i16, &map, &nntree);
             position.offset = out.position.offset;

@@ -243,6 +243,7 @@ pub fn apply(
             airtime: airtime.state,
             movement_speed: attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()),
             pace: common_bevy::components::status::Status::pace_of(status),
+            turn_pace: common_bevy::components::status::Status::turn_pace_of(status),
             collides: true,
         }, dt as i16, &map, &nntree);
         position.offset = out.position.offset;
