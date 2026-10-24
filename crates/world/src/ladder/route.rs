@@ -151,15 +151,15 @@ pub(super) fn route_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], p: 
     let mut stats = [0u64; 4];
     for block in blocks {
         for d in block.decided {
-            lv.rec[d.v] = d.rec;
-            lv.trough[d.v] = d.trough;
-            lv.acc[d.v] = d.acc;
-            lv.flow[d.v] = d.flow;
-            lv.graded[d.v] = d.graded;
-            lv.room[d.v] = d.room;
-            lv.lake[d.v] = d.lake;
-            lv.floor[d.v] = d.floor;
-            lv.born[d.v] = d.born;
+            lv.rec.set(d.v, d.rec);
+            lv.trough.set(d.v, d.trough);
+            lv.acc.set(d.v, d.acc);
+            lv.flow.set(d.v, d.flow);
+            lv.graded.set(d.v, d.graded);
+            lv.room.set(d.v, d.room);
+            lv.lake.set(d.v, d.lake);
+            lv.floor.set(d.v, d.floor);
+            lv.born.set(d.v, d.born);
         }
         for (a, b) in stats.iter_mut().zip(block.stats) {
             *a += b;
@@ -167,7 +167,7 @@ pub(super) fn route_blocks(lv: &mut Level, par: &Level, pend: &[(i64, i64)], p: 
     }
     for (own, _) in &lists {
         for &c in own {
-            lv.routed[c] = true;
+            lv.routed.set(c, true);
         }
     }
     stats
@@ -183,14 +183,14 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     let mut stats = [0u64; 4];
     let cur = b as u32 + 1;
     for &c in fpl {
-        stamp[c] = cur;
+        stamp.set(c, cur);
     }
     let vids: Vec<usize> = fpl.iter().flat_map(|&c| (0..3).map(move |t| t * nn + c)).collect();
     for (x, &v) in vids.iter().enumerate() {
-        loc[v] = x as i64;
+        loc.set(v, x as i64);
     }
     let nv = vids.len();
-    let local = |g: usize| -> Option<usize> { (loc[g] >= 0).then(|| loc[g] as usize) };
+    let local = |g: usize| -> Option<usize> { (loc.get(g) >= 0).then(|| loc.get(g) as usize) };
     let mut known = vec![false; nv];
     let mut sink = vec![false; nv];
     let mut decided = vec![false; nv];
@@ -200,12 +200,12 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     for (x, &v) in vids.iter().enumerate() {
         let (t, i, j) = lv.vertex(v);
         let (cells, m) = vertex_cells(t, i, j);
-        known[x] = cells[..m].iter().all(|&(a, bb)| lv.idx(a, bb).is_none_or(|c| stamp[c] == cur && lv.supplied[c]));
+        known[x] = cells[..m].iter().all(|&(a, bb)| lv.idx(a, bb).is_none_or(|c| stamp.get(c) == cur && lv.supplied.get(c)));
         let (q3, r3) = pos3(t, i, j, w);
-        key[x] = (lv.sunk[v], 2 * r3 + q3, q3);
+        key[x] = (lv.sunk.get(v), 2 * r3 + q3, q3);
         at[x] = xy(q3, r3);
         pos[x] = (q3, r3);
-        if known[x] && lv.ground[v] < 0.0 {
+        if known[x] && lv.ground.get(v) < 0.0 {
             sink[x] = true;
             decided[x] = true;
         }
@@ -279,7 +279,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     let mut lake = vec![f64::NAN; nv];
     let mut seen = vec![false; nv];
     let mut heap = BinaryHeap::new();
-    let base: Vec<f64> = (0..nv).map(|x| key[x].0.max(lv.lake_zone[vids[x]])).collect();
+    let base: Vec<f64> = (0..nv).map(|x| key[x].0.max(lv.lake_zone.get(vids[x]))).collect();
     for x in 0..nv {
         if known[x] && (sink[x] || !decided[x]) {
             seen[x] = true;
@@ -353,7 +353,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         for t in 0..3 {
             let u = t * pnn + pc;
             let Some(way) = course_of(par, lv, u, p) else { continue };
-            let r = par.rec[u] as usize;
+            let r = par.rec.get(u) as usize;
             let steps = way.len() - 1;
             for k in 0..steps {
                 let Some(x) = lv.vid_at(way[k].0, way[k].1).and_then(local) else { continue };
@@ -362,11 +362,11 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
                 }
                 let f = k as f64 / steps as f64;
                 let lerp = |a: f64, b: f64| a + (b - a) * f;
-                src_acc[x] = par.acc[u];
-                src_flow[x] = par.flow[u];
-                src_born[x] = par.born[u];
-                src_graded[x] = lerp(par.graded[u], par.graded[r]);
-                src_floor[x] = lerp(par.floor[u], par.floor[r]);
+                src_acc[x] = par.acc.get(u);
+                src_flow[x] = par.flow.get(u);
+                src_born[x] = par.born.get(u);
+                src_graded[x] = lerp(par.graded.get(u), par.graded.get(r));
+                src_floor[x] = lerp(par.floor.get(u), par.floor.get(r));
                 if let Some(y) = lv.vid_at(way[k + 1].0, way[k + 1].1).and_then(local) {
                     rec[x] = Some(y);
                     recg[x] = vids[y] as i64;
@@ -379,7 +379,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     let mut own_flag = vec![false; nv];
     for &c in own {
         for t in 0..3 {
-            own_flag[loc[t * nn + c] as usize] = true;
+            own_flag[loc.get(t * nn + c) as usize] = true;
         }
     }
     let mut trunc = vec![false; nv];
@@ -465,11 +465,11 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         let v = vids[x];
         let c = v % nn;
         let area = if v < nn && lv.exists[c] { (w * w) as f64 } else { 0.0 };
-        let (head, above) = (head_of(w, lv.erod[c], slope[x], p), head_of(par.w, lv.erod[c], slope[x], p));
+        let (head, above) = (head_of(w, lv.erod.get(c), slope[x], p), head_of(par.w, lv.erod.get(c), slope[x], p));
         let gathered = area + inflow[x];
         val[x] = gathered.min(above);
         let kept = if gathered > 0.0 { val[x] / gathered } else { 0.0 };
-        wet[x] = (if area > 0.0 { area * lv.rain[c] } else { 0.0 } + wet_in[x]) * kept;
+        wet[x] = (if area > 0.0 { area * lv.rain.get(c) } else { 0.0 } + wet_in[x]) * kept;
         let headed = births && head < above && val[x] >= head;
         trough[x] = !sink[x] && (headed || !src_acc[x].is_nan() || fed[x]);
         acc[x] = val[x];
@@ -563,9 +563,9 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
                 above_sea(lake[x])
             } else if let Some(y) = rec[x] {
                 let tiles = (at[x].0 - at[y].0).hypot(at[x].1 - at[y].1) / crate::SQRT_3;
-                let up = graded[y] + graded_slope(acc[x], lv.erod[v % nn], p) * tiles;
+                let up = graded[y] + graded_slope(acc[x], lv.erod.get(v % nn), p) * tiles;
                 above_sea(src_graded[x].min(up).max(graded[y]))
-            } else if sink[x] && lv.ground[v] < 0.0 {
+            } else if sink[x] && lv.ground.get(v) < 0.0 {
                 0.0
             } else {
                 f64::NAN
@@ -589,9 +589,9 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     // A lake handed down was cut by the level that found it.
     let mut lowered = lake.clone();
     for x in 0..nv {
-        let Some(o) = outlet[x].filter(|_| lv.lake_zone[vids[x]].is_nan()) else { continue };
+        let Some(o) = outlet[x].filter(|_| lv.lake_zone.get(vids[x]).is_nan()) else { continue };
         let c = vids[o] % nn;
-        let level = above_sea(drained(lake[x], graded[o], lv.age[c], lv.erod[c], room(o), p));
+        let level = above_sea(drained(lake[x], graded[o], lv.age.get(c), lv.erod.get(c), room(o), p));
         lowered[x] = if level > key[x].0 { level } else { f64::NAN };
     }
     let lake = lowered;
@@ -612,7 +612,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             }
             let v = vids[x];
             let c = v % nn;
-            drained(lv.ground[v], graded[x], lv.age[c], lv.erod[c], room(x), p).min(lv.carved[v])
+            drained(lv.ground.get(v), graded[x], lv.age.get(c), lv.erod.get(c), room(x), p).min(lv.carved.get(v))
         })
         .collect();
     let mut low = vec![f64::INFINITY; nv];
@@ -663,7 +663,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         });
     }
     for &v in &vids {
-        loc[v] = -1;
+        loc.set(v, -1);
     }
     Block { decided: out, stats }
 }
@@ -678,18 +678,18 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
 /// meet. None where `u` runs nowhere.
 fn course_of(par: &Level, lv: &Level, u: usize, p: &Params) -> Option<Vec<(i64, i64)>> {
     let w = lv.w;
-    let sunk = |(q3, r3): (i64, i64)| lv.vid_at(q3, r3).map_or(f64::NAN, |v| lv.sunk[v]);
+    let sunk = |(q3, r3): (i64, i64)| lv.vid_at(q3, r3).map_or(f64::NAN, |v| lv.sunk.get(v));
     let want = |u: usize| -> Option<((i64, i64), (i64, i64), Option<(i64, i64)>)> {
-        if !par.trough[u] || par.rec[u] < 0 {
+        if !par.trough.get(u) || par.rec.get(u) < 0 {
             return None;
         }
         let (t, i, j) = par.vertex(u);
-        let (rt, ri, rj) = par.vertex(par.rec[u] as usize);
+        let (rt, ri, rj) = par.vertex(par.rec.get(u) as usize);
         let (a, b) = (pos3(t, i, j, par.w), pos3(rt, ri, rj, par.w));
         let e = ((b.0 - a.0) / 3, (b.1 - a.1) / 3);
         // A level finer than draws the channel would bend it within its own
         // width.
-        let bend = if w >= water::drawn_at(water::bed(par.flow[u], p)) {
+        let bend = if w >= water::drawn_at(water::bed(par.flow.get(u), p)) {
             let draw = crate::noise::hash_f64(a.0 + 7 * b.0, a.1 + 7 * b.1, BEND_SEED);
             let turn = if draw < 1.0 / 3.0 { Some((-e.1, e.0 + e.1)) } else if draw >= 2.0 / 3.0 { Some((e.0 + e.1, -e.0)) } else { None };
             turn.map(|f| (a.0 + e.0 + f.0, a.1 + e.1 + f.1))
@@ -704,7 +704,7 @@ fn course_of(par: &Level, lv: &Level, u: usize, p: &Params) -> Option<Vec<(i64, 
         Some((a, e, bend))
     };
     let (a, e, bend) = want(u)?;
-    let mine = (par.acc[u], u);
+    let mine = (par.acc.get(u), u);
     // The other edges of the triangle this one would bend through.
     let bend = bend.filter(|&m| {
         let r = (3 * m.0 - 2 * a.0 - 3 * e.0, 3 * m.1 - 2 * a.1 - 3 * e.1);
@@ -713,17 +713,17 @@ fn course_of(par: &Level, lv: &Level, u: usize, p: &Params) -> Option<Vec<(i64, 
         ends.iter().all(|&(x, y)| {
             [(x, y), (y, x)].iter().all(|&(from, to)| {
                 let Some(k) = par.vid_at(from.0, from.1) else { return true };
-                let runs_to = par.rec[k] >= 0 && par.vid_at(to.0, to.1) == Some(par.rec[k] as usize);
-                !runs_to || want(k).and_then(|o| o.2) != Some(m) || (par.acc[k], k) < mine
+                let runs_to = par.rec.get(k) >= 0 && par.vid_at(to.0, to.1) == Some(par.rec.get(k) as usize);
+                !runs_to || want(k).and_then(|o| o.2) != Some(m) || (par.acc.get(k), k) < mine
             })
         })
     });
     let step = |k: i64| (a.0 + k * e.0, a.1 + k * e.1);
     // Where the river turns sharply at its receiver, its main stream cuts
     // the corner, a step of the level from the vertex to the next edge's.
-    let r = par.rec[u] as usize;
-    let end = match par.rec[r] {
-        n if par.trough[r] && n >= 0 => {
+    let r = par.rec.get(u) as usize;
+    let end = match par.rec.get(r) {
+        n if par.trough.get(r) && n >= 0 => {
             let (nt, ni, nj) = par.vertex(n as usize);
             let (rq, rr) = step(3);
             let (nq, nr) = pos3(nt, ni, nj, par.w);
@@ -734,8 +734,8 @@ fn course_of(par: &Level, lv: &Level, u: usize, p: &Params) -> Option<Vec<(i64, 
                 let (tt, a, b) = vnbr(t, i, j, k);
                 par.vid(tt, a, b)
             })
-            .filter(|&k| par.trough[k] && par.rec[k] == r as i64)
-            .all(|k| (par.acc[k], k) <= mine);
+            .filter(|&k| par.trough.get(k) && par.rec.get(k) == r as i64)
+            .all(|k| (par.acc.get(k), k) <= mine);
             if sharp && main { (rq + f.0, rr + f.1) } else { (rq, rr) }
         }
         _ => step(3),
@@ -761,7 +761,7 @@ pub(super) fn flood_zone(lv: &mut Level, zone: &HashSet<usize>) {
     let key = |lv: &Level, v: usize| {
         let (t, i, j) = lv.vertex(v);
         let (q3, r3) = pos3(t, i, j, w);
-        (lv.sunk[v], 2 * r3 + q3, q3)
+        (lv.sunk.get(v), 2 * r3 + q3, q3)
     };
     let inside = |v: usize| zone.contains(&(v % nn));
     let mut heap = BinaryHeap::new();
@@ -770,26 +770,26 @@ pub(super) fn flood_zone(lv: &mut Level, zone: &HashSet<usize>) {
     for &c in zone {
         for t in 0..3u8 {
             let v = t as usize * nn + c;
-            if lv.sunk[v].is_nan() {
+            if lv.sunk.get(v).is_nan() {
                 continue;
             }
             vertices.push(v);
             let (t, i, j) = lv.vertex(v);
-            let mut outlet = lv.ground[v] < 0.0;
+            let mut outlet = lv.ground.get(v) < 0.0;
             for k in 0..6 {
                 let (tt, ni, nj) = vnbr(t, i, j, k);
                 match lv.idx(ni, nj).filter(|&d| lv.exists[d]) {
                     None => outlet = true,
                     Some(d) => {
                         let u = tt as usize * nn + d;
-                        if !inside(u) && !lv.sunk[u].is_nan() && seen.insert(u) {
-                            heap.push(Reverse(Flood { level: lv.sunk[u], key: key(lv, u), x: u }));
+                        if !inside(u) && !lv.sunk.get(u).is_nan() && seen.insert(u) {
+                            heap.push(Reverse(Flood { level: lv.sunk.get(u), key: key(lv, u), x: u }));
                         }
                     }
                 }
             }
             if outlet && seen.insert(v) {
-                heap.push(Reverse(Flood { level: lv.sunk[v], key: key(lv, v), x: v }));
+                heap.push(Reverse(Flood { level: lv.sunk.get(v), key: key(lv, v), x: v }));
             }
         }
     }
@@ -803,17 +803,17 @@ pub(super) fn flood_zone(lv: &mut Level, zone: &HashSet<usize>) {
             let (tt, ni, nj) = vnbr(t, i, j, k);
             let Some(d) = lv.idx(ni, nj).filter(|&d| lv.exists[d]) else { continue };
             let u = tt as usize * nn + d;
-            if inside(u) && !lv.sunk[u].is_nan() && seen.insert(u) {
-                heap.push(Reverse(Flood { level: f.level.max(lv.sunk[u]), key: key(lv, u), x: u }));
+            if inside(u) && !lv.sunk.get(u).is_nan() && seen.insert(u) {
+                heap.push(Reverse(Flood { level: f.level.max(lv.sunk.get(u)), key: key(lv, u), x: u }));
             }
         }
     }
     for v in vertices {
-        let surface = level.get(&v).map_or(f64::NAN, |&s| s.min(lv.lake_above[v % nn]));
-        lv.lake_zone[v] = if surface > lv.sunk[v] { surface } else { f64::NAN };
+        let surface = level.get(&v).map_or(f64::NAN, |&s| s.min(lv.lake_above.get(v % nn)));
+        lv.lake_zone.set(v, if surface > lv.sunk.get(v) { surface } else { f64::NAN });
     }
     for &c in zone {
-        lv.zoned[c] = true;
+        lv.zoned.set(c, true);
     }
 }
 

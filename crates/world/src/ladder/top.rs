@@ -56,17 +56,17 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         let (q3, r3) = pos3(t, i, j, lv.w);
         pos[v] = xy(q3, r3);
         // Flats break by the ground's own height there.
-        tb[v] = lv.ground[v];
+        tb[v] = lv.ground.get(v);
     }
     let e: Vec<f64> = (0..count)
         .map(|v| {
             let (t, i, j) = lv.vertex(v);
             let (q3, r3) = pos3(t, i, j, lv.w);
-            lv.z[v] + 1e-4 * tb[v] + 1e-7 * (r3 as f64 / 3.0 + q3 as f64 / 6.0)
+            lv.z.get(v) + 1e-4 * tb[v] + 1e-7 * (r3 as f64 / 3.0 + q3 as f64 / 6.0)
         })
         .collect();
-    let live: Vec<bool> = (0..count).map(|v| lv.exists[v % nn] && !lv.z[v].is_nan()).collect();
-    let sink: Vec<bool> = (0..count).map(|v| live[v] && (nbr[v].iter().any(|&u| u < 0) || lv.z[v] < 0.0)).collect();
+    let live: Vec<bool> = (0..count).map(|v| lv.exists[v % nn] && !lv.z.get(v).is_nan()).collect();
+    let sink: Vec<bool> = (0..count).map(|v| live[v] && (nbr[v].iter().any(|&u| u < 0) || lv.z.get(v) < 0.0)).collect();
 
     // The flood.
     let mut rec = vec![-1i64; count];
@@ -161,9 +161,9 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     // Catchment, flow and troughs over the flood's order, upstream first: a
     // trough is born where the catchment reaches the head, and whatever a
     // trough drains into is a trough.
-    let head = |v: usize| head_of(lv.w, lv.erod[v % nn], slope[v], p);
+    let head = |v: usize| head_of(lv.w, lv.erod.get(v % nn), slope[v], p);
     let mut acc: Vec<f64> = (0..count).map(|v| if v < nn && live[v] { (lv.w * lv.w) as f64 } else { 0.0 }).collect();
-    let mut flow: Vec<f64> = (0..count).map(|v| if v < nn && live[v] { acc[v] * lv.rain[v] } else { 0.0 }).collect();
+    let mut flow: Vec<f64> = (0..count).map(|v| if v < nn && live[v] { acc[v] * lv.rain.get(v) } else { 0.0 }).collect();
     let mut trough = vec![false; count];
     for &v in order.iter().rev() {
         if rec[v] < 0 {
@@ -239,7 +239,7 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     for &v in &order {
         let c = v % nn;
         graded[v] = if rec[v] < 0 {
-            if lv.z[v] < 0.0 { 0.0 } else { f64::NAN }
+            if lv.z.get(v) < 0.0 { 0.0 } else { f64::NAN }
         } else if flooded(v) {
             // The sea is every river's base level: ground flooded below it
             // drains to the sea's.
@@ -247,7 +247,7 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         } else {
             let r = rec[v] as usize;
             let tiles = (pos[v].0 - pos[r].0).hypot(pos[v].1 - pos[r].1) / crate::SQRT_3;
-            graded[r] + graded_slope(acc[v], lv.erod[c], p) * tiles
+            graded[r] + graded_slope(acc[v], lv.erod.get(c), p) * tiles
         };
     }
     // Floors: drainage's under each vertex, toward its graded profile and
@@ -256,7 +256,7 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
     let mut floor: Vec<f64> = (0..count)
         .map(|v| {
             let c = v % nn;
-            drained(lv.z[v], graded[v], lv.age[c], lv.erod[c], room(v), p)
+            drained(lv.z.get(v), graded[v], lv.age.get(c), lv.erod.get(c), room(v), p)
         })
         .collect();
     let mut low = vec![f64::INFINITY; count];
@@ -269,13 +269,13 @@ pub(super) fn route_top(lv: &mut Level, p: &Params) {
         low[r] = low[r].min(floor[v]);
     }
     for v in 0..count {
-        lv.rec[v] = rec[v];
-        lv.acc[v] = acc[v];
-        lv.graded[v] = graded[v];
-        lv.room[v] = room(v);
-        lv.flow[v] = flow[v];
-        lv.trough[v] = trough[v];
-        lv.floor[v] = (floor[v] + 0.5).floor();
-        lv.born[v] = if lv.trough[v] { lv.w } else { -1 };
+        lv.rec.set(v, rec[v]);
+        lv.acc.set(v, acc[v]);
+        lv.graded.set(v, graded[v]);
+        lv.room.set(v, room(v));
+        lv.flow.set(v, flow[v]);
+        lv.trough.set(v, trough[v]);
+        lv.floor.set(v, (floor[v] + 0.5).floor());
+        lv.born.set(v, if lv.trough.get(v) { lv.w } else { -1 });
     }
 }

@@ -374,7 +374,7 @@ pub fn area_bounds(centre: (i32, i32), radius: i64, widths: &[i64]) -> Vec<Bound
 pub fn landmass_bounds(top: &Level, seed: u64, id: SiteId) -> Vec<Bounds> {
     let w = top.w;
     let land: Vec<(i64, i64)> = (0..top.cap())
-        .filter(|&c| top.exists[c] && top.z[c] >= 0.0)
+        .filter(|&c| top.exists[c] && top.z.get(c) >= 0.0)
         .map(|c| top.ij(c))
         .filter(|&(i, j)| {
             let (wx, wy) = hex_to_world((i * w) as i32, (j * w) as i32);

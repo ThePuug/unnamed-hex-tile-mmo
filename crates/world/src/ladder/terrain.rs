@@ -73,7 +73,7 @@ impl<'g, G: Ground> Terrain<'g, G> {
             ladder.request(k, &held);
         }
         let lv = &ladder.levels[k];
-        let read: Vec<Option<Cell>> = at.iter().map(|&(i, j)| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built[c]).map(|c| cell(lv, c))).collect();
+        let read: Vec<Option<Cell>> = at.iter().map(|&(i, j)| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built.get(c)).map(|c| cell(lv, c))).collect();
         if self.recent.len() + 7 * at.len() > RECENT_CELLS {
             self.recent.clear();
         }
@@ -81,7 +81,7 @@ impl<'g, G: Ground> Terrain<'g, G> {
             for (di, dj) in std::iter::once((0, 0)).chain(NB) {
                 let (i, j) = (i + di, j + dj);
                 match lv.idx(i, j).filter(|&c| lv.exists[c]) {
-                    Some(c) if lv.finished[c] => self.recent.insert((w, i, j), Some(cell(lv, c))),
+                    Some(c) if lv.finished.get(c) => self.recent.insert((w, i, j), Some(cell(lv, c))),
                     Some(_) => None,
                     None => self.recent.insert((w, i, j), None),
                 };
@@ -93,10 +93,10 @@ impl<'g, G: Ground> Terrain<'g, G> {
 
 fn cell(lv: &super::Level, c: usize) -> Cell {
     Cell {
-        z: lv.z[c],
-        zd: lv.zd[c],
-        cut: lv.cut[c],
-        water: Some(lv.water[c]).filter(|w| !w.is_nan()),
-        wet_parts: lv.wparts[c],
+        z: lv.z.get(c),
+        zd: lv.zd.get(c),
+        cut: lv.cut.get(c),
+        water: Some(lv.water.get(c)).filter(|w| !w.is_nan()),
+        wet_parts: lv.wparts.get(c),
     }
 }

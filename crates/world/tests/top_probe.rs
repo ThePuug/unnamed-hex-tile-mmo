@@ -73,8 +73,8 @@ fn top_probe() {
         let (land_cells, peak) = {
             let ladder = laddered.terrain().ladder();
             let top = &ladder.levels[0];
-            let land = (0..top.cap()).filter(|&c| top.exists[c] && top.z[c] >= 0.0).count();
-            let peak = (0..top.cap()).filter(|&c| top.exists[c]).map(|c| top.z[c]).fold(f64::NEG_INFINITY, f64::max);
+            let land = (0..top.cap()).filter(|&c| top.exists[c] && top.z.get(c) >= 0.0).count();
+            let peak = (0..top.cap()).filter(|&c| top.exists[c]).map(|c| top.z.get(c)).fold(f64::NEG_INFINITY, f64::max);
             (land, peak)
         };
         drop(laddered);

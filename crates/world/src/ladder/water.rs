@@ -95,41 +95,41 @@ fn tiles(lv: &Level, v: usize) -> (f64, f64) {
 /// whether its river begins there and where it runs on.
 pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
     let nn = lv.cap();
-    let runs = |v: usize| lv.trough[v] && lv.rec[v] >= 0;
+    let runs = |v: usize| lv.trough.get(v) && lv.rec.get(v) >= 0;
     let head = |v: usize| {
         let (t, i, j) = lv.vertex(v);
         !(0..6).filter_map(|k| {
             let (tt, a, b) = vnbr(t, i, j, k);
             lv.vid(tt, a, b)
         })
-        .any(|u| runs(u) && lv.rec[u] == v as i64)
+        .any(|u| runs(u) && lv.rec.get(u) == v as i64)
     };
     // A vertex's graded profile, its floor where routing could not grade it.
-    let graded_at = |u: usize| if lv.graded[u].is_nan() { lv.floor[u].max(0.0) } else { lv.graded[u].max(0.0) };
+    let graded_at = |u: usize| if lv.graded.get(u).is_nan() { lv.floor.get(u).max(0.0) } else { lv.graded.get(u).max(0.0) };
     // A vertex's plain, held to its room where routing measured one.
     let plain_at = |u: usize| {
-        let half = bed(lv.flow[u], p);
-        let room = lv.room[u];
-        let wide = plain(half, lv.acc[u], rock(lv, u), lv.age[u % nn], p);
+        let half = bed(lv.flow.get(u), p);
+        let room = lv.room.get(u);
+        let wide = plain(half, lv.acc.get(u), rock(lv, u), lv.age.get(u % nn), p);
         if room.is_nan() { wide } else { wide.min(room.max(half)) }
     };
     (0..3)
         .flat_map(|t| mask.iter().map(move |c| t * nn + c))
         .filter(|&v| runs(v))
         .map(|v| {
-            let to = lv.rec[v] as usize;
-            let next = (runs(to) && lv.routed[lv.rec[to] as usize % nn]).then(|| {
-                let on = lv.rec[to] as usize;
+            let to = lv.rec.get(v) as usize;
+            let next = (runs(to) && lv.routed.get(lv.rec.get(to) as usize % nn)).then(|| {
+                let on = lv.rec.get(to) as usize;
                 Next {
                     to: tiles(lv, on),
-                    floor: lv.floor[on].max(0.0),
+                    floor: lv.floor.get(on).max(0.0),
                     graded: graded_at(on),
                     plain: plain_at(on),
-                    flow: lv.flow[to],
-                    born: lv.born[to],
+                    flow: lv.flow.get(to),
+                    born: lv.born.get(to),
                     erod: rock(lv, to),
                     src: to,
-                    fall: super::graded_slope(lv.acc[to], rock(lv, to), p),
+                    fall: super::graded_slope(lv.acc.get(to), rock(lv, to), p),
                 }
             });
             Edge {
@@ -137,14 +137,14 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
                 to: tiles(lv, to),
                 // The sea is every river's base level: a floor running out
                 // over the sea floor stands at the sea.
-                floors: (lv.floor[v].max(0.0), lv.floor[to].max(0.0)),
+                floors: (lv.floor.get(v).max(0.0), lv.floor.get(to).max(0.0)),
                 graded: (graded_at(v), graded_at(to)),
-                flow: lv.flow[v],
-                born: lv.born[v],
+                flow: lv.flow.get(v),
+                born: lv.born.get(v),
                 erod: rock(lv, v),
                 src: v,
                 plains: (plain_at(v), plain_at(to)),
-                fall: super::graded_slope(lv.acc[v], rock(lv, v), p),
+                fall: super::graded_slope(lv.acc.get(v), rock(lv, v), p),
                 w: lv.w,
                 head: head(v),
                 next,
@@ -155,7 +155,7 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
 
 /// The erodibility of the rock under a vertex, its cell's.
 fn rock(lv: &Level, v: usize) -> f64 {
-    let e = lv.erod[v % (lv.cap())];
+    let e = lv.erod.get(v % (lv.cap()));
     if e.is_nan() { 1.0 } else { e }
 }
 
@@ -714,7 +714,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[&Band], cells: &[usize]) -> Vec<C
         let radius = at.iter().map(|&(q, r)| world(q, r)).map(|(x, y)| (x - cx).hypot(y - cy)).fold(0.0, f64::max) + wf + half_step;
         let high = xs
             .iter()
-            .flat_map(|&x| lv.own_vertices(cells[x]).map(|(_, v)| lv.ground[v]).collect::<Vec<_>>())
+            .flat_map(|&x| lv.own_vertices(cells[x]).map(|(_, v)| lv.ground.get(v)).collect::<Vec<_>>())
             .filter(|h| h.is_finite())
             .fold(f64::NEG_INFINITY, f64::max);
         ((cq, cr), (cx, cy), radius, high)
@@ -786,7 +786,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[&Band], cells: &[usize]) -> Vec<C
         for (t, v) in lv.own_vertices(c) {
             let (q, r) = vertex_tiles(t, i, j, w);
             let (px, py) = world(q, r);
-            let ground = if lv.ground[v].is_nan() { f64::INFINITY } else { lv.ground[v] };
+            let ground = if lv.ground.get(v).is_nan() { f64::INFINITY } else { lv.ground.get(v) };
             let (mut low, mut near) = (ground, ground);
             // A bed's banks never stand below its profile, so the least the
             // profile can come to bounds them too.
@@ -805,8 +805,8 @@ pub(super) fn carved_over(lv: &Level, bands: &[&Band], cells: &[usize]) -> Vec<C
                     }
                 }
             }
-            out[t as usize] = if low.is_infinite() { lv.ground[v] } else { low };
-            sunk[t as usize] = if near.is_infinite() { lv.ground[v] } else { near };
+            out[t as usize] = if low.is_infinite() { lv.ground.get(v) } else { low };
+            sunk[t as usize] = if near.is_infinite() { lv.ground.get(v) } else { near };
         }
         let (q, r) = vertex_tiles(0, i, j, w);
         Carved { carved: out, sunk, water: standing(&held, q, r, w), parts: wet_children(&held, w, i, j) }
@@ -841,19 +841,21 @@ pub(super) fn top_cut(lv: &mut Level, edges: &[Edge], p: &Params) {
         let near: &[Sample] = near;
         for (t, v) in view.own_vertices(c) {
             let (vq, vr) = vertex_tiles(t, i, j, w);
-            cuts[t as usize] = cut_at(near, vq, vr, w, view.ground[v], view.ground[v]);
+            cuts[t as usize] = cut_at(near, vq, vr, w, view.ground.get(v), view.ground.get(v));
         }
-        (cuts, on_carve(standing(near, q, r, w), (view.ground[c] + cuts[0] + 0.5).floor()), wet_children(near, w, i, j))
+        (cuts, on_carve(standing(near, q, r, w), (view.ground.get(c) + cuts[0] + 0.5).floor()), wet_children(near, w, i, j))
     });
     for (&c, (cuts, wet, parts)) in cells.iter().zip(cuts) {
         let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
         for (t, v) in vertices {
-            lv.cut[v] = cuts[t as usize];
+            lv.cut.set(v, cuts[t as usize]);
         }
-        lv.wparts[c] = parts;
-        (lv.water[c], lv.wdepth[c]) = wet.map_or((f64::NAN, f64::NAN), |w| (w.0, w.1));
-        lv.wwet[c] = wet.map_or(-1, |w| w.2 as i64);
-        lv.watered[c] = true;
+        lv.wparts.set(c, parts);
+        let (water, depth) = wet.map_or((f64::NAN, f64::NAN), |w| (w.0, w.1));
+        lv.water.set(c, water);
+        lv.wdepth.set(c, depth);
+        lv.wwet.set(c, wet.map_or(-1, |w| w.2 as i64));
+        lv.watered.set(c, true);
     }
 }
 
@@ -890,7 +892,7 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
             let radius = at.iter().map(|&(q, r)| world(q, r)).map(|(x, y)| (x - cx).hypot(y - cy)).fold(0.0, f64::max) + wf + wf / SQRT_3 / 2.0;
             let high = own
                 .iter()
-                .flat_map(|&c| view.own_vertices(c).map(|(_, v)| view.ground[v]).collect::<Vec<_>>())
+                .flat_map(|&c| view.own_vertices(c).map(|(_, v)| view.ground.get(v)).collect::<Vec<_>>())
                 .filter(|g| g.is_finite())
                 .fold(f64::NEG_INFINITY, f64::max);
             let mut beds = Vec::new();
@@ -924,21 +926,21 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
         let mut cut = [0.0; 3];
         for (t, v) in view.own_vertices(c) {
             let (vq, vr) = vertex_tiles(t, i, j, w);
-            cut[t as usize] = cut_at(near, vq, vr, w, view.sunk[v], view.ground[v]);
+            cut[t as usize] = cut_at(near, vq, vr, w, view.sunk.get(v), view.ground.get(v));
         }
-        let (ground, carved) = (view.ground[c], view.carved[c]);
-        let held = (!view.held[c].is_nan()).then(|| (view.held[c], view.held_depth[c], view.held_src[c] as usize));
+        let (ground, carved) = (view.ground.get(c), view.carved.get(c));
+        let held = (!view.held.get(c).is_nan()).then(|| (view.held.get(c), view.held_depth.get(c), view.held_src.get(c) as usize));
         let bed = match (standing(&near, q, r, w), held) {
             (Some(a), Some(b)) => Some(if b.0 < a.0 { b } else { a }),
             (a, b) => a.or(b),
         };
-        let parts = wet_children(&near, w, i, j) | view.held_parts[c];
+        let parts = wet_children(&near, w, i, j) | view.held_parts.get(c);
         let water = |z: f64| {
             let river = on_carve(bed, z);
             let lake = lakes(view, c);
             let lake = (lake > 0.0).then(|| {
                 let surface = lake;
-                (surface, surface - (view.sunk[c] + 0.5).floor(), usize::MAX)
+                (surface, surface - (view.sunk.get(c) + 0.5).floor(), usize::MAX)
             });
             match on_carve(lake, z) {
                 Some(lake) if river.is_none_or(|r| lake.0 > r.0) => Some(lake),
@@ -953,25 +955,27 @@ pub(super) fn level_cut(lv: &mut Level, band: &Band, pend: &[(i64, i64)], p: &Pa
     for (&(_, c), k) in jobs.iter().zip(found) {
         let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
         for (t, v) in vertices {
-            lv.cut[v] = k.cut[t as usize];
+            lv.cut.set(v, k.cut[t as usize]);
         }
-        lv.wdist[c] = k.governing.map_or(f64::INFINITY, |(_, d)| d / wf);
-        lv.wborn[c] = k.governing.map_or(-1, |(s, _)| s.born);
-        lv.wsrc[c] = k.governing.map_or(-1, |(s, _)| s.w);
-        lv.wgov[c] = k.governing.map_or(-1, |(s, _)| s.src as i64);
-        lv.wgfloor[c] = k.governing.map_or(f64::NAN, |(s, _)| s.floor);
-        (lv.water[c], lv.wdepth[c]) = k.water.map_or((f64::NAN, f64::NAN), |w| (w.0, w.1));
-        lv.wwet[c] = k.water.map_or(-1, |w| w.2 as i64);
-        lv.wparts[c] = k.parts;
-        lv.lakes[c] = lakes(lv, c);
-        lv.watered[c] = true;
+        lv.wdist.set(c, k.governing.map_or(f64::INFINITY, |(_, d)| d / wf));
+        lv.wborn.set(c, k.governing.map_or(-1, |(s, _)| s.born));
+        lv.wsrc.set(c, k.governing.map_or(-1, |(s, _)| s.w));
+        lv.wgov.set(c, k.governing.map_or(-1, |(s, _)| s.src as i64));
+        lv.wgfloor.set(c, k.governing.map_or(f64::NAN, |(s, _)| s.floor));
+        let (water, depth) = k.water.map_or((f64::NAN, f64::NAN), |w| (w.0, w.1));
+        lv.water.set(c, water);
+        lv.wdepth.set(c, depth);
+        lv.wwet.set(c, k.water.map_or(-1, |w| w.2 as i64));
+        lv.wparts.set(c, k.parts);
+        lv.lakes.set(c, lakes(lv, c));
+        lv.watered.set(c, true);
     }
 }
 
 /// The surface of the lake routing keeps over a cell's centre, rounded;
 /// NaN where none.
 pub(super) fn lakes(lv: &Level, c: usize) -> f64 {
-    (lv.lake[c] + 0.5).floor()
+    (lv.lake.get(c) + 0.5).floor()
 }
 
 /// The cut at the centre of each of `cells` from every river of `edges`,
@@ -983,7 +987,7 @@ pub(super) fn whole_cut(lv: &Level, edges: &[Edge], cells: &[usize], p: &Params)
     in_parallel(cells, |_, c| {
         let (i, j) = lv.ij(c);
         let (q, r) = vertex_tiles(0, i, j, lv.w);
-        cut_at(&all, q, r, lv.w, lv.sunk[c], lv.ground[c])
+        cut_at(&all, q, r, lv.w, lv.sunk.get(c), lv.ground.get(c))
     })
 }
 

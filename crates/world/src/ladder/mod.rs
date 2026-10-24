@@ -511,7 +511,7 @@ impl Level {
 
     fn height(&self, i: i64, j: i64, of: &Paged<f64>, done: &Paged<bool>) -> f64 {
         match self.idx(i, j) {
-            Some(c) if self.exists[c] && done[c] => of[c],
+            Some(c) if self.exists[c] && done.get(c) => of.get(c),
             _ => f64::NAN,
         }
     }
@@ -705,7 +705,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
     /// sky at its centre.
     fn read_ground(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let todo: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.ground[c].is_nan()).collect();
+        let todo: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.ground.get(c).is_nan()).collect();
         if todo.is_empty() {
             return;
         }
@@ -742,11 +742,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
         for (&c, points) in todo.iter().zip(read) {
             let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
             for ((_, v), point) in vertices.into_iter().zip(&points) {
-                lv.ground[v] = point.height;
+                lv.ground.set(v, point.height);
             }
-            lv.erod[c] = points[0].erodibility;
-            lv.age[c] = points[0].age;
-            lv.rain[c] = points[0].moisture;
+            lv.erod.set(c, points[0].erodibility);
+            lv.age.set(c, points[0].age);
+            lv.rain.set(c, points[0].moisture);
         }
         self.timing[k][Stage::Read as usize] += started.elapsed().as_secs_f64();
     }
@@ -761,11 +761,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let lv = &mut self.levels[0];
         let vertices: Vec<usize> = all.iter().flat_map(|c| lv.own_vertices(c).map(|(_, v)| v).collect::<Vec<_>>()).collect();
         for &v in &vertices {
-            let h = lv.ground[v];
-            lv.carved[v] = h;
-            lv.sunk[v] = h;
-            lv.z[v] = (h + 0.5).floor();
-            lv.zd[v] = lv.z[v];
+            let h = lv.ground.get(v);
+            lv.carved.set(v, h);
+            lv.sunk.set(v, h);
+            lv.z.set(v, (h + 0.5).floor());
+            lv.zd.set(v, lv.z.get(v));
         }
         lv.supplied.fill(true);
         lv.built.fill(true);
@@ -776,11 +776,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let edges = water::trough_edges(lv, &all, &p);
         water::top_cut(lv, &edges, &p);
         for &v in &vertices {
-            lv.z[v] = (lv.ground[v] + lv.cut[v] + 0.5).floor();
+            lv.z.set(v, (lv.ground.get(v) + lv.cut.get(v) + 0.5).floor());
         }
         for c in all.iter() {
-            if lv.water[c] <= lv.z[c] {
-                lv.water[c] = f64::NAN;
+            if lv.water.get(c) <= lv.z.get(c) {
+                lv.water.set(c, f64::NAN);
             }
         }
         corners_over(lv, &all);
@@ -791,7 +791,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
     pub fn request(&mut self, k: usize, cells: &[(i64, i64)]) {
         let lv = &self.levels[k];
         // A request for cells already finished reads what is kept.
-        if k == 0 || cells.iter().all(|&(i, j)| lv.idx(i, j).is_none_or(|c| !lv.exists[c] || lv.finished[c])) {
+        if k == 0 || cells.iter().all(|&(i, j)| lv.idx(i, j).is_none_or(|c| !lv.exists[c] || lv.finished.get(c))) {
             return;
         }
         let mask = Mask::new(cells.iter().filter_map(|&(i, j)| lv.idx(i, j)).filter(|&c| lv.exists[c]));
@@ -815,7 +815,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             return;
         }
         let lv = &self.levels[k];
-        let need = mask.filter(|c| !lv.routed[c] && lv.exists[c]);
+        let need = mask.filter(|c| !lv.routed.get(c) && lv.exists[c]);
         if need.is_empty() {
             return;
         }
@@ -842,9 +842,9 @@ impl<'g, G: Ground> Ladder<'g, G> {
     /// found, with the ring of cells round it.
     fn zone_lakes(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let starts: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.supplied[c] && !lv.zoned[c] && !lv.lake_above[c].is_nan()).collect();
+        let starts: Vec<usize> = mask.iter().filter(|&c| lv.exists[c] && lv.supplied.get(c) && !lv.zoned.get(c) && !lv.lake_above.get(c).is_nan()).collect();
         for start in starts {
-            if self.levels[k].zoned[start] {
+            if self.levels[k].zoned.get(start) {
                 continue;
             }
             let mut zone: HashSet<usize> = HashSet::from([start]);
@@ -860,9 +860,9 @@ impl<'g, G: Ground> Ladder<'g, G> {
                         if zone.contains(&d) || round.contains(&d) {
                             continue;
                         }
-                        if !lv.supplied[d] {
+                        if !lv.supplied.get(d) {
                             ask.push(d);
-                        } else if lv.lake_above[d].is_nan() {
+                        } else if lv.lake_above.get(d).is_nan() {
                             round.insert(d);
                         } else {
                             zone.insert(d);
@@ -878,7 +878,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 self.ensure_supplied(k, &Mask::new(ask.iter().copied()));
                 let lv = &self.levels[k];
                 for d in ask {
-                    if lv.lake_above[d].is_nan() {
+                    if lv.lake_above.get(d).is_nan() {
                         round.insert(d);
                     } else if zone.insert(d) {
                         queue.push(d);
@@ -912,7 +912,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
 
     fn ensure_supplied(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let need = mask.filter(|c| !lv.supplied[c] && lv.exists[c]);
+        let need = mask.filter(|c| !lv.supplied.get(c) && lv.exists[c]);
         if need.is_empty() {
             return;
         }
@@ -925,27 +925,29 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let (above, rest) = self.levels.split_at_mut(k);
         let (par, lv) = (&above[k - 1], &mut rest[0]);
         let bands: Vec<&water::Band> = above.iter().map(|up| &self.bands[&(up.w, lv.w)]).collect();
-        let todo: Vec<usize> = fp.iter().filter(|&c| lv.exists[c] && !lv.supplied[c]).collect();
+        let todo: Vec<usize> = fp.iter().filter(|&c| lv.exists[c] && !lv.supplied.get(c)).collect();
         let carved = water::carved_over(lv, &bands, &todo);
         for (&c, found) in todo.iter().zip(carved) {
             let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
             for (t, v) in vertices {
-                lv.carved[v] = found.carved[t as usize];
-                lv.sunk[v] = found.sunk[t as usize];
+                lv.carved.set(v, found.carved[t as usize]);
+                lv.sunk.set(v, found.sunk[t as usize]);
             }
             if let Some((surface, depth, src)) = found.water {
-                (lv.held[c], lv.held_depth[c], lv.held_src[c]) = (surface, depth, src as i64);
+                lv.held.set(c, surface);
+                lv.held_depth.set(c, depth);
+                lv.held_src.set(c, src as i64);
             }
-            lv.held_parts[c] = found.parts;
+            lv.held_parts.set(c, found.parts);
             let (i, j) = lv.ij(c);
             let (pi, pj, _, _) = parent_of(i, j);
-            lv.lake_above[c] = std::iter::once((0, 0))
+            lv.lake_above.set(c, std::iter::once((0, 0))
                 .chain(NB)
                 .filter_map(|(di, dj)| par.idx(pi + di, pj + dj))
-                .filter(|&pc| par.lakes[pc] > par.zd[pc])
-                .map(|pc| par.lakes[pc])
-                .fold(f64::NAN, f64::max);
-            lv.supplied[c] = true;
+                .filter(|&pc| par.lakes.get(pc) > par.zd.get(pc))
+                .map(|pc| par.lakes.get(pc))
+                .fold(f64::NAN, f64::max));
+            lv.supplied.set(c, true);
         }
         lv.cost[Pass::Ground as usize] += pend.len() as u64;
         self.timing[k][Stage::Supply as usize] += started.elapsed().as_secs_f64();
@@ -985,11 +987,11 @@ impl<'g, G: Ground> Ladder<'g, G> {
 
     fn ensure_built(&mut self, k: usize, mask: &Mask) {
         let lv = &self.levels[k];
-        let need = mask.filter(|c| !lv.built[c] && lv.exists[c]);
+        let need = mask.filter(|c| !lv.built.get(c) && lv.exists[c]);
         if need.is_empty() {
             return;
         }
-        let sel = need.filter(|c| !lv.watered[c]);
+        let sel = need.filter(|c| !lv.watered.get(c));
         if !sel.is_empty() {
             let pend = lv.pending(Pass::Water, &sel);
             let fp = lv.footprint(Pass::Water, &pend);
@@ -1013,26 +1015,26 @@ impl<'g, G: Ground> Ladder<'g, G> {
         let lv = &mut self.levels[k];
         let mut built = 0;
         for c in need.iter() {
-            if lv.supplied[c] && lv.watered[c] {
+            if lv.supplied.get(c) && lv.watered.get(c) {
                 let vertices: Vec<(u8, usize)> = lv.own_vertices(c).collect();
                 for (_, v) in vertices {
-                    lv.z[v] = (lv.ground[v] + lv.cut[v] + 0.5).floor();
-                    lv.zd[v] = (lv.ground[v] + 0.5).floor();
+                    lv.z.set(v, (lv.ground.get(v) + lv.cut.get(v) + 0.5).floor());
+                    lv.zd.set(v, (lv.ground.get(v) + 0.5).floor());
                 }
-                if lv.water[c] <= lv.z[c] {
-                    lv.water[c] = f64::NAN;
+                if lv.water.get(c) <= lv.z.get(c) {
+                    lv.water.set(c, f64::NAN);
                 }
                 // A lake, water standing over no river's bed, covers the
                 // whole cell.
-                if !lv.water[c].is_nan() && lv.wwet[c] < 0 {
-                    lv.wparts[c] = (1 << CHILD_OFFSETS.len()) - 1;
+                if !lv.water.get(c).is_nan() && lv.wwet.get(c) < 0 {
+                    lv.wparts.set(c, (1 << CHILD_OFFSETS.len()) - 1);
                 }
-                lv.built[c] = true;
+                lv.built.set(c, true);
                 built += 1;
             }
         }
         lv.cost[4] += built;
-        assert!(need.iter().all(|c| lv.built[c]), "a built cell read something its deform did not cover");
+        assert!(need.iter().all(|c| lv.built.get(c)), "a built cell read something its deform did not cover");
         self.timing[k][Stage::Build as usize] += started.elapsed().as_secs_f64();
     }
 
@@ -1042,7 +1044,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
     #[cfg(feature = "inspect")]
     pub fn unlimited_cut(&self, k: usize, cells: &[(i64, i64)]) -> Vec<f64> {
         let lv = &self.levels[k];
-        let routed = Mask::new(lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed[c]));
+        let routed = Mask::new(lv.routed.written().flat_map(|first| first..first + PAGE).filter(|&c| lv.routed.get(c)));
         let edges = water::trough_edges(lv, &routed, &self.p);
         let at: Vec<usize> = cells.iter().map(|&(i, j)| lv.idx(i, j).expect("a cell the level holds")).collect();
         water::whole_cut(lv, &edges, &at, &self.p)
@@ -1061,7 +1063,7 @@ fn births(par: &Level, lv: &Level, p: &Params) -> bool {
 fn corners_over(lv: &mut Level, mask: &Mask) {
     let mut draw: Vec<usize> = Vec::new();
     for c in mask.iter() {
-        if !lv.exists[c] || !lv.built[c] {
+        if !lv.exists[c] || !lv.built.get(c) {
             continue;
         }
         let (i, j) = lv.ij(c);
@@ -1071,11 +1073,11 @@ fn corners_over(lv: &mut Level, mask: &Mask) {
     draw.sort_unstable();
     draw.dedup();
     for c in draw {
-        if lv.exists[c] && lv.built[c] && !lv.finished[c] {
+        if lv.exists[c] && lv.built.get(c) && !lv.finished.get(c) {
             let (i, j) = lv.ij(c);
-            lv.finished[c] = [(i - 1, j + 1), (i - 1, j), (i, j - 1)]
+            lv.finished.set(c, [(i - 1, j + 1), (i - 1, j), (i, j - 1)]
                 .iter()
-                .all(|&(a, b)| lv.idx(a, b).is_none_or(|d| !lv.exists[d] || lv.built[d]));
+                .all(|&(a, b)| lv.idx(a, b).is_none_or(|d| !lv.exists[d] || lv.built.get(d))));
         }
     }
 }
@@ -1089,7 +1091,7 @@ fn tile_corners(lv: &mut Level, mask: &Mask) {
     }
     let nn = lv.cap();
     for c in mask.iter() {
-        if !lv.exists[c] || !lv.supplied[c] {
+        if !lv.exists[c] || !lv.supplied.get(c) {
             continue;
         }
         let (i, j) = lv.ij(c);
@@ -1097,14 +1099,14 @@ fn tile_corners(lv: &mut Level, mask: &Mask) {
         let (da, db, _, _) = lv.corner_means(i, j, &lv.ground, &lv.supplied);
         let (sa, sb, _, _) = lv.corner_means(i, j, &lv.sunk, &lv.supplied);
         if ready_a {
-            lv.carved[nn + c] = a;
-            lv.ground[nn + c] = da;
-            lv.sunk[nn + c] = sa;
+            lv.carved.set(nn + c, a);
+            lv.ground.set(nn + c, da);
+            lv.sunk.set(nn + c, sa);
         }
         if ready_b {
-            lv.carved[2 * nn + c] = b;
-            lv.ground[2 * nn + c] = db;
-            lv.sunk[2 * nn + c] = sb;
+            lv.carved.set(2 * nn + c, b);
+            lv.ground.set(2 * nn + c, db);
+            lv.sunk.set(2 * nn + c, sb);
         }
     }
 }

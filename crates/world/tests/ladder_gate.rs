@@ -134,7 +134,7 @@ fn exact<G: Ground>(ground: &G, whole: &Terrain<G>, p: Params, out: &mut String)
             for m in [&one, &apart] {
                 let lv = &m.levels[k];
                 for cc in 0..lv.cap() {
-                    if lv.routed[cc] {
+                    if lv.routed.get(cc) {
                         let (i, j) = lv.ij(cc);
                         cells += 1;
                         let bad = differs(lv, wl, i, j);
@@ -174,23 +174,23 @@ fn dump(dir: &str, lv: &Level) {
     let cells = |f: &dyn Fn(usize) -> f64| order.iter().map(|&c| f(c)).collect::<Vec<f64>>();
     let verts = |f: &dyn Fn(usize) -> f64| (0..3).flat_map(|t| order.iter().map(move |&c| t * cap + c)).map(f).collect::<Vec<f64>>();
     for (name, v) in [
-        ("z", cells(&|c| lv.z[c])),
-        ("zd", cells(&|c| lv.zd[c])),
-        ("ground", cells(&|c| lv.ground[c])),
-        ("cut", cells(&|c| lv.cut[c])),
-        ("wgfloor", cells(&|c| lv.wgfloor[c])),
-        ("wdist", cells(&|c| lv.wdist[c])),
-        ("water", cells(&|c| lv.water[c])),
-        ("wdepth", cells(&|c| lv.wdepth[c])),
-        ("age", cells(&|c| lv.age[c])),
-        ("erod", cells(&|c| lv.erod[c])),
-        ("graded", verts(&|v| lv.graded[v])),
-        ("elev", verts(&|v| lv.z[v])),
-        ("gelev", verts(&|v| lv.carved[v])),
-        ("gdry", verts(&|v| lv.ground[v])),
-        ("acc", verts(&|v| lv.acc[v])),
-        ("flow", verts(&|v| lv.flow[v])),
-        ("floor", verts(&|v| lv.floor[v])),
+        ("z", cells(&|c| lv.z.get(c))),
+        ("zd", cells(&|c| lv.zd.get(c))),
+        ("ground", cells(&|c| lv.ground.get(c))),
+        ("cut", cells(&|c| lv.cut.get(c))),
+        ("wgfloor", cells(&|c| lv.wgfloor.get(c))),
+        ("wdist", cells(&|c| lv.wdist.get(c))),
+        ("water", cells(&|c| lv.water.get(c))),
+        ("wdepth", cells(&|c| lv.wdepth.get(c))),
+        ("age", cells(&|c| lv.age.get(c))),
+        ("erod", cells(&|c| lv.erod.get(c))),
+        ("graded", verts(&|v| lv.graded.get(v))),
+        ("elev", verts(&|v| lv.z.get(v))),
+        ("gelev", verts(&|v| lv.carved.get(v))),
+        ("gdry", verts(&|v| lv.ground.get(v))),
+        ("acc", verts(&|v| lv.acc.get(v))),
+        ("flow", verts(&|v| lv.flow.get(v))),
+        ("floor", verts(&|v| lv.floor.get(v))),
     ] {
         dump_f64(&p(name), v.into_iter());
     }
@@ -204,22 +204,22 @@ fn dump(dir: &str, lv: &Level) {
         (t as i64 * lv.n as i64 + (i - lv.lo)) * lv.n_j as i64 + (j - lv.lo_j)
     };
     for (name, v) in [
-        ("rec", vi(&|v| rowed(lv.rec[v]))),
-        ("born", vi(&|v| lv.born[v])),
+        ("rec", vi(&|v| rowed(lv.rec.get(v)))),
+        ("born", vi(&|v| lv.born.get(v))),
     ] {
         dump_i64(&p(name), v.into_iter());
     }
-    dump_i64(&p("wborn"), order.iter().map(|&c| lv.wborn[c]));
-    dump_i64(&p("wsrc"), order.iter().map(|&c| lv.wsrc[c]));
-    dump_i64(&p("wwet"), order.iter().map(|&c| rowed(lv.wwet[c])));
+    dump_i64(&p("wborn"), order.iter().map(|&c| lv.wborn.get(c)));
+    dump_i64(&p("wsrc"), order.iter().map(|&c| lv.wsrc.get(c)));
+    dump_i64(&p("wwet"), order.iter().map(|&c| rowed(lv.wwet.get(c))));
     // A governing river read from a coarser level is a vertex of that level.
-    dump_i64(&p("wgov"), order.iter().map(|&c| if lv.wsrc[c] == lv.w { rowed(lv.wgov[c]) } else { -2 }));
+    dump_i64(&p("wgov"), order.iter().map(|&c| if lv.wsrc.get(c) == lv.w { rowed(lv.wgov.get(c)) } else { -2 }));
     let vb = |f: &dyn Fn(usize) -> bool| (0..3).flat_map(|t| order.iter().map(move |&c| t * cap + c)).map(f).collect::<Vec<bool>>();
-    dump_bool(&p("trough"), vb(&|v| lv.trough[v]).into_iter());
+    dump_bool(&p("trough"), vb(&|v| lv.trough.get(v)).into_iter());
     for (name, f) in [
         ("exists", &|c: usize| lv.exists[c] as u8 != 0),
-        ("routed", &|c: usize| lv.routed[c]),
-        ("built", &|c: usize| lv.built[c]),
+        ("routed", &|c: usize| lv.routed.get(c)),
+        ("built", &|c: usize| lv.built.get(c)),
     ] as [(&str, &dyn Fn(usize) -> bool); 3]
     {
         dump_bool(&p(name), order.iter().map(|&c| f(c)));
@@ -238,7 +238,7 @@ fn truth<G: Ground>(ladder: &Ladder<G>, w: i64) -> String {
     let (ci, cj) = haven_cell(lv.w);
     let mut cells: Vec<(i64, i64)> = (-h..=h)
         .flat_map(|a| (-h..=h).map(move |b| (ci + a, cj + b)))
-        .filter(|&(i, j)| lv.idx(i, j).is_some_and(|x| lv.built[x]))
+        .filter(|&(i, j)| lv.idx(i, j).is_some_and(|x| lv.built.get(x)))
         .collect();
     let mut draw = Draw(23);
     for x in (1..cells.len()).rev() {
@@ -253,16 +253,16 @@ fn truth<G: Ground>(ladder: &Ladder<G>, w: i64) -> String {
     let (mut steps, mut cuts, mut far) = (Vec::new(), Vec::new(), Vec::new());
     for (&(i, j), &t) in cells.iter().zip(&whole) {
         let c = lv.idx(i, j).unwrap();
-        let dry = lv.ground[c];
-        let off = (lv.z[c] - (dry + t + 0.5).floor()).abs();
+        let dry = lv.ground.get(c);
+        let off = (lv.z.get(c) - (dry + t + 0.5).floor()).abs();
         if off > 3.0 {
             far.push(format!(
                 "   ({i}, {j}): {off} steps; cut {:.1}, every river's {t:.1}; governing river read at {}, {:.2} cells off\n",
-                lv.cut[c], lv.wsrc[c], lv.wdist[c]
+                lv.cut.get(c), lv.wsrc.get(c), lv.wdist.get(c)
             ));
         }
         steps.push(off);
-        cuts.push((lv.cut[c] - t).abs());
+        cuts.push((lv.cut.get(c) - t).abs());
     }
     let pct = |v: &mut Vec<f64>, q: f64| {
         v.sort_by(f64::total_cmp);
@@ -291,9 +291,9 @@ fn floating<G: Ground>(ladder: &Ladder<G>) -> String {
         let (mut wet, mut float, mut worst) = (0u64, Vec::new(), 0.0f64);
         for a in -h..=h {
             for b in -h..=h {
-                let Some(c) = lv.idx(ci + a, cj + b).filter(|&c| lv.built[c] && !lv.water[c].is_nan()) else { continue };
+                let Some(c) = lv.idx(ci + a, cj + b).filter(|&c| lv.built.get(c) && !lv.water.get(c).is_nan()) else { continue };
                 wet += 1;
-                let excess = lv.water[c] - lv.z[c] - lv.wdepth[c];
+                let excess = lv.water.get(c) - lv.z.get(c) - lv.wdepth.get(c);
                 if excess > 0.0 {
                     worst = worst.max(excess);
                     float.push((a.abs().max(b.abs()).max((a + b).abs()), ci + a, cj + b, excess));
@@ -318,7 +318,7 @@ fn faces<G: Ground>(ladder: &Ladder<G>) -> String {
     for lv in &ladder.levels[1..] {
         let h = region(lv.w) / lv.w;
         let (ci, cj) = haven_cell(lv.w);
-        let z = |i: i64, j: i64| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built[c]).map_or(f64::NAN, |c| lv.z[c]);
+        let z = |i: i64, j: i64| lv.idx(i, j).filter(|&c| lv.exists[c] && lv.built.get(c)).map_or(f64::NAN, |c| lv.z.get(c));
         let met = |cells: [(i64, i64); 3]| meet(cells.map(|(i, j)| z(i, j)), lv.w as f64);
         // A corner's cells, and whether two of them part there.
         let apart = |cells: [(i64, i64); 3], x: usize, y: usize| {
@@ -475,33 +475,33 @@ fn differs(a: &Level, b: &Level, i: i64, j: i64) -> Vec<String> {
     let (Some(ca), Some(cb)) = (a.idx(i, j), b.idx(i, j)) else { return vec!["held".into()] };
     let (na, nb) = (a.cap(), b.cap());
     let mut bad = Vec::new();
-    if a.built[ca] && b.built[cb] && !same(a.z[ca], b.z[cb]) {
-        bad.push(format!("z {} / {}", a.z[ca], b.z[cb]));
+    if a.built.get(ca) && b.built.get(cb) && !same(a.z.get(ca), b.z.get(cb)) {
+        bad.push(format!("z {} / {}", a.z.get(ca), b.z.get(cb)));
     }
     for t in 0..3 {
         let (va, vb) = (t * na + ca, t * nb + cb);
-        if a.built[ca] && b.built[cb] && !same(a.z[va], b.z[vb]) {
-            bad.push(format!("z{t} {} / {}", a.z[va], b.z[vb]));
+        if a.built.get(ca) && b.built.get(cb) && !same(a.z.get(va), b.z.get(vb)) {
+            bad.push(format!("z{t} {} / {}", a.z.get(va), b.z.get(vb)));
         }
-        if !same(a.carved[va], b.carved[vb]) {
-            bad.push(format!("carved{t} {} / {}", a.carved[va], b.carved[vb]));
+        if !same(a.carved.get(va), b.carved.get(vb)) {
+            bad.push(format!("carved{t} {} / {}", a.carved.get(va), b.carved.get(vb)));
         }
-        if a.trough[va] != b.trough[vb] {
-            bad.push(format!("trough{t} {} / {}", a.trough[va], b.trough[vb]));
+        if a.trough.get(va) != b.trough.get(vb) {
+            bad.push(format!("trough{t} {} / {}", a.trough.get(va), b.trough.get(vb)));
         }
-        if !same(a.acc[va], b.acc[vb]) {
-            bad.push(format!("acc{t} {} / {}", a.acc[va], b.acc[vb]));
+        if !same(a.acc.get(va), b.acc.get(vb)) {
+            bad.push(format!("acc{t} {} / {}", a.acc.get(va), b.acc.get(vb)));
         }
-        if !same(a.flow[va], b.flow[vb]) {
-            bad.push(format!("flow{t} {} / {}", a.flow[va], b.flow[vb]));
+        if !same(a.flow.get(va), b.flow.get(vb)) {
+            bad.push(format!("flow{t} {} / {}", a.flow.get(va), b.flow.get(vb)));
         }
-        if !same(a.floor[va], b.floor[vb]) {
-            bad.push(format!("floor{t} {} / {}", a.floor[va], b.floor[vb]));
+        if !same(a.floor.get(va), b.floor.get(vb)) {
+            bad.push(format!("floor{t} {} / {}", a.floor.get(va), b.floor.get(vb)));
         }
         // A receiver is a vertex index in each ladder's own arrays.
         let r = |lv: &Level, v: i64| (v >= 0).then(|| lv.vertex(v as usize));
-        if r(a, a.rec[va]) != r(b, b.rec[vb]) {
-            bad.push(format!("rec{t} {:?} / {:?}", r(a, a.rec[va]), r(b, b.rec[vb])));
+        if r(a, a.rec.get(va)) != r(b, b.rec.get(vb)) {
+            bad.push(format!("rec{t} {:?} / {:?}", r(a, a.rec.get(va)), r(b, b.rec.get(vb))));
         }
     }
     bad
@@ -700,9 +700,9 @@ fn ladder_wet_dry() {
             let (la, lb) = (&a.levels[k], &b.levels[k]);
             let (mut both, mut up) = (0, 0);
             for c in 0..la.cap() {
-                if la.built[c] && lb.built[c] {
+                if la.built.get(c) && lb.built.get(c) {
                     both += 1;
-                    up += (la.z[c] > lb.z[c]) as u64;
+                    up += (la.z.get(c) > lb.z.get(c)) as u64;
                 }
             }
             out.push_str(&format!("{}: {both}; {up}\n", la.w));
