@@ -212,6 +212,19 @@ pub fn dispatch_summary_tasks(
                 let rl = mesh_region_lattice();
                 let cells: Vec<(i64, i64)> = rl.tiles_in_cell((rk.mn, rk.mm)).map(|(sq, sr)| (sq as i64, sr as i64)).collect();
                 generated.warm_level(common::summary::scale(rk.r) as i64, &cells);
+                // Every summary's parts too, on the ground of the level a
+                // third as wide, in one request: asked for a part at a
+                // time, the ground is built a block or two at a time, on as
+                // many threads.
+                let part = common::summary::part_width(rk.r);
+                let parts: Vec<(i64, i64)> = cells
+                    .iter()
+                    .flat_map(|&(sq, sr)| {
+                        let (cq, cr) = common::summary::center_tile(rk.r, sq as i32, sr as i32);
+                        common::summary::part_offsets(rk.r).map(|(dq, dr)| ((cq + dq) as i64 / part, (cr + dr) as i64 / part))
+                    })
+                    .collect();
+                generated.warm_level(part, &parts);
                 let data: Vec<SummaryData> = rl.tiles_in_cell((rk.mn, rk.mm))
                     .map(|(sq, sr)| SummaryData { r: rk.r, sq, sr, cell: generate(rk.r, sq, sr, &generated, &laid) })
                     .collect();

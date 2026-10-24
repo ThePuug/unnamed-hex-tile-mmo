@@ -20,7 +20,9 @@ impl EventRegistry {
         self.composite.warm(coords);
     }
 
-    /// The summaries of the level `w` wide at `cells` made ready together.
+    /// The cells of the level `w` wide at `cells` made ready together: the
+    /// summaries `w` wide, or the ground the parts of summaries three times
+    /// as wide stand on.
     pub fn warm_level(&self, w: i64, cells: &[(i64, i64)]) {
         self.composite.warm_level(w, cells);
     }

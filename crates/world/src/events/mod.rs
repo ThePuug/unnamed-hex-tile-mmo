@@ -835,9 +835,11 @@ impl Composite {
         }
     }
 
-    /// The summaries `w` tiles wide at `cells` made ready together, as
+    /// The cells of the level `w` tiles wide at `cells` made ready together:
+    /// the summaries `w` wide, as
     /// [`SummarySource::cell`](common::summary::SummarySource::cell) reads
-    /// them.
+    /// them, or the ground under the parts of summaries three times as
+    /// wide, as [`Composite::tile_on`] stands them on it.
     pub fn warm_level(&self, w: i64, cells: &[(i64, i64)]) {
         self.level(w, cells);
     }
