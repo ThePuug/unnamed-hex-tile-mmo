@@ -33,7 +33,7 @@
 //! on the carve as a river does, so a lake that rounds to its own ground
 //! covers nothing.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::RwLock;
 
 use super::geom::{cube_round, hex_offsets, parent_of, pos3, project, vnbr, CHILD_OFFSETS};
@@ -64,8 +64,9 @@ pub(super) struct Edge {
     fall: f64,
     /// The width of the level the edge is drawn at, which spaces its samples.
     w: i64,
-    /// Whether no trough drains into the vertex the edge leaves.
-    head: bool,
+    /// How many troughs drain into the vertex the edge leaves: none at a
+    /// river's head.
+    ins: u8,
     /// The edge leaving the vertex this one reaches, where its river runs
     /// on and that vertex's receiver is routed.
     next: Option<Next>,
@@ -97,13 +98,14 @@ fn tiles(lv: &Level, v: usize) -> (f64, f64) {
 pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
     let nn = lv.cap();
     let runs = |v: usize| lv.trough.get(v) && lv.rec.get(v) >= 0;
-    let head = |v: usize| {
+    let ins = |v: usize| {
         let (t, i, j) = lv.vertex(v);
-        !(0..6).filter_map(|k| {
+        (0..6).filter_map(|k| {
             let (tt, a, b) = vnbr(t, i, j, k);
             lv.vid(tt, a, b)
         })
-        .any(|u| runs(u) && lv.rec.get(u) == v as i64)
+        .filter(|&u| runs(u) && lv.rec.get(u) == v as i64)
+        .count() as u8
     };
     // A vertex's graded profile, its floor where routing could not grade it.
     let graded_at = |u: usize| if lv.graded.get(u).is_nan() { lv.floor.get(u).max(0.0) } else { lv.graded.get(u).max(0.0) };
@@ -147,7 +149,7 @@ pub(super) fn trough_edges(lv: &Level, mask: &Mask, p: &Params) -> Vec<Edge> {
                 plains: (plain_at(v), plain_at(to)),
                 fall: super::graded_slope(lv.acc.get(v), rock(lv, v), p),
                 w: lv.w,
-                head: head(v),
+                ins: ins(v),
                 next,
             }
         })
@@ -222,6 +224,7 @@ fn standing(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, f64, usize)
     let half_step = w as f64 / SQRT_3 / 2.0;
     beds.iter()
         .filter(|s| s.bed >= corner && drawn_at(s.bed) <= s.w.max(w))
+        .filter(|s| back(s, at) <= half_step)
         .filter_map(|s| {
             let (floor, d) = on_stretch(s, (s.x, s.y), s.on, at, half_step);
             (d <= s.bed + depth(s.bed) / s.slope).then(|| ((floor + 0.5).floor(), depth(s.bed), s.src))
@@ -234,6 +237,22 @@ fn standing(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, f64, usize)
 fn on_stretch(s: &Sample, from: (f64, f64), on: (f64, f64), (x, y): (f64, f64), nearer: f64) -> (f64, f64) {
     let (f, d) = project((x, y), from, (from.0 + on.0, from.1 + on.1));
     (s.floor + f * s.down, (d * SQRT_3 - nearer).max(0.0))
+}
+
+/// How far a position lies upstream of the start of a bed's stretch, in
+/// tiles, less than nothing where it lies ahead of it: no distance at a
+/// river's head, where its valley closes round its source, and every
+/// distance from a stretch of no length, a way's last point, which the
+/// stretch before it reaches.
+fn back(s: &Sample, (x, y): (f64, f64)) -> f64 {
+    if s.head {
+        return f64::NEG_INFINITY;
+    }
+    let l = s.on.0.hypot(s.on.1);
+    if l == 0.0 {
+        return f64::INFINITY;
+    }
+    -((x - s.x) * s.on.0 + (y - s.y) * s.on.1) / l
 }
 
 /// A bed's valley at a position in world units a tile apart, as a level
@@ -251,8 +270,21 @@ fn profile(s: &Sample, at: (f64, f64), nearer: f64) -> f64 {
 
 /// A bed's valley as [`profile`] draws it, in two: its channel, and its
 /// banks, the plain and the walls beside the bed, never lower than the
-/// channel's walls where it has no plain.
-fn parts(s: &Sample, (x, y): (f64, f64), nearer: f64) -> (f64, f64) {
+/// channel's walls where it has no plain. A stretch's valley reaches the
+/// ground beside it and downstream past its end, never upstream past its
+/// start, but by `nearer` or at a river's head: a point stands on the
+/// river beside it, which the stretch upstream reaches, never on a floor
+/// downstream below a reach steeper than its valley climbs.
+fn parts(s: &Sample, at: (f64, f64), nearer: f64) -> (f64, f64) {
+    if back(s, at) > nearer.max(0.0) {
+        return (f64::INFINITY, f64::INFINITY);
+    }
+    reach(s, at, nearer)
+}
+
+/// A bed's valley as [`parts`] draws it, whether or not it reaches the
+/// position: no lower than it anywhere.
+fn reach(s: &Sample, (x, y): (f64, f64), nearer: f64) -> (f64, f64) {
     let (floor, d) = on_stretch(s, (s.x, s.y), s.on, (x, y), nearer);
     let channel = floor - depth(s.bed) + s.slope * (d - s.bed).max(0.0);
     // The plain rises from its river faster than the river falls, so a
@@ -277,13 +309,15 @@ fn lean(s: &Sample) -> f64 {
 /// distance from the disc's nearest point, its floor wherever along the
 /// stretch.
 fn lowest_over(s: &Sample, at: (f64, f64), radius: f64) -> f64 {
-    profile(s, at, radius) - s.down.abs()
+    let (channel, banks) = reach(s, at, radius);
+    channel.min(banks) - s.down.abs()
 }
 
 /// The most a bed's banks stand over a disc `radius` tiles round a
-/// position, never below its [`profile`] there.
+/// position, never below its [`profile`] there, wherever its stretch
+/// reaches ([`parts`]).
 fn highest_over(s: &Sample, at: (f64, f64), radius: f64) -> f64 {
-    parts(s, at, -radius).1 + s.down.abs()
+    reach(s, at, -radius).1 + s.down.abs()
 }
 
 /// A point of a trough's bed and the stretch of it to the next point,
@@ -313,6 +347,11 @@ struct Sample {
     slope: f64,
     /// The river vertex its edge leaves.
     src: usize,
+    /// Whether it begins its river: its valley closes round it upstream.
+    head: bool,
+    /// How many ways run into the start of its own, whose last stretches
+    /// reach what lies upstream of it.
+    ins: u8,
     w: i64,
     near: f64,
     far: f64,
@@ -366,7 +405,7 @@ impl Way {
             Some(n) => (mid(b, world(n.to.0, n.to.1)), (e.floors.1 + n.floor) / 2.0, (e.plains.1 + n.plain) / 2.0, River { flow: n.flow, born: n.born, erod: n.erod, src: n.src, fall: n.fall }),
             None => (b, e.floors.1, e.plains.1, own),
         };
-        let head = e.head.then(|| (a, (m1.0 - a.0).hypot(m1.1 - a.1)));
+        let head = (e.ins == 0).then(|| (a, (m1.0 - a.0).hypot(m1.1 - a.1)));
         let start = head.map_or(0.0, |h| h.1);
         let mut curve = Vec::with_capacity(Self::SPAN + 1);
         let mut run = start;
@@ -561,6 +600,8 @@ impl Band {
                     born: river.born,
                     slope: wall_slope(river.erod, p.wall),
                     src: river.src,
+                    head: way.head.is_some() && s == 0,
+                    ins: e.ins,
                     w: e.w,
                     near,
                     far,
@@ -640,7 +681,7 @@ fn valley(beds: &[Sample], q: f64, r: f64) -> Option<(f64, Sample, f64)> {
     for s in beds {
         let d = (s.x - x).hypot(s.y - y);
         let v = profile(s, (x, y), 0.0);
-        if best.is_none_or(|b| v < b.0) {
+        if v.is_finite() && best.is_none_or(|b| v < b.0) {
             best = Some((v, *s, d));
         }
     }
@@ -734,7 +775,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[&RwLock<Band>], cells: &[usize]) 
     }
     let groups: Vec<Vec<Vec<usize>>> = by.into_values().map(|g| g.into_values().collect()).collect();
     let each: Vec<usize> = (0..groups.len()).collect();
-    let lists: Vec<Vec<(f64, Sample)>> = in_parallel(&each, |_, g| {
+    let lists: Vec<(Vec<(f64, Sample)>, HashMap<(i64, usize, u32), usize>, HashMap<(i64, usize), Vec<usize>>)> = in_parallel(&each, |_, g| {
         let xs: Vec<usize> = groups[g].iter().flatten().copied().collect();
         let ((cq, cr), _, radius, high) = span(&xs);
         let (mut list, mut found) = (Vec::new(), Vec::new());
@@ -744,7 +785,23 @@ pub(super) fn carved_over(lv: &Level, bands: &[&RwLock<Band>], cells: &[usize]) 
             list.append(&mut found);
         }
         list.sort_by(|a, b| a.0.total_cmp(&b.0));
-        list
+        let index: HashMap<(i64, usize, u32), usize> = list.iter().enumerate().map(|(k, (_, s))| ((s.w, s.rank.0, s.rank.1), k)).collect();
+        // The last point of each way read that runs into another's start,
+        // under that way's vertex: its river there is the one it runs on to.
+        let mut last: HashMap<(i64, usize), usize> = HashMap::new();
+        for (k, (_, s)) in list.iter().enumerate() {
+            if s.src != s.rank.0 {
+                let at = last.entry((s.w, s.rank.0)).or_insert(k);
+                if list[*at].1.rank.1 < s.rank.1 {
+                    *at = k;
+                }
+            }
+        }
+        let mut tails: HashMap<(i64, usize), Vec<usize>> = HashMap::new();
+        for k in last.into_values() {
+            tails.entry((list[k].1.w, list[k].1.src)).or_default().push(k);
+        }
+        (list, index, tails)
     });
     // Each coarser cell's children read their group's beds again, nearer:
     // lowest the valley can stand among them first. No vertex of theirs
@@ -762,16 +819,43 @@ pub(super) fn carved_over(lv: &Level, bands: &[&RwLock<Band>], cells: &[usize]) 
     let near_lists: Vec<Vec<(f64, Sample)>> = in_parallel(&each, |_, k| {
         let (g, xs) = subs[k];
         let (_, centre, radius, high) = span(xs);
+        let (group, index, tails) = &lists[g];
+        // The most a bed's banks stand over the disc where its stretch
+        // reaches, and where it does not, the stretches before it on its
+        // way and on every way running into it, back to those starting
+        // upstream of the whole disc: unbounded where one of them lies past
+        // its reach or among no beds read.
+        let ceiling_of = |s: &Sample| {
+            let (mut most, mut todo) = (f64::NEG_INFINITY, vec![*s]);
+            while let Some(at) = todo.pop() {
+                if (at.x - centre.0).hypot(at.y - centre.1) + radius > at.far || todo.len() > 64 {
+                    return f64::INFINITY;
+                }
+                most = most.max(highest_over(&at, centre, radius));
+                if back(&at, centre) + radius <= 0.0 {
+                    continue;
+                }
+                if at.rank.1 > 0 {
+                    let Some(&k) = index.get(&(at.w, at.rank.0, at.rank.1 - 1)) else { return f64::INFINITY };
+                    todo.push(group[k].1);
+                    continue;
+                }
+                let ways = tails.get(&(at.w, at.rank.0)).map_or(&[][..], |w| &w[..]);
+                if ways.len() != at.ins as usize {
+                    return f64::INFINITY;
+                }
+                todo.extend(ways.iter().map(|&k| group[k].1));
+            }
+            most
+        };
         let mut ceiling = high;
         let mut list: Vec<(f64, Sample)> = Vec::new();
-        for (lowest, s) in &lists[g] {
+        for (lowest, s) in group {
             if *lowest >= ceiling {
                 break;
             }
             if let Some(near) = reaching(s, centre, radius, ceiling) {
-                if (s.x - centre.0).hypot(s.y - centre.1) + radius <= s.far {
-                    ceiling = ceiling.min(highest_over(s, centre, radius));
-                }
+                ceiling = ceiling.min(ceiling_of(s));
                 list.push(near);
             }
         }
