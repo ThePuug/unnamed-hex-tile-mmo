@@ -820,37 +820,62 @@ pub(super) fn carved_over(lv: &Level, bands: &[&RwLock<Band>], cells: &[usize]) 
         let (g, xs) = subs[k];
         let (_, centre, radius, high) = span(xs);
         let (group, index, tails) = &lists[g];
-        // The most a bed's banks stand over the disc where its stretch
-        // reaches, and where it does not, the stretches before it on its
-        // way and on every way running into it, back to those starting
-        // upstream of the whole disc: unbounded where one of them lies past
-        // its reach or among no beds read.
-        let ceiling_of = |s: &Sample| {
-            let (mut most, mut todo) = (f64::NEG_INFINITY, vec![*s]);
-            while let Some(at) = todo.pop() {
-                if (at.x - centre.0).hypot(at.y - centre.1) + radius > at.far || todo.len() > 64 {
-                    return f64::INFINITY;
-                }
-                most = most.max(highest_over(&at, centre, radius));
-                if back(&at, centre) + radius <= 0.0 {
-                    continue;
-                }
-                if at.rank.1 > 0 {
-                    let Some(&k) = index.get(&(at.w, at.rank.0, at.rank.1 - 1)) else { return f64::INFINITY };
-                    todo.push(group[k].1);
-                    continue;
-                }
-                let ways = tails.get(&(at.w, at.rank.0)).map_or(&[][..], |w| &w[..]);
-                if ways.len() != at.ins as usize {
-                    return f64::INFINITY;
-                }
-                todo.extend(ways.iter().map(|&k| group[k].1));
+        // The stretches a bed's ceiling reaches on to: the one before it on
+        // its way, or the last of every way running into it; none once it
+        // starts upstream of the whole disc. None where one lies past its
+        // reach or among no beds read, which leaves the ceiling unbounded.
+        let before = |k: usize| -> Option<Vec<usize>> {
+            let at = &group[k].1;
+            if (at.x - centre.0).hypot(at.y - centre.1) + radius > at.far {
+                return None;
             }
-            most
+            if back(at, centre) + radius <= 0.0 {
+                return Some(Vec::new());
+            }
+            if at.rank.1 > 0 {
+                return index.get(&(at.w, at.rank.0, at.rank.1 - 1)).map(|&j| vec![j]);
+            }
+            let ways = tails.get(&(at.w, at.rank.0)).map_or(&[][..], |w| &w[..]);
+            (ways.len() == at.ins as usize).then(|| ways.to_vec())
+        };
+        // The most a bed's banks stand over the disc where its stretch
+        // reaches, and where it does not, over the stretches before it, back
+        // to those starting upstream of the whole disc: each stretch's once,
+        // shared by every bed reaching on to it, upstream first. A stretch
+        // whose way back returns to a stretch still being walked lies on a
+        // loop and is unbounded, as one past its reach.
+        let mut ceilings: HashMap<usize, f64> = HashMap::new();
+        let mut walking: HashSet<usize> = HashSet::new();
+        let mut ceiling_of = |k: usize| {
+            let mut todo = vec![k];
+            while let Some(&at) = todo.last() {
+                if ceilings.contains_key(&at) {
+                    todo.pop();
+                    continue;
+                }
+                let up = before(at).filter(|up| !up.iter().any(|j| walking.contains(j)));
+                let Some(up) = up else {
+                    ceilings.insert(at, f64::INFINITY);
+                    walking.remove(&at);
+                    todo.pop();
+                    continue;
+                };
+                let open: Vec<usize> = up.iter().copied().filter(|j| !ceilings.contains_key(j)).collect();
+                if open.is_empty() {
+                    let most = up.iter().fold(highest_over(&group[at].1, centre, radius), |m, j| m.max(ceilings[j]));
+                    ceilings.insert(at, most);
+                    walking.remove(&at);
+                    todo.pop();
+                } else {
+                    walking.insert(at);
+                    todo.extend(open);
+                }
+            }
+            ceilings[&k]
         };
         let mut ceiling = high;
         let mut list: Vec<(f64, Sample)> = Vec::new();
-        for (lowest, s) in group {
+        for (k, (lowest, s)) in group.iter().enumerate() {
             if *lowest >= ceiling {
                 break;
             }
@@ -860,7 +885,7 @@ pub(super) fn carved_over(lv: &Level, bands: &[&RwLock<Band>], cells: &[usize]) 
                 continue;
             }
             if let Some(near) = reaching(s, centre, radius, ceiling) {
-                ceiling = ceiling.min(ceiling_of(s));
+                ceiling = ceiling.min(ceiling_of(k));
                 list.push(near);
             }
         }
