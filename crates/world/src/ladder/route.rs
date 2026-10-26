@@ -37,7 +37,8 @@
 //! lake's surface is lowered toward its outlet's graded profile, as far
 //! as the plate's age has carried erosion, and a vertex the lowered
 //! surface no longer covers is dry. A lake is the base level of the
-//! rivers above it, and its floor is its surface; the floors below never
+//! rivers above it, and its floor is its surface, the lake handed down's
+//! at a vertex the block reads but does not route; the floors below never
 //! stand above it, so the outlet is cut to it. A level draws the lake it
 //! keeps over a cell's centre.
 //!
@@ -613,6 +614,11 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
                     return above_sea(lake[x]);
                 }
                 let v = vids[x];
+                // A vertex the block does not route stands under the lake
+                // handed down over it, as the block that routes it floods it.
+                if !known[x] && !lv.lake_zone.get(v).is_nan() {
+                    return above_sea(lv.lake_zone.get(v));
+                }
                 if !src_floor[x].is_nan() {
                     return src_floor[x].min(lv.brim.get(v));
                 }
