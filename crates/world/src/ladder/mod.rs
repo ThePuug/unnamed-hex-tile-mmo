@@ -164,6 +164,12 @@ pub const WALL_HARDEST: f64 = 3.0;
 pub const HEAD_SLOPE: f64 = 1.0;
 /// How far upstream a trough born at a level may gather, in its cells.
 pub const ROUTE_REACH: f64 = 11.0;
+/// How many rings of the level above a cell reads that level's lakes over:
+/// past the ring its shore lies within, a ring more, so a hollow its
+/// coarser points stepped over beside the lake lies in the lake's zone and
+/// fills, and only ground still under the surface a whole coarser cell
+/// beyond the shore is an opening the lake drains to.
+pub const LAKE_REACH: i64 = 2;
 
 /// The stages a level's work is timed by.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -339,11 +345,13 @@ pub struct Level {
     pub held_depth: Paged<f64>,
     pub held_src: Paged<i64>,
     pub held_parts: Paged<u16>,
-    /// The surface of the lake over each cell's parent or a cell beside
-    /// it, the highest, rounded, where it stands over that cell's dry
-    /// ground; NaN where none: a shore lies within a cell of the level
-    /// above's lake. A lake in a basin wider than routing reads is found
-    /// by a coarser level; the cells it marks are its zone at this level.
+    /// The surface of the lake over each cell's parent or a cell within
+    /// [`LAKE_REACH`] of it, the highest, rounded, where it stands over that
+    /// cell's dry ground; NaN where none: a shore lies within a cell of the
+    /// level above's lake, and a hollow the level above stepped over
+    /// within a cell beyond it. A lake in a basin wider than routing reads
+    /// is found by a coarser level; the cells it marks are its zone at this
+    /// level.
     pub lake_above: Paged<f64>,
     /// The surface of the lake handed down at each vertex of its zone, as
     /// the level's own ground holds it ([`route::flood_zone`]); NaN where
@@ -1000,8 +1008,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
         }
     }
 
-    /// The level above under a mask and a ring of its cells: read, routed,
-    /// built and cornered.
+    /// The level above under a mask and [`LAKE_REACH`] rings of its cells:
+    /// read, routed, built and cornered.
     fn parent_over(&self, k: usize, mask: &Mask) {
         let (lv, par) = (&self.levels[k], &self.levels[k - 1]);
         let under = Mask::new(mask.iter().filter_map(|c| {
@@ -1009,7 +1017,7 @@ impl<'g, G: Ground> Ladder<'g, G> {
             let (pi, pj, _, _) = parent_of(i, j);
             par.idx(pi, pj)
         }));
-        let pmask = par.dilate(&under, 1);
+        let pmask = par.dilate(&under, LAKE_REACH as usize);
         self.read_ground(k - 1, &pmask);
         if k - 1 > 0 {
             self.ensure_routed(k - 1, &pmask);
@@ -1049,8 +1057,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
                 lv.held_parts.set(c, found.parts);
                 let (i, j) = lv.ij(c);
                 let (pi, pj, _, _) = parent_of(i, j);
-                lv.lake_above.set(c, std::iter::once((0, 0))
-                    .chain(NB)
+                let near = (-LAKE_REACH..=LAKE_REACH).flat_map(|di| (-LAKE_REACH..=LAKE_REACH).filter(move |dj| (di + dj).abs() <= LAKE_REACH).map(move |dj| (di, dj)));
+                lv.lake_above.set(c, near
                     .filter_map(|(di, dj)| par.idx(pi + di, pj + dj))
                     .filter(|&pc| par.lakes.get(pc) > par.zd.get(pc))
                     .map(|pc| par.lakes.get(pc))

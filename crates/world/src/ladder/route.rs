@@ -788,10 +788,11 @@ fn course_of(par: &Level, lv: &Level, u: usize, p: &Params) -> Option<Vec<(i64, 
 }
 
 /// The lakes the level above hands down over `zone`, cells of a level
-/// whose parent or a cell beside it lies under the level above's lake,
-/// joined to every such cell beside them: the zone's vertices flooded
-/// together from the ground round it ([`Level::brim`]: a river's channel
-/// spills at its water, never its bed), lowest water first, so a lake
+/// whose parent or a cell within [`super::LAKE_REACH`] of it lies under
+/// the level above's lake, joined to every such cell beside them: the
+/// zone's vertices flooded together from the ground round it
+/// ([`Level::brim`]: a river's channel spills at its water, never its
+/// bed), lowest water first, so a lake
 /// stands at one surface wherever it is read, as high as the level's own
 /// ground holds it and never above the lake handed down over it. Where
 /// the level's ground opens a hollow the level above found closed, the
