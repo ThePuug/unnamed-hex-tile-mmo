@@ -207,7 +207,7 @@ pub fn tend_dens(
     tuning: Res<Tuning>,
     time: Res<Time>,
     dice: Res<combat::dice::Dice>,
-    haven: Res<SpawnPoint>,
+    haven: Option<Res<SpawnPoint>>,
     mut next: Local<Moment>,
     mut commands: Commands,
 ) {
@@ -215,6 +215,7 @@ pub fn tend_dens(
     for ending in ended.read() {
         dens.ended(ending.engagement, ending.cleared, now);
     }
+    let Some(haven) = haven else { return };
     if now < *next {
         return;
     }

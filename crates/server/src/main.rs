@@ -67,6 +67,7 @@ fn main() {
 
     app.add_systems(PreUpdate, (
         renet::write_try,
+        renet::admit,
     ));
 
     // Actor systems
@@ -136,9 +137,7 @@ fn main() {
         Err(_) => default(),
     };
     app.insert_resource(changes);
-    let spawn_z = registry.elevation_at(haven.q, haven.r) + 1;
-    app.insert_resource(common_bevy::components::resources::SpawnPoint(
-        qrz::Qrz { q: haven.q, r: haven.r, z: spawn_z }));
+    app.insert_resource(renet::Admission::reading(haven, registry.clone()));
     app.insert_resource(registry);
     app.init_resource::<crate::resources::summary_cache::SummaryCache>();
     app.init_resource::<engagement_spawner::Parties>();

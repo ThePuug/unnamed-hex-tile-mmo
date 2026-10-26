@@ -95,8 +95,9 @@ impl Default for CombatState {
     }
 }
 
-/// The location players respawn at after death.
-/// Initialized by the server with terrain-aware height.
+/// The location players enter and respawn at, standing on the haven's
+/// ground. The server inserts it once that ground is read, which takes a
+/// while after start; until then it is absent.
 #[derive(Clone, Copy, Debug, Resource)]
 pub struct SpawnPoint(pub qrz::Qrz);
 

@@ -115,15 +115,16 @@ pub fn check_death(
 }
 
 /// Stands every player whose respawn timer has run out at the `SpawnPoint`,
-/// its pools full
+/// its pools full, once the server has read the ground there
 /// Runs on server only
 pub fn process_respawn(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
-    spawn_point: Res<SpawnPoint>,
+    spawn_point: Option<Res<SpawnPoint>>,
     mut query: Query<(Entity, &RespawnTimer, &mut Health, Option<&mut Endurance>, &mut Loc, &mut Position, Option<&crate::components::behaviour::PlayerControlled>)>,
 ) {
+    let Some(spawn_point) = spawn_point else { return };
     for (ent, timer, mut health, endurance, mut loc, mut position, player_controlled) in &mut query {
         if timer.should_respawn(Moment::ZERO + time.elapsed()) {
             let spawn_qrz = spawn_point.0;

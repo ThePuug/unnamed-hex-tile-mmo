@@ -42,6 +42,38 @@ pub enum Presence {
     View { client_id: ::renet::ClientId, ent: Entity },
 }
 
+/// The haven's ground, read on a thread of its own, and the clients who
+/// asked to enter before it was. Ground no one has read yet can take the
+/// world's generator longer to build than a connection waits on a frame,
+/// so the server answers connections while it reads.
+#[derive(Resource)]
+pub struct Admission {
+    ground: Option<std::thread::JoinHandle<Qrz>>,
+    waiting: Vec<::renet::ClientId>,
+}
+
+impl Admission {
+    /// Starts reading the ground at `haven` from `registry`.
+    pub fn reading(haven: Qrz, registry: crate::resources::event_registry::EventRegistry) -> Self {
+        let ground = std::thread::spawn(move || Qrz { z: registry.elevation_at(haven.q, haven.r) + 1, ..haven });
+        Self { ground: Some(ground), waiting: Vec::new() }
+    }
+}
+
+/// Stands the spawn point on the haven's ground once it is read, and lets
+/// in every client who asked to enter meanwhile.
+pub fn admit(mut admission: ResMut<Admission>, mut commands: Commands) {
+    if !admission.ground.as_ref().is_some_and(std::thread::JoinHandle::is_finished) {
+        return;
+    }
+    let spawn = admission.ground.take().expect("a finished read").join().expect("the haven's ground read");
+    info!("the haven's ground is read: players enter at {spawn:?}");
+    commands.insert_resource(common_bevy::components::resources::SpawnPoint(spawn));
+    for client_id in admission.waiting.drain(..) {
+        commands.trigger(Presence::Enter { client_id });
+    }
+}
+
 pub fn do_manage_connections(
     trigger: On<NetServerEvent>,
     mut commands: Commands,
@@ -70,7 +102,8 @@ pub fn do_presence(
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
     runtime: Res<RunTime>,
-    spawn_point: Res<common_bevy::components::resources::SpawnPoint>,
+    spawn_point: Option<Res<common_bevy::components::resources::SpawnPoint>>,
+    mut admission: ResMut<Admission>,
     characters: Query<(), With<PlayerControlled>>,
     actors: Query<(&EntityType, &Loc, Option<&ActorAttributes>), Without<RespawnTimer>>,
 ) {
@@ -80,6 +113,12 @@ pub fn do_presence(
                 if lobby.contains_left(&client_id) {
                     return;
                 }
+                let Some(spawn_point) = spawn_point else {
+                    if !admission.waiting.contains(&client_id) {
+                        admission.waiting.push(client_id);
+                    }
+                    return;
+                };
                 info!("Player {} entered the world", client_id);
                 let typ = EntityType::Actor(ActorImpl::new(
                     Origin::Evolved,
@@ -152,6 +191,7 @@ pub fn do_presence(
             }
             Presence::Leave { client_id } => {
                 let client_id = *client_id;
+                admission.waiting.retain(|&waiting| waiting != client_id);
                 let Some((_, ent)) = lobby.remove_by_left(&client_id) else { return };
                 leave(client_id, ent, characters.contains(ent), &mut commands, &mut conn, &lobby, &mut buffers, &mut guards, &mut loaded_by_query);
             }
