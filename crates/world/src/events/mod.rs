@@ -1211,8 +1211,10 @@ impl common::summary::SummarySource for Composite {
         }
         // A summary's parts are its cell's children, in the same order
         // (`summary_parts_are_the_ladders_children`).
-        let (z, _, wet) = self.level(w, &[(sq as i64, sr as i64)]).pop().flatten()?;
-        Some((z.round() as i32, wet))
+        let (z, water, wet) = self.level(w, &[(sq as i64, sr as i64)]).pop().flatten()?;
+        let ground = z.round() as i32;
+        let surface = water.map(|s| s.round() as i32).filter(|&s| s > ground && s > 0);
+        Some((surface.map_or(ground, |s| s - 1), wet))
     }
 }
 

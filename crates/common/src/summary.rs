@@ -28,7 +28,10 @@ pub trait SummarySource {
     /// source holds the summary's own cell rather than its tiles, as the
     /// terrain ladder does at 3, 9, 27 and 81 wide: its height, and which of
     /// its parts stand under water above the sea, a bit to each, as
-    /// [`wet_parts`] marks them.
+    /// [`wet_parts`] marks them. Where water stands over the cell its height
+    /// is a step under the water's surface, as [`summarize`] stands a wet
+    /// summary, so a lake is drawn level at its surface and never over its
+    /// bed.
     fn cell(&self, _r: u32, _sq: i32, _sr: i32) -> Option<(i32, u16)> {
         None
     }
