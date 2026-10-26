@@ -202,7 +202,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         let (cells, m) = vertex_cells(t, i, j);
         known[x] = cells[..m].iter().all(|&(a, bb)| lv.idx(a, bb).is_none_or(|c| stamp.get(c) == cur && lv.supplied.done(c)));
         let (q3, r3) = pos3(t, i, j, w);
-        key[x] = (lv.sunk.get(v), 2 * r3 + q3, q3);
+        key[x] = (lv.brim.get(v), 2 * r3 + q3, q3);
         at[x] = xy(q3, r3);
         pos[x] = (q3, r3);
         if known[x] && lv.ground.get(v) < 0.0 {
@@ -597,10 +597,11 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
     let mut lake = lowered;
     // Floors: drainage's under each vertex's dry ground, toward its graded
     // profile and held to the room its hillslopes give, and never above its
-    // carved ground; where a node hands its river down, the level above's,
-    // cut once from the dry ground and never again, but never above the
-    // ground every coarser valley left with each channel full, so a river
-    // laid across another's valley runs down into it rather than over it;
+    // carved ground, nor below the water of a coarser channel it stands in;
+    // where a node hands its river down, the level above's, cut once from
+    // the dry ground and never again, but never above the ground every
+    // coarser valley left with each channel full, so a river laid across
+    // another's valley runs down into it rather than over it;
     // along a trough never above the floors draining into it, upstream
     // first, through a lake as anywhere: a lake's floor is its surface,
     // and a river reaching it cut lower lowers the whole lake to its floor,
@@ -623,7 +624,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
                     return src_floor[x].min(lv.brim.get(v));
                 }
                 let c = v % nn;
-                drained(lv.ground.get(v), graded[x], lv.age.get(c), lv.erod.get(c), room(x), p).min(lv.carved.get(v))
+                drained(lv.ground.get(v), graded[x], lv.age.get(c), lv.erod.get(c), room(x), p).min(lv.carved.get(v).max(lv.brim.get(v)))
             })
             .collect();
         let mut low = vec![f64::INFINITY; nv];

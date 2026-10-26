@@ -303,14 +303,16 @@ pub struct Level {
     pub carved: Paged<f64>,
     /// The lowest the carved ground falls within half a step of each
     /// vertex, a step the distance between the level's points: its ground
-    /// met by every coarser level's valleys at their nearest there. What
-    /// routing reads, so a valley narrower than the level's steps runs on
-    /// as a course, never a row of hollows.
+    /// met by every coarser level's valleys at their nearest there, so a
+    /// valley narrower than the level's steps runs on as a course, never a
+    /// row of hollows.
     pub sunk: Paged<f64>,
     /// The sunk ground with every coarser river's channel full to its
-    /// floor, where its water stands: what a lake handed down is flooded
-    /// over, so it spills where a river's water runs out, never down to
-    /// the bed beneath it.
+    /// floor, where its water stands: what routing reads and a lake handed
+    /// down is flooded over, so a coarser river's channel is a river at
+    /// this level too, never a hollow its water fills as a lake, and a lake
+    /// spills where a river's water runs out, never down to the bed beneath
+    /// it.
     pub brim: Paged<f64>,
     /// The level's carve at each vertex: its valleys, each at its lowest
     /// within half a step, met by its sunk ground, less the ground; never
