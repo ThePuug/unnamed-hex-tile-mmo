@@ -49,6 +49,7 @@
 //! of the head splits between the same two neighbours by those weights, so
 //! a slope drains in a spread; a trough goes whole to its receiver.
 
+use std::cell::OnceCell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -530,7 +531,7 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
             shown.vid(tt, ni, nj)
         })
     };
-    let room = |x: usize| -> f64 {
+    let room_of = |x: usize| -> f64 {
         let mut best = slope_len[x];
         let mut take = |y: usize| {
             best[0] = best[0].max(slope_len[y][0]);
@@ -547,6 +548,10 @@ fn route_block(lv: &Level, par: &Level, p: &Params, births: bool, b: usize, (own
         }
         if best[0] > 0.0 && best[1] > 0.0 { best[0].min(best[1]) } else { best[0].max(best[1]) }
     };
+    // A vertex's room is read on every pass of the floors below, and no
+    // lake lowered there changes it.
+    let rooms: Vec<OnceCell<f64>> = vec![OnceCell::new(); nv];
+    let room = |x: usize| *rooms[x].get_or_init(|| room_of(x));
     // Each vertex's graded profile, outlets first: the sea's its level, a
     // lake's its surface, and up from its receiver by its channel's graded
     // slope over the way between, never rising downstream. A node holds its
