@@ -31,7 +31,7 @@ use common_bevy::summary_mesh::MeshRegionKey;
 /// `settle` is one of the level's own cells: every triangle that reaches
 /// the edge then lies wholly on the coarser surface, the two levels meet
 /// parallel, and no sightline passes between them where they part. Field
-/// order is the uniform layout in `terrain_cut.wgsl`. No name in an
+/// order is the uniform layout in `terrain_cut.wesl`. No name in an
 /// imported shader module may end in a digit or start with an underscore:
 /// the composer rejects any identifier naga's namer would rewrite.
 #[derive(ShaderType, Debug, Clone, Copy, PartialEq)]
@@ -82,6 +82,7 @@ pub struct EdgeCenters(pub HashMap<u32, Vec2>);
 /// transforms are; an unset ring shows the models and hides the cards,
 /// and an unset far band hides the far cards.
 #[derive(Resource, Clone, Copy, Default, PartialEq, bevy::render::extract_resource::ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct CardBand {
     pub center: Vec2,
     pub inner: f32,
@@ -201,19 +202,19 @@ pub struct TerrainExtension {
 
 impl MaterialExtension for TerrainExtension {
     fn vertex_shader() -> ShaderRef {
-        "shaders/terrain_vertex.wgsl".into()
+        "shaders/terrain_vertex.wesl".into()
     }
     fn fragment_shader() -> ShaderRef {
-        "shaders/terrain.wgsl".into()
+        "shaders/terrain.wesl".into()
     }
     /// Depth-only passes (shadow maps) morph and cut too, so a plate the
     /// main pass drops casts no shadow onto the plate that replaces it and
     /// the depth the main pass tests against is the surface it draws.
     fn prepass_vertex_shader() -> ShaderRef {
-        "shaders/terrain_prepass_vertex.wgsl".into()
+        "shaders/terrain_prepass_vertex.wesl".into()
     }
     fn prepass_fragment_shader() -> ShaderRef {
-        "shaders/terrain_prepass.wgsl".into()
+        "shaders/terrain_prepass.wesl".into()
     }
     /// One vertex layout for every pass, the locations both vertex shaders
     /// declare: Bevy's own layouts differ between the main pass and the

@@ -643,7 +643,7 @@ fn save(cli: &Cli, buf: &[u8], width: u32, height: u32) {
 // ── Colour ──────────────────────────────────────────────────────────────────
 
 /// Mirrors the terrain shader's elevation ramp, so a viewer render and the game
-/// read the same heights the same way. See `assets/shaders/terrain.wgsl` for
+/// read the same heights the same way. See `assets/shaders/terrain.wesl` for
 /// what each stop is anchored to.
 fn orogen_ramp(z: f64) -> (f64, f64, f64) {
     const STOPS: [(f64, (f64, f64, f64)); 14] = [

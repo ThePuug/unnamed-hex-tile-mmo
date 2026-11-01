@@ -3,7 +3,7 @@
 //! writes that depth, so the terrain, the wood and the actors are lined by
 //! one rule and none of them carries a line of its own. A camera takes the
 //! lines by carrying [`Ink`] and a `DepthPrepass`; the lines' look — width,
-//! threshold, fade and colour — is the shader's, `shaders/ink.wgsl`. A
+//! threshold, fade and colour — is the shader's, `shaders/ink.wesl`. A
 //! line is hazed with the surface it lies on, by the camera's fog, so the
 //! frontier where the drawn world ends is never lined.
 
@@ -84,11 +84,11 @@ pub struct InkUniform {
     ray: Vec2,
 }
 
-impl SyncComponent for Ink {
+impl SyncComponent<RenderApp> for Ink {
     type Target = (InkUniform, InkPipelineId);
 }
 
-impl ExtractComponent for Ink {
+impl ExtractComponent<RenderApp> for Ink {
     type QueryData = (&'static Projection, Option<&'static DistanceFog>);
     type QueryFilter = With<Ink>;
     type Out = InkUniform;
@@ -186,7 +186,7 @@ fn init_pipeline(
         single: layout("ink bind group layout", false),
         multisampled: layout("ink bind group layout (multisampled)", true),
         sampler: render_device.create_sampler(&SamplerDescriptor::default()),
-        shader: asset_server.load("shaders/ink.wgsl"),
+        shader: asset_server.load("shaders/ink.wesl"),
         fullscreen: fullscreen.clone(),
     });
 }
@@ -228,7 +228,7 @@ fn ink(
     let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_id.id) else {
         return;
     };
-    let Some(depth) = prepass.depth_view() else {
+    let Some(depth) = prepass.depth_only_view() else {
         return;
     };
     let Some(uniform) = uniforms.uniforms().binding() else {

@@ -13,7 +13,7 @@ dynamic = ["bevy/dynamic_linking", "common-bevy/dynamic", "combat/dynamic"]
 combat = { path = "../combat" }
 common = { path = "../common" }
 common-bevy = { path = "../common-bevy" }
-bevy = "0.19"
+bevy = "0.20"
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }
 cmaes = { version = "0.2", default-features = false }

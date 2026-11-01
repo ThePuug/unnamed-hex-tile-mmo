@@ -8,7 +8,7 @@ use bevy::{
     },
     ecs::{schedule::ScheduleConfigs, system::BoxedSystem},
     prelude::*,
-    render::{extract_component::ExtractComponent, render_resource::ShaderType},
+    render::{extract_component::ExtractComponent, render_resource::ShaderType, RenderApp},
     shader::ShaderRef,
 };
 
@@ -26,6 +26,7 @@ impl Plugin for VignettePlugin {
 
 /// Settings for vignette effect (attached to camera)
 #[derive(Component, ExtractComponent, Clone, Copy, ShaderType, Default)]
+#[extract_app(RenderApp)]
 pub struct VignetteSettings {
     /// Intensity of the vignette effect (0.0 = none, 1.0 = full)
     pub intensity: f32,
@@ -35,7 +36,7 @@ pub struct VignetteSettings {
 
 impl FullscreenMaterial for VignetteSettings {
     fn fragment_shader() -> ShaderRef {
-        "shaders/vignette.wgsl".into()
+        "shaders/vignette.wesl".into()
     }
 
     /// After tone mapping: the vignette darkens the graded image, not the

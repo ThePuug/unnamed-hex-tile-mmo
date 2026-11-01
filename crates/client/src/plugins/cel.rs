@@ -1,7 +1,7 @@
 //! Cel light for what glTF scenes bring: each material a scene spawns with —
 //! an actor, what it wears, what it drops — is swapped for the same
 //! material extended by the cel light, so an actor is shaded by the rule
-//! the ground and the cover are (`shaders/cel.wgsl`). The water builds its
+//! the ground and the cover are (`shaders/cel.wesl`). The water builds its
 //! own cel material (`plugins::water`); the markers, built in code, keep
 //! the standard light.
 
@@ -31,7 +31,7 @@ pub struct Cel {}
 
 impl MaterialExtension for Cel {
     fn fragment_shader() -> ShaderRef {
-        "shaders/cel_material.wgsl".into()
+        "shaders/cel_material.wesl".into()
     }
 }
 

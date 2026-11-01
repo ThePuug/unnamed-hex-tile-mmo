@@ -129,7 +129,7 @@ impl FromWorld for SkyWeather {
 /// The cloud deck: a dome about the camera inside the discs, so a cloud
 /// passes in front of the sun and the moon, and past the reach, so the
 /// ground stands in front of it. Transparent, so it writes no depth and
-/// the ink draws no line round a cloud. Shaded by `shaders/clouds.wgsl`.
+/// the ink draws no line round a cloud. Shaded by `shaders/clouds.wesl`.
 #[derive(Component)]
 pub struct CloudDeck;
 
@@ -182,7 +182,7 @@ pub struct CloudMaterial {
 
 impl Material for CloudMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/clouds.wgsl".into()
+        "shaders/clouds.wesl".into()
     }
 
     /// A cloud covers what is behind it by its density, and a bolt adds
@@ -251,11 +251,11 @@ pub struct PrecipitationMaterial {
 
 impl Material for PrecipitationMaterial {
     fn vertex_shader() -> ShaderRef {
-        "shaders/precipitation.wgsl".into()
+        "shaders/precipitation.wesl".into()
     }
 
     fn fragment_shader() -> ShaderRef {
-        "shaders/precipitation.wgsl".into()
+        "shaders/precipitation.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {

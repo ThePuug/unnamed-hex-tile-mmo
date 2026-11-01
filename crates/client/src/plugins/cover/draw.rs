@@ -30,7 +30,8 @@ use bevy::core_pipeline::core_3d::{Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey
 use bevy::core_pipeline::prepass::{Opaque3dPrepass, OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey};
 use bevy::ecs::query::QueryItem;
 use bevy::ecs::system::{lifetimeless::*, SystemParamItem};
-use bevy::math::{primitives::ViewFrustum, Affine3A};
+use bevy::math::Affine3A;
+use bevy::shape::ViewFrustum;
 use bevy::mesh::{MeshVertexBufferLayoutRef, VertexBufferLayout};
 use bevy::pbr::{MeshPipeline, MeshPipelineKey, MeshPipelineSystems, RenderMeshInstances, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, ViewKeyCache, MATERIAL_BIND_GROUP_INDEX};
 use bevy::prelude::*;
@@ -60,12 +61,8 @@ use super::{Kind, Marked};
 use crate::resources::CardBand;
 use crate::systems::camera::NEAR_FADE_RADIUS;
 
-const MODEL_SHADER: &str = "shaders/models.wgsl";
-const CARD_SHADER: &str = "shaders/cards.wgsl";
-/// What both import. A module is resolved only once its asset is loaded,
-/// and a pipeline whose import is missing waits forever and says nothing,
-/// so the handle is held here for the life of the app.
-const SHARED_SHADER: &str = "shaders/cover_shared.wgsl";
+const MODEL_SHADER: &str = "shaders/models.wesl";
+const CARD_SHADER: &str = "shaders/cards.wesl";
 
 /// The fragment stage each shader writes its silhouette into the depth
 /// prepass with: the colour stage's discards and nothing else.
@@ -236,11 +233,11 @@ pub struct Cards {
     pub top: CardView,
 }
 
-impl SyncComponent for ModelStand {
+impl SyncComponent<RenderApp> for ModelStand {
     type Target = ModelStand;
 }
 
-impl ExtractComponent for ModelStand {
+impl ExtractComponent<RenderApp> for ModelStand {
     type QueryData = &'static ModelStand;
     type QueryFilter = ();
     type Out = ModelStand;
@@ -250,11 +247,11 @@ impl ExtractComponent for ModelStand {
     }
 }
 
-impl SyncComponent for CardStand {
+impl SyncComponent<RenderApp> for CardStand {
     type Target = CardStand;
 }
 
-impl ExtractComponent for CardStand {
+impl ExtractComponent<RenderApp> for CardStand {
     type QueryData = &'static CardStand;
     type QueryFilter = ();
     type Out = CardStand;
@@ -542,8 +539,6 @@ trait BatchPipeline: Resource + SpecializedMeshPipeline<Key = BatchKey> {
 #[derive(Resource)]
 struct ModelPipeline {
     shader: Handle<Shader>,
-    /// Held, never read: the shared module's asset stays loaded.
-    _shared: Handle<Shader>,
     mesh_pipeline: MeshPipeline,
     layout: BindGroupLayoutDescriptor,
     bind_group_layout: BindGroupLayout,
@@ -569,7 +564,6 @@ fn init_pipelines(
     );
     commands.insert_resource(ModelPipeline {
         shader: asset_server.load(MODEL_SHADER),
-        _shared: asset_server.load(SHARED_SHADER),
         mesh_pipeline: mesh_pipeline.clone(),
         layout: BindGroupLayoutDescriptor::new("models_cover", &cover),
         bind_group_layout: render_device.create_bind_group_layout("models_cover", &cover),

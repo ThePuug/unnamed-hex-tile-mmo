@@ -35,7 +35,7 @@ const MOON_ILLUMINANCE: f32 = EARTH_MOON_LUX
 /// plane, one colour everywhere but toward the sun, where a glow of the
 /// sun's tint sits low under its bearing, and the haze at the horizon,
 /// behind the frontier where the drawn world ends. Shaded by
-/// `shaders/sky.wgsl`. The clouds, and the leap season's fireballs in front
+/// `shaders/sky.wesl`. The clouds, and the leap season's fireballs in front
 /// of them, are a deck of their own in front of the discs
 /// (`plugins::weather::CloudDeck`).
 #[derive(Component)]
@@ -57,7 +57,7 @@ pub struct SkyMaterial {
 
 impl Material for SkyMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/sky.wgsl".into()
+        "shaders/sky.wesl".into()
     }
 
     /// The camera is inside the dome, so its inner faces must draw.
@@ -88,7 +88,7 @@ pub enum Disc { Sun, Moon }
 /// full; the rest is the sky. The body's `face`, if it has one, is shown
 /// once and whole, inscribed. Below `waterline` there is no disc, so it
 /// sets into the sea instead of showing through it. Shaded by
-/// `shaders/disc.wgsl`.
+/// `shaders/disc.wesl`.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct DiscMaterial {
     #[uniform(0)]
@@ -110,7 +110,7 @@ impl DiscMaterial {
 
 impl Material for DiscMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/disc.wgsl".into()
+        "shaders/disc.wesl".into()
     }
 
     /// The unlit part is the sky: nothing of a body is darker than it.
@@ -1323,7 +1323,7 @@ pub fn poll_summary_meshes(
             true => crate::plugins::canopy::NO_LAYER,
             false => canopy_parts.write(key, build.parts),
         };
-        commands.entity(entity).insert(bevy::mesh::MeshTag(tag));
+        commands.entity(entity).insert(bevy::mesh::MeshTag::new(tag));
 
         if !build.water.indices.is_empty() {
             let water = build_bevy_mesh(&build.water.positions, &build.water.normals, None, &[], &build.water.indices);

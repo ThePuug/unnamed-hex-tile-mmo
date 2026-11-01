@@ -241,6 +241,7 @@ impl Kit {
 /// The foot of what G will act on, in rendered coordinates, which the cover
 /// draws lit through; none while nothing is in reach.
 #[derive(Resource, Clone, Copy, Default, PartialEq, bevy::render::extract_resource::ExtractResource)]
+#[extract_app(bevy::render::RenderApp)]
 pub struct Marked(pub Option<Vec3>);
 
 /// The kit, present once every model has loaded.

@@ -10,7 +10,7 @@ dynamic = ["bevy/dynamic_linking", "common-bevy/dynamic"]
 
 [dependencies]
 common-bevy = { path = "../common-bevy" }
-bevy = "0.19"
+bevy = "0.20"
 rand = "0.9"
 
 [dependencies.qrz]

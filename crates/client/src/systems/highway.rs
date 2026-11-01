@@ -12,7 +12,7 @@
 //! colour with a flash down its lane.
 //!
 //! [`scale`] and [`rise`] are the one projection: the notes here and the
-//! lanes the shader draws (`shaders/highway.wgsl`) are placed by it.
+//! lanes the shader draws (`shaders/highway.wesl`) are placed by it.
 
 use std::time::Duration;
 
@@ -84,7 +84,7 @@ pub struct HighwayMaterial {
 
 impl UiMaterial for HighwayMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/highway.wgsl".into()
+        "shaders/highway.wesl".into()
     }
 }
 

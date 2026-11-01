@@ -12,7 +12,7 @@ dynamic = ["bevy/dynamic_linking"]
 
 [dependencies]
 common = { path = "../common" }
-bevy = "0.19"
+bevy = "0.20"
 dashmap = "6"
 lru = "0"
 rstar = "0"

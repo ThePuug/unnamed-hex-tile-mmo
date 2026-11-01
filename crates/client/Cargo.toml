@@ -21,11 +21,11 @@ common = { path = "../common" }
 common-bevy = { path = "../common-bevy" }
 music = { path = "../music" }
 user-data = { path = "../user-data" }
-bevy = { version = "0.19", features = ["dds"] }
-bevy_asset = "0.19"
-bevy_camera = "0.19"
-bevy_light = "0.19"
-bevy_mesh = "0.19"
+bevy = { version = "0.20", features = ["dds"] }
+bevy_asset = "0.20"
+bevy_camera = "0.20"
+bevy_light = "0.20"
+bevy_mesh = "0.20"
 bytemuck = { version = "1", features = ["derive"] }
 renet_netcode = "2"
 bimap = "0"

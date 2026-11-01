@@ -5,5 +5,5 @@ version = "0.0.1"
 authors = ["Reed Debaets <reed.debaets@gmail.com>"]
 
 [dependencies]
-glam = "0.32"
+glam = "0.33"
 serde = { version = "1", features = ["derive"] }

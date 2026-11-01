@@ -12,7 +12,7 @@ dynamic = ["bevy/dynamic_linking", "common-bevy/dynamic"]
 world = { path = "../world", features = ["inspect"] }
 common = { path = "../common" }
 common-bevy = { path = "../common-bevy" }
-bevy = "0.19"
+bevy = "0.20"
 image = "0"
 rapid-qoi = "0"
 clap = { version = "4", features = ["derive"] }
