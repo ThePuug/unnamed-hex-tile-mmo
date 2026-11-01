@@ -9,11 +9,11 @@
 //! gives each fight its own, to try values without a rebuild. Whatever
 //! reads a number takes the set it plays by.
 
-use bevy::prelude::Resource;
+use bevy::{prelude::Resource, reflect::{GetPath, Reflect}};
 
 use crate::message::AbilityType;
 
-#[derive(Clone, Copy, Debug, Resource)]
+#[derive(Clone, Copy, Debug, Reflect, Resource)]
 pub struct Tuning {
     // --- Absolute: potency, health, and level where a blow lands ---
     /// Potency every actor has, the same at every level: what a skill's and
@@ -525,147 +525,20 @@ impl Tuning {
         }
     }
 
-    /// Sets the knob `name` from text, as the arena's command line gives it.
-    /// Errs on an unknown knob or a value that does not parse.
+    /// Sets the knob `name` from text, as the arena's command line gives it:
+    /// any field by its own name, an element of a triple as `name[i]`; a
+    /// count is rounded to at least one. Errs on an unknown knob or a value
+    /// that does not parse.
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
         let number = value.parse::<f32>().map_err(|_| format!("{name} takes a number, not {value}"))?;
-        if name == "leap_distance" {
-            self.leap_distance = number.round().max(1.0) as usize;
-            return Ok(());
+        if let Ok(knob) = self.path_mut::<f32>(name) {
+            *knob = number;
+        } else if let Ok(count) = self.path_mut::<usize>(name) {
+            *count = number.round().max(1.0) as usize;
+        } else {
+            return Err(format!("no tuning knob {name}"));
         }
-        *self.knob(name)? = number;
         Ok(())
-    }
-
-    /// The knob `name`'s value, as `set` names it. Errs on an unknown knob.
-    pub fn get(&self, name: &str) -> Result<f32, String> {
-        if name == "leap_distance" {
-            return Ok(self.leap_distance as f32);
-        }
-        let mut copy = *self;
-        copy.knob(name).map(|knob| *knob)
-    }
-
-    /// The fractional knob `name`
-    fn knob(&mut self, name: &str) -> Result<&mut f32, String> {
-        Ok(match name {
-            "base_interval" => &mut self.base_interval,
-            "intimidation_aura_secs" => &mut self.intimidation_aura_secs,
-            "awareness_band" => &mut self.awareness_band,
-            "grace_arc" => &mut self.grace_arc,
-            "overcommit_secs" => &mut self.overcommit_secs,
-            "tempo_ceiling" => &mut self.tempo_ceiling,
-            "potency_base" => &mut self.potency_base,
-            "level_gap" => &mut self.level_gap,
-            "base_health" => &mut self.base_health,
-            "endurance_pool" => &mut self.endurance_pool,
-            "endurance_depth" => &mut self.endurance_depth,
-            "endurance_regen" => &mut self.endurance_regen,
-            "fatigue_recovery" => &mut self.fatigue_recovery,
-            "fatigue_window" => &mut self.fatigue_window,
-            "fatigue_bend" => &mut self.fatigue_bend,
-            "health_depth" => &mut self.health_depth,
-            "contest_scale" => &mut self.contest_scale,
-            "contest_per_level" => &mut self.contest_per_level,
-            "pushback_share" => &mut self.pushback_share,
-            "fitness_share" => &mut self.fitness_share,
-            "combo_floor" => &mut self.combo_floor,
-            "combo_share" => &mut self.combo_share,
-            "reaction_window" => &mut self.reaction_window,
-            "window_bonus" => &mut self.window_bonus,
-            "auto_damage" => &mut self.auto_damage,
-            "force_auto" => &mut self.force_auto,
-            "stride_pace" => &mut self.stride_pace,
-            "damage_spread" => &mut self.damage_spread,
-            "crit_chance" => &mut self.crit_chance,
-            "crit_power" => &mut self.crit_power,
-            "frenzy_cost" => &mut self.frenzy_cost,
-            "frenzy_recovery" => &mut self.frenzy_recovery,
-            "frenzy_damage" => &mut self.frenzy_damage,
-            "feint_cost" => &mut self.feint_cost,
-            "feint_recovery" => &mut self.feint_recovery,
-            "feint_damage" => &mut self.feint_damage,
-            "overpower_cost" => &mut self.overpower_cost,
-            "overpower_recovery" => &mut self.overpower_recovery,
-            "overpower_damage" => &mut self.overpower_damage,
-            "punish_cost" => &mut self.punish_cost,
-            "punish_recovery" => &mut self.punish_recovery,
-            "punish_base" => &mut self.punish_base,
-            "punish_per_stack" => &mut self.punish_per_stack,
-            "parry_cost" => &mut self.parry_cost,
-            "parry_recovery" => &mut self.parry_recovery,
-            "counter_cost" => &mut self.counter_cost,
-            "counter_recovery" => &mut self.counter_recovery,
-            "counter_reflect" => &mut self.counter_reflect,
-            "leap_cost" => &mut self.leap_cost,
-            "leap_recovery" => &mut self.leap_recovery,
-            "stride_cost" => &mut self.stride_cost,
-            "stride_recovery" => &mut self.stride_recovery,
-            "stride_secs" => &mut self.stride_secs,
-            "stride_speed" => &mut self.stride_speed,
-            "frenzy_line" => &mut self.frenzy_line,
-            "overpower_line" => &mut self.overpower_line,
-            "punish_line" => &mut self.punish_line,
-            "counter_line" => &mut self.counter_line,
-            "stride_line" => &mut self.stride_line,
-            "leap_line" => &mut self.leap_line,
-            "leap_strike" => &mut self.leap_strike,
-            "clash_cost" => &mut self.clash_cost,
-            "clash_recovery" => &mut self.clash_recovery,
-            "clash_stun" => &mut self.clash_stun,
-            "clash_line" => &mut self.clash_line,
-            "sidestep_cost" => &mut self.sidestep_cost,
-            "sidestep_recovery" => &mut self.sidestep_recovery,
-            "sidestep_steps" => &mut self.sidestep_steps,
-            "sidestep_line" => &mut self.sidestep_line,
-            "yank_cost" => &mut self.yank_cost,
-            "yank_recovery" => &mut self.yank_recovery,
-            "yank_tiles" => &mut self.yank_tiles,
-            "yank_line" => &mut self.yank_line,
-            "backstab_cost" => &mut self.backstab_cost,
-            "backstab_recovery" => &mut self.backstab_recovery,
-            "backstab_damage" => &mut self.backstab_damage,
-            "backstab_crit" => &mut self.backstab_crit,
-            "backstab_line" => &mut self.backstab_line,
-            "pounce_cost" => &mut self.pounce_cost,
-            "pounce_recovery" => &mut self.pounce_recovery,
-            "pounce_tiles" => &mut self.pounce_tiles,
-            "pounce_line" => &mut self.pounce_line,
-            "kick_cost" => &mut self.kick_cost,
-            "kick_recovery" => &mut self.kick_recovery,
-            "kick_damage" => &mut self.kick_damage,
-            "kick_tiles" => &mut self.kick_tiles,
-            "kick_line" => &mut self.kick_line,
-            "defy_cost" => &mut self.defy_cost,
-            "defy_recovery" => &mut self.defy_recovery,
-            "defy_damage" => &mut self.defy_damage,
-            "defy_per_threat" => &mut self.defy_per_threat,
-            "defy_line" => &mut self.defy_line,
-            "bloodlust_cost" => &mut self.bloodlust_cost,
-            "bloodlust_recovery" => &mut self.bloodlust_recovery,
-            "bloodlust_secs" => &mut self.bloodlust_secs,
-            "bloodlust_share" => &mut self.bloodlust_share,
-            "bloodlust_line" => &mut self.bloodlust_line,
-            "brace_cost" => &mut self.brace_cost,
-            "brace_recovery" => &mut self.brace_recovery,
-            "brace_secs" => &mut self.brace_secs,
-            "brace_line" => &mut self.brace_line,
-            "surge_cost" => &mut self.surge_cost,
-            "surge_recovery" => &mut self.surge_recovery,
-            "surge_secs" => &mut self.surge_secs,
-            "surge_per_tile" => &mut self.surge_per_tile,
-            "surge_line" => &mut self.surge_line,
-            "vigil_cost" => &mut self.vigil_cost,
-            "vigil_recovery" => &mut self.vigil_recovery,
-            "vigil_secs" => &mut self.vigil_secs,
-            "vigil_line" => &mut self.vigil_line,
-            "lurk_cost" => &mut self.lurk_cost,
-            "lurk_recovery" => &mut self.lurk_recovery,
-            "lurk_secs" => &mut self.lurk_secs,
-            "lurk_line" => &mut self.lurk_line,
-
-            _ => return Err(format!("no tuning knob {name}")),
-        })
     }
 }
 
@@ -688,11 +561,12 @@ mod tests {
         assert_eq!(tuning.frenzy_damage, 0.25);
         assert_eq!(tuning.leap_distance, 2);
         assert_eq!(tuning.awareness_band, 0.25);
-        assert_eq!(tuning.get("awareness_band"), Ok(0.25));
-        assert_eq!(tuning.get("leap_distance"), Ok(2.0));
-        assert!(tuning.get("no_such_knob").is_err());
         assert!(tuning.set("frenzy_damage", "much").is_err());
         assert!(tuning.set("no_such_knob", "1").is_err());
+        tuning.set("leap_distance", "0.2").unwrap();
+        assert_eq!(tuning.leap_distance, 1, "a count is at least one");
+        tuning.set("early_facet[1]", "0.5").unwrap();
+        assert_eq!(tuning.early_facet[1], 0.5);
     }
 
     #[test]
