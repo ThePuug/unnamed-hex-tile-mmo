@@ -117,11 +117,23 @@ pub fn does(ability: AbilityType, attrs: &ActorAttributes, tuning: &Tuning) -> R
             seconds(tuning.surge_secs), say.lined(tuning.surge_per_tile, percent),
         ),
         AbilityType::Vigil => format!("for {}, no strike takes you in the flank", say.lined(tuning.vigil_secs, seconds)),
+        AbilityType::Drag => format!(
+            "cut a rune {} ahead. For {}, each foe stepping within {} of it is dragged {} to it",
+            plain_tiles(tuning.drag_distance), seconds(tuning.drag_secs), plain_tiles(tuning.drag_reach), say.tiles(tuning.drag_tiles),
+        ),
         AbilityType::Lurk => format!(
             "for {}, no foe beyond your reach can see you, until you attack. A skill struck from hiding always crits",
             say.lined(tuning.lurk_secs, seconds),
         ),
     })
+}
+
+/// `whole` tiles, as no line scales them
+fn plain_tiles(whole: f32) -> String {
+    match whole.round() as i32 {
+        1 => "1 tile".to_string(),
+        n => format!("{n} tiles"),
+    }
 }
 
 /// A skill's name as a player reads it: `PerfectStride` as Perfect Stride

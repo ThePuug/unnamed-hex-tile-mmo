@@ -190,6 +190,32 @@ pub fn do_spawn(
                 // Health/Endurance/CombatState will be inserted by Incremental events from server
                 // (do_incremental handles inserting missing components)
             }
+            // A rune lies on the ground of its tile, the shared stone with
+            // its glyph hung from the stone's face, and is targeted as
+            // anyone on a side is
+            EntityType::Rune(rune) => {
+                let loc = Loc::new(qrz);
+                let Some((floor, _)) = map.get_by_qr(qrz.q, qrz.r) else { continue };
+                let ground = common_bevy::systems::movement::surface_y_from(floor, Vec2::ZERO, floor, &map);
+                let at = origin.render_tile(&map, floor) + Vec3::Y * ground;
+                let mut entity_cmd = if let Ok(e) = commands.get_entity(ent) { e } else { commands.spawn_empty() };
+                entity_cmd.insert((
+                    loc,
+                    typ,
+                    WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(super::rune::STONE))),
+                    Transform { translation: at, scale: Vec3::ONE * map.radius(), ..default() },
+                    Visibility::default(),
+                    NearestNeighbor::new(ent, loc),
+                ));
+                let stone = entity_cmd.id();
+                commands.spawn((
+                    super::rune::Glyph::default(),
+                    WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(super::rune::glyph_asset(rune)))),
+                    Transform::default(),
+                    Visibility::default(),
+                    ChildOf(stone),
+                ));
+            }
             _ => continue,
         }
     }

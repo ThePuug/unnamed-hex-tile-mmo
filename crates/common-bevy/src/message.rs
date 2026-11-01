@@ -273,25 +273,30 @@ pub enum AbilityType {
     /// Instinct's stance: for a while no foe beyond its reach sees it,
     /// until it attacks
     Lurk,
+    /// Physique's rune, cut ahead: drags each foe entering its reach
+    /// straight toward it (`rune::Rune::Drag`)
+    Drag,
 }
 
-/// The kinds of slot a bar holds ([`AbilityType::kind`]): four strikes,
-/// three reactions and a stance
+/// The kinds of skill ([`AbilityType::kind`]): a strike and a reaction,
+/// actions; a stance, a while of something on its user; a rune, a while of
+/// something on a place
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkillKind {
     Strike,
     Reaction,
     Stance,
+    Rune,
 }
 
 impl AbilityType {
     /// Every ability, the auto-attack first
-    pub const ALL: [AbilityType; 21] = [
+    pub const ALL: [AbilityType; 22] = [
         AbilityType::AutoAttack, AbilityType::Frenzy, AbilityType::Feint, AbilityType::Overpower, AbilityType::Punish,
         AbilityType::Parry, AbilityType::Counter, AbilityType::Leap, AbilityType::PerfectStride,
         AbilityType::Clash, AbilityType::Sidestep, AbilityType::Yank, AbilityType::Backstab,
         AbilityType::Pounce, AbilityType::Kick, AbilityType::Defy, AbilityType::Bloodlust, AbilityType::Brace,
-        AbilityType::Surge, AbilityType::Vigil, AbilityType::Lurk,
+        AbilityType::Surge, AbilityType::Vigil, AbilityType::Lurk, AbilityType::Drag,
     ];
 
     /// Whether it is a reaction, an answer to what is queued, where every
@@ -315,6 +320,7 @@ impl AbilityType {
         match self {
             AbilityType::PerfectStride | AbilityType::Bloodlust | AbilityType::Brace | AbilityType::Surge | AbilityType::Vigil | AbilityType::Lurk => SkillKind::Stance,
             AbilityType::Leap => SkillKind::Reaction,
+            AbilityType::Drag => SkillKind::Rune,
             ability if ability.is_reaction() => SkillKind::Reaction,
             _ => SkillKind::Strike,
         }
@@ -334,14 +340,15 @@ impl AbilityType {
     /// How near and how far, in tiles, `ability` strikes a target from an
     /// actor whose own reach is `own`: as far as the actor reaches. None
     /// for one the gate checks no target for: a reaction, a Leap, which
-    /// checks its own, or the stride.
+    /// checks its own, a stance, or a rune.
     pub fn reach(self, own: i32) -> Option<std::ops::RangeInclusive<i32>> {
         match self {
             AbilityType::AutoAttack | AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Punish
             | AbilityType::Backstab | AbilityType::Kick | AbilityType::Defy => Some(0..=own),
             AbilityType::Parry | AbilityType::Counter | AbilityType::Leap | AbilityType::PerfectStride
             | AbilityType::Clash | AbilityType::Sidestep | AbilityType::Yank | AbilityType::Pounce
-            | AbilityType::Bloodlust | AbilityType::Brace | AbilityType::Surge | AbilityType::Vigil | AbilityType::Lurk => None,
+            | AbilityType::Bloodlust | AbilityType::Brace | AbilityType::Surge | AbilityType::Vigil | AbilityType::Lurk
+            | AbilityType::Drag => None,
         }
     }
 
@@ -353,6 +360,14 @@ impl AbilityType {
         match self {
             AbilityType::Frenzy => Some(AbilityType::Frenzy),
             AbilityType::Parry => Some(AbilityType::Feint),
+            _ => None,
+        }
+    }
+
+    /// The rune it cuts, for a rune's skill
+    pub fn rune(self) -> Option<crate::components::rune::Rune> {
+        match self {
+            AbilityType::Drag => Some(crate::components::rune::Rune::Drag),
             _ => None,
         }
     }

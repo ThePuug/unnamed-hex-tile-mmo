@@ -177,6 +177,7 @@ impl Abilities<'_, '_> {
             capacity_taken: self.capacity_taken(ent, target),
             queue: Threats::reading(&queue, attrs.span(&tuning), attrs.awareness_snap(&tuning), game_now),
             foe,
+            runes: self.runes.iter().filter(|(_, _, stone)| stone.caster == ent).map(|(_, _, stone)| stone.rune.kind()).collect(),
         })
     }
 }

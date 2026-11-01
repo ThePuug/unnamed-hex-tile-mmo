@@ -200,6 +200,7 @@ fn main() {
         gathering::do_loot,
         gathering::do_activity,
         (equipment::hold, equipment::bind_held).chain(),
+        crate::systems::rune::bind,
         mount::request,
         (mount::saddle, mount::seat).chain(),
         crate::systems::focus::track,

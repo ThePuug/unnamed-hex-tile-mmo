@@ -91,6 +91,9 @@ pub enum AbilityFailReason {
     NotHeld,
     /// A skill that moves its user, held in an Intimidating foe's zone
     Pinned,
+    /// A rune whose tile ahead holds a rune already, or whose ground ahead
+    /// takes no step
+    NoRoom,
 }
 
 /// What a threat carries to the one it is queued on: damage, seconds of
@@ -195,6 +198,11 @@ pub struct Abilities<'w, 's> {
     pub last_skills: Query<'w, 's, &'static LastSkill>,
     pub kinds: Query<'w, 's, &'static EntityType>,
     pub loadouts: Query<'w, 's, &'static common_bevy::components::loadout::Loadout>,
+    pub positions: Query<'w, 's, &'static common_bevy::components::position::Position>,
+    /// Every rune standing, where, and whose: a strike's target where it
+    /// names one ([`Abilities::foe`]), and the tiles a rune is refused on
+    pub runes: Query<'w, 's, (Entity, &'static Loc, &'static crate::runes::RuneStone)>,
+    pub rune_sides: Query<'w, 's, &'static Side, With<crate::runes::RuneStone>>,
     pub map: Res<'w, Map>,
     pub time: Res<'w, Time>,
     pub runtime: Res<'w, crate::RunTime>,
@@ -346,6 +354,7 @@ impl Abilities<'_, '_> {
             AbilityType::Surge => surge::take(self, &cast),
             AbilityType::Vigil => vigil::take(self, &cast),
             AbilityType::Lurk => lurk::take(self, &cast),
+            AbilityType::Drag => crate::runes::cut(self, &cast, common_bevy::components::rune::Rune::Drag),
         }.map_err(Some)?;
 
         // Endurance is spent and refuses nothing; an auto-attack is free
@@ -372,9 +381,14 @@ impl Abilities<'_, '_> {
         Ok(())
     }
 
-    /// The living hostile `cast` was asked about, and where it stands
+    /// The living hostile `cast` was asked about, and where it stands: an
+    /// actor, or a hostile rune, which a blow strikes down
     pub fn foe(&self, cast: &Cast) -> Result<(Entity, Loc), AbilityFailReason> {
         let target = cast.target.ok_or(AbilityFailReason::NoTargets)?;
+        if let (Ok((_, &loc, _)), Ok(side)) = (self.runes.get(target), self.rune_sides.get(target)) {
+            let hostile = cast.side.is_some_and(|own| own.is_hostile_to(*side));
+            return if hostile { Ok((target, loc)) } else { Err(AbilityFailReason::NoTargets) };
+        }
         let Ok((&loc, _, _, _, side, range, dead)) = self.actors.get(target) else {
             return Err(AbilityFailReason::NoTargets);
         };
@@ -625,6 +639,66 @@ mod tests {
 
     fn turned_to(app: &mut App, ent: Entity, q: i32) {
         app.world_mut().entity_mut(ent).insert(Heading::from_hex(Qrz { q, r: 0, z: 0 }));
+    }
+
+    /// The rune standing at `(q, 0)`, if one does
+    fn rune_at(app: &mut App, q: i32) -> Option<Entity> {
+        let mut runes = app.world_mut().query::<(Entity, &Loc, &crate::runes::RuneStone)>();
+        runes.iter(app.world()).find(|(_, loc, _)| loc.q == q && loc.r == 0).map(|(ent, ..)| ent)
+    }
+
+    #[test]
+    fn a_drag_rune_is_cut_ahead_and_pulls_a_foe_entering_its_reach() {
+        let mut app = arena();
+        let tuning = Tuning::DEFAULT;
+        let caster = actor(&mut app, Side::PLAYERS, 0);
+        let ahead = tuning.drag_distance.round() as i32;
+        let reach = tuning.drag_reach.round() as i32;
+        let foe = actor(&mut app, Side::WILD, ahead + reach + 1);
+        ask(&mut app, caster, AbilityType::Drag, None);
+        let rune = rune_at(&mut app, ahead).expect("cut on the tile its distance ahead");
+        app.update();
+        assert!(queue(&app, foe).is_empty(), "a foe beyond its reach is left alone");
+
+        app.world_mut().entity_mut(foe).insert(Loc::new(Qrz { q: ahead + reach, r: 0, z: 1 }));
+        app.update();
+        let pulled = queue(&app, foe);
+        assert_eq!(pulled.len(), 1, "a foe entering its reach takes its threat");
+        assert_eq!(pulled[0].source, rune, "the rune's own");
+        assert!(pulled[0].drag > 0, "dragging toward the rune");
+        app.update();
+        assert_eq!(queue(&app, foe).len(), 1, "once for entering, not again while it stands in reach");
+    }
+
+    #[test]
+    fn a_rune_takes_no_tile_a_rune_holds_and_one_of_a_kind_lifts_the_one_before() {
+        let mut app = arena();
+        let ahead = Tuning::DEFAULT.drag_distance.round() as i32;
+        let caster = actor(&mut app, Side::PLAYERS, 0);
+        ask(&mut app, caster, AbilityType::Drag, None);
+        let first = rune_at(&mut app, ahead).expect("the first rune");
+        app.world_mut().entity_mut(caster).remove::<GlobalRecovery>();
+        assert_eq!(refused(&mut app, caster, AbilityType::Drag, None), Some(AbilityFailReason::NoRoom), "its tile holds a rune");
+
+        app.world_mut().entity_mut(caster).insert(Loc::new(Qrz { q: 1, r: 0, z: 1 }));
+        let said = ask(&mut app, caster, AbilityType::Drag, None);
+        assert!(rune_at(&mut app, ahead + 1).is_some(), "cut a tile further on");
+        assert!(said.iter().any(|event| matches!(event, GameEvent::Despawn { ent, died: false } if *ent == first)), "the control rune before is lifted");
+    }
+
+    #[test]
+    fn a_blow_on_a_rune_strikes_it_down_as_it_lands() {
+        let mut app = arena();
+        let ahead = Tuning::DEFAULT.drag_distance.round() as i32;
+        let caster = actor(&mut app, Side::PLAYERS, 0);
+        let foe = actor(&mut app, Side::WILD, ahead + 1);
+        ask(&mut app, caster, AbilityType::Drag, None);
+        let rune = rune_at(&mut app, ahead).expect("the rune");
+        app.world_mut().resource_mut::<Said>().0.clear();
+        app.world_mut().trigger(crate::DealDamage { source: foe, target: rune, base_damage: 10.0, ability: Some(AbilityType::AutoAttack), dot: 0.0, delay: Duration::ZERO, stun: 0.0, drag: 0 });
+        app.update();
+        let said = std::mem::take(&mut app.world_mut().resource_mut::<Said>().0);
+        assert!(said.iter().any(|event| matches!(event, GameEvent::Despawn { ent, died: true } if *ent == rune)), "struck down at once");
     }
 
     #[test]

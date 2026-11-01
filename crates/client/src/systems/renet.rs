@@ -132,10 +132,10 @@ pub fn write_do(
                 do_writer.write(Do { event: Event::View { ent: viewed } });
             }
 
-            // insert l2r entry when spawning an Actor
+            // insert l2r entry when spawning an actor or a rune
             Do { event: Event::Spawn { ent, typ, qrz, attrs } } => {
                 let ent = match typ {
-                    EntityType::Actor(_) => {
+                    EntityType::Actor(_) | EntityType::Rune(_) => {
                         if let Some(&loc) = l2r.get_by_right(&ent) {
                             loc
                         }

@@ -32,7 +32,7 @@ use crate::{
 const KEYCODE_NEXT_ROW: KeyCode = KeyCode::NumpadDecimal;
 
 /// The rows of skills, a kind each
-const ROWS: [SkillKind; 3] = [SkillKind::Strike, SkillKind::Reaction, SkillKind::Stance];
+const ROWS: [SkillKind; 4] = [SkillKind::Strike, SkillKind::Reaction, SkillKind::Stance, SkillKind::Rune];
 
 const PICKED: Color = Color::srgb(0.85, 0.65, 0.13);
 const PLAIN: Color = Color::srgb(0.85, 0.85, 0.85);
@@ -118,6 +118,7 @@ fn kind_name(kind: SkillKind) -> &'static str {
         SkillKind::Strike => "Strikes",
         SkillKind::Reaction => "Reactions",
         SkillKind::Stance => "Stances",
+        SkillKind::Rune => "Runes",
     }
 }
 
@@ -473,6 +474,7 @@ fn kind_line(skill: AbilityType) -> String {
         SkillKind::Strike => "Strike",
         SkillKind::Reaction => "Reaction",
         SkillKind::Stance => "Stance",
+        SkillKind::Rune => "Rune",
     };
     match ActorAttributes::line(skill) {
         Some(line) => format!("{kind} - {line:?}"),

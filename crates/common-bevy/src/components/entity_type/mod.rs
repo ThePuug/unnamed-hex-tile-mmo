@@ -14,6 +14,8 @@ pub enum EntityType {
     #[default] Unset,
     Actor(ActorImpl),
     Decorator(Decorator),
+    /// A rune standing on its tile
+    Rune(crate::components::rune::Rune),
 }
 
 impl EntityType {
@@ -24,6 +26,7 @@ impl EntityType {
             EntityType::Unset => "Unknown",
             EntityType::Actor(actor_impl) => actor_impl.identity.display_name(),
             EntityType::Decorator(_) => "Object",
+            EntityType::Rune(_) => "Rune",
         }
     }
 }

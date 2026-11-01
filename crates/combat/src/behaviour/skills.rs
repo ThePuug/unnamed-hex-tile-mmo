@@ -77,6 +77,8 @@ pub struct View {
     pub capacity_taken: bool,
     pub queue: Threats,
     pub foe: Option<Foe>,
+    /// The kinds of its own runes standing
+    pub runes: Vec<common_bevy::components::rune::RuneKind>,
 }
 
 /// Its queue, as a reaction would meet it.
@@ -203,6 +205,8 @@ enum Part {
     Dive,
     /// A timed effect it puts on itself
     Effect,
+    /// A rune cut ahead
+    Rune,
 }
 
 /// What `ability` does for what `view` perceives, and its considerations:
@@ -226,6 +230,7 @@ fn reason(ability: AbilityType, view: &View) -> Option<(&'static str, Vec<Consid
         AbilityType::Surge => ("surge", Part::Effect),
         AbilityType::Vigil => ("vigil", Part::Effect),
         AbilityType::Lurk => ("lurk", Part::Effect),
+        AbilityType::Drag => ("rune", Part::Rune),
     };
     let mut considerations = vec![USABLE, ENDURANCE_LEFT];
     considerations.extend(part_considerations(part));
@@ -242,6 +247,7 @@ fn part_considerations(part: Part) -> Vec<Considered> {
         Part::Clear => vec![MID_BAND, WORTH_ANSWERING, LEASH_LEFT],
         Part::Dive => vec![CAPACITY, STRIKE_WORTH, LEASH_LEFT, EXPOSURE],
         Part::Effect => vec![TAKES_HOLD],
+        Part::Rune => vec![RUNE_CATCHES],
     }
 }
 
@@ -483,6 +489,18 @@ const LEASH_LEFT: Considered = Consideration {
 /// effect's own rule (`Effect::takes_hold`)
 const TAKES_HOLD: Considered = step("takes_hold", |view| flag(effect(view).is_some_and(|effect| effect.takes_hold(view))));
 
+/// Whether the rune `view.ability` cuts would catch its foe: the foe beyond
+/// its own reach, in the arc it faces, within the rune's reach of where the
+/// rune would land; and none of its own runes of that kind standing, which
+/// cutting another would lift.
+const RUNE_CATCHES: Considered = step("rune_catches", |view| {
+    let Some(rune) = view.ability.rune() else { return 0.0 };
+    let Some(foe) = view.foe else { return 0.0 };
+    let lands = crate::runes::distance(&view.tuning, rune) as i32;
+    let reach = crate::runes::reach_of(&view.tuning, &view.attrs, rune);
+    flag(foe.in_arc && foe.distance > view.reach && (foe.distance - lands).abs() <= reach && !view.runes.contains(&rune.kind()))
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,7 +530,26 @@ mod tests {
             capacity_taken: false,
             queue: Threats::default(),
             foe: Some(Foe { at: Loc::default(), heading: None, distance: 1, health: 600.0, in_arc: true, flanked: false, patient: 0.0, since_skill: None, status: Status::default() }),
+            runes: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_rune_is_cut_where_it_would_catch_a_foe_beyond_reach_and_not_again_while_it_stands() {
+        let tuning = Tuning::DEFAULT;
+        let mut view = view(&tuning, AbilityType::Drag, ActorAttributes::default());
+        let lands = crate::runes::distance(&tuning, common_bevy::components::rune::Rune::Drag) as i32;
+        let catches = |view: &View| RUNE_CATCHES.answer(view) > 0.0;
+        view.foe.as_mut().unwrap().distance = lands;
+        assert!(catches(&view), "a foe where the rune lands");
+        view.foe.as_mut().unwrap().distance = 1;
+        assert!(!catches(&view), "a foe in its own reach it strikes instead");
+        view.foe.as_mut().unwrap().distance = lands;
+        view.foe.as_mut().unwrap().in_arc = false;
+        assert!(!catches(&view), "a rune lands ahead, so a foe off its arc is missed");
+        view.foe.as_mut().unwrap().in_arc = true;
+        view.runes.push(common_bevy::components::rune::RuneKind::Control);
+        assert!(!catches(&view), "its control rune stands: another would lift it");
     }
 
     /// A queue read with `span`: each blow its damage, whether it is a

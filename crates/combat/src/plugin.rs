@@ -46,6 +46,8 @@ impl Plugin for CombatPlugin {
             (combat::abilities::use_abilities, reaction_queue::process_expired_threats).chain(),
             common_bevy::systems::combat::resources::check_death,
             common_bevy::systems::combat::resources::process_respawn,
+            combat::runes::control,
+            combat::runes::lapse,
         ));
     }
 }

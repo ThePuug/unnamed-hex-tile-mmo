@@ -110,9 +110,12 @@ pub struct Stumble {
 /// blow's crit, a patient striker's skill likelier and harder on an
 /// overcommitted foe and certain once the foe carries Patience's capstone
 /// stacks, which that crit spends; and inserts it into the reaction queue,
-/// its window starting as the strike is made: now, or its `delay` after
+/// its window starting as the strike is made: now, or its `delay` after.
+/// A blow on a rune lands as struck and strikes it down: nothing answers
+/// for a rune.
 pub fn process_deal_damage(
     trigger: On<DealDamage>,
+    runes: Query<(), With<runes::RuneStone>>,
     tuning: Res<Tuning>,
     mut commands: Commands,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
@@ -128,6 +131,10 @@ pub fn process_deal_damage(
     mut writer: MessageWriter<Do>,
 ) {
     let DealDamage { source, target, base_damage, ability, dot, delay, stun, drag } = trigger.event();
+    if runes.contains(*target) {
+        writer.write(Do { event: GameEvent::Despawn { ent: *target, died: true } });
+        return;
+    }
     // Get attacker attributes for scaling
     let (Ok(source_attrs), Ok(mut rolls)) = (all_attrs.get(*source), rolls.get_mut(*source)) else {
         return;
@@ -278,7 +285,8 @@ pub fn resolve_threat(
 }
 
 /// Moves the target of a `ResolveThreat` that carries a drag as it lands: a
-/// walk over the ground up to its tiles, toward the threat's source and
+/// walk over the ground up to its tiles, toward the threat's source, an
+/// actor or a rune, where it stands as the threat lands, and
 /// stopping beside it, or away along the line from it, inside the
 /// target's leash (`leap::Leash::of`), slid there as a Leap is. A braced
 /// target stands.
@@ -288,6 +296,7 @@ pub fn resolve_drag(
     mut writer: MessageWriter<Do>,
     map: Res<common_bevy::resources::map::Map>,
     actors: Query<(&Loc, &Health)>,
+    locs: Query<&Loc>,
     statuses: Query<&common_bevy::components::status::Status>,
     leashed: Query<(&behaviour::chase::Chase, &engagement::EngagementMember)>,
     dens: Query<&Loc, With<engagement::Engagement>>,
@@ -296,7 +305,7 @@ pub fn resolve_drag(
     if threat.drag == 0 || statuses.get(*ent).is_ok_and(|status| status.is_braced()) {
         return;
     }
-    let (Ok((&at, health)), Ok((&to, _))) = (actors.get(*ent), actors.get(threat.source)) else { return };
+    let (Ok((&at, health)), Ok(&to)) = (actors.get(*ent), locs.get(threat.source)) else { return };
     if health.state <= 0.0 {
         return;
     }

@@ -59,7 +59,7 @@ fn tool_of(activity: common::gathering::Activity) -> Option<&'static str> {
 /// of that name among `joints`, keeping the transform the build wrote
 /// relative to the socket's point. Returns the nodes moved, or None where a
 /// socket is not on the rig yet or the piece names none.
-fn hang(
+pub(crate) fn hang(
     piece: Entity,
     joints: &HashMap<&str, Entity>,
     children: &Query<&Children>,
@@ -82,7 +82,7 @@ fn hang(
 }
 
 /// The joints of an actor's own rig, by name.
-fn joints_of<'a>(rig: Entity, children: &Query<&Children>, names: &'a Query<&Name>) -> HashMap<&'a str, Entity> {
+pub(crate) fn joints_of<'a>(rig: Entity, children: &Query<&Children>, names: &'a Query<&Name>) -> HashMap<&'a str, Entity> {
     children.iter_descendants(rig).filter_map(|e| names.get(e).ok().map(|n| (n.as_str(), e))).collect()
 }
 

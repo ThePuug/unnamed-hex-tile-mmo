@@ -92,12 +92,12 @@ impl Clip {
 
     /// The one-shot an ability plays: a swing, an Overpower and a Punish the attack,
     /// a Frenzy its snap, a Feint the rattle, a Parry its sweep, a Counter the counter,
-    /// a Leap the disengage, whichever way it goes. A Perfect Stride plays
-    /// none: the gait it keeps shows it.
+    /// a Leap the disengage, whichever way it goes, a rune cut ahead the
+    /// attack. A Perfect Stride plays none: the gait it keeps shows it.
     pub fn of(ability: AbilityType) -> Option<Clip> {
         match ability {
             AbilityType::AutoAttack | AbilityType::Overpower | AbilityType::Punish | AbilityType::Backstab
-            | AbilityType::Kick | AbilityType::Defy => Some(Clip::Attack),
+            | AbilityType::Kick | AbilityType::Defy | AbilityType::Drag => Some(Clip::Attack),
             AbilityType::Frenzy => Some(Clip::Frenzy),
             AbilityType::Feint => Some(Clip::Rattle),
             AbilityType::Parry => Some(Clip::Parry),

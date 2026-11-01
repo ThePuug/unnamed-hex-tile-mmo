@@ -12,6 +12,7 @@ pub mod reaction_queue;
 pub mod recovery;
 pub mod resources;
 pub mod returning;
+pub mod rune;
 pub mod status;
 pub mod target;
 
@@ -526,7 +527,7 @@ impl ActorAttributes {
         use crate::message::AbilityType::*;
         match ability {
             Frenzy | Clash | Bloodlust => Some(Attribute::Might),
-            Overpower | Yank | Brace => Some(Attribute::Physique),
+            Overpower | Yank | Brace | Drag => Some(Attribute::Physique),
             PerfectStride | Sidestep | Backstab => Some(Attribute::Agility),
             Punish | Pounce | Lurk => Some(Attribute::Instinct),
             Leap | Kick | Surge => Some(Attribute::Discipline),

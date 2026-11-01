@@ -256,6 +256,19 @@ pub struct Tuning {
     /// Tiles a Yank's return drags each source, at full commitment to its
     /// Physique line
     pub yank_tiles: f32,
+    pub drag_cost: f32,
+    pub drag_recovery: f32,
+    /// Tiles ahead along its caster's heading a Drag rune is cut: from 4.2
+    /// on, every step of a turn moves the tile, wherever in its hex the
+    /// caster stands
+    pub drag_distance: f32,
+    /// Hexes from its tile a Drag rune reaches
+    pub drag_reach: f32,
+    /// Seconds a Drag rune stands unless struck down or lifted
+    pub drag_secs: f32,
+    /// Tiles a Drag rune drags a foe entering its reach toward it, at full
+    /// commitment to its Physique line
+    pub drag_tiles: f32,
 
     // --- Lines: the share of a skill's own numbers it has with no points in
     // its line, rising evenly to all of them at full commitment
@@ -278,6 +291,7 @@ pub struct Tuning {
     pub surge_line: f32,
     pub vigil_line: f32,
     pub lurk_line: f32,
+    pub drag_line: f32,
 }
 
 impl Tuning {
@@ -401,6 +415,12 @@ impl Tuning {
         yank_cost: 12.0,
         yank_recovery: 1.5,
         yank_tiles: 3.0,
+        drag_cost: 12.0,
+        drag_recovery: 1.5,
+        drag_distance: 5.0,
+        drag_reach: 2.0,
+        drag_secs: 12.0,
+        drag_tiles: 3.0,
         clash_line: 0.2,
         sidestep_line: 0.2,
         yank_line: 0.2,
@@ -413,6 +433,7 @@ impl Tuning {
         surge_line: 0.2,
         vigil_line: 0.2,
         lurk_line: 0.2,
+        drag_line: 0.2,
     };
 
     /// The endurance `ability` costs, in points of the pool
@@ -440,6 +461,7 @@ impl Tuning {
             AbilityType::Surge => self.surge_cost,
             AbilityType::Vigil => self.vigil_cost,
             AbilityType::Lurk => self.lurk_cost,
+            AbilityType::Drag => self.drag_cost,
         }
     }
 
@@ -457,7 +479,8 @@ impl Tuning {
             AbilityType::Defy => self.defy_damage,
             AbilityType::AutoAttack | AbilityType::Parry | AbilityType::Counter | AbilityType::PerfectStride
             | AbilityType::Clash | AbilityType::Sidestep | AbilityType::Yank | AbilityType::Pounce
-            | AbilityType::Bloodlust | AbilityType::Brace | AbilityType::Surge | AbilityType::Vigil | AbilityType::Lurk => 0.0,
+            | AbilityType::Bloodlust | AbilityType::Brace | AbilityType::Surge | AbilityType::Vigil | AbilityType::Lurk
+            | AbilityType::Drag => 0.0,
         }
     }
 
@@ -483,6 +506,7 @@ impl Tuning {
             AbilityType::Surge => self.surge_line,
             AbilityType::Vigil => self.vigil_line,
             AbilityType::Lurk => self.lurk_line,
+            AbilityType::Drag => self.drag_line,
             AbilityType::AutoAttack | AbilityType::Feint | AbilityType::Parry => 1.0,
         }
     }
@@ -522,6 +546,7 @@ impl Tuning {
             AbilityType::Surge => self.surge_recovery,
             AbilityType::Vigil => self.vigil_recovery,
             AbilityType::Lurk => self.lurk_recovery,
+            AbilityType::Drag => self.drag_recovery,
         }
     }
 
