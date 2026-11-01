@@ -209,35 +209,53 @@ enum Part {
     Rune,
 }
 
-/// What `ability` does for what `view` perceives, and its considerations:
-/// what any skill asks, what its part asks, what the commitments its user
-/// holds ask of that part, and what any timed effect it would put on
-/// someone asks. A Leap does what its range has it do: clear of a foe in
-/// reach, onto one out of it. None where it does nothing.
+/// What `ability` may do, each beside its reason: one part, or for a skill
+/// that reads the range, its part with a foe in reach and then its part
+/// with one beyond (a Leap clears the one, dives onto the other). None for
+/// a skill that is no decision.
+fn parts(ability: AbilityType) -> &'static [(&'static str, Part)] {
+    match ability {
+        AbilityType::AutoAttack => &[],
+        AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Backstab | AbilityType::Kick | AbilityType::Defy => &[("strike", Part::Strike)],
+        AbilityType::Punish => &[("punish", Part::Strike)],
+        AbilityType::Parry | AbilityType::Counter | AbilityType::Clash | AbilityType::Sidestep | AbilityType::Yank | AbilityType::Pounce => &[("answer", Part::Reaction)],
+        AbilityType::Leap => &[("dodge", Part::Clear), ("dive", Part::Dive)],
+        AbilityType::PerfectStride => &[("stride", Part::Effect)],
+        AbilityType::Bloodlust => &[("bloodlust", Part::Effect)],
+        AbilityType::Brace => &[("brace", Part::Effect)],
+        AbilityType::Surge => &[("surge", Part::Effect)],
+        AbilityType::Vigil => &[("vigil", Part::Effect)],
+        AbilityType::Lurk => &[("lurk", Part::Effect)],
+        AbilityType::Drag => &[("rune", Part::Rune)],
+    }
+}
+
+/// What `ability` does for what `view` perceives, and its considerations
+/// ([`considerations`]). None where it does nothing.
 fn reason(ability: AbilityType, view: &View) -> Option<(&'static str, Vec<Considered>)> {
-    let (reason, part) = match ability {
-        AbilityType::AutoAttack => return None,
-        AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Backstab | AbilityType::Kick | AbilityType::Defy => ("strike", Part::Strike),
-        AbilityType::Punish => ("punish", Part::Strike),
-        AbilityType::Parry | AbilityType::Counter | AbilityType::Clash | AbilityType::Sidestep | AbilityType::Yank | AbilityType::Pounce => ("answer", Part::Reaction),
-        AbilityType::Leap => match view.foe?.distance <= view.reach {
-            true => ("dodge", Part::Clear),
-            false => ("dive", Part::Dive),
-        },
-        AbilityType::PerfectStride => ("stride", Part::Effect),
-        AbilityType::Bloodlust => ("bloodlust", Part::Effect),
-        AbilityType::Brace => ("brace", Part::Effect),
-        AbilityType::Surge => ("surge", Part::Effect),
-        AbilityType::Vigil => ("vigil", Part::Effect),
-        AbilityType::Lurk => ("lurk", Part::Effect),
-        AbilityType::Drag => ("rune", Part::Rune),
+    let (reason, part) = match parts(ability) {
+        [] => return None,
+        [one] => *one,
+        [near, far, ..] => if view.foe?.distance <= view.reach { *near } else { *far },
     };
+    Some((reason, considerations(ability, part)))
+}
+
+/// Every decision `ability` may bring, at any range, beside its reason:
+/// what the balance arena's skills reference lists.
+pub fn decisions(ability: AbilityType) -> Vec<(&'static str, Vec<Consideration<View>>)> {
+    parts(ability).iter().map(|&(reason, part)| (reason, considerations(ability, part))).collect()
+}
+
+/// What `ability` asks doing `part`: what any skill asks, what its part
+/// asks, and what any timed effect it would put on someone asks.
+fn considerations(ability: AbilityType, part: Part) -> Vec<Considered> {
     let mut considerations = vec![USABLE, ENDURANCE_LEFT];
     considerations.extend(part_considerations(part));
-    if effect(view).is_some() {
+    if effect(ability).is_some() {
         considerations.push(EFFECT_ADDED);
     }
-    Some((reason, considerations))
+    considerations
 }
 
 fn part_considerations(part: Part) -> Vec<Considered> {
@@ -313,10 +331,10 @@ impl Effect {
     }
 }
 
-/// The timed effect `view.ability` would put on someone now: a stance's on
-/// itself. None for a decision that puts on none.
-fn effect(view: &View) -> Option<Effect> {
-    match view.ability {
+/// The timed effect `ability` would put on someone: a stance's on itself.
+/// None for a decision that puts on none.
+fn effect(ability: AbilityType) -> Option<Effect> {
+    match ability {
         AbilityType::PerfectStride => Some(Effect::PerfectStride),
         AbilityType::Bloodlust => Some(Effect::Bloodlust),
         AbilityType::Brace => Some(Effect::Brace),
@@ -388,7 +406,7 @@ const ENDURANCE_LEFT: Considered = Consideration {
 /// over what a fresh one lasts. Nothing new vetoes it
 const EFFECT_ADDED: Considered = Consideration {
     name: "effect_added",
-    read: |view| effect(view).map_or(1.0, |effect| {
+    read: |view| effect(view.ability).map_or(1.0, |effect| {
         let lasts = effect.lasts(view).max(f32::EPSILON);
         (lasts - effect.left(view)) / lasts
     }),
@@ -487,7 +505,7 @@ const LEASH_LEFT: Considered = Consideration {
 
 /// The effect it would put on itself would do something now, by the
 /// effect's own rule (`Effect::takes_hold`)
-const TAKES_HOLD: Considered = step("takes_hold", |view| flag(effect(view).is_some_and(|effect| effect.takes_hold(view))));
+const TAKES_HOLD: Considered = step("takes_hold", |view| flag(effect(view.ability).is_some_and(|effect| effect.takes_hold(view))));
 
 /// Whether the rune `view.ability` cuts would catch its foe: the foe beyond
 /// its own reach, in the arc it faces, within the rune's reach of where the

@@ -66,7 +66,7 @@ pub struct Candidate {
 
 /// What it weighs a step by: itself and the candidate.
 #[derive(Clone, Copy, Debug)]
-struct Ground {
+pub struct Ground {
     footing: Footing,
     candidate: Candidate,
 }
@@ -91,10 +91,12 @@ pub fn choose(footing: &Footing, candidates: &[Candidate], under_way: Move, mind
 /// What a step to `candidate` scores to engage, for `footing`, as `mind`
 /// shapes it
 fn weigh(footing: &Footing, candidate: &Candidate, mind: &Mind) -> f32 {
-    let considerations: &[Consideration<Ground>] = &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND];
     let ground = Ground { footing: *footing, candidate: *candidate };
-    score(1.0, considerations.iter().map(|consideration| mind.shape(consideration).answer(&ground)))
+    score(1.0, ENGAGE.iter().map(|consideration| mind.shape(consideration).answer(&ground)))
 }
+
+/// What a step to engage is weighed by
+pub const ENGAGE: &[Consideration<Ground>] = &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND];
 
 /// Seconds more the step costs it on its way to strike than the best one:
 /// the best step answers whole however far it has to go

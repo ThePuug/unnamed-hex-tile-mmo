@@ -84,8 +84,14 @@ impl<V> Consideration<V> {
     pub fn answer(&self, view: &V) -> f32 {
         let (from, to) = self.bounds;
         let raw = (self.read)(view);
-        let x = if to == from { if raw >= to { 1.0 } else { 0.0 } } else { (raw - from) / (to - from) };
+        let x = if self.is_condition() { if raw >= to { 1.0 } else { 0.0 } } else { (raw - from) / (to - from) };
         self.curve.at(x)
+    }
+
+    /// Whether it only holds or fails: its bounds meet, so it answers 1 or
+    /// its floor, and no mind tunes it
+    pub fn is_condition(&self) -> bool {
+        self.bounds.0 == self.bounds.1
     }
 }
 
