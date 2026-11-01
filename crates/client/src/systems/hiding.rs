@@ -46,6 +46,9 @@ pub struct Covers(pub Vec<u32>);
 struct Extras {
     covers: Option<Vec<u32>>,
     socket: Option<String>,
+    /// A tether socket's loop round the body (`rope::Girth`)
+    #[serde(rename = "loop")]
+    girth: Option<[f32; 9]>,
 }
 
 fn triangles(mesh: &Mesh) -> Option<Vec<u32>> {
@@ -89,7 +92,7 @@ pub struct Shipped(Handle<Mesh>);
 pub struct HiddenMeshes(HashMap<(AssetId<Mesh>, Vec<Item>), Handle<Mesh>>);
 
 /// Reads what each newly spawned node declares: what of the body it
-/// covers, and the socket it hangs from.
+/// covers, the socket it hangs from, and the loop a pull closes round it.
 pub fn parse_extras(
     mut commands: Commands,
     nodes: Query<(Entity, &GltfExtras), Added<GltfExtras>>,
@@ -102,6 +105,9 @@ pub fn parse_extras(
         }
         if let Some(socket) = parsed.socket {
             node.insert(SocketAnchor(socket));
+        }
+        if let Some(girth) = parsed.girth {
+            node.insert(crate::systems::rope::Girth::from_extras(girth));
         }
     }
 }

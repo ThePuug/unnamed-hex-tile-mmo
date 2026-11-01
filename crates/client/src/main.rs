@@ -81,6 +81,7 @@ fn main() {
         MaterialPlugin::<ExtendedMaterial<StandardMaterial, crate::resources::TerrainExtension>>::default(),
         MaterialPlugin::<world::DiscMaterial>::default(),
         MaterialPlugin::<world::SkyMaterial>::default(),
+        MaterialPlugin::<crate::systems::rope::RopeMaterial>::default(),
     ));
     app.add_plugins((SettingsPlugin, ShellPlugin, InkPlugin, crate::plugins::cel::CelPlugin, crate::plugins::music::MusicPlugin, crate::plugins::weather::WeatherPlugin));
     #[cfg(target_os = "windows")]
@@ -201,6 +202,7 @@ fn main() {
         gathering::do_activity,
         (equipment::hold, equipment::bind_held).chain(),
         crate::systems::rune::bind,
+        crate::systems::rope::throw.after(combat::handle_insert_threat),
         mount::request,
         (mount::saddle, mount::seat).chain(),
         crate::systems::focus::track,
@@ -211,12 +213,15 @@ fn main() {
     app.add_systems(PostUpdate, (
         renet::send_try,
         world::follow_camera,
+        // A rope's ends are joints the animation moved this frame
+        crate::systems::rope::draw.after(bevy::transform::TransformSystems::Propagate),
     ));
 
     app.insert_resource(crate::resources::world_map());
 
     app.init_resource::<InputQueues>();
     app.init_resource::<combat::Gone>();
+    app.init_resource::<crate::systems::rope::RopeKit>();
     app.init_resource::<common_bevy::tuning::Tuning>();
     app.init_resource::<crate::resources::RenderOrigin>();
     app.init_resource::<common_bevy::haven::Haven>();

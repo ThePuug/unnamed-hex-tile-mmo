@@ -32,6 +32,7 @@ pub mod renet;
 pub mod resolved_threats; // Resolved threats stack below threat queue
 pub mod resource_bars;
 pub mod rune;
+pub mod rope;
 pub mod struck;
 pub mod target_frame;
 pub mod target_indicator;
