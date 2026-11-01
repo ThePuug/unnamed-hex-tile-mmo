@@ -16,6 +16,7 @@ pub mod landing;
 pub mod leap;
 mod plugin;
 pub mod reaction_queue;
+pub mod runes;
 pub mod targeting;
 
 pub use plugin::{BehaviourPlugin, CombatPlugin};
