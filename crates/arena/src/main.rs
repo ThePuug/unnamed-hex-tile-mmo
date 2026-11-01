@@ -178,8 +178,7 @@ fn build_named(value: &str) -> [i8; 9] {
 }
 
 fn ability_named(name: &str) -> AbilityType {
-    use AbilityType::*;
-    [Frenzy, Feint, Overpower, Punish, Parry, Counter, Leap, PerfectStride].into_iter()
+    AbilityType::ALL.into_iter()
         .find(|a| format!("{a:?}").eq_ignore_ascii_case(name))
         .unwrap_or_else(|| panic!("no skill {name}"))
 }
