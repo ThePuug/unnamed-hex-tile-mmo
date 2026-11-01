@@ -36,6 +36,7 @@ HAVEN=<q>,<r> cargo run --bin server   # the haven and the spawn elsewhere; the 
 cargo run --bin music-player       # needs a SoundFont: $SOUNDFONT or ~/soundfonts/GeneralUser.sf2
 cargo run --bin arena               # archetype v archetype balance, headless; keys in arena/src/main.rs
 cargo run --bin arena -- tune screen|balance|minds|settle|loop|show|apply   # searches; bounds in arena/src/tune.toml
+cargo run --bin arena -- curves > data.json   # the Skill Curves page's data; publish arena/skill_curves.html beside it
 cargo run --bin metrics -- serve   # records the server's and client's published metrics; then `metrics page|stats|snapshot|list|subscribe`
 cargo test                         # all tests
 cargo test -p common-bevy physics  # specific module

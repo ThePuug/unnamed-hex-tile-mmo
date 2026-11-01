@@ -31,7 +31,9 @@
 //!
 //! `arena serve` runs one scenario per line of stdin, each line the keys
 //! above, and ends each report with a line `end`. `arena tune ...` searches
-//! the game's numbers and the NPCs' minds in-process ([`tune`]).
+//! the game's numbers and the NPCs' minds in-process ([`tune`]). `arena
+//! curves` prints every archetype's decisions and mind as JSON, the data
+//! of the skills reference page ([`curves`]).
 //!
 //! Every pairing fights `runs` times, the two swapping ends each run, each
 //! team starting on its end's tile or a neighbour and each fighter facing
@@ -51,6 +53,7 @@
 //! reach and standing past its target's forward faces, and its mean
 //! fatigue; then how much it used its commitment.
 
+mod curves;
 mod tune;
 
 use std::{collections::HashMap, time::Duration};
@@ -654,12 +657,13 @@ fn timeline(world: &mut World, elapsed: Duration) {
 }
 
 /// Runs the arena: `serve` answers scenarios from stdin, `tune` searches,
-/// anything else is one scenario's keys.
+/// `curves` prints the minds, anything else is one scenario's keys.
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("serve") => serve(),
         Some("tune") => tune::run(&args[1..]),
+        Some("curves") => curves::print(),
         _ => report(&Settings::parse(&args)),
     }
 }
