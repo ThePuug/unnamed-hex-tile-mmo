@@ -49,11 +49,11 @@ const LOC_SETTLE_SECS: f32 = 0.125;
 /// Replays the local player's open inputs from its confirmed position and
 /// turn state, and points the visual and `Heading` at the result.
 /// `Position` and `Turn` are never written here; they are the confirmed
-/// state.
+/// state. A slide under way draws the player itself (`apply_displace`).
 pub fn predict_local_player(
     fixed_time: Res<Time<Fixed>>,
     origin: Res<RenderOrigin>,
-    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Option<&Status>)>,
+    mut query: Query<(&Position, &Turn, &mut Heading, &mut AirTime, &mut VisualPosition, Option<&ActorAttributes>, Option<&Status>), Without<Displacing>>,
     map: Res<Map>,
     nntree: Res<NNTree>,
     buffers: Res<InputQueues>,
