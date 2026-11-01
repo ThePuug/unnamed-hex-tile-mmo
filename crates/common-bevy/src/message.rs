@@ -222,15 +222,15 @@ pub enum AbilityType {
     AutoAttack,
     /// The Berserker's bite. Its combo is itself, so Ferocity fires bites in a burst
     Frenzy,
-    /// A light strike, cheap and quickly recovered from, on every bar. Its
-    /// combo is a Parry
+    /// A light strike, cheap and quickly recovered from: a Parry's combo,
+    /// offering none of its own
     Feint,
     /// The Juggernaut's heavy blow
     Overpower,
     /// The Ambusher's strike, harder on a target still in recovery
     Punish,
-    /// A reaction clearing the threats in its span, on every bar;
-    /// Preparation chains it through a recovery. Its combo is a Feint
+    /// A reaction clearing the threats in its span, on a new character's
+    /// bar; Preparation chains it through a recovery. Its combo is a Feint
     Parry,
     /// The Defender's reaction, clearing every threat in its span and
     /// sending a share of each back; Awareness lengthens the span
@@ -347,7 +347,7 @@ impl AbilityType {
 
     /// The ability this one offers as its combo, the one that unlocks
     /// through its recovery ahead of the rest (`combos::recovery_after`): a
-    /// bite's is another bite, and a Parry and a Feint offer each other.
+    /// bite's is another bite, and a Parry's a Feint.
     /// None for an ability that offers nothing.
     pub fn combo(self) -> Option<AbilityType> {
         match self {
