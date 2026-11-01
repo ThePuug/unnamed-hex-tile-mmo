@@ -118,8 +118,8 @@ pub fn does(ability: AbilityType, attrs: &ActorAttributes, tuning: &Tuning) -> R
         ),
         AbilityType::Vigil => format!("for {}, no strike takes you in the flank", say.lined(tuning.vigil_secs, seconds)),
         AbilityType::Drag => format!(
-            "cut a rune {} ahead. For {}, each foe stepping within {} of it is dragged {} to it",
-            plain_tiles(tuning.drag_distance), seconds(tuning.drag_secs), plain_tiles(tuning.drag_reach), say.tiles(tuning.drag_tiles),
+            "cut a rune {} ahead. For {}, each foe stepping within {} of it is dragged all the way to it",
+            plain_tiles(tuning.drag_distance), seconds(tuning.drag_secs), say.tiles(tuning.drag_reach),
         ),
         AbilityType::Lurk => format!(
             "for {}, no foe beyond your reach can see you, until you attack. A skill struck from hiding always crits",

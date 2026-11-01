@@ -18,7 +18,7 @@ use common_bevy::{
         rune::{Rune, RuneKind},
         ActorAttributes, Loc,
     },
-    message::{AbilityType, Do, Event as GameEvent},
+    message::{Do, Event as GameEvent},
     moment::Moment,
     plugins::nntree::{NNTree, NearestNeighbor},
     systems::combat::{queue as queue_utils, state::enter_combat},
@@ -118,7 +118,7 @@ pub fn control(
         stone.inside = inside;
         for foe in entered {
             let Ok((_, _, _, attrs, mut queue, endurance, combat)) = foes.get_mut(foe) else { continue };
-            let (stun, drag) = carried(&tuning, &stone);
+            let (stun, drag) = carried(&stone);
             let threat = queue_utils::create_threat(
                 &tuning, ent, attrs, &stone.attrs, 0.0, stone.rune.ability(), now, 0.0, Endurance::fatigue_of(&tuning, endurance),
             ).carrying(stun, drag);
@@ -142,22 +142,24 @@ pub fn lapse(time: Res<Time>, runes: Query<(Entity, &RuneStone)>, mut writer: Me
 }
 
 /// What a control rune's threat carries to a foe: seconds of stun, and
-/// tiles of drag toward the rune where positive
-fn carried(tuning: &Tuning, stone: &RuneStone) -> (f32, i8) {
+/// tiles of drag toward the rune where positive. Drag's pull is as long as
+/// the drag carries, so it reaches the rune from wherever the foe stands as
+/// it lands, more tiles than a window's walk; the ground and the foe's
+/// leash alone stop it short (`resolve_drag`).
+fn carried(stone: &RuneStone) -> (f32, i8) {
     match stone.rune {
-        Rune::Drag => {
-            let ability = AbilityType::Drag;
-            let tiles = stone.attrs.line_tiles(tuning, ability, tuning.drag_tiles).min(i8::MAX as usize) as i8;
-            (0.0, tiles)
-        }
+        Rune::Drag => (0.0, i8::MAX),
         _ => (0.0, 0),
     }
 }
 
-/// Hexes from its tile a rune cut by `attrs` reaches. Unbuilt: Distract's
-/// line raises its reach; no other rune's does.
-pub fn reach_of(tuning: &Tuning, _attrs: &ActorAttributes, rune: Rune) -> i32 {
-    reach(tuning, rune).round().max(0.0) as i32
+/// Hexes from its tile a rune cut by `attrs` reaches: Drag's raised by its
+/// caster's Physique line. Unbuilt: Distract's raised by its Agility line.
+pub fn reach_of(tuning: &Tuning, attrs: &ActorAttributes, rune: Rune) -> i32 {
+    match rune.ability() {
+        Some(ability) => attrs.line_tiles(tuning, ability, reach(tuning, rune)) as i32,
+        None => reach(tuning, rune).round().max(0.0) as i32,
+    }
 }
 
 /// Tiles ahead a rune is cut
@@ -168,7 +170,7 @@ pub fn distance(tuning: &Tuning, rune: Rune) -> usize {
     }
 }
 
-/// Hexes from its tile a rune reaches
+/// Hexes from its tile a rune reaches, at full commitment to its line
 fn reach(tuning: &Tuning, rune: Rune) -> f32 {
     match rune {
         Rune::Drag => tuning.drag_reach,
@@ -181,5 +183,20 @@ fn length(tuning: &Tuning, rune: Rune) -> f32 {
     match rune {
         Rune::Drag => tuning.drag_secs,
         _ => 0.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn its_line_raises_a_drag_runes_reach() {
+        let tuning = Tuning::DEFAULT;
+        let reach = |steps: i8| reach_of(&tuning, &ActorAttributes::new(0, 0, 0, -steps, 0, 0, 0, 0, 0), Rune::Drag);
+        for steps in 0..ActorAttributes::STEPS as i8 {
+            assert!(reach(steps + 1) >= reach(steps), "never less for more Physique, at {steps}");
+        }
+        assert!(reach(ActorAttributes::STEPS as i8) > reach(0), "further at full commitment than with none");
     }
 }

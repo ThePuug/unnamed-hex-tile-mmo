@@ -33,9 +33,9 @@ pub enum Rune {
     /// to a striker beyond, for a Backstab and Grace's flank. Its line
     /// raises its reach
     Distract,
-    /// Physique's: drags a foe entering its reach straight toward the rune,
-    /// into an Overpower's reach and Intimidation's ground. Its line raises
-    /// how far
+    /// Physique's: drags a foe entering its reach all the way to the rune,
+    /// from wherever it stands as the drag lands, into an Overpower's reach
+    /// and Intimidation's ground. Its line raises its reach
     Drag,
     /// Discipline's: pushes a foe entering its reach straight away from the
     /// rune, the distance a Leap dives across and a Surge counts. Its line

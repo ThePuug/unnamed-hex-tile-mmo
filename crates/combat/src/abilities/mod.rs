@@ -713,12 +713,12 @@ mod tests {
     }
 
     #[test]
-    fn a_drag_rune_is_cut_ahead_and_pulls_a_foe_entering_its_reach() {
+    fn a_drag_rune_is_cut_ahead_and_pulls_a_foe_entering_its_reach_all_the_way_in() {
         let mut app = arena();
         let tuning = Tuning::DEFAULT;
         let caster = actor(&mut app, Side::PLAYERS, 0);
         let ahead = tuning.drag_distance.round() as i32;
-        let reach = tuning.drag_reach.round() as i32;
+        let reach = crate::runes::reach_of(&tuning, &ActorAttributes::default(), common_bevy::components::rune::Rune::Drag);
         let foe = actor(&mut app, Side::WILD, ahead + reach + 1);
         ask(&mut app, caster, AbilityType::Drag, None);
         let rune = rune_at(&mut app, ahead).expect("cut on the tile its distance ahead");
@@ -733,6 +733,14 @@ mod tests {
         assert!(pulled[0].drag > 0, "dragging toward the rune");
         app.update();
         assert_eq!(queue(&app, foe).len(), 1, "once for entering, not again while it stands in reach");
+
+        // Walked off as far as a window lets it before the drag lands
+        app.world_mut().entity_mut(foe).insert(Loc::new(Qrz { q: ahead, r: -10, z: 1 }));
+        let distance = |app: &App| app.world().get::<Loc>(foe).unwrap().flat_distance(app.world().get::<Loc>(rune).unwrap());
+        clock_to(&mut app, pulled[0].lands_at() + EARLY);
+        app.update();
+        app.update();
+        assert_eq!(distance(&app), 1, "and drags it all the way in once it lands, however far it walked");
     }
 
     #[test]

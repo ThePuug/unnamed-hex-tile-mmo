@@ -262,13 +262,11 @@ pub struct Tuning {
     /// on, every step of a turn moves the tile, wherever in its hex the
     /// caster stands
     pub drag_distance: f32,
-    /// Hexes from its tile a Drag rune reaches
+    /// Hexes from its tile a Drag rune reaches, at full commitment to its
+    /// caster's Physique line
     pub drag_reach: f32,
     /// Seconds a Drag rune stands unless struck down or lifted
     pub drag_secs: f32,
-    /// Tiles a Drag rune drags a foe entering its reach toward it, at full
-    /// commitment to its Physique line
-    pub drag_tiles: f32,
 
     // --- Lines: the share of a skill's own numbers it has with no points in
     // its line, rising evenly to all of them at full commitment
@@ -418,9 +416,8 @@ impl Tuning {
         drag_cost: 12.0,
         drag_recovery: 1.5,
         drag_distance: 5.0,
-        drag_reach: 2.0,
+        drag_reach: 7.0,
         drag_secs: 12.0,
-        drag_tiles: 3.0,
         clash_line: 0.2,
         sidestep_line: 0.2,
         yank_line: 0.2,
@@ -433,7 +430,7 @@ impl Tuning {
         surge_line: 0.2,
         vigil_line: 0.2,
         lurk_line: 0.2,
-        drag_line: 0.2,
+        drag_line: 2.0 / 7.0,
     };
 
     /// The endurance `ability` costs, in points of the pool
