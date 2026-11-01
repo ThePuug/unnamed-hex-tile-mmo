@@ -24,7 +24,6 @@ user-data = { path = "../user-data" }
 bevy = { version = "0.19", features = ["dds"] }
 bevy_asset = "0.19"
 bevy_camera = "0.19"
-bevy_easings = "0.19"
 bevy_light = "0.19"
 bevy_mesh = "0.19"
 bytemuck = { version = "1", features = ["derive"] }

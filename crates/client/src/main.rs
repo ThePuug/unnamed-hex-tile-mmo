@@ -13,7 +13,6 @@ use bevy::{
     prelude::*,
     render::error_handler::{ErrorType, RenderErrorHandler, RenderErrorPolicy},
 };
-use bevy_easings::*;
 use common_bevy::{
     components::*,
     message::*,
@@ -70,7 +69,6 @@ fn main() {
             ..default()
         }),
         crate::network::NetworkPlugin,
-        EasingsPlugin::default(),
         nntree::NNTreePlugin,
         DevConsolePlugin,
         DiagnosticsPlugin,

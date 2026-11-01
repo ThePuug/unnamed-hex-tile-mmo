@@ -1106,25 +1106,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy_easings"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3fca5384b61d0aa97d81e81b43222b4785cf255ed86a92ed5cebfa61453df94"
-dependencies = [
- "bevy_app",
- "bevy_color",
- "bevy_ecs",
- "bevy_math",
- "bevy_render",
- "bevy_sprite",
- "bevy_text",
- "bevy_time",
- "bevy_transform",
- "bevy_ui",
- "interpolation",
-]
-
-[[package]]
 name = "bevy_ecs"
 version = "0.19.1"
 source = "git+https://github.com/ThePuug/bevy?branch=shadow-pass-diagnostic#81c283be487cb4eee82babce7144016b19842a6a"
@@ -2588,7 +2569,6 @@ dependencies = [
  "bevy",
  "bevy_asset",
  "bevy_camera",
- "bevy_easings",
  "bevy_light",
  "bevy_mesh",
  "bimap",
@@ -4607,12 +4587,6 @@ dependencies = [
  "quote",
  "syn 2.0.114",
 ]
-
-[[package]]
-name = "interpolation"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9c13ae9d91148fcb4aab6654c4c2a7d02a15395ea9e23f65170f175f8b269ce"
 
 [[package]]
 name = "inventory"
