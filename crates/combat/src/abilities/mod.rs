@@ -203,6 +203,7 @@ pub struct Abilities<'w, 's> {
     /// names one ([`Abilities::foe`]), and the tiles a rune is refused on
     pub runes: Query<'w, 's, (Entity, &'static Loc, &'static crate::runes::RuneStone)>,
     pub rune_sides: Query<'w, 's, &'static Side, With<crate::runes::RuneStone>>,
+    pub nntree: Res<'w, common_bevy::plugins::nntree::NNTree>,
     pub map: Res<'w, Map>,
     pub time: Res<'w, Time>,
     pub runtime: Res<'w, crate::RunTime>,
@@ -311,6 +312,9 @@ impl Abilities<'_, '_> {
         // reach is measured as a swing measures it, the first level of
         // height between free
         let mut cast = Cast { ent, ability, at, loc, attrs, side, reach, target: asked, target_loc: None };
+        if ability.reach(reach).is_some() && self.npcs.contains(ent) {
+            cast.target = self.in_front(&cast, heading.unwrap_or_default());
+        }
         if ability.reach(reach).is_some() {
             cast.target_loc = self.foe(&cast).ok().map(|(_, target_loc)| target_loc);
         }
@@ -398,6 +402,22 @@ impl Abilities<'_, '_> {
             return Err(AbilityFailReason::NoTargets);
         }
         Ok((target, loc))
+    }
+
+    /// What an NPC's swing or strike lands on: the hostile nearest in front
+    /// of it by the one rule a player targets by
+    /// (`targeting::select_target`), a rune among them, the target it
+    /// chases holding a tie. A player's lands on what its client chose by
+    /// the same rule.
+    fn in_front(&self, cast: &Cast, heading: Heading) -> Option<Entity> {
+        let tuning = *self.tuning;
+        let side_of = |other: Entity| self.actors.get(other).ok().and_then(|(.., side, _, _)| side.copied())
+            .or_else(|| self.rune_sides.get(other).ok().copied());
+        let seen = |other: Entity| self.actors.get(other).map_or(true, |(&at, .., range, dead)| {
+            !dead && !targeting::unseen(self.statuses.get(other).ok(), range.copied().unwrap_or_default().0, cast.loc.flat_distance(&at))
+        });
+        let hostile = |other: Entity| cast.side.zip(side_of(other)).is_some_and(|(own, theirs)| own.is_hostile_to(theirs)) && seen(other);
+        targeting::select_target(cast.ent, cast.loc, heading, targeting::arc_of(&tuning, Some(&cast.attrs)), &self.nntree, hostile, cast.target)
     }
 
     /// The leash `ent`'s moves keep inside: an NPC's, round its
@@ -645,6 +665,51 @@ mod tests {
     fn rune_at(app: &mut App, q: i32) -> Option<Entity> {
         let mut runes = app.world_mut().query::<(Entity, &Loc, &crate::runes::RuneStone)>();
         runes.iter(app.world()).find(|(_, loc, _)| loc.q == q && loc.r == 0).map(|(ent, ..)| ent)
+    }
+
+    /// An NPC on the wild side at `(q, 0)`, facing up the q axis
+    fn npc(app: &mut App, q: i32) -> Entity {
+        let ent = actor(app, Side::WILD, q);
+        app.world_mut().entity_mut(ent).insert((
+            Chase { acquisition_range: 10, leash_distance: 30 },
+            EntityType::default(),
+            crate::behaviour::Bar::of(common_bevy::archetype::EnemyArchetype::Berserker),
+        ));
+        ent
+    }
+
+    #[test]
+    fn an_npc_strikes_what_stands_in_front_of_its_quarry_and_its_quarry_on_a_tie() {
+        let mut app = arena();
+        let hunter = npc(&mut app, 0);
+        let quarry = actor(&mut app, Side::PLAYERS, 2);
+        let guard = actor(&mut app, Side::PLAYERS, 1);
+        ask(&mut app, hunter, AbilityType::Frenzy, Some(quarry));
+        assert_eq!(queue(&app, guard).len(), 1, "the one standing in front takes it");
+        assert!(queue(&app, quarry).is_empty(), "not the one it chases behind");
+
+        let mut app = arena();
+        let hunter = npc(&mut app, 0);
+        let quarry = actor(&mut app, Side::PLAYERS, 1);
+        let beside = actor(&mut app, Side::PLAYERS, 1);
+        ask(&mut app, hunter, AbilityType::Frenzy, Some(quarry));
+        assert_eq!(queue(&app, quarry).len(), 1, "of two on one tile, the one it chases");
+        assert!(queue(&app, beside).is_empty());
+    }
+
+    #[test]
+    fn a_rune_between_takes_an_npcs_blow() {
+        let mut app = arena();
+        let ahead = Tuning::DEFAULT.drag_distance.round() as i32;
+        let caster = actor(&mut app, Side::PLAYERS, 0);
+        ask(&mut app, caster, AbilityType::Drag, None);
+        let rune = rune_at(&mut app, ahead).expect("the rune");
+        // Facing back along the q axis, the rune between it and its quarry
+        let hunter = npc(&mut app, ahead + 2);
+        app.world_mut().entity_mut(hunter).insert(Heading::from_hex(Qrz { q: -1, r: 0, z: 0 }));
+        let said = ask(&mut app, hunter, AbilityType::Frenzy, Some(caster));
+        assert!(said.iter().any(|event| matches!(event, GameEvent::Despawn { ent, died: true } if *ent == rune)), "the rune takes it and is struck down");
+        assert!(queue(&app, caster).is_empty(), "not its caster beyond");
     }
 
     #[test]
