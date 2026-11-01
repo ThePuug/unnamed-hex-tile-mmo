@@ -23,7 +23,6 @@ impl Plugin for UiPlugin {
                 compass::setup.after(crate::systems::camera::setup),
                 highway::setup.after(crate::systems::camera::setup),
                 target_frame::setup.after(crate::systems::camera::setup),
-                target_indicator::setup,
                 combat_ui::setup_health_bars.after(crate::systems::camera::setup),
                 combat_log::setup.after(crate::systems::camera::setup),
             ),
@@ -35,6 +34,7 @@ impl Plugin for UiPlugin {
         app.add_systems(Update, resource_bars::update);
         app.add_systems(Update, (action_bar::sync_loadout, action_bar::update).chain());
         app.add_systems(Update, target_frame::update);
+        app.insert_gizmo_config(target_indicator::TargetGizmos, target_indicator::config());
         app.add_systems(Update, target_indicator::update);
 
         // Character panel systems

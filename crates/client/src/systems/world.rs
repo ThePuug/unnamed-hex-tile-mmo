@@ -14,8 +14,6 @@ use bevy::{
 };
 use bevy_light::{CascadeShadowConfig, CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver};
 
-pub const TILE_SIZE: f32 = 1.;
-
 /// Illuminance of the sun at noon, in lux. The moon's share of it is what
 /// the haze dims by at night.
 const SUN_ILLUMINANCE: f32 = 10_000.;
