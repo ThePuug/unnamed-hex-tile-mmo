@@ -21,7 +21,7 @@ use common_bevy::{
     resources::map::Map,
 };
 use crate::behaviour::chase::{self, Chase};
-use crate::engagement::{AssignedHex, Engagement, EngagementMember, HexAssignment};
+use crate::engagement::{AssignedHex, EngagementMember, HexAssignment, Members};
 
 /// Steps between two entries of a ring `slots` long, the shorter way
 /// round: `min(|a - b|, slots - |a - b|)`.
@@ -80,16 +80,16 @@ pub fn calculate_assignments(
 /// one of its NPCs falls.
 pub fn assign_hexes(
     mut commands: Commands,
-    mut engagement_query: Query<(&Engagement, &mut HexAssignment)>,
+    mut engagement_query: Query<(&Members, &mut HexAssignment)>,
     npc_query: Query<(Entity, &Loc, Has<Chase>, Option<&Target>, &AttackRange), With<EngagementMember>>,
     sided: Query<(Entity, &Loc), With<Side>>,
     health_query: Query<&Health>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
-    for (engagement, mut hex_assign) in engagement_query.iter_mut() {
+    for (members, mut hex_assign) in engagement_query.iter_mut() {
         // Find the target player for this engagement's NPCs
-        let target_player = find_engagement_target(engagement, &npc_query);
+        let target_player = find_engagement_target(members, &npc_query);
         let Some(target_player) = target_player else {
             continue; // No NPC has a target yet
         };
@@ -101,8 +101,8 @@ pub fn assign_hexes(
         let player_tile = **player_loc;
 
         // Assigned already for this target, on this tile, with these alive
-        let living = engagement.spawned_npcs.iter()
-            .filter(|&&npc| health_query.get(npc).is_ok_and(|health| health.current() > 0.0))
+        let living = members.iter()
+            .filter(|&npc| health_query.get(npc).is_ok_and(|health| health.current() > 0.0))
             .count();
         let assigning_for = HexAssignment { target_player: Some(target_player), last_player_tile: Some(player_tile), living };
         if *hex_assign == assigning_for {
@@ -113,8 +113,8 @@ pub fn assign_hexes(
         // Collect the living NPCs that chase, and the reach every one of
         // them swings from
         let mut reach = u32::MAX;
-        let alive_npcs: Vec<(Entity, Qrz)> = engagement.spawned_npcs.iter()
-            .filter_map(|&npc_ent| {
+        let alive_npcs: Vec<(Entity, Qrz)> = members.iter()
+            .filter_map(|npc_ent| {
                 // Check NPC is alive
                 let health = health_query.get(npc_ent).ok()?;
                 if health.current() <= 0.0 { return None; }
@@ -151,10 +151,10 @@ pub fn assign_hexes(
 
 /// Find the player that this engagement's NPCs are targeting.
 fn find_engagement_target(
-    engagement: &Engagement,
+    members: &Members,
     npc_query: &Query<(Entity, &Loc, Has<Chase>, Option<&Target>, &AttackRange), With<EngagementMember>>,
 ) -> Option<Entity> {
-    for &npc_ent in &engagement.spawned_npcs {
+    for npc_ent in members.iter() {
         if let Ok((_, _, _, Some(target), _)) = npc_query.get(npc_ent) {
             if let Some(target_ent) = target.entity {
                 return Some(target_ent);
@@ -275,7 +275,7 @@ mod tests {
         world.insert_resource(tiles);
 
         let target = world.spawn((Loc::new(TARGET + Qrz::Z), Side::PLAYERS)).id();
-        let engagement = world.spawn_empty().id();
+        let engagement = world.spawn(HexAssignment::default()).id();
         let npcs = [5, -5].map(|q| {
             world.spawn((
                 Loc::new(Qrz { q, r: 0, z: 1 }),
@@ -286,8 +286,6 @@ mod tests {
                 Health { state: 100.0, max: 100.0 },
             )).id()
         });
-        let members = Engagement { spawned_npcs: npcs.to_vec(), ..default() };
-        world.entity_mut(engagement).insert((members, HexAssignment::default()));
         (app, target, npcs)
     }
 

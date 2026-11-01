@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 use std::time::Duration;
 
-use combat::engagement::{Engagement, EngagementMember, LastPlayerProximity};
+use combat::engagement::{Engagement, LastPlayerProximity, Members};
 use common_bevy::{
     components::Loc,
     message::{Do, Event},
@@ -26,7 +26,7 @@ const PROXIMITY_RANGE: i32 = crate::systems::aoi::EXIT_RADIUS + 8;
 /// System that cleans up completed or abandoned engagements
 
 /// Cleanup triggers:
-/// 1. All NPCs dead (all child entities despawned)
+/// 1. All NPCs dead: the engine takes `Members` off with the last
 /// 2. Abandoned (no client watching within `PROXIMITY_RANGE` for 30 seconds)
 
 /// Actions on cleanup:
@@ -38,23 +38,20 @@ pub fn cleanup_engagements(
     mut writer: MessageWriter<Do>,
     mut ended: MessageWriter<EngagementEnded>,
     time: Res<Time>,
-    engagement_query: Query<(Entity, &Engagement, &Loc, &LastPlayerProximity)>,
-    npc_query: Query<&EngagementMember>,
+    engagement_query: Query<(Entity, Option<&Members>, &Loc, &LastPlayerProximity), With<Engagement>>,
     lobby: Res<Lobby>,
     locs: Query<&Loc, Without<Engagement>>,
 ) {
-    for (engagement_entity, engagement, engagement_loc, last_proximity) in engagement_query.iter() {
-        let all_npcs_dead = !engagement.spawned_npcs.iter().any(|&npc_entity| npc_query.get(npc_entity).is_ok());
+    for (engagement_entity, members, engagement_loc, last_proximity) in engagement_query.iter() {
+        let all_npcs_dead = members.is_none();
         let should_cleanup = all_npcs_dead
             || (last_proximity.is_abandoned(Moment::ZERO + time.elapsed(), ABANDONMENT_TIMEOUT) && !watched(engagement_loc, &lobby, &locs));
 
         if should_cleanup {
             // Emit Despawn events for all NPCs — send_do routes via LoadedBy,
             // cleanup_despawned handles actual entity removal
-            for &npc_entity in &engagement.spawned_npcs {
-                if npc_query.get(npc_entity).is_ok() {
-                    writer.write(Do { event: Event::Despawn { ent: npc_entity, died: false } });
-                }
+            for npc_entity in members.into_iter().flat_map(|members| members.iter()) {
+                writer.write(Do { event: Event::Despawn { ent: npc_entity, died: false } });
             }
 
             // Despawn engagement entity directly (no network component, clients don't know about it)

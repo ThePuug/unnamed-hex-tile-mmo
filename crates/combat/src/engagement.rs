@@ -27,12 +27,11 @@ use common_bevy::{
 };
 use common_bevy::tuning::Tuning;
 
-/// A group of NPCs spawned together. It is cleaned up once every one is
-/// dead, or no client has watched it for a while (`engagement_cleanup`).
+/// A group of NPCs spawned together, its members its [`Members`]. It is
+/// cleaned up once every one is dead, or no client has watched it for a
+/// while (`engagement_cleanup`).
 #[derive(Component, Debug, Clone)]
 pub struct Engagement {
-    /// Child NPC entities (tracked for cleanup)
-    pub spawned_npcs: Vec<Entity>,
     /// How many of its NPCs may have an ability standing in one target's
     /// queue at once. A reaction's span answers abilities that land
     /// together, so it seldom binds: high by default, lower to make an
@@ -45,21 +44,22 @@ pub const ATTACK_CAPACITY: u8 = 6;
 
 impl Default for Engagement {
     fn default() -> Self {
-        Self { spawned_npcs: Vec::new(), attack_capacity: ATTACK_CAPACITY }
+        Self { attack_capacity: ATTACK_CAPACITY }
     }
 }
 
-impl Engagement {
-    /// Add NPC entity to tracking list
-    pub fn add_npc(&mut self, entity: Entity) {
-        self.spawned_npcs.push(entity);
-    }
-}
-
-/// Marker component for NPCs that belong to an engagement
-/// Back-reference to parent engagement entity
+/// The engagement an NPC belongs to. Its target must exist as it is
+/// inserted, or the engine drops it.
 #[derive(Component, Debug, Clone, Copy)]
+#[relationship(relationship_target = Members)]
 pub struct EngagementMember(pub Entity);
+
+/// An engagement's NPCs, kept by the engine from their [`EngagementMember`]:
+/// a member despawned leaves it, and it goes with the last. Never
+/// `linked_spawn`: an NPC's Despawn is routed to clients before it goes.
+#[derive(Component, Debug, Default)]
+#[relationship_target(relationship = EngagementMember)]
+pub struct Members(Vec<Entity>);
 
 /// Last time players were near this engagement (for abandonment tracking)
 #[derive(Component, Debug, Clone, Copy)]
@@ -134,10 +134,9 @@ pub fn spawn_engagement(
     commands: &mut Commands,
     time: &Time,
 ) -> Entity {
-    let mut engagement = Engagement::default();
-
     let engagement_entity = commands
         .spawn((
+            Engagement::default(),
             Loc::new(location),
             LastPlayerProximity::new(Moment::ZERO + time.elapsed()),
             HexAssignment::default(),
@@ -193,11 +192,8 @@ pub fn spawn_engagement(
             AirTime::default(),
             common_bevy::components::movement_intent_state::MovementIntentState::default(),
         ));
-
-        engagement.add_npc(npc_entity);
     }
 
-    commands.entity(engagement_entity).insert(engagement);
     engagement_entity
 }
 
