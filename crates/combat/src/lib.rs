@@ -288,16 +288,19 @@ pub fn resolve_threat(
 /// walk over the ground up to its tiles, toward the threat's source, an
 /// actor or a rune, where it stands as the threat lands, and
 /// stopping beside it, or away along the line from it, inside the
-/// target's leash (`leap::Leash::of`), slid there as a Leap is. A braced
-/// target stands.
+/// target's leash (`leap::Leash::of`). It slides there at
+/// `Tuning::drag_pace`, so a longer drag takes longer, held in place
+/// (`Status::hold`) until it arrives. A braced target stands.
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_drag(
     trigger: On<ResolveThreat>,
+    tuning: Res<Tuning>,
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
     map: Res<common_bevy::resources::map::Map>,
     actors: Query<(&Loc, &Health)>,
     locs: Query<&Loc>,
-    statuses: Query<&common_bevy::components::status::Status>,
+    mut statuses: Query<&mut common_bevy::components::status::Status>,
     leashed: Query<(&behaviour::chase::Chase, &engagement::EngagementMember)>,
     dens: Query<&Loc, With<engagement::Engagement>>,
 ) {
@@ -312,9 +315,10 @@ pub fn resolve_drag(
     let leash = leap::Leash::of(*ent, &leashed, &dens);
     let tiles = threat.drag.unsigned_abs() as usize;
     let landing = if threat.drag > 0 { leap::toward(&map, *at, *to, tiles, leash) } else { leap::away(&map, *at, *to, tiles, leash) };
-    if let Some(landing) = landing {
-        leap::slide(*ent, landing, leap::LEAP_MS, None, &mut commands, &mut writer);
-    }
+    let Some(landing) = landing else { return };
+    let secs = at.flat_distance(&landing) as f32 / tuning.drag_pace;
+    landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| status.hold(secs));
+    leap::slide(*ent, landing, (secs * 1000.0).round().min(u16::MAX as f32) as u16, None, &mut commands, &mut writer);
 }
 
 /// A wound's DoT tick lands on its target, outside the queue and past its

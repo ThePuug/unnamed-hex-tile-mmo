@@ -122,6 +122,9 @@ pub struct Tuning {
     pub reaction_window: f32,
     /// Most more a Reflex advantage widens it by
     pub window_bonus: f32,
+    /// Tiles a second a drag slides its target, toward its source or away,
+    /// held in place until it arrives
+    pub drag_pace: f32,
 
     // --- Every swing and blow ---
     /// Share of base potency an auto-attack strikes for without Force
@@ -334,6 +337,7 @@ impl Tuning {
         combo_share: 0.4,
         reaction_window: 3.0,
         window_bonus: 1.0,
+        drag_pace: 8.0,
         auto_damage: 1.029,
         force_auto: 0.42,
         stride_pace: 0.7,

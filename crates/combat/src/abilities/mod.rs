@@ -744,6 +744,25 @@ mod tests {
     }
 
     #[test]
+    fn a_longer_drag_holds_its_target_longer() {
+        use common_bevy::systems::combat::queue::create_threat;
+        let tuning = Tuning::DEFAULT;
+        let held = |from: i32| {
+            let mut app = arena();
+            let source = actor(&mut app, Side::PLAYERS, 0);
+            let target = actor(&mut app, Side::WILD, from);
+            app.update();
+            let plain = ActorAttributes::default();
+            let threat = create_threat(&tuning, source, &plain, &plain, 0.0, None, game_now(&app), 0.0, 0.0).carrying(0.0, i8::MAX);
+            app.world_mut().trigger(crate::ResolveThreat { ent: target, threat });
+            app.update();
+            app.world().get::<Status>(target).and_then(|status| status.held).map_or(0.0, |held| held.remaining)
+        };
+        assert!(held(3) > 0.0, "held while it slides");
+        assert!(held(9) > held(3), "and longer the further it is dragged");
+    }
+
+    #[test]
     fn a_rune_takes_no_tile_a_rune_holds_and_one_of_a_kind_lifts_the_one_before() {
         let mut app = arena();
         let ahead = Tuning::DEFAULT.drag_distance.round() as i32;
