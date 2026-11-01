@@ -540,6 +540,17 @@ impl Tuning {
         }
         Ok(())
     }
+
+    /// The knob `name`'s value, as `set` names it. Errs on an unknown knob.
+    pub fn get(&self, name: &str) -> Result<f32, String> {
+        if let Ok(knob) = self.path::<f32>(name) {
+            Ok(*knob)
+        } else if let Ok(count) = self.path::<usize>(name) {
+            Ok(*count as f32)
+        } else {
+            Err(format!("no tuning knob {name}"))
+        }
+    }
 }
 
 impl Default for Tuning {
@@ -561,6 +572,9 @@ mod tests {
         assert_eq!(tuning.frenzy_damage, 0.25);
         assert_eq!(tuning.leap_distance, 2);
         assert_eq!(tuning.awareness_band, 0.25);
+        assert_eq!(tuning.get("awareness_band"), Ok(0.25));
+        assert_eq!(tuning.get("leap_distance"), Ok(2.0));
+        assert!(tuning.get("no_such_knob").is_err());
         assert!(tuning.set("frenzy_damage", "much").is_err());
         assert!(tuning.set("no_such_knob", "1").is_err());
         tuning.set("leap_distance", "0.2").unwrap();
