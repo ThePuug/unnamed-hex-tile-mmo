@@ -48,34 +48,11 @@ pub enum Event {
     Confirm { ent: Entity, seq: u8, position: Position, airtime: Option<i16>, turn: Turn },
     Incremental { ent: Entity, component: Component },
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz, attrs: Option<ActorAttributes> },
-    /// Server-internal: Deal damage (Try event)
-    /// Triggers damage calculation and queue insertion
-    DealDamage {
-        source: Entity,
-        target: Entity,
-        base_damage: f32,
-        ability: Option<AbilityType>,
-        /// Damage each DoT tick deals while the threat stands: a wound's, zero for a blow
-        dot: f32,
-        /// How long after now the strike is made: its threat's window starts then
-        delay: std::time::Duration,
-        /// Seconds the threat stuns its target as it lands, and tiles it
-        /// moves its target, toward `source` where positive and away where
-        /// negative
-        stun: f32,
-        drag: i8,
-    },
-    /// Server-internal: a wound's DoT tick lands outside the queue
-    DotTick { ent: Entity, source: Entity, damage: f32, ability: Option<AbilityType> },
-    /// Server-internal: `ent` struck across its own line and broke its stride
-    Stumble { ent: Entity },
     /// Server → Client: Insert threat into reaction queue
     InsertThreat { ent: Entity, threat: QueuedThreat },
     /// Server → Client: Apply damage to entity (threat resolved). `dot` marks
     /// a wound's damage, shown apart from a blow's.
     ApplyDamage { ent: Entity, damage: f32, source: Entity, dot: bool },
-    /// Server-internal: Resolve a threat (apply damage with modifiers)
-    ResolveThreat { ent: Entity, threat: QueuedThreat },
     /// Client → Server (Try): Request to use an ability
     /// Server → Client (Do): Ability was used successfully
     /// target: the actor it is used on, a player's choice the server checks
@@ -202,11 +179,8 @@ impl Event {
             | Event::Confirm { ent, .. }
             | Event::Incremental { ent, .. }
             | Event::Spawn { ent, .. }
-            | Event::DotTick { ent, .. }
-            | Event::Stumble { ent }
             | Event::InsertThreat { ent, .. }
             | Event::ApplyDamage { ent, .. }
-            | Event::ResolveThreat { ent, .. }
             | Event::UseAbility { ent, .. }
             | Event::ClearQueue { ent, .. }
             | Event::MovementIntent { ent, .. }
@@ -230,8 +204,7 @@ impl Event {
             | Event::RespecAttributes { ent, .. }
             | Event::SetLoadout { ent, .. }
             | Event::View { ent } => Some(ent),
-            Event::DealDamage { .. }
-            | Event::Ping { .. }
+            Event::Ping { .. }
             | Event::Pong { .. }
             | Event::Play
             | Event::Leave

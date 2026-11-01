@@ -24,7 +24,7 @@ pub use plugin::{BehaviourPlugin, CombatPlugin};
 use bevy::prelude::*;
 use common_bevy::{
     components::{reaction_queue::*, resources::*, *},
-    message::{Do, Try, Event as GameEvent},
+    message::{AbilityType, Do, Event as GameEvent},
     moment::Moment,
     systems::{
         combat::{damage as damage_calc, queue as queue_utils},
@@ -53,6 +53,52 @@ impl RunTime {
     }
 }
 
+/// What the server tells itself of a fight, triggered and observed by type;
+/// none crosses the wire.
+///
+/// A strike made: `process_deal_damage` queues the threat it makes on
+/// `target`.
+#[derive(Event, Debug, Clone, Copy)]
+pub struct DealDamage {
+    pub source: Entity,
+    pub target: Entity,
+    pub base_damage: f32,
+    pub ability: Option<AbilityType>,
+    /// Damage each DoT tick deals while the threat stands: a wound's, zero for a blow
+    pub dot: f32,
+    /// How long after now the strike is made: its threat's window starts then
+    pub delay: std::time::Duration,
+    /// Seconds the threat stuns its target as it lands, and tiles it
+    /// moves its target, toward `source` where positive and away where
+    /// negative
+    pub stun: f32,
+    pub drag: i8,
+}
+
+/// A threat's window closed on `ent`: it lands (`resolve_threat`,
+/// `resolve_drag`).
+#[derive(Event, Debug, Clone, Copy)]
+pub struct ResolveThreat {
+    pub ent: Entity,
+    pub threat: QueuedThreat,
+}
+
+/// A wound's DoT tick lands on `ent` outside the queue (`resolve_dot_tick`).
+#[derive(Event, Debug, Clone, Copy)]
+pub struct DotTick {
+    pub ent: Entity,
+    pub source: Entity,
+    pub damage: f32,
+    pub ability: Option<AbilityType>,
+}
+
+/// `ent` struck across its own line and broke its stride
+/// (`landing::stumble`).
+#[derive(Event, Debug, Clone, Copy)]
+pub struct Stumble {
+    pub ent: Entity,
+}
+
 /// Takes a `DealDamage` and queues the threat it makes on its target.
 /// An attack made at a target with Patience overcommits its source
 /// (`Status::overcommit`). Lands a strike from past its target's forward
@@ -66,7 +112,7 @@ impl RunTime {
 /// stacks, which that crit spends; and inserts it into the reaction queue,
 /// its window starting as the strike is made: now, or its `delay` after
 pub fn process_deal_damage(
-    trigger: On<Try>,
+    trigger: On<DealDamage>,
     tuning: Res<Tuning>,
     mut commands: Commands,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
@@ -81,121 +127,118 @@ pub fn process_deal_damage(
     mut rolls: Query<&mut dice::Rolls>,
     mut writer: MessageWriter<Do>,
 ) {
-    let event = &trigger.event().event;
+    let DealDamage { source, target, base_damage, ability, dot, delay, stun, drag } = trigger.event();
+    // Get attacker attributes for scaling
+    let (Ok(source_attrs), Ok(mut rolls)) = (all_attrs.get(*source), rolls.get_mut(*source)) else {
+        return;
+    };
 
-    if let GameEvent::DealDamage { source, target, base_damage, ability, dot, delay, stun, drag } = event {
-        // Get attacker attributes for scaling
-        let (Ok(source_attrs), Ok(mut rolls)) = (all_attrs.get(*source), rolls.get_mut(*source)) else {
-            return;
-        };
+    // Get target's queue, attributes, health, and recovery
+    let Ok((mut queue, attrs, health, endurance, recovery_opt)) = target_query.get_mut(*target) else {
+        return;
+    };
 
-        // Get target's queue, attributes, health, and recovery
-        let Ok((mut queue, attrs, health, endurance, recovery_opt)) = target_query.get_mut(*target) else {
-            return;
-        };
-
-        // Don't queue threats on dead targets
-        if health.state <= 0.0 {
-            return;
-        }
-
-        if attrs.patience().index() > 0 && source != target {
-            landing::update(*source, &mut statuses, &mut commands, &mut writer, |status| status.overcommit(tuning.overcommit_secs));
-        }
-
-        let flanked = places.get(*source).ok().zip(places.get(*target).ok())
-            .is_some_and(|((from, _), (at, heading))| common_bevy::systems::targeting::takes_flank(heading, statuses.get(*target).ok(), at, from));
-        // An attack gives a lurker away; a skill struck out of hiding is an
-        // ambush, a certain crit
-        let lurking = statuses.get(*source).is_ok_and(|status| status.is_lurking());
-        if lurking {
-            landing::update(*source, &mut statuses, &mut commands, &mut writer, |status| status.lurk = None);
-        }
-        // A Surge spends what its user's moves built on its next skill strike
-        let surged = match statuses.get(*source).map(|status| status.surging()) {
-            Ok(share) if share > 0.0 && ability.is_some_and(|ability| ability.kind() == common_bevy::message::SkillKind::Strike && ability != common_bevy::message::AbilityType::AutoAttack) => {
-                let tiles = surges.get(*source).map_or(0, |surged| surged.tiles);
-                landing::update(*source, &mut statuses, &mut commands, &mut writer, |status| status.surge = None);
-                1.0 + share * tiles as f32
-            }
-            _ => 1.0,
-        };
-        let base_damage = &(base_damage * surged);
-        let base_damage = if flanked { base_damage * (1.0 + source_attrs.flank(&tuning)) } else { *base_damage };
-        let stride = if flanked { source_attrs.flank_stride(&tuning).unwrap_or(0.0) } else { 0.0 };
-        let gap = damage_calc::level_factor(&tuning, source_attrs.total_level(), attrs.total_level());
-        let base_damage = base_damage * gap;
-        let draw = dice.draw(&mut rolls, ("spread", *source)).signed();
-        let outgoing = damage_calc::spread(base_damage, tuning.damage_spread, draw);
-        // A skill crits an overcommitted foe likelier and harder by its
-        // striker's Patience, and for certain at its capstone's stacks
-        let skill = *ability != Some(common_bevy::message::AbilityType::AutoAttack);
-        let stacks = if skill { statuses.get(*target).map_or(0, |status| status.overcommits()) } else { 0 };
-        let opening = stacks > 0 && source_attrs.patience_opening(&tuning).is_some_and(|at| stacks >= at);
-        let ambush = lurking && skill;
-        let patient = if opening || ambush { 1.0 } else { source_attrs.patience_crit(&tuning) * stacks as f32 };
-        let power = if stacks > 0 { source_attrs.patience_power(&tuning) } else { 0.0 } + tuning.crit_severity(*ability);
-        let roll = dice.draw(&mut rolls, ("crit", *source)).share();
-        let critted = damage_calc::crits(&tuning, source_attrs, attrs, patient, roll);
-        let outgoing = damage_calc::crit(&tuning, outgoing, source_attrs, attrs, patient, power, roll);
-        if opening {
-            landing::update(*target, &mut statuses, &mut commands, &mut writer, |status| status.spend_overcommits());
-        }
-        let dot = damage_calc::spread(*dot * gap, tuning.damage_spread, draw);
-
-        let now = runtime.now(&time) + *delay;
-
-        // A blow pushes its target's recovery back, by the attacker's Impact
-        // over the target's Efficiency with the level gap weighing in
-        if let Some(mut recovery) = recovery_opt {
-            let pushback_pct = damage_calc::calculate_recovery_pushback(
-                &tuning,
-                source_attrs.impact(),
-                attrs.efficiency(),
-                damage_calc::level_edge(&tuning, source_attrs.total_level(), attrs.total_level()),
-            );
-            recovery.apply_pushback(pushback_pct);
-            writer.write(Do { event: GameEvent::Incremental { ent: *target, component: common_bevy::message::Component::Recovery(*recovery) } });
-        }
-
-        // INV-003: the threat's timer is the helper's to set
-        let threat = queue_utils::create_threat(
-            &tuning,
-            *source,
-            attrs,
-            source_attrs,
-            outgoing,
-            *ability,
-            now,
-            dot,
-            Endurance::fatigue_of(&tuning, endurance),
-        ).breaking(stride).critical(critted).carrying(*stun, *drag);
-
-        queue_utils::insert_threat(&mut queue, threat);
-
-        // Both enter combat once the threat stands in the queue
-        if source == target {
-            if let Ok(mut combat_state) = combat_query.get_mut(*source) {
-                common_bevy::systems::combat::state::enter_combat(*source, &mut combat_state, &time, &mut writer);
-            }
-        } else {
-            // Enter combat for attacker (put threat in queue)
-            if let Ok(mut attacker_combat) = combat_query.get_mut(*source) {
-                common_bevy::systems::combat::state::enter_combat(*source, &mut attacker_combat, &time, &mut writer);
-            }
-            // Enter combat for target (received threat in queue)
-            if let Ok(mut target_combat) = combat_query.get_mut(*target) {
-                common_bevy::systems::combat::state::enter_combat(*target, &mut target_combat, &time, &mut writer);
-            }
-        }
-
-        writer.write(Do {
-            event: GameEvent::InsertThreat {
-                ent: *target,
-                threat,
-            },
-        });
+    // Don't queue threats on dead targets
+    if health.state <= 0.0 {
+        return;
     }
+
+    if attrs.patience().index() > 0 && source != target {
+        landing::update(*source, &mut statuses, &mut commands, &mut writer, |status| status.overcommit(tuning.overcommit_secs));
+    }
+
+    let flanked = places.get(*source).ok().zip(places.get(*target).ok())
+        .is_some_and(|((from, _), (at, heading))| common_bevy::systems::targeting::takes_flank(heading, statuses.get(*target).ok(), at, from));
+    // An attack gives a lurker away; a skill struck out of hiding is an
+    // ambush, a certain crit
+    let lurking = statuses.get(*source).is_ok_and(|status| status.is_lurking());
+    if lurking {
+        landing::update(*source, &mut statuses, &mut commands, &mut writer, |status| status.lurk = None);
+    }
+    // A Surge spends what its user's moves built on its next skill strike
+    let surged = match statuses.get(*source).map(|status| status.surging()) {
+        Ok(share) if share > 0.0 && ability.is_some_and(|ability| ability.kind() == common_bevy::message::SkillKind::Strike && ability != common_bevy::message::AbilityType::AutoAttack) => {
+            let tiles = surges.get(*source).map_or(0, |surged| surged.tiles);
+            landing::update(*source, &mut statuses, &mut commands, &mut writer, |status| status.surge = None);
+            1.0 + share * tiles as f32
+        }
+        _ => 1.0,
+    };
+    let base_damage = &(base_damage * surged);
+    let base_damage = if flanked { base_damage * (1.0 + source_attrs.flank(&tuning)) } else { *base_damage };
+    let stride = if flanked { source_attrs.flank_stride(&tuning).unwrap_or(0.0) } else { 0.0 };
+    let gap = damage_calc::level_factor(&tuning, source_attrs.total_level(), attrs.total_level());
+    let base_damage = base_damage * gap;
+    let draw = dice.draw(&mut rolls, ("spread", *source)).signed();
+    let outgoing = damage_calc::spread(base_damage, tuning.damage_spread, draw);
+    // A skill crits an overcommitted foe likelier and harder by its
+    // striker's Patience, and for certain at its capstone's stacks
+    let skill = *ability != Some(common_bevy::message::AbilityType::AutoAttack);
+    let stacks = if skill { statuses.get(*target).map_or(0, |status| status.overcommits()) } else { 0 };
+    let opening = stacks > 0 && source_attrs.patience_opening(&tuning).is_some_and(|at| stacks >= at);
+    let ambush = lurking && skill;
+    let patient = if opening || ambush { 1.0 } else { source_attrs.patience_crit(&tuning) * stacks as f32 };
+    let power = if stacks > 0 { source_attrs.patience_power(&tuning) } else { 0.0 } + tuning.crit_severity(*ability);
+    let roll = dice.draw(&mut rolls, ("crit", *source)).share();
+    let critted = damage_calc::crits(&tuning, source_attrs, attrs, patient, roll);
+    let outgoing = damage_calc::crit(&tuning, outgoing, source_attrs, attrs, patient, power, roll);
+    if opening {
+        landing::update(*target, &mut statuses, &mut commands, &mut writer, |status| status.spend_overcommits());
+    }
+    let dot = damage_calc::spread(*dot * gap, tuning.damage_spread, draw);
+
+    let now = runtime.now(&time) + *delay;
+
+    // A blow pushes its target's recovery back, by the attacker's Impact
+    // over the target's Efficiency with the level gap weighing in
+    if let Some(mut recovery) = recovery_opt {
+        let pushback_pct = damage_calc::calculate_recovery_pushback(
+            &tuning,
+            source_attrs.impact(),
+            attrs.efficiency(),
+            damage_calc::level_edge(&tuning, source_attrs.total_level(), attrs.total_level()),
+        );
+        recovery.apply_pushback(pushback_pct);
+        writer.write(Do { event: GameEvent::Incremental { ent: *target, component: common_bevy::message::Component::Recovery(*recovery) } });
+    }
+
+    // INV-003: the threat's timer is the helper's to set
+    let threat = queue_utils::create_threat(
+        &tuning,
+        *source,
+        attrs,
+        source_attrs,
+        outgoing,
+        *ability,
+        now,
+        dot,
+        Endurance::fatigue_of(&tuning, endurance),
+    ).breaking(stride).critical(critted).carrying(*stun, *drag);
+
+    queue_utils::insert_threat(&mut queue, threat);
+
+    // Both enter combat once the threat stands in the queue
+    if source == target {
+        if let Ok(mut combat_state) = combat_query.get_mut(*source) {
+            common_bevy::systems::combat::state::enter_combat(*source, &mut combat_state, &time, &mut writer);
+        }
+    } else {
+        // Enter combat for attacker (put threat in queue)
+        if let Ok(mut attacker_combat) = combat_query.get_mut(*source) {
+            common_bevy::systems::combat::state::enter_combat(*source, &mut attacker_combat, &time, &mut writer);
+        }
+        // Enter combat for target (received threat in queue)
+        if let Ok(mut target_combat) = combat_query.get_mut(*target) {
+            common_bevy::systems::combat::state::enter_combat(*target, &mut target_combat, &time, &mut writer);
+        }
+    }
+
+    writer.write(Do {
+        event: GameEvent::InsertThreat {
+            ent: *target,
+            threat,
+        },
+    });
 }
 
 /// Lands a `ResolveThreat` on its target: its damage on the target's
@@ -203,36 +246,33 @@ pub fn process_deal_damage(
 /// and a share of its damage on its source's health where a Bloodlust holds
 /// it (`Status::lifesteal`).
 pub fn resolve_threat(
-    trigger: On<Try>,
+    trigger: On<ResolveThreat>,
     tuning: Res<Tuning>,
     mut commands: Commands,
     mut query: Query<&mut Health>,
     mut statuses: Query<&mut common_bevy::components::status::Status>,
     mut writer: MessageWriter<Do>,
 ) {
-    let event = &trigger.event().event;
+    let ResolveThreat { ent, threat } = trigger.event();
+    let Ok(mut health) = query.get_mut(*ent) else { return };
+    let final_damage = threat.damage + threat.dot_left();
+    land_damage(*ent, threat.source, final_damage, threat.is_wound(), &mut health, &mut writer);
 
-    if let GameEvent::ResolveThreat { ent, threat } = event {
-        let Ok(mut health) = query.get_mut(*ent) else { return };
-        let final_damage = threat.damage + threat.dot_left();
-        land_damage(*ent, threat.source, final_damage, threat.is_wound(), &mut health, &mut writer);
+    // A flank strike at Grace's capstone breaks its target's stride
+    // for a swing as it lands
+    if threat.stride > 0.0 {
+        landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| status.break_stride(threat.stride, tuning.base_interval));
+    }
+    if threat.stun > 0.0 {
+        landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| status.hold(threat.stun));
+    }
 
-        // A flank strike at Grace's capstone breaks its target's stride
-        // for a swing as it lands
-        if threat.stride > 0.0 {
-            landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| status.break_stride(threat.stride, tuning.base_interval));
-        }
-        if threat.stun > 0.0 {
-            landing::update(*ent, &mut statuses, &mut commands, &mut writer, |status| status.hold(threat.stun));
-        }
-
-        let lifesteal = statuses.get(threat.source).map_or(0.0, |status| status.lifesteal());
-        if lifesteal > 0.0 && final_damage > 0.0 {
-            let Ok(mut health) = query.get_mut(threat.source) else { return };
-            if health.state > 0.0 {
-                health.state = (health.state + final_damage * lifesteal).min(health.max);
-                writer.write(Do { event: GameEvent::Incremental { ent: threat.source, component: common_bevy::message::Component::Health(*health) } });
-            }
+    let lifesteal = statuses.get(threat.source).map_or(0.0, |status| status.lifesteal());
+    if lifesteal > 0.0 && final_damage > 0.0 {
+        let Ok(mut health) = query.get_mut(threat.source) else { return };
+        if health.state > 0.0 {
+            health.state = (health.state + final_damage * lifesteal).min(health.max);
+            writer.write(Do { event: GameEvent::Incremental { ent: threat.source, component: common_bevy::message::Component::Health(*health) } });
         }
     }
 }
@@ -243,7 +283,7 @@ pub fn resolve_threat(
 /// target's leash (`leap::Leash::of`), slid there as a Leap is. A braced
 /// target stands.
 pub fn resolve_drag(
-    trigger: On<Try>,
+    trigger: On<ResolveThreat>,
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
     map: Res<common_bevy::resources::map::Map>,
@@ -252,7 +292,7 @@ pub fn resolve_drag(
     leashed: Query<(&behaviour::chase::Chase, &engagement::EngagementMember)>,
     dens: Query<&Loc, With<engagement::Engagement>>,
 ) {
-    let Try { event: GameEvent::ResolveThreat { ent, threat } } = trigger.event() else { return };
+    let ResolveThreat { ent, threat } = trigger.event();
     if threat.drag == 0 || statuses.get(*ent).is_ok_and(|status| status.is_braced()) {
         return;
     }
@@ -271,11 +311,11 @@ pub fn resolve_drag(
 /// A wound's DoT tick lands on its target, outside the queue and past its
 /// defences.
 pub fn resolve_dot_tick(
-    trigger: On<Try>,
+    trigger: On<DotTick>,
     mut query: Query<&mut Health>,
     mut writer: MessageWriter<Do>,
 ) {
-    let Try { event: GameEvent::DotTick { ent, source, damage, .. } } = trigger.event() else { return };
+    let DotTick { ent, source, damage, .. } = trigger.event();
     let Ok(mut health) = query.get_mut(*ent) else { return };
     if health.state <= 0.0 {
         return;

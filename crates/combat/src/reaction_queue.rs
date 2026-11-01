@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use common_bevy::{
     components::{reaction_queue::*, ActorAttributes},
-    message::{Try, Do, ClearType, Event as GameEvent},
+    message::{Do, ClearType, Event as GameEvent},
     systems::combat::queue as queue_utils,
 };
 
@@ -29,14 +29,7 @@ pub fn process_expired_threats(
             if !queue_utils::clear_threats(&mut queue, clear_type).is_empty() {
                 writer.write(Do { event: GameEvent::ClearQueue { ent, clear_type } });
 
-                commands.trigger(
-                    Try {
-                        event: GameEvent::ResolveThreat {
-                            ent,
-                            threat: *expired_threat,
-                        },
-                    },
-                );
+                commands.trigger(crate::ResolveThreat { ent, threat: *expired_threat });
             }
         }
     }
@@ -58,9 +51,7 @@ pub fn tick_dots(
             let due = wound.ticks_due(now);
             while wound.ticked < due {
                 wound.ticked += 1;
-                commands.trigger(Try {
-                    event: GameEvent::DotTick { ent, source: wound.source, damage: wound.dot, ability: wound.ability },
-                });
+                commands.trigger(crate::DotTick { ent, source: wound.source, damage: wound.dot, ability: wound.ability });
             }
         }
     }

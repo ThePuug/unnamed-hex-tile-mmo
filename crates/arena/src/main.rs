@@ -71,7 +71,7 @@ use common_bevy::{
         target::Target,
         AttackRange, Loc,
     },
-    message::{AbilityType, ClearType, Component as MessageComponent, Do, Event, Try},
+    message::{AbilityType, ClearType, Component as MessageComponent, Do, Event},
     plugins::nntree::NNTreePlugin,
     resources::map::Map,
     systems::targeting,
@@ -84,7 +84,7 @@ use combat::{
     behaviour::{mind::Minds, perception::Skill, Bar, Decisions},
     dice::Dice,
     engagement::{engaging_at, spawn_engagement, STAGE_GAP},
-    BehaviourPlugin, CombatPlugin,
+    BehaviourPlugin, CombatPlugin, DotTick, ResolveThreat,
 };
 
 /// One simulated frame. FixedUpdate's 125ms tick runs every second frame.
@@ -376,25 +376,30 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
     }
 }
 
-/// Counts each resolved threat and DoT tick against the side of the actor
-/// that sent it, and each threat that lands on an actor out of its queue.
-fn tally_resolved(trigger: On<Try>, mut tally: ResMut<Tally>) {
-    let (source, ability, damage) = match trigger.event() {
-        Try { event: Event::ResolveThreat { ent, threat } } => {
-            if let Some(ledger) = tally.of(*ent) {
-                ledger.landed_on += 1;
-                ledger.landed_damage_on += whole(threat);
-            }
-            if threat.crit {
-                if let Some(ledger) = tally.of(threat.source) {
-                    ledger.crit_landed += whole(threat);
-                }
-            }
-            (threat.source, threat.ability, whole(threat))
+/// Counts each resolved threat against the side of the actor that sent it,
+/// and against the actor it lands on out of its queue.
+fn tally_resolved(trigger: On<ResolveThreat>, mut tally: ResMut<Tally>) {
+    let ResolveThreat { ent, threat } = trigger.event();
+    if let Some(ledger) = tally.of(*ent) {
+        ledger.landed_on += 1;
+        ledger.landed_damage_on += whole(threat);
+    }
+    if threat.crit {
+        if let Some(ledger) = tally.of(threat.source) {
+            ledger.crit_landed += whole(threat);
         }
-        Try { event: Event::DotTick { source, ability, damage, .. } } => (*source, *ability, *damage),
-        _ => return,
-    };
+    }
+    landed(&mut tally, threat.source, threat.ability, whole(threat));
+}
+
+/// Counts each DoT tick against the side of the actor that sent it.
+fn tally_dot(trigger: On<DotTick>, mut tally: ResMut<Tally>) {
+    let DotTick { source, ability, damage, .. } = trigger.event();
+    landed(&mut tally, *source, *ability, *damage);
+}
+
+/// Adds `damage` landed by `source` with `ability` to its side's ledger.
+fn landed(tally: &mut Tally, source: Entity, ability: Option<AbilityType>, damage: f32) {
     let Some(ledger) = tally.of(source) else { return };
     *ledger.landed.entry(ability).or_default() += damage;
 }
@@ -498,6 +503,7 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     app.add_systems(Update, (actor::update, tally_sent));
     app.add_systems(PostUpdate, actor::cleanup_despawned);
     app.add_observer(tally_resolved);
+    app.add_observer(tally_dot);
     app.finish();
     app.cleanup();
     // Fights already fill every core, one to a worker thread: a fight's

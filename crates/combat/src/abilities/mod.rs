@@ -362,7 +362,7 @@ impl Abilities<'_, '_> {
         // A strike across the caster's line breaks its stride, but in a
         // Perfect Stride
         if across && !self.strides(ent) {
-            self.commands.trigger(Try { event: GameEvent::Stumble { ent } });
+            self.commands.trigger(crate::Stumble { ent });
         }
         if ability != AbilityType::AutoAttack {
             self.commands.entity(ent).try_insert(LastSkill(Moment::ZERO + self.time.elapsed()));
@@ -455,9 +455,7 @@ impl Abilities<'_, '_> {
     /// Queues a blow of `base_damage` from `source` on `target` as
     /// `ability`'s, struck `delay` after now.
     pub fn deal(&mut self, source: Entity, target: Entity, base_damage: f32, ability: AbilityType, delay: Duration) {
-        self.commands.trigger(Try {
-            event: GameEvent::DealDamage { source, target, base_damage, ability: Some(ability), dot: 0.0, delay, stun: 0.0, drag: 0 },
-        });
+        self.commands.trigger(crate::DealDamage { source, target, base_damage, ability: Some(ability), dot: 0.0, delay, stun: 0.0, drag: 0 });
     }
 
     /// Queues what `cast`, a reaction, does to the sources of the threats
@@ -482,9 +480,7 @@ impl Abilities<'_, '_> {
     /// Queues `carried` on `target` as `cast`'s, struck at once
     pub fn carry(&mut self, cast: &Cast, target: Entity, carried: Carried) {
         let Carried { damage, stun, drag } = carried;
-        self.commands.trigger(Try {
-            event: GameEvent::DealDamage { source: cast.ent, target, base_damage: damage, ability: Some(cast.ability), dot: 0.0, delay: Duration::ZERO, stun, drag },
-        });
+        self.commands.trigger(crate::DealDamage { source: cast.ent, target, base_damage: damage, ability: Some(cast.ability), dot: 0.0, delay: Duration::ZERO, stun, drag });
     }
 
     /// Takes the threats in `cast`'s band out of its user's queue, those
@@ -939,7 +935,7 @@ mod tests {
     /// Queues a blow of `damage` from `source` on `target`, as a strike
     /// would, and returns it as queued
     fn create_threat_on(app: &mut App, source: Entity, target: Entity, damage: f32) -> QueuedThreat {
-        app.world_mut().trigger(Try { event: GameEvent::DealDamage { source, target, base_damage: damage, ability: Some(AbilityType::Frenzy), dot: 0.0, delay: Duration::ZERO, stun: 0.0, drag: 0 } });
+        app.world_mut().trigger(crate::DealDamage { source, target, base_damage: damage, ability: Some(AbilityType::Frenzy), dot: 0.0, delay: Duration::ZERO, stun: 0.0, drag: 0 });
         app.update();
         queue(app, target).into_iter().find(|threat| threat.source == source).expect("the blow is queued")
     }
@@ -1322,7 +1318,7 @@ mod tests {
         assert!(used(&ask(&mut app, graceful, AbilityType::Feint, Some(flanked)), AbilityType::Feint));
         assert!(queue(&app, flanked)[0].stride > 0.0, "its flank strike will break the foe's stride");
         let threat = app.world_mut().get_mut::<ReactionQueue>(flanked).unwrap().threats.pop_front().unwrap();
-        app.world_mut().trigger(Try { event: GameEvent::ResolveThreat { ent: flanked, threat } });
+        app.world_mut().trigger(crate::ResolveThreat { ent: flanked, threat });
         app.update();
         assert!(app.world().get::<Status>(flanked).is_some_and(|status| status.stride.is_some()), "and does as it lands");
 
