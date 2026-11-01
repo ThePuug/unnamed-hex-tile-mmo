@@ -375,7 +375,7 @@ fn range_state(
     let Some(reach) = ability.reach(own_reach) else {
         return AbilityState::Ready;
     };
-    let target = select_target(player_ent, player_loc, player_heading, arc, nntree, hostile);
+    let target = select_target(player_ent, player_loc, player_heading, arc, nntree, hostile, None);
     match target.and_then(|target| entity_query.get(target).ok()) {
         Some((_, target_loc, _)) if reach.contains(&player_loc.flat_distance(target_loc)) => AbilityState::Ready,
         _ => AbilityState::OutOfRange,

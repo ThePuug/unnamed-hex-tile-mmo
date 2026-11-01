@@ -22,4 +22,8 @@ impl Selection for AllyTarget {
             self.last_target = picked;
         }
     }
+
+    fn current(&self) -> Option<Entity> {
+        self.entity
+    }
 }

@@ -8,6 +8,8 @@ pub trait Selection {
     /// Makes `picked` the selection: none clears the current one and
     /// leaves the last.
     fn select(&mut self, picked: Option<Entity>);
+    /// What is selected now
+    fn current(&self) -> Option<Entity>;
 }
 
 /// Target component for tracking which hostile entity is currently targeted
@@ -29,5 +31,9 @@ impl Selection for Target {
         if picked.is_some() {
             self.last_target = picked;
         }
+    }
+
+    fn current(&self) -> Option<Entity> {
+        self.entity
     }
 }

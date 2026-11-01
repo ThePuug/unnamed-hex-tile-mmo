@@ -131,8 +131,9 @@ pub const TARGET_RADIUS: u32 = 30;
 /// The entity a caster at `caster_loc` facing `caster_heading` targets: of
 /// those `wanted` within [`TARGET_RADIUS`] and `arc` degrees either side of
 /// its heading, one inside the forward faces before any across its line,
-/// then the nearest, and among the equally near the one nearest dead
-/// ahead. Never the caster itself.
+/// then the nearest, and among the equally near the one it `keep`s, its
+/// target now, then the one nearest dead ahead: two on one tile never
+/// trade places by the order they are found in. Never the caster itself.
 ///
 /// `arc` is the arc the caster strikes within ([`arc_of`]), so whatever it
 /// may strike it may target, and a wider arc still takes what stands in
@@ -147,6 +148,7 @@ pub fn select_target(
     arc: f32,
     nntree: &NNTree,
     wanted: impl Fn(Entity) -> bool,
+    keep: Option<Entity>,
 ) -> Option<Entity> {
     nntree.within_tiles(caster_loc, TARGET_RADIUS as i64)
         // By entity, not location: several may stand on one tile
@@ -156,9 +158,10 @@ pub fn select_target(
             nn.ent,
             !is_in_facing_cone(caster_heading, caster_loc, nn.loc),
             caster_loc.flat_distance(&nn.loc) as u32,
+            Some(nn.ent) != keep,
             off_heading(caster_heading, caster_loc, nn.loc),
         ))
-        .min_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.3.total_cmp(&b.3)))
+        .min_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.3.cmp(&b.3)).then(a.4.total_cmp(&b.4)))
         .map(|(ent, ..)| ent)
 }
 
@@ -184,10 +187,11 @@ pub fn update_targets_impl(
     side_of: impl Fn(Entity) -> Option<Side>,
     wants: impl Fn(Side, Side) -> bool,
 ) {
+    let keep = target.current();
     let picked = side_of(ent).and_then(|own| {
         select_target(ent, loc, heading, arc, nntree, |other| {
             side_of(other).is_some_and(|side| wants(own, side))
-        })
+        }, keep)
     });
     target.select(picked);
 }
@@ -356,6 +360,25 @@ mod tests {
     }
 
     #[test]
+    fn of_two_on_one_tile_the_one_kept_holds() {
+        let (mut world, mut nntree) = setup_test_world();
+        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
+        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
+        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
+        world.entity_mut(caster).insert(PlayerControlled);
+        let shared = Loc::new(Qrz { q: 2, r: 0, z: 0 });
+        let first = spawn_actor(&mut world, &mut nntree, shared);
+        let second = spawn_actor(&mut world, &mut nntree, shared);
+        for kept in [first, second] {
+            let picked = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), Some(kept));
+            assert_eq!(picked, Some(kept), "its target now holds against an equal");
+        }
+        let nearer = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 }));
+        let picked = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), Some(first));
+        assert_eq!(picked, Some(nearer), "but not against one nearer");
+    }
+
+    #[test]
     fn test_select_target_single_target_ahead() {
         let (mut world, mut nntree) = setup_test_world();
 
@@ -369,7 +392,7 @@ mod tests {
         // Spawn target directly ahead (east) - NPC
         let target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 }));
 
-        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), None);
 
         assert_eq!(result, Some(target), "Should select the target directly ahead");
     }
@@ -384,7 +407,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), None);
 
         assert_eq!(result, None, "Should return None when no targets exist");
     }
@@ -402,7 +425,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), None);
 
         assert_eq!(result, None, "Should not select target behind caster");
     }
@@ -422,7 +445,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), None);
 
         assert_eq!(result, Some(nearest), "Should select the nearest target");
     }
@@ -442,7 +465,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), None);
 
         assert_eq!(
             result, Some(directly_ahead),
@@ -459,7 +482,7 @@ mod tests {
         world.entity_mut(caster).insert(PlayerControlled);
         let behind = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: -1, r: 0, z: 0 }));
 
-        let pick = |arc| select_target(caster, caster_loc, heading, arc, &nntree, hostile(&world, caster));
+        let pick = |arc| select_target(caster, caster_loc, heading, arc, &nntree, hostile(&world, caster), None);
         assert_eq!(pick(STRIDE_ARC), None, "the forward faces do not reach behind");
         assert_eq!(pick(180.0), Some(behind), "an arc every way does");
     }
@@ -474,7 +497,7 @@ mod tests {
         spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: -1, r: 0, z: 0 }));
         let ahead = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 3, r: 0, z: 0 }));
 
-        let result = select_target(caster, caster_loc, heading, 180.0, &nntree, hostile(&world, caster));
+        let result = select_target(caster, caster_loc, heading, 180.0, &nntree, hostile(&world, caster), None);
         assert_eq!(result, Some(ahead));
     }
 
@@ -506,6 +529,7 @@ mod tests {
             STRIDE_ARC,
             &nntree,
             ally(&world, caster),
+            None,
         );
 
         assert_eq!(
