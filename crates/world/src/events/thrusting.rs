@@ -25,24 +25,18 @@
 //! sheet's forelimb rises from the front itself and the last sheet's
 //! backlimb rests on the plateau. A belt is one-sided: the wedge stands on
 //! the overriding plate and verges toward the plate going under, whose side
-//! carries nothing but the scree that comes to rest across the front. A
-//! sheet is continuous for its length as a structure: a range runs its whole
+//! of the front carries nothing of it. A sheet is continuous for its
+//! length as a structure: a range runs its whole
 //! edge and ends against the plate's other edges over one sheet spacing,
 //! straight and on the lattice. Its height rises and falls along strike, a
 //! sheet plunging from culminations to saddles above a floor at no
 //! wavelength shorter than two sheet spacings, so no sheet breaks into
 //! lenses and a typical sheet stands near its full height; neighbouring
 //! sheets culminate out of step, so a belt is a chain of culminations and
-//! saddles, not ridges rising and falling together. A sheet's structure
-//! stands at a thrust wedge's dips, each flank falling straight from the
-//! crest, the forelimb at 50°; its surface does not, since rock steeper
-//! than debris rests at sheds, so the cross-section is held under a cone at
-//! repose from every point of it: the forelimb becomes scree reaching
-//! further from the crest and buries the trough's near side, the frontal
-//! sheet's runs out past the front onto the plate going under, and the
-//! backlimb is barely touched. Under a lower crest the scree is shorter,
-//! never gentler. Repose is over the one level a step climbs, so a range
-//! is climbed by traverse and crossed at its passes. The crest is a
+//! saddles, not ridges rising and falling together. A sheet stands at a
+//! thrust wedge's dips, each flank falling straight from the crest, the
+//! forelimb at 50°, steeper than debris rests at, and the backlimb at its
+//! own 10–25°; its surface is that structure at its plunge. The crest is a
 //! hillslope's, rounded to the curvature its height erodes at
 //! ([`crate::hillslope`]): sharp at a culmination, broad in a saddle.
 //!
@@ -65,16 +59,7 @@
 //! among edges is not: a tile that took the nearest edge alone would switch
 //! wedges along the bisector between two edges of different convergence, a
 //! cliff the height of a range. Across an edge the two plates' wedges both
-//! reach nothing, so nothing steps.
-//!
-//! **Every front in reach, past it, whichever plate's.** Scree at rest past
-//! a front stands on a plate that does not own the wedge, and around the
-//! corner the front ends at it stands on a third. A tile reads the toe of
-//! every wedge whose front is within the scree's reach, at its distance to
-//! that front and ended against that plate's other edges as the wedge is,
-//! so the plates meeting at a corner all read the same toes there. A tile
-//! that read only across the edge it stands nearest would step at the
-//! corner by the toe's height.
+//! reach nothing, and at a corner every wedge has ended, so nothing steps.
 //!
 //! **Spacing varies across strike only.** A spacing read from a field that
 //! varies along strike moves the n-th sheet n times as far as the field's
@@ -152,8 +137,8 @@ pub const RANGE_GRADED_HALF_WIDTH: f64 = 2.0 * RANGE_HALF_WIDTH / (1.0 + STEEP_F
 /// wedge's forelimb dips at, the same geology [`STEEP_FLANK_SHARE`] is read
 /// from. The backlimb then falls out at its own 10–25°, which a test holds.
 ///
-/// The dip is the structure's. The surface stands under repose, below; what a
-/// player can climb is movement's to decide.
+/// The dip is the surface's as much as the structure's, below a rounded
+/// crest; what a player can climb is movement's to decide.
 #[cfg(test)]
 const FORELIMB_DIP_DEGREES: f64 = 50.0;
 
@@ -170,9 +155,7 @@ const FORELIMB_DIP_TAN: f64 = 1.191_753_592_594_210;
 /// into a ramp.
 pub const RANGE_RISE: f64 = RANGE_STEEP_HALF_WIDTH * FORELIMB_DIP_TAN / RISE;
 
-/// The angle loose, angular rock debris comes to rest at, in degrees. A
-/// range's structure stands at its dips; its surface stands no steeper than
-/// this, since rock steeper sheds and the scree rests here.
+/// The angle loose, angular rock debris comes to rest at, in degrees.
 #[cfg(test)]
 const REPOSE_DEGREES: f64 = 34.0;
 
@@ -180,25 +163,17 @@ const REPOSE_DEGREES: f64 = 34.0;
 /// the two equal.
 const REPOSE_TAN: f64 = 0.674_508_516_842_426_5;
 
-/// Scree's fall per world unit of run, in z-levels: a range's cross-section
-/// descends from any point of it no steeper. Over the one level a step
-/// climbs, so a range is climbed by traverse.
+/// The fall per world unit of run, in z-levels, of debris at rest: the one
+/// level a step climbs per tile ([`RISE`]). What a debris slope stands at;
+/// a range's forelimb stands steeper and its backlimb gentler.
 pub const REPOSE_GRADE: f64 = REPOSE_TAN / RISE;
 
-/// How far scree from a full range's crest reaches, in world units: its
-/// height over the repose grade. What a cross-section is read over to hold
-/// it under repose.
-pub const SCREE_REACH: f64 = RANGE_RISE / REPOSE_GRADE;
-
-/// Spacing of the points a cross-section is read at to hold it under repose,
-/// in world units, on a grid fixed in the across-strike coordinate so the
-/// result is continuous. The structure is taken straight between points, so
-/// a crest stands under its structure by a chord's error, under a level.
-const REPOSE_STEP: f64 = 8.0;
-
-/// Where a scree profile begins, in world units from the front: scree from
-/// the frontal crest reaches this far out past the front.
-const SCREE_START: f64 = -SCREE_REACH;
+/// Spacing of the points a sheet's cross-section is read at, in world
+/// units, on a grid fixed in the across-strike coordinate from the front
+/// so the result is continuous. The structure is taken straight between
+/// points, so a crest stands under its structure by a chord's error, under
+/// a level.
+const PROFILE_STEP: f64 = 8.0;
 
 /// Total shortening a fold-thrust belt has taken up, as a fraction of its
 /// original width: the Zagros 15–25%, the Appalachians near half. A sheet
@@ -262,8 +237,8 @@ pub struct EdgeOutline {
     /// stands: whole on an edge that closes, and on a suture what the time
     /// since it closed leaves ([`standing_after`]).
     pub standing: f64,
-    /// The wedge's cross-section under repose, sheet by sheet at each
-    /// plunge, none where the edge carries no wedge.
+    /// The wedge's cross-section, sheet by sheet at each plunge, none where
+    /// the edge carries no wedge.
     pub faces: Option<Arc<Faces>>,
     /// The chain's bounding box, `[x0, y0, x1, y1]`: what a reader across
     /// the plate asks before measuring the chain.
@@ -443,9 +418,9 @@ const RECENT_READS: usize = 16_384;
 pub struct Outlines {
     plates: HashMap<PlateId, PlateOutline>,
     /// Every edge that carries a wedge, as its plate, its index in that
-    /// plate's outline and its chain's bounding box: what a reader of the
-    /// scree at rest past the fronts walks, the box here so a front out of
-    /// reach costs no lookup.
+    /// plate's outline and its chain's bounding box: what a reader past the
+    /// fronts on the plates going under walks, the box here so a front out
+    /// of reach costs no lookup.
     fronts: Vec<(PlateId, usize, [f64; 4])>,
     seed: u64,
     /// The last reads by position.
@@ -474,8 +449,7 @@ fn carried(s: &BoundarySegment) -> Option<(PlateId, f64, f64)> {
 }
 
 /// The wedge's cross-section an edge carries, where it carries one: its
-/// sheets under repose at every plunge, built once by the cell owning the
-/// edge.
+/// sheets at every plunge, built once by the cell owning the edge.
 pub fn faces_of(s: &BoundarySegment, seed: u64) -> Option<Faces> {
     let (plate, converge, standing) = carried(s)?;
     let other = if s.edge.a.id == plate { s.edge.b.id } else { s.edge.a.id };
@@ -653,9 +627,9 @@ impl Outlines {
         inside.then_some(distances)
     }
     /// Elevation the ranges add at a position, in z-levels: the strongest
-    /// of the wedges of the plate the position stands in and the toes of
-    /// scree that come to rest on it from its neighbours' wedges. Nothing
-    /// on an oceanic plate, whose edges carry no convergence, but the toes.
+    /// of the wedges of the plate the position stands in. Nothing on an
+    /// oceanic plate, whose edges carry no convergence, and nothing past a
+    /// front on the plate going under.
     pub fn relief(&self, x: f64, y: f64) -> f64 {
         self.at(x, y).map_or(0.0, |at| self.relief_of(&at))
     }
@@ -664,39 +638,35 @@ impl Outlines {
     /// standing, so a caller reading several layers at one position looks
     /// the plate up once.
     pub fn relief_of(&self, at: &Standing) -> f64 {
-        let wedges = Self::wedges_of(at.plate, &at.distances, |e, faces, d| faces.at(d, e.along(at.x, at.y)));
-        let toes = self.toes_on(at.plate, at.x, at.y, SCREE_REACH, |front, faces, d| faces.at(-d, front.along(at.x, at.y)));
-        RANGE_RISE * wedges.max(toes)
+        RANGE_RISE * Self::wedges_of(at.plate, &at.distances, |e, faces, d| faces.at(d, e.along(at.x, at.y)))
     }
 
     /// The height of the crest of the range a position standing `at` lies
     /// on, in z-levels, as relief and at its plunge: the hillslope's whole
     /// height, which it erodes at, from its crest to its toe alike, and
-    /// ended with its wedge. Nothing off the ranges and their scree.
+    /// ended with its wedge. Nothing off the ranges.
     pub fn crest_of(&self, at: &Standing) -> f64 {
-        let wedges = Self::wedges_of(at.plate, &at.distances, |e, faces, d| faces.crest_at(d, e.along(at.x, at.y)));
-        let toes = self.toes_on(at.plate, at.x, at.y, SCREE_REACH, |front, faces, d| faces.crest_at(-d, front.along(at.x, at.y)));
-        RANGE_RISE * wedges.max(toes)
+        RANGE_RISE * Self::wedges_of(at.plate, &at.distances, |e, faces, d| faces.crest_at(d, e.along(at.x, at.y)))
     }
 
     /// How near a position standing `at` lies to the front of a wedge, as a
     /// share: one at a front, falling smoothly to nothing `own` in from it
     /// on the plate whose wedge it is and `under` out from it on any other,
     /// and ended against the wedge's plate's other edges as the wedge is;
-    /// the nearest front's. Past a front it is read as the toes are, from
-    /// every front within `under`, so it is one at the front from both
-    /// sides and continuous around its corners.
+    /// the nearest front's. Past a front it is read from every front within
+    /// `under` ([`Outlines::past_fronts`]), so it is one at the front from
+    /// both sides and continuous around its corners.
     pub fn front_share(&self, at: &Standing, own: f64, under: f64) -> f64 {
         let near = |d: f64, reach: f64| 1.0 - smoothstep(d.max(0.0) / reach);
         let wedges = Self::wedges_of(at.plate, &at.distances, |_, _, d| near(d, own));
-        wedges.max(self.toes_on(at.plate, at.x, at.y, under, |_, _, d| near(d, under)))
+        wedges.max(self.past_fronts(at.plate, at.x, at.y, under, |d| near(d, under)))
     }
 
     /// The height the ranges' structure stands at a position where
     /// [`Outlines::at`] found it standing, in z-levels: the strongest wedge
-    /// as it was built at its plunge, with no scree swept over it, and a
-    /// suture's whole though its surface has worn down, since its beds keep
-    /// the collision's shape. What lithology strips the column by.
+    /// as it was built at its plunge, its crest unrounded, and a suture's
+    /// whole though its surface has worn down, since its beds keep the
+    /// collision's shape. What lithology strips the column by.
     pub fn structure_of(&self, at: &Standing) -> f64 {
         RANGE_RISE * Self::wedges_of(at.plate, &at.distances, |e, faces, d| faces.structure_at(d, e.along(at.x, at.y)))
     }
@@ -706,7 +676,7 @@ impl Outlines {
     /// faces by `share` at the distance to its front: each ending against
     /// every other edge of the plate. A wedge ends against a convergent edge
     /// as much as a quiet one: past the corner that edge's own wedge climbs
-    /// from nothing, and the plate across it stands at nothing but scree.
+    /// from nothing, and the plate across it stands at nothing.
     fn wedges_of(plate: &PlateOutline, distances: &[f64], share: impl Fn(&EdgeOutline, &Faces, f64) -> f64) -> f64 {
         let mut best = 0.0f64;
         for (i, (e, d)) in plate.edges.iter().zip(distances).enumerate() {
@@ -730,22 +700,23 @@ impl Outlines {
             .map(|&(id, k, _)| &self.plates[&id].edges[k])
     }
 
-    /// The highest toe at a position standing outside the plate whose
+    /// The highest share at a position standing outside the plate whose
     /// wedge it is, as `share` reads each front at the position's distance
     /// out past it: every wedge of every other plate whose front lies
     /// within `reach`, ended against that plate's other edges as the wedge
     /// is. Read from every front in reach, not only across the edge the
     /// position is nearest, so the plates meeting at a corner all read the
-    /// same toes around it and nothing steps.
-    fn toes_on(&self, plate: &PlateOutline, x: f64, y: f64, reach: f64, share: impl Fn(&EdgeOutline, &Faces, f64) -> f64) -> f64 {
+    /// same shares around it and nothing steps: what the foreland's cover
+    /// past a front is read by ([`Outlines::front_share`]).
+    fn past_fronts(&self, plate: &PlateOutline, x: f64, y: f64, reach: f64, share: impl Fn(f64) -> f64) -> f64 {
         let mut best = 0.0f64;
         for &(id, k, bounds) in &self.fronts {
             if id == plate.id || box_distance(bounds, x, y) >= reach { continue }
             let p = &self.plates[&id];
             let front = &p.edges[k];
-            let Some(faces) = &front.faces else { continue };
-            let family = share(front, faces, front.distance(x, y).0);
-            if family <= 0.0 { continue }
+            if front.faces.is_none() { continue }
+            let near = share(front.distance(x, y).0);
+            if near <= 0.0 { continue }
             let others = p
                 .edges
                 .iter()
@@ -753,7 +724,7 @@ impl Outlines {
                 .filter(|(j, _)| *j != k)
                 .map(|(_, o)| if o.at_least(x, y) >= RANGE_END { RANGE_END } else { o.distance(x, y).0 })
                 .fold(f64::MAX, f64::min);
-            best = best.max(family * smoothstep(others / RANGE_END));
+            best = best.max(near * smoothstep(others / RANGE_END));
         }
         best
     }
@@ -830,30 +801,12 @@ fn family_at(d: f64, sheets: f64) -> f64 {
     range_family(RANGE_STEEP_HALF_WIDTH - RANGE_SPACING * sheets_in(d), sheets)
 }
 
-/// A profile on a grid held under the falls its steps allow, in place:
-/// every value of `h`, the structure, raised to the highest of any point's
-/// less the falls between, where `falls[i]` is the most the surface falls
-/// over the step between points `i - 1` and `i`. Two sweeps do it exactly:
-/// forward, a value is at least the one before it less its step's fall,
-/// and back the same. Read straight between points, the surface is
-/// continuous, a chord of a slope within its falls is within them, and a
-/// crest stands under its structure by a chord's error.
-pub(crate) fn sweep(h: &mut [f64], falls: &[f64]) {
-    for i in 1..h.len() {
-        h[i] = h[i].max(h[i - 1] - falls[i]);
-    }
-    for i in (1..h.len()).rev() {
-        h[i - 1] = h[i - 1].max(h[i] - falls[i]);
-    }
-}
-
 /// A profile on a grid with its crest rounded to a curvature, in place:
 /// the highest profile beneath it that a parabola of curvature `c`, per
 /// step squared, fits under at every point. The profile rises to one crest
 /// and falls from it, straight or curving the other way, as a sheet's
 /// does. The crest, sharper than `c`, lowers to the parabola tangent to its
-/// flanks; the rest is untouched; and no slope steepens, so a profile under
-/// repose stays under it.
+/// flanks; the rest is untouched; and no slope steepens.
 pub(crate) fn round(h: &mut [f64], c: f64) {
     let steepest = h.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f64::max);
     if c <= 0.0 || steepest <= 0.0 {
@@ -900,14 +853,14 @@ pub(crate) fn round(h: &mut [f64], c: f64) {
 /// as a share of a range's rise, where the crest stands `relief` z-levels
 /// high: the hillslope its height erodes at.
 fn crest_rounding(relief: f64) -> f64 {
-    crest_curvature(erosion_rate(relief)) * REPOSE_STEP * REPOSE_STEP / RANGE_RISE
+    crest_curvature(erosion_rate(relief)) * PROFILE_STEP * PROFILE_STEP / RANGE_RISE
 }
 
 /// A profile's share at a distance `d` from the front, read straight
 /// between its points, where `point` is its share at a point of the grid
-/// and nothing past its end; nothing before the grid begins.
+/// and nothing past its end; nothing before the grid begins, at the front.
 fn between(d: f64, point: impl Fn(usize) -> f64) -> f64 {
-    let x = (d - SCREE_START) / REPOSE_STEP;
+    let x = d / PROFILE_STEP;
     if x < 0.0 {
         return 0.0;
     }
@@ -916,19 +869,16 @@ fn between(d: f64, point: impl Fn(usize) -> f64) -> f64 {
     h0 + (h1 - h0) * (x - i as f64)
 }
 
-/// A wedge's cross-section held under repose, sheet by sheet, one profile
-/// for each share of its height a sheet's plunge leaves it, each crest
-/// rounded to the curvature that height erodes at.
+/// A wedge's cross-section, sheet by sheet, one profile for each share of
+/// its height a sheet's plunge leaves it: the sheet's structure at that
+/// share, its crest rounded to the curvature that height erodes at.
 ///
 /// The sheets' wedges are disjoint across strike, each meeting the next at
-/// a trough, so the structure is the highest of them, and the highest of
-/// their sweeps is the sweep of the whole: each sheet is swept alone at its
-/// own plunge, and a position reads every sheet whose scree reaches it.
-/// The plunge scales a sheet's structure before its sweep, since repose is
-/// a rule for debris: under a lower crest the scree is shorter, never
-/// gentler. A sheet's profiles are built at every [`PLUNGE_STEP`] of share
-/// from [`PLUNGE_FLOOR`] to one, and a position blends the two bracketing
-/// its sheet's plunge, so the surface is continuous along strike.
+/// a trough, so the wedge is the highest of them: each sheet is built alone
+/// at its own plunge, and a position reads every sheet whose span holds it.
+/// A sheet's profiles are built at every [`PLUNGE_STEP`] of share from
+/// [`PLUNGE_FLOOR`] to one, and a position blends the two bracketing its
+/// sheet's plunge, so the surface is continuous along strike.
 pub struct Faces {
     sheets: Vec<Sheet>,
     /// The plunge field's seed for each sheet, as [`Faces::plunge`] reads it.
@@ -937,8 +887,8 @@ pub struct Faces {
     standing: f64,
 }
 
-/// One sheet of a wedge on the profiles' grid, over the points its
-/// structure and its scree can reach.
+/// One sheet of a wedge on the profiles' grid, over the points of its own
+/// wedge and one point of nothing either side.
 struct Sheet {
     /// The grid point the sheet's span begins at.
     start: usize,
@@ -956,25 +906,23 @@ struct Sheet {
 impl Faces {
     /// The faces of a wedge of `sheets`, the sheets plunging by the fields
     /// `plunges` seeds, standing at a share `standing` of their height. A
-    /// sheet's scree is spent within a scree reach of its wedge, so its span
-    /// ends there.
+    /// sheet's span is its own wedge and a point of nothing either side:
+    /// rounding needs no more, since every point past a point of nothing is
+    /// nothing too, and farther.
     fn new(sheets: f64, plunges: Vec<u64>, standing: f64) -> Self {
-        let full = ((WEDGE_REACH + 2.0 * SCREE_REACH) / REPOSE_STEP).ceil() as usize + 2;
-        let reach = (SCREE_REACH / REPOSE_STEP).ceil() as usize + 1;
-        let family: Vec<f64> = (0..full).map(|i| family_at(SCREE_START + i as f64 * REPOSE_STEP, sheets)).collect();
-        let sheet_of = |i: usize| sheets_in(SCREE_START + i as f64 * REPOSE_STEP).floor() as usize;
+        let full = (WEDGE_REACH / PROFILE_STEP).ceil() as usize + 2;
+        let family: Vec<f64> = (0..full).map(|i| family_at(i as f64 * PROFILE_STEP, sheets)).collect();
+        let sheet_of = |i: usize| sheets_in(i as f64 * PROFILE_STEP).floor() as usize;
         let sheets = (0..sheets.ceil() as usize)
             .filter_map(|j| {
                 let own = |i: usize| family[i] > 0.0 && sheet_of(i) == j;
                 let (a, b) = ((0..full).find(|&i| own(i))?, (0..full).rfind(|&i| own(i))?);
-                let (start, end) = (a.saturating_sub(reach), (b + reach + 1).min(full));
+                let (start, end) = (a.saturating_sub(1), (b + 2).min(full));
                 let structure: Vec<f64> = (start..end).map(|i| if own(i) { family[i] } else { 0.0 }).collect();
-                let falls = vec![REPOSE_GRADE * REPOSE_STEP / RANGE_RISE; structure.len()];
                 let crest = structure.iter().copied().fold(0.0, f64::max);
                 let mut profiles = Vec::with_capacity(PLUNGE_STEPS * structure.len());
                 for p in 0..PLUNGE_STEPS {
                     let mut h: Vec<f64> = structure.iter().map(|s| standing * plunge_step(p) * s).collect();
-                    sweep(&mut h, &falls);
                     round(&mut h, crest_rounding(standing * plunge_step(p) * crest * RANGE_RISE));
                     profiles.extend(h);
                 }
@@ -1003,7 +951,7 @@ impl Faces {
 
     /// The sheets whose spans hold a distance `d` from the front.
     fn spanning(&self, d: f64) -> impl Iterator<Item = usize> + '_ {
-        let x = (d - SCREE_START) / REPOSE_STEP;
+        let x = d / PROFILE_STEP;
         let i = if x < 0.0 { None } else { Some(x as usize) };
         self.sheets.iter().enumerate().filter_map(move |(j, sheet)| {
             let i = i?;
@@ -1244,7 +1192,7 @@ mod tests {
     const S: u64 = 0x9E3779B97F4A7C15;
 
     /// The home continent's centre, among its collision fronts and active
-    /// margins, where fronts carry scree to the front and past it.
+    /// margins.
     const BELT: (f64, f64) = (98_000.0, -2_000.0);
 
     /// A range stands at a thrust wedge's structural dips: the forelimb at the
@@ -1261,48 +1209,74 @@ mod tests {
 
     /// The structure of a wedge of `sheets` on the profiles' grid, whole.
     fn structure_of(sheets: f64) -> Vec<f64> {
-        let n = ((WEDGE_REACH + 2.0 * SCREE_REACH) / REPOSE_STEP).ceil() as usize + 2;
-        (0..n).map(|i| family_at(SCREE_START + i as f64 * REPOSE_STEP, sheets)).collect()
+        let n = (WEDGE_REACH / PROFILE_STEP).ceil() as usize + 2;
+        (0..n).map(|i| family_at(i as f64 * PROFILE_STEP, sheets)).collect()
     }
 
-    /// A profile held under repose everywhere.
-    fn under_repose(structure: &[f64]) -> Vec<f64> {
-        let mut h = structure.to_vec();
-        sweep(&mut h, &vec![REPOSE_GRADE * REPOSE_STEP / RANGE_RISE; structure.len()]);
-        h
+    /// A sheet's profile at plunge step `p`, over its span.
+    fn profile(sheet: &Sheet, p: usize) -> &[f64] {
+        let n = sheet.structure.len();
+        &sheet.profiles[p * n..(p + 1) * n]
     }
 
-    /// A range's surface stands no steeper than repose anywhere across the
-    /// belt, though its structure does, and every crest keeps its height:
-    /// the forelimb becomes scree from the crest down.
+    /// A range's surface is its structure at its plunge but at the crest,
+    /// which rounding only lowers: every sheet at every plunge stands at its
+    /// structure but over one run round its highest point, lower there, and
+    /// its flanks either side of the run keep their structure. Read between
+    /// the points, the surface stands nowhere above the structure.
     #[test]
-    fn a_range_surface_stands_under_repose() {
-        assert!((REPOSE_TAN - REPOSE_DEGREES.to_radians().tan()).abs() < 1e-12);
-        let weathered = under_repose(&structure_of(WEDGE_SHEETS));
-        let structure = |d: f64| RANGE_RISE * family_at(d, WEDGE_SHEETS);
-        let surface = |d: f64| RANGE_RISE * between(d, |i| weathered.get(i).copied().unwrap_or(0.0));
-        let (mut steepest_structure, mut steepest_surface) = (0.0f64, 0.0f64);
-        // A chord across a crest's corner falls under it by at most a step
-        // of the gentler flank, steepened as far as the sheets tighten.
-        let chord = REPOSE_STEP * RANGE_RISE / (RANGE_GRADED_HALF_WIDTH * (1.0 - BELT_SHORTENING));
-        let mut d = -200.0;
-        while d < WEDGE_REACH + 600.0 {
-            steepest_structure = steepest_structure.max((structure(d + 1.0) - structure(d)).abs());
-            steepest_surface = steepest_surface.max((surface(d + 1.0) - surface(d)).abs());
-            assert!(surface(d) >= structure(d) - chord, "scree under the structure by more than a chord's error at {d}");
-            d += 1.0;
+    fn a_range_surface_is_its_plunged_structure_but_the_crest() {
+        for sheets in [0.5, 1.7, WEDGE_SHEETS] {
+            let faces = faces_of(sheets);
+            for (j, sheet) in faces.sheets.iter().enumerate() {
+                let top = (0..sheet.structure.len()).fold(0, |best, i| if sheet.structure[i] > sheet.structure[best] { i } else { best });
+                for p in 0..PLUNGE_STEPS {
+                    let h = profile(sheet, p);
+                    let s: Vec<f64> = sheet.structure.iter().map(|s| faces.standing * plunge_step(p) * s).collect();
+                    assert!(h.iter().zip(&s).all(|(h, s)| *h <= s + 1e-12), "sheet {j} of {sheets} raised at plunge {p}");
+                    let lowered: Vec<usize> = (0..h.len()).filter(|&i| h[i] < s[i] - 1e-12).collect();
+                    let (Some(&first), Some(&last)) = (lowered.first(), lowered.last()) else {
+                        panic!("sheet {j} of {sheets}'s crest unrounded at plunge {p}");
+                    };
+                    assert_eq!(last - first + 1, lowered.len(), "sheet {j} of {sheets} lowered off its crest at plunge {p}");
+                    assert!((first..=last).contains(&top), "sheet {j} of {sheets} lowered away from its top at plunge {p}");
+                    let kept = |i: usize| s[i] > 0.0 && h[i] == s[i];
+                    assert!((0..first).any(kept) && (last + 1..h.len()).any(kept), "sheet {j} of {sheets} rounded a whole flank at plunge {p}");
+                }
+            }
+            for p in 0..PLUNGE_STEPS {
+                let mut d = 0.0;
+                while d < WEDGE_REACH + 2.0 * PROFILE_STEP {
+                    let surface = faces.at_plunged(d, |_| plunge_step(p));
+                    assert!(surface <= faces.structure_plunged(d, |_| plunge_step(p)) + 1e-12, "the surface above the structure at {d}");
+                    d += 1.0;
+                }
+            }
         }
-        assert!(steepest_structure > REPOSE_GRADE, "the structure never exceeded repose: {steepest_structure}");
-        assert!(steepest_surface <= REPOSE_GRADE + 1e-6, "the surface exceeds repose: {steepest_surface} over {REPOSE_GRADE}");
-        // The crests: the sweep only raises, so the highest point of the
-        // grid stands full within a step of the corner, and keeps it.
-        let grid = structure_of(WEDGE_SHEETS);
-        let (top, at) = (0..grid.len())
-            .map(|i| (RANGE_RISE * grid[i], i))
-            .fold((0.0f64, 0), |best, p| if p.0 > best.0 { p } else { best });
-        let dip = RANGE_RISE / RANGE_STEEP_HALF_WIDTH;
-        assert!(top <= RANGE_RISE + 1e-9 && top >= RANGE_RISE - dip * REPOSE_STEP, "no crest stands full: {top}");
-        assert!(RANGE_RISE * weathered[at] >= top - 1e-9, "a crest lowered by repose");
+    }
+
+    /// The forelimb stands at its dip, steeper than the backlimb on every
+    /// sheet at every plunge, and at full height steeper than debris rests
+    /// at: the steepest fall toward the front from the crest outruns the
+    /// steepest fall away from it, and at a culmination outruns repose. The
+    /// plunge lowers a crest over the same width, so a saddle's forelimb
+    /// dips less.
+    #[test]
+    fn the_forelimb_stands_steeper_than_the_backlimb_and_repose() {
+        assert!((REPOSE_TAN - REPOSE_DEGREES.to_radians().tan()).abs() < 1e-12);
+        let faces = faces_of(WEDGE_SHEETS);
+        let steepest = |h: &[f64]| h.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f64::max) * RANGE_RISE / PROFILE_STEP;
+        for (j, sheet) in faces.sheets.iter().enumerate() {
+            for p in 0..PLUNGE_STEPS {
+                let h = profile(sheet, p);
+                let top = (0..h.len()).fold(0, |best, i| if h[i] > h[best] { i } else { best });
+                let (forelimb, backlimb) = (steepest(&h[..=top]), steepest(&h[top..]));
+                assert!(forelimb > backlimb, "sheet {j}'s forelimb falls {forelimb} at plunge {p}, under its backlimb's {backlimb}");
+                if p == PLUNGE_STEPS - 1 {
+                    assert!(forelimb > REPOSE_GRADE, "sheet {j}'s forelimb falls {forelimb} at full height, under repose");
+                }
+            }
+        }
     }
 
     /// Rounding lowers a crest's corner to a parabola tangent to its flanks
@@ -1345,15 +1319,15 @@ mod tests {
         Faces::new(sheets, plunges, 1.0)
     }
 
-    /// A position reads each sheet's profile swept at repose at each
-    /// plunge step, the highest of the sheets there, and between two steps
-    /// it lies between them.
+    /// A position reads each sheet's structure at each plunge step with its
+    /// crest rounded, the highest of the sheets there, and between two
+    /// steps it lies between them.
     #[test]
     fn faces_are_keyed_on_the_plunge() {
         let faces = faces_of(2.5);
         let whole = |p: usize, i: usize| {
             faces.sheets.iter().map(|sheet| {
-                let mut h = under_repose(&sheet.structure.iter().map(|s| faces.standing * plunge_step(p) * s).collect::<Vec<_>>());
+                let mut h: Vec<f64> = sheet.structure.iter().map(|s| faces.standing * plunge_step(p) * s).collect();
                 round(&mut h, crest_rounding(faces.standing * plunge_step(p) * sheet.crest * RANGE_RISE));
                 i.checked_sub(sheet.start).and_then(|r| h.get(r).copied()).unwrap_or(0.0)
             }).fold(0.0, f64::max)
@@ -1361,7 +1335,7 @@ mod tests {
         let n = faces.sheets.iter().map(|s| s.start + s.structure.len()).max().unwrap();
         for p in 0..PLUNGE_STEPS - 1 {
             for i in (0..n).step_by(7) {
-                let d = SCREE_START + i as f64 * REPOSE_STEP;
+                let d = i as f64 * PROFILE_STEP;
                 let own = faces.at_plunged(d, |_| plunge_step(p));
                 assert!((own - whole(p, i)).abs() < 1e-12, "the profile at plunge {p} is not its own");
                 let mid = faces.at_plunged(d, |_| plunge_step(p) + 0.5 * PLUNGE_STEP);
@@ -1379,7 +1353,7 @@ mod tests {
             let faces = faces_of(sheets);
             let structure = structure_of(sheets);
             for (i, &s) in structure.iter().enumerate() {
-                let d = SCREE_START + i as f64 * REPOSE_STEP;
+                let d = i as f64 * PROFILE_STEP;
                 assert!((faces.structure_plunged(d, |_| 1.0) - s).abs() < 1e-12, "full height is not the wedge at {d}");
                 assert!((faces.structure_plunged(d, |_| PLUNGE_FLOOR) - PLUNGE_FLOOR * s).abs() < 1e-12, "the floor is not the floor of the share at {d}");
             }
@@ -1520,20 +1494,32 @@ mod tests {
         assert!(rim_of(WEDGE_SHEETS) <= WEDGE_REACH, "the full wedge outreaches WEDGE_REACH");
     }
 
-    /// The ranges' relief is continuous across every front and around every
-    /// corner of one: the frontal scree comes to rest across the front, and no
-    /// step stands anywhere steeper than repose, a range's end and the
-    /// plunge's blend together can make, stretched by the warp the position
-    /// reads it through. Every position is where a tile stands to read the
-    /// point on the chain: the chain's point unwarped.
+    /// A range reads nothing past its front and ends at its corners: across
+    /// every front its relief comes down to nothing at the chain, a plate
+    /// going under that carries no wedge of its own stands at nothing past
+    /// it, and no step stands anywhere steeper than the steepest face, a
+    /// range's end and the plunge's blend together can make, stretched by
+    /// the warp the position reads it through. Every position is where a
+    /// tile stands to read the point on the chain: the chain's point
+    /// unwarped.
     #[test]
-    fn scree_comes_to_rest_across_the_front() {
+    fn a_range_ends_at_its_front_and_its_corners() {
         let outlines = Outlines::in_box(BELT.0, BELT.1, 30_000.0, S);
-        let steepest = REPOSE_GRADE + RANGE_RISE * 1.5 / RANGE_END;
+        let all_faces = || outlines.plates().flat_map(|p| p.edges.iter().filter_map(|e| e.faces.as_ref()));
+        // The steepest any face stands, read straight between its points.
+        let mut face = 0.0f64;
+        for f in all_faces() {
+            for sheet in &f.sheets {
+                for p in 0..PLUNGE_STEPS {
+                    face = face.max(profile(sheet, p).windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f64::max));
+                }
+            }
+        }
+        let steepest = face * RANGE_RISE / PROFILE_STEP + RANGE_RISE * 1.5 / RANGE_END;
         // The most two neighbouring profiles of any sheet part by, per share
         // of plunge between them.
         let mut plunged = 0.0f64;
-        for f in outlines.plates().flat_map(|p| p.edges.iter().filter_map(|e| e.faces.as_ref())) {
+        for f in all_faces() {
             for (j, sheet) in f.sheets.iter().enumerate() {
                 for p in 0..PLUNGE_STEPS - 1 {
                     for i in sheet.start..sheet.start + sheet.structure.len() {
@@ -1558,7 +1544,7 @@ mod tests {
         let bound = |x0: f64, y0: f64, x1: f64, y1: f64| {
             steepest * stretch_at(x0, y0, S).0 * (x1 - x0).hypot(y1 - y0) + plunged * moved(x0, y0, x1, y1)
         };
-        let (mut fronts, mut toes) = (0, 0);
+        let (mut fronts, mut bare) = (0, 0);
         for plate in outlines.plates() {
             for e in plate.edges.iter().filter(|e| e.converge > 0.0) {
                 let s = e.segments[e.segments.len() / 2];
@@ -1566,14 +1552,16 @@ mod tests {
                 // Only fronts the box holds both sides of.
                 if (mx - BELT.0).abs() > 25_000.0 || (my - BELT.1).abs() > 25_000.0 { continue }
                 fronts += 1;
-                // Across the front along the plate-facing normal, finely:
-                // talus that reaches past the front rests there.
+                // Across the front along the plate-facing normal, finely.
                 let (mx, my) = unwarp(mx, my, S);
                 let at = |t: f64| outlines.relief(mx + s.nx * t, my + s.ny * t);
-                let (fx, fy) = warp(mx, my, S);
-                if e.faces.as_ref().unwrap().at(-10.0, e.along(fx, fy)) > 0.0 {
-                    toes += 1;
-                    assert!(at(-4.0) > 0.0, "no talus rests across the front of {:?}", plate.id);
+                assert!(at(0.0) <= bound(mx - 1.0, my, mx, my) + 1e-6, "the range of {:?} stands {} at its front", plate.id, at(0.0));
+                for t in [-20.0, -100.0, -400.0] {
+                    let Some(under) = outlines.at(mx + s.nx * t, my + s.ny * t) else { continue };
+                    if under.plate.id != plate.id && under.plate.edges.iter().all(|o| o.faces.is_none()) {
+                        bare += 1;
+                        assert_eq!(at(t), 0.0, "the range of {:?} reaches {t} past its front", plate.id);
+                    }
                 }
                 let step = 2.0;
                 let mut t = -400.0;
@@ -1583,9 +1571,9 @@ mod tests {
                     assert!(jump <= bound + 1e-6, "a step of {jump} across the front of {:?} at {t}", plate.id);
                     t += step;
                 }
-                // Around the corner the front ends at, where the toe caps,
-                // coarsely: a step there is a range's end or a toe, tens of
-                // levels, not a chord's error.
+                // Around the corner the front ends at, coarsely: a step
+                // there is a range's end, tens of levels, not a chord's
+                // error.
                 let (cx, cy) = unwarp(e.segments[0].x0, e.segments[0].y0, S);
                 let step = 6.0;
                 let n = (240.0 / step) as i32;
@@ -1601,7 +1589,7 @@ mod tests {
                 }
             }
         }
-        assert!(fronts > 0 && toes > 0, "{fronts} fronts in the box, {toes} with scree at the front");
+        assert!(fronts > 0 && bare > 0, "{fronts} fronts in the box, {bare} positions past one on a plate with no wedge");
     }
 
     /// Every position stands in exactly one plate, by the outline within a

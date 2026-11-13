@@ -503,7 +503,7 @@ pub fn cover_of(q: i32, r: i32, ground: Cover, density: f64, trees: f64, tempera
 /// degrees, as far up as across, within the critical gradients soil-mantled
 /// hillslopes are measured at, 0.8 to 1.25 (Hurst et al. 2012, Roering et
 /// al. 1999). Soil stays under it and a cliff or a gorge wall above it does
-/// not, while a range's talus at repose, thirty-four degrees, keeps its
+/// not, while a debris slope at repose, thirty-four degrees, keeps its
 /// woods. tan 45° is one.
 pub const SOIL_GRADE: f64 = 1.0 / RISE;
 

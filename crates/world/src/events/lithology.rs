@@ -41,8 +41,9 @@
 //! the height the ranges' structure stands above the platform says how
 //! much the plate's age has stripped from it, so the depth into the column
 //! at the surface, and with it the rock, is a function of position. The
-//! structure and not the ranges' surface: the scree swept over a range is
-//! debris, not the bed beneath. The cuesta is a function of that depth
+//! structure and not the ranges' surface: a crest's rounding and a
+//! suture's wear take the surface down, and the beds keep the shape the
+//! wedge was built to. The cuesta is a function of that depth
 //! alone: how far the weak rock around the position has been lowered
 //! against the resistant, held up where a harder bed lies just beneath,
 //! which is what makes the dip slope, and stepped at every contact, which
@@ -59,7 +60,7 @@ use crate::noise::{hash_channel_f64, simplex_2d};
 use crate::tectonic::{aged, PlateId, PLATE_SPACING};
 use crate::{hex_to_world, substrate_on};
 use super::plates::{coasts_of, shore_gate, Coasts, GRAPH_CELL_SCALE};
-use super::thrusting::{outlines_of, Outlines, Standing, OUTLINE_REACH, SCREE_REACH, WEDGE_REACH};
+use super::thrusting::{outlines_of, Outlines, Standing, OUTLINE_REACH, RANGE_RISE, REPOSE_GRADE, WEDGE_REACH};
 use super::{gradient_of, CellScope, TileOutput, TileView, WorldEvent};
 
 const COVER_SEED: u64 = 0x436f_7665_725f_5f5f; // "Cover___"
@@ -201,15 +202,20 @@ pub fn cover(wx: f64, wy: f64, seed: u64) -> f64 {
 /// stacked over the basin the range fills with its own debris.
 pub const BELT_COVER: f64 = COVER_MEAN + COVER_SWING;
 
+/// How far a fold belt's basin fill reaches past its front onto the plate
+/// going under, in world units: a full range's height over the repose
+/// grade, the run the debris it sheds comes to rest over.
+const FORELAND_REACH: f64 = RANGE_RISE / REPOSE_GRADE;
+
 /// The cover remaining at a position standing `at` in `outlines`, in
 /// z-levels: the basin potential's, filled within a wedge's reach of a
 /// front to [`BELT_COVER`] at the front and smoothly less to the
 /// potential's own at the reach, ended with the wedge against its plate's
 /// other edges. Past a front, on the plate going under, the fill falls
-/// over a scree's reach, which is what the toes are read over: it is full
-/// at the front from both sides and continuous everywhere.
+/// over [`FORELAND_REACH`]: it is full at the front from both sides and
+/// continuous everywhere.
 pub fn cover_on(outlines: &Outlines, at: &Standing, seed: u64) -> f64 {
-    cover(at.wx, at.wy, seed).max(BELT_COVER * outlines.front_share(at, WEDGE_REACH, SCREE_REACH))
+    cover(at.wx, at.wy, seed).max(BELT_COVER * outlines.front_share(at, WEDGE_REACH, FORELAND_REACH))
 }
 
 /// Depth into `column` at the surface, in z-levels, where `cover` remains
@@ -416,7 +422,7 @@ mod tests {
                 for t in [-1.0, 1.0] {
                     if fill(t).0 >= 0.9 * BELT_COVER { filled += 1 }
                 }
-                let mut t = -SCREE_REACH - 50.0;
+                let mut t = -FORELAND_REACH - 50.0;
                 while t < WEDGE_REACH + 300.0 {
                     let (here, potential) = fill(t);
                     assert!(here >= potential - 1e-12, "the cover is less than the potential's at {t}");

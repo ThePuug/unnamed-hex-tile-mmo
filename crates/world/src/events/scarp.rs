@@ -90,7 +90,7 @@ const WASH_TAN: f64 = 0.087_488_663_525_924;
 pub const WASH_GRADE: f64 = WASH_TAN / RISE;
 
 /// The share of repose a scarp's site may slope at, at most: a tenth
-/// gentler than repose, so the scree a range's forelimb lies at stands
+/// gentler than repose, so a range's forelimb, steeper than repose, stands
 /// none.
 const SCARP_GROUND: f64 = 0.9;
 
@@ -480,8 +480,8 @@ mod tests {
         assert!(scarps > 0, "no scarp on the belt");
     }
 
-    /// Ground near repose, as a forelimb's scree lies, and ground on shale
-    /// stand no scarp, wherever a site falls on them.
+    /// Ground near repose or steeper, as a range's forelimb stands, and
+    /// ground on shale stand no scarp, wherever a site falls on them.
     #[test]
     fn a_forelimb_or_shale_stands_no_scarp() {
         let (o, c) = (Outlines::in_box(BELT.0, BELT.1, 9_000.0, S), Coasts::in_box(BELT.0, BELT.1, 9_000.0, S));

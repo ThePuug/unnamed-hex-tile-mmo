@@ -48,7 +48,6 @@ use std::sync::{Arc, OnceLock};
 use dashmap::DashMap;
 
 use crate::events::plates::{warp, WARP_STEP};
-use crate::events::thrusting::SCREE_REACH;
 use crate::lattice::CHAIN_SWING;
 use crate::noise::hash_channel_f64;
 use crate::tectonic::{cell_for, cells_around, lattice_point, neighbours_of, plate_cell_for, polygon, seed_point, PlateId, PLATE_SPACING};
@@ -79,13 +78,11 @@ pub const SUBCONTINENT_SHARE: f64 = 0.5;
 /// polygons, in the coordinates the plates are drawn in. Land stands past a
 /// continental plate only within two chain swings of its polygon: a coast
 /// decides which side is land within a swing of itself, an outline stands a
-/// position on its plate only within a swing of the plate's sides, a toe
-/// rests within its reach of a front, and every chain lies within a swing
-/// of its plate's side. Twice that, and the farthest the warp carries two adjacent tiles
+/// position on its plate only within a swing of the plate's sides, a range
+/// stands on its own plate and nothing of it past its front, and every
+/// chain lies within a swing of its plate's side. Twice that, and the farthest the warp carries two adjacent tiles
 /// apart, and no land tile of one continent lies beside one of another.
 pub const CLAIM_GAP: f64 = 4.0 * CHAIN_SWING + WARP_STEP;
-
-const _: () = assert!(SCREE_REACH <= CHAIN_SWING, "a toe can rest farther past its front than the claim gap allows");
 
 /// How far past its claimed plates a site's land may stand, as the plates
 /// are drawn: the two chain swings [`CLAIM_GAP`] allows each side.
