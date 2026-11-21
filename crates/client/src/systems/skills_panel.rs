@@ -5,7 +5,7 @@
 //! the row shown; then a bar key puts the skill picked on it, any skill on
 //! any key, sent to the server at once (`Event::SetLoadout`), which takes
 //! it out of combat. Beside the bar, the skill picked as a card: its name
-//! and its endurance and recovery in pills over its icon, its kind and
+//! and its endurance, activation and recharge in pills over its icon, its kind and
 //! line, and what it does for this character.
 
 use bevy::prelude::*;
@@ -32,7 +32,7 @@ use crate::{
 const KEYCODE_NEXT_ROW: KeyCode = KeyCode::NumpadDecimal;
 
 /// The rows of skills, a kind each
-const ROWS: [SkillKind; 4] = [SkillKind::Strike, SkillKind::Reaction, SkillKind::Stance, SkillKind::Rune];
+const ROWS: [SkillKind; 4] = [SkillKind::Strike, SkillKind::Defence, SkillKind::Stance, SkillKind::Rune];
 
 const PICKED: Color = Color::srgb(0.85, 0.65, 0.13);
 const PLAIN: Color = Color::srgb(0.85, 0.85, 0.85);
@@ -42,7 +42,7 @@ const OFF_BAR: Color = Color::srgb(0.3, 0.3, 0.3);
 /// The card: landscape, its icon the art beside its text
 const CARD_WIDTH: f32 = 440.0;
 const ART_PX: f32 = 112.0;
-/// A cost's pill, wide enough for its longest number, a recovery to a
+/// A cost's pill, wide enough for its longest number, an activation to a
 /// tenth: 1.5s
 const PILL_WIDTH: f32 = 48.0;
 const PILL_HEIGHT: f32 = 26.0;
@@ -51,10 +51,12 @@ const CARD_EDGE: Color = Color::srgb(0.62, 0.50, 0.30);
 const TITLE_FILL: Color = Color::srgb(0.24, 0.21, 0.17);
 const TEXT_FILL: Color = Color::srgb(0.19, 0.18, 0.15);
 const TITLE: Color = Color::srgb(0.96, 0.92, 0.82);
-/// The pills a skill's costs stand in: endurance green, recovery yellow,
+/// The pills a skill's costs stand in: endurance green, activation
+/// yellow as its bar is, recharge blue,
 /// each number dark on it
 const ENDURANCE: Color = Color::srgb(0.30, 0.66, 0.30);
-const RECOVERY: Color = Color::srgb(0.90, 0.76, 0.20);
+const ACTIVATION: Color = Color::srgb(0.90, 0.76, 0.20);
+const RECHARGE: Color = Color::srgb(0.45, 0.62, 0.85);
 const ON_COST: Color = Color::srgb(0.08, 0.08, 0.06);
 /// A number on a card its attribute line scales, so a player sees what
 /// committing to the line changes
@@ -94,7 +96,8 @@ pub struct SkillCard;
 pub enum Said {
     Name,
     Endurance,
-    Recovery,
+    Activation,
+    Recharge,
     Kind,
     Refusal,
 }
@@ -116,7 +119,7 @@ fn row(row: usize) -> Vec<AbilityType> {
 fn kind_name(kind: SkillKind) -> &'static str {
     match kind {
         SkillKind::Strike => "Strikes",
-        SkillKind::Reaction => "Reactions",
+        SkillKind::Defence => "Defences",
         SkillKind::Stance => "Stances",
         SkillKind::Rune => "Runes",
     }
@@ -205,7 +208,8 @@ fn spawn_card(parent: &mut ChildSpawnerCommands) {
                 bar.spawn((Said::Name, text(TITLE, 18.0)));
                 bar.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(6.), ..default() }).with_children(|costs| {
                     cost_pill(costs, Said::Endurance, ENDURANCE);
-                    cost_pill(costs, Said::Recovery, RECOVERY);
+                    cost_pill(costs, Said::Activation, ACTIVATION);
+                    cost_pill(costs, Said::Recharge, RECHARGE);
                 });
             });
             card.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(8.), ..default() }).with_children(|body| {
@@ -438,7 +442,8 @@ pub fn update_card(
             (Said::Refusal, _) | (_, None) => String::new(),
             (Said::Name, Some(skill)) => name(skill),
             (Said::Endurance, Some(skill)) => format!("{:.0}", tuning.cost(skill)),
-            (Said::Recovery, Some(skill)) => seconds(tuning.recovery(skill)),
+            (Said::Activation, Some(skill)) => seconds(tuning.activation(skill)),
+            (Said::Recharge, Some(skill)) => seconds(tuning.recharge(skill)),
             (Said::Kind, Some(skill)) => kind_line(skill),
         };
         if text.0 != now {
@@ -472,7 +477,7 @@ pub fn update_card(
 fn kind_line(skill: AbilityType) -> String {
     let kind = match skill.kind() {
         SkillKind::Strike => "Strike",
-        SkillKind::Reaction => "Reaction",
+        SkillKind::Defence => "Defence",
         SkillKind::Stance => "Stance",
         SkillKind::Rune => "Rune",
     };

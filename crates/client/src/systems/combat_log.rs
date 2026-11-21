@@ -55,16 +55,16 @@ pub fn setup(
     });
 }
 
-/// Log damage events to the combat log
-/// Triggered by Do::ApplyDamage events
-pub fn on_damage_applied(
+/// Logs each attack as it resolves on someone: its damage where it
+/// landed, else how it ended.
+pub fn on_resolved(
     mut commands: Commands,
     content_query: Query<Entity, With<CombatLogContent>>,
     entity_type_query: Query<&EntityType>,
     viewed: Query<Entity, With<crate::components::Viewed>>,
     mut event_reader: MessageReader<common_bevy::message::Do>,
 ) {
-    use common_bevy::message::Event as GameEvent;
+    use common_bevy::message::{Event as GameEvent, Outcome};
 
     let Ok(content) = content_query.single() else {
         return;
@@ -74,7 +74,16 @@ pub fn on_damage_applied(
     let player_entity = viewed.single().ok();
 
     for event in event_reader.read() {
-        if let GameEvent::ApplyDamage { ent, damage, source, .. } = event.event {
+        if let GameEvent::Resolved { ent: source, ability, target: Some(ent), damage, outcome, .. } = event.event {
+            // A rune letting a foe go is no miss
+            let ended = match outcome {
+                Outcome::Landed if damage > 0.0 => format!("{damage:.0} dmg"),
+                Outcome::Blocked => "blocked".to_string(),
+                Outcome::Missed if ability.rune().is_none() => "missed".to_string(),
+                Outcome::Interrupted => "interrupted".to_string(),
+                Outcome::Landed | Outcome::Missed | Outcome::Cancelled => continue,
+            };
+
             // Resolve entity names using EntityType::display_name()
             let source_name = entity_type_query.get(source)
                 .map(|et| et.display_name())
@@ -91,10 +100,7 @@ pub fn on_damage_applied(
             let timestamp = Local::now().format("%H:%M:%S").to_string();
 
             // Format entry text
-            let entry_text = format!(
-                "[{}] {} → {}: {:.0} dmg (Physical)",
-                timestamp, source_name, target_name, damage
-            );
+            let entry_text = format!("[{timestamp}] {source_name} → {target_name}: {ended}");
 
             // Determine color based on whether player dealt or took damage
             let color = if is_player_damage {
@@ -102,42 +108,6 @@ pub fn on_damage_applied(
             } else {
                 Color::srgb(1.0, 0.6, 0.0) // Orange - damage taken
             };
-
-            // Spawn log entry
-            spawn_log_entry(&mut commands, content, entry_text, color);
-        }
-    }
-}
-
-/// Log queue clear events to the combat log
-/// Triggered by Do::ClearQueue events
-pub fn on_queue_cleared(
-    mut commands: Commands,
-    content_query: Query<Entity, With<CombatLogContent>>,
-    entity_type_query: Query<&EntityType>,
-    mut event_reader: MessageReader<common_bevy::message::Do>,
-) {
-    use common_bevy::message::Event as GameEvent;
-
-    let Ok(content) = content_query.single() else {
-        return;
-    };
-
-    for event in event_reader.read() {
-        if let GameEvent::ClearQueue { ent, .. } = event.event {
-            // Resolve entity name using EntityType::display_name()
-            let entity_name = entity_type_query.get(ent)
-                .map(|et| et.display_name())
-                .unwrap_or("Unknown");
-
-            // Get current timestamp
-            let timestamp = Local::now().format("%H:%M:%S").to_string();
-
-            // Format entry text
-            let entry_text = format!("[{}] {} cleared queue", timestamp, entity_name);
-
-            // Gray color for clear events
-            let color = Color::srgb(0.6, 0.6, 0.6);
 
             // Spawn log entry
             spawn_log_entry(&mut commands, content, entry_text, color);

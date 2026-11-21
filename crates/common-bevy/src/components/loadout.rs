@@ -64,7 +64,7 @@ mod tests {
         let mut stances = Loadout::DEFAULT;
         stances.0[0] = AbilityType::Lurk;
         stances.0[4] = AbilityType::Vigil;
-        assert!(stances.fits(), "stances on a strike's key and a reaction's");
+        assert!(stances.fits(), "stances on a strike's key and a defence's");
         let mut twice = Loadout::DEFAULT;
         twice.0[1] = AbilityType::Frenzy;
         assert!(!twice.fits(), "one skill on two slots");

@@ -11,28 +11,24 @@ use common_bevy::{
         heading::Heading,
         Loc,
         target::Target,
-        ActorAttributes,
     },
     plugins::nntree::NNTree,
-    systems::targeting::{arc_of, update_targets_impl},
+    systems::targeting::update_targets_impl,
 };
-use common_bevy::tuning::Tuning;
 
 /// Selects every actor's hostile `Target` each frame, so a target that
 /// moves out of reach or arc is dropped at once, not only when the actor
 /// itself turns or moves.
 pub fn update_targets(
-    tuning: Res<Tuning>,
-    mut query: Query<(Entity, &Loc, &Heading, &mut Target, Option<&ActorAttributes>)>,
+    mut query: Query<(Entity, &Loc, &Heading, &mut Target)>,
     sides: Query<&Side>,
     nntree: Res<NNTree>,
 ) {
-    for (ent, loc, heading, mut target, attrs) in &mut query {
+    for (ent, loc, heading, mut target) in &mut query {
         update_targets_impl(
             ent,
             *loc,
             *heading,
-            arc_of(&tuning, attrs),
             &mut *target,
             &nntree,
             |e| sides.get(e).ok().copied(),
@@ -45,17 +41,15 @@ pub fn update_targets(
 /// its hostile one, wanting the actors on its own side. UI systems read
 /// the component and never select for themselves.
 pub fn update_ally_targets(
-    tuning: Res<Tuning>,
-    mut query: Query<(Entity, &Loc, &Heading, &mut AllyTarget, Option<&ActorAttributes>)>,
+    mut query: Query<(Entity, &Loc, &Heading, &mut AllyTarget)>,
     sides: Query<&Side>,
     nntree: Res<NNTree>,
 ) {
-    for (ent, loc, heading, mut ally_target, attrs) in &mut query {
+    for (ent, loc, heading, mut ally_target) in &mut query {
         update_targets_impl(
             ent,
             *loc,
             *heading,
-            arc_of(&tuning, attrs),
             &mut *ally_target,
             &nntree,
             |e| sides.get(e).ok().copied(),

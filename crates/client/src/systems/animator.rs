@@ -1,7 +1,7 @@
 //! Which of an actor's clips plays: the walk or the run while it moves,
 //! whichever its pace keeps the feet on the ground at, the idle while it
-//! stands, a one-shot over either when the server says it used an
-//! ability, held until the one-shot ends, and the jump in three parts
+//! stands, a one-shot over either as the server says it began a skill
+//! or swung, held until the one-shot ends, and the jump in three parts
 //! while the physics carries the actor through the air.
 
 use std::{ collections::HashMap, time::Duration };
@@ -385,23 +385,29 @@ pub struct Held(Clip);
 const BLEND: Duration = Duration::from_millis(120);
 const SETTLE: Duration = Duration::from_millis(300);
 
-/// Plays the one-shot for each ability the server confirms, where the
-/// actor's graph has that clip or its stand-in. A swing behind a leap's
-/// slide waits for it to end (`Held`).
+/// Plays a skill's one-shot as its activation starts, and a swing's as it
+/// resolves, an auto-attack having no activation, where the actor's graph
+/// has that clip or its stand-in. A swing behind a leap's slide waits for
+/// it to end (`Held`). An activation told again starts nothing (`Heard`).
 pub fn play_abilities(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
     actors: Query<(&Animates, Has<Displacing>)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions, &Clips)>,
+    mut heard: Local<crate::systems::combat::Heard>,
 ) {
     for message in reader.read() {
-        let Do { event: Event::UseAbility { ent, ability, .. } } = message else { continue };
-        let Some(clip) = Clip::of(*ability) else { continue };
-        let Ok((animates, sliding)) = actors.get(*ent) else { continue };
+        let (ent, ability) = match message.event {
+            Event::Activate { ent, activation } if heard.fresh(ent, &activation) => (ent, activation.ability),
+            Event::Resolved { ent, ability: AbilityType::AutoAttack, .. } => (ent, AbilityType::AutoAttack),
+            _ => continue,
+        };
+        let Some(clip) = Clip::of(ability) else { continue };
+        let Ok((animates, sliding)) = actors.get(ent) else { continue };
         let Ok((mut player, mut transitions, clips)) = q_anim.get_mut(animates.0) else { continue };
         let Some((clip, node)) = clips.playing(clip) else { continue };
-        if sliding && *ability == AbilityType::AutoAttack && transitions.get_main_animation().is_some_and(|main| clips.is(main, Clip::Disengage)) {
-            commands.entity(*ent).insert(Held(clip));
+        if sliding && ability == AbilityType::AutoAttack && transitions.get_main_animation().is_some_and(|main| clips.is(main, Clip::Disengage)) {
+            commands.entity(ent).insert(Held(clip));
             continue;
         }
         transitions.play(&mut player, node, BLEND);

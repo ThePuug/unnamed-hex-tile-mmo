@@ -6,7 +6,7 @@
 
 use combat::behaviour::{mind::{Mind, Minds}, moves, skills, utility::{Consideration, Shape}};
 use common_bevy::archetype::EnemyArchetype;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 /// A number as the page shows it, free of f32's tail
 fn n(value: f32) -> Value {
@@ -47,21 +47,17 @@ pub fn print() {
                 "considerations": considerations.iter().map(|consideration| considered(consideration, &mind)).collect::<Vec<_>>(),
             }))
             .collect();
-        let just_acted: Map<String, Value> = EnemyArchetype::ALL.into_iter()
-            .map(|foe| (format!("{foe:?}"), n(mind.just_acted(Some(foe.profile().approach)))))
-            .collect();
         json!({
             "archetype": format!("{archetype:?}"),
             "approach": format!("{:?}", profile.approach),
-            "wait": n(mind.wait), "hold": n(mind.hold), "momentum": n(mind.momentum), "combo": n(mind.combo),
+            "wait": n(mind.wait), "hold": n(mind.hold), "momentum": n(mind.momentum),
             "decisions": decisions,
             "steps": moves::ENGAGE.iter().map(|consideration| considered(consideration, &mind)).collect::<Vec<_>>(),
-            "just_acted": just_acted,
         })
     }).collect();
     let plain = Mind::default();
     let all = json!({
-        "defaults": { "wait": n(plain.wait), "hold": n(plain.hold), "momentum": n(plain.momentum), "combo": n(plain.combo) },
+        "defaults": { "wait": n(plain.wait), "hold": n(plain.hold), "momentum": n(plain.momentum) },
         "archetypes": archetypes,
     });
     println!("{}", serde_json::to_string_pretty(&all).expect("arena: curves to JSON"));

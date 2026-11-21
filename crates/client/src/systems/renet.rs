@@ -32,17 +32,15 @@ fn get_message_type_name(message: &Do) -> &'static str {
             Component::Endurance(_) => "Inc:Endurance",
             Component::CombatState(_) => "Inc:Combat",
             Component::PlayerControlled(_) => "Inc:PlayerControlled",
-            Component::Recovery(_) => "Inc:Recovery",
             Component::Returning(_) => "Inc:Returning",
             Component::Side(_) => "Inc:Side",
             Component::Status(_) => "Inc:Status",
             Component::Equipment(_) => "Inc:Equipment",
         },
         Event::ChunkData { .. } => "ChunkData",
-        Event::InsertThreat { .. } => "InsertThreat",
-        Event::ApplyDamage { .. } => "ApplyDamage",
-        Event::ClearQueue { .. } => "ClearQueue",
-        Event::UseAbility { .. } => "UseAbility",
+        Event::Activate { .. } => "Activate",
+        Event::Resolved { .. } => "Resolved",
+        Event::Recharge { .. } => "Recharge",
         Event::Pong { .. } => "Pong",
         Event::MovementIntent { .. } => "MovementIntent",
         Event::Displace { .. } => "Displace",
@@ -191,6 +189,15 @@ pub fn write_do(
             Do { event: event @ (Event::Pong { .. } | Event::Calendar { .. }) } => {
                 do_writer.write(Do { event });
             }
+            // How a skill ended is told for whom it struck as much as for
+            // its user: one whose user is gone here still lands on its
+            // target, by no one the client knows, and one on a target not
+            // held here, a lurker the server withholds, on no one
+            Do { event: Event::Resolved { ent, ability, target, damage, outcome, dot } } => {
+                let here = |ent: Entity| l2r.get_by_right(&ent).copied().unwrap_or(Entity::PLACEHOLDER);
+                let (ent, target) = (here(ent), target.map(here));
+                do_writer.write(Do { event: Event::Resolved { ent, ability, target, damage, outcome, dot } });
+            }
             // Every other is about an entity, known here by an id of its
             // own; one the client has not spawned is asked for. ChunkData
             // arrives on ReliableUnordered, handled below.
@@ -202,10 +209,8 @@ pub fn write_do(
                 | Event::Inventory { .. }
                 | Event::Loot { .. }
                 | Event::Activity { .. }
-                | Event::InsertThreat { .. }
-                | Event::ApplyDamage { .. }
-                | Event::ClearQueue { .. }
-                | Event::UseAbility { .. }
+                | Event::Activate { .. }
+                | Event::Recharge { .. }
                 | Event::RespecAttributes { .. }
                 | Event::SetLoadout { .. }
             ) } => {
@@ -215,13 +220,10 @@ pub fn write_do(
                     continue
                 };
                 *ent = local;
-                // The others an event names: a blow's source keeps the server's
-                // id where it is gone here, and a threat's always, since it
-                // names the threat in the ClearQueue that ends it
-                match &mut event {
-                    Event::ApplyDamage { source, .. } => *source = l2r.get_by_right(source).copied().unwrap_or(*source),
-                    Event::UseAbility { target, .. } => *target = target.and_then(|target| l2r.get_by_right(&target).copied()),
-                    _ => {}
+                // An activation's target goes by the client's id too, or as
+                // none where it is unknown here
+                if let Event::Activate { activation, .. } = &mut event {
+                    activation.target = activation.target.and_then(|target| l2r.get_by_right(&target).copied());
                 }
                 do_writer.write(Do { event });
             }
@@ -388,53 +390,5 @@ pub fn track_latency(conn: Option<Res<ClientNet>>, mut server: ResMut<crate::res
     let rtt = conn.rtt();
     if !rtt.is_zero() {
         server.latency = rtt.as_millis() / 2;
-    }
-}
-
-/// Holds the clock's lead by how far ahead of its moment the server says
-/// each of the local player's presses arrived. An auto-attack is no press:
-/// it comes due on the server's clock, which stamps it as it arrives
-/// whatever the lead, and counted it would push the lead out without end.
-pub fn handle_arrived(
-    mut reader: MessageReader<Do>,
-    mut server: ResMut<crate::resources::Server>,
-    own: Query<(), With<common_bevy::components::Actor>>,
-) {
-    for message in reader.read() {
-        let Do { event: Event::UseAbility { ent, ability, at, arrived, .. } } = message else { continue };
-        if own.contains(*ent) && *ability != AbilityType::AutoAttack {
-            server.arrived(at.since(*arrived).as_millis() as i64 - arrived.since(*at).as_millis() as i64);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_the_players_own_presses_hold_the_lead() {
-        let mut app = App::new();
-        app.add_message::<Do>();
-        app.insert_resource(crate::resources::Server::default());
-        app.add_systems(Update, handle_arrived);
-        let player = app.world_mut().spawn(common_bevy::components::Actor).id();
-        let other = app.world_mut().spawn_empty().id();
-        let used = |ent, ability, early: u64| Do { event: Event::UseAbility {
-            ent, ability, target: None, at: Moment::from_millis(1_000 + early), arrived: Moment::from_millis(1_000),
-        }};
-        let margin = |app: &App| app.world().resource::<crate::resources::Server>().margin;
-
-        let before = margin(&app);
-        for _ in 0..20 {
-            app.world_mut().write_message(used(player, AbilityType::AutoAttack, 0));
-            app.world_mut().write_message(used(other, AbilityType::Parry, 0));
-            app.update();
-        }
-        assert_eq!(margin(&app), before, "an auto-attack, or another's press, moves nothing");
-
-        app.world_mut().write_message(used(player, AbilityType::Parry, 0));
-        app.update();
-        assert_ne!(margin(&app), before, "the player's own press does");
     }
 }

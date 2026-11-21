@@ -47,11 +47,26 @@
 //! each side's damage came from: auto-attacks, skills, or reflections.
 //!
 //! A side's ledger says why, per fight: each ability's uses, the damage it
-//! sent into its foes' queues and the share of what settled that landed, the
-//! rest answered (a reaction's is what it reflected); then the share of the
-//! fight it spent recovering, held, lost to a slow, with its target beyond its
-//! reach and standing past its target's forward faces, and its mean
-//! fatigue; then how much it used its commitment.
+//! landed, and how many of its uses landed, were blocked, missed or were
+//! interrupted; then the share of the fight it spent activating, held, lost
+//! to a slow, with its target beyond its reach and standing past its
+//! target's forward faces, its mean endurance, and the share it stood
+//! priced out: a skill of its bar recharged and costing more than it held,
+//! which the gate would refuse for endurance alone.
+//!
+//! The report ends with its distance ([`Distance`]): how far the matrix
+//! stands from a simple, functional fight, as a sum of named parts, each 0
+//! at the target. `parity` is the mean over pairings of the edge's size;
+//! `length` the mean of the seconds a pairing's median fight falls outside
+//! 30 to 45; `capped` the share of fights run to the cap, in points;
+//! `skills` the mean over every side of the points by which skills' share
+//! of its damage, all but its auto-attacks, falls short of 50; `dead` 10
+//! for each skill on an archetype's own bar it uses less than once a fight
+//! across its pairings, or a strike landing under a quarter of its uses, a
+//! stance judged only over the pairings whose foe can bring about what it
+//! takes hold against (`skills::arises`);
+//! `answers` the points by which the share of skill strikes blocked, missed
+//! or interrupted falls outside 10 to 40.
 
 mod curves;
 mod tune;
@@ -65,16 +80,15 @@ use common_bevy::{
     components::{
         behaviour::Side,
         entity_type::{decorator::Decorator, EntityType},
+        activation::{Activating, Recharges},
         heading::Heading,
-        reaction_queue::{QueuedThreat, ReactionQueue},
-        recovery::GlobalRecovery,
         resources::{Endurance, Health, SpawnPoint},
         ActorAttributes,
-        status::Status,
+        status::{Stance, Status},
         target::Target,
         AttackRange, Loc,
     },
-    message::{AbilityType, ClearType, Component as MessageComponent, Do, Event},
+    message::{AbilityType, Do, Event, Outcome as Ended, SkillKind},
     plugins::nntree::NNTreePlugin,
     resources::map::Map,
     systems::targeting,
@@ -84,10 +98,10 @@ use common_bevy::{
 
 use combat::{
     actor,
-    behaviour::{mind::Minds, perception::Skill, Bar, Decisions},
+    behaviour::{mind::Minds, perception::Skill, skills::arises, Bar, Decisions},
     dice::Dice,
     engagement::{engaging_at, spawn_engagement, STAGE_GAP},
-    BehaviourPlugin, CombatPlugin, DotTick, ResolveThreat,
+    BehaviourPlugin, CombatPlugin,
 };
 
 /// One simulated frame. FixedUpdate's 125ms tick runs every second frame.
@@ -192,53 +206,28 @@ fn archetype_named(name: &str) -> EnemyArchetype {
         .unwrap_or_else(|| panic!("no archetype {name}"))
 }
 
-/// What one side did over its fights. Damage is keyed by the ability that
-/// sent it.
+/// What one side did over its fights, keyed by the ability that did it.
 #[derive(Clone, Default)]
 struct Ledger {
     used: HashMap<AbilityType, u32>,
-    /// Damage it put in its foes' queues, damage over time whole
-    sent: HashMap<Option<AbilityType>, f32>,
-    /// Damage of its that landed, a reflection's included
-    landed: HashMap<Option<AbilityType>, f32>,
-    /// Damage of its still queued when the fight ended, neither landed nor
-    /// answered
-    pending: HashMap<Option<AbilityType>, f32>,
-    /// Seconds alive, and of those recovering, held, lost to a slow (a slow
-    /// to 85% for a second losing 0.15 s), with its target beyond its reach
-    /// and standing past its target's forward faces; and its fatigue summed
-    /// over them
+    /// How each of its attacks and activations ended: landed, blocked,
+    /// missed or interrupted, a Counter's return among the landed
+    ended: HashMap<(AbilityType, Ended), u32>,
+    /// Damage of its that landed, a Counter's return included
+    landed: HashMap<AbilityType, f32>,
+    /// Seconds alive, and of those activating a skill, held, lost to a slow
+    /// (a slow to 85% for a second losing 0.15 s), with its target beyond
+    /// its reach and standing past its target's forward faces; and the
+    /// share of its endurance it held summed over them
     alive: f32,
-    recovering: f32,
+    activating: f32,
     held: f32,
     lost_to_slow: f32,
     beyond_reach: f32,
     past_faces: f32,
-    fatigue: f32,
-    /// Its commitments at work: skill strikes taken as a combo, and of
-    /// those the combos fired before they unlocked (Ferocity); reactions
-    /// taken through a recovery (Preparation); strikes struck from a flank
-    /// of all it struck (Grace); the stacks of Overcommitted on the foe each
-    /// of its skills struck into, of the skills it struck with, and its
-    /// damage landed as crits (Patience)
-    combo_strikes: u32,
-    early_combos: u32,
-    through: u32,
-    flanked: u32,
-    strikes: u32,
-    patient_stacks: u32,
-    skill_strikes: u32,
-    crit_landed: f32,
-    /// Threats queued on it, of those landed and still queued at the end,
-    /// and the clears that took the rest: how many each clear answered
-    /// (Awareness); and the damage of each, whole
-    queued_on: u32,
-    landed_on: u32,
-    pending_on: u32,
-    clears: u32,
-    queued_damage_on: f32,
-    landed_damage_on: f32,
-    pending_damage_on: f32,
+    endurance: f32,
+    /// Seconds a skill of its bar stood recharged and cost more than it held
+    priced_out: f32,
 }
 
 impl Ledger {
@@ -246,39 +235,20 @@ impl Ledger {
         for (ability, n) in &other.used {
             *self.used.entry(*ability).or_default() += n;
         }
-        for (mine, theirs) in [(&mut self.sent, &other.sent), (&mut self.landed, &other.landed), (&mut self.pending, &other.pending)] {
-            for (ability, damage) in theirs {
-                *mine.entry(*ability).or_default() += damage;
-            }
+        for (key, n) in &other.ended {
+            *self.ended.entry(*key).or_default() += n;
+        }
+        for (ability, damage) in &other.landed {
+            *self.landed.entry(*ability).or_default() += damage;
         }
         self.alive += other.alive;
-        self.recovering += other.recovering;
+        self.activating += other.activating;
         self.held += other.held;
         self.lost_to_slow += other.lost_to_slow;
         self.beyond_reach += other.beyond_reach;
         self.past_faces += other.past_faces;
-        self.fatigue += other.fatigue;
-        self.combo_strikes += other.combo_strikes;
-        self.early_combos += other.early_combos;
-        self.through += other.through;
-        self.flanked += other.flanked;
-        self.strikes += other.strikes;
-        self.patient_stacks += other.patient_stacks;
-        self.skill_strikes += other.skill_strikes;
-        self.crit_landed += other.crit_landed;
-        self.queued_damage_on += other.queued_damage_on;
-        self.landed_damage_on += other.landed_damage_on;
-        self.pending_damage_on += other.pending_damage_on;
-        self.queued_on += other.queued_on;
-        self.landed_on += other.landed_on;
-        self.pending_on += other.pending_on;
-        self.clears += other.clears;
-    }
-
-    /// Threats each of its clears answered
-    fn per_answer(&self) -> f32 {
-        let answered = self.queued_on.saturating_sub(self.landed_on + self.pending_on);
-        answered as f32 / self.clears.max(1) as f32
+        self.endurance += other.endurance;
+        self.priced_out += other.priced_out;
     }
 
     fn landed_total(&self) -> f32 {
@@ -291,7 +261,7 @@ impl Ledger {
 
     /// Landed damage as auto-attacks, skills and reflections
     fn sources(&self) -> (f32, f32, f32) {
-        let of = |ability: AbilityType| self.landed.get(&Some(ability)).copied().unwrap_or(0.0);
+        let of = |ability: AbilityType| self.landed.get(&ability).copied().unwrap_or(0.0);
         let (auto, reflect) = (of(AbilityType::AutoAttack), of(AbilityType::Counter));
         (auto, self.landed_total() - auto - reflect, reflect)
     }
@@ -302,11 +272,6 @@ impl Ledger {
 struct Tally {
     sides: HashMap<Entity, Side>,
     ledgers: HashMap<Side, Ledger>,
-    /// Each actor's recovery as last sent and the second it was sent: its
-    /// chain's counts a new one adds to (a blow's pushback resends it
-    /// longer, which adds nothing), and a skill taken while it runs may be
-    /// the combo it offers
-    recoveries: HashMap<Entity, (GlobalRecovery, f32)>,
 }
 
 impl Tally {
@@ -316,61 +281,22 @@ impl Tally {
     }
 }
 
-/// A threat's whole damage, what of its DoT has not ticked included.
-fn whole(threat: &QueuedThreat) -> f32 {
-    threat.damage + threat.dot_left()
-}
-
-/// Counts each ability an actor uses, auto-attacks included, and each
-/// threat it sends; a strike struck from past its target's forward faces; each threat
-/// queued on an actor and each answer that cleared its span; a skill strike
-/// taken as the combo the recovery it was taken in offers; and of each
-/// recovery an ability starts, a combo fired before it unlocked (it carries
-/// what it skipped, with no reaction through it) or a reaction taken
-/// through one. A use is sent before the recovery it starts.
-fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Query<(&Loc, Option<&Heading>)>, statuses: Query<&Status>, time: Res<Time>) {
-    let now = time.elapsed_secs();
+/// Counts each skill an actor uses as its activation starts, each
+/// auto-attack as it resolves, how every attack and activation ended, and
+/// the damage each landed. A rune's pulses are on no side's ledger.
+fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>) {
     for message in reader.read() {
         match &message.event {
-            Event::UseAbility { ent, ability, target, .. } => {
-                let flanked = ability.reach(1).is_some() && target.and_then(|target| places.get(target).ok())
-                    .zip(places.get(*ent).ok())
-                    .is_some_and(|((target_loc, target_heading), (loc, _))| targeting::flanked(target_heading, target_loc, loc));
-                let skill_strike = *ability != AbilityType::AutoAttack && target.is_some() && !ability.is_reaction() && *ability != AbilityType::PerfectStride;
-                let stacks = target.and_then(|target| statuses.get(target).ok()).map_or(0, |status| status.overcommits());
-                let combo = skill_strike && tally.recoveries.get(ent).is_some_and(|(recovery, sent)| {
-                    recovery.remaining > now - sent && recovery.combo.is_some_and(|combo| combo.ability == *ability)
-                });
-                if let Some(ledger) = tally.of(*ent) {
-                    ledger.combo_strikes += combo as u32;
-                    *ledger.used.entry(*ability).or_default() += 1;
-                    ledger.strikes += ability.reach(1).is_some() as u32;
-                    ledger.flanked += flanked as u32;
-                    ledger.skill_strikes += skill_strike as u32;
-                    ledger.patient_stacks += if skill_strike { stacks as u32 } else { 0 };
-                }
-            }
-            Event::InsertThreat { ent, threat } => {
-                if let Some(ledger) = tally.of(threat.source) {
-                    *ledger.sent.entry(threat.ability).or_default() += whole(threat);
-                }
-                if let Some(ledger) = tally.of(*ent) {
-                    ledger.queued_on += 1;
-                    ledger.queued_damage_on += whole(threat);
-                }
-            }
-            // A threat landing clears it too; only a band cleared is an
-            // answer, a reaction's or a leap clear's
-            Event::ClearQueue { ent, clear_type: ClearType::Span { .. } } => if let Some(ledger) = tally.of(*ent) {
-                ledger.clears += 1;
+            Event::Activate { ent, activation } => if let Some(ledger) = tally.of(*ent) {
+                *ledger.used.entry(activation.ability).or_default() += 1;
             },
-            Event::Incremental { ent, component: MessageComponent::Recovery(recovery) } => {
-                let last = tally.recoveries.insert(*ent, (*recovery, now)).map_or_else(Default::default, |(last, _)| last.chain);
-                let added = |now: u8, before: u8| if now >= before { now - before } else { now };
-                let (combos, reactions) = (added(recovery.chain.early_combos, last.early_combos), added(recovery.chain.early_reactions, last.early_reactions));
-                if let Some(ledger) = tally.of(*ent) {
-                    ledger.early_combos += combos as u32;
-                    ledger.through += reactions as u32;
+            Event::Resolved { ent, ability, damage, outcome, .. } => if let Some(ledger) = tally.of(*ent) {
+                if *ability == AbilityType::AutoAttack {
+                    *ledger.used.entry(*ability).or_default() += 1;
+                }
+                *ledger.ended.entry((*ability, *outcome)).or_default() += 1;
+                if *outcome == Ended::Landed {
+                    *ledger.landed.entry(*ability).or_default() += damage;
                 }
             },
             _ => {}
@@ -378,63 +304,42 @@ fn tally_sent(mut reader: MessageReader<Do>, mut tally: ResMut<Tally>, places: Q
     }
 }
 
-/// Counts each resolved threat against the side of the actor that sent it,
-/// and against the actor it lands on out of its queue.
-fn tally_resolved(trigger: On<ResolveThreat>, mut tally: ResMut<Tally>) {
-    let ResolveThreat { ent, threat } = trigger.event();
-    if let Some(ledger) = tally.of(*ent) {
-        ledger.landed_on += 1;
-        ledger.landed_damage_on += whole(threat);
-    }
-    if threat.crit {
-        if let Some(ledger) = tally.of(threat.source) {
-            ledger.crit_landed += whole(threat);
-        }
-    }
-    landed(&mut tally, threat.source, threat.ability, whole(threat));
-}
-
-/// Counts each DoT tick against the side of the actor that sent it.
-fn tally_dot(trigger: On<DotTick>, mut tally: ResMut<Tally>) {
-    let DotTick { source, ability, damage, .. } = trigger.event();
-    landed(&mut tally, *source, *ability, *damage);
-}
-
-/// Adds `damage` landed by `source` with `ability` to its side's ledger.
-fn landed(tally: &mut Tally, source: Entity, ability: Option<AbilityType>, damage: f32) {
-    let Some(ledger) = tally.of(source) else { return };
-    *ledger.landed.entry(ability).or_default() += damage;
-}
-
 /// Adds a frame of `step` seconds to each living actor's side: whether it
-/// is recovering, held, what its slow takes, has its target beyond its
-/// reach or stands past its target's forward faces, and its fatigue.
+/// is activating, held, what its slow takes, has its target beyond its
+/// reach or stands past its target's forward faces, and the share of its
+/// endurance it holds.
 fn tally_states(world: &mut World, step: f32) {
-    let tuning = *world.resource::<Tuning>();
     let mut locs = world.query::<(Entity, &Loc)>();
     let locs: HashMap<Entity, Loc> = locs.iter(world).map(|(ent, loc)| (ent, *loc)).collect();
     let mut headings = world.query::<(Entity, &Heading)>();
     let headings: HashMap<Entity, Heading> = headings.iter(world).map(|(ent, heading)| (ent, *heading)).collect();
-    let mut actors = world.query::<(Entity, &Health, &Loc, &AttackRange, Option<&Target>, Option<&GlobalRecovery>, Option<&Status>, Option<&Endurance>)>();
-    let frames: Vec<_> = actors.iter(world).filter(|(_, health, ..)| health.state > 0.0).map(|(ent, _, loc, range, target, recovery, status, endurance)| {
+    let tuning = *world.resource::<Tuning>();
+    let now = world.resource::<combat::RunTime>().now(world.resource::<Time>());
+    let mut actors = world.query::<(Entity, &Health, &Loc, &AttackRange, Option<&Target>, Option<&Activating>, Option<&Status>, Option<&Endurance>, Option<(&Bar, &Recharges)>)>();
+    let frames: Vec<_> = actors.iter(world).filter(|(_, health, ..)| health.state > 0.0).map(|(ent, _, loc, range, target, activating, status, endurance, skills)| {
+        let priced_out = endurance.zip(skills).is_some_and(|(endurance, (bar, recharges))| {
+            bar.0.iter().any(|&ability| recharges.is_ready(ability, now) && tuning.cost(ability) > endurance.state)
+        });
         let foe = target.and_then(|target| target.entity);
         let beyond = foe.and_then(|foe| locs.get(&foe)).is_some_and(|foe| loc.flat_distance(foe) > range.0);
         let past_faces = foe.and_then(|foe| Some((locs.get(&foe)?, headings.get(&foe))))
             .is_some_and(|(foe_loc, heading)| targeting::flanked(heading, foe_loc, loc));
         let slow = status.and_then(|status| status.slow).filter(|slow| slow.remaining > 0.0).map_or(0.0, |slow| 1.0 - slow.pace);
-        (ent, recovery.is_some(), Status::holds(status), slow, beyond, past_faces, Endurance::fatigue_of(&tuning, endurance))
+        let pool = endurance.map_or(1.0, |endurance| endurance.state / endurance.max.max(f32::EPSILON));
+        (ent, activating.is_some_and(|activating| activating.0.is_some()), Status::holds(status), slow, beyond, past_faces, pool, priced_out)
     }).collect();
     let mut tally = world.resource_mut::<Tally>();
-    for (ent, recovering, held, slow, beyond, past_faces, fatigue) in frames {
+    for (ent, activating, held, slow, beyond, past_faces, pool, priced_out) in frames {
         let Some(ledger) = tally.of(ent) else { continue };
         let during = |state: bool| if state { step } else { 0.0 };
         ledger.alive += step;
-        ledger.recovering += during(recovering);
+        ledger.activating += during(activating);
         ledger.held += during(held);
         ledger.lost_to_slow += slow * step;
         ledger.beyond_reach += during(beyond);
         ledger.past_faces += during(past_faces);
-        ledger.fatigue += fatigue * step;
+        ledger.endurance += pool * step;
+        ledger.priced_out += during(priced_out);
     }
 }
 
@@ -504,8 +409,6 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
     }
     app.add_systems(Update, (actor::update, tally_sent));
     app.add_systems(PostUpdate, actor::cleanup_despawned);
-    app.add_observer(tally_resolved);
-    app.add_observer(tally_dot);
     app.finish();
     app.cleanup();
     // Fights already fill every core, one to a worker thread: a fight's
@@ -601,18 +504,7 @@ fn fight(west: Team, east: Team, settings: &Settings, seed: u64) -> Outcome {
             _ => {}
         }
     };
-    let mut queues = app.world_mut().query::<(Entity, &ReactionQueue)>();
-    let pending: Vec<(Entity, QueuedThreat)> = queues.iter(app.world()).flat_map(|(ent, queue)| queue.threats.iter().map(move |threat| (ent, *threat))).collect();
-    let mut tally = std::mem::take(&mut *app.world_mut().resource_mut::<Tally>());
-    for (on, threat) in pending {
-        if let Some(ledger) = tally.of(threat.source) {
-            *ledger.pending.entry(threat.ability).or_default() += whole(&threat);
-        }
-        if let Some(ledger) = tally.of(on) {
-            ledger.pending_on += 1;
-            ledger.pending_damage_on += whole(&threat);
-        }
-    }
+    let tally = std::mem::take(&mut *app.world_mut().resource_mut::<Tally>());
     if settings.trace > 0 {
         let used = |side: Side| {
             let used: Vec<_> = tally.ledgers.get(&side).map_or(Vec::new(), |ledger| ledger.used.iter().map(|(a, n)| format!("{a:?} {n}")).collect());
@@ -726,6 +618,78 @@ fn print_matrix(rows: &[Pairing], ledger: bool) {
             println!("    {:?}: {}", row.a, ledger_line(&row.a_ledger, row.runs));
             println!("    {:?}: {}", row.b, ledger_line(&row.b_ledger, row.runs));
         }
+    }
+    println!("{}", Distance::of(rows));
+}
+
+/// How far a matrix stands from the target fight, part by part (the module
+/// doc says what each measures): every part 0 or more, 0 at the target.
+struct Distance([(&'static str, f32); 6]);
+
+impl Distance {
+    fn of(rows: &[Pairing]) -> Self {
+        let mean = |values: Vec<f32>| values.iter().sum::<f32>() / values.len().max(1) as f32;
+        let outside = |value: f32, low: f32, high: f32| (low - value).max(value - high).max(0.0);
+        let sides = || rows.iter().flat_map(|row| [(row.a, &row.a_ledger, row.runs), (row.b, &row.b_ledger, row.runs)]);
+
+        let skills = mean(sides().map(|(_, ledger, _)| {
+            let (auto, total) = (ledger.sources().0, ledger.landed_total());
+            if total > 0.0 { (50.0 - 100.0 * (total - auto) / total).max(0.0) } else { 50.0 }
+        }).collect());
+
+        // Each skill of each archetype's bar across the matrix: its uses,
+        // how many landed, and the fights it was judged over, a stance's
+        // only those against a foe that can bring its condition about
+        let ended = |ledger: &Ledger, ability: AbilityType, outcome: Ended| ledger.ended.get(&(ability, outcome)).copied().unwrap_or(0) as f32;
+        let mut whole: HashMap<(EnemyArchetype, AbilityType), (f32, f32, f32)> = HashMap::new();
+        for row in rows {
+            for (archetype, foe, ledger) in [(row.a, row.b, &row.a_ledger), (row.b, row.a, &row.b_ledger)] {
+                for ability in archetype.bar() {
+                    if Stance::of(ability).is_some_and(|stance| !arises(stance, &foe.bar())) {
+                        continue;
+                    }
+                    let (uses, landed, fights) = whole.entry((archetype, ability)).or_default();
+                    *uses += ledger.used.get(&ability).copied().unwrap_or(0) as f32;
+                    *landed += ended(ledger, ability, Ended::Landed);
+                    *fights += row.runs;
+                }
+            }
+        }
+        let dead = whole.iter()
+            .filter(|&(&(_, ability), &(uses, landed, fights))| {
+                let strike = ability.kind() == SkillKind::Strike;
+                uses < fights || strike && landed < 0.25 * uses
+            })
+            .count();
+
+        let (mut landed, mut answered) = (0.0, 0.0);
+        for (_, ledger, _) in sides() {
+            for ability in AbilityType::ALL.into_iter().filter(|&ability| ability != AbilityType::AutoAttack && ability.kind() == SkillKind::Strike) {
+                landed += ended(ledger, ability, Ended::Landed);
+                answered += [Ended::Blocked, Ended::Missed, Ended::Interrupted].into_iter().map(|outcome| ended(ledger, ability, outcome)).sum::<f32>();
+            }
+        }
+        let answers = if landed + answered > 0.0 { outside(100.0 * answered / (landed + answered), 10.0, 40.0) } else { 10.0 };
+
+        Distance([
+            ("parity", mean(rows.iter().map(|row| row.edge.abs()).collect())),
+            ("length", mean(rows.iter().map(|row| outside(row.median, 30.0, 45.0)).collect())),
+            ("capped", mean(rows.iter().map(|row| row.capped).collect())),
+            ("skills", skills),
+            ("dead", 10.0 * dead as f32),
+            ("answers", answers),
+        ])
+    }
+
+    fn total(&self) -> f32 {
+        self.0.iter().map(|&(_, part)| part).sum()
+    }
+}
+
+impl std::fmt::Display for Distance {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let parts: Vec<String> = self.0.iter().map(|(name, part)| format!("{name} {part:.1}")).collect();
+        write!(f, "distance {:.1} = {}", self.total(), parts.join(" + "))
     }
 }
 
@@ -866,31 +830,31 @@ fn split(ledger: &Ledger, runs: f32) -> String {
     format!("{:.0} ({:.0}/{:.0}/{:.0}%)", total / runs, 100.0 * auto / total, 100.0 * ability / total, 100.0 * reflect / total)
 }
 
-/// A side's ledger per fight: each ability's uses, the damage it sent and
-/// the share of what settled that landed, or a reaction's reflected; then
-/// its states as shares of the time it was alive
+/// A side's ledger per fight: each ability's uses, the damage it landed,
+/// and how many of its uses landed, were blocked, missed and were
+/// interrupted; then its states as shares of the time it was alive
 fn ledger_line(ledger: &Ledger, runs: f32) -> String {
     let mut used: Vec<(AbilityType, u32)> = ledger.used.iter().map(|(&ability, &uses)| (ability, uses)).collect();
+    used.extend(ledger.ended.keys().map(|&(ability, _)| ability).filter(|ability| !ledger.used.contains_key(ability)).map(|ability| (ability, 0)));
     used.sort_by_key(|&(ability, _)| format!("{ability:?}"));
+    used.dedup();
     let abilities: Vec<String> = used.into_iter().map(|(ability, uses)| {
-        let of = |damage: &HashMap<Option<AbilityType>, f32>| damage.get(&Some(ability)).copied().unwrap_or(0.0);
-        let (sent, landed, settled) = (of(&ledger.sent), of(&ledger.landed), of(&ledger.sent) - of(&ledger.pending));
-        let damage = if settled > 0.0 {
-            format!(" sent {:.0} landed {:.0}%", sent / runs, 100.0 * landed / settled)
-        } else if landed > 0.0 {
-            format!(" reflected {:.0}", landed / runs)
-        } else {
-            String::new()
-        };
-        format!("{ability:?} {:.1}x{damage}", uses as f32 / runs)
+        let ended = |outcome: Ended| ledger.ended.get(&(ability, outcome)).copied().unwrap_or(0) as f32 / runs;
+        let counts: Vec<String> = [("landed", Ended::Landed), ("blocked", Ended::Blocked), ("missed", Ended::Missed), ("interrupted", Ended::Interrupted)]
+            .into_iter()
+            .filter(|&(_, outcome)| ended(outcome) > 0.0)
+            .map(|(name, outcome)| format!("{name} {:.1}", ended(outcome)))
+            .collect();
+        let dealt = ledger.landed.get(&ability).copied().unwrap_or(0.0);
+        let damage = if dealt > 0.0 { format!(" dealt {:.0}", dealt / runs) } else { String::new() };
+        let counts = if counts.is_empty() { String::new() } else { format!(" ({})", counts.join(", ")) };
+        format!("{ability:?} {:.1}x{damage}{counts}", uses as f32 / runs)
     }).collect();
     let alive = ledger.alive.max(f32::EPSILON);
     let share = |seconds: f32| 100.0 * seconds / alive;
-    let each = |count: u32| count as f32 / runs;
-    format!("{} || recovering {:.0}% held {:.0}% lost to slow {:.0}% beyond reach {:.0}% past faces {:.0}% fatigue {:.0}% || commitments: combo strikes {:.1} early combos {:.1} crit landed {:.0} flanked {:.1} of {:.1} strikes stacks {:.1} per skill strike through {:.1} per answer {:.1}",
+    format!("{} || activating {:.0}% held {:.0}% lost to slow {:.0}% beyond reach {:.0}% past faces {:.0}% endurance {:.0}% priced out {:.0}%",
         abilities.join(" | "),
-        share(ledger.recovering), share(ledger.held), share(ledger.lost_to_slow), share(ledger.beyond_reach), share(ledger.past_faces), share(ledger.fatigue),
-        each(ledger.combo_strikes), each(ledger.early_combos), ledger.crit_landed / runs, each(ledger.flanked), each(ledger.strikes), ledger.patient_stacks as f32 / ledger.skill_strikes.max(1) as f32, each(ledger.through), ledger.per_answer())
+        share(ledger.activating), share(ledger.held), share(ledger.lost_to_slow), share(ledger.beyond_reach), share(ledger.past_faces), share(ledger.endurance), share(ledger.priced_out))
 }
 
 #[cfg(test)]
@@ -901,6 +865,47 @@ mod tests {
     fn fingerprint(rows: &[Pairing]) -> Vec<u32> {
         rows.iter().flat_map(|row| [row.a_wins, row.b_wins, row.capped, row.median, row.left, row.edge,
             row.a_ledger.landed_total(), row.b_ledger.landed_total(), row.a_ledger.alive, row.b_ledger.alive]).map(f32::to_bits).collect()
+    }
+
+    /// A Berserker v Defender pairing at the target on every part: even,
+    /// 40 s, every skill of both bars used and landed, a fifth of the
+    /// strikes answered, half the damage from skills
+    fn on_target() -> Pairing {
+        let side = |archetype: EnemyArchetype| {
+            let mut ledger = Ledger::default();
+            ledger.landed.insert(AbilityType::AutoAttack, 500.0);
+            for ability in archetype.bar() {
+                ledger.used.insert(ability, 100);
+                ledger.ended.insert((ability, Ended::Landed), 80);
+                ledger.ended.insert((ability, Ended::Blocked), 20);
+                ledger.landed.insert(ability, 512.0 / archetype.bar().len() as f32);
+            }
+            ledger
+        };
+        let (a, b) = (EnemyArchetype::Berserker, EnemyArchetype::Defender);
+        Pairing { a, b, a_wins: 50.0, b_wins: 50.0, capped: 0.0, median: 40.0, left: 20.0, edge: 0.0, a_ledger: side(a), b_ledger: side(b), runs: 10.0 }
+    }
+
+    #[test]
+    fn a_matrix_worse_on_one_part_stands_further_by_that_part() {
+        assert_eq!(Distance::of(&[on_target()]).total(), 0.0, "the target stands nowhere from itself");
+        let worse: [(&str, fn(&mut Pairing)); 8] = [
+            ("parity", |row| row.edge = -30.0),
+            ("length", |row| row.median = 80.0),
+            ("length", |row| row.median = 12.0),
+            ("capped", |row| row.capped = 25.0),
+            ("skills", |row| { row.a_ledger.landed.insert(AbilityType::AutoAttack, 5000.0); }),
+            ("dead", |row| { row.a_ledger.used.insert(AbilityType::Clash, 3); }),
+            ("dead", |row| { row.a_ledger.ended.insert((AbilityType::Frenzy, Ended::Landed), 10); }),
+            ("answers", |row| { row.b_ledger.ended.insert((AbilityType::Defy, Ended::Missed), 400); }),
+        ];
+        for (name, worsen) in worse {
+            let mut row = on_target();
+            worsen(&mut row);
+            let distance = Distance::of(&[row]);
+            let moved: Vec<&str> = distance.0.iter().filter(|(_, part)| *part > 0.0).map(|&(part, _)| part).collect();
+            assert_eq!(moved, [name], "{distance}");
+        }
     }
 
     #[test]

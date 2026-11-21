@@ -1,11 +1,11 @@
 //! The target frames: what the viewed actor has targeted, a hostile and an
 //! ally, side by side in the top-right corner. Each shows its target's
-//! level, name, triumvirate and health, and stays on the last one targeted while that one stands in the world, so
+//! level, name, triumvirate, health and the skill it is activating, and stays on the last one targeted while that one stands in the world, so
 //! turning away does not blank it.
 
 use bevy::prelude::*;
 
-use common_bevy::components::{ally_target::AllyTarget, entity_type::*, resources::*, target::Target, ActorAttributes};
+use common_bevy::components::{activation::Activating, ally_target::AllyTarget, entity_type::*, resources::*, target::Target, ActorAttributes};
 
 /// Which of the viewed actor's targets a frame shows. Every part of a frame
 /// carries its lane, and the two differ only in what `Lane` answers.
@@ -25,6 +25,7 @@ pub enum Part {
     Triumvirate,
     HealthBar,
     HealthText,
+    Activating,
     LevelHex,
     LevelText,
 }
@@ -221,6 +222,15 @@ pub fn setup(
                 ));
             });
 
+            // The skill it is activating; its line's room is kept with
+            // none, so the frame holds its height
+            parent.spawn((
+                Text::new(""),
+                TextFont { font_size: FontSize::Px(11.0), ..default() },
+                TextColor(Color::srgb(0.90, 0.76, 0.20)),
+                Node { min_height: Val::Px(14.), ..default() },
+                (lane, Part::Activating),
+            ));
         });
     }
 }
@@ -230,7 +240,7 @@ pub fn setup(
 pub fn update(
     mut parts: Query<(&Lane, &Part, &mut Visibility, Option<&mut Text>, Option<&mut TextColor>, Option<&mut Node>, Option<&mut BackgroundColor>)>,
     viewed: Query<(&Health, &Target, Option<&AllyTarget>, Option<&ActorAttributes>), With<crate::components::Viewed>>,
-    targets: Query<(&EntityType, &Health, Option<&ActorAttributes>)>,
+    targets: Query<(&EntityType, &Health, Option<&ActorAttributes>, Option<&Activating>)>,
 ) {
     let Ok((own_health, target, ally, own_attrs)) = viewed.single() else {
         return;
@@ -242,7 +252,7 @@ pub fn update(
     });
 
     for (lane, part, mut visibility, text, color, node, background) in &mut parts {
-        let Some((typ, health, attrs)) = shown[*lane as usize] else {
+        let Some((typ, health, attrs, activating)) = shown[*lane as usize] else {
             // A frame hides its parts with it
             if *part == Part::Frame {
                 *visibility = Visibility::Hidden;
@@ -281,6 +291,15 @@ pub fn update(
             Part::HealthText => {
                 if let Some(mut text) = text {
                     **text = format!("{:.0}/{:.0}", health.state, health.max);
+                }
+            }
+            Part::Activating => {
+                if let Some(mut text) = text {
+                    let now = activating.and_then(|activating| activating.0)
+                        .map_or(String::new(), |activation| crate::systems::skill_text::name(activation.ability));
+                    if text.0 != now {
+                        text.0 = now;
+                    }
                 }
             }
             // The level its attributes give it, coloured by the gap to the viewed actor's own

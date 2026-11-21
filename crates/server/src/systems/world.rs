@@ -30,6 +30,7 @@ pub struct Synced {
     combat_state: Option<&'static CombatState>,
     equipment: Option<&'static Equipment>,
     status: Option<&'static status::Status>,
+    activating: Option<&'static activation::Activating>,
 }
 
 impl SyncedItem<'_, '_> {
@@ -48,13 +49,15 @@ impl SyncedItem<'_, '_> {
             self.combat_state,
             self.equipment,
             self.status,
+            self.activating.and_then(|activating| activating.0),
         )
     }
 }
 
 /// The `Do`s that put `ent` on a client: its `Spawn`, then an
-/// `Incremental` for each component it has. The `Spawn` comes first: a
-/// client attaches a component only to an entity it holds.
+/// `Incremental` for each component it has, then the skill it is part way
+/// through activating, whole as it was first told. The `Spawn` comes
+/// first: a client attaches a component only to an entity it holds.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_actor_spawn_events(
     ent: Entity,
@@ -69,6 +72,7 @@ pub fn generate_actor_spawn_events(
     combat_state: Option<&CombatState>,
     equipment: Option<&Equipment>,
     status: Option<&status::Status>,
+    activation: Option<activation::Activation>,
 ) -> Vec<Do> {
     let mut events = Vec::new();
 
@@ -105,9 +109,13 @@ pub fn generate_actor_spawn_events(
         events.push(Do { event: Event::Incremental { ent, component: Component::Equipment(*e) }});
     }
 
-    // What holds it now, a lurk among them
+    // What holds it now, a lurk, a block and a stance among them
     if let Some(s) = status {
         events.push(Do { event: Event::Incremental { ent, component: Component::Status(*s) }});
+    }
+
+    if let Some(activation) = activation {
+        events.push(Do { event: Event::Activate { ent, activation }});
     }
 
     events
@@ -187,5 +195,33 @@ pub fn do_spawn(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_client_meeting_an_actor_late_learns_what_it_is_activating() {
+        let ent = Entity::from_raw_u32(7).unwrap();
+        let activation = activation::Activation {
+            ability: AbilityType::Overpower,
+            target: None,
+            began: common_bevy::Moment::from_millis(500),
+            length: std::time::Duration::from_secs(1),
+        };
+        let met = |activation| generate_actor_spawn_events(
+            ent, EntityType::default(), Qrz::default(), None, None, None, None, None, None, None, None,
+            Some(&status::Status::default()), activation,
+        );
+
+        let events = met(Some(activation));
+        assert!(matches!(events.first(), Some(Do { event: Event::Spawn { .. } })), "the actor comes before anything of it");
+        assert!(
+            matches!(events.last(), Some(Do { event: Event::Activate { ent: told, activation: whole } }) if *told == ent && *whole == activation),
+            "its skill is told as it began, so the client counts from the same moment",
+        );
+        assert!(!met(None).iter().any(|told| matches!(told.event, Event::Activate { .. })), "one activating nothing tells of none");
     }
 }

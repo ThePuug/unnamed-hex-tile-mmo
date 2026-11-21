@@ -21,7 +21,6 @@ pub mod focus;
 pub mod gathering;
 pub mod ghost;
 pub mod help;
-pub mod highway;
 pub mod hiding;
 pub mod input;
 pub mod keycap;
@@ -29,7 +28,6 @@ pub mod loot_window;
 pub mod mount;
 pub mod movement;
 pub mod renet;
-pub mod resolved_threats; // Resolved threats stack below threat queue
 pub mod resource_bars;
 pub mod rune;
 pub mod rope;
@@ -37,7 +35,6 @@ pub mod struck;
 pub mod target_frame;
 pub mod target_indicator;
 pub mod targeting;
-pub mod threat_icons;
 pub mod ui;
 pub mod world;
 

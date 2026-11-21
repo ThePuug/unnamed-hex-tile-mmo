@@ -1,8 +1,7 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{Actor, ActorAttributes, Attribute, Pair, Unlock},
-    systems::combat::damage::contest_factor,
+    components::{Actor, ActorAttributes, Attribute, Pair},
 };
 
 use crate::systems::{
@@ -100,25 +99,12 @@ pub enum AxisMarker {
     InstinctResolve,
 }
 
-/// A stat a pair's attributes give: its absolute, which both share, and
-/// each attribute's contest and commitment
+/// A stat a pair's attributes give together: its absolute
 #[derive(Clone, Copy)]
 pub enum Stat {
     Force,
     Constitution,
     Endurance,
-    Impact,
-    Tempo,
-    Fitness,
-    Efficiency,
-    Reflex,
-    Focus,
-    Ferocity,
-    Grace,
-    Intimidation,
-    Preparation,
-    Patience,
-    Awareness,
 }
 
 impl Stat {
@@ -127,18 +113,6 @@ impl Stat {
             Stat::Force => "Force",
             Stat::Constitution => "Constitution",
             Stat::Endurance => "Endurance",
-            Stat::Impact => "Impact",
-            Stat::Tempo => "Tempo",
-            Stat::Fitness => "Fitness",
-            Stat::Efficiency => "Efficiency",
-            Stat::Reflex => "Reflex",
-            Stat::Focus => "Focus",
-            Stat::Ferocity => "Ferocity",
-            Stat::Grace => "Grace",
-            Stat::Intimidation => "Intimidation",
-            Stat::Preparation => "Preparation",
-            Stat::Patience => "Patience",
-            Stat::Awareness => "Awareness",
         }
     }
 }
@@ -196,16 +170,14 @@ impl CharacterPanelState {
 
 pub const KEYCODE_CHARACTER_PANEL: KeyCode = KeyCode::KeyC;
 
-/// A pair's stats beside its sliders: a column to each attribute, its name
-/// over the three stats it gives, absolute, contest and commitment; each
-/// cell its stat's name and value, and what it gives while the pointer
-/// rests on it
+/// A pair's absolute beside its sliders: its name and value, and what it
+/// gives while the pointer rests on it
 macro_rules! create_stat_section {
-    ($parent:expr, $(($name:expr, $color:expr, [$($stat:expr),+])),+) => {
+    ($parent:expr, $stat:expr, $color:expr) => {
         $parent.spawn((
             Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(16.),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
                 width: Val::Px(375.),
                 padding: UiRect::all(Val::Px(10.)),
                 border_radius: BorderRadius::all(Val::Px(4.)),
@@ -214,18 +186,7 @@ macro_rules! create_stat_section {
             BackgroundColor(Color::srgba(0.15, 0.15, 0.15, 0.8)),
         ))
         .with_children(|section| {
-            $(
-                section.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(4.), flex_grow: 1.0, flex_basis: Val::Px(0.), ..default() })
-                    .with_children(|column| {
-                        column.spawn((
-                            Text::new($name),
-                            TextFont { font_size: FontSize::Px(14.0), ..default() },
-                            TextColor($color),
-                            Node { margin: UiRect::bottom(Val::Px(2.)), ..default() },
-                        ));
-                        $(create_stat_cell!(column, $stat, $color);)+
-                    });
-            )+
+            create_stat_cell!(section, $stat, $color);
         });
     };
 }
@@ -511,9 +472,9 @@ pub fn setup(
     commands
         .entity(attributes)
         .with_children(|parent| {
-            // One row to a pair: its sliders, and the stats its two
-            // attributes give, each saying what it gives while the pointer
-            // rests on it.
+            // One row to a pair: its sliders, and the absolute its two
+            // attributes give together, saying what it gives while the
+            // pointer rests on it.
             parent.spawn((
                 Node {
                     flex_direction: FlexDirection::Column,
@@ -530,9 +491,7 @@ pub fn setup(
                         Color::srgb(0.9, 0.5, 0.5), Color::srgb(0.9, 0.9, 0.5),
                         AttributeTitle::MightAgility, AttributeBar::MightAgility, AxisMarker::MightAgility,
                         LeftCurrentValue::MightAgility, RightCurrentValue::MightAgility);
-                    create_stat_section!(pair,
-                        ("Might", Color::srgb(0.9, 0.5, 0.5), [Stat::Force, Stat::Impact, Stat::Ferocity]),
-                        ("Agility", Color::srgb(0.9, 0.9, 0.5), [Stat::Force, Stat::Tempo, Stat::Grace]));
+                    create_stat_section!(pair, Stat::Force, Color::srgb(0.9, 0.7, 0.5));
                 });
 
                 // PHYSIQUE ↔ DISCIPLINE
@@ -541,9 +500,7 @@ pub fn setup(
                         Color::srgb(0.5, 0.8, 0.5), Color::srgb(0.5, 0.7, 0.9),
                         AttributeTitle::PhysiqueDiscipline, AttributeBar::PhysiqueDiscipline, AxisMarker::PhysiqueDiscipline,
                         LeftCurrentValue::PhysiqueDiscipline, RightCurrentValue::PhysiqueDiscipline);
-                    create_stat_section!(pair,
-                        ("Physique", Color::srgb(0.5, 0.8, 0.5), [Stat::Constitution, Stat::Fitness, Stat::Intimidation]),
-                        ("Discipline", Color::srgb(0.5, 0.7, 0.9), [Stat::Constitution, Stat::Efficiency, Stat::Preparation]));
+                    create_stat_section!(pair, Stat::Constitution, Color::srgb(0.5, 0.75, 0.7));
                 });
 
                 // INSTINCT ↔ RESOLVE
@@ -552,9 +509,7 @@ pub fn setup(
                         Color::srgb(0.7, 0.5, 0.9), Color::srgb(0.9, 0.6, 0.3),
                         AttributeTitle::InstinctResolve, AttributeBar::InstinctResolve, AxisMarker::InstinctResolve,
                         LeftCurrentValue::InstinctResolve, RightCurrentValue::InstinctResolve);
-                    create_stat_section!(pair,
-                        ("Instinct", Color::srgb(0.7, 0.5, 0.9), [Stat::Endurance, Stat::Reflex, Stat::Patience]),
-                        ("Resolve", Color::srgb(0.9, 0.6, 0.3), [Stat::Endurance, Stat::Focus, Stat::Awareness]));
+                    create_stat_section!(pair, Stat::Endurance, Color::srgb(0.8, 0.55, 0.6));
                 });
             });
 
@@ -849,90 +804,22 @@ pub fn update_attributes(
     }
 }
 
-/// What `stat` shows in its cell: the pair's points for its absolute, the
-/// attribute's value for a contest, a commitment's tier
+/// What `stat` shows in its cell: its pair's points
 fn shown(attrs: &ActorAttributes, stat: Stat) -> String {
-    use Stat::*;
     match stat {
-        Force => attrs.pair_points(Attribute::Might).to_string(),
-        Constitution => attrs.pair_points(Attribute::Physique).to_string(),
-        Endurance => attrs.pair_points(Attribute::Instinct).to_string(),
-        Impact => attrs.might().to_string(),
-        Tempo => attrs.agility().to_string(),
-        Fitness => attrs.physique().to_string(),
-        Efficiency => attrs.discipline().to_string(),
-        Reflex => attrs.instinct().to_string(),
-        Focus => attrs.resolve().to_string(),
-        Ferocity => format!("T{}", attrs.ferocity().index()),
-        Grace => format!("T{}", attrs.grace().index()),
-        Intimidation => format!("T{}", attrs.intimidation().index()),
-        Preparation => format!("T{}", attrs.preparation().index()),
-        Patience => format!("T{}", attrs.patience().index()),
-        Awareness => format!("T{}", attrs.awareness().index()),
+        Stat::Force => attrs.pair_points(Attribute::Might).to_string(),
+        Stat::Constitution => attrs.pair_points(Attribute::Physique).to_string(),
+        Stat::Endurance => attrs.pair_points(Attribute::Instinct).to_string(),
     }
 }
 
-/// What `stat` gives an actor with `attrs`, by the numbers the fight
-/// reads; a contest as it stands against a foe of its level with none of
-/// what contests it
+/// What `stat` gives an actor with `attrs`, by the numbers the fight reads
 fn describe(attrs: &ActorAttributes, stat: Stat, tuning: &Tuning) -> String {
     let percent = |share: f32| format!("{:.0}%", share * 100.0);
-    let less = |discount: f32| if discount > 0.0 { format!(", {} less", percent(discount)) } else { String::new() };
-    let contest = |stat: u16| contest_factor(tuning, stat, 0, 0.0);
-    let against = "\nAgainst a foe of its level with none of what contests it.";
     match stat {
         Stat::Force => format!("Force, the absolute of Might and Agility together: its auto-attacks strike {} harder.", percent(attrs.auto_damage(tuning) / (attrs.base_potency(tuning) * tuning.auto_damage) - 1.0)),
         Stat::Constitution => format!("Constitution, the absolute of Physique and Discipline together: {} more health.", percent(attrs.constitution(tuning) / tuning.base_health - 1.0)),
         Stat::Endurance => format!("Endurance, the absolute of Instinct and Resolve together: an endurance pool {} deeper.", percent(attrs.endurance(tuning) - 1.0)),
-        Stat::Impact => format!("Impact, Might's contest, against a foe's Efficiency: each blow pushes its recovery back {}.{against}", percent(tuning.pushback_share * contest(attrs.impact()))),
-        Stat::Tempo => format!("Tempo, Agility's contest, against a foe's Reflex: its auto-attacks come {} sooner.{against}", percent(1.0 - attrs.cadence_interval(tuning, None).as_secs_f32() / tuning.base_interval)),
-        Stat::Fitness => format!("Fitness, Physique's contest, against a foe's Focus: its recovery runs {} shorter, and a foe's Focus crits it less.{against}", percent(tuning.fitness_share * contest(attrs.fitness()))),
-        Stat::Efficiency => format!("Efficiency, Discipline's contest, against a foe's Impact: its combos unlock {} sooner.{against}", percent(tuning.combo_share * contest(attrs.efficiency()))),
-        Stat::Reflex => format!("Reflex, Instinct's contest, against a foe's Tempo: a threat on it waits {:.1}s to land, time to act and answer in.{against}", tuning.reaction_window * (1.0 + tuning.window_bonus * contest(attrs.reflex()))),
-        Stat::Focus => format!("Focus, Resolve's contest, against a foe's Fitness: its blows crit {} of the time.{against}", percent(tuning.crit_chance * contest(attrs.focus()))),
-        Stat::Ferocity => {
-            let third = attrs.ferocity().at(Unlock::Capstone, tuning.ferocity_third)
-                .map_or(String::new(), |third| format!(" The third owes {} less.", percent(third)));
-            format!("Ferocity, Might's commitment: up to {} combos in a chain fire before they unlock, each owing the chain the time it skipped{}.{third}",
-                attrs.early_combos(), less(attrs.early_discount(tuning, Attribute::Might, 0)))
-        }
-        Stat::Grace => {
-            let stride = attrs.flank_stride(tuning)
-                .map_or(String::new(), |pace| format!(" A strike from a foe's flank breaks its stride, holding it to {} of its speed for a swing.", percent(pace)));
-            format!("Grace, Agility's commitment: its strikes land {} harder from a foe's flank, and it strikes within {:.0} degrees either side of its heading.{stride}",
-                percent(attrs.flank(tuning)), attrs.arc(tuning))
-        }
-        Stat::Intimidation => match attrs.intimidation_pace(tuning) {
-            None => "Intimidation, Physique's commitment: none yet. Its first tier slows foes in its reach.".to_string(),
-            Some(pace) => {
-                let toll = attrs.intimidation_toll(tuning);
-                let toll = if toll > 0.0 { format!(", and each skill they use there costs {} more", percent(toll)) } else { String::new() };
-                let pin = attrs.intimidation_zone(tuning)
-                    .map_or(String::new(), |zone| format!(" They use no skill that moves them there, and its zone reaches {zone} tiles past its reach."));
-                format!("Intimidation, Physique's commitment: foes in its reach move at {} of their speed{toll}.{pin}", percent(pace))
-            }
-        },
-        Stat::Preparation => {
-            let slip = attrs.slip(tuning)
-                .map_or(String::new(), |tiles| format!(" Each carries it {tiles} tiles away from what it answered."));
-            format!("Preparation, Discipline's commitment: up to {} reactions in a chain fire early after a strike, a Leap clear among them, each owing the chain the time it skipped{}.{slip}",
-                attrs.early_reactions(), less(attrs.early_discount(tuning, Attribute::Discipline, 0)))
-        }
-        Stat::Patience => {
-            let power = attrs.patience_power(tuning);
-            let power = if power > 0.0 { format!(", and land {} harder", percent(power)) } else { String::new() };
-            let opening = attrs.patience_opening(tuning)
-                .map_or(String::new(), |stacks| format!(" At {stacks} stacks its next skill on that foe crits for certain, spending them."));
-            format!("Patience, Instinct's commitment: each attack made at it overcommits its attacker, and its skills crit {} likelier for each stack a foe carries{power}.{opening}",
-                percent(attrs.patience_crit(tuning)))
-        }
-        Stat::Awareness => {
-            let refund = attrs.awareness_refund(tuning);
-            let refund = if refund > 0.0 { format!(" Each threat one answer takes past the first pays back {} of its price.", percent(refund)) } else { String::new() };
-            let snap = attrs.awareness_snap(tuning)
-                .map_or(String::new(), |snap| format!(" Pressed up to {:.1}s further ahead, its band starts at the next threat.", snap.as_secs_f32()));
-            format!("Awareness, Resolve's commitment: a reaction takes every threat landing within {:.2}s of its press.{refund}{snap}", attrs.span(tuning).as_secs_f32())
-        }
     }
 }
 

@@ -1,15 +1,16 @@
 //! Ropes: a pull drawn from what pulls to whom it pulls. One rope stands
-//! for each threat in a queue that carries a pull toward its source
-//! (`QueuedThreat::drag`), where the source draws one: a rune, from its
-//! glyph, in its glyph's light. Unbuilt: a rope from an actor.
+//! for each foe a rune's pulse winds up on (the rune's `Event::Activate`,
+//! naming the foe), from the rune's glyph, in its glyph's light. Unbuilt:
+//! a rope from an actor.
 //!
 //! A rope is a child of its source, so it goes when its source does. Its
 //! shader lays it from one shared mesh (`shaders/rope.wesl`): a cord from
 //! the source to a loop round its target's `socket.tether`, the loop the
-//! size the rig declares there ([`Girth`]). It hangs slack while its
-//! threat waits, tightens as the threat lands, stays taut while its
-//! target slides in (`Displacing`) and lets go as the slide ends. A threat
-//! answered drops it, and so does one that lands and moves nothing.
+//! size the rig declares there ([`Girth`]). It hangs slack while the
+//! pulse winds up, tightens as the pulse lands (`Event::Resolved`), stays
+//! taut while its target slides in (`Displacing`) and lets go as the
+//! slide ends. A pulse that lets its foe go drops it, and so does one
+//! that lands and moves nothing.
 
 use std::{collections::HashSet, time::Duration};
 
@@ -25,17 +26,16 @@ use bevy_camera::visibility::NoFrustumCulling;
 use bevy_light::{NotShadowCaster, NotShadowReceiver};
 
 use common_bevy::{
-    components::{entity_type::EntityType, reaction_queue::ReactionQueue},
+    components::entity_type::EntityType,
+    message::{Do, Event as GameEvent, Outcome},
     moment::Moment,
 };
 
 use crate::{
     components::Displacing,
     plugins::cel::CelMaterial,
-    resources::EntityMap,
     systems::{
         actor::actor_name,
-        combat::Gone,
         equipment::{joints_of, rig, Worn},
     },
 };
@@ -69,6 +69,9 @@ const DROOP: f32 = 0.5;
 const SNAP: Duration = Duration::from_millis(80);
 const TAUT_WAIT: Duration = Duration::from_millis(400);
 const DROP: Duration = Duration::from_millis(350);
+/// How long past its pulse's end a slack rope waits to hear how the pulse
+/// ended before it falls away
+const UNHEARD: Duration = Duration::from_millis(500);
 
 pub type RopeMaterial = ExtendedMaterial<StandardMaterial, RopeExtension>;
 
@@ -180,23 +183,24 @@ pub fn rope_mesh() -> Mesh {
 /// Where a rope is in its pull
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Stage {
-    /// Its threat waits in its target's queue
+    /// Its pulse winds up
     Slack,
-    /// Its threat landed: tightening, then waiting on its target's slide
+    /// Its pulse landed: tightening, then waiting on its target's slide
     Taut { since: Moment },
     /// Its target slides toward its source
     Reeling,
-    /// Its threat was answered, or landed and moved nothing: falling away
+    /// Its pulse let the target go, or landed and moved nothing: falling
+    /// away
     Dropping { since: Moment },
 }
 
 impl Stage {
-    /// The stage after this one at `now`: its threat still `queued`, or
-    /// gone having `landed` (None where nothing is known of it going), its
+    /// The stage after this one at `now`: its pulse still `winding`, or
+    /// ended having `landed` (None where nothing is known of its end), its
     /// target `sliding`. None when the rope is done.
-    pub fn next(self, queued: bool, landed: Option<bool>, sliding: bool, now: Moment) -> Option<Stage> {
+    pub fn next(self, winding: bool, landed: Option<bool>, sliding: bool, now: Moment) -> Option<Stage> {
         match self {
-            Stage::Slack if queued => Some(Stage::Slack),
+            Stage::Slack if winding => Some(Stage::Slack),
             Stage::Slack => match landed {
                 Some(true) if sliding => Some(Stage::Reeling),
                 Some(true) => Some(Stage::Taut { since: now }),
@@ -252,16 +256,20 @@ pub fn shape(start: Vec3, girth: Girth, down: Vec3, scale: f32, tight: f32, fall
     }
 }
 
-/// One threat's rope: whom it pulls, the threat by its source as the
-/// server names it and when it was queued, the node it leaves from, its
-/// stage, and its target's tether once found.
+/// One rune's rope to one foe: what pulls and whom, the moment its pulse
+/// began on the server's clock, the moment on the client's it stops
+/// waiting on that pulse, whether the pulse landed once that is heard, its
+/// stage, and its two ends once found: the node it leaves from and its
+/// target's tether.
 #[derive(Component)]
 pub struct Rope {
-    target: Entity,
     source: Entity,
-    inserted_at: Moment,
-    from: Entity,
+    target: Entity,
+    began: Moment,
+    until: Moment,
+    landed: Option<bool>,
     stage: Stage,
+    from: Option<Entity>,
     tether: Option<Entity>,
 }
 
@@ -280,49 +288,79 @@ fn tint_under(
     })
 }
 
-/// Gives each threat carrying a pull toward a rune a rope from that rune,
-/// once the rune's glyph is drawn: lit in the glyph's colour, as light.
+/// Gives each foe a rune's pulse winds up on a rope from that rune, slack
+/// until the pulse ends, and takes how each pulse ended; a foe caught
+/// again keeps its rope, slack anew. A rope is lit in its glyph's colour,
+/// as light, once the rune's glyph is drawn.
 #[allow(clippy::too_many_arguments)]
 pub fn throw(
     mut commands: Commands,
+    mut reader: MessageReader<Do>,
     kit: Res<RopeKit>,
     mut materials: ResMut<Assets<RopeMaterial>>,
-    queues: Query<(Entity, &ReactionQueue)>,
-    ropes: Query<&Rope>,
-    l2r: Res<EntityMap>,
+    mut ropes: Query<(Entity, &mut Rope)>,
     types: Query<&EntityType>,
     children: Query<&Children>,
     names: Query<&Name>,
     (cel, cels, standard, standards): (Query<&MeshMaterial3d<CelMaterial>>, Res<Assets<CelMaterial>>, Query<&MeshMaterial3d<StandardMaterial>>, Res<Assets<StandardMaterial>>),
+    (server, time): (Res<crate::resources::Server>, Res<Time>),
 ) {
-    let thrown: HashSet<(Entity, Entity, Moment)> = ropes.iter().map(|rope| (rope.target, rope.source, rope.inserted_at)).collect();
-    for (target, queue) in &queues {
-        for threat in queue.threats.iter().filter(|threat| threat.drag > 0) {
-            if thrown.contains(&(target, threat.source, threat.inserted_at)) {
-                continue;
+    let now = Moment::ZERO + time.elapsed();
+    let game_now = server.now(time.elapsed().as_millis());
+    for message in reader.read() {
+        match message.event {
+            GameEvent::Activate { ent: source, activation } => {
+                let Some(target) = activation.target else { continue };
+                if !matches!(types.get(source), Ok(EntityType::Rune(_))) {
+                    continue;
+                }
+                let until = now + activation.left(game_now) + UNHEARD;
+                match ropes.iter_mut().find(|(_, rope)| (rope.source, rope.target) == (source, target)) {
+                    // A pulse told again, to a client that met its rune late
+                    Some((_, rope)) if rope.began == activation.began => {}
+                    Some((_, mut rope)) => {
+                        rope.began = activation.began;
+                        rope.until = until;
+                        rope.landed = None;
+                        rope.stage = Stage::Slack;
+                    }
+                    None => {
+                        commands.spawn((
+                            Rope { source, target, began: activation.began, until, landed: None, stage: Stage::Slack, from: None, tether: None },
+                            Transform::default(),
+                            Visibility::Hidden,
+                            ChildOf(source),
+                        ));
+                    }
+                }
             }
-            let Some(&source) = l2r.get_by_right(&threat.source) else { continue };
-            if !matches!(types.get(source), Ok(EntityType::Rune(_))) {
-                continue;
+            GameEvent::Resolved { ent: source, target: Some(target), outcome, .. } => {
+                if let Some((_, mut rope)) = ropes.iter_mut().find(|(_, rope)| (rope.source, rope.target) == (source, target)) {
+                    rope.landed = Some(outcome == Outcome::Landed);
+                }
             }
-            let Some(&from) = joints_of(source, &children, &names).get(FROM) else { continue };
-            let Some(tint) = tint_under(from, &children, &cel, &cels, &standard, &standards) else { continue };
-            let material = materials.add(RopeMaterial {
-                base: StandardMaterial { base_color: tint, unlit: true, ..default() },
-                extension: RopeExtension::default(),
-            });
-            commands.spawn((
-                Rope { target, source: threat.source, inserted_at: threat.inserted_at, from, stage: Stage::Slack, tether: None },
-                Mesh3d(kit.mesh.clone()),
-                MeshMaterial3d(material),
-                Transform::default(),
-                Visibility::Hidden,
-                NoFrustumCulling,
-                NotShadowCaster,
-                NotShadowReceiver,
-                ChildOf(source),
-            ));
+            _ => {}
         }
+    }
+
+    for (ent, mut rope) in &mut ropes {
+        if rope.from.is_some() {
+            continue;
+        }
+        let Some(&from) = joints_of(rope.source, &children, &names).get(FROM) else { continue };
+        let Some(tint) = tint_under(from, &children, &cel, &cels, &standard, &standards) else { continue };
+        let material = materials.add(RopeMaterial {
+            base: StandardMaterial { base_color: tint, unlit: true, ..default() },
+            extension: RopeExtension::default(),
+        });
+        rope.from = Some(from);
+        commands.entity(ent).insert((
+            Mesh3d(kit.mesh.clone()),
+            MeshMaterial3d(material),
+            NoFrustumCulling,
+            NotShadowCaster,
+            NotShadowReceiver,
+        ));
     }
 }
 
@@ -334,9 +372,7 @@ pub fn throw(
 pub fn draw(
     mut commands: Commands,
     time: Res<Time>,
-    gone: Res<Gone>,
-    mut ropes: Query<(Entity, &mut Rope, &GlobalTransform, &MeshMaterial3d<RopeMaterial>, &mut Visibility)>,
-    queues: Query<&ReactionQueue>,
+    mut ropes: Query<(Entity, &mut Rope, &GlobalTransform, Option<&MeshMaterial3d<RopeMaterial>>, &mut Visibility)>,
     sliding: Query<(), With<Displacing>>,
     nodes: Query<&GlobalTransform>,
     tethers: Query<(&GlobalTransform, &Girth)>,
@@ -346,13 +382,12 @@ pub fn draw(
     let now = Moment::ZERO + time.elapsed();
     let worn: HashSet<Entity> = worn.iter().collect();
     for (ent, mut rope, frame, material, mut visibility) in &mut ropes {
-        let Ok(queue) = queues.get(rope.target) else {
+        if !nodes.contains(rope.target) {
             commands.entity(ent).despawn();
             continue;
-        };
-        let queued = queue.threats.iter().any(|threat| (threat.source, threat.inserted_at) == (rope.source, rope.inserted_at));
-        let landed = gone.landed(rope.target, rope.source, rope.inserted_at);
-        let Some(stage) = rope.stage.next(queued, landed, sliding.contains(rope.target), now) else {
+        }
+        let winding = rope.landed.is_none() && now < rope.until;
+        let Some(stage) = rope.stage.next(winding, rope.landed, sliding.contains(rope.target), now) else {
             commands.entity(ent).despawn();
             continue;
         };
@@ -364,7 +399,12 @@ pub fn draw(
                 .and_then(|own| joints_of(own, &children, &names).get(TETHER).copied())
                 .filter(|&node| tethers.contains(node));
         }
-        let (Some((socket, girth)), Ok(from)) = (rope.tether.and_then(|node| tethers.get(node).ok()), nodes.get(rope.from)) else {
+        let ends = (
+            rope.tether.and_then(|node| tethers.get(node).ok()),
+            rope.from.and_then(|node| nodes.get(node).ok()),
+            material.and_then(|material| materials.get_mut(&material.0)),
+        );
+        let (Some((socket, girth)), Some(from), Some(mut material)) = ends else {
             *visibility = Visibility::Hidden;
             continue;
         };
@@ -377,9 +417,7 @@ pub fn draw(
         };
         let down = local.transform_vector3(Vec3::NEG_Y).normalize_or(Vec3::NEG_Y);
         let start = local.transform_point3(from.translation());
-        if let Some(mut material) = materials.get_mut(&material.0) {
-            material.extension.shape = shape(start, girth, down, scale, stage.tight(now), stage.fallen(now));
-        }
+        material.extension.shape = shape(start, girth, down, scale, stage.tight(now), stage.fallen(now));
         *visibility = Visibility::Inherited;
     }
 }
@@ -395,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn a_rope_hangs_slack_while_its_threat_waits_and_tightens_as_it_lands() {
+    fn a_rope_hangs_slack_while_its_pulse_winds_up_and_tightens_as_it_lands() {
         assert_eq!(Stage::Slack.next(true, None, false, AT), Some(Stage::Slack));
         assert_eq!(Stage::Slack.next(false, Some(true), false, AT), Some(Stage::Taut { since: AT }));
         assert_eq!(Stage::Slack.next(false, Some(true), true, AT), Some(Stage::Reeling), "its slide come with it");
@@ -412,10 +450,10 @@ mod tests {
     }
 
     #[test]
-    fn an_answered_rope_falls_away() {
+    fn a_rope_whose_pulse_let_go_falls_away() {
         let dropping = Stage::Slack.next(false, Some(false), false, AT);
         assert_eq!(dropping, Some(Stage::Dropping { since: AT }));
-        assert_eq!(Stage::Slack.next(false, None, false, AT), dropping, "and one whose threat went unseen");
+        assert_eq!(Stage::Slack.next(false, None, false, AT), dropping, "and one whose pulse ended unheard");
         assert_eq!(dropping.unwrap().next(false, Some(false), false, AT + DROP), None);
     }
 

@@ -47,7 +47,6 @@ pub fn update_keybits(
     mut writer: MessageWriter<Try>,
     mut buffers: ResMut<InputQueues>,
     dt: Res<Time>,
-    server: Res<crate::resources::Server>,
     mut look: ResMut<crate::systems::camera::Look>,
     mut looked_steps: Local<u8>,
 ) {
@@ -66,15 +65,13 @@ pub fn update_keybits(
     let mut keybits = KeyBits::default();
     if !modal {
         // The player's kit: each key's ability, used on the hostile it
-        // faces, stamped with the game time it was pressed at, where the
-        // server judges a reaction's band. A skill picked in the skills tab
-        // is placed by the keys instead (`skills_panel::place`).
-        let at = server.now(dt.elapsed().as_millis());
+        // faces. A skill picked in the skills tab is placed by the keys
+        // instead (`skills_panel::place`).
         let attrs = attrs.copied().unwrap_or_default();
         let kit = held.copied().unwrap_or_default().0.into_iter().filter(|_| panel.placing().is_none());
         for (key, ability) in crate::systems::action_bar::KEYS.into_iter().zip(kit) {
             if keys.pressed(key, crate::systems::skill_text::describe(ability, &attrs, &tuning)) {
-                writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity, at, arrived: Default::default() }});
+                writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity }});
             }
         }
 

@@ -47,7 +47,11 @@ pub fn dismount(
 ) {
     for message in reader.read() {
         let ent = match message.event {
-            Event::UseAbility { ent, .. } | Event::Activity { ent, activity: Some(_) } => ent,
+            // A skill as it starts and a swing as it lands; a wound's tick
+            // names its striker long after the blow
+            Event::Activate { ent, .. }
+            | Event::Resolved { ent, dot: false, .. }
+            | Event::Activity { ent, activity: Some(_) } => ent,
             Event::Incremental { ent, component: Component::CombatState(CombatState { in_combat: true, .. }) } => ent,
             _ => continue,
         };

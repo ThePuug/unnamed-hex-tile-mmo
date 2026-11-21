@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use crate::moment::Moment;
-use crate::tuning::Tuning;
 
 /// Health, as the server holds it and sends it
 /// - state: what the actor has now
@@ -38,8 +37,8 @@ impl Health {
 }
 
 /// Endurance, as the server holds it and sends it: what an actor spends on
-/// every skill and reaction. It refuses nothing; spent, it tires the actor
-/// ([`Endurance::fatigue`]). It refills steadily, in combat or out
+/// every skill, as it starts. A skill that costs more than its user holds
+/// is refused. It refills steadily, in combat or out
 /// (`resources::regenerate_resources`).
 #[derive(Clone, Component, Copy, Debug, Deserialize, Serialize)]
 pub struct Endurance {
@@ -56,23 +55,6 @@ impl Endurance {
     /// Resizes the pool to `max`, as full as it was
     pub fn resize(&mut self, max: f32) {
         *self = Self { state: resized(self.state, self.max, max), max };
-    }
-
-    /// How tired the actor is, 0 with the pool full to 1 empty: the share
-    /// spent raised to `Tuning::fatigue_bend`, so it stays light while the
-    /// pool holds and bites as it empties. Fatigue lengthens the actor's
-    /// recoveries and shortens the windows of threats against it.
-    pub fn fatigue(&self, tuning: &Tuning) -> f32 {
-        if self.max <= 0.0 {
-            return 0.0;
-        }
-        let spent = (1.0 - self.state / self.max).clamp(0.0, 1.0);
-        spent.powf(tuning.fatigue_bend)
-    }
-
-    /// The fatigue of an actor with `endurance`; none where it has no pool
-    pub fn fatigue_of(tuning: &Tuning, endurance: Option<&Endurance>) -> f32 {
-        endurance.map_or(0.0, |endurance| endurance.fatigue(tuning))
     }
 }
 

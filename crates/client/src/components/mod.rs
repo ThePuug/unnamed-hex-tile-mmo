@@ -39,7 +39,7 @@ pub enum Info {
     DistanceIndicator,  // Shows distance from haven
 }
 
-/// The actor the view follows: the camera, the reaction queue and the
+/// The actor the view follows: the camera, the skill bar and the
 /// resource bars read it. The local player, unless a recording views a
 /// fighter it staged.
 #[derive(Component)]
@@ -68,40 +68,33 @@ pub struct FloatingText {
     pub velocity: f32,
 }
 
-/// A bar drawn over a target in the world, its lane's
-/// (`systems::target_frame::Lane`): what it measures, and the fill it
-/// shows now, which eases toward the measure.
+/// The health bar drawn over a target in the world, its lane's
+/// (`systems::target_frame::Lane`): the fill it shows now, which eases
+/// toward the target's health.
 #[derive(Component)]
 pub struct WorldBar {
-    pub measure: Measure,
     /// Fill shown, 0.0 to 1.0
     pub current_fill: f32,
-}
-
-/// What a [`WorldBar`] measures of its target
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Measure {
-    Health,
-    /// How far through its recovery the target is, drawn flush under its health
-    Recovery,
 }
 
 /// The part of a [`WorldBar`] whose width is its fill
 #[derive(Component)]
 pub struct WorldBarFill;
 
-/// Resolved threat entry - fades out after showing damage resolution
+/// A bar showing a skill under way, its name and how far through it
+/// stands: over the actor it names, or with none the viewed actor's own,
+/// above its skill bar.
 #[derive(Component)]
-pub struct ResolvedThreatEntry {
-    pub spawn_time: Moment,
-    pub lifetime: f32,  // 4.0 seconds
-    /// Its colour: a blow's by severity, damage over time's its own
-    pub rgb: (f32, f32, f32),
-}
+pub struct ActivationBar(pub Option<Entity>);
 
-/// Marker for the resolved threats stack, beside the highway's hit line
+/// The part of an [`ActivationBar`] whose width is how far through the
+/// skill stands
 #[derive(Component)]
-pub struct ResolvedThreatsContainer;
+pub struct ActivationFill;
+
+/// The part of an [`ActivationBar`] that names the skill
+#[derive(Component)]
+pub struct ActivationName;
 
 /// Marker for combat log panel
 #[derive(Component)]

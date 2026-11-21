@@ -1,10 +1,9 @@
 use bevy::prelude::*;
 
 use common_bevy::{
-    components::{Actor, behaviour::Side, recovery::GlobalRecovery, Loc, heading::Heading, entity_type::EntityType, loadout::Loadout},
+    components::{activation::Recharges, entity_type::EntityType, loadout::Loadout, resources::Endurance, target::Target, Actor, ActorAttributes, AttackRange, Loc},
     message::AbilityType,
-    plugins::nntree::NNTree,
-    systems::targeting::select_target,
+    moment::Moment,
 };
 use common_bevy::tuning::Tuning;
 
@@ -26,11 +25,8 @@ pub struct SlotIcon;
 #[derive(Component)]
 pub struct SlotKeybind;
 
-/// Marker for the glow on a slot whose ability is offered as a combo
-#[derive(Component)]
-pub struct ComboGlow;
-
-/// Marker for cooldown overlay (dark rect that shrinks as recovery depletes)
+/// The shade over the part of a slot its recharge has yet to light: hung
+/// from the top, so the slot fills from the bottom as the recharge runs
 #[derive(Component)]
 pub struct CooldownOverlay;
 
@@ -194,191 +190,150 @@ pub fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, keybind: KeyCode, ic
 
 fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>, icon: Option<Handle<Image>>) {
     slot_frame(parent, keybind, icon, SLOT_PX, true).insert(AbilitySlot { ability }).with_children(|parent| {
-        // Cooldown overlay: dark rect anchored at bottom, height = recovery %
         parent.spawn((
             Node {
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.),
                 height: Val::Percent(0.),
-                bottom: Val::Px(0.),
+                top: Val::Px(0.),
                 left: Val::Px(0.),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
             CooldownOverlay,
         ));
-
-        // Combo glow overlay: a yellow glow over the whole slot while its
-        // ability is offered, hidden otherwise
-        parent.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.),
-                height: Val::Percent(100.),
-                top: Val::Px(0.),
-                left: Val::Px(0.),
-                border: UiRect::all(Val::Px(8.)),
-                ..default()
-            },
-            BorderColor::all(Color::srgb(1.0, 1.0, 0.0)),
-            BackgroundColor(Color::srgba(1.0, 1.0, 0.0, 0.5)),
-            Visibility::Hidden,
-            ComboGlow,
-        ));
     });
 }
 
-/// Update action bar states based on player's recovery, combo and range
-/// Updates border colors and the combo glow's visibility
+/// What a slot shows of its skill
+#[derive(Debug, PartialEq)]
+enum AbilityState {
+    Ready,
+    /// Recharging, or costing more endurance than its holder has
+    Unusable,
+    /// A strike whose target stands beyond its reach, or with none
+    OutOfRange,
+}
+
+impl AbilityState {
+    /// The gate's order: a skill it would refuse for its recharge or its
+    /// price shows that, whatever its range.
+    fn of(recharged: bool, afforded: bool, in_range: bool) -> AbilityState {
+        if !recharged || !afforded {
+            AbilityState::Unusable
+        } else if !in_range {
+            AbilityState::OutOfRange
+        } else {
+            AbilityState::Ready
+        }
+    }
+
+    fn border(&self) -> Color {
+        match self {
+            AbilityState::Ready => READY,
+            AbilityState::Unusable => Color::srgb(0.5, 0.5, 0.5),
+            AbilityState::OutOfRange => Color::srgb(0.8, 0.5, 0.1),
+        }
+    }
+
+    /// What its icon is drawn through: greyed where unusable, dim out of
+    /// range
+    fn tint(&self) -> Color {
+        match self {
+            AbilityState::Ready => Color::WHITE,
+            AbilityState::Unusable => Color::srgb(0.35, 0.35, 0.35),
+            AbilityState::OutOfRange => Color::srgb(0.6, 0.6, 0.6),
+        }
+    }
+}
+
+/// The share of `ability`'s recharge still to run at `now`, 0 once ready
+fn recharge_left(recharges: &Recharges, ability: AbilityType, now: Moment) -> f32 {
+    recharges.of(ability)
+        .filter(|recharge| !recharge.length.is_zero())
+        .map_or(0.0, |recharge| (recharge.left(now).as_secs_f32() / recharge.length.as_secs_f32()).clamp(0.0, 1.0))
+}
+
+/// Shows each slot's skill as the viewed actor has it: lit from the
+/// bottom as its recharge runs, greyed while it recharges or costs more
+/// endurance than its holder has, orange-bordered and dim while a strike's
+/// target is out of reach.
 pub fn update(
     tuning: Res<Tuning>,
     mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
-    mut glow_query: Query<&mut Visibility, With<ComboGlow>>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
-    player_query: Query<(Entity, &Loc, &Heading, Option<&GlobalRecovery>, Option<&common_bevy::components::ActorAttributes>, Option<&common_bevy::components::AttackRange>, Has<Actor>), With<crate::components::Viewed>>,
-    entity_query: Query<(&EntityType, &Loc, Option<&Side>)>,
-    nntree: Res<NNTree>,
+    mut icon_query: Query<&mut ImageNode, With<SlotIcon>>,
+    player_query: Query<(&Loc, Option<&Recharges>, Option<&Endurance>, Option<&AttackRange>, Option<&Target>, Has<Actor>, Option<&ActorAttributes>), With<crate::components::Viewed>>,
+    locs: Query<&Loc>,
+    server: Res<crate::resources::Server>,
+    time: Res<Time>,
 ) {
-    // The position of the actor the client sees as
-    let Ok((player_ent, player_loc, player_heading, recovery_opt, attrs, own_reach, controlled)) = player_query.single() else {
+    let Ok((loc, recharges, endurance, own_reach, target, controlled, attrs)) = player_query.single() else {
         return;
     };
-
-    // The recovery, the combo it offers, and what the gate would let fire
-    // early in its chain (`combos::timing`)
-    let recovery_active = recovery_opt.map_or(false, |r| r.is_active());
-    let own_attrs = attrs.copied().unwrap_or_default();
-    let early_reaction = |ability: AbilityType| matches!(
-        common_bevy::systems::combat::combos::timing(ability, ability.is_reaction(), recovery_opt, &own_attrs),
-        Some(common_bevy::systems::combat::combos::Timing::Early(common_bevy::systems::combat::combos::Early::Preparation))
-    );
-    let offered = recovery_opt.and_then(|r| r.combo);
-    let recovery_remaining = recovery_opt.map(|r| r.remaining).unwrap_or(0.0);
-    let recovery_duration = recovery_opt.map(|r| r.duration).unwrap_or(1.0);
+    let now = server.now(time.elapsed().as_millis());
+    let own_reach = own_reach.copied().unwrap_or_default().0;
+    let attrs = attrs.copied().unwrap_or_default();
+    // The target a press would name (`input::update_keybits`)
+    let target = target.and_then(|target| target.entity).and_then(|target| locs.get(target).ok());
 
     for (slot, mut border_color, children) in &mut slot_query {
-        // An empty slot: dark, no glow, no overlay
-        let Some(ability) = slot.ability else {
-            *border_color = BorderColor::all(EMPTY);
-            for child in children.iter() {
-                if let Ok(mut visibility) = glow_query.get_mut(child) {
-                    *visibility = Visibility::Hidden;
-                }
-                if let Ok(mut node) = overlay_query.get_mut(child) {
-                    node.height = Val::Percent(0.0);
-                }
+        let (state, left) = match slot.ability {
+            None => (None, 0.0),
+            Some(ability) => {
+                let left = recharges.map_or(0.0, |recharges| recharge_left(recharges, ability, now));
+                let afforded = endurance.is_none_or(|endurance| endurance.state >= tuning.cost(ability));
+                // Range is judged for the client's own character, who picks
+                // its targets here; a viewed actor's targets are the server's
+                let in_range = !controlled || ability.reach(&tuning, &attrs, own_reach)
+                    .is_none_or(|reach| target.is_some_and(|target| reach.contains(&loc.flat_distance(target))));
+                (Some(AbilityState::of(left <= 0.0, afforded, in_range)), left)
             }
-            continue;
         };
-        // Range is judged for the client's own character, who picks its
-        // targets here; a viewed actor's targets are the server's
-        let state = if recovery_active {
-            recovery_state(offered.is_some_and(|combo| combo.ability == ability), early_reaction(ability))
-        } else if controlled {
-            range_state(
-                ability,
-                player_ent,
-                *player_loc,
-                *player_heading,
-                common_bevy::systems::targeting::arc_of(&tuning, attrs),
-                own_reach.copied().unwrap_or_default().0,
-                &nntree,
-                &entity_query,
-            )
-        } else {
-            AbilityState::Ready
-        };
-
-        // Update border color based on state (keep meaningful colors)
-        let (border, show_combo_glow) = match state {
-            AbilityState::Ready => (BorderColor::all(READY), false),
-            AbilityState::OnCooldown => (BorderColor::all(Color::srgb(0.5, 0.5, 0.5)), false),      // Gray
-            AbilityState::ComboUnlocked => (BorderColor::all(READY), true),
-            AbilityState::EarlyReaction => (BorderColor::all(Color::srgb(0.2, 0.8, 0.9)), false),   // Cyan
-            AbilityState::OutOfRange => (BorderColor::all(Color::srgb(0.8, 0.5, 0.1)), false),      // Orange
-        };
-        *border_color = border;
-
-        // Cooldown overlay: height = proportion of recovery remaining
-        let overlay_pct = if !recovery_active || recovery_duration <= 0.0 || matches!(state, AbilityState::EarlyReaction) {
-            0.0
-        } else {
-            let combo_unlock_at = offered
-                .filter(|combo| combo.ability == ability)
-                .map(|combo| combo.unlock_at);
-            let ratio = match combo_unlock_at {
-                Some(unlock_at) if recovery_duration > unlock_at => {
-                    (recovery_remaining - unlock_at) / (recovery_duration - unlock_at)
-                }
-                _ => recovery_remaining / recovery_duration,
-            };
-            ratio.clamp(0.0, 1.0) * 100.0
-        };
-
-        // Update combo glow and cooldown overlay
+        let border = BorderColor::all(state.as_ref().map_or(EMPTY, AbilityState::border));
+        if *border_color != border {
+            *border_color = border;
+        }
         for child in children.iter() {
-            if let Ok(mut visibility) = glow_query.get_mut(child) {
-                *visibility = if show_combo_glow {
-                    Visibility::Visible
-                } else {
-                    Visibility::Hidden
-                };
-            }
             if let Ok(mut node) = overlay_query.get_mut(child) {
-                node.height = Val::Percent(overlay_pct);
+                node.height = Val::Percent(left * 100.0);
+            }
+            if let (Ok(mut icon), Some(state)) = (icon_query.get_mut(child), &state) {
+                if icon.color != state.tint() {
+                    icon.color = state.tint();
+                }
             }
         }
     }
 }
 
-/// Ability states for UI feedback
-#[derive(Debug, PartialEq)]
-enum AbilityState {
-    Ready,
-    OnCooldown,
-    ComboUnlocked,  // The ability the recovery offers as its combo (gold glow)
-    EarlyReaction,  // A reaction Preparation fires early in the chain (cyan)
-    OutOfRange,
-}
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
 
-/// A slot's state in recovery: the offered combo glowing from the moment
-/// it is offered, a reaction Preparation fires early usable, and all else
-/// waiting
-fn recovery_state(offered: bool, early_reaction: bool) -> AbilityState {
-    if offered {
-        AbilityState::ComboUnlocked
-    } else if early_reaction {
-        AbilityState::EarlyReaction
-    } else {
-        AbilityState::OnCooldown
+    use super::*;
+    use common_bevy::components::activation::Recharge;
+
+    #[test]
+    fn a_slot_shows_what_the_gate_would_refuse_it_for_first() {
+        assert_eq!(AbilityState::of(true, true, true), AbilityState::Ready);
+        assert_eq!(AbilityState::of(false, true, true), AbilityState::Unusable, "recharging");
+        assert_eq!(AbilityState::of(true, false, true), AbilityState::Unusable, "too dear");
+        assert_eq!(AbilityState::of(true, true, false), AbilityState::OutOfRange);
+        assert_eq!(AbilityState::of(false, true, false), AbilityState::Unusable, "its recharge before its range");
     }
-}
 
-/// Whether `ability` has its target in reach, for an actor not recovering.
-fn range_state(
-    ability: AbilityType,
-    player_ent: Entity,
-    player_loc: Loc,
-    player_heading: Heading,
-    arc: f32,
-    own_reach: i32,
-    nntree: &NNTree,
-    entity_query: &Query<(&EntityType, &Loc, Option<&Side>)>,
-) -> AbilityState {
-    // The actors the player may target: those on a side hostile to its own
-    let side_of = |ent: Entity| entity_query.get(ent).ok().and_then(|(_, _, side)| side.copied());
-    let own_side = side_of(player_ent);
-    let hostile = |ent: Entity| side_of(ent).zip(own_side).is_some_and(|(side, own)| side.is_hostile_to(own));
-
-    // Only a strike is held to a reach: it needs the hostile the player
-    // faces within it
-    let Some(reach) = ability.reach(own_reach) else {
-        return AbilityState::Ready;
-    };
-    let target = select_target(player_ent, player_loc, player_heading, arc, nntree, hostile, None);
-    match target.and_then(|target| entity_query.get(target).ok()) {
-        Some((_, target_loc, _)) if reach.contains(&player_loc.flat_distance(target_loc)) => AbilityState::Ready,
-        _ => AbilityState::OutOfRange,
+    #[test]
+    fn a_recharge_runs_down_for_its_own_skill_alone() {
+        let at = Moment::from_millis;
+        let mut recharges = Recharges::default();
+        recharges.start(AbilityType::Frenzy, Recharge { began: at(1_000), length: Duration::from_secs(4) });
+        let left = |ms| recharge_left(&recharges, AbilityType::Frenzy, at(ms));
+        assert_eq!(left(1_000), 1.0);
+        assert!(left(2_000) > left(3_000), "it runs down");
+        assert_eq!(left(5_000), 0.0);
+        assert_eq!(left(9_000), 0.0, "and stays run");
+        assert_eq!(recharge_left(&recharges, AbilityType::Overpower, at(2_000)), 0.0, "no other skill with it");
     }
 }
 
@@ -406,18 +361,6 @@ mod loadout_tests {
             assert!(archetype.bar().iter().all(|&skill| bar.contains(&Some(skill))), "{archetype:?}: every skill of its stands on the bar");
             assert_eq!(bar.iter().flatten().count(), archetype.bar().len(), "{archetype:?} shows only its own");
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn in_recovery_the_combo_glows_an_early_reaction_shows_usable_and_the_rest_waits() {
-        assert!(matches!(recovery_state(true, false), AbilityState::ComboUnlocked));
-        assert!(matches!(recovery_state(false, true), AbilityState::EarlyReaction));
-        assert!(matches!(recovery_state(false, false), AbilityState::OnCooldown));
     }
 }
 

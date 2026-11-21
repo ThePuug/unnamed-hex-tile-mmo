@@ -175,6 +175,7 @@ pub fn do_presence(
                     Some(&combat_state),
                     Some(&equipment),
                     None,
+                    None,
                 );
 
                 for event in spawn_events {
@@ -347,13 +348,13 @@ fn route(event: &Event) -> Option<Route> {
         Event::Incremental { ent, .. }
         | Event::Despawn { ent, .. }
         | Event::Activity { ent, .. }
-        | Event::InsertThreat { ent, .. }
-        | Event::ApplyDamage { ent, .. }
-        | Event::ClearQueue { ent, .. }
         | Event::Respawn { ent, .. }
         | Event::Teleport { ent, .. }
-        | Event::UseAbility { ent, .. } => Some(Route::Seen(*ent)),
-        Event::Confirm { ent, .. }
+        | Event::Activate { ent, .. }
+        | Event::Resolved { ent, .. } => Some(Route::Seen(*ent)),
+        // Only its owner's bar shows a recharge
+        Event::Recharge { ent, .. }
+        | Event::Confirm { ent, .. }
         | Event::RespecAttributes { ent, .. }
         | Event::SetLoadout { ent, .. }
         | Event::Inventory { ent, .. }
@@ -429,7 +430,11 @@ mod tests {
     fn what_only_its_owner_should_know_goes_to_its_owner_alone() {
         let ent = Entity::from_raw_u32(7).unwrap();
         assert_eq!(route(&Event::Loot { ent, entries: None }), Some(Route::Owner(ent)));
-        assert_eq!(route(&Event::UseAbility { ent, ability: AbilityType::Frenzy, target: None, at: Default::default(), arrived: Default::default() }), Some(Route::Seen(ent)));
+        let activation = activation::Activation { ability: AbilityType::Frenzy, target: None, began: Moment::ZERO, length: default() };
+        assert_eq!(route(&Event::Activate { ent, activation }), Some(Route::Seen(ent)));
+        assert_eq!(route(&Event::Resolved { ent, ability: AbilityType::Frenzy, target: None, damage: 0.0, outcome: Outcome::Missed, dot: false }), Some(Route::Seen(ent)));
+        assert_eq!(route(&Event::Recharge { ent, ability: AbilityType::Frenzy, began: Moment::ZERO, length: default() }), Some(Route::Owner(ent)));
+        assert_eq!(route(&Event::UseAbility { ent, ability: AbilityType::Frenzy, target: None }), None, "a skill is asked for, never told as asked");
         assert_eq!(route(&Event::Despawn { ent, died: true }), Some(Route::Seen(ent)));
         assert_eq!(route(&Event::Displace { ent, destination: Qrz::default(), duration_ms: 0, around: None }), Some(Route::Moving(ent)));
     }

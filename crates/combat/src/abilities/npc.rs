@@ -7,22 +7,22 @@
 use bevy::prelude::*;
 use common_bevy::{
     components::{entity_type::{actor::ActorIdentity, EntityType}, Loc},
-    message::AbilityType,
+    message::{AbilityType, SkillKind},
     moment::Moment,
-    systems::targeting,
+    systems::{combat::damage, targeting},
 };
 
-use super::{in_arc, Abilities};
+use super::{strike, Abilities};
 use crate::leap::{away, toward};
 use common_bevy::archetype::EnemyArchetype;
 use crate::behaviour::{
-    approach_of,
     perception::Skill,
-    skills::{self, Foe, Threats, View},
+    skills::{self, Foe, View},
 };
 
 impl Abilities<'_, '_> {
-    /// Asks, for each NPC, the skill its skills channel chooses, if any.
+    /// Asks, for each NPC activating nothing, the skill its skills channel
+    /// chooses, if any.
     pub(super) fn skills(&mut self) {
         let npcs: Vec<(Entity, EnemyArchetype, Vec<AbilityType>)> = self.npcs.iter()
             .filter_map(|(ent, entity_type, bar)| match entity_type {
@@ -40,21 +40,11 @@ impl Abilities<'_, '_> {
             let target = self.targets.get(ent).ok().and_then(|(_, target)| target.entity);
             let foe = self.foe_of(ent, target);
             let now = Moment::ZERO + self.time.elapsed();
-            let reach = target.and_then(|target| self.reach_seen(ent, target));
             let foe = match self.minds.get_mut(ent) {
-                Ok((_, mut sight)) => {
-                    if let Some(reach) = reach {
-                        sight.saw_strike(reach);
-                    }
-                    sight.look(&self.dice, ent, &skill, now, target.zip(foe))
-                }
+                Ok((_, mut sight)) => sight.look(&self.dice, ent, &skill, now, target.zip(foe)),
                 Err(_) => foe,
             };
-            // How long ago the foe's last skill was counts as much as its
-            // Approach, on its target frame, makes it count
             let mind = self.mind_set.mind(Some(archetype));
-            let approach = approach_of(target.and_then(|target| self.kinds.get(target).ok()));
-            let foe = foe.map(|foe| Foe { since_skill: foe.since_skill.map(|since| since / mind.just_acted(approach)), ..foe });
             let Some(mut view) = self.view(ent, ability, &skill, foe, target) else { continue };
             let Ok(mut rolls) = self.rolls.get_mut(ent) else { continue };
             let dice = *self.dice;
@@ -70,9 +60,10 @@ impl Abilities<'_, '_> {
                 decisions.0.push(format!("{ent} uses {:?} to {} at {:.2}: {line}", decision.ability, decision.reason, decision.score));
             }
             let Some(decision) = chosen else { continue };
+            // A block and a stance are its own; every other skill is used
+            // on its target
             let at = match decision.ability {
-                ability if ability.is_reaction() => None,
-                ability if ability.kind() == common_bevy::message::SkillKind::Stance => None,
+                ability if ability.blocks() || ability.kind() == SkillKind::Stance => None,
                 _ => target,
             };
             debug!("npc {ent} {:?} to {}: {:.2} {:?}", decision.ability, decision.reason, decision.score, decision.responses);
@@ -83,33 +74,39 @@ impl Abilities<'_, '_> {
         }
     }
 
-    /// How far off `target` stood as a threat of its, new in `ent`'s queue
-    /// this frame, came in: what `ent` sees of how far it strikes from
-    fn reach_seen(&self, ent: Entity, target: Entity) -> Option<i32> {
-        let queue = self.queues.get(ent).ok()?;
-        let game_now = self.game_now();
-        let fresh = queue.threats.iter().any(|threat| threat.source == target && game_now.since(threat.inserted_at) < self.time.delta() * 2);
-        let (&loc, ..) = self.actors.get(ent).ok()?;
-        let (&target_loc, ..) = self.actors.get(target).ok()?;
-        fresh.then(|| loc.distance(&target_loc))
-    }
-
     /// How `target` stands as `ent` would see it now
     fn foe_of(&self, ent: Entity, target: Option<Entity>) -> Option<Foe> {
         let tuning = *self.tuning;
-        let (&loc, attrs, _, heading, ..) = self.actors.get(ent).ok()?;
-        let (&target_loc, target_attrs, target_health, target_heading, ..) = self.actors.get(target?).ok()?;
+        let target = target?;
+        let (&loc, attrs, heading, ..) = self.actors.get(ent).ok()?;
+        let (&target_loc, target_attrs, target_heading, ..) = self.actors.get(target).ok()?;
+        let health = self.health.get(target).ok()?;
+        let level = damage::level_factor(&tuning, target_attrs.total_level(), attrs.total_level());
+        let activation = self.activation_of(target);
+        // What the strike it is activating at this one would land
+        let strike = activation
+            .filter(|activation| activation.target == Some(ent) && activation.ability.kind() == SkillKind::Strike)
+            .map_or(0.0, |activation| {
+                let lost = 1.0 - health.state / health.max.max(f32::EPSILON);
+                target_attrs.base_potency(&tuning) * strike::share(&tuning, target_attrs, activation.ability, self.activation_of(ent).is_some(), lost) * level
+            });
+        // The swing clock runs on the server's own time, the game clock
+        // an offset from it
+        let elapsed = Moment::ZERO + self.time.elapsed();
+        let swing = self.swings.get(target).ok().and_then(|swing| swing.due)
+            .map(|due| self.game_now() + elapsed.until(due) - due.until(elapsed));
         Some(Foe {
             at: target_loc,
             heading: target_heading.copied(),
             distance: loc.distance(&target_loc),
-            health: target_health.state,
-            in_arc: in_arc(&tuning, heading, Some(attrs), &loc, &target_loc),
-            flanked: targeting::takes_flank(target_heading, self.statuses.get(target?).ok(), &target_loc, &loc),
-            patient: target_attrs.patience_crit(&tuning) * (1.0 + target_attrs.patience_power(&tuning)),
-            since_skill: self.last_skills.get(target?).ok()
-                .map(|last| (Moment::ZERO + self.time.elapsed()).since(last.0).as_secs_f32()),
-            status: self.statuses.get(target?).ok().copied().unwrap_or_default(),
+            health: health.state,
+            in_arc: targeting::faces(heading, &loc, &target_loc),
+            flanked: targeting::flanked(target_heading, &target_loc, &loc),
+            activation,
+            strike,
+            swing,
+            auto: target_attrs.auto_damage(&tuning) * level,
+            status: self.statuses.get(target).ok().copied().unwrap_or_default(),
         })
     }
 
@@ -130,52 +127,51 @@ impl Abilities<'_, '_> {
     }
 
     /// Whether as many others of `ent`'s engagement as it lets attack at
-    /// once have an ability standing in `target`'s queue: a member holds
-    /// its slot from its ability's use until the last threat it queued
-    /// resolves.
+    /// once are activating a skill at `target`: a member holds its slot
+    /// from its skill's use until it lands.
     fn capacity_taken(&self, ent: Entity, target: Option<Entity>) -> bool {
         let Some(engagement) = self.leashed.get(ent).ok().map(|(_, member)| member.0) else { return false };
         let Some(capacity) = self.engagements.get(engagement).ok().map(|engagement| engagement.attack_capacity) else { return false };
-        let Some(queue) = target.and_then(|target| self.queues.get(target).ok()) else { return false };
-        let holders: std::collections::HashSet<Entity> = queue.threats.iter()
-            .filter(|threat| !threat.is_pressure() && threat.source != ent)
-            .filter(|threat| self.leashed.get(threat.source).is_ok_and(|(_, member)| member.0 == engagement))
-            .map(|threat| threat.source)
-            .collect();
-        holders.len() >= capacity as usize
+        let Some(target) = target else { return false };
+        let holders = self.skills.iter()
+            .filter(|(other, activating, _)| *other != ent && activating.0.is_some_and(|activation| activation.target == Some(target)))
+            .filter(|(other, ..)| self.leashed.get(*other).is_ok_and(|(_, member)| member.0 == engagement))
+            .count();
+        holders >= capacity as usize
     }
 
     /// What `ent`, perceiving with `skill`, knows as it weighs `ability`
     /// against `foe`, its target as it perceives it; None for the dead. Its
-    /// own state it knows at once; a threat only once its delay has run.
+    /// own state it knows at once.
     fn view(&self, ent: Entity, ability: AbilityType, skill: &Skill, foe: Option<Foe>, target: Option<Entity>) -> Option<View> {
         let tuning = *self.tuning;
-        let (&loc, &attrs, health, _, _, range, dead) = self.actors.get(ent).ok()?;
-        if dead {
+        let (&loc, &attrs, _, _, range, _) = self.actors.get(ent).ok()?;
+        if !self.lives(ent) {
             return None;
         }
-        let game_now = self.game_now();
-        let queue: Vec<_> = self.queues.get(ent)
-            .map(|queue| queue.threats.iter()
-                .filter(|threat| skill.sees(&self.dice, ent, threat, game_now))
-                .map(|threat| (skill.judged(&self.dice, ent, threat), *threat))
-                .collect())
-            .unwrap_or_default();
+        let now = self.game_now();
+        let health = self.health.get(ent).ok()?;
         let reach = range.copied().unwrap_or_default().0;
+        let (activating, recharges) = self.skills.get(ent).map_or_else(|_| (false, default()), |(_, activating, recharges)| (activating.0.is_some(), recharges.clone()));
+        let lands_in = foe.and_then(|foe| foe.activation)
+            .map(|activation| now.until(skill.judged(&self.dice, ent, &activation)).as_secs_f32());
         Some(View {
             tuning,
             ability,
             attrs,
             health: health.state,
+            health_max: health.max,
             endurance: self.endurance.get(ent).map_or(0.0, |endurance| endurance.state),
             endurance_max: self.endurance.get(ent).map_or(0.0, |endurance| endurance.max),
-            recovery: self.recoveries.get(ent).ok().copied(),
+            now,
+            activating,
+            recharges,
             status: self.statuses.get(ent).ok().copied().unwrap_or_default(),
             reach,
             leap: attrs.leap_tiles(&tuning) as i32,
             leap_room: self.leap_room(ent, loc, reach, target),
             capacity_taken: self.capacity_taken(ent, target),
-            queue: Threats::reading(&queue, attrs.span(&tuning), attrs.awareness_snap(&tuning), game_now),
+            lands_in,
             foe,
             runes: self.runes.iter().filter(|(_, _, stone)| stone.caster == ent).map(|(_, _, stone)| stone.rune.kind()).collect(),
         })

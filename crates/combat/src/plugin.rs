@@ -1,16 +1,18 @@
 use bevy::prelude::*;
 use common_bevy::message::{Do, Try};
 
-use crate::{self as combat, behaviour, reaction_queue, targeting};
+use crate::{self as combat, behaviour, targeting};
 
-/// Combat as the server runs it, with no networking: damage and threats,
-/// NPC targeting, auto-attacks and signature abilities, the reaction queue,
-/// resources, combat state, death and respawn.
+/// Combat as the server runs it, with no networking: every ability through
+/// one gate, activations, recharges and what lands, NPC targeting,
+/// auto-attacks, runes, resources, combat state, death and respawn.
 ///
 /// Both the live server and the balance arena install it, so the arena
 /// fights by the rules players meet. Movement, behaviour (`BehaviourPlugin`)
 /// and the removal of the dead (`actor::cleanup_despawned`) are the
 /// installer's, since the live server orders removal after the network send.
+/// A player's own step or turn mid-activation is the installer's to tell
+/// (`combat::Cancel`).
 pub struct CombatPlugin;
 
 impl Plugin for CombatPlugin {
@@ -23,30 +25,23 @@ impl Plugin for CombatPlugin {
         app.insert_resource(behaviour::mind::Minds::tuned());
         app.register_required_components::<common_bevy::components::ActorAttributes, combat::dice::Rolls>();
 
-        app.add_observer(combat::process_deal_damage);
-        app.add_observer(combat::resolve_threat);
-        app.add_observer(combat::resolve_drag);
-        app.add_observer(combat::resolve_dot_tick);
-        app.add_observer(combat::landing::stumble);
+        app.add_observer(combat::abilities::cancel);
 
         app.add_systems(FixedUpdate, (
             common_bevy::systems::combat::resources::regenerate_resources,
             common_bevy::systems::combat::state::update_combat_state,
-            common_bevy::systems::combat::recovery::global_recovery_system,
-            reaction_queue::tick_dots,
+            combat::landing::tick_wounds,
             combat::track_engagement,
-            combat::intimidate,
         ));
 
         app.add_systems(Update, (
             targeting::update_targets,
-            combat::abilities::surge::count,
-            // Every ability, through the one gate, then what lands: a press
-            // come due this frame takes its band before any of it lands
-            (combat::abilities::use_abilities, reaction_queue::process_expired_threats).chain(),
+            combat::abilities::stance::count,
+            // Every ability through the one gate, the ended activations
+            // landing first; then each rune's pulse
+            (combat::abilities::use_abilities, combat::runes::control).chain(),
             common_bevy::systems::combat::resources::check_death,
             common_bevy::systems::combat::resources::process_respawn,
-            combat::runes::control,
             combat::runes::lapse,
         ));
     }

@@ -32,10 +32,8 @@ use common_bevy::tuning::Tuning;
 /// while (`engagement_cleanup`).
 #[derive(Component, Debug, Clone)]
 pub struct Engagement {
-    /// How many of its NPCs may have an ability standing in one target's
-    /// queue at once. A reaction's span answers abilities that land
-    /// together, so it seldom binds: high by default, lower to make an
-    /// engagement easier.
+    /// How many of its NPCs may be activating a skill at one target at
+    /// once: high by default, lower to make an engagement easier.
     pub attack_capacity: u8,
 }
 

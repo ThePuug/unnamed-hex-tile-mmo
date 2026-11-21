@@ -8,7 +8,6 @@ use common_bevy::{
         entity_type::{ actor::*, * },
         heading::*, keybits::*,
         position::{Position, VisualPosition},
-        reaction_queue::ReactionQueue,
         status::Status,
         *
     },
@@ -138,7 +137,6 @@ pub fn do_spawn(
                 let loc = Loc::new(qrz);
 
                 let attrs_val = attrs.unwrap_or_default();
-                let reaction_queue = ReactionQueue::default();
 
                 // Handle entities that may have been evicted - spawn if needed
                 let mut entity_cmd = if let Ok(e) = commands.get_entity(ent) {
@@ -175,7 +173,6 @@ pub fn do_spawn(
                     ))
                     .insert((
                         attrs_val,
-                        reaction_queue,
                         common_bevy::components::target::Target::default(), // For targeting system
                         common_bevy::components::AttackRange::default(), // Auto-attack range (melee default)
                     ))

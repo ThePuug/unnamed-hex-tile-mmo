@@ -25,7 +25,7 @@ pub const MOMENTUM: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "leash_left", "recovery_left", "detour", "behind",
+    "leash_left", "detour", "behind",
 ];
 
 /// What a step is for.
@@ -36,14 +36,6 @@ pub enum Move {
     Hold,
     /// It steps to where it strikes its target soonest
     Engage,
-}
-
-/// What an NPC knows of itself as it weighs where to step.
-#[derive(Clone, Copy, Debug)]
-pub struct Footing {
-    /// Seconds of recovery it is in, with what its chain owes: 0 out of
-    /// recovery
-    pub recovery_left: f32,
 }
 
 /// One tile it may step to, as it would find it there.
@@ -60,27 +52,28 @@ pub struct Candidate {
     pub room: f32,
     /// How far round toward its target's back the tile stands, off its
     /// target's heading: 0 straight before it, 1 straight behind. Past a
-    /// third it stands outside its target's forward faces
+    /// third it stands outside its target's forward faces. 1 on every
+    /// tile for one with no strike ready that lands only from there: it
+    /// has nothing to step round for
     pub behind: f32,
 }
 
-/// What it weighs a step by: itself and the candidate.
+/// What it weighs a step by: the candidate.
 #[derive(Clone, Copy, Debug)]
 pub struct Ground {
-    footing: Footing,
     candidate: Candidate,
 }
 
-/// The step `candidates` offer that scores highest for `footing` as `mind`
-/// shapes it, and what it is for, where it beats holding; `under_way` is
-/// what its last step was for. The first candidate is the tile it stands
-/// on, and of steps scoring alike it keeps to it.
-pub fn choose(footing: &Footing, candidates: &[Candidate], under_way: Move, mind: &Mind) -> (Move, Option<Candidate>) {
+/// The step `candidates` offer that scores highest as `mind` shapes it,
+/// and what it is for, where it beats holding; `under_way` is what its
+/// last step was for. The first candidate is the tile it stands on, and of
+/// steps scoring alike it keeps to it.
+pub fn choose(candidates: &[Candidate], under_way: Move, mind: &Mind) -> (Move, Option<Candidate>) {
     let threshold = mind.hold + if under_way == Move::Hold { mind.momentum } else { 0.0 };
     let momentum = if under_way == Move::Engage { mind.momentum } else { 0.0 };
     let mut best: Option<(Candidate, f32)> = None;
     for &candidate in candidates {
-        let scored = weigh(footing, &candidate, mind) + momentum;
+        let scored = weigh(&candidate, mind) + momentum;
         if scored > threshold && best.is_none_or(|(_, top)| scored > top) {
             best = Some((candidate, scored));
         }
@@ -88,15 +81,14 @@ pub fn choose(footing: &Footing, candidates: &[Candidate], under_way: Move, mind
     best.map_or((Move::Hold, None), |(candidate, _)| (Move::Engage, Some(candidate)))
 }
 
-/// What a step to `candidate` scores to engage, for `footing`, as `mind`
-/// shapes it
-fn weigh(footing: &Footing, candidate: &Candidate, mind: &Mind) -> f32 {
-    let ground = Ground { footing: *footing, candidate: *candidate };
+/// What a step to `candidate` scores to engage, as `mind` shapes it
+fn weigh(candidate: &Candidate, mind: &Mind) -> f32 {
+    let ground = Ground { candidate: *candidate };
     score(1.0, ENGAGE.iter().map(|consideration| mind.shape(consideration).answer(&ground)))
 }
 
 /// What a step to engage is weighed by
-pub const ENGAGE: &[Consideration<Ground>] = &[DETOUR, LEASH_LEFT, RECOVERY_LEFT, BEHIND];
+pub const ENGAGE: &[Consideration<Ground>] = &[DETOUR, LEASH_LEFT, BEHIND];
 
 /// Seconds more the step costs it on its way to strike than the best one:
 /// the best step answers whole however far it has to go
@@ -116,16 +108,6 @@ const LEASH_LEFT: Consideration<Ground> = Consideration {
     curve: LEASH_LEFT_CURVE,
 };
 
-/// The seconds of recovery it would be left in: a step costs none, so what
-/// it is in. Weighed only as far as a mind lowers its floor, holding back
-/// from a fight it cannot act in
-const RECOVERY_LEFT: Consideration<Ground> = Consideration {
-    name: "recovery_left",
-    read: |ground| ground.footing.recovery_left,
-    bounds: (0.0, 10.0),
-    curve: Curve::FALLING.floored(1.0),
-};
-
 /// How far round toward its target's back the tile stands, every step
 /// round worth more until it stands to its target's side, past its forward
 /// faces, where a target cannot strike back without the arc to. Weighed
@@ -140,10 +122,6 @@ const BEHIND: Consideration<Ground> = Consideration {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn footing() -> Footing {
-        Footing { recovery_left: 0.0 }
-    }
 
     /// A tile `q` east of the origin, with its target standing further
     /// east: struck from in two tiles
@@ -169,20 +147,12 @@ mod tests {
         candidates
     }
 
-    /// A mind that holds back while it recovers: it engages only ready to
-    /// act
-    fn keeping() -> Mind {
-        let mut minds = crate::behaviour::mind::Minds::default();
-        minds.set("all.recovery_left.floor", "0").unwrap();
-        minds.mind(None)
-    }
-
     #[test]
     fn it_steps_toward_where_it_strikes_soonest_and_stands_once_there() {
         let mind = Mind::default();
-        let (decision, step) = choose(&footing(), &around(0, 8), Move::Hold, &mind);
+        let (decision, step) = choose(&around(0, 8), Move::Hold, &mind);
         assert_eq!((decision, step.map(|step| step.tile.q)), (Move::Engage, Some(1)), "far off, it steps in");
-        let (decision, step) = choose(&footing(), &around(6, 8), Move::Engage, &mind);
+        let (decision, step) = choose(&around(6, 8), Move::Engage, &mind);
         assert_eq!((decision, step.map(|step| step.tile.q)), (Move::Engage, Some(6)), "in reach, it keeps to its tile");
     }
 
@@ -192,15 +162,8 @@ mod tests {
         for candidate in &mut candidates {
             candidate.room = if candidate.tile.q > 0 { 0.0 } else { 1.0 };
         }
-        let (_, step) = choose(&footing(), &candidates, Move::Hold, &Mind::default());
+        let (_, step) = choose(&candidates, Move::Hold, &Mind::default());
         assert_ne!(step.map(|step| step.tile.q), Some(1), "never onto a tile with no leash left");
-    }
-
-    #[test]
-    fn a_mind_holding_back_holds_while_it_recovers() {
-        let recovering = Footing { recovery_left: 10.0, ..footing() };
-        assert_eq!(choose(&recovering, &around(0, 8), Move::Hold, &Mind::default()).0, Move::Engage);
-        assert_eq!(choose(&recovering, &around(0, 8), Move::Hold, &keeping()).0, Move::Hold);
     }
 
     #[test]
@@ -210,14 +173,14 @@ mod tests {
         let mind = minds.mind(None);
         let mut candidates = around(6, 8);
         candidates[1].behind = 0.17;
-        let (_, step) = choose(&footing(), &candidates, Move::Engage, &mind);
+        let (_, step) = choose(&candidates, Move::Engage, &mind);
         assert_eq!(step.map(|step| step.tile.q), Some(7), "faced, any step round is worth taking");
         candidates[1].behind = 0.5;
         candidates[0].behind = 0.5;
-        let (_, step) = choose(&footing(), &candidates, Move::Engage, &mind);
+        let (_, step) = choose(&candidates, Move::Engage, &mind);
         assert_eq!(step.map(|step| step.tile.q), Some(6), "past its faces already, it stands and strikes");
         candidates[0].behind = 0.0;
-        let plain = choose(&footing(), &candidates, Move::Engage, &Mind::default()).1;
+        let plain = choose(&candidates, Move::Engage, &Mind::default()).1;
         assert_eq!(plain.map(|step| step.tile.q), Some(6), "a mind that does not weigh it keeps to its tile");
     }
 

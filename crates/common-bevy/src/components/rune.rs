@@ -14,8 +14,8 @@ use crate::{components::Attribute, message::AbilityType};
 /// What a rune works on
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum RuneKind {
-    /// Moves or turns a foe entering its reach, by threats of its own,
-    /// measured from the rune wherever the foe stands as they land
+    /// Moves or turns every foe in its reach, pulse by pulse, each pulse
+    /// measured from the rune wherever the foe stands as it ends
     Control,
     /// Changes the blows struck from its reach
     Damage,
@@ -29,15 +29,15 @@ pub enum Rune {
     /// Might's: blows struck from its reach land harder, so a Frenzy bursts
     /// into it and a Bloodlust returns more. Its line raises how much harder
     Empower,
-    /// Agility's: turns a foe entering its reach to face the rune, its back
+    /// Agility's: turns every foe in its reach to face the rune, its back
     /// to a striker beyond, for a Backstab and Grace's flank. Its line
     /// raises its reach
     Distract,
-    /// Physique's: drags a foe entering its reach all the way to the rune,
+    /// Physique's: drags every foe in its reach all the way to the rune,
     /// from wherever it stands as the drag lands, into an Overpower's reach
     /// and Intimidation's ground. Its line raises its reach
     Drag,
-    /// Discipline's: pushes a foe entering its reach straight away from the
+    /// Discipline's: pushes every foe in its reach straight away from the
     /// rune, the distance a Leap dives across and a Surge counts. Its line
     /// raises how far
     Push,

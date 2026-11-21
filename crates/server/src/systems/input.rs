@@ -194,12 +194,13 @@ pub fn try_input(
 /// entry, the open input (INV-002); a message with the next sequence closes
 /// it, confirming the position and turn state it left the entity at, and
 /// replaces it in place. A dead player's inputs keep the sequence moving but
-/// do not move it.
+/// do not move it. An input that walks or turns a player mid-activation
+/// cancels the skill (`combat::Cancel`); a jump in place does not.
 pub fn apply(
     mut reader: MessageReader<Do>,
     mut commands: Commands,
     mut buffers: ResMut<InputQueues>,
-    mut query: Query<(&mut Heading, &mut Turn, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>, Option<&common_bevy::components::status::Status>)>,
+    mut query: Query<(&mut Heading, &mut Turn, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>, Option<&common_bevy::components::status::Status>, Option<&activation::Activating>)>,
     map: Res<Map>,
     nntree: Res<NNTree>,
 ) {
@@ -207,7 +208,7 @@ pub fn apply(
         let Do { event: Event::Input { ent, key_bits, dt, seq } } = message else { continue };
         let (ent, key_bits, dt, seq) = (*ent, *key_bits, *dt, *seq);
         let Some(buffer) = buffers.get_mut(&ent) else { continue };
-        let Ok((mut heading, mut turn, mut position, mut airtime, attrs, dead, status)) = query.get_mut(ent) else { continue };
+        let Ok((mut heading, mut turn, mut position, mut airtime, attrs, dead, status, activating)) = query.get_mut(ent) else { continue };
         let Some(front) = buffer.queue.front_mut() else {
             panic!("Queue invariant violation: entity {ent} has empty queue");
         };
@@ -246,6 +247,10 @@ pub fn apply(
             turn_pace: common_bevy::components::status::Status::turn_pace_of(status),
             collides: true,
         }, dt as i16, &map, &nntree);
+        let walked = key_bits.moving() && out.position.offset.xz() != position.offset.xz();
+        if activating.is_some_and(|activating| activating.0.is_some()) && (walked || out.heading != turn.heading) {
+            commands.trigger(combat::Cancel { ent });
+        }
         position.offset = out.position.offset;
         airtime.state = out.airtime;
         turn.since_step_ms = out.since_step_ms;
@@ -414,6 +419,43 @@ mod tests {
         world.write_message(Try { event: Event::RespecAttributes { ent, pairs } });
         world.run_system_once(try_respec_attributes).unwrap();
         assert_eq!(world.get::<ActorAttributes>(ent).unwrap().pairs(), mighty.pairs(), "refused in a fight");
+    }
+
+    /// The actors `apply` cancelled, after an activating player's open
+    /// input is extended by `dt` ms of `keys`.
+    fn cancelled_by(keys: u8, dt: u16) -> usize {
+        use common_bevy::components::activation::{Activating, Activation};
+        #[derive(Default, Resource)]
+        struct Cancelled(usize);
+
+        let mut app = App::new();
+        app.add_plugins(common_bevy::plugins::nntree::NNTreePlugin);
+        app.add_message::<Do>();
+        app.init_resource::<InputQueues>();
+        app.init_resource::<Cancelled>();
+        app.insert_resource(Map::new(qrz::Map::new(common::grid::HEX_RADIUS, common::grid::RISE)));
+        app.add_observer(|_: On<combat::Cancel>, mut cancelled: ResMut<Cancelled>| cancelled.0 += 1);
+        app.add_systems(Update, apply);
+
+        let activation = Activation { ability: AbilityType::Overpower, target: None, began: Moment::ZERO, length: Duration::from_secs(1) };
+        let ent = app.world_mut().spawn((
+            Heading::default(), Turn::default(), Position::default(), AirTime::default(), Activating(Some(activation)),
+        )).id();
+        let key_bits = KeyBits { key_bits: keys, accumulator: 0 };
+        app.world_mut().resource_mut::<InputQueues>().extend_one((ent, common_bevy::resources::InputQueue {
+            queue: [Event::Input { ent, key_bits, dt: 0, seq: 1 }].into(), ..default() }));
+        app.world_mut().write_message(Do { event: Event::Input { ent, key_bits, dt, seq: 1 } });
+        app.update();
+        app.world().resource::<Cancelled>().0
+    }
+
+    #[test]
+    fn a_step_or_a_turn_cancels_what_a_player_is_activating() {
+        assert_eq!(cancelled_by(0, 200), 0, "standing, the skill runs on");
+        assert_eq!(cancelled_by(KB_JUMP, 200), 0, "as it does through a jump in place");
+        assert_eq!(cancelled_by(KB_RIGHT, 200), 1, "a turn cancels it");
+        assert_eq!(cancelled_by(KB_FORWARD, 200), 1, "a step cancels it");
+        assert_eq!(cancelled_by(KB_FORWARD, 0), 0, "keys held for no time move nothing");
     }
 
     fn moving() -> KeyBits {

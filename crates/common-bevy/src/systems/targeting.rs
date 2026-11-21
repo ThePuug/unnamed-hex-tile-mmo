@@ -3,9 +3,9 @@
 //!
 //! A `Heading` is one of [`HEADING_SLOTS`] bearings clockwise from north;
 //! the bearing to a target is measured the same way, and the two are
-//! compared the short way round. An actor strikes within [`STRIDE_ARC`]
-//! either side of its heading without turning from its line: the three
-//! forward hex faces, whose tile-to-tile bearings lie 60° apart.
+//! compared the short way round. Every actor strikes and targets within
+//! [`FACING_ARC`] either side of its heading: the three forward hex faces,
+//! whose tile-to-tile bearings lie 60° apart.
 
 use bevy::prelude::*;
 
@@ -13,38 +13,25 @@ use crate::{
     components::{behaviour::Side, heading::*, *},
     plugins::nntree::*,
 };
-use crate::tuning::Tuning;
+
+/// The half-angle either side of its heading every actor strikes and
+/// targets within: the three forward hex faces.
+pub const FACING_ARC: f32 = 60.0;
 
 /// Whether `target_loc` lies within the forward faces of `caster_heading`
-/// from `caster_loc`: [`STRIDE_ARC`] either side of it.
+/// from `caster_loc`: [`FACING_ARC`] either side of it. A target on the
+/// caster's own tile always does.
 pub fn is_in_facing_cone(
     caster_heading: Heading,
     caster_loc: Loc,
     target_loc: Loc,
 ) -> bool {
-    within_arc(caster_heading, STRIDE_ARC, caster_loc, target_loc)
-}
-
-/// The half-angle either side of its heading an actor strikes within
-/// without turning from its line: the three forward hex faces.
-pub const STRIDE_ARC: f32 = 60.0;
-
-/// Whether `target_loc` lies within `arc` degrees either side of
-/// `caster_heading` from `caster_loc`. A target on the caster's own tile
-/// always does.
-pub fn within_arc(
-    caster_heading: Heading,
-    arc: f32,
-    caster_loc: Loc,
-    target_loc: Loc,
-) -> bool {
-    // Targets on the same tile are always in the facing cone
-    // (e.g., multiple enemies standing on the same hex)
+    // Several may stand on one tile, each in the others' cone
     if *caster_loc == *target_loc {
         return true;
     }
 
-    off_heading(caster_heading, caster_loc, target_loc) <= arc
+    off_heading(caster_heading, caster_loc, target_loc) <= FACING_ARC
 }
 
 /// Degrees between `heading` and the bearing from `from` to `to`, the
@@ -54,18 +41,11 @@ fn off_heading(heading: Heading, from: Loc, to: Loc) -> f32 {
     if delta > 180.0 { 360.0 - delta } else { delta }
 }
 
-/// Whether an attacker at `from` facing `heading`, striking within `arc`
-/// degrees either side of it, may strike `to`: every attack, auto-attack
-/// or ability, lands only on a target in its arc. An entity with no heading
-/// faces every way.
-pub fn faces(heading: Option<&Heading>, arc: f32, from: &Loc, to: &Loc) -> bool {
-    heading.is_none_or(|heading| within_arc(*heading, arc, *from, *to))
-}
-
-/// Whether a strike from `from` facing `heading` at `to` crosses the
-/// striker's line: past [`STRIDE_ARC`], where only a Grace arc reaches.
-pub fn across(heading: Option<&Heading>, from: &Loc, to: &Loc) -> bool {
-    heading.is_some_and(|heading| !within_arc(*heading, STRIDE_ARC, *from, *to))
+/// Whether an attacker at `from` facing `heading` may strike `to`: every
+/// attack, auto-attack or ability, lands only on a target in its arc. An
+/// entity with no heading faces every way.
+pub fn faces(heading: Option<&Heading>, from: &Loc, to: &Loc) -> bool {
+    heading.is_none_or(|heading| is_in_facing_cone(*heading, *from, *to))
 }
 
 /// Whether a strike from `from` lands on a target at `at` facing `heading`
@@ -80,13 +60,6 @@ pub fn flanked(heading: Option<&Heading>, at: &Loc, from: &Loc) -> bool {
 /// it, acquires it or keeps it as a target then.
 pub fn unseen(status: Option<&crate::components::status::Status>, reach: i32, distance: i32) -> bool {
     status.is_some_and(|status| status.is_lurking()) && distance > reach
-}
-
-/// Whether a strike from `from` takes the flank of a target at `at`
-/// facing `heading` with `status`: from past its forward faces
-/// ([`flanked`]), while no Vigil watches it (`Status::is_vigilant`).
-pub fn takes_flank(heading: Option<&Heading>, status: Option<&crate::components::status::Status>, at: &Loc, from: &Loc) -> bool {
-    flanked(heading, at, from) && !status.is_some_and(|status| status.is_vigilant())
 }
 
 /// The bearing from `from` to `to` in degrees clockwise from north, in
@@ -129,23 +102,20 @@ fn angle_between_locs(from: Loc, to: Loc) -> f32 {
 pub const TARGET_RADIUS: u32 = 30;
 
 /// The entity a caster at `caster_loc` facing `caster_heading` targets: of
-/// those `wanted` within [`TARGET_RADIUS`] and `arc` degrees either side of
-/// its heading, one inside the forward faces before any across its line,
-/// then the nearest, and among the equally near the one it `keep`s, its
-/// target now, then the one nearest dead ahead: two on one tile never
-/// trade places by the order they are found in. Never the caster itself.
+/// those `wanted` within [`TARGET_RADIUS`] and its facing cone, the
+/// nearest, and among the equally near the one it `keep`s, its target now,
+/// then the one nearest dead ahead: two on one tile never trade places by
+/// the order they are found in. Never the caster itself.
 ///
-/// `arc` is the arc the caster strikes within ([`arc_of`]), so whatever it
-/// may strike it may target, and a wider arc still takes what stands in
-/// front first. `wanted` says who may be targeted at all: an actor on a
-/// hostile side for an attack, one on the caster's own side for an ally.
-/// Hostile and ally targets are picked by this one rule, so both move with
-/// the heading alike.
+/// The cone is the arc the caster strikes within, so whatever it may
+/// strike it may target. `wanted` says who may be targeted at all: an
+/// actor on a hostile side for an attack, one on the caster's own side for
+/// an ally. Hostile and ally targets are picked by this one rule, so both
+/// move with the heading alike.
 pub fn select_target(
     caster_ent: Entity,
     caster_loc: Loc,
     caster_heading: Heading,
-    arc: f32,
     nntree: &NNTree,
     wanted: impl Fn(Entity) -> bool,
     keep: Option<Entity>,
@@ -153,35 +123,26 @@ pub fn select_target(
     nntree.within_tiles(caster_loc, TARGET_RADIUS as i64)
         // By entity, not location: several may stand on one tile
         .filter(|nn| nn.ent != caster_ent && wanted(nn.ent))
-        .filter(|nn| within_arc(caster_heading, arc, caster_loc, nn.loc))
+        .filter(|nn| is_in_facing_cone(caster_heading, caster_loc, nn.loc))
         .map(|nn| (
             nn.ent,
-            !is_in_facing_cone(caster_heading, caster_loc, nn.loc),
             caster_loc.flat_distance(&nn.loc) as u32,
             Some(nn.ent) != keep,
             off_heading(caster_heading, caster_loc, nn.loc),
         ))
-        .min_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.3.cmp(&b.3)).then(a.4.total_cmp(&b.4)))
+        .min_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.3.total_cmp(&b.3)))
         .map(|(ent, ..)| ent)
 }
 
-/// The half-angle an actor with `attrs` strikes and targets within: the
-/// arc its Grace opens, the forward faces for one with no attributes.
-pub fn arc_of(tuning: &Tuning, attrs: Option<&ActorAttributes>) -> f32 {
-    attrs.map_or(STRIDE_ARC, |attrs| attrs.arc(tuning))
-}
-
 /// Points `target` at the actor `ent` faces from `loc` along `heading`
-/// within its `arc` whose side it `wants` beside its own: a hostile side
-/// for a `Target`, its own for an `AllyTarget`. With none in its arc the
-/// current target clears and the last one stays, for a frame that keeps
-/// showing it. An entity with no side targets nothing.
-#[allow(clippy::too_many_arguments)]
+/// whose side it `wants` beside its own: a hostile side for a `Target`,
+/// its own for an `AllyTarget`. With none in its arc the current target
+/// clears and the last one stays, for a frame that keeps showing it. An
+/// entity with no side targets nothing.
 pub fn update_targets_impl(
     ent: Entity,
     loc: Loc,
     heading: Heading,
-    arc: f32,
     target: &mut impl crate::components::target::Selection,
     nntree: &NNTree,
     side_of: impl Fn(Entity) -> Option<Side>,
@@ -189,7 +150,7 @@ pub fn update_targets_impl(
 ) {
     let keep = target.current();
     let picked = side_of(ent).and_then(|own| {
-        select_target(ent, loc, heading, arc, nntree, |other| {
+        select_target(ent, loc, heading, nntree, |other| {
             side_of(other).is_some_and(|side| wants(own, side))
         }, keep)
     });
@@ -370,11 +331,11 @@ mod tests {
         let first = spawn_actor(&mut world, &mut nntree, shared);
         let second = spawn_actor(&mut world, &mut nntree, shared);
         for kept in [first, second] {
-            let picked = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), Some(kept));
+            let picked = select_target(caster, caster_loc, heading, &nntree, hostile(&world, caster), Some(kept));
             assert_eq!(picked, Some(kept), "its target now holds against an equal");
         }
         let nearer = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 }));
-        let picked = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), Some(first));
+        let picked = select_target(caster, caster_loc, heading, &nntree, hostile(&world, caster), Some(first));
         assert_eq!(picked, Some(nearer), "but not against one nearer");
     }
 
@@ -392,7 +353,7 @@ mod tests {
         // Spawn target directly ahead (east) - NPC
         let target = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 1, r: 0, z: 0 }));
 
-        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), None);
+        let result = select_target(caster, caster_loc, heading, &nntree, hostile(&world, caster), None);
 
         assert_eq!(result, Some(target), "Should select the target directly ahead");
     }
@@ -407,7 +368,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), None);
+        let result = select_target(caster, caster_loc, heading, &nntree, hostile(&world, caster), None);
 
         assert_eq!(result, None, "Should return None when no targets exist");
     }
@@ -425,7 +386,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), None);
+        let result = select_target(caster, caster_loc, heading, &nntree, hostile(&world, caster), None);
 
         assert_eq!(result, None, "Should not select target behind caster");
     }
@@ -445,7 +406,7 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), None);
+        let result = select_target(caster, caster_loc, heading, &nntree, hostile(&world, caster), None);
 
         assert_eq!(result, Some(nearest), "Should select the nearest target");
     }
@@ -465,40 +426,12 @@ mod tests {
         let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
         world.entity_mut(caster).insert(PlayerControlled);
 
-        let result = select_target(caster, caster_loc, heading, STRIDE_ARC, &nntree, hostile(&world, caster), None);
+        let result = select_target(caster, caster_loc, heading, &nntree, hostile(&world, caster), None);
 
         assert_eq!(
             result, Some(directly_ahead),
             "Should select target closest to exact heading angle"
         );
-    }
-
-    #[test]
-    fn a_wider_arc_targets_what_stands_across_the_line() {
-        let (mut world, mut nntree) = setup_test_world();
-        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
-        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
-        world.entity_mut(caster).insert(PlayerControlled);
-        let behind = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: -1, r: 0, z: 0 }));
-
-        let pick = |arc| select_target(caster, caster_loc, heading, arc, &nntree, hostile(&world, caster), None);
-        assert_eq!(pick(STRIDE_ARC), None, "the forward faces do not reach behind");
-        assert_eq!(pick(180.0), Some(behind), "an arc every way does");
-    }
-
-    #[test]
-    fn a_target_in_front_is_taken_before_a_nearer_one_across_the_line() {
-        let (mut world, mut nntree) = setup_test_world();
-        let caster_loc = Loc::new(Qrz { q: 0, r: 0, z: 0 });
-        let heading = Heading::from_hex(Qrz { q: 1, r: 0, z: 0 });
-        let caster = spawn_actor(&mut world, &mut nntree, caster_loc);
-        world.entity_mut(caster).insert(PlayerControlled);
-        spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: -1, r: 0, z: 0 }));
-        let ahead = spawn_actor(&mut world, &mut nntree, Loc::new(Qrz { q: 3, r: 0, z: 0 }));
-
-        let result = select_target(caster, caster_loc, heading, 180.0, &nntree, hostile(&world, caster), None);
-        assert_eq!(result, Some(ahead));
     }
 
     #[test]
@@ -526,7 +459,6 @@ mod tests {
             caster,
             caster_loc,
             heading,
-            STRIDE_ARC,
             &nntree,
             ally(&world, caster),
             None,

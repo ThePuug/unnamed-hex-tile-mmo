@@ -1,28 +1,14 @@
-//! What a strike shows on what it struck. A strike of the viewed actor's
-//! stands as a note over its target from the moment its threat is queued,
-//! in the highway's look (`highway::look`), until it goes as a highway
-//! note goes (`combat::Gone`): landed, it pulses in its lane's colour;
-//! cleared, it shatters, broken. Whatever
-//! lands, on whomever, flashes the body it lands on, and its damage rises
-//! from it unless that body is the viewed actor's, whose resolved stack
-//! shows it.
-//!
-//! A threat names its source by the server's id here (`renet::write_do`),
-//! a landing by the client's, so the viewed actor is matched by each.
+//! What a skill shows as it resolves (`Event::Resolved`). A blow that
+//! landed flashes the body it lands on, and its damage rises from that
+//! body; one blocked or missed raises that word from its target in the
+//! number's place, and a skill interrupted raises it from its user.
 
-use std::time::Duration;
-
-use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use common_bevy::components::reaction_queue::{Lane, ReactionQueue};
-use common_bevy::components::resources::Health;
-use common_bevy::message::{Do, Event as GameEvent};
+use common_bevy::message::{Do, Event as GameEvent, Outcome};
 use common_bevy::moment::Moment;
 
-use crate::components::{FloatingText, Viewed};
-use crate::resources::EntityMap;
+use crate::components::FloatingText;
 use crate::plugins::cel::CelMaterial;
-use crate::systems::{closeup::CloseupCamera, combat_ui::node_at, highway, threat_icons::DOT_COLOR};
 
 /// How long a struck body's flash takes to fade
 const FLASH: f32 = 0.2;
@@ -30,23 +16,13 @@ const FLASH: f32 = 0.2;
 /// as drawn, unweighted by exposure
 const FLASH_LIGHT: f32 = 0.6;
 
-/// A note's width over its target, and the gap between two over one
-const NOTE: f32 = 26.0;
-const GAP: f32 = 4.0;
-/// How far over a target's origin its notes stand: above its health bar
-const OVER: f32 = 2.1;
-/// How far over a target's origin its damage rises from
+/// How far over a body's origin what rises from it starts
 const RISES_FROM: f32 = 2.5;
-/// How long a note takes to arrive, and how much bigger than its width it
-/// arrives
-const ARRIVAL: f32 = 0.15;
-const ARRIVES_AT: f32 = 1.8;
-/// A note's label is drawn at one size, its largest, and scaled: text
-/// keeps a glyph atlas for every size it is drawn at, never freed
-const LABEL_FONT: f32 = NOTE * ARRIVES_AT * 0.4;
-/// How long a gone note lingers while it pulses or its shards fly
-const GONE: Duration = Duration::from_millis(600);
-use crate::systems::combat_ui::OFF_SCREEN;
+
+/// The colour of damage over time, apart from every blow's, and of a word
+/// that stands where a number would
+const DOT_COLOR: Color = Color::srgb(0.65, 0.3, 0.95);
+const WORD_COLOR: Color = Color::srgb(0.85, 0.85, 0.85);
 
 /// When damage last landed on a body, while its flash lasts
 #[derive(Component)]
@@ -57,208 +33,60 @@ pub struct Struck(Moment);
 #[derive(Component)]
 pub struct Flashing(Handle<CelMaterial>);
 
-/// A strike of the viewed actor's, standing over what it struck: which
-/// threat, keyed as the highway keys a note, and when it went, if it has
-#[derive(Component)]
-pub struct Mark {
-    struck: Entity,
-    key: (Entity, Moment, Lane),
-    lands_at: Moment,
-    color: Color,
-    born: Moment,
-    unsure: Option<Moment>,
-    gone: Option<Moment>,
-}
-
-#[derive(Component)]
-pub struct MarkLabel;
-
-/// A strike of the viewed actor's on another gets its note as its threat
-/// is queued.
-pub fn on_contact(
-    mut commands: Commands,
-    mut reader: MessageReader<Do>,
-    viewed: Query<Entity, With<Viewed>>,
-    l2r: Res<EntityMap>,
-    time: Res<Time>,
-) {
-    let viewed = viewed.single().ok();
-    let on_server = viewed.and_then(|viewed| l2r.get_by_left(&viewed).copied());
-    let now = Moment::ZERO + time.elapsed();
-    for message in reader.read() {
-        let GameEvent::InsertThreat { ent, threat } = message.event else { continue };
-        if on_server != Some(threat.source) || viewed == Some(ent) {
-            continue;
-        }
-        commands
-            .spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Px(NOTE),
-                    height: Val::Px(NOTE),
-                    left: Val::Px(OFF_SCREEN),
-                    border: UiRect::all(Val::Px(2.0)),
-                    border_radius: BorderRadius::all(Val::Percent(50.)),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                Mark {
-                    struck: ent,
-                    key: (threat.source, threat.inserted_at, threat.lane()),
-                    lands_at: threat.lands_at(),
-                    color: Color::NONE,
-                    born: now,
-                    unsure: None,
-                    gone: None,
-                },
-            ))
-            .with_children(|parent| {
-                parent.spawn((
-                    Text::default(),
-                    TextFont { font_size: FontSize::Px(LABEL_FONT), ..default() },
-                    UiTransform { scale: Vec2::ONE, ..default() },
-                    TextColor(Color::WHITE),
-                    MarkLabel,
-                ));
-            });
+/// What rises as a skill resolves `outcome` for `damage`, and from which
+/// of the two it names, its user or its target: None where nothing shows.
+/// A blow with no damage, a drag or a pull, shows by what it moves; a
+/// skill its user cancelled shows nothing; a rune letting a foe go is no
+/// miss.
+fn rises(outcome: Outcome, damage: f32, of_rune: bool) -> Option<(String, bool)> {
+    match outcome {
+        Outcome::Landed if damage > 0.0 => Some((format!("{damage:.0}"), true)),
+        Outcome::Blocked => Some(("Blocked".to_string(), true)),
+        Outcome::Missed if !of_rune => Some(("Miss".to_string(), true)),
+        Outcome::Interrupted => Some(("Interrupted".to_string(), false)),
+        Outcome::Landed | Outcome::Missed | Outcome::Cancelled => None,
     }
 }
 
-/// As damage lands, the body it lands on flashes, and on an actor other
-/// than the viewed one it rises from it.
-pub fn on_landing(
+/// As a skill resolves, the body its damage lands on flashes, and its
+/// damage, or the word for how it ended, rises ([`rises`]).
+pub fn on_resolved(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
-    viewed: Query<Entity, With<Viewed>>,
     bodies: Query<&Transform>,
     time: Res<Time>,
 ) {
-    let viewed = viewed.single().ok();
     let now = Moment::ZERO + time.elapsed();
     for message in reader.read() {
-        let GameEvent::ApplyDamage { ent, damage, dot, .. } = message.event else { continue };
-        let Ok(mut struck) = commands.get_entity(ent) else { continue };
-        struck.try_insert(Struck(now));
-        // What lands on the viewed actor shows in its resolved stack
-        if viewed == Some(ent) {
-            continue;
+        let GameEvent::Resolved { ent, ability, target, damage, outcome, dot } = message.event else { continue };
+        let Some((text, on_target)) = rises(outcome, damage, ability.rune().is_some()) else { continue };
+        // A strike at no one, or at one gone from here, misses over its user
+        let from = if on_target { target.unwrap_or(ent) } else { ent };
+        if outcome == Outcome::Landed {
+            if let Ok(mut struck) = commands.get_entity(from) {
+                struck.try_insert(Struck(now));
+            }
         }
         // A body stays for its death pose, so the dead one struck has its Transform
-        let Ok(body) = bodies.get(ent) else { continue };
+        let Ok(body) = bodies.get(from) else { continue };
+        let color = match outcome {
+            Outcome::Landed if dot => DOT_COLOR,
+            Outcome::Landed => Color::WHITE,
+            _ => WORD_COLOR,
+        };
         commands.spawn((
             Node { position_type: PositionType::Absolute, ..default() },
-            Text::new(format!("{damage:.0}")),
+            Text::new(text),
             TextFont { font_size: FontSize::Px(32.0), ..default() },
-            TextColor(if dot { DOT_COLOR } else { Color::WHITE }),
+            TextColor(color),
             TextLayout::justify(Justify::Center),
             FloatingText {
-                spawn_time: Moment::ZERO + time.elapsed(),
+                spawn_time: now,
                 world_position: body.translation + Vec3::Y * RISES_FROM,
                 lifetime: 1.5,
                 velocity: 1.0,
             },
         ));
-    }
-}
-
-/// Stands each note over its target, in a row ordered by when each lands,
-/// and colours it as the highway would; as its threat goes, pulses it if
-/// it landed and shatters it if not (`combat::Gone`), and takes it down
-/// once it has.
-#[allow(clippy::too_many_arguments)]
-pub fn update_marks(
-    mut commands: Commands,
-    mut marks: Query<(Entity, &mut Mark, &mut Node, &mut BackgroundColor, &mut BorderColor, &Children)>,
-    mut labels: Query<(&mut Text, &mut UiTransform, &mut Visibility), With<MarkLabel>>,
-    targets: Query<(&ReactionQueue, &Health, &Transform)>,
-    camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
-    scale: Res<UiScale>,
-    gone: Res<crate::systems::combat::Gone>,
-    time: Res<Time>,
-) {
-    let Ok((camera, camera_transform)) = camera_query.single() else {
-        return;
-    };
-    let now = Moment::ZERO + time.elapsed();
-
-    let mut rows: HashMap<Entity, Vec<(Moment, Entity)>> = HashMap::default();
-    for (note, mark, ..) in &marks {
-        if mark.gone.is_none() {
-            rows.entry(mark.struck).or_default().push((mark.lands_at, note));
-        }
-    }
-    for row in rows.values_mut() {
-        row.sort();
-    }
-
-    for (note, mut mark, mut node, mut background, mut border, children) in &mut marks {
-        if let Some(gone) = mark.gone {
-            if now.since(gone) >= GONE {
-                commands.entity(note).despawn();
-                continue;
-            }
-            background.0 = Color::NONE;
-            *border = BorderColor::all(Color::NONE);
-            for child in children.iter() {
-                if let Ok((_, _, mut visibility)) = labels.get_mut(child) {
-                    visibility.set_if_neq(Visibility::Hidden);
-                }
-            }
-            continue;
-        }
-        let Ok((queue, health, body)) = targets.get(mark.struck) else {
-            commands.entity(note).despawn();
-            continue;
-        };
-
-        match queue.threats.iter().find(|t| (t.source, t.inserted_at, t.lane()) == mark.key) {
-            Some(threat) => {
-                let (fill, rim, label) = highway::look(threat, health, false);
-                background.0 = fill;
-                *border = BorderColor::all(rim);
-                mark.color = fill;
-                for child in children.iter() {
-                    if let Ok((mut text, _, _)) = labels.get_mut(child) {
-                        if **text != label {
-                            **text = label.clone();
-                        }
-                    }
-                }
-            }
-            None if gone.landed(mark.struck, mark.key.0, mark.key.1) == Some(true) => {
-                mark.gone = Some(now);
-                highway::pulse(&mut commands, note, Vec2::splat(NOTE / 2.0), NOTE, highway::lane_color(mark.key.2), now);
-                continue;
-            }
-            None if gone.landed(mark.struck, mark.key.0, mark.key.1) == Some(false)
-                || now.since(*mark.unsure.get_or_insert(now)) >= highway::UNSURE => {
-                mark.gone = Some(now);
-                highway::shatter(&mut commands, note, Vec2::splat(NOTE / 2.0), NOTE, mark.color, now);
-                continue;
-            }
-            None => {}
-        }
-
-        let arriving = 1.0 - (now.since(mark.born).as_secs_f32() / ARRIVAL).min(1.0);
-        let size = NOTE * (1.0 + (ARRIVES_AT - 1.0) * arriving);
-        let row = &rows[&mark.struck];
-        let slot = row.iter().position(|&(_, e)| e == note).unwrap_or(0) as f32;
-        let across = (slot - (row.len() - 1) as f32 / 2.0) * (NOTE + GAP);
-        node.width = Val::Px(size);
-        node.height = Val::Px(size);
-        for child in children.iter() {
-            if let Ok((_, mut transform, _)) = labels.get_mut(child) {
-                transform.scale = Vec2::splat(size / (NOTE * ARRIVES_AT));
-            }
-        }
-        match node_at(camera, camera_transform, &scale, body.translation + Vec3::Y * OVER) {
-            Some(at) => {
-                node.left = Val::Px(at.x + across - size / 2.0);
-                node.top = Val::Px(at.y - size / 2.0);
-            }
-            None => node.left = Val::Px(OFF_SCREEN),
-        }
     }
 }
 
@@ -306,48 +134,60 @@ pub fn flash(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common_bevy::{components::ActorAttributes, message::AbilityType, systems::combat::queue as queue_utils, tuning::Tuning};
+    use common_bevy::message::AbilityType;
 
-    fn strike(source: Entity, at: u64) -> common_bevy::components::reaction_queue::QueuedThreat {
-        queue_utils::create_threat(
-            &Tuning::DEFAULT,
-            source, &ActorAttributes::default(), &ActorAttributes::default(),
-            50.0, Some(AbilityType::Frenzy), Moment::from_millis(at * 1_000), 0.0, 0.0,
-        )
-    }
-
-    fn notes(app: &mut App) -> Vec<(Entity, Moment, bool)> {
-        let mut query = app.world_mut().query::<&Mark>();
-        query.iter(app.world()).map(|mark| (mark.struck, mark.key.1, mark.gone.is_some())).collect()
-    }
-
-    #[test]
-    fn the_viewed_actors_strike_stands_over_its_target_and_a_landing_flashes() {
+    fn app() -> (App, Entity, Entity) {
         let mut app = App::new();
         app.add_message::<Do>();
         app.init_resource::<Time>();
-        app.init_resource::<EntityMap>();
-        app.add_systems(Update, (on_contact, on_landing).chain());
+        app.add_systems(Update, on_resolved);
+        let striker = app.world_mut().spawn(Transform::from_xyz(0.0, 0.0, 0.0)).id();
+        let foe = app.world_mut().spawn(Transform::from_xyz(5.0, 0.0, 0.0)).id();
+        (app, striker, foe)
+    }
 
-        let player = app.world_mut().spawn((Viewed, Transform::default())).id();
-        let foe = app.world_mut().spawn(Transform::default()).id();
-        // A threat names its source as the server does
-        let [player_there, foe_there, other_there] = [9_000, 9_001, 9_002].map(|id| Entity::from_raw_u32(id).unwrap());
-        app.world_mut().resource_mut::<EntityMap>().insert(player, player_there);
-        app.world_mut().resource_mut::<EntityMap>().insert(foe, foe_there);
-        for (ent, threat) in [(foe, strike(player_there, 1)), (foe, strike(player_there, 2)), (foe, strike(other_there, 3)), (player, strike(foe_there, 4))] {
-            app.world_mut().write_message(Do { event: GameEvent::InsertThreat { ent, threat } });
-        }
-        app.update();
-        let mut standing = notes(&mut app);
-        standing.sort();
-        assert_eq!(standing, vec![(foe, Moment::from_millis(1_000), false), (foe, Moment::from_millis(2_000), false)], "a note for each of its own strikes, none for another's or on itself");
-        assert!(app.world().get::<Struck>(foe).is_none(), "nothing flashes before it lands");
+    /// What rose this frame: its text and the x it rose at
+    fn risen(app: &mut App) -> Vec<(String, f32)> {
+        let mut query = app.world_mut().query::<(&Text, &FloatingText)>();
+        query.iter(app.world()).map(|(text, floating)| (text.0.clone(), floating.world_position.x)).collect()
+    }
 
-        app.world_mut().write_message(Do { event: GameEvent::ApplyDamage { ent: foe, damage: 50.0, source: player, dot: false } });
+    fn resolved(ent: Entity, ability: AbilityType, target: Option<Entity>, damage: f32, outcome: Outcome) -> Do {
+        Do { event: GameEvent::Resolved { ent, ability, target, damage, outcome, dot: false } }
+    }
+
+    #[test]
+    fn a_blow_that_lands_flashes_the_one_struck_and_its_damage_rises_from_it() {
+        let (mut app, striker, foe) = app();
+        app.world_mut().write_message(resolved(striker, AbilityType::Frenzy, Some(foe), 50.0, Outcome::Landed));
         app.update();
-        let mut risen = app.world_mut().query::<&FloatingText>();
-        assert_eq!(risen.iter(app.world()).count(), 1, "and its damage rises");
-        assert!(app.world().get::<Struck>(foe).is_some(), "from the body it lands on, which flashes");
+        assert_eq!(risen(&mut app), vec![("50".to_string(), 5.0)]);
+        assert!(app.world().get::<Struck>(foe).is_some(), "the one struck flashes");
+        assert!(app.world().get::<Struck>(striker).is_none(), "never its striker");
+    }
+
+    #[test]
+    fn a_blow_stopped_says_how_in_the_numbers_place_and_flashes_no_one() {
+        let (mut app, striker, foe) = app();
+        app.world_mut().write_message(resolved(striker, AbilityType::Frenzy, Some(foe), 0.0, Outcome::Blocked));
+        app.world_mut().write_message(resolved(striker, AbilityType::Overpower, Some(foe), 0.0, Outcome::Missed));
+        app.world_mut().write_message(resolved(striker, AbilityType::Overpower, Some(foe), 0.0, Outcome::Interrupted));
+        app.update();
+        let mut risen = risen(&mut app);
+        risen.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(risen.iter().map(|(_, x)| *x).collect::<Vec<_>>(), vec![5.0, 0.0, 5.0], "a block and a miss over the target, an interrupt over its user: {risen:?}");
+        assert!(risen.iter().all(|(text, _)| text.parse::<f32>().is_err()), "each a word: {risen:?}");
+        assert!(app.world().get::<Struck>(foe).is_none() && app.world().get::<Struck>(striker).is_none());
+    }
+
+    #[test]
+    fn what_moves_its_target_or_was_let_go_raises_nothing() {
+        let (mut app, striker, foe) = app();
+        app.world_mut().write_message(resolved(striker, AbilityType::Yank, Some(foe), 0.0, Outcome::Landed));
+        app.world_mut().write_message(resolved(striker, AbilityType::Drag, Some(foe), 0.0, Outcome::Missed));
+        app.world_mut().write_message(resolved(striker, AbilityType::Overpower, Some(foe), 0.0, Outcome::Cancelled));
+        app.update();
+        assert!(risen(&mut app).is_empty());
+        assert!(app.world().get::<Struck>(foe).is_none());
     }
 }

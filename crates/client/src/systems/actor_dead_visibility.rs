@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use common_bevy::components::{
-    Actor, Loc, position::{Position, VisualPosition}, reaction_queue::ReactionQueue,
+    activation::Activating, Actor, Loc, position::{Position, VisualPosition},
     resources::{CombatState, Health}, status::Status,
 };
 use common_bevy::message::{Do, Event};
@@ -51,23 +51,23 @@ pub fn respawn(
 
 /// Apply death pose to newly dead entities and despawn after 3 seconds, but
 /// the one the client sees as: its body stays until the view ends. As it
-/// falls it leaves the fight: the threats it held go and it is out of
-/// combat, the dead taking no more part. The player's own character lies
-/// until the server respawns it ([`respawn`]).
+/// falls it leaves the fight: the skill it was activating goes and it is
+/// out of combat, the dead taking no more part. The player's own character
+/// lies until the server respawns it ([`respawn`]).
 pub fn cleanup_dead_entities(
     mut commands: Commands,
-    mut query: Query<(Entity, &DeathMarker, &mut Transform, Option<&mut ReactionQueue>, Option<&mut CombatState>, Has<Viewed>)>,
+    mut query: Query<(Entity, &DeathMarker, &mut Transform, Option<&mut Activating>, Option<&mut CombatState>, Has<Viewed>)>,
     time: Res<Time>,
 ) {
     const DEATH_LINGER_SECS: f32 = 3.0;
 
-    for (entity, marker, mut transform, queue, combat, viewed) in &mut query {
+    for (entity, marker, mut transform, activating, combat, viewed) in &mut query {
         let elapsed = (Moment::ZERO + time.elapsed()).since(marker.death_time).as_secs_f32();
         if elapsed <= 0.01 {
             // First frame: tip over 90 degrees to lay on side
             transform.rotation *= Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
-            if let Some(mut queue) = queue {
-                queue.threats.clear();
+            if let Some(mut activating) = activating {
+                activating.0 = None;
             }
             if let Some(mut combat) = combat {
                 combat.in_combat = false;
@@ -84,7 +84,6 @@ pub fn cleanup_dead_entities(
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
-    use common_bevy::tuning::Tuning;
 
     #[test]
     fn test_dead_actor_stays_visible() {
@@ -166,19 +165,14 @@ mod tests {
 
     #[test]
     fn a_body_leaves_the_fight_as_it_falls() {
-        let tuning = Tuning::DEFAULT;
+        use common_bevy::{components::activation::Activation, message::AbilityType};
         let mut world = World::new();
         world.insert_resource(Time::<()>::default());
-        let mut queue = ReactionQueue::default();
-        queue.threats.push_back(common_bevy::systems::combat::queue::create_threat(
-            &tuning,
-            Entity::PLACEHOLDER, &Default::default(), &Default::default(), 10.0,
-            None, Moment::ZERO, 0.0, 0.0,
-        ));
+        let under_way = Activation { ability: AbilityType::Overpower, target: None, began: Moment::ZERO, length: std::time::Duration::from_secs(2) };
         let body = world.spawn((
             DeathMarker { death_time: Moment::ZERO },
             Transform::default(),
-            queue,
+            Activating(Some(under_way)),
             CombatState { in_combat: true, last_action: Moment::ZERO },
             Viewed,
         )).id();
@@ -186,6 +180,6 @@ mod tests {
         world.run_system_once(cleanup_dead_entities).unwrap();
 
         assert!(!world.get::<CombatState>(body).unwrap().in_combat, "out of combat");
-        assert!(world.get::<ReactionQueue>(body).unwrap().threats.is_empty(), "holding no threats");
+        assert!(world.get::<Activating>(body).unwrap().0.is_none(), "activating nothing");
     }
 }

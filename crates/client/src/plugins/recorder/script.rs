@@ -83,7 +83,7 @@ pub struct Stage {
     #[serde(default)]
     pub b_size: Option<u8>,
     /// The team whose fighter the view follows while the shot rolls: the
-    /// gameplay camera, the reaction queue and the resource bars are its,
+    /// gameplay camera, the skill bar and the resource bars are its,
     /// as a player's are theirs. Where both teams are one archetype, the
     /// nearer of them.
     #[serde(default)]

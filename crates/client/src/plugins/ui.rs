@@ -1,8 +1,8 @@
 use bevy::prelude::*;
-use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, skills_panel, combat_log, combat_ui, compass, drop_panel, equipment_panel, highway, resolved_threats, resource_bars, target_frame, target_indicator, ui};
+use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, skills_panel, combat_log, combat_ui, compass, drop_panel, equipment_panel, resource_bars, target_frame, target_indicator, ui};
 
-/// The game's UI: the panels, the HUD, the target rings, the highway and
-/// the combat feedback drawn over the world.
+/// The game's UI: the panels, the HUD, the target rings and the combat
+/// feedback drawn over the world.
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
@@ -21,7 +21,6 @@ impl Plugin for UiPlugin {
                 resource_bars::setup.after(crate::systems::camera::setup),
                 action_bar::setup.after(crate::systems::camera::setup),
                 compass::setup.after(crate::systems::camera::setup),
-                highway::setup.after(crate::systems::camera::setup),
                 target_frame::setup.after(crate::systems::camera::setup),
                 combat_ui::setup_health_bars.after(crate::systems::camera::setup),
                 combat_log::setup.after(crate::systems::camera::setup),
@@ -66,26 +65,15 @@ impl Plugin for UiPlugin {
         // Dropping from the bag
         app.add_systems(Update, (bag_panel::handle_numpad, (drop_panel::handle_keys, drop_panel::update).chain()));
 
-        app.add_plugins(UiMaterialPlugin::<highway::HighwayMaterial>::default());
-        app.add_systems(Update, (highway::update, highway::update_pulses, highway::update_shards));
-
-        // Combat UI feedback systems (floating damage numbers, health bars, recovery bars, threat dots)
+        // Combat feedback: what rises from a body, the bars over actors,
+        // and the log
         app.add_systems(
             Update,
             (
                 combat_ui::update_floating_text,
                 combat_ui::update_world_bars,
-            ),
-        );
-
-        // Combat feedback enhancements (resolved threats + combat log)
-        app.add_systems(
-            Update,
-            (
-                resolved_threats::on_damage_resolved,
-                resolved_threats::update_entries,
-                combat_log::on_damage_applied,
-                combat_log::on_queue_cleared,
+                combat_ui::update_activation_bars,
+                combat_log::on_resolved,
                 combat_log::maintain_log,
                 combat_log::handle_scroll,
                 combat_log::auto_scroll_to_bottom,

@@ -18,7 +18,7 @@ use common_bevy::{
 use common_bevy::message::AbilityType;
 use qrz::{Convert, Qrz};
 
-use super::{mind::Minds, moves::{self, Candidate, Footing, Move}, perception::Sight, Bar, Body};
+use super::{mind::Minds, moves::{self, Candidate, Move}, perception::Sight, Bar, Body};
 use crate::engagement::{AssignedHex, EngagementMember};
 use crate::leap::LEAP_MS;
 use common_bevy::tuning::Tuning;
@@ -39,7 +39,9 @@ const HOME: i32 = 2;
 /// It strikes from its assigned hex where it has one (`AssignedHex`), else
 /// from wherever its target is within its `AttackRange`. A step that gives
 /// ground it takes backing away, facing its target; holding, or keeping to
-/// its tile, it stands and faces it.
+/// its tile, it stands and faces it. Activating a skill, it holds its
+/// ground and its heading until the skill lands: a step or a turn would
+/// cancel it.
 ///
 /// Further than `leash_distance` from its engagement's place it lets its
 /// target go and walks home (`Returning`), taking no target until it is
@@ -86,8 +88,8 @@ pub fn chase(
         Option<&AssignedHex>,
         &Side,
         Option<&Status>,
-        (Option<&mut Move>, Option<&EntityType>, Option<&Bar>, Option<&Sight>, &AttackRange),
-        Option<&common_bevy::components::recovery::GlobalRecovery>,
+        (Option<&mut Move>, Option<&EntityType>, Option<&Bar>, Option<&Sight>, &AttackRange, Option<&common_bevy::components::activation::Recharges>),
+        Option<&common_bevy::components::activation::Activating>,
     )>, Query<(Entity, &Heading)>)>,
     q_target: Query<(&Loc, &Health, &Side, Option<&ActorAttributes>, Option<&Status>)>,
     q_home: Query<&Loc, Without<Chase>>,
@@ -98,12 +100,14 @@ pub fn chase(
     minds: Res<Minds>,
     mut rolls: Query<&mut crate::dice::Rolls>,
     mut decisions: Option<ResMut<super::Decisions>>,
+    runtime: Option<Res<crate::RunTime>>,
 ) {
+    let now = runtime.map_or(common_bevy::moment::Moment::ZERO + dt.elapsed(), |runtime| runtime.now(&dt));
     // Which way each actor faces, read apart from the bodies this turns
     let headings: HashMap<Entity, Heading> = actors.p1().iter().map(|(ent, &heading)| (ent, heading)).collect();
-    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, (mut under_way, kind, bar, sight, range), recovery) in actors.p0().iter_mut() {
-        // Held: it neither walks nor turns
-        if Status::holds(status) {
+    for (npc, &chase, loc, mut body, attrs, mut target, returning, member, assigned, own_side, status, (mut under_way, kind, bar, sight, range, recharges), activating) in actors.p0().iter_mut() {
+        // Held, or committed to a skill: it neither walks nor turns
+        if Status::holds(status) || activating.is_some_and(|activating| activating.0.is_some()) {
             continue;
         }
         let dt_ms = dt.delta().as_millis() as i16;
@@ -195,29 +199,33 @@ pub fn chase(
         let tiles: Vec<Qrz> = std::iter::once(floor)
             .chain(map.neighbors(floor).into_iter().map(|(neighbor, _)| neighbor).filter(|&neighbor| uncrowded(&nntree, neighbor)))
             .collect();
+        // Its target's back is worth a step only to a strike that lands
+        // from there alone, ready to be struck
+        let flanks = bar.is_some_and(|bar| bar.0.iter().any(|ability| {
+            ability.flanks() && recharges.is_none_or(|recharges| recharges.is_ready(*ability, now))
+        }));
         let mut candidates: Vec<Candidate> = tiles.iter().map(|&at| {
             Candidate {
                 tile: at,
                 time_to_strike: to_strike(at),
                 detour: 0.0,
                 room: room(at),
-                behind: target_heading.filter(|_| at != *target_loc - Qrz::Z).map_or(0.0, |heading| {
-                    let bearing = Heading::from_hex(Qrz { z: 0, ..at - (*target_loc - Qrz::Z) });
-                    heading.turn_toward(bearing).1 as f32 / (HEADING_SLOTS / 2) as f32
-                }),
+                behind: if !flanks { 1.0 } else {
+                    target_heading.filter(|_| at != *target_loc - Qrz::Z).map_or(0.0, |heading| {
+                        let bearing = Heading::from_hex(Qrz { z: 0, ..at - (*target_loc - Qrz::Z) });
+                        heading.turn_toward(bearing).1 as f32 / (HEADING_SLOTS / 2) as f32
+                    })
+                },
             }
         }).collect();
         let soonest = candidates.iter().map(|candidate| candidate.time_to_strike).fold(f32::INFINITY, f32::min);
         for candidate in &mut candidates {
             candidate.detour = candidate.time_to_strike - soonest;
         }
-        let footing = Footing {
-            recovery_left: recovery.filter(|recovery| recovery.is_active()).map_or(0.0, |recovery| recovery.remaining + recovery.chain.owed),
-        };
-        let (chosen, step) = moves::choose(&footing, &candidates, under_way.as_deref().copied().unwrap_or_default(), &mind);
+        let (chosen, step) = moves::choose(&candidates, under_way.as_deref().copied().unwrap_or_default(), &mind);
         if let Some(under_way) = under_way.as_mut().filter(|under_way| ***under_way != chosen) {
             if let Some(decisions) = decisions.as_mut() {
-                decisions.0.push(format!("{npc} moves {:?} -> {chosen:?}: {footing:?} {step:?}", **under_way));
+                decisions.0.push(format!("{npc} moves {:?} -> {chosen:?}: {step:?}", **under_way));
             }
             **under_way = chosen;
         }

@@ -15,7 +15,7 @@ use common_bevy::{
     components::{ally_target::AllyTarget, heading::*, position::VisualPosition, target::Target},
     haven::Haven,
     resources::map::Map,
-    systems::targeting::STRIDE_ARC,
+    systems::targeting::FACING_ARC,
 };
 use qrz::Qrz;
 
@@ -61,7 +61,7 @@ impl Mark {
     fn px(self) -> f32 {
         match self {
             Mark::Bearing(_) => MARK_PX,
-            Mark::Facing => 2. * STRIDE_ARC * PX_PER_DEGREE,
+            Mark::Facing => 2. * FACING_ARC * PX_PER_DEGREE,
             Mark::Pin(_) => PIN_PX,
             Mark::Den(_) => DEN_PX,
             Mark::Haven => HAVEN_PX,

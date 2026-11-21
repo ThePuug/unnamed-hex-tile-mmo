@@ -1,4 +1,4 @@
-//! Every roll combat makes — damage, crits, the foe an NPC takes up, how
+//! Every roll combat makes — damage, the foe an NPC takes up, how
 //! far its judgement strays, how late it sees — comes from the [`Dice`]: a
 //! hash of the world's seed and what the roll is for, so two worlds seeded
 //! alike roll alike.

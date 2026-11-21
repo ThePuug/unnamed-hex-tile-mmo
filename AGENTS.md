@@ -40,7 +40,7 @@ cargo run --bin arena -- curves > data.json   # the Skill Curves page's data; pu
 cargo run --bin metrics -- serve   # records the server's and client's published metrics; then `metrics page|stats|snapshot|list|subscribe`
 cargo test                         # all tests
 cargo test -p common-bevy physics  # specific module
-cargo test -p combat reaction_queue
+cargo test -p combat abilities
 
 cargo build --release --no-default-features -p server -p client   # optimized
 ```
@@ -93,7 +93,7 @@ flat-top hex grid. All crates under `crates/`:
 | `common` | Non-Bevy shared library — plate tags, hex spatial grid, pure data |
 | `common-bevy` | Shared Bevy code — components, chunks, physics, messages, map |
 | `client` | Rendering, input, networking |
-| `combat` | The fight with no networking — damage, the reaction queue, abilities, NPC behaviour and minds, engagements; the server and the arena both install its plugins |
+| `combat` | The fight with no networking — activation and recharge, attacks, blocks and interrupts, runes, NPC behaviour and minds, engagements; the server and the arena both install its plugins |
 | `server` | Authority, terrain serving, connections; combat's network round it |
 | `arena` | Headless balance arena and tuning search over `combat` |
 | `world` | World event system + terrain generation, no Bevy |
@@ -153,10 +153,11 @@ pathfinding read the `Map`, never a summary cache.
 **INV-002 — InputQueue non-empty.** Every input queue holds ≥1 entry.
 Violations panic.
 
-**INV-003 — Threat timer consistency.** A threat's timer is set by who struck
-whom and how fatigued the target is as it is struck, never by which ability
-made it. Use `queue_utils::create_threat()`; never construct `QueuedThreat`
-directly.
+**INV-003 — An attack resolves once, where both then stand.** Every strike
+and auto-attack lands through `combat::abilities::Abilities::attack` as its
+activation ends: reach, arc, block and interrupt are judged there and
+nowhere else, and nothing of a skill lands at its cast. A second path that
+applies damage skips the block and the miss.
 
 **INV-004 — Chunk spatial authority.** The chunk system is the spatial
 authority. Never filter or classify cells by raw `wx/wy` as a substitute for

@@ -1,38 +1,33 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// The status effects that slow or hold an actor, one of each kind, a
-/// fresh one replacing the one it lands on. Each is a share of its speed,
-/// and its pace is all of them together: every caller of the physics takes
-/// it through [`Status::pace_of`] and [`Status::turn_pace_of`], so the
-/// server, the owner's prediction and every remote simulation agree. Every
-/// effect scales the walk and the turn alike but the horse, which runs
-/// faster and turns slower. At no pace, a root or a hold, an actor neither
-/// walks nor turns; a hold stops more: a held actor does not jump or swing
-/// either ([`Status::holds`]).
+use crate::message::AbilityType;
+
+/// The timed effects on an actor: what slows or holds it, the block it
+/// has up, and the one stance it holds. Each slow or hold is a share of
+/// its speed, and its pace is all of them together: every caller of the
+/// physics takes it through [`Status::pace_of`] and
+/// [`Status::turn_pace_of`], so the server, the owner's prediction and
+/// every remote simulation agree. Every effect scales the walk and the
+/// turn alike but the horse, which runs faster and turns slower. At no
+/// pace, a root or a hold, an actor neither walks nor turns; a hold stops
+/// more: a held actor does not jump, swing or use a skill either
+/// ([`Status::holds`]).
 ///
 /// The server sends the whole of it whenever an ability changes it, and
 /// both sides count its timed effects down, so a client moves an actor at
 /// the pace the server does without waiting on word that an effect ended.
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Status {
-    /// Slowed, by Intimidation: held to `pace` of its speed for `remaining`
-    /// seconds ([`Status::slow`]). The server works `pace` out from its
-    /// tuning and sends it, so a client holds none of the tuning.
+    /// Slowed: held to `pace` of its speed for `remaining` seconds
+    /// ([`Status::slow`]). The server works `pace` out from its tuning and
+    /// sends it, so a client holds none of the tuning.
     pub slow: Option<Timed>,
     /// Rooted, a slow to nothing: it can neither move nor turn, and swings
-    /// and recovers as ever ([`Status::root`])
+    /// and activates as ever ([`Status::root`])
     pub root: Option<Timed>,
-    /// Overcommitted: the seconds each stack has left, a stack put on by
-    /// every attack the actor made at a foe with Patience; 0 is no stack
-    /// ([`Status::overcommit`])
-    pub overcommitted: [f32; OVERCOMMIT_STACKS],
-    /// A strike across the striker's own line, its stride broken
-    pub stride: Option<Timed>,
-    /// A Perfect Stride under way: its strikes across its own line break no
-    /// stride, and it runs at `pace` of its speed, above whole
-    pub perfect_stride: Option<Timed>,
-    /// Held in place, by a stun or by the stagger of a Kick ([`Status::hold`])
+    /// Held in place, by a stun or for as long as a drag slides it
+    /// ([`Status::hold`])
     pub held: Option<Timed>,
     /// Carrying past the bag's burden limit
     pub burden: bool,
@@ -40,33 +35,32 @@ pub struct Status {
     /// turns at [`MOUNTED_TURN`] of its turn, until it fights, uses a skill
     /// or gathers
     pub mounted: bool,
-    /// Taxed, in an Intimidating foe's zone: every skill it uses costs
-    /// `pace` times its price, for `remaining` seconds ([`Status::tax`])
-    pub toll: Option<Timed>,
-    /// Pinned, in an Intimidating foe's zone at its capstone: no skill that
-    /// moves it, for `remaining` seconds ([`Status::pin`]); its `pace` is unused
+    /// Pinned: no skill of its own that is only a move, for `remaining`
+    /// seconds ([`Status::pin`]); its `pace` is unused
     pub pinned: Option<Timed>,
+    /// A block up: the attacks it still stops, whole
+    pub block: Option<Block>,
+    /// A Perfect Stride under way: it runs at `pace` of its speed, above
+    /// whole
+    pub perfect_stride: Option<Timed>,
     /// A Bloodlust under way: `pace` of the damage its attacks land comes
     /// back to it as health, for `remaining` seconds
     pub bloodlust: Option<Timed>,
-    /// A Brace under way: no hold, slow, root, pin or broken stride a foe
-    /// lays on it takes, and no drag moves it, for `remaining` seconds
+    /// A Brace under way: no hold, slow, root or pin a foe lays on it
+    /// takes, and no drag moves it, for `remaining` seconds
     /// ([`Status::is_braced`]); its `pace` is unused
     pub braced: Option<Timed>,
     /// A Surge under way: each tile it moves adds `pace` more to its next
     /// skill strike, for `remaining` seconds or until that strike spends it
     pub surge: Option<Timed>,
-    /// A Vigil under way: no strike takes its flank, for `remaining`
-    /// seconds ([`Status::is_vigilant`]); its `pace` is unused
+    /// A Vigil under way: every attack from outside its arc is blocked, for
+    /// `remaining` seconds ([`Status::is_vigilant`]); its `pace` is unused
     pub vigil: Option<Timed>,
     /// A Lurk under way: no foe beyond its reach sees it, for `remaining`
-    /// seconds or until it attacks (`targeting::unseen`); its `pace` is
-    /// unused
+    /// seconds or until it attacks (`targeting::unseen`), and a skill
+    /// struck out of it lands `pace` harder
     pub lurk: Option<Timed>,
 }
-
-/// The most stacks of Overcommitted an actor carries
-pub const OVERCOMMIT_STACKS: usize = 10;
 
 /// An effect that lasts `remaining` seconds at `pace` of the actor's speed.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -78,6 +72,50 @@ pub struct Timed {
 impl Timed {
     fn pace(slot: Option<Timed>) -> f32 {
         slot.filter(|timed| timed.remaining > 0.0).map_or(1.0, |timed| timed.pace)
+    }
+}
+
+/// A block a skill put up: it stops the next `attacks` attacks on its user
+/// within `remaining` seconds, each whole, with all it carried.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct Block {
+    /// The skill that put it up, which says what a blocked attack's
+    /// striker takes
+    pub ability: AbilityType,
+    pub attacks: u8,
+    pub remaining: f32,
+    /// How much of what its skill does to a blocked attack's striker its
+    /// user's line gives: seconds of a Clash's stun, the share of the blow
+    /// a Counter strikes back for
+    pub power: f32,
+}
+
+/// The stances, one skill each: an actor holds one at a time
+/// ([`Status::take`]).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Stance {
+    PerfectStride,
+    Bloodlust,
+    Brace,
+    Surge,
+    Vigil,
+    Lurk,
+}
+
+impl Stance {
+    pub const ALL: [Stance; 6] = [Stance::PerfectStride, Stance::Bloodlust, Stance::Brace, Stance::Surge, Stance::Vigil, Stance::Lurk];
+
+    /// The stance `ability` takes, for a stance's skill
+    pub fn of(ability: AbilityType) -> Option<Stance> {
+        match ability {
+            AbilityType::PerfectStride => Some(Stance::PerfectStride),
+            AbilityType::Bloodlust => Some(Stance::Bloodlust),
+            AbilityType::Brace => Some(Stance::Brace),
+            AbilityType::Surge => Some(Stance::Surge),
+            AbilityType::Vigil => Some(Stance::Vigil),
+            AbilityType::Lurk => Some(Stance::Lurk),
+            _ => None,
+        }
     }
 }
 
@@ -117,12 +155,51 @@ impl Status {
     /// Every effect that scales the walk and the turn alike
     fn effects(&self) -> f32 {
         let burden = if self.burden { BURDENED_PACE } else { 1.0 };
-        Timed::pace(self.slow) * Timed::pace(self.root) * Timed::pace(self.stride) * Timed::pace(self.perfect_stride) * Timed::pace(self.held) * burden
+        Timed::pace(self.slow) * Timed::pace(self.root) * Timed::pace(self.perfect_stride) * Timed::pace(self.held) * burden
+    }
+
+    /// The place `stance` is kept in
+    fn stance_mut(&mut self, stance: Stance) -> &mut Option<Timed> {
+        match stance {
+            Stance::PerfectStride => &mut self.perfect_stride,
+            Stance::Bloodlust => &mut self.bloodlust,
+            Stance::Brace => &mut self.braced,
+            Stance::Surge => &mut self.surge,
+            Stance::Vigil => &mut self.vigil,
+            Stance::Lurk => &mut self.lurk,
+        }
+    }
+
+    /// What is left of `stance` on it, if it holds it now
+    pub fn stance(&self, stance: Stance) -> Option<Timed> {
+        let slot = match stance {
+            Stance::PerfectStride => self.perfect_stride,
+            Stance::Bloodlust => self.bloodlust,
+            Stance::Brace => self.braced,
+            Stance::Surge => self.surge,
+            Stance::Vigil => self.vigil,
+            Stance::Lurk => self.lurk,
+        };
+        slot.filter(|timed| timed.remaining > 0.0)
+    }
+
+    /// The stance it holds now, if any
+    pub fn held_stance(&self) -> Option<Stance> {
+        Stance::ALL.into_iter().find(|&stance| self.stance(stance).is_some())
+    }
+
+    /// Takes `stance` as `timed` has it, ending the one it held: an actor
+    /// holds one stance at a time
+    pub fn take(&mut self, stance: Stance, timed: Timed) {
+        for other in Stance::ALL {
+            *self.stance_mut(other) = None;
+        }
+        *self.stance_mut(stance) = Some(timed);
     }
 
     /// Whether a Perfect Stride holds now
     pub fn is_striding(&self) -> bool {
-        self.perfect_stride.is_some_and(|stride| stride.remaining > 0.0)
+        self.stance(Stance::PerfectStride).is_some()
     }
 
     /// Whether the actor is held in place now
@@ -131,61 +208,62 @@ impl Status {
     }
 
     /// Whether an actor with `status` is held in place now: it neither
-    /// moves, turns, jumps nor swings. Its abilities and reactions are for
-    /// the recovery whatever held it lays on alongside.
+    /// moves, turns, jumps, swings nor uses a skill.
     pub fn holds(status: Option<&Status>) -> bool {
         status.is_some_and(Status::is_held)
     }
 
     /// Whether a Lurk holds now: no foe beyond its reach sees it
     pub fn is_lurking(&self) -> bool {
-        self.lurk.is_some_and(|lurk| lurk.remaining > 0.0)
+        self.stance(Stance::Lurk).is_some()
     }
 
-    /// Whether a Vigil holds now: no strike takes its flank
+    /// Whether a Vigil holds now: every attack from outside its arc is
+    /// blocked
     pub fn is_vigilant(&self) -> bool {
-        self.vigil.is_some_and(|vigil| vigil.remaining > 0.0)
+        self.stance(Stance::Vigil).is_some()
     }
 
     /// The share more each tile it has moved adds to its next skill strike
     /// now: a Surge's, none without one
     pub fn surging(&self) -> f32 {
-        self.surge.filter(|surge| surge.remaining > 0.0).map_or(0.0, |surge| surge.pace)
+        self.stance(Stance::Surge).map_or(0.0, |surge| surge.pace)
     }
 
     /// Whether a Brace holds now: nothing a foe lays on it holds or moves it
     pub fn is_braced(&self) -> bool {
-        self.braced.is_some_and(|braced| braced.remaining > 0.0)
+        self.stance(Stance::Brace).is_some()
     }
 
     /// The share of the damage its attacks land that comes back to it as
     /// health now: a Bloodlust's, none without one
     pub fn lifesteal(&self) -> f32 {
-        self.bloodlust.filter(|bloodlust| bloodlust.remaining > 0.0).map_or(0.0, |bloodlust| bloodlust.pace)
+        self.stance(Stance::Bloodlust).map_or(0.0, |bloodlust| bloodlust.pace)
+    }
+
+    /// The block it has up now, if it still stops an attack
+    pub fn blocking(&self) -> Option<Block> {
+        self.block.filter(|block| block.attacks > 0 && block.remaining > 0.0)
+    }
+
+    /// Stops one attack with the block it has up, and returns the block as
+    /// it stood; None with none up, where the attack lands
+    pub fn stop(&mut self) -> Option<Block> {
+        let block = self.blocking()?;
+        self.block = Some(Block { attacks: block.attacks - 1, ..block }).filter(|left| left.attacks > 0);
+        Some(block)
     }
 
     /// Holds the actor for `seconds`, or for what a hold already on it has
     /// left where that is longer: a short hold never cuts a long one. A
-    /// braced actor takes none.
-    pub fn hold(&mut self, seconds: f32) {
+    /// braced actor takes none. Returns whether it took.
+    pub fn hold(&mut self, seconds: f32) -> bool {
         if self.is_braced() {
-            return;
+            return false;
         }
         let left = self.held.map_or(0.0, |held| held.remaining);
         self.held = Some(Timed { pace: 0.0, remaining: seconds.max(left) });
-    }
-
-    /// How many stacks of Overcommitted the actor carries now
-    pub fn overcommits(&self) -> usize {
-        self.overcommitted.iter().filter(|&&left| left > 0.0).count()
-    }
-
-    /// Puts a stack of Overcommitted lasting `seconds` on the actor, on its
-    /// own: in an empty place, or in place of the stack with least left
-    pub fn overcommit(&mut self, seconds: f32) {
-        if let Some(place) = self.overcommitted.iter_mut().min_by(|a, b| a.total_cmp(b)) {
-            *place = place.max(seconds);
-        }
+        true
     }
 
     /// Whether the actor is slowed or rooted now
@@ -214,35 +292,7 @@ impl Status {
         self.slow = Some(Timed { pace: pace.min(held), remaining: seconds.max(left) });
     }
 
-    /// What its skills' prices are multiplied by now: its toll, or whole
-    pub fn price(&self) -> f32 {
-        Timed::pace(self.toll)
-    }
-
-    /// Taxes the actor `factor` times every skill's price for `seconds`,
-    /// keeping a toll already on it that is dearer or lasts longer
-    pub fn tax(&mut self, factor: f32, seconds: f32) {
-        let (held, left) = self.toll.map_or((1.0, 0.0), |toll| (toll.pace, toll.remaining));
-        self.toll = Some(Timed { pace: factor.max(held), remaining: seconds.max(left) });
-    }
-
-    /// Breaks the actor's stride to `pace` for `seconds` as a foe's strike
-    /// lands, the deeper of two breaks holding. A braced actor takes none.
-    pub fn break_stride(&mut self, pace: f32, seconds: f32) {
-        if self.is_braced() {
-            return;
-        }
-        let pace = self.stride.map_or(pace, |stride| stride.pace.min(pace));
-        self.stride = Some(Timed { pace, remaining: seconds });
-    }
-
-    /// Takes every stack of Overcommitted off it: a patient foe's certain
-    /// crit spent them
-    pub fn spend_overcommits(&mut self) {
-        self.overcommitted = [0.0; OVERCOMMIT_STACKS];
-    }
-
-    /// Whether it is pinned now: no skill may move it
+    /// Whether it is pinned now: no skill that is only a move
     pub fn is_pinned(&self) -> bool {
         self.pinned.is_some_and(|pinned| pinned.remaining > 0.0)
     }
@@ -257,15 +307,11 @@ impl Status {
         self.pinned = Some(Timed { pace: 1.0, remaining: seconds.max(left) });
     }
 
-    /// Counts the timed effects and Overcommitted stacks down by `dt`
-    /// seconds, dropping spent ones. Returns whether any was counting.
+    /// Counts the timed effects down by `dt` seconds, dropping spent ones.
+    /// Returns whether any was counting.
     pub fn tick(&mut self, dt: f32) -> bool {
         let mut counted = false;
-        for left in self.overcommitted.iter_mut().filter(|left| **left > 0.0) {
-            *left = (*left - dt).max(0.0);
-            counted = true;
-        }
-        for slot in [&mut self.slow, &mut self.root, &mut self.stride, &mut self.perfect_stride, &mut self.held, &mut self.toll, &mut self.pinned, &mut self.bloodlust, &mut self.braced, &mut self.surge, &mut self.vigil, &mut self.lurk] {
+        for slot in [&mut self.slow, &mut self.root, &mut self.held, &mut self.pinned, &mut self.perfect_stride, &mut self.bloodlust, &mut self.braced, &mut self.surge, &mut self.vigil, &mut self.lurk] {
             if let Some(timed) = slot {
                 timed.remaining -= dt;
                 if timed.remaining <= 0.0 {
@@ -273,6 +319,13 @@ impl Status {
                 }
                 counted = true;
             }
+        }
+        if let Some(block) = &mut self.block {
+            block.remaining -= dt;
+            if block.remaining <= 0.0 {
+                self.block = None;
+            }
+            counted = true;
         }
         counted
     }
@@ -303,15 +356,13 @@ mod tests {
         let mut alone = Status::default();
         alone.root(1.0);
         let rooted = app.world_mut().spawn(alone).id();
-        let mut stacked = Status::default();
-        stacked.overcommitted[0] = 1.0;
-        let overcommitted = app.world_mut().spawn(stacked).id();
+        let blocking = app.world_mut().spawn(Status { block: Some(Block { ability: AbilityType::Parry, attacks: 1, remaining: 1.0, power: 0.0 }), ..default() }).id();
         for _ in 0..3 {
             app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(1));
             app.update();
         }
         assert!(app.world().get::<Status>(rooted).unwrap().root.is_none(), "a root with nothing beside it");
-        assert_eq!(app.world().get::<Status>(overcommitted).unwrap().overcommits(), 0, "and a stack");
+        assert!(app.world().get::<Status>(blocking).unwrap().block.is_none(), "and a block that stopped nothing");
     }
 
     #[test]
@@ -335,10 +386,10 @@ mod tests {
     #[test]
     fn every_effect_adjusts_the_one_pace() {
         let slowed = Status { slow: Some(Timed { pace: 0.8, remaining: 1.0 }), ..default() };
-        let stumbling = Status { stride: Some(Timed { pace: 0.9, remaining: 1.0 }), ..default() };
-        let both = Status { slow: slowed.slow, stride: stumbling.stride, ..default() };
-        assert!(slowed.pace() < 1.0 && stumbling.pace() < 1.0);
-        assert!((both.pace() - slowed.pace() * stumbling.pace()).abs() < 1e-6, "effects multiply");
+        let striding = Status { perfect_stride: Some(Timed { pace: 1.2, remaining: 1.0 }), ..default() };
+        let both = Status { slow: slowed.slow, perfect_stride: striding.perfect_stride, ..default() };
+        assert!(slowed.pace() < 1.0 && striding.pace() > 1.0);
+        assert!((both.pace() - slowed.pace() * striding.pace()).abs() < 1e-6, "effects multiply");
         let burdened = Status { burden: true, ..both };
         assert!(burdened.pace() < both.pace());
         assert_eq!(burdened.turn_pace(), burdened.pace(), "an effect slows the turn as it does the walk");
@@ -353,7 +404,7 @@ mod tests {
     fn a_hold_stops_the_actor_until_it_runs_out_and_a_shorter_one_never_cuts_it() {
         let mut status = Status::default();
         assert!(!status.is_held() && !Status::holds(None));
-        status.hold(1.0);
+        assert!(status.hold(1.0));
         assert!(status.is_held());
         assert_eq!(status.pace(), 0.0, "held, it moves at no pace");
         status.hold(0.25);
@@ -365,17 +416,26 @@ mod tests {
     }
 
     #[test]
-    fn each_stack_of_overcommitted_runs_out_on_its_own_and_ten_is_the_most() {
+    fn taking_a_stance_ends_the_one_before() {
         let mut status = Status::default();
-        status.overcommit(5.0);
-        status.tick(2.0);
-        status.overcommit(5.0);
-        assert_eq!(status.overcommits(), 2);
-        status.tick(3.0);
-        assert_eq!(status.overcommits(), 1, "the first runs out, and the second was never refreshed by it");
-        (0..OVERCOMMIT_STACKS + 3).for_each(|_| status.overcommit(5.0));
-        assert_eq!(status.overcommits(), OVERCOMMIT_STACKS);
+        let timed = Timed { pace: 1.0, remaining: 5.0 };
+        status.take(Stance::Bloodlust, timed);
+        assert_eq!(status.held_stance(), Some(Stance::Bloodlust));
+        status.take(Stance::Brace, timed);
+        assert_eq!(status.held_stance(), Some(Stance::Brace), "the new one holds");
+        assert_eq!(status.lifesteal(), 0.0, "and the one before is over");
+        assert!(status.is_braced() && !status.hold(1.0), "a brace refuses a hold");
         status.tick(5.0);
-        assert_eq!(status.overcommits(), 0);
+        assert_eq!(status.held_stance(), None, "a stance runs out on its own");
+    }
+
+    #[test]
+    fn a_block_stops_as_many_attacks_as_it_says_and_no_more() {
+        let mut status = Status { block: Some(Block { ability: AbilityType::Parry, attacks: 1, remaining: 2.0, power: 0.0 }), ..default() };
+        assert!(status.stop().is_some(), "the next attack is stopped");
+        assert!(status.stop().is_none(), "and the one after lands");
+        let mut late = Status { block: Some(Block { ability: AbilityType::Parry, attacks: 1, remaining: 2.0, power: 0.0 }), ..default() };
+        late.tick(2.0);
+        assert!(late.stop().is_none(), "run out, it stops nothing");
     }
 }

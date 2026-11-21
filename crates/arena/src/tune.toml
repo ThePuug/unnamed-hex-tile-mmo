@@ -22,11 +22,9 @@ knobs = []
 [fixed]
 
 # Balance lessens each pairing's edge and its fights run to the cap, each a
-# hundred points off fair, both at `edge` a point, what its median fight
-# falls short of `short` seconds, and the mean of how far the minds fall
-# short of their styles ([style]); it keeps nothing that widens a
-# pairing's win split past `band` points either side of even, or that
-# shortfall. A mind
+# hundred points off fair, both at `edge` a point, and what its median
+# fight falls short of `short` seconds; it keeps nothing that widens a
+# pairing's win split past `band` points either side of even. A mind
 # raises its archetype's edge, each fight run to the cap a loss at full
 # health
 [score]
@@ -34,35 +32,13 @@ band = 15.0
 edge = 1.0
 short = 24.0
 
-# A mind is held to its archetype's style: the commitment its build invests
-# in, used at least `floor`. In points: Ferocity's skill strikes taken as a
-# combo of its skill strikes, never a chain's first; Patience's damage
-# landed as crits of its damage landed; Awareness's damage cleared of the
-# damage queued on it; Preparation's time with its target in reach against
-# beyond it, whole at one to one; Grace's strikes from a flank of its
-# strikes; Intimidation's foe's time its slow took, at most 30 at T8's 70%.
-# Below its floor the mind's score loses `weight` of a hundred points for
-# each share of the floor it falls short of. An archetype with no floor is held to nothing.
-[style]
-weight = 0.25
-
-[style.floor]
-berserker = 66.0
-juggernaut = 25.0
-flanker = 66.0
-defender = 50.0
-skirmisher = 66.0
-ambusher = 33.0
-
 [screen]
 # A knob whose sweep across its bounds moves no pairing's edge by this many
 # points is left out of the balance search
 min_moved = 3.0
 
-# Each archetype's mind: every one tunes `common`, `strike` and `reaction`
-# (every bar holds a Feint and a Parry), how much each foe Approach's last
-# skill counts (`just_acted`), and its own. A setting not yet in
-# `mind::TUNED` starts at `start`, or its range's middle.
+# Each archetype's mind: every one tunes `common`, and its own. A setting
+# not yet in `mind::TUNED` starts at `start`, or its range's middle.
 [minds]
 # Passes over every archetype until no mind gains more than `settle` points
 # in one, and no more than `rounds`. A mind is searched against the minds as
@@ -73,27 +49,15 @@ settle = 3.0
 rounds = 15
 pool = 4
 exploit_every = 3
-just_acted = { min = 0.2, max = 3.0 }
 common = [
     { name = "wait", min = 0.05, max = 0.7, start = 0.35 },
     { name = "hold", min = 0.05, max = 0.6, start = 0.35 },
     { name = "momentum", min = 0.0, max = 0.3, start = 0.15 },
-    { name = "combo", min = 0.0, max = 0.3, start = 0.15 },
-    { name = "recovery_left.to", min = 1.0, max = 12.0, start = 10.0 },
-    { name = "recovery_left.floor", min = 0.0, max = 1.0, start = 1.0 },
     { name = "leash_left.to", min = 0.05, max = 0.6, start = 0.3 },
     { name = "effect_added.from", min = 0.0, max = 0.9, start = 0.0 },
     { name = "detour.to", min = 0.1, max = 2.0, start = 1.0 },
-    { name = "exposure.to", min = 0.2, max = 1.0, start = 0.9 },
-    { name = "exposure.floor", min = 0.0, max = 1.0, start = 1.0 },
     { name = "behind.to", min = 0.2, max = 1.0, start = 0.5 },
     { name = "behind.floor", min = 0.0, max = 1.0, start = 1.0 },
-]
-strike = [
-    { name = "foe_just_acted.floor", min = 0.2, max = 1.0, start = 0.6 },
-    { name = "foe_just_acted.from", min = 0.5, max = 4.0, start = 2.0 },
-]
-reaction = [
     { name = "worth_answering.to", min = 0.05, max = 0.8, start = 0.3 },
 ]
 

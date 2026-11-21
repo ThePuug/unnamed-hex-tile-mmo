@@ -158,18 +158,10 @@ fn main() {
     #[cfg(not(feature = "admin"))]
     app.add_systems(Update, camera::update);
 
-    // The server starts every recovery; the client only counts it down
     app.add_systems(Update, (
-        common_bevy::systems::combat::recovery::global_recovery_system,
-    ));
-
-    app.add_systems(Update, (
-        combat::handle_insert_threat,
-        (struck::on_contact, struck::on_landing, struck::update_marks, struck::flash).chain(),
+        combat::track,
+        (struck::on_resolved, struck::flash).chain(),
         ghost::ghost,
-        combat::handle_clear_queue,
-        combat::land_own,
-        combat::answer_own,
         common_bevy::systems::world::try_incremental,
         common_bevy::systems::world::do_incremental,
         // A Loc that arrives with a slide must see the Displacing marker the
@@ -191,7 +183,6 @@ fn main() {
         renet::handle_pong,
         renet::periodic_ping,
         renet::track_latency,
-        renet::handle_arrived,
         world::update,
     ));
 
@@ -202,7 +193,7 @@ fn main() {
         gathering::do_activity,
         (equipment::hold, equipment::bind_held).chain(),
         crate::systems::rune::bind,
-        crate::systems::rope::throw.after(combat::handle_insert_threat),
+        crate::systems::rope::throw,
         mount::request,
         (mount::saddle, mount::seat).chain(),
         crate::systems::focus::track,
@@ -220,7 +211,6 @@ fn main() {
     app.insert_resource(crate::resources::world_map());
 
     app.init_resource::<InputQueues>();
-    app.init_resource::<combat::Gone>();
     app.init_resource::<crate::systems::rope::RopeKit>();
     app.init_resource::<common_bevy::tuning::Tuning>();
     app.init_resource::<crate::resources::RenderOrigin>();

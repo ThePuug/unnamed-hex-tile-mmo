@@ -20,7 +20,7 @@ use common_bevy::{
         position::Position,
         Loc,
     },
-    message::{Do, Event, Try},
+    message::{Do, Event, Outcome, Try},
     moment::Moment,
     resources::map::Map,
     systems::movement::{stand_point, stepped},
@@ -488,12 +488,12 @@ pub fn finish_work(
     }
 }
 
-/// Breaks off the work of each player struck.
+/// Breaks off the work of each player something lands on.
 pub fn interrupt_work(mut commands: Commands, mut reader: MessageReader<Do>, working: Query<Has<Looting>, With<Working>>) {
     for message in reader.read() {
-        let Do { event: Event::ApplyDamage { ent, .. } } = message else { continue };
-        if let Ok(looting) = working.get(*ent) {
-            stop(*ent, looting, &mut commands);
+        let Do { event: Event::Resolved { target: Some(struck), outcome: Outcome::Landed, .. } } = message else { continue };
+        if let Ok(looting) = working.get(*struck) {
+            stop(*struck, looting, &mut commands);
         }
     }
 }

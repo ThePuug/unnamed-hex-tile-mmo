@@ -51,10 +51,16 @@ pub struct PoolText {
 
 /// How far up the screen the bars' line stands, in hundredths of the
 /// window's width: midway between the player and the bottom of the screen.
-/// The highway stands on it and the action bar hangs below it.
+/// The viewed actor's activation bar stands on it and the action bar
+/// hangs below it.
 pub const LINE_VW: f32 = 12.5;
 
-/// Builds the bars on their line (`LINE_VW`).
+/// Width of the viewed actor's activation bar, in px: the two pools' and
+/// the gap between them
+const ACTIVATION_PX: f32 = 410.;
+
+/// Builds the bars on their line (`LINE_VW`), the viewed actor's
+/// activation bar over them.
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, With<IsDefaultUiCamera>>,
@@ -69,8 +75,10 @@ pub fn setup(
             height: Val::Percent(100.),
             bottom: Val::Px(0.),
             left: Val::Px(0.),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::FlexEnd,
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::FlexEnd,
+            align_items: AlignItems::Center,
+            row_gap: Val::Px(6.),
             padding: UiRect::bottom(Val::Vw(LINE_VW)),
             ..default()
         },
@@ -78,6 +86,7 @@ pub fn setup(
         crate::components::ViewHud,
     ))
     .with_children(|parent| {
+        crate::systems::combat_ui::activation_bar(parent.spawn_empty(), None, ACTIVATION_PX, Node::default());
         parent.spawn((
             Node {
                 flex_direction: FlexDirection::Row,

@@ -1,18 +1,16 @@
-use bevy::prelude::*;
-use common_bevy::message::AbilityType;
+use common_bevy::message::{AbilityType, Outcome};
 
-use super::{Abilities, AbilityFailReason, Cast, Carried};
+use super::{Abilities, Cast};
 
-/// Yank, Physique's reaction: clears the threats in its user's band
-/// ([`Abilities::answer`]) and drags each source it cleared up to
-/// `Tuning::yank_tiles` toward its user as its Physique line has it
-/// (`ActorAttributes::line_tiles`), the pull queued on that source
-/// ([`Abilities::send_back`]) and walked as it lands (`resolve_drag`). Its
-/// recovery is contested by the source of the first threat it answers.
-pub fn answer(abilities: &mut Abilities, cast: &Cast) -> Result<Option<Entity>, AbilityFailReason> {
+/// Yank, Physique's defence: drags its target, a living hostile within its
+/// range and its user's arc as its activation ends (`AbilityType::reach`), up to
+/// `Tuning::yank_tiles` toward its user as its line has it
+/// (`ActorAttributes::line_tiles`), ending what the target was activating
+/// (`Abilities::drag`). No attack, so nothing blocks it.
+pub fn pull(abilities: &mut Abilities, cast: &Cast) {
     let tuning = *abilities.tuning;
-    let answered = abilities.answer(cast);
-    let drag = cast.attrs.line_tiles(&tuning, AbilityType::Yank, tuning.yank_tiles).min(i8::MAX as usize) as i8;
-    abilities.send_back(cast, &answered, |_| Carried { drag, ..Carried::default() });
-    Ok(answered.first().map(|threat| threat.source))
+    let Ok((target, _)) = cast.struck() else { return };
+    let tiles = cast.attrs.line_tiles(&tuning, AbilityType::Yank, tuning.yank_tiles).min(i8::MAX as usize) as i8;
+    abilities.told(cast.ent, cast.ability, Some(target), 0.0, Outcome::Landed);
+    abilities.drag(target, cast.loc, tiles);
 }

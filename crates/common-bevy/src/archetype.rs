@@ -24,7 +24,7 @@ pub enum EnemyArchetype {
 pub struct Profile {
     /// What an NPC of it is called
     pub name: &'static str,
-    /// Its skill, the one of the early kit its attribute's commitment shows in
+    /// Its own skill, one of its attribute's line
     pub ability: AbilityType,
     pub approach: Approach,
     pub resilience: Resilience,

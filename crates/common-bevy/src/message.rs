@@ -5,7 +5,7 @@ use tinyvec::ArrayVec;
 
 use crate::{
     chunk::ChunkId,
-    components::{ behaviour::*, entity_type::*, equipment::{Equipment, Inventory, Item}, heading::*, keybits::*, position::Position, reaction_queue::*, resources::*, * },
+    components::{ behaviour::*, entity_type::*, equipment::{Equipment, Inventory, Item}, heading::*, keybits::*, activation::Activation, position::Position, resources::*, * },
     moment::Moment,
 };
 
@@ -48,23 +48,23 @@ pub enum Event {
     Confirm { ent: Entity, seq: u8, position: Position, airtime: Option<i16>, turn: Turn },
     Incremental { ent: Entity, component: Component },
     Spawn { ent: Entity, typ: EntityType, qrz: Qrz, attrs: Option<ActorAttributes> },
-    /// Server → Client: Insert threat into reaction queue
-    InsertThreat { ent: Entity, threat: QueuedThreat },
-    /// Server → Client: Apply damage to entity (threat resolved). `dot` marks
-    /// a wound's damage, shown apart from a blow's.
-    ApplyDamage { ent: Entity, damage: f32, source: Entity, dot: bool },
-    /// Client → Server (Try): Request to use an ability
-    /// Server → Client (Do): Ability was used successfully
-    /// target: the actor it is used on, a player's choice the server checks
-    /// at: the moment it was used on the game clock, a player's key press
-    /// as its client stamped it
-    /// arrived: in a Do, the server's clock as the press reached it, which
-    /// tells the client how far ahead its press came; a Try's is unread.
-    /// The server holds a press until the later of the two and judges a
-    /// reaction's band there (`abilities::Press`)
-    UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity>, at: Moment, arrived: Moment },
-    /// Server → Client: Clear threats from queue
-    ClearQueue { ent: Entity, clear_type: ClearType },
+    /// Client → Server: `ent` asks to use `ability` on `target`, a player's
+    /// choice the gate checks and never substitutes.
+    UseAbility { ent: Entity, ability: AbilityType, target: Option<Entity> },
+    /// Server → Client: `ent` began using a skill, sent once, whole: what,
+    /// on whom, the moment it began on the game clock and how long until
+    /// it lands, no time for a skill that takes hold at once. A control
+    /// rune's pulse is its own, one for each foe then in its reach.
+    Activate { ent: Entity, activation: Activation },
+    /// Server → Client: how `ent`'s use of `ability` on `target` ended, for
+    /// `damage` where it landed. One for every attack as it resolves, an
+    /// activation's, a swing's or a block's return; and for an activation
+    /// that ends with nothing done. `dot` marks a wound's tick, shown
+    /// apart from a blow.
+    Resolved { ent: Entity, ability: AbilityType, target: Option<Entity>, damage: f32, outcome: Outcome, dot: bool },
+    /// Server → Client: `ent`'s `ability` recharges from `began`, on the
+    /// game clock, for `length`, sent once as its activation ends.
+    Recharge { ent: Entity, ability: AbilityType, began: Moment, length: std::time::Duration },
     /// Client → Server: ask for the server's game world time
     Ping,
     /// Server → Client: the answer to a Ping, the server's game world time
@@ -166,8 +166,8 @@ pub enum Event {
 impl Event {
     /// The entity this event is about, where it is about one: the id the
     /// wire exchanges, a client's for the server's and back. Other entities
-    /// an event names (a blow's source, an ability's target) are its
-    /// handler's to exchange.
+    /// an event names (an ability's target, an activation's, a blow's) are
+    /// its handler's to exchange.
     pub fn ent_mut(&mut self) -> Option<&mut Entity> {
         match self {
             Event::Despawn { ent, .. }
@@ -179,10 +179,10 @@ impl Event {
             | Event::Confirm { ent, .. }
             | Event::Incremental { ent, .. }
             | Event::Spawn { ent, .. }
-            | Event::InsertThreat { ent, .. }
-            | Event::ApplyDamage { ent, .. }
             | Event::UseAbility { ent, .. }
-            | Event::ClearQueue { ent, .. }
+            | Event::Activate { ent, .. }
+            | Event::Resolved { ent, .. }
+            | Event::Recharge { ent, .. }
             | Event::MovementIntent { ent, .. }
             | Event::Displace { ent, .. }
             | Event::Teleport { ent, .. }
@@ -214,50 +214,46 @@ impl Event {
     }
 }
 
-/// What an actor uses in a fight: the auto-attack, and the early kit, one
-/// skill to an archetype, each showing what its attribute's commitment buys.
+/// What an actor uses in a fight: the auto-attack, and the kit, a strike, a
+/// defence and a stance to each attribute's line, with a strike and a block
+/// of no line.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum AbilityType {
     /// The swing every actor makes on its own clock, free
     AutoAttack,
-    /// The Berserker's bite. Its combo is itself, so Ferocity fires bites in a burst
+    /// Might's strike, quick to return
     Frenzy,
-    /// A light strike, cheap and quickly recovered from: a Parry's combo,
-    /// offering none of its own
+    /// A light, quick strike of no line that interrupts
     Feint,
-    /// The Juggernaut's heavy blow
+    /// Physique's strike: one heavy blow, slow to land
     Overpower,
-    /// The Ambusher's strike, harder on a target still in recovery
+    /// Instinct's strike, harder on a target mid-activation
     Punish,
-    /// A reaction clearing the threats in its span, on a new character's
-    /// bar; Preparation chains it through a recovery. Its combo is a Feint
+    /// A block of no line: stops the next attack
     Parry,
-    /// The Defender's reaction, clearing every threat in its span and
-    /// sending a share of each back; Awareness lengthens the span
+    /// Resolve's defence: blocks the next attack and strikes its striker
+    /// for a share of it
     Counter,
-    /// The Skirmisher's leap: clear of a target in its reach, or onto one
-    /// out of it
+    /// Discipline's defence: clear of a target in its reach, or onto one
+    /// out of it, striking as it arrives
     Leap,
-    /// The Flanker's stride: for a while its strikes past the forward faces
-    /// break no stride, so Grace strikes on the run
+    /// Agility's stance: for a while it runs faster
     PerfectStride,
-    /// Might's reaction: clears its span and stuns each source it cleared
+    /// Might's defence: blocks the next attack and stuns its striker
     Clash,
-    /// Agility's reaction: clears its span and steps round its source
-    /// toward that one's back
+    /// Agility's defence: steps round its target toward that one's back
     Sidestep,
-    /// Physique's reaction: clears its span and drags each source it
-    /// cleared toward its user
+    /// Physique's defence: drags its target to its user
     Yank,
-    /// Agility's strike: a blow struck only from a target's flank, its crit
-    /// the harder
+    /// Agility's strike: a heavy blow that lands only from past its
+    /// target's forward faces
     Backstab,
-    /// Instinct's reaction: clears its span and lunges beside its source
+    /// Instinct's defence: lunges toward its target
     Pounce,
     /// Discipline's strike: a blow that knocks its target back as it lands
     Kick,
-    /// Resolve's strike: a blow the harder for each threat waiting in its
-    /// user's own queue
+    /// Resolve's strike: a blow the harder the more of its user's health
+    /// is lost
     Defy,
     /// Might's stance: for a while a share of the damage its attacks land
     /// comes back to it as health
@@ -268,23 +264,25 @@ pub enum AbilityType {
     /// Discipline's stance: for a moment each tile it moves adds to its
     /// next skill strike
     Surge,
-    /// Resolve's stance: for a while no strike takes its flank
+    /// Resolve's stance: for a while every attack from outside its arc is
+    /// blocked
     Vigil,
     /// Instinct's stance: for a while no foe beyond its reach sees it,
-    /// until it attacks
+    /// until it attacks, and a skill struck out of it lands harder
     Lurk,
-    /// Physique's rune, cut ahead: drags each foe entering its reach
-    /// straight toward it (`rune::Rune::Drag`)
+    /// Physique's rune, cut ahead: drags each foe in its reach straight
+    /// toward it (`rune::Rune::Drag`)
     Drag,
 }
 
-/// The kinds of skill ([`AbilityType::kind`]): a strike and a reaction,
-/// actions; a stance, a while of something on its user; a rune, a while of
-/// something on a place
+/// The kinds of skill ([`AbilityType::kind`]): a strike, a blow on a
+/// target in reach; a defence, which stops or escapes what is coming; a
+/// stance, a while of something on its user; a rune, a while of something
+/// on a place
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkillKind {
     Strike,
-    Reaction,
+    Defence,
     Stance,
     Rune,
 }
@@ -299,68 +297,48 @@ impl AbilityType {
         AbilityType::Surge, AbilityType::Vigil, AbilityType::Lurk, AbilityType::Drag,
     ];
 
-    /// Whether it is a reaction, an answer to what is queued, where every
-    /// other skill is an action. Discipline's Preparation fires a reaction
-    /// early (`combos::may_use`).
-    pub fn is_reaction(self) -> bool {
-        matches!(self, AbilityType::Parry | AbilityType::Counter | AbilityType::Clash | AbilityType::Sidestep | AbilityType::Yank | AbilityType::Pounce)
-    }
-
-    /// Whether using it now is a reaction: one always, and a Leap with its
-    /// target `in_reach`, which leaps clear and answers its span as a
-    /// reaction does
-    pub fn reacts(self, in_reach: bool) -> bool {
-        self.is_reaction() || (self == AbilityType::Leap && in_reach)
-    }
-
-    /// The kind of slot it takes on a bar: a Leap the reaction's, the
-    /// answer it makes in reach; a stance, a while of something on its user,
-    /// the stance's
+    /// The kind of skill it is, the row it stands in
     pub fn kind(self) -> SkillKind {
         match self {
             AbilityType::PerfectStride | AbilityType::Bloodlust | AbilityType::Brace | AbilityType::Surge | AbilityType::Vigil | AbilityType::Lurk => SkillKind::Stance,
-            AbilityType::Leap => SkillKind::Reaction,
+            AbilityType::Parry | AbilityType::Counter | AbilityType::Clash | AbilityType::Sidestep | AbilityType::Yank
+            | AbilityType::Pounce | AbilityType::Leap => SkillKind::Defence,
             AbilityType::Drag => SkillKind::Rune,
-            ability if ability.is_reaction() => SkillKind::Reaction,
-            _ => SkillKind::Strike,
+            AbilityType::AutoAttack | AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Punish
+            | AbilityType::Backstab | AbilityType::Kick | AbilityType::Defy => SkillKind::Strike,
         }
     }
 
-    /// Whether it strikes only from past its target's forward faces
+    /// Whether it puts up a block (`Status::block`)
+    pub fn blocks(self) -> bool {
+        matches!(self, AbilityType::Parry | AbilityType::Counter | AbilityType::Clash)
+    }
+
+    /// Whether it is a strike that ends the activation of the foe it
+    /// lands on
+    pub fn interrupts(self) -> bool {
+        self == AbilityType::Feint
+    }
+
+    /// Whether it lands only from past its target's forward faces
     pub fn flanks(self) -> bool {
         self == AbilityType::Backstab
     }
 
-    /// Whether using it moves its user: a skill a pin refuses
+    /// Whether it is only a move of its user: a skill a pin refuses
     /// (`Status::is_pinned`)
     pub fn moves(self) -> bool {
-        self == AbilityType::Leap
+        matches!(self, AbilityType::Leap | AbilityType::Sidestep | AbilityType::Pounce)
     }
 
-    /// How near and how far, in tiles, `ability` strikes a target from an
-    /// actor whose own reach is `own`: as far as the actor reaches. None
-    /// for one the gate checks no target for: a reaction, a Leap, which
-    /// checks its own, a stance, or a rune.
-    pub fn reach(self, own: i32) -> Option<std::ops::RangeInclusive<i32>> {
+    /// How near and how far, in tiles, it takes a target from an actor with
+    /// `attrs` whose own reach is `own`: a strike as far as the actor
+    /// reaches, a Yank as far past that as it drags. None for one the gate
+    /// checks no reach for.
+    pub fn reach(self, tuning: &crate::tuning::Tuning, attrs: &ActorAttributes, own: i32) -> Option<std::ops::RangeInclusive<i32>> {
         match self {
-            AbilityType::AutoAttack | AbilityType::Frenzy | AbilityType::Feint | AbilityType::Overpower | AbilityType::Punish
-            | AbilityType::Backstab | AbilityType::Kick | AbilityType::Defy => Some(0..=own),
-            AbilityType::Parry | AbilityType::Counter | AbilityType::Leap | AbilityType::PerfectStride
-            | AbilityType::Clash | AbilityType::Sidestep | AbilityType::Yank | AbilityType::Pounce
-            | AbilityType::Bloodlust | AbilityType::Brace | AbilityType::Surge | AbilityType::Vigil | AbilityType::Lurk
-            | AbilityType::Drag => None,
-        }
-    }
-
-    /// The ability this one offers as its combo, the one that unlocks
-    /// through its recovery ahead of the rest (`combos::recovery_after`): a
-    /// bite's is another bite, and a Parry's a Feint.
-    /// None for an ability that offers nothing.
-    pub fn combo(self) -> Option<AbilityType> {
-        match self {
-            AbilityType::Frenzy => Some(AbilityType::Frenzy),
-            AbilityType::Parry => Some(AbilityType::Feint),
-            _ => None,
+            AbilityType::Yank => Some(0..=own + attrs.line_tiles(tuning, AbilityType::Yank, tuning.yank_tiles) as i32),
+            ability => (ability.kind() == SkillKind::Strike).then_some(0..=own),
         }
     }
 
@@ -373,16 +351,19 @@ impl AbilityType {
     }
 }
 
-/// Types of queue clears for reaction abilities
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum ClearType {
-    /// Clear every threat landing at `at` or within `span` after it
-    /// (`ReactionQueue::swept`): what a reaction takes
-    Span { at: Moment, span: std::time::Duration },
-    /// Clear the one threat `source` inserted at `inserted_at`, wherever it
-    /// stands: an expiry, since threats from different sources expire out of
-    /// queue order.
-    Threat { source: Entity, inserted_at: Moment },
+/// How a use of an ability ended (`Event::Resolved`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum Outcome {
+    /// It did what it does: a strike landed its blow
+    Landed,
+    /// Its target's block stopped it whole, with all it carried
+    Blocked,
+    /// Its target was dead, or out of its reach or its arc, as it resolved
+    Missed,
+    /// A foe ended its activation with nothing done
+    Interrupted,
+    /// Its user ended its activation by stepping or turning
+    Cancelled,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -394,7 +375,6 @@ pub enum Component {
     Heading(Heading),
     Loc(Loc),
     PlayerControlled(PlayerControlled),
-    Recovery(crate::components::recovery::GlobalRecovery),
     Returning(crate::components::returning::Returning),
     Side(crate::components::behaviour::Side),
     Status(crate::components::status::Status),
@@ -410,7 +390,6 @@ impl Component {
             Component::Equipment(v) => { entity.insert(v); }
             Component::Health(v) => { entity.insert(v); }
             Component::PlayerControlled(v) => { entity.insert(v); }
-            Component::Recovery(v) => { entity.insert(v); }
             Component::Returning(v) => { entity.insert(v); }
             Component::Side(v) => { entity.insert(v); }
             Component::Status(v) => { entity.insert(v); }

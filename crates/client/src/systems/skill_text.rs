@@ -1,7 +1,7 @@
 //! What a skill is, said for the actor who holds it, plainly enough to
 //! stand alone: what it does with each of its numbers as this build has
-//! them, damage before its spread rolls, then what it costs and the
-//! recovery it leaves. How it plays against other skills is left for the
+//! them, damage before its spread rolls, then what it costs, how long it
+//! takes to land and how long to recharge. How it plays against other skills is left for the
 //! player to find. The help on a skill's key and the skills tab both say
 //! it; the tab marks each number its attribute line scales ([`Rules`]).
 
@@ -12,16 +12,21 @@ use common_bevy::{
 };
 
 /// What `ability` is for an actor with `attrs`, by `tuning`'s numbers:
-/// its name, what it does, then its cost and recovery on a line of their
-/// own.
+/// its name, what it does, then its cost, activation and recharge on a
+/// line of their own.
 pub fn describe(ability: AbilityType, attrs: &ActorAttributes, tuning: &Tuning) -> String {
     if ability == AbilityType::AutoAttack {
         return "Auto-attack: strikes the hostile target within reach on its own".to_string();
     }
     format!(
-        "{}: {}.\n{:.0} endurance, {} recovery",
-        name(ability), does(ability, attrs, tuning).plain(), tuning.cost(ability), seconds(tuning.recovery(ability)),
+        "{}: {}.\n{:.0} endurance, {}, {} recharge",
+        name(ability), does(ability, attrs, tuning).plain(), tuning.cost(ability), activation(tuning.activation(ability)), seconds(tuning.recharge(ability)),
     )
+}
+
+/// A skill's activation as it is said: its seconds, or that it has none
+pub fn activation(secs: f32) -> String {
+    if secs > 0.0 { format!("{} activation", seconds(secs)) } else { "no activation".to_string() }
 }
 
 /// What a skill does, as a clause following its name ("bite your target
@@ -69,61 +74,56 @@ impl Rules {
 /// What `ability`, a skill, does for an actor with `attrs`.
 pub fn does(ability: AbilityType, attrs: &ActorAttributes, tuning: &Tuning) -> Rules {
     let say = Say { ability, attrs, tuning };
-    const ANSWER: &str = "answer the blows about to land on you";
+    let block = format!("block the next attack on you within {}", seconds(tuning.block_secs));
+    const ENDS: &str = "ending the skill it is activating";
     Rules(match ability {
         AbilityType::AutoAttack => "strike the hostile target within reach on its own".to_string(),
         AbilityType::Frenzy => format!("bite your target in reach for {}", say.strike()),
         AbilityType::Overpower => format!("strike your target in reach with one heavy blow for {}", say.strike()),
-        AbilityType::Feint => format!("strike your target in reach with a light blow for {}", say.strike()),
+        AbilityType::Feint => format!("strike your target in reach with a light blow for {}, {ENDS}", say.strike()),
         AbilityType::Punish => format!(
-            "strike your target in reach for {}, plus {} for each stack of Overcommitted on it",
+            "strike your target in reach for {}, plus {} if it is activating a skill",
             damage(say.potency() * tuning.punish_base),
-            say.lined(say.potency() * tuning.punish_per_stack, damage),
+            say.lined(say.potency() * tuning.punish_caught, damage),
         ),
-        AbilityType::Backstab => format!(
-            "strike your target in reach from beside or behind it for {}. Its crits land {} harder",
-            say.strike(), percent(tuning.backstab_crit),
-        ),
+        AbilityType::Backstab => format!("strike your target in reach for {}. It misses from in front of its target", say.strike()),
         AbilityType::Kick => format!(
-            "kick your target in reach for {}, knocking it back {}",
+            "kick your target in reach for {}, knocking it back {} and {ENDS}",
             damage(say.potency() * tuning.kick_damage), say.tiles(tuning.kick_tiles),
         ),
         AbilityType::Defy => format!(
-            "strike your target in reach for {}, plus {} for each blow about to land on you",
+            "strike your target in reach for {}, and up to {} more the less health you have left",
             damage(say.potency() * tuning.defy_damage),
-            say.lined(say.potency() * tuning.defy_damage * tuning.defy_per_threat, damage),
+            say.lined(say.potency() * tuning.defy_low, damage),
         ),
         AbilityType::Leap => format!(
-            "leap {} away from your target in reach, dodging the blows coming, or onto it from afar for {}",
+            "leap {} clear of your target in reach, or onto one beyond it, striking it for {}",
             say.tiles(tuning.leap_distance as f32), say.strike(),
         ),
-        AbilityType::Parry => ANSWER.to_string(),
-        AbilityType::Counter => format!("{ANSWER}, and send {} of each back to whoever struck it", say.lined(tuning.counter_reflect, percent)),
-        AbilityType::Clash => format!("{ANSWER}, and stun whoever struck them for {}", say.lined(tuning.clash_stun, seconds)),
-        AbilityType::Sidestep => format!("{ANSWER}, and step {} round whoever struck them, toward its back", say.tiles(tuning.sidestep_steps)),
-        AbilityType::Yank => format!("{ANSWER}, and drag whoever struck them {} toward you", say.tiles(tuning.yank_tiles)),
-        AbilityType::Pounce => format!("{ANSWER}, and lunge up to {} toward whoever struck them", say.tiles(tuning.pounce_tiles)),
-        AbilityType::PerfectStride => format!(
-            "for {}, run {} faster, and striking a target beside or behind you doesn't slow you",
-            seconds(tuning.stride_secs), say.lined(tuning.stride_speed, percent),
-        ),
+        AbilityType::Parry => block,
+        AbilityType::Counter => format!("{block}, and strike its striker for {} of what it stopped", say.lined(tuning.counter_reflect, percent)),
+        AbilityType::Clash => format!("{block}, and stun its striker for {}", say.lined(tuning.clash_stun, seconds)),
+        AbilityType::Sidestep => format!("step {} round your target, toward its back", say.tiles(tuning.sidestep_steps)),
+        AbilityType::Yank => format!("drag a target up to {} beyond your reach to you, {ENDS}", say.tiles(tuning.yank_tiles)),
+        AbilityType::Pounce => format!("lunge up to {} toward your target", say.tiles(tuning.pounce_tiles)),
+        AbilityType::PerfectStride => format!("for {}, run {} faster", seconds(tuning.stride_secs), say.lined(tuning.stride_speed, percent)),
         AbilityType::Bloodlust => format!(
             "for {}, heal for {} of the damage your attacks land",
             seconds(tuning.bloodlust_secs), say.lined(tuning.bloodlust_share, percent),
         ),
-        AbilityType::Brace => format!("for {}, nothing a foe does stuns, slows, pins or drags you, nor breaks your stride", say.lined(tuning.brace_secs, seconds)),
+        AbilityType::Brace => format!("for {}, nothing a foe does stuns, slows, pins or drags you", say.lined(tuning.brace_secs, seconds)),
         AbilityType::Surge => format!(
             "for {}, each tile you move makes your next skill strike {} harder",
             seconds(tuning.surge_secs), say.lined(tuning.surge_per_tile, percent),
         ),
-        AbilityType::Vigil => format!("for {}, no strike takes you in the flank", say.lined(tuning.vigil_secs, seconds)),
+        AbilityType::Vigil => format!("for {}, every attack from outside your arc is blocked", say.lined(tuning.vigil_secs, seconds)),
         AbilityType::Drag => format!(
-            "cut a rune {} ahead. For {}, each foe stepping within {} of it is dragged all the way to it",
-            plain_tiles(tuning.drag_distance), seconds(tuning.drag_secs), say.tiles(tuning.drag_reach),
+            "cut a rune {} ahead. For {}, every {} it drags in each foe that stays within {} for {}",
+            plain_tiles(tuning.drag_distance), seconds(tuning.drag_secs), seconds(tuning.rune_pulse), say.tiles(tuning.drag_reach), seconds(tuning.rune_windup),
         ),
         AbilityType::Lurk => format!(
-            "for {}, no foe beyond your reach can see you, until you attack. A skill struck from hiding always crits",
-            say.lined(tuning.lurk_secs, seconds),
+            "for {}, no foe beyond your reach sees you until you attack. A skill struck from hiding lands {} harder",
+            say.lined(tuning.lurk_secs, seconds), say.lined(tuning.lurk_ambush, percent),
         ),
     })
 }
@@ -227,7 +227,7 @@ mod tests {
         for ability in AbilityType::ALL.into_iter().filter(|&ability| ability != AbilityType::AutoAttack) {
             let said = describe(ability, &attrs, &tuning);
             assert!(said.starts_with(&format!("{}: ", name(ability))), "{said}");
-            assert!(said.lines().last().is_some_and(|last| last.contains("endurance") && last.contains("recovery")), "{said}");
+            assert!(said.lines().last().is_some_and(|last| last.contains("endurance") && last.contains("activation") && last.ends_with("recharge")), "{said}");
             assert!(!said.contains('('), "{ability:?} says it plainly: {said}");
             assert!(said.chars().all(|c| c == '\n' || c.is_ascii_graphic() || c == ' '), "{ability:?} says nothing the UI's font lacks: {said}");
         }

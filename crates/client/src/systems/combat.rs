@@ -1,229 +1,149 @@
-use std::time::Duration;
+//! What the server says of skills under way, kept on the actors they are
+//! about: the skill each is activating (`Activating`) and each skill
+//! recharging (`Recharges`), both counted on the server's clock
+//! (`resources::Server::now`). The server starts and ends every one; the
+//! client only counts.
+
+use std::collections::HashMap;
 
 use bevy::prelude::*;
 use common_bevy::{
-    components::{reaction_queue::*, Actor, ActorAttributes, AttackRange, Loc},
-    components::recovery::GlobalRecovery,
-    message::{AbilityType, ClearType, Do, Try, Event as GameEvent},
+    components::activation::{Activating, Activation, Recharge, Recharges},
+    message::{AbilityType, Do, Event as GameEvent},
     moment::Moment,
-    systems::combat::{combos, queue as queue_utils},
-    tuning::Tuning,
 };
 
-/// How long a gone threat is kept for the notes it ends
-const GONE_KEPT: Duration = Duration::from_secs(1);
+/// The activation last heard of each entity. The server tells one again,
+/// as it began, to a client that meets its actor late, and a client may
+/// hear both: whatever starts something on an activation asks first
+/// whether it is new.
+#[derive(Default)]
+pub struct Heard(HashMap<Entity, (AbilityType, Moment)>);
 
-/// How each threat lately gone from a queue here went: landed, or
-/// answered. A note whose threat is gone looks it up to pulse or shatter.
-/// The server says which for every queue (`ClearType`); the local
-/// player's own landings and answers are told here first, on its clock.
-#[derive(Resource, Default)]
-pub struct Gone(Vec<Went>);
-
-struct Went {
-    ent: Entity,
-    source: Entity,
-    inserted_at: Moment,
-    landed: bool,
-    at: Moment,
-}
-
-impl Gone {
-    /// Whether the threat `source` queued at `inserted_at` on `ent` landed,
-    /// or None while nothing is known of it going
-    pub fn landed(&self, ent: Entity, source: Entity, inserted_at: Moment) -> Option<bool> {
-        self.0.iter()
-            .find(|went| (went.ent, went.source, went.inserted_at) == (ent, source, inserted_at))
-            .map(|went| went.landed)
-    }
-
-    fn record(&mut self, ent: Entity, threats: &[QueuedThreat], landed: bool, at: Moment) {
-        self.0.retain(|went| at.since(went.at) < GONE_KEPT);
-        self.0.extend(threats.iter().map(|threat| Went { ent, source: threat.source, inserted_at: threat.inserted_at, landed, at }));
+impl Heard {
+    /// Whether `activation` by `ent` is one not heard before, taking it as
+    /// heard
+    pub fn fresh(&mut self, ent: Entity, activation: &Activation) -> bool {
+        let heard = (activation.ability, activation.began);
+        self.0.insert(ent, heard) != Some(heard)
     }
 }
 
-/// Client system to handle InsertThreat events
-/// Inserts threats into the visual reaction queue for display
-/// No deduplication needed - we don't predict threat insertions
-pub fn handle_insert_threat(
+/// Takes each skill begun, ended and recharging as the server tells it. A
+/// skill that takes hold at once has no activation to hold. An activation
+/// ends on the word of how it resolved, or as its time runs out here,
+/// whichever comes first.
+pub fn track(
     mut reader: MessageReader<Do>,
-    mut query: Query<&mut ReactionQueue>,
-) {
-    for event in reader.read() {
-        if let GameEvent::InsertThreat { ent, threat } = event.event {
-            if let Ok(mut queue) = query.get_mut(ent) {
-                // Insert always succeeds (unbounded queue)
-                queue_utils::insert_threat(&mut queue, threat);
-            }
-        }
-    }
-}
-
-/// Takes from a queue what the server cleared from it: a threat that
-/// landed, or what a reaction answered. The local player's own are mostly
-/// gone already, told on its clock ([`land_own`], [`answer_own`]).
-pub fn handle_clear_queue(
-    mut reader: MessageReader<Do>,
-    mut query: Query<&mut ReactionQueue>,
-    mut gone: ResMut<Gone>,
-    time: Res<Time>,
-) {
-    for event in reader.read() {
-        if let GameEvent::ClearQueue { ent, clear_type } = event.event {
-            if let Ok(mut queue) = query.get_mut(ent) {
-                let cleared = queue_utils::clear_threats(&mut queue, clear_type);
-                gone.record(ent, &cleared, matches!(clear_type, ClearType::Threat { .. }), Moment::ZERO + time.elapsed());
-            }
-        }
-    }
-}
-
-/// Lands each threat on the local player as its time runs on the client's
-/// clock, as the server will: its note leaves the line on time. Its damage
-/// comes with the server's word, a trip later.
-pub fn land_own(
-    mut query: Query<(Entity, &mut ReactionQueue), With<Actor>>,
-    mut gone: ResMut<Gone>,
-    time: Res<Time>,
+    mut activating: Query<&mut Activating>,
+    mut recharges: Query<&mut Recharges>,
+    mut heard: Local<Heard>,
     server: Res<crate::resources::Server>,
-) {
-    let Ok((ent, mut queue)) = query.single_mut() else { return };
-    let now = server.now(time.elapsed().as_millis());
-    let landed = queue_utils::check_expired_threats(&queue, now);
-    for threat in &landed {
-        queue_utils::clear_threats(&mut queue, ClearType::Threat { source: threat.source, inserted_at: threat.inserted_at });
-    }
-    gone.record(ent, &landed, true, Moment::ZERO + time.elapsed());
-}
-
-/// Answers the local player's reaction as it is pressed, as the server
-/// will judge it at the moment it carries: what lands in its band goes at
-/// once. A press the server refuses or hears of late is told by the damage
-/// that follows.
-pub fn answer_own(
-    mut reader: MessageReader<Try>,
-    mut query: Query<(Entity, &mut ReactionQueue, &ActorAttributes, &Loc, Option<&AttackRange>, Option<&GlobalRecovery>), With<Actor>>,
-    locs: Query<&Loc>,
-    mut gone: ResMut<Gone>,
-    tuning: Res<Tuning>,
     time: Res<Time>,
 ) {
     for message in reader.read() {
-        let Try { event: GameEvent::UseAbility { ent, ability, target, at, .. } } = message else { continue };
-        let Ok((own, mut queue, attrs, loc, reach, recovery)) = query.single_mut() else { return };
-        if *ent != own {
-            continue;
+        match message.event {
+            GameEvent::Activate { ent, activation } if !activation.length.is_zero() && heard.fresh(ent, &activation) => {
+                if let Ok(mut activating) = activating.get_mut(ent) {
+                    activating.0 = Some(activation);
+                }
+            }
+            GameEvent::Resolved { ent, ability, .. } => {
+                if let Ok(mut activating) = activating.get_mut(ent) {
+                    if activating.0.is_some_and(|activation| activation.ability == ability) {
+                        activating.0 = None;
+                    }
+                }
+            }
+            GameEvent::Recharge { ent, ability, began, length } => {
+                if let Ok(mut recharges) = recharges.get_mut(ent) {
+                    recharges.start(ability, Recharge { began, length });
+                }
+            }
+            _ => {}
         }
-        let reach = reach.copied().unwrap_or_default().0;
-        let in_reach = *ability == AbilityType::Leap
-            && target.and_then(|target| locs.get(target).ok()).is_some_and(|target| loc.distance(target) <= reach);
-        let reacting = ability.reacts(in_reach);
-        if !reacting || !combos::may_use(*ability, reacting, recovery, attrs) {
-            continue;
+    }
+    let now = server.now(time.elapsed().as_millis());
+    for mut activating in &mut activating {
+        if activating.0.is_some_and(|activation| activation.left(now).is_zero()) {
+            activating.0 = None;
         }
-        let span = attrs.span(&tuning);
-        let start = queue.band(*at, attrs.awareness_snap(&tuning));
-        let answered = queue_utils::clear_threats(&mut queue, ClearType::Span { at: start, span });
-        gone.record(own, &answered, false, Moment::ZERO + time.elapsed());
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
-    use common_bevy::{components::ActorAttributes, message::{AbilityType, ClearType}, tuning::Tuning};
+    use common_bevy::message::Outcome;
 
-    #[test]
-    fn a_threat_clears_after_its_source_is_gone_here() {
-        let tuning = Tuning::DEFAULT;
+    fn app() -> (App, Entity) {
         let mut app = App::new();
         app.add_message::<Do>();
         app.init_resource::<Time>();
-        app.insert_resource(crate::resources::Server::default());
-        app.init_resource::<crate::resources::EntityMap>();
-        app.init_resource::<Gone>();
-        app.add_systems(Update, (handle_insert_threat, handle_clear_queue).chain());
-
-        let player = app.world_mut().spawn((ReactionQueue::default(), ActorAttributes::default())).id();
-        let attacker = app.world_mut().spawn(ActorAttributes::default()).id();
-        let on_server = Entity::from_raw_u32(9_000).unwrap();
-        app.world_mut().resource_mut::<crate::resources::EntityMap>().insert(attacker, on_server);
-
-        let threat = queue_utils::create_threat(
-            &tuning,
-            on_server, &ActorAttributes::default(), &ActorAttributes::default(),
-            50.0, Some(AbilityType::Frenzy), Moment::from_millis(10_000), 0.0, 0.0,
-        );
-        app.world_mut().write_message(Do { event: GameEvent::InsertThreat { ent: player, threat } });
-        app.update();
-        assert_eq!(app.world().get::<ReactionQueue>(player).unwrap().threats.len(), 1);
-
-        // The attacker dies and is despawned here before its threat lands
-        app.world_mut().resource_mut::<crate::resources::EntityMap>().remove_by_left(&attacker);
-        app.world_mut().despawn(attacker);
-        let clear_type = ClearType::Threat { source: on_server, inserted_at: threat.inserted_at };
-        app.world_mut().write_message(Do { event: GameEvent::ClearQueue { ent: player, clear_type } });
-        app.update();
-        assert!(app.world().get::<ReactionQueue>(player).unwrap().threats.is_empty(), "the landing clears it all the same");
-        assert_eq!(app.world().resource::<Gone>().landed(player, on_server, threat.inserted_at), Some(true), "and is told as a landing");
+        let mut server = crate::resources::Server::default();
+        server.sync(Moment::from_millis(10_000), 0);
+        app.insert_resource(server);
+        app.add_systems(Update, track);
+        let actor = app.world_mut().spawn((Activating::default(), Recharges::default())).id();
+        (app, actor)
     }
 
-    fn own_player(app: &mut App) -> Entity {
-        app.add_message::<Do>();
-        app.add_message::<Try>();
-        app.init_resource::<Time>();
-        app.init_resource::<Tuning>();
-        app.init_resource::<Gone>();
-        app.insert_resource(crate::resources::Server::default());
-        app.add_systems(Update, (land_own, answer_own));
-        app.world_mut().spawn((Actor, ReactionQueue::default(), ActorAttributes::default(), Loc::default())).id()
+    fn begun(app: &App, ability: AbilityType, length: Duration) -> Activation {
+        let now = app.world().resource::<crate::resources::Server>().now(0);
+        Activation { ability, target: None, began: now, length }
     }
 
-    fn queued(app: &mut App, ent: Entity, source: Entity, lands_in: Duration) -> QueuedThreat {
-        let tuning = Tuning::DEFAULT;
-        let server = app.world().resource::<crate::resources::Server>();
-        let now = server.now(0);
-        let mut threat = queue_utils::create_threat(&tuning, source, &ActorAttributes::default(), &ActorAttributes::default(), 10.0, Some(AbilityType::Frenzy), now, 0.0, 0.0);
-        threat.timer_duration = lands_in;
-        queue_utils::insert_threat(&mut app.world_mut().get_mut::<ReactionQueue>(ent).unwrap(), threat);
-        threat
+    fn activating(app: &App, actor: Entity) -> Option<AbilityType> {
+        app.world().get::<Activating>(actor).unwrap().0.map(|activation| activation.ability)
     }
 
     #[test]
-    fn the_local_player_lands_its_own_threats_on_its_own_clock() {
-        let mut app = App::new();
-        let player = own_player(&mut app);
-        let [one, other] = [9_000, 9_001].map(|id| Entity::from_raw_u32(id).unwrap());
-        let due = queued(&mut app, player, one, Duration::ZERO);
-        let later = queued(&mut app, player, other, Duration::from_secs(3));
+    fn a_skill_stands_from_its_activation_until_it_resolves() {
+        let (mut app, actor) = app();
+        let activation = begun(&app, AbilityType::Overpower, Duration::from_secs(2));
+        app.world_mut().write_message(Do { event: GameEvent::Activate { ent: actor, activation } });
         app.update();
-        let gone = app.world().resource::<Gone>();
-        assert_eq!(gone.landed(player, one, due.inserted_at), Some(true), "its time run, it lands here");
-        assert_eq!(gone.landed(player, other, later.inserted_at), None, "and one to come stands");
-        assert_eq!(app.world().get::<ReactionQueue>(player).unwrap().threats.len(), 1);
+        assert_eq!(activating(&app, actor), Some(AbilityType::Overpower));
+
+        // A swing of its own resolving ends nothing
+        let resolved = |ability, outcome| Do { event: GameEvent::Resolved { ent: actor, ability, target: None, damage: 0.0, outcome, dot: false } };
+        app.world_mut().write_message(resolved(AbilityType::AutoAttack, Outcome::Landed));
+        app.update();
+        assert_eq!(activating(&app, actor), Some(AbilityType::Overpower));
+
+        app.world_mut().write_message(resolved(AbilityType::Overpower, Outcome::Interrupted));
+        app.update();
+        assert_eq!(activating(&app, actor), None, "however it ended");
+
+        app.world_mut().write_message(Do { event: GameEvent::Activate { ent: actor, activation } });
+        app.update();
+        assert_eq!(activating(&app, actor), None, "and told again, it begins nothing");
     }
 
     #[test]
-    fn the_local_players_reaction_answers_its_band_as_pressed() {
-        let tuning = Tuning::DEFAULT;
-        let mut app = App::new();
-        let player = own_player(&mut app);
-        let [one, other, third] = [9_000, 9_001, 9_002].map(|id| Entity::from_raw_u32(id).unwrap());
-        let near = queued(&mut app, player, one, Duration::from_millis(500));
-        let far = queued(&mut app, player, other, Duration::from_secs(2));
-        let span = ActorAttributes::default().span(&tuning);
-        let at = near.lands_at() - span / 2;
-        app.world_mut().write_message(Try { event: GameEvent::UseAbility { ent: player, ability: AbilityType::Parry, target: None, at, arrived: Moment::ZERO } });
+    fn a_skill_with_no_length_or_whose_time_has_run_stands_no_longer() {
+        let (mut app, actor) = app();
+        let instant = begun(&app, AbilityType::Parry, Duration::ZERO);
+        app.world_mut().write_message(Do { event: GameEvent::Activate { ent: actor, activation: instant } });
         app.update();
-        let gone = app.world().resource::<Gone>();
-        assert_eq!(gone.landed(player, one, near.inserted_at), Some(false), "what lands in its band is answered");
-        assert_eq!(gone.landed(player, other, far.inserted_at), None, "and the rest stands");
+        assert_eq!(activating(&app, actor), None, "one that takes hold at once");
 
-        // A skill that is no reaction answers nothing
-        let struck = queued(&mut app, player, third, Duration::from_millis(700));
-        app.world_mut().write_message(Try { event: GameEvent::UseAbility { ent: player, ability: AbilityType::Frenzy, target: None, at: struck.lands_at(), arrived: Moment::ZERO } });
+        let run = Activation { began: Moment::ZERO, ..begun(&app, AbilityType::Frenzy, Duration::from_millis(500)) };
+        app.world_mut().write_message(Do { event: GameEvent::Activate { ent: actor, activation: run } });
         app.update();
-        assert_eq!(app.world().resource::<Gone>().landed(player, third, struck.inserted_at), None);
+        assert_eq!(activating(&app, actor), None, "one whose time ran out unheard");
+    }
+
+    #[test]
+    fn a_recharge_is_kept_for_its_own_skill() {
+        let (mut app, actor) = app();
+        let began = app.world().resource::<crate::resources::Server>().now(0);
+        app.world_mut().write_message(Do { event: GameEvent::Recharge { ent: actor, ability: AbilityType::Frenzy, began, length: Duration::from_secs(3) } });
+        app.update();
+        let recharges = app.world().get::<Recharges>(actor).unwrap();
+        assert!(!recharges.is_ready(AbilityType::Frenzy, began));
+        assert!(recharges.is_ready(AbilityType::Overpower, began));
     }
 }

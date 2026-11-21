@@ -30,7 +30,7 @@ use common_bevy::{
 };
 
 use crate::{
-    components::{CombatLogEntry, FloatingText, ResolvedThreatEntry},
+    components::{CombatLogEntry, FloatingText},
     network::Link,
     resources::{EntityMap, LoadedChunks, RenderOrigin, Server, SummaryCache, SummaryMesh, SummaryMeshes},
     systems::{
@@ -226,8 +226,6 @@ fn leave_world(
         Or<(
             With<SummaryMesh>,
             With<FloatingText>,
-            With<crate::systems::struck::Mark>,
-            With<ResolvedThreatEntry>,
             With<CombatLogEntry>,
         )>,
     >,

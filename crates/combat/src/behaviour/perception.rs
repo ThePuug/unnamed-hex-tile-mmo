@@ -3,24 +3,24 @@
 //! An NPC sees what a player in its place is shown and nothing more, and
 //! each change reaches its decisions a reaction delay after it happens,
 //! drawn afresh for each change from its [`Skill`]. Its own state it knows
-//! at once, as a player knows their own bars. A threat it sees it judges
-//! landing a little off when it does, as a player times a note by eye. A
-//! change's delay and a threat's misjudgement are [`Dice`] rolls for the
-//! change itself, so a threat seen once stays seen and judged alike, and
-//! no draw needs keeping.
+//! at once, as a player knows their own bars. A foe's activation it sees
+//! it judges landing a little off when it does, as a player times a note
+//! by eye. A change's delay and an activation's misjudgement are [`Dice`]
+//! rolls for the change itself, so an activation is judged alike each time
+//! it is asked, and no draw needs keeping.
 
 use std::{collections::VecDeque, hash::Hash, time::Duration};
 
 use bevy::prelude::*;
-use common_bevy::{components::reaction_queue::QueuedThreat, moment::Moment};
+use common_bevy::{components::activation::Activation, moment::Moment};
 
 use super::skills::Foe;
 use crate::dice::Dice;
 
 /// How well an NPC carries out its decisions: how late each change
 /// reaches it, how far its judgement strays, a random spread on every
-/// score as a share of it, and how far either way it misjudges when a
-/// threat lands.
+/// score as a share of it, and how far either way it misjudges when an
+/// activation lands.
 #[derive(Clone, Component, Copy, Debug)]
 pub struct Skill {
     pub fastest: Duration,
@@ -77,17 +77,11 @@ impl Skill {
         self.fastest + (self.slowest.saturating_sub(self.fastest)).mul_f32(dice.roll(("delay", key)).share())
     }
 
-    /// Whether `threat`, in the queue of the NPC `ent`, has reached it by
-    /// `now`, the game's clock
-    pub fn sees(&self, dice: &Dice, ent: Entity, threat: &QueuedThreat, now: Moment) -> bool {
-        threat.inserted_at + self.delay(dice, (ent, threat.source, threat.inserted_at)) <= now
-    }
-
-    /// When the NPC `ent` judges `threat`, in its queue, lands: off by up
+    /// When the NPC `ent` judges `activation`, its foe's, lands: off by up
     /// to its `misjudge` either way
-    pub fn judged(&self, dice: &Dice, ent: Entity, threat: &QueuedThreat) -> Moment {
-        let off = self.misjudge.mul_f32(dice.roll(("misjudge", ent, threat.source, threat.inserted_at)).share() * 2.0);
-        threat.lands_at() + off - self.misjudge
+    pub fn judged(&self, dice: &Dice, ent: Entity, activation: &Activation) -> Moment {
+        let off = self.misjudge.mul_f32(dice.roll(("misjudge", ent, activation.ability, activation.began)).share() * 2.0);
+        activation.ends() + off - self.misjudge
     }
 }
 
@@ -98,38 +92,23 @@ impl Default for Skill {
 }
 
 /// What an NPC has seen of its target: each change as it stood when it
-/// happened, newest last, back to the one it perceives; and the furthest
-/// it has seen its target strike it from, which a new target starts over.
+/// happened, newest last, back to the one it perceives.
 #[derive(Clone, Component, Debug, Default)]
 pub struct Sight {
     seen: VecDeque<(Moment, Entity, Foe)>,
-    reach: i32,
 }
 
 impl Sight {
-    /// It has seen its target strike it from `distance` tiles off
-    pub fn saw_strike(&mut self, distance: i32) {
-        self.reach = self.reach.max(distance);
-    }
-
-    /// The furthest it has seen its target strike it from, 0 where it has
-    /// seen none
-    pub fn reach(&self) -> i32 {
-        self.reach
-    }
-
     /// Takes in how its target `target` stands at `now`, and returns how
     /// the NPC `ent` perceives it: the newest change whose delay has run.
     /// A new target is unseen until its first change reaches it.
     pub fn look(&mut self, dice: &Dice, ent: Entity, skill: &Skill, now: Moment, target: Option<(Entity, Foe)>) -> Option<Foe> {
         let Some((target, foe)) = target else {
             self.seen.clear();
-            self.reach = 0;
             return None;
         };
         if self.seen.back().is_some_and(|&(_, seen, _)| seen != target) {
             self.seen.clear();
-            self.reach = 0;
         }
         if self.seen.back().is_none_or(|&(_, _, last)| last != foe) {
             self.seen.push_back((now, target, foe));
@@ -154,7 +133,7 @@ mod tests {
     const DICE: Dice = Dice::seeded(0);
 
     fn foe(distance: i32) -> Foe {
-        Foe { at: Default::default(), heading: None, distance, health: 600.0, in_arc: true, flanked: false, patient: 0.0, since_skill: None, status: Default::default() }
+        Foe { distance, ..Foe::default() }
     }
 
     fn ms(millis: u64) -> Duration {
@@ -174,18 +153,6 @@ mod tests {
     }
 
     #[test]
-    fn it_learns_how_far_its_target_strikes_from_and_a_new_target_starts_over() {
-        let (ent, target, other) = (Entity::from_raw_u32(1).unwrap(), Entity::from_raw_u32(2).unwrap(), Entity::from_raw_u32(3).unwrap());
-        let mut sight = Sight::default();
-        sight.look(&DICE, ent, &Skill::SHARP, at(0), Some((target, foe(12))));
-        sight.saw_strike(12);
-        sight.saw_strike(4);
-        assert_eq!(sight.reach(), 12, "the furthest it has seen");
-        sight.look(&DICE, ent, &Skill::SHARP, at(10), Some((other, foe(3))));
-        assert_eq!(sight.reach(), 0, "a new target is unknown");
-    }
-
-    #[test]
     fn every_delay_falls_within_its_skill() {
         let skill = Skill::SHARP;
         for key in 0..500 {
@@ -199,20 +166,8 @@ mod tests {
         let ent = Entity::from_raw_u32(1).unwrap();
         let skill = Skill::STEADY;
         let judged: Vec<i64> = (0..500u64).map(|key| {
-            let threat = QueuedThreat {
-                source: Entity::from_raw_u32(2).unwrap(),
-                damage: 10.0,
-                inserted_at: at(key * 10),
-                timer_duration: ms(3000),
-                ability: None,
-                dot: 0.0,
-                ticked: 0,
-                stride: 0.0,
-                crit: false,
-                stun: 0.0,
-                drag: 0,
-            };
-            let (judged, lands) = (skill.judged(&DICE, ent, &threat), threat.lands_at());
+            let activation = Activation { ability: common_bevy::message::AbilityType::Overpower, target: Some(ent), began: at(key * 10), length: ms(1500) };
+            let (judged, lands) = (skill.judged(&DICE, ent, &activation), activation.ends());
             judged.since(lands).as_millis() as i64 - lands.since(judged).as_millis() as i64
         }).collect();
         let reach = skill.misjudge.as_millis() as i64;

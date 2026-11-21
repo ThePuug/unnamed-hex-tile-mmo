@@ -7,8 +7,8 @@ use crate::{
 use crate::tuning::Tuning;
 
 /// What every actor is spawned fighting with, all of it from its
-/// attributes: its pools full, out of combat, an empty reaction queue,
-/// no target, and loaded by no one. A player and
+/// attributes: its pools full, out of combat, no target, and loaded by
+/// no one. A player and
 /// an NPC are both spawned with it, so what one starts with the other does.
 #[derive(Bundle)]
 pub struct Fighter {
@@ -16,7 +16,6 @@ pub struct Fighter {
     pub health: Health,
     pub endurance: Endurance,
     pub combat_state: CombatState,
-    pub queue: crate::components::reaction_queue::ReactionQueue,
     pub target: crate::components::target::Target,
     pub loaded_by: crate::components::loaded_by::LoadedBy,
 }
@@ -29,7 +28,6 @@ impl Fighter {
             health: Health::full(attrs.max_health(tuning)),
             endurance: Endurance::full(attrs.max_endurance(tuning)),
             combat_state: CombatState { in_combat: false, last_action: now },
-            queue: default(),
             target: default(),
             loaded_by: default(),
         }
@@ -48,7 +46,8 @@ pub const COMBAT_HEALTH_REGEN: f32 = 0.0;
 
 /// Regenerate endurance and health for all entities with resources
 /// Runs in FixedUpdate schedule (125ms ticks)
-/// Endurance regenerates steadily, in combat or out.
+/// Endurance regenerates steadily, in combat or out, as fast for a deep
+/// pool as for a shallow one.
 /// Health regenerates at `RETURNING_HEALTH_REGEN` a second while
 /// Returning, else `RESTING_HEALTH_REGEN` out of combat and
 /// `COMBAT_HEALTH_REGEN` in it.
@@ -66,7 +65,7 @@ pub fn regenerate_resources(
         }
 
         if let Some(mut endurance) = endurance.filter(|endurance| endurance.state < endurance.max) {
-            let regained = tuning.endurance_regen * endurance.max * dt;
+            let regained = tuning.endurance_regen * tuning.endurance_pool * dt;
             endurance.state = (endurance.state + regained).min(endurance.max);
         }
 
@@ -240,7 +239,6 @@ mod tests {
         assert_eq!((fighter.endurance.state, fighter.endurance.max), (attrs.max_endurance(&tuning), attrs.max_endurance(&tuning)));
         assert!(!fighter.combat_state.in_combat);
         assert_eq!(fighter.combat_state.last_action, now);
-        assert!(fighter.queue.is_empty());
     }
 
     // ===== SYSTEM TESTS =====
