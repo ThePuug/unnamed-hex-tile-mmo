@@ -34,9 +34,10 @@ pub struct SlotIcon {
     shown: Option<Item>,
 }
 
-/// The icon asset an item is shown by: the piece alone, in the item's style.
+/// The icon asset an item is shown by: the piece alone, in the item's
+/// style and colour.
 pub(crate) fn icon(asset_server: &AssetServer, item: Item) -> Handle<Image> {
-    asset_server.load(format!("icons/{}-{}.png", item.piece.name(), item.style))
+    asset_server.load(format!("icons/{}-{}.png", item.piece.name(), item.shipped()))
 }
 
 /// The bag's rows of cells.
@@ -107,8 +108,8 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                 ));
 
                 // Down the closeup's right, five squares held for accessories,
-                // which are unbuilt, and under them the main hand, held for a
-                // weapon, and the off hand, which holds a shield.
+                // which are unbuilt, and under them the main hand, which holds
+                // a weapon, and the off hand, which holds a shield.
                 row.spawn(Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(4.),
@@ -125,14 +126,7 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                             ..default()
                         })
                         .with_children(|hands| {
-                            hands.spawn(held_square()).with_children(|cell| {
-                                cell.spawn((
-                                    Text::new("Main\nhand"),
-                                    TextFont { font_size: FontSize::Px(11.0), ..default() },
-                                    TextColor(Color::srgb(0.6, 0.6, 0.6)),
-                                    TextLayout::justify(Justify::Center),
-                                ));
-                            });
+                            slot_square(hands, Slot::MainHand);
                             slot_square(hands, Slot::OffHand);
                         });
                 });

@@ -8,18 +8,21 @@
 //! the same names and drops the copy, so the actor's clips move the piece
 //! and nothing is fitted at load.
 
-use bevy::{mesh::skinning::SkinnedMesh, prelude::*};
+use bevy::{gltf::GltfMaterialName, mesh::skinning::SkinnedMesh, prelude::*};
 use std::collections::{HashMap, HashSet};
 
 use common_bevy::{
     components::{
         entity_type::EntityType,
-        equipment::{Equipment, Item},
+        equipment::{Equipment, Item, Slot},
     },
     message::{Event, *},
 };
 
-use crate::systems::{actor::actor_name, hiding::Redress};
+use crate::{
+    plugins::cel::Dye,
+    systems::{actor::actor_name, hiding::Redress},
+};
 
 /// A worn piece's scene, a child of the actor wearing it.
 #[derive(Component)]
@@ -159,11 +162,26 @@ pub fn dress(
             commands.spawn((
                 Worn { item: *item, bound: false, moved: Vec::new() },
                 Name::new(format!("worn:{}", item.piece.name())),
-                WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(item.style as usize).from_asset(path))),
+                WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(item.shape()).from_asset(path))),
                 ChildOf(actor),
             ));
         }
         commands.entity(actor).insert(Redress);
+    }
+}
+
+/// Marks each mesh of a worn piece, as its scene spawns, for the colour
+/// its item is made in.
+pub fn dye(
+    mut commands: Commands,
+    meshes: Query<Entity, Added<GltfMaterialName>>,
+    parents: Query<&ChildOf>,
+    worn: Query<&Worn>,
+) {
+    for mesh in &meshes {
+        if let Some(piece) = parents.iter_ancestors(mesh).find_map(|a| worn.get(a).ok()) {
+            commands.entity(mesh).insert(Dye { set: piece.item.piece.set().name, seed: piece.item.seed });
+        }
     }
 }
 
@@ -275,6 +293,24 @@ pub fn hold(
             WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(path))),
             ChildOf(actor),
         ));
+    }
+}
+
+/// Puts away what an actor holds in its main hand while the tool of a
+/// gather's work is in its hands, and brings it back when the tool goes.
+pub fn stow(
+    held: Query<&ChildOf, With<Held>>,
+    worn: Query<(&ChildOf, &Worn)>,
+    mut visibility: Query<&mut Visibility>,
+) {
+    let working: HashSet<Entity> = held.iter().map(ChildOf::parent).collect();
+    for (child_of, piece) in worn.iter().filter(|(_, piece)| piece.item.piece.slot() == Slot::MainHand) {
+        let wanted = if working.contains(&child_of.parent()) { Visibility::Hidden } else { Visibility::Inherited };
+        for &node in &piece.moved {
+            if let Ok(mut shown) = visibility.get_mut(node) {
+                shown.set_if_neq(wanted);
+            }
+        }
     }
 }
 

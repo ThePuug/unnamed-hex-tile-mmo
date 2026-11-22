@@ -7,6 +7,7 @@ pub mod glyphs;
 pub mod grid;
 pub mod hex_lattice;
 pub mod hex_spatial_grid;
+pub mod kit;
 pub mod metrics;
 pub mod network;
 pub mod numfmt;

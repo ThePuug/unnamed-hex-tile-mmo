@@ -2,7 +2,9 @@
 //! of the player's feet each gather lands its work, from what the player's
 //! clips declare (`gathering::CHOP_REACH` and the rest), and every den
 //! model's pieces, from their nodes (`den::MODELS`), so a model
-//! re-exported moves them on the next build.
+//! re-exported moves them on the next build; and the kit, every set and
+//! piece worn or wielded and what each seed makes of it, from the table
+//! beside the models (`kit::SETS`, `kit::PIECES`).
 
 use std::{env, fs, path::Path};
 
@@ -94,8 +96,60 @@ fn dens() -> String {
     out
 }
 
+/// `kebab-case` as the variant it names: `main-hand` is `MainHand`.
+fn variant(name: &str) -> String {
+    name.split('-').map(|word| word[..1].to_uppercase() + &word[1..]).collect()
+}
+
+/// The kit as Rust: every set with each seed's colours, and every piece
+/// with its set, its slots and its shapes.
+fn kit() -> String {
+    let path = format!("{MODELS}/kit.json");
+    println!("cargo:rerun-if-changed={path}");
+    let text = fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path}: {error}; the assets submodule must be checked out"));
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|error| panic!("{path}: {error}"));
+    let sets = json["sets"].as_array().expect("sets");
+    let mut out = String::from("pub static SETS: &[Set] = &[\n");
+    for set in sets {
+        let seeds: Vec<String> = set["seeds"].as_array().expect("a set's seeds").iter()
+            .map(|seed| {
+                let materials: Vec<String> = seed.as_object().expect("a seed's materials").iter()
+                    .map(|(name, rgb)| {
+                        let v = |k: usize| rgb[k].as_f64().unwrap_or_else(|| panic!("{path}: {name} is no colour")) as f32;
+                        format!("({name:?}, [{:?}, {:?}, {:?}])", v(0), v(1), v(2))
+                    })
+                    .collect();
+                format!("&[{}]", materials.join(", "))
+            })
+            .collect();
+        out.push_str(&format!(
+            "    Set {{ name: {:?}, kind: Kind::{}, seeds: &[{}] }},\n",
+            set["name"].as_str().expect("a set's name"),
+            variant(set["kind"].as_str().expect("a set's kind")),
+            seeds.join(", "),
+        ));
+    }
+    out.push_str("];\npub static PIECES: &[Piece] = &[\n");
+    for piece in json["pieces"].as_array().expect("pieces") {
+        let name = piece["name"].as_str().expect("a piece's name");
+        let of = piece["set"].as_str().expect("a piece's set");
+        let set = sets.iter().position(|s| s["name"] == of).unwrap_or_else(|| panic!("{path}: {name} is of no set, `{of}`"));
+        let fills: Vec<String> = piece["fills"].as_array().expect("a piece's slots").iter()
+            .map(|slot| format!("Slot::{}", variant(slot.as_str().expect("a slot's name"))))
+            .collect();
+        out.push_str(&format!(
+            "    Piece {{ name: {name:?}, set: {set}, fills: &[{}], shapes: {} }},\n",
+            fills.join(", "),
+            piece["shapes"].as_u64().expect("a piece's shapes"),
+        ));
+    }
+    out.push_str("];\n");
+    out
+}
+
 fn main() {
     let out = env::var("OUT_DIR").unwrap();
     fs::write(Path::new(&out).join("reaches.rs"), reaches()).unwrap();
     fs::write(Path::new(&out).join("dens.rs"), dens()).unwrap();
+    fs::write(Path::new(&out).join("kit.rs"), kit()).unwrap();
 }

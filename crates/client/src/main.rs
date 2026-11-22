@@ -176,6 +176,7 @@ fn main() {
         (
             equipment::do_inventory,
             equipment::dress,
+            equipment::dye,
             hiding::parse_extras,
             equipment::bind_worn,
             hiding::hide_under,
@@ -191,7 +192,7 @@ fn main() {
         gathering::mark,
         gathering::do_loot,
         gathering::do_activity,
-        (equipment::hold, equipment::bind_held).chain(),
+        (equipment::hold, equipment::bind_held, equipment::stow).chain(),
         crate::systems::rune::bind,
         crate::systems::rope::throw,
         mount::request,

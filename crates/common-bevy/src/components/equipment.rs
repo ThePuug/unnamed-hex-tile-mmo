@@ -4,155 +4,106 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// A piece the asset build makes, cut for every body that can wear it: a
-/// garment of the leather set, or a plate of the kit.
+pub use common::kit::Slot;
+use common::kit::{self, Kind};
+
+/// A piece the asset build makes, cut for every body that can wear it:
+/// one of `common::kit::PIECES`, by its place there. Which pieces there
+/// are is the assets' to say; the game reads what each declares.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-pub enum Piece {
-    LeatherHood,
-    LeatherVest,
-    PlateCuirass,
-    LeatherGloves,
-    LeatherGirdle,
-    LeatherPants,
-    LeatherBoots,
-    SwordBreaker,
-    PlateHelm,
-    PlateGauntlets,
-    PlateLeggings,
-    PlateSabatons,
-}
+pub struct Piece(u8);
 
 impl Piece {
-    /// Every piece, in slot order.
-    pub const ALL: [Piece; 12] = [
-        Piece::LeatherHood,
-        Piece::PlateHelm,
-        Piece::LeatherVest,
-        Piece::PlateCuirass,
-        Piece::LeatherGloves,
-        Piece::PlateGauntlets,
-        Piece::LeatherGirdle,
-        Piece::LeatherPants,
-        Piece::PlateLeggings,
-        Piece::LeatherBoots,
-        Piece::PlateSabatons,
-        Piece::SwordBreaker,
-    ];
-
-    /// The asset's name: the stem of `models/<name>-<actor>.glb`, so the
-    /// two must agree.
-    pub fn name(self) -> &'static str {
-        match self {
-            Piece::LeatherHood => "leather-hood",
-            Piece::LeatherVest => "leather-vest",
-            Piece::PlateCuirass => "plate-cuirass",
-            Piece::LeatherGloves => "leather-gloves",
-            Piece::LeatherGirdle => "leather-girdle",
-            Piece::LeatherPants => "leather-pants",
-            Piece::LeatherBoots => "leather-boots",
-            Piece::SwordBreaker => "sword-breaker",
-            Piece::PlateHelm => "plate-helm",
-            Piece::PlateGauntlets => "plate-gauntlets",
-            Piece::PlateLeggings => "plate-leggings",
-            Piece::PlateSabatons => "plate-sabatons",
-        }
+    /// Every piece, in the order the assets declare them.
+    pub fn all() -> impl Iterator<Item = Piece> {
+        (0..kit::PIECES.len()).map(|at| Piece(at as u8))
     }
 
-    /// The slot a piece is worn in. The game assigns it: pants and boots
-    /// both fit the legs.
+    /// The piece the assets call `name`. Panics where they declare none:
+    /// a piece the code names is one the build must make.
+    pub fn named(name: &str) -> Piece {
+        Piece::all().find(|piece| piece.name() == name).unwrap_or_else(|| panic!("the assets declare no piece `{name}`"))
+    }
+
+    fn declared(self) -> &'static kit::Piece {
+        &kit::PIECES[self.0 as usize]
+    }
+
+    /// The asset's name: the stem of `models/<name>-<actor>.glb`.
+    pub fn name(self) -> &'static str {
+        self.declared().name
+    }
+
+    /// The set the piece is of.
+    pub fn set(self) -> &'static kit::Set {
+        &kit::SETS[self.declared().set]
+    }
+
+    /// The slot a piece is worn in.
     pub fn slot(self) -> Slot {
         self.slots()[0]
     }
 
-    /// Every slot a piece fills, its own first: the cuirass's slats hang
-    /// where a girdle would, so it fills the waist as well, and nothing
-    /// is worn under it there.
+    /// Every slot a piece fills, its own first: a cuirass whose skirt
+    /// hangs where a girdle would fills the waist as well, and nothing is
+    /// worn under it there.
     pub fn slots(self) -> &'static [Slot] {
-        match self {
-            Piece::LeatherHood | Piece::PlateHelm => &[Slot::Head],
-            Piece::LeatherVest => &[Slot::Torso],
-            Piece::PlateCuirass => &[Slot::Torso, Slot::Waist],
-            Piece::LeatherGloves | Piece::PlateGauntlets => &[Slot::Hands],
-            Piece::LeatherGirdle => &[Slot::Waist],
-            Piece::LeatherPants | Piece::PlateLeggings => &[Slot::Legs],
-            Piece::LeatherBoots | Piece::PlateSabatons => &[Slot::Feet],
-            Piece::SwordBreaker => &[Slot::OffHand],
-        }
+        self.declared().fills
     }
 
-    pub fn display_name(self) -> &'static str {
-        match self {
-            Piece::LeatherHood => "Leather Hood",
-            Piece::LeatherVest => "Leather Vest",
-            Piece::PlateCuirass => "Plate Cuirass",
-            Piece::LeatherGloves => "Leather Gloves",
-            Piece::LeatherGirdle => "Leather Girdle",
-            Piece::LeatherPants => "Leather Pants",
-            Piece::LeatherBoots => "Leather Boots",
-            Piece::SwordBreaker => "Sword-breaker",
-            Piece::PlateHelm => "Plate Helm",
-            Piece::PlateGauntlets => "Plate Gauntlets",
-            Piece::PlateLeggings => "Plate Leggings",
-            Piece::PlateSabatons => "Plate Sabatons",
-        }
+    /// The asset's name as a player reads it: `ranger-hood` is "Ranger Hood".
+    pub fn display_name(self) -> String {
+        self.name()
+            .split('-')
+            .map(|word| word[..1].to_uppercase() + &word[1..])
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
-    /// What the piece weighs, worn or carried.
+    /// What the piece weighs, worn or carried: by its set's kind and the
+    /// slot it goes in.
     pub fn weight(self) -> u32 {
-        match self {
-            Piece::LeatherHood | Piece::LeatherGloves | Piece::LeatherGirdle => 1,
-            Piece::LeatherPants | Piece::LeatherBoots => 2,
-            Piece::LeatherVest | Piece::SwordBreaker | Piece::PlateGauntlets => 3,
-            Piece::PlateHelm | Piece::PlateSabatons => 4,
-            Piece::PlateLeggings => 6,
-            Piece::PlateCuirass => 10,
+        match (self.set().kind, self.slot()) {
+            (Kind::Light, Slot::Torso) => 3,
+            (Kind::Light, Slot::Legs | Slot::Feet) => 2,
+            (Kind::Light, _) => 1,
+            (Kind::Medium, Slot::Torso) => 6,
+            (Kind::Medium, Slot::Legs) => 4,
+            (Kind::Medium, Slot::Feet) => 3,
+            (Kind::Medium, Slot::Waist) => 1,
+            (Kind::Medium, _) => 2,
+            (Kind::Heavy, Slot::Torso) => 10,
+            (Kind::Heavy, Slot::Legs) => 6,
+            (Kind::Heavy, Slot::Head | Slot::Feet) => 4,
+            (Kind::Heavy, Slot::Waist) => 2,
+            (Kind::Heavy, _) => 3,
+            (Kind::Sword | Kind::Shield, _) => 3,
+            (Kind::Axe | Kind::Mace, _) => 4,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub enum Slot {
-    Head,
-    Torso,
-    Hands,
-    Waist,
-    Legs,
-    Feet,
-    OffHand,
-}
-
-impl Slot {
-    pub const ALL: [Slot; 7] = [Slot::Head, Slot::Torso, Slot::Hands, Slot::Waist, Slot::Legs, Slot::Feet, Slot::OffHand];
-    /// The slots a garment goes in, down the body; the rest are held.
-    pub const BODY: [Slot; 6] = [Slot::Head, Slot::Torso, Slot::Hands, Slot::Waist, Slot::Legs, Slot::Feet];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Slot::Head => "Head",
-            Slot::Torso => "Torso",
-            Slot::Hands => "Hands",
-            Slot::Waist => "Waist",
-            Slot::Legs => "Legs",
-            Slot::Feet => "Feet",
-            Slot::OffHand => "Off\nhand",
-        }
-    }
-
-    fn index(self) -> usize {
-        self as usize
-    }
-}
-
-/// The styles every set is made in: its seeds, one outfit each, which
-/// are a piece's glTF scenes in order. A style of the leather and the
-/// same style of the plate are one outfit.
-pub const STYLES: u8 = 3;
-
-/// A piece in a style.
+/// One make of a piece: the piece, and the seed of its set it is made
+/// in. A seed is the set's colours and which of the piece's shapes it is
+/// cut in, the same across the set, so the pieces of one seed match.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Item {
     pub piece: Piece,
-    pub style: u8,
+    pub seed: u16,
+}
+
+impl Item {
+    /// Which of the piece's shapes this seed is cut in, its glTF scenes
+    /// in order: each in turn.
+    pub fn shape(self) -> usize {
+        self.seed as usize % self.piece.declared().shapes as usize
+    }
+
+    /// The seed as the assets ship it: one past those shipped is drawn as
+    /// one of them.
+    pub fn shipped(self) -> u16 {
+        self.seed % self.piece.set().seeds.len() as u16
+    }
 }
 
 /// What an actor wears, one item to a slot, a piece that fills several
@@ -160,7 +111,7 @@ pub struct Item {
 /// client that sees the actor.
 #[derive(Clone, Component, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Equipment {
-    worn: [Option<Item>; 7],
+    worn: [Option<Item>; 8],
 }
 
 impl Equipment {
@@ -207,21 +158,14 @@ impl Equipment {
     }
 
     /// What a player starts wearing, and what the character screen shows:
-    /// the strapped leather, buckled down the vest, and the sword-breaker.
+    /// the ranger's leather, an arming sword and the sword-breaker.
     pub fn starting_outfit() -> Self {
-        const STRAPPED: u8 = 2;
+        const SEED: u16 = 2;
         let mut outfit = Equipment::default();
-        for piece in [
-            Piece::LeatherHood,
-            Piece::LeatherVest,
-            Piece::LeatherGloves,
-            Piece::LeatherGirdle,
-            Piece::LeatherPants,
-            Piece::LeatherBoots,
-        ] {
-            outfit.wear(Item { piece, style: STRAPPED });
+        for name in ["ranger-hood", "ranger-vest", "ranger-gloves", "ranger-girdle", "ranger-pants", "ranger-boots", "arming-sword"] {
+            outfit.wear(Item { piece: Piece::named(name), seed: SEED });
         }
-        outfit.wear(Item { piece: Piece::SwordBreaker, style: 0 });
+        outfit.wear(Item { piece: Piece::named("sword-breaker"), seed: 0 });
         outfit
     }
 }
@@ -320,8 +264,8 @@ impl Inventory {
 mod tests {
     use super::*;
 
-    fn item(piece: Piece, style: u8) -> Item {
-        Item { piece, style }
+    fn item(name: &str, seed: u16) -> Item {
+        Item { piece: Piece::named(name), seed }
     }
 
     fn of(material: common::Material, count: u32) -> common::Stack {
@@ -331,20 +275,20 @@ mod tests {
     #[test]
     fn wearing_displaces_what_held_the_slot() {
         let mut worn = Equipment::default();
-        assert_eq!(worn.wear(item(Piece::LeatherPants, 0)), vec![]);
-        assert_eq!(worn.wear(item(Piece::LeatherPants, 1)), vec![item(Piece::LeatherPants, 0)]);
-        assert!(worn.is_worn(item(Piece::LeatherPants, 1)));
-        assert!(!worn.is_worn(item(Piece::LeatherPants, 0)));
+        assert_eq!(worn.wear(item("ranger-pants", 0)), vec![]);
+        assert_eq!(worn.wear(item("ranger-pants", 1)), vec![item("ranger-pants", 0)]);
+        assert!(worn.is_worn(item("ranger-pants", 1)));
+        assert!(!worn.is_worn(item("ranger-pants", 0)));
         assert_eq!(worn.items().count(), 1);
     }
 
     #[test]
     fn taking_off_only_what_is_worn() {
         let mut worn = Equipment::default();
-        assert!(!worn.take_off(item(Piece::LeatherVest, 2)));
-        worn.wear(item(Piece::LeatherVest, 2));
-        assert!(!worn.take_off(item(Piece::LeatherVest, 0)));
-        assert!(worn.take_off(item(Piece::LeatherVest, 2)));
+        assert!(!worn.take_off(item("ranger-vest", 2)));
+        worn.wear(item("ranger-vest", 2));
+        assert!(!worn.take_off(item("ranger-vest", 0)));
+        assert!(worn.take_off(item("ranger-vest", 2)));
         assert_eq!(worn.worn(Slot::Torso), None);
     }
 
@@ -353,24 +297,24 @@ mod tests {
     #[test]
     fn the_cuirass_is_a_girdle_too() {
         let mut worn = Equipment::default();
-        worn.wear(item(Piece::LeatherVest, 0));
-        worn.wear(item(Piece::LeatherGirdle, 0));
-        let off = worn.wear(item(Piece::PlateCuirass, 0));
-        assert_eq!(off, vec![item(Piece::LeatherVest, 0), item(Piece::LeatherGirdle, 0)]);
-        assert_eq!(worn.worn(Slot::Waist), Some(item(Piece::PlateCuirass, 0)));
+        worn.wear(item("ranger-vest", 0));
+        worn.wear(item("ranger-girdle", 0));
+        let off = worn.wear(item("sentinel-cuirass", 0));
+        assert_eq!(off, vec![item("ranger-vest", 0), item("ranger-girdle", 0)]);
+        assert_eq!(worn.worn(Slot::Waist), Some(item("sentinel-cuirass", 0)));
         assert_eq!(worn.items().count(), 1);
-        assert_eq!(worn.wear(item(Piece::LeatherGirdle, 1)), vec![item(Piece::PlateCuirass, 0)]);
+        assert_eq!(worn.wear(item("ranger-girdle", 1)), vec![item("sentinel-cuirass", 0)]);
         assert_eq!(worn.worn(Slot::Torso), None);
-        assert_eq!(worn.items().collect::<Vec<_>>(), vec![item(Piece::LeatherGirdle, 1)]);
+        assert_eq!(worn.items().collect::<Vec<_>>(), vec![item("ranger-girdle", 1)]);
     }
 
     #[test]
     fn pants_and_boots_take_different_slots() {
         let mut worn = Equipment::default();
-        worn.wear(item(Piece::LeatherPants, 0));
-        worn.wear(item(Piece::LeatherBoots, 0));
+        worn.wear(item("ranger-pants", 0));
+        worn.wear(item("ranger-boots", 0));
         assert_eq!(worn.items().count(), 2);
-        assert_ne!(Piece::LeatherPants.slot(), Piece::LeatherBoots.slot());
+        assert_ne!(Piece::named("ranger-pants").slot(), Piece::named("ranger-boots").slot());
     }
 
     /// A player starts wearing its outfit with nothing in the bag; what it
@@ -432,7 +376,7 @@ mod tests {
     fn a_full_bag_takes_only_what_it_stacks() {
         let worn = Equipment::default();
         let mut bag = Inventory::default();
-        let pieces: Vec<Item> = Piece::ALL.iter().flat_map(|&piece| (0..STYLES).map(move |style| item(piece, style))).collect();
+        let pieces: Vec<Item> = Piece::all().flat_map(|piece| (0..piece.set().seeds.len() as u16).map(move |seed| Item { piece, seed })).collect();
         bag.items = pieces.into_iter().cycle().take(BAG_STACKS - 1).collect();
         bag.add(of(common::Material::Softwood, 1));
         assert_eq!(bag.stacks(&worn), BAG_STACKS);
@@ -440,15 +384,17 @@ mod tests {
         assert_eq!(bag.room_for(&worn, common::Stackable::Material(common::Material::Hardwood)), 0);
     }
 
+    /// A seed past a piece's shapes is cut in one of them, and one past
+    /// the seeds its set ships is drawn as one of those.
     #[test]
-    fn piece_names_are_distinct_asset_stems() {
-        let names: Vec<&str> = Piece::ALL.iter().map(|p| p.name()).collect();
-        for name in &names {
-            assert!(name.chars().all(|c| c.is_ascii_lowercase() || c == '-'), "{name}");
+    fn any_seed_is_a_shape_and_a_shipped_seed() {
+        for piece in Piece::all() {
+            for seed in [0, 1, 7, 8, 31, 1000, u16::MAX] {
+                let item = Item { piece, seed };
+                assert!(item.shape() < kit::PIECES[piece.0 as usize].shapes as usize);
+                assert!((item.shipped() as usize) < piece.set().seeds.len());
+            }
         }
-        let mut unique = names.clone();
-        unique.sort();
-        unique.dedup();
-        assert_eq!(unique.len(), names.len());
     }
+
 }

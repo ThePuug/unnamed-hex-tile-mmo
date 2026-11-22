@@ -319,15 +319,22 @@ the physics carries the actor on through the air. A gait with no flight spins it
 feet to match the ground. Moving back against its facing, an actor plays
 its `back` gait forward where it has one, else its gait ahead reversed.
 
-**Worn pieces.** A piece loads from `models/<piece>-<actor>.glb`, scene =
-style, as a child of the actor. `client::systems::equipment` points its
+**Worn pieces.** Which pieces and sets exist is the assets' to say:
+`common::kit::PIECES` and `SETS`, baked from `models/kit.json`, and
+`Piece` is a place in that table, never an enum the code keeps. An item
+is a piece and a seed of its set. The piece loads from
+`models/<piece>-<actor>.glb`, scene = the seed's shape (`Item::shape`),
+as a child of the actor, and is painted in the seed's colours: each
+mesh's material, by the name its glTF gives it, takes what the set says
+that seed makes of the name (`plugins::cel::Dye`). `client::systems::equipment` points its
 skin's joints at the actor's by name, or hangs a socket piece from the rig's
 `socket.<name>` node, and drops the GLB's copy of the rig.
 `client::systems::hiding` reads the node extras: `covers`, triangles of the
 actor's mesh the piece's leather lies over; `socket`. It swaps the actor's
 index buffer on cached copies shared by every actor in the same
 combination; no piece hides any of another. `Piece::name` is the asset
-stem.
+stem, and code that needs one piece asks for it by that name
+(`Piece::named`).
 
 **Water.** A tile's water is one surface, a z-level, published by a layer
 and rounded once, in `Composite::water_at`: surface and ground round to the
