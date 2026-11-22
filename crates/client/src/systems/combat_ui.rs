@@ -1,11 +1,15 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 use bevy::prelude::*;
-use common_bevy::{components::{activation::Activating, ally_target::AllyTarget, target::Target}, moment::Moment};
+use common_bevy::{
+    components::{activation::Activating, ally_target::AllyTarget, target::Target},
+    message::{AbilityType, Do, Event as GameEvent, Outcome},
+    moment::Moment,
+};
 
 use crate::{
     components::{ActivationBar, ActivationFill, ActivationName, Viewed, WorldBar, WorldBarFill},
-    systems::{closeup::CloseupCamera, skill_text, target_frame::{Lane, LANES}},
+    systems::{closeup::CloseupCamera, skill_text, struck::{outcome_color, outcome_word}, target_frame::{Lane, LANES}},
 };
 
 /// Where a `Node` goes to be drawn at `world`, or None where that is off
@@ -102,6 +106,14 @@ pub fn setup_health_bars(mut commands: Commands) {
         .with_children(|parent| {
             parent.spawn((whole.clone(), BackgroundColor(TRACK)));
             parent.spawn((whole.clone(), BackgroundColor(fill), ZIndex(1), WorldBarFill));
+            // The target's stance, block and holds, standing on the bar
+            crate::systems::status_marks::row(parent, crate::systems::status_marks::Of::Held(lane), Node {
+                position_type: PositionType::Absolute,
+                width: Val::Px(BAR_WIDTH),
+                left: Val::Px(0.0),
+                bottom: Val::Px(BAR_HEIGHT + NAME_GAP),
+                ..default()
+            });
         });
     }
 }
@@ -153,7 +165,8 @@ pub fn update_world_bars(
 /// Makes `bar` an activation bar (`ActivationBar`) for `of`, laid out from
 /// `at`: a track `track` px wide whose fill is how far through the skill
 /// stands, and the skill's name, under the track over an actor and above
-/// it for the viewed actor's own. Hidden until a skill is under way.
+/// it for the viewed actor's own. Hidden until a skill is under way; what
+/// it shows then is its [`Showing`].
 pub fn activation_bar(mut bar: EntityCommands, of: Option<Entity>, track: f32, at: Node) {
     bar.insert((
         Node {
@@ -165,6 +178,7 @@ pub fn activation_bar(mut bar: EntityCommands, of: Option<Entity>, track: f32, a
         },
         Visibility::Hidden,
         ActivationBar(of),
+        Showing::default(),
     ))
     .with_children(|parent| {
         parent.spawn((Node { width: Val::Px(track), height: Val::Px(BAR_HEIGHT), ..default() }, BackgroundColor(TRACK)))
@@ -180,46 +194,119 @@ pub fn activation_bar(mut bar: EntityCommands, of: Option<Entity>, track: f32, a
     });
 }
 
+/// How long an activation bar holds its verdict, fading over the last half
+const VERDICT: Duration = Duration::from_millis(600);
+/// How long past its skill's time a bar waits, full, to hear how the skill
+/// ended: the word of it comes a trip from the server after the clock does
+const UNHEARD: Duration = Duration::from_millis(400);
+
+/// What an activation bar shows, its moments on the client's clock
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub enum Showing {
+    #[default]
+    Nothing,
+    /// A skill under way
+    UnderWay(AbilityType),
+    /// A skill whose time ran out, its ending awaited until the moment
+    Unheard(AbilityType, Moment),
+    /// How its skill ended, until the moment
+    Verdict(Outcome, Moment),
+}
+
+impl Showing {
+    /// What the bar shows at `now`: its actor activating `under_way`, and
+    /// `ended` telling how a skill of that actor's resolved this frame.
+    /// The skill it showed resolving gives its verdict, held for
+    /// [`VERDICT`]; one whose time ran out unheard goes after [`UNHEARD`].
+    pub fn next(self, under_way: Option<AbilityType>, ended: impl Fn(AbilityType) -> Option<Outcome>, now: Moment) -> Showing {
+        let shown = match self {
+            Showing::UnderWay(ability) | Showing::Unheard(ability, _) => Some(ability),
+            _ => None,
+        };
+        // Before the skill under way: the word may come a frame before the
+        // actor's `Activating` clears
+        if let Some(outcome) = shown.and_then(&ended) {
+            return Showing::Verdict(outcome, now + VERDICT);
+        }
+        if let Some(ability) = under_way {
+            return Showing::UnderWay(ability);
+        }
+        match self {
+            Showing::UnderWay(ability) => Showing::Unheard(ability, now + UNHEARD),
+            Showing::Unheard(_, until) | Showing::Verdict(_, until) if now < until => self,
+            _ => Showing::Nothing,
+        }
+    }
+}
+
 /// Shows every skill under way: over each actor activating one, a bar
-/// under where its health bar stands, made as the skill begins and gone as
-/// it ends; for the viewed actor, the one bar above its skill bar. Each
-/// names its skill and fills as the server's clock nears the moment it
-/// lands.
+/// under where its health bar stands, made as the skill begins; for the
+/// viewed actor, the one bar above its skill bar. Each names its skill and
+/// fills as the server's clock nears the moment it lands, then holds a
+/// moment, full, in the colour of how the skill ended with the word for it
+/// in the name's place (`struck::outcome_color`, `struck::outcome_word`),
+/// and goes.
 #[allow(clippy::too_many_arguments)]
 pub fn update_activation_bars(
     mut commands: Commands,
+    mut reader: MessageReader<Do>,
     actors: Query<(Entity, &Activating, &Transform, Has<Viewed>)>,
-    mut bars: Query<(Entity, &ActivationBar, &mut Node, &mut Visibility)>,
+    mut bars: Query<(Entity, &ActivationBar, &mut Showing, &mut Node, &mut Visibility)>,
     children: Query<&Children>,
-    mut fills: Query<&mut Node, (With<ActivationFill>, Without<ActivationBar>)>,
-    mut names: Query<&mut Text, With<ActivationName>>,
+    mut fills: Query<(&mut Node, &mut BackgroundColor), (With<ActivationFill>, Without<ActivationBar>)>,
+    mut names: Query<(&mut Text, &mut TextColor), With<ActivationName>>,
     camera_query: Query<(&Camera, &GlobalTransform), (With<Camera3d>, Without<CloseupCamera>)>,
     scale: Res<UiScale>,
     server: Res<crate::resources::Server>,
     time: Res<Time>,
 ) {
     let now = server.now(time.elapsed().as_millis());
+    let here = Moment::ZERO + time.elapsed();
     let camera = camera_query.single().ok();
-    let own = actors.iter().find(|(.., viewed)| *viewed).and_then(|(_, activating, ..)| activating.0);
+    let own = actors.iter().find(|(.., viewed)| *viewed).map(|(actor, ..)| actor);
+    let ended: Vec<(Entity, AbilityType, Outcome)> = reader.read()
+        .filter_map(|message| match message.event {
+            GameEvent::Resolved { ent, ability, outcome, .. } => Some((ent, ability, outcome)),
+            _ => None,
+        })
+        .collect();
 
     let mut barred: HashSet<Entity> = HashSet::new();
-    for (bar, shows, mut node, mut visibility) in &mut bars {
-        let under_way = match shows.0 {
-            None => own.map(|activation| (activation, None)),
-            Some(actor) => actors.get(actor).ok()
-                .filter(|(.., viewed)| !viewed)
-                .and_then(|(_, activating, transform, _)| Some((activating.0?, Some(transform.translation)))),
+    for (bar, shows, mut showing, mut node, mut visibility) in &mut bars {
+        let of = match shows.0 {
+            None => own.and_then(|own| actors.get(own).ok()),
+            Some(actor) => actors.get(actor).ok().filter(|(.., viewed)| !viewed),
         };
-        let Some((activation, over)) = under_way else {
-            match shows.0 {
-                Some(_) => commands.entity(bar).despawn(),
-                None => { visibility.set_if_neq(Visibility::Hidden); }
+        let activation = of.and_then(|(_, activating, ..)| activating.0);
+        let next = match of {
+            Some((actor, ..)) => showing.next(
+                activation.map(|activation| activation.ability),
+                |ability| ended.iter().find(|(ent, of, _)| (*ent, *of) == (actor, ability)).map(|(.., outcome)| *outcome),
+                here,
+            ),
+            None => Showing::Nothing,
+        };
+        showing.set_if_neq(next);
+        // What it reads, how full, and in what colour
+        let (label, full, color) = match (next, activation) {
+            (Showing::UnderWay(ability), Some(activation)) => (skill_text::name(ability), activation.progress(now), ACTIVATION),
+            (Showing::UnderWay(ability), None) | (Showing::Unheard(ability, _), _) => (skill_text::name(ability), 1.0, ACTIVATION),
+            (Showing::Verdict(outcome, until), _) => {
+                let left = until.since(here).as_secs_f32() / VERDICT.as_secs_f32();
+                (outcome_word(outcome).to_string(), 1.0, outcome_color(outcome).with_alpha((left * 2.0).clamp(0.0, 1.0)))
             }
-            continue;
+            (Showing::Nothing, _) => {
+                match shows.0 {
+                    Some(_) => commands.entity(bar).despawn(),
+                    None => { visibility.set_if_neq(Visibility::Hidden); }
+                }
+                continue;
+            }
         };
         barred.extend(shows.0);
-        if let Some(over) = over {
-            let at = camera.and_then(|(camera, transform)| node_at(camera, transform, &scale, over + Vec3::Y * OVER));
+        if let (Some(_), Some((_, _, transform, _))) = (shows.0, of) {
+            let over = transform.translation + Vec3::Y * OVER;
+            let at = camera.and_then(|(camera, transform)| node_at(camera, transform, &scale, over));
             match at {
                 Some(at) => {
                     node.left = Val::Px(at.x - NAME_WIDTH / 2.0);
@@ -229,15 +316,17 @@ pub fn update_activation_bars(
             }
         }
         visibility.set_if_neq(Visibility::Inherited);
+        let verdict = matches!(next, Showing::Verdict(..));
         for part in children.iter_descendants(bar) {
-            if let Ok(mut fill) = fills.get_mut(part) {
-                fill.width = Val::Percent(activation.progress(now) * 100.0);
+            if let Ok((mut fill, mut background)) = fills.get_mut(part) {
+                fill.width = Val::Percent(full * 100.0);
+                background.set_if_neq(BackgroundColor(color));
             }
-            if let Ok(mut text) = names.get_mut(part) {
-                let name = skill_text::name(activation.ability);
-                if text.0 != name {
-                    text.0 = name;
+            if let Ok((mut text, mut text_color)) = names.get_mut(part) {
+                if text.0 != label {
+                    text.0 = label.clone();
                 }
+                text_color.set_if_neq(TextColor(if verdict { color } else { Color::WHITE }));
             }
         }
     }
@@ -265,13 +354,14 @@ mod tests {
     #[test]
     fn an_actor_has_its_bar_while_its_skill_is_under_way_and_the_viewed_one_keeps_to_its_own() {
         let mut app = App::new();
+        app.add_message::<Do>();
         app.init_resource::<Time>();
         app.init_resource::<UiScale>();
         app.insert_resource(crate::resources::Server::default());
         app.add_systems(Update, update_activation_bars);
         let under_way = Activating(Some(Activation { ability: AbilityType::Overpower, target: None, began: Moment::ZERO, length: Duration::from_secs(2) }));
         let foe = app.world_mut().spawn((under_way, Transform::default())).id();
-        app.world_mut().spawn((under_way, Transform::default(), Viewed));
+        let viewed = app.world_mut().spawn((under_way, Transform::default(), Viewed)).id();
         app.world_mut().spawn((Activating(None), Transform::default()));
         let own = app.world_mut().spawn_empty().id();
         activation_bar(app.world_mut().commands().entity(own), None, 200.0, Node::default());
@@ -286,9 +376,50 @@ mod tests {
         let mut names = app.world_mut().query::<(&Text, &ActivationName)>();
         assert!(names.iter(app.world()).all(|(text, _)| text.0 == "Overpower"), "each naming its skill");
 
-        app.world_mut().get_mut::<Activating>(foe).unwrap().0 = None;
+        // Each hears how its skill ended and holds the word for it
+        let resolved = |ent, outcome| Do { event: GameEvent::Resolved { ent, ability: AbilityType::Overpower, target: None, damage: 0.0, outcome, dot: false } };
+        app.world_mut().write_message(resolved(foe, Outcome::Blocked));
+        app.world_mut().write_message(resolved(viewed, Outcome::Interrupted));
+        for actor in [foe, viewed] {
+            app.world_mut().get_mut::<Activating>(actor).unwrap().0 = None;
+        }
         app.update();
-        assert_eq!(bars(&mut app), vec![None], "gone as the skill ends");
+        let mut words: Vec<String> = names.iter(app.world()).map(|(text, _)| text.0.clone()).collect();
+        words.sort();
+        assert_eq!(words, vec!["Blocked", "Interrupted"], "the verdict in the name's place");
+        let mut fills = app.world_mut().query::<(&Node, &BackgroundColor, &ActivationFill)>();
+        assert!(fills.iter(app.world()).all(|(fill, color, _)| fill.width == Val::Percent(100.0) && color.0 != ACTIVATION), "full, in the outcome's colour");
+
+        app.world_mut().resource_mut::<Time>().advance_by(VERDICT);
+        app.update();
+        assert_eq!(bars(&mut app), vec![None], "gone once the verdict is told");
+        assert_eq!(*app.world().get::<Visibility>(own).unwrap(), Visibility::Hidden);
+    }
+
+    #[test]
+    fn a_bar_holds_its_verdict_a_moment_and_one_unheard_just_goes() {
+        let at = Moment::from_millis(5_000);
+        let (skill, other) = (AbilityType::Overpower, AbilityType::AutoAttack);
+        let none = |_| None;
+        let under_way = Showing::Nothing.next(Some(skill), none, at);
+        assert_eq!(under_way, Showing::UnderWay(skill));
+
+        // Only its own skill resolving ends it, and before the actor's
+        // activation is seen to clear
+        let landed = |ability| (ability == skill).then_some(Outcome::Landed);
+        assert_eq!(under_way.next(Some(skill), |ability| (ability == other).then_some(Outcome::Landed), at), under_way);
+        let verdict = under_way.next(Some(skill), landed, at);
+        assert_eq!(verdict, Showing::Verdict(Outcome::Landed, at + VERDICT));
+        assert_eq!(verdict.next(None, none, at + VERDICT / 2), verdict, "held");
+        assert_eq!(verdict.next(None, none, at + VERDICT), Showing::Nothing, "then gone");
+        assert_eq!(verdict.next(Some(other), none, at), Showing::UnderWay(other), "or given up to the next skill");
+
+        // Its time run out, it waits to hear, takes a late word, and goes
+        // with none
+        let unheard = under_way.next(None, none, at);
+        assert_eq!(unheard, Showing::Unheard(skill, at + UNHEARD));
+        assert!(matches!(unheard.next(None, landed, at + UNHEARD / 2), Showing::Verdict(Outcome::Landed, _)));
+        assert_eq!(unheard.next(None, none, at + UNHEARD), Showing::Nothing);
     }
 }
 

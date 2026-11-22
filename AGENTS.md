@@ -297,7 +297,10 @@ name and an actor lacking one has no node for it: a Frenzy or a Feint it
 lacks plays its `attack`, a Parry its `counter` (`Clip::stand_in`). A
 swing that arrives while a leap's slide runs waits for it to end
 (`animator::Held`), or the swing due as a Leap lands would cut the
-flight off. The actor holds its `Gltf` root (`animator::Rig`) from spawn or the names are gone by then. A
+flight off. A clip that lands a blow declares its `strike`, the moment
+it meets what it hits, and `animator::play_abilities` plays the wind-up
+against the activation so the strike falls as it ends; a clip declaring
+none plays as authored. The actor holds its `Gltf` root (`animator::Rig`) from spawn or the names are gone by then. A
 jump clip never rises: the armature node's `animgen` extras declare
 `leave`, `freeze` and `land` in seconds, and `animator::Jumping` plays it
 to the freeze as `AirTime` goes airborne, holds it there by speed (never

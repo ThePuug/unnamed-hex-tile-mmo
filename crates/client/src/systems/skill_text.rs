@@ -8,6 +8,7 @@
 use common_bevy::{
     components::ActorAttributes,
     message::AbilityType,
+    systems::combat::gate::AbilityFailReason,
     tuning::Tuning,
 };
 
@@ -22,6 +23,49 @@ pub fn describe(ability: AbilityType, attrs: &ActorAttributes, tuning: &Tuning) 
         "{}: {}.\n{:.0} endurance, {}, {} recharge",
         name(ability), does(ability, attrs, tuning).plain(), tuning.cost(ability), activation(tuning.activation(ability)), seconds(tuning.recharge(ability)),
     )
+}
+
+/// [`describe`], ending with why the gate would refuse the skill now where
+/// it would.
+pub fn describe_now(ability: AbilityType, attrs: &ActorAttributes, tuning: &Tuning, refused: Option<AbilityFailReason>) -> String {
+    let said = describe(ability, attrs, tuning);
+    match refused {
+        Some(reason) => format!("{said}\nNot now: {}.", why(reason)),
+        None => said,
+    }
+}
+
+/// The word for why the gate refused a skill, short enough to rise over
+/// its user.
+pub fn word(reason: AbilityFailReason) -> &'static str {
+    match reason {
+        AbilityFailReason::NoTargets => "No target",
+        AbilityFailReason::Held => "Stunned",
+        AbilityFailReason::Activating => "Busy",
+        AbilityFailReason::Recharging => "Recharging",
+        AbilityFailReason::NoEndurance => "No endurance",
+        AbilityFailReason::OutOfRange => "Out of range",
+        AbilityFailReason::NotFacing => "Not facing",
+        AbilityFailReason::NotHeld => "Not on your bar",
+        AbilityFailReason::Pinned => "Pinned",
+        AbilityFailReason::NoRoom => "No room",
+    }
+}
+
+/// Why the gate refuses a skill, as a clause said to its user
+fn why(reason: AbilityFailReason) -> &'static str {
+    match reason {
+        AbilityFailReason::NoTargets => "you have no target",
+        AbilityFailReason::Held => "you are stunned",
+        AbilityFailReason::Activating => "you are busy with another skill",
+        AbilityFailReason::Recharging => "it is recharging",
+        AbilityFailReason::NoEndurance => "you have too little endurance",
+        AbilityFailReason::OutOfRange => "your target is out of range",
+        AbilityFailReason::NotFacing => "you are not facing your target",
+        AbilityFailReason::NotHeld => "it is not on your bar",
+        AbilityFailReason::Pinned => "you are pinned, and it is a move",
+        AbilityFailReason::NoRoom => "it has nowhere to go",
+    }
 }
 
 /// A skill's activation as it is said: its seconds, or that it has none
@@ -233,6 +277,26 @@ mod tests {
         }
         assert_eq!(name(AbilityType::PerfectStride), "Perfect Stride");
         assert_eq!((seconds(3.0), seconds(5.8)), ("3s".to_string(), "5.8s".to_string()));
+    }
+
+    #[test]
+    fn a_skill_the_gate_would_refuse_ends_with_why_and_one_it_would_not_says_no_more() {
+        let tuning = Tuning::DEFAULT;
+        let attrs = ActorAttributes::default();
+        let plain = describe(AbilityType::Frenzy, &attrs, &tuning);
+        assert_eq!(describe_now(AbilityType::Frenzy, &attrs, &tuning, None), plain);
+        let reasons = [
+            AbilityFailReason::NoTargets, AbilityFailReason::Held, AbilityFailReason::Activating, AbilityFailReason::Recharging,
+            AbilityFailReason::NoEndurance, AbilityFailReason::OutOfRange, AbilityFailReason::NotFacing, AbilityFailReason::NotHeld,
+            AbilityFailReason::Pinned, AbilityFailReason::NoRoom,
+        ];
+        let mut said = std::collections::HashSet::new();
+        for reason in reasons {
+            let now = describe_now(AbilityType::Frenzy, &attrs, &tuning, Some(reason));
+            let ending = now.strip_prefix(&plain).expect("it says the skill first");
+            assert!(ending.len() > 1 && ending.is_ascii(), "{reason:?}: {now}");
+            assert!(said.insert(ending.to_string()) && said.insert(word(reason).to_string()), "{reason:?} is told apart from the rest");
+        }
     }
 
     #[test]

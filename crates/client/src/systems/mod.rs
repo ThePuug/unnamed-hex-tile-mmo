@@ -31,10 +31,12 @@ pub mod renet;
 pub mod resource_bars;
 pub mod rune;
 pub mod rope;
+pub mod status_marks;
 pub mod struck;
 pub mod target_frame;
 pub mod target_indicator;
 pub mod targeting;
+pub mod telegraph;
 pub mod ui;
 pub mod world;
 

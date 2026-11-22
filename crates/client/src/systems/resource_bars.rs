@@ -17,8 +17,11 @@ pub enum Pool {
 /// and answered in [`Pool::of`] has its bar.
 const BARS: [(Pool, Color); 2] = [
     (Pool::Health, Color::srgb(0.9, 0.1, 0.1)),
-    (Pool::Endurance, Color::srgb(0.2, 0.65, 0.45)),
+    (Pool::Endurance, ENDURANCE),
 ];
+
+/// The fill of an endurance bar, the viewed actor's and a target's alike
+pub const ENDURANCE: Color = Color::srgb(0.2, 0.65, 0.45);
 
 /// The decay constant a bar's fill eases toward its pool by
 const EASE: f32 = 5.0;
@@ -60,7 +63,7 @@ pub const LINE_VW: f32 = 12.5;
 const ACTIVATION_PX: f32 = 410.;
 
 /// Builds the bars on their line (`LINE_VW`), the viewed actor's
-/// activation bar over them.
+/// activation bar over them and the marks of its status over that.
 pub fn setup(
     mut commands: Commands,
     query: Query<Entity, With<IsDefaultUiCamera>>,
@@ -86,6 +89,8 @@ pub fn setup(
         crate::components::ViewHud,
     ))
     .with_children(|parent| {
+        // The viewed actor's stance, block and holds
+        crate::systems::status_marks::row(parent, crate::systems::status_marks::Of::Viewed, Node::default());
         crate::systems::combat_ui::activation_bar(parent.spawn_empty(), None, ACTIVATION_PX, Node::default());
         parent.spawn((
             Node {

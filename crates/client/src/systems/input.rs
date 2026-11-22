@@ -38,6 +38,7 @@ pub const INPUT_SEND_MS: u16 = 50;
 
 pub fn update_keybits(
     mut keys: crate::systems::help::Keys,
+    mut presses: crate::systems::action_bar::Presses,
     console: Res<crate::plugins::console::DevConsole>,
     menu: Res<crate::plugins::shell::menu::GameMenu>,
     focus: Res<crate::systems::focus::NumpadFocus>,
@@ -70,7 +71,13 @@ pub fn update_keybits(
         let attrs = attrs.copied().unwrap_or_default();
         let kit = held.copied().unwrap_or_default().0.into_iter().filter(|_| panel.placing().is_none());
         for (key, ability) in crate::systems::action_bar::KEYS.into_iter().zip(kit) {
-            if keys.pressed(key, crate::systems::skill_text::describe(ability, &attrs, &tuning)) {
+            // Asked here only to show it: the server's gate is the one
+            // that refuses, so the press is sent whatever this one says
+            let refused = presses.refusal(ability);
+            if keys.pressed(key, crate::systems::skill_text::describe_now(ability, &attrs, &tuning, refused)) {
+                if let Some(reason) = refused {
+                    presses.refuse(ability, reason);
+                }
                 writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity }});
             }
         }

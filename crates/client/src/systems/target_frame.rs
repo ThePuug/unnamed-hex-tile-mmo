@@ -1,7 +1,9 @@
 //! The target frames: what the viewed actor has targeted, a hostile and an
 //! ally, side by side in the top-right corner. Each shows its target's
-//! level, name, triumvirate, health and the skill it is activating, and stays on the last one targeted while that one stands in the world, so
-//! turning away does not blank it.
+//! level, name, triumvirate, health, endurance where it has any, the skill
+//! it is activating and the marks of its status, and stays on the last one
+//! targeted while that one stands in the world, so turning away does not
+//! blank it.
 
 use bevy::prelude::*;
 
@@ -25,6 +27,9 @@ pub enum Part {
     Triumvirate,
     HealthBar,
     HealthText,
+    /// The endurance bar's track, gone for a target with no endurance
+    Endurance,
+    EnduranceBar,
     Activating,
     LevelHex,
     LevelText,
@@ -67,7 +72,7 @@ impl Lane {
     }
 
     /// The target this lane's frame shows: the last the viewed actor held
-    fn target(self, target: &Target, ally: Option<&AllyTarget>) -> Option<Entity> {
+    pub fn target(self, target: &Target, ally: Option<&AllyTarget>) -> Option<Entity> {
         match self {
             Lane::Hostile => target.last_target,
             Lane::Ally => ally.and_then(|ally| ally.last_target),
@@ -105,6 +110,11 @@ fn level_color(diff: i32) -> Color {
     } else {
         Color::srgb(0.9, 0.2, 0.2)
     }
+}
+
+/// The hundredths of a pool `max` deep that `state` fills
+fn share(state: f32, max: f32) -> f32 {
+    if max > 0.0 { (state / max * 100.0).clamp(0.0, 100.0) } else { 0.0 }
 }
 
 /// Builds both frames, hidden until their lane has a target.
@@ -222,6 +232,27 @@ pub fn setup(
                 ));
             });
 
+            // Endurance, a slimmer bar under its health in the colour the
+            // viewed actor's own has
+            parent.spawn((
+                Node {
+                    width: Val::Percent(100.),
+                    height: Val::Px(8.),
+                    border: UiRect::all(Val::Px(2.)),
+                    ..default()
+                },
+                BorderColor::all(theme.bar_border),
+                BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
+                (lane, Part::Endurance),
+            ))
+            .with_children(|parent| {
+                parent.spawn((
+                    Node { width: Val::Percent(100.), height: Val::Percent(100.), ..default() },
+                    BackgroundColor(crate::systems::resource_bars::ENDURANCE),
+                    (lane, Part::EnduranceBar),
+                ));
+            });
+
             // The skill it is activating; its line's room is kept with
             // none, so the frame holds its height
             parent.spawn((
@@ -231,6 +262,13 @@ pub fn setup(
                 Node { min_height: Val::Px(14.), ..default() },
                 (lane, Part::Activating),
             ));
+
+            // Its stance, block and holds
+            crate::systems::status_marks::row(
+                parent,
+                crate::systems::status_marks::Of::Last(lane),
+                Node { justify_content: JustifyContent::FlexStart, ..default() },
+            );
         });
     }
 }
@@ -240,7 +278,7 @@ pub fn setup(
 pub fn update(
     mut parts: Query<(&Lane, &Part, &mut Visibility, Option<&mut Text>, Option<&mut TextColor>, Option<&mut Node>, Option<&mut BackgroundColor>)>,
     viewed: Query<(&Health, &Target, Option<&AllyTarget>, Option<&ActorAttributes>), With<crate::components::Viewed>>,
-    targets: Query<(&EntityType, &Health, Option<&ActorAttributes>, Option<&Activating>)>,
+    targets: Query<(&EntityType, &Health, Option<&Endurance>, Option<&ActorAttributes>, Option<&Activating>)>,
 ) {
     let Ok((own_health, target, ally, own_attrs)) = viewed.single() else {
         return;
@@ -252,7 +290,7 @@ pub fn update(
     });
 
     for (lane, part, mut visibility, text, color, node, background) in &mut parts {
-        let Some((typ, health, attrs, activating)) = shown[*lane as usize] else {
+        let Some((typ, health, endurance, attrs, activating)) = shown[*lane as usize] else {
             // A frame hides its parts with it
             if *part == Part::Frame {
                 *visibility = Visibility::Hidden;
@@ -284,13 +322,25 @@ pub fn update(
             }
             Part::HealthBar => {
                 if let Some(mut node) = node {
-                    let percent = if health.max > 0.0 { (health.state / health.max * 100.0).clamp(0.0, 100.0) } else { 0.0 };
-                    node.width = Val::Percent(percent);
+                    node.width = Val::Percent(share(health.state, health.max));
                 }
             }
             Part::HealthText => {
                 if let Some(mut text) = text {
                     **text = format!("{:.0}/{:.0}", health.state, health.max);
+                }
+            }
+            Part::Endurance => {
+                if let Some(mut node) = node {
+                    let display = if endurance.is_some() { Display::Flex } else { Display::None };
+                    if node.display != display {
+                        node.display = display;
+                    }
+                }
+            }
+            Part::EnduranceBar => {
+                if let (Some(mut node), Some(endurance)) = (node, endurance) {
+                    node.width = Val::Percent(share(endurance.state, endurance.max));
                 }
             }
             Part::Activating => {

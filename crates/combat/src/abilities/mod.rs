@@ -1,7 +1,8 @@
 //! Every ability an actor uses goes through one gate, [`Abilities::cast`].
 //! The gate asks, in order and the same of every ability: is the caster
 //! alive and unheld; is it on the bar, for a player (`Loadout`); is the
-//! caster activating nothing; is the skill recharged; does the caster hold
+//! caster activating nothing, which a stance alone need not wait for; is
+//! the skill recharged; does the caster hold
 //! its endurance; does a pin hold it, for a skill that is only a move; is
 //! its target a living hostile within the skill's reach and the caster's
 //! arc, for one with a reach (`AbilityType::reach`). An auto-attack asks its own
@@ -66,29 +67,7 @@ use crate::{
     landing,
 };
 
-/// Why the gate refused an ability.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AbilityFailReason {
-    NoTargets,
-    /// The caster is stunned, or held while a drag slides it
-    Held,
-    /// The caster is activating a skill
-    Activating,
-    /// The skill is recharging
-    Recharging,
-    /// The skill costs more endurance than the caster holds
-    NoEndurance,
-    OutOfRange,
-    /// The target stands outside the caster's arc
-    NotFacing,
-    /// A player's skill not on its bar
-    NotHeld,
-    /// A skill that is only a move, while its user is pinned
-    Pinned,
-    /// A rune whose tile ahead holds a rune already, or whose ground ahead
-    /// takes no step; a move with nowhere to go
-    NoRoom,
-}
+pub use common_bevy::systems::combat::gate::{admits, AbilityFailReason, Standing};
 
 /// What an attack carries to its target: its damage, and what lands with
 /// it, seconds of stun, tiles of drag (toward its striker where positive)
@@ -125,51 +104,6 @@ impl Cast {
     pub fn struck(&self) -> Result<(Entity, Loc), AbilityFailReason> {
         self.target.zip(self.target_loc).ok_or(AbilityFailReason::NoTargets)
     }
-}
-
-/// How an actor stands as the gate asks of it.
-#[derive(Clone, Copy, Debug)]
-pub struct Standing {
-    pub held: bool,
-    pub pinned: bool,
-    pub activating: bool,
-    /// The skill asked for is recharged
-    pub recharged: bool,
-    pub endurance: f32,
-}
-
-/// What the gate asks of `ability` before it does anything, in order: its
-/// caster unheld, activating nothing, the skill recharged and its
-/// endurance held (`standing`); for one that is only a move, no pin; for
-/// one with a reach (`AbilityType::reach`), a target at `foe`'s distance and
-/// inside its arc, None for no target. An NPC's skills channel asks the
-/// same of what it perceives, so it never weighs a skill the gate refuses.
-pub fn admits(tuning: &Tuning, ability: AbilityType, standing: &Standing, attrs: &ActorAttributes, reach: i32, foe: Option<(i32, bool)>) -> Result<(), AbilityFailReason> {
-    if standing.held {
-        return Err(AbilityFailReason::Held);
-    }
-    if standing.activating {
-        return Err(AbilityFailReason::Activating);
-    }
-    if !standing.recharged {
-        return Err(AbilityFailReason::Recharging);
-    }
-    if standing.endurance < tuning.cost(ability) {
-        return Err(AbilityFailReason::NoEndurance);
-    }
-    if standing.pinned && ability.moves() {
-        return Err(AbilityFailReason::Pinned);
-    }
-    if let Some(within) = ability.reach(tuning, attrs, reach) {
-        let (distance, in_arc) = foe.ok_or(AbilityFailReason::NoTargets)?;
-        if !within.contains(&distance) {
-            return Err(AbilityFailReason::OutOfRange);
-        }
-        if !in_arc {
-            return Err(AbilityFailReason::NotFacing);
-        }
-    }
-    Ok(())
 }
 
 /// Everything an ability reads or changes as it is used.
@@ -885,6 +819,10 @@ mod tests {
         assert_eq!(refused(&mut app, caster, AbilityType::Frenzy, Some(near)), Some(AbilityFailReason::Activating), "it uses no other skill");
         let said = ask(&mut app, caster, AbilityType::AutoAttack, Some(near));
         assert_eq!(ended(&said, caster, AbilityType::AutoAttack), None, "and swings no auto-attack");
+        assert_eq!(refused(&mut app, caster, AbilityType::Brace, None), None, "a stance alone is taken mid-activation");
+        ask(&mut app, caster, AbilityType::Brace, None);
+        assert_eq!(refused(&mut app, caster, AbilityType::Brace, None), Some(AbilityFailReason::Recharging), "it took hold");
+        assert_eq!(activating(&app, caster).map(|activation| activation.ability), Some(AbilityType::Overpower), "and leaves the skill running");
 
         finish(&mut app, caster);
         assert_eq!(refused(&mut app, caster, AbilityType::Overpower, Some(near)), Some(AbilityFailReason::Recharging));

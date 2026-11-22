@@ -1,7 +1,9 @@
 //! The target indicators: the outline of the tile under whoever the viewed
 //! actor targets now, red for the hostile and green for the ally. They are
 //! drawn afresh each frame from the targets as they stand, so an indicator
-//! never lags its target or lingers after it. Unbuilt: a tier badge.
+//! never lags its target or lingers after it. Unbuilt: a tier badge. The
+//! ground telegraphs (`telegraph`) are drawn with the same gizmos, on the
+//! same vertices.
 
 use bevy::prelude::*;
 
@@ -40,6 +42,16 @@ fn color(lane: Lane) -> Color {
     }
 }
 
+/// Where `tile`'s seven vertices are drawn, six corners then the centre:
+/// on the terrain surface (`Map::sloped_corners`), lifted clear of it.
+pub fn drawn_vertices(map: &Map, origin: &RenderOrigin, tile: qrz::Qrz) -> Vec<Vec3> {
+    // The corners about the tile's column, placed by its tile: the
+    // render origin comes off as a tile difference, never a vector.
+    let at = origin.render_tile(map, tile);
+    let foot = Vec3::new(at.x, LIFT, at.z);
+    map.sloped_corners(tile).into_iter().map(|vertex| foot + vertex).collect()
+}
+
 /// Outlines the tile under each lane's current target, never the sticky
 /// `last_target`, following the ground's slope. Nothing is drawn for a
 /// lane with no target, or while the viewed actor is dead.
@@ -59,11 +71,7 @@ pub fn update(
     for lane in LANES {
         let Some(loc) = lane.held(target, ally).and_then(|ent| locs.get(ent).ok()) else { continue };
         let Some((tile, _)) = map.get_by_qr(loc.q, loc.r) else { continue };
-        // The corners about the tile's column, placed by its tile: the
-        // render origin comes off as a tile difference, never a vector.
-        let at = origin.render_tile(&map, tile);
-        let foot = Vec3::new(at.x, LIFT, at.z);
-        let corners = map.sloped_corners(tile);
-        gizmos.linestrip((0..=6).map(|corner| foot + corners[corner % 6]), color(lane));
+        let vertices = drawn_vertices(&map, &origin, tile);
+        gizmos.linestrip((0..=6).map(|corner| vertices[corner % 6]), color(lane));
     }
 }

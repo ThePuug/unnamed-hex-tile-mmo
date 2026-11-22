@@ -2,7 +2,9 @@
 //! whichever its pace keeps the feet on the ground at, the idle while it
 //! stands, a one-shot over either as the server says it began a skill
 //! or swung, held until the one-shot ends, and the jump in three parts
-//! while the physics carries the actor through the air.
+//! while the physics carries the actor through the air. A one-shot that
+//! declares its strike is played against the server's clock, so the blow
+//! is drawn as the activation ends (`Swing`).
 
 use std::{ collections::HashMap, time::Duration };
 
@@ -13,7 +15,8 @@ use serde::Deserialize;
 use crate::components::*;
 use common_bevy::{
     components::{ heading::Heading, position::VisualPosition, * },
-    message::{ AbilityType, Do, Event },
+    message::{ AbilityType, Do, Event, Outcome },
+    moment::Moment,
     resources::map::Map,
     systems::movement::{ fall_time, standing_y },
 };
@@ -131,7 +134,8 @@ pub struct Rig(pub Handle<Gltf>);
 /// What a clip declares in the asset's extras, under `animgen` on the
 /// armature node, keyed by the clip's name: its length in seconds, the
 /// ground one cycle covers in the model's units — zero for a clip that
-/// covers none — and a jump's three moments.
+/// covers none — a jump's three moments, and the moment a blow meets what
+/// it hits.
 #[derive(Clone, Debug, Deserialize)]
 struct Declaration {
     stride: Option<f32>,
@@ -140,6 +144,7 @@ struct Declaration {
     leave: Option<f32>,
     freeze: Option<f32>,
     land: Option<f32>,
+    strike: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -198,6 +203,38 @@ impl Stride {
     }
 }
 
+/// The slowest and the fastest a clip's wind-up plays against its authored
+/// rate. An activation longer than the slowest fills starts the clip late;
+/// one shorter than the fastest fills starts it part-way in.
+const SLOWEST: f32 = 0.5;
+const FASTEST: f32 = 2.0;
+
+/// How a clip that strikes `strike` seconds in is played against an
+/// activation, so the strike falls as the activation ends: its wind-up at
+/// `rate`, the clip's time a function of the time the activation has left
+/// alone, so a client that hears of it late draws the same pose.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Swing {
+    strike: f32,
+    rate: f32,
+}
+
+impl Swing {
+    /// The swing for an activation `length` seconds long: the rate that
+    /// fills it with the wind-up, held within the band.
+    fn new(strike: f32, length: f32) -> Swing {
+        let rate = if length > 0.0 { (strike / length).clamp(SLOWEST, FASTEST) } else { FASTEST };
+        Swing { strike, rate }
+    }
+
+    /// Where the clip stands with `left` seconds of the activation to
+    /// run, None while it has yet to start.
+    fn at(&self, left: f32) -> Option<f32> {
+        let seconds = self.strike - left * self.rate;
+        (seconds >= 0.0).then_some(seconds)
+    }
+}
+
 /// How much nearer its authored pace the other gait must play before an
 /// actor changes to it, as a ratio, so a pace between the two holds one.
 const GAIT_SWITCH: f32 = 1.25;
@@ -212,6 +249,7 @@ pub struct Clips {
     jump: Option<Moments>,
     strides: HashMap<Clip, Stride>,
     freezes: HashMap<Clip, f32>,
+    strikes: HashMap<Clip, f32>,
 }
 
 impl Clips {
@@ -231,11 +269,22 @@ impl Clips {
         else {
             return (graph, clips);
         };
+        clips.declare(&declared);
+        (graph, clips)
+    }
+
+    /// Takes what the asset declares of each clip.
+    fn declare(&mut self, declared: &Extras) {
+        let clips = self;
         clips.jump = declared.animgen.get(Clip::Jump.name())
             .and_then(|d| Some(Moments { leave: d.leave?, freeze: d.freeze?, land: d.land? }));
         for clip in Clip::ALL {
-            if let Some(freeze) = declared.animgen.get(clip.name()).and_then(|d| d.freeze) {
+            let Some(d) = declared.animgen.get(clip.name()) else { continue };
+            if let Some(freeze) = d.freeze {
                 clips.freezes.insert(clip, freeze);
+            }
+            if let Some(strike) = d.strike {
+                clips.strikes.insert(clip, strike);
             }
         }
         for clip in Clip::STRIDED {
@@ -246,7 +295,6 @@ impl Clips {
                 }
             }
         }
-        (graph, clips)
     }
 
     pub fn node(&self, clip: Clip) -> Option<AnimationNodeIndex> {
@@ -267,6 +315,11 @@ impl Clips {
     /// The moment `clip` is held at, where it declares one.
     fn freeze(&self, clip: Clip) -> Option<f32> {
         self.freezes.get(&clip).copied()
+    }
+
+    /// The moment `clip`'s blow meets what it hits, where it declares one.
+    fn strike(&self, clip: Clip) -> Option<f32> {
+        self.strikes.get(&clip).copied()
     }
 
     /// The jump and its moments, where the asset has one and declares them.
@@ -385,21 +438,86 @@ pub struct Held(Clip);
 const BLEND: Duration = Duration::from_millis(120);
 const SETTLE: Duration = Duration::from_millis(300);
 
-/// Plays a skill's one-shot as its activation starts, and a swing's as it
+/// A skill's swing under way: the clip winding up to the moment its
+/// activation ends.
+struct WindUp {
+    ability: AbilityType,
+    ends: Moment,
+    node: AnimationNodeIndex,
+    swing: Swing,
+    /// Whether the clip has begun: an activation longer than its wind-up
+    /// fills at the slowest rate starts it late.
+    started: bool,
+}
+
+impl WindUp {
+    /// Draws the clip where it stands with `left` seconds of the
+    /// activation to run. Returns whether the wind-up is over: the blow
+    /// landed and the follow-through playing as authored, or the body
+    /// taken by something else.
+    fn advance(&mut self, left: f32, player: &mut AnimationPlayer, transitions: &mut AnimationTransitions) -> bool {
+        if self.started && transitions.get_main_animation() != Some(self.node) {
+            return true;
+        }
+        let Some(seconds) = self.swing.at(left) else { return false };
+        if !self.started {
+            transitions.play(player, self.node, BLEND);
+            self.started = true;
+        }
+        let Some(anim) = player.animation_mut(self.node) else { return true };
+        let landed = left <= 0.0;
+        anim.set_seek_time(seconds).set_speed(if landed { 1.0 } else { self.swing.rate });
+        landed
+    }
+}
+
+/// Every wind-up under way, by the actor swinging.
+#[derive(Default)]
+pub struct WindUps(HashMap<Entity, WindUp>);
+
+/// Plays `clip` at `node` for a blow that has landed: from its strike
+/// where it declares one, from its start where not.
+fn play_landed(player: &mut AnimationPlayer, transitions: &mut AnimationTransitions, clips: &Clips, clip: Clip, node: AnimationNodeIndex) {
+    let anim = transitions.play(player, node, BLEND).set_speed(1.0);
+    if let Some(strike) = clips.strike(clip) {
+        anim.set_seek_time(strike);
+    }
+}
+
+/// Plays a skill's one-shot against its activation, and a swing's as it
 /// resolves, an auto-attack having no activation, where the actor's graph
-/// has that clip or its stand-in. A swing behind a leap's slide waits for
-/// it to end (`Held`). An activation told again starts nothing (`Heard`).
+/// has that clip or its stand-in. A clip that declares its strike winds
+/// up so the strike falls as the activation ends (`Swing`), and blends
+/// back to the idle at once where the activation is interrupted or
+/// cancelled; an auto-attack's starts at its strike, the blow having
+/// landed. A clip declaring none plays from its start as authored. A swing
+/// behind a leap's slide waits for it to end (`Held`). An activation told
+/// again starts nothing (`Heard`).
 pub fn play_abilities(
     mut commands: Commands,
     mut reader: MessageReader<Do>,
     actors: Query<(&Animates, Has<Displacing>)>,
     mut q_anim: Query<(&mut AnimationPlayer, &mut AnimationTransitions, &Clips)>,
     mut heard: Local<crate::systems::combat::Heard>,
+    mut winding: Local<WindUps>,
+    server: Res<crate::resources::Server>,
+    time: Res<Time>,
 ) {
     for message in reader.read() {
-        let (ent, ability) = match message.event {
-            Event::Activate { ent, activation } if heard.fresh(ent, &activation) => (ent, activation.ability),
-            Event::Resolved { ent, ability: AbilityType::AutoAttack, .. } => (ent, AbilityType::AutoAttack),
+        let (ent, ability, activation) = match message.event {
+            Event::Activate { ent, activation } if heard.fresh(ent, &activation) => (ent, activation.ability, Some(activation)),
+            Event::Resolved { ent, ability: AbilityType::AutoAttack, .. } => (ent, AbilityType::AutoAttack, None),
+            Event::Resolved { ent, ability, outcome: Outcome::Interrupted | Outcome::Cancelled, .. } => {
+                if winding.0.get(&ent).is_some_and(|wound| wound.ability == ability) {
+                    let wound = winding.0.remove(&ent).expect("found above");
+                    let Ok((animates, _)) = actors.get(ent) else { continue };
+                    let Ok((mut player, mut transitions, clips)) = q_anim.get_mut(animates.0) else { continue };
+                    if let Some(idle) = clips.node(Clip::Idle).filter(|_| wound.started && transitions.get_main_animation() == Some(wound.node)) {
+                        transitions.play(&mut player, idle, BLEND).set_speed(1.).repeat();
+                    }
+                }
+                continue;
+            }
             _ => continue,
         };
         let Some(clip) = Clip::of(ability) else { continue };
@@ -410,8 +528,24 @@ pub fn play_abilities(
             commands.entity(ent).insert(Held(clip));
             continue;
         }
-        transitions.play(&mut player, node, BLEND);
+        match (activation, clips.strike(clip)) {
+            (Some(activation), Some(strike)) => {
+                let swing = Swing::new(strike, activation.length.as_secs_f32());
+                winding.0.insert(ent, WindUp { ability, ends: activation.ends(), node, swing, started: false });
+            }
+            (Some(_), None) => {
+                transitions.play(&mut player, node, BLEND).set_speed(1.0);
+            }
+            (None, _) => play_landed(&mut player, &mut transitions, clips, clip, node),
+        }
     }
+
+    let now = server.now(time.elapsed().as_millis());
+    winding.0.retain(|&ent, wound| {
+        let Ok((animates, _)) = actors.get(ent) else { return false };
+        let Ok((mut player, mut transitions, _)) = q_anim.get_mut(animates.0) else { return false };
+        !wound.advance(now.until(wound.ends).as_secs_f32(), &mut player, &mut transitions)
+    });
 }
 
 /// Plays each held swing once its actor's slide has ended.
@@ -423,8 +557,8 @@ pub fn play_held(
     for (ent, animates, held) in &actors {
         commands.entity(ent).remove::<Held>();
         let Ok((mut player, mut transitions, clips)) = q_anim.get_mut(animates.0) else { continue };
-        let Some((_, node)) = clips.playing(held.0) else { continue };
-        transitions.play(&mut player, node, BLEND).set_speed(1.);
+        let Some((clip, node)) = clips.playing(held.0) else { continue };
+        play_landed(&mut player, &mut transitions, clips, clip, node);
     }
 }
 
@@ -575,6 +709,77 @@ mod tests {
             real += dt;
         }
         (real, grounded)
+    }
+
+    /// How long before the activation's end the clip starts, and where in
+    /// it, stepping the time left down from `length`.
+    fn start(swing: &Swing, length: f32) -> (f32, f32) {
+        let mut left = length;
+        loop {
+            if let Some(seconds) = swing.at(left) {
+                return (left, seconds);
+            }
+            left -= 0.001;
+        }
+    }
+
+    #[test]
+    fn inside_the_band_the_wind_up_fills_the_activation_and_strikes_at_its_end() {
+        let strike = 0.6;
+        for length in [0.3, 0.45, 0.6, 0.9, 1.2] {
+            let swing = Swing::new(strike, length);
+            let (left, seconds) = start(&swing, length);
+            assert!(length - left < 0.01 && seconds < 0.01, "a {length}s activation starts its clip {left}s out, {seconds}s in");
+            assert_eq!(swing.at(0.0), Some(strike), "a {length}s activation ends off its strike");
+            let mut last = -1.0;
+            for step in (0..10).rev() {
+                let seconds = swing.at(length * step as f32 / 10.0).expect("under way");
+                assert!(seconds >= last, "the clip ran back");
+                last = seconds;
+            }
+        }
+        assert!(Swing::new(strike, 0.4).rate > Swing::new(strike, 0.8).rate, "a shorter activation winds up no faster than a longer");
+    }
+
+    #[test]
+    fn a_long_activation_starts_its_clip_late_and_never_crawls() {
+        let strike = 0.6;
+        let slowest = Swing::new(strike, strike / SLOWEST);
+        for length in [1.5, 3.0, 10.0] {
+            let swing = Swing::new(strike, length);
+            assert_eq!(swing.rate, slowest.rate, "a {length}s activation crawls");
+            assert_eq!(swing.at(length), None, "a {length}s activation starts at once");
+            let (left, seconds) = start(&swing, length);
+            assert!(seconds < 0.01 && (left - start(&slowest, strike / SLOWEST).0).abs() < 0.01, "it starts {left}s out, {seconds}s in");
+            assert_eq!(swing.at(0.0), Some(strike));
+        }
+    }
+
+    #[test]
+    fn a_short_activation_starts_its_clip_part_way_in_and_never_blurs() {
+        let strike = 0.6;
+        let mut last = 0.0;
+        for length in [0.25, 0.1, 0.0] {
+            let swing = Swing::new(strike, length);
+            assert_eq!(swing.rate, Swing::new(strike, strike / FASTEST).rate, "a {length}s activation blurs");
+            let seconds = swing.at(length).expect("it starts at once");
+            assert!(seconds > last && seconds <= strike, "a {length}s activation starts {seconds}s in");
+            last = seconds;
+            assert_eq!(swing.at(0.0), Some(strike));
+        }
+        assert_eq!(last, strike, "an activation with no length shows the strike");
+    }
+
+    #[test]
+    fn a_clip_declares_its_strike_or_plays_as_authored() {
+        let declared: Extras = serde_json::from_str(
+            r#"{"animgen":{"attack":{"stride":0.0,"seconds":1.25,"strike":0.55},"counter":{"stride":0.0,"seconds":1.5}}}"#,
+        ).expect("the extras parse");
+        let mut clips = Clips::default();
+        clips.declare(&declared);
+        assert_eq!(clips.strike(Clip::Attack), Some(0.55));
+        assert_eq!(clips.strike(Clip::Counter), None);
+        assert_eq!(clips.strike(Clip::Frenzy), None);
     }
 
     #[test]

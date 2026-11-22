@@ -1,11 +1,17 @@
-use bevy::prelude::*;
+use bevy::{ecs::{query::QueryData, system::SystemParam}, prelude::*};
 
 use common_bevy::{
-    components::{activation::Recharges, entity_type::EntityType, loadout::Loadout, resources::Endurance, target::Target, Actor, ActorAttributes, AttackRange, Loc},
+    components::{
+        activation::{Activating, Recharges}, entity_type::EntityType, heading::Heading, loadout::Loadout, resources::Endurance,
+        status::Status, target::Target, Actor, ActorAttributes, AttackRange, Loc,
+    },
     message::AbilityType,
     moment::Moment,
+    systems::{combat::gate::{admits, AbilityFailReason, Standing}, targeting},
 };
 use common_bevy::tuning::Tuning;
+
+use crate::systems::{skill_text, struck};
 
 /// Marker component for individual ability slot UI
 #[derive(Component)]
@@ -205,44 +211,163 @@ fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Opti
     });
 }
 
-/// What a slot shows of its skill
+/// What the client holds of an actor that the gate asks of.
+#[derive(QueryData)]
+pub struct Stands {
+    loc: &'static Loc,
+    heading: Option<&'static Heading>,
+    status: Option<&'static Status>,
+    activating: Option<&'static Activating>,
+    recharges: Option<&'static Recharges>,
+    endurance: Option<&'static Endurance>,
+    reach: Option<&'static AttackRange>,
+    target: Option<&'static Target>,
+    attrs: Option<&'static ActorAttributes>,
+    /// The client's own character, who picks its targets here; another
+    /// actor viewed has targets only the server knows
+    controlled: Has<Actor>,
+}
+
+impl StandsItem<'_, '_> {
+    /// The target a press would name (`input::update_keybits`)
+    fn targets(&self) -> Option<Entity> {
+        self.target.and_then(|target| target.entity)
+    }
+
+    /// The gate's answer for `ability` at `now` on the game clock, as far
+    /// as the client can give it (`gate::admits`), with its target standing
+    /// at `target`. A pool the client holds none of is never short; an
+    /// actor viewed and not controlled is taken to have its target in
+    /// reach.
+    fn asks(&self, tuning: &Tuning, ability: AbilityType, now: Moment, target: Option<&Loc>) -> Result<(), AbilityFailReason> {
+        let status = self.status.copied().unwrap_or_default();
+        let standing = Standing {
+            held: status.is_held(),
+            pinned: status.is_pinned(),
+            activating: self.activating.is_some_and(|activating| activating.0.is_some()),
+            recharged: self.recharges.is_none_or(|recharges| recharges.is_ready(ability, now)),
+            endurance: self.endurance.map_or(f32::INFINITY, |endurance| endurance.state),
+        };
+        let foe = if self.controlled {
+            target.map(|target| (self.loc.distance(target), targeting::faces(self.heading, self.loc, target)))
+        } else {
+            Some((0, true))
+        };
+        admits(tuning, ability, &standing, &self.attrs.copied().unwrap_or_default(), self.reach.copied().unwrap_or_default().0, foe)
+    }
+}
+
+/// The gate as the client asks it: the shared check, on the game clock,
+/// of what the client holds.
+#[derive(SystemParam)]
+pub struct Gate<'w, 's> {
+    tuning: Res<'w, Tuning>,
+    server: Res<'w, crate::resources::Server>,
+    time: Res<'w, Time>,
+    locs: Query<'w, 's, &'static Loc>,
+}
+
+impl Gate<'_, '_> {
+    /// Now, on the game clock recharges are stamped in
+    fn now(&self) -> Moment {
+        self.server.now(self.time.elapsed().as_millis())
+    }
+
+    /// The gate's answer for `ability` used by the actor that `stands` now
+    fn asks(&self, stands: &StandsItem<'_, '_>, ability: AbilityType) -> Result<(), AbilityFailReason> {
+        let target = stands.targets().and_then(|target| self.locs.get(target).ok());
+        stands.asks(&self.tuning, ability, self.now(), target)
+    }
+}
+
+/// How long a slot flashes after a press the gate would refuse
+const REFUSED_FLASH: f32 = 0.25;
+/// The least time between two reason words, so a key drummed raises one
+const WORD_GAP: f32 = 0.5;
+const FLASHED: Color = Color::WHITE;
+
+/// When a press on a slot was last refused, on the client's clock, while
+/// its flash lasts
+#[derive(Component)]
+pub struct Refused(Moment);
+
+/// The player's presses on the bar, asked of the gate before the server
+/// answers: what a press would be refused for, and the showing of it.
+#[derive(SystemParam)]
+pub struct Presses<'w, 's> {
+    gate: Gate<'w, 's>,
+    player: Query<'w, 's, (Stands, &'static Transform), With<Actor>>,
+    slots: Query<'w, 's, (Entity, &'static AbilitySlot)>,
+    commands: Commands<'w, 's>,
+    said: Local<'s, Option<Moment>>,
+}
+
+impl Presses<'_, '_> {
+    /// Why the gate would refuse the player's `ability` now, None where it
+    /// would not
+    pub fn refusal(&self, ability: AbilityType) -> Option<AbilityFailReason> {
+        let (stands, _) = self.player.single().ok()?;
+        self.gate.asks(&stands, ability).err()
+    }
+
+    /// Shows a press on `ability` refused for `reason`: its slot flashes,
+    /// and the reason's word rises over the player as the refusal sounds.
+    pub fn refuse(&mut self, ability: AbilityType, reason: AbilityFailReason) {
+        let now = Moment::ZERO + self.gate.time.elapsed();
+        for (slot, held) in &self.slots {
+            if held.ability == Some(ability) {
+                self.commands.entity(slot).try_insert(Refused(now));
+            }
+        }
+        if self.said.is_some_and(|said| now.since(said).as_secs_f32() < WORD_GAP) {
+            return;
+        }
+        *self.said = Some(now);
+        self.commands.write_message(crate::plugins::sfx::Play::refused());
+        if let Ok((_, body)) = self.player.single() {
+            struck::float(&mut self.commands, skill_text::word(reason), struck::REFUSED, body, now);
+        }
+    }
+}
+
+/// What a slot shows of its skill: the gate's own answer, ready or why not
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AbilityState(Result<(), AbilityFailReason>);
+
+/// The three ways a slot is drawn
 #[derive(Debug, PartialEq)]
-enum AbilityState {
-    Ready,
-    /// Recharging, or costing more endurance than its holder has
-    Unusable,
-    /// A strike whose target stands beyond its reach, or with none
-    OutOfRange,
+enum Look {
+    Lit,
+    /// Nothing its holder does by moving or turning changes it: held,
+    /// busy, pinned, recharging, too dear
+    Greyed,
+    /// Its target is what refuses it: none, too far, or outside the arc
+    Reaching,
 }
 
 impl AbilityState {
-    /// The gate's order: a skill it would refuse for its recharge or its
-    /// price shows that, whatever its range.
-    fn of(recharged: bool, afforded: bool, in_range: bool) -> AbilityState {
-        if !recharged || !afforded {
-            AbilityState::Unusable
-        } else if !in_range {
-            AbilityState::OutOfRange
-        } else {
-            AbilityState::Ready
+    fn look(&self) -> Look {
+        match self.0 {
+            Ok(()) => Look::Lit,
+            Err(AbilityFailReason::NoTargets | AbilityFailReason::OutOfRange | AbilityFailReason::NotFacing) => Look::Reaching,
+            Err(_) => Look::Greyed,
         }
     }
 
     fn border(&self) -> Color {
-        match self {
-            AbilityState::Ready => READY,
-            AbilityState::Unusable => Color::srgb(0.5, 0.5, 0.5),
-            AbilityState::OutOfRange => Color::srgb(0.8, 0.5, 0.1),
+        match self.look() {
+            Look::Lit => READY,
+            Look::Greyed => Color::srgb(0.5, 0.5, 0.5),
+            Look::Reaching => Color::srgb(0.8, 0.5, 0.1),
         }
     }
 
-    /// What its icon is drawn through: greyed where unusable, dim out of
-    /// range
+    /// What its icon is drawn through: greyed, or dim while reaching
     fn tint(&self) -> Color {
-        match self {
-            AbilityState::Ready => Color::WHITE,
-            AbilityState::Unusable => Color::srgb(0.35, 0.35, 0.35),
-            AbilityState::OutOfRange => Color::srgb(0.6, 0.6, 0.6),
+        match self.look() {
+            Look::Lit => Color::WHITE,
+            Look::Greyed => Color::srgb(0.35, 0.35, 0.35),
+            Look::Reaching => Color::srgb(0.6, 0.6, 0.6),
         }
     }
 }
@@ -254,43 +379,39 @@ fn recharge_left(recharges: &Recharges, ability: AbilityType, now: Moment) -> f3
         .map_or(0.0, |recharge| (recharge.left(now).as_secs_f32() / recharge.length.as_secs_f32()).clamp(0.0, 1.0))
 }
 
-/// Shows each slot's skill as the viewed actor has it: lit from the
-/// bottom as its recharge runs, greyed while it recharges or costs more
-/// endurance than its holder has, orange-bordered and dim while a strike's
-/// target is out of reach.
+/// Shows each slot's skill as the gate would answer the viewed actor for
+/// it now: lit where it would be used; lit from the bottom as its recharge
+/// runs; greyed while its holder is held or busy, while it recharges,
+/// costs more endurance than its holder has, or is a move and its holder
+/// pinned; orange-bordered and dim while its target is none, out of reach
+/// or outside the arc. A slot whose press was refused flashes its border.
 pub fn update(
-    tuning: Res<Tuning>,
-    mut slot_query: Query<(&AbilitySlot, &mut BorderColor, &Children)>,
+    mut commands: Commands,
+    gate: Gate,
+    mut slot_query: Query<(Entity, &AbilitySlot, &mut BorderColor, &Children, Option<&Refused>)>,
     mut overlay_query: Query<&mut Node, With<CooldownOverlay>>,
     mut icon_query: Query<&mut ImageNode, With<SlotIcon>>,
-    player_query: Query<(&Loc, Option<&Recharges>, Option<&Endurance>, Option<&AttackRange>, Option<&Target>, Has<Actor>, Option<&ActorAttributes>), With<crate::components::Viewed>>,
-    locs: Query<&Loc>,
-    server: Res<crate::resources::Server>,
-    time: Res<Time>,
+    viewed: Query<Stands, With<crate::components::Viewed>>,
 ) {
-    let Ok((loc, recharges, endurance, own_reach, target, controlled, attrs)) = player_query.single() else {
+    let Ok(stands) = viewed.single() else {
         return;
     };
-    let now = server.now(time.elapsed().as_millis());
-    let own_reach = own_reach.copied().unwrap_or_default().0;
-    let attrs = attrs.copied().unwrap_or_default();
-    // The target a press would name (`input::update_keybits`)
-    let target = target.and_then(|target| target.entity).and_then(|target| locs.get(target).ok());
+    let now = gate.now();
+    let clock = Moment::ZERO + gate.time.elapsed();
 
-    for (slot, mut border_color, children) in &mut slot_query {
+    for (ent, slot, mut border_color, children, refused) in &mut slot_query {
         let (state, left) = match slot.ability {
             None => (None, 0.0),
-            Some(ability) => {
-                let left = recharges.map_or(0.0, |recharges| recharge_left(recharges, ability, now));
-                let afforded = endurance.is_none_or(|endurance| endurance.state >= tuning.cost(ability));
-                // Range is judged for the client's own character, who picks
-                // its targets here; a viewed actor's targets are the server's
-                let in_range = !controlled || ability.reach(&tuning, &attrs, own_reach)
-                    .is_none_or(|reach| target.is_some_and(|target| reach.contains(&loc.flat_distance(target))));
-                (Some(AbilityState::of(left <= 0.0, afforded, in_range)), left)
-            }
+            Some(ability) => (
+                Some(AbilityState(gate.asks(&stands, ability))),
+                stands.recharges.map_or(0.0, |recharges| recharge_left(recharges, ability, now)),
+            ),
         };
-        let border = BorderColor::all(state.as_ref().map_or(EMPTY, AbilityState::border));
+        let flashing = refused.is_some_and(|refused| clock.since(refused.0).as_secs_f32() < REFUSED_FLASH);
+        if refused.is_some() && !flashing {
+            commands.entity(ent).remove::<Refused>();
+        }
+        let border = BorderColor::all(if flashing { FLASHED } else { state.as_ref().map_or(EMPTY, AbilityState::border) });
         if *border_color != border {
             *border_color = border;
         }
@@ -312,15 +433,79 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use common_bevy::components::activation::Recharge;
+    use common_bevy::components::activation::{Activation, Recharge};
+
+    /// The tile ahead of an actor at the origin heading north, the one
+    /// behind it, and one ahead beyond any reach
+    const AHEAD: (i32, i32) = (0, -1);
+    const BEHIND: (i32, i32) = (0, 1);
+    const FAR: (i32, i32) = (0, -9);
+
+    /// What a slot holding `ability` shows for the client's own character
+    /// standing free at the origin, heading north, after `change`, with
+    /// its target at `target`
+    fn shown(ability: AbilityType, target: Option<(i32, i32)>, change: impl FnOnce(&mut EntityWorldMut)) -> AbilityState {
+        let mut world = World::new();
+        let mut actor = world.spawn((
+            Loc::from_qrz(0, 0, 0), Heading::NORTH, Status::default(), Activating(None), Recharges::default(),
+            Endurance::full(1_000.0), Actor,
+        ));
+        change(&mut actor);
+        let ent = actor.id();
+        let target = target.map(|(q, r)| Loc::from_qrz(q, r, 0));
+        let mut query = world.query::<Stands>();
+        let stands = query.get(&world, ent).unwrap();
+        AbilityState(stands.asks(&Tuning::DEFAULT, ability, Moment::from_millis(1_000), target.as_ref()))
+    }
+
+    fn refused(reason: AbilityFailReason) -> AbilityState {
+        AbilityState(Err(reason))
+    }
 
     #[test]
-    fn a_slot_shows_what_the_gate_would_refuse_it_for_first() {
-        assert_eq!(AbilityState::of(true, true, true), AbilityState::Ready);
-        assert_eq!(AbilityState::of(false, true, true), AbilityState::Unusable, "recharging");
-        assert_eq!(AbilityState::of(true, false, true), AbilityState::Unusable, "too dear");
-        assert_eq!(AbilityState::of(true, true, false), AbilityState::OutOfRange);
-        assert_eq!(AbilityState::of(false, true, false), AbilityState::Unusable, "its recharge before its range");
+    fn a_slot_shows_the_gates_own_answer_for_each_reason() {
+        let strike = AbilityType::Frenzy;
+        assert_eq!(shown(strike, Some(AHEAD), |_| {}), AbilityState(Ok(())));
+        assert_eq!(shown(strike, Some(AHEAD), |actor| { actor.get_mut::<Status>().unwrap().hold(1.0); }), refused(AbilityFailReason::Held));
+        let busy = Activating(Some(Activation { ability: AbilityType::Overpower, target: None, began: Moment::ZERO, length: Duration::from_secs(2) }));
+        assert_eq!(shown(strike, Some(AHEAD), |actor| { actor.insert(busy); }), refused(AbilityFailReason::Activating));
+        let recharging = |actor: &mut EntityWorldMut| {
+            actor.get_mut::<Recharges>().unwrap().start(strike, Recharge { began: Moment::ZERO, length: Duration::from_secs(5) });
+        };
+        assert_eq!(shown(strike, Some(AHEAD), recharging), refused(AbilityFailReason::Recharging));
+        assert_eq!(shown(strike, Some(AHEAD), |actor| { actor.insert(Endurance { state: 0.0, max: 100.0 }); }), refused(AbilityFailReason::NoEndurance));
+        assert_eq!(shown(AbilityType::Leap, Some(AHEAD), |actor| { actor.get_mut::<Status>().unwrap().pin(1.0); }), refused(AbilityFailReason::Pinned));
+        assert_eq!(shown(strike, None, |_| {}), refused(AbilityFailReason::NoTargets));
+        assert_eq!(shown(strike, Some(FAR), |_| {}), refused(AbilityFailReason::OutOfRange));
+        assert_eq!(shown(strike, Some(BEHIND), |_| {}), refused(AbilityFailReason::NotFacing));
+        assert_eq!(shown(strike, Some(FAR), recharging), refused(AbilityFailReason::Recharging), "its recharge before its range");
+    }
+
+    #[test]
+    fn a_stance_stays_lit_mid_activation() {
+        let busy = Activating(Some(Activation { ability: AbilityType::Overpower, target: None, began: Moment::ZERO, length: Duration::from_secs(2) }));
+        assert_eq!(shown(AbilityType::Brace, None, |actor| { actor.insert(busy); }).look(), Look::Lit);
+    }
+
+    #[test]
+    fn an_actor_viewed_and_not_controlled_is_never_shown_out_of_reach() {
+        assert_eq!(shown(AbilityType::Frenzy, None, |actor| { actor.remove::<Actor>(); }), AbilityState(Ok(())));
+    }
+
+    #[test]
+    fn every_refusal_is_drawn_apart_from_ready_and_not_facing_as_out_of_range() {
+        let reasons = [
+            AbilityFailReason::NoTargets, AbilityFailReason::Held, AbilityFailReason::Activating, AbilityFailReason::Recharging,
+            AbilityFailReason::NoEndurance, AbilityFailReason::OutOfRange, AbilityFailReason::NotFacing, AbilityFailReason::NotHeld,
+            AbilityFailReason::Pinned, AbilityFailReason::NoRoom,
+        ];
+        let ready = AbilityState(Ok(()));
+        for reason in reasons {
+            let state = refused(reason);
+            assert!(state.border() != ready.border() && state.tint() != ready.tint(), "{reason:?} shows in its border and its dim");
+        }
+        assert_eq!(refused(AbilityFailReason::NotFacing).look(), refused(AbilityFailReason::OutOfRange).look());
+        assert_eq!(refused(AbilityFailReason::Held).look(), refused(AbilityFailReason::Recharging).look());
     }
 
     #[test]

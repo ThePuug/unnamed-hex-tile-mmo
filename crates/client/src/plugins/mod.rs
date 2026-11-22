@@ -13,6 +13,7 @@ pub mod world_streaming;
 pub mod cover;
 pub mod music;
 pub mod settings;
+pub mod sfx;
 pub mod shell;
 #[cfg(target_os = "windows")]
 pub mod window_menu;

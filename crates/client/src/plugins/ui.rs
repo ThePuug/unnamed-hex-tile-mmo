@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, skills_panel, combat_log, combat_ui, compass, drop_panel, equipment_panel, resource_bars, target_frame, target_indicator, ui};
+use crate::systems::{action_bar, bag_panel, character_panel, character_panel_respec, closeup, skills_panel, combat_log, combat_ui, compass, drop_panel, equipment_panel, resource_bars, status_marks, target_frame, target_indicator, ui};
 
 /// The game's UI: the panels, the HUD, the target rings and the combat
 /// feedback drawn over the world.
@@ -33,8 +33,9 @@ impl Plugin for UiPlugin {
         app.add_systems(Update, resource_bars::update);
         app.add_systems(Update, (action_bar::sync_loadout, action_bar::update).chain());
         app.add_systems(Update, target_frame::update);
+        app.add_systems(Update, (status_marks::mark, status_marks::update_rows).chain());
         app.insert_gizmo_config(target_indicator::TargetGizmos, target_indicator::config());
-        app.add_systems(Update, target_indicator::update);
+        app.add_systems(Update, (target_indicator::update, crate::systems::telegraph::update));
 
         // Character panel systems
         app.add_systems(

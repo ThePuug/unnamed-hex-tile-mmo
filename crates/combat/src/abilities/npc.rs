@@ -21,8 +21,8 @@ use crate::behaviour::{
 };
 
 impl Abilities<'_, '_> {
-    /// Asks, for each NPC activating nothing, the skill its skills channel
-    /// chooses, if any.
+    /// Asks, for each NPC, the skill its skills channel chooses, if any:
+    /// mid-activation the gate leaves it only its stances.
     pub(super) fn skills(&mut self) {
         let npcs: Vec<(Entity, EnemyArchetype, Vec<AbilityType>)> = self.npcs.iter()
             .filter_map(|(ent, entity_type, bar)| match entity_type {
