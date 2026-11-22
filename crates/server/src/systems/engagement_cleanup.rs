@@ -31,8 +31,7 @@ const PROXIMITY_RANGE: i32 = crate::systems::aoi::EXIT_RADIUS + 8;
 
 /// Actions on cleanup:
 /// - Despawn engagement entity
-/// - Say which way it ended ([`EngagementEnded`]), so a den is cleared only
-///   when its pack died
+/// - Say that it ended ([`EngagementEnded`]), so its den stands unwatched
 pub fn cleanup_engagements(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
@@ -56,7 +55,7 @@ pub fn cleanup_engagements(
 
             // Despawn engagement entity directly (no network component, clients don't know about it)
             commands.entity(engagement_entity).despawn();
-            ended.write(EngagementEnded { engagement: engagement_entity, cleared: all_npcs_dead });
+            ended.write(EngagementEnded { engagement: engagement_entity });
         }
     }
 }

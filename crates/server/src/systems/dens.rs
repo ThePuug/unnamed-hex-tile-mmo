@@ -7,9 +7,13 @@
 //! server's to make, and it ages on world time. A site with none, a player
 //! near, gets one of the archetype that dens on its ground, at the level its
 //! distance from the haven gives, never nearer the player's own than
-//! [`MARGIN`]. A standing den keeps its pack while players come and go: one
-//! abandoned unwatched comes back whole when a player returns. Killing the
-//! pack leaves the den cleared, a change that stands for [`DECAY`] and then
+//! [`MARGIN`]. A den is a nest and the pack that lives in it. The nest is
+//! an actor of its own, standing where the den is drawn, that a player
+//! targets and strikes; while it stands, the den brings back one of its
+//! pack's dead every [`RESPAWN`]. A standing den keeps both while players
+//! come and go: one abandoned unwatched comes back whole when a player
+//! returns. Breaking the nest leaves the den cleared, whatever of its pack
+//! still lives the last of it: a change that stands for [`DECAY`] and then
 //! is gone, leaving the site as the world made it. A standing den's growth
 //! with age is unbuilt. Dens are held in memory and not kept past the
 //! server: the ground a den clears is laid again when it next stands.
@@ -31,16 +35,23 @@ use std::{collections::HashMap, time::Duration};
 use bevy::prelude::*;
 use qrz::{Qrz, DIRECTIONS};
 
-use combat::engagement::Engagement;
+use combat::engagement::{Engagement, EngagementMember, Members};
 use common::den::Habitat;
 use common_bevy::{
-    archetype::EnemyArchetype,
+    archetype::{calculate_enemy_attributes, EnemyArchetype},
     den::DenLook,
     message::{Do, Event},
     moment::Moment,
     chunk::{calculate_visible_chunks, loc_to_chunk, ChunkId},
-    components::{behaviour::Side, resources::SpawnPoint, ActorAttributes, Loc},
+    components::{
+        behaviour::Side,
+        entity_type::{actor::{ActorIdentity, ActorImpl, Origin}, EntityType},
+        resources::SpawnPoint,
+        ActorAttributes, Loc,
+    },
+    plugins::nntree::NearestNeighbor,
     resources::map::Map,
+    systems::combat::resources::Fighter,
     tuning::Tuning,
 };
 
@@ -61,6 +72,15 @@ pub const DECAY: Duration = Duration::from_secs(600);
 /// How often dens are raised and packs brought back
 const TEND: Duration = Duration::from_secs(1);
 
+/// How long a standing nest takes to bring back one of its pack's dead
+pub const RESPAWN: Duration = Duration::from_secs(20);
+
+/// The fewest a den's pack holds; a site's roll may add one
+pub const PACK: u8 = 2;
+
+/// How many levels below its nest's a den's pack stands
+pub const PACK_BELOW: u8 = 3;
+
 /// Tiles from the haven each level of a den lies further out
 pub const STRETCH: i32 = 400;
 
@@ -69,6 +89,10 @@ pub const MARGIN: u32 = 5;
 
 /// How many tiles a den's search for dry ground round its site may look at
 const SEARCH: usize = 400;
+
+/// The fewest tiles between two dens: the sites of a clump stand further
+/// apart, and two under one water would else take the same shore.
+pub const APART: i32 = 24;
 
 /// Tiles past a den's furthest piece its ground stays open: from the
 /// camera's height and pitch, a tree nearer than this to its edge hides it.
@@ -86,11 +110,14 @@ pub struct Site {
     pub den: Option<Den>,
 }
 
-/// A den: the pack that lives on a site, where it stands, and how it is.
+/// A den: the nest on a site and the pack that lives in it, where it
+/// stands, and how it is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Den {
     pub archetype: EnemyArchetype,
+    /// Its nest's level; its pack stands [`PACK_BELOW`] under it
     pub level: u8,
+    /// How many its pack holds when whole
     pub size: u8,
     /// Where its pack stands, on dry ground near the site; none until it
     /// has first stood
@@ -102,11 +129,17 @@ pub struct Den {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DenState {
-    /// Its pack lives: the engagement out in the world, none while no
-    /// player is near
-    Standing { pack: Option<Entity> },
-    /// Its pack was killed
+    /// Its nest stands: the nest and its pack's engagement out in the
+    /// world, neither while no player is near, and when it next brings
+    /// back one of its dead, while it is short of any
+    Standing { pack: Option<Entity>, nest: Option<Entity>, refill: Option<Moment> },
+    /// Its nest was broken
     Cleared,
+}
+
+impl DenState {
+    /// A den standing with nothing of it out in the world.
+    pub const UNWATCHED: DenState = DenState::Standing { pack: None, nest: None, refill: None };
 }
 
 impl Den {
@@ -134,28 +167,33 @@ impl Dens {
         }
     }
 
-    /// Notes how `pack` ended at `now`: killed, its den is cleared from
-    /// then; abandoned, its den stands without it.
-    pub fn ended(&mut self, pack: Entity, cleared: bool, now: Moment) {
-        let Some(den) = self.sites.values_mut().flatten().filter_map(|site| site.den.as_mut())
-            .find(|den| den.state == DenState::Standing { pack: Some(pack) })
-        else {
-            return;
-        };
-        *den = if cleared {
-            Den { state: DenState::Cleared, since: now, ..*den }
-        } else {
-            Den { state: DenState::Standing { pack: None }, ..*den }
-        };
+    fn standing(&mut self, holds: impl Fn(Option<Entity>, Option<Entity>) -> bool) -> Option<&mut Den> {
+        self.sites.values_mut().flatten().filter_map(|site| site.den.as_mut())
+            .find(|den| matches!(den.state, DenState::Standing { pack, nest, .. } if holds(pack, nest)))
+    }
+
+    /// Notes that `pack` is gone from the world, its nest with it: its den
+    /// stands unwatched, to come back whole.
+    pub fn ended(&mut self, pack: Entity) {
+        if let Some(den) = self.standing(|held, _| held == Some(pack)) {
+            den.state = DenState::UNWATCHED;
+        }
+    }
+
+    /// Notes that `actor` died at `now`: the nest of a standing den, that
+    /// den is cleared from then.
+    pub fn died(&mut self, actor: Entity, now: Moment) {
+        if let Some(den) = self.standing(|_, nest| nest == Some(actor)) {
+            *den = Den { state: DenState::Cleared, since: now, ..*den };
+        }
     }
 }
 
-/// An engagement gone: `cleared` when every member died, else abandoned
+/// An engagement gone from the world: every member dead, or abandoned
 /// unwatched.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct EngagementEnded {
     pub engagement: Entity,
-    pub cleared: bool,
 }
 
 /// The level of a den on a site `tile`, for a player of `level`: its
@@ -166,15 +204,16 @@ pub fn den_level(tile: Qrz, haven: Qrz, level: u32) -> u8 {
     far.min(level.saturating_sub(MARGIN)).min(u8::MAX as u32) as u8
 }
 
-/// The nearest dry ground the server has materialized to `site`, walking
-/// out by neighbour offsets, and the tile its pack stands on there: the
-/// floor's, a level up. None where none lies within [`SEARCH`] tiles.
-pub fn dry_ground_near(map: &Map, site: Qrz) -> Option<Qrz> {
+/// The nearest dry ground the server has materialized to `site` and
+/// [`APART`] from every den of `taken`, walking out by neighbour offsets,
+/// and the tile its pack stands on there: the floor's, a level up. None
+/// where none lies within [`SEARCH`] tiles.
+pub fn dry_ground_near(map: &Map, site: Qrz, taken: &[Qrz]) -> Option<Qrz> {
     let mut seen = std::collections::HashSet::from([(site.q, site.r)]);
     let mut frontier = std::collections::VecDeque::from([(site.q, site.r)]);
     while let Some((q, r)) = frontier.pop_front() {
         if let Some((floor, _)) = map.get_by_qr(q, r) {
-            if map.water_at(q, r).is_none() {
+            if map.water_at(q, r).is_none() && taken.iter().all(|den| den.flat_distance(&floor) >= APART) {
                 return Some(floor + Qrz::Z);
             }
         }
@@ -191,18 +230,21 @@ pub fn dry_ground_near(map: &Map, site: Qrz) -> Option<Qrz> {
     None
 }
 
-/// Hears every frame how packs ended, and each [`TEND`] raises a den on
-/// every site near a player that has none, brings back the pack of a
-/// standing den that has none, and lets a decayed den go. A pack stands on
-/// the ground the map holds, never read from the world's generator, which
-/// may be busy building elsewhere for longer than a frame.
+/// Hears every frame which packs left the world and which nests were
+/// broken, and each [`TEND`] raises a den on every site near a player that
+/// has none, brings out the nest and pack of a standing den that has
+/// neither, brings back one of a short pack's dead when its time comes,
+/// and lets a decayed den go. A pack stands on the ground the map holds,
+/// never read from the world's generator, which may be busy building
+/// elsewhere for longer than a frame.
 #[allow(clippy::too_many_arguments)]
 pub fn tend_dens(
     mut dens: ResMut<Dens>,
     mut ended: MessageReader<EngagementEnded>,
+    mut done: MessageReader<Do>,
     lobby: Res<Lobby>,
     players: Query<(&Loc, Option<&ActorAttributes>)>,
-    engagements: Query<(), With<Engagement>>,
+    engagements: Query<Option<&Members>, With<Engagement>>,
     map: Res<Map>,
     tuning: Res<Tuning>,
     time: Res<Time>,
@@ -212,14 +254,20 @@ pub fn tend_dens(
     mut commands: Commands,
 ) {
     let now = Moment::ZERO + time.elapsed();
+    for message in done.read() {
+        if let Do { event: Event::Despawn { ent, died: true } } = message {
+            dens.died(*ent, now);
+        }
+    }
     for ending in ended.read() {
-        dens.ended(ending.engagement, ending.cleared, now);
+        dens.ended(ending.engagement);
     }
     let Some(haven) = haven else { return };
     if now < *next {
         return;
     }
     *next = now + TEND;
+    let mut taken: Vec<Qrz> = dens.sites.values().flatten().filter_map(|site| site.den?.at).collect();
 
     for &player in lobby.right_values() {
         let Ok((loc, attrs)) = players.get(player) else { continue };
@@ -231,39 +279,70 @@ pub fn tend_dens(
                     info!("den decayed at ({}, {})", site.tile.q, site.tile.r);
                     site.den = None;
                 }
-                let den = site.den.get_or_insert_with(|| {
-                    // The spec's den: one at its level, or two three below
-                    // it, rolled by the site so a seed pairs the same dens
-                    let level = den_level(site.tile, haven.0, level);
-                    let pair = dice.roll(("pair", site.tile)).pick(2) == 0 && level >= 3;
-                    Den {
-                        archetype: EnemyArchetype::denning_on(site.habitat),
-                        level: if pair { level - 3 } else { level },
-                        size: if pair { 2 } else { 1 },
-                        at: None,
-                        state: DenState::Standing { pack: None },
-                        since: now,
-                    }
+                let den = site.den.get_or_insert_with(|| Den {
+                    archetype: EnemyArchetype::denning_on(site.habitat),
+                    level: den_level(site.tile, haven.0, level),
+                    // Rolled by the site, so a seed packs the same dens
+                    size: PACK + dice.roll(("pack", site.tile)).pick(2) as u8,
+                    at: None,
+                    state: DenState::UNWATCHED,
+                    since: now,
                 });
-                let DenState::Standing { pack } = den.state else { continue };
-                if pack.is_some_and(|pack| engagements.contains(pack)) {
-                    continue;
+                let DenState::Standing { pack, nest, refill } = den.state else { continue };
+                let map = &*map;
+                let elevation = |at: Qrz| move |q: i32, r: i32| map.get_by_qr(q, r).map_or(at.z - 1, |(floor, _)| floor.z);
+                let below = den.level.saturating_sub(PACK_BELOW);
+                if let (Some(pack), Some(at)) = (pack, den.at) {
+                    if let Ok(members) = engagements.get(pack) {
+                        let living = members.map_or(0, |members| members.all().filter(|&member| Some(member) != nest).count());
+                        let refill = match refill {
+                            _ if living >= den.size as usize => None,
+                            None => Some(now + RESPAWN),
+                            Some(due) if now >= due => {
+                                combat::engagement::spawn_member(&tuning, pack, at, living, den.archetype, Side::WILD, below, elevation(at), &mut commands, &time);
+                                None
+                            }
+                            waiting => waiting,
+                        };
+                        den.state = DenState::Standing { pack: Some(pack), nest, refill };
+                        continue;
+                    }
                 }
-                let Some(at) = den.at.or_else(|| dry_ground_near(&map, site.tile)) else { continue };
+                let Some(at) = den.at.or_else(|| dry_ground_near(&map, site.tile, &taken)) else { continue };
                 if den.at.is_none() {
+                    taken.push(at);
                     info!("den of {} {:?} at level {} on {:?} ground at ({}, {})", den.size, den.archetype, den.level, site.habitat, at.q, at.r);
                 }
                 den.at = Some(at);
                 // A member on a tile the map does not hold yet stands level
                 // with the den's own.
                 let pack = combat::engagement::spawn_engagement(
-                    &tuning, at, den.archetype, Side::WILD, den.level, den.size,
-                    |q, r| map.get_by_qr(q, r).map_or(at.z - 1, |(floor, _)| floor.z), &mut commands, &time,
+                    &tuning, at, den.archetype, Side::WILD, below, den.size, elevation(at), &mut commands, &time,
                 );
-                den.state = DenState::Standing { pack: Some(pack) };
+                let nest = spawn_nest(&tuning, pack, at, den.archetype, den.level, &mut commands, &time);
+                den.state = DenState::Standing { pack: Some(pack), nest: Some(nest), refill: None };
             }
         }
     }
+}
+
+/// Spawns the nest of a den of `archetype` at `level` on `at`, a member of
+/// its `pack`'s engagement, so it leaves the world when that does. It is an
+/// actor with health and a side and nothing to act with: no heading, so it
+/// picks no target, is never flanked and is never dragged.
+fn spawn_nest(tuning: &Tuning, pack: Entity, at: Qrz, archetype: EnemyArchetype, level: u8, commands: &mut Commands, time: &Time) -> Entity {
+    let profile = archetype.profile();
+    let typ = EntityType::Actor(ActorImpl {
+        origin: Origin::Evolved,
+        approach: profile.approach,
+        resilience: profile.resilience,
+        identity: ActorIdentity::Nest(archetype),
+    });
+    let loc = Loc::new(at);
+    let fighter = Fighter::new(tuning, calculate_enemy_attributes(level, archetype), Moment::ZERO + time.elapsed());
+    let nest = commands.spawn((typ, loc, fighter, Side::WILD, EngagementMember(pack))).id();
+    commands.entity(nest).insert(NearestNeighbor::new(nest, loc));
+    nest
 }
 
 /// How far a player sees a den from, in tiles: the outer edge of the
@@ -404,24 +483,29 @@ mod tests {
     }
 
     #[test]
-    fn a_cleared_den_stands_until_it_decays_and_an_abandoned_one_waits_for_its_pack() {
+    fn a_den_is_cleared_when_its_nest_is_broken_and_an_abandoned_one_waits_whole() {
         let site = Qrz { q: 0, r: 0, z: 0 };
-        let pack = Entity::from_raw_u32(7).unwrap();
+        let (pack, nest, member) = (Entity::from_raw_u32(7).unwrap(), Entity::from_raw_u32(8).unwrap(), Entity::from_raw_u32(9).unwrap());
+        let out = DenState::Standing { pack: Some(pack), nest: Some(nest), refill: None };
         let mut dens = Dens::default();
         dens.found(site, Habitat::Open);
         let den = |dens: &Dens| dens.sites[&loc_to_chunk(site)][0].den.unwrap();
         dens.sites.get_mut(&loc_to_chunk(site)).unwrap()[0].den = Some(Den {
-            archetype: EnemyArchetype::Berserker, level: 0, size: 1, at: Some(site),
-            state: DenState::Standing { pack: Some(pack) }, since: Moment::ZERO,
+            archetype: EnemyArchetype::Berserker, level: 0, size: 2, at: Some(site),
+            state: out, since: Moment::ZERO,
         });
 
-        dens.ended(pack, false, Moment::from_millis(5_000));
-        assert_eq!(den(&dens).state, DenState::Standing { pack: None }, "abandoned, it stands without its pack");
+        dens.ended(pack);
+        assert_eq!(den(&dens).state, DenState::UNWATCHED, "abandoned, it stands with nothing out");
 
-        dens.sites.get_mut(&loc_to_chunk(site)).unwrap()[0].den.as_mut().unwrap().state = DenState::Standing { pack: Some(pack) };
+        dens.sites.get_mut(&loc_to_chunk(site)).unwrap()[0].den.as_mut().unwrap().state = out;
         let killed = Moment::from_millis(10_000);
-        dens.ended(pack, true, killed);
+        dens.died(member, killed);
+        assert_eq!(den(&dens).state, out, "one of its pack dead, it stands");
+        dens.died(nest, killed);
         assert_eq!(den(&dens).state, DenState::Cleared);
+        dens.ended(pack);
+        assert_eq!(den(&dens).state, DenState::Cleared, "and stays cleared when the last of its pack goes");
         assert!(!den(&dens).decayed(killed + DECAY - Duration::from_secs(1)), "cleared, it stands a while");
         assert!(den(&dens).decayed(killed + DECAY), "then it is gone");
     }
@@ -474,8 +558,9 @@ mod tests {
         for q in -3..=1 {
             map.set_water(q, 0, Some(1));
         }
-        assert_eq!(dry_ground_near(&map, Qrz { q: -2, r: 0, z: 0 }), Some(Qrz { q: 2, r: 0, z: 1 }), "a site under water stands its den on the shore");
-        assert_eq!(dry_ground_near(&map, Qrz { q: 3, r: 0, z: 0 }), Some(Qrz { q: 3, r: 0, z: 1 }), "a dry site stands it on the site");
-        assert_eq!(dry_ground_near(&map, Qrz { q: 40, r: 40, z: 0 }), None, "where nothing is materialized, nowhere");
+        assert_eq!(dry_ground_near(&map, Qrz { q: -2, r: 0, z: 0 }, &[]), Some(Qrz { q: 2, r: 0, z: 1 }), "a site under water stands its den on the shore");
+        assert_eq!(dry_ground_near(&map, Qrz { q: 3, r: 0, z: 0 }, &[]), Some(Qrz { q: 3, r: 0, z: 1 }), "a dry site stands it on the site");
+        assert_eq!(dry_ground_near(&map, Qrz { q: 40, r: 40, z: 0 }, &[]), None, "where nothing is materialized, nowhere");
+        assert_eq!(dry_ground_near(&map, Qrz { q: 3, r: 0, z: 0 }, &[Qrz { q: 2, r: 0, z: 1 }]), None, "and never on another den");
     }
 }

@@ -552,13 +552,14 @@ impl Abilities<'_, '_> {
     /// positive, stopping beside it, or away along the line from it,
     /// inside its leash. It slides there at `Tuning::drag_pace`, so a
     /// longer drag takes longer, held in place until it arrives, and the
-    /// skill it was activating ends. A braced actor stands, and one with
-    /// nowhere to go is not moved.
+    /// skill it was activating ends. A braced actor stands, one with
+    /// nowhere to go is not moved, and neither is one with no heading: a
+    /// nest, which stands where its den does.
     pub fn drag(&mut self, ent: Entity, from: Loc, tiles: i8) {
         if tiles == 0 || !self.lives(ent) || self.statuses.get(ent).is_ok_and(|status| status.is_braced()) {
             return;
         }
-        let Ok((&at, ..)) = self.actors.get(ent) else { return };
+        let Ok((&at, _, Some(_), ..)) = self.actors.get(ent) else { return };
         let leash = self.leash(ent);
         let steps = tiles.unsigned_abs() as usize;
         let landing = if tiles > 0 { crate::leap::toward(&self.map, *at, *from, steps, leash) } else { crate::leap::away(&self.map, *at, *from, steps, leash) };

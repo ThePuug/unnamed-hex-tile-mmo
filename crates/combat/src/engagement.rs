@@ -27,9 +27,9 @@ use common_bevy::{
 };
 use common_bevy::tuning::Tuning;
 
-/// A group of NPCs spawned together, its members its [`Members`]. It is
-/// cleaned up once every one is dead, or no client has watched it for a
-/// while (`engagement_cleanup`).
+/// A group of NPCs spawned together, its members its [`Members`], and
+/// any that join it after. It is cleaned up once every one is dead, or no
+/// client has watched it for a while (`engagement_cleanup`).
 #[derive(Component, Debug, Clone)]
 pub struct Engagement {
     /// How many of its NPCs may be activating a skill at one target at
@@ -58,6 +58,13 @@ pub struct EngagementMember(pub Entity);
 #[derive(Component, Debug, Default)]
 #[relationship_target(relationship = EngagementMember)]
 pub struct Members(Vec<Entity>);
+
+impl Members {
+    /// Every member not yet despawned.
+    pub fn all(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.0.iter().copied()
+    }
+}
 
 /// Last time players were near this engagement (for abandonment tracking)
 #[derive(Component, Debug, Clone, Copy)]
@@ -141,58 +148,75 @@ pub fn spawn_engagement(
         ))
         .id();
 
-    let attributes = calculate_enemy_attributes(level, archetype);
-
     for i in 0..npc_count {
-        let offset = member_offset(i as usize);
-        let npc_location_base = location + offset;
-        let npc_z = elevation(npc_location_base.q, npc_location_base.r);
-        let npc_location = Qrz { q: npc_location_base.q, r: npc_location_base.r, z: npc_z + 1 };
-
-        let actor_impl = ActorImpl {
-            origin: Origin::Evolved,
-            approach: archetype.profile().approach,
-            resilience: archetype.profile().resilience,
-            identity: ActorIdentity::Npc(archetype),
-        };
-
-        let npc_loc = Loc::new(npc_location);
-        let npc_entity = commands
-            .spawn((
-                EntityType::Actor(actor_impl),
-                npc_loc,
-                Fighter::new(tuning, attributes, Moment::ZERO + time.elapsed()),
-                side,
-                EngagementMember(engagement_entity),
-            ))
-            .id();
-        // An NPC wears what the server gives it, with no bag and no asking.
-        let worn = kit(archetype);
-        if worn.items().next().is_some() {
-            commands.entity(npc_entity).insert(worn);
-        }
-
-        let chase = crate::behaviour::chase::Chase {
-            acquisition_range: crate::behaviour::ACQUISITION_RANGE,
-            leash_distance: crate::behaviour::LEASH_DISTANCE,
-        };
-        commands.entity(npc_entity).insert((
-            NearestNeighbor::new(npc_entity, npc_loc),
-            chase,
-            crate::behaviour::perception::Skill::default(),
-            crate::behaviour::Bar::of(archetype),
-            crate::behaviour::perception::Sight::default(),
-            crate::behaviour::moves::Move::default(),
-            common_bevy::components::AttackRange::default(),
-            Heading::default(),
-            common_bevy::components::Turn::default(),
-            Position::at_tile(npc_location),
-            AirTime::default(),
-            common_bevy::components::movement_intent_state::MovementIntentState::default(),
-        ));
+        spawn_member(tuning, engagement_entity, location, i as usize, archetype, side, level, &elevation, commands, time);
     }
 
     engagement_entity
+}
+
+/// Spawns one NPC of `archetype` at `level` into `engagement`, on `side`,
+/// in the `index`th place round `location`, a tile above the ground
+/// `elevation` gives there. The engagement must exist, or be spawned by
+/// the same commands before this.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_member(
+    tuning: &Tuning,
+    engagement: Entity,
+    location: Qrz,
+    index: usize,
+    archetype: EnemyArchetype,
+    side: Side,
+    level: u8,
+    elevation: impl Fn(i32, i32) -> i32,
+    commands: &mut Commands,
+    time: &Time,
+) -> Entity {
+    let base = location + member_offset(index);
+    let npc_location = Qrz { z: elevation(base.q, base.r) + 1, ..base };
+
+    let actor_impl = ActorImpl {
+        origin: Origin::Evolved,
+        approach: archetype.profile().approach,
+        resilience: archetype.profile().resilience,
+        identity: ActorIdentity::Npc(archetype),
+    };
+
+    let npc_loc = Loc::new(npc_location);
+    let npc_entity = commands
+        .spawn((
+            EntityType::Actor(actor_impl),
+            npc_loc,
+            Fighter::new(tuning, calculate_enemy_attributes(level, archetype), Moment::ZERO + time.elapsed()),
+            side,
+            EngagementMember(engagement),
+        ))
+        .id();
+    // An NPC wears what the server gives it, with no bag and no asking.
+    let worn = kit(archetype);
+    if worn.items().next().is_some() {
+        commands.entity(npc_entity).insert(worn);
+    }
+
+    let chase = crate::behaviour::chase::Chase {
+        acquisition_range: crate::behaviour::ACQUISITION_RANGE,
+        leash_distance: crate::behaviour::LEASH_DISTANCE,
+    };
+    commands.entity(npc_entity).insert((
+        NearestNeighbor::new(npc_entity, npc_loc),
+        chase,
+        crate::behaviour::perception::Skill::default(),
+        crate::behaviour::Bar::of(archetype),
+        crate::behaviour::perception::Sight::default(),
+        crate::behaviour::moves::Move::default(),
+        common_bevy::components::AttackRange::default(),
+        Heading::default(),
+        common_bevy::components::Turn::default(),
+        Position::at_tile(npc_location),
+        AirTime::default(),
+        common_bevy::components::movement_intent_state::MovementIntentState::default(),
+    ));
+    npc_entity
 }
 
 /// Where the `index`th member of a pack stands round its place: one of

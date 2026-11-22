@@ -148,14 +148,17 @@ pub fn do_spawn(
                 // Where it is drawn, about the render origin.
                 let spawn_world: Vec3 = origin.render_tile(&map, qrz);
 
+                // A nest has no body: its den is drawn as the world's.
+                if !matches!(desc.identity, ActorIdentity::Nest(_)) {
+                    entity_cmd.insert((
+                        WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
+                        Rig(asset_server.load(get_asset(EntityType::Actor(desc)))),
+                    ));
+                }
                 entity_cmd
                     .insert((
                         loc,
                         typ,
-                        (
-                            WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(get_asset(EntityType::Actor(desc))))),
-                            Rig(asset_server.load(get_asset(EntityType::Actor(desc)))),
-                        ),
                         Transform {
                             translation: spawn_world,
                             scale: Vec3::ONE * map.radius(),
@@ -220,7 +223,7 @@ pub fn do_spawn(
 
 /// The body an actor is drawn with: its rig under `actors/`, and the cut of
 /// every piece it wears under `models/`. Identity decides it; the triumvirate
-/// shapes combat only.
+/// shapes combat only. A nest has none, and no name.
 pub fn actor_name(typ: EntityType) -> &'static str {
     match typ {
         EntityType::Actor(desc) => match desc.identity {
@@ -233,6 +236,7 @@ pub fn actor_name(typ: EntityType) -> &'static str {
                 EnemyArchetype::Ambusher => "crocodile",
                 EnemyArchetype::Defender => "player",
             }
+            ActorIdentity::Nest(_) => "",
         },
         _ => panic!("couldn't find asset for entity type {:?}", typ)
     }
