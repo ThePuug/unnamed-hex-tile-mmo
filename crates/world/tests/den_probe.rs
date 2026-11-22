@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use common::den::Habitat;
-use world::events::den::{den_lattice, site_of};
+use world::events::den::{den_lattice, sites_of};
 use world::events::Composite;
 use world::WORLD_SEED;
 
@@ -23,10 +23,11 @@ fn habitats_around_the_haven() {
     let mut counts: HashMap<Habitat, usize> = HashMap::new();
     let mut sites = 0;
     for cell in lattice.cells_within_distance(home, 12) {
-        let (q, r) = site_of(&lattice, cell, WORLD_SEED);
-        sites += 1;
-        if let Some(habitat) = composite.tile_at(q, r).den {
-            *counts.entry(habitat).or_default() += 1;
+        for (q, r) in sites_of(&lattice, cell, WORLD_SEED) {
+            sites += 1;
+            if let Some(habitat) = composite.tile_at(q, r).den {
+                *counts.entry(habitat).or_default() += 1;
+            }
         }
     }
     let total: usize = counts.values().sum();
