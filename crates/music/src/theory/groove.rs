@@ -50,61 +50,9 @@ pub const HORO: [Groove; 4] = [
     Groove { name: "dajčovo", groups: &[2, 2, 2, 3], tempo: (280, 340), dum: &[0, 6], tek: &[2, 4, 8], chord: &[1, 3, 5, 7, 8], busy: 0.6 },
 ];
 
-/// A minor blues's feels, as the recordings surveyed take them
-/// (`proofs/research/blues-findings.md`): the slow twelve-eight, four
-/// beats of three at sixty to eighty, the kick on one and three and the
-/// backbeat on two and four; the rumba, straight eighths at a hundred and
-/// four to a hundred and twenty-eight, the kick on one, the and of two
-/// and three, the comp off the beat; the walking four, swung at a hundred
-/// and twenty to a hundred and sixty; and the six-eight, two beats of
-/// three, the Latin blues's lilt.
-pub const BLUES: [Groove; 4] = [
-    Groove { name: "slow twelve-eight", groups: &[3, 3, 3, 3], tempo: (180, 240), dum: &[0, 6], tek: &[3, 9], chord: &[2, 5, 8, 11], busy: 0.4 },
-    Groove { name: "rumba", groups: &[2, 2, 2, 2], tempo: (208, 256), dum: &[0, 3, 4], tek: &[2, 6], chord: &[1, 3, 5, 7], busy: 0.35 },
-    Groove { name: "walking four", groups: &[2, 2, 2, 2], tempo: (240, 320), dum: &[0, 4], tek: &[2, 6], chord: &[1, 5], busy: 0.3 },
-    Groove { name: "six-eight", groups: &[3, 3], tempo: (220, 280), dum: &[0], tek: &[3], chord: &[2, 5], busy: 0.4 },
-];
-
-/// The ballad's feels, slow enough that every beat is a weight: the
-/// four of a power ballad, its kick on one and the and of three and its
-/// snare on two and four, the accompaniment on the off-beats; and the
-/// twelve-eight, four slow beats of three, its kick on one and the last
-/// eighth of two, its snare on two and four, the accompaniment on every
-/// eighth between. Its tune leans on the beat and sings rather than
-/// runs. The twelve-eight's beat is 50 to 60, under the blues'
-/// shuffle.
-pub const BALLAD: [Groove; 2] = [
-    Groove { name: "four", groups: &[2, 2, 2, 2], tempo: (120, 150), dum: &[0, 5], tek: &[2, 6], chord: &[1, 3, 5, 7], busy: 0.3 },
-    Groove { name: "twelve-eight", groups: &[3, 3, 3, 3], tempo: (150, 180), dum: &[0, 5], tek: &[3, 9], chord: &[1, 2, 4, 5, 7, 8, 10, 11], busy: 0.25 },
-];
-
-/// Speed metal's beats as Helloween took them in 1985–88, at a hundred
-/// and forty-four to a hundred and sixty-four beats, counted one snare
-/// a beat: the skank, the kick on the beats and the snare on every
-/// off-beat eighth, the cymbal on every eighth; and the rock backbeat,
-/// the snare on two and four and the kick on one, the and of two and
-/// three — ten verses of seventeen skank, seven run the backbeat. Its
-/// tune runs more than a ballad's and less than a horo's.
-pub const SPEED: [Groove; 2] = [
-    Groove { name: "skank", groups: &[2, 2, 2, 2], tempo: (288, 328), dum: &[0, 2, 4, 6], tek: &[1, 3, 5, 7], chord: &[1, 3, 5, 7], busy: 0.45 },
-    Groove { name: "backbeat", groups: &[2, 2, 2, 2], tempo: (288, 328), dum: &[0, 3, 4], tek: &[2, 6], chord: &[1, 3, 5, 7], busy: 0.45 },
-];
-
-/// Stomp-and-holler's pulses (`proofs/research/stomp-holler-findings.md`,
-/// §1–2), both a kick on every quarter and the "chick" — a tambourine, a
-/// clap, the strum's up-stroke — on every off-beat eighth, never a
-/// backbeat: the drive, a hundred and two to a hundred and fifty a
-/// quarter, as nineteen of the songs go; and the stomp, the half-time
-/// stompers' seventy-six to eighty-five, Ho Hey's and Ophelia's. Its
-/// tune leans on the beat and enters as a pick-up.
-pub const INDIE: [Groove; 2] = [
-    Groove { name: "drive", groups: &[2, 2, 2, 2], tempo: (204, 300), dum: &[0, 2, 4, 6], tek: &[1, 3, 5, 7], chord: &[1, 3, 5, 7], busy: 0.35 },
-    Groove { name: "stomp", groups: &[2, 2, 2, 2], tempo: (152, 170), dum: &[0, 2, 4, 6], tek: &[1, 3, 5, 7], chord: &[1, 3, 5, 7], busy: 0.3 },
-];
-
 /// Every groove there is.
 pub fn all() -> impl Iterator<Item = &'static Groove> {
-    BALKAN.iter().chain(BLUES.iter()).chain(HORO.iter()).chain(BALLAD.iter()).chain(SPEED.iter()).chain(INDIE.iter())
+    BALKAN.iter().chain(HORO.iter())
 }
 
 impl Groove {

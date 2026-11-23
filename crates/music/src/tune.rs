@@ -21,20 +21,7 @@ pub struct Tune {
     pub bars: Vec<Vec<Tone>>,
     /// What each bar's degrees are shifted by, the piece's sequence.
     pub shifts: Vec<i32>,
-    /// The degrees of the mode the line stands on, where a style sings in
-    /// fewer than seven — the blues' pentatonic: the tune's degrees count
-    /// this scale's steps, so a step of the theme is a step of the scale
-    /// and never a tone struck again. Every degree where `None`.
-    pub scale: Option<&'static [i32]>,
 }
-
-/// The minor pentatonic as degrees of a minor mode: the tonic, the
-/// flat third, the fourth, the fifth and the flat seventh.
-pub const MINOR_PENTATONIC: &[i32] = &[0, 2, 3, 4, 6];
-
-/// The major pentatonic as degrees of the major: the tonic, the second,
-/// the third, the fifth and the sixth.
-pub const MAJOR_PENTATONIC: &[i32] = &[0, 1, 2, 4, 5];
 
 /// A note as placed: `(tick, len, pitch)`.
 pub type Placed = (u32, u32, u8);
@@ -62,12 +49,7 @@ impl Tune {
             let end = if schema.closed { 0 } else { open_tone(schema.chord(3, size)) };
             bars.extend(melody::phrase(theme, meter, form, mid, end));
         }
-        Tune {
-            chords,
-            bars,
-            shifts,
-            scale: None,
-        }
+        Tune { chords, bars, shifts }
     }
 
     pub fn len(&self) -> u32 {
@@ -93,12 +75,12 @@ impl Tune {
         let mut prev = b.checked_sub(1).map(|last| last as usize).and_then(|last| {
             self.bars[last]
                 .last()
-                .map(|t| score.key_at(last as u32 * score.bar()).pitch(home_degree + self.on_scale(t.degree) + self.shifts[last], 4))
+                .map(|t| score.key_at(last as u32 * score.bar()).pitch(home_degree + t.degree + self.shifts[last], 4))
         });
         bar.iter()
             .map(|t| {
                 let strong = score.meter.strong(t.onset);
-                let mut pitch = self.within(key, chord, strong, key.pitch(home_degree + self.on_scale(t.degree) + shift, 4), lo, hi);
+                let mut pitch = self.within(key, chord, strong, key.pitch(home_degree + t.degree + shift, 4), lo, hi);
                 if strong && !chord.holds(key, pitch) {
                     pitch = bent_to_chord(key, chord, pitch, prev, lo, hi);
                 }
@@ -108,8 +90,8 @@ impl Tune {
             .collect()
     }
 
-    /// `pitch` inside `lo..=hi`: itself, or the nearest tone of the line's
-    /// scale inside — the chord's on a `strong` beat — where a sequence
+    /// `pitch` inside `lo..=hi`: itself, or the nearest tone of the mode
+    /// inside — the chord's on a `strong` beat — where a sequence
     /// or a cadence's turn over the tune's top carries it past the
     /// register: the line touches the register's edge rather than
     /// leaving its instrument.
@@ -118,7 +100,7 @@ impl Tune {
             return pitch;
         }
         (lo..=hi)
-            .filter(|p| self.sings(key, *p) && (!strong || chord.holds(key, *p)))
+            .filter(|p| key.absolute_degree(*p).is_some() && (!strong || chord.holds(key, *p)))
             .min_by_key(|p| ((*p as i32 - pitch as i32).abs(), *p))
             .unwrap_or(pitch.clamp(lo, hi))
     }
@@ -131,7 +113,7 @@ impl Tune {
         let pitches = (a..b).flat_map(|bar| {
             let key = score.key_at(bar * score.bar());
             let shift = self.shifts[bar as usize];
-            self.bars[bar as usize].iter().map(move |t| key.pitch(home_degree + self.on_scale(t.degree) + shift, 4)).collect::<Vec<u8>>()
+            self.bars[bar as usize].iter().map(move |t| key.pitch(home_degree + t.degree + shift, 4)).collect::<Vec<u8>>()
         });
         pitches.fold((u8::MAX, u8::MIN), |(lo, hi), p| (lo.min(p), hi.max(p)))
     }
@@ -192,7 +174,7 @@ impl Tune {
                         && *p != line[i].2
                         && *p >= lo
                         && *p <= hi
-                        && self.sings(key, *p)
+                        && key.absolute_degree(*p).is_some()
                         && (!strong || chord.holds(key, *p))
                 })
                 .filter(|p| (degree(line[i].0, *p) - d0).abs() < counterpoint::LEAP)
@@ -212,7 +194,7 @@ impl Tune {
             // The nearest such tone, as far as an octave away: a tone after
             // a wide leap may have none near it that steps or turns back.
             let turned = (pitch.saturating_sub(12)..=pitch.saturating_add(12))
-                .filter(|p| *p >= lo && *p <= hi && self.sings(key, *p) && (!strong || chord.holds(key, *p)))
+                .filter(|p| *p >= lo && *p <= hi && key.absolute_degree(*p).is_some() && (!strong || chord.holds(key, *p)))
                 .filter(|p| {
                     let next = degree(start, *p) - d1;
                     next.abs() < counterpoint::LEAP || next.signum() != leap.signum()
@@ -222,26 +204,6 @@ impl Tune {
                 line[i + 1].2 = p;
             }
         }
-    }
-}
-
-impl Tune {
-    /// The mode's degree from home of the tune's `step` from home: the
-    /// step itself, or where there is a scale, that many of its steps.
-    pub fn on_scale(&self, step: i32) -> i32 {
-        match self.scale {
-            Some(scale) => {
-                let n = scale.len() as i32;
-                7 * step.div_euclid(n) + scale[step.rem_euclid(n) as usize]
-            }
-            None => step,
-        }
-    }
-
-    /// Whether the line may stand on `pitch`: in the mode, and on the
-    /// scale where there is one.
-    fn sings(&self, key: &Key, pitch: u8) -> bool {
-        key.absolute_degree(pitch).is_some_and(|d| self.scale.is_none_or(|s| s.contains(&d.rem_euclid(7))))
     }
 }
 

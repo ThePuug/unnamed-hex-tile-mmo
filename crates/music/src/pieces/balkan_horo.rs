@@ -438,7 +438,7 @@ fn lean(setting: Setting) -> Lean {
             endings: [1.0, 1.0, 0.0, 1.0],
             bounds: Bounds { tempo: (2.0 / 3.0, 1.0) },
         },
-        Setting::Ambient | Setting::City | Setting::None => AS_RECORDED,
+        Setting::Ambient | Setting::None => AS_RECORDED,
     }
 }
 

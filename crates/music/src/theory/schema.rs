@@ -1,12 +1,12 @@
 //! The progressions a mode is heard in, four bars at a time: the loops
 //! that stay open, ending away from the tonic, and the cadences that
-//! close on it; and the twelve-bar, three rows that are one chorus.
+//! close on it.
 //! Chords come in phrases, not one at a time; a walk from chord to
 //! chord has no direction, and the ear hears that it has none. Over a
 //! tonic drone only some chords can be held at all, and every schema
 //! is filtered by that before a droned piece may draw it.
 
-use super::{interval_class, Chord, Key, Mode, DIATONIC, MAJOR};
+use super::{interval_class, Chord, Key, Mode, DIATONIC};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Schema {
@@ -29,60 +29,30 @@ impl Schema {
     }
 }
 
-use Mode::{Aeolian, Dorian, Hijaz, Ionian};
+use Mode::{Aeolian, Dorian, Hijaz};
 
 /// The Balkan loops and cadences, as an arranger sets a tune that is
 /// traditionally only droned: the shuttle between i and ♭VII, the
 /// commonest Bulgarian pattern; the lament down through ♭VI to v; the
 /// plagal ones every minor mode shares; and the closes home through
-/// ♭VII — i–iv–♭VII–i above all. Never ♭VI–♭VII–i, which is rock's and
-/// the ballad's, not the folk's.
-pub const SCHEMATA: [Schema; 6] = [
+/// ♭VII — i–iv–♭VII–i above all; the turn through the relative major,
+/// i–♭III–♭VII, out to it or home; and the tonic held two bars before
+/// it moves, to iv or to ♭VII, which is all Hijaz has over a drone
+/// besides its shuttle.
+/// Never ♭VI–♭VII–i, which is rock's, not the folk's.
+pub const SCHEMATA: [Schema; 12] = [
     Schema { name: "subtonic shuttle", modes: &[Aeolian, Dorian], roots: [0, 6, 0, 6], closed: false, alters: [DIATONIC; 4] },
     Schema { name: "lament", modes: &[Aeolian], roots: [0, 6, 5, 4], closed: false, alters: [DIATONIC; 4] },
     Schema { name: "plagal shuttle", modes: &[Aeolian, Dorian, Hijaz], roots: [0, 3, 0, 3], closed: false, alters: [DIATONIC; 4] },
     Schema { name: "subtonic close", modes: &[Aeolian, Dorian], roots: [0, 6, 3, 0], closed: true, alters: [DIATONIC; 4] },
     Schema { name: "folk close", modes: &[Aeolian, Dorian], roots: [0, 3, 6, 0], closed: true, alters: [DIATONIC; 4] },
     Schema { name: "plagal close", modes: &[Aeolian, Dorian, Hijaz], roots: [0, 3, 3, 0], closed: true, alters: [DIATONIC; 4] },
-];
-
-/// The twelve-bar blues as three rows of one chorus, each a choice: the
-/// tonic's row, plain or with the quick change to IV; the
-/// subdominant's, IV falling back to I; and the turn home in its ninth
-/// and tenth bars, as the lead sheets and recordings surveyed take it
-/// (`proofs/research/blues-findings.md`): v through iv, the blues
-/// band's; v held a bar longer; the jazz minor blues's ♭VI7 to the major
-/// V7; V7 deceived to ♭VI7; or iiø to V7. A minor blues, on sevenths: in
-/// Dorian the tonic and v are minor sevenths and IV is a dominant
-/// seventh, in Aeolian all three are minor, and either is diatonic to
-/// the last tone, so the blue notes are the mode's own; the turn's ♭VI7
-/// and its V7's leading tone are borrowed, Dorian lowering its sixth to
-/// reach the ♭VI and its fifth for the iiø.
-pub const TWELVE_BAR: [&[Schema]; 3] = [
-    &[
-        Schema { name: "tonic row", modes: &[Dorian, Aeolian], roots: [0, 0, 0, 0], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "quick change", modes: &[Dorian, Aeolian], roots: [0, 3, 0, 0], closed: false, alters: [DIATONIC; 4] },
-        // The jazz blues' fourth bar: the tonic made the dominant of the
-        // iv it sets up.
-        Schema { name: "tonic row, the dominant into four", modes: &[Dorian, Aeolian], roots: [0, 0, 0, 0], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
-        Schema { name: "quick change, the dominant into four", modes: &[Dorian, Aeolian], roots: [0, 3, 0, 0], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
-    ],
-    &[Schema { name: "subdominant row", modes: &[Dorian, Aeolian], roots: [3, 3, 0, 0], closed: false, alters: [DIATONIC; 4] }],
-    &[
-        Schema { name: "turn home", modes: &[Dorian, Aeolian], roots: [4, 3, 0, 0], closed: true, alters: [DIATONIC; 4] },
-        Schema { name: "turn home, the dominant held", modes: &[Dorian, Aeolian], roots: [4, 4, 0, 0], closed: true, alters: [DIATONIC; 4] },
-        Schema { name: "minor turn", modes: &[Aeolian], roots: [5, 4, 0, 0], closed: true, alters: [[0, 0, 0, -1], MAJOR, DIATONIC, DIATONIC] },
-        Schema { name: "minor turn, the sixth lowered", modes: &[Dorian], roots: [5, 4, 0, 0], closed: true, alters: [[-1, 0, 0, -1], MAJOR, DIATONIC, DIATONIC] },
-        // The soul blues' turn, The Thrill Is Gone's: the ♭VI a major
-        // seventh, not the dominant the jazz turn makes it; Dorian's VI
-        // is half-diminished, so lowering its root alone makes the ♭VI.
-        Schema { name: "the thrill turn", modes: &[Aeolian], roots: [5, 4, 0, 0], closed: true, alters: [DIATONIC, MAJOR, DIATONIC, DIATONIC] },
-        Schema { name: "the thrill turn, the sixth lowered", modes: &[Dorian], roots: [5, 4, 0, 0], closed: true, alters: [[-1, 0, 0, 0], MAJOR, DIATONIC, DIATONIC] },
-        Schema { name: "deceptive turn", modes: &[Aeolian], roots: [4, 5, 0, 0], closed: true, alters: [MAJOR, [0, 0, 0, -1], DIATONIC, DIATONIC] },
-        Schema { name: "deceptive turn, the sixth lowered", modes: &[Dorian], roots: [4, 5, 0, 0], closed: true, alters: [MAJOR, [-1, 0, 0, -1], DIATONIC, DIATONIC] },
-        Schema { name: "two-five turn", modes: &[Aeolian], roots: [1, 4, 0, 0], closed: true, alters: [DIATONIC, MAJOR, DIATONIC, DIATONIC] },
-        Schema { name: "two-five turn, the fifth lowered", modes: &[Dorian], roots: [1, 4, 0, 0], closed: true, alters: [[0, 0, -1, 0], MAJOR, DIATONIC, DIATONIC] },
-    ],
+    Schema { name: "relative rise", modes: &[Aeolian, Dorian], roots: [0, 2, 6, 2], closed: false, alters: [DIATONIC; 4] },
+    Schema { name: "plagal turn", modes: &[Aeolian, Dorian], roots: [0, 3, 0, 6], closed: false, alters: [DIATONIC; 4] },
+    Schema { name: "held plagal", modes: &[Aeolian, Dorian, Hijaz], roots: [0, 0, 3, 3], closed: false, alters: [DIATONIC; 4] },
+    Schema { name: "relative close", modes: &[Aeolian, Dorian], roots: [0, 2, 6, 0], closed: true, alters: [DIATONIC; 4] },
+    Schema { name: "subtonic held", modes: &[Aeolian, Dorian], roots: [0, 0, 6, 0], closed: true, alters: [DIATONIC; 4] },
+    Schema { name: "held plagal close", modes: &[Aeolian, Dorian, Hijaz], roots: [0, 0, 3, 0], closed: true, alters: [DIATONIC; 4] },
 ];
 
 /// The horo's progressions, with no drone under them to spare: the
@@ -100,156 +70,6 @@ pub const HORO: [Schema; 6] = [
     Schema { name: "phrygian close", modes: &[Hijaz], roots: [0, 3, 1, 0], closed: true, alters: [DIATONIC; 4] },
     Schema { name: "plagal close", modes: &[Aeolian, Hijaz], roots: [0, 3, 3, 0], closed: true, alters: [DIATONIC; 4] },
 ];
-
-/// The ballad's progressions, in the minor with no drone, by the part
-/// of the song they serve. A verse opens on the tonic and stays on it
-/// longest, swinging slowly to one or two chords and back — i to VI, i
-/// down through VII to VI, i through III and VII to the minor v, the
-/// tonic held as the bass falls to VI and the major V — and comes home
-/// through III and VII, holds the tonic till VII, or falls through VI
-/// to the major V. A chorus moves a chord a bar and opens off the tonic
-/// as often as on it, on the sixth; it walks down i, VII, VI to the
-/// major V, the Andalusian cadence, and comes home by the sixth and
-/// seventh, the cadence hard rock and metal end on, or through iv and
-/// the major V. The major V borrows its third from the harmonic minor,
-/// the leading tone a metal ballad turns on and a folk tune never
-/// has. The climax takes a progression of its own, heard nowhere before
-/// it: the tonic shuttling with the seventh and sixth. Every chord a
-/// major or minor triad: the minor's second is diminished and never
-/// stands.
-pub struct Song {
-    pub verse: &'static [Schema],
-    pub chorus: &'static [Schema],
-    pub climax: &'static [Schema],
-}
-
-pub const BALLAD: Song = Song {
-    verse: &[
-        Schema { name: "tonic and sixth", modes: &[Aeolian], roots: [0, 0, 5, 5], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "subtonic descent", modes: &[Aeolian], roots: [0, 0, 6, 5], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "relative turn", modes: &[Aeolian], roots: [0, 2, 6, 4], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "falling to the dominant", modes: &[Aeolian], roots: [0, 0, 5, 4], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
-        Schema { name: "relative home", modes: &[Aeolian], roots: [0, 2, 6, 0], closed: true, alters: [DIATONIC; 4] },
-        Schema { name: "tonic held home", modes: &[Aeolian], roots: [0, 0, 6, 0], closed: true, alters: [DIATONIC; 4] },
-        Schema { name: "home through the dominant", modes: &[Aeolian], roots: [0, 5, 4, 0], closed: true, alters: [DIATONIC, DIATONIC, MAJOR, DIATONIC] },
-    ],
-    chorus: &[
-        Schema { name: "lift", modes: &[Aeolian], roots: [5, 6, 0, 6], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "climb", modes: &[Aeolian], roots: [0, 5, 2, 6], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "andalusian", modes: &[Aeolian], roots: [0, 6, 5, 4], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
-        Schema { name: "lift home", modes: &[Aeolian], roots: [5, 6, 0, 0], closed: true, alters: [DIATONIC; 4] },
-        Schema { name: "subdominant home", modes: &[Aeolian], roots: [3, 5, 6, 0], closed: true, alters: [DIATONIC; 4] },
-        Schema { name: "dominant home", modes: &[Aeolian], roots: [0, 3, 4, 0], closed: true, alters: [DIATONIC, DIATONIC, MAJOR, DIATONIC] },
-    ],
-    climax: &[
-        Schema { name: "outro shuttle", modes: &[Aeolian], roots: [0, 6, 5, 6], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "outro close", modes: &[Aeolian], roots: [0, 5, 6, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-};
-
-/// Speed metal's progressions as Helloween wrote them in 1985–88, in
-/// the minor, by the part of the song they serve; power chords, so a
-/// chord's third is the lead's to choose. A verse is Aeolian: the tonic
-/// held and swinging to the seventh, rocking with the relative major,
-/// or turning through the sixth and seventh to the major V. A
-/// pre-chorus lifts: the relative major's V and I rocked, the sixth and
-/// seventh climbed two bars each, or the sixth, third and seventh to the
-/// major V. A chorus is the minor's — the tonic held into the sixth and
-/// seventh, Halloween's turn through the seventh and third, Starlight's
-/// way home through iv and the sixth, How Many Tears' sixth and seventh
-/// to the major V and home — or bright, on the relative major: its I, V,
-/// vi and iii, the Pachelbel turn of Guardians and Eagle Fly Free, home
-/// through its IV, I and V to the minor tonic. Under the solos the other
-/// guitar holds a pedal on one root or two. The major V is a cadence's
-/// colour, never the riff's mode.
-pub struct Speed {
-    pub verse: &'static [Schema],
-    pub pre: &'static [Schema],
-    pub chorus: &'static [Schema],
-    pub bright: &'static [Schema],
-    pub solo: &'static [Schema],
-}
-
-pub const SPEED: Speed = Speed {
-    verse: &[
-        Schema { name: "subtonic pedal", modes: &[Aeolian], roots: [0, 0, 6, 6], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "relative swing", modes: &[Aeolian], roots: [0, 2, 0, 5], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "relative rock", modes: &[Aeolian], roots: [0, 6, 2, 6], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "turn to the dominant", modes: &[Aeolian], roots: [0, 5, 6, 4], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
-        Schema { name: "relative home", modes: &[Aeolian], roots: [0, 6, 2, 0], closed: true, alters: [DIATONIC; 4] },
-        Schema { name: "subtonic home", modes: &[Aeolian], roots: [0, 6, 6, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-    pre: &[
-        Schema { name: "relative shuttle", modes: &[Aeolian], roots: [6, 2, 6, 2], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "the climb", modes: &[Aeolian], roots: [5, 5, 6, 6], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "climb to the dominant", modes: &[Aeolian], roots: [5, 2, 6, 4], closed: false, alters: [DIATONIC, DIATONIC, DIATONIC, MAJOR] },
-    ],
-    chorus: &[
-        Schema { name: "the drive", modes: &[Aeolian], roots: [0, 0, 5, 6], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "halloween turn", modes: &[Aeolian], roots: [6, 2, 0, 4], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "starlight home", modes: &[Aeolian], roots: [0, 3, 5, 0], closed: true, alters: [DIATONIC; 4] },
-        Schema { name: "tears home", modes: &[Aeolian], roots: [5, 6, 4, 0], closed: true, alters: [DIATONIC, DIATONIC, MAJOR, DIATONIC] },
-    ],
-    bright: &[
-        Schema { name: "pachelbel", modes: &[Aeolian], roots: [2, 6, 0, 4], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "relative lift", modes: &[Aeolian], roots: [5, 2, 6, 2], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "relative close", modes: &[Aeolian], roots: [5, 2, 6, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-    solo: &[
-        Schema { name: "solo pedal", modes: &[Aeolian], roots: [0, 5, 0, 6], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "solo close", modes: &[Aeolian], roots: [5, 5, 6, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-};
-
-/// Indie folk-pop's loops as Of Monsters and Men's debut runs them
-/// (`proofs/research/omam-findings.md`, §2), in the major and nowhere
-/// else: four chords — I, IV, V, vi — and now and then ii or iii, no
-/// borrowed chord, no seventh. A song keeps one loop, its question and
-/// its answer the same loop with its last bar turned home: Little Talks'
-/// vi–IV–I–V, which starts on the relative minor and finds the tonic;
-/// Mountain Sound's ii–IV–vi–V, home by IV and vi; Love Love Love's
-/// IV–V–I–iii and vi–V–I; Yellow Light's IV–vi–I–iii; Dirty Paws' vi–I–I–IV;
-/// King and Lionheart's IV–I–V–vi, its lift the plagal IV to I; Six
-/// Weeks' I–vi–V; and the tonic held under a verse, rocking to IV.
-pub const INDIE: [[Schema; 2]; 8] = [
-    [
-        Schema { name: "relative loop", modes: &[Ionian], roots: [5, 3, 0, 4], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "relative home", modes: &[Ionian], roots: [5, 3, 0, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-    [
-        Schema { name: "mountain loop", modes: &[Ionian], roots: [1, 3, 5, 4], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "mountain home", modes: &[Ionian], roots: [3, 5, 0, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-    [
-        Schema { name: "lullaby loop", modes: &[Ionian], roots: [3, 4, 0, 2], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "lullaby home", modes: &[Ionian], roots: [5, 4, 0, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-    [
-        Schema { name: "lamp loop", modes: &[Ionian], roots: [3, 5, 0, 2], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "lamp home", modes: &[Ionian], roots: [3, 5, 4, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-    [
-        Schema { name: "paws loop", modes: &[Ionian], roots: [5, 0, 0, 3], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "paws home", modes: &[Ionian], roots: [5, 0, 3, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-    [
-        Schema { name: "plagal lift", modes: &[Ionian], roots: [3, 0, 4, 5], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "plagal home", modes: &[Ionian], roots: [3, 0, 4, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-    [
-        Schema { name: "weeks loop", modes: &[Ionian], roots: [0, 5, 4, 4], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "weeks home", modes: &[Ionian], roots: [0, 5, 4, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-    [
-        Schema { name: "tonic pedal", modes: &[Ionian], roots: [0, 0, 3, 3], closed: false, alters: [DIATONIC; 4] },
-        Schema { name: "pedal home", modes: &[Ionian], roots: [3, 3, 0, 0], closed: true, alters: [DIATONIC; 4] },
-    ],
-];
-
-/// A part of the song's schemata: the open ones and the closed.
-pub fn split(schemata: &'static [Schema]) -> (Vec<&'static Schema>, Vec<&'static Schema>) {
-    (schemata.iter().filter(|s| !s.closed).collect(), schemata.iter().filter(|s| s.closed).collect())
-}
 
 /// The horo's schemata a mode may use: the open ones and the closed.
 pub fn horo_schemata(mode: Mode) -> (Vec<&'static Schema>, Vec<&'static Schema>) {
@@ -303,26 +123,6 @@ mod tests {
         }
     }
 
-    /// The twelve-bar's rows are the blues' three chords and the minor
-    /// turn's flat sixth, every row falling back to the tonic, the first
-    /// two open and the last closed, and every row offering both minor
-    /// modes a choice; the flat sixth only where it is a major chord.
-    #[test]
-    fn the_twelve_bar_is_three_chords_and_a_turn_home() {
-        for (r, row) in TWELVE_BAR.iter().enumerate() {
-            for s in row.iter() {
-                assert!(s.roots.iter().all(|d| matches!(d, 0 | 1 | 3 | 4 | 5)), "{}: a chord off the blues", s.name);
-                assert_eq!(s.roots[3], 0, "{}: does not fall back to the tonic", s.name);
-                assert_eq!(s.closed, r == 2, "{}: its end belies its row", s.name);
-            }
-            for mode in [Dorian, Aeolian] {
-                assert!(row.iter().any(|s| s.modes.contains(&mode)), "row {r} offers {mode:?} nothing");
-            }
-        }
-        assert!(TWELVE_BAR[1].iter().all(|s| s.roots[0] == 3));
-        assert!(TWELVE_BAR[2].iter().all(|s| matches!(s.roots[0], 1 | 4 | 5)));
-    }
-
     /// Every horo schema opens on the tonic and closes as it says,
     /// every chord in it a triad with no tritone and not augmented, and
     /// each of the horo's modes has a question and an answer.
@@ -343,98 +143,6 @@ mod tests {
         for mode in [Aeolian, Hijaz] {
             let (open, closed) = horo_schemata(mode);
             assert!(!open.is_empty() && !closed.is_empty(), "{mode:?}");
-        }
-    }
-
-    /// Every ballad schema closes as it says, every chord a major or
-    /// minor triad; every verse opens on the tonic, some chorus opens off
-    /// it, and every part of the song has a question and an answer.
-    #[test]
-    fn every_part_of_the_ballad_asks_and_answers() {
-        let key = Key::new("E", Aeolian);
-        for part in [BALLAD.verse, BALLAD.chorus, BALLAD.climax] {
-            for s in part {
-                assert_eq!(s.roots[3] == 0, s.closed, "{}", s.name);
-                for k in 0..4 {
-                    let chord = s.chord(k, 3);
-                    let under = key.under(chord);
-                    let tones: Vec<u8> = chord.degrees().iter().map(|d| under.pitch(*d, 4)).collect();
-                    assert!(matches!((tones[1] - tones[0], tones[2] - tones[1]), (3, 4) | (4, 3)), "{}: {} is no major or minor triad", s.name, chord.root);
-                }
-            }
-            let (open, closed) = split(part);
-            assert!(!open.is_empty() && !closed.is_empty());
-        }
-        assert!(BALLAD.verse.iter().all(|s| s.roots[0] == 0));
-        assert!(BALLAD.chorus.iter().any(|s| s.roots[0] != 0));
-        // The major V, in a verse and in a chorus.
-        for part in [BALLAD.verse, BALLAD.chorus] {
-            assert!(part.iter().any(|s| (0..4).any(|k| s.roots[k] == 4 && s.alters[k] == MAJOR)));
-        }
-    }
-
-    /// Every speed metal schema closes as it says and every chord stands a
-    /// power chord, its fifth perfect in the bar's key; a pre-chorus never
-    /// closes, it lifts into the chorus; every other part asks and answers.
-    #[test]
-    fn every_part_of_speed_metal_asks_and_answers() {
-        let key = Key::new("E", Aeolian);
-        for part in [SPEED.verse, SPEED.pre, SPEED.chorus, SPEED.bright, SPEED.solo] {
-            for s in part {
-                assert_eq!(s.roots[3] == 0, s.closed, "{}", s.name);
-                for k in 0..4 {
-                    let under = key.under(s.chord(k, 3));
-                    assert_eq!(under.pitch(s.roots[k] + 4, 4) - under.pitch(s.roots[k], 4), 7, "{}: no power chord on {}", s.name, s.roots[k]);
-                }
-            }
-        }
-        assert!(SPEED.pre.iter().all(|s| !s.closed));
-        for part in [SPEED.verse, SPEED.chorus, SPEED.bright, SPEED.solo] {
-            let (open, closed) = split(part);
-            assert!(!open.is_empty() && !closed.is_empty());
-        }
-    }
-
-    /// A progression in a mode belongs to one style: the folk's — the
-    /// overworld's and the horo's, one world — the blues' or the
-    /// ballad's, so no two styles are heard turning the same way; a
-    /// progression is its chords as they sound, so the Andalusian's major
-    /// V is not the lament's minor v.
-    #[test]
-    fn no_progression_crosses_styles() {
-        let folk: Vec<&Schema> = SCHEMATA.iter().chain(HORO.iter()).collect();
-        let blues: Vec<&Schema> = TWELVE_BAR.iter().flat_map(|row| row.iter()).collect();
-        let ballad: Vec<&Schema> = [BALLAD.verse, BALLAD.chorus, BALLAD.climax].into_iter().flatten().collect();
-        let speed: Vec<&Schema> = [SPEED.verse, SPEED.pre, SPEED.chorus, SPEED.bright, SPEED.solo].into_iter().flatten().collect();
-        let indie: Vec<&Schema> = INDIE.iter().flatten().collect();
-        let styles = [("folk", folk), ("blues", blues), ("ballad", ballad), ("speed", speed), ("indie", indie)];
-        for (i, (a, ours)) in styles.iter().enumerate() {
-            for (b, theirs) in &styles[i + 1..] {
-                for s in ours {
-                    for t in theirs.iter().filter(|t| t.roots == s.roots && t.alters == s.alters) {
-                        assert!(!s.modes.iter().any(|m| t.modes.contains(m)), "{a}'s {} is {b}'s {}", s.name, t.name);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Every indie loop asks and then answers, its question ending off the
-    /// tonic and its answer on it, every chord the major's own major or
-    /// minor triad, never the diminished seventh degree.
-    #[test]
-    fn every_indie_loop_asks_and_answers() {
-        let key = Key::new("D", Ionian);
-        for [open, closed] in &INDIE {
-            assert!(!open.closed && open.roots[3] != 0, "{}", open.name);
-            assert!(closed.closed && closed.roots[3] == 0, "{}", closed.name);
-            for s in [open, closed] {
-                assert_eq!(s.alters, [DIATONIC; 4], "{}: a borrowed chord", s.name);
-                for r in s.roots {
-                    let tones: Vec<u8> = Chord::triad(r).degrees().iter().map(|d| key.pitch(*d, 4)).collect();
-                    assert!(matches!((tones[1] - tones[0], tones[2] - tones[1]), (3, 4) | (4, 3)), "{}: {r} is no major or minor triad", s.name);
-                }
-            }
         }
     }
 

@@ -1,12 +1,10 @@
 //! A theme and what a phrase makes of it. A theme is a skeleton of
 //! degrees on the strong beats of two bars, in one of a few shapes a
 //! listener follows — an arch, a descent to the finalis, a circling, a
-//! leap and its recovery, a wave, and the blues' own, the
-//! fall from the fifth and the riff round the tonic — with the
+//! leap and its recovery, a wave — with the
 //! feet between filled by steps toward the next skeleton tone, so a
-//! leap is only ever the shape's own and every leap is answered. A
-//! piece draws from the shapes its style sings in. Degrees are from the
-//! theme's home; a piece puts them in a register.
+//! leap is only ever the shape's own and every leap is answered. Degrees
+//! are from the theme's home; a piece puts them in a register.
 
 use super::groove::Groove;
 use super::phrase::{Form, Slot};
@@ -29,52 +27,12 @@ pub enum Shape {
     Circling,
     LeapBack,
     Wave,
-    /// The blues' shout and fall: from the fifth down the pentatonic,
-    /// under the tonic to the flat seventh, and home.
-    Tumble,
-    /// The blues' riff round the tonic: up to the third, back, under to
-    /// the flat seventh, home.
-    Riff,
-    /// An anthem's rise: up by steps to the fifth, a turn, and the fifth
-    /// held, the open ending a speed metal chorus asks on.
-    Rise,
-    /// A hook's fall in thirds by steps: from the fifth down, a step back
-    /// up between, to home.
-    Call,
-    /// Indie folk's sung fall, counted on the major pentatonic: the third,
-    /// down through the second to home, and under it to the sixth below.
-    Fall,
-    /// Indie folk's hook: the third and home by turns, then up to the fifth
-    /// and held there, the question a hook asks.
-    Rock,
-    /// Indie folk's brass hook: from the sixth below up through home to the
-    /// third, and back down to home and the sixth below.
-    Lift,
-    /// The gang's chant: the third struck again and again, up to the fifth
-    /// and back, ending on the third as most sung phrases of the style do.
-    Chant,
 }
 
 /// The shapes a Balkan tune sings in: each comes down to its finalis at
 /// the bottom of its range, and none climbs to a peak to resolve there,
 /// which is a Western tune's way.
 pub const FOLK_SHAPES: [Shape; 5] = [Shape::Arch, Shape::Descent, Shape::Circling, Shape::LeapBack, Shape::Wave];
-
-/// The shapes a blues sings in, the fall the most often; counted in
-/// the pentatonic's steps, each keeps within the fifth over home, the
-/// core a blues line moves in.
-pub const BLUES_SHAPES: [Shape; 4] = [Shape::Tumble, Shape::Riff, Shape::Tumble, Shape::Wave];
-
-/// The shapes a speed metal tune sings in, as Helloween's choruses do:
-/// mostly by step, an octave wide at most, rising to its height or
-/// falling from it in a sequence.
-pub const SPEED_SHAPES: [Shape; 2] = [Shape::Rise, Shape::Call];
-
-/// The shapes a stomp-and-holler tune sings in
-/// (`proofs/research/stomp-holler-findings.md`, §7): counted on the
-/// major pentatonic, about an octave wide, short phrases ending on the
-/// third or home, a quarter of the moves a tone struck again.
-pub const INDIE_SHAPES: [Shape; 4] = [Shape::Fall, Shape::Chant, Shape::Rock, Shape::Lift];
 
 impl Shape {
     /// The shape over six strong beats; a skeleton of another length
@@ -86,14 +44,6 @@ impl Shape {
             Shape::Circling => [0, 1, 0, -1, 0, 1],
             Shape::LeapBack => [0, 4, 3, 2, 1, 0],
             Shape::Wave => [0, 2, 1, 3, 2, 0],
-            Shape::Tumble => [3, 2, 1, 0, -1, 0],
-            Shape::Riff => [0, 2, 0, -1, 0, 0],
-            Shape::Rise => [0, 1, 2, 4, 3, 4],
-            Shape::Call => [4, 2, 3, 1, 2, 0],
-            Shape::Fall => [2, 2, 1, 0, -1, 0],
-            Shape::Rock => [2, 0, 2, 0, 3, 3],
-            Shape::Lift => [-1, 0, 2, 1, 0, -1],
-            Shape::Chant => [2, 2, 3, 2, 2, 2],
         }
     }
 
@@ -296,7 +246,7 @@ mod tests {
     /// recovers, and never wanders past a sixth.
     #[test]
     fn shapes_hold_their_span() {
-        for shape in FOLK_SHAPES.iter().chain(BLUES_SHAPES.iter()).chain(SPEED_SHAPES.iter()).chain(INDIE_SHAPES.iter()) {
+        for shape in &FOLK_SHAPES {
             for n in [4, 6, 8, 10] {
                 let s = shape.skeleton(n);
                 assert_eq!(s.len(), n);

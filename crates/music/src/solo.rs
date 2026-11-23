@@ -1,4 +1,5 @@
-//! A guitar solo as the players of 1980s metal built one, counted from
+//! A soloist's turn. Its gestures are a guitar solo's as the players of
+//! 1980s metal built one, counted from
 //! forty-five Helloween turns and eighteen more — Maiden, Accept, Gamma
 //! Ray, Malmsteen, Racer X, Cacophony, Metallica — decoded from their
 //! transcriptions (`proofs/research/solos-findings.md`).
@@ -17,19 +18,13 @@
 //! trill, a scale falling twice as often as rising — and runs on from
 //! the beat before by a step about half the time, a jump a third,
 //! a sequence or a repeat the rest, its rhythm changing about one beat in
-//! five. Two players are two people: one runs long lines with leaps,
-//! repeated cells and odd groupings, Hansen's way; the other plays short
-//! bent phrases round a pedal or a neighbour and peaks in the middle,
-//! Weikath's. A turn that answers another flips at least two of how it
+//! five. A turn that answers another flips at least two of how it
 //! opens, its main note value, its density's course and its top.
 //!
-//! Other idioms are other players. A power ballad's soloist bends and
-//! holds more and opens held; a blues player breathes — phrases of six or
-//! seven beats with rests between, most entering off the beat or pushed
-//! ahead of it, one in three restating an earlier one, on the minor
-//! pentatonic in eighths; a wedding band's soloist runs sixteenths
-//! regrouped against the dance's limp, turns about a tone, sequences cells,
-//! and closes every two or four bars on a held tone.
+//! Another idiom is another player: a wedding band's soloist runs
+//! sixteenths regrouped against the dance's limp, turns about a tone,
+//! sequences cells, and closes every two or four bars on a held tone
+//! (`BALKAN`), the one player a track casts.
 //!
 //! A turn is pitch and time in the score's key; the piece holds every
 //! strong beat to the chord and repairs the line, as it does a tune.
@@ -98,57 +93,6 @@ pub struct Phrasing {
     pub again: f32,
 }
 
-/// Hansen's way: four beats in five fast, runs of seven beats, thirty-one
-/// semitones, leaps, cells in two turns of three, odd groupings in half.
-pub const SHREDDER: Player = Player { name: "shredder", fast: 0.79, run: 7, span: 18, pedal: 0.14, turn: 0.03, leap: 0.17, cells: 0.68, odd: 0.53, peaks_mid: 0.37, tuplets: true, picks: true, opens: METAL_OPENS, ends: METAL_ENDS, density: [1.0; 4], values: [0.0, 5.0, 1.5, 2.0 + 4.0 * 0.53], phrasing: None, scale: None };
-
-/// Weikath's way: half the beats fast, runs of two or three beats,
-/// twenty-four semitones, short bent phrases round a pedal or a
-/// neighbour, the peak in the middle in two turns of three.
-pub const SINGER: Player = Player { name: "singer", fast: 0.52, run: 3, span: 14, pedal: 0.21, turn: 0.12, leap: 0.07, cells: 0.31, odd: 0.31, peaks_mid: 0.69, tuplets: true, picks: true, opens: METAL_OPENS, ends: METAL_ENDS, density: [1.0; 4], values: [0.0, 5.0, 1.5, 2.0 + 4.0 * 0.31], phrasing: None, scale: None };
-
-/// How the speed-metal turns surveyed open and end.
-const METAL_OPENS: [f32; 4] = [21.0, 11.0, 7.0, 6.0];
-const METAL_ENDS: [f32; 2] = [30.0, 12.0];
-
-/// A power ballad's soloist, from forty-seven turns
-/// (`proofs/research/ballad-guitars-findings.md`): slower than a speed
-/// metal turn, bent twice as often, a tone held about every bar; opening
-/// held more than bent, ending held about half the time; its peak in the
-/// middle half the time and its fastest playing most often in its last
-/// third, after the peak.
-pub const BALLADEER: Player = Player { name: "balladeer", fast: 0.5, run: 3, span: 14, pedal: 0.18, turn: 0.1, leap: 0.06, cells: 0.2, odd: 0.15, peaks_mid: 0.51, tuplets: true, picks: true, opens: [32.0, 19.0, 38.0, 11.0], ends: [53.0, 47.0], density: [20.0, 20.0, 20.0, 40.0], values: [0.0, 5.0, 1.5, 2.6], phrasing: None, scale: None };
-
-/// A blues soloist, from ninety-seven blues solos of the Weimar Jazz
-/// Database and the recordings' transcriptions
-/// (`proofs/research/blues-findings.md`): phrases of six or seven beats
-/// with a beat or two of rest between, five or six a chorus; one in five
-/// pushed in ahead of its beat, almost none on it; one in three
-/// restating an earlier one; steps and thirds of the minor pentatonic,
-/// walked in its own steps, in eighths — a beat of sixteenths now and
-/// then, a turn mostly of them seldom — long tones only where a phrase
-/// ends; denser as it goes, its peak in its second half.
-pub const BLUESMAN: Player = Player {
-    name: "bluesman",
-    fast: 0.7,
-    run: 2,
-    span: 8,
-    pedal: 0.12,
-    turn: 0.15,
-    leap: 0.05,
-    cells: 0.35,
-    odd: 0.0,
-    peaks_mid: 0.3,
-    tuplets: false,
-    picks: false,
-    opens: [30.0, 10.0, 20.0, 40.0],
-    ends: [70.0, 30.0],
-    density: [20.0, 15.0, 10.0, 55.0],
-    values: [9.0, 1.0, 0.0, 0.0],
-    phrasing: Some(Phrasing { len: (4, 10), in_bars: false, rest: (1, 2), pickup: 0.22, late: 0.71, again: 0.34 }),
-    scale: Some(crate::tune::MINOR_PENTATONIC),
-};
-
 /// A village band's soloist over a horo's vamp
 /// (`proofs/research/ornaments-findings.md`): sixteenths and eighths,
 /// never a shredder's tuplets, regrouped against the limp by the dance's
@@ -210,7 +154,7 @@ pub enum Density {
 /// A turn's main fast value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Value {
-    /// Eighths, now and then a beat of sixteenths: a blues line's.
+    /// Eighths, now and then a beat of sixteenths.
     Eighths,
     Sixteenths,
     Sextuplets,
@@ -253,35 +197,6 @@ impl Shape {
             if flips >= 2 {
                 return s;
             }
-        }
-    }
-}
-
-/// What the solo block holds, part by part.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Part {
-    /// A turn by the block's `n`th player.
-    Turn(usize),
-    /// Both players together: the piece's twin break.
-    Together,
-}
-
-/// The block's parts in `bars` bars, as the surveyed blocks run: two
-/// turns of eight bars with the twin break after, between or before
-/// them; or the turns trading eight and then halving to four, as
-/// Halloween's do; each part whole bars of two.
-pub fn layout(bars: u32, rng: &mut Rng) -> Vec<(u32, Part)> {
-    let third = (bars / 3 / 2 * 2).max(2);
-    let rest = bars - 2 * third;
-    match rng.weighted(&[3.0, 3.0, 2.0, 2.0]) {
-        0 => vec![(third, Part::Turn(0)), (third, Part::Turn(1)), (rest, Part::Together)],
-        1 => vec![(third, Part::Turn(0)), (rest, Part::Together), (third, Part::Turn(1))],
-        2 => vec![(rest, Part::Together), (third, Part::Turn(0)), (third, Part::Turn(1))],
-        _ => {
-            let long = (bars / 3 / 2 * 2).max(2);
-            let short = ((bars - 2 * long) / 2 / 2 * 2).max(2);
-            let last = bars - 2 * long - short;
-            vec![(long, Part::Turn(0)), (long, Part::Turn(1)), (short, Part::Turn(0)), (last, Part::Turn(1))]
         }
     }
 }
@@ -736,76 +651,31 @@ mod tests {
         s
     }
 
-    /// A turn fills its bars, stays in its register, and two turns of one
-    /// player drawn apart are not one line.
-    #[test]
-    fn a_turn_fills_its_bars_in_its_register() {
-        let s = score();
-        for seed in 0..40 {
-            let mut rng = Rng::new(seed);
-            let player = [&SHREDDER, &SINGER, &BALLADEER][seed as usize % 3];
-            let shape = Shape::draw(player, &mut rng);
-            let line = turn(&s, 0, 8, (59, 88), player, &shape, &mut rng);
-            assert!(!line.is_empty());
-            let end = line.iter().map(|n| n.0 + n.1).max().unwrap();
-            assert!(end <= 8 * s.bar() && end + 4 * E >= 8 * s.bar(), "seed {seed}: a turn ending at {end}");
-            assert!(line.iter().all(|n| (59..=88).contains(&n.2)), "seed {seed}: out of register");
-            assert!(line.windows(2).all(|w| w[0].0 <= w[1].0), "seed {seed}: out of order");
-        }
-    }
-
     /// An answering turn flips at least two of what the turn it answers
-    /// is, and the shredder plays more fast notes than the singer.
+    /// is.
     #[test]
-    fn an_answer_contrasts_and_the_players_differ() {
-        let s = score();
-        let (mut shred, mut sing) = (0usize, 0usize);
+    fn an_answer_contrasts() {
         for seed in 0..40 {
             let mut rng = Rng::new(seed);
-            let a = Shape::draw(&SHREDDER, &mut rng);
-            let b = Shape::answer(&a, &SINGER, &mut rng);
+            let a = Shape::draw(&BALKAN, &mut rng);
+            let b = Shape::answer(&a, &BALKAN, &mut rng);
             let flips = [a.opening != b.opening, a.value != b.value, a.density != b.density, a.top != b.top].iter().filter(|f| **f).count();
             assert!(flips >= 2);
-            shred += turn(&s, 0, 8, (59, 88), &SHREDDER, &a, &mut rng).len();
-            sing += turn(&s, 0, 8, (59, 88), &SINGER, &b, &mut rng).len();
         }
-        assert!(shred > sing, "{shred} against {sing}");
     }
 
-    /// A player that breathes leaves rests between its phrases, ends
-    /// inside its bars and in its register, and the bluesman stands on the
-    /// pentatonic.
+    /// A turn is notes in order that end inside its bars and stay in its
+    /// register.
     #[test]
-    fn a_breathing_player_rests_between_phrases() {
+    fn a_turn_keeps_its_bars_and_its_register() {
         let s = score();
         for seed in 0..40 {
             let mut rng = Rng::new(seed);
-            let player = if seed % 2 == 0 { &BLUESMAN } else { &BALKAN };
-            let shape = Shape::draw(player, &mut rng);
-            let line = turn(&s, 0, 8, (59, 88), player, &shape, &mut rng);
+            let shape = Shape::draw(&BALKAN, &mut rng);
+            let line = turn(&s, 0, 8, (59, 88), &BALKAN, &shape, &mut rng);
             assert!(!line.is_empty());
             assert!(line.iter().all(|n| n.0 + n.1 <= 8 * s.bar() && (59..=88).contains(&n.2)), "seed {seed}");
-            let rests = line.windows(2).filter(|w| w[1].0 >= w[0].0 + w[0].1 + E).count();
-            if player == &BLUESMAN {
-                assert!(rests >= 2, "seed {seed}: {rests} rests in eight bars");
-                for n in &line {
-                    let d = s.key_at(n.0).standing_degree(n.2).rem_euclid(7);
-                    assert!(crate::tune::MINOR_PENTATONIC.contains(&d), "seed {seed}: degree {d} off the pentatonic");
-                }
-            }
-        }
-    }
-
-    /// Every layout fills its bars, whole bars of two, with a turn for
-    /// each player.
-    #[test]
-    fn every_layout_fills_the_block() {
-        for seed in 0..40 {
-            let parts = layout(24, &mut Rng::new(seed));
-            assert_eq!(parts.iter().map(|(n, _)| n).sum::<u32>(), 24);
-            assert!(parts.iter().all(|(n, _)| *n >= 2 && n % 2 == 0));
-            assert!(parts.contains(&(parts[0].0, Part::Turn(0))) || parts.iter().any(|p| p.1 == Part::Turn(0)));
-            assert!(parts.iter().any(|p| p.1 == Part::Turn(1)));
+            assert!(line.windows(2).all(|w| w[0].0 <= w[1].0), "seed {seed}: out of order");
         }
     }
 }

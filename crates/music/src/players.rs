@@ -3,8 +3,8 @@
 //! the beat, how its time wanders, how unevenly it strikes, how far out
 //! of tune it pitches, whether it swells into a held tone, and how it
 //! shapes a tone — its vibrato, and for a lead how it bends, scoops,
-//! slides, graces and lets a phrase go — a guitarist's way, a
-//! saxophonist's, a zurna player's. Every shape is a bend of the
+//! slides, graces and lets a phrase go — a guitarist's way, a zurna
+//! player's. Every shape is a bend of the
 //! channel's pitch, the player's own: a bank's mod-wheel vibrato runs at
 //! the bank's rate, which on the harmonica and the tenor is a bleat, and
 //! on a bank recorded with vibrato is a second one beating against it.
@@ -18,7 +18,7 @@
 //! graces, shakes, its own vibrato — and a second voice under it plays
 //! plain, as a section player does. Which player a style's lead is, the
 //! style says, casting it (`Score::cast`): a village clarinet's pralls
-//! and not a blues horn's, a saxophonist's falls and not a zurna's.
+//! and not a state ensemble's straight tone.
 //! Unless a style casts it, a part is played by its role and its
 //! instrument alone (`of`), which know no style.
 
@@ -283,70 +283,6 @@ const PLAIN_WIND: Ornaments = Ornaments {
     dips: false,
     grace: None,
     shake: None,
-};
-
-/// A blues saxophonist: scooping into a quarter of its accented tones
-/// from a half or a whole step, falling off a sixth of its phrases two to
-/// five semitones, a doit seldom; its vibrato dipping under the tone
-/// first, from a quarter second — through a long tone's last two fifths
-/// only — five and a half to six times a second; a downbeat late, its
-/// bank's own wheel left alone.
-pub const SAXOPHONIST: Player = Player {
-    name: "saxophonist",
-    lean: (10.0, 35.0),
-    ornaments: Some(Ornaments { bend: 0.25, whole: 0.5, rise_s: (0.06, 0.14), narrow: (12.0, 20.0), wide: (18.0, 25.0), terminal: 0.6, ends: [0.79, 0.05, 0.16], dips: true, ..PLAIN_WIND }),
-    ..SINGER
-};
-
-/// A blues harmonica player: dipping into a third of its tones from a
-/// semitone under, bent down only, cutting a quarter of its phrases a
-/// semitone flat; its vibrato only on a held, bent tone, and now and
-/// then a shake to the next hole on a long peak; its bank's own wheel,
-/// at the wrong rate, left alone.
-pub const HARP_PLAYER: Player = Player {
-    name: "harmonica player",
-    lean: (10.0, 35.0),
-    ornaments: Some(Ornaments {
-        bend: 0.35,
-        whole: 0.15,
-        rise_s: (0.04, 0.09),
-        rate_hz: (5.5, 6.5),
-        narrow: (12.0, 20.0),
-        vibrato_from_s: (0.2, 0.25),
-        vibrato_min_s: 0.4,
-        fall: (1, 1),
-        fall_s: 0.18,
-        ends: [0.75, 0.0, 0.25],
-        accel: 1.0,
-        shake: Some(Shake { share: 0.1, cents: 300.0, rate_hz: 7.0 }),
-        ..PLAIN_WIND
-    }),
-    ..SINGER
-};
-
-/// A Harmon-muted trumpet: little vibrato and that late in a long tone, a
-/// half-valve scoop now and then, a phrase's end glided down a little or
-/// fallen off, a shake on a long peak.
-pub const MUTED_TRUMPETER: Player = Player {
-    name: "muted trumpeter",
-    lean: (10.0, 30.0),
-    ornaments: Some(Ornaments {
-        bend: 0.1,
-        whole: 0.3,
-        rise_s: (0.08, 0.15),
-        vibrato_from_s: (0.5, 0.7),
-        vibrato_min_s: 0.6,
-        rate_hz: (5.5, 6.5),
-        narrow: (8.0, 12.0),
-        wide: (10.0, 14.0),
-        terminal: 0.5,
-        fall: (2, 5),
-        fall_s: 0.22,
-        ends: [0.85, 0.0, 0.15],
-        shake: Some(Shake { share: 0.08, cents: 250.0, rate_hz: 6.0 }),
-        ..PLAIN_WIND
-    }),
-    ..SINGER
 };
 
 /// A zurna player: every tone of a third of a second or more shaking at

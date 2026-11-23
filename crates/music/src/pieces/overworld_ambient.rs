@@ -1,36 +1,41 @@
-//! The overworld's music: a place told on a dance, from a
-//! drone. Every choice is a draw from the seed's stream, one fork per
-//! purpose, and the first forks decide what kind of piece this is —
-//! which story it tells, in what mode and tonic, on which dance, with
-//! which instruments, on what themes, in which phrase form, on which
-//! harmonic schemata; whether the dance is there from the start, steps
-//! in, is a plucked figure with no drum or no pulse at all; whether its
-//! tempo holds or presses on; the one thing it does once; how it opens
-//! and how it ends — each as often as the exploration music and the
-//! dance records surveyed do it (`proofs/research/overworld-findings.md`),
-//! so two seeds are two pieces of one place. The seed picks which shape
-//! at every level; it never picks the next note.
+//! The overworld's music: a place told on a dance, from a drone. Every
+//! choice is a draw from the seed's stream, one fork per purpose, and the
+//! first forks decide what kind of piece this is — in what mode and
+//! tonic, on which dance, with which instruments, the order its band
+//! gathers in; whether the dance is there from the start, steps in, is a
+//! plucked figure with no drum or no pulse at all; whether its tempo
+//! holds or presses on; how it opens and how it ends — each as often as
+//! the exploration music and the dance records surveyed do it
+//! (`proofs/research/overworld-findings.md`), so two seeds are two pieces
+//! of one place.
 //!
-//! A story is a ladder of the bed's layers, walked as `ladder` says;
-//! the story is the texture's, and the loudness holds, the pedal
-//! giving back what each layer adds. One theme runs under the piece, or
-//! two or three in series as a dance plays its tunes, phrase after
-//! phrase, an open schema and a closed by turns, and one player tells
-//! it, the lead: it sings the tune, plays it as a
-//! riff, holds a tone between the tellings. The weave echoes it a bar
-//! behind, a second holds tones under the riff, and the bed — drum,
-//! plucks, strings, breath — plays the dance under it.
+//! The lead plays first. The piece is about its motif, and the lead
+//! improvises its distance from it a half-phrase at a time (`improv`),
+//! taking each phrase's schema as it goes. The band is written after and
+//! follows where the lead stands (`gathered`): how many play, the roll
+//! and the step up behind a run back, the stroke the motif lands on, the
+//! silence after the lead breaks off, and the level, which the pedal lets
+//! move with the band (`SWELL`) where it gives back the rest of what each
+//! layer adds. Nothing of the band is placed by the bar count: a fill
+//! that comes every phrase says nothing, and one that comes because the
+//! lead is on its way back says so. What the band plays is the lead's
+//! too, bar by bar: the plucks and the drum's fingers strike where the
+//! lead moves off the beat, the second pluck a third under its tones,
+//! and where the lead holds they take the figure's eighths it leaves
+//! open; the weave says the motif back in the bar the lead rests after
+//! it, a second holds tones under the motif said higher, and the bed
+//! — drum, plucks, strings, breath — plays the dance under it.
 
-use crate::ladder::{self, turn, Bed, Run, Story, Walk};
+use crate::ladder::{self, Run, Walk};
 use crate::band::Part;
+use crate::improv::{self, Feel, Stance};
 use crate::pieces::Params;
 use crate::rng::Rng;
 use crate::score::{Instrument, Note, Role, Score, Section, TICKS_PER_EIGHTH as E};
 use crate::teller::{self, Hold, Teller, Telling};
 use crate::theory::groove::{Groove, BALKAN};
-use crate::theory::melody::{Theme, FOLK_SHAPES};
-use crate::theory::phrase::{self, Form as PhraseForm, FORMS};
-use crate::theory::schema::{holdable_roots, schemata_for, Schema};
+use crate::theory::phrase;
+use crate::theory::schema::{schemata_for, Schema};
 use crate::theory::{clashes, Chord, Key, Mode};
 use crate::variation::{self, Role as Bar};
 use crate::tune::{self, Tune};
@@ -92,7 +97,7 @@ const LEAD: f32 = 3.0;
 const SECONDS: [u8; 4] = [FIDDLE, CLARINET, ACCORDION, ENGLISH_HORN];
 
 /// The velocity every voice strikes at before its own accent: one
-/// dynamic for the whole bed, since its story is in what plays.
+/// dynamic for the whole bed, since its level is the pedal's to move.
 const VEL: i32 = 85;
 
 /// The frame drum's level, dB: its most struck stroke's, under the
@@ -114,17 +119,9 @@ const LIFT_LEAD: [f32; 6] = [0.0, 1.6, 3.1, 0.0, 3.8, 3.4];
 
 /// The tune's register; the lead and the second take it here, the weave
 /// an octave under. Home is the tonic a third under its middle, since
-/// a shape reaches a sixth above home and a step below, so with the
-/// sequences the tune spans an octave over home and never leaves the
-/// register.
+/// a line moves from two degrees under home to an octave over it and
+/// never leaves the register.
 const TUNE: (u8, u8) = (62, 88);
-/// The sequence a phrase pair takes, in degrees, pair by pair: the
-/// theme, a step up, the theme, a step up, round again.
-const PAIRS: [i32; 2] = [0, 1];
-/// The sequence the ladder's top takes instead, a third up: the
-/// piece's own seyir, the tune rising where the bed is fullest.
-const CLIMB: i32 = 2;
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Pad {
     Off,
@@ -136,17 +133,19 @@ enum Pad {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Plucks {
     Off,
-    /// The bass alone, on the dance's strong beats.
+    /// The bass on the dance's strong beats and the chord where the lead
+    /// moves, both soft.
     Accents,
-    /// The chord too, on the dance's strikes.
+    /// Both at full weight.
     Full,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Drum {
     Off,
-    /// The dum alone.
+    /// The dum, and the fingers where the lead moves.
     Accents,
+    /// The dance's teks too.
     Full,
 }
 
@@ -160,7 +159,7 @@ enum Weave {
     Two,
 }
 
-/// A layer of the bed, the thing a rung of the ladder moves.
+/// A layer of the bed, the thing that joins as the band gathers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Layer {
     Pad,
@@ -191,9 +190,9 @@ impl Texture {
     }
 }
 
-impl Bed for Texture {
-    type Layer = Layer;
-
+impl Texture {
+    /// The bed with `layer` one notch up; the same bed where it is
+    /// already at its top.
     fn up(self, layer: Layer) -> Texture {
         match layer {
             Layer::Pad => Texture { pad: if self.pad == Pad::Off { Pad::Thin } else { Pad::Full }, ..self },
@@ -203,96 +202,115 @@ impl Bed for Texture {
             Layer::Weave => Texture { weave: if self.weave == Weave::Off { Weave::One } else { Weave::Two }, ..self },
         }
     }
-
-    fn step_from(self, from: Texture) -> &'static str {
-        let to = self;
-        let moved = |a: u8, b: u8, names: [&'static str; 4]| match (a, b) {
-            (0, _) => names[0],
-            (_, 0) => names[3],
-            _ if b > a => names[1],
-            _ => names[2],
-        };
-        if from.pad != to.pad {
-            moved(from.pad as u8, to.pad as u8, ["pad in", "pad up", "pad down", "pad out"])
-        } else if from.plucks != to.plucks {
-            moved(from.plucks as u8, to.plucks as u8, ["plucks in", "plucks up", "plucks down", "plucks out"])
-        } else if from.drum != to.drum {
-            moved(from.drum as u8, to.drum as u8, ["drum in", "drum up", "drum down", "drum out"])
-        } else if from.colours != to.colours {
-            if to.colours { "colours in" } else { "colours out" }
-        } else if from.weave != to.weave {
-            moved(from.weave as u8, to.weave as u8, ["weave in", "weave up", "weave down", "weave out"])
-        } else {
-            "held"
-        }
-    }
 }
 
 use Layer::{Colours, Drum as DrumLayer, Pad as PadLayer, Plucks as PlucksLayer, Weave as WeaveLayer};
-use Telling::{Long, Off, Phrases, Riff, RiffAndLong};
+/// How a band gathers: what plays where it is barest, and the layers in
+/// the order they join as it comes in behind the lead, each a notch.
+struct Gathering {
+    name: &'static str,
+    /// How often the seed picks it, against the others.
+    weight: f32,
+    base: Texture,
+    ladder: &'static [Layer],
+}
 
-const STORIES: [Story<Texture, Telling>; 6] = [
-    Story {
-        name: "arc",
-        weight: 3.0,
-        base: Texture::BARE,
-        ladder: &[PadLayer, DrumLayer, PadLayer, PlucksLayer, WeaveLayer, Colours, PlucksLayer],
-        leads: &[Phrases, Phrases, Phrases, Long, Long, RiffAndLong, RiffAndLong, Riff],
-        turns: &[turn((7, 7), (1, 1)), turn((0, 0), (0, 0))],
-        halves: (1, 1),
-        pace: (0.0, 1.0),
-    },
-    Story {
-        name: "two waves",
-        weight: 2.0,
-        base: Texture::BARE,
-        ladder: &[PadLayer, DrumLayer, PlucksLayer, WeaveLayer, PadLayer, Colours],
-        leads: &[Phrases, Phrases, Phrases, Long, Long, RiffAndLong, Riff],
-        turns: &[turn((3, 3), (0, 0)), turn((1, 1), (0, 0)), turn((6, 6), (1, 1)), turn((0, 0), (0, 0))],
-        halves: (1, 1),
-        pace: (0.0, 1.0),
-    },
-    Story {
-        name: "slow burn",
-        weight: 2.0,
-        base: Texture::BARE,
-        ladder: &[PadLayer, DrumLayer, PadLayer, WeaveLayer, PlucksLayer, Colours],
-        leads: &[Phrases, Phrases, Phrases, Phrases, Long, Long, Phrases],
-        turns: &[turn((6, 6), (2, 2)), turn((0, 0), (0, 0))],
-        halves: (1, 2),
-        pace: (0.0, 1.0),
-    },
-    Story {
-        name: "lament",
-        weight: 2.0,
-        base: Texture::BARE,
-        ladder: &[PadLayer, PlucksLayer, PadLayer, WeaveLayer, Colours],
-        leads: &[Phrases, Phrases, Phrases, Phrases, Long, Long],
-        turns: &[turn((5, 5), (1, 1)), turn((0, 0), (0, 0))],
-        halves: (2, 2),
-        pace: (0.0, 1.0),
-    },
-    Story {
+impl Gathering {
+    /// The bed with the band `gathered` this far, 0 its barest and 1 all
+    /// of it.
+    fn bed(&self, gathered: f32) -> Texture {
+        let rung = (gathered * self.ladder.len() as f32).round() as usize;
+        self.ladder[..rung.min(self.ladder.len())].iter().fold(self.base, |t, l| t.up(*l))
+    }
+}
+
+const GATHERINGS: [Gathering; 6] = [
+    Gathering { name: "arc", weight: 3.0, base: Texture::BARE, ladder: &[PadLayer, DrumLayer, PadLayer, PlucksLayer, WeaveLayer, Colours, PlucksLayer] },
+    Gathering { name: "two waves", weight: 2.0, base: Texture::BARE, ladder: &[PadLayer, DrumLayer, PlucksLayer, WeaveLayer, PadLayer, Colours] },
+    Gathering { name: "slow burn", weight: 2.0, base: Texture::BARE, ladder: &[PadLayer, DrumLayer, PadLayer, WeaveLayer, PlucksLayer, Colours] },
+    Gathering { name: "lament", weight: 2.0, base: Texture::BARE, ladder: &[PadLayer, PlucksLayer, PadLayer, WeaveLayer, Colours] },
+    Gathering {
         name: "dance",
         weight: 2.0,
         base: Texture { pad: Pad::Off, plucks: Plucks::Full, drum: Drum::Accents, colours: false, weave: Weave::Off },
         ladder: &[PadLayer, WeaveLayer, PadLayer, DrumLayer, Colours],
-        leads: &[Off, Phrases, Phrases, RiffAndLong, RiffAndLong, Riff],
-        turns: &[turn((5, 5), (1, 1)), turn((1, 1), (0, 0)), turn((4, 5), (1, 1)), turn((0, 0), (0, 0))],
-        halves: (1, 1),
-        pace: (0.0, 1.0),
     },
-    Story {
+    Gathering {
         name: "fragments",
         weight: 1.5,
         base: Texture { pad: Pad::Thin, plucks: Plucks::Off, drum: Drum::Off, colours: false, weave: Weave::Off },
         ladder: &[PlucksLayer, WeaveLayer, PlucksLayer, PadLayer, Colours],
-        leads: &[Phrases, Riff, Phrases, Riff, Phrases, Long],
-        turns: &[turn((1, 1), (0, 0)), turn((0, 0), (0, 0)), turn((1, 1), (0, 0)), turn((2, 3), (0, 0)), turn((1, 1), (0, 0)), turn((4, 5), (0, 1)), turn((0, 0), (0, 0))],
-        halves: (1, 1),
-        pace: (0.0, 1.0),
     },
 ];
+
+/// How the lead tells a half-phrase it stands to its motif so: sung, but
+/// the motif higher, which it plays detached over the second's held
+/// tones with the strings on it, and its run back, detached.
+fn telling(stance: Stance) -> Telling {
+    match stance {
+        Stance::Lifts => Telling::RiffAndLong,
+        Stance::Returns => Telling::Riff,
+        _ => Telling::Phrases,
+    }
+}
+
+/// How far the band is gathered through each bar of a play of `stances`,
+/// 0 its barest and 1 all of it. It follows the lead: a little more with
+/// each statement the play opens on; all the more where the lead says the
+/// motif higher; thinner where it answers and thinnest where it leaves;
+/// coming in bar by bar behind a run back; out, but for the drone and the
+/// breath, in the silence after the lead breaks off; landing with the
+/// motif where a run or a break led to it, a little fuller each time; and
+/// settling under the last statement.
+fn gathered(stances: &[Stance]) -> Vec<f32> {
+    let mut out = Vec::new();
+    let mut e = 0.2f32;
+    let mut landings = 0;
+    for (h, stance) in stances.iter().enumerate() {
+        let prev = h.checked_sub(1).map(|p| stances[p]);
+        let (first, second) = match stance {
+            Stance::States => {
+                e = match prev {
+                    Some(Stance::Returns | Stance::Breaks) => {
+                        landings += 1;
+                        (0.5 + 0.1 * landings as f32).min(0.9)
+                    }
+                    // The last statement settles; the first few gather.
+                    Some(Stance::States) if h + 1 == stances.len() => (e - 0.15).max(0.3),
+                    None | Some(Stance::States) => (e + 0.1).min(0.7),
+                    Some(Stance::Lifts) => (e - 0.15).max(0.4),
+                    _ => e.max(0.45),
+                };
+                (e, e)
+            }
+            Stance::Lifts => {
+                e = (e + 0.15).min(1.0);
+                (e, e)
+            }
+            Stance::Answers => {
+                e = (e - 0.15).max(0.3);
+                (e, e)
+            }
+            Stance::Leaves => {
+                e = (e - 0.3).max(0.2);
+                (e, e)
+            }
+            Stance::Breaks => ((e - 0.2).max(0.15), 0.0),
+            Stance::Returns => {
+                let first = (e + 0.1).min(1.0);
+                e = (e + 0.25).min(1.0);
+                (first, e)
+            }
+        };
+        out.extend([first, second]);
+    }
+    out
+}
+
+/// How far the level moves with the band, LU, from its barest to all of
+/// it: what the pedal lets through of what the layers add, so a return
+/// is heard to land and a leaving to fall away.
+const SWELL: f32 = 5.0;
 
 /// Whether the piece has a pulse, and what: the dance on the plucks and
 /// the drum from its start; the dance with its drum stepping in a quarter
@@ -310,36 +328,6 @@ enum Pulse {
 impl Pulse {
     fn drums(self) -> bool {
         matches!(self, Pulse::Dance | Pulse::StepsIn)
-    }
-}
-
-/// The one thing the piece does once, a colour and never a hole: the bed
-/// hollowing to the drone and the breath under the lead for a phrase; the
-/// tune sung by the second for a phrase pair; a phrase pair lifted onto
-/// the relative major's chords, or sequenced on the fifth; a phrase sung
-/// over the drone and the pad with the dance stopped. The lead sings
-/// through every one but the handover and the tempo holds through all of
-/// them: a bar of nothing, or a phrase that wanders off the beat and
-/// back, is heard as the band stopping and not as the piece turning.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Event {
-    Hollow,
-    Voice,
-    Lifted,
-    Fifth,
-    Song,
-}
-
-impl Event {
-    /// Its name, as a band's preferences name it.
-    fn name(self) -> &'static str {
-        match self {
-            Event::Hollow => "hollow",
-            Event::Voice => "handover",
-            Event::Lifted => "lifted",
-            Event::Fifth => "fifth",
-            Event::Song => "song",
-        }
     }
 }
 
@@ -406,18 +394,16 @@ struct Design {
     choir: bool,
     horn: bool,
     groove: &'static Groove,
-    form: PhraseForm,
-    theme: Theme,
-    open: &'static Schema,
-    closed: &'static Schema,
+    /// The play's rhythms, the lead's and the band's.
+    feel: Feel,
+    /// The rows the mode has that the drone holds: the questions and the
+    /// answers the lead takes its harmony from.
+    open: Vec<&'static Schema>,
+    closed: Vec<&'static Schema>,
     pulse: Pulse,
     /// Whether the tempo presses on from a little past halfway, and to
     /// how much faster.
     ramp: Option<f32>,
-    /// The tune after the first, in series, where the walk is long enough
-    /// to tell each three pairs.
-    tunes: Vec<Theme>,
-    event: Event,
     intro: Intro,
     ending: Ending,
     /// Whether the band slows into its last bars.
@@ -435,18 +421,20 @@ struct Form {
     walk: Walk<Texture, Telling>,
     tune: Tune,
     design: Design,
-    /// The bars the event spans.
-    event: (u32, u32),
+    /// Where the lead stands to its motif, a half-phrase each.
+    stances: Vec<Stance>,
     /// The bar the drum steps in at where it steps in.
     steps_in: u32,
-    /// Which tune each bar tells.
-    tunes: Vec<usize>,
 }
 
 impl Form {
-    /// The bed at `bar`: the walk's, as the pulse has it, emptied where the
-    /// event or the ending empties it.
+    /// The bed at `bar`: the band's as it follows the lead, as the pulse
+    /// has it, emptied where the lead has broken off or the ending
+    /// empties it.
     fn texture_at(&self, bar: u32) -> Texture {
+        if self.spaces(bar) {
+            return Texture::BARE;
+        }
         let mut t = self.walk.bed_at(bar);
         match self.design.pulse {
             Pulse::Dance => {
@@ -469,37 +457,53 @@ impl Form {
             }
         }
         let at = self.bars();
-        let quiet = self.inside_event(bar) && self.design.event == Event::Hollow;
         let alone = self.design.ending == Ending::Alone && bar + phrase::BARS / 2 >= at;
         let decayed = self.design.ending == Ending::Decay && bar + phrase::BARS / 2 >= at;
-        if quiet || alone || decayed {
+        if alone || decayed {
             return Texture::BARE;
         }
-        if (self.design.ending == Ending::Decay && bar + phrase::BARS >= at) || (self.inside_event(bar) && self.design.event == Event::Song) {
+        if self.design.ending == Ending::Decay && bar + phrase::BARS >= at {
             t = Texture { plucks: Plucks::Off, drum: Drum::Off, colours: false, weave: Weave::Off, ..t };
         }
         t
     }
-    fn inside_event(&self, bar: u32) -> bool {
-        (self.event.0..self.event.1).contains(&bar)
+    fn stance(&self, bar: u32) -> Option<Stance> {
+        self.stances.get(bar as usize / 2).copied()
     }
-    /// The walk's runs, the lead silent where the event hands the tune to
-    /// the second, singing where the bed hollows under it or the dance
-    /// stops for its song.
-    fn runs(&self) -> Vec<Run<Telling>> {
-        let mut runs: Vec<Run<Telling>> = Vec::new();
-        for b in 0..self.bars() {
-            let lead = match self.design.event {
-                Event::Voice if self.inside_event(b) => Telling::Off,
-                Event::Hollow | Event::Song if self.inside_event(b) => Telling::Phrases,
-                _ => self.walk.at(b).lead,
-            };
-            match runs.last_mut() {
-                Some(r) if r.lead == lead => r.b = b + 1,
-                _ => runs.push(Run { lead, a: b, b: b + 1 }),
-            }
+    /// Whether `bar` is the silence after the lead breaks off, where the
+    /// band opens the space the motif is missed in.
+    fn spaces(&self, bar: u32) -> bool {
+        bar % 2 == 1 && self.stance(bar) == Some(Stance::Breaks)
+    }
+    /// Whether `bar` is the last of a run into the motif: where the band
+    /// leans in, the drum rolling and the bass stepping up to it.
+    fn gathers(&self, bar: u32) -> bool {
+        bar % 2 == 1 && self.stance(bar) == Some(Stance::Returns) && self.stance(bar + 1).is_some_and(|s| s.arrives())
+    }
+    /// Whether the motif lands on `bar`, come back to by a run or after a
+    /// break: where the band comes down on it together.
+    fn lands(&self, bar: u32) -> bool {
+        bar % 2 == 0 && bar > 0 && self.stance(bar).is_some_and(|s| s.arrives()) && matches!(self.stance(bar - 1), Some(Stance::Returns | Stance::Breaks))
+    }
+    /// The eighths off the beat the band strikes in `bar`: the lead's own
+    /// where it moves off the beat twice or more, so the band is in the
+    /// rhythm the lead is playing, whatever that is; else the figure's
+    /// that the lead leaves open, the band answering where it holds.
+    fn strikes(&self, bar: u32) -> Vec<u32> {
+        let meter = self.design.groove.meter();
+        let lead: Vec<u32> = self.tune.bars[bar as usize].iter().map(|t| t.onset).filter(|onset| !meter.strong(*onset)).collect();
+        if lead.len() >= 2 {
+            return lead;
         }
-        runs
+        self.design.feel.strikes(self.design.groove).into_iter().filter(|e| !lead.contains(e)).collect()
+    }
+    /// Whether `bar` is where the lead rests after its motif or an
+    /// answer, the bar the weave echoes it in.
+    fn echoes(&self, bar: u32) -> bool {
+        bar % 2 == 1 && matches!(self.stance(bar), Some(Stance::States | Stance::Lifts | Stance::Answers))
+    }
+    fn runs(&self) -> Vec<Run<Telling>> {
+        self.walk.runs()
     }
     fn chord(&self, bar: u32) -> Chord {
         self.tune.chords[bar as usize]
@@ -519,16 +523,20 @@ fn compose(params: &Params) -> (Score, Form) {
     let mut skeleton = rng.fork(0);
     // The band: the place's players.
     let band = params.band;
-    let stories: Vec<f32> = STORIES.iter().map(|s| s.weight * band.lean(s.name)).collect();
-    let story = &STORIES[skeleton.weighted(&stories)];
+    let gatherings: Vec<f32> = GATHERINGS.iter().map(|g| g.weight * band.lean(g.name)).collect();
+    let gathering = &GATHERINGS[skeleton.weighted(&gatherings)];
     // Never the harmonic minor: its leading tone sits a semitone under
     // the tonic drone in every chord that carries it.
     let mode = [Mode::Aeolian, Mode::Dorian, Mode::Hijaz][skeleton.weighted(&[4.0, 2.5, 2.5])];
     let key = Key::new(["D", "E", "G", "A", "C"][skeleton.weighted(&[3.0, 2.0, 2.0, 2.0, 1.0])], mode);
     // The slow dances, for a wander; the quick ones are other pieces'.
     let groove = &BALKAN[skeleton.weighted(&[4.0, 0.0, 0.0, 2.0, 1.0f32].iter().enumerate().map(|(i, w)| w * band.lean(BALKAN[i].name)).collect::<Vec<f32>>())];
-    let tempo = story.tempo(groove.tempo, &ladder::UNBOUNDED.within(band.prefs.tempo), &mut skeleton);
-    // At least one colour, since a ladder may bring the colours in.
+    let tempo = {
+        let (lo, hi) = (groove.tempo.0 as f32, groove.tempo.1 as f32);
+        let (a, b) = ladder::UNBOUNDED.within(band.prefs.tempo).tempo;
+        skeleton.range((lo + (hi - lo) * a).round() as i32, (lo + (hi - lo) * b).round() as i32) as f32
+    };
+    // At least one colour, since a gathering may bring the colours in.
     let colours = skeleton.range(1, 7);
     let (open, closed) = schemata_for(&key);
     // The band's first lead the overworld has a voice for, and its first
@@ -539,12 +547,9 @@ fn compose(params: &Params) -> (Score, Form) {
     let second = band.programs(Part::Second).into_iter().chain(SECONDS).find(|p| *p != teller && SECONDS.contains(p)).unwrap_or(SECONDS[0]);
     let pluck = band.program(Part::Pluck, &[], NYLON_GUITAR);
     let pluck_2 = band.program(Part::Pluck2, &[], NYLON_GUITAR);
-    let form = FORMS[skeleton.below(FORMS.len())];
-    let theme = Theme::draw(groove, &FOLK_SHAPES, &mut skeleton);
-    let open = open[skeleton.below(open.len())];
-    let closed = closed[skeleton.below(closed.len())];
-    // The piece's identity, on a stream of its own; how it opens, what it
-    // does once and how it ends as the band likes to, its house ways.
+    let feel = Feel::draw(groove, &mut skeleton);
+    // The piece's identity, on a stream of its own; how it opens and how
+    // it ends as the band likes to, its house ways.
     let mut habits = rng.fork(14);
     let mut pulse = [Pulse::Dance, Pulse::StepsIn, Pulse::Figure, Pulse::Free][habits.weighted(&[30.0, 30.0, 20.0, 20.0])];
     let intros = [Intro::Fade, Intro::Prelude, Intro::Dance, Intro::Figure, Intro::Call];
@@ -553,26 +558,8 @@ fn compose(params: &Params) -> (Score, Form) {
     if opening == Intro::Figure && pulse == Pulse::Free {
         pulse = Pulse::Figure;
     }
-    let events = [Event::Hollow, Event::Voice, Event::Lifted, Event::Fifth, Event::Song];
-    let event = events[habits.weighted(&events.iter().zip([30.0, 20.0, 15.0, 15.0, 20.0]).map(|(e, w)| w * band.lean(e.name())).collect::<Vec<f32>>())];
-    // The tempo presses on in a dance's records, never under a song.
-    let ramp = (pulse.drums() && event != Event::Song && habits.chance(0.2)).then(|| habits.range(110, 120) as f32 / 100.0);
-    // One tune, or two: a tune has to come round before the next can be
-    // heard as the next, and a third in a piece this long was a medley.
-    let count = [1, 2][habits.weighted(&[55.0, 45.0])];
-    let tunes: Vec<Theme> = (1..count)
-        .map(|_| {
-            // Another shape than the first's, where a few draws find one.
-            let mut t = Theme::draw(groove, &FOLK_SHAPES, &mut habits);
-            for _ in 0..8 {
-                if t.shape != theme.shape {
-                    break;
-                }
-                t = Theme::draw(groove, &FOLK_SHAPES, &mut habits);
-            }
-            t
-        })
-        .collect();
+    // The tempo presses on in a dance's records.
+    let ramp = (pulse.drums() && habits.chance(0.2)).then(|| habits.range(110, 120) as f32 / 100.0);
     let endings = [Ending::Decay, Ending::Alone, Ending::Cadence, Ending::Stroke, Ending::Stop];
     let close = endings[habits.weighted(&endings.iter().zip([40.0, 20.0, 15.0, 20.0, 5.0]).map(|(e, w)| w * band.lean(e.name())).collect::<Vec<f32>>())];
     // The stroke is the drum's.
@@ -589,14 +576,11 @@ fn compose(params: &Params) -> (Score, Form) {
         horn: colours & 2 != 0,
         shimmer: colours & 4 != 0,
         groove,
-        form,
-        theme,
+        feel,
         open,
         closed,
         pulse,
         ramp,
-        tunes,
-        event,
         intro: opening,
         ending: close,
         slows,
@@ -655,49 +639,32 @@ fn compose(params: &Params) -> (Score, Form) {
     let colours: Vec<&str> = [(design.choir, "choir"), (design.horn, "horn"), (design.shimmer, "shimmer")].into_iter().filter(|(on, _)| *on).map(|(_, n)| n).collect();
     let bar = score.bar();
 
-    // The walk, in half-phrases, and whole question-and-answer pairs
-    // of them, so it closes on an answer.
-    let walk = story.place(&mut skeleton, &mut score, 4, &[], |texture, lead| texture.trim(lead));
-    let bars = walk.bars();
-    let pair = 2 * phrase::BARS;
-    let pairs = bars / pair;
-
-    // The event's bars, placed as the sources place it, on a phrase or a
-    // pair, clear of the first pair and the last.
-    let placed = |lo: f32, hi: f32, unit: u32, len: u32, rng: &mut Rng| -> (u32, u32) {
-        let x = lo + (hi - lo) * rng.f32();
-        let at = ((x * bars as f32) as u32 / unit * unit).clamp(pair, bars.saturating_sub(pair + len).max(pair));
-        (at, (at + len).min(bars))
-    };
-    // A pair lifted or sequenced only where every chord it moves to is
-    // one the drone holds; else the bed hollows instead.
-    let mut design = design;
-    let holdable = holdable_roots(&key);
-    let (o, c) = (design.open, design.closed);
-    let moves = |by: i32| [o, c].iter().all(|s| s.roots.iter().all(|r| holdable.contains(&(r + by).rem_euclid(7))));
-    if (design.event == Event::Lifted && !moves(2)) || (design.event == Event::Fifth && !moves(4)) {
-        design.event = Event::Hollow;
+    // The lead plays first: five or six questions and their answers
+    // about its motif. The band follows where it stands, a half-phrase a
+    // part: its layers by how far it is gathered, the lead told as its
+    // stance asks, and the level let to move with the band.
+    let pairs = skeleton.range(5, 6) as usize;
+    let improv::Play { tune, stances } = improv::improvise(design.groove, &design.feel, &design.open, &design.closed, 3, 2 * pairs, &mut rng.fork(16));
+    let bars = tune.bars.len() as u32;
+    let gathered = gathered(&stances);
+    score.story = gathering.name;
+    let mut parts = Vec::new();
+    for b in 0..bars {
+        let lead = telling(stances[b as usize / 2]);
+        let bed = gathering.bed(gathered[b as usize]);
+        if b % 2 == 0 {
+            let trim = bed.trim(lead) * ladder::gain(-SWELL * (gathered[b as usize] - 0.5));
+            score.sections.push(Section { name: stances[b as usize / 2].name(), start: b * bar, end: (b + 2) * bar, trim, level: None, rings: false });
+        }
+        parts.push(ladder::Part { rung: 0, bed, lead, a: b, b: b + 1 });
     }
-    let event = match design.event {
-        Event::Hollow => placed(0.15, 0.45, phrase::BARS, phrase::BARS, &mut habits),
-        Event::Song => placed(0.5, 0.75, phrase::BARS, phrase::BARS, &mut habits),
-        Event::Voice => placed(0.4, 0.7, pair, pair, &mut habits),
-        Event::Lifted | Event::Fifth => placed(0.34, 0.66, pair, pair, &mut habits),
-    };
+    let walk = Walk { parts };
     let steps_in = ((habits.range(25, 40) as f32 / 100.0 * bars as f32) as u32 / phrase::BARS) * phrase::BARS;
-    // The tunes in series, each told three pairs or more: the first, then
-    // the second from halfway. One tune where the walk is too short for
-    // two.
-    let series = (design.tunes.len() + 1).min((pairs / 3).max(1) as usize);
-    let tunes: Vec<usize> = (0..bars).map(|b| ((b / pair) as usize * series / pairs.max(1) as usize).min(series - 1)).collect();
+    let said = stances.iter().filter(|s| s.arrives()).count();
     score.summary = format!(
-        "{} on the {}: a {:?} in a {:?}, {} to ask and {} to answer; {} drone, {} pad, {} lead, {} second, {} and {} plucks, colours {}; {:?}, {} tune{}{}, {:?} at {:.0}%, opens {:?}, ends {:?}",
-        story.name,
+        "{} on the {}: {} drone, {} pad, {} lead, {} second, {} and {} plucks, colours {}; {:?}{}, the tune said {} times in {} half-phrases, opens {:?}, ends {:?}",
+        gathering.name,
         groove.name,
-        design.theme.shape,
-        design.form,
-        design.open.name,
-        design.closed.name,
         name(design.drone),
         name(design.pad),
         name(design.lead),
@@ -706,54 +673,15 @@ fn compose(params: &Params) -> (Score, Form) {
         name(design.pluck_2),
         colours.join(", "),
         design.pulse,
-        series,
-        if series > 1 { "s" } else { "" },
         if design.ramp.is_some() { ", pressing on" } else { "" },
-        design.event,
-        100.0 * event.0 as f32 / bars as f32,
+        said,
+        stances.len(),
         design.intro,
         design.ending,
     )
     .to_lowercase();
-
-    // Each phrase on its schema, by turns; a lifted pair's moved up the
-    // mode a third, a sequenced one's a fifth, its tune with it — or down
-    // a sixth and a fourth, the same chords, where the tune a third or a
-    // fifth up would leave its register. The tune's degrees shifted: the
-    // climb at the ladder's top, else the phrase pair's sequence.
-    let all: Vec<&Theme> = std::iter::once(&design.theme).chain(design.tunes.iter()).collect();
-    let themes: Vec<&Theme> = (0..bars / phrase::BARS).map(|p| all[tunes[(p * phrase::BARS) as usize]]).collect();
-    let upper = story.ladder.len().max(1);
-    let composed = |by: i32| -> Tune {
-        let moved = |s: &Schema| Schema { roots: s.roots.map(|r| r + by), ..*s };
-        let (moved_open, moved_closed) = (moved(design.open), moved(design.closed));
-        let moved_pair = |b: u32| by != 0 && (event.0..event.1).contains(&b);
-        let rows: Vec<&Schema> = (0..bars / phrase::BARS)
-            .map(|p| {
-                let b = p * phrase::BARS;
-                match (moved_pair(b), p % 2) {
-                    (true, 0) => &moved_open,
-                    (true, _) => &moved_closed,
-                    (false, 0) => design.open,
-                    (false, _) => design.closed,
-                }
-            })
-            .collect();
-        let shifts: Vec<i32> = (0..bars).map(|b| if moved_pair(b) { by } else if walk.at(b).rung >= upper { CLIMB } else { PAIRS[(b / pair) as usize % PAIRS.len()] }).collect();
-        Tune::compose(&themes, &score.meter, design.form, &rows, 3, shifts)
-    };
-    let (up, down) = match design.event {
-        Event::Lifted => (2, -5),
-        Event::Fifth => (4, -3),
-        _ => (0, 0),
-    };
-    let mut tune = composed(up);
     score.harmony = tune.chords.clone();
-    if up != 0 && tune.span(&score, event.0, event.1, TUNE.0, TUNE.1).1 > TUNE.1 {
-        tune = composed(down);
-        score.harmony = tune.chords.clone();
-    }
-    let form = Form { bar, walk, tune, design, event, steps_in, tunes };
+    let form = Form { bar, walk, tune, design, stances, steps_in };
 
     drone(&mut score, &form);
     breath(&mut score, &form, &mut rng.fork(12));
@@ -787,9 +715,6 @@ fn compose(params: &Params) -> (Score, Form) {
         pushes: 0.0,
     };
     teller::tell(&mut score, &teller, &form.tune, &form.runs(), &mut rng.fork(8));
-    if form.design.event == Event::Voice {
-        voice(&mut score, &form, &mut rng.fork(15));
-    }
     frame_drum(&mut score, &form, &mut rng.fork(10));
     linger(&mut score);
     score.mark_phrases(0, form.bars());
@@ -800,33 +725,37 @@ fn compose(params: &Params) -> (Score, Form) {
     (score, form)
 }
 
-/// The tune sung by the second through the event's pair while the lead
-/// rests: the tune's own tones in its register, held to the next a hair
-/// short, as the lead sings it.
-fn voice(score: &mut Score, form: &Form, rng: &mut Rng) {
-    for (start, len, pitch) in form.tune.run(score, form.event.0, form.event.1, TUNE.0, TUNE.1, true) {
-        score.add(Note { start, len: len - E / 8, pitch, vel: vel(-10, rng), channel: CH_SECOND });
-    }
-}
-
-/// The piece's tempo as its design moves it: pressing on a phrase at a
-/// time from a little past halfway to its last phrase, where it presses
-/// on. Nothing else moves it: a phrase taken off the beat and back was
-/// heard as a band losing its way, not as a song.
+/// The piece's tempo: pressing on a phrase at a time from a little past
+/// halfway to its last phrase, where it presses on, and leaning with the
+/// lead, every player together. No one part moves it alone: a phrase
+/// taken off the beat and back was heard as a band losing its way.
 fn pace(score: &mut Score, form: &Form) {
     let bar = form.bar;
     let bars = form.bars();
     let base = score.eighth_bpm;
-    if let Some(to) = form.design.ramp {
-        let from = (bars * 55 / 100).next_multiple_of(phrase::BARS);
-        let steps: Vec<u32> = (from..bars).step_by(phrase::BARS as usize).collect();
-        let n = steps.len().max(1) as f32;
-        for (k, b) in steps.iter().enumerate() {
-            score.tempo.push((b * bar, base * (1.0 + (to - 1.0) * (k + 1) as f32 / n)));
+    let from = (bars * 55 / 100).next_multiple_of(phrase::BARS);
+    let pressed = |b: u32| match form.design.ramp {
+        Some(to) if b >= from => 1.0 + (to - 1.0) * ((b - from) / phrase::BARS + 1) as f32 / ((bars - from) / phrase::BARS).max(1) as f32,
+        _ => 1.0,
+    };
+    let mut last = 1.0f32;
+    for b in 0..bars {
+        let leans = if form.gathers(b) { LEANS_IN } else if form.spaces(b) { HOLDS_BACK } else { 1.0 };
+        let now = pressed(b) * leans;
+        if (now - last).abs() > 1e-4 {
+            score.tempo.push((b * bar, base * now));
+            last = now;
         }
     }
     score.tempo.sort_by_key(|(t, _)| *t);
 }
+
+/// How the whole band's tempo leans with the lead, together: a little
+/// quicker through the last bar of its run into the motif, and held back
+/// through the silence after it breaks off, the motif landing in tempo
+/// after either.
+const LEANS_IN: f32 = 1.04;
+const HOLDS_BACK: f32 = 0.94;
 
 /// The bars of the opening call over the drone, of the prelude, of the
 /// dance or the figure first, and the bars the drone rings on alone after
@@ -906,9 +835,9 @@ fn intro(score: &mut Score, form: &Form, rng: &mut Rng) {
         }
         Intro::Dance | Intro::Figure => {
             for k in 0..n {
-                pluck_bar(score, form, k, tonic, if form.design.intro == Intro::Dance { Plucks::Full } else { Plucks::Full }, 0, rng);
+                pluck_bar(score, form, k, tonic, Plucks::Full, false, &form.design.feel.strikes(form.design.groove), &[], rng);
                 if form.design.intro == Intro::Dance && form.design.pulse.drums() {
-                    drum_bar(score, form, k, Drum::Accents, k + 1 < n, rng);
+                    drum_bar(score, form, k, Drum::Accents, false, false, &form.design.feel.strikes(form.design.groove), rng);
                 }
             }
         }
@@ -1125,7 +1054,8 @@ fn bass_degree(chord: Chord) -> i32 {
 /// The plucks on the dance: the first takes the bass on every strong
 /// beat, the chord's tone that sits with the drone, an octave clear of
 /// the drone's own pitch; the second takes the chord's other tones on
-/// the dance's strikes, an octave up. Both sit under the bed's level:
+/// the eighths off the beat the lead moves on, with it, or in the bars it
+/// holds, on the figure's, an octave up. Both sit under the bed's level:
 /// a pluck is a strike, and a strike at the bed's level cuts in; alone
 /// on the accents, with nothing to stand over, the bass is softer
 /// still. The bass's variant bar passes through the mode into its last
@@ -1137,14 +1067,18 @@ fn plucks(score: &mut Score, form: &Form, rng: &mut Rng) {
         if mode == Plucks::Off || (form.design.pulse == Pulse::Free && b % 2 == 1) {
             continue;
         }
-        pluck_bar(score, form, b, form.chord(b), mode, form.tunes[b as usize], rng);
+        let line = form.tune.bar(score, b, TUNE.0, TUNE.1, false);
+        pluck_bar(score, form, b, form.chord(b), mode, form.gathers(b), &form.strikes(b), &line, rng);
     }
 }
 
-/// The plucks' bar `b` on `chord` at `mode`; a second tune of the series
-/// turns the second pluck's figure round, so a new tune changes what is
-/// under it.
-fn pluck_bar(score: &mut Score, form: &Form, b: u32, chord: Chord, mode: Plucks, tune: usize, rng: &mut Rng) {
+/// The plucks' bar `b` on `chord` at `mode`; where the band `gathers`
+/// behind the lead's run, the bass steps up into the bar's last beat. The
+/// second pluck takes the chord on `strikes`, and under a tone of the
+/// lead's `line` struck with it, the chord's tone nearest a third under
+/// that tone, so it moves as the lead moves.
+#[allow(clippy::too_many_arguments)]
+fn pluck_bar(score: &mut Score, form: &Form, b: u32, chord: Chord, mode: Plucks, gathers: bool, strikes: &[u32], line: &[tune::Placed], rng: &mut Rng) {
     let strong = score.meter.strong_eighths();
     let floor = score.key.pitch(0, 3) + 2;
     let degree = bass_degree(chord);
@@ -1161,19 +1095,20 @@ fn pluck_bar(score: &mut Score, form: &Form, b: u32, chord: Chord, mode: Plucks,
         let pitch = if role == Bar::Cadence && *i == last { other.unwrap_or(bass) } else { bass };
         score.add(Note { start, len: E - 40, pitch, vel: vel(if mode == Plucks::Accents { -6 } else { 6 }, rng), channel: CH_PLUCK });
     }
-    if role == Bar::Variant && last > 0 && !score.meter.strong(last - 1) {
+    if (role == Bar::Variant || gathers) && last > 0 && !score.meter.strong(last - 1) {
         let passing = score.key.pitch(score.key.absolute_degree(bass).unwrap() + 1, 4);
         score.add(Note { start: b * form.bar + (last - 1) * E, len: E - 40, pitch: passing, vel: vel(-8, rng), channel: CH_PLUCK });
     }
-    if mode != Plucks::Full {
-        return;
-    }
+    let soft = if mode == Plucks::Full { -6 } else { -12 };
     let others: Vec<u8> = chord.pitches_within(&score.key, 57, 69).into_iter().filter(|p| score.key.degree_of(*p) != Some(degree.rem_euclid(7) as usize)).collect();
-    for (j, i) in form.design.groove.chord.iter().enumerate() {
+    for (j, i) in strikes.iter().enumerate() {
         let start = b * form.bar + i * E;
-        let k = (j + b as usize) % others.len();
-        let pitch = others[if tune % 2 == 1 { others.len() - 1 - k } else { k }];
-        score.add(Note { start, len: E - 60, pitch, vel: vel(-6, rng), channel: CH_PLUCK_2 });
+        let under = |lead: u8| {
+            let off = |p: &u8| (lead as i32 - 3 - *p as i32).rem_euclid(12);
+            *others.iter().min_by_key(|p| off(p).min(12 - off(p))).unwrap()
+        };
+        let pitch = line.iter().find(|n| n.0 == start).map_or(others[(j + b as usize) % others.len()], |n| under(n.2));
+        score.add(Note { start, len: E - 60, pitch, vel: vel(soft, rng), channel: CH_PLUCK_2 });
     }
 }
 
@@ -1247,16 +1182,16 @@ fn horn(score: &mut Score, form: &Form, rng: &mut Rng) {
     }
 }
 
-/// The tune echoed under everything, soft, where the bed asks: the
-/// dulcimer plays each bar the tune of the bar before, detached, an
-/// octave under the tune's register — a canon at the bar, so the tune
-/// is in the air before the riff takes it and behind it after; at the
+/// The tune answered, soft, where the bed asks: in the bar the lead rests
+/// after its motif or an answer, the dulcimer plays what the lead just
+/// said, detached, an octave under the tune's register — the band saying
+/// it back while the lead holds, and silent while the lead speaks; at the
 /// second notch the harp takes the bar's own skeleton, its strong-beat
 /// tones, a foot late and a third up, bent to the chord.
 fn weave(score: &mut Score, form: &Form, rng: &mut Rng) {
     let (lo, hi) = (TUNE.0 - 12, TUNE.1 - 12);
     let bars = form.bars();
-    let late = form.design.theme.feet[0][0].1;
+    let late = form.tune.bars[0][0].len;
     let eighths = score.meter.eighths();
     for b in 0..bars {
         let mode = form.texture_at(b).weave;
@@ -1265,7 +1200,8 @@ fn weave(score: &mut Score, form: &Form, rng: &mut Rng) {
         }
         let behind = (b + bars - 1) % bars;
         let chord = form.chord(b);
-        for (start, len, pitch) in form.tune.bar(score, behind, lo, hi, false) {
+        let said = if form.echoes(b) { form.tune.bar(score, behind, lo, hi, false) } else { Vec::new() };
+        for (start, len, pitch) in said {
             let onset = start - behind * form.bar;
             let held = if len >= 3 * E { 2 * E } else { len - E / 2 };
             // A bar behind, the tune meets this bar's chord: its strong
@@ -1295,39 +1231,62 @@ fn weave(score: &mut Score, form: &Form, rng: &mut Rng) {
 /// the dance's low strokes, and where the bed asks for the whole hand,
 /// the tek on its high; soft, a hand and not a kit. Its phrase's variant
 /// bar slips a ghost tek onto an eighth the dance leaves bare, and its
-/// cadence rolls the fingers through the bar's last group, growing, into
-/// the next phrase's dum.
+/// last a soft stroke into the next. It rolls only behind the lead's run
+/// into the motif, the fingers through the
+/// bar's last group, growing, and comes down harder on the bar the motif
+/// lands on: a roll every phrase says nothing.
 fn frame_drum(score: &mut Score, form: &Form, rng: &mut Rng) {
     for b in 0..form.bars() {
         let mode = form.texture_at(b).drum;
         if mode == Drum::Off {
             continue;
         }
-        drum_bar(score, form, b, mode, b + 1 < form.bars(), rng);
+        drum_bar(score, form, b, mode, form.gathers(b), form.lands(b), &form.strikes(b), rng);
     }
 }
 
-/// The frame drum's bar `b` at `mode`, rolling into the next where its
-/// cadence leads `into` one.
-fn drum_bar(score: &mut Score, form: &Form, b: u32, mode: Drum, into: bool, rng: &mut Rng) {
+/// The frame drum's bar `b` at `mode`, rolling into the next where the
+/// band `gathers`, its first stroke harder where the motif `lands`, its
+/// fingers on `strikes`.
+#[allow(clippy::too_many_arguments)]
+fn drum_bar(score: &mut Score, form: &Form, b: u32, mode: Drum, gathers: bool, lands: bool, strikes: &[u32], rng: &mut Rng) {
     let groove = form.design.groove;
     let eighths = score.meter.eighths();
     let last_group = eighths - *groove.groups.last().unwrap() as u32;
     let bare = (1..eighths).find(|e| !score.meter.strong(*e) && !groove.dum.contains(e) && !groove.tek.contains(e));
     let start = b * form.bar;
     let role = variation::role(b);
-    let roll_from = (role == Bar::Cadence && into).then_some(last_group);
+    let roll_from = gathers.then_some(last_group);
     let before_roll = |i: &u32| roll_from.is_none_or(|r| *i < r);
     for i in groove.dum.iter().filter(|i| before_roll(i)) {
-        score.add(Note { start: start + i * E, len: E - 20, pitch: DUM, vel: vel(0, rng), channel: CH_DRUM });
+        score.add(Note { start: start + i * E, len: E - 20, pitch: DUM, vel: vel(if lands && *i == 0 { 10 } else { 0 }, rng), channel: CH_DRUM });
     }
     if mode == Drum::Full {
         for i in groove.tek.iter().filter(|i| before_roll(i)) {
             score.add(Note { start: start + i * E, len: E - 20, pitch: TEK, vel: vel(-14, rng), channel: CH_DRUM });
         }
     }
-    if let Some(e) = bare.filter(|_| role == Bar::Variant) {
+    let ghost = bare.filter(|_| role == Bar::Variant);
+    if let Some(e) = ghost {
         score.add(Note { start: start + e * E, len: E - 20, pitch: TEK, vel: vel(-24, rng), channel: CH_DRUM });
+    }
+    // The fingers where the lead moves off the beat, under the hand's
+    // strokes; the phrase's variant bar leaves one of them out, a
+    // different one each phrase.
+    let left_out = (role == Bar::Variant && !strikes.is_empty()).then(|| strikes[(b / phrase::BARS) as usize % strikes.len()]);
+    let teks = |e: &u32| mode == Drum::Full && groove.tek.contains(e);
+    for e in strikes.iter().filter(|e| before_roll(e) && !groove.dum.contains(e) && !teks(e) && Some(**e) != ghost && Some(**e) != left_out) {
+        score.add(Note { start: start + e * E, len: E - 20, pitch: TEK, vel: vel(-26, rng), channel: CH_DRUM });
+    }
+    // A phrase's last bar takes one soft stroke in its last group, on an
+    // eighth nothing else of the drum's is on, or between its last two
+    // where every eighth is taken: a hand that varies its bar by the
+    // phrase, and too little to be heard as a signal.
+    if role == Bar::Cadence && roll_from.is_none() {
+        let figure = strikes;
+        let taken = |e: &u32| groove.dum.contains(e) || teks(e) || figure.contains(e);
+        let at = (last_group..eighths).rev().find(|e| !taken(e)).map_or((eighths - 1) * E + E / 2, |e| e * E);
+        score.add(Note { start: start + at, len: E / 2 - 10, pitch: TEK, vel: vel(-22, rng), channel: CH_DRUM });
     }
     if let Some(r) = roll_from {
         let top = if mode == Drum::Full { -8 } else { -14 };
@@ -1339,12 +1298,26 @@ fn drum_bar(score: &mut Score, form: &Form, b: u32, mode: Drum, into: bool, rng:
 mod tests {
     use super::*;
 
-    /// Every story is a ladder.
+    /// Every layer a band gathers moves the bed, and the band follows
+    /// the lead: out in the silence after it breaks off, never thinner
+    /// through a run back, and at its fullest where the motif sounds.
     #[test]
-    fn every_story_is_a_ladder() {
-        for story in &STORIES {
-            assert_eq!(story.fault(), None);
+    fn the_band_follows_the_lead() {
+        for g in &GATHERINGS {
+            for r in 0..g.ladder.len() {
+                let n = g.ladder.len() as f32;
+                assert_ne!(g.bed(r as f32 / n), g.bed((r + 1) as f32 / n), "{}: rung {} moves nothing", g.name, r + 1);
+            }
         }
+        use Stance::*;
+        let stances = [States, States, Answers, Leaves, Returns, States, Breaks, States, Lifts, States];
+        let e = gathered(&stances);
+        assert_eq!(e.len(), 2 * stances.len());
+        assert_eq!(e[13], 0.0);
+        assert!(e[8] <= e[9] && e[9] <= e[10], "{e:?}");
+        assert!(e[6] < e[4] && e[10] > e[2] && e[14] > e[10], "{e:?}");
+        let top = e.iter().cloned().fold(0.0, f32::max);
+        assert_eq!(e[16], top, "{e:?}");
     }
 
     /// The bars the piece opens with before its walk.
@@ -1379,17 +1352,14 @@ mod tests {
         }
     }
 
-    /// The seeds take every pulse, event, opening and ending, and a free
-    /// piece has no drum.
+    /// The seeds take every pulse, opening and ending, and a free piece
+    /// has no drum.
     #[test]
     fn the_pieces_are_their_own() {
         let forms: Vec<(Score, Form)> = (0..48).map(|seed| compose(&Params::of(crate::pieces::find("overworld-ambient").unwrap(), seed))).collect();
         let took = |f: &dyn Fn(&Design) -> bool| forms.iter().any(|(_, form)| f(&form.design));
         for pulse in [Pulse::Dance, Pulse::StepsIn, Pulse::Figure, Pulse::Free] {
             assert!(took(&|d| d.pulse == pulse), "{pulse:?} never taken");
-        }
-        for event in [Event::Hollow, Event::Voice, Event::Song] {
-            assert!(took(&|d| d.event == event), "{event:?} never taken");
         }
         for intro in [Intro::Fade, Intro::Prelude, Intro::Dance, Intro::Figure, Intro::Call] {
             assert!(took(&|d| d.intro == intro), "{intro:?} never taken");

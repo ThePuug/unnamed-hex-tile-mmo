@@ -948,15 +948,6 @@ fn title(score: &mut Score, form: &Form, rng: &mut Rng) {
 mod tests {
     use super::*;
 
-    /// The cue's own rows are the folk's: none turns as the ballad does.
-    #[test]
-    fn the_cue_turns_as_the_folk_does() {
-        let ballad = [crate::theory::schema::BALLAD.verse, crate::theory::schema::BALLAD.chorus, crate::theory::schema::BALLAD.climax];
-        for row in [&TONIC, &LAMENT, &PLAGAL, &RISE] {
-            assert!(ballad.iter().copied().flatten().all(|s| s.roots != row.roots || s.alters != row.alters), "the cue's {} is the ballad's", row.name);
-        }
-    }
-
     /// The cue is its movements in order at their cuts, whole
     /// half-phrases each, the tune whole phrases ending on the rise, the
     /// title on the tonic; nothing sounds past the end.

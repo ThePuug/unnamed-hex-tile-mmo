@@ -620,7 +620,7 @@ mod tests {
     /// has mutes nothing.
     #[test]
     fn muting_is_the_muted_parts_the_score_has() {
-        let piece = &TRACKS[track("minor-blues")];
+        let piece = &TRACKS[track("balkan-horo")];
         let score = (piece.build)(&Params::of(piece, 1));
         let names: Vec<&str> = score.instruments.iter().map(|i| i.name).collect();
         assert!(names.len() >= 3);
@@ -630,26 +630,25 @@ mod tests {
     }
 
     /// A draw with nothing locked keeps a band and its track in one style
-    /// and a track in a setting it is made for; what is locked stays, a
-    /// band and a track locked apart among it, and a locked seed holds;
-    /// what is locked but not chosen is drawn.
+    /// and a track in a setting it is made for; what is locked stays, and
+    /// a locked seed holds; what is locked but not chosen is drawn.
     #[test]
     fn a_draw_keeps_what_is_locked() {
         let mut rng = Rng::new(7);
-        let blues = band::of_style(Style::Blues).next().unwrap();
-        let picked = Picked { band: Some(blues), style: Some(Style::Metal), track: Some(track("speed-metal")), setting: Setting::Combat, seed: Some(42) };
+        let village = band::of_style(Style::Bulgarian).nth(1).unwrap();
+        let picked = Picked { band: Some(village), style: Some(Style::Bulgarian), track: Some(track("balkan-horo")), setting: Setting::Combat, seed: Some(42) };
         for _ in 0..200 {
             let v = draw(&mut rng, picked, Locks::default());
             assert_eq!(v.band.style, TRACKS[v.piece].style);
             assert!(TRACKS[v.piece].plays_in(v.setting));
-            let apart = Locks { band: true, track: true, ..Locks::default() };
-            let v = draw(&mut rng, picked, apart);
-            assert_eq!((v.band.name, Some(v.piece)), (blues.name, picked.track));
+            let both = Locks { band: true, track: true, ..Locks::default() };
+            let v = draw(&mut rng, picked, both);
+            assert_eq!((v.band.name, Some(v.piece)), (village.name, picked.track));
             let v = draw(&mut rng, picked, Locks { setting: true, ..Locks::default() });
             assert!(TRACKS[v.piece].plays_in(Setting::Combat) && v.setting == Setting::Combat);
             let all = Locks { band: true, style: true, track: true, setting: true, seed: true };
             let v = draw(&mut rng, picked, all);
-            assert_eq!((Some(v.piece), v.band.name, v.setting, v.seed), (picked.track, blues.name, Setting::Combat, 42));
+            assert_eq!((Some(v.piece), v.band.name, v.setting, v.seed), (picked.track, village.name, Setting::Combat, 42));
             let unchosen = Picked { band: None, style: None, track: None, ..picked };
             let v = draw(&mut rng, unchosen, all);
             assert_eq!(v.band.style, TRACKS[v.piece].style);
