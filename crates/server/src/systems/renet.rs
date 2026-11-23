@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn what_only_its_owner_should_know_goes_to_its_owner_alone() {
         let ent = Entity::from_raw_u32(7).unwrap();
-        assert_eq!(route(&Event::Loot { ent, entries: None }), Some(Route::Owner(ent)));
+        assert_eq!(route(&Event::Loot { ent, cells: None }), Some(Route::Owner(ent)));
         let activation = activation::Activation { ability: AbilityType::Frenzy, target: None, began: Moment::ZERO, length: default() };
         assert_eq!(route(&Event::Activate { ent, activation }), Some(Route::Seen(ent)));
         assert_eq!(route(&Event::Resolved { ent, ability: AbilityType::Frenzy, target: None, damage: 0.0, outcome: Outcome::Missed, dot: false }), Some(Route::Seen(ent)));

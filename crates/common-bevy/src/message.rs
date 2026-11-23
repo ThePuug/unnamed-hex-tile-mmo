@@ -129,12 +129,14 @@ pub enum Event {
     /// within sight of it; the whole den, so applying it twice leaves the
     /// same.
     Den { ent: Entity, at: Qrz, den: Option<crate::den::DenLook> },
-    /// Server → Client: the loot window `ent` has open, a stack to an
-    /// entry, or None where it has none open. Sent to its owner only.
-    Loot { ent: Entity, entries: Option<Vec<common::Stack>> },
-    /// Client → Server (Try): take entry `entry` of the open loot window,
-    /// or every entry where None
-    Take { ent: Entity, entry: Option<u8> },
+    /// Server → Client: the loot window `ent` has open, a cell to each
+    /// slot of its tile holding what `ent` may take there, or None where
+    /// it has none open. Sent to its owner only.
+    Loot { ent: Entity, cells: Option<[Option<common::Stack>; common::TILE_SLOTS as usize]> },
+    /// Client → Server (Try): take the pile in slot `slot` of the tile
+    /// the open loot window is on, the key pressed, or every pile where
+    /// None
+    Take { ent: Entity, slot: Option<u8> },
     /// Client → Server (Try): close the open loot window
     CloseLoot { ent: Entity },
     /// Client → Server (Try): drop `count` of `kind` from the bag onto the

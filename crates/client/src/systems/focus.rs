@@ -44,7 +44,7 @@ impl NumpadFocus {
 /// Follows each panel opening and shutting.
 pub fn track(state: Res<CharacterPanelState>, window: Res<LootWindow>, drop: Res<DropChoice>, mut focus: ResMut<NumpadFocus>) {
     focus.set(Panel::Character, state.visible);
-    focus.set(Panel::Loot, window.entries.is_some());
+    focus.set(Panel::Loot, window.cells.is_some());
     focus.set(Panel::Drop, drop.0.is_some());
 }
 

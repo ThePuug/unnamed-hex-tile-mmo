@@ -1,6 +1,7 @@
-//! The loot window: what a pile holds, a stack to a cell in rows of nine,
-//! over the foot of the screen while it is open. The digits take from the
-//! row the cursor is on.
+//! The loot window: the piles on a tile, a cell to each of the tile's
+//! slots, over the foot of the screen while it is open. A cell's digit
+//! takes what lies in its slot, so a cell means the same slot whatever
+//! is taken or laid round it.
 
 use bevy::prelude::*;
 
@@ -14,7 +15,7 @@ use crate::systems::{
 #[derive(Component)]
 pub struct LootPanel;
 
-/// The window's rows of cells.
+/// The window's row of cells.
 #[derive(Component)]
 pub struct LootCells;
 
@@ -30,7 +31,7 @@ pub fn update(
     if !window.is_changed() {
         return;
     }
-    let Some(entries) = &window.entries else {
+    let Some(lying) = &window.cells else {
         if let Ok(mut node) = panel.single_mut() {
             node.display = Display::None;
         }
@@ -44,38 +45,32 @@ pub fn update(
         }
         _ => spawn(&mut commands),
     };
-    for (r, row) in entries.chunks(ENTRY_KEYS.len()).enumerate() {
-        let cursor = r == window.row;
-        let row_cells = commands
-            .spawn((Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(4.), ..default() }, ChildOf(cells)))
-            .id();
-        for (i, stack) in row.iter().enumerate() {
-            commands
-                .spawn((
-                    Node {
-                        width: Val::Px(CELL),
-                        height: Val::Px(CELL),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(2.)),
-                        border_radius: BorderRadius::all(Val::Px(4.)),
-                        ..default()
-                    },
-                    BackgroundColor(if cursor { CURSOR_ROW } else { OTHER_ROW }),
-                    BorderColor::all(UNWORN),
-                    ChildOf(row_cells),
-                ))
-                .with_children(|cell| {
+    for (slot, stack) in lying.iter().enumerate() {
+        commands
+            .spawn((
+                Node {
+                    width: Val::Px(CELL),
+                    height: Val::Px(CELL),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(2.)),
+                    border_radius: BorderRadius::all(Val::Px(4.)),
+                    ..default()
+                },
+                BackgroundColor(if stack.is_some() { CURSOR_ROW } else { OTHER_ROW }),
+                BorderColor::all(UNWORN),
+                ChildOf(cells),
+            ))
+            .with_children(|cell| {
+                if let Some(stack) = stack {
                     cell_contents(cell, &asset_server, Cell::Stack(*stack), 1.0);
-                    if cursor {
-                        crate::systems::keycap::corner_keycap(cell, ENTRY_KEYS[i]);
-                    }
-                });
-        }
+                    crate::systems::keycap::corner_keycap(cell, ENTRY_KEYS[slot]);
+                }
+            });
     }
 }
 
-/// Spawns the window, shown, and returns its rows of cells: the cells on
+/// Spawns the window, shown, and returns its row of cells: the cells on
 /// the left, and down the right the keys that take everything and close.
 fn spawn(commands: &mut Commands) -> Entity {
     let mut cells = Entity::PLACEHOLDER;
@@ -96,7 +91,7 @@ fn spawn(commands: &mut Commands) -> Entity {
         ))
         .with_children(|panel| {
             cells = panel
-                .spawn((LootCells, Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(4.), ..default() }))
+                .spawn((LootCells, Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(4.), ..default() }))
                 .id();
             panel
                 .spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(4.), ..default() })

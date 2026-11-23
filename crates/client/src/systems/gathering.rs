@@ -26,10 +26,8 @@ use crate::resources::{RenderOrigin, SummaryMeshes};
 /// The key that gathers, or opens a pile.
 pub const KEYCODE_GATHER: KeyCode = KeyCode::KeyG;
 
-/// The loot window's keys: take everything, move to the next row of
-/// entries, and close.
+/// The loot window's keys: take everything, and close.
 pub const KEYCODE_TAKE_ALL: KeyCode = KeyCode::NumpadEnter;
-pub const KEYCODE_NEXT_ROW: KeyCode = KeyCode::NumpadDecimal;
 pub const KEYCODE_CLOSE: KeyCode = KeyCode::Numpad0;
 
 /// The digit keys that take an entry of the loot window's row.
@@ -39,21 +37,12 @@ pub const ENTRY_KEYS: [KeyCode; 9] = [
     KeyCode::Numpad7, KeyCode::Numpad8, KeyCode::Numpad9,
 ];
 
-/// The loot window the local player has open, a stack to an entry, as the
-/// server last said, None where it has none open; and the row of entries
-/// the digits take from.
+/// The loot window the local player has open, as the server last said: a
+/// cell to each slot of its tile, the digit that takes it the cell's
+/// place, or None where it has none open.
 #[derive(Resource, Default)]
 pub struct LootWindow {
-    pub entries: Option<Vec<common::Stack>>,
-    pub row: usize,
-}
-
-impl LootWindow {
-    /// How many rows of [`ENTRY_KEYS`] the entries fill, never less than
-    /// one.
-    pub fn rows(&self) -> usize {
-        self.entries.as_ref().map_or(0, |e| e.len()).div_ceil(ENTRY_KEYS.len()).max(1)
-    }
+    pub cells: Option<[Option<common::Stack>; common::TILE_SLOTS as usize]>,
 }
 
 /// Every tile the server has changed in the chunks the client holds, as its
@@ -113,7 +102,7 @@ pub fn request(
     mut keys: crate::systems::help::Keys,
     menu: Res<crate::plugins::shell::menu::GameMenu>,
     focus: Res<crate::systems::focus::NumpadFocus>,
-    mut window: ResMut<LootWindow>,
+    window: Res<LootWindow>,
     map: Res<Map>,
     nntree: Res<common_bevy::plugins::nntree::NNTree>,
     mut player: Query<(Entity, &mut Position, &mut Heading, &mut common_bevy::components::Turn), With<Actor>>,
@@ -126,19 +115,14 @@ pub fn request(
     let Ok((ent, mut position, mut heading, mut turn)) = player.single_mut() else { return };
     // An open loot window works the numpad while it is the panel opened
     // last.
-    if window.entries.is_some() && focus.has(crate::systems::focus::Panel::Loot) {
-        let row = window.row;
-        for (i, key) in ENTRY_KEYS.iter().enumerate() {
-            if keys.take(*key, "Take the entry in this column") {
-                let entry = (row * ENTRY_KEYS.len() + i) as u8;
-                writer.write(Try { event: Event::Take { ent, entry: Some(entry) } });
+    if window.cells.is_some() && focus.has(crate::systems::focus::Panel::Loot) {
+        for (slot, key) in ENTRY_KEYS.iter().take(common::TILE_SLOTS as usize).enumerate() {
+            if keys.take(*key, "Take the pile in this cell") {
+                writer.write(Try { event: Event::Take { ent, slot: Some(slot as u8) } });
             }
         }
         if keys.take(KEYCODE_TAKE_ALL, "Take everything in the loot window") {
-            writer.write(Try { event: Event::Take { ent, entry: None } });
-        }
-        if keys.take(KEYCODE_NEXT_ROW, "Show the loot window's next row") {
-            window.row = (row + 1) % window.rows();
+            writer.write(Try { event: Event::Take { ent, slot: None } });
         }
         if keys.take(KEYCODE_CLOSE, "Close the loot window") {
             writer.write(Try { event: Event::CloseLoot { ent } });
@@ -210,10 +194,9 @@ pub fn do_activity(mut commands: Commands, mut reader: MessageReader<Do>) {
 /// Keeps the local player's loot window as the server sends it.
 pub fn do_loot(mut reader: MessageReader<Do>, mut window: ResMut<LootWindow>, player: Query<(), With<Actor>>) {
     for message in reader.read() {
-        let Do { event: Event::Loot { ent, entries } } = message else { continue };
+        let Do { event: Event::Loot { ent, cells } } = message else { continue };
         if player.contains(*ent) {
-            window.entries = entries.clone();
-            window.row = window.row.min(window.rows() - 1);
+            window.cells = *cells;
         }
     }
 }

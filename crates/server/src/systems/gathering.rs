@@ -1,9 +1,9 @@
 //! Gathering: a player works at what it gathers for a time, and the yield
-//! then lies at once as a pile. What lies on the ground lies one stack to
-//! a slot; a loot window opens on a tile and shows every pile there, to
-//! one player at a time, who takes from them into its bag, and closing it
-//! leaves the rest to anyone. Every tile changed keeps the change, and
-//! every client holding the tile learns it.
+//! then lies at once as a pile, kept for it until it lets go. What lies
+//! on the ground lies one stack to a slot; a loot window opens on a tile
+//! and shows its piles, a slot to a cell, to every player who has one
+//! open there, and each takes what it may into its bag. Every tile
+//! changed keeps the change, and every client holding the tile learns it.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -213,31 +213,47 @@ impl<S: SummarySource> SummarySource for LaidOver<S> {
     }
 }
 
+/// A pile: the stack lying in one slot of a tile, and the player it is
+/// kept for, who gathered it and has not yet let go of it.
+#[derive(Clone, Copy, Debug)]
+struct Pile {
+    stack: common::Stack,
+    kept_for: Option<Entity>,
+}
+
 /// Everything lying on the ground: one stack to a slot of a tile, each a
 /// pile of its own. A pile's content in the cover says where it lies and
 /// what it looks like; this says what is in it.
 #[derive(Resource, Default)]
-pub struct Piles(HashMap<(i32, i32, usize), common::Stack>);
+pub struct Piles(HashMap<(i32, i32, usize), Pile>);
+
+/// What a loot window shows: a tile's slots, each the pile its player may
+/// take from, in slot order.
+pub type Cells = [Option<common::Stack>; common::TILE_SLOTS as usize];
 
 impl Piles {
     /// What the pile at `key` holds, where one lies.
     pub fn held(&self, key: (i32, i32, usize)) -> Option<common::Stack> {
-        self.0.get(&key).copied()
+        self.0.get(&key).map(|pile| pile.stack)
     }
 
-    /// Lays a kept pile holding `stack` at `key`, where none lies already.
+    /// Lays a kept pile holding `stack` at `key`, anyone's, where none
+    /// lies already.
     pub fn recall(&mut self, key: (i32, i32, usize), stack: common::Stack) {
-        self.0.entry(key).or_insert(stack);
+        self.0.entry(key).or_insert(Pile { stack, kept_for: None });
     }
 
-    /// Every pile on tile `(q, r)`, its slot and what it holds, by slot:
-    /// the entries of a loot window open on the tile, in their order.
-    fn on(&self, q: i32, r: i32) -> Vec<(usize, common::Stack)> {
-        (0..common::TILE_SLOTS as usize).filter_map(|slot| Some((slot, self.held((q, r, slot))?))).collect()
+    /// What `ent` may take at `key`: the pile there, unless it is kept
+    /// for another player who has not let go of it.
+    fn open_to(&self, key: (i32, i32, usize), ent: Entity, windows: &Windows) -> Option<common::Stack> {
+        let pile = self.0.get(&key)?;
+        let kept = pile.kept_for.is_some_and(|other| other != ent && windows.keeps(other, (key.0, key.1)));
+        (!kept).then_some(pile.stack)
     }
 
-    fn entries(&self, q: i32, r: i32) -> Vec<common::Stack> {
-        self.on(q, r).into_iter().map(|(_, stack)| stack).collect()
+    /// What `ent`'s window on tile `(q, r)` shows.
+    fn cells(&self, (q, r): (i32, i32), ent: Entity, windows: &Windows) -> Cells {
+        std::array::from_fn(|slot| self.open_to((q, r, slot), ent, windows))
     }
 }
 
@@ -250,9 +266,9 @@ pub struct TileChanged {
 }
 
 /// The tile a player has its loot window open on, and where it stood and
-/// faced as the window opened. The window shows every pile on the tile,
-/// and while it is open no one else opens one there; it closes the moment
-/// the player moves or turns.
+/// faced as the window opened. The window shows the tile's piles, to any
+/// number of players at once, and closes the moment its player moves or
+/// turns.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Looting {
     pub q: i32,
@@ -261,12 +277,31 @@ pub struct Looting {
     pub facing: Heading,
 }
 
-/// Every open loot window: its player and its tile.
-type Windows<'w, 's> = Query<'w, 's, (Entity, &'static Looting)>;
+/// Every open loot window, and who is in the world to have one.
+#[derive(SystemParam)]
+pub struct Windows<'w, 's> {
+    open: Query<'w, 's, (Entity, &'static Looting, Has<Working>)>,
+    actors: Query<'w, 's, (), With<Loc>>,
+}
 
-/// The player whose window is open on tile `(q, r)`, where one is.
-fn holder(windows: &Windows, (q, r): (i32, i32)) -> Option<Entity> {
-    windows.iter().find(|(_, looting)| (looting.q, looting.r) == (q, r)).map(|(holder, _)| holder)
+impl Windows<'_, '_> {
+    /// The tile `ent`'s window is open on.
+    fn of(&self, ent: Entity) -> Option<(i32, i32)> {
+        self.open.get(ent).ok().map(|(_, looting, _)| (looting.q, looting.r))
+    }
+
+    /// Whether `ent` still keeps what it gathered on `tile`: it is in the
+    /// world and has no window open elsewhere. Closing its window lets go
+    /// of it outright ([`release`]).
+    fn keeps(&self, ent: Entity, tile: (i32, i32)) -> bool {
+        self.actors.contains(ent) && self.of(ent).is_none_or(|open| open == tile)
+    }
+
+    /// Every player with a window open on `tile`, and whether it is at
+    /// work.
+    fn on(&self, tile: (i32, i32)) -> impl Iterator<Item = (Entity, bool)> + '_ {
+        self.open.iter().filter(move |(_, looting, _)| (looting.q, looting.r) == tile).map(|(ent, _, working)| (ent, working))
+    }
 }
 
 /// Whether tile `(q, r)` lies in the reach of a player on `here` facing
@@ -342,13 +377,6 @@ pub struct Working {
     pub facing: Heading,
 }
 
-/// Opens `ent`'s loot window on tile `(q, r)`, with the player standing
-/// `from` and facing `facing`; a window it had open elsewhere closes.
-fn open(ent: Entity, (q, r): (i32, i32), from: Position, facing: Heading, piles: &Piles, commands: &mut Commands, writer: &mut MessageWriter<Do>) {
-    commands.entity(ent).insert(Looting { q, r, from, facing });
-    writer.write(Do { event: Event::Loot { ent, entries: Some(piles.entries(q, r)) } });
-}
-
 /// Tells everyone who sees `ent` what it is doing at a gather.
 fn show(ent: Entity, activity: Option<common::gathering::Activity>, commands: &mut Commands) {
     commands.write_message(Do { event: Event::Activity { ent, activity } });
@@ -361,24 +389,89 @@ fn stop(ent: Entity, looting: bool, commands: &mut Commands) {
     show(ent, looting.then_some(common::gathering::Activity::Pickup), commands);
 }
 
+/// What players do to the piles and each other's windows on them.
+#[derive(SystemParam)]
+pub struct Looters<'w, 's> {
+    commands: Commands<'w, 's>,
+    writer: MessageWriter<'w, Do>,
+    piles: ResMut<'w, Piles>,
+    ground: Ground<'w, 's>,
+    windows: Windows<'w, 's>,
+}
+
+impl Looters<'_, '_> {
+    /// Opens `ent`'s loot window on `tile`, with the player standing
+    /// `from` and facing `facing`. A window it had open elsewhere closes,
+    /// and what it kept there is let go.
+    fn open(&mut self, ent: Entity, tile: (i32, i32), from: Position, facing: Heading) {
+        if let Some(was) = self.windows.of(ent).filter(|&was| was != tile) {
+            self.release(ent, was);
+        }
+        let cells = self.piles.cells(tile, ent, &self.windows);
+        self.commands.entity(ent).insert(Looting { q: tile.0, r: tile.1, from, facing });
+        self.writer.write(Do { event: Event::Loot { ent, cells: Some(cells) } });
+    }
+
+    /// Closes `ent`'s window, which shows it nothing more.
+    fn close(&mut self, ent: Entity, working: bool) {
+        self.commands.entity(ent).remove::<Looting>();
+        self.writer.write(Do { event: Event::Loot { ent, cells: None } });
+        if !working {
+            show(ent, None, &mut self.commands);
+        }
+    }
+
+    /// Tells each player with a window on `tile`, but `skip`, what it now
+    /// shows, and closes one it shows nothing.
+    fn refresh(&mut self, tile: (i32, i32), skip: Option<Entity>) {
+        let open: Vec<(Entity, bool)> = self.windows.on(tile).filter(|(ent, _)| Some(*ent) != skip).collect();
+        for (ent, working) in open {
+            let cells = self.piles.cells(tile, ent, &self.windows);
+            if cells.iter().all(Option::is_none) {
+                self.close(ent, working);
+            } else {
+                self.writer.write(Do { event: Event::Loot { ent, cells: Some(cells) } });
+            }
+        }
+    }
+
+    /// Lets go of every pile on `tile` kept for `ent`: each is anyone's,
+    /// and joins the tile's pile of its kind where one lies. Everyone
+    /// else with a window there sees them.
+    fn release(&mut self, ent: Entity, (q, r): (i32, i32)) {
+        let Some(before) = self.ground.cover(q, r) else { return };
+        let mut cover = before;
+        for slot in 0..common::TILE_SLOTS as usize {
+            let Some(pile) = self.piles.0.get_mut(&(q, r, slot)).filter(|pile| pile.kept_for == Some(ent)) else { continue };
+            pile.kept_for = None;
+            let stack = pile.stack;
+            let joins = (0..common::TILE_SLOTS as usize).find(|&other| {
+                other != slot && self.piles.0.get(&(q, r, other)).is_some_and(|pile| pile.stack.kind == stack.kind && pile.kept_for.is_none())
+            });
+            if let Some(pile) = joins.and_then(|other| self.piles.0.get_mut(&(q, r, other))) {
+                pile.stack.count += stack.count;
+                self.piles.0.remove(&(q, r, slot));
+                cover = common::gathering::emptied(cover, slot);
+            }
+        }
+        if cover != before {
+            self.ground.set(&mut self.writer, q, r, cover);
+        }
+        self.refresh((q, r), Some(ent));
+    }
+}
+
 /// Answers each gather a player asks for: the slot must lie in its reach.
-/// A pile there opens the window on its tile at once, unless another
-/// player has one open there. Something gatherable there sets the player
-/// to work on it, unless it is at work already.
-#[allow(clippy::too_many_arguments)]
+/// A pile there opens the player's window on its tile at once, where the
+/// tile holds something it may take. Something gatherable there sets the
+/// player to work on it, unless it is at work already.
 pub fn try_gather(
-    mut commands: Commands,
     mut reader: MessageReader<Try>,
-    mut writer: MessageWriter<Do>,
-    ground: Ground,
-    piles: Res<Piles>,
+    mut looters: Looters,
     time: Res<Time>,
     nntree: Res<common_bevy::plugins::nntree::NNTree>,
-    windows: Windows,
     mut players: Query<(&Loc, &mut Heading, &mut common_bevy::components::Turn, &mut Position, Has<Working>)>,
 ) {
-    // Windows opened this frame, which no query sees until it ends
-    let mut opened: Vec<(Entity, (i32, i32))> = Vec::new();
     for message in reader.read() {
         let Try { event: Event::Gather { ent, q, r, slot } } = message else { continue };
         let (ent, q, r, slot) = (*ent, *q, *r, *slot as usize);
@@ -391,7 +484,7 @@ pub fn try_gather(
             info!("gather: {ent} at {loc:?} asked out of reach for slot {slot} of ({q}, {r})");
             continue;
         }
-        let Some(cover) = ground.cover(q, r) else {
+        let Some(cover) = looters.ground.cover(q, r) else {
             info!("gather: {ent} asked for ({q}, {r}), which the map does not hold");
             continue;
         };
@@ -406,29 +499,24 @@ pub fn try_gather(
         };
         let position = activity
             .filter(|_| !working)
-            .and_then(|activity| stand_point(position.tile, position.offset, facing, (q, r), slot, activity, &ground.map, &nntree))
-            .map_or(position, |stand| stepped(position, stand, &ground.map));
+            .and_then(|activity| stand_point(position.tile, position.offset, facing, (q, r), slot, activity, &looters.ground.map, &nntree))
+            .map_or(position, |stand| stepped(position, stand, &looters.ground.map));
         if cover.content(slot).is_pile() {
-            if piles.held((q, r, slot)).is_none() {
+            if looters.piles.cells((q, r), ent, &looters.windows).iter().all(Option::is_none) {
+                info!("gather: {ent} asked for the piles on ({q}, {r}), which holds none it may take");
                 continue;
             }
-            let other = holder(&windows, (q, r)).or_else(|| opened.iter().find(|(_, tile)| *tile == (q, r)).map(|(other, _)| *other));
-            if let Some(other) = other.filter(|&other| other != ent) {
-                info!("gather: {ent} asked for the piles on ({q}, {r}), which {other} has open");
-                continue;
-            }
-            open(ent, (q, r), position, facing, &piles, &mut commands, &mut writer);
-            opened.push((ent, (q, r)));
+            looters.open(ent, (q, r), position, facing);
             if !working {
-                show(ent, Some(common::gathering::Activity::Pickup), &mut commands);
+                show(ent, Some(common::gathering::Activity::Pickup), &mut looters.commands);
             }
         } else if let Some(work) = common::gathering::work(cover, slot) {
             if working {
                 continue;
             }
             let until = Moment::ZERO + time.elapsed() + std::time::Duration::from_millis(common::gathering::WORK_MS);
-            commands.entity(ent).insert(Working { q, r, slot, until, from: position, facing });
-            show(ent, Some(common::gathering::Activity::Work(work)), &mut commands);
+            looters.commands.entity(ent).insert(Working { q, r, slot, until, from: position, facing });
+            show(ent, Some(common::gathering::Activity::Work(work)), &mut looters.commands);
         } else {
             info!("gather: {ent} asked for slot {slot} of ({q}, {r}), which holds nothing gatherable");
             continue;
@@ -443,56 +531,45 @@ pub fn try_gather(
 
 /// Ends each player's work: broken off where it has moved or turned since
 /// it began; done when its time is up, when what it worked on is gathered,
-/// if it is still there and in reach. Its yield lies at once, on the
-/// tile's pile of its kind or as a new one in the slot the gather freed,
-/// and its window opens on the tile, unless another player's is open
-/// there, who sees the yield arrive.
+/// if it is still there and in reach. Its yield lies at once, kept for
+/// it: on the pile of its kind it keeps there already, or as a new one in
+/// the slot the gather freed; and its window opens on the tile.
 pub fn finish_work(
-    mut commands: Commands,
-    mut writer: MessageWriter<Do>,
-    mut ground: Ground,
-    mut piles: ResMut<Piles>,
+    mut looters: Looters,
     time: Res<Time>,
-    windows: Windows,
     players: Query<(Entity, &Loc, &Heading, &Position, &Working, Has<Looting>)>,
 ) {
     for (ent, loc, heading, position, working, looting) in &players {
         if *position != working.from || *heading != working.facing {
-            stop(ent, looting, &mut commands);
+            stop(ent, looting, &mut looters.commands);
             continue;
         }
         if Moment::ZERO + time.elapsed() < working.until {
             continue;
         }
         let Working { q, r, slot, .. } = *working;
-        let harvest = ground.cover(q, r).and_then(|cover| common::gathering::harvest(cover, slot));
+        let harvest = looters.ground.cover(q, r).and_then(|cover| common::gathering::harvest(cover, slot));
         let Some(harvest) = harvest.filter(|_| in_reach(**loc, *heading, q, r)) else {
             info!("gather: {ent} finished on slot {slot} of ({q}, {r}), which it can no longer gather");
-            stop(ent, looting, &mut commands);
+            stop(ent, looting, &mut looters.commands);
             continue;
         };
         info!("gather: {ent} gathered {} {:?} from slot {slot} of ({q}, {r})", harvest.amount, harvest.material);
         let stack = harvest.stack();
-        match piles.on(q, r).into_iter().find(|(_, held)| held.kind == stack.kind) {
-            Some((onto, held)) => {
-                piles.0.insert((q, r, onto), common::Stack { count: held.count + stack.count, ..held });
-                ground.set(&mut writer, q, r, harvest.cover);
+        let own = (0..common::TILE_SLOTS as usize)
+            .find(|&k| looters.piles.0.get(&(q, r, k)).is_some_and(|pile| pile.stack.kind == stack.kind && pile.kept_for == Some(ent)));
+        match own.and_then(|k| looters.piles.0.get_mut(&(q, r, k))) {
+            Some(pile) => {
+                pile.stack.count += stack.count;
+                looters.ground.set(&mut looters.writer, q, r, harvest.cover);
             }
             None => {
-                piles.0.insert((q, r, harvest.freed), stack);
-                ground.set(&mut writer, q, r, common::gathering::left(harvest.cover, harvest.freed, harvest.material));
+                looters.piles.0.insert((q, r, harvest.freed), Pile { stack, kept_for: Some(ent) });
+                looters.ground.set(&mut looters.writer, q, r, common::gathering::left(harvest.cover, harvest.freed, harvest.material));
             }
         }
-        match holder(&windows, (q, r)).filter(|&other| other != ent) {
-            Some(other) => {
-                stop(ent, looting, &mut commands);
-                writer.write(Do { event: Event::Loot { ent: other, entries: Some(piles.entries(q, r)) } });
-            }
-            None => {
-                stop(ent, true, &mut commands);
-                open(ent, (q, r), *position, *heading, &piles, &mut commands, &mut writer);
-            }
-        }
+        stop(ent, true, &mut looters.commands);
+        looters.open(ent, (q, r), *position, *heading);
     }
 }
 
@@ -506,34 +583,27 @@ pub fn interrupt_work(mut commands: Commands, mut reader: MessageReader<Do>, wor
     }
 }
 
-/// Takes what a player asks from the tile its window is open on: one
-/// entry's pile or every pile, each as far as the bag has room and weight
-/// for. A pile emptied frees its slot, and the last one closes the window.
-pub fn try_take(
-    mut commands: Commands,
-    mut reader: MessageReader<Try>,
-    mut writer: MessageWriter<Do>,
-    mut ground: Ground,
-    mut piles: ResMut<Piles>,
-    mut players: Query<(&Equipment, &mut Inventory, &Looting, Has<Working>)>,
-) {
+/// Takes what a player asks from the tile its window is open on: the pile
+/// in one slot or every pile it may take, each as far as the bag has room
+/// and weight for. A pile emptied frees its slot, and every window on the
+/// tile shows what is left.
+pub fn try_take(mut reader: MessageReader<Try>, mut looters: Looters, mut players: Query<(&Equipment, &mut Inventory, &Looting)>) {
     for message in reader.read() {
-        let Try { event: Event::Take { ent, entry } } = message else { continue };
-        let (ent, entry) = (*ent, *entry);
-        let Ok((worn, mut bag, looting, working)) = players.get_mut(ent) else { continue };
+        let Try { event: Event::Take { ent, slot } } = message else { continue };
+        let (ent, slot) = (*ent, *slot);
+        let Ok((worn, mut bag, looting)) = players.get_mut(ent) else { continue };
         let (q, r) = (looting.q, looting.r);
-        let lying = piles.on(q, r);
-        let chosen = match entry {
-            Some(entry) => match lying.get(entry as usize) {
-                Some(&pile) => vec![pile],
-                None => continue,
-            },
-            None => lying,
+        let cells = looters.piles.cells((q, r), ent, &looters.windows);
+        let chosen: Vec<usize> = match slot {
+            Some(slot) if (slot as usize) < cells.len() => vec![slot as usize],
+            Some(_) => continue,
+            None => (0..cells.len()).collect(),
         };
-        let Some(before) = ground.cover(q, r) else { continue };
+        let Some(before) = looters.ground.cover(q, r) else { continue };
         let mut cover = before;
         let mut taken = false;
-        for (slot, stack) in chosen {
+        for slot in chosen {
+            let Some(stack) = cells[slot] else { continue };
             let count = stack.count.min(bag.room_for(worn, stack.kind));
             if count == 0 {
                 continue;
@@ -541,39 +611,28 @@ pub fn try_take(
             taken = true;
             bag.add(common::Stack { kind: stack.kind, count });
             if count == stack.count {
-                piles.0.remove(&(q, r, slot));
+                looters.piles.0.remove(&(q, r, slot));
                 cover = common::gathering::emptied(cover, slot);
-            } else if let Some(left) = piles.0.get_mut(&(q, r, slot)) {
-                left.count -= count;
+            } else if let Some(left) = looters.piles.0.get_mut(&(q, r, slot)) {
+                left.stack.count -= count;
             }
         }
-        if cover != before {
-            ground.set(&mut writer, q, r, cover);
-        } else if taken {
-            ground.piled(q, r);
-        }
-        writer.write(Do { event: Event::Inventory { ent, bag: bag.clone() } });
-        let left = piles.entries(q, r);
-        if !left.is_empty() {
-            writer.write(Do { event: Event::Loot { ent, entries: Some(left) } });
+        if !taken {
             continue;
         }
-        commands.entity(ent).remove::<Looting>();
-        writer.write(Do { event: Event::Loot { ent, entries: None } });
-        if !working {
-            show(ent, None, &mut commands);
+        if cover != before {
+            looters.ground.set(&mut looters.writer, q, r, cover);
+        } else {
+            looters.ground.piled(q, r);
         }
+        looters.writer.write(Do { event: Event::Inventory { ent, bag: bag.clone() } });
+        looters.refresh((q, r), None);
     }
 }
 
 /// Closes each window its player asks to close, or whose player has moved
-/// or turned at all since it opened, leaving its tile's piles to anyone.
-pub fn close_windows(
-    mut commands: Commands,
-    mut reader: MessageReader<Try>,
-    mut writer: MessageWriter<Do>,
-    players: Query<(Entity, &Position, &Heading, &Looting, Has<Working>)>,
-) {
+/// or turned at all since it opened, and lets go of what it kept there.
+pub fn close_windows(mut reader: MessageReader<Try>, mut looters: Looters, players: Query<(Entity, &Position, &Heading, &Looting, Has<Working>)>) {
     let asked: Vec<Entity> = reader
         .read()
         .filter_map(|m| match m.event {
@@ -585,22 +644,18 @@ pub fn close_windows(
         if !asked.contains(&ent) && *position == looting.from && *heading == looting.facing {
             continue;
         }
-        commands.entity(ent).remove::<Looting>();
-        writer.write(Do { event: Event::Loot { ent, entries: None } });
-        if !working {
-            show(ent, None, &mut commands);
-        }
+        looters.release(ent, (looting.q, looting.r));
+        looters.close(ent, working);
     }
 }
 
-/// Where a drop of `kind` lands among `tiles`, each with its cover: the
-/// slot of the pile of `kind` nearest `from`, xz from the centre of tile
-/// `frame`, or else the free slot nearest it, with its tile's cover. The
-/// flag says it lands on a pile already lying there.
+/// Where a drop lands among `tiles`, each with its cover: the slot
+/// nearest `from`, xz from the centre of tile `frame`, of those holding a
+/// pile it `joins`, or else the free slot nearest it, with its tile's
+/// cover. The flag says it lands on a pile already lying there.
 fn landing(
     tiles: &[((i32, i32), common::Cover)],
-    piles: &Piles,
-    kind: common::Stackable,
+    joins: impl Fn((i32, i32, usize)) -> bool,
     frame: (i32, i32),
     from: Vec2,
 ) -> Option<((i32, i32), common::Cover, usize, bool)> {
@@ -609,7 +664,7 @@ fn landing(
         let distance = |(tile, cover, k)| Vec2::from(common_bevy::geometry::slot_point(cover, tile, k, frame)).distance_squared(from);
         slots().filter(|&(tile, cover, k)| fits(tile, cover, k)).min_by(|&a, &b| distance(a).total_cmp(&distance(b)))
     };
-    let onto = nearest(&|(q, r), _, k| piles.held((q, r, k)).is_some_and(|stack| stack.kind == kind));
+    let onto = nearest(&|(q, r), _, k| joins((q, r, k)));
     let free = || nearest(&|_, cover, k| cover.content(k) == common::Content::Empty);
     onto.map(|(tile, cover, k)| (tile, cover, k, true)).or_else(|| free().map(|(tile, cover, k)| (tile, cover, k, false)))
 }
@@ -618,19 +673,12 @@ fn landing(
 const AROUND: [(i32, i32); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
 
 /// Lays what a player drops from its bag: onto a pile of its kind on the
-/// tile it stands on, or as a new pile in that tile's free slot nearest
-/// the player; a tile with neither spills it the same way onto the tiles
-/// round it that stand within a step of its height. Where none of those
-/// takes it either, the bag keeps it. A player whose window is open where
-/// it lands sees it arrive.
-pub fn try_drop(
-    mut reader: MessageReader<Try>,
-    mut writer: MessageWriter<Do>,
-    mut ground: Ground,
-    mut piles: ResMut<Piles>,
-    windows: Windows,
-    mut players: Query<(&Loc, &Position, &mut Inventory)>,
-) {
+/// tile it stands on that it may take from, or as a new pile in that
+/// tile's free slot nearest the player; a tile with neither spills it the
+/// same way onto the tiles round it that stand within a step of its
+/// height. Where none of those takes it either, the bag keeps it. Every
+/// window open where it lands shows it.
+pub fn try_drop(mut reader: MessageReader<Try>, mut looters: Looters, mut players: Query<(&Loc, &Position, &mut Inventory)>) {
     for message in reader.read() {
         let Try { event: Event::Drop { ent, kind, count } } = message else { continue };
         let (ent, kind, count) = (*ent, *kind, *count);
@@ -639,39 +687,38 @@ pub fn try_drop(
             continue;
         }
         let (q, r) = (loc.q, loc.r);
-        let Some((height, cover)) = ground.lies(q, r) else {
+        let Some((height, cover)) = looters.ground.lies(q, r) else {
             info!("drop: {ent} stands on ({q}, {r}), which the map does not hold");
             continue;
         };
         let round: Vec<((i32, i32), common::Cover)> = AROUND
             .iter()
             .filter_map(|&(dq, dr)| {
-                let (z, cover) = ground.lies(q + dq, r + dr)?;
+                let (z, cover) = looters.ground.lies(q + dq, r + dr)?;
                 ((z - height).abs() <= 1).then_some(((q + dq, r + dr), cover))
             })
             .collect();
         let frame = (position.tile.q, position.tile.r);
         let from = position.offset.xz();
-        let landed = landing(&[((q, r), cover)], &piles, kind, frame, from).or_else(|| landing(&round, &piles, kind, frame, from));
+        let joins = |key| looters.piles.open_to(key, ent, &looters.windows).is_some_and(|stack| stack.kind == kind);
+        let landed = landing(&[((q, r), cover)], joins, frame, from).or_else(|| landing(&round, joins, frame, from));
         let Some(((q, r), cover, slot, onto)) = landed else {
             info!("drop: {ent} at ({q}, {r}) has nowhere to drop {kind:?}");
             continue;
         };
         let stack = bag.remove(kind, count);
-        writer.write(Do { event: Event::Inventory { ent, bag: bag.clone() } });
+        looters.writer.write(Do { event: Event::Inventory { ent, bag: bag.clone() } });
         if onto {
-            if let Some(held) = piles.0.get_mut(&(q, r, slot)) {
-                held.count += stack.count;
+            if let Some(pile) = looters.piles.0.get_mut(&(q, r, slot)) {
+                pile.stack.count += stack.count;
             }
-            ground.piled(q, r);
+            looters.ground.piled(q, r);
         } else {
-            piles.0.insert((q, r, slot), stack);
+            looters.piles.0.insert((q, r, slot), Pile { stack, kept_for: None });
             let common::Stackable::Material(material) = kind;
-            ground.set(&mut writer, q, r, common::gathering::left(cover, slot, material));
+            looters.ground.set(&mut looters.writer, q, r, common::gathering::left(cover, slot, material));
         }
-        if let Some(holder) = holder(&windows, (q, r)) {
-            writer.write(Do { event: Event::Loot { ent: holder, entries: Some(piles.entries(q, r)) } });
-        }
+        looters.refresh((q, r), None);
         info!("drop: {ent} dropped {} {kind:?} in slot {slot} of ({q}, {r})", stack.count);
     }
 }
@@ -762,7 +809,11 @@ mod tests {
         assert_eq!(changes.get(40, 40), Some(Cover::NONE), "the held chunk keeps its own");
     }
 
-    /// A drop goes onto the pile of its kind, or else to the free slot
+    fn lying(kind: common::Stackable, count: u32) -> Pile {
+        Pile { stack: common::Stack { kind, count }, kept_for: None }
+    }
+
+    /// A drop goes onto the pile it joins, or else to the free slot
     /// nearest the player; tiles with neither take nothing.
     #[test]
     fn a_drop_lands_on_its_pile_or_the_nearest_free_slot() {
@@ -771,39 +822,43 @@ mod tests {
         let tile = (3, -2);
         let cover = common::gathering::left(Cover::NONE.with_boulder(0), 4, common::Material::Softwood);
         let mut piles = Piles::default();
-        piles.0.insert((3, -2, 4), common::Stack { kind: softwood, count: 4 });
+        piles.0.insert((3, -2, 4), lying(softwood, 4));
         let here = [(tile, cover)];
+        let piles = &piles;
+        let of = |kind| move |key| piles.held(key).is_some_and(|stack: common::Stack| stack.kind == kind);
 
-        assert_eq!(landing(&here, &piles, softwood, tile, Vec2::ZERO), Some((tile, cover, 4, true)));
+        assert_eq!(landing(&here, of(softwood), tile, Vec2::ZERO), Some((tile, cover, 4, true)));
 
         let free = |k: usize| cover.content(k) == Content::Empty;
         for k in (0..common::TILE_SLOTS as usize).filter(|&k| free(k)) {
             let at = Vec2::from(common_bevy::geometry::slot_point(cover, tile, k, tile));
-            assert_eq!(landing(&here, &piles, stone, tile, at), Some((tile, cover, k, false)), "standing on free slot {k}");
+            assert_eq!(landing(&here, of(stone), tile, at), Some((tile, cover, k, false)), "standing on free slot {k}");
         }
 
         let full = (0..common::TILE_SLOTS as usize).fold(cover, |c, k| if free(k) { c.with_boulder(k) } else { c });
-        assert_eq!(landing(&[(tile, full)], &piles, stone, tile, Vec2::ZERO), None);
-        assert_eq!(landing(&[(tile, full)], &piles, softwood, tile, Vec2::ZERO), Some((tile, full, 4, true)));
+        assert_eq!(landing(&[(tile, full)], of(stone), tile, Vec2::ZERO), None);
+        assert_eq!(landing(&[(tile, full)], of(softwood), tile, Vec2::ZERO), Some((tile, full, 4, true)));
     }
 
     /// What a full tile cannot take spills to the tiles round it: onto a
-    /// pile of its kind there before any free slot, and into the free slot
+    /// pile it joins there before any free slot, and into the free slot
     /// nearest the player among them all.
     #[test]
     fn a_drop_spills_to_the_nearest_slot_round_a_full_tile() {
         let stone = common::Stackable::Material(common::Material::Limestone);
         let round = AROUND.map(|(dq, dr)| ((dq, dr), Cover::NONE));
-        let (east, _, _, onto) = landing(&round, &Piles::default(), stone, (0, 0), Vec2::new(0.4, 0.0)).expect("a free slot lies round it");
+        let none = |_| false;
+        let (east, _, _, onto) = landing(&round, none, (0, 0), Vec2::new(0.4, 0.0)).expect("a free slot lies round it");
         assert!(!onto);
-        let (west, ..) = landing(&round, &Piles::default(), stone, (0, 0), Vec2::new(-0.4, 0.0)).expect("a free slot lies round it");
+        let (west, ..) = landing(&round, none, (0, 0), Vec2::new(-0.4, 0.0)).expect("a free slot lies round it");
         assert_ne!(east, west, "it falls on the side the player stands toward");
 
         let mut piles = Piles::default();
-        piles.0.insert((west.0, west.1, 3), common::Stack { kind: stone, count: 1 });
+        piles.0.insert((west.0, west.1, 3), lying(stone, 1));
         let cover = common::gathering::left(Cover::NONE, 3, common::Material::Limestone);
         let round = round.map(|(tile, bare)| (tile, if tile == west { cover } else { bare }));
-        assert_eq!(landing(&round, &piles, stone, (0, 0), Vec2::new(0.4, 0.0)), Some((west, cover, 3, true)));
+        let joins = |key| piles.held(key).is_some();
+        assert_eq!(landing(&round, joins, (0, 0), Vec2::new(0.4, 0.0)), Some((west, cover, 3, true)));
     }
 
     /// A clearing takes every tree and boulder within its radius, leaves
