@@ -47,10 +47,11 @@ impl RunTime {
     }
 }
 
-/// `ent` stepped or turned of its own: the skill it was activating, if
-/// any, is cancelled (`abilities::cancel`). Whatever moves a player by its
-/// input triggers it; an NPC mid-activation stands still instead
-/// (`behaviour::chase`). The server's own; it never crosses the wire.
+/// `ent` stepped of its own: the skill it was activating, if any, is
+/// cancelled (`abilities::cancel`). Whatever walks a settled player by its
+/// input triggers it, and a turn never does; an NPC mid-activation stands
+/// still instead (`behaviour::chase`). The server's own; it never crosses
+/// the wire.
 #[derive(Event, Debug, Clone, Copy)]
 pub struct Cancel {
     pub ent: Entity,

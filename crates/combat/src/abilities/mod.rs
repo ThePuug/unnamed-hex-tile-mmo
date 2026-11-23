@@ -165,7 +165,7 @@ pub fn use_abilities(mut reader: MessageReader<Try>, mut abilities: Abilities) {
 }
 
 /// Ends the activation of the actor a `crate::Cancel` names, by its own
-/// step or turn: nothing lands, its endurance stays spent and its recharge
+/// step: nothing lands, its endurance stays spent and its recharge
 /// starts.
 pub fn cancel(trigger: On<crate::Cancel>, mut abilities: Abilities) {
     abilities.end(trigger.event().ent, Outcome::Cancelled);
@@ -881,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn a_step_or_a_turn_of_its_own_cancels_an_activation() {
+    fn a_step_of_its_own_cancels_an_activation() {
         let mut app = arena();
         let (caster, near) = duel(&mut app);
         ask(&mut app, caster, AbilityType::Overpower, Some(near));

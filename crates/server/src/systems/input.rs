@@ -194,11 +194,14 @@ pub fn try_input(
 /// entry, the open input (INV-002); a message with the next sequence closes
 /// it, confirming the position and turn state it left the entity at, and
 /// replaces it in place. A dead player's inputs keep the sequence moving but
-/// do not move it. An input that walks or turns a player mid-activation
-/// cancels the skill (`combat::Cancel`); a jump in place does not.
+/// do not move it. An input that walks a player mid-activation cancels the
+/// skill (`combat::Cancel`) once its user has settled
+/// (`Activation::settled`); a turn or a jump in place never does.
 pub fn apply(
     mut reader: MessageReader<Do>,
     mut commands: Commands,
+    runtime: Res<combat::RunTime>,
+    time: Res<Time>,
     mut buffers: ResMut<InputQueues>,
     mut query: Query<(&mut Heading, &mut Turn, &mut Position, &mut AirTime, Option<&ActorAttributes>, Option<&RespawnTimer>, Option<&common_bevy::components::status::Status>, Option<&activation::Activating>)>,
     map: Res<Map>,
@@ -248,7 +251,7 @@ pub fn apply(
             collides: true,
         }, dt as i16, &map, &nntree);
         let walked = key_bits.moving() && out.position.offset.xz() != position.offset.xz();
-        if activating.is_some_and(|activating| activating.0.is_some()) && (walked || out.heading != turn.heading) {
+        if walked && activating.and_then(|activating| activating.0).is_some_and(|activation| activation.settled(runtime.now(&time))) {
             commands.trigger(combat::Cancel { ent });
         }
         position.offset = out.position.offset;
@@ -421,9 +424,9 @@ mod tests {
         assert_eq!(world.get::<ActorAttributes>(ent).unwrap().pairs(), mighty.pairs(), "refused in a fight");
     }
 
-    /// The actors `apply` cancelled, after an activating player's open
-    /// input is extended by `dt` ms of `keys`.
-    fn cancelled_by(keys: u8, dt: u16) -> usize {
+    /// The actors `apply` cancelled, after the open input of a player
+    /// `into` its activation is extended by `dt` ms of `keys`.
+    fn cancelled_by(keys: u8, dt: u16, into: Duration) -> usize {
         use common_bevy::components::activation::{Activating, Activation};
         #[derive(Default, Resource)]
         struct Cancelled(usize);
@@ -433,6 +436,10 @@ mod tests {
         app.add_message::<Do>();
         app.init_resource::<InputQueues>();
         app.init_resource::<Cancelled>();
+        app.init_resource::<combat::RunTime>();
+        let mut time = Time::<()>::default();
+        time.advance_by(into);
+        app.insert_resource(time);
         app.insert_resource(Map::new(qrz::Map::new(common::grid::HEX_RADIUS, common::grid::RISE)));
         app.add_observer(|_: On<combat::Cancel>, mut cancelled: ResMut<Cancelled>| cancelled.0 += 1);
         app.add_systems(Update, apply);
@@ -450,12 +457,14 @@ mod tests {
     }
 
     #[test]
-    fn a_step_or_a_turn_cancels_what_a_player_is_activating() {
-        assert_eq!(cancelled_by(0, 200), 0, "standing, the skill runs on");
-        assert_eq!(cancelled_by(KB_JUMP, 200), 0, "as it does through a jump in place");
-        assert_eq!(cancelled_by(KB_RIGHT, 200), 1, "a turn cancels it");
-        assert_eq!(cancelled_by(KB_FORWARD, 200), 1, "a step cancels it");
-        assert_eq!(cancelled_by(KB_FORWARD, 0), 0, "keys held for no time move nothing");
+    fn a_step_cancels_what_a_settled_player_is_activating() {
+        use common_bevy::components::activation::SETTLE;
+        assert_eq!(cancelled_by(0, 200, SETTLE), 0, "standing, the skill runs on");
+        assert_eq!(cancelled_by(KB_JUMP, 200, SETTLE), 0, "as it does through a jump in place");
+        assert_eq!(cancelled_by(KB_RIGHT, 200, SETTLE), 0, "and through a turn");
+        assert_eq!(cancelled_by(KB_FORWARD, 200, SETTLE), 1, "a step cancels it");
+        assert_eq!(cancelled_by(KB_FORWARD, 200, SETTLE / 2), 0, "but not one still arriving as the skill begins");
+        assert_eq!(cancelled_by(KB_FORWARD, 0, SETTLE), 0, "keys held for no time move nothing");
     }
 
     fn moving() -> KeyBits {

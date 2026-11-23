@@ -50,6 +50,7 @@ pub fn update_keybits(
     dt: Res<Time>,
     mut look: ResMut<crate::systems::camera::Look>,
     mut looked_steps: Local<u8>,
+    mut settling: Local<std::time::Duration>,
 ) {
     // The menu and the console's world clock, whose arrows scrub the
     // clock, are modal: while one is open every gameplay key reads as
@@ -63,6 +64,7 @@ pub fn update_keybits(
     let delta_ns = dt.delta().as_nanos();
     keybits0.accumulator += delta_ns;
 
+    *settling = settling.saturating_sub(dt.delta());
     let mut keybits = KeyBits::default();
     if !modal {
         // The player's kit: each key's ability, used on the hostile it
@@ -77,6 +79,10 @@ pub fn update_keybits(
             if keys.pressed(key, crate::systems::skill_text::describe_now(ability, &attrs, &tuning, refused)) {
                 if let Some(reason) = refused {
                     presses.refuse(ability, reason);
+                } else if tuning.activation(ability) > 0.0 {
+                    // A walk key let go a moment late would cancel the
+                    // skill it was pressed with
+                    *settling = common_bevy::components::activation::SETTLE;
                 }
                 writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity }});
             }
@@ -89,8 +95,9 @@ pub fn update_keybits(
             *look = look.moved(Vec2::new(right as f32, up as f32), dt.delta_secs());
         } else {
             *look = default();
-            keybits.set_pressed([KB_FORWARD], keys.held(KEYCODE_UP, "Move forward"));
-            keybits.set_pressed([KB_BACK], keys.held(KEYCODE_DOWN, "Move back, facing ahead"));
+            let walks = settling.is_zero();
+            keybits.set_pressed([KB_FORWARD], keys.held(KEYCODE_UP, "Move forward") && walks);
+            keybits.set_pressed([KB_BACK], keys.held(KEYCODE_DOWN, "Move back, facing ahead") && walks);
             keybits.set_pressed([KB_LEFT], keys.held(KEYCODE_LEFT, "Turn left"));
             keybits.set_pressed([KB_RIGHT], keys.held(KEYCODE_RIGHT, "Turn right"));
         }

@@ -21,7 +21,20 @@ pub struct Activation {
     pub length: Duration,
 }
 
+/// How long a skill's user settles as it begins. A player's client holds
+/// its walk keys released that long from the press, and the server takes
+/// no step inside it for a cancel: the walk under way at the press is
+/// still arriving then, and nothing sent after the client's hold reaches
+/// the server sooner than this after the skill began.
+pub const SETTLE: Duration = Duration::from_millis(150);
+
 impl Activation {
+    /// Whether its user has settled at `now`: a step from here on is one
+    /// it chose to take, and cancels it
+    pub fn settled(&self, now: Moment) -> bool {
+        now.since(self.began) >= SETTLE
+    }
+
     /// The moment it lands
     pub fn ends(&self) -> Moment {
         self.began + self.length
@@ -110,5 +123,6 @@ mod tests {
         assert_eq!(activation.ends(), Moment::from_millis(1_500));
         assert!(activation.progress(Moment::from_millis(1_000)) > activation.progress(Moment::from_millis(600)));
         assert_eq!(activation.left(Moment::from_millis(2_000)), Duration::ZERO, "nothing left once it has landed");
+        assert!(!activation.settled(activation.began) && activation.settled(activation.began + SETTLE), "its user settles as it begins");
     }
 }

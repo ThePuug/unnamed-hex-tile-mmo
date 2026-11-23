@@ -40,8 +40,8 @@ const HOME: i32 = 2;
 /// from wherever its target is within its `AttackRange`. A step that gives
 /// ground it takes backing away, facing its target; holding, or keeping to
 /// its tile, it stands and faces it. Activating a skill, it holds its
-/// ground and its heading until the skill lands: a step or a turn would
-/// cancel it.
+/// ground and its heading until the skill lands: a step would cancel it,
+/// and a foe that steps round past its arc has answered it.
 ///
 /// Further than `leash_distance` from its engagement's place it lets its
 /// target go and walks home (`Returning`), taking no target until it is

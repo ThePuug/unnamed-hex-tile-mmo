@@ -11,7 +11,7 @@ use crate::{self as combat, behaviour, targeting};
 /// fights by the rules players meet. Movement, behaviour (`BehaviourPlugin`)
 /// and the removal of the dead (`actor::cleanup_despawned`) are the
 /// installer's, since the live server orders removal after the network send.
-/// A player's own step or turn mid-activation is the installer's to tell
+/// A player's own step mid-activation is the installer's to tell
 /// (`combat::Cancel`).
 pub struct CombatPlugin;
 
