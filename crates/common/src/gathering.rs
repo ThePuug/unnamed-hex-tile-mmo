@@ -174,12 +174,14 @@ impl Harvest {
     }
 }
 
-/// The pile that holds `material`: its wood, or stone in the tile's rock.
+/// The pile that holds `material`.
 fn pile_of(material: Material) -> Content {
     match material {
         Material::Softwood => Content::SoftwoodPile,
         Material::Hardwood => Content::HardwoodPile,
-        Material::Sandstone | Material::Limestone | Material::Basement => Content::StonePile,
+        Material::Sandstone => Content::SandstonePile,
+        Material::Limestone => Content::LimestonePile,
+        Material::Basement => Content::BasementPile,
     }
 }
 
@@ -275,7 +277,8 @@ mod tests {
         assert_eq!(emptied(piled, cut.freed), cut.cover);
         let crag = Cover::NONE.with_boulder(4).with_rock(Rock::Basement);
         let mined = harvest(crag, 4).unwrap();
-        assert_eq!(left(mined.cover, mined.freed, mined.material).content(4), Content::StonePile);
+        assert_eq!(left(mined.cover, mined.freed, mined.material).content(4), Content::BasementPile);
+        assert_eq!(left(Cover::NONE.with_rock(Rock::Shale), 2, Material::Limestone).content(2), Content::LimestonePile, "whatever it lies on");
     }
 
     /// A tree takes a chop and a boulder a strike; what is not gathered

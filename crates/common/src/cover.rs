@@ -22,11 +22,13 @@ pub enum Content {
     /// What a felled tree leaves in its first slot.
     PineStump = 6,
     DeciduousStump = 7,
-    /// What a player left of a yield: a pile of its wood, or of stone in
-    /// the tile's rock.
+    /// What lies on the ground for anyone to take: a pile of its wood, or
+    /// of its stone, whatever rock it lies on.
     SoftwoodPile = 8,
     HardwoodPile = 9,
-    StonePile = 10,
+    SandstonePile = 10,
+    LimestonePile = 11,
+    BasementPile = 12,
 }
 
 impl Content {
@@ -36,7 +38,7 @@ impl Content {
         match self {
             Content::Empty | Content::Spanned => 0,
             Content::Brush | Content::Boulder | Content::PineStump | Content::DeciduousStump => 1,
-            Content::SoftwoodPile | Content::HardwoodPile | Content::StonePile => 1,
+            Content::SoftwoodPile | Content::HardwoodPile | Content::SandstonePile | Content::LimestonePile | Content::BasementPile => 1,
             Content::Pine | Content::Deciduous => 2,
         }
     }
@@ -49,7 +51,7 @@ impl Content {
 
     /// Whether it is a pile a player left, which anyone may open.
     pub fn is_pile(self) -> bool {
-        matches!(self, Content::SoftwoodPile | Content::HardwoodPile | Content::StonePile)
+        matches!(self, Content::SoftwoodPile | Content::HardwoodPile | Content::SandstonePile | Content::LimestonePile | Content::BasementPile)
     }
 
     /// Whether it grows at a site: brush or a tree.
@@ -68,7 +70,9 @@ impl Content {
             7 => Content::DeciduousStump,
             8 => Content::SoftwoodPile,
             9 => Content::HardwoodPile,
-            10 => Content::StonePile,
+            10 => Content::SandstonePile,
+            11 => Content::LimestonePile,
+            12 => Content::BasementPile,
             _ => Content::Empty,
         }
     }

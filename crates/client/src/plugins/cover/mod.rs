@@ -56,17 +56,14 @@ impl From<Content> for Kind {
 }
 
 impl Kind {
-    /// The pile `content` draws as on a tile of `rock`: its wood, or its
-    /// stone in the rock's colour.
-    fn pile(content: Content, rock: common::Rock) -> Option<Kind> {
+    /// The pile `content` draws as.
+    fn pile(content: Content) -> Option<Kind> {
         match content {
             Content::SoftwoodPile => Some(Kind::SoftwoodPile),
             Content::HardwoodPile => Some(Kind::HardwoodPile),
-            Content::StonePile => Some(match rock {
-                common::Rock::Limestone => Kind::LimestonePile,
-                common::Rock::Basement => Kind::BasementPile,
-                common::Rock::Sandstone | common::Rock::Shale => Kind::SandstonePile,
-            }),
+            Content::SandstonePile => Some(Kind::SandstonePile),
+            Content::LimestonePile => Some(Kind::LimestonePile),
+            Content::BasementPile => Some(Kind::BasementPile),
             _ => None,
         }
     }
@@ -532,7 +529,7 @@ pub fn place_cover(
             // A pile lies in its slot as its model stands, turned and placed
             // by the slot's own sway as a boulder's.
             for k in 0..TILE_SLOTS as usize {
-                let Some(kind) = Kind::pile(cover.content(k), cover.rock()) else { continue };
+                let Some(kind) = Kind::pile(cover.content(k)) else { continue };
                 let sway = common::boulder_sway(q, r, k);
                 let (x, z) = boulder_center(q - origin.q, r - origin.r, k, &sway);
                 let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
