@@ -219,7 +219,7 @@ impl Keeper {
             }
             batch.tiles.push((chunk, q, r, cover));
             for slot in 0..common::TILE_SLOTS as usize {
-                let playable = piles.stacks((q, r, slot)).unwrap_or_default().iter().copied().map(stored::stack);
+                let playable = piles.held((q, r, slot)).map(stored::stack).into_iter();
                 let held: Vec<_> = playable.chain(self.lying.get(&(q, r, slot)).into_iter().flatten().cloned()).collect();
                 if !held.is_empty() {
                     batch.piles.push((chunk, (q, r, slot), held));
@@ -338,12 +338,15 @@ fn receive(mut changes: ResMut<WorldChanges>, mut piles: ResMut<Piles>, mut know
                 debug!("store: recalled {} chunks, {} changed tiles, {} piles", chunks.len(), recalled.tiles.len(), recalled.piles.len());
                 changes.recall(recalled.tiles, generated);
                 for (key, held) in recalled.piles {
-                    let (stacks, unplayable) = stored::stacks(held);
-                    if !stacks.is_empty() {
-                        piles.recall(key, stacks);
+                    let (stacks, mut unplayable) = stored::stacks(held);
+                    let mut stacks = stacks.into_iter();
+                    if let Some(stack) = stacks.next() {
+                        piles.recall(key, stack);
                     }
+                    // A slot holds one stack: any more kept under it stay kept
+                    unplayable.extend(stacks.map(stored::stack));
                     if !unplayable.is_empty() {
-                        error!("store: the pile at {key:?} holds {} things this build cannot play; they stay kept", unplayable.len());
+                        error!("store: the pile at {key:?} holds {} things this build cannot lay there; they stay kept", unplayable.len());
                         keeper.lying.insert(key, unplayable);
                     }
                 }
