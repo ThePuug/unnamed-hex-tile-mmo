@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM den d USING UNNEST($1::BIGINT[], $2::INT[], $3::INT[]) AS t(chunk, q, r)\n             WHERE d.chunk = t.chunk AND d.q = t.q AND d.r = t.r",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int4Array",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c74fe76460368a42e8aa399374668e57b700c756c0f0a9be9cba3d557cf4129c"
+}

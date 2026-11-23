@@ -1,8 +1,8 @@
-//! Keeps the changed world and its characters past the server, in the
+//! Keeps the changed world, its dens and its characters past the server, in the
 //! PostgreSQL at `DATABASE_URL`, or the local one ([`LOCAL`]) where that is
 //! unset. The rest of the server never learns how: kept changes are
-//! recalled into [`WorldChanges`] and [`Piles`], and kept characters into
-//! [`Characters`], as they are asked after, and what players change is
+//! recalled into [`WorldChanges`], [`Piles`] and [`Dens`], and kept
+//! characters into [`Characters`], as they are asked after, and what players change is
 //! written behind play.
 //!
 //! One server writes a chunk at a time, and one an account. Recalling a
@@ -28,6 +28,7 @@
 //! the simulation.
 
 mod character;
+mod den;
 mod store;
 mod stored;
 
@@ -57,6 +58,7 @@ use crate::{
     resources::event_registry::EventRegistry,
     systems::{
         characters::{Character, Characters},
+        dens::Dens,
         gathering::{Piles, TileChanged, WorldChanges},
     },
 };
@@ -106,6 +108,7 @@ struct Held {
 /// What a write in flight carries, to be written again should it fail.
 struct Carried {
     tiles: Vec<(i32, i32)>,
+    dens: Vec<Qrz>,
     /// Each character, and its state as written.
     characters: Vec<(Identity, String)>,
     economy: bool,
@@ -113,7 +116,7 @@ struct Carried {
 
 impl Carried {
     fn is_empty(&self) -> bool {
-        self.tiles.is_empty() && self.characters.is_empty()
+        self.tiles.is_empty() && self.dens.is_empty() && self.characters.is_empty()
     }
 }
 
@@ -127,6 +130,8 @@ struct Keeper {
     accounts: HashMap<Identity, Held>,
     /// Tiles players changed since the last write.
     dirty: HashSet<(i32, i32)>,
+    /// Den sites whose den changed since the last write.
+    changed_dens: HashSet<Qrz>,
     /// Characters to write whenever the next write goes: one whose bag
     /// changed, one that left the world.
     changed: HashSet<Identity>,
@@ -163,6 +168,7 @@ impl Keeper {
             epochs: HashMap::new(),
             accounts: HashMap::new(),
             dirty: HashSet::new(),
+            changed_dens: HashSet::new(),
             changed: HashSet::new(),
             written: HashMap::new(),
             dormant: HashMap::new(),
@@ -204,7 +210,8 @@ impl Keeper {
     /// what it carries. With `every`, every character in the world is
     /// looked at; without, only those marked changed. A character whose
     /// state is as the store holds it is not written.
-    fn batch(&mut self, changes: &WorldChanges, piles: &Piles, playing: &Query<Playing>, known: &Characters, every: bool) -> (Carried, Batch) {
+    #[allow(clippy::too_many_arguments)]
+    fn batch(&mut self, changes: &WorldChanges, piles: &Piles, dens: &Dens, now: Moment, playing: &Query<Playing>, known: &Characters, every: bool) -> (Carried, Batch) {
         let mut batch = Batch { economy: std::mem::take(&mut self.due), ..default() };
         let mut claimed = HashSet::new();
         let tiles: Vec<(i32, i32)> = self.dirty.drain().collect();
@@ -225,6 +232,19 @@ impl Keeper {
                     batch.piles.push((chunk, (q, r, slot), held));
                 }
             }
+        }
+
+        let sites: Vec<Qrz> = self.changed_dens.drain().collect();
+        for &site in &sites {
+            let chunk = loc_to_chunk(site);
+            let Some(&epoch) = self.epochs.get(&chunk) else {
+                warn!("store: the den at ({}, {}) changed on chunk {chunk:?}, which this server does not hold", site.q, site.r);
+                continue;
+            };
+            if claimed.insert(chunk) {
+                batch.epochs.push((chunk, epoch));
+            }
+            batch.dens.push((chunk, (site.q, site.r), dens.den_on(site).and_then(|den| den::kept(&den, now, unix()))));
         }
 
         let mut changed = std::mem::take(&mut self.changed);
@@ -254,14 +274,14 @@ impl Keeper {
             batch.characters.push((held.character, state.clone()));
             characters.push((identity, state));
         }
-        (Carried { tiles, characters, economy: batch.economy }, batch)
+        (Carried { tiles, dens: sites, characters, economy: batch.economy }, batch)
     }
 
     /// The write carrying `carried` landed, was refused or failed.
     fn wrote(&mut self, carried: Carried, result: Result<Refused, sqlx::Error>, known: &mut Characters) {
         match result {
             Ok(refused) if refused.is_empty() => {
-                debug!("store: wrote {} changed tiles and {} characters", carried.tiles.len(), carried.characters.len());
+                debug!("store: wrote {} changed tiles, {} dens and {} characters", carried.tiles.len(), carried.dens.len(), carried.characters.len());
                 self.written.extend(carried.characters);
             }
             Ok(refused) => {
@@ -289,9 +309,15 @@ impl Keeper {
 
     fn rewrite(&mut self, carried: Carried) {
         self.dirty.extend(carried.tiles);
+        self.changed_dens.extend(carried.dens);
         self.changed.extend(carried.characters.into_iter().map(|(identity, _)| identity));
         self.due |= carried.economy;
     }
+}
+
+/// The time, in milliseconds of the Unix clock.
+fn unix() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64)
 }
 
 /// From the first frame, a chunk's changes are on the map only once
@@ -300,14 +326,16 @@ fn keep(mut changes: ResMut<WorldChanges>) {
     changes.keep();
 }
 
-fn note(mut reader: MessageReader<TileChanged>, bags: Query<&Character, Changed<Inventory>>, mut known: ResMut<Characters>, mut keeper: ResMut<Keeper>) {
+fn note(mut reader: MessageReader<TileChanged>, bags: Query<&Character, Changed<Inventory>>, mut dens: ResMut<Dens>, mut known: ResMut<Characters>, mut keeper: ResMut<Keeper>) {
     let keeper = &mut *keeper;
     let before = keeper.dirty.len() + keeper.changed.len();
     keeper.dirty.extend(reader.read().map(|changed| (changed.q, changed.r)));
     keeper.changed.extend(bags.iter().map(|character| character.0));
     keeper.due |= keeper.dirty.len() + keeper.changed.len() > before;
-    // A character that left is written before long, though no item moved
+    // A character that left and a den that changed are written before
+    // long, though no item moved
     keeper.changed.extend(known.take_left());
+    keeper.changed_dens.extend(dens.take_changed());
 }
 
 /// Sends what the game asked after to the store.
@@ -326,10 +354,19 @@ fn ask(mut changes: ResMut<WorldChanges>, mut known: ResMut<Characters>, mut kee
     }
 }
 
-/// Lays what the store answered: a recalled chunk's tiles and piles, then
-/// the chunk as held; a read box's tiles where no held chunk has newer; a
+/// Lays what the store answered: a recalled chunk's tiles, piles and dens,
+/// then the chunk as held; a read box's tiles where no held chunk has newer; a
 /// player's character, its account then held.
-fn receive(mut changes: ResMut<WorldChanges>, mut piles: ResMut<Piles>, mut known: ResMut<Characters>, registry: Res<EventRegistry>, mut keeper: ResMut<Keeper>) {
+#[allow(clippy::too_many_arguments)]
+fn receive(
+    mut changes: ResMut<WorldChanges>,
+    mut piles: ResMut<Piles>,
+    mut dens: ResMut<Dens>,
+    mut known: ResMut<Characters>,
+    registry: Res<EventRegistry>,
+    time: Res<Time>,
+    mut keeper: ResMut<Keeper>,
+) {
     let generated = |q, r| registry.cover_at(q, r);
     for (chunks, mut task) in std::mem::take(&mut keeper.recalls) {
         match block_on(poll_once(&mut task)) {
@@ -348,6 +385,11 @@ fn receive(mut changes: ResMut<WorldChanges>, mut piles: ResMut<Piles>, mut know
                     if !unplayable.is_empty() {
                         error!("store: the pile at {key:?} holds {} things this build cannot lay there; they stay kept", unplayable.len());
                         keeper.lying.insert(key, unplayable);
+                    }
+                }
+                for (site, state) in recalled.dens {
+                    if let Some(den) = den::recalled(state, Moment::ZERO + time.elapsed(), unix()) {
+                        dens.recall(site, den);
                     }
                 }
                 for (chunk, epoch) in recalled.epochs {
@@ -418,7 +460,17 @@ fn receive(mut changes: ResMut<WorldChanges>, mut piles: ResMut<Piles>, mut know
 /// Writes what players changed: at once where an item moved, and every
 /// [`FLUSH`] otherwise, when it also asks again after what failed. A
 /// write still in flight holds the next one back.
-fn flush(time: Res<Time<Real>>, changes: Res<WorldChanges>, piles: Res<Piles>, playing: Query<Playing>, known: Res<Characters>, mut keeper: ResMut<Keeper>) {
+#[allow(clippy::too_many_arguments)]
+fn flush(
+    time: Res<Time<Real>>,
+    game: Res<Time>,
+    changes: Res<WorldChanges>,
+    piles: Res<Piles>,
+    dens: Res<Dens>,
+    playing: Query<Playing>,
+    known: Res<Characters>,
+    mut keeper: ResMut<Keeper>,
+) {
     let now = Moment::ZERO + time.elapsed();
     let interval = now >= keeper.next_flush;
     if interval {
@@ -437,7 +489,7 @@ fn flush(time: Res<Time<Real>>, changes: Res<WorldChanges>, piles: Res<Piles>, p
     if keeper.write.is_some() || !(interval || keeper.due) {
         return;
     }
-    let (carried, batch) = keeper.batch(&changes, &piles, &playing, &known, interval);
+    let (carried, batch) = keeper.batch(&changes, &piles, &dens, Moment::ZERO + game.elapsed(), &playing, &known, interval);
     if carried.is_empty() {
         return;
     }
@@ -449,8 +501,10 @@ fn flush(time: Res<Time<Real>>, changes: Res<WorldChanges>, piles: Res<Piles>, p
 /// every character in the world with it.
 fn flush_at_exit(
     mut exit: MessageReader<AppExit>,
+    time: Res<Time>,
     changes: Res<WorldChanges>,
     piles: Res<Piles>,
+    mut dens: ResMut<Dens>,
     playing: Query<Playing>,
     mut known: ResMut<Characters>,
     mut keeper: ResMut<Keeper>,
@@ -463,8 +517,9 @@ fn flush_at_exit(
         keeper.wrote(carried, result, &mut known);
     }
     keeper.changed.extend(known.take_left());
+    keeper.changed_dens.extend(dens.take_changed());
     keeper.due = true;
-    let (carried, batch) = keeper.batch(&changes, &piles, &playing, &known, true);
+    let (carried, batch) = keeper.batch(&changes, &piles, &dens, Moment::ZERO + time.elapsed(), &playing, &known, true);
     if carried.is_empty() {
         return;
     }

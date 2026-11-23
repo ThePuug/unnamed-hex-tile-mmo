@@ -14,8 +14,12 @@
 //! returns. Breaking the nest leaves the den cleared, whatever of its pack
 //! still lives the last of it: a change that stands for [`DECAY`] and then
 //! is gone, leaving the site as the world made it. A standing den's growth
-//! with age is unbuilt. Dens are held in memory and not kept past the
-//! server: the ground a den clears is laid again when it next stands.
+//! with age is unbuilt. A den outlives the server where it stands and as
+//! it is, standing or cleared: whatever keeps the world is told of each
+//! that changes ([`Dens::take_changed`]) and recalls those it kept
+//! ([`Dens::recall`]) before their chunk's sites are found. Its nest and
+//! pack do not, and come back whole as a player nears; the ground it
+//! clears is laid again when it next stands.
 //!
 //! A den is drawn about the tile its pack first stood on, as its
 //! archetype's model, active or cleared, its seed and turn its site's:
@@ -151,27 +155,56 @@ impl Den {
 #[derive(Resource, Default)]
 pub struct Dens {
     sites: HashMap<ChunkId, Vec<Site>>,
+    /// Dens recalled for sites not yet found, by the site's `(q, r)`.
+    recalled: HashMap<(i32, i32), Den>,
+    /// Sites whose den came to stand, was cleared or went since the last
+    /// [`Dens::take_changed`].
+    changed: Vec<Qrz>,
 }
 
 impl Dens {
-    /// Records a site a generated chunk holds; one already known is kept as
-    /// it stands, den and all.
+    /// Records a site a generated chunk holds, with the den recalled for
+    /// it, if any; one already known is kept as it stands, den and all.
     pub fn found(&mut self, tile: Qrz, habitat: Habitat) {
         let sites = self.sites.entry(loc_to_chunk(tile)).or_default();
         if !sites.iter().any(|site| site.tile == tile) {
-            sites.push(Site { tile, habitat, den: None });
+            sites.push(Site { tile, habitat, den: self.recalled.remove(&(tile.q, tile.r)) });
         }
     }
 
-    fn standing(&mut self, holds: impl Fn(Option<Entity>, Option<Entity>) -> bool) -> Option<&mut Den> {
-        self.sites.values_mut().flatten().filter_map(|site| site.den.as_mut())
-            .find(|den| matches!(den.state, DenState::Standing { pack, nest, .. } if holds(pack, nest)))
+    /// Lays `den`, kept from an earlier run, on the site at `(q, r)`,
+    /// where that site has none: on one already found, or when it is.
+    pub fn recall(&mut self, (q, r): (i32, i32), den: Den) {
+        match self.sites.values_mut().flatten().find(|site| (site.tile.q, site.tile.r) == (q, r)) {
+            Some(site) => {
+                site.den.get_or_insert(den);
+            }
+            None => {
+                self.recalled.insert((q, r), den);
+            }
+        }
+    }
+
+    /// The sites whose den changed since the last call: came to stand, was
+    /// cleared, or went.
+    pub fn take_changed(&mut self) -> Vec<Qrz> {
+        std::mem::take(&mut self.changed)
+    }
+
+    /// The den on the site at `tile` that has stood, as it is.
+    pub fn den_on(&self, tile: Qrz) -> Option<Den> {
+        self.sites.get(&loc_to_chunk(tile))?.iter().find(|site| site.tile == tile)?.den.filter(|den| den.at.is_some())
+    }
+
+    fn standing(&mut self, holds: impl Fn(Option<Entity>, Option<Entity>) -> bool) -> Option<&mut Site> {
+        self.sites.values_mut().flatten()
+            .find(|site| site.den.is_some_and(|den| matches!(den.state, DenState::Standing { pack, nest, .. } if holds(pack, nest))))
     }
 
     /// Notes that `pack` is gone from the world, its nest with it: its den
     /// stands unwatched, to come back whole.
     pub fn ended(&mut self, pack: Entity) {
-        if let Some(den) = self.standing(|held, _| held == Some(pack)) {
+        if let Some(den) = self.standing(|held, _| held == Some(pack)).and_then(|site| site.den.as_mut()) {
             den.state = DenState::UNWATCHED;
         }
     }
@@ -179,9 +212,12 @@ impl Dens {
     /// Notes that `actor` died at `now`: the nest of a standing den, that
     /// den is cleared from then.
     pub fn died(&mut self, actor: Entity, now: Moment) {
-        if let Some(den) = self.standing(|_, nest| nest == Some(actor)) {
+        let Some(site) = self.standing(|_, nest| nest == Some(actor)) else { return };
+        let tile = site.tile;
+        if let Some(den) = site.den.as_mut() {
             *den = Den { state: DenState::Cleared, since: now, ..*den };
         }
+        self.changed.push(tile);
     }
 }
 
@@ -272,6 +308,7 @@ pub fn tend_dens(
                 if site.den.is_some_and(|den| den.decayed(now)) {
                     info!("den decayed at ({}, {})", site.tile.q, site.tile.r);
                     site.den = None;
+                    changed.push(site.tile);
                 }
                 let den = site.den.get_or_insert_with(|| Den {
                     archetype: EnemyArchetype::denning_on(site.habitat),
@@ -305,6 +342,7 @@ pub fn tend_dens(
                 let Some(at) = den.at.or_else(|| dry_ground_near(&map, site.tile, &taken)) else { continue };
                 if den.at.is_none() {
                     taken.push(at);
+                    changed.push(site.tile);
                     info!("den of {} {:?} at level {} on {:?} ground at ({}, {})", den.size, den.archetype, den.level, site.habitat, at.q, at.r);
                 }
                 den.at = Some(at);
@@ -318,6 +356,7 @@ pub fn tend_dens(
             }
         }
     }
+    dens.changed.extend(changed);
 }
 
 /// Spawns the nest of a den of `archetype` at `level` on `at`, a member of

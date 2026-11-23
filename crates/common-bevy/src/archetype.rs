@@ -39,6 +39,25 @@ pub struct Profile {
 impl EnemyArchetype {
     pub const ALL: [Self; 6] = [Self::Berserker, Self::Juggernaut, Self::Flanker, Self::Defender, Self::Skirmisher, Self::Ambusher];
 
+    /// The number a store keeps the archetype by. It is given once: an
+    /// archetype renamed or reworked keeps it, a new one takes the next
+    /// never used, and a removed one's is never given again.
+    pub fn id(self) -> u32 {
+        match self {
+            Self::Berserker => 1,
+            Self::Juggernaut => 2,
+            Self::Flanker => 3,
+            Self::Defender => 4,
+            Self::Skirmisher => 5,
+            Self::Ambusher => 6,
+        }
+    }
+
+    /// The archetype kept as `id`, or none where the game no longer has it.
+    pub fn kept_as(id: u32) -> Option<Self> {
+        Self::ALL.into_iter().find(|archetype| archetype.id() == id)
+    }
+
     /// Everything that sets this archetype apart, one row each
     pub const fn profile(self) -> Profile {
         use AbilityType::*;

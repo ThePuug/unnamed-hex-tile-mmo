@@ -17,11 +17,13 @@ pub struct Store {
 pub type PileKey = (i32, i32, usize);
 
 /// What a claim of chunks found: each chunk's new ownership number, and
-/// every tile and pile kept on them, a pile as the JSON of what it holds.
+/// every tile, pile and den kept on them, a pile as the JSON of what it
+/// holds and a den as its JSON, by its site's `(q, r)`.
 pub struct Recalled {
     pub epochs: Vec<(ChunkId, i64)>,
     pub tiles: Vec<(i32, i32, Cover)>,
     pub piles: Vec<(PileKey, Vec<serde_json::Value>)>,
+    pub dens: Vec<((i32, i32), serde_json::Value)>,
 }
 
 /// Tiles, piles and characters to keep, each under the ownership number
@@ -32,6 +34,9 @@ pub struct Batch {
     pub epochs: Vec<(ChunkId, i64)>,
     pub tiles: Vec<(ChunkId, i32, i32, Cover)>,
     pub piles: Vec<(ChunkId, PileKey, Vec<serde_json::Value>)>,
+    /// Each den site written, by its `(q, r)`: its den's JSON, or none
+    /// where it has none any more.
+    pub dens: Vec<(ChunkId, (i32, i32), Option<String>)>,
     /// Each account written and the number it was claimed with.
     pub accounts: Vec<(i64, i64)>,
     /// Each character written, by its id, as its state's JSON.
@@ -115,8 +120,14 @@ impl Store {
         .into_iter()
         .map(|row| ((row.q, row.r, row.slot as usize), row.stacks.0))
         .collect();
+        let dens = sqlx::query!(r#"SELECT q, r, state AS "state: Json<serde_json::Value>" FROM den WHERE chunk = ANY($1)"#, &keys)
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .map(|row| ((row.q, row.r), row.state.0))
+            .collect();
         tx.commit().await?;
-        Ok(Recalled { epochs, tiles, piles })
+        Ok(Recalled { epochs, tiles, piles, dens })
     }
 
     /// Every tile kept with `min.0 <= q <= max.0` and `min.1 <= r <= max.1`,
@@ -264,6 +275,31 @@ impl Store {
         )
         .execute(&mut *tx)
         .await?;
+        let den_chunks: Vec<i64> = batch.dens.iter().map(|d| key(d.0)).collect();
+        let den_qs: Vec<i32> = batch.dens.iter().map(|d| d.1 .0).collect();
+        let den_rs: Vec<i32> = batch.dens.iter().map(|d| d.1 .1).collect();
+        let den_states: Vec<Option<String>> = batch.dens.iter().map(|d| d.2.clone()).collect();
+        sqlx::query!(
+            "DELETE FROM den d USING UNNEST($1::BIGINT[], $2::INT[], $3::INT[]) AS t(chunk, q, r)
+             WHERE d.chunk = t.chunk AND d.q = t.q AND d.r = t.r",
+            &den_chunks,
+            &den_qs,
+            &den_rs,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "INSERT INTO den (chunk, q, r, state)
+             SELECT chunk, q, r, state::JSONB
+             FROM UNNEST($1::BIGINT[], $2::INT[], $3::INT[], $4::TEXT[]) AS t(chunk, q, r, state)
+             WHERE state IS NOT NULL",
+            &den_chunks,
+            &den_qs,
+            &den_rs,
+            &den_states as &[Option<String>],
+        )
+        .execute(&mut *tx)
+        .await?;
         sqlx::query!(
             "UPDATE player_character c SET state = t.state::JSONB
              FROM UNNEST($1::BIGINT[], $2::TEXT[]) AS t(id, state)
@@ -332,6 +368,25 @@ mod tests {
             assert!(again.epochs[0].1 > claimed.epochs[0].1, "each claim raises the number");
             assert_eq!(store.read((0, -100), (50, 0)).await.unwrap(), vec![(40, -60, pine())]);
             assert!(store.read((41, -100), (50, 0)).await.unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    #[ignore = "needs the PostgreSQL the server keeps to"]
+    fn a_den_is_kept_until_its_site_has_none() {
+        scratch(async |store| {
+            let here = ChunkId(1, 1);
+            let epochs = store.recall(&[here]).await.unwrap().epochs;
+            let stands = Batch { epochs: epochs.clone(), dens: vec![(here, (20, 21), Some(r#"{"level":4}"#.into()))], ..Default::default() };
+            assert!(store.write(stands).await.unwrap().is_empty());
+            let epochs = {
+                let again = store.recall(&[here]).await.unwrap();
+                assert_eq!(again.dens, vec![((20, 21), serde_json::json!({"level": 4}))]);
+                again.epochs
+            };
+            let gone = Batch { epochs, dens: vec![(here, (20, 21), None)], ..Default::default() };
+            assert!(store.write(gone).await.unwrap().is_empty());
+            assert!(store.recall(&[here]).await.unwrap().dens.is_empty());
         });
     }
 
