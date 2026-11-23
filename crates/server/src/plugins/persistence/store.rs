@@ -24,14 +24,45 @@ pub struct Recalled {
     pub piles: Vec<(PileKey, Vec<Stack>)>,
 }
 
-/// Tiles and piles to keep, each under the ownership number its chunk was
-/// claimed with. A tile's piles are written whole: one with none left has
-/// none kept.
+/// Tiles, piles and characters to keep, each under the ownership number
+/// its chunk or its account was claimed with. A tile's piles are written
+/// whole: one with none left has none kept.
 #[derive(Default)]
 pub struct Batch {
     pub epochs: Vec<(ChunkId, i64)>,
     pub tiles: Vec<(ChunkId, i32, i32, Cover)>,
     pub piles: Vec<(ChunkId, PileKey, Vec<Stack>)>,
+    /// Each account written and the number it was claimed with.
+    pub accounts: Vec<(i64, i64)>,
+    /// Each character written, by its id, as its state's JSON.
+    pub characters: Vec<(i64, String)>,
+    /// Whether an item appeared, was consumed or changed holder in what
+    /// the batch carries: the write then waits on the disk.
+    pub economy: bool,
+}
+
+/// The chunks and accounts a write named under numbers since raised.
+/// Where either holds any, nothing of the batch was written.
+#[derive(Debug, Default, PartialEq)]
+pub struct Refused {
+    pub chunks: Vec<ChunkId>,
+    pub accounts: Vec<i64>,
+}
+
+impl Refused {
+    pub fn is_empty(&self) -> bool {
+        self.chunks.is_empty() && self.accounts.is_empty()
+    }
+}
+
+/// What claiming a player's account found: the account, its new ownership
+/// number, and its first character's id and state, JSON `null` where it
+/// has never been written.
+pub struct Entered {
+    pub account: i64,
+    pub epoch: i64,
+    pub character: i64,
+    pub state: serde_json::Value,
 }
 
 /// The one column a chunk is keyed by.
@@ -105,17 +136,61 @@ impl Store {
         .collect())
     }
 
-    /// Writes `batch` where this server still holds each chunk at the number
-    /// it names, and returns the chunks it does not, whose part is dropped.
-    /// The ownership rows are locked until the write commits, so a claim
-    /// made meanwhile waits for it instead of slipping between check and
-    /// write.
-    pub async fn write(&self, batch: Batch) -> Result<Vec<ChunkId>, sqlx::Error> {
+    /// Claims the account `provider` knows as `name` for this server,
+    /// raising its ownership number, and reads its first character, in one
+    /// transaction. A player never seen is given an account, and an
+    /// account with no character its first, unwritten.
+    pub async fn enter(&self, provider: &str, name: &str) -> Result<Entered, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let known = sqlx::query_scalar!("SELECT account FROM identity WHERE provider = $1 AND name = $2", provider, name)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let account = match known {
+            Some(account) => account,
+            None => {
+                let account = sqlx::query_scalar!("INSERT INTO account DEFAULT VALUES RETURNING id").fetch_one(&mut *tx).await?;
+                sqlx::query!("INSERT INTO identity (provider, name, account) VALUES ($1, $2, $3)", provider, name, account)
+                    .execute(&mut *tx)
+                    .await?;
+                account
+            }
+        };
+        let epoch = sqlx::query_scalar!("UPDATE account SET epoch = epoch + 1, holder = $2 WHERE id = $1 RETURNING epoch", account, self.holder)
+            .fetch_one(&mut *tx)
+            .await?;
+        let first = sqlx::query!(
+            r#"SELECT id, state AS "state: Json<serde_json::Value>" FROM player_character WHERE account = $1 ORDER BY id LIMIT 1"#,
+            account,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        let (character, state) = match first {
+            Some(row) => (row.id, row.state.0),
+            None => {
+                let id = sqlx::query_scalar!("INSERT INTO player_character (account, state) VALUES ($1, 'null') RETURNING id", account)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                (id, serde_json::Value::Null)
+            }
+        };
+        tx.commit().await?;
+        Ok(Entered { account, epoch, character, state })
+    }
+
+    /// Writes `batch` whole where this server still holds every chunk and
+    /// account at the number it names. Where it does not, nothing is
+    /// written and those it does not hold are returned: half a batch would
+    /// keep one side of a move and lose the other. The ownership rows are
+    /// locked until the write commits, so a claim made meanwhile waits for
+    /// it instead of slipping between check and write.
+    pub async fn write(&self, batch: Batch) -> Result<Refused, sqlx::Error> {
         let (keys, epochs): (Vec<i64>, Vec<i64>) = batch.epochs.iter().map(|&(c, e)| (key(c), e)).unzip();
         let mut tx = self.pool.begin().await?;
-        // A crash loses what the flush interval holds anyway; waiting on the
-        // disk for each flush buys nothing.
-        sqlx::raw_sql("SET LOCAL synchronous_commit = off").execute(&mut *tx).await?;
+        if !batch.economy {
+            // A crash loses what the flush interval holds anyway; waiting on
+            // the disk for each flush buys nothing.
+            sqlx::raw_sql("SET LOCAL synchronous_commit = off").execute(&mut *tx).await?;
+        }
         let held: std::collections::HashSet<i64> = sqlx::query_scalar!(
             r#"SELECT o.chunk AS "chunk!" FROM chunk_owner o, UNNEST($1::BIGINT[], $2::BIGINT[]) AS h(chunk, epoch)
              WHERE o.chunk = h.chunk AND o.epoch = h.epoch AND o.holder = $3
@@ -128,8 +203,28 @@ impl Store {
         .await?
         .into_iter()
         .collect();
+        let (accounts, account_epochs): (Vec<i64>, Vec<i64>) = batch.accounts.iter().copied().unzip();
+        let held_accounts: std::collections::HashSet<i64> = sqlx::query_scalar!(
+            r#"SELECT a.id AS "id!" FROM account a, UNNEST($1::BIGINT[], $2::BIGINT[]) AS h(id, epoch)
+             WHERE a.id = h.id AND a.epoch = h.epoch AND a.holder = $3
+             FOR SHARE OF a"#,
+            &accounts,
+            &account_epochs,
+            self.holder,
+        )
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .collect();
+        let refused = Refused {
+            chunks: batch.epochs.iter().map(|&(c, _)| c).filter(|&c| !held.contains(&key(c))).collect(),
+            accounts: accounts.iter().copied().filter(|a| !held_accounts.contains(a)).collect(),
+        };
+        if !refused.is_empty() {
+            return Ok(refused);
+        }
 
-        let tiles: Vec<_> = batch.tiles.iter().filter(|t| held.contains(&key(t.0))).collect();
+        let tiles: Vec<_> = batch.tiles.iter().collect();
         let tile_chunks: Vec<i64> = tiles.iter().map(|t| key(t.0)).collect();
         let qs: Vec<i32> = tiles.iter().map(|t| t.1).collect();
         let rs: Vec<i32> = tiles.iter().map(|t| t.2).collect();
@@ -155,7 +250,7 @@ impl Store {
         .execute(&mut *tx)
         .await?;
 
-        let piles: Vec<_> = batch.piles.iter().filter(|p| held.contains(&key(p.0))).collect();
+        let piles: Vec<_> = batch.piles.iter().collect();
         let stacks: Vec<String> = piles.iter().map(|p| serde_json::to_string(&p.2).expect("stacks serialize")).collect();
         sqlx::query!(
             "INSERT INTO pile (chunk, q, r, slot, stacks)
@@ -169,9 +264,18 @@ impl Store {
         )
         .execute(&mut *tx)
         .await?;
+        sqlx::query!(
+            "UPDATE player_character c SET state = t.state::JSONB
+             FROM UNNEST($1::BIGINT[], $2::TEXT[]) AS t(id, state)
+             WHERE c.id = t.id AND c.account = ANY($3)",
+            &batch.characters.iter().map(|c| c.0).collect::<Vec<_>>(),
+            &batch.characters.iter().map(|c| c.1.clone()).collect::<Vec<_>>(),
+            &accounts,
+        )
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
-
-        Ok(batch.epochs.iter().map(|&(c, _)| c).filter(|&c| !held.contains(&key(c))).collect())
+        Ok(refused)
     }
 }
 
@@ -186,15 +290,15 @@ mod tests {
         }
     }
 
-    /// Opens a scratch database made for one test, schema and all, and
-    /// drops it after. None without DATABASE_URL, the server's own store.
+    /// Opens a scratch database made for one test, schema and all, beside
+    /// the server's own store, and drops it after.
     fn scratch(test: impl AsyncFnOnce(Store)) {
-        let Ok(url) = std::env::var("DATABASE_URL") else { return };
+        let url = super::super::url();
         bevy::tasks::block_on(async {
             let name = format!("test_{}_{}", std::process::id(), rand::random::<u32>());
-            let admin = PgPool::connect(&url).await.expect("the store at DATABASE_URL opens");
+            let admin = PgPool::connect(&url).await.expect("the store opens");
             sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}"))).execute(&admin).await.expect("may create a database");
-            let (base, _) = url.rsplit_once('/').expect("DATABASE_URL names a database");
+            let (base, _) = url.rsplit_once('/').expect("the store's URL names a database");
             let store = Store::open(&format!("{base}/{name}")).await.expect("the scratch store opens");
             test(store.clone()).await;
             store.pool.close().await;
@@ -207,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs a PostgreSQL at DATABASE_URL"]
+    #[ignore = "needs the PostgreSQL the server keeps to"]
     fn what_is_written_is_recalled_and_read() {
         scratch(async |store| {
             let here = ChunkId(2, -3);
@@ -218,6 +322,7 @@ mod tests {
                 epochs: claimed.epochs.clone(),
                 tiles: vec![(here, 40, -60, pine())],
                 piles: vec![(here, (40, -60, 4), stacks.clone())],
+                ..Default::default()
             };
             assert!(store.write(batch).await.unwrap().is_empty());
 
@@ -231,22 +336,22 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs a PostgreSQL at DATABASE_URL"]
+    #[ignore = "needs the PostgreSQL the server keeps to"]
     fn a_write_under_a_stale_number_is_refused_and_writes_nothing() {
         scratch(async |store| {
             let here = ChunkId(0, 0);
             let first = store.recall(&[here]).await.unwrap();
             let second = store.recall(&[here]).await.unwrap();
-            let stale = Batch { epochs: first.epochs, tiles: vec![(here, 1, 1, pine())], piles: vec![] };
-            assert_eq!(store.write(stale).await.unwrap(), vec![here]);
+            let stale = Batch { epochs: first.epochs, tiles: vec![(here, 1, 1, pine())], ..Default::default() };
+            assert_eq!(store.write(stale).await.unwrap().chunks, vec![here]);
             assert!(store.read((0, 0), (5, 5)).await.unwrap().is_empty());
-            let fresh = Batch { epochs: second.epochs, tiles: vec![(here, 1, 1, pine())], piles: vec![] };
+            let fresh = Batch { epochs: second.epochs, tiles: vec![(here, 1, 1, pine())], ..Default::default() };
             assert!(store.write(fresh).await.unwrap().is_empty());
         });
     }
 
     #[test]
-    #[ignore = "needs a PostgreSQL at DATABASE_URL"]
+    #[ignore = "needs the PostgreSQL the server keeps to"]
     fn a_tiles_piles_are_written_whole() {
         scratch(async |store| {
             let here = ChunkId(0, 0);
@@ -256,11 +361,54 @@ mod tests {
                 epochs: epochs.clone(),
                 tiles: vec![(here, 3, 3, pine())],
                 piles: vec![(here, (3, 3, 1), stone.clone()), (here, (3, 3, 2), stone.clone())],
+                ..Default::default()
             };
             store.write(both).await.unwrap();
-            let one = Batch { epochs, tiles: vec![(here, 3, 3, pine())], piles: vec![(here, (3, 3, 2), stone.clone())] };
+            let one = Batch { epochs, tiles: vec![(here, 3, 3, pine())], piles: vec![(here, (3, 3, 2), stone.clone())], ..Default::default() };
             store.write(one).await.unwrap();
             assert_eq!(store.recall(&[here]).await.unwrap().piles, vec![((3, 3, 2), stone)]);
+        });
+    }
+
+    #[test]
+    #[ignore = "needs the PostgreSQL the server keeps to"]
+    fn a_player_enters_as_its_character_was_written() {
+        scratch(async |store| {
+            let first = store.enter("key", "ab").await.unwrap();
+            assert!(first.state.is_null(), "a new player's character is unwritten");
+            let written = Batch { accounts: vec![(first.account, first.epoch)], characters: vec![(first.character, r#"{"at":3}"#.into())], ..Default::default() };
+            assert!(store.write(written).await.unwrap().is_empty());
+
+            let again = store.enter("key", "ab").await.unwrap();
+            assert_eq!((again.account, again.character), (first.account, first.character));
+            assert_eq!(again.state, serde_json::json!({"at": 3}));
+            assert!(again.epoch > first.epoch, "each claim raises the number");
+            assert_ne!(store.enter("key", "cd").await.unwrap().account, first.account, "another key is another player");
+        });
+    }
+
+    /// A batch naming one stale holder writes nothing, the holders it
+    /// still has included: a pile and a bag are kept together or not at all.
+    #[test]
+    #[ignore = "needs the PostgreSQL the server keeps to"]
+    fn a_batch_with_a_stale_holder_writes_nothing_of_the_rest() {
+        scratch(async |store| {
+            let here = ChunkId(0, 0);
+            let epochs = store.recall(&[here]).await.unwrap().epochs;
+            let stale = store.enter("key", "ab").await.unwrap();
+            let held = store.enter("key", "ab").await.unwrap();
+            let batch = Batch {
+                epochs: epochs.clone(),
+                tiles: vec![(here, 1, 1, pine())],
+                accounts: vec![(stale.account, stale.epoch)],
+                characters: vec![(stale.character, "{}".into())],
+                economy: true,
+                ..Default::default()
+            };
+            assert_eq!(store.write(batch).await.unwrap(), Refused { chunks: vec![], accounts: vec![stale.account] });
+            assert!(store.read((0, 0), (5, 5)).await.unwrap().is_empty());
+            assert!(store.enter("key", "ab").await.unwrap().state.is_null());
+            assert!(held.epoch > stale.epoch);
         });
     }
 }

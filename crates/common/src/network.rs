@@ -57,3 +57,63 @@ pub const HEALTH_THRESHOLD: f32 = 0.2;
 pub fn port() -> u16 {
     std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(5000)
 }
+
+/// Who a connection says it is: the provider vouching for it and that
+/// provider's name for the player. A client's own key is the one provider:
+/// whoever holds the key is the player.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Identity {
+    Key([u8; 16]),
+}
+
+impl Identity {
+    const KEY: u8 = 1;
+
+    /// The identity as netcode's connect user data carries it: the
+    /// provider's byte, then its name.
+    pub fn user_data(self) -> [u8; 256] {
+        let mut data = [0; 256];
+        match self {
+            Identity::Key(key) => {
+                data[0] = Self::KEY;
+                data[1..17].copy_from_slice(&key);
+            }
+        }
+        data
+    }
+
+    /// The identity `data` carries, or none where it names no provider.
+    pub fn from_user_data(data: &[u8; 256]) -> Option<Self> {
+        match data[0] {
+            Self::KEY => Some(Identity::Key(data[1..17].try_into().expect("16 bytes"))),
+            _ => None,
+        }
+    }
+
+    /// The provider, as the store names it.
+    pub fn provider(self) -> &'static str {
+        match self {
+            Identity::Key(_) => "key",
+        }
+    }
+
+    /// The provider's name for the player.
+    pub fn name(self) -> String {
+        match self {
+            Identity::Key(key) => key.iter().map(|byte| format!("{byte:02x}")).collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_identity_crosses_the_connect_data_whole() {
+        let identity = Identity::Key(*b"0123456789abcdef");
+        assert_eq!(Identity::from_user_data(&identity.user_data()), Some(identity));
+        assert_eq!(Identity::from_user_data(&[0; 256]), None);
+        assert_eq!(identity.name().len(), 32);
+    }
+}

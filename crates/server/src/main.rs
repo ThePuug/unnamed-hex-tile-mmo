@@ -111,6 +111,7 @@ fn main() {
     app.insert_resource(Map::new(qrz::Map::new(common::grid::HEX_RADIUS, common::grid::RISE)));
 
     app.init_resource::<Lobby>();
+    app.init_resource::<crate::systems::characters::Characters>();
     app.init_resource::<crate::systems::gathering::Piles>();
     app.init_resource::<InputQueues>();
     app.init_resource::<input::InputGuards>();

@@ -23,6 +23,7 @@ use crate::*;
 
 
 use crate::network::{ServerNet, NetServerEvent};
+use crate::systems::characters::{Character, Characters, Kept};
 use combat::RunTime;
 use common_bevy::tuning::Tuning;
 
@@ -43,7 +44,8 @@ pub enum Presence {
 }
 
 /// The haven's ground, read on a thread of its own, and the clients who
-/// asked to enter before it was. Ground no one has read yet can take the
+/// asked to enter before they could: before it was read, or before their
+/// character was recalled. Ground no one has read yet can take the
 /// world's generator longer to build than a connection waits on a frame,
 /// so the server answers connections while it reads.
 #[derive(Resource)]
@@ -60,15 +62,18 @@ impl Admission {
     }
 }
 
-/// Stands the spawn point on the haven's ground once it is read, and lets
-/// in every client who asked to enter meanwhile.
+/// Stands the spawn point on the haven's ground once it is read, and from
+/// then on has every waiting client ask to enter again each frame.
 pub fn admit(mut admission: ResMut<Admission>, mut commands: Commands) {
-    if !admission.ground.as_ref().is_some_and(std::thread::JoinHandle::is_finished) {
+    if admission.ground.as_ref().is_some_and(|ground| !ground.is_finished()) {
         return;
     }
-    let spawn = admission.ground.take().expect("a finished read").join().expect("the haven's ground read");
-    info!("the haven's ground is read: players enter at {spawn:?}");
-    commands.insert_resource(common_bevy::components::resources::SpawnPoint(spawn));
+    if let Some(ground) = admission.ground.take() {
+        let spawn = ground.join().expect("the haven's ground read");
+        info!("the haven's ground is read: players enter at {spawn:?}");
+        commands.insert_resource(common_bevy::components::resources::SpawnPoint(spawn));
+    }
+    // Each asks again, and waits again where its character is not yet recalled
     for client_id in admission.waiting.drain(..) {
         commands.trigger(Presence::Enter { client_id });
     }
@@ -106,6 +111,8 @@ pub fn do_presence(
     mut admission: ResMut<Admission>,
     characters: Query<(), With<PlayerControlled>>,
     actors: Query<(&EntityType, &Loc, Option<&ActorAttributes>), Without<RespawnTimer>>,
+    mut known: ResMut<Characters>,
+    playing: Query<Playing>,
 ) {
     match trigger.event() {
         Presence::Enter { client_id } => {
@@ -113,29 +120,36 @@ pub fn do_presence(
                 if lobby.contains_left(&client_id) {
                     return;
                 }
-                let Some(spawn_point) = spawn_point else {
+                let Some(identity) = conn.identity(client_id) else {
+                    warn!("Client {} names no player and cannot enter", client_id);
+                    return;
+                };
+                let mut wait = || {
                     if !admission.waiting.contains(&client_id) {
                         admission.waiting.push(client_id);
                     }
-                    return;
                 };
+                // A player in the world from another connection leaves it
+                // there, and enters here as it left
+                let elsewhere = lobby.iter().find(|&(&other, &ent)| playing.get(ent).is_ok_and(|p| p.0 .0 == identity) && other != client_id).map(|(&other, _)| other);
+                if let Some(other) = elsewhere {
+                    info!("Client {} takes its player over from client {}", client_id, other);
+                    commands.trigger(Presence::Leave { client_id: other });
+                    conn.disconnect(other);
+                    return wait();
+                }
+                let (Some(spawn_point), true) = (spawn_point, known.knows(identity)) else { return wait() };
                 info!("Player {} entered the world", client_id);
+                let Kept { equipment, inventory: bag, attrs, loadout, at: qrz, heading } =
+                    known.as_left(identity).cloned().unwrap_or_else(|| Kept::fresh(spawn_point.0));
                 let typ = EntityType::Actor(ActorImpl::new(
                     Origin::Evolved,
                     Approach::Direct,
                     Resilience::Vital,
                     ActorIdentity::Player));
-                let qrz = spawn_point.0;
                 let loc = Loc::new(qrz);
-                let attrs = ActorAttributes::new(
-                    -3, 4, 0,
-                    1, 0, 0,
-                    -3, 4, 0,
-                );
                 let fighter = Fighter::new(&tuning, attrs, Moment::ZERO + time.elapsed());
                 let (health, endurance, combat_state) = (fighter.health, fighter.endurance, fighter.combat_state);
-                let equipment = Equipment::starting_outfit();
-                let bag = Inventory::wearing(&equipment);
 
                 let ent = commands.spawn((
                     typ,
@@ -149,6 +163,7 @@ pub fn do_presence(
                     common_bevy::components::AttackRange::default(),
                     equipment,
                     bag.clone(),
+                    (Character(identity), loadout, heading),
                 ));
 
                 // init input buffer for client
@@ -169,7 +184,7 @@ pub fn do_presence(
                     Some(attrs),
                     Some(&PlayerControlled),
                     Some(&common_bevy::components::behaviour::Side::PLAYERS),
-                    None,
+                    Some(&heading),
                     Some(&health),
                     Some(&endurance),
                     Some(&combat_state),
@@ -184,6 +199,7 @@ pub fn do_presence(
 
                 // The bag goes to its owner only, after Init so the client has its entity
                 conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Inventory { ent, bag }});
+                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::SetLoadout { ent, loadout }});
 
                 // Write Spawn to message bus so do_spawn_discover triggers initial chunk discovery
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) } });
@@ -194,12 +210,14 @@ pub fn do_presence(
                 let client_id = *client_id;
                 admission.waiting.retain(|&waiting| waiting != client_id);
                 let Some((_, ent)) = lobby.remove_by_left(&client_id) else { return };
+                remember(ent, &playing, &mut known);
                 leave(client_id, ent, characters.contains(ent), &mut commands, &mut conn, &lobby, &mut buffers, &mut guards, &mut loaded_by_query);
             }
             Presence::View { client_id, ent: viewed } => {
                 let (client_id, viewed) = (*client_id, *viewed);
                 let Ok((&typ, &loc, attrs)) = actors.get(viewed) else { return };
                 if let Some((_, ent)) = lobby.remove_by_left(&client_id) {
+                    remember(ent, &playing, &mut known);
                     leave(client_id, ent, characters.contains(ent), &mut commands, &mut conn, &lobby, &mut buffers, &mut guards, &mut loaded_by_query);
                 }
                 info!("Client {} views {}", client_id, viewed);
@@ -214,6 +232,25 @@ pub fn do_presence(
         }
 }
 
+
+/// A character in the world, and everything of it that is kept as it
+/// leaves.
+type Playing = (
+    &'static Character,
+    &'static Equipment,
+    &'static Inventory,
+    &'static ActorAttributes,
+    &'static common_bevy::components::loadout::Loadout,
+    &'static Loc,
+    &'static common_bevy::components::heading::Heading,
+);
+
+/// Keeps `ent` as it stands, where it is a character, for when its player
+/// next enters.
+fn remember(ent: Entity, playing: &Query<Playing>, known: &mut Characters) {
+    let Ok((&Character(identity), equipment, inventory, attrs, loadout, loc, heading)) = playing.get(ent) else { return };
+    known.leave(identity, Kept { equipment: *equipment, inventory: inventory.clone(), attrs: *attrs, loadout: *loadout, at: **loc, heading: *heading });
+}
 
 /// Takes `ent`, the lobby entry `client_id` just left, out of the client's
 /// hands: a character leaves the world, despawned for everyone who saw it;

@@ -1,5 +1,6 @@
 pub mod actor;
 pub mod aoi;
+pub mod characters;
 pub mod dens;
 pub mod engagement_cleanup;
 pub mod engagement_spawner;

@@ -1,19 +1,28 @@
-//! Keeps the changed world past the server, in the PostgreSQL at
-//! `DATABASE_URL`. The rest of the server never learns how: kept changes
-//! are recalled into [`WorldChanges`] and [`Piles`] as they are asked
-//! after, and every tile a player changes, announced as [`TileChanged`], is
-//! written behind play. Without `DATABASE_URL` nothing is kept, and the
-//! changed world lasts as long as the server.
+//! Keeps the changed world and its characters past the server, in the
+//! PostgreSQL at `DATABASE_URL`, or the local one ([`LOCAL`]) where that is
+//! unset. The rest of the server never learns how: kept changes are
+//! recalled into [`WorldChanges`] and [`Piles`], and kept characters into
+//! [`Characters`], as they are asked after, and what players change is
+//! written behind play.
 //!
-//! One server writes a chunk at a time. Recalling a chunk to build claims
-//! it, raising its ownership number, and a write under a number since
-//! raised is refused in the transaction that would have made it. A box of
-//! tiles read for a summary claims nothing.
+//! One server writes a chunk at a time, and one an account. Recalling a
+//! chunk to build claims it, as recalling a player's character claims its
+//! account, raising its ownership number. A write is one transaction
+//! carrying everything changed since the last, and one naming a number
+//! since raised is refused whole. A box of tiles read for a summary claims
+//! nothing.
+//!
+//! A write is due the frame an item appears, is consumed or changes
+//! holder, and waits on the disk; anything else waits for [`FLUSH`]. Every
+//! change a player makes to a tile today moves an item, a gather's yield or
+//! a pile's contents, so every [`TileChanged`] is such a change, as is
+//! every change to a bag.
 //!
 //! No system waits on the store: every query is a task on the IO pool,
 //! polled each frame, so a slow store delays recalls and writes and never
 //! the simulation.
 
+mod character;
 mod store;
 
 use std::{
@@ -25,33 +34,79 @@ use bevy::{
     prelude::*,
     tasks::{block_on, futures_lite::future::poll_once, IoTaskPool, Task},
 };
-use common_bevy::{chunk::{loc_to_chunk, ChunkId}, moment::Moment};
+use common::network::Identity;
+use common_bevy::{
+    chunk::{loc_to_chunk, ChunkId},
+    components::{
+        equipment::{Equipment, Inventory},
+        heading::Heading,
+        loadout::Loadout,
+        ActorAttributes, Loc,
+    },
+    moment::Moment,
+};
 use qrz::Qrz;
 
 use crate::{
     resources::event_registry::EventRegistry,
-    systems::gathering::{Piles, TileChanged, WorldChanges},
+    systems::{
+        characters::{Character, Characters},
+        gathering::{Piles, TileChanged, WorldChanges},
+    },
 };
-use store::{Batch, Recalled, Store};
+use store::{Batch, Entered, Recalled, Refused, Store};
 
-/// How often what players changed is written. A crash loses at most this
-/// much of the ground.
+/// How often what players changed is written where no item moved. A crash
+/// loses at most this much of it.
 const FLUSH: Duration = Duration::from_secs(5);
+
+/// The store a server keeps to where `DATABASE_URL` names none: a role and
+/// a database of its own on the machine's PostgreSQL, made once by
+/// `CREATE ROLE mmo LOGIN PASSWORD 'mmo' CREATEDB` and
+/// `CREATE DATABASE mmo OWNER mmo`.
+const LOCAL: &str = "postgres://mmo:mmo@localhost:5432/mmo";
+
+/// Where the store is.
+fn url() -> String {
+    std::env::var("DATABASE_URL").unwrap_or_else(|_| LOCAL.to_owned())
+}
 
 pub struct PersistencePlugin;
 
 impl Plugin for PersistencePlugin {
     fn build(&self, app: &mut App) {
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            info!("no DATABASE_URL: the changed world lasts as long as the server");
-            return;
-        };
-        let store = block_on(Store::open(&url)).unwrap_or_else(|e| panic!("DATABASE_URL is set but its store will not open: {e}"));
-        info!("keeping the changed world in the store at DATABASE_URL");
+        let url = url();
+        let store = block_on(Store::open(&url)).unwrap_or_else(|e| {
+            panic!("the store will not open: {e}\nThe server keeps to the PostgreSQL at DATABASE_URL, or to {LOCAL} where that is unset; AGENTS.md says how that one is made.")
+        });
+        info!("keeping the changed world and its characters in the store");
         app.insert_resource(Keeper::new(store))
             .add_systems(Startup, keep)
             .add_systems(Update, (note, ask, receive, flush).chain())
             .add_systems(Last, flush_at_exit);
+    }
+}
+
+/// A player's account as this server holds it.
+#[derive(Clone, Copy)]
+struct Held {
+    account: i64,
+    /// The ownership number the account was claimed with.
+    epoch: i64,
+    character: i64,
+}
+
+/// What a write in flight carries, to be written again should it fail.
+struct Carried {
+    tiles: Vec<(i32, i32)>,
+    /// Each character, and its state as written.
+    characters: Vec<(Identity, String)>,
+    economy: bool,
+}
+
+impl Carried {
+    fn is_empty(&self) -> bool {
+        self.tiles.is_empty() && self.characters.is_empty()
     }
 }
 
@@ -61,28 +116,51 @@ struct Keeper {
     store: Store,
     /// The ownership number each chunk this server holds was claimed with.
     epochs: HashMap<ChunkId, i64>,
+    /// The accounts this server holds.
+    accounts: HashMap<Identity, Held>,
     /// Tiles players changed since the last write.
     dirty: HashSet<(i32, i32)>,
+    /// Characters to write whenever the next write goes: one whose bag
+    /// changed, one that left the world.
+    changed: HashSet<Identity>,
+    /// Each character's state as the store holds it.
+    written: HashMap<Identity, String>,
+    /// Whether an item moved since the last write: the next goes now.
+    due: bool,
     recalls: Vec<(Vec<ChunkId>, Task<Result<Recalled, sqlx::Error>>)>,
     reads: Vec<(((i32, i32), (i32, i32)), Task<Result<Vec<(i32, i32, common::Cover)>, sqlx::Error>>)>,
-    /// The write in flight, and the tiles it carries. One at a time, so a
-    /// tile's writes land in the order they were made.
-    write: Option<(Vec<(i32, i32)>, Task<Result<Vec<ChunkId>, sqlx::Error>>)>,
-    /// Chunks and boxes whose query failed, asked again at the next flush.
-    failed: (Vec<ChunkId>, Vec<((i32, i32), (i32, i32))>),
+    entering: Vec<(Identity, Task<Result<Entered, sqlx::Error>>)>,
+    /// The write in flight. One at a time, so writes land in the order
+    /// they were made.
+    write: Option<(Carried, Task<Result<Refused, sqlx::Error>>)>,
+    /// Chunks, boxes and players whose query failed, asked again at the
+    /// next flush.
+    failed: (Vec<ChunkId>, Vec<((i32, i32), (i32, i32))>, Vec<Identity>),
+    /// Players whose character the store holds and this build cannot
+    /// read. They stay out, and their character stays as it is.
+    unreadable: HashSet<Identity>,
     next_flush: Moment,
 }
+
+/// A character in the world, and everything of it that is kept.
+type Playing = (&'static Character, &'static Equipment, &'static Inventory, &'static ActorAttributes, &'static Loadout, &'static Loc, &'static Heading);
 
 impl Keeper {
     fn new(store: Store) -> Self {
         Self {
             store,
             epochs: HashMap::new(),
+            accounts: HashMap::new(),
             dirty: HashSet::new(),
+            changed: HashSet::new(),
+            written: HashMap::new(),
+            due: false,
             recalls: Vec::new(),
             reads: Vec::new(),
+            entering: Vec::new(),
             write: None,
-            failed: (Vec::new(), Vec::new()),
+            failed: default(),
+            unreadable: HashSet::new(),
             next_flush: Moment::ZERO + FLUSH,
         }
     }
@@ -98,10 +176,23 @@ impl Keeper {
         self.reads.push((area, IoTaskPool::get().spawn(async move { store.read(area.0, area.1).await })));
     }
 
-    /// Everything players changed since the last write, under the number
-    /// each tile's chunk was claimed with, and the tiles it carries.
-    fn batch(&mut self, changes: &WorldChanges, piles: &Piles) -> (Vec<(i32, i32)>, Batch) {
-        let mut batch = Batch::default();
+    fn enter(&mut self, identity: Identity) {
+        let store = self.store.clone();
+        self.entering.push((identity, IoTaskPool::get().spawn(async move { store.enter(identity.provider(), &identity.name()).await })));
+    }
+
+    /// Whether `identity` is being asked after, or was and cannot be.
+    fn asked(&self, identity: Identity) -> bool {
+        self.entering.iter().any(|(entering, _)| *entering == identity) || self.failed.2.contains(&identity) || self.unreadable.contains(&identity)
+    }
+
+    /// Everything changed since the last write, under the number each
+    /// tile's chunk and each character's account was claimed with, and
+    /// what it carries. With `every`, every character in the world is
+    /// looked at; without, only those marked changed. A character whose
+    /// state is as the store holds it is not written.
+    fn batch(&mut self, changes: &WorldChanges, piles: &Piles, playing: &Query<Playing>, known: &Characters, every: bool) -> (Carried, Batch) {
+        let mut batch = Batch { economy: std::mem::take(&mut self.due), ..default() };
         let mut claimed = HashSet::new();
         let tiles: Vec<(i32, i32)> = self.dirty.drain().collect();
         for &(q, r) in &tiles {
@@ -120,7 +211,64 @@ impl Keeper {
                 }
             }
         }
-        (tiles, batch)
+
+        let mut changed = std::mem::take(&mut self.changed);
+        let mut states: Vec<(Identity, String)> = Vec::new();
+        for (&Character(identity), equipment, inventory, attrs, loadout, loc, heading) in playing {
+            if changed.remove(&identity) || every {
+                states.push((identity, character::state(equipment, inventory, attrs, loadout, **loc, *heading)));
+            }
+        }
+        // Those left are out of the world, as they left it
+        states.extend(changed.into_iter().filter_map(|identity| Some((identity, character::kept(known.as_left(identity)?)))));
+        let mut characters = Vec::new();
+        for (identity, state) in states {
+            let Some(&held) = self.accounts.get(&identity) else { continue };
+            if self.written.get(&identity) == Some(&state) {
+                continue;
+            }
+            if !batch.accounts.contains(&(held.account, held.epoch)) {
+                batch.accounts.push((held.account, held.epoch));
+            }
+            batch.characters.push((held.character, state.clone()));
+            characters.push((identity, state));
+        }
+        (Carried { tiles, characters, economy: batch.economy }, batch)
+    }
+
+    /// The write carrying `carried` landed, was refused or failed.
+    fn wrote(&mut self, carried: Carried, result: Result<Refused, sqlx::Error>, known: &mut Characters) {
+        match result {
+            Ok(refused) if refused.is_empty() => {
+                debug!("store: wrote {} changed tiles and {} characters", carried.tiles.len(), carried.characters.len());
+                self.written.extend(carried.characters);
+            }
+            Ok(refused) => {
+                for chunk in refused.chunks {
+                    error!("store: chunk {chunk:?} was claimed by another server; changes this one made there are lost");
+                    self.epochs.remove(&chunk);
+                }
+                for account in refused.accounts {
+                    let Some((&identity, _)) = self.accounts.iter().find(|(_, held)| held.account == account) else { continue };
+                    error!("store: account {account} was claimed by another server; what its character did here since is lost");
+                    self.accounts.remove(&identity);
+                    self.written.remove(&identity);
+                    known.forget(identity);
+                }
+                // Nothing of the batch was written: the rest goes again
+                self.rewrite(carried);
+            }
+            Err(e) => {
+                warn!("store: writing {} tiles and {} characters failed, writing them again: {e}", carried.tiles.len(), carried.characters.len());
+                self.rewrite(carried);
+            }
+        }
+    }
+
+    fn rewrite(&mut self, carried: Carried) {
+        self.dirty.extend(carried.tiles);
+        self.changed.extend(carried.characters.into_iter().map(|(identity, _)| identity));
+        self.due |= carried.economy;
     }
 }
 
@@ -130,12 +278,18 @@ fn keep(mut changes: ResMut<WorldChanges>) {
     changes.keep();
 }
 
-fn note(mut reader: MessageReader<TileChanged>, mut keeper: ResMut<Keeper>) {
+fn note(mut reader: MessageReader<TileChanged>, bags: Query<&Character, Changed<Inventory>>, mut known: ResMut<Characters>, mut keeper: ResMut<Keeper>) {
+    let keeper = &mut *keeper;
+    let before = keeper.dirty.len() + keeper.changed.len();
     keeper.dirty.extend(reader.read().map(|changed| (changed.q, changed.r)));
+    keeper.changed.extend(bags.iter().map(|character| character.0));
+    keeper.due |= keeper.dirty.len() + keeper.changed.len() > before;
+    // A character that left is written before long, though no item moved
+    keeper.changed.extend(known.take_left());
 }
 
 /// Sends what the game asked after to the store.
-fn ask(mut changes: ResMut<WorldChanges>, mut keeper: ResMut<Keeper>) {
+fn ask(mut changes: ResMut<WorldChanges>, mut known: ResMut<Characters>, mut keeper: ResMut<Keeper>) {
     let wanted = changes.take_wanted();
     if !wanted.is_empty() {
         keeper.recall(wanted);
@@ -143,11 +297,17 @@ fn ask(mut changes: ResMut<WorldChanges>, mut keeper: ResMut<Keeper>) {
     for area in changes.take_sought() {
         keeper.read(area);
     }
+    for identity in known.take_wanted() {
+        if !keeper.asked(identity) {
+            keeper.enter(identity);
+        }
+    }
 }
 
 /// Lays what the store answered: a recalled chunk's tiles and piles, then
-/// the chunk as held, and a read box's tiles where no held chunk has newer.
-fn receive(mut changes: ResMut<WorldChanges>, mut piles: ResMut<Piles>, registry: Res<EventRegistry>, mut keeper: ResMut<Keeper>) {
+/// the chunk as held; a read box's tiles where no held chunk has newer; a
+/// player's character, its account then held.
+fn receive(mut changes: ResMut<WorldChanges>, mut piles: ResMut<Piles>, mut known: ResMut<Characters>, registry: Res<EventRegistry>, mut keeper: ResMut<Keeper>) {
     let generated = |q, r| registry.cover_at(q, r);
     for (chunks, mut task) in std::mem::take(&mut keeper.recalls) {
         match block_on(poll_once(&mut task)) {
@@ -179,73 +339,99 @@ fn receive(mut changes: ResMut<WorldChanges>, mut piles: ResMut<Piles>, registry
             }
         }
     }
-    if let Some((tiles, mut task)) = keeper.write.take() {
+    for (identity, mut task) in std::mem::take(&mut keeper.entering) {
         match block_on(poll_once(&mut task)) {
-            None => keeper.write = Some((tiles, task)),
-            Some(Ok(refused)) => {
-                debug!("store: wrote {} changed tiles", tiles.len());
-                refuse(&mut keeper, refused);
+            None => keeper.entering.push((identity, task)),
+            Some(Ok(Entered { account, epoch, character, state })) => {
+                let kept = if state.is_null() {
+                    None
+                } else {
+                    match character::recalled(state) {
+                        Ok(kept) => Some(kept),
+                        Err(e) => {
+                            error!("store: character {character} of account {account} cannot be read, and stays out of the world as it is: {e}");
+                            keeper.unreadable.insert(identity);
+                            continue;
+                        }
+                    }
+                };
+                debug!("store: recalled account {account}, character {character}");
+                keeper.accounts.insert(identity, Held { account, epoch, character });
+                if let Some(kept) = &kept {
+                    keeper.written.insert(identity, character::kept(kept));
+                }
+                known.recall(identity, kept);
             }
             Some(Err(e)) => {
-                warn!("store: writing {} tiles failed, writing them again: {e}", tiles.len());
-                keeper.dirty.extend(tiles);
+                warn!("store: recalling a player failed, asking again: {e}");
+                keeper.failed.2.push(identity);
             }
+        }
+    }
+    if let Some((carried, mut task)) = keeper.write.take() {
+        match block_on(poll_once(&mut task)) {
+            None => keeper.write = Some((carried, task)),
+            Some(result) => keeper.wrote(carried, result, &mut known),
         }
     }
 }
 
-/// Another server claimed `refused` since this one did: what this one
-/// changed there is dropped, and it writes there no more.
-fn refuse(keeper: &mut Keeper, refused: Vec<ChunkId>) {
-    for chunk in refused {
-        error!("store: chunk {chunk:?} was claimed by another server; changes this one made there are lost");
-        keeper.epochs.remove(&chunk);
-    }
-}
-
-/// Every [`FLUSH`], writes what players changed and asks again after what
-/// failed. A write still in flight holds the next one back.
-fn flush(time: Res<Time<Real>>, changes: Res<WorldChanges>, piles: Res<Piles>, mut keeper: ResMut<Keeper>) {
+/// Writes what players changed: at once where an item moved, and every
+/// [`FLUSH`] otherwise, when it also asks again after what failed. A
+/// write still in flight holds the next one back.
+fn flush(time: Res<Time<Real>>, changes: Res<WorldChanges>, piles: Res<Piles>, playing: Query<Playing>, known: Res<Characters>, mut keeper: ResMut<Keeper>) {
     let now = Moment::ZERO + time.elapsed();
-    if now < keeper.next_flush {
+    let interval = now >= keeper.next_flush;
+    if interval {
+        keeper.next_flush = now + FLUSH;
+        let (chunks, areas, players) = std::mem::take(&mut keeper.failed);
+        if !chunks.is_empty() {
+            keeper.recall(chunks);
+        }
+        for area in areas {
+            keeper.read(area);
+        }
+        for identity in players {
+            keeper.enter(identity);
+        }
+    }
+    if keeper.write.is_some() || !(interval || keeper.due) {
         return;
     }
-    keeper.next_flush = now + FLUSH;
-    let (chunks, areas) = std::mem::take(&mut keeper.failed);
-    if !chunks.is_empty() {
-        keeper.recall(chunks);
-    }
-    for area in areas {
-        keeper.read(area);
-    }
-    if keeper.write.is_some() || keeper.dirty.is_empty() {
+    let (carried, batch) = keeper.batch(&changes, &piles, &playing, &known, interval);
+    if carried.is_empty() {
         return;
     }
-    let (tiles, batch) = keeper.batch(&changes, &piles);
     let store = keeper.store.clone();
-    keeper.write = Some((tiles, IoTaskPool::get().spawn(async move { store.write(batch).await })));
+    keeper.write = Some((carried, IoTaskPool::get().spawn(async move { store.write(batch).await })));
 }
 
-/// As the server stops, waits out the write in flight and writes the rest.
-fn flush_at_exit(mut exit: MessageReader<AppExit>, changes: Res<WorldChanges>, piles: Res<Piles>, mut keeper: ResMut<Keeper>) {
+/// As the server stops, waits out the write in flight and writes the rest,
+/// every character in the world with it.
+fn flush_at_exit(
+    mut exit: MessageReader<AppExit>,
+    changes: Res<WorldChanges>,
+    piles: Res<Piles>,
+    playing: Query<Playing>,
+    mut known: ResMut<Characters>,
+    mut keeper: ResMut<Keeper>,
+) {
     if exit.read().count() == 0 {
         return;
     }
-    if let Some((tiles, task)) = keeper.write.take() {
-        match block_on(task) {
-            Ok(refused) => refuse(&mut keeper, refused),
-            Err(_) => keeper.dirty.extend(tiles),
-        }
+    if let Some((carried, task)) = keeper.write.take() {
+        let result = block_on(task);
+        keeper.wrote(carried, result, &mut known);
     }
-    if keeper.dirty.is_empty() {
+    keeper.changed.extend(known.take_left());
+    keeper.due = true;
+    let (carried, batch) = keeper.batch(&changes, &piles, &playing, &known, true);
+    if carried.is_empty() {
         return;
     }
-    let (tiles, batch) = keeper.batch(&changes, &piles);
     match block_on(keeper.store.write(batch)) {
-        Ok(refused) => {
-            refuse(&mut keeper, refused);
-            info!("store: wrote {} changed tiles as the server stopped", tiles.len());
-        }
-        Err(e) => error!("store: writing {} changed tiles as the server stopped failed; they are lost: {e}", tiles.len()),
+        Ok(refused) if refused.is_empty() => info!("store: wrote {} changed tiles and {} characters as the server stopped", carried.tiles.len(), carried.characters.len()),
+        Ok(refused) => error!("store: the last write was refused, and what it carried is lost: {refused:?}"),
+        Err(e) => error!("store: the last write failed, and what it carried is lost: {e}"),
     }
 }

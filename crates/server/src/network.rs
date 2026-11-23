@@ -119,6 +119,11 @@ impl ServerNet {
 
     // ── Connection state ──
 
+    /// Who `client_id` said it was as it connected, where it said.
+    pub fn identity(&self, client_id: ClientId) -> Option<Identity> {
+        self.transport.user_data(client_id).as_ref().and_then(Identity::from_user_data)
+    }
+
     pub fn clients_id(&self) -> Vec<ClientId> {
         self.server.clients_id()
     }

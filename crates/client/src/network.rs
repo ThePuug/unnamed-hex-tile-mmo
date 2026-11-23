@@ -98,6 +98,26 @@ impl Drop for ClientNet {
     }
 }
 
+/// Who this client is to the server: the key it made on its first run and
+/// keeps in its data folder, in `identity`, or in `identity-<name>` where
+/// `IDENTITY` names another, so a second client on one machine is a second
+/// player. A key that cannot be kept lasts the run.
+fn identity() -> Identity {
+    let file = std::env::var("IDENTITY").map_or("identity".to_owned(), |name| format!("identity-{name}"));
+    let path = user_data::folder("client").map(|folder| folder.join(file));
+    let kept = path.as_ref().and_then(|path| std::fs::read(path).ok()).and_then(|bytes| <[u8; 16]>::try_from(bytes).ok());
+    Identity::Key(kept.unwrap_or_else(|| {
+        let key: [u8; 16] = rand::random();
+        let written = path.as_ref().ok_or_else(|| "no data folder".to_owned()).and_then(|path| {
+            std::fs::create_dir_all(path.parent().expect("a file in a folder")).and_then(|_| std::fs::write(path, key)).map_err(|e| e.to_string())
+        });
+        if let Err(e) = written {
+            warn!("identity: the key could not be kept, and names a new player next run: {e}");
+        }
+        key
+    }))
+}
+
 impl ClientNet {
     fn new() -> Result<Self, String> {
         let server_addr = format!("127.0.0.1:{}", common::network::port()).parse().unwrap();
@@ -108,7 +128,7 @@ impl ClientNet {
             client_id,
             protocol_id: PROTOCOL_ID,
             server_addr,
-            user_data: None,
+            user_data: Some(identity().user_data()),
         };
 
         let transport = NetcodeClientTransport::new(current_time, authentication, socket).map_err(|e| e.to_string())?;

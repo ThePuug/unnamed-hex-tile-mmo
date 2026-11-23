@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.id AS \"id!\" FROM account a, UNNEST($1::BIGINT[], $2::BIGINT[]) AS h(id, epoch)\n             WHERE a.id = h.id AND a.epoch = h.epoch AND a.holder = $3\n             FOR SHARE OF a",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8Array",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ce69f24a5b436d3095e99bc83deccbe2ce2e2b8d257e18ca292456b945c8f731"
+}

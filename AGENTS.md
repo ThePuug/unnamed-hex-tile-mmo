@@ -45,12 +45,24 @@ cargo test -p combat abilities
 cargo build --release --no-default-features -p server -p client   # optimized
 ```
 
-The server keeps the changed world in the PostgreSQL at `DATABASE_URL`
-(`server::plugins::persistence`); unset, it keeps nothing past a run. Builds
-never connect: sqlx checks queries against `crates/server/.sqlx/`, which
-`cargo sqlx prepare` (from `crates/server`, `DATABASE_URL` set) rewrites after
-a query or migration changes. The store's own tests are `#[ignore]`d; run
-them with `DATABASE_URL` set and `cargo test -p server -- --ignored store`.
+The server keeps the changed world and its characters in the PostgreSQL at
+`DATABASE_URL` (`server::plugins::persistence`); unset, in the machine's
+own, at `postgres://mmo:mmo@localhost:5432/mmo`, and it does not start
+without one. That role and database are made once, as the superuser:
+
+```bash
+psql -U postgres -c "CREATE ROLE mmo LOGIN PASSWORD 'mmo' CREATEDB" -c "CREATE DATABASE mmo OWNER mmo"
+```
+
+Builds never connect: sqlx checks queries against `crates/server/.sqlx/`,
+which `cargo sqlx prepare` (from `crates/server`, `DATABASE_URL` set)
+rewrites after a query or migration changes. The store's own tests are
+`#[ignore]`d, and each makes a scratch database beside the server's; run
+them with `cargo test -p server -- --ignored store`.
+
+A client is the player its key names: `identity` in its data folder, or
+`identity-<name>` with `IDENTITY=<name>`, so a second client on one machine
+is a second player.
 
 A music-player release is built by request: run the *music-player release*
 workflow in GitHub Actions on a commit. It publishes `music-player-v<version>`
