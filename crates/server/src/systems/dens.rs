@@ -6,8 +6,7 @@
 //! found as it is generated. A den on a site is a change to the world, the
 //! server's to make, and it ages on world time. A site with none, a player
 //! near, gets one of the archetype that dens on its ground, at the level its
-//! distance from the haven gives, never nearer the player's own than
-//! [`MARGIN`]. A den is a nest and the pack that lives in it. The nest is
+//! distance from the haven gives. A den is a nest and the pack that lives in it. The nest is
 //! an actor of its own, standing where the den is drawn, that a player
 //! targets and strikes; while it stands, the den brings back one of its
 //! pack's dead every [`RESPAWN`]. A standing den keeps both while players
@@ -47,7 +46,7 @@ use common_bevy::{
         behaviour::Side,
         entity_type::{actor::{ActorIdentity, ActorImpl, Origin}, EntityType},
         resources::SpawnPoint,
-        ActorAttributes, Loc,
+        Loc,
     },
     plugins::nntree::NearestNeighbor,
     resources::map::Map,
@@ -83,9 +82,6 @@ pub const PACK_BELOW: u8 = 3;
 
 /// Tiles from the haven each level of a den lies further out
 pub const STRETCH: i32 = 400;
-
-/// How many levels below the nearest player's a den always stands
-pub const MARGIN: u32 = 5;
 
 /// How many tiles a den's search for dry ground round its site may look at
 const SEARCH: usize = 400;
@@ -196,12 +192,10 @@ pub struct EngagementEnded {
     pub engagement: Entity,
 }
 
-/// The level of a den on a site `tile`, for a player of `level`: its
-/// distance from the `haven` over [`STRETCH`], never within [`MARGIN`] of
-/// the player's.
-pub fn den_level(tile: Qrz, haven: Qrz, level: u32) -> u8 {
-    let far = (tile.flat_distance(&haven) / STRETCH).max(0) as u32;
-    far.min(level.saturating_sub(MARGIN)).min(u8::MAX as u32) as u8
+/// The level of a den on a site `tile`: its distance from the `haven`
+/// over [`STRETCH`], whoever finds it.
+pub fn den_level(tile: Qrz, haven: Qrz) -> u8 {
+    (tile.flat_distance(&haven) / STRETCH).clamp(0, u8::MAX as i32) as u8
 }
 
 /// The nearest dry ground the server has materialized to `site` and
@@ -243,7 +237,7 @@ pub fn tend_dens(
     mut ended: MessageReader<EngagementEnded>,
     mut done: MessageReader<Do>,
     lobby: Res<Lobby>,
-    players: Query<(&Loc, Option<&ActorAttributes>)>,
+    players: Query<&Loc>,
     engagements: Query<Option<&Members>, With<Engagement>>,
     map: Res<Map>,
     tuning: Res<Tuning>,
@@ -268,10 +262,10 @@ pub fn tend_dens(
     }
     *next = now + TEND;
     let mut taken: Vec<Qrz> = dens.sites.values().flatten().filter_map(|site| site.den?.at).collect();
+    let mut changed = Vec::new();
 
     for &player in lobby.right_values() {
-        let Ok((loc, attrs)) = players.get(player) else { continue };
-        let level = attrs.map_or(0, ActorAttributes::total_level);
+        let Ok(loc) = players.get(player) else { continue };
         for chunk in calculate_visible_chunks(loc_to_chunk(**loc), PLACE_CHUNKS) {
             let Some(sites) = dens.sites.get_mut(&chunk) else { continue };
             for site in sites.iter_mut().filter(|site| site.tile.flat_distance(loc) <= PLACE_RANGE) {
@@ -281,7 +275,7 @@ pub fn tend_dens(
                 }
                 let den = site.den.get_or_insert_with(|| Den {
                     archetype: EnemyArchetype::denning_on(site.habitat),
-                    level: den_level(site.tile, haven.0, level),
+                    level: den_level(site.tile, haven.0),
                     // Rolled by the site, so a seed packs the same dens
                     size: PACK + dice.roll(("pack", site.tile)).pick(2) as u8,
                     at: None,
@@ -473,13 +467,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_den_is_deeper_the_further_from_the_haven_and_never_near_the_players_level() {
+    fn a_den_is_deeper_the_further_from_the_haven() {
         let haven = Qrz { q: 107289, r: -7677, z: 0 };
         let at = |tiles: i32| Qrz { q: haven.q + tiles, r: haven.r, z: 0 };
-        assert_eq!(den_level(at(0), haven, 15), 0, "at the haven, the weakest");
-        assert!(den_level(at(STRETCH * 4), haven, 15) > den_level(at(STRETCH), haven, 15), "further out, deeper");
-        assert_eq!(den_level(at(STRETCH * 100), haven, 15), 10, "never within the margin of the player's level");
-        assert_eq!(den_level(at(STRETCH * 100), haven, 3), 0, "and a player below the margin meets the weakest");
+        assert_eq!(den_level(at(0), haven), 0, "at the haven, the weakest");
+        assert!(den_level(at(STRETCH * 4), haven) > den_level(at(STRETCH), haven), "further out, deeper");
+        assert_eq!(den_level(at(STRETCH * 100), haven), 100, "past any player's level");
     }
 
     #[test]
