@@ -18,12 +18,18 @@
 //! a pile's contents, so every [`TileChanged`] is such a change, as is
 //! every change to a bag.
 //!
+//! Everything kept is known by a number given it once ([`stored`]), so a
+//! build that renames a thing still reads it. What a build has no number
+//! for stays in the store: [`Keeper`] holds it beside the character or the
+//! pile it was kept with, and writes it back with them.
+//!
 //! No system waits on the store: every query is a task on the IO pool,
 //! polled each frame, so a slow store delays recalls and writes and never
 //! the simulation.
 
 mod character;
 mod store;
+mod stored;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -54,7 +60,8 @@ use crate::{
         gathering::{Piles, TileChanged, WorldChanges},
     },
 };
-use store::{Batch, Entered, Recalled, Refused, Store};
+use character::Dormant;
+use store::{Batch, Entered, PileKey, Recalled, Refused, Store};
 
 /// How often what players changed is written where no item moved. A crash
 /// loses at most this much of it.
@@ -125,6 +132,10 @@ struct Keeper {
     changed: HashSet<Identity>,
     /// Each character's state as the store holds it.
     written: HashMap<Identity, String>,
+    /// What each character holds that this build cannot play.
+    dormant: HashMap<Identity, Dormant>,
+    /// What lies in each pile's place that this build cannot play.
+    lying: HashMap<PileKey, Vec<serde_json::Value>>,
     /// Whether an item moved since the last write: the next goes now.
     due: bool,
     recalls: Vec<(Vec<ChunkId>, Task<Result<Recalled, sqlx::Error>>)>,
@@ -154,6 +165,8 @@ impl Keeper {
             dirty: HashSet::new(),
             changed: HashSet::new(),
             written: HashMap::new(),
+            dormant: HashMap::new(),
+            lying: HashMap::new(),
             due: false,
             recalls: Vec::new(),
             reads: Vec::new(),
@@ -206,21 +219,29 @@ impl Keeper {
             }
             batch.tiles.push((chunk, q, r, cover));
             for slot in 0..common::TILE_SLOTS as usize {
-                if let Some(stacks) = piles.stacks((q, r, slot)) {
-                    batch.piles.push((chunk, (q, r, slot), stacks.to_vec()));
+                let playable = piles.stacks((q, r, slot)).unwrap_or_default().iter().copied().map(stored::stack);
+                let held: Vec<_> = playable.chain(self.lying.get(&(q, r, slot)).into_iter().flatten().cloned()).collect();
+                if !held.is_empty() {
+                    batch.piles.push((chunk, (q, r, slot), held));
                 }
             }
         }
 
         let mut changed = std::mem::take(&mut self.changed);
         let mut states: Vec<(Identity, String)> = Vec::new();
+        let none = Dormant::default();
         for (&Character(identity), equipment, inventory, attrs, loadout, loc, heading) in playing {
             if changed.remove(&identity) || every {
-                states.push((identity, character::state(equipment, inventory, attrs, loadout, **loc, *heading)));
+                let dormant = self.dormant.get(&identity).unwrap_or(&none);
+                states.push((identity, character::state(equipment, inventory, attrs, loadout, **loc, *heading, dormant)));
             }
         }
         // Those left are out of the world, as they left it
-        states.extend(changed.into_iter().filter_map(|identity| Some((identity, character::kept(known.as_left(identity)?)))));
+        for identity in changed {
+            if let Some(kept) = known.as_left(identity) {
+                states.push((identity, character::kept(kept, self.dormant.get(&identity).unwrap_or(&none))));
+            }
+        }
         let mut characters = Vec::new();
         for (identity, state) in states {
             let Some(&held) = self.accounts.get(&identity) else { continue };
@@ -253,6 +274,7 @@ impl Keeper {
                     error!("store: account {account} was claimed by another server; what its character did here since is lost");
                     self.accounts.remove(&identity);
                     self.written.remove(&identity);
+                    self.dormant.remove(&identity);
                     known.forget(identity);
                 }
                 // Nothing of the batch was written: the rest goes again
@@ -315,8 +337,15 @@ fn receive(mut changes: ResMut<WorldChanges>, mut piles: ResMut<Piles>, mut know
             Some(Ok(recalled)) => {
                 debug!("store: recalled {} chunks, {} changed tiles, {} piles", chunks.len(), recalled.tiles.len(), recalled.piles.len());
                 changes.recall(recalled.tiles, generated);
-                for (key, stacks) in recalled.piles {
-                    piles.recall(key, stacks);
+                for (key, held) in recalled.piles {
+                    let (stacks, unplayable) = stored::stacks(held);
+                    if !stacks.is_empty() {
+                        piles.recall(key, stacks);
+                    }
+                    if !unplayable.is_empty() {
+                        error!("store: the pile at {key:?} holds {} things this build cannot play; they stay kept", unplayable.len());
+                        keeper.lying.insert(key, unplayable);
+                    }
                 }
                 for (chunk, epoch) in recalled.epochs {
                     keeper.epochs.insert(chunk, epoch);
@@ -347,7 +376,13 @@ fn receive(mut changes: ResMut<WorldChanges>, mut piles: ResMut<Piles>, mut know
                     None
                 } else {
                     match character::recalled(state) {
-                        Ok(kept) => Some(kept),
+                        Ok((kept, dormant)) => {
+                            if dormant != Dormant::default() {
+                                error!("store: character {character} of account {account} holds things this build cannot play; they stay kept: {dormant:?}");
+                            }
+                            keeper.dormant.insert(identity, dormant);
+                            Some(kept)
+                        }
                         Err(e) => {
                             error!("store: character {character} of account {account} cannot be read, and stays out of the world as it is: {e}");
                             keeper.unreadable.insert(identity);
@@ -358,7 +393,8 @@ fn receive(mut changes: ResMut<WorldChanges>, mut piles: ResMut<Piles>, mut know
                 debug!("store: recalled account {account}, character {character}");
                 keeper.accounts.insert(identity, Held { account, epoch, character });
                 if let Some(kept) = &kept {
-                    keeper.written.insert(identity, character::kept(kept));
+                    let state = character::kept(kept, &keeper.dormant[&identity]);
+                    keeper.written.insert(identity, state);
                 }
                 known.recall(identity, kept);
             }

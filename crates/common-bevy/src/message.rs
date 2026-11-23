@@ -297,6 +297,42 @@ impl AbilityType {
         AbilityType::Surge, AbilityType::Vigil, AbilityType::Lurk, AbilityType::Drag,
     ];
 
+    /// The number a store keeps the skill by. It is given once: a skill
+    /// renamed or reworked keeps it, a new one takes the next never used,
+    /// and a removed one's is never given again, or a bar kept with it
+    /// holds something else.
+    pub fn id(self) -> u32 {
+        match self {
+            AbilityType::AutoAttack => 1,
+            AbilityType::Frenzy => 2,
+            AbilityType::Feint => 3,
+            AbilityType::Overpower => 4,
+            AbilityType::Punish => 5,
+            AbilityType::Parry => 6,
+            AbilityType::Counter => 7,
+            AbilityType::Leap => 8,
+            AbilityType::PerfectStride => 9,
+            AbilityType::Clash => 10,
+            AbilityType::Sidestep => 11,
+            AbilityType::Yank => 12,
+            AbilityType::Backstab => 13,
+            AbilityType::Pounce => 14,
+            AbilityType::Kick => 15,
+            AbilityType::Defy => 16,
+            AbilityType::Bloodlust => 17,
+            AbilityType::Brace => 18,
+            AbilityType::Surge => 19,
+            AbilityType::Vigil => 20,
+            AbilityType::Lurk => 21,
+            AbilityType::Drag => 22,
+        }
+    }
+
+    /// The skill kept as `id`, or none where the game no longer has it.
+    pub fn kept_as(id: u32) -> Option<AbilityType> {
+        AbilityType::ALL.into_iter().find(|ability| ability.id() == id)
+    }
+
     /// The kind of skill it is, the row it stands in
     pub fn kind(self) -> SkillKind {
         match self {

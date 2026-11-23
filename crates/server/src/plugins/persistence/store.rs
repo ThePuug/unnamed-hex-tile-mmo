@@ -1,7 +1,7 @@
 //! The store's queries. Each is one transaction or one read, and none
 //! reads anything of the game but the values handed it.
 
-use common::{Cover, Stack};
+use common::Cover;
 use common_bevy::chunk::ChunkId;
 use sqlx::{postgres::PgPoolOptions, types::Json, PgPool};
 
@@ -17,11 +17,11 @@ pub struct Store {
 pub type PileKey = (i32, i32, usize);
 
 /// What a claim of chunks found: each chunk's new ownership number, and
-/// every tile and pile kept on them.
+/// every tile and pile kept on them, a pile as the JSON of what it holds.
 pub struct Recalled {
     pub epochs: Vec<(ChunkId, i64)>,
     pub tiles: Vec<(i32, i32, Cover)>,
-    pub piles: Vec<(PileKey, Vec<Stack>)>,
+    pub piles: Vec<(PileKey, Vec<serde_json::Value>)>,
 }
 
 /// Tiles, piles and characters to keep, each under the ownership number
@@ -31,7 +31,7 @@ pub struct Recalled {
 pub struct Batch {
     pub epochs: Vec<(ChunkId, i64)>,
     pub tiles: Vec<(ChunkId, i32, i32, Cover)>,
-    pub piles: Vec<(ChunkId, PileKey, Vec<Stack>)>,
+    pub piles: Vec<(ChunkId, PileKey, Vec<serde_json::Value>)>,
     /// Each account written and the number it was claimed with.
     pub accounts: Vec<(i64, i64)>,
     /// Each character written, by its id, as its state's JSON.
@@ -107,7 +107,7 @@ impl Store {
             .map(|row| (row.q, row.r, Cover::from_bits(row.cover as u32)))
             .collect();
         let piles = sqlx::query!(
-            r#"SELECT q, r, slot, stacks AS "stacks: Json<Vec<Stack>>" FROM pile WHERE chunk = ANY($1)"#,
+            r#"SELECT q, r, slot, stacks AS "stacks: Json<Vec<serde_json::Value>>" FROM pile WHERE chunk = ANY($1)"#,
             &keys,
         )
         .fetch_all(&mut *tx)
@@ -317,7 +317,7 @@ mod tests {
             let here = ChunkId(2, -3);
             let claimed = store.recall(&[here]).await.unwrap();
             assert!(claimed.tiles.is_empty() && claimed.piles.is_empty());
-            let stacks = vec![Stack { kind: common::Stackable::Material(common::Material::Softwood), count: 3 }];
+            let stacks = vec![serde_json::json!({"material": 1, "count": 3})];
             let batch = Batch {
                 epochs: claimed.epochs.clone(),
                 tiles: vec![(here, 40, -60, pine())],
@@ -356,7 +356,7 @@ mod tests {
         scratch(async |store| {
             let here = ChunkId(0, 0);
             let epochs = store.recall(&[here]).await.unwrap().epochs;
-            let stone = vec![Stack { kind: common::Stackable::Material(common::Material::Limestone), count: 2 }];
+            let stone = vec![serde_json::json!({"material": 4, "count": 2})];
             let both = Batch {
                 epochs: epochs.clone(),
                 tiles: vec![(here, 3, 3, pine())],

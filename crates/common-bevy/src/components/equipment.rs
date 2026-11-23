@@ -29,6 +29,17 @@ impl Piece {
         &kit::PIECES[self.0 as usize]
     }
 
+    /// The number a store keeps the piece by: its own whatever the assets
+    /// come to call it, where its place among them moves with every build.
+    pub fn id(self) -> u32 {
+        self.declared().id
+    }
+
+    /// The piece kept as `id`, or none where the assets no longer declare it.
+    pub fn kept_as(id: u32) -> Option<Piece> {
+        Piece::all().find(|piece| piece.id() == id)
+    }
+
     /// The asset's name: the stem of `models/<name>-<actor>.glb`.
     pub fn name(self) -> &'static str {
         self.declared().name

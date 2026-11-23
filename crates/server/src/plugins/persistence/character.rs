@@ -1,95 +1,83 @@
-//! A character as the store keeps it: JSON that names each thing as the
-//! game names it to a player, never by its place in a table the next build
-//! may reorder.
+//! A character as the store keeps it: JSON holding each item, stack and
+//! skill by its number ([`stored`]).
 
-use bevy::prelude::*;
-use common::Stack;
 use common_bevy::components::{
-    equipment::{Equipment, Inventory, Item, Piece},
+    equipment::{Equipment, Inventory},
     heading::Heading,
     loadout::Loadout,
     ActorAttributes,
 };
 use qrz::Qrz;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
+use super::stored;
 use crate::systems::characters::Kept;
 
 #[derive(Serialize, Deserialize)]
 struct State {
-    owned: Vec<Named>,
-    worn: Vec<Named>,
-    stock: Vec<Stack>,
+    owned: Vec<Value>,
+    worn: Vec<Value>,
+    stock: Vec<Value>,
     attrs: ActorAttributes,
-    /// Read apart from the rest: a bar naming a skill the game no longer
-    /// has is the default bar, and the character is otherwise as it was.
-    loadout: serde_json::Value,
+    loadout: Value,
     at: Qrz,
     heading: Heading,
 }
 
-/// An item by its piece's name.
-#[derive(Serialize, Deserialize)]
-struct Named {
-    piece: String,
-    seed: u16,
+/// What a character holds that this build cannot play, as the store kept
+/// it. The character keeps it, out of the world, and is written with it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Dormant {
+    owned: Vec<Value>,
+    stock: Vec<Value>,
 }
 
-impl Named {
-    fn of(item: Item) -> Self {
-        Self { piece: item.piece.name().to_owned(), seed: item.seed }
-    }
-
-    /// The item, or none where the assets no longer declare its piece.
-    fn item(&self) -> Option<Item> {
-        let piece = Piece::all().find(|piece| piece.name() == self.piece);
-        if piece.is_none() {
-            error!("store: a character owns a `{}`, which the assets no longer declare; it is dropped", self.piece);
-        }
-        Some(Item { piece: piece?, seed: self.seed })
-    }
-}
-
-/// A character standing at `at` facing `heading`, as the store keeps it.
-pub fn state(equipment: &Equipment, inventory: &Inventory, attrs: &ActorAttributes, loadout: &Loadout, at: Qrz, heading: Heading) -> String {
+/// A character standing at `at` facing `heading`, holding `dormant`
+/// besides, as the store keeps it.
+pub fn state(equipment: &Equipment, inventory: &Inventory, attrs: &ActorAttributes, loadout: &Loadout, at: Qrz, heading: Heading, dormant: &Dormant) -> String {
     let state = State {
-        owned: inventory.items.iter().copied().map(Named::of).collect(),
-        worn: equipment.items().map(Named::of).collect(),
-        stock: inventory.stock.clone(),
+        owned: inventory.items.iter().copied().map(stored::item).chain(dormant.owned.iter().cloned()).collect(),
+        worn: equipment.items().map(stored::item).collect(),
+        stock: inventory.stock.iter().copied().map(stored::stack).chain(dormant.stock.iter().cloned()).collect(),
         attrs: *attrs,
-        loadout: serde_json::to_value(loadout).expect("a loadout serializes"),
+        loadout: stored::loadout(loadout),
         at,
         heading,
     };
     serde_json::to_string(&state).expect("a character serializes")
 }
 
-/// `kept` as the store keeps it.
-pub fn kept(kept: &Kept) -> String {
-    state(&kept.equipment, &kept.inventory, &kept.attrs, &kept.loadout, kept.at, kept.heading)
+/// `kept`, holding `dormant` besides, as the store keeps it.
+pub fn kept(kept: &Kept, dormant: &Dormant) -> String {
+    state(&kept.equipment, &kept.inventory, &kept.attrs, &kept.loadout, kept.at, kept.heading, dormant)
 }
 
-/// The character `state` keeps. It wears only what it owns.
-pub fn recalled(state: serde_json::Value) -> Result<Kept, serde_json::Error> {
+/// The character `state` keeps, and what of it this build cannot play. It
+/// wears only what it owns.
+pub fn recalled(state: Value) -> Result<(Kept, Dormant), serde_json::Error> {
     let state: State = serde_json::from_value(state)?;
-    let items: Vec<Item> = state.owned.iter().filter_map(Named::item).collect();
+    let (items, owned) = stored::items(state.owned);
+    let (stock, unstocked) = stored::stacks(state.stock);
     let mut equipment = Equipment::default();
-    for item in state.worn.iter().filter_map(Named::item).filter(|item| items.contains(item)) {
+    for item in stored::items(state.worn).0.into_iter().filter(|item| items.contains(item)) {
         equipment.wear(item);
     }
-    Ok(Kept {
+    let kept = Kept {
         equipment,
-        inventory: Inventory { items, stock: state.stock },
+        inventory: Inventory { items, stock },
         attrs: state.attrs,
-        loadout: serde_json::from_value(state.loadout).unwrap_or_default(),
+        loadout: stored::bar(&state.loadout),
         at: state.at,
         heading: state.heading,
-    })
+    };
+    Ok((kept, Dormant { owned, stock: unstocked }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::Stack;
 
     #[test]
     fn a_character_is_recalled_as_it_was_kept() {
@@ -97,24 +85,29 @@ mod tests {
         was.inventory.add(Stack { kind: common::Stackable::Material(common::Material::Softwood), count: 5 });
         let vest = was.equipment.worn(common_bevy::components::equipment::Slot::Torso).unwrap();
         was.equipment.take_off(vest);
-        let text = kept(&was);
-        let back = recalled(serde_json::from_str(&text).unwrap()).unwrap();
-        assert_eq!(kept(&back), text);
+        let text = kept(&was, &Dormant::default());
+        let (back, dormant) = recalled(serde_json::from_str(&text).unwrap()).unwrap();
+        assert_eq!(dormant, Dormant::default());
+        assert_eq!(kept(&back, &dormant), text);
         assert_eq!((back.equipment, &back.inventory, back.at), (was.equipment, &was.inventory, was.at));
     }
 
-    /// What the next build no longer has is dropped, and the rest of the
-    /// character comes back.
+    /// What this build has no number for stays out of the world and in
+    /// the store, and the rest of the character comes back.
     #[test]
-    fn a_piece_or_a_skill_since_removed_costs_only_itself() {
+    fn what_this_build_cannot_play_is_kept_and_written_back() {
         let was = Kept::fresh(Qrz::default());
-        let mut state: serde_json::Value = serde_json::from_str(&kept(&was)).unwrap();
-        state["owned"].as_array_mut().unwrap().push(serde_json::json!({"piece": "no-such-piece", "seed": 0}));
-        state["worn"].as_array_mut().unwrap().push(serde_json::json!({"piece": "no-such-piece", "seed": 0}));
-        state["loadout"] = serde_json::json!(["NoSuchSkill"]);
-        let back = recalled(state).unwrap();
+        let mut state: Value = serde_json::from_str(&kept(&was, &Dormant::default())).unwrap();
+        let gone = serde_json::json!({"piece": 4_000_000, "seed": 0});
+        let coin = serde_json::json!({"coin": 1, "count": 30});
+        state["owned"].as_array_mut().unwrap().push(gone.clone());
+        state["worn"].as_array_mut().unwrap().push(gone.clone());
+        state["stock"].as_array_mut().unwrap().push(coin.clone());
+        let (back, dormant) = recalled(state).unwrap();
         assert_eq!(back.inventory.items, was.inventory.items);
         assert_eq!(back.equipment, was.equipment);
-        assert_eq!(back.loadout, Loadout::default());
+        let again: Value = serde_json::from_str(&kept(&back, &dormant)).unwrap();
+        assert_eq!(again["owned"].as_array().unwrap().last(), Some(&gone));
+        assert_eq!(again["stock"].as_array().unwrap().last(), Some(&coin));
     }
 }

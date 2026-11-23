@@ -78,12 +78,14 @@ impl Set {
     }
 }
 
-/// One piece of the kit: `name`, the stem of `models/<name>-<actor>.glb`;
-/// `set`, its set's place in [`SETS`]; `fills`, every slot it takes, its
-/// own first; `shapes`, how many glTF scenes its file holds, which its
-/// set's seeds are cut in in turn.
+/// One piece of the kit: `id`, the number a store keeps it by, the
+/// piece's own through any rename and never another's; `name`, the stem
+/// of `models/<name>-<actor>.glb`; `set`, its set's place in [`SETS`];
+/// `fills`, every slot it takes, its own first; `shapes`, how many glTF
+/// scenes its file holds, which its set's seeds are cut in in turn.
 #[derive(Debug)]
 pub struct Piece {
+    pub id: u32,
     pub name: &'static str,
     pub set: usize,
     pub fills: &'static [Slot],

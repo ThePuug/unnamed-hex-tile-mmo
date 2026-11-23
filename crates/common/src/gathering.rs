@@ -18,6 +18,27 @@ pub enum Material {
 }
 
 impl Material {
+    pub const ALL: [Material; 5] = [Material::Softwood, Material::Hardwood, Material::Sandstone, Material::Limestone, Material::Basement];
+
+    /// The number a store keeps the material by. It is given once: a
+    /// material renamed keeps it, a new one takes the next never used, and
+    /// a removed one's is never given again, or what players hold under
+    /// it becomes something else.
+    pub fn id(self) -> u32 {
+        match self {
+            Material::Softwood => 1,
+            Material::Hardwood => 2,
+            Material::Sandstone => 3,
+            Material::Limestone => 4,
+            Material::Basement => 5,
+        }
+    }
+
+    /// The material kept as `id`, or none where the game no longer has it.
+    pub fn kept_as(id: u32) -> Option<Material> {
+        Material::ALL.into_iter().find(|material| material.id() == id)
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Material::Softwood => "Softwood",

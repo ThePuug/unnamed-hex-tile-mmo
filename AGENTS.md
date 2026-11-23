@@ -348,6 +348,15 @@ combination; no piece hides any of another. `Piece::name` is the asset
 stem, and code that needs one piece asks for it by that name
 (`Piece::named`).
 
+**Kept by number.** The store keeps a piece, a material and a skill by
+its `id()`, never by a name or a place in a table: a piece's from the
+assets (`kit.IDS` in modelgen, shipped in `kit.json`), `Material::id` and
+`AbilityType::id` in code. A number is given once. A rename or a rework
+keeps it, a new thing takes the next never used, and a removed thing's is
+never given again, or every one a player holds becomes the other thing.
+What a build has no number for stays in the store, carried beside its
+character or pile (`persistence::stored`).
+
 **Water.** A tile's water is one surface, a z-level, published by a layer
 and rounded once, in `Composite::water_at`: surface and ground round to the
 same steps, a surface's step covers the tiles below it and leaves the tiles

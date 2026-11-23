@@ -130,15 +130,18 @@ fn kit() -> String {
         ));
     }
     out.push_str("];\npub static PIECES: &[Piece] = &[\n");
+    let mut numbers = std::collections::HashSet::new();
     for piece in json["pieces"].as_array().expect("pieces") {
         let name = piece["name"].as_str().expect("a piece's name");
-        let of = piece["set"].as_str().expect("a piece's set");
+        let id = piece["id"].as_u64().unwrap_or_else(|| panic!("{path}: {name} has no number"));
+        assert!(numbers.insert(id), "{path}: {name} has another piece's number, {id}");
+        let of =piece["set"].as_str().expect("a piece's set");
         let set = sets.iter().position(|s| s["name"] == of).unwrap_or_else(|| panic!("{path}: {name} is of no set, `{of}`"));
         let fills: Vec<String> = piece["fills"].as_array().expect("a piece's slots").iter()
             .map(|slot| format!("Slot::{}", variant(slot.as_str().expect("a slot's name"))))
             .collect();
         out.push_str(&format!(
-            "    Piece {{ name: {name:?}, set: {set}, fills: &[{}], shapes: {} }},\n",
+            "    Piece {{ id: {id}, name: {name:?}, set: {set}, fills: &[{}], shapes: {} }},\n",
             fills.join(", "),
             piece["shapes"].as_u64().expect("a piece's shapes"),
         ));

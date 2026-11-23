@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT q, r, slot, stacks AS \"stacks: Json<Vec<Stack>>\" FROM pile WHERE chunk = ANY($1)",
+  "query": "SELECT q, r, slot, stacks AS \"stacks: Json<Vec<serde_json::Value>>\" FROM pile WHERE chunk = ANY($1)",
   "describe": {
     "columns": [
       {
@@ -38,7 +38,7 @@
       },
       {
         "ordinal": 3,
-        "name": "stacks: Json<Vec<Stack>>",
+        "name": "stacks: Json<Vec<serde_json::Value>>",
         "type_info": "Jsonb",
         "origin": {
           "Table": {
@@ -60,5 +60,5 @@
       false
     ]
   },
-  "hash": "f0b4eca1723e56fb2aea434a9150e8fc123163b5ac70e6b675de0f348c56bd0b"
+  "hash": "9d71a5b4661f22e9b37dd86fbb77975847ef3c69e8e290c7ee15af72bb0364f0"
 }
