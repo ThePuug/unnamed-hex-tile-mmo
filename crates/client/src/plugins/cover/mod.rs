@@ -728,11 +728,21 @@ fn card_parts(cover: &[CoverInstance], kit: &CoverKit) -> (Vec<draw::CoverPart>,
     (parts, reach)
 }
 
+/// Stand `parts` on a region, in place of whatever it stood: a region
+/// left standing nothing takes down what it stood.
+fn stand(commands: &mut Commands, entity: Entity, parts: Vec<draw::CoverPart>, reach: f32) {
+    if parts.is_empty() {
+        commands.entity(entity).remove::<draw::RegionCover>();
+    } else {
+        commands.entity(entity).insert(draw::RegionCover::new(parts, reach));
+    }
+}
+
 /// Stand a region of tiles' cover as models. None casts a shadow: the
 /// cascades would draw every tree four times over for it.
 pub fn spawn_models(commands: &mut Commands, entity: Entity, cover: &[CoverInstance], kit: &CoverKit) {
     let (parts, reach) = model_parts(cover.iter(), kit, 0);
-    commands.entity(entity).insert(draw::RegionCover::new(parts, reach));
+    stand(commands, entity, parts, reach);
 }
 
 /// Stand a summary level's cover as cards, and the dens it stands as
@@ -742,7 +752,7 @@ pub fn spawn_cards(commands: &mut Commands, entity: Entity, cover: &[CoverInstan
     let (mut parts, reach) = card_parts(cover, kit);
     let (dens, den_reach) = model_parts(cover.iter().filter(|t| matches!(t.kind, Kind::Den(..))), kit, band);
     parts.extend(dens);
-    commands.entity(entity).insert(draw::RegionCover::new(parts, reach.max(den_reach)));
+    stand(commands, entity, parts, reach.max(den_reach));
 }
 
 /// Stand the cover of every region within reach of the camera as models
@@ -765,9 +775,6 @@ fn update_cover(
 
     for (key, state) in summary_meshes.states.iter_mut() {
         let Some(entity) = state.entity else { continue };
-        if state.cover.is_empty() {
-            continue;
-        }
         // The tiles' cover is models and the summaries' is cards; the
         // ring between the two levels is where one dithers out and the
         // other in, which is the shaders' to do. A region of tiles keeps
