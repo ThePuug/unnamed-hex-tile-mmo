@@ -144,13 +144,13 @@ pub const BRUSH_SMALL: f32 = 0.6;
 /// and none flickers at its edge.
 const RING_MARGIN: f32 = 40.0;
 
-/// The trees a tile stands, bushes aside.
+/// The trees a tile stands, bushes and reeds aside.
 pub fn trees_on(map: &common_bevy::resources::map::Map, q: i32, r: i32) -> usize {
-    map.cover_at(q, r).filled().filter(|&(_, s)| s != Content::Brush).count()
+    map.cover_at(q, r).filled().filter(|&(_, s)| matches!(s, Content::Pine | Content::Deciduous)).count()
 }
 
 /// Whether a tree stands on this tile or any of the six around it,
-/// bushes aside: the camera closes in over the shoulder there, since a
+/// bushes and reeds aside: the camera closes in over the shoulder there, since a
 /// boom at its length would stand among the crowns.
 pub fn among_trees(map: &common_bevy::resources::map::Map, q: i32, r: i32) -> bool {
     trees_on(map, q, r) > 0 || qrz::DIRECTIONS.iter().any(|d| trees_on(map, q + d.q, r + d.r) > 0)
