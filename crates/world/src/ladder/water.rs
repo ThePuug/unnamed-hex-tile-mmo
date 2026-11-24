@@ -216,9 +216,9 @@ fn drawn(s: &Sample, at: (f64, f64), nearer: f64, w: i64) -> f64 {
 /// its corners, whose water reaches it: over the bed, or up the wall to
 /// where it climbs to the floor, measured as the level draws the channel,
 /// from the bed's stretch and half a step nearer ([`cut_at`]). The lowest
-/// such bed's floor there rounded, its depth, and the river vertex it
-/// stands over. None where none reaches.
-fn standing(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, f64, usize)> {
+/// such bed's floor there rounded, its depth, the river vertex it stands
+/// over and how far that river falls a tile. None where none reaches.
+fn standing(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<Wet> {
     let at = world(q, r);
     let corner = w as f64 / SQRT_3;
     let half_step = w as f64 / SQRT_3 / 2.0;
@@ -227,7 +227,7 @@ fn standing(beds: &[Sample], q: f64, r: f64, w: i64) -> Option<(f64, f64, usize)
         .filter(|s| back(s, at) <= half_step)
         .filter_map(|s| {
             let (floor, d) = on_stretch(s, (s.x, s.y), s.on, at, half_step);
-            (d <= s.bed + depth(s.bed) / s.slope).then(|| ((floor + 0.5).floor(), depth(s.bed), s.src))
+            (d <= s.bed + depth(s.bed) / s.slope).then(|| ((floor + 0.5).floor(), depth(s.bed), s.src, s.fall))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
 }
@@ -716,17 +716,21 @@ fn wet_children(beds: &[Sample], w: i64, i: i64, j: i64) -> u16 {
     CHILD_OFFSETS.iter().enumerate().fold(0, |wet, (k, &(oi, oj))| {
         let (q, r) = ((i * w + oi * d) as f64, (j * w + oj * d) as f64);
         match standing(beds, q, r, d) {
-            Some((surface, _, _)) if surface > 0.0 => wet | 1 << k,
+            Some((surface, ..)) if surface > 0.0 => wet | 1 << k,
             _ => wet,
         }
     })
 }
 
-/// The water a cell's bed puts over it, `(surface, depth, river)`: at the
-/// bed's floor, and never more than its depth over the cell's carved height
-/// `z`.
-fn on_carve(bed: Option<(f64, f64, usize)>, z: f64) -> Option<(f64, f64, usize)> {
-    bed.map(|(surface, depth, river)| (surface.min(z + depth), depth, river))
+/// The water over a cell: its surface, how deep its bed's water stands,
+/// the river vertex whose bed it stands in, and how far that river falls
+/// a tile along its course, nothing over a lake.
+pub(super) type Wet = (f64, f64, usize, f64);
+
+/// The water a cell's bed puts over it: at the bed's floor, and never more
+/// than its depth over the cell's carved height `z`.
+fn on_carve(bed: Option<Wet>, z: f64) -> Option<Wet> {
+    bed.map(|(surface, depth, river, fall)| (surface.min(z + depth), depth, river, fall))
 }
 
 /// The carved ground at each vertex of `cells` of a level: its ground met
@@ -948,7 +952,7 @@ pub(super) struct Carved {
     pub carved: [f64; 3],
     pub sunk: [f64; 3],
     pub brim: [f64; 3],
-    pub water: Option<(f64, f64, usize)>,
+    pub water: Option<Wet>,
     pub parts: u16,
 }
 
@@ -984,6 +988,7 @@ pub(super) fn top_cut(lv: &mut Level, edges: &[Edge], p: &Params) {
         lv.water.set(c, water);
         lv.wdepth.set(c, depth);
         lv.wwet.set(c, wet.map_or(-1, |w| w.2 as i64));
+        lv.wfall.set(c, wet.map_or(f64::NAN, |w| w.3));
         lv.watered.finish(c);
     }
 }
@@ -996,7 +1001,7 @@ struct Carve {
     governing: Option<(Sample, f64)>,
     /// The water standing over the cell, its depth, and the river vertex
     /// it stands over.
-    water: Option<(f64, f64, usize)>,
+    water: Option<Wet>,
     /// Which of its children stand under water ([`wet_children`]).
     parts: u16,
 }
@@ -1060,7 +1065,7 @@ pub(super) fn level_cut(lv: &Level, band: &RwLock<Band>, pend: &[(i64, i64)], p:
             cut[t as usize] = cut_at(near, vq, vr, w, view.sunk.get(v), view.ground.get(v));
         }
         let (ground, carved) = (view.ground.get(c), view.carved.get(c));
-        let held = (!view.held.get(c).is_nan()).then(|| (view.held.get(c), view.held_depth.get(c), view.held_src.get(c) as usize));
+        let held = (!view.held.get(c).is_nan()).then(|| (view.held.get(c), view.held_depth.get(c), view.held_src.get(c) as usize, view.held_fall.get(c)));
         let bed = match (standing(&near, q, r, w), held) {
             (Some(a), Some(b)) => Some(if b.0 < a.0 { b } else { a }),
             (a, b) => a.or(b),
@@ -1071,7 +1076,7 @@ pub(super) fn level_cut(lv: &Level, band: &RwLock<Band>, pend: &[(i64, i64)], p:
             let lake = lakes(view, c);
             let lake = (lake > 0.0).then(|| {
                 let surface = lake;
-                (surface, surface - (view.sunk.get(c) + 0.5).floor(), usize::MAX)
+                (surface, surface - (view.sunk.get(c) + 0.5).floor(), usize::MAX, 0.0)
             });
             match on_carve(lake, z) {
                 Some(lake) if river.is_none_or(|r| lake.0 > r.0) => Some(lake),
@@ -1097,6 +1102,7 @@ pub(super) fn level_cut(lv: &Level, band: &RwLock<Band>, pend: &[(i64, i64)], p:
         lv.water.set(c, water);
         lv.wdepth.set(c, depth);
         lv.wwet.set(c, k.water.map_or(-1, |w| w.2 as i64));
+        lv.wfall.set(c, k.water.map_or(f64::NAN, |w| w.3));
         lv.wparts.set(c, k.parts);
         lv.lakes.set(c, lakes(lv, c));
         lv.watered.finish(c);

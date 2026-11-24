@@ -17,6 +17,9 @@ pub struct Cell {
     pub cut: f64,
     /// The surface of the water standing over the cell, in levels.
     pub water: Option<f64>,
+    /// How far that water falls a tile along its course, in levels: a
+    /// river's graded fall, and nothing over a lake or dry ground.
+    pub fall: f64,
     /// Which of its nine children stand under its level's water above the
     /// sea, a bit to each ([`super::Level::wparts`]).
     pub wet_parts: u16,
@@ -67,6 +70,7 @@ fn cell(lv: &super::Level, c: usize) -> Cell {
         fine: lv.ground.get(c) + lv.cut.get(c),
         cut: lv.cut.get(c),
         water: Some(lv.water.get(c)).filter(|w| !w.is_nan()),
+        fall: Some(lv.wfall.get(c)).filter(|f| !f.is_nan() && !lv.water.get(c).is_nan()).unwrap_or(0.0),
         wet_parts: lv.wparts.get(c),
     }
 }

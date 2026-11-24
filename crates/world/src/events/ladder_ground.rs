@@ -314,6 +314,7 @@ impl WorldEvent for LadderEvent {
             fine: Some(cell.fine),
             gradient: (gradient.0 - below.gradient.0, gradient.1 - below.gradient.1),
             water: cell.water,
+            fall: cell.fall,
             ..TileOutput::default()
         })
     }

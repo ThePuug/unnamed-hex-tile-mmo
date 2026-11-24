@@ -135,6 +135,10 @@ pub struct TileOutput {
     /// layer puts one. Surfaces compose by the highest: water covers what
     /// lies under it.
     pub water: Option<f64>,
+    /// How far that water falls a tile along its course, in z-levels: a
+    /// river's fall, and nothing where it stands still. Goes with the
+    /// surface that covers the tile.
+    pub fall: f64,
     /// The rock at the surface, where the layer knows it. A later layer's
     /// replaces an earlier one's.
     pub rock: Option<Rock>,
@@ -172,6 +176,9 @@ pub struct TileView {
     pub slopes: bool,
     /// The highest water surface any layer below put over this tile.
     pub water: Option<f64>,
+    /// How far that water falls a tile along its course, as
+    /// [`TileOutput::fall`]: nothing over still water.
+    pub fall: f64,
     /// The rock at the surface, as [`TileOutput::rock`].
     pub rock: Option<Rock>,
     /// What stands in the tile's seven slots.
@@ -187,7 +194,7 @@ pub struct TileView {
 impl TileView {
     fn on(w: i64, q: i32, r: i32) -> Self {
         let (wx, wy) = hex_to_world(q, r);
-        TileView { q, r, w, wx, wy, elevation: 0.0, fine: None, gradient: (0.0, 0.0), slopes: true, water: None, rock: None, cover: Cover::NONE, den: None, stand: None }
+        TileView { q, r, w, wx, wy, elevation: 0.0, fine: None, gradient: (0.0, 0.0), slopes: true, water: None, fall: 0.0, rock: None, cover: Cover::NONE, den: None, stand: None }
     }
 
     fn compose(&mut self, out: &TileOutput) {
@@ -196,6 +203,9 @@ impl TileView {
         self.gradient.0 += out.gradient.0;
         self.gradient.1 += out.gradient.1;
         if let Some(w) = out.water {
+            if self.water.is_none_or(|v| w >= v) {
+                self.fall = out.fall;
+            }
             self.water = Some(self.water.map_or(w, |v| v.max(w)));
         }
         if out.rock.is_some() {

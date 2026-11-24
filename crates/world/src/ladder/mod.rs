@@ -338,6 +338,9 @@ pub struct Level {
     /// where none. And how deep that bed's water stands over its floor.
     pub water: Paged<f64>,
     pub wdepth: Paged<f64>,
+    /// How far the river whose bed that water stands in falls a tile
+    /// along its course, in levels: nothing over a lake, NaN where dry.
+    pub wfall: Paged<f64>,
     /// The water a coarser level's channel puts over each cell's centre,
     /// where that level draws a river the level routes
     /// ([`water::drawn_at`]): its surface, depth and river vertex, as an
@@ -346,6 +349,8 @@ pub struct Level {
     pub held: Paged<f64>,
     pub held_depth: Paged<f64>,
     pub held_src: Paged<i64>,
+    /// How far that river falls a tile along its course.
+    pub held_fall: Paged<f64>,
     pub held_parts: Paged<u16>,
     /// The surface of the lake over each cell's parent or a cell within
     /// [`LAKE_REACH`] of it, the highest, rounded, where it stands over that
@@ -445,9 +450,11 @@ impl Level {
             wwet: Paged::new(-1, cells),
             water: nan(cells),
             wdepth: nan(cells),
+            wfall: nan(cells),
             held: nan(cells),
             held_depth: nan(cells),
             held_src: Paged::new(-1, cells),
+            held_fall: nan(cells),
             held_parts: Paged::new(0, cells),
             lake_above: nan(cells),
             lake_zone: nan(3 * cells),
@@ -1051,7 +1058,8 @@ impl<'g, G: Ground> Ladder<'g, G> {
                     lv.sunk.set(v, found.sunk[t as usize]);
                     lv.brim.set(v, found.brim[t as usize]);
                 }
-                if let Some((surface, depth, src)) = found.water {
+                if let Some((surface, depth, src, fall)) = found.water {
+                    lv.held_fall.set(c, fall);
                     lv.held.set(c, surface);
                     lv.held_depth.set(c, depth);
                     lv.held_src.set(c, src as i64);
