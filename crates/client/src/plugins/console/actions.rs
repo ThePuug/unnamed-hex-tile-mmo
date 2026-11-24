@@ -19,6 +19,8 @@ pub enum DevConsoleAction {
     ToggleClockHold,
     /// Run the world's clock at the wall clock again.
     ResetClock,
+    /// Roll the whole world back this many ms, of game time or of real.
+    Rollback { game: bool, ms: u64 },
     ToggleTerrainHidden,
     ToggleCoverHidden,
     ToggleCameraCloseup,
@@ -134,6 +136,7 @@ pub fn execute_console_actions(
             DevConsoleAction::GotoQR(_, _) => {}
             DevConsoleAction::ViewTarget | DevConsoleAction::StopViewing => {}
             DevConsoleAction::SpawnParty { .. } => {}
+            DevConsoleAction::Rollback { .. } => {}
             DevConsoleAction::SetClockHour(_)
             | DevConsoleAction::ShiftClock(_)
             | DevConsoleAction::ToggleClockHold
@@ -175,6 +178,17 @@ pub fn send_view(
                 view::stop(&mut writer, &mut next, &mut entered, &mut rejoin, &mut viewing);
             }
             _ => {}
+        }
+    }
+}
+
+/// Asks the server to roll the world back as the console's rollback menu
+/// says.
+pub fn send_rollback(mut reader: MessageReader<DevConsoleAction>, mut writer: MessageWriter<common_bevy::message::Try>) {
+    for action in reader.read() {
+        if let DevConsoleAction::Rollback { game, ms } = *action {
+            info!("Rollback asked: {ms} ms of {} time", if game { "game" } else { "real" });
+            writer.write(common_bevy::message::Try { event: common_bevy::message::Event::Rollback { game, ms } });
         }
     }
 }

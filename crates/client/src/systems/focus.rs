@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 
-use crate::systems::{character_panel::CharacterPanelState, drop_panel::DropChoice, gathering::LootWindow};
+use crate::systems::{building::BuildPanel, character_panel::CharacterPanelState, drop_panel::DropChoice, gathering::LootWindow};
 
 /// A panel the numpad works.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -11,6 +11,8 @@ pub enum Panel {
     Character,
     Loot,
     Drop,
+    Build,
+    Settler,
 }
 
 /// The open panels in the order they opened.
@@ -42,10 +44,19 @@ impl NumpadFocus {
 }
 
 /// Follows each panel opening and shutting.
-pub fn track(state: Res<CharacterPanelState>, window: Res<LootWindow>, drop: Res<DropChoice>, mut focus: ResMut<NumpadFocus>) {
+pub fn track(
+    state: Res<CharacterPanelState>,
+    window: Res<LootWindow>,
+    drop: Res<DropChoice>,
+    build: Res<BuildPanel>,
+    hailed: Res<crate::systems::settlers::Hailed>,
+    mut focus: ResMut<NumpadFocus>,
+) {
+    focus.set(Panel::Settler, hailed.0.is_some());
     focus.set(Panel::Character, state.visible);
     focus.set(Panel::Loot, window.cells.is_some());
     focus.set(Panel::Drop, drop.0.is_some());
+    focus.set(Panel::Build, build.open);
 }
 
 #[cfg(test)]

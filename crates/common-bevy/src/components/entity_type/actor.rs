@@ -3,14 +3,16 @@ use serde::{Deserialize, Serialize};
 use crate::archetype::EnemyArchetype;
 
 /// Who an actor is, which names it and picks the body it is drawn with: a
-/// player, an NPC of an archetype, or the nest an archetype's pack lives
-/// in. A nest has no body: its den is drawn as the world's, and it stands
-/// where that does, never turning and never moved.
+/// player, an NPC of an archetype, the nest an archetype's pack lives
+/// in, or a settler, who builds a hub and fights no one. A nest has no
+/// body: its den is drawn as the world's, and it stands where that does,
+/// never turning and never moved.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ActorIdentity {
     Player,
     Npc(EnemyArchetype),
     Nest(EnemyArchetype),
+    Settler,
 }
 
 impl ActorIdentity {
@@ -20,6 +22,7 @@ impl ActorIdentity {
             ActorIdentity::Player => "Player",
             ActorIdentity::Npc(archetype) => archetype.profile().name,
             ActorIdentity::Nest(_) => "Nest",
+            ActorIdentity::Settler => "Settler",
         }
     }
 }

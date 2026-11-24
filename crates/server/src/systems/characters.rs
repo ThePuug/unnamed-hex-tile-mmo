@@ -21,8 +21,9 @@ use qrz::Qrz;
 pub struct Character(pub Identity);
 
 /// A character out of the world, as it left: what it owns and wears, its
-/// build and its bar, and where it stood. Its health is not kept, and it
-/// enters whole.
+/// build and its bar, where it stood, and where it stands at the hearth
+/// that is its home, if it has one. Its health is not kept, and it enters
+/// whole.
 #[derive(Clone, Debug)]
 pub struct Kept {
     pub equipment: Equipment,
@@ -31,6 +32,7 @@ pub struct Kept {
     pub loadout: Loadout,
     pub at: Qrz,
     pub heading: Heading,
+    pub home: Option<Qrz>,
 }
 
 impl Kept {
@@ -45,6 +47,7 @@ impl Kept {
             loadout: Loadout::default(),
             at,
             heading: Heading::default(),
+            home: None,
         }
     }
 }

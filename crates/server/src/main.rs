@@ -90,7 +90,16 @@ fn main() {
         crate::systems::gathering::finish_work,
         crate::systems::gathering::interrupt_work,
         crate::systems::gathering::close_windows,
-        crate::systems::gathering::try_drop,
+        (
+            crate::systems::gathering::try_drop,
+            crate::systems::building::try_build,
+            crate::systems::building::finish_building,
+            crate::systems::building::interrupt_building,
+            crate::systems::building::try_use,
+            crate::systems::building::house,
+            crate::systems::settlers::tend_camps,
+            crate::systems::settlers::try_hail,
+        ),
         common_bevy::systems::movement::update_burden,
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))),
         engagement_cleanup::cleanup_engagements.run_if(on_timer(Duration::from_secs(5))),
@@ -104,6 +113,9 @@ fn main() {
         aoi::update_area_of_interest,
         renet::send_do.after(aoi::update_area_of_interest),
         combat::actor::cleanup_despawned.after(renet::send_do),
+        // What an NPC leaves is laid where it stood, which is read off it
+        // before it is gone
+        crate::systems::loot::leave_loot.before(combat::actor::cleanup_despawned),
     ));
 
 
@@ -119,6 +131,19 @@ fn main() {
     // spawn are the same place, and the z comes from the terrain there.
     let haven = common_bevy::haven::launch();
     info!("the haven stands at ({}, {})", haven.q, haven.r);
+    // `HEARTH_PLAYERS=<n>` counts every hearth as that many players at home
+    // besides those who are: a fixture for seeing hubs grow and take each
+    // other in with no one else in the world.
+    let mut hubs = common_bevy::hubs::Hubs::new((haven.q, haven.r));
+    hubs.per_hearth = std::env::var("HEARTH_PLAYERS").map_or(0, |n| n.parse().expect("HEARTH_PLAYERS is a count of players"));
+    app.insert_resource(hubs);
+    app.init_resource::<crate::systems::building::Constructs>();
+    app.init_resource::<crate::systems::settlers::Camps>();
+    // `SETTLER_HASTE=<n>` has settlers come and work n times as fast: a
+    // fixture for seeing a camp go up without the wait.
+    let haste: u32 = std::env::var("SETTLER_HASTE").map_or(1, |n| n.parse().expect("SETTLER_HASTE is a whole number of times"));
+    app.insert_resource(crate::systems::settlers::Settling::default().hastened(haste.max(1)));
+    app.add_systems(FixedUpdate, crate::systems::settlers::settle);
     let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED);
     // `CLEARING=<radius>[@<q>,<r>][~]` fells and mines every tile that far
     // round the tile named, or the haven, before anything is served: a
@@ -145,6 +170,7 @@ fn main() {
     app.init_resource::<crate::systems::dens::Dens>();
     app.add_message::<crate::systems::dens::EngagementEnded>();
     app.add_message::<crate::systems::gathering::TileChanged>();
+    app.add_message::<crate::systems::economy::Moved>();
 
     app.run();
 }

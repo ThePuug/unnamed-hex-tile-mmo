@@ -1,3 +1,4 @@
+pub mod building;
 pub mod camera;
 pub mod corner;
 pub mod cover;

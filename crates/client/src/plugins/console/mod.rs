@@ -52,7 +52,7 @@ impl Plugin for DevConsolePlugin {
             );
             app.add_systems(
                 Update,
-                (actions::send_view, actions::send_goto, actions::send_spawn_party, actions::send_calendar).after(actions::execute_console_actions),
+                (actions::send_view, actions::send_goto, actions::send_spawn_party, actions::send_calendar, actions::send_rollback).after(actions::execute_console_actions),
             );
         }
     }

@@ -55,6 +55,11 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Den { .. } => "Den",
         Event::Loot { .. } => "Loot",
         Event::Activity { .. } => "Activity",
+        Event::Build { .. } => "Build",
+        Event::Home { .. } => "Home",
+        Event::Hail { .. } => "Hail",
+        Event::Rollback { .. } => "Rollback",
+        Event::Wants { .. } => "Wants",
         Event::View { .. } => "View",
         Event::SetLoadout { .. } => "SetLoadout",
         _ => "Other",
@@ -208,6 +213,8 @@ pub fn write_do(
                 | Event::Incremental { .. }
                 | Event::Inventory { .. }
                 | Event::Loot { .. }
+                | Event::Home { .. }
+                | Event::Wants { .. }
                 | Event::Activity { .. }
                 | Event::Activate { .. }
                 | Event::Recharge { .. }
@@ -323,7 +330,7 @@ pub fn send_try(
         let mut event = message.event.clone();
         match event {
             // A spawn is asked for by the server's own id, and these are about no entity
-            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping | Event::ChangeCalendar { .. } => {}
+            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping | Event::ChangeCalendar { .. } | Event::Rollback { .. } => {}
             Event::Input { .. }
             | Event::UseAbility { .. }
             | Event::View { .. }
@@ -331,6 +338,8 @@ pub fn send_try(
             | Event::Take { .. }
             | Event::CloseLoot { .. }
             | Event::Drop { .. }
+            | Event::Build { .. }
+            | Event::Hail { .. }
             | Event::Wear { .. }
             | Event::Mount { .. }
             | Event::Teleport { .. }

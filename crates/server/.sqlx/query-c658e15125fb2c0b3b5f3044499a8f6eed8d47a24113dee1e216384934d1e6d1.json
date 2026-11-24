@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO ledger (item, count, source, dest, cause, npc)\n             SELECT item::JSONB, count, source::JSONB, dest::JSONB, cause, npc\n             FROM UNNEST($1::TEXT[], $2::BIGINT[], $3::TEXT[], $4::TEXT[], $5::INT[], $6::INT[])\n                  WITH ORDINALITY AS t(item, count, source, dest, cause, npc, place)\n             ORDER BY place",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Int8Array",
+        "TextArray",
+        "TextArray",
+        "Int4Array",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c658e15125fb2c0b3b5f3044499a8f6eed8d47a24113dee1e216384934d1e6d1"
+}

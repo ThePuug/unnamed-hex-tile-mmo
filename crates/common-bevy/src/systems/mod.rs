@@ -95,6 +95,76 @@ pub enum CalendarChange {
     Reset,
 }
 
+/// A moment of the calendar, in its milliseconds: the one kind of time
+/// kept past the server. A time the store keeps is one of these, read on
+/// the calendar wherever an admin has moved it; a time that lives only
+/// in a running server is a [`Moment`] of the game clock, which no move
+/// of the calendar touches.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct When(pub u64);
+
+impl When {
+    /// The span from `earlier` to this moment, none where `earlier` is
+    /// later.
+    pub fn since(self, earlier: When) -> std::time::Duration {
+        std::time::Duration::from_millis(self.0.saturating_sub(earlier.0))
+    }
+
+    /// How much of the time from `earlier` to this moment was day.
+    pub fn daytime_since(self, earlier: When) -> std::time::Duration {
+        daytime(earlier.0 as u128, self.0 as u128)
+    }
+
+    pub fn is_night(self) -> bool {
+        is_night(self.0 as u128)
+    }
+}
+
+impl std::ops::Add<std::time::Duration> for When {
+    type Output = When;
+    fn add(self, span: std::time::Duration) -> When {
+        When(self.0 + span.as_millis() as u64)
+    }
+}
+
+impl std::ops::Sub<std::time::Duration> for When {
+    type Output = When;
+    fn sub(self, span: std::time::Duration) -> When {
+        When(self.0.saturating_sub(span.as_millis() as u64))
+    }
+}
+
+impl Calendar {
+    /// The calendar's moment at game time `game`, as it is kept.
+    pub fn when(&self, game: Moment) -> When {
+        When(self.at(game) as u64)
+    }
+}
+
+/// The night: the hour of the day the sun sets and the hour it rises,
+/// past midnight. The sky's sun is down exactly these hours, and a
+/// settler sleeps through them.
+pub const NIGHT: (u128, u128) = (22, 6);
+
+/// The hour of the day the sun stands highest: a short morning and a
+/// long afternoon either side of it.
+pub const NOON: u128 = 12;
+
+/// Whether the calendar's moment `wall` is in the night.
+pub fn is_night(wall: u128) -> bool {
+    let hour = wall % DAY_MS / HOUR_MS;
+    hour >= NIGHT.0 || hour < NIGHT.1
+}
+
+/// How much of the time from the calendar's moment `from` to `to` is
+/// day: none where `to` is no later.
+pub fn daytime(from: u128, to: u128) -> std::time::Duration {
+    // The day there has been up to a moment, in milliseconds
+    let day = (NIGHT.0 - NIGHT.1) * HOUR_MS;
+    let lit = |wall: u128| wall / DAY_MS * day + (wall % DAY_MS).saturating_sub(NIGHT.1 * HOUR_MS).min(day);
+    std::time::Duration::from_millis(lit(to).saturating_sub(lit(from)) as u64)
+}
+
 /// The earliest moment the calendar is moved to, 1 January 1971: it reads
 /// no moment whose week or year began before the epoch.
 pub const EARLIEST: u128 = 365 * 86_400_000;
@@ -165,6 +235,23 @@ fn first_monday(year: i32, month: u32) -> chrono::NaiveDate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Night runs from its first hour past midnight to its last, and the
+    /// daytime between two moments is the hours outside it, however many
+    /// days lie between.
+    #[test]
+    fn daytime_is_the_hours_outside_the_night() {
+        let hour = |day: u128, hour: u128| day * DAY_MS + hour * HOUR_MS;
+        let (sunset, sunrise) = NIGHT;
+        assert!(is_night(hour(3, sunset)) && is_night(hour(3, 0)) && is_night(hour(3, sunrise - 1)));
+        assert!(!is_night(hour(3, sunrise)) && !is_night(hour(3, sunset - 1)));
+        let lit = |from, to| daytime(from, to).as_millis();
+        let day = (sunset - sunrise) * HOUR_MS;
+        assert_eq!(lit(hour(3, sunset), hour(4, sunrise)), 0, "a night through");
+        assert_eq!(lit(hour(3, sunset - 2), hour(4, sunrise + 4)), 6 * HOUR_MS, "dusk to morning is the two ends of it");
+        assert_eq!(lit(hour(3, 12), hour(6, 12)), 3 * day);
+        assert_eq!(lit(hour(4, 0), hour(3, 0)), 0);
+    }
 
     fn monday(year: i32, month: u32, day: u32) -> u128 {
         game_ms(chrono::NaiveDate::from_ymd_opt(year, month, day).unwrap())

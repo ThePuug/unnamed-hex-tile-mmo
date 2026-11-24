@@ -158,15 +158,24 @@ pub fn request(
     writer.write(Try { event: Event::Gather { ent, q: target.tile.q, r: target.tile.r, slot: target.slot as u8 } });
 }
 
-/// Marks what G would gather, for the cover to draw lit through.
+/// Marks what G would gather, or the tile the open build panel builds
+/// on, for the cover to draw lit through.
 pub fn mark(
     mut marked: ResMut<crate::plugins::cover::Marked>,
     map: Res<Map>,
     origin: Res<RenderOrigin>,
+    build: Res<crate::systems::building::BuildPanel>,
     player: Query<(&Position, &Heading), With<Actor>>,
 ) {
     let foot = player.single().ok().and_then(|(position, heading)| {
-        let target = gather_target(&map, position, *heading)?;
+        let target = if build.open {
+            let tile = crate::systems::building::faced(&map, position, *heading);
+            let tile = map.get_by_qr(tile.q, tile.r)?.0;
+            let at = Vec2::from(common_bevy::geometry::flat_top_tile_center(tile.q - position.tile.q, tile.r - position.tile.r, 1.0));
+            GatherTarget { tile, slot: common::building::SLOT, at }
+        } else {
+            gather_target(&map, position, *heading)?
+        };
         let rise = common_bevy::systems::movement::surface_y_from(position.tile, target.at, target.tile, &map);
         Some(origin.render_tile(&map, position.tile) + Vec3::new(target.at.x, rise, target.at.y))
     });

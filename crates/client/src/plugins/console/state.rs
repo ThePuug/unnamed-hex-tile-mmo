@@ -58,6 +58,8 @@ pub struct DevConsole {
     pub clock_scrub_secs: f32,
     /// The date field Up and Down step (when in the WorldClock menu).
     pub clock_date_field: DateField,
+    /// How far back a rollback goes (when in the Rollback menu).
+    pub rollback: Rollback,
 }
 
 impl Default for DevConsole {
@@ -71,7 +73,49 @@ impl Default for DevConsole {
             clock_buf: String::new(),
             clock_scrub_secs: 0.0,
             clock_date_field: DateField::default(),
+            rollback: Rollback::default(),
         }
+    }
+}
+
+/// How far back a rollback goes: so many of a unit, of game time or of
+/// real time.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Rollback {
+    pub game: bool,
+    /// 0 minutes, 1 hours, 2 days.
+    pub unit: usize,
+    pub amount: u32,
+    /// Whether Enter was pressed once: the next rolls back.
+    pub armed: bool,
+}
+
+impl Default for Rollback {
+    fn default() -> Self {
+        Self { game: false, unit: 0, amount: 5, armed: false }
+    }
+}
+
+impl Rollback {
+    pub const UNITS: [&'static str; 3] = ["minutes", "hours", "days"];
+
+    /// The span it goes back, in real milliseconds: a game minute, hour
+    /// and day are the calendar's.
+    pub fn ms(self) -> u64 {
+        use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS};
+        let unit = match (self.game, self.unit) {
+            (true, 0) => MINUTE_MS as u64,
+            (true, 1) => HOUR_MS as u64,
+            (true, _) => DAY_MS as u64,
+            (false, 0) => 60_000,
+            (false, 1) => 3_600_000,
+            (false, _) => 86_400_000,
+        };
+        self.amount as u64 * unit
+    }
+
+    pub fn says(self) -> String {
+        format!("{} {} of {} time", self.amount, Self::UNITS[self.unit], if self.game { "game" } else { "real" })
     }
 }
 
@@ -81,6 +125,9 @@ pub enum MenuPath {
     Root,
     Terrain,
     WorldClock,
+    /// Roll the whole world back to an earlier moment
+    #[cfg(feature = "admin")]
+    Rollback,
     #[cfg(feature = "admin")]
     GotoSelect,
     #[cfg(feature = "admin")]
@@ -120,6 +167,8 @@ impl MenuPath {
             MenuPath::Root => "Main Menu",
             MenuPath::Terrain => "Terrain Settings",
             MenuPath::WorldClock => "World Clock",
+            #[cfg(feature = "admin")]
+            MenuPath::Rollback => "Rollback",
             #[cfg(feature = "admin")]
             MenuPath::GotoSelect => "Goto — Select Coordinates",
             #[cfg(feature = "admin")]

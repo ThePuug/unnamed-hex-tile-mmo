@@ -24,6 +24,7 @@ use crate::*;
 
 use crate::network::{ServerNet, NetServerEvent};
 use crate::systems::characters::{Character, Characters, Kept};
+use crate::systems::economy::{Cause, Holder, Moved, Thing};
 use combat::RunTime;
 use common_bevy::tuning::Tuning;
 
@@ -140,8 +141,13 @@ pub fn do_presence(
                 }
                 let (Some(spawn_point), true) = (spawn_point, known.knows(identity)) else { return wait() };
                 info!("Player {} entered the world", client_id);
-                let Kept { equipment, inventory: bag, attrs, loadout, at: qrz, heading } =
-                    known.as_left(identity).cloned().unwrap_or_else(|| Kept::fresh(spawn_point.0));
+                let Kept { equipment, inventory: bag, attrs, loadout, at: qrz, heading, home } = known.as_left(identity).cloned().unwrap_or_else(|| {
+                    let fresh = Kept::fresh(spawn_point.0);
+                    for &item in &fresh.inventory.items {
+                        commands.write_message(Moved { what: Thing::Piece(item), count: 1, from: Holder::World, to: Holder::Character(identity), cause: Cause::Outfit });
+                    }
+                    fresh
+                });
                 let typ = EntityType::Actor(ActorImpl::new(
                     Origin::Evolved,
                     Approach::Direct,
@@ -165,6 +171,9 @@ pub fn do_presence(
                     bag.clone(),
                     (Character(identity), loadout, heading),
                 ));
+                if let Some(home) = home {
+                    commands.entity(ent).insert(common_bevy::components::Home(home));
+                }
 
                 // init input buffer for client
                 buffers.extend_one((ent, InputQueue {
@@ -243,13 +252,15 @@ type Playing = (
     &'static common_bevy::components::loadout::Loadout,
     &'static Loc,
     &'static common_bevy::components::heading::Heading,
+    Option<&'static common_bevy::components::Home>,
 );
 
 /// Keeps `ent` as it stands, where it is a character, for when its player
 /// next enters.
 fn remember(ent: Entity, playing: &Query<Playing>, known: &mut Characters) {
-    let Ok((&Character(identity), equipment, inventory, attrs, loadout, loc, heading)) = playing.get(ent) else { return };
-    known.leave(identity, Kept { equipment: *equipment, inventory: inventory.clone(), attrs: *attrs, loadout: *loadout, at: **loc, heading: *heading });
+    let Ok((&Character(identity), equipment, inventory, attrs, loadout, loc, heading, home)) = playing.get(ent) else { return };
+    let home = home.map(|home| home.0);
+    known.leave(identity, Kept { equipment: *equipment, inventory: inventory.clone(), attrs: *attrs, loadout: *loadout, at: **loc, heading: *heading, home });
 }
 
 /// Takes `ent`, the lobby entry `client_id` just left, out of the client's
@@ -332,7 +343,7 @@ pub fn write_try(
                 }
                 // An admin's party stands ahead of whichever actor it names,
                 // and an admin's calendar is the world's
-                Event::SpawnParty { .. } | Event::ChangeCalendar { .. } => {
+                Event::SpawnParty { .. } | Event::ChangeCalendar { .. } | Event::Rollback { .. } => {
                     writer.write(Try { event });
                 }
                 // An auto-attack is the server's to time, never a client's to ask for
@@ -342,6 +353,8 @@ pub fn write_try(
                 | Event::Take { .. }
                 | Event::CloseLoot { .. }
                 | Event::Drop { .. }
+                | Event::Build { .. }
+                | Event::Hail { .. }
                 | Event::UseAbility { .. }
                 | Event::RespecAttributes { .. }
                 | Event::SetLoadout { .. }
@@ -397,6 +410,8 @@ fn route(event: &Event) -> Option<Route> {
         | Event::Inventory { ent, .. }
         | Event::CoverChanged { ent, .. }
         | Event::Den { ent, .. }
+        | Event::Home { ent, .. }
+        | Event::Wants { ent, .. }
         | Event::Loot { ent, .. } => Some(Route::Owner(*ent)),
         Event::ChunkData { ent, .. }
         | Event::EvictChunks { ent, .. }

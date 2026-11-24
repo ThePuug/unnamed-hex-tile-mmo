@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO camp (chunk, q, r, state)\n             SELECT chunk, q, r, state::JSONB\n             FROM UNNEST($1::BIGINT[], $2::INT[], $3::INT[], $4::TEXT[]) AS t(chunk, q, r, state)\n             WHERE state IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int4Array",
+        "Int4Array",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ce9c587d1f438317aa432daddf737091f4eb7794aabdd109dc37c617ecadf769"
+}

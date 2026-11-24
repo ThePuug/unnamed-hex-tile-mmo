@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM hub",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "9188b86666a8c1a8d8eccdf0acfc199b502b279f93f825ea1e3eeb3ae4daa59b"
+}

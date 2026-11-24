@@ -34,14 +34,15 @@ pub enum Kind {
     Boulder,
     PineStump,
     DeciduousStump,
-    SoftwoodPile,
-    HardwoodPile,
-    SandstonePile,
-    LimestonePile,
-    BasementPile,
+    Pile(common::Material),
     /// A den's pieces: the model `common::den::MODELS` holds at this
     /// index, active or cleared, one variation to each of its meshes
     Den(u8, bool),
+    /// What a player built, and whether it is a gate standing open
+    Built(common::building::Construct, bool),
+    /// What a hub's settlers raised, or are raising at this stage of it
+    /// from 1; none is raised
+    Raised(common::building::Fixture, u8),
 }
 
 impl From<Content> for Kind {
@@ -60,17 +61,13 @@ impl Kind {
     /// The pile `content` draws as.
     fn pile(content: Content) -> Option<Kind> {
         match content {
-            Content::SoftwoodPile => Some(Kind::SoftwoodPile),
-            Content::HardwoodPile => Some(Kind::HardwoodPile),
-            Content::SandstonePile => Some(Kind::SandstonePile),
-            Content::LimestonePile => Some(Kind::LimestonePile),
-            Content::BasementPile => Some(Kind::BasementPile),
+            Content::Pile(of) => Some(Kind::Pile(of)),
             _ => None,
         }
     }
 
     fn is_pile(self) -> bool {
-        matches!(self, Kind::SoftwoodPile | Kind::HardwoodPile | Kind::SandstonePile | Kind::LimestonePile | Kind::BasementPile)
+        matches!(self, Kind::Pile(_))
     }
 
     /// The tree a stump is the base of: it is built at that tree's scale,
@@ -95,12 +92,42 @@ const MODELS: &[(Kind, &str)] = &[
     (Kind::Boulder, "models/boulder.glb"),
     (Kind::PineStump, "models/pine-stump.glb"),
     (Kind::DeciduousStump, "models/deciduous-stump.glb"),
-    (Kind::SoftwoodPile, "models/log-pile-softwood.glb"),
-    (Kind::HardwoodPile, "models/log-pile-hardwood.glb"),
-    (Kind::SandstonePile, "models/stone-pile-sandstone.glb"),
-    (Kind::LimestonePile, "models/stone-pile-limestone.glb"),
-    (Kind::BasementPile, "models/stone-pile-basement.glb"),
+    (Kind::Pile(common::Material::Softwood), "models/log-pile-softwood.glb"),
+    (Kind::Pile(common::Material::Hardwood), "models/log-pile-hardwood.glb"),
+    (Kind::Pile(common::Material::Sandstone), "models/stone-pile-sandstone.glb"),
+    (Kind::Pile(common::Material::Limestone), "models/stone-pile-limestone.glb"),
+    (Kind::Pile(common::Material::Basement), "models/stone-pile-basement.glb"),
+    (Kind::Pile(common::Material::Hide), "models/hide-pile.glb"),
 ];
+
+/// Where each construct's GLB is: `models/<kind>-<material>.glb`, a gate
+/// standing open `-open` besides.
+fn built_models() -> impl Iterator<Item = (Kind, String)> {
+    use common::building::Kind as Built;
+    common::building::Construct::all().flat_map(|construct| {
+        let kind = match construct.kind {
+            Built::Hearth => "hearth",
+            Built::Wall => "wall",
+            Built::Gate => "gate",
+        };
+        let of = construct.of.stem();
+        let swings = construct.kind == Built::Gate;
+        [false, true].into_iter().filter(move |&open| swings || !open).map(move |open| {
+            (Kind::Built(construct, open), format!("models/{kind}-{of}{}.glb", if open { "-open" } else { "" }))
+        })
+    })
+}
+
+/// Where each fixture's GLB is: `models/<stem>.glb`, and
+/// `-raising-<stage>` for one being raised.
+fn fixture_models() -> impl Iterator<Item = (Kind, String)> {
+    common::building::Fixture::ALL.into_iter().flat_map(|fixture| {
+        (0..=common::building::STAGES).map(move |stage| {
+            let stem = fixture.stem();
+            (Kind::Raised(fixture, stage), if stage == 0 { format!("models/{stem}.glb") } else { format!("models/{stem}-raising-{stage}.glb") })
+        })
+    })
+}
 
 /// Where each den model's GLB is: `models/den-<stem>-<state>.glb`.
 fn den_models() -> impl Iterator<Item = (Kind, String)> {
@@ -230,7 +257,7 @@ impl Kit {
     pub fn scale(kind: Kind, model_height: f32, growth: f32) -> f32 {
         let growth = growth.clamp(0.0, 1.0);
         match kind {
-            Kind::Den(..) => 1.0,
+            Kind::Den(..) | Kind::Built(..) | Kind::Raised(..) => 1.0,
             _ if kind.is_pile() => 1.0,
             Kind::Brush => BRUSH_SMALL + (1.0 - BRUSH_SMALL) * growth,
             Kind::Boulder => common::cover::boulder_scale(growth),
@@ -352,7 +379,7 @@ fn begin_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
     let handles = MODELS
         .iter()
         .map(|(kind, path)| (*kind, asset_server.load::<Gltf>(*path)))
-        .chain(den_models().map(|(kind, path)| (kind, asset_server.load::<Gltf>(path))))
+        .chain(den_models().chain(built_models()).chain(fixture_models()).map(|(kind, path)| (kind, asset_server.load::<Gltf>(path))))
         .collect();
     commands.insert_resource(Loading(handles));
 }
@@ -574,6 +601,39 @@ pub fn place_cover(
                     growth: common::cover::boulder_growth(cover, q, r, k),
                     kind: Kind::Boulder,
                     variation: sway.variation,
+                    far: false,
+                });
+            }
+            // A construct stands square on its tile's centre, its corners
+            // the tile's, so a run of walls meets edge to edge.
+            if let Some((construct, open)) = common::building::standing(cover) {
+                let (x, z) = flat_top_tile_center(q - origin.q, r - origin.r, 1.0);
+                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+                out.push(CoverInstance {
+                    translation: Vec3::new(x, y, z),
+                    yaw: 0.0,
+                    tilt: Quat::IDENTITY,
+                    growth: 1.0,
+                    kind: Kind::Built(construct, open),
+                    variation: 0,
+                    far: false,
+                });
+            }
+            // A fixture stands on its tile's centre as a construct does,
+            // each turned its tile's own way but the stakes, which meet
+            // their neighbours' edge to edge
+            let raised = common::building::fixture(cover).map(|fixture| (fixture, 0));
+            if let Some((fixture, stage)) = raised.or_else(|| common::building::rising(cover)) {
+                let (x, z) = flat_top_tile_center(q - origin.q, r - origin.r, 1.0);
+                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+                let sway = common::cover::boulder_sway(q, r, common::building::SLOT);
+                out.push(CoverInstance {
+                    translation: Vec3::new(x, y, z),
+                    yaw: if fixture == common::building::Fixture::Stakes { 0.0 } else { sway.yaw as f32 },
+                    tilt: Quat::IDENTITY,
+                    growth: 1.0,
+                    kind: Kind::Raised(fixture, stage),
+                    variation: 0,
                     far: false,
                 });
             }
@@ -883,8 +943,7 @@ mod tests {
         assert!(after.iter().all(|t| t.kind != Kind::Pine));
     }
 
-    /// A pile lies where it was left, as its wood or as stone in the
-    /// tile's rock.
+    /// A pile lies where it was left, as its own material.
     #[test]
     fn a_pile_lies_as_its_kind() {
         let place = |cover: Cover| {
@@ -897,7 +956,7 @@ mod tests {
         let mined = common::gathering::harvest(crag, 4).unwrap();
         let piled = common::gathering::left(mined.cover, mined.freed, mined.material);
         let placed = place(piled);
-        assert_eq!(placed.iter().filter(|t| t.kind == Kind::LimestonePile).count(), 1);
+        assert_eq!(placed.iter().filter(|t| t.kind == Kind::Pile(common::Material::Limestone)).count(), 1);
         assert_eq!(placed.iter().filter(|t| t.kind == Kind::Boulder).count(), 1);
     }
 }

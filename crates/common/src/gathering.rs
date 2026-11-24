@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::cover::{Content, Cover, SITE_SLOTS};
 use crate::Rock;
 
-/// What gathering gives: a tree's wood by its kind, a boulder's stone by
-/// its rock.
+/// What is carried and built with: a tree's wood by its kind, a boulder's
+/// stone by its rock, and the hide a beast leaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Material {
     Softwood,
@@ -15,10 +15,11 @@ pub enum Material {
     Sandstone,
     Limestone,
     Basement,
+    Hide,
 }
 
 impl Material {
-    pub const ALL: [Material; 5] = [Material::Softwood, Material::Hardwood, Material::Sandstone, Material::Limestone, Material::Basement];
+    pub const ALL: [Material; 6] = [Material::Softwood, Material::Hardwood, Material::Sandstone, Material::Limestone, Material::Basement, Material::Hide];
 
     /// The number a store keeps the material by. It is given once: a
     /// material renamed keeps it, a new one takes the next never used, and
@@ -31,6 +32,7 @@ impl Material {
             Material::Sandstone => 3,
             Material::Limestone => 4,
             Material::Basement => 5,
+            Material::Hide => 6,
         }
     }
 
@@ -46,18 +48,40 @@ impl Material {
             Material::Sandstone => "Sandstone",
             Material::Limestone => "Limestone",
             Material::Basement => "Basement stone",
+            Material::Hide => "Hide",
         }
     }
 
-    /// What one of it weighs in the bag: wood lighter than stone, and the
-    /// hard of each heavier.
+    /// The name its assets are filed under: its icon is `icons/<stem>.png`.
+    pub fn stem(self) -> &'static str {
+        match self {
+            Material::Softwood => "softwood",
+            Material::Hardwood => "hardwood",
+            Material::Sandstone => "sandstone",
+            Material::Limestone => "limestone",
+            Material::Basement => "basement",
+            Material::Hide => "hide",
+        }
+    }
+
+    /// What one of it weighs in the bag: a hide least, wood less than
+    /// stone, and the hard of each more.
     pub fn weight(self) -> u32 {
         match self {
+            Material::Hide => 2,
             Material::Softwood => 3,
             Material::Hardwood => 4,
             Material::Sandstone | Material::Limestone => 5,
             Material::Basement => 6,
         }
+    }
+
+    pub fn is_stone(self) -> bool {
+        matches!(self, Material::Sandstone | Material::Limestone | Material::Basement)
+    }
+
+    pub fn is_wood(self) -> bool {
+        matches!(self, Material::Softwood | Material::Hardwood)
     }
 
     /// The stone a boulder of `rock` gives, or None for shale, which breaks
@@ -109,19 +133,22 @@ impl Stack {
     }
 }
 
-/// The work a gather takes: a chop at a tree, a strike at a boulder.
+/// The work an actor is seen at: a chop at a tree, a strike at a boulder,
+/// or busy with its hands at whatever it is raising.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Work {
     Chop,
     Mine,
+    Build,
 }
 
-/// What a player is seen doing at a gather: at its work, or stooped to
-/// the pile its loot window is open on.
+/// What an actor is seen doing where it stands: at its work, stooped to
+/// the pile its loot window is open on, or asleep on the ground.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Activity {
     Work(Work),
     Pickup,
+    Sleep,
 }
 
 // How far ahead of the actor's feet each gather's clip lands its work, as
@@ -135,7 +162,9 @@ pub fn reach(activity: Activity) -> f32 {
     match activity {
         Activity::Work(Work::Chop) => CHOP_REACH,
         Activity::Work(Work::Mine) => MINE_REACH,
-        Activity::Pickup => PICKUP_REACH,
+        // Hands at the work, as at a pile
+        Activity::Work(Work::Build) | Activity::Pickup => PICKUP_REACH,
+        Activity::Sleep => 0.0,
     }
 }
 
@@ -154,6 +183,9 @@ const TREE_YIELD: u32 = 4;
 
 /// How much one mined boulder gives.
 const BOULDER_YIELD: u32 = 3;
+
+/// How much one stump gives, the second gather of its tree.
+const STUMP_YIELD: u32 = 2;
 
 /// What gathering one slot takes and leaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,20 +206,9 @@ impl Harvest {
     }
 }
 
-/// The pile that holds `material`.
-fn pile_of(material: Material) -> Content {
-    match material {
-        Material::Softwood => Content::SoftwoodPile,
-        Material::Hardwood => Content::HardwoodPile,
-        Material::Sandstone => Content::SandstonePile,
-        Material::Limestone => Content::LimestonePile,
-        Material::Basement => Content::BasementPile,
-    }
-}
-
 /// `cover` with a pile of `material` left in slot `k`.
 pub fn left(cover: Cover, k: usize, material: Material) -> Cover {
-    cover.with_content(k, pile_of(material))
+    cover.with_content(k, Content::Pile(material))
 }
 
 /// `cover` with the pile in slot `k` emptied, the slot free again.
@@ -195,10 +216,10 @@ pub fn emptied(cover: Cover, k: usize) -> Cover {
     cover.with_content(k, Content::Empty)
 }
 
-/// Whether G acts on slot `k`: something gatherable stands there, or a
-/// pile lies there to open.
+/// Whether G acts on slot `k`: something gatherable stands there, a pile
+/// lies there to open, or a construct stands there to use.
 pub fn reachable(cover: Cover, k: usize) -> bool {
-    cover.content(k).is_pile() || harvest(cover, k).is_some()
+    cover.content(k).is_pile() || harvest(cover, k).is_some() || crate::building::used(cover, k)
 }
 
 /// The slot a gather of slot `k` acts on: a tree's first slot for either
@@ -212,8 +233,9 @@ pub fn anchor(cover: Cover, k: usize) -> usize {
 
 /// What gathering slot `k` of a tile with `cover` gives and leaves, or None
 /// where nothing gatherable stands. A tree, named by either slot it holds,
-/// leaves its stump in its first slot and frees its second; a boulder of
-/// any rock but shale frees its slot. Brush and stumps are not gathered.
+/// leaves its stump in its first slot and frees its second; the stump,
+/// gathered after it, frees the first; a boulder of any rock but shale
+/// frees its slot. Brush is not gathered.
 pub fn harvest(cover: Cover, k: usize) -> Option<Harvest> {
     let at = anchor(cover, k);
     let felled = |stump: Content, material: Material| {
@@ -228,6 +250,12 @@ pub fn harvest(cover: Cover, k: usize) -> Option<Harvest> {
     match cover.content(at) {
         Content::Pine => felled(Content::PineStump, Material::Softwood),
         Content::Deciduous => felled(Content::DeciduousStump, Material::Hardwood),
+        stump @ (Content::PineStump | Content::DeciduousStump) => Some(Harvest {
+            cover: cover.with_content(at, Content::Empty),
+            material: if stump == Content::PineStump { Material::Softwood } else { Material::Hardwood },
+            amount: STUMP_YIELD,
+            freed: at,
+        }),
         Content::Boulder => Some(Harvest {
             cover: cover.with_content(at, Content::Empty),
             material: Material::stone(cover.rock())?,
@@ -270,15 +298,19 @@ mod tests {
         let cut = harvest(two, SITE_SLOTS[0][0]).unwrap();
         assert_eq!(cut.freed, SITE_SLOTS[0][1]);
         let piled = left(cut.cover, cut.freed, cut.material);
-        assert_eq!(piled.content(cut.freed), Content::SoftwoodPile);
+        assert_eq!(piled.content(cut.freed), Content::Pile(Material::Softwood));
         assert_eq!(piled.fullness(), cut.cover.fullness(), "a pile stands in no one's way");
         assert!(reachable(piled, cut.freed) && harvest(piled, cut.freed).is_none());
         assert_eq!(Cover::from_bits(piled.bits()), piled);
         assert_eq!(emptied(piled, cut.freed), cut.cover);
+        for material in Material::ALL {
+            let kept = Cover::from_bits(left(Cover::NONE, 3, material).bits());
+            assert_eq!(kept.content(3), Content::Pile(material), "{material:?} is kept as itself");
+        }
         let crag = Cover::NONE.with_boulder(4).with_rock(Rock::Basement);
         let mined = harvest(crag, 4).unwrap();
-        assert_eq!(left(mined.cover, mined.freed, mined.material).content(4), Content::BasementPile);
-        assert_eq!(left(Cover::NONE.with_rock(Rock::Shale), 2, Material::Limestone).content(2), Content::LimestonePile, "whatever it lies on");
+        assert_eq!(left(mined.cover, mined.freed, mined.material).content(4), Content::Pile(Material::Basement));
+        assert_eq!(left(Cover::NONE.with_rock(Rock::Shale), 2, Material::Limestone).content(2), Content::Pile(Material::Limestone), "whatever it lies on");
     }
 
     /// A tree takes a chop and a boulder a strike; what is not gathered
@@ -293,7 +325,8 @@ mod tests {
     }
 
     /// A boulder gives its rock's stone and frees its slot; shale gives
-    /// nothing, and brush, stumps and empty slots are not gathered.
+    /// nothing, and brush and empty slots are not gathered. A stump is
+    /// its tree's second gather, and frees the tile of it.
     #[test]
     fn a_boulder_gives_its_rock() {
         let crag = Cover::NONE.with_boulder(0).with_rock(Rock::Limestone);
@@ -304,7 +337,9 @@ mod tests {
         let brush = Cover::NONE.with(0, Content::Brush);
         assert_eq!(harvest(brush, SITE_SLOTS[0][0]), None);
         let stump = harvest(Cover::NONE.with(0, Content::Pine), SITE_SLOTS[0][0]).unwrap().cover;
-        assert_eq!(harvest(stump, SITE_SLOTS[0][0]), None);
+        let grubbed = harvest(stump, SITE_SLOTS[0][0]).unwrap();
+        assert_eq!((grubbed.material, grubbed.amount, grubbed.freed), (Material::Softwood, STUMP_YIELD, SITE_SLOTS[0][0]));
+        assert_eq!((grubbed.cover, work(stump, SITE_SLOTS[0][0])), (Cover::NONE, Some(Work::Chop)));
         assert_eq!(harvest(Cover::NONE, 3), None);
     }
 }

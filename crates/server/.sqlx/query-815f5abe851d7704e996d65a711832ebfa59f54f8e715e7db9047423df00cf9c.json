@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO tile_cover (chunk, q, r, cover)\n             SELECT * FROM UNNEST($1::BIGINT[], $2::INT[], $3::INT[], $4::BIGINT[])\n             ON CONFLICT (chunk, q, r) DO UPDATE SET cover = EXCLUDED.cover",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int4Array",
+        "Int4Array",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "815f5abe851d7704e996d65a711832ebfa59f54f8e715e7db9047423df00cf9c"
+}

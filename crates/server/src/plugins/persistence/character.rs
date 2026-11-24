@@ -23,6 +23,10 @@ struct State {
     loadout: Value,
     at: Qrz,
     heading: Heading,
+    /// Where it stands at the hearth that is its home; none where its
+    /// home is the haven.
+    #[serde(default)]
+    home: Option<Qrz>,
 }
 
 /// What a character holds that this build cannot play, as the store kept
@@ -33,9 +37,10 @@ pub struct Dormant {
     stock: Vec<Value>,
 }
 
-/// A character standing at `at` facing `heading`, holding `dormant`
-/// besides, as the store keeps it.
-pub fn state(equipment: &Equipment, inventory: &Inventory, attrs: &ActorAttributes, loadout: &Loadout, at: Qrz, heading: Heading, dormant: &Dormant) -> String {
+/// A character standing at `at` facing `heading`, at home at `home` and
+/// holding `dormant` besides, as the store keeps it.
+#[allow(clippy::too_many_arguments)]
+pub fn state(equipment: &Equipment, inventory: &Inventory, attrs: &ActorAttributes, loadout: &Loadout, at: Qrz, heading: Heading, home: Option<Qrz>, dormant: &Dormant) -> String {
     let state = State {
         owned: inventory.items.iter().copied().map(stored::item).chain(dormant.owned.iter().cloned()).collect(),
         worn: equipment.items().map(stored::item).collect(),
@@ -44,13 +49,14 @@ pub fn state(equipment: &Equipment, inventory: &Inventory, attrs: &ActorAttribut
         loadout: stored::loadout(loadout),
         at,
         heading,
+        home,
     };
     serde_json::to_string(&state).expect("a character serializes")
 }
 
 /// `kept`, holding `dormant` besides, as the store keeps it.
 pub fn kept(kept: &Kept, dormant: &Dormant) -> String {
-    state(&kept.equipment, &kept.inventory, &kept.attrs, &kept.loadout, kept.at, kept.heading, dormant)
+    state(&kept.equipment, &kept.inventory, &kept.attrs, &kept.loadout, kept.at, kept.heading, kept.home, dormant)
 }
 
 /// The character `state` keeps, and what of it this build cannot play. It
@@ -70,6 +76,7 @@ pub fn recalled(state: Value) -> Result<(Kept, Dormant), serde_json::Error> {
         loadout: stored::bar(&state.loadout),
         at: state.at,
         heading: state.heading,
+        home: state.home,
     };
     Ok((kept, Dormant { owned, stock: unstocked }))
 }

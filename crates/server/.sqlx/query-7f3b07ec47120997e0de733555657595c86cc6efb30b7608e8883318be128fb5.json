@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT roll_back(now() - make_interval(secs => $1::DOUBLE PRECISION / 1000), NULL)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "roll_back",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7f3b07ec47120997e0de733555657595c86cc6efb30b7608e8883318be128fb5"
+}

@@ -132,26 +132,47 @@ fn disc_distance_wu() -> f32 {
 const SUN_DISC_BRIGHTNESS: f32 = 4.0;
 const MOON_DISC_BRIGHTNESS: f32 = 1.0;
 
-/// When the sun and the moon rise and set, as fractions of the day from
-/// midnight: a sixteen-hour day, and the moon up while the sun is down,
-/// opposite it. The twilight sky lights the ground while the moon's light
-/// climbs, and again after it goes.
-const SUNRISE: f32 = 4. / 24.;
-const SUNSET: f32 = 20. / 24.;
-const MOONRISE: f32 = SUNSET;
-const MOONSET: f32 = SUNRISE;
+/// When the sun rises, stands highest and sets, as fractions of the day
+/// from midnight: a sixteen-hour day, its morning shorter than its
+/// afternoon.
+const SUNRISE: f32 = common_bevy::systems::NIGHT.1 as f32 / 24.;
+const NOON: f32 = common_bevy::systems::NOON as f32 / 24.;
+const SUNSET: f32 = common_bevy::systems::NIGHT.0 as f32 / 24.;
+/// When the moon rises and sets: up from two hours before the sun sets
+/// to two after it rises, so some light is always up. It stands highest
+/// the same share of the way through its time up as the sun does through
+/// its own, quick to rise and slow to set as the sun is: half past
+/// midnight, counted on from its rise.
+const MOONRISE: f32 = 20. / 24.;
+const MOONSET: f32 = 8. / 24.;
+const MOON_HIGH: f32 = MOONRISE + (1. + MOONSET - MOONRISE) * (NOON - SUNRISE) / (SUNSET - SUNRISE);
 /// How far the sun's rise and set swing from east and west at the
 /// season's height: its whole circle leans that far south and back.
 const SEASON_SWING: f32 = 25_f32.to_radians();
 
-/// A body's orbit angle at day fraction `t`: zero as it rises, π/2 at
-/// its zenith, π as it sets, 3π/2 at its nadir. The half above the
-/// horizon takes the time from `rise` to `set` and the half below the
-/// rest, so the sun's long day is its slow sweep.
-fn orbit(t: f32, rise: f32, set: f32) -> f32 {
-    let up = (set - rise).rem_euclid(1.);
+/// A body's orbit angle at day fraction `t`: zero as it rises at `rise`,
+/// π/2 at its zenith at `high`, π as it sets at `set`, 3π/2 at its nadir.
+/// One smooth curve through the three: a cubic over each of the three
+/// stretches between them, its pace at each of the three the harmonic
+/// mean of the stretches' own either side, which keeps it turning one
+/// way. So the sun eases from its quick morning into its slow afternoon
+/// and its quicker night, and no body changes pace at once.
+fn orbit(t: f32, rise: f32, high: f32, set: f32) -> f32 {
+    // Each stretch: how long it lasts and how far it turns
+    let stretches = [((high - rise).rem_euclid(1.), PI / 2.), ((set - high).rem_euclid(1.), PI / 2.), ((rise - set).rem_euclid(1.), PI)];
+    let pace = |k: usize| stretches[k % 3].1 / stretches[k % 3].0;
+    let at_start = |k: usize| 2. * pace(k) * pace(k + 2) / (pace(k) + pace(k + 2));
     let since_rise = (t - rise).rem_euclid(1.);
-    if since_rise < up { PI * since_rise / up } else { PI + PI * (since_rise - up) / (1. - up) }
+    let (mut from, mut turned) = (0., 0.);
+    for (k, &(long, turns)) in stretches.iter().enumerate() {
+        if since_rise < from + long || k == 2 {
+            let u = (since_rise - from) / long;
+            let (rise, eased_in, eased_out) = (u * u * (3. - 2. * u), u * (1. - u) * (1. - u), u * u * (u - 1.));
+            return turned + turns * rise + long * (at_start(k) * eased_in + at_start(k + 1) * eased_out);
+        }
+        (from, turned) = (from + long, turned + turns);
+    }
+    unreachable!("the third stretch takes what is left of the day")
 }
 
 /// Unit direction to a body at orbit angle `a`: rising in the east (+x,
@@ -440,7 +461,7 @@ pub fn update(
 
     // sun
     let (mut s_light, mut s_transform, mut cascade_config) = q_sun.single_mut().expect("no result in q_sun");
-    let s_orbit = orbit(dtd, SUNRISE, SUNSET);
+    let s_orbit = orbit(dtd, SUNRISE, NOON, SUNSET);
     let s_toward = toward(s_orbit, tan(SEASON_SWING) * cos(dty * 2. * PI));
     let s_elevation = elevation(s_toward);
     let s_direct = direct(s_elevation);
@@ -471,7 +492,7 @@ pub fn update(
 
     // moon
     let (mut m_light, mut m_transform) = q_moon.single_mut().expect("no result in q_moon");
-    let m_orbit = orbit(dtd, MOONRISE, MOONSET);
+    let m_orbit = orbit(dtd, MOONRISE, MOON_HIGH, MOONSET);
     let m_toward = toward(m_orbit, 0.);
     // The month turns the moon from full to new and back: its light is
     // its lit fraction, and its disc is lit from that far round from the
@@ -1360,27 +1381,37 @@ pub fn poll_summary_meshes(
 mod tests {
     use super::*;
 
-    /// The sun is above the horizon exactly from sunrise to sunset, its
-    /// orbit runs on without a break through both, and its day sweep is
-    /// the slow one.
+    /// The sun and the moon are each above the horizon exactly from
+    /// their rise to their set and highest at their own hour; each orbit
+    /// runs on one way without a break, and its pace never changes at
+    /// once. The sun is quick through its short morning, slow through
+    /// its long afternoon and quicker again by night.
     #[test]
-    fn the_sun_orbits_slowly_by_day_and_fast_by_night() {
+    fn the_sun_and_the_moon_keep_their_hours_at_an_even_changing_pace() {
         // Half-minute samples, so none lands on a rise or a set.
         let step = 1. / 1440.;
-        let mut prev = orbit(1. - step / 2., SUNRISE, SUNSET);
-        for minute in 0..1440 {
-            let t = (minute as f32 + 0.5) * step;
-            let a = orbit(t, SUNRISE, SUNSET);
-            let up = (SUNRISE..SUNSET).contains(&t);
-            assert_eq!(toward(a, 0.).y > 0., up, "t={t} a={a}");
-            let advance = (a - prev).rem_euclid(2. * PI);
-            assert!(advance > 0. && advance < 0.1, "t={t} advance={advance}");
-            assert_eq!(direct(elevation(toward(a, 0.))) > 0., up, "t={t}");
-            prev = a;
+        for (rise, high, set) in [(SUNRISE, NOON, SUNSET), (MOONRISE, MOON_HIGH, MOONSET)] {
+            let orbit = |t: f32| orbit(t, rise, high, set);
+            let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+            assert!(near(orbit(rise + 1e-5), 0.) && near(orbit(high), PI / 2.) && near(orbit(set), PI));
+            let advance = |t: f32| (orbit(t + step) - orbit(t)).rem_euclid(2. * PI);
+            let mut pace = advance(1. - step / 2.);
+            for minute in 0..1440 {
+                let t = (minute as f32 + 0.5) * step;
+                let a = orbit(t);
+                let up = (t - rise).rem_euclid(1.) < (set - rise).rem_euclid(1.);
+                assert_eq!(toward(a, 0.).y > 0., up, "t={t} a={a}");
+                assert_eq!(direct(elevation(toward(a, 0.))) > 0., up, "t={t}");
+                let next = advance(t);
+                assert!(next > 0. && next < 0.1, "t={t} advance={next}");
+                assert!((next - pace).abs() < 0.03 * next, "the pace jumps at t={t}: {pace} to {next}");
+                pace = next;
+            }
         }
-        let day_rate = orbit(SUNRISE + step, SUNRISE, SUNSET) - orbit(SUNRISE, SUNRISE, SUNSET);
-        let night_rate = orbit(SUNSET + step, SUNRISE, SUNSET) - orbit(SUNSET, SUNRISE, SUNSET);
-        assert!(day_rate < night_rate, "{day_rate} vs {night_rate}");
+        let advance = |t: f32| (orbit(t + step, SUNRISE, NOON, SUNSET) - orbit(t, SUNRISE, NOON, SUNSET)).rem_euclid(2. * PI);
+        let (morning, afternoon, night) = (advance((SUNRISE + NOON) / 2.), advance((NOON + SUNSET) / 2.), advance((SUNSET + 1. + SUNRISE) / 2.));
+        assert!(afternoon < morning && afternoon < night, "{morning} {afternoon} {night}");
+        assert!((MOON_HIGH.rem_euclid(1.) - 0.5 / 24.).abs() < 1e-5, "the moon is as quick to rise and slow to set as the sun");
     }
 
     /// The sun's light and the sky's glow both turn within a band about

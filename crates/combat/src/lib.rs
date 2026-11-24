@@ -45,6 +45,12 @@ impl RunTime {
     pub fn now(&self, time: &Time) -> Moment {
         Moment::from_millis(time.elapsed().as_millis() as u64 + self.elapsed_offset as u64)
     }
+
+    /// The calendar's moment at `time`: what a time kept past the server
+    /// is measured on.
+    pub fn when(&self, time: &Time) -> common_bevy::systems::When {
+        self.calendar.when(self.now(time))
+    }
 }
 
 /// `ent` stepped of its own: the skill it was activating, if any, is

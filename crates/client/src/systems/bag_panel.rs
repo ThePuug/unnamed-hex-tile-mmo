@@ -126,13 +126,8 @@ pub fn handle_numpad(
 
 /// A stackable kind's icon: the build writes a material's under its name.
 pub(crate) fn stack_icon(asset_server: &AssetServer, kind: common::Stackable) -> Handle<Image> {
-    let stem = match kind {
-        common::Stackable::Material(common::Material::Softwood) => "softwood",
-        common::Stackable::Material(common::Material::Hardwood) => "hardwood",
-        common::Stackable::Material(common::Material::Sandstone) => "sandstone",
-        common::Stackable::Material(common::Material::Limestone) => "limestone",
-        common::Stackable::Material(common::Material::Basement) => "basement",
-    };
+    let common::Stackable::Material(material) = kind;
+    let stem = material.stem();
     asset_server.load(format!("icons/{stem}.png"))
 }
 

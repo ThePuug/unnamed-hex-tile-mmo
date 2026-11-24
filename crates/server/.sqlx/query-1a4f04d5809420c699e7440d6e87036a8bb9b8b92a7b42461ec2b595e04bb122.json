@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT q, r, state AS \"state: Json<serde_json::Value>\" FROM camp WHERE chunk = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "q",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "camp",
+            "name": "q"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "r",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "camp",
+            "name": "r"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "state: Json<serde_json::Value>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "camp",
+            "name": "state"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1a4f04d5809420c699e7440d6e87036a8bb9b8b92a7b42461ec2b595e04bb122"
+}

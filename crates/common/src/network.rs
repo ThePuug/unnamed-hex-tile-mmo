@@ -90,6 +90,19 @@ impl Identity {
         }
     }
 
+    /// The identity `provider` knows as `name`, as [`Self::provider`] and
+    /// [`Self::name`] give them, or none where they name none.
+    pub fn named(provider: &str, name: &str) -> Option<Self> {
+        if provider != "key" || name.len() != 32 || !name.is_ascii() {
+            return None;
+        }
+        let mut key = [0; 16];
+        for (byte, pair) in key.iter_mut().zip(name.as_bytes().chunks(2)) {
+            *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+        }
+        Some(Identity::Key(key))
+    }
+
     /// The provider, as the store names it.
     pub fn provider(self) -> &'static str {
         match self {

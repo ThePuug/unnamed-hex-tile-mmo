@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT ON (c.id) i.provider, i.name, c.state -> 'home' AS \"home?: Json<serde_json::Value>\"\n             FROM player_character c JOIN identity i ON i.account = c.account\n             WHERE c.seen > $1::BIGINT - 604800000 AND c.state <> 'null'::JSONB\n             ORDER BY c.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "provider",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "identity",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "identity",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "home?: Json<serde_json::Value>",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "5f954e6a6c5f3fa9033c91150bd248bee5a1cf2c31abab6dd8c15807cbb20f35"
+}

@@ -275,10 +275,12 @@ pub fn setup(
 
 /// Shows in each frame the lane's last target while it stands in the
 /// world, and hides the frame with none, or while the viewed actor is dead.
+/// A target with no health, a settler, shows its name over an empty bar
+/// and no level.
 pub fn update(
     mut parts: Query<(&Lane, &Part, &mut Visibility, Option<&mut Text>, Option<&mut TextColor>, Option<&mut Node>, Option<&mut BackgroundColor>)>,
     viewed: Query<(&Health, &Target, Option<&AllyTarget>, Option<&ActorAttributes>), With<crate::components::Viewed>>,
-    targets: Query<(&EntityType, &Health, Option<&Endurance>, Option<&ActorAttributes>, Option<&Activating>)>,
+    targets: Query<(&EntityType, Option<&Health>, Option<&Endurance>, Option<&ActorAttributes>, Option<&Activating>)>,
 ) {
     let Ok((own_health, target, ally, own_attrs)) = viewed.single() else {
         return;
@@ -322,12 +324,12 @@ pub fn update(
             }
             Part::HealthBar => {
                 if let Some(mut node) = node {
-                    node.width = Val::Percent(share(health.state, health.max));
+                    node.width = Val::Percent(health.map_or(0.0, |health| share(health.state, health.max)));
                 }
             }
             Part::HealthText => {
                 if let Some(mut text) = text {
-                    **text = format!("{:.0}/{:.0}", health.state, health.max);
+                    **text = health.map_or(String::new(), |health| format!("{:.0}/{:.0}", health.state, health.max));
                 }
             }
             Part::Endurance => {
@@ -359,8 +361,8 @@ pub fn update(
                 }
             }
             Part::LevelText => {
-                if let (Some(mut text), Some(level)) = (text, level) {
-                    **text = level.to_string();
+                if let Some(mut text) = text {
+                    **text = level.map_or(String::new(), |level| level.to_string());
                 }
             }
         }

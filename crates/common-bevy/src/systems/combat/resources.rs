@@ -83,6 +83,18 @@ pub fn regenerate_resources(
     }
 }
 
+/// Where an actor at home on `home` stands: there, or on the first tile
+/// round it a walker may enter where what stands on `home` fills it. None
+/// where the map does not hold `home` or no tile round it is open.
+fn beside(map: &crate::resources::map::Map, home: qrz::Qrz) -> Option<qrz::Qrz> {
+    use crate::systems::movement::is_full_cover;
+    let (floor, _) = map.get_by_qr(home.q, home.r)?;
+    if !is_full_cover(map, home.q, home.r) {
+        return Some(home);
+    }
+    map.neighbors(floor).into_iter().map(|(tile, _)| tile).find(|tile| !is_full_cover(map, tile.q, tile.r)).map(|tile| tile + qrz::Qrz::Z)
+}
+
 /// Check for entities with health <= 0 and handle death immediately
 /// Runs on server only, after damage application systems
 /// For NPCs: emits Despawn
@@ -113,20 +125,23 @@ pub fn check_death(
     }
 }
 
-/// Stands every player whose respawn timer has run out at the `SpawnPoint`,
-/// its pools full, once the server has read the ground there
+/// Stands every player whose respawn timer has run out at its `Home`, or
+/// at the `SpawnPoint` where it has none, its pools full, once the server
+/// has read the ground there; beside its home, where that is a hearth
+/// filling its tile
 /// Runs on server only
 pub fn process_respawn(
     mut commands: Commands,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
     spawn_point: Option<Res<SpawnPoint>>,
-    mut query: Query<(Entity, &RespawnTimer, &mut Health, Option<&mut Endurance>, &mut Loc, &mut Position, Option<&crate::components::behaviour::PlayerControlled>)>,
+    map: Option<Res<crate::resources::map::Map>>,
+    mut query: Query<(Entity, &RespawnTimer, &mut Health, Option<&mut Endurance>, &mut Loc, &mut Position, Option<&crate::components::behaviour::PlayerControlled>, Option<&crate::components::Home>)>,
 ) {
     let Some(spawn_point) = spawn_point else { return };
-    for (ent, timer, mut health, endurance, mut loc, mut position, player_controlled) in &mut query {
+    for (ent, timer, mut health, endurance, mut loc, mut position, player_controlled, home) in &mut query {
         if timer.should_respawn(Moment::ZERO + time.elapsed()) {
-            let spawn_qrz = spawn_point.0;
+            let spawn_qrz = home.map_or(spawn_point.0, |home| map.as_deref().and_then(|map| beside(map, home.0)).unwrap_or(home.0));
             *loc = Loc::new(spawn_qrz);
 
             // Reset position to snap to new location

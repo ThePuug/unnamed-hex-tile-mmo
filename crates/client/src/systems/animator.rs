@@ -41,14 +41,18 @@ pub enum Clip {
     Chop,
     Mine,
     Pickup,
+    /// Busy with its hands at whatever it is raising.
+    Work,
+    /// Asleep on the ground.
+    Sleep,
     Mounted,
 }
 
 impl Clip {
-    pub const ALL: [Clip; 16] = [
+    pub const ALL: [Clip; 18] = [
         Clip::Tee, Clip::Idle, Clip::Walk, Clip::Run, Clip::Back, Clip::Jump, Clip::Attack, Clip::Counter,
         Clip::Frenzy, Clip::Parry, Clip::Rattle, Clip::Disengage,
-        Clip::Chop, Clip::Mine, Clip::Pickup, Clip::Mounted,
+        Clip::Chop, Clip::Mine, Clip::Pickup, Clip::Work, Clip::Sleep, Clip::Mounted,
     ];
 
     /// The one-shots an ability plays, each held until it ends.
@@ -79,6 +83,8 @@ impl Clip {
             Clip::Chop => "chop",
             Clip::Mine => "mine",
             Clip::Pickup => "pickup",
+            Clip::Work => "work",
+            Clip::Sleep => "sleep",
             Clip::Mounted => "mounted",
         }
     }
@@ -89,7 +95,9 @@ impl Clip {
         match activity {
             common::gathering::Activity::Work(common::gathering::Work::Chop) => Clip::Chop,
             common::gathering::Activity::Work(common::gathering::Work::Mine) => Clip::Mine,
+            common::gathering::Activity::Work(common::gathering::Work::Build) => Clip::Work,
             common::gathering::Activity::Pickup => Clip::Pickup,
+            common::gathering::Activity::Sleep => Clip::Sleep,
         }
     }
 

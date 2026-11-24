@@ -133,6 +133,7 @@ pub fn update_console_menu(
                         line(parent, "2. Goto Coordinates", 16.0, Color::WHITE);
                         line(parent, format!("3. Added Latency      [{}ms]", added.0.as_millis()), 16.0, state_color(!added.0.is_zero()));
                     }
+                    line(parent, "4. Rollback", 16.0, Color::WHITE);
                     gap(parent);
                     for text in ["5. Spawn Den", "6. View", "7. Stage Party", "8. Stage Opposition"] {
                         line(parent, text, 16.0, Color::WHITE);
@@ -184,6 +185,32 @@ pub fn update_console_menu(
                     }
                     gap(parent);
                     line(parent, "Esc. Back", 16.0, BACK);
+                }
+                MenuPath::Rollback => {
+                    let chosen = console.rollback;
+                    for text in [
+                        format!("1. Clock                    [{}]", if chosen.game { "Game time" } else { "Real time" }),
+                        format!("2. Unit                     [{}]", super::state::Rollback::UNITS[chosen.unit]),
+                        format!("3. Fewer  4. More           [{}]", chosen.amount),
+                    ] {
+                        line(parent, text, 16.0, Color::WHITE);
+                    }
+                    gap(parent);
+                    let (text, color) = if chosen.armed {
+                        (format!("Enter again: roll the world back {}", chosen.says()), Color::srgb(0.95, 0.4, 0.3))
+                    } else {
+                        (format!("Enter: roll the world back {}", chosen.says()), Color::srgb(0.9, 0.9, 0.4))
+                    };
+                    line(parent, text, 16.0, color);
+                    for text in [
+                        "Everything kept goes back to that moment for every player:",
+                        "the ground, piles, bags, camps, dens, hubs and the ledger.",
+                        "The calendar goes back as far. The server stops; start it again.",
+                    ] {
+                        line(parent, text, 12.0, Color::srgb(0.6, 0.6, 0.6));
+                    }
+                    gap(parent);
+                    line(parent, "0. Back", 16.0, BACK);
                 }
                 MenuPath::Stage(_) => {
                     for (i, (label, _)) in super::state::DENS.iter().enumerate() {

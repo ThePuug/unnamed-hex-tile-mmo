@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT roll_back(NULL, $1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "roll_back",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "cd8c1422cfa6fa8b20cca91208fc2d2b64c724a65a01c673fa74f9e926ea2aef"
+}

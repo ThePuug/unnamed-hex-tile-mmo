@@ -54,7 +54,7 @@ fn tool_of(activity: common::gathering::Activity) -> Option<&'static str> {
     match activity {
         common::gathering::Activity::Work(common::gathering::Work::Chop) => Some("wood-axe"),
         common::gathering::Activity::Work(common::gathering::Work::Mine) => Some("pick"),
-        common::gathering::Activity::Pickup => None,
+        common::gathering::Activity::Work(common::gathering::Work::Build) | common::gathering::Activity::Pickup | common::gathering::Activity::Sleep => None,
     }
 }
 

@@ -237,6 +237,7 @@ pub fn actor_name(typ: EntityType) -> &'static str {
                 EnemyArchetype::Defender => "player",
             }
             ActorIdentity::Nest(_) => "",
+            ActorIdentity::Settler => "player",
         },
         _ => panic!("couldn't find asset for entity type {:?}", typ)
     }

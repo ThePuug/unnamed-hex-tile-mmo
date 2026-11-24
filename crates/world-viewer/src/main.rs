@@ -1,7 +1,7 @@
 //! World viewer: the event stack, one event's published index, or one
 //! event's own output, rendered to an image, with what each layer cost.
 //!
-//! Three kinds of view, and a view is one of them. A composite view draws
+//! Three kinds of view of the world, and a view of it is one of them. A composite view draws
 //! what the stack composes at each tile, read through the composite and
 //! nothing else. An index view draws what one event published, read from the
 //! registry through `Composite::with_indexes` once the tiles under the
@@ -9,7 +9,8 @@
 //! returned at each tile, read through `Composite::outputs_at`. Nothing
 //! reads a layer's functions directly (INV-009). The stack built here is the
 //! server's stack, so same seed, same image. Which views exist, and when one
-//! is added or removed, is the README.
+//! is added or removed, is the README. The hubs view is of no layer: it
+//! draws a scenario of hearths as the game's own rule settles it (`hubs`).
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -25,6 +26,7 @@ use world::events::forest;
 use world::events::plates::{unwarp, PlateEdgeIndex};
 use world::lattice::node_world;
 
+mod hubs;
 mod summaries;
 mod view3d;
 
@@ -51,6 +53,10 @@ enum Layer {
     /// Stand index: the density the stands give each position, in four
     /// plain bands over whatever is drawn beneath, open ground showing it.
     Stands,
+    /// A scenario: `--hearth`'s hearths settled into hubs by the game's
+    /// rule, their cores, influence and what took what in, over whatever
+    /// is drawn beneath.
+    Hubs,
 }
 
 /// Every view by its command-line name. The one list: parsing, the help text
@@ -64,6 +70,7 @@ const LAYERS: &[(&str, Layer)] = &[
     ("thrusting-fronts", Layer::Fronts),
     ("forest", Layer::Forest),
     ("stands", Layer::Stands),
+    ("hubs", Layer::Hubs),
 ];
 
 impl Layer {
@@ -134,6 +141,24 @@ struct Cli {
     /// The event the `contribution` view draws, by its name in the stack
     #[arg(long)]
     event: Option<String>,
+
+    /// The tile the view centres on, `<q>,<r>`, or `+<q>,<r>` counted
+    /// from the haven's, in place of the world coordinates; the `hubs` view centres on the haven where neither
+    /// is given
+    #[arg(long, allow_hyphen_values = true)]
+    centre: Option<String>,
+
+    /// A hearth of the `hubs` view's scenario, `<q>,<r>` or
+    /// `<q>,<r>:<players>` with that many at home at it; repeated, in the
+    /// order they are built. A `+` before the tile counts it from the
+    /// haven's. A hearth named again changes how many are at home at it
+    #[arg(long, allow_hyphen_values = true)]
+    hearth: Vec<String>,
+
+    /// With the `hubs` view, one picture for each hearth built, in order,
+    /// so a hub is seen growing and taking another in
+    #[arg(long)]
+    steps: bool,
 
     /// Render as the client draws a distance band: summaries of this
     /// radius (0 is the tiles; the ladder is 1, 4, 13, 40), each read from
@@ -210,8 +235,32 @@ fn main() {
     // The world's tracing spans reach the log where the workspace builds
     // `tracing` with `log`: one line a tile, unless silenced.
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,tracing::span=off")).init();
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
     let layers = parse_layers(&cli.layers);
+    let haven = common_bevy::haven::launch();
+    let centre = cli.centre.as_deref().map(|spec| {
+        let (spec, from) = spec.strip_prefix('+').map_or((spec, (0, 0)), |rest| (rest, (haven.q, haven.r)));
+        let (q, r) = hubs::Hearth::parse(spec).unwrap_or_else(|e| {
+            eprintln!("--centre: {e}");
+            std::process::exit(1);
+        }).tile;
+        (q + from.0, r + from.1)
+    });
+    if let Some((q, r)) = centre.or(layers.contains(&Layer::Hubs).then_some((haven.q, haven.r)).filter(|_| cli.center_x == 0.0 && cli.center_y == 0.0)) {
+        (cli.center_x, cli.center_y) = common::hex_to_world(q, r);
+    }
+    let hearths: Vec<hubs::Hearth> = cli
+        .hearth
+        .iter()
+        .map(|spec| {
+            let (spec, from) = spec.strip_prefix('+').map_or((spec.as_str(), (0, 0)), |rest| (rest, (haven.q, haven.r)));
+            let hearth = hubs::Hearth::parse(spec).unwrap_or_else(|e| {
+                eprintln!("--hearth: {e}");
+                std::process::exit(1);
+            });
+            hubs::Hearth { tile: (hearth.tile.0 + from.0, hearth.tile.1 + from.1), ..hearth }
+        })
+        .collect();
 
     let scale = cli.scale.max(0.5);
     let origin_x = cli.center_x - cli.radius;
@@ -268,7 +317,9 @@ fn main() {
         }
     }
 
-    let coords: Vec<(i32, i32)> = tile_set.into_iter().collect();
+    // The hubs view alone reads no world, and waits on none
+    let alone = layers.iter().all(|&layer| layer == Layer::Hubs);
+    let coords: Vec<(i32, i32)> = if alone { Vec::new() } else { tile_set.into_iter().collect() };
     log::info!("Materializing {} unique tiles (from {}x{} pixels)...", coords.len(), w, h);
 
     // The layer the contribution view reads, by its place in the stack.
@@ -588,9 +639,40 @@ fn main() {
         log::info!("Plate edges: {} edges, {} coasts; red seeds continental, blue oceanic", edges.len(), edges.iter().filter(|e| e.is_coast()).count());
     }
 
-
+    if layers.contains(&Layer::Hubs) {
+        // The scenario settled whole, or a picture for each hearth built
+        let from = if cli.steps { 0 } else { hearths.len() };
+        for count in from..=hearths.len() {
+            let settled = hubs::settle((haven.q, haven.r), &hearths, count);
+            let mut pixels = buf.clone();
+            hubs::draw(&mut hubs::Canvas { buf: &mut pixels, w, h, origin: (origin_x, origin_y), scale }, &settled, &hearths[..count]);
+            log::info!("Hubs with {count} of {} hearths built:", hearths.len());
+            hubs::report(&settled);
+            if cli.steps {
+                save_step(&cli, &pixels, width, height, count);
+            } else {
+                buf = pixels;
+            }
+        }
+        log::info!(
+            "  legend: a hub's core filled and outlined in its hue; its reach outlined thin; influence a white wash; dotted, the core each hearth would hold alone; white dots hearths, a ringed dot each hub's centre; gold, the haven: its point, its guarded ground and, thin, its reach"
+        );
+        if cli.steps {
+            return;
+        }
+    }
 
     save(&cli, &buf, width, height);
+}
+
+/// Saves step `step` of a run of pictures beside where the one picture
+/// would go, its number before the extension.
+fn save_step(cli: &Cli, buf: &[u8], width: u32, height: u32, step: usize) {
+    let ext = if cli.format == "png" { "png" } else { "qoi" };
+    let base = cli.output.clone().unwrap_or_else(|| format!("world.{ext}"));
+    let (stem, ext) = base.rsplit_once('.').unwrap_or((&base, ext));
+    let stepped = Cli { output: Some(format!("{stem}-{step:02}.{ext}")), format: cli.format.clone(), layers: cli.layers.clone(), event: None, centre: None, hearth: Vec::new(), ..*cli };
+    save(&stepped, buf, width, height);
 }
 
 /// A chain as a tile sees it: each segment in eight, every point moved to

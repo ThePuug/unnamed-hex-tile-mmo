@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT shift, held FROM calendar",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "shift",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "calendar",
+            "name": "shift"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "held",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "calendar",
+            "name": "held"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "0e43f050a9bf6cf2b74079a70d1e9fa7d752b485b04c98ecbeadc979e56c7240"
+}

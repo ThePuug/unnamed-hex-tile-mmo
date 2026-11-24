@@ -102,7 +102,7 @@ pub fn loadout(typ: &EntityType, held: Option<&Loadout>) -> [Option<AbilityType>
                 }
                 bar
             }
-            ActorIdentity::Nest(_) => [None; 8],
+            ActorIdentity::Nest(_) | ActorIdentity::Settler => [None; 8],
         },
         _ => [None; 8],
     }

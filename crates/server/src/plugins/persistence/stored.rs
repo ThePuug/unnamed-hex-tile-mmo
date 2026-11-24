@@ -18,10 +18,17 @@ pub fn item(item: Item) -> Value {
     json!({"piece": item.piece.id(), "seed": item.seed})
 }
 
-pub fn stack(stack: Stack) -> Value {
-    match stack.kind {
-        Stackable::Material(material) => json!({"material": material.id(), "count": stack.count}),
+/// A stackable kind, with no count.
+pub fn kind(kind: Stackable) -> Value {
+    match kind {
+        Stackable::Material(material) => json!({"material": material.id()}),
     }
+}
+
+pub fn stack(stack: Stack) -> Value {
+    let mut kept = kind(stack.kind);
+    kept["count"] = json!(stack.count);
+    kept
 }
 
 /// A bar, a skill's number to a slot.

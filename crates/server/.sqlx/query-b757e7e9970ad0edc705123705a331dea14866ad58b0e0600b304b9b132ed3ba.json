@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT q, r, provider, name, camp_q, camp_r FROM construct WHERE chunk = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "q",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "construct",
+            "name": "q"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "r",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "construct",
+            "name": "r"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "provider",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "construct",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "construct",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "camp_q",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "construct",
+            "name": "camp_q"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "camp_r",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "construct",
+            "name": "camp_r"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "b757e7e9970ad0edc705123705a331dea14866ad58b0e0600b304b9b132ed3ba"
+}

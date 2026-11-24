@@ -4,31 +4,46 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::Rock;
+use crate::{gathering::Material, Rock};
 
 /// What stands in one slot of a tile. A tree stands in its site's first
 /// slot and spans the second, which holds [`Content::Spanned`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[repr(u8)]
 pub enum Content {
     #[default]
-    Empty = 0,
-    Brush = 1,
-    Pine = 2,
-    Deciduous = 3,
+    Empty,
+    Brush,
+    Pine,
+    Deciduous,
     /// The second slot of the tree in the site's first.
-    Spanned = 4,
-    Boulder = 5,
+    Spanned,
+    Boulder,
     /// What a felled tree leaves in its first slot.
-    PineStump = 6,
-    DeciduousStump = 7,
-    /// What lies on the ground for anyone to take: a pile of its wood, or
-    /// of its stone, whatever rock it lies on.
-    SoftwoodPile = 8,
-    HardwoodPile = 9,
-    SandstonePile = 10,
-    LimestonePile = 11,
-    BasementPile = 12,
+    PineStump,
+    DeciduousStump,
+    /// What lies on the ground for anyone to take: a pile of one
+    /// material, whatever ground it lies on.
+    Pile(Material),
+    /// A slot the wall or the shut gate in the tile's centre fills.
+    Filled,
+    /// A slot the open gate in the tile's centre keeps: nothing stands in
+    /// it, and nothing is laid there.
+    Kept,
+    /// What players built (`crate::building`), each of its material,
+    /// standing in the tile's centre and holding every slot.
+    Hearth(Material),
+    Wall(Material),
+    Gate { of: Material, open: bool },
+    /// What a hub's settlers raise (`crate::building::Fixture`), each
+    /// standing in the tile's centre: a tent and a wagon there alone,
+    /// stakes holding every slot.
+    Tent,
+    Stakes,
+    Wagon,
+    /// A fixture begun and not yet raised, in the tile's centre, at a
+    /// stage of `crate::building::STAGES` from 1: in no one's way, and
+    /// the tile no one else's to build on.
+    Raising(crate::building::Fixture, u8),
 }
 
 impl Content {
@@ -36,22 +51,24 @@ impl Content {
     /// tree two, brush and a boulder one.
     pub fn slots(self) -> u8 {
         match self {
-            Content::Empty | Content::Spanned => 0,
-            Content::Brush | Content::Boulder | Content::PineStump | Content::DeciduousStump => 1,
-            Content::SoftwoodPile | Content::HardwoodPile | Content::SandstonePile | Content::LimestonePile | Content::BasementPile => 1,
+            Content::Empty | Content::Spanned | Content::Filled | Content::Kept => 0,
+            Content::Brush | Content::Boulder | Content::PineStump | Content::DeciduousStump | Content::Tent | Content::Wagon | Content::Raising(..) => 1,
+            Content::Hearth(_) | Content::Wall(_) | Content::Gate { .. } | Content::Stakes => TILE_SLOTS,
+            Content::Pile(_) => 1,
             Content::Pine | Content::Deciduous => 2,
         }
     }
 
     /// Whether the slot stands in a walker's way: a tree's two do, a
-    /// boulder's and a stump's do, brush's and a pile's do not.
+    /// boulder's and a stump's do, a hearth's, and every slot of a wall
+    /// or a shut gate; brush's, a pile's and an open gate's do not.
     pub fn is_solid(self) -> bool {
-        !matches!(self, Content::Empty | Content::Brush) && !self.is_pile()
+        !matches!(self, Content::Empty | Content::Brush | Content::Kept | Content::Raising(..) | Content::Gate { open: true, .. }) && !self.is_pile()
     }
 
     /// Whether it is a pile a player left, which anyone may open.
     pub fn is_pile(self) -> bool {
-        matches!(self, Content::SoftwoodPile | Content::HardwoodPile | Content::SandstonePile | Content::LimestonePile | Content::BasementPile)
+        matches!(self, Content::Pile(_))
     }
 
     /// Whether it grows at a site: brush or a tree.
@@ -59,8 +76,50 @@ impl Content {
         matches!(self, Content::Brush | Content::Pine | Content::Deciduous)
     }
 
-    fn from_bits(bits: u32) -> Content {
-        match bits & CONTENT_MASK {
+    /// The bits a cover holds it as. A construct's are its kind's sixteen
+    /// and its material's number in them.
+    fn bits(self) -> u64 {
+        match self {
+            Content::Empty => 0,
+            Content::Brush => 1,
+            Content::Pine => 2,
+            Content::Deciduous => 3,
+            Content::Spanned => 4,
+            Content::Boulder => 5,
+            Content::PineStump => 6,
+            Content::DeciduousStump => 7,
+            Content::Pile(Material::Softwood) => 8,
+            Content::Pile(Material::Hardwood) => 9,
+            Content::Pile(Material::Sandstone) => 10,
+            Content::Pile(Material::Limestone) => 11,
+            Content::Pile(Material::Basement) => 12,
+            Content::Pile(Material::Hide) => 15,
+            Content::Filled => 13,
+            Content::Kept => 14,
+            Content::Hearth(of) => HEARTH_BITS | of.id() as u64,
+            Content::Wall(of) => WALL_BITS | of.id() as u64,
+            Content::Gate { of, open: false } => GATE_BITS | of.id() as u64,
+            Content::Gate { of, open: true } => OPEN_GATE_BITS | of.id() as u64,
+            Content::Tent => 96,
+            Content::Stakes => 97,
+            Content::Wagon => 98,
+            Content::Raising(crate::building::Fixture::Tent, stage) => RAISING_BITS | stage as u64 & 3,
+            Content::Raising(crate::building::Fixture::Stakes, stage) => RAISING_BITS + 4 | stage as u64 & 3,
+            Content::Raising(crate::building::Fixture::Wagon, stage) => RAISING_BITS + 8 | stage as u64 & 3,
+        }
+    }
+
+    fn from_bits(bits: u64) -> Content {
+        let bits = bits & CONTENT_MASK;
+        let built = |content: fn(Material) -> Content| Material::kept_as((bits & 15) as u32).map_or(Content::Empty, content);
+        match bits & !15 {
+            HEARTH_BITS => return built(Content::Hearth),
+            WALL_BITS => return built(Content::Wall),
+            GATE_BITS => return built(|of| Content::Gate { of, open: false }),
+            OPEN_GATE_BITS => return built(|of| Content::Gate { of, open: true }),
+            _ => {}
+        }
+        match bits {
             1 => Content::Brush,
             2 => Content::Pine,
             3 => Content::Deciduous,
@@ -68,19 +127,38 @@ impl Content {
             5 => Content::Boulder,
             6 => Content::PineStump,
             7 => Content::DeciduousStump,
-            8 => Content::SoftwoodPile,
-            9 => Content::HardwoodPile,
-            10 => Content::SandstonePile,
-            11 => Content::LimestonePile,
-            12 => Content::BasementPile,
+            8 => Content::Pile(Material::Softwood),
+            9 => Content::Pile(Material::Hardwood),
+            10 => Content::Pile(Material::Sandstone),
+            11 => Content::Pile(Material::Limestone),
+            12 => Content::Pile(Material::Basement),
+            13 => Content::Filled,
+            14 => Content::Kept,
+            15 => Content::Pile(Material::Hide),
+            96 => Content::Tent,
+            97 => Content::Stakes,
+            98 => Content::Wagon,
+            105..=107 => Content::Raising(crate::building::Fixture::Tent, (bits & 3) as u8),
+            109..=111 => Content::Raising(crate::building::Fixture::Stakes, (bits & 3) as u8),
+            113..=115 => Content::Raising(crate::building::Fixture::Wagon, (bits & 3) as u8),
             _ => Content::Empty,
         }
     }
 }
 
 /// The bits one slot's content takes in a [`Cover`].
-const CONTENT_BITS: u32 = 4;
-const CONTENT_MASK: u32 = (1 << CONTENT_BITS) - 1;
+const CONTENT_BITS: u32 = 8;
+const CONTENT_MASK: u64 = (1 << CONTENT_BITS) - 1;
+
+/// Where each kind of construct's contents begin, sixteen to a kind.
+const HEARTH_BITS: u64 = 32;
+const WALL_BITS: u64 = 48;
+const GATE_BITS: u64 = 64;
+const OPEN_GATE_BITS: u64 = 80;
+
+/// Where a fixture being raised begins, four to a fixture: its stage in
+/// the low two bits, from 1.
+const RAISING_BITS: u64 = 104;
 
 /// How many slots a tile has: its centre and one toward each neighbour.
 /// What stands on the ground holds some of them, by its size.
@@ -238,21 +316,21 @@ fn mix(q: i32, r: i32, k: usize, channel: u64) -> u64 {
     x ^ (x >> 31)
 }
 
-/// What stands on a tile, in one `u32` so it crosses the wire as one:
+/// What stands on a tile, in one `u64` so it crosses the wire as one:
 /// each of the seven slots' [`Content`] in [`CONTENT_BITS`], slot `k` from
 /// bit `k * CONTENT_BITS` in [`SLOT_TOWARD`] order; and the boulders' rock
 /// in the two bits past those, read only where a boulder stands. The
 /// server's store keeps a changed tile as these bits, so changing the
 /// layout needs a migration of what it keeps.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Cover(u32);
+pub struct Cover(u64);
 
 /// The first rock bit.
 const ROCK_BIT: u32 = CONTENT_BITS * TILE_SLOTS as u32;
 
 impl Rock {
     /// The two bits a cover and an outcrop carry the rock as.
-    fn to_bits(self) -> u32 {
+    fn to_bits(self) -> u64 {
         match self {
             Rock::Shale => 0,
             Rock::Sandstone => 1,
@@ -262,7 +340,7 @@ impl Rock {
     }
 
     /// The rock two bits name; bits past them are ignored.
-    fn from_bits(bits: u32) -> Rock {
+    fn from_bits(bits: u64) -> Rock {
         match bits & 3 {
             0 => Rock::Shale,
             1 => Rock::Sandstone,
@@ -277,13 +355,13 @@ impl Cover {
 
     /// The cover these bits hold: bits past the rock's are dropped, and a
     /// slot's bits that name no content read as empty.
-    pub fn from_bits(bits: u32) -> Cover {
+    pub fn from_bits(bits: u64) -> Cover {
         (0..TILE_SLOTS as usize).fold(Cover(bits & (3 << ROCK_BIT)), |c, k| {
             c.with_content(k, Content::from_bits(bits >> (k as u32 * CONTENT_BITS)))
         })
     }
 
-    pub fn bits(self) -> u32 {
+    pub fn bits(self) -> u64 {
         self.0
     }
 
@@ -297,7 +375,7 @@ impl Cover {
     pub(crate) fn with_content(self, k: usize, content: Content) -> Cover {
         debug_assert!(k < TILE_SLOTS as usize);
         let at = k as u32 * CONTENT_BITS;
-        Cover((self.0 & !(CONTENT_MASK << at)) | (content as u32) << at)
+        Cover((self.0 & !(CONTENT_MASK << at)) | content.bits() << at)
     }
 
     /// What grows at site `k`, in [`SITES`] order: brush, a tree, or
@@ -495,7 +573,7 @@ impl Outcrop {
 
     /// The rock the boulders are.
     pub fn rock(self) -> Rock {
-        Rock::from_bits((self.0 >> 6) as u32)
+        Rock::from_bits((self.0 >> 6) as u64)
     }
 
     pub fn is_empty(self) -> bool {
@@ -559,8 +637,8 @@ mod tests {
         assert_eq!(c.with(0, Content::Pine).fullness(), 4, "a tree beside two boulders closes a tile");
         let all = (0..TILE_SLOTS as usize).fold(Cover::NONE, |c, k| c.with_boulder(k)).with_rock(Rock::Basement);
         assert_eq!(all.fullness(), TILE_SLOTS);
-        assert_eq!(Cover::from_bits(u32::MAX).rock(), Rock::Basement);
-        assert!((0..TILE_SLOTS as usize).all(|k| Cover::from_bits(u32::MAX).content(k) == Content::Empty), "bits naming no content read as empty");
+        assert_eq!(Cover::from_bits(u64::MAX).rock(), Rock::Basement);
+        assert!((0..TILE_SLOTS as usize).all(|k| Cover::from_bits(u64::MAX).content(k) == Content::Empty), "bits naming no content read as empty");
     }
 
     /// An outcrop counts its covers' boulders and keeps their rock: none

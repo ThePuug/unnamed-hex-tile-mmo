@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO hub (hearths) SELECT hearths::JSONB FROM UNNEST($1::TEXT[]) WITH ORDINALITY AS t(hearths, place) ORDER BY place",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9ec6c5e8d285a10289606a2b002416d99b7c67056ae65894e436a58bedc1e268"
+}

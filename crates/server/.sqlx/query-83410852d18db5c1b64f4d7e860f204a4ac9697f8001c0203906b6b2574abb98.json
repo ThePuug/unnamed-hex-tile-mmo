@@ -28,7 +28,7 @@
       {
         "ordinal": 2,
         "name": "cover",
-        "type_info": "Int4",
+        "type_info": "Int8",
         "origin": {
           "Table": {
             "table": "tile_cover",

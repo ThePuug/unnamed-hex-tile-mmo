@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO construct (chunk, q, r, provider, name, camp_q, camp_r)\n             SELECT * FROM UNNEST($1::BIGINT[], $2::INT[], $3::INT[], $4::TEXT[], $5::TEXT[], $6::INT[], $7::INT[])",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int4Array",
+        "Int4Array",
+        "TextArray",
+        "TextArray",
+        "Int4Array",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3a18ef85792f7e24cc307c1adf4db49e9732c465e07c916f0786a164df4d7354"
+}

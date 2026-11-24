@@ -32,6 +32,37 @@ tile, a region's cells made ready together and then read, the finest band
 first. It prints how long each band took and how many of its summaries
 hold water, for timing what the ladder's far levels cost.
 
+## Hubs
+
+```bash
+cargo run --bin world-viewer -- --layers elevation,hubs --radius 130 --scale 0.5 --format png --steps     --hearth +70,0:30 --hearth +70,14 --hearth +55,6:60 --hearth +38,4:20
+cargo run --bin world-viewer -- --layers hubs --radius 2600 --scale 5 --format png     --hearth +900,0:300 --hearth +-1600,-600:1000
+```
+
+The `hubs` view draws a scenario: each `--hearth <q>,<r>[:<players>]` is
+built in the order given, with that many players at home at it, and the
+game's own rule (`common_bevy::hubs`) settles them. A `+`
+before the tile counts it from the haven's. A hearth named again is not
+built again: the players at home at it become the number given, so a hub
+is seen losing them. The view centres on the haven unless `--centre`
+names another tile, with a `+` from the haven's too.
+
+| Drawn | Is |
+|-------|----|
+| a filled, outlined shape in a hub's hue | its core: the ground round each of its hearths, less the further the hearth stands from the centre |
+| a thin outline in the same hue | how far its influence reaches |
+| a white wash | every hub's influence together, whiter the stronger |
+| a dotted outline | the core a hearth would hold alone, so what a hub took in shows inside it |
+| a white dot, a line from it | a hearth, and the hub it is a home in |
+| a ringed dot | a hub's centre |
+| gold: a ringed dot, an outline, a thin outline | the haven, which is no hub: its point, the ground its guard keeps, and how far its influence reaches |
+
+`--steps` writes a picture for each hearth built, `<output>-00`, `-01`
+and on, so a hub is seen growing, taking another in and shedding its
+far side; the log says which hubs became one and which hearth a hub let
+go. Alone, with no other view under it, `hubs` reads no
+world and renders a continent in seconds.
+
 ## 3D
 
 ```bash
@@ -101,7 +132,9 @@ viewport is a full-resolution render.
 
 ## What a view may read
 
-A view is one of three kinds.
+A view of the world is one of three kinds. The `hubs` view is of no
+layer: it asks `common_bevy::hubs` what holds each tile and how strong the
+influence is there, and derives nothing of its own.
 
 - **A composite view** reads tiles through the composite and nothing else. It
   is the bird's eye: what the stack composes at each tile, every layer's

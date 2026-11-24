@@ -135,19 +135,25 @@ pub fn setup(
 
 /// Takes an admin's change to the world's calendar and sends the calendar
 /// as it then stands to every client, so every player's date, sky and
-/// weather move together.
+/// weather move together. A clock scrubbed is a change a frame: it is
+/// said once a second while it moves, and any other change at once.
 pub fn try_change_calendar(
     mut reader: MessageReader<Try>,
     mut writer: MessageWriter<Do>,
     mut runtime: ResMut<RunTime>,
     time: Res<Time>,
+    mut said: Local<Option<common_bevy::Moment>>,
 ) {
     for message in reader.read() {
         let Try { event: Event::ChangeCalendar { change } } = message else { continue };
         let now = runtime.now(&time);
         let wall_at_zero = wall_now() - now.since(common_bevy::Moment::ZERO).as_millis();
         runtime.calendar.change(*change, now, wall_at_zero);
-        info!("calendar: {change:?}, now {}", Date::of(runtime.calendar.at(now)));
+        let scrubbed = matches!(change, common_bevy::systems::CalendarChange::Shift(_));
+        if !scrubbed || said.is_none_or(|said| now.since(said) >= std::time::Duration::from_secs(1)) {
+            info!("calendar: {change:?}, now {}", Date::of(runtime.calendar.at(now)));
+            *said = Some(now);
+        }
         writer.write(Do { event: Event::Calendar { calendar: runtime.calendar } });
     }
 }

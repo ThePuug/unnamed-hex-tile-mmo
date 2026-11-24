@@ -90,6 +90,7 @@ fn handle(
         MenuPath::Root => handle_root_menu(keyboard, console),
         MenuPath::Terrain => handle_terrain_menu(keyboard, console, action_writer),
         MenuPath::WorldClock => handle_world_clock(keyboard, console, action_writer, dt),
+        MenuPath::Rollback => handle_rollback_menu(keyboard, console, action_writer),
         MenuPath::GotoSelect => handle_goto_select_menu(keyboard, console),
         MenuPath::GotoInput => handle_goto_input(keyboard, console, action_writer),
         MenuPath::View => handle_view_menu(keyboard, action_writer),
@@ -121,6 +122,13 @@ fn handle_root_menu(
         console.history.push(console.current_menu.clone());
         console.current_menu = MenuPath::Latency;
         consumed = Some(KeyCode::Numpad3);
+    }
+
+    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad4) {
+        console.history.push(console.current_menu.clone());
+        console.current_menu = MenuPath::Rollback;
+        console.rollback.armed = false;
+        consumed = Some(KeyCode::Numpad4);
     }
 
     if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad6) {
@@ -305,6 +313,45 @@ fn handle_view_menu(
 
 /// How far one press moves the added latency
 pub const LATENCY_STEP_MS: i64 = 25;
+
+/// The rollback: 1 picks game or real time, 2 the unit, 3 and 4 fewer
+/// and more of it. Enter arms it and Enter again asks the server for it;
+/// any other key disarms. Asked for, the console shuts: the server stops
+/// under it, and an Enter pressed to play again must not ask twice.
+fn handle_rollback_menu(
+    keyboard: &mut ButtonInput<KeyCode>,
+    console: &mut DevConsole,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
+) {
+    let mut chosen = console.rollback;
+    if keyboard.just_pressed(KeyCode::NumpadEnter) {
+        keyboard.clear_just_pressed(KeyCode::NumpadEnter);
+        if chosen.armed {
+            action_writer.write(DevConsoleAction::Rollback { game: chosen.game, ms: chosen.ms() });
+            console.rollback.armed = false;
+            console.visible = false;
+            console.current_menu = MenuPath::Root;
+            console.history.clear();
+            return;
+        }
+        chosen.armed = true;
+    }
+    for (key, change) in [
+        (KeyCode::Numpad1, (|r: &mut super::state::Rollback| r.game = !r.game) as fn(&mut super::state::Rollback)),
+        (KeyCode::Numpad2, |r| r.unit = (r.unit + 1) % super::state::Rollback::UNITS.len()),
+        (KeyCode::Numpad3, |r| r.amount = r.amount.saturating_sub(1).max(1)),
+        (KeyCode::Numpad4, |r| r.amount = (r.amount + 1).min(999)),
+    ] {
+        if keyboard.just_pressed(key) {
+            keyboard.clear_just_pressed(key);
+            change(&mut chosen);
+            chosen.armed = false;
+        }
+    }
+    if chosen != console.rollback {
+        console.rollback = chosen;
+    }
+}
 
 fn handle_latency_menu(
     keyboard: &mut ButtonInput<KeyCode>,

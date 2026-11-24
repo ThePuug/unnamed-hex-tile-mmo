@@ -45,6 +45,7 @@ use common_bevy::{
     den::DenLook,
     message::{Do, Event},
     moment::Moment,
+    systems::When,
     chunk::{calculate_visible_chunks, loc_to_chunk, ChunkId},
     components::{
         behaviour::Side,
@@ -123,8 +124,8 @@ pub struct Den {
     /// has first stood
     pub at: Option<Qrz>,
     pub state: DenState,
-    /// When it came to be as it is, on the server's clock
-    pub since: Moment,
+    /// When it came to be as it is, on the calendar
+    pub since: When,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,7 +146,7 @@ impl DenState {
 impl Den {
     /// Whether the den has decayed by `now`, and the site is as the world
     /// made it.
-    pub fn decayed(&self, now: Moment) -> bool {
+    pub fn decayed(&self, now: When) -> bool {
         self.state == DenState::Cleared && now >= self.since + DECAY
     }
 }
@@ -191,6 +192,13 @@ impl Dens {
         std::mem::take(&mut self.changed)
     }
 
+    /// Whether a den's nest stands within `reach` tiles of `tile`.
+    pub fn stands_within(&self, tile: Qrz, reach: i32) -> bool {
+        self.sites.values().flatten().any(|site| {
+            site.den.is_some_and(|den| matches!(den.state, DenState::Standing { .. }) && den.at.unwrap_or(site.tile).flat_distance(&tile) <= reach)
+        })
+    }
+
     /// The den on the site at `tile` that has stood, as it is.
     pub fn den_on(&self, tile: Qrz) -> Option<Den> {
         self.sites.get(&loc_to_chunk(tile))?.iter().find(|site| site.tile == tile)?.den.filter(|den| den.at.is_some())
@@ -211,7 +219,7 @@ impl Dens {
 
     /// Notes that `actor` died at `now`: the nest of a standing den, that
     /// den is cleared from then.
-    pub fn died(&mut self, actor: Entity, now: Moment) {
+    pub fn died(&mut self, actor: Entity, now: When) {
         let Some(site) = self.standing(|_, nest| nest == Some(actor)) else { return };
         let tile = site.tile;
         if let Some(den) = site.den.as_mut() {
@@ -278,15 +286,19 @@ pub fn tend_dens(
     map: Res<Map>,
     tuning: Res<Tuning>,
     time: Res<Time>,
+    runtime: Res<combat::RunTime>,
     dice: Res<combat::dice::Dice>,
     haven: Option<Res<SpawnPoint>>,
+    hubs: Res<common_bevy::hubs::Hubs>,
     mut next: Local<Moment>,
     mut commands: Commands,
 ) {
     let now = Moment::ZERO + time.elapsed();
+    // What is kept of a den, when it came to be as it is, is the calendar's
+    let when = runtime.when(&time);
     for message in done.read() {
         if let Do { event: Event::Despawn { ent, died: true } } = message {
-            dens.died(*ent, now);
+            dens.died(*ent, when);
         }
     }
     for ending in ended.read() {
@@ -305,10 +317,16 @@ pub fn tend_dens(
         for chunk in calculate_visible_chunks(loc_to_chunk(**loc), PLACE_CHUNKS) {
             let Some(sites) = dens.sites.get_mut(&chunk) else { continue };
             for site in sites.iter_mut().filter(|site| site.tile.flat_distance(loc) <= PLACE_RANGE) {
-                if site.den.is_some_and(|den| den.decayed(now)) {
+                if site.den.is_some_and(|den| den.decayed(when)) {
                     info!("den decayed at ({}, {})", site.tile.q, site.tile.r);
                     site.den = None;
                     changed.push(site.tile);
+                }
+                // A hub's core holds its ground, and the haven's guard
+                // its own: a site on either gets no den
+                let tile = (site.tile.q, site.tile.r);
+                if site.den.is_none() && (hubs.guarded(tile) || hubs.holding(tile).is_some()) {
+                    continue;
                 }
                 let den = site.den.get_or_insert_with(|| Den {
                     archetype: EnemyArchetype::denning_on(site.habitat),
@@ -317,7 +335,7 @@ pub fn tend_dens(
                     size: PACK + dice.roll(("pack", site.tile)).pick(2) as u8,
                     at: None,
                     state: DenState::UNWATCHED,
-                    since: now,
+                    since: when,
                 });
                 let DenState::Standing { pack, nest, refill } = den.state else { continue };
                 let map = &*map;
@@ -524,14 +542,14 @@ mod tests {
         let den = |dens: &Dens| dens.sites[&loc_to_chunk(site)][0].den.unwrap();
         dens.sites.get_mut(&loc_to_chunk(site)).unwrap()[0].den = Some(Den {
             archetype: EnemyArchetype::Berserker, level: 0, size: 2, at: Some(site),
-            state: out, since: Moment::ZERO,
+            state: out, since: When(0),
         });
 
         dens.ended(pack);
         assert_eq!(den(&dens).state, DenState::UNWATCHED, "abandoned, it stands with nothing out");
 
         dens.sites.get_mut(&loc_to_chunk(site)).unwrap()[0].den.as_mut().unwrap().state = out;
-        let killed = Moment::from_millis(10_000);
+        let killed = When(10_000);
         dens.died(member, killed);
         assert_eq!(den(&dens).state, out, "one of its pack dead, it stands");
         dens.died(nest, killed);

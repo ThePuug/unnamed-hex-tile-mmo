@@ -33,6 +33,7 @@ cargo build
 cargo run --bin server             # separate processes
 cargo run --bin client
 HAVEN=<q>,<r> cargo run --bin server   # the haven and the spawn elsewhere; the viewer's centre follows it too
+HEARTH_PLAYERS=<n> cargo run --bin server   # every hearth counts as n players at home: hubs grow with no one else in the world
 cargo run --bin music-player       # needs a SoundFont: $SOUNDFONT or ~/soundfonts/GeneralUser.sf2
 cargo run --bin arena               # archetype v archetype balance, headless; keys in arena/src/main.rs
 cargo run --bin arena -- tune screen|balance|minds|settle|loop|show|apply   # searches; bounds in arena/src/tune.toml
@@ -348,14 +349,54 @@ combination; no piece hides any of another. `Piece::name` is the asset
 stem, and code that needs one piece asks for it by that name
 (`Piece::named`).
 
-**Kept by number.** The store keeps a piece, a material and a skill by
-its `id()`, never by a name or a place in a table: a piece's from the
-assets (`kit.IDS` in modelgen, shipped in `kit.json`), `Material::id` and
-`AbilityType::id` in code. A number is given once. A rename or a rework
+**Kept by number.** The store keeps a piece, a material, a skill, an
+archetype and a ledger entry's cause by its `id()`, never by a name or a
+place in a table: a piece's from the assets (`kit.IDS` in modelgen,
+shipped in `kit.json`), `Material::id`, `AbilityType::id`,
+`EnemyArchetype::id` and `economy::Cause::id` in code. A number is given once. A rename or a rework
 keeps it, a new thing takes the next never used, and a removed thing's is
 never given again, or every one a player holds becomes the other thing.
 What a build has no number for stays in the store, carried beside its
 character or pile (`persistence::stored`).
+
+**Constructs.** What players build is a tile's cover like a tree or a
+pile: `common::building` is the one rule for what a tile takes, what a
+construct leaves when it comes down and how a gate swings, which the
+server applies and the client offers its choices by. A construct stands
+in the centre slot; a wall or a gate holds the other six as `Filled` or,
+standing open, `Kept`, so fullness and every drop read the tile with no
+rule of their own. Whose it is, and its hub, are the server's
+(`building::Constructs`, `hubs::Hubs`), never the cover's.
+
+**Settlers.** A hub is built by its settlers, never the world and never
+by a rule of its own: `server::systems::settlers` holds a camp for every
+hearth a player built, and its settler raises the camp's line
+(`settlers::Step`) of `common::building::Fixture`s from what players
+handed it. A fixture is its hub's (`building::Owner::Camp`) and is never
+taken down. The settler is in the world only by day and near a player;
+`settlers::catch_up` gives a camp found again the work of the daytime
+between, through the same `begin` and `advance` the walked work goes by,
+so the two never differ. A thing being raised is its tile's cover
+(`Content::Raising`, a stage of `building::STAGES`), each stage a model
+of its own, `models/<stem>-raising-<stage>.glb`. It finds its way by `common_bevy::path`, A* over what
+`Map::neighbors` and fullness let a walker step on.
+
+**Rollback.** Every table the store keeps of the world journals its
+changes (`history`, by the `journal` trigger), each stamped with the
+calendar moment its writer declared (`SET LOCAL mmo.when`), and
+`Store::roll_back` undoes them back to a moment, on the calendar or the
+real clock. Two gates hold it whole: the store does not open while a
+table is neither journaled nor named in `store::UNJOURNALED`, and a
+journaled table refuses a change that names no moment. A new kept table
+takes the trigger in its migration; a migration that changes kept rows
+sets `mmo.when` first. A rolled-back server writes nothing more and
+stops, since its memory is of a world that is gone.
+
+**Economy.** An item appearing, being consumed or changing holder is
+announced as a `server::systems::economy::Moved` the frame it happens,
+from the world or to it where it enters or leaves play, and the store
+appends each to its ledger in the write that carries the holders. A path
+that gives, takes or moves an item without one unbalances the ledger.
 
 **Water.** A tile's water is one surface, a z-level, published by a layer
 and rounded once, in `Composite::water_at`: surface and ground round to the
@@ -444,9 +485,15 @@ points `VisualPosition` at it, `actor::update` renders it.
     float and no count; a length of time is a `Duration`.
     The world's calendar (`systems::Calendar`) lives in `RunTime::calendar`
     and reaches every client, read through `Server::wall` by the date
-    (`systems::Date`), the sky and the weather alone; an admin may shift or
-    hold it for every player at once. The game clock every timer runs on is
-    the server's uptime, never moves with it, and stays small.
+    (`systems::Date`), the sky and the weather; an admin may shift or
+    hold it for every player at once. **A time the store keeps is a moment
+    of the calendar (`systems::When`); a time that lives only in a running
+    server is a `Moment` of the game clock**, the server's uptime, which
+    never moves with the calendar and stays small. So moving the calendar
+    moves exactly what is kept: a camp's settler and its work, a den's
+    decay, when a character was last in the world. Nothing done is undone
+    by it; a kept time still ahead waits. The store translates no clock,
+    and keeps the calendar's own shift beside the times read on it.
 
 ## Writing a world event
 

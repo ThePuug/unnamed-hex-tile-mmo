@@ -43,6 +43,10 @@ pub fn boulder_center(q: i32, r: i32, k: usize, sway: &common::Sway) -> (f32, f3
 /// before any vector, so the point is exact however far out the tiles are.
 pub fn slot_point(cover: common::Cover, (q, r): (i32, i32), k: usize, from: (i32, i32)) -> (f32, f32) {
     let (dq, dr) = (q - from.0, r - from.1);
+    // A construct stands square on its tile's centre
+    if k == common::building::SLOT && common::building::standing(cover).is_some() {
+        return flat_top_tile_center(dq, dr, 1.0);
+    }
     let tree = cover.content(k).slots() == 2;
     match common::SITE_SLOTS.iter().position(|s| s[0] == k).filter(|_| tree) {
         Some(site) => slot_center(dq, dr, site, &common::sway(q, r, site)),

@@ -37,6 +37,12 @@ pub enum Event {
     /// Client → Server: change the world's calendar for everyone. An admin
     /// request, as ungated on the wire as `Teleport` (issue #21).
     ChangeCalendar { change: crate::systems::CalendarChange },
+    /// Client → Server: roll the whole world back `ms` milliseconds, as
+    /// the store kept it then: on the calendar where `game`, on the real
+    /// clock otherwise. The calendar goes back with it, and the server
+    /// stops, to be started again on the world as it was. An admin
+    /// request, as ungated on the wire as `Teleport`.
+    Rollback { game: bool, ms: u64 },
     /// Server → Client: the world's calendar as it stands, sent to every
     /// client when an admin changes it.
     Calendar { calendar: crate::systems::Calendar },
@@ -145,6 +151,20 @@ pub enum Event {
     /// Server → Client: what `ent` is seen doing at a gather, or nothing
     /// where None. Sent to every client that sees it, so each shows it.
     Activity { ent: Entity, activity: Option<common::gathering::Activity> },
+    /// Client → Server (Try): build `construct` on the tile `ent` faces,
+    /// from its bag, or take down the construct standing there where None
+    Build { ent: Entity, construct: Option<common::building::Construct> },
+    /// Server → Client: where `ent` is at home, the tile it stands on at
+    /// its hearth, or None where its home is the haven. Sent to its owner
+    /// only.
+    Home { ent: Entity, home: Option<Qrz> },
+    /// Client → Server (Try): `ent` hails the settler nearest it, and with
+    /// `give` hands it what its bag holds of what the settler lacks
+    Hail { ent: Entity, give: bool },
+    /// Server → Client: what the settler `ent` hailed raises next and
+    /// still lacks, or None where no settler is near enough to hail. Sent
+    /// to its owner only.
+    Wants { ent: Entity, wants: Option<common::building::Wants> },
     /// Client → Server (Try): put `ent`'s levels into `pairs` instead
     /// Server → Client (Do): the respec was taken
     RespecAttributes { ent: Entity, pairs: [Pair; 3] },
@@ -203,6 +223,10 @@ impl Event {
             | Event::CloseLoot { ent }
             | Event::Drop { ent, .. }
             | Event::Activity { ent, .. }
+            | Event::Build { ent, .. }
+            | Event::Home { ent, .. }
+            | Event::Hail { ent, .. }
+            | Event::Wants { ent, .. }
             | Event::RespecAttributes { ent, .. }
             | Event::SetLoadout { ent, .. }
             | Event::View { ent } => Some(ent),
@@ -211,6 +235,7 @@ impl Event {
             | Event::Play
             | Event::Leave
             | Event::ChangeCalendar { .. }
+            | Event::Rollback { .. }
             | Event::Calendar { .. } => None,
         }
     }
