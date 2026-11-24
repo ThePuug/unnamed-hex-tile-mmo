@@ -221,6 +221,22 @@ fn boundary_color(seg: &BoundarySegment) -> [u8; 3] {
     }
 }
 
+/// Logs how high the land in view stands: its highest tile, and the share
+/// of it above each hundred z-levels.
+fn report_heights(elevations: impl Iterator<Item = f64>) {
+    let mut land: Vec<f64> = elevations.filter(|z| *z > 0.0).collect();
+    if land.is_empty() {
+        return;
+    }
+    land.sort_by(f64::total_cmp);
+    let top = land[land.len() - 1];
+    log::info!("Heights: {} land tiles in view, the highest at {top:.0} z; the share above each height:", land.len());
+    for line in (100..top as usize).step_by(100) {
+        let over = land.len() - land.partition_point(|z| *z <= line as f64);
+        log::info!("  {line:>5} z: {:>6.2}%", 100.0 * over as f64 / land.len() as f64);
+    }
+}
+
 fn main() {
     // `world-viewer 3d …` is the live view (`view3d`), which brings its own
     // log.
@@ -361,6 +377,7 @@ fn main() {
         coords.len() as f64 / tile_secs
     );
     report_cost(&composite);
+    report_heights(tile_cache.values().map(|t| t.0));
 
     // The contribution view's full scale: the largest the layer reaches in view.
     let full_delta = tile_cache.values().map(|t| t.2.abs()).fold(0.0f64, f64::max);
