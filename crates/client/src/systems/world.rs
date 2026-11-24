@@ -679,11 +679,20 @@ pub fn update(
         if (max_dist - current_max).abs() > 1.0 {
             *cascade_config = CascadeShadowConfigBuilder {
                 maximum_distance: max_dist,
+                // Bounds are distances from the camera, and the boom keeps
+                // it this far from the player: a nearer bound spends the
+                // finest map on the air between them.
+                first_cascade_far_bound: camera_to_player * FINE_SHADOWS_PAST_PLAYER,
                 ..default()
             }.into();
         }
     }
 }
+
+/// How far the finest shadow map reaches, in the resting camera's distances
+/// to the player: past the player, so its far seam never lies at their feet
+/// and the ground they act on is all in it.
+const FINE_SHADOWS_PAST_PLAYER: f32 = 1.3;
 
 /// Keeps the sky dome centred on the camera. After camera movement, so
 /// it never lags a frame and shows its own horizon.
