@@ -1,0 +1,4 @@
+# sqlx checks each applied migration by its bytes: a migration checked out
+# with other line endings is a changed one, and the server will not start
+# against a store that ran it.
+crates/server/migrations/*.sql text eol=lf
