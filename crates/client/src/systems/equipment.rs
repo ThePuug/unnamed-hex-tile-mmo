@@ -296,16 +296,16 @@ pub fn hold(
     }
 }
 
-/// Puts away what an actor holds in its main hand while the tool of a
-/// gather's work is in its hands, and brings it back when the tool goes.
+/// Puts away what an actor holds in its main hand while it is at a
+/// gather, at work or stooped to its pile, and brings it back when it
+/// stops.
 pub fn stow(
-    held: Query<&ChildOf, With<Held>>,
+    gathering: Query<(), With<crate::systems::gathering::Gathering>>,
     worn: Query<(&ChildOf, &Worn)>,
     mut visibility: Query<&mut Visibility>,
 ) {
-    let working: HashSet<Entity> = held.iter().map(ChildOf::parent).collect();
     for (child_of, piece) in worn.iter().filter(|(_, piece)| piece.item.piece.slot() == Slot::MainHand) {
-        let wanted = if working.contains(&child_of.parent()) { Visibility::Hidden } else { Visibility::Inherited };
+        let wanted = if gathering.contains(child_of.parent()) { Visibility::Hidden } else { Visibility::Inherited };
         for &node in &piece.moved {
             if let Ok(mut shown) = visibility.get_mut(node) {
                 shown.set_if_neq(wanted);
