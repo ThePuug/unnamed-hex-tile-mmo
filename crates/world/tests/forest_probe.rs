@@ -6,7 +6,6 @@
 
 use std::time::Instant;
 
-use common::Content;
 use world::events::climate::{temperature, TREELINE};
 use world::events::forest::ForestEvent;
 use world::events::lithology::LithologyEvent;
@@ -84,7 +83,7 @@ fn forest_census() {
     let tiles = window(SPAWN, 12_000, 250);
     let t = Instant::now();
     let (mut land, mut covered, mut cold, mut full) = (0u32, 0u32, 0u32, 0u64);
-    let mut kinds = [0u32; 4];
+    let mut kinds = [0u32; 3];
     let mut hist = [0u32; 4];
     let (mut t_min, mut t_max, mut t_sum) = (f64::MAX, f64::MIN, 0.0);
     for &(q, r) in &tiles {
@@ -106,8 +105,8 @@ fn forest_census() {
         if f > 0 {
             covered += 1;
             full += f as u64;
-            for (_, s) in v.cover.filled() {
-                kinds[s as usize] += 1;
+            for (kind, count) in kinds.iter_mut().zip(common::Canopy::tally(v.cover)) {
+                *kind += count;
             }
         }
     }
@@ -119,7 +118,7 @@ fn forest_census() {
     println!("sites filled histogram 0..3: {hist:?}");
     println!(
         "slots: brush {}, pine {}, deciduous {}",
-        kinds[Content::Brush as usize], kinds[Content::Pine as usize], kinds[Content::Deciduous as usize]
+        kinds[2], kinds[0], kinds[1]
     );
 }
 
