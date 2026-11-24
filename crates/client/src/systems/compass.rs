@@ -3,8 +3,11 @@
 //! turn to. One press of a turn key moves it one mark. The six tile-to-tile
 //! bearings stand taller, the cardinals carry their letters, a bracket
 //! spans the arc the viewed actor strikes within, and a pin stands at each
-//! target's bearing and the haven's, held at the edge while it is off the
-//! strip. Each den the server has told of stands at its bearing too, and
+//! target's bearing, the haven's and the player's home's, held at the edge
+//! while it is off the strip: the haven's square and gold, the home's
+//! round and the colour of its fire, shown while the player has one. The
+//! strip itself is warmed a little while the player stands on ground a
+//! hub holds. Each den the server has told of stands at its bearing too, and
 //! drops off the strip with the rest of what lies behind.
 
 use bevy::prelude::*;
@@ -41,6 +44,15 @@ const BRACKET_PX: f32 = 6.;
 const PIN_ROW_PX: f32 = 20.;
 
 const GOLD: Color = Color::srgb(0.85, 0.65, 0.13);
+/// The strip's ground, and as it is warmed on a hub's.
+const STRIP: Color = Color::srgba(0.1, 0.1, 0.1, 0.7);
+const STRIP_HELD: Color = Color::srgba(0.32, 0.2, 0.09, 0.7);
+
+/// The strip the marks stand on.
+#[derive(Component)]
+pub struct Strip;
+/// A hearth's fire.
+const HEARTH: Color = Color::srgb(1.0, 0.5, 0.12);
 
 /// What a node on the strip stands for, and so where it goes.
 #[derive(Component, Clone, Copy)]
@@ -54,6 +66,8 @@ pub enum Mark {
     /// The den whose pack stands on a tile
     Den(Qrz),
     Haven,
+    /// The hearth or tent the local player is at home at
+    Home,
 }
 
 impl Mark {
@@ -64,13 +78,13 @@ impl Mark {
             Mark::Facing => 2. * FACING_ARC * PX_PER_DEGREE,
             Mark::Pin(_) => PIN_PX,
             Mark::Den(_) => DEN_PX,
-            Mark::Haven => HAVEN_PX,
+            Mark::Haven | Mark::Home => HAVEN_PX,
         }
     }
 
     /// Whether it is held at the strip's edge while its bearing is off it.
     fn held(self) -> bool {
-        matches!(self, Mark::Pin(_) | Mark::Haven)
+        matches!(self, Mark::Pin(_) | Mark::Haven | Mark::Home)
     }
 }
 
@@ -128,8 +142,9 @@ pub fn setup(
                 overflow: Overflow::clip(),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.7)),
+            BackgroundColor(STRIP),
             BorderColor::all(GOLD.with_alpha(0.6)),
+            Strip,
         ))
         .with_children(|bar| {
             for slot in 0..HEADING_SLOTS {
@@ -148,6 +163,10 @@ pub fn setup(
             ));
 
             bar.spawn(pin(Mark::Haven, GOLD, Color::WHITE));
+            // Round, where every other pin is square
+            let mut home = pin(Mark::Home, HEARTH, Color::WHITE);
+            home.0.border_radius = BorderRadius::MAX;
+            bar.spawn(home);
 
             // The bracket: open at the top, its ends standing up
             bar.spawn((
@@ -224,7 +243,7 @@ fn spawn_bearing(bar: &mut ChildSpawnerCommands, heading: Heading) {
 
 /// A square pin for `mark`, its size the mark's, hidden until `update`
 /// places it.
-fn pin(mark: Mark, fill: Color, border: Color) -> impl Bundle {
+fn pin(mark: Mark, fill: Color, border: Color) -> (Node, BackgroundColor, BorderColor, Visibility, Mark) {
     let side = mark.px();
     (
         Node {
@@ -259,16 +278,25 @@ pub fn sync_dens(mut commands: Commands, dens: Res<Dens>, pins: Query<Entity, Wi
 }
 
 /// Slides every mark to its bearing off the camera's: a pin to its
-/// target's, its den's or the haven's from the viewed actor.
+/// target's, its den's, the haven's or the player's home's from the
+/// viewed actor.
 pub fn update(
     camera: Res<CameraPose>,
     map: Res<Map>,
     origin: Res<RenderOrigin>,
     haven: Res<Haven>,
+    home: Res<crate::systems::building::HomeHearth>,
+    sheltered: Res<crate::systems::building::Sheltered>,
+    mut strip: Query<&mut BackgroundColor, With<Strip>>,
     viewed: Query<(&Heading, &VisualPosition, &Target, Option<&AllyTarget>), With<Viewed>>,
     positions: Query<&VisualPosition>,
     mut marks: Query<(&Mark, &mut Node, &mut Visibility)>,
 ) {
+    if sheltered.is_changed() {
+        for mut ground in &mut strip {
+            ground.0 = if sheltered.0 { STRIP_HELD } else { STRIP };
+        }
+    }
     let view = view_bearing(camera.pose.yaw);
     let seer = viewed.single().ok();
     // Degrees off the strip's centre of a rendered point, from the viewed actor
@@ -287,6 +315,7 @@ pub fn update(
             ),
             Mark::Den(tile) => toward(Some(origin.render_tile(&map, tile))),
             Mark::Haven => toward(Some(origin.render_tile(&map, haven.0))),
+            Mark::Home => toward(home.0.map(|at| origin.render_tile(&map, at))),
         };
         let Some(rel) = rel else {
             *visibility = Visibility::Hidden;

@@ -158,6 +158,10 @@ pub enum Event {
     /// its hearth, or None where its home is the haven. Sent to its owner
     /// only.
     Home { ent: Entity, home: Option<Qrz> },
+    /// Server → Client: whether `ent` stands on ground a hub holds, the
+    /// ground its fortifications border, as it enters the world and
+    /// whenever that changes. Sent to its owner only.
+    Sheltered { ent: Entity, held: bool },
     /// Client → Server (Try): `ent` hails the settler nearest it, and with
     /// `give` hands it what its bag holds of what the settler lacks
     Hail { ent: Entity, give: bool },
@@ -227,6 +231,7 @@ impl Event {
             | Event::Home { ent, .. }
             | Event::Hail { ent, .. }
             | Event::Wants { ent, .. }
+            | Event::Sheltered { ent, .. }
             | Event::RespecAttributes { ent, .. }
             | Event::SetLoadout { ent, .. }
             | Event::View { ent } => Some(ent),

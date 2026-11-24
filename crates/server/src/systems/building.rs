@@ -366,6 +366,27 @@ pub fn try_use(
     }
 }
 
+/// A player standing on ground a hub holds.
+#[derive(Component)]
+pub struct Sheltered;
+
+/// Tells each player's client whether it stands on ground a hub holds, as
+/// it enters the world and whenever that changes.
+pub fn shelter(mut commands: Commands, hubs: Res<Hubs>, mut writer: MessageWriter<Do>, players: Query<(Entity, &Loc, Ref<Character>, Has<Sheltered>)>) {
+    for (ent, loc, character, was) in &players {
+        let held = hubs.holding((loc.q, loc.r)).is_some();
+        if held == was && !character.is_added() {
+            continue;
+        }
+        if held {
+            commands.entity(ent).insert(Sheltered);
+        } else {
+            commands.entity(ent).remove::<Sheltered>();
+        }
+        writer.write(Do { event: Event::Sheltered { ent, held } });
+    }
+}
+
 /// Counts each character that enters the world among the players of late,
 /// at home where it left: at its hearth while a hub still holds that, at
 /// the haven otherwise. Tells its client which.

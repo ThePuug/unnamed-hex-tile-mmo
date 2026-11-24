@@ -97,6 +97,7 @@ fn main() {
             crate::systems::building::interrupt_building,
             crate::systems::building::try_use,
             crate::systems::building::house,
+            crate::systems::building::shelter.run_if(on_timer(Duration::from_millis(500))),
             crate::systems::settlers::tend_camps,
             crate::systems::settlers::try_hail,
         ),

@@ -192,7 +192,7 @@ fn main() {
         gathering::mark,
         gathering::do_loot,
         gathering::do_activity,
-        (crate::systems::building::request, crate::systems::building::update, crate::systems::building::do_home).chain(),
+        (crate::systems::building::request, crate::systems::building::update, crate::systems::building::do_home, crate::systems::building::do_sheltered).chain(),
         (crate::systems::settlers::request, crate::systems::settlers::do_wants, crate::systems::settlers::update).chain(),
         (equipment::hold, equipment::bind_held, equipment::stow).chain(),
         crate::systems::rune::bind,
@@ -221,6 +221,7 @@ fn main() {
     app.init_resource::<gathering::LootWindow>();
     app.init_resource::<crate::systems::building::BuildPanel>();
     app.init_resource::<crate::systems::building::HomeHearth>();
+    app.init_resource::<crate::systems::building::Sheltered>();
     app.init_resource::<crate::systems::settlers::Hailed>();
     app.init_resource::<movement::Corrections>();
     app.init_resource::<crate::systems::focus::NumpadFocus>();

@@ -60,6 +60,7 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Hail { .. } => "Hail",
         Event::Rollback { .. } => "Rollback",
         Event::Wants { .. } => "Wants",
+        Event::Sheltered { .. } => "Sheltered",
         Event::View { .. } => "View",
         Event::SetLoadout { .. } => "SetLoadout",
         _ => "Other",
@@ -215,6 +216,7 @@ pub fn write_do(
                 | Event::Loot { .. }
                 | Event::Home { .. }
                 | Event::Wants { .. }
+                | Event::Sheltered { .. }
                 | Event::Activity { .. }
                 | Event::Activate { .. }
                 | Event::Recharge { .. }

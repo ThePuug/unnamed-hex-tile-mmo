@@ -412,6 +412,7 @@ fn route(event: &Event) -> Option<Route> {
         | Event::Den { ent, .. }
         | Event::Home { ent, .. }
         | Event::Wants { ent, .. }
+        | Event::Sheltered { ent, .. }
         | Event::Loot { ent, .. } => Some(Route::Owner(*ent)),
         Event::ChunkData { ent, .. }
         | Event::EvictChunks { ent, .. }

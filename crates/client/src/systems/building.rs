@@ -125,6 +125,22 @@ pub fn request(
     }
 }
 
+/// Whether the local player stands on ground a hub holds, as the server
+/// last said.
+#[derive(Resource, Default)]
+pub struct Sheltered(pub bool);
+
+/// Keeps whether the local player stands on a hub's ground as the server
+/// says.
+pub fn do_sheltered(mut reader: MessageReader<Do>, mut sheltered: ResMut<Sheltered>, player: Query<(), With<Actor>>) {
+    for message in reader.read() {
+        let Do { event: Event::Sheltered { ent, held } } = message else { continue };
+        if player.contains(*ent) && sheltered.0 != *held {
+            sheltered.0 = *held;
+        }
+    }
+}
+
 /// Keeps where the local player is at home as the server says.
 pub fn do_home(mut reader: MessageReader<Do>, mut home: ResMut<HomeHearth>, player: Query<(), With<Actor>>) {
     for message in reader.read() {
