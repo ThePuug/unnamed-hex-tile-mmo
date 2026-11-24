@@ -207,18 +207,19 @@ pub fn do_incremental(
 /// Generate a chunk of terrain tiles, and the den sites among them (pure
 /// computation, no ECS access).
 pub(crate) fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> (TerrainChunk, Vec<(Qrz, Habitat)>) {
-    let mut tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>); 272]> = tinyvec::ArrayVec::new();
+    let mut tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>, i8); 272]> = tinyvec::ArrayVec::new();
     let mut dens = Vec::new();
     let coords: Vec<(i32, i32)> = chunk::chunk_tiles(chunk_id).collect();
     registry.warm(&coords);
 
     for &(q, r) in &coords {
-        let z = registry.elevation_at(q, r);
+        let ground = registry.ground_at(q, r);
+        let z = ground.z;
         let water = registry.water_at(q, r);
         let cover = registry.cover_at(q, r);
         let qrz = Qrz { q, r, z };
         let typ = EntityType::Decorator(Decorator { cover, is_solid: true });
-        tiles.push((qrz, typ, water));
+        tiles.push((qrz, typ, water, ground.fine));
         if let Some(habitat) = registry.den_at(q, r) {
             dens.push((qrz, habitat));
         }
@@ -230,14 +231,15 @@ pub(crate) fn generate_chunk(chunk_id: ChunkId, registry: &EventRegistry) -> (Te
 /// Merge a chunk's tiles into the server Map for physics, collision and AI,
 /// leaving ground already there alone, and build the tiles as sent: each
 /// as generated with what players changed laid over it.
-fn merge_and_pack(chunk: &TerrainChunk, map: &Map, changes: &WorldChanges) -> tinyvec::ArrayVec<[(i32, EntityType, Option<i32>); 272]> {
-    for &(qrz, typ, water) in &chunk.tiles {
+fn merge_and_pack(chunk: &TerrainChunk, map: &Map, changes: &WorldChanges) -> tinyvec::ArrayVec<[(common::grid::Ground, EntityType, Option<i32>); 272]> {
+    for &(qrz, typ, water, fine) in &chunk.tiles {
         if map.get(qrz).is_none() {
             map.insert(qrz, changes.laid_over(qrz, typ));
             map.set_water(qrz.q, qrz.r, water);
+            map.set_fine(qrz.q, qrz.r, fine);
         }
     }
-    chunk.tiles.iter().map(|&(qrz, typ, water)| (qrz.z, changes.laid_over(qrz, typ), water)).collect()
+    chunk.tiles.iter().map(|&(qrz, typ, water, fine)| (common::grid::Ground { z: qrz.z, fine }, changes.laid_over(qrz, typ), water)).collect()
 }
 
 /// Dispatch chunk generation: cache hits → immediate Do, cache misses →

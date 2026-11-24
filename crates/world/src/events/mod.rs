@@ -123,6 +123,10 @@ pub use index::{CellId, CellIndex, IndexRegistry, Located};
 #[derive(Default, Clone)]
 pub struct TileOutput {
     pub elevation_delta: f64,
+    /// The ground's height before the layer rounded it to a level, where
+    /// the layer rounds: what a surface is drawn through, the level being
+    /// what stands on the map.
+    pub fine: Option<f64>,
     /// How steeply `elevation_delta` climbs, in z-levels per world unit
     /// along x and y, where the layer makes ground steep enough to read.
     /// Composes by the sum, as the deltas do.
@@ -155,6 +159,9 @@ pub struct TileView {
     pub wx: f64,
     pub wy: f64,
     pub elevation: f64,
+    /// The ground's height before it was rounded to `elevation`, as
+    /// [`TileOutput::fine`]; None where no layer rounded it.
+    pub fine: Option<f64>,
     /// How steeply the ground climbs, as [`TileOutput::gradient`], summed
     /// over the layers beneath.
     pub gradient: (f64, f64),
@@ -180,11 +187,12 @@ pub struct TileView {
 impl TileView {
     fn on(w: i64, q: i32, r: i32) -> Self {
         let (wx, wy) = hex_to_world(q, r);
-        TileView { q, r, w, wx, wy, elevation: 0.0, gradient: (0.0, 0.0), slopes: true, water: None, rock: None, cover: Cover::NONE, den: None, stand: None }
+        TileView { q, r, w, wx, wy, elevation: 0.0, fine: None, gradient: (0.0, 0.0), slopes: true, water: None, rock: None, cover: Cover::NONE, den: None, stand: None }
     }
 
     fn compose(&mut self, out: &TileOutput) {
         self.elevation += out.elevation_delta;
+        self.fine = out.fine.or(self.fine);
         self.gradient.0 += out.gradient.0;
         self.gradient.1 += out.gradient.1;
         if let Some(w) = out.water {
@@ -828,7 +836,7 @@ impl Composite {
     /// `(i, j)·w`: the terrain ladder's, where it holds them, each one's
     /// height, its water's surface where the level holds water, and which
     /// of its nine parts stand under water above the sea, a bit to each.
-    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>, u16)>> {
+    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, f64, Option<f64>, u16)>> {
         match &self.ladders {
             Some(ladders) => ladders.level(w, cells),
             None => vec![None; cells.len()],
@@ -991,6 +999,24 @@ impl Composite {
     /// are all stated in z — so this rounds rather than converts.
     pub fn elevation_at(&self, q: i32, r: i32) -> i32 {
         self.tile_at(q, r).elevation.round() as i32
+    }
+
+    /// A tile's ground: the level [`Composite::elevation_at`] gives, and
+    /// the height its surface runs through, which a layer that rounds its
+    /// ground to levels kept ([`TileView::fine`]).
+    pub fn ground_at(&self, q: i32, r: i32) -> common::grid::Ground {
+        Self::ground_of(&self.tile_at(q, r))
+    }
+
+    fn ground_of(view: &TileView) -> common::grid::Ground {
+        Self::ground_through(view.elevation.round() as i32, view.fine)
+    }
+
+    /// Ground at level `z` whose surface runs through `fine`, held to
+    /// within the half level about `z` that rounds to it.
+    fn ground_through(z: i32, fine: Option<f64>) -> common::grid::Ground {
+        let steps = fine.filter(|f| f.is_finite()).map_or(0.0, |f| ((f - z as f64) * common::grid::Ground::FINE).round());
+        common::grid::Ground { z, fine: steps.clamp(-128.0, 127.0) as i8 }
     }
 
     /// The surface water stands at over a tile as a z-level, or None where
@@ -1204,17 +1230,19 @@ impl common::summary::SummarySource for Composite {
         Some(self.cover_on(w, q, r))
     }
 
-    fn cell(&self, r: u32, sq: i32, sr: i32) -> Option<(i32, u16)> {
+    fn cell(&self, r: u32, sq: i32, sr: i32) -> Option<(common::grid::Ground, u16)> {
         let w = common::summary::scale(r) as i64;
         if w < 3 {
             return None;
         }
         // A summary's parts are its cell's children, in the same order
         // (`summary_parts_are_the_ladders_children`).
-        let (z, water, wet) = self.level(w, &[(sq as i64, sr as i64)]).pop().flatten()?;
+        let (z, fine, water, wet) = self.level(w, &[(sq as i64, sr as i64)]).pop().flatten()?;
         let ground = z.round() as i32;
         let surface = water.map(|s| s.round() as i32).filter(|&s| s > ground && s > 0);
-        Some((surface.map_or(ground, |s| s - 1), wet))
+        // Under water the summary is level a step below the surface; dry,
+        // its ground runs through the cell's own height.
+        Some((surface.map_or(Self::ground_through(ground, Some(fine)), |s| common::grid::Ground::level(s - 1)), wet))
     }
 }
 

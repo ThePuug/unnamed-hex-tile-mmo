@@ -578,7 +578,7 @@ fn build(worlds: &Worlds, centre: (i32, i32), radius: i32, w: i64, surface: Surf
     let mut built = Vec::new();
     for &(mn, mm) in &regions {
         let key = MeshRegionKey { r, mn, mm };
-        let height = |a: i32, b: i32| heights.get(&(a, b)).copied();
+        let height = |a: i32, b: i32| heights.get(&(a, b)).copied().map(common::grid::Ground::level);
         let Some(ground) = build_summary_mesh_region(r, key, &height, None, None) else { continue };
         let origin = key.origin();
         let (x, z) = flat_top_tile_center(origin.q - centre.0, origin.r - centre.1, 1.0);

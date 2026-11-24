@@ -10,6 +10,9 @@ pub struct Cell {
     /// Its height, and its dry height: its ground before any cut.
     pub z: f64,
     pub zd: f64,
+    /// Its ground and cut before they are rounded to its height: `z` is
+    /// this to the nearest level.
+    pub fine: f64,
     /// Water's cut below the dry ground.
     pub cut: f64,
     /// The surface of the water standing over the cell, in levels.
@@ -61,6 +64,7 @@ fn cell(lv: &super::Level, c: usize) -> Cell {
     Cell {
         z: lv.z.get(c),
         zd: lv.zd.get(c),
+        fine: lv.ground.get(c) + lv.cut.get(c),
         cut: lv.cut.get(c),
         water: Some(lv.water.get(c)).filter(|w| !w.is_nan()),
         wet_parts: lv.wparts.get(c),

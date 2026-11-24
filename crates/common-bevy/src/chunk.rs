@@ -139,11 +139,13 @@ impl ChunkId {
 /// it, or None where it is dry.
 #[derive(Clone, Debug)]
 pub struct TerrainChunk {
-    pub tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>); 272]>,
+    /// Each tile: where it stands, what it is, the water over it and how
+    /// far its surface runs from its level (`common::grid::Ground::fine`).
+    pub tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>, i8); 272]>,
 }
 
 impl TerrainChunk {
-    pub fn new(tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>); 272]>) -> Self {
+    pub fn new(tiles: tinyvec::ArrayVec<[(Qrz, EntityType, Option<i32>, i8); 272]>) -> Self {
         Self {
             tiles,
         }

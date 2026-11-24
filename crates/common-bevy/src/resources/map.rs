@@ -50,6 +50,9 @@ pub struct Map {
     /// Flooded tiles only: the surface water stands at, as a z-level. A
     /// tile absent here is dry.
     water: Arc<DashMap<(i32, i32), i32>>,
+    /// How far each tile's surface runs from its level
+    /// (`common::grid::Ground::fine`), where it is off it at all.
+    fine: Arc<DashMap<(i32, i32), i8>>,
     /// Chunk-sharded storage for mesh generation and EntityType lookups.
     chunks: Arc<DashMap<ChunkId, HashMap<(i32, i32), TileRecord>>>,
     changed: Arc<AtomicBool>,
@@ -69,6 +72,7 @@ impl Map {
             rise: map.rise(),
             flat: Arc::new(DashMap::new()),
             water: Arc::new(DashMap::new()),
+            fine: Arc::new(DashMap::new()),
             chunks: Arc::new(DashMap::new()),
             changed: Arc::new(AtomicBool::new(false)),
             solids: Arc::new(DashMap::new()),
@@ -95,6 +99,24 @@ impl Map {
             None => { self.water.remove(&(q, r)); }
         }
         self.changed.store(true, Ordering::Relaxed);
+    }
+
+    /// Set how far a tile's surface runs from its level. Independent of
+    /// `insert`, as its water is.
+    pub fn set_fine(&self, q: i32, r: i32, fine: i8) {
+        match fine {
+            0 => { self.fine.remove(&(q, r)); }
+            fine => { self.fine.insert((q, r), fine); }
+        }
+        self.changed.store(true, Ordering::Relaxed);
+    }
+
+    /// A tile's ground: its level and the height its surface runs through.
+    /// What the surface is drawn and walked through; whether a tile may be
+    /// entered reads the level alone.
+    pub fn ground_at(&self, q: i32, r: i32) -> Option<common::grid::Ground> {
+        let z = *self.flat.get(&(q, r))?.value();
+        Some(common::grid::Ground { z, fine: self.fine.get(&(q, r)).map_or(0, |f| *f) })
     }
 
     /// Stands the circles of the den on tile `anchor` in place of any it
@@ -151,6 +173,7 @@ impl Map {
     pub fn remove(&self, qrz: Qrz) -> Option<EntityType> {
         self.flat.remove(&(qrz.q, qrz.r));
         self.water.remove(&(qrz.q, qrz.r));
+        self.fine.remove(&(qrz.q, qrz.r));
         let chunk_id = loc_to_chunk(qrz);
         let removed = self.chunks.get_mut(&chunk_id)
             .and_then(|mut bucket| bucket.remove(&(qrz.q, qrz.r)).map(|r| r.typ));
@@ -169,6 +192,7 @@ impl Map {
             for &(q, r) in bucket.keys() {
                 self.flat.remove(&(q, r));
                 self.water.remove(&(q, r));
+                self.fine.remove(&(q, r));
             }
             self.changed.store(true, Ordering::Relaxed);
         }
@@ -271,13 +295,12 @@ impl Map {
         // built on these is exact however far out the tile is, and is
         // placed by its tile (`RenderOrigin::render_tile`).
         let mut verts = self.geo.vertices(Qrz { q: 0, r: 0, z: 0 });
-        let corner_zs = crate::surface::cell_corner_zs((qrz.q, qrz.r), |q, r| {
-            self.get_by_qr(q, r).map(|(t, _)| t.z)
-        });
+        let centre = self.ground_at(qrz.q, qrz.r).filter(|g| g.z == qrz.z).map_or(qrz.z as f32, |g| g.above(0));
+        let corner_zs = crate::surface::cell_corner_zs((qrz.q, qrz.r), |q, r| self.ground_at(q, r));
         for (v, z) in verts.iter_mut().zip(corner_zs) {
-            v.y = crate::surface::height_y(z.unwrap_or(qrz.z as f32));
+            v.y = crate::surface::height_y(z.unwrap_or(centre));
         }
-        verts[6].y = crate::surface::height_y(qrz.z as f32);
+        verts[6].y = crate::surface::height_y(centre);
         verts
     }
 

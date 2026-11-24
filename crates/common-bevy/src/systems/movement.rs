@@ -166,9 +166,11 @@ pub fn surface_y(world_xz: Vec2, floor: Qrz, map: &Map) -> f32 {
 /// however far out, or up, the tile is.
 pub fn surface_y_from(tile: Qrz, xz: Vec2, floor: Qrz, map: &Map) -> f32 {
     let floor_centre: Vec3 = map.convert(floor - tile);
-    crate::surface::surface_y(xz, Qrz { z: floor.z - tile.z, ..floor }, floor_centre, |q, r| {
-        map.get_by_qr(q, r).map(|(qrz, _)| qrz.z - tile.z)
-    })
+    let from = |g: common::grid::Ground| common::grid::Ground { z: g.z - tile.z, ..g };
+    // The floor a walker stands on may be one the map no longer holds at
+    // that level; it is then walked at the level itself.
+    let own = map.ground_at(floor.q, floor.r).filter(|g| g.z == floor.z).unwrap_or(common::grid::Ground::level(floor.z));
+    crate::surface::surface_y(xz, (floor.q, floor.r), from(own), floor_centre, |q, r| map.ground_at(q, r).map(from))
 }
 
 #[derive(Clone, Copy, Debug)]

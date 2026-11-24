@@ -22,6 +22,7 @@ use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 use common::cover::{Canopy, Content};
 use common::summary::{SummaryCell, PARTS};
 
+use common::grid::Ground;
 use crate::{
     chunk::{self, ChunkId},
     geometry::{flat_top_tile_center, hex_ball_tiles},
@@ -114,7 +115,7 @@ pub fn cell_fan(
     lattice: &SummaryLattice,
     cell: (i32, i32),
     frame: qrz::Qrz,
-    height: impl Fn(i32, i32) -> Option<i32>,
+    height: impl Fn(i32, i32) -> Option<Ground>,
 ) -> Option<Fan> {
     let offsets = corner_offsets(lattice.scale as f32);
     let centre_of = |c: (i32, i32)| -> Vec2 {
@@ -124,11 +125,11 @@ pub fn cell_fan(
     };
     let centre_3d = |c: (i32, i32)| -> Option<Vec3> {
         let p = centre_of(c);
-        Some(Vec3::new(p.x, height_y(height(c.0, c.1)? as f32), p.y))
+        Some(Vec3::new(p.x, height_y(height(c.0, c.1)?.above(0)), p.y))
     };
     let z = height(cell.0, cell.1)?;
     let centre = centre_of(cell);
-    let centre_y = height_y(z as f32);
+    let centre_y = height_y(z.above(0));
     let mut corner_y = [0.0; 6];
     let mut corner_n = [Vec3::Y; 6];
     let mut corner_pos = [Vec3::ZERO; 6];
@@ -157,12 +158,12 @@ pub fn cell_fan(
 pub struct LevelSurface<'a> {
     lattice: SummaryLattice,
     frame: qrz::Qrz,
-    height: &'a dyn Fn(i32, i32) -> Option<i32>,
+    height: &'a dyn Fn(i32, i32) -> Option<Ground>,
     fans: HashMap<(i32, i32), Option<Fan>>,
 }
 
 impl<'a> LevelSurface<'a> {
-    pub fn new(radius: u32, frame: qrz::Qrz, height: &'a dyn Fn(i32, i32) -> Option<i32>) -> Self {
+    pub fn new(radius: u32, frame: qrz::Qrz, height: &'a dyn Fn(i32, i32) -> Option<Ground>) -> Self {
         LevelSurface { lattice: summary_lattice(radius), frame, height, fans: HashMap::new() }
     }
 
@@ -185,8 +186,8 @@ impl<'a> LevelSurface<'a> {
 }
 
 /// Build a mesh region at `radius` from a height lookup over that level's
-/// lattice: `height(sq, sr)` is the cell's z, or None while its data is
-/// absent. At r = 0 the lattice coordinates are tile coordinates. `coarse`
+/// lattice: `height(sq, sr)` is the cell's ground, or None while its data
+/// is absent. At r = 0 the lattice coordinates are tile coordinates. `coarse`
 /// is the same lookup over the next coarser level, which every vertex's
 /// morph target is read from; None at the coarsest level.
 
@@ -206,8 +207,8 @@ impl<'a> LevelSurface<'a> {
 pub fn build_summary_mesh_region(
     radius: u32,
     region_key: MeshRegionKey,
-    height: &dyn Fn(i32, i32) -> Option<i32>,
-    coarse: Option<&dyn Fn(i32, i32) -> Option<i32>>,
+    height: &dyn Fn(i32, i32) -> Option<Ground>,
+    coarse: Option<&dyn Fn(i32, i32) -> Option<Ground>>,
     canopy: Option<&dyn Fn(i32, i32) -> Option<[Canopy; PARTS]>>,
 ) -> Option<SummaryMeshResult> {
     let lattice = summary_lattice(radius);
@@ -219,7 +220,7 @@ pub fn build_summary_mesh_region(
     // Heights for the region and its ring — the ring only feeds corners.
     let region_cells: Vec<(i32, i32)> = region_lat.tiles_in_cell(region_id).collect();
     let region_set: HashSet<(i32, i32)> = region_cells.iter().copied().collect();
-    let mut heights: HashMap<(i32, i32), i32> = HashMap::new();
+    let mut heights: HashMap<(i32, i32), Ground> = HashMap::new();
     let mut canopies: HashMap<(i32, i32), [f32; 4]> = HashMap::new();
     for &(sq, sr) in &region_cells {
         for (dq, dr) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)] {
@@ -256,7 +257,7 @@ pub fn build_summary_mesh_region(
     // A corner vertex is shared by the cells that hold the same height there:
     // all of them, but where the corner rule leaves a face.
     let mut corner_index: HashMap<((i32, i32), u32), u32> = HashMap::new();
-    let span = lattice.scale as f64;
+    let span = lattice.scale;
 
     let mut push = |p: Vec3, n: Vec3, target: (f32, Vec3), canopy: [f32; 4]| -> u32 {
         let (ty, tn) = target;
@@ -315,8 +316,8 @@ pub fn build_summary_mesh_region(
                 };
                 // The neighbour's own heights at this edge's two corners: it
                 // is the first sharer of corner i and the second of corner j.
-                let low_i = common::corner::meet([z as f64, zd as f64, zi as f64], span)[1] as f32;
-                let low_j = common::corner::meet([z as f64, zj as f64, zd as f64], span)[2] as f32;
+                let low_i = own_corner_z([Some(zd), Some(z), Some(zi)], span)?;
+                let low_j = own_corner_z([Some(zd), Some(zj), Some(z)], span)?;
                 let (yi, yj) = (height_y(low_i) - bias, height_y(low_j) - bias);
                 let (top0, top1) = (corner_pos[i], corner_pos[j]);
                 if top0.y <= yi + 1e-4 && top1.y <= yj + 1e-4 {
@@ -438,7 +439,7 @@ pub const DROP_OFFSET: f32 = 0.05;
 /// at or over the surface it is the shore, and hides the water's edge
 /// itself. Every face shades as the surface does, facing up.
 /// `water(sq, sr)` is the surface over a cell as a z-level, `ground(sq, sr)`
-/// its height, each None where unknown, and water None where the cell is
+/// its ground, each None where unknown, and water None where the cell is
 /// dry. Water at zero is not built: the sea is one plane drawn to the
 /// horizon. Sinks by the level's depth bias with the ground, and is empty
 /// where nothing is flooded.
@@ -446,7 +447,7 @@ pub fn build_water_mesh_region(
     radius: u32,
     region_key: MeshRegionKey,
     water: &dyn Fn(i32, i32) -> Option<i32>,
-    ground: &dyn Fn(i32, i32) -> Option<i32>,
+    ground: &dyn Fn(i32, i32) -> Option<Ground>,
 ) -> SummaryMeshResult {
     let lattice = summary_lattice(radius);
     let region_lat = mesh_region_lattice();
@@ -819,7 +820,7 @@ mod tests {
         assert_eq!(build_water_mesh_region(0, key, &|_, _| None, &unknown).tri_count, 0);
         let sea = build_water_mesh_region(0, key, &|_, _| Some(0), &unknown);
         assert_eq!(sea.tri_count, 0, "the sea is the plane's, not the region's");
-        let built = build_water_mesh_region(0, key, &|q, r| ((q, r) == (0, 0)).then_some(4), &|_, _| Some(9));
+        let built = build_water_mesh_region(0, key, &|q, r| ((q, r) == (0, 0)).then_some(4), &|_, _| Some(Ground::level(9)));
         assert_eq!(built.tri_count, 6, "a fan, and nothing down an edge to a higher bank");
         let expect = height_y(4.0 - 0.5);
         assert!(built.positions.iter().all(|p| (p[1] - expect).abs() < 1e-4));
@@ -842,7 +843,7 @@ mod tests {
             (1, 0) => Some(3),
             _ => None,
         };
-        let ground = |q: i32, r: i32| Some(if (q, r) == (0, 1) { 2 } else { 4 });
+        let ground = |q: i32, r: i32| Some(Ground::level(if (q, r) == (0, 1) { 2 } else { 4 }));
         let built = build_water_mesh_region(0, key, &water, &ground);
         // Three fans; from (0, 0) a drop to the lower water and one to the
         // lower ground; from (1, 0) one to that same lower ground, which
@@ -890,17 +891,17 @@ mod tests {
         let [beyond, third] = CORNER_NEIGHBOURS[0];
         let water = |q: i32, r: i32| ((q, r) == (0, 0)).then_some(28);
         let ground = move |q: i32, r: i32| {
-            Some(match (q, r) {
+            Some(Ground::level(match (q, r) {
                 (0, 0) => 27,
                 at if at == beyond => 27,
                 at if at == third => 26,
                 _ => 30,
-            })
+            }))
         };
         // Beyond edge 0, the tile at 27 is drawn at corner 0, where it meets
         // the wet tile's ground at 27 and the third tile at 26, lower than
         // itself.
-        let drawn = own_corner_z([Some(27), Some(27), Some(26)], 1).expect("all three");
+        let drawn = own_corner_z([27, 27, 26].map(|z| Some(Ground::level(z))), 1).expect("all three");
         assert!(drawn < 27.0, "the corner rule draws it lower there: {drawn}");
         let built = build_water_mesh_region(0, key, &water, &ground);
         let reaches = built.positions.iter().any(|p| (p[1] - height_y(drawn)).abs() < 1e-4);
@@ -912,8 +913,8 @@ mod tests {
     /// every vector is a tile difference from the region's origin tile.
     #[test]
     fn a_region_builds_the_same_however_far_out() {
-        let field = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
-        let coarse = |q: i32, r: i32| Some((q * 5 + r * 2).rem_euclid(9));
+        let field = |q: i32, r: i32| Some(Ground::level(((q * 7 + r * 3).rem_euclid(11)) - 5));
+        let coarse = |q: i32, r: i32| Some(Ground::level((q * 5 + r * 2).rem_euclid(9)));
         let far = MeshRegionKey { r: 1, mn: 30_000, mm: -60_000 };
         let shift = mesh_region_lattice().cell_center((far.mn, far.mm));
         assert_eq!((shift.0 % 3, shift.1 % 3), (0, 0), "the far region's origin is a coarser centre too");
@@ -931,7 +932,7 @@ mod tests {
 
     #[test]
     fn flat_region_is_fans_plus_perimeter_curtains() {
-        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None, None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(Ground::level(5)), None, None).unwrap();
         assert_eq!(result.tri_count, MESH_REGION_CELLS * 6 + PERIMETER_EDGES * 2);
         let fans = fan_vertices(REGION, &result);
         let y = fans[0].0.y;
@@ -941,29 +942,29 @@ mod tests {
 
     #[test]
     fn shared_corners_are_single_vertices() {
-        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(5), None, None).unwrap();
+        let result = build_summary_mesh_region(1, REGION, &|_, _| Some(Ground::level(5)), None, None).unwrap();
         assert_eq!(fan_vertices(REGION, &result).len(), MESH_REGION_CELLS as usize + CORNER_VERTICES);
     }
 
     #[test]
     fn build_waits_for_every_cell_of_region_and_ring() {
         let region_lat = mesh_region_lattice();
-        let hole = |q: i32, r: i32| ((q, r) != (0, 0)).then_some(5);
+        let hole = |q: i32, r: i32| ((q, r) != (0, 0)).then_some(Ground::level(5));
         assert!(build_summary_mesh_region(1, REGION, &hole, None, None).is_none(), "built with a cell missing");
-        let no_ring = |q: i32, r: i32| (region_lat.cell_id(q, r) == (0, 0)).then_some(5);
+        let no_ring = |q: i32, r: i32| (region_lat.cell_id(q, r) == (0, 0)).then_some(Ground::level(5));
         assert!(build_summary_mesh_region(1, REGION, &no_ring, None, None).is_none(), "built with the ring missing");
     }
 
     #[test]
     fn build_waits_for_the_coarser_cells_under_it() {
-        let flat = |_: i32, _: i32| Some(5);
+        let flat = |_: i32, _: i32| Some(Ground::level(5));
         // The coarser cell under the region's centre is absent.
-        let hole = |q: i32, r: i32| ((q, r) != (0, 0)).then_some(5);
+        let hole = |q: i32, r: i32| ((q, r) != (0, 0)).then_some(Ground::level(5));
         assert!(build_summary_mesh_region(1, REGION, &flat, Some(&hole), None).is_none(), "built with a coarser cell missing");
         // A ring cell of the coarser cell at the region's edge is absent: the
         // region's cells reach 9 fine cells out, three coarse cells, whose
         // ring is the fourth.
-        let far = |q: i32, _: i32| (q != 4).then_some(5);
+        let far = |q: i32, _: i32| (q != 4).then_some(Ground::level(5));
         assert!(build_summary_mesh_region(1, REGION, &flat, Some(&far), None).is_none(), "built with a coarser ring cell missing");
     }
 
@@ -971,7 +972,7 @@ mod tests {
     /// no-op and the coarsest level never moves.
     #[test]
     fn coarse_target_is_the_vertex_itself_at_the_coarsest_level() {
-        let field = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
+        let field = |q: i32, r: i32| Some(Ground::level(((q * 7 + r * 3).rem_euclid(11)) - 5));
         let result = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
         for ((p, n), c) in result.positions.iter().zip(&result.normals).zip(&result.coarse) {
             assert!((c[3] - p[1]).abs() < 1e-5, "target height {} is not the vertex's {}", c[3], p[1]);
@@ -985,8 +986,8 @@ mod tests {
     /// centre is one, since levels nest — targets exactly that cell's height.
     #[test]
     fn coarse_targets_lie_on_the_coarser_surface() {
-        let fine = |q: i32, r: i32| Some(((q * 7 + r * 3).rem_euclid(11)) - 5);
-        let flat = |_: i32, _: i32| Some(20);
+        let fine = |q: i32, r: i32| Some(Ground::level(((q * 7 + r * 3).rem_euclid(11)) - 5));
+        let flat = |_: i32, _: i32| Some(Ground::level(20));
         let result = build_summary_mesh_region(1, REGION, &fine, Some(&flat), None).unwrap();
         let want = height_y(20.0) - level_depth_bias(1);
         // Fan vertices only: a curtain keeps its own normal and hangs from
@@ -997,7 +998,7 @@ mod tests {
         }
         assert!(result.positions.iter().any(|p| (p[1] - want).abs() > 0.5), "the fine relief is flat");
 
-        let coarse = |q: i32, r: i32| Some((q * 5 + r * 2).rem_euclid(9));
+        let coarse = |q: i32, r: i32| Some(Ground::level((q * 5 + r * 2).rem_euclid(9)));
         let result = build_summary_mesh_region(1, REGION, &fine, Some(&coarse), None).unwrap();
         let coarse_lat = summary_lattice(4);
         let mut centres = 0;
@@ -1010,7 +1011,7 @@ mod tests {
                 continue;
             }
             centres += 1;
-            let want = height_y(coarse(cell.0, cell.1).unwrap() as f32) - level_depth_bias(1);
+            let want = height_y(coarse(cell.0, cell.1).unwrap().above(0)) - level_depth_bias(1);
             assert!((c[3] - want).abs() < 1e-4, "target {} at coarser centre {cell:?} (want {want})", c[3]);
         }
         assert!(centres > 0, "no fine vertex sits on a coarser centre");
@@ -1021,7 +1022,7 @@ mod tests {
         // A varying field whose cells all reach each other, so every corner
         // is met: every vertex the two regions both place must be at the
         // same height, or the seam between them opens.
-        let field = |q: i32, r: i32| Some((q * 7 + r * 3).rem_euclid(3));
+        let field = |q: i32, r: i32| Some(Ground::level((q * 7 + r * 3).rem_euclid(3)));
         let a = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
         let b = build_summary_mesh_region(1, MeshRegionKey { r: 1, mn: 1, mm: 0 }, &field, None, None).unwrap();
         let av = fan_vertices(REGION, &a);
@@ -1042,7 +1043,7 @@ mod tests {
         // A cliff: half the field 20 steps higher, far past a 3-wide cell's
         // reach. Each side keeps its own corners, and a wall hangs from the
         // high side's down to the low side's.
-        let field = |q: i32, _r: i32| Some(if q > 0 { 20 } else { 0 });
+        let field = |q: i32, _r: i32| Some(Ground::level(if q > 0 { 20 } else { 0 }));
         let result = build_summary_mesh_region(1, REGION, &field, None, None).unwrap();
         let bias = level_depth_bias(1);
         let (top, foot) = (height_y(20.0) - bias, height_y(0.0) - bias);
@@ -1096,7 +1097,7 @@ mod tests {
     #[test]
     fn canopy_rides_the_vertices_by_the_corner_rule() {
         use common::cover::{Canopy, Content, Cover};
-        let flat = |_: i32, _: i32| Some(5);
+        let flat = |_: i32, _: i32| Some(Ground::level(5));
         let bare = build_summary_mesh_region(1, REGION, &flat, None, None).unwrap();
         assert!(bare.canopy.is_empty());
 

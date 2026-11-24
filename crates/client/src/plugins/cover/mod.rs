@@ -548,7 +548,7 @@ pub fn place_cover(
     radius: u32,
     region_key: MeshRegionKey,
     map: &common_bevy::resources::map::Map,
-    height: &dyn Fn(i32, i32) -> Option<i32>,
+    height: &dyn Fn(i32, i32) -> Option<common::grid::Ground>,
 ) -> Vec<CoverInstance> {
     let lattice = common_bevy::summary::summary_lattice(radius);
     let region_lat = common_bevy::summary::mesh_region_lattice();
@@ -565,7 +565,7 @@ pub fn place_cover(
             for (k, slot) in cover.filled().chain(cover.stumps()) {
                 let sway = common::sway(q, r, k);
                 let (x, z) = slot_center(q - origin.q, r - origin.r, k, &sway);
-                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
                 out.push(CoverInstance {
                     translation: Vec3::new(x, y, z),
                     yaw: sway.yaw as f32,
@@ -582,7 +582,7 @@ pub fn place_cover(
                 let Some(kind) = Kind::pile(cover.content(k)) else { continue };
                 let sway = common::boulder_sway(q, r, k);
                 let (x, z) = boulder_center(q - origin.q, r - origin.r, k, &sway);
-                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
                 out.push(CoverInstance {
                     translation: Vec3::new(x, y, z),
                     yaw: sway.yaw as f32,
@@ -596,7 +596,7 @@ pub fn place_cover(
             for k in cover.boulders() {
                 let sway = common::boulder_sway(q, r, k);
                 let (x, z) = boulder_center(q - origin.q, r - origin.r, k, &sway);
-                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
                 out.push(CoverInstance {
                     translation: Vec3::new(x, y, z),
                     yaw: sway.yaw as f32,
@@ -611,7 +611,7 @@ pub fn place_cover(
             // the tile's, so a run of walls meets edge to edge.
             if let Some((construct, open)) = common::building::standing(cover) {
                 let (x, z) = flat_top_tile_center(q - origin.q, r - origin.r, 1.0);
-                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
                 out.push(CoverInstance {
                     translation: Vec3::new(x, y, z),
                     yaw: 0.0,
@@ -628,7 +628,7 @@ pub fn place_cover(
             let raised = common::building::fixture(cover).map(|fixture| (fixture, 0));
             if let Some((fixture, stage)) = raised.or_else(|| common::building::rising(cover)) {
                 let (x, z) = flat_top_tile_center(q - origin.q, r - origin.r, 1.0);
-                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
                 let sway = common::cover::boulder_sway(q, r, common::building::SLOT);
                 out.push(CoverInstance {
                     translation: Vec3::new(x, y, z),
@@ -661,7 +661,7 @@ pub fn place_crags(
     radius: u32,
     region_key: MeshRegionKey,
     outcrop: &dyn Fn(i32, i32) -> Option<common::Outcrop>,
-    height: &dyn Fn(i32, i32) -> Option<i32>,
+    height: &dyn Fn(i32, i32) -> Option<common::grid::Ground>,
 ) -> Vec<CoverInstance> {
     let lattice = common_bevy::summary::summary_lattice(radius);
     let region_lat = common_bevy::summary::mesh_region_lattice();
@@ -682,7 +682,7 @@ pub fn place_crags(
             let sway = common::boulder_sway(sq, sr, k);
             let (dx, dz) = boulder_center(0, 0, k, &sway);
             let (x, z) = (cx + dx * FAR_BLOCK, cz + dz * FAR_BLOCK);
-            let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z as f32), |(y, _)| y);
+            let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
             out.push(CoverInstance {
                 translation: Vec3::new(x, y, z),
                 yaw: sway.yaw as f32,
@@ -707,7 +707,7 @@ pub fn place_dens(
     region_key: MeshRegionKey,
     dens: &HashMap<qrz::Qrz, common_bevy::den::DenLook>,
     map: &common_bevy::resources::map::Map,
-    height: &dyn Fn(i32, i32) -> Option<i32>,
+    height: &dyn Fn(i32, i32) -> Option<common::grid::Ground>,
 ) -> Vec<CoverInstance> {
     use qrz::Convert;
     let lattice = common_bevy::summary::summary_lattice(radius);
@@ -724,7 +724,7 @@ pub fn place_dens(
             }
             let cell = lattice.cell_id(tile.0, tile.1);
             let stands = centre + about;
-            let Some((y, normal)) = surface.at(stands).or_else(|| height(cell.0, cell.1).map(|z| (height_y(z as f32), Vec3::Y))) else { continue };
+            let Some((y, normal)) = surface.at(stands).or_else(|| height(cell.0, cell.1).map(|z| (height_y(z.above(0)), Vec3::Y))) else { continue };
             out.push(CoverInstance {
                 translation: Vec3::new(stands.x, y, stands.y),
                 // The models' turn runs the other way about the vertical
@@ -912,7 +912,7 @@ mod tests {
         let (oq, or) = lattice.cell_center(region_lat.cell_center((0, 0)));
         let (ox, oz) = flat_top_tile_center(oq, or, 1.0);
         let origin = Vec3::new(ox, 0.0, oz);
-        let placed = place_cover(0, key, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z));
+        let placed = place_cover(0, key, &map, &|q, r| map.ground_at(q, r));
         assert_eq!(placed.len(), expected);
         for t in &placed {
             assert!((t.translation.y - height_y(0.0)).abs() < 1e-4, "a tree off the ground at {:?}", t.translation);
@@ -933,7 +933,7 @@ mod tests {
             let map = Map::new(qrz::Map::new(1.0, 0.8));
             map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
             let key = MeshRegionKey { r: 0, mn: 0, mm: 0 };
-            place_cover(0, key, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z))
+            place_cover(0, key, &map, &|q, r| map.ground_at(q, r))
         };
         let wood = Cover::NONE.with(0, Content::Pine).with(1, Content::Deciduous);
         let felled = common::gathering::harvest(wood, common::SITE_SLOTS[0][0]).unwrap().cover;
@@ -953,7 +953,7 @@ mod tests {
             let map = Map::new(qrz::Map::new(1.0, 0.8));
             map.insert(Qrz { q: 0, r: 0, z: 0 }, EntityType::Decorator(Decorator { cover, is_solid: true }));
             let key = MeshRegionKey { r: 0, mn: 0, mm: 0 };
-            place_cover(0, key, &map, &|q, r| map.get_by_qr(q, r).map(|(qrz, _)| qrz.z))
+            place_cover(0, key, &map, &|q, r| map.ground_at(q, r))
         };
         let crag = Cover::NONE.with_boulder(3).with_boulder(4).with_rock(common::Rock::Limestone);
         let mined = common::gathering::harvest(crag, 4).unwrap();
@@ -979,7 +979,7 @@ mod crag_tests {
         let face = (0..boulders).fold(Cover::NONE, |c, k| c.with_boulder(k)).with_rock(Rock::Basement);
         let outcrop = move |sq: i32, sr: i32| Some(if (sq, sr) == rocky { Outcrop::of(&[face; 7]) } else { Outcrop::NONE });
         let key = MeshRegionKey { r: radius, mn: 0, mm: 0 };
-        place_crags(radius, key, &outcrop, &|_, _| Some(0))
+        place_crags(radius, key, &outcrop, &|_, _| Some(common::grid::Ground::level(0)))
     }
 
     #[test]

@@ -153,8 +153,8 @@ impl Laddered {
     /// The cells of the level `w` wide, where the ladder holds them: each
     /// one's height, the surface of the water standing over it, and which
     /// of its children stand under water ([`Cell::wet_parts`]).
-    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>, u16)>> {
-        self.terrain.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.water, c.wet_parts))).collect()
+    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, f64, Option<f64>, u16)>> {
+        self.terrain.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.fine, c.water, c.wet_parts))).collect()
     }
 }
 
@@ -272,8 +272,8 @@ impl Ladders {
 
     /// Each cell's height, the surface of the water standing over it, and
     /// which of its children stand under water ([`Ladders::cells`]).
-    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, Option<f64>, u16)>> {
-        self.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.water, c.wet_parts))).collect()
+    pub fn level(&self, w: i64, cells: &[(i64, i64)]) -> Vec<Option<(f64, f64, Option<f64>, u16)>> {
+        self.cells(w, cells).into_iter().map(|c| c.map(|c| (c.z, c.fine, c.water, c.wet_parts))).collect()
     }
 }
 
@@ -311,6 +311,7 @@ impl WorldEvent for LadderEvent {
         };
         Some(TileOutput {
             elevation_delta: cell.z - below.elevation,
+            fine: Some(cell.fine),
             gradient: (gradient.0 - below.gradient.0, gradient.1 - below.gradient.1),
             water: cell.water,
             ..TileOutput::default()

@@ -213,7 +213,7 @@ player felled.
 **INV-009 — The world's stack is opaque.** Outside
 `crates/world/src/events`, the world is read through `Composite::tile_at` and
 its siblings (`tile_on`, a read standing on a coarser ladder level, `tiles_at`,
-`elevation_at`, `water_at`, `tags_at`, `cover_at`, `cover_on`, `den_at`): a
+`elevation_at`, `ground_at`, `water_at`, `tags_at`, `cover_at`, `cover_on`, `den_at`): a
 tile, composed. No caller learns which layers exist, reads a
 layer's index, or skips a layer it thinks it does not need. A layer's work
 changes behind that contract, and a bypass becomes load-bearing. A layer too
@@ -447,8 +447,12 @@ points `VisualPosition` at it, `actor::update` renders it.
    monotonicity, determinism — never exact values.
 5. **Dropping world-space during `Loc` updates.** Causes teleporting and falling.
 6. **A second ground function.** `common_bevy::surface` is the terrain
-   surface: corners by the corner rule (`common::corner`), fans between,
-   a wall where neighbours are out of reach. The mesh builder places
+   surface: a tile is its whole level and the height its ground runs
+   through before rounding (`common::grid::Ground`), which the wire and
+   the `Map` carry beside the level. Corners by the corner rule
+   (`common::corner::meet_through`), which judges reach on the levels
+   and places a corner on the heights, fans between, a wall where
+   neighbours are out of reach. The mesh builder places
    vertices on it and `movement::surface_y` samples it, so feet stay on
    what is drawn. Never blend, clamp, or smooth toward a neighbour by
    another rule. Whether a tile may be entered is a separate concern on
