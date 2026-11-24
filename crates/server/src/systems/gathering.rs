@@ -214,7 +214,7 @@ impl<S: SummarySource> SummarySource for LaidOver<S> {
         self.tiles.get(&(q, r)).copied().or_else(|| self.source.cover(w, q, r))
     }
 
-    fn cell(&self, r: u32, sq: i32, sr: i32) -> Option<(i32, u16)> {
+    fn cell(&self, r: u32, sq: i32, sr: i32) -> Option<(common::grid::Ground, u16)> {
         self.source.cell(r, sq, sr)
     }
 }

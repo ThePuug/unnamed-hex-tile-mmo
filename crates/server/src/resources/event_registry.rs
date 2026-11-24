@@ -34,6 +34,10 @@ impl EventRegistry {
 
     /// The surface water stands at over a tile as a z-level, or None where
     /// the tile is dry.
+    pub fn ground_at(&self, q: i32, r: i32) -> common::grid::Ground {
+        self.composite.ground_at(q, r)
+    }
+
     pub fn water_at(&self, q: i32, r: i32) -> Option<i32> {
         self.composite.water_at(q, r)
     }
@@ -63,7 +67,7 @@ impl common::summary::SummarySource for EventRegistry {
         self.composite.cover(w, q, r)
     }
 
-    fn cell(&self, r: u32, sq: i32, sr: i32) -> Option<(i32, u16)> {
+    fn cell(&self, r: u32, sq: i32, sr: i32) -> Option<(common::grid::Ground, u16)> {
         self.composite.cell(r, sq, sr)
     }
 }

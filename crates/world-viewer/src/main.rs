@@ -135,6 +135,11 @@ struct Cli {
     #[arg(long, default_value_t = 0x9E3779B97F4A7C15)]
     seed: u64,
 
+    /// Read each tile's height before it was rounded to a level, where the
+    /// world keeps one, in place of the level
+    #[arg(long)]
+    fine: bool,
+
     #[arg(long, default_value = "elevation", help = layer_help())]
     layers: String,
 
@@ -354,19 +359,21 @@ fn main() {
     // Materializing the tiles deforms every layer under them, which is what
     // fills the indexes the marker layers below read. Each tile is the
     // composed elevation and cover, and the contributor's own height.
+    let fine = cli.fine;
+    let ground = |v: &world::events::TileView| if fine { v.fine.unwrap_or(v.elevation) } else { v.elevation };
     let tile_cache: HashMap<(i32, i32), (f64, common::Cover, f64)> = match contributor {
         Some(layer) => coords
             .iter()
             .map(|&(q, r)| {
                 let (v, outputs) = composite.outputs_at(q, r);
                 let delta = outputs[layer].1.as_ref().map_or(0.0, |o| o.elevation_delta);
-                ((q, r), (v.elevation, v.cover, delta))
+                ((q, r), (ground(&v), v.cover, delta))
             })
             .collect(),
         None => composite
             .tiles_at(&coords)
             .into_iter()
-            .map(|((q, r), v)| ((q, r), (v.elevation, v.cover, 0.0)))
+            .map(|((q, r), v)| ((q, r), (ground(&v), v.cover, 0.0)))
             .collect(),
     };
 

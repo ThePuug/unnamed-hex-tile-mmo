@@ -255,9 +255,10 @@ pub fn write_do(
                 // Reconstruct (q,r) from chunk_tiles iteration order. The
                 // ground arrives as a spawn; the water goes straight to the
                 // map, which holds it apart from the ground.
-                for ((q, r), (z, typ, water)) in common_bevy::chunk::chunk_tiles(chunk_id).zip(tiles) {
-                    let qrz = Qrz { q, r, z };
+                for ((q, r), (ground, typ, water)) in common_bevy::chunk::chunk_tiles(chunk_id).zip(tiles) {
+                    let qrz = Qrz { q, r, z: ground.z };
                     map.set_water(q, r, water);
+                    map.set_fine(q, r, ground.fine);
                     do_writer.write(Do { event: Event::Spawn { ent: Entity::PLACEHOLDER, typ, qrz, attrs: None }});
                 }
                 loaded_chunks.insert(chunk_id);

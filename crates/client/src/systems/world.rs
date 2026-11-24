@@ -1212,7 +1212,7 @@ fn collect_and_build_summary_mesh(
         cover: Vec::new(),
     };
 
-    let tile_z = |q: i32, r: i32| -> Option<i32> { map.get_by_qr(q, r).map(|(qrz, _)| qrz.z) };
+    let tile_z = |q: i32, r: i32| -> Option<common::grid::Ground> { map.ground_at(q, r) };
     // The same seven samples over the map's tiles, where every producer's
     // rule reads them; nothing until the tiles are all there.
     let sampled = |level: u32, sq: i32, sr: i32| common_bevy::summary::summarize(level, sq, sr, map);
@@ -1237,24 +1237,24 @@ fn collect_and_build_summary_mesh(
     // A level's heights: the tile's own at r = 0, else the cached summary
     // or the same seven samples over the map's tiles.
     let level_z = |level: u32| {
-        move |sq: i32, sr: i32| -> Option<i32> {
+        move |sq: i32, sr: i32| -> Option<common::grid::Ground> {
             if level == 0 {
                 return tile_z(sq, sr);
             }
             if let Some(cell) = cached(level, sq, sr) {
-                return Some(cell.z);
+                return Some(cell.ground());
             }
             // A summary is the ladder's cell, which the tiles do not hold:
             // it is only ever the server's.
             if level >= common_bevy::summary::LOD_LEVELS[1] {
                 return None;
             }
-            sampled(level, sq, sr).map(|c| c.z)
+            sampled(level, sq, sr).map(|c| c.ground())
         }
     };
     let height = level_z(radius);
     let coarse = common_bevy::summary::coarser_level(radius).map(level_z);
-    let coarse: Option<&dyn Fn(i32, i32) -> Option<i32>> = coarse.as_ref().map(|c| c as &dyn Fn(i32, i32) -> Option<i32>);
+    let coarse: Option<&dyn Fn(i32, i32) -> Option<common::grid::Ground>> = coarse.as_ref().map(|c| c as &dyn Fn(i32, i32) -> Option<common::grid::Ground>);
 
     // The cover stands with the ground: placed here from the map's covers
     // at every level the map reaches, spawned with the ground once the kit

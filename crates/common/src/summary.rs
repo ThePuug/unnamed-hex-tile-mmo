@@ -32,7 +32,7 @@ pub trait SummarySource {
     /// is a step under the water's surface, as [`summarize`] stands a wet
     /// summary, so a lake is drawn level at its surface and never over its
     /// bed.
-    fn cell(&self, _r: u32, _sq: i32, _sr: i32) -> Option<(i32, u16)> {
+    fn cell(&self, _r: u32, _sq: i32, _sr: i32) -> Option<(crate::grid::Ground, u16)> {
         None
     }
 }
@@ -52,11 +52,20 @@ pub struct TileSample {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummaryCell {
     pub z: i32,
+    /// How far its surface runs from `z`, as [`crate::grid::Ground::fine`].
+    pub fine: i8,
     /// A bit to each part in [`part_offsets`] order, set where the part's
     /// tile stands under water above the sea.
     pub wet: u16,
     pub canopy: [Canopy; PARTS],
     pub outcrop: Outcrop,
+}
+
+impl SummaryCell {
+    /// The ground its surface is drawn through.
+    pub fn ground(&self) -> crate::grid::Ground {
+        crate::grid::Ground { z: self.z, fine: self.fine }
+    }
 }
 
 /// Nested LoD levels: summary scales triple per level.
@@ -183,13 +192,13 @@ pub fn sampled_by(r: u32, q: i32, rr: i32) -> Option<(i32, i32)> {
 /// the source has all nine (the client's map while chunks stream in).
 pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Option<SummaryCell> {
     let (cq, cr) = center_tile(r, sq, sr);
-    if let Some((z, wet)) = source.cell(r, sq, sr) {
+    if let Some((ground, wet)) = source.cell(r, sq, sr) {
         let mut covers = [Cover::default(); PARTS];
         for (i, (dq, dr)) in part_offsets(r).into_iter().enumerate() {
             covers[i] = source.cover(part_width(r), cq + dq, cr + dr)?;
         }
         let samples: [Cover; SAMPLES] = std::array::from_fn(|i| covers[i]);
-        return Some(SummaryCell { z, wet, canopy: covers.map(Canopy::of), outcrop: Outcrop::of(&samples) });
+        return Some(SummaryCell { z: ground.z, fine: ground.fine, wet, canopy: covers.map(Canopy::of), outcrop: Outcrop::of(&samples) });
     }
     let mut read = [None; PARTS];
     for (i, (dq, dr)) in part_offsets(r).into_iter().enumerate() {
@@ -208,6 +217,7 @@ pub fn summarize(r: u32, sq: i32, sr: i32, source: &impl SummarySource) -> Optio
     };
     Some(SummaryCell {
         z,
+        fine: 0,
         wet,
         canopy: parts.map(|part| Canopy::of(part.cover)),
         outcrop: Outcrop::of(&covers),
