@@ -43,16 +43,37 @@ pub struct SkyDome;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct SkyMaterial {
-    /// The sun's bearing on the ground, a unit vector in xz.
+    /// To the sun, a unit vector, and in `w` the fire of a sunrise or a
+    /// sunset ([`fire`]).
     #[uniform(0)]
-    pub bearing: Vec4,
+    pub sun: Vec4,
     #[uniform(0)]
     pub base: LinearRgba,
+    /// The fire's colour at the horizon and high on the dome.
     #[uniform(0)]
-    pub glow: LinearRgba,
+    pub ember: LinearRgba,
+    #[uniform(0)]
+    pub rose: LinearRgba,
+    /// The sun's halo.
+    #[uniform(0)]
+    pub halo: LinearRgba,
     /// The camera's fog colour, which the sky is at the horizon.
     #[uniform(0)]
     pub haze: LinearRgba,
+    /// In `x`, how far out the stars are.
+    #[uniform(0)]
+    pub night: Vec4,
+    /// The columns of what takes a direction in the world to its place
+    /// on the stars' sphere (`common_bevy::sky::turning`, undone).
+    #[uniform(0)]
+    pub turn_east: Vec4,
+    #[uniform(0)]
+    pub turn_up: Vec4,
+    #[uniform(0)]
+    pub turn_south: Vec4,
+    /// The guide stars (`common_bevy::sky::guides`).
+    #[uniform(0)]
+    pub guides: [Vec4; common_bevy::sky::GUIDES],
 }
 
 impl Material for SkyMaterial {
@@ -237,6 +258,54 @@ fn smoothstep(from: f32, to: f32, x: f32) -> f32 {
     t * t * (3. - 2. * t)
 }
 
+/// The lowest the sun's light is cast from, in radians above the
+/// horizon. A shadow is its caster's height over the tangent of the
+/// light's elevation, and its tip moves as the inverse square of the
+/// sine: under this a hill's shadow crosses the map and its tip runs
+/// faster than a player as the sun climbs. The disc and the light's
+/// strength and colour keep to the true sun.
+const CAST_ABOVE: f32 = 14_f32.to_radians();
+
+/// The direction the sun's light is cast from while the sun stands at
+/// `toward`: its own while it is above [`CAST_ABOVE`], and under that the
+/// same bearing raised to it.
+fn cast_from(toward: Vec3) -> Vec3 {
+    let flat = Vec2::new(toward.x, toward.z);
+    if elevation(toward) >= CAST_ABOVE || flat.length_squared() < 1e-9 {
+        return toward;
+    }
+    let flat = flat.normalize() * cos(CAST_ABOVE);
+    Vec3::new(flat.x, sin(CAST_ABOVE), flat.y)
+}
+
+/// The fire of a sunrise or a sunset with the sun at elevation `e`, 0 to
+/// 1: it builds from the first of twilight, burns fullest as the sun
+/// crosses the horizon and a little above it, and is bleached out by the
+/// time the sun stands a hand high.
+fn fire(e: f32) -> f32 {
+    smoothstep(-TWILIGHT_BELOW, -1_f32.to_radians(), e) * (1. - smoothstep(3_f32.to_radians(), 16_f32.to_radians(), e))
+}
+
+/// How far out the stars are with the sun at elevation `e`, 0 to 1: none
+/// until it is well under the horizon, all by the end of twilight.
+fn starlit(e: f32) -> f32 {
+    1. - smoothstep(-TWILIGHT_BELOW, -3_f32.to_radians(), e)
+}
+
+/// The fire's colours at their fullest, linear: the ember at the horizon,
+/// brighter than white so it glares, and the rose it turns to higher up.
+const EMBER: Vec3 = Vec3::new(1.7, 0.42, 0.05);
+const ROSE: Vec3 = Vec3::new(0.85, 0.28, 0.36);
+/// The clear sky overhead while the fire burns: the day's blue gone deep.
+const DUSK_SKY: Vec3 = Vec3::new(0.09, 0.16, 0.5);
+/// The sun's halo at the crossing, brighter than white so it glares.
+const GLARE: f32 = 2.5;
+/// The clear sky on a moonless night: never black, so the stars stand on
+/// a deep blue.
+const NIGHT_SKY: Vec3 = Vec3::new(0.0035, 0.006, 0.016);
+/// How much of the stars a full moon high in the sky washes out.
+const MOON_WASH: f32 = 0.5;
+
 /// Elevation of a direction above the horizontal, in radians.
 fn elevation(toward: Vec3) -> f32 {
     toward.y.asin()
@@ -307,10 +376,17 @@ pub fn setup(
     commands.spawn((
         Mesh3d(meshes.add(Sphere::new(sky_radius_wu()).mesh().ico(3).expect("a sphere subdivides"))),
         MeshMaterial3d(sky_materials.add(SkyMaterial {
-            bearing: Vec4::X,
+            sun: Vec4::X,
             base: LinearRgba::BLACK,
-            glow: LinearRgba::BLACK,
+            ember: LinearRgba::BLACK,
+            rose: LinearRgba::BLACK,
+            halo: LinearRgba::BLACK,
             haze: LinearRgba::BLACK,
+            night: Vec4::ZERO,
+            turn_east: Vec4::X,
+            turn_up: Vec4::Y,
+            turn_south: Vec4::Z,
+            guides: common_bevy::sky::guides(),
         })),
         Transform::default(),
         NotShadowCaster,
@@ -478,7 +554,7 @@ pub fn update(
     let gloom = (1. - RAIN_GLOOM * here.rain - STORM_GLOOM * here.storm) * dusk;
     s_light.color = tint(s_direct);
     s_light.illuminance = SUN_ILLUMINANCE * s_direct * shaded * gloom;
-    *s_transform = Transform::from_translation(s_toward * 1_000.).looking_at(Vec3::ZERO, Vec3::Y);
+    *s_transform = Transform::from_translation(cast_from(s_toward) * 1_000.).looking_at(Vec3::ZERO, Vec3::Y);
 
     // The sky: lit through twilight, reddened around the crossing, and
     // the ambient is its light on the ground, blue as it is overhead, and
@@ -528,13 +604,24 @@ pub fn update(
         * (1. - (1. - RAIN_VISIBILITY) * here.rain)
         * (1. - (1. - STORM_VISIBILITY) * here.storm);
     fog.falloff = FogFalloff::Exponential { density: crate::systems::camera::haze_density() / visibility };
-    let bearing = s_toward.xz().try_normalize().unwrap_or(Vec2::X).extend(0.).extend(0.);
-    let glow = lit(sky_tint) - lit(Vec3::ONE);
+    // The fire of the crossing: lit by what light is left, dimmed by the
+    // weather; the stars come out as it dies, less under a bright moon.
+    let burning = fire(s_elevation);
+    let left = (0.3 + 0.7 * sky_bright) * gloom;
+    let (ember, rose) = (EMBER * left, ROSE * left);
+    let stars = starlit(s_elevation) * (1. - MOON_WASH * m_lit * direct(elevation(m_toward))) * gloom;
+    let bearing = s_toward.xz().try_normalize().unwrap_or(Vec2::X).extend(burning).extend(0.);
     if let Some(mut sky) = q_sky.single().ok().and_then(|m| sky_materials.get_mut(&m.0)) {
-        sky.bearing = bearing;
-        sky.base = lit(Vec3::ONE) + LinearRgba::from_vec3(BLAZE_SKY * weather.blaze);
-        sky.glow = glow;
+        let sphere = Mat3::from_quat(common_bevy::sky::turning(dtd, dty).inverse());
+        sky.sun = s_toward.extend(burning);
+        let day = lit(Vec3::ONE).to_vec3().lerp(DUSK_SKY * left, 0.9 * burning);
+        sky.base = LinearRgba::from_vec3(day + BLAZE_SKY * weather.blaze + NIGHT_SKY * starlit(s_elevation));
+        sky.ember = LinearRgba::from_vec3(ember);
+        sky.rose = LinearRgba::from_vec3(rose);
+        sky.halo = LinearRgba::from_vec3(s_light.color.to_linear().to_vec3() * (0.5 * s_direct + GLARE * burning * sky_bright) * gloom * (1. - 0.6 * cover));
         sky.haze = haze;
+        sky.night = Vec4::new(stars, 0., 0., 0.);
+        (sky.turn_east, sky.turn_up, sky.turn_south) = (sphere.x_axis.extend(0.), sphere.y_axis.extend(0.), sphere.z_axis.extend(0.));
     }
 
     // The deck: lit white by the sun and reddened with it, its underside
@@ -544,7 +631,7 @@ pub fn update(
         let light = sky_tint * sky_bright + moon;
         clouds.light = LinearRgba::from_vec3(light * CLOUD_LIGHT * dusk);
         clouds.shade = LinearRgba::from_vec3(lit(Vec3::ONE).to_vec3().lerp(light, 0.3) * CLOUD_UNDERSIDE * dusk);
-        clouds.glow = glow;
+        clouds.glow = LinearRgba::from_vec3(ember);
         clouds.bearing = bearing;
         clouds.deck = Vec4::new(DECK_HEIGHT, visibility, weather.flash, OMEN_PALL * pall);
         clouds.frame = weather.frame;
@@ -1412,6 +1499,43 @@ mod tests {
         let (morning, afternoon, night) = (advance((SUNRISE + NOON) / 2.), advance((NOON + SUNSET) / 2.), advance((SUNSET + 1. + SUNRISE) / 2.));
         assert!(afternoon < morning && afternoon < night, "{morning} {afternoon} {night}");
         assert!((MOON_HIGH.rem_euclid(1.) - 0.5 / 24.).abs() < 1e-5, "the moon is as quick to rise and slow to set as the sun");
+    }
+
+    /// The fire burns only about the crossing, fullest with the sun on
+    /// the horizon, and the stars are out only once it has died: neither
+    /// by day.
+    #[test]
+    fn the_fire_burns_at_the_crossing_and_the_stars_follow_it() {
+        let at = |degrees: f32| degrees.to_radians();
+        assert_eq!((fire(at(40.)), fire(at(-20.))), (0., 0.));
+        assert!(fire(at(0.)) > 0.9 && fire(at(2.)) > 0.9);
+        assert!(fire(at(-6.)) < fire(at(-2.)) && fire(at(12.)) < fire(at(5.)));
+        assert_eq!((starlit(at(5.)), starlit(at(-15.))), (0., 1.));
+        assert!(starlit(at(-6.)) > 0. && starlit(at(-6.)) < 1.);
+        for degrees in -20..40 {
+            assert!(starlit(at(degrees as f32)) <= starlit(at(degrees as f32 - 1.)), "the lower the sun, the more stars");
+        }
+    }
+
+    /// The sun's light is cast from no lower than its floor, on the sun's
+    /// own bearing, and from the sun itself above that, with no step
+    /// between: so a shadow is never longer than the floor makes it.
+    #[test]
+    fn the_light_is_cast_from_no_lower_than_its_floor() {
+        for minute in 0..1440 {
+            let sun = toward(orbit(minute as f32 / 1440., SUNRISE, NOON, SUNSET), 0.3);
+            let cast = cast_from(sun);
+            assert!((cast.length() - 1.).abs() < 1e-4);
+            if elevation(sun) >= CAST_ABOVE {
+                assert_eq!(cast, sun);
+            } else {
+                assert!((elevation(cast) - CAST_ABOVE).abs() < 1e-4, "minute {minute}");
+                let (a, b) = (Vec2::new(sun.x, sun.z).normalize(), Vec2::new(cast.x, cast.z).normalize());
+                assert!(a.dot(b) > 0.9999, "its bearing is the sun's");
+            }
+        }
+        let at = toward(CAST_ABOVE, 0.);
+        assert!((cast_from(toward(CAST_ABOVE - 1e-4, 0.)) - at).length() < 1e-3, "no step at the floor");
     }
 
     /// The sun's light and the sky's glow both turn within a band about

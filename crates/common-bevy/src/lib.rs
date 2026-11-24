@@ -5,6 +5,7 @@ pub mod geometry;
 pub mod message;
 pub mod moment;
 pub mod path;
+pub mod sky;
 pub mod plugins;
 pub mod resources;
 pub mod archetype;
