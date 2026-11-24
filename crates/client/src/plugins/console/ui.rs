@@ -2,7 +2,6 @@ use bevy::prelude::*;
 
 use super::state::{DevConsole, MenuPath};
 use crate::plugins::diagnostics::{DateField, DiagnosticsState, WeatherHold};
-use common_bevy::settings::{Kept, Setting, Settings};
 use common_bevy::systems::{Date, DAY_MS, HOUR_MS, MINUTE_MS, SEASONS, WEEKS};
 
 #[derive(Component)]
@@ -103,8 +102,6 @@ pub fn update_console_menu(
     diagnostics_state: Res<DiagnosticsState>,
     added: Res<crate::network::AddedLatency>,
     server: Res<crate::resources::Server>,
-    settings: Res<Settings>,
-    kept: Res<Kept>,
     time: Res<Time>,
     mut breadcrumb_query: Query<&mut Text, (With<BreadcrumbText>, Without<MenuItemsContainer>)>,
     menu_query: Query<(Entity, Option<&Children>), With<MenuItemsContainer>>,
@@ -113,7 +110,7 @@ pub fn update_console_menu(
 ) {
     // The clock's row reads the calendar the server last sent
     let calendar_changed = shown.replace(server.calendar) != Some(server.calendar);
-    if !console.is_changed() && !diagnostics_state.is_changed() && !added.is_changed() && !calendar_changed && !settings.is_changed() && !kept.is_changed() {
+    if !console.is_changed() && !diagnostics_state.is_changed() && !added.is_changed() && !calendar_changed {
         return;
     }
 
@@ -142,34 +139,6 @@ pub fn update_console_menu(
                     }
                     gap(parent);
                     line(parent, if console.current_menu == MenuPath::Root { "0. Close Console" } else { "0. Back" }, 16.0, BACK);
-                }
-                MenuPath::Settings => {
-                    for (row, setting) in Setting::ALL.into_iter().enumerate() {
-                        let text = format!("{}. {:<25}[{}]", row + 1, setting.name(), stands(setting, &settings, &kept));
-                        line(parent, text, 16.0, state_color(kept.0.get(setting) == setting.default()));
-                    }
-                    for text in ["The server's, for every player, and kept: green is as built", "A cold setting holds from the server's next start"] {
-                        line(parent, text, 12.0, Color::srgb(0.6, 0.6, 0.6));
-                    }
-                    gap(parent);
-                    line(parent, "0. Back", 16.0, BACK);
-                }
-                MenuPath::Setting(setting) => {
-                    let buf = &console.setting_buf;
-                    let display = if buf.is_empty() { "_" } else { buf };
-                    line(parent, format!("Value = {display}"), 16.0, Color::srgb(0.9, 0.9, 0.4));
-                    line(parent, format!("Now = {}", stands(setting, &settings, &kept)), 16.0, Color::srgb(0.9, 0.9, 0.4));
-                    let (least, most) = setting.range();
-                    for text in [
-                        setting.says().to_string(),
-                        format!("From {least} to {most}, {} as built", setting.default()),
-                        if setting.hot() { "Hot: holds at once, for every player" } else { "Cold: kept at once, holds from the server's next start" }.to_string(),
-                        "Type a value, press Enter (empty = as built)".to_string(),
-                    ] {
-                        line(parent, text, 12.0, Color::srgb(0.6, 0.6, 0.6));
-                    }
-                    gap(parent);
-                    line(parent, "Esc. Back", 16.0, BACK);
                 }
                 MenuPath::Client => {
                     let rows = [
@@ -286,13 +255,6 @@ pub fn update_console_menu(
             }
         });
     }
-}
-
-/// A setting as it is in force, and what is kept for the server's next
-/// start where that differs.
-fn stands(setting: Setting, settings: &Settings, kept: &Kept) -> String {
-    let (now, next) = (settings.get(setting), kept.0.get(setting));
-    if next == now { now.to_string() } else { format!("{now}, {next} at restart") }
 }
 
 fn state_color(state: bool) -> Color {

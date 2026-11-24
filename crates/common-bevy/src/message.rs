@@ -37,14 +37,9 @@ pub enum Event {
     /// Client → Server: change the world's calendar for everyone. An admin
     /// request, as ungated on the wire as `Teleport` (issue #21).
     ChangeCalendar { change: crate::systems::CalendarChange },
-    /// Client → Server: set `setting` to `value`, which the server holds
-    /// within its range and keeps. An admin's request, as ungated on the
-    /// wire as `Teleport`.
-    Set { setting: crate::settings::Setting, value: i32 },
-    /// Server → Client: every setting as it is in force and as it is
-    /// kept, sent to a client as it enters and to every client when one
-    /// changes. The two differ where a cold setting waits on a restart.
-    Settings { running: crate::settings::Settings, kept: crate::settings::Settings },
+    /// Server → Client: every setting as it is in force, sent to a
+    /// client as it enters and to every client when a hot one changes.
+    Settings { settings: crate::settings::Settings },
     /// Client → Server: roll the whole world back `ms` milliseconds, as
     /// the store kept it then: on the calendar where `game`, on the real
     /// clock otherwise. The calendar goes back with it, and the server
@@ -262,7 +257,6 @@ impl Event {
             | Event::Play
             | Event::Leave
             | Event::ChangeCalendar { .. }
-            | Event::Set { .. }
             | Event::Settings { .. }
             | Event::Rollback { .. }
             | Event::Calendar { .. } => None,

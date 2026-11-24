@@ -1,14 +1,19 @@
-//! The monitoring console: a page for each process publishing metrics to
-//! its kind's multicast group (`common::metrics`), switched with the
-//! number keys, Tab, or a click on the strip at the top. Processes of one
+//! The admin console: a program of its own, apart from the dev console a
+//! client draws over the game, and the one thing that starts a server
+//! (`child`). It has a page for each process publishing metrics to its
+//! kind's multicast group (`common::metrics`) and, last, a page for the
+//! server and its settings as the store keeps them (`settings`),
+//! switched with the number keys, Tab, or a click on the strip at the top. Processes of one
 //! kind share a group, and each is told apart by the address it sends
 //! from: every client running gets a page of its own, numbered in the
 //! order first heard, and loses it once silent for `FORGET`. Every source
 //! is heard whichever page shows, so a page switched to has its history.
 
+mod child;
 mod client;
 mod feed;
 mod server;
+mod settings;
 mod widgets;
 
 use std::{
@@ -88,7 +93,7 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             load_fonts(&cc.egui_ctx);
-            Ok(Box::new(Console { rx, sources: Vec::new(), shown: Shown::Kind(Kind::Server), char_width: None, row_height: None }))
+            Ok(Box::new(Console { rx, sources: Vec::new(), shown: Shown::Kind(Kind::Server), settings: settings::Page::new(), server: child::Server::default(), char_width: None, row_height: None }))
         }),
     )
 }
@@ -130,17 +135,21 @@ impl Source {
     }
 }
 
-/// The page up: a source, or a kind none of whose processes is heard.
+/// The page up: a source, a kind none of whose processes is heard, or
+/// the server's settings.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Shown {
     Source(SocketAddr),
     Kind(Kind),
+    Settings,
 }
 
 struct Console {
     rx: mpsc::Receiver<(Kind, SocketAddr, MetricsPacket)>,
     sources: Vec<Source>,
     shown: Shown,
+    settings: settings::Page,
+    server: child::Server,
     char_width: Option<f32>,
     row_height: Option<f32>,
 }
@@ -164,7 +173,7 @@ impl Console {
     }
 
     /// The pages in the strip's order: each kind's sources by number, or
-    /// the kind alone while none is heard.
+    /// the kind alone while none is heard; then the settings.
     fn pages(&self) -> Vec<Shown> {
         let mut pages = Vec::new();
         for kind in Kind::ALL {
@@ -175,6 +184,7 @@ impl Console {
             }
             pages.extend(ofkind.iter().map(|s| Shown::Source(s.sender)));
         }
+        pages.push(Shown::Settings);
         pages
     }
 
@@ -186,6 +196,7 @@ impl Console {
         match page {
             Shown::Source(sender) => self.source(sender).map(|s| s.kind),
             Shown::Kind(kind) => Some(kind),
+            Shown::Settings => None,
         }
     }
 
@@ -193,6 +204,7 @@ impl Console {
         match page {
             Shown::Source(sender) => self.source(sender).map_or_else(String::new, Source::label),
             Shown::Kind(kind) => kind.label().to_string(),
+            Shown::Settings => "SETTINGS".to_string(),
         }
     }
 
@@ -207,6 +219,10 @@ impl Console {
     }
 
     fn switch(&mut self, ctx: &egui::Context) {
+        // A value being typed on the settings page has the keys
+        if ctx.wants_keyboard_input() {
+            return;
+        }
         let pages = self.pages();
         let keys = [egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num4, egui::Key::Num5, egui::Key::Num6, egui::Key::Num7, egui::Key::Num8, egui::Key::Num9];
         ctx.input(|input| {
@@ -233,7 +249,7 @@ impl Console {
                 let text = format!("{}{} {}{} ", if lit { "[" } else { " " }, number + 1, self.label(page), if lit { "]" } else { " " });
                 let color = match (lit, page) {
                     (true, _) => COLOR_NORMAL,
-                    (false, Shown::Source(_)) => COLOR_DIM,
+                    (false, Shown::Source(_) | Shown::Settings) => COLOR_DIM,
                     (false, Shown::Kind(_)) => COLOR_BORDER,
                 };
                 if ui.add(egui::Label::new(colored_mono(&text, color)).sense(egui::Sense::click())).clicked() {
@@ -241,9 +257,14 @@ impl Console {
                 }
             }
             ui.label(colored_mono("   ", COLOR_DIM));
+            if self.shown == Shown::Settings {
+                let (text, color) = self.settings.status();
+                ui.label(colored_mono(text, color));
+                return;
+            }
             let Some(source) = (match self.shown {
                 Shown::Source(sender) => self.source(sender),
-                Shown::Kind(_) => None,
+                Shown::Kind(_) | Shown::Settings => None,
             }) else {
                 ui.label(colored_mono("NO SIGNAL", COLOR_CRITICAL));
                 return;
@@ -286,9 +307,13 @@ impl eframe::App for Console {
             self.status(ui);
             ui.add_space(4.0);
 
+            if self.shown == Shown::Settings {
+                self.settings.draw(ui, &mut self.server);
+                return;
+            }
             let Some(source) = (match self.shown {
                 Shown::Source(sender) => self.source(sender),
-                Shown::Kind(_) => None,
+                Shown::Kind(_) | Shown::Settings => None,
             }) else {
                 ui.label(colored_mono("\n  AWAITING TELEMETRY...", COLOR_DIM));
                 return;

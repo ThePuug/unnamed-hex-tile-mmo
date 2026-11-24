@@ -59,7 +59,6 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Home { .. } => "Home",
         Event::Hail { .. } => "Hail",
         Event::Draw { .. } => "Draw",
-        Event::Set { .. } => "Set",
         Event::Settings { .. } => "Settings",
         Event::Wagon { .. } => "Wagon",
         Event::Send { .. } => "Send",
@@ -339,7 +338,7 @@ pub fn send_try(
         let mut event = message.event.clone();
         match event {
             // A spawn is asked for by the server's own id, and these are about no entity
-            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping | Event::ChangeCalendar { .. } | Event::Rollback { .. } | Event::Set { .. } => {}
+            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping | Event::ChangeCalendar { .. } | Event::Rollback { .. } => {}
             Event::Input { .. }
             | Event::UseAbility { .. }
             | Event::View { .. }

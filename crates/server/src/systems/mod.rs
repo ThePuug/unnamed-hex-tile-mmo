@@ -14,7 +14,6 @@ pub mod input;
 pub mod loot;
 pub mod mount;
 pub mod renet;
-pub mod settings;
 pub mod settlers;
 pub mod summary;
 pub mod warming;

@@ -2935,6 +2935,8 @@ version = "0.1.0"
 dependencies = [
  "common",
  "eframe",
+ "futures-lite",
+ "sqlx",
 ]
 
 [[package]]

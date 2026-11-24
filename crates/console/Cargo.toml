@@ -6,3 +6,7 @@ version = "0.1.0"
 [dependencies]
 common = { path = "../common" }
 eframe = "0.31"
+futures-lite = "2"
+# The store's settings are changed in place. Queries are checked as they
+# run: the admin console has no `.sqlx/` of its own.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-smol", "tls-rustls", "postgres"] }

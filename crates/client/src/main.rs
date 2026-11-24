@@ -219,7 +219,6 @@ fn main() {
     app.init_resource::<crate::systems::rope::RopeKit>();
     app.init_resource::<common_bevy::tuning::Tuning>();
     app.init_resource::<common_bevy::settings::Settings>();
-    app.init_resource::<common_bevy::settings::Kept>();
     app.init_resource::<crate::resources::RenderOrigin>();
     app.init_resource::<common_bevy::haven::Haven>();
     app.init_resource::<gathering::LootWindow>();

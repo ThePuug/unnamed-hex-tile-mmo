@@ -33,8 +33,6 @@ pub enum DevConsoleAction {
     /// Stage a party of this archetype ahead of the actor the client sees
     /// as: a den, a party out of its reach, or one engaging it.
     SpawnParty { archetype: common_bevy::archetype::EnemyArchetype, staging: super::state::Staging },
-    /// Have the server set a setting to a value.
-    Set(common_bevy::settings::Setting, i32),
 }
 
 /// System that executes console actions
@@ -60,7 +58,6 @@ pub fn execute_console_actions(
             DevConsoleAction::ViewTarget | DevConsoleAction::StopViewing => {}
             DevConsoleAction::SpawnParty { .. } => {}
             DevConsoleAction::Rollback { .. } => {}
-            DevConsoleAction::Set(..) => {}
             DevConsoleAction::SetClockHour(_)
             | DevConsoleAction::ShiftClock(_)
             | DevConsoleAction::ToggleClockHold
@@ -75,15 +72,6 @@ pub fn execute_console_actions(
     }
 }
 
-
-/// Asks the server to set what the Settings menu set.
-pub fn send_settings(mut reader: MessageReader<DevConsoleAction>, mut writer: MessageWriter<common_bevy::message::Try>) {
-    for action in reader.read() {
-        let DevConsoleAction::Set(setting, value) = *action else { continue };
-        info!("Setting asked: {} = {value}", setting.name());
-        writer.write(common_bevy::message::Try { event: common_bevy::message::Event::Set { setting, value } });
-    }
-}
 
 /// Asks the server to see the world as the target of the actor the client
 /// sees as, or stops the view.

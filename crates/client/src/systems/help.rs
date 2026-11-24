@@ -2,7 +2,7 @@
 //! [`Keys`], with what it does. While [`KEYCODE_HELP`] is held a press acts
 //! on nothing; what each reader would have done with it shows beside the
 //! cap that names the key, or at one shared spot where none does. The
-//! admin console reads its keys as it always has, and has no help. The
+//! dev console reads its keys as it always has, and has no help. The
 //! same tooltip shows what a [`Describes`] node says while the pointer
 //! rests on it and no key is asked about.
 

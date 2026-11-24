@@ -514,17 +514,11 @@ pub fn do_calendar(
     }
 }
 
-/// Takes the server's settings as it tells of them: those in force, and
-/// those it keeps.
-pub fn do_settings(
-    mut reader: MessageReader<Do>,
-    mut settings: ResMut<common_bevy::settings::Settings>,
-    mut held: ResMut<common_bevy::settings::Kept>,
-) {
+/// Takes the server's settings as it tells of them.
+pub fn do_settings(mut reader: MessageReader<Do>, mut settings: ResMut<common_bevy::settings::Settings>) {
     for message in reader.read() {
-        let Do { event: Event::Settings { running, kept } } = message else { continue };
-        settings.set_if_neq(*running);
-        held.set_if_neq(common_bevy::settings::Kept(*kept));
+        let Do { event: Event::Settings { settings: told } } = message else { continue };
+        settings.set_if_neq(*told);
     }
 }
 

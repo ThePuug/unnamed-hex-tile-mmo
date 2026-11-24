@@ -102,9 +102,8 @@ pub struct Batch {
     /// Each depot written, by the tile its hub is known by: what it
     /// holds, as the JSON of its stacks.
     pub depots: Vec<((i32, i32), String)>,
-    /// Each setting an admin changed, by its number, and its value.
-    pub settings: Vec<(i32, i32)>,
 }
+
 
 /// The chunks and accounts a write named under numbers since raised.
 /// Where either holds any, nothing of the batch was written.
@@ -284,6 +283,21 @@ impl Store {
     /// has changed.
     pub async fn settings(&self) -> Result<Vec<(i32, i32)>, sqlx::Error> {
         Ok(sqlx::query!("SELECT id, value FROM setting").fetch_all(&self.pool).await?.into_iter().map(|row| (row.id, row.value)).collect())
+    }
+
+    /// Passes on every setting kept, read anew each time one changes,
+    /// for as long as `tx` is heard. The connection it listens on is the
+    /// pool's, and comes back by itself where it is lost. Ends in the
+    /// error that stopped it.
+    pub async fn hear(&self, tx: std::sync::mpsc::Sender<Vec<(i32, i32)>>) -> Result<(), sqlx::Error> {
+        let mut listener = sqlx::postgres::PgListener::connect_with(&self.pool).await?;
+        listener.listen(common::settings::SETTING_CHANNEL).await?;
+        loop {
+            listener.recv().await?;
+            if tx.send(self.settings().await?).is_err() {
+                return Ok(());
+            }
+        }
     }
 
     /// The calendar as an admin left it: how far it stands from the wall
@@ -582,15 +596,6 @@ impl Store {
         )
         .execute(&mut *tx)
         .await?;
-        sqlx::query!(
-            "INSERT INTO setting (id, value)
-             SELECT id, value FROM UNNEST($1::INT[], $2::INT[]) AS t(id, value)
-             ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value",
-            &batch.settings.iter().map(|setting| setting.0).collect::<Vec<_>>(),
-            &batch.settings.iter().map(|setting| setting.1).collect::<Vec<_>>(),
-        )
-        .execute(&mut *tx)
-        .await?;
         if let Some((shift, held)) = batch.calendar {
             sqlx::query!(
                 "INSERT INTO calendar (shift, held) VALUES ($1, $2)
@@ -877,17 +882,23 @@ mod tests {
         });
     }
 
-    /// A setting written is kept, and written again takes its new value.
+    /// A setting the admin console writes is read, and a change to one
+    /// is told on the channel a server listens on.
     #[test]
     #[ignore = "needs the PostgreSQL the server keeps to"]
-    fn a_setting_written_is_kept_as_it_was_last_set() {
+    fn a_setting_changed_is_read_and_told() {
         scratch(async |store| {
             assert!(store.settings().await.unwrap().is_empty());
-            assert!(store.write(Batch { settings: vec![(1, 4), (3, 100)], ..Default::default() }).await.unwrap().is_empty());
-            assert!(store.write(Batch { settings: vec![(1, 7)], ..Default::default() }).await.unwrap().is_empty());
+            let mut listener = sqlx::postgres::PgListener::connect_with(&store.pool).await.unwrap();
+            listener.listen(common::settings::SETTING_CHANNEL).await.unwrap();
+            sqlx::query("INSERT INTO setting (id, value) VALUES (1, 4), (3, 100)").execute(&store.pool).await.unwrap();
+            assert_eq!(listener.recv().await.unwrap().channel(), common::settings::SETTING_CHANNEL);
+            sqlx::query("UPDATE setting SET value = 7 WHERE id = 1").execute(&store.pool).await.unwrap();
+            listener.recv().await.unwrap();
             let mut kept = store.settings().await.unwrap();
             kept.sort();
             assert_eq!(kept, vec![(1, 7), (3, 100)]);
+            drop(listener);
         });
     }
 

@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 
 use super::state::{GotoCoordType, GotoInputState, Staging};
-use common_bevy::settings::Setting;
 
 use super::{
     state::{DevConsole, MenuPath},
@@ -56,7 +55,7 @@ fn handle(
     // Back key: Numpad0 normally, Escape when numpad digits have other meaning
     let uses_escape_back = matches!(
         console.current_menu,
-        MenuPath::GotoInput | MenuPath::WorldClock | MenuPath::Setting(_)
+        MenuPath::GotoInput | MenuPath::WorldClock
     );
 
     let back_pressed = if uses_escape_back {
@@ -75,9 +74,6 @@ fn handle(
             if matches!(console.current_menu, MenuPath::WorldClock) {
                 console.clock_buf.clear();
             }
-            if matches!(console.current_menu, MenuPath::Setting(_)) {
-                console.setting_buf.clear();
-            }
             console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
         }
 
@@ -92,8 +88,6 @@ fn handle(
     // Handle menu-specific inputs
     match console.current_menu {
         MenuPath::Root | MenuPath::World | MenuPath::Travel | MenuPath::Stages => handle_group_menu(keyboard, console),
-        MenuPath::Settings => handle_settings_menu(keyboard, console),
-        MenuPath::Setting(setting) => handle_setting(keyboard, console, action_writer, setting),
         MenuPath::Client => handle_client_menu(keyboard, console, action_writer),
         MenuPath::WorldClock => handle_world_clock(keyboard, console, action_writer, dt),
         MenuPath::Rollback => handle_rollback_menu(keyboard, console, action_writer),
@@ -108,7 +102,7 @@ fn handle(
 /// The menus a group's rows open, in row order from numpad 1.
 pub fn rows(menu: &MenuPath) -> &'static [MenuPath] {
     match menu {
-        MenuPath::Root => &[MenuPath::World, MenuPath::Travel, MenuPath::Stages, MenuPath::Settings, MenuPath::Client],
+        MenuPath::Root => &[MenuPath::World, MenuPath::Travel, MenuPath::Stages, MenuPath::Client],
         MenuPath::World => &[MenuPath::WorldClock, MenuPath::Rollback],
         MenuPath::Travel => &[MenuPath::GotoSelect, MenuPath::View],
         MenuPath::Stages => &[MenuPath::Stage(Staging::Den), MenuPath::Stage(Staging::Party), MenuPath::Stage(Staging::Opposition)],
@@ -126,7 +120,6 @@ const ROW_KEYS: [KeyCode; 9] = [
 fn open(console: &mut DevConsole, menu: MenuPath) {
     match menu {
         MenuPath::WorldClock => console.clock_buf.clear(),
-        MenuPath::Setting(_) => console.setting_buf.clear(),
         MenuPath::Rollback => console.rollback.armed = false,
         _ => {}
     }
@@ -142,56 +135,6 @@ fn handle_group_menu(keyboard: &mut ButtonInput<KeyCode>, console: &mut DevConso
             open(console, menu.clone());
             return;
         }
-    }
-}
-
-/// A digit opens the setting its row lists.
-fn handle_settings_menu(keyboard: &mut ButtonInput<KeyCode>, console: &mut DevConsole) {
-    // Every setting has a key, or the zip drops the rows past the last
-    const _: () = assert!(Setting::ALL.len() <= ROW_KEYS.len());
-    for (key, setting) in ROW_KEYS.into_iter().zip(Setting::ALL) {
-        if keyboard.just_pressed(key) {
-            keyboard.clear_just_pressed(key);
-            open(console, MenuPath::Setting(setting));
-            return;
-        }
-    }
-}
-
-/// One setting: digits typed and Enter ask the server to set it to that
-/// value, or with nothing typed to what it is where no admin has changed
-/// it. Either way the console goes back to the settings.
-fn handle_setting(
-    keyboard: &mut ButtonInput<KeyCode>,
-    console: &mut DevConsole,
-    action_writer: &mut MessageWriter<DevConsoleAction>,
-    setting: Setting,
-) {
-    if keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::NumpadEnter) {
-        keyboard.clear_just_pressed(KeyCode::Enter);
-        keyboard.clear_just_pressed(KeyCode::NumpadEnter);
-        let buf = console.setting_buf.trim();
-        let value = if buf.is_empty() { Some(setting.default()) } else { buf.parse().ok() };
-        let Some(value) = value else {
-            info!("Setting: invalid input '{buf}'");
-            return;
-        };
-        action_writer.write(DevConsoleAction::Set(setting, value));
-        console.setting_buf.clear();
-        console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
-        return;
-    }
-
-    for &(key, ch) in DIGIT_KEYS {
-        if keyboard.just_pressed(key) {
-            console.setting_buf.push(ch);
-            keyboard.clear_just_pressed(key);
-        }
-    }
-
-    if keyboard.just_pressed(KeyCode::Backspace) {
-        console.setting_buf.pop();
-        keyboard.clear_just_pressed(KeyCode::Backspace);
     }
 }
 

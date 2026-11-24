@@ -14,6 +14,7 @@ pub mod network;
 pub mod numfmt;
 pub mod plane;
 pub mod rock;
+pub mod settings;
 pub mod summary;
 pub mod timers;
 pub use cover::{boulder_draw, boulder_sway, sway, Canopy, Content, Cover, Outcrop, Sway, SITES, SITE_SLOTS, SLOT_JITTER, SLOT_SHARE, SLOT_TOWARD, TILE_SLOTS};

@@ -30,9 +30,9 @@ say in the proposal why neither did.
 
 ```bash
 cargo build
-cargo run --bin server             # separate processes
+cargo run --bin console            # the admin console: it starts, stops and restarts the server, and shows its metrics and settings
 cargo run --bin client
-HAVEN=<q>,<r> cargo run --bin server   # the haven and the spawn elsewhere; the viewer's centre follows it too
+HAVEN=<q>,<r> cargo run --bin console  # the haven and the spawn elsewhere, for the server it starts; the viewer's centre follows it too
 cargo run --bin music-player       # needs a SoundFont: $SOUNDFONT or ~/soundfonts/GeneralUser.sf2
 cargo run --bin arena               # archetype v archetype balance, headless; keys in arena/src/main.rs
 cargo run --bin arena -- tune screen|balance|minds|settle|loop|show|apply   # searches; bounds in arena/src/tune.toml
@@ -111,7 +111,7 @@ flat-top hex grid. All crates under `crates/`:
 | `world` | World event system + terrain generation, no Bevy |
 | `world-viewer` | CLI rendering the event stack, or one event's field or index, to an image; its README says what a view may read |
 | `qrz` | Hex grid library — see `crates/qrz/AGENTS.md` |
-| `console` | Monitoring console: a page for each process publishing to its multicast group (`common::metrics`) — server, client (admin builds) |
+| `console` | The admin console, a program of its own: a page for each process publishing to its multicast group (`common::metrics`) — server, client (admin builds) — and a page that changes the server's settings in the store and asks a running server to start again |
 | `metrics-cli` | `metrics`: records what the game's processes publish to their multicast groups (`common::metrics`) and reads it back — snapshots, stats over a window, pages |
 | `music` | Music composed from a seed and rendered through a SoundFont — the pieces and their vocabulary; the client composes from it as it plays, `assets/crates/musicgen` checks and proofs it, and its `AGENTS.md` binds the pieces |
 | `music-player` | A window playing fresh variations of the chosen pieces as they are composed, a rest between |
@@ -270,8 +270,23 @@ into `VisualPosition` and `Heading`. Remote entities run the same physics in
 **Keys.** Every key a player presses is read through
 `client::systems::help::Keys`, which takes what the key does: held Right
 Alt turns a press into that statement beside the cap naming the key
-(`keycap::Names`). Only the admin console reads raw `ButtonInput`, and
+(`keycap::Names`). Only the dev console reads raw `ButtonInput`, and
 has no help.
+
+**Two consoles.** The dev console is the menu a client draws over the
+game in admin builds (`client::plugins::console`, `DevConsole`): it acts
+on that client and on the world through `Try`. The admin console is the
+program `crates/console` (`cargo run --bin console`): metrics, the
+server's settings, and the server itself. Neither is called the other's
+name.
+
+**The server is the admin console's child.** Nothing else starts one:
+`server::main` does not run without `common::settings::CONSOLE_ENV`,
+which the console sets (`console::child`). The console holds the other
+end of the server's standard input and lets go of it to stop it, so a
+server whose console is gone writes what it holds and stops. A restart
+is that and a new process, built anew where the console was run by
+cargo. The server's environment and its output are the console's.
 
 **Network events.** `Try` (client→server) → server validates → `Do`
 (server→client broadcast). Never write `Do` directly.
@@ -412,16 +427,17 @@ sets `mmo.when` first. A rolled-back server writes nothing more and
 stops, since its memory is of a world that is gone.
 
 **Settings.** A number an admin may change without a build is a
-`common_bevy::settings::Setting`, never a `const`: the server owns it,
-keeps it in the store, tells every client of it, and takes a change from
-the admin console (`server::systems::settings::try_set`). A hot one is
-read from `Settings` each time it is used, on either side, so a change
-holds from the next frame; a cold one is read once as the server starts,
-and a change waits in `Kept` for the next start. A setting is hot only
-where nothing built from it is kept around. A reader that copies a hot
-one into its own state follows `Settings` as it changes, as
-`settlers::heed_settings` does. The table is not journaled: a rollback
-leaves the settings as they are.
+`common::settings::Setting`, never a `const`, and a row of the store's
+`setting` table. The admin console changes it there, server running or
+not; the server never writes one. It reads them all as it starts, hears
+each change from the store (`Store::hear`, told by the table's trigger)
+and tells every client. A hot one is read from
+`common_bevy::settings::Settings` each time it is used, on either side,
+so a change holds within a frame of being heard; a cold one is read once
+as the server starts. A setting is hot only where nothing built from it
+is kept around. A reader that copies a hot one into its own state follows
+`Settings` as it changes, as `settlers::heed_settings` does. The table is
+not journaled: a rollback leaves the settings as they are.
 
 **Economy.** An item appearing, being consumed or changing holder is
 announced as a `server::systems::economy::Moved` the frame it happens,

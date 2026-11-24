@@ -92,16 +92,12 @@ use store::{Batch, Entered, PileKey, Recalled, Refused, Store};
 /// loses at most this much of it.
 const FLUSH: Duration = Duration::from_secs(5);
 
-/// The store a server keeps to where `DATABASE_URL` names none: a role and
-/// a database of its own on the machine's PostgreSQL, made once by
-/// `CREATE ROLE mmo LOGIN PASSWORD 'mmo' CREATEDB` and
-/// `CREATE DATABASE mmo OWNER mmo`.
-const LOCAL: &str = "postgres://mmo:mmo@localhost:5432/mmo";
+use common::settings::{store_url as url, LOCAL_STORE as LOCAL};
 
-/// Where the store is.
-fn url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_else(|_| LOCAL.to_owned())
-}
+/// Every setting kept, as the store tells of a change to one
+/// (`Store::hear`), and the task hearing it.
+#[derive(Resource)]
+struct Heard(std::sync::Mutex<std::sync::mpsc::Receiver<Vec<(i32, i32)>>>, #[allow(dead_code)] Task<()>);
 
 pub struct PersistencePlugin;
 
@@ -124,13 +120,18 @@ impl Plugin for PersistencePlugin {
                 None => warn!("store: this build has no setting {id}; it stays kept at {value}"),
             }
         }
-        let mut keeper = Keeper::new(store);
-        keeper.settings = settings;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let hearing = store.clone();
+        let hearing = IoTaskPool::get().spawn(async move {
+            if let Err(e) = hearing.hear(tx).await {
+                error!("store: no longer listening, so a setting changed goes unheard until the server starts again: {e}");
+            }
+        });
         app.insert_resource(settings)
-            .insert_resource(common_bevy::settings::Kept(settings))
-            .insert_resource(keeper)
+            .insert_resource(Heard(std::sync::Mutex::new(rx), hearing))
+            .insert_resource(Keeper::new(store))
             .add_systems(Startup, keep.after(crate::systems::world::setup))
-            .add_systems(Update, (roll_back, note, ask, receive, flush).chain())
+            .add_systems(Update, (heed, roll_back, note, ask, receive, flush).chain())
             .add_systems(Last, flush_at_exit);
     }
 }
@@ -154,7 +155,6 @@ struct Carried {
     characters: Vec<(Identity, String)>,
     hubs: bool,
     calendar: bool,
-    settings: Vec<Setting>,
     /// Each leaf a map charted, by the map's number and the chunk, and
     /// each map used up.
     leaves: Vec<(u32, ChunkId)>,
@@ -168,7 +168,7 @@ struct Carried {
 
 impl Carried {
     fn is_empty(&self) -> bool {
-        self.tiles.is_empty() && self.dens.is_empty() && self.camps.is_empty() && self.characters.is_empty() && !self.hubs && !self.calendar && self.settings.is_empty() && self.leaves.is_empty() && self.spent.is_empty() && self.depots.is_empty() && self.moved.is_empty()
+        self.tiles.is_empty() && self.dens.is_empty() && self.camps.is_empty() && self.characters.is_empty() && !self.hubs && !self.calendar && self.leaves.is_empty() && self.spent.is_empty() && self.depots.is_empty() && self.moved.is_empty()
     }
 }
 
@@ -205,10 +205,6 @@ struct Keeper {
     /// and where held, and whether it has changed since the last write.
     calendar: (i64, Option<i64>),
     changed_calendar: bool,
-    /// Every setting as the store holds it or the next write leaves it,
-    /// and those changed since the last write.
-    settings: Settings,
-    changed_settings: HashSet<Setting>,
     /// Whether the world was rolled back under this server: it writes
     /// nothing more.
     rolled: bool,
@@ -261,8 +257,6 @@ impl Keeper {
             anchor: 0,
             calendar: (0, None),
             changed_calendar: false,
-            settings: Settings::default(),
-            changed_settings: HashSet::new(),
             rolled: false,
             changed: HashSet::new(),
             written: HashMap::new(),
@@ -313,8 +307,6 @@ impl Keeper {
         let mut batch = Batch { economy: std::mem::take(&mut self.due), when: self.when.0 as i64, ..default() };
         let calendar_changed = std::mem::take(&mut self.changed_calendar);
         batch.calendar = calendar_changed.then_some(self.calendar);
-        let settings: Vec<Setting> = self.changed_settings.drain().collect();
-        batch.settings = settings.iter().map(|&setting| (setting.id(), self.settings.get(setting))).collect();
         let hubs_changed = std::mem::take(&mut self.changed_hubs);
         if hubs_changed {
             batch.hubs = Some(hubs.kept());
@@ -414,7 +406,7 @@ impl Keeper {
                 None => error!("store: {moved:?} names a player whose account this server does not hold; the ledger lacks it"),
             }
         }
-        (Carried { tiles, dens: sites, camps: hearths, characters, hubs: hubs_changed, calendar: calendar_changed, settings, leaves, spent, depots: hubs_left_at, moved, economy: batch.economy }, batch)
+        (Carried { tiles, dens: sites, camps: hearths, characters, hubs: hubs_changed, calendar: calendar_changed, leaves, spent, depots: hubs_left_at, moved, economy: batch.economy }, batch)
     }
 
     /// The write carrying `carried` landed, was refused or failed.
@@ -453,7 +445,6 @@ impl Keeper {
         self.changed_camps.extend(carried.camps);
         self.changed_hubs |= carried.hubs;
         self.changed_calendar |= carried.calendar;
-        self.changed_settings.extend(carried.settings);
         self.charted.extend(carried.leaves);
         self.spent.splice(0..0, carried.spent);
         self.changed_depots.extend(carried.depots);
@@ -540,6 +531,36 @@ fn number(store: &Store, charts: &mut Charts) {
 /// Takes an admin's rollback: lets the write in flight land, has the
 /// store put the world back as it was, and stops the server with nothing
 /// more written.
+/// Takes the settings as the store tells of a change to one: each hot
+/// one is in force as it is now kept, one with no row as built, and
+/// every client is told; a cold one waits for the next start.
+fn heed(
+    heard: Res<Heard>,
+    mut settings: ResMut<Settings>,
+    mut waiting: Local<HashMap<Setting, i32>>,
+    mut writer: MessageWriter<common_bevy::message::Do>,
+) {
+    let Ok(heard) = heard.0.lock() else { return };
+    for rows in heard.try_iter() {
+        let mut changed = false;
+        for setting in Setting::ALL {
+            let value = setting.held(rows.iter().find(|row| row.0 == setting.id()).map_or(setting.default(), |row| row.1));
+            if setting.hot() {
+                if settings.get(setting) != value {
+                    settings.set(setting, value);
+                    info!("store: {} is {value}", setting.name());
+                    changed = true;
+                }
+            } else if waiting.insert(setting, value) != Some(value) && value != settings.get(setting) {
+                info!("store: {} is {} and will be {value} once the server starts again", setting.name(), settings.get(setting));
+            }
+        }
+        if changed {
+            writer.write(common_bevy::message::Do { event: common_bevy::message::Event::Settings { settings: *settings } });
+        }
+    }
+}
+
 fn roll_back(mut reader: MessageReader<common_bevy::message::Try>, mut keeper: ResMut<Keeper>, mut exit: MessageWriter<AppExit>) {
     for message in reader.read() {
         let common_bevy::message::Try { event: common_bevy::message::Event::Rollback { game, ms } } = message else { continue };
@@ -571,19 +592,11 @@ fn note(
     mut depots: ResMut<Depots>,
     mut known: ResMut<Characters>,
     runtime: Res<combat::RunTime>,
-    settings: Res<common_bevy::settings::Kept>,
     time: Res<Time>,
     mut keeper: ResMut<Keeper>,
 ) {
     let keeper = &mut *keeper;
     keeper.when = runtime.when(&time);
-    for setting in Setting::ALL {
-        let value = settings.0.get(setting);
-        if keeper.settings.get(setting) != value {
-            keeper.settings.set(setting, value);
-            keeper.changed_settings.insert(setting);
-        }
-    }
     if charts.numbers_left() == 0 {
         number(&keeper.store, &mut charts);
     }

@@ -107,7 +107,7 @@ pub fn do_presence(
     mut loaded_by_query: Query<&mut common_bevy::components::loaded_by::LoadedBy>,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
-    (runtime, settings, kept): (Res<RunTime>, Res<common_bevy::settings::Settings>, Res<common_bevy::settings::Kept>),
+    (runtime, settings): (Res<RunTime>, Res<common_bevy::settings::Settings>),
     spawn_point: Option<Res<common_bevy::components::resources::SpawnPoint>>,
     mut admission: ResMut<Admission>,
     characters: Query<(), With<PlayerControlled>>,
@@ -182,7 +182,7 @@ pub fn do_presence(
                 // init client
                 let dt = runtime.now(&time);
                 conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Init { ent, dt, calendar: runtime.calendar, haven: spawn_point.0 }});
-                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Settings { running: *settings, kept: kept.0 }});
+                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Settings { settings: *settings }});
 
                 // Send own Spawn + component states directly to connecting client
                 // AOI will handle discovering nearby entities via Changed<Loc>
@@ -344,7 +344,7 @@ pub fn write_try(
                 }
                 // An admin's party stands ahead of whichever actor it names,
                 // and an admin's calendar is the world's
-                Event::SpawnParty { .. } | Event::ChangeCalendar { .. } | Event::Rollback { .. } | Event::Set { .. } => {
+                Event::SpawnParty { .. } | Event::ChangeCalendar { .. } | Event::Rollback { .. } => {
                     writer.write(Try { event });
                 }
                 // An auto-attack is the server's to time, never a client's to ask for

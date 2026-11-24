@@ -38,7 +38,7 @@ impl GotoInputState {
     }
 }
 
-/// The developer console's state. Held in every build, so what reads
+/// The dev console's state. Held in every build, so what reads
 /// `visible` compiles everywhere; only an admin build has the console
 /// that sets it.
 #[derive(Resource, Clone, PartialEq)]
@@ -60,8 +60,6 @@ pub struct DevConsole {
     pub clock_date_field: DateField,
     /// How far back a rollback goes (when in the Rollback menu).
     pub rollback: Rollback,
-    /// Text buffer for the value typed (when in a Setting menu).
-    pub setting_buf: String,
 }
 
 impl Default for DevConsole {
@@ -76,7 +74,6 @@ impl Default for DevConsole {
             clock_scrub_secs: 0.0,
             clock_date_field: DateField::default(),
             rollback: Rollback::default(),
-            setting_buf: String::new(),
         }
     }
 }
@@ -132,10 +129,6 @@ pub enum MenuPath {
     Travel,
     /// What is staged ahead of the actor the client sees as
     Stages,
-    /// The server's settings, for every player
-    Settings,
-    /// One setting, its value typed
-    Setting(common_bevy::settings::Setting),
     /// What this client alone draws and sends: its overlays and its
     /// added latency
     Client,
@@ -183,8 +176,6 @@ impl MenuPath {
             MenuPath::World => "World",
             MenuPath::Travel => "Travel",
             MenuPath::Stages => "Stage",
-            MenuPath::Settings => "Settings",
-            MenuPath::Setting(setting) => setting.name(),
             MenuPath::Client => "Client",
             MenuPath::WorldClock => "World Clock",
             #[cfg(feature = "admin")]

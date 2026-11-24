@@ -16,8 +16,36 @@ use crate::{
 };
 
 
+/// Whether the admin console let go of the server: it stops.
+static LET_GO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Stops the server once the console that started it lets go.
+fn stop_when_let_go(mut exit: MessageWriter<AppExit>) {
+    if LET_GO.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        warn!("the admin console let go of the server; it stops");
+        exit.write(AppExit::Success);
+    }
+}
+
+/// Runs the server as the admin console's child, and as nothing else.
+/// The console holds the other end of its standard input: when that
+/// closes, by the console's word or because the console is gone, the
+/// server writes what it holds and stops.
 fn main() {
+    if std::env::var_os(common::settings::CONSOLE_ENV).is_none() {
+        eprintln!("The server is started from the admin console, which holds and stops it: cargo run --bin console");
+        std::process::exit(2);
+    }
+    std::thread::spawn(|| {
+        let mut heard = String::new();
+        while std::io::stdin().read_line(&mut heard).is_ok_and(|read| read > 0) {
+            heard.clear();
+        }
+        LET_GO.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+
     let mut app = App::new();
+    app.add_systems(Update, stop_when_let_go);
     app.add_plugins((
         // Without a wait the runner spins a core. Physics is FixedUpdate, so
         // the wait only bounds how long a Try or Do sits before Update runs.
@@ -103,7 +131,6 @@ fn main() {
             crate::systems::settlers::tend_camps,
             crate::systems::settlers::try_hail,
             crate::systems::settlers::try_send,
-            crate::systems::settings::try_set,
             crate::systems::settlers::heed_settings,
             crate::systems::charts::chart,
             crate::systems::charts::try_draw,
