@@ -278,16 +278,39 @@ pub struct TileChanged {
     pub r: i32,
 }
 
-/// The tile a player has its loot window open on, and where it stood and
-/// faced as the window opened. The window shows the tile's piles, to any
-/// number of players at once, and closes the moment its player moves or
-/// turns.
+/// The tile a player has its loot window open on. The window shows the
+/// tile's piles, to any number of players at once, and closes the moment
+/// its player leaves its [`Stance`].
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Looting {
     pub q: i32,
     pub r: i32,
-    pub from: Position,
-    pub facing: Heading,
+}
+
+/// Where a player stood and faced as it last began a work or opened its
+/// loot window, which moving from there or turning from that facing
+/// breaks off. While it settles (`activation::SETTLE`) the stance follows
+/// it instead: the walk under way at the press is still arriving then.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Stance {
+    at: Position,
+    facing: Heading,
+    began: Moment,
+}
+
+impl Stance {
+    pub fn new(at: Position, facing: Heading, began: Moment) -> Self {
+        Self { at, facing, began }
+    }
+
+    /// Whether a player at `position` facing `heading` at `now` has kept
+    /// it.
+    pub fn kept(&mut self, position: Position, heading: Heading, now: Moment) -> bool {
+        if now.since(self.began) < common_bevy::components::activation::SETTLE {
+            (self.at, self.facing) = (position, heading);
+        }
+        self.at == position && self.facing == heading
+    }
 }
 
 /// Every open loot window, and who is in the world to have one.
@@ -383,16 +406,13 @@ impl Ground<'_, '_> {
 }
 
 /// The work a player is at: gathering slot `slot` of tile `(q, r)`, done
-/// at `until`, from where it stood and faced when it began. Moving from
-/// there, turning from that facing or being struck breaks it off.
+/// at `until`. Leaving its [`Stance`] or being struck breaks it off.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Working {
     pub q: i32,
     pub r: i32,
     pub slot: usize,
     pub until: Moment,
-    pub from: Position,
-    pub facing: Heading,
 }
 
 /// Tells everyone who sees `ent` what it is doing at a gather.
@@ -419,15 +439,15 @@ pub struct Looters<'w, 's> {
 }
 
 impl Looters<'_, '_> {
-    /// Opens `ent`'s loot window on `tile`, with the player standing
-    /// `from` and facing `facing`. A window it had open elsewhere closes,
-    /// and what it kept there is let go.
-    fn open(&mut self, ent: Entity, tile: (i32, i32), from: Position, facing: Heading) {
+    /// Opens `ent`'s loot window on `tile`, held by the stance the player
+    /// has. A window it had open elsewhere closes, and what it kept there
+    /// is let go.
+    fn open(&mut self, ent: Entity, tile: (i32, i32)) {
         if let Some(was) = self.windows.of(ent).filter(|&was| was != tile) {
             self.release(ent, was);
         }
         let cells = self.piles.cells(tile, ent, &self.windows);
-        self.commands.entity(ent).insert(Looting { q: tile.0, r: tile.1, from, facing });
+        self.commands.entity(ent).insert(Looting { q: tile.0, r: tile.1 });
         self.writer.write(Do { event: Event::Loot { ent, cells: Some(cells) } });
     }
 
@@ -531,6 +551,7 @@ pub fn try_gather(
     nntree: Res<common_bevy::plugins::nntree::NNTree>,
     mut players: Query<(&Loc, &mut Heading, &mut common_bevy::components::Turn, &mut Position, Has<Working>)>,
 ) {
+    let now = Moment::ZERO + time.elapsed();
     for message in reader.read() {
         let Try { event: Event::Gather { ent, q, r, slot } } = message else { continue };
         let (ent, q, r, slot) = (*ent, *q, *r, *slot as usize);
@@ -569,21 +590,25 @@ pub fn try_gather(
                 info!("gather: {ent} asked for the piles on ({q}, {r}), which holds none it may take");
                 continue;
             }
-            looters.open(ent, (q, r), position, facing);
+            looters.open(ent, (q, r));
             if !working {
                 show(ent, Some(common::gathering::Activity::Pickup), &mut looters.commands);
+            } else if facing != heading {
+                // Turning to the pile leaves the work
+                stop(ent, true, &mut looters.commands);
             }
         } else if let Some(work) = common::gathering::work(cover, slot) {
             if working {
                 continue;
             }
-            let until = Moment::ZERO + time.elapsed() + std::time::Duration::from_millis(common::gathering::WORK_MS);
-            looters.commands.entity(ent).insert(Working { q, r, slot, until, from: position, facing });
+            let until = now + std::time::Duration::from_millis(common::gathering::WORK_MS);
+            looters.commands.entity(ent).insert(Working { q, r, slot, until });
             show(ent, Some(common::gathering::Activity::Work(work)), &mut looters.commands);
         } else {
             info!("gather: {ent} asked for slot {slot} of ({q}, {r}), which holds nothing gatherable");
             continue;
         }
+        looters.commands.entity(ent).insert(Stance::new(position, facing, now));
         if let Ok((_, mut heading, mut turn, mut at, ..)) = players.get_mut(ent) {
             turn.heading = facing;
             *heading = facing;
@@ -592,22 +617,23 @@ pub fn try_gather(
     }
 }
 
-/// Ends each player's work: broken off where it has moved or turned since
-/// it began; done when its time is up, when what it worked on is gathered,
+/// Ends each player's work: broken off where it has left its stance; done
+/// when its time is up, when what it worked on is gathered,
 /// if it is still there and in reach. Its yield lies at once, kept for
 /// it: on the pile of its kind it keeps there already, or as a new one in
 /// the slot the gather freed; and its window opens on the tile.
 pub fn finish_work(
     mut looters: Looters,
     time: Res<Time>,
-    players: Query<(Entity, &Loc, &Heading, &Position, &Working, Has<Looting>)>,
+    mut players: Query<(Entity, &Loc, &Heading, &Position, &Working, &mut Stance, Has<Looting>)>,
 ) {
-    for (ent, loc, heading, position, working, looting) in &players {
-        if *position != working.from || *heading != working.facing {
+    let now = Moment::ZERO + time.elapsed();
+    for (ent, loc, heading, position, working, mut stance, looting) in &mut players {
+        if !stance.kept(*position, *heading, now) {
             stop(ent, looting, &mut looters.commands);
             continue;
         }
-        if Moment::ZERO + time.elapsed() < working.until {
+        if now < working.until {
             continue;
         }
         let Working { q, r, slot, .. } = *working;
@@ -633,7 +659,7 @@ pub fn finish_work(
         }
         looters.moved(stack, Holder::World, Holder::Pile(q, r, own.unwrap_or(harvest.freed)), Cause::Gather);
         stop(ent, true, &mut looters.commands);
-        looters.open(ent, (q, r), *position, *heading);
+        looters.open(ent, (q, r));
     }
 }
 
@@ -696,9 +722,15 @@ pub fn try_take(mut reader: MessageReader<Try>, mut looters: Looters, mut player
     }
 }
 
-/// Closes each window its player asks to close, or whose player has moved
-/// or turned at all since it opened, and lets go of what it kept there.
-pub fn close_windows(mut reader: MessageReader<Try>, mut looters: Looters, players: Query<(Entity, &Position, &Heading, &Looting, Has<Working>)>) {
+/// Closes each window its player asks to close, or whose player has left
+/// its stance, and lets go of what it kept there.
+pub fn close_windows(
+    mut reader: MessageReader<Try>,
+    mut looters: Looters,
+    time: Res<Time>,
+    mut players: Query<(Entity, &Position, &Heading, &Looting, &mut Stance, Has<Working>)>,
+) {
+    let now = Moment::ZERO + time.elapsed();
     let asked: Vec<Entity> = reader
         .read()
         .filter_map(|m| match m.event {
@@ -706,8 +738,8 @@ pub fn close_windows(mut reader: MessageReader<Try>, mut looters: Looters, playe
             _ => None,
         })
         .collect();
-    for (ent, position, heading, looting, working) in &players {
-        if !asked.contains(&ent) && *position == looting.from && *heading == looting.facing {
+    for (ent, position, heading, looting, mut stance, working) in &mut players {
+        if stance.kept(*position, *heading, now) && !asked.contains(&ent) {
             continue;
         }
         looters.release(ent, (looting.q, looting.r));

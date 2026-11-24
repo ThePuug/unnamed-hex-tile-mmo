@@ -36,6 +36,25 @@ pub const INPUT_ROLL_MS: u128 = 1000;
 /// Milliseconds of an open input accumulated before they go on the wire.
 pub const INPUT_SEND_MS: u16 = 50;
 
+/// How much longer the walk keys read as released: `activation::SETTLE`
+/// from the press of a skill that takes time, a gather or a build, which
+/// a walk key let go a moment late would break off. A new input opens
+/// behind the press, so the server confirms where the press left the
+/// player without waiting on the keys to change.
+#[derive(Resource, Default)]
+pub struct Settling {
+    left: std::time::Duration,
+    opens: bool,
+}
+
+impl Settling {
+    /// Holds the walk keys released from now.
+    pub fn begin(&mut self) {
+        self.left = common_bevy::components::activation::SETTLE;
+        self.opens = true;
+    }
+}
+
 pub fn update_keybits(
     mut keys: crate::systems::help::Keys,
     mut presses: crate::systems::action_bar::Presses,
@@ -50,7 +69,7 @@ pub fn update_keybits(
     dt: Res<Time>,
     mut look: ResMut<crate::systems::camera::Look>,
     mut looked_steps: Local<u8>,
-    mut settling: Local<std::time::Duration>,
+    mut settling: ResMut<Settling>,
 ) {
     // The menu and the console's world clock, whose arrows scrub the
     // clock, are modal: while one is open every gameplay key reads as
@@ -64,7 +83,7 @@ pub fn update_keybits(
     let delta_ns = dt.delta().as_nanos();
     keybits0.accumulator += delta_ns;
 
-    *settling = settling.saturating_sub(dt.delta());
+    settling.left = settling.left.saturating_sub(dt.delta());
     let mut keybits = KeyBits::default();
     if !modal {
         // The player's kit: each key's ability, used on the hostile it
@@ -80,9 +99,7 @@ pub fn update_keybits(
                 if let Some(reason) = refused {
                     presses.refuse(ability, reason);
                 } else if tuning.activation(ability) > 0.0 {
-                    // A walk key let go a moment late would cancel the
-                    // skill it was pressed with
-                    *settling = common_bevy::components::activation::SETTLE;
+                    settling.begin();
                 }
                 writer.write(Try { event: Event::UseAbility { ent, ability, target: target.entity }});
             }
@@ -95,7 +112,7 @@ pub fn update_keybits(
             *look = look.moved(Vec2::new(right as f32, up as f32), dt.delta_secs());
         } else {
             *look = default();
-            let walks = settling.is_zero();
+            let walks = settling.left.is_zero();
             keybits.set_pressed([KB_FORWARD], keys.held(KEYCODE_UP, "Move forward") && walks);
             keybits.set_pressed([KB_BACK], keys.held(KEYCODE_DOWN, "Move back, facing ahead") && walks);
             keybits.set_pressed([KB_LEFT], keys.held(KEYCODE_LEFT, "Turn left"));
@@ -110,9 +127,10 @@ pub fn update_keybits(
         writer.write(Try { event: Event::Look { ent, steps: *looked_steps } });
     }
 
-    // A new input opens when the keys change, or after INPUT_ROLL_MS so the
-    // server confirms at least that often.
-    if !keybits0.same_input(&keybits) || keybits0.accumulator >= INPUT_ROLL_MS * 1_000_000 {
+    // A new input opens when the keys change, behind a press that settles,
+    // or after INPUT_ROLL_MS so the server confirms at least that often.
+    let opens = std::mem::take(&mut settling.opens);
+    if opens || !keybits0.same_input(&keybits) || keybits0.accumulator >= INPUT_ROLL_MS * 1_000_000 {
         *keybits0 = keybits;
         let Some(buffer) = buffers.get_mut(&ent) else { return };
         open_input(buffer, ent, keybits, &mut writer);

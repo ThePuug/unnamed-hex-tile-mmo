@@ -485,11 +485,13 @@ pub fn stand_point(
 }
 
 /// `position` moved to `stand`, given in its tile's frame, on the ground
-/// there.
+/// there, and held on the tile it reaches.
 pub fn stepped(position: Position, stand: Vec2, map: &Map) -> Position {
     let here: Qrz = position.tile + map.convert(Vec3::new(stand.x, 0.0, stand.y));
     let y = map.get_by_qr(here.q, here.r).map_or(position.offset.y, |(floor, _)| surface_y_from(position.tile, stand, floor, map));
-    Position { tile: position.tile, offset: Vec3::new(stand.x, y, stand.y) }
+    let mut stepped = Position { tile: position.tile, offset: Vec3::new(stand.x, y, stand.y) };
+    stepped.rebase(stepped.reached(map), map);
+    stepped
 }
 
 /// How near the segment from `a` to `b` comes to `p`.

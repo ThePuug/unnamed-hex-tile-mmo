@@ -13,7 +13,6 @@ use common_bevy::{
         Actor,
     },
     geometry::slot_point,
-    systems::movement::{stand_point, stepped},
     message::{Do, Event, Try},
     resources::map::Map,
     summary::{mesh_region_lattice, summary_lattice, LOD_LEVELS},
@@ -104,15 +103,16 @@ pub fn request(
     focus: Res<crate::systems::focus::NumpadFocus>,
     window: Res<LootWindow>,
     map: Res<Map>,
-    nntree: Res<common_bevy::plugins::nntree::NNTree>,
-    mut player: Query<(Entity, &mut Position, &mut Heading, &mut common_bevy::components::Turn), With<Actor>>,
+    predicted: crate::systems::movement::Predicted,
+    player: Query<(Entity, &Heading), With<Actor>>,
     mut writer: MessageWriter<Try>,
+    mut settling: ResMut<crate::systems::input::Settling>,
 ) {
     if menu.open {
         return;
     }
     // A view has no character, and nothing to gather with
-    let Ok((ent, mut position, mut heading, mut turn)) = player.single_mut() else { return };
+    let (Ok((ent, heading)), Some(position)) = (player.single(), predicted.position()) else { return };
     // An open loot window works the numpad while it is the panel opened
     // last.
     if window.cells.is_some() && focus.has(crate::systems::focus::Panel::Loot) {
@@ -138,23 +138,9 @@ pub fn request(
     };
     info!("gather: asking for slot {} of {:?}", target.slot, target.tile);
     // The server turns the player to face what it gathers and steps it to
-    // where the work reaches; doing the same to the confirmed state here
-    // spares waiting on it.
-    let facing = Heading::facing(position.offset.xz(), target.at).unwrap_or(*heading);
-    turn.heading = facing;
-    *heading = facing;
-    let cover = map.cover_at(target.tile.q, target.tile.r);
-    let activity = if cover.content(target.slot).is_pile() {
-        Some(common::gathering::Activity::Pickup)
-    } else {
-        common::gathering::work(cover, target.slot).map(common::gathering::Activity::Work)
-    };
-    let stand = activity.and_then(|activity| {
-        stand_point(position.tile, position.offset, facing, (target.tile.q, target.tile.r), target.slot, activity, &map, &nntree)
-    });
-    if let Some(stand) = stand {
-        *position = stepped(*position, stand, &map);
-    }
+    // where the work reaches, which the input opened behind the press
+    // brings back confirmed.
+    settling.begin();
     writer.write(Try { event: Event::Gather { ent, q: target.tile.q, r: target.tile.r, slot: target.slot as u8 } });
 }
 
@@ -165,9 +151,11 @@ pub fn mark(
     map: Res<Map>,
     origin: Res<RenderOrigin>,
     build: Res<crate::systems::building::BuildPanel>,
-    player: Query<(&Position, &Heading), With<Actor>>,
+    predicted: crate::systems::movement::Predicted,
+    player: Query<&Heading, With<Actor>>,
 ) {
-    let foot = player.single().ok().and_then(|(position, heading)| {
+    let foot = player.single().ok().zip(predicted.position()).and_then(|(heading, position)| {
+        let position = &position;
         let target = if build.open {
             let tile = crate::systems::building::faced(&map, position, *heading);
             let tile = map.get_by_qr(tile.q, tile.r)?.0;

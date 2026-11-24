@@ -28,7 +28,7 @@ use crate::systems::{
     characters::Character,
     dens::Dens,
     economy::{Cause, Holder, Moved},
-    gathering::{Ground, Piles, Working},
+    gathering::{Ground, Piles, Stance, Working},
     settlers::{Camps, Settling},
 };
 
@@ -76,17 +76,14 @@ pub enum Job {
     TakeDown,
 }
 
-/// The work a player is at: `job` on tile `(q, r)`, done at `until`, from
-/// where it stood and faced when it began. Moving from there, turning
-/// from that facing or being struck breaks it off with nothing spent.
+/// The work a player is at: `job` on tile `(q, r)`, done at `until`.
+/// Leaving its [`Stance`] breaks it off with nothing spent.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Building {
     pub q: i32,
     pub r: i32,
     pub job: Job,
     pub until: Moment,
-    pub from: Position,
-    pub facing: Heading,
 }
 
 /// Why a job cannot be done.
@@ -197,8 +194,9 @@ pub fn try_build(
             Job::Build(construct) => construct.work(),
             Job::TakeDown => building::standing(cover).map_or(common::gathering::Work::Chop, Construct::work),
         };
-        let until = Moment::ZERO + time.elapsed() + std::time::Duration::from_millis(common::gathering::WORK_MS);
-        commands.entity(ent).insert(Building { q, r, job, until, from: *position, facing: *heading });
+        let now = Moment::ZERO + time.elapsed();
+        let until = now + std::time::Duration::from_millis(common::gathering::WORK_MS);
+        commands.entity(ent).insert((Building { q, r, job, until }, Stance::new(*position, *heading, now)));
         commands.write_message(Do { event: Event::Activity { ent, activity: Some(common::gathering::Activity::Work(work)) } });
     }
 }
@@ -209,8 +207,8 @@ fn stop(ent: Entity, commands: &mut Commands) {
     commands.write_message(Do { event: Event::Activity { ent, activity: None } });
 }
 
-/// Ends each player's work on a construct: broken off where it has moved
-/// or turned since it began; done when its time is up, if the tile and
+/// Ends each player's work on a construct: broken off where it has left
+/// its stance; done when its time is up, if the tile and
 /// the bag still allow it. Building spends the materials and stands the
 /// construct, a hearth as a home in a hub; taking down lays the materials
 /// as a pile, and a hearth's players are at home at the haven.
@@ -222,15 +220,16 @@ pub fn finish_building(
     time: Res<Time>,
     runtime: Res<combat::RunTime>,
     mut commands: Commands,
-    mut players: Query<(Entity, &Loc, &Heading, &Position, &mut Inventory, &Character, &Building)>,
+    mut players: Query<(Entity, &Loc, &Heading, &Position, &mut Inventory, &Character, &Building, &mut Stance)>,
     homes: Query<(Entity, &Home)>,
 ) {
-    for (ent, loc, heading, position, mut bag, &Character(who), work) in &mut players {
-        if *position != work.from || *heading != work.facing {
+    let now = Moment::ZERO + time.elapsed();
+    for (ent, loc, heading, position, mut bag, &Character(who), work, mut stance) in &mut players {
+        if !stance.kept(*position, *heading, now) {
             stop(ent, &mut commands);
             continue;
         }
-        if Moment::ZERO + time.elapsed() < work.until {
+        if now < work.until {
             continue;
         }
         stop(ent, &mut commands);

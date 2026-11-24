@@ -65,18 +65,55 @@ pub fn predict_local_player(
         let Ok((position, turn, mut heading, mut airtime, mut visual, attrs, status)) = query.get_mut(ent) else { continue; };
         let movement_speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
 
-        let (mut offset, mut air) = (position.offset, airtime.state);
-        let (mut facing, mut since_step_ms) = (turn.heading, turn.since_step_ms);
-        for input in buffer.queue.iter().rev() {
-            let turn = Turn { heading: facing, since_step_ms };
-            let out = replay(input, Position::new(position.tile, offset), turn, air, movement_speed, status, &map, &nntree);
-            (offset, air, facing, since_step_ms) = (out.position.offset, out.airtime, out.heading, out.since_step_ms);
-        }
-
-        if *heading != facing { *heading = facing; }
-        airtime.step = air;
-        let predicted = origin.render(&map, &Position::new(position.tile, offset));
+        let out = replayed(&buffer.queue, *position, *turn, airtime.state, movement_speed, status, &map, &nntree);
+        if *heading != out.heading { *heading = out.heading; }
+        airtime.step = out.airtime;
+        let predicted = origin.render(&map, &out.position);
         visual.interpolate_toward(predicted, tick * VISUAL_TICKS);
+    }
+}
+
+/// The local player's state after every input of `queue`, oldest first,
+/// run from its confirmed `position`, `turn` and `air`. The position
+/// stays in the frame of the confirmed tile.
+#[allow(clippy::too_many_arguments)]
+fn replayed(
+    queue: &std::collections::VecDeque<Event>,
+    position: Position,
+    turn: Turn,
+    air: Option<i16>,
+    movement_speed: f32,
+    status: Option<&Status>,
+    map: &Map,
+    nntree: &NNTree,
+) -> MovementOutput {
+    let start = MovementOutput { position, heading: turn.heading, since_step_ms: turn.since_step_ms, airtime: air };
+    queue.iter().rev().fold(start, |at, input| {
+        let turn = Turn { heading: at.heading, since_step_ms: at.since_step_ms };
+        replay(input, at.position, turn, at.airtime, movement_speed, status, map, nntree)
+    })
+}
+
+/// Where the local player stands with its open inputs played: what it
+/// sees, and where the server has it but for the inputs still on the
+/// wire. Its confirmed `Position` trails this by every input the server
+/// has yet to close.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Predicted<'w, 's> {
+    player: Query<'w, 's, (Entity, &'static Position, &'static Turn, &'static AirTime, Option<&'static ActorAttributes>, Option<&'static Status>), With<common_bevy::components::Actor>>,
+    buffers: Res<'w, InputQueues>,
+    map: Res<'w, Map>,
+    nntree: Res<'w, NNTree>,
+}
+
+impl Predicted<'_, '_> {
+    /// The position, in the frame of the confirmed tile, or None where
+    /// there is no local player.
+    pub fn position(&self) -> Option<Position> {
+        let (ent, position, turn, airtime, attrs, status) = self.player.single().ok()?;
+        let Some(buffer) = self.buffers.get(&ent) else { return Some(*position) };
+        let speed = attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed());
+        Some(replayed(&buffer.queue, *position, *turn, airtime.state, speed, status, &self.map, &self.nntree).position)
     }
 }
 

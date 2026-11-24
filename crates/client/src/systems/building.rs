@@ -83,6 +83,8 @@ pub fn request(
     mut panel: ResMut<BuildPanel>,
     player: Query<(Entity, &Position, &Heading, &Inventory), With<Actor>>,
     mut writer: MessageWriter<Try>,
+    mut settling: ResMut<crate::systems::input::Settling>,
+    predicted: crate::systems::movement::Predicted,
 ) {
     let Ok((ent, position, heading, bag)) = player.single() else {
         panel.open = false;
@@ -97,7 +99,7 @@ pub fn request(
     if !panel.open {
         return;
     }
-    let tile = faced(&map, position, *heading);
+    let tile = faced(&map, &predicted.position().unwrap_or(*position), *heading);
     let offered = choices(map.cover_at(tile.q, tile.r), bag);
     if panel.choices != offered {
         panel.choices = offered;
@@ -115,6 +117,7 @@ pub fn request(
                 Choice::Build(construct) => Some(construct),
                 Choice::TakeDown(_) => None,
             };
+            settling.begin();
             writer.write(Try { event: Event::Build { ent, construct } });
             panel.open = false;
         }
