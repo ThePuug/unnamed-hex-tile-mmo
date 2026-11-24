@@ -8,6 +8,7 @@
 //! meshes; each is merged once into one mesh coloured by its materials.
 
 pub mod draw;
+pub mod fire;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -141,6 +142,9 @@ pub struct Variation {
     pub color: Vec3,
     pub cards: Option<Arc<draw::Cards>>,
     pub seed: u32,
+    /// Where its glowing faces are, in its own frame: the middle of them
+    /// across and their top. None where nothing of it glows.
+    pub glow: Option<Vec3>,
 }
 
 /// Every variation of every kind, and the quad every card is drawn on.
@@ -307,6 +311,7 @@ impl Plugin for CoverPlugin {
         }
         app.add_systems(Startup, begin_loading);
         app.add_systems(Update, draw::update_stands);
+        app.add_systems(Update, (fire::kindle.run_if(resource_exists::<CoverKit>), fire::flicker).chain());
         app.add_systems(Update, load_kit.run_if(resource_exists::<Loading>));
         app.add_systems(Update, dress_far_ground.run_if(resource_added::<CoverKit>));
         app.add_systems(
@@ -402,7 +407,8 @@ fn load_kit(
                 _ => (0.0, 0.0),
             };
             let color = surface_color(&merged);
-            let variation = Variation { mesh: meshes.add(merged), height, width, color, cards: cards.clone(), seed: seed as u32 };
+            let glow = glowing(&merged);
+            let variation = Variation { mesh: meshes.add(merged), height, width, color, cards: cards.clone(), seed: seed as u32, glow };
             kit.kinds.entry(*kind).or_default().push(variation);
         }
     }
@@ -446,8 +452,24 @@ fn surface_color(mesh: &Mesh) -> Vec3 {
     }
 }
 
+/// Where a merged mesh's glowing faces are: the middle of their box across
+/// and its top.
+fn glowing(mesh: &Mesh) -> Option<Vec3> {
+    let (Some(VertexAttributeValues::Float32x3(p)), Some(VertexAttributeValues::Float32x4(c))) =
+        (mesh.attribute(Mesh::ATTRIBUTE_POSITION), mesh.attribute(Mesh::ATTRIBUTE_COLOR))
+    else {
+        return None;
+    };
+    let lit = || p.iter().zip(c).filter(|(_, c)| c[3] > 1.0).map(|(p, _)| Vec3::from(*p));
+    let (lo, hi) = lit().fold(None, |b: Option<(Vec3, Vec3)>, p| Some(b.map_or((p, p), |(lo, hi)| (lo.min(p), hi.max(p)))))?;
+    Some(Vec3::new((lo.x + hi.x) / 2.0, hi.y, (lo.z + hi.z) / 2.0))
+}
+
 /// One variation's primitives as one mesh, each vertex coloured by its
-/// primitive's material, so one white material draws the whole tree.
+/// primitive's material, so one white material draws the whole tree. The
+/// colour's last component is one and how strongly the material glows, as
+/// its emission declares: the shader lights a glowing face in its own
+/// colour whatever light falls on it.
 fn merge(gm: &GltfMesh, meshes: &Assets<Mesh>, materials: &Assets<bevy::gltf::GltfMaterial>) -> Mesh {
     use bevy::asset::RenderAssetUsages;
     use bevy::render::render_resource::PrimitiveTopology;
@@ -459,18 +481,16 @@ fn merge(gm: &GltfMesh, meshes: &Assets<Mesh>, materials: &Assets<bevy::gltf::Gl
     for prim in &gm.primitives {
         let Some(mesh) = meshes.get(&prim.mesh) else { continue };
         let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { continue };
-        let color = prim
-            .material
-            .as_ref()
-            .and_then(|m| materials.get(m))
-            .map_or(LinearRgba::WHITE, |m| m.base_color.to_linear());
+        let material = prim.material.as_ref().and_then(|m| materials.get(m));
+        let color = material.map_or(LinearRgba::WHITE, |m| m.base_color.to_linear());
+        let glow = material.map_or(0.0, |m| m.emissive.to_vec3().max_element());
         let base = positions.len() as u32;
         positions.extend_from_slice(p);
         match mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
             Some(VertexAttributeValues::Float32x3(n)) => normals.extend_from_slice(n),
             _ => normals.extend(p.iter().map(|_| [0.0, 1.0, 0.0])),
         }
-        colors.extend(p.iter().map(|_| [color.red, color.green, color.blue, 1.0]));
+        colors.extend(p.iter().map(|_| [color.red, color.green, color.blue, 1.0 + glow]));
         match mesh.indices() {
             Some(Indices::U16(v)) => indices.extend(v.iter().map(|&i| base + i as u32)),
             Some(Indices::U32(v)) => indices.extend(v.iter().map(|&i| base + i)),
