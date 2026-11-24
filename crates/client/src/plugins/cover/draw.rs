@@ -98,6 +98,17 @@ impl Instance {
         }
     }
 
+    /// Where the point `local` of a model, in the model's own frame, stands
+    /// in its region's: the instance's own placing, as `shaders/models.wesl`
+    /// does it.
+    pub fn place(&self, local: Vec3) -> Vec3 {
+        let [x, y, z, scale] = self.pos_scale;
+        let [cos, sin, ..] = self.turn;
+        let p = local * scale;
+        let turned = Vec3::new(p.x * cos - p.z * sin, p.y, p.x * sin + p.z * cos);
+        Quat::from_array(self.tilt) * turned + Vec3::new(x, y, z)
+    }
+
     /// A card: the first layer of its variation's pictures, mirrored by
     /// its turn, facing left or right of the front, and `height` tall as
     /// scaled, which the shader centres the picture on. A far card stands

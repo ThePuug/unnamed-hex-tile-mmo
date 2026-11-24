@@ -66,16 +66,11 @@ pub fn kindle(
             let StandKey::Model(kind, k) = part.key else { continue };
             let Some(glow) = kit.kit.of(kind).get(k).and_then(|v| v.glow) else { continue };
             for instance in part.instances.iter().filter(|i| i.turn[2] == 0.0) {
-                let [x, y, z, scale] = instance.pos_scale;
-                let [cos, sin, ..] = instance.turn;
-                // The instance's own placing, as `shaders/models.wesl` does it.
-                let tip = (glow + Vec3::Y * OVER) * scale;
-                let turned = Vec3::new(tip.x * cos - tip.z * sin, tip.y, tip.x * sin + tip.z * cos);
-                let at = Quat::from_array(instance.tilt) * turned + Vec3::new(x, y, z);
+                let [x, _, z, _] = instance.pos_scale;
                 commands.entity(region).with_child((
                     Fire { phase: (x * 0.137 + z * 0.731).rem_euclid(1.0) * std::f32::consts::TAU },
                     PointLight { color: COLOR, intensity: LUMENS, range: REACH, ..default() },
-                    Transform::from_translation(at),
+                    Transform::from_translation(instance.place(glow + Vec3::Y * OVER)),
                 ));
             }
         }

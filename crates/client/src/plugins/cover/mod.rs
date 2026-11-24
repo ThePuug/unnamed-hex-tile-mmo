@@ -9,6 +9,7 @@
 
 pub mod draw;
 pub mod fire;
+pub mod sparkle;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -339,6 +340,8 @@ impl Plugin for CoverPlugin {
         app.add_systems(Startup, begin_loading);
         app.add_systems(Update, draw::update_stands);
         app.add_systems(Update, (fire::kindle.run_if(resource_exists::<CoverKit>), fire::flicker).chain());
+        app.add_systems(Startup, sparkle::setup);
+        app.add_systems(Update, (sparkle::scatter.run_if(resource_exists::<CoverKit>), sparkle::twinkle).chain());
         app.add_systems(Update, load_kit.run_if(resource_exists::<Loading>));
         app.add_systems(Update, dress_far_ground.run_if(resource_added::<CoverKit>));
         app.add_systems(
