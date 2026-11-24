@@ -145,14 +145,29 @@ pub struct CloudMaterial {
     pub light: LinearRgba,
     #[uniform(0)]
     pub shade: LinearRgba,
-    /// The sky's glow toward the sun, which lights the clouds there too,
-    /// and the sun's bearing in xz.
+    /// The low sun's light caught on the deck from beneath: the ember,
+    /// the rose where it has just reached, the gold where it has lit
+    /// longest.
     #[uniform(0)]
     pub glow: LinearRgba,
     #[uniform(0)]
+    pub rose: LinearRgba,
+    #[uniform(0)]
+    pub gold: LinearRgba,
+    /// The sun's light on a cloud's hem and in the rays through the gaps.
+    #[uniform(0)]
+    pub lining: LinearRgba,
+    /// The sun's bearing in xz, the fire of its crossing, and the sine of
+    /// its elevation.
+    #[uniform(0)]
     pub bearing: Vec4,
-    /// The deck's height over the camera, the haze's visibility, the
-    /// lightning's flash, the leap season's pall.
+    /// Where the catch has reached along the sun's bearing, as a share of
+    /// the map's half side; how much of it the clouds take; the sun's
+    /// direct light; the rays' strength.
+    #[uniform(0)]
+    pub dawn: Vec4,
+    /// The deck's height over the camera, the haze's density per unit,
+    /// the lightning's flash, the leap season's pall.
     #[uniform(0)]
     pub deck: Vec4,
     /// `SkyWeather::frame` and `SkyWeather::drift`.

@@ -280,10 +280,10 @@ fn cast_from(toward: Vec3) -> Vec3 {
 
 /// The fire of a sunrise or a sunset with the sun at elevation `e`, 0 to
 /// 1: it builds from the first of twilight, burns fullest as the sun
-/// crosses the horizon and a little above it, and is bleached out by the
-/// time the sun stands a hand high.
+/// crosses the horizon and a little above it, and is bleached out as the
+/// sun's light turns white.
 fn fire(e: f32) -> f32 {
-    smoothstep(-TWILIGHT_BELOW, -1_f32.to_radians(), e) * (1. - smoothstep(3_f32.to_radians(), 16_f32.to_radians(), e))
+    smoothstep(-TWILIGHT_BELOW, -1_f32.to_radians(), e) * (1. - smoothstep(2_f32.to_radians(), CLEAR_ABOVE, e))
 }
 
 /// How far out the stars are with the sun at elevation `e`, 0 to 1: none
@@ -296,10 +296,32 @@ fn starlit(e: f32) -> f32 {
 /// brighter than white so it glares, and the rose it turns to higher up.
 const EMBER: Vec3 = Vec3::new(1.7, 0.42, 0.05);
 const ROSE: Vec3 = Vec3::new(0.85, 0.28, 0.36);
+/// The clouds the low sun has lit longest, and a cloud's hem against the
+/// sun at the crossing; by day a hem is white. None glares: a cloud
+/// brighter than white draws as a white blot about the sun.
+const GOLD: Vec3 = Vec3::new(1.1, 0.66, 0.27);
+const GILT: Vec3 = Vec3::new(1.15, 0.95, 0.68);
+const HEM_BY_DAY: f32 = 1.05;
+/// The share of the horizon's ember a cloud's underside burns at.
+const CLOUD_EMBER: f32 = 0.65;
+/// The share of the crossing's rays a high sun still sends through the
+/// gaps in the clouds.
+const RAYS_BY_DAY: f32 = 0.3;
+
+/// Where the low sun's light has reached on the cloud deck with the sun
+/// at elevation `e`, along the sun's bearing from the camera as a share
+/// of the way to the horizon: the deck is lit from there toward the
+/// sun. The sun under the horizon lights the deck from beneath, the far
+/// clouds on its own side first and the whole deck as it crosses.
+fn caught_from(e: f32) -> f32 {
+    0.95 - 2.1 * smoothstep(-9_f32.to_radians(), 0.5_f32.to_radians(), e)
+}
+
 /// The clear sky overhead while the fire burns: the day's blue gone deep.
 const DUSK_SKY: Vec3 = Vec3::new(0.09, 0.16, 0.5);
-/// The sun's halo at the crossing, brighter than white so it glares.
-const GLARE: f32 = 2.5;
+/// The sun's halo, the same by day and at the crossing: a brighter one
+/// whitens the sky further out, and the sun grows as it nears the horizon.
+const HALO: f32 = 0.5;
 /// The clear sky on a moonless night: never black, so the stars stand on
 /// a deep blue.
 const NIGHT_SKY: Vec3 = Vec3::new(0.0035, 0.006, 0.016);
@@ -610,7 +632,7 @@ pub fn update(
     let left = (0.3 + 0.7 * sky_bright) * gloom;
     let (ember, rose) = (EMBER * left, ROSE * left);
     let stars = starlit(s_elevation) * (1. - MOON_WASH * m_lit * direct(elevation(m_toward))) * gloom;
-    let bearing = s_toward.xz().try_normalize().unwrap_or(Vec2::X).extend(burning).extend(0.);
+    let bearing = s_toward.xz().try_normalize().unwrap_or(Vec2::X).extend(burning).extend(s_toward.y);
     if let Some(mut sky) = q_sky.single().ok().and_then(|m| sky_materials.get_mut(&m.0)) {
         let sphere = Mat3::from_quat(common_bevy::sky::turning(dtd, dty).inverse());
         sky.sun = s_toward.extend(burning);
@@ -618,22 +640,29 @@ pub fn update(
         sky.base = LinearRgba::from_vec3(day + BLAZE_SKY * weather.blaze + NIGHT_SKY * starlit(s_elevation));
         sky.ember = LinearRgba::from_vec3(ember);
         sky.rose = LinearRgba::from_vec3(rose);
-        sky.halo = LinearRgba::from_vec3(s_light.color.to_linear().to_vec3() * (0.5 * s_direct + GLARE * burning * sky_bright) * gloom * (1. - 0.6 * cover));
+        sky.halo = LinearRgba::from_vec3(s_light.color.to_linear().to_vec3() * HALO * s_direct.max(burning * sky_bright) * gloom * (1. - 0.6 * cover));
         sky.haze = haze;
         sky.night = Vec4::new(stars, 0., 0., 0.);
         (sky.turn_east, sky.turn_up, sky.turn_south) = (sphere.x_axis.extend(0.), sphere.y_axis.extend(0.), sphere.z_axis.extend(0.));
     }
 
-    // The deck: lit white by the sun and reddened with it, its underside
-    // the sky's own colour shaded; the weather over each place is the
-    // map's.
+    // The deck: lit white as the sky is bright, its underside the sky's
+    // own colour shaded, so a cloud the low sun has not reached stands
+    // dark; about the crossing the sun's light caught from beneath, on
+    // the hems and through the gaps; the weather over each place is the
+    // map's. A far cloud fades by the fog's rule.
     if let Some(mut clouds) = q_clouds.single().ok().and_then(|m| cloud_materials.get_mut(&m.0)) {
-        let light = sky_tint * sky_bright + moon;
+        let light = Vec3::splat(sky_bright) + moon;
+        let reaching = smoothstep(-7_f32.to_radians(), -2_f32.to_radians(), s_elevation) * gloom;
         clouds.light = LinearRgba::from_vec3(light * CLOUD_LIGHT * dusk);
         clouds.shade = LinearRgba::from_vec3(lit(Vec3::ONE).to_vec3().lerp(light, 0.3) * CLOUD_UNDERSIDE * dusk);
-        clouds.glow = LinearRgba::from_vec3(ember);
+        clouds.glow = LinearRgba::from_vec3(ember * CLOUD_EMBER);
+        clouds.rose = LinearRgba::from_vec3(rose);
+        clouds.gold = LinearRgba::from_vec3(GOLD * left);
+        clouds.lining = LinearRgba::from_vec3(GILT.lerp(Vec3::splat(HEM_BY_DAY), s_direct)).with_alpha(reaching);
         clouds.bearing = bearing;
-        clouds.deck = Vec4::new(DECK_HEIGHT, visibility, weather.flash, OMEN_PALL * pall);
+        clouds.dawn = Vec4::new(caught_from(s_elevation), (1.5 * burning).min(1.), s_direct, burning.max(RAYS_BY_DAY * s_direct));
+        clouds.deck = Vec4::new(DECK_HEIGHT, crate::systems::camera::haze_density() / visibility, weather.flash, OMEN_PALL * pall);
         clouds.frame = weather.frame;
         clouds.drift = weather.drift.extend(0.).extend(0.);
         clouds.veil = LinearRgba { alpha: (MIST_VEIL * here.mist + RAIN_VEIL * here.rain).min(1.), ..haze };
@@ -1545,6 +1574,17 @@ mod tests {
         }
         let at = toward(CAST_ABOVE, 0.);
         assert!((cast_from(toward(CAST_ABOVE - 1e-4, 0.)) - at).length() < 1e-3, "no step at the floor");
+    }
+
+    /// The deck catches the sun's light on the sun's side first, while
+    /// the sun is still under the horizon, and whole by the time it is up.
+    #[test]
+    fn the_clouds_catch_the_sun_from_its_own_side_first() {
+        let at = |degrees: f32| caught_from(degrees.to_radians());
+        assert!(at(-10.) > 0.6, "nothing the deck draws is lit in the dark");
+        assert!(at(-6.) < at(-10.) && at(-6.) > 0., "the sun's side is lit under the horizon, the camera's not yet");
+        assert!((-9..=1).map(|d| at(d as f32)).is_sorted_by(|a, b| a >= b));
+        assert!(at(1.) < -1., "and the whole deck with the sun up");
     }
 
     /// The sun's light and the sky's glow both turn within a band about
