@@ -6,14 +6,15 @@
 //! where it strikes it soonest. The best is taken where it beats holding,
 //! which scores [`HOLD`]; the decision under way scores [`MOMENTUM`] more,
 //! so two scoring alike do not trade places every tick. Every reading is
-//! the candidate's own: the seconds from it to striking, the leash left
-//! there and how far round toward its target's back it stands. How a step is walked
-//! is its pursuit's ([`super::chase`]).
+//! the candidate's own: the seconds from it to striking and how far round
+//! toward its target's back it stands. Its leash is no reading: a step may
+//! carry it past, which is how its pursuit lets go ([`super::chase`]), whose
+//! also is how a step is walked.
 
 use bevy::prelude::*;
 use qrz::Qrz;
 
-use super::{mind::Mind, skills::{LEASH_LEFT_BOUNDS, LEASH_LEFT_CURVE}, utility::{score, Consideration, Curve}};
+use super::{mind::Mind, utility::{score, Consideration, Curve}};
 
 /// What holding scores unless a mind sets it: the threshold every step must
 /// beat.
@@ -25,7 +26,7 @@ pub const MOMENTUM: f32 = 0.15;
 /// The considerations a mind may tune ([`super::mind`]): those with a
 /// curve to shape, where a condition only holds or fails.
 pub const TUNABLE: &[&str] = &[
-    "leash_left", "detour", "behind",
+    "detour", "behind",
 ];
 
 /// What a step is for.
@@ -48,8 +49,6 @@ pub struct Candidate {
     pub time_to_strike: f32,
     /// Of that, how many seconds more than from the best of the candidates
     pub detour: f32,
-    /// Share of its leash it would have left there: 1 with none
-    pub room: f32,
     /// How far round toward its target's back the tile stands, off its
     /// target's heading: 0 straight before it, 1 straight behind. Past a
     /// third it stands outside its target's forward faces. 1 on every
@@ -88,7 +87,7 @@ fn weigh(candidate: &Candidate, mind: &Mind) -> f32 {
 }
 
 /// What a step to engage is weighed by
-pub const ENGAGE: &[Consideration<Ground>] = &[DETOUR, LEASH_LEFT, BEHIND];
+pub const ENGAGE: &[Consideration<Ground>] = &[DETOUR, BEHIND];
 
 /// Seconds more the step costs it on its way to strike than the best one:
 /// the best step answers whole however far it has to go
@@ -97,15 +96,6 @@ const DETOUR: Consideration<Ground> = Consideration {
     read: |ground| ground.candidate.detour,
     bounds: (0.0, 1.0),
     curve: Curve::FALLING,
-};
-
-/// The share of its leash it would have left there; `leash_left` as a Leap
-/// reads it where it lands
-const LEASH_LEFT: Consideration<Ground> = Consideration {
-    name: "leash_left",
-    read: |ground| ground.candidate.room,
-    bounds: LEASH_LEFT_BOUNDS,
-    curve: LEASH_LEFT_CURVE,
 };
 
 /// How far round toward its target's back the tile stands, every step
@@ -131,7 +121,6 @@ mod tests {
             tile: Qrz { q, r: 0, z: 0 },
             time_to_strike: (gap - 2).max(0) as f32 * 0.25,
             detour: 0.0,
-            room: 1.0,
             behind: 0.0,
         }
     }
@@ -154,16 +143,6 @@ mod tests {
         assert_eq!((decision, step.map(|step| step.tile.q)), (Move::Engage, Some(1)), "far off, it steps in");
         let (decision, step) = choose(&around(6, 8), Move::Engage, &mind);
         assert_eq!((decision, step.map(|step| step.tile.q)), (Move::Engage, Some(6)), "in reach, it keeps to its tile");
-    }
-
-    #[test]
-    fn it_holds_rather_than_step_out_to_its_leash_edge() {
-        let mut candidates = around(0, 8);
-        for candidate in &mut candidates {
-            candidate.room = if candidate.tile.q > 0 { 0.0 } else { 1.0 };
-        }
-        let (_, step) = choose(&candidates, Move::Hold, &Mind::default());
-        assert_ne!(step.map(|step| step.tile.q), Some(1), "never onto a tile with no leash left");
     }
 
     #[test]

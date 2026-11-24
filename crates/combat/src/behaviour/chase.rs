@@ -195,7 +195,6 @@ pub fn chase(
                 _ => walked,
             }
         };
-        let room = |at: Qrz| (chase.leash_distance - at.flat_distance(&home)).max(0) as f32 / chase.leash_distance.max(1) as f32;
         let tiles: Vec<Qrz> = std::iter::once(floor)
             .chain(map.neighbors(floor).into_iter().map(|(neighbor, _)| neighbor).filter(|&neighbor| uncrowded(&nntree, neighbor)))
             .collect();
@@ -209,7 +208,6 @@ pub fn chase(
                 tile: at,
                 time_to_strike: to_strike(at),
                 detour: 0.0,
-                room: room(at),
                 behind: if !flanks { 1.0 } else {
                     target_heading.filter(|_| at != *target_loc - Qrz::Z).map_or(0.0, |heading| {
                         let bearing = Heading::from_hex(Qrz { z: 0, ..at - (*target_loc - Qrz::Z) });

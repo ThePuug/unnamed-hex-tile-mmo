@@ -59,8 +59,7 @@ impl Curve {
 ///
 /// Every consideration is a curve each archetype's mind carries and every
 /// search tunes, so one is added only after it is discussed. A number
-/// another already reads is read through it, sharing its setting as
-/// `leash_left` does across both channels.
+/// another already reads is read through it, sharing its setting.
 #[derive(Debug)]
 pub struct Consideration<V> {
     pub name: &'static str,

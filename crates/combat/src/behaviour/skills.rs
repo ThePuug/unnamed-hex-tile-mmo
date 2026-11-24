@@ -32,10 +32,6 @@ pub const TUNABLE: &[&str] = &[
     "worth_answering", "leash_left", "effect_added",
 ];
 
-/// `leash_left`'s bounds and curve, shared with the movement channel's
-pub const LEASH_LEFT_BOUNDS: (f32, f32) = (0.0, 0.3);
-pub const LEASH_LEFT_CURVE: Curve = Curve::RISING;
-
 /// The blow, as a share of its own health, a block or a leap clear counts
 /// as fully worth answering.
 const WORTH: f32 = 0.3;
@@ -376,8 +372,8 @@ const WORTH_ANSWERING: Considered = Consideration {
 const LEASH_LEFT: Considered = Consideration {
     name: "leash_left",
     read: |view| view.leap_room,
-    bounds: LEASH_LEFT_BOUNDS,
-    curve: LEASH_LEFT_CURVE,
+    bounds: (0.0, 0.3),
+    curve: Curve::RISING,
 };
 
 // --- Moves ---
