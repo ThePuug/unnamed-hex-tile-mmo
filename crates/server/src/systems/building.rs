@@ -1,7 +1,7 @@
 //! Building: a player spends its bag's wood or stone on the tile it
 //! faces, works, and a construct stands there. Taking its own construct
 //! down is the same work, and lays what it was built of as a pile. G uses
-//! a construct: a gate swings, and a hearth becomes the player's home.
+//! a hearth: it becomes the player's home.
 //! A hearth is a home in a hub ([`Hubs`]), founding one where no hub's
 //! ground reaches it, and a settler comes to it ([`Camps`]). What a
 //! settler raises is its hub's, and no player takes it down; a player
@@ -195,7 +195,7 @@ pub fn try_build(
         };
         let work = match job {
             Job::Build(construct) => construct.work(),
-            Job::TakeDown => building::standing(cover).map_or(common::gathering::Work::Chop, |(construct, _)| construct.work()),
+            Job::TakeDown => building::standing(cover).map_or(common::gathering::Work::Chop, Construct::work),
         };
         let until = Moment::ZERO + time.elapsed() + std::time::Duration::from_millis(common::gathering::WORK_MS);
         commands.entity(ent).insert(Building { q, r, job, until, from: *position, facing: *heading });
@@ -260,7 +260,7 @@ pub fn finish_building(
             }
             Job::TakeDown => {
                 let Some((_, stack)) = site.ground.cover(tile.0, tile.1).and_then(building::razed) else { continue };
-                let hearth = site.ground.cover(tile.0, tile.1).and_then(building::standing).is_some_and(|(construct, _)| construct.kind == Kind::Hearth);
+                let hearth = site.ground.cover(tile.0, tile.1).and_then(building::standing).is_some_and(|construct| construct.kind == Kind::Hearth);
                 site.constructs.0.remove(&tile);
                 if hearth {
                     site.hubs.razed(tile);
@@ -306,10 +306,9 @@ pub fn interrupt_building(mut commands: Commands, mut reader: MessageReader<Do>,
     }
 }
 
-/// Answers each G a player presses on a construct in its reach: a gate
-/// swings, shut only while no one stands in it, and a hearth becomes the
-/// player's home, as does the tent a settler raised for a player to
-/// claim. The first to claim a tent makes it a home in its hub, and the
+/// Answers each G a player presses on a construct in its reach: a hearth
+/// becomes the player's home, as does the tent a settler raised for a
+/// player to claim. The first to claim a tent makes it a home in its hub, and the
 /// hearth of its camp the hub's.
 pub fn try_use(
     mut reader: MessageReader<Try>,
@@ -345,24 +344,11 @@ pub fn try_use(
             info!("build: {ent} is at home in the tent on {tile:?}, of {hub:?}");
             continue;
         }
-        match building::standing(cover) {
-            Some((Construct { kind: Kind::Gate, .. }, open)) => {
-                if open && occupied(&site.nntree, (q, r), z) {
-                    info!("build: {ent} cannot shut the gate on ({q}, {r}) while someone stands in it");
-                    continue;
-                }
-                let Some(swung) = building::swung(cover) else { continue };
-                site.ground.set(&mut site.writer, q, r, swung);
-            }
-            Some((Construct { kind: Kind::Hearth, .. }, _)) => {
-                let home = Qrz { q, r, z: z + 1 };
-                commands.entity(ent).insert(Home(home));
-                site.hubs.resident(who, Some((q, r)));
-                site.writer.write(Do { event: Event::Home { ent, home: Some(home) } });
-                info!("build: {ent} is at home at the hearth on ({q}, {r}), of {:?}", site.hubs.of_hearth((q, r)));
-            }
-            _ => {}
-        }
+        let home = Qrz { q, r, z: z + 1 };
+        commands.entity(ent).insert(Home(home));
+        site.hubs.resident(who, Some((q, r)));
+        site.writer.write(Do { event: Event::Home { ent, home: Some(home) } });
+        info!("build: {ent} is at home at the hearth on ({q}, {r}), of {:?}", site.hubs.of_hearth((q, r)));
     }
 }
 

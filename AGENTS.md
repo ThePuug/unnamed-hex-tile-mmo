@@ -360,12 +360,13 @@ What a build has no number for stays in the store, carried beside its
 character or pile (`persistence::stored`).
 
 **Constructs.** What players build is a tile's cover like a tree or a
-pile: `common::building` is the one rule for what a tile takes, what a
-construct leaves when it comes down and how a gate swings, which the
-server applies and the client offers its choices by. A construct stands
-in the centre slot; a wall or a gate holds the other six as `Filled` or,
-standing open, `Kept`, so fullness and every drop read the tile with no
-rule of their own. Whose it is, and its hub, are the server's
+pile: `common::building` is the one rule for what a tile takes and what a
+construct leaves when it comes down, which the server applies and the
+client offers its choices by. A player builds a hearth or a blockade and
+nothing else; the rest of a hub is its settlers'. A construct stands in
+the centre slot and holds the other six as `Filled`, so fullness and
+every drop read the tile with no rule of their own. Whose it is, and
+its hub, are the server's
 (`building::Constructs`, `hubs::Hubs`), never the cover's.
 
 **Settlers.** A hub is built by its settlers, never the world and never

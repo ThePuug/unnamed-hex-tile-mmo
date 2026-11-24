@@ -24,16 +24,12 @@ pub enum Content {
     /// What lies on the ground for anyone to take: a pile of one
     /// material, whatever ground it lies on.
     Pile(Material),
-    /// A slot the wall or the shut gate in the tile's centre fills.
+    /// A slot what stands in the tile's centre fills.
     Filled,
-    /// A slot the open gate in the tile's centre keeps: nothing stands in
-    /// it, and nothing is laid there.
-    Kept,
     /// What players built (`crate::building`), each of its material,
     /// standing in the tile's centre and holding every slot.
     Hearth(Material),
-    Wall(Material),
-    Gate { of: Material, open: bool },
+    Blockade(Material),
     /// What a hub's settlers raise (`crate::building::Fixture`), each
     /// standing in the tile's centre: a tent and a wagon there alone,
     /// stakes holding every slot.
@@ -51,19 +47,19 @@ impl Content {
     /// tree two, brush and a boulder one.
     pub fn slots(self) -> u8 {
         match self {
-            Content::Empty | Content::Spanned | Content::Filled | Content::Kept => 0,
+            Content::Empty | Content::Spanned | Content::Filled => 0,
             Content::Brush | Content::Boulder | Content::PineStump | Content::DeciduousStump | Content::Tent | Content::Wagon | Content::Raising(..) => 1,
-            Content::Hearth(_) | Content::Wall(_) | Content::Gate { .. } | Content::Stakes => TILE_SLOTS,
+            Content::Hearth(_) | Content::Blockade(_) | Content::Stakes => TILE_SLOTS,
             Content::Pile(_) => 1,
             Content::Pine | Content::Deciduous => 2,
         }
     }
 
     /// Whether the slot stands in a walker's way: a tree's two do, a
-    /// boulder's and a stump's do, a hearth's, and every slot of a wall
-    /// or a shut gate; brush's, a pile's and an open gate's do not.
+    /// boulder's and a stump's do, and every slot of a hearth, a
+    /// blockade or stakes; brush's and a pile's do not.
     pub fn is_solid(self) -> bool {
-        !matches!(self, Content::Empty | Content::Brush | Content::Kept | Content::Raising(..) | Content::Gate { open: true, .. }) && !self.is_pile()
+        !matches!(self, Content::Empty | Content::Brush | Content::Raising(..)) && !self.is_pile()
     }
 
     /// Whether it is a pile a player left, which anyone may open.
@@ -95,11 +91,8 @@ impl Content {
             Content::Pile(Material::Basement) => 12,
             Content::Pile(Material::Hide) => 15,
             Content::Filled => 13,
-            Content::Kept => 14,
             Content::Hearth(of) => HEARTH_BITS | of.id() as u64,
-            Content::Wall(of) => WALL_BITS | of.id() as u64,
-            Content::Gate { of, open: false } => GATE_BITS | of.id() as u64,
-            Content::Gate { of, open: true } => OPEN_GATE_BITS | of.id() as u64,
+            Content::Blockade(of) => BLOCKADE_BITS | of.id() as u64,
             Content::Tent => 96,
             Content::Stakes => 97,
             Content::Wagon => 98,
@@ -114,9 +107,7 @@ impl Content {
         let built = |content: fn(Material) -> Content| Material::kept_as((bits & 15) as u32).map_or(Content::Empty, content);
         match bits & !15 {
             HEARTH_BITS => return built(Content::Hearth),
-            WALL_BITS => return built(Content::Wall),
-            GATE_BITS => return built(|of| Content::Gate { of, open: false }),
-            OPEN_GATE_BITS => return built(|of| Content::Gate { of, open: true }),
+            BLOCKADE_BITS => return built(Content::Blockade),
             _ => {}
         }
         match bits {
@@ -133,7 +124,6 @@ impl Content {
             11 => Content::Pile(Material::Limestone),
             12 => Content::Pile(Material::Basement),
             13 => Content::Filled,
-            14 => Content::Kept,
             15 => Content::Pile(Material::Hide),
             96 => Content::Tent,
             97 => Content::Stakes,
@@ -150,11 +140,11 @@ impl Content {
 const CONTENT_BITS: u32 = 8;
 const CONTENT_MASK: u64 = (1 << CONTENT_BITS) - 1;
 
-/// Where each kind of construct's contents begin, sixteen to a kind.
+/// Where each kind of construct's contents begin, sixteen to a kind. A
+/// store may hold 14 and the sixteens from 64 and from 80 for contents
+/// no build has, so nothing new takes them.
 const HEARTH_BITS: u64 = 32;
-const WALL_BITS: u64 = 48;
-const GATE_BITS: u64 = 64;
-const OPEN_GATE_BITS: u64 = 80;
+const BLOCKADE_BITS: u64 = 48;
 
 /// Where a fixture being raised begins, four to a fixture: its stage in
 /// the low two bits, from 1.

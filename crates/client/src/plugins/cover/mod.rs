@@ -39,8 +39,8 @@ pub enum Kind {
     /// A den's pieces: the model `common::den::MODELS` holds at this
     /// index, active or cleared, one variation to each of its meshes
     Den(u8, bool),
-    /// What a player built, and whether it is a gate standing open
-    Built(common::building::Construct, bool),
+    /// A hearth a player built, of this stone
+    Hearth(common::Material),
     /// What a hub's settlers raised, or are raising at this stage of it
     /// from 1; none is raised
     Raised(common::building::Fixture, u8),
@@ -101,21 +101,20 @@ const MODELS: &[(Kind, &str)] = &[
     (Kind::Pile(common::Material::Hide), "models/hide-pile.glb"),
 ];
 
-/// Where each construct's GLB is: `models/<kind>-<material>.glb`, a gate
-/// standing open `-open` besides.
-fn built_models() -> impl Iterator<Item = (Kind, String)> {
-    use common::building::Kind as Built;
-    common::building::Construct::all().flat_map(|construct| {
-        let kind = match construct.kind {
-            Built::Hearth => "hearth",
-            Built::Wall => "wall",
-            Built::Gate => "gate",
-        };
-        let of = construct.of.stem();
-        let swings = construct.kind == Built::Gate;
-        [false, true].into_iter().filter(move |&open| swings || !open).map(move |open| {
-            (Kind::Built(construct, open), format!("models/{kind}-{of}{}.glb", if open { "-open" } else { "" }))
-        })
+/// What a construct is drawn as: a hearth in its stone, and a blockade
+/// as the stakes a camp is bordered by, whatever its wood.
+fn built(construct: common::building::Construct) -> Kind {
+    match construct.kind {
+        common::building::Kind::Hearth => Kind::Hearth(construct.of),
+        common::building::Kind::Blockade => Kind::Raised(common::building::Fixture::Stakes, 0),
+    }
+}
+
+/// Where each hearth's GLB is: `models/hearth-<material>.glb`.
+fn hearth_models() -> impl Iterator<Item = (Kind, String)> {
+    common::building::Construct::all().filter_map(|construct| match built(construct) {
+        kind @ Kind::Hearth(of) => Some((kind, format!("models/hearth-{}.glb", of.stem()))),
+        _ => None,
     })
 }
 
@@ -258,7 +257,7 @@ impl Kit {
     pub fn scale(kind: Kind, model_height: f32, growth: f32) -> f32 {
         let growth = growth.clamp(0.0, 1.0);
         match kind {
-            Kind::Den(..) | Kind::Built(..) | Kind::Raised(..) => 1.0,
+            Kind::Den(..) | Kind::Hearth(..) | Kind::Raised(..) => 1.0,
             _ if kind.is_pile() => 1.0,
             Kind::Brush => BRUSH_SMALL + (1.0 - BRUSH_SMALL) * growth,
             Kind::Boulder => common::cover::boulder_scale(growth),
@@ -382,7 +381,7 @@ fn begin_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
     let handles = MODELS
         .iter()
         .map(|(kind, path)| (*kind, asset_server.load::<Gltf>(*path)))
-        .chain(den_models().chain(built_models()).chain(fixture_models()).map(|(kind, path)| (kind, asset_server.load::<Gltf>(path))))
+        .chain(den_models().chain(hearth_models()).chain(fixture_models()).map(|(kind, path)| (kind, asset_server.load::<Gltf>(path))))
         .collect();
     commands.insert_resource(Loading(handles));
 }
@@ -608,8 +607,8 @@ pub fn place_cover(
                 });
             }
             // A construct stands square on its tile's centre, its corners
-            // the tile's, so a run of walls meets edge to edge.
-            if let Some((construct, open)) = common::building::standing(cover) {
+            // the tile's, so a run of blockades meets edge to edge.
+            if let Some(construct) = common::building::standing(cover) {
                 let (x, z) = flat_top_tile_center(q - origin.q, r - origin.r, 1.0);
                 let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
                 out.push(CoverInstance {
@@ -617,7 +616,7 @@ pub fn place_cover(
                     yaw: 0.0,
                     tilt: Quat::IDENTITY,
                     growth: 1.0,
-                    kind: Kind::Built(construct, open),
+                    kind: built(construct),
                     variation: 0,
                     far: false,
                 });

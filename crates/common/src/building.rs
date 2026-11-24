@@ -15,20 +15,18 @@ pub const SLOT: usize = 0;
 pub enum Kind {
     /// Founds a hub, and is a home.
     Hearth,
-    /// Fills its tile.
-    Wall,
-    /// Fills its tile while shut, and none of it while open.
-    Gate,
+    /// Sharpened stakes filling their tile, as a camp's fortification
+    /// does.
+    Blockade,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 3] = [Kind::Hearth, Kind::Wall, Kind::Gate];
+    pub const ALL: [Kind; 2] = [Kind::Hearth, Kind::Blockade];
 
     pub fn name(self) -> &'static str {
         match self {
             Kind::Hearth => "Hearth",
-            Kind::Wall => "Wall",
-            Kind::Gate => "Gate",
+            Kind::Blockade => "Blockade",
         }
     }
 
@@ -37,17 +35,16 @@ impl Kind {
     pub fn cost(self) -> u32 {
         match self {
             Kind::Hearth => 6,
-            Kind::Wall | Kind::Gate => 4,
+            Kind::Blockade => 4,
         }
     }
 
-    /// Whether one is built of `material`: a hearth of stone, a gate of
-    /// wood, a wall of either.
+    /// Whether one is built of `material`: a hearth of stone, a blockade
+    /// of wood.
     pub fn built_of(self, material: Material) -> bool {
         match self {
             Kind::Hearth => material.is_stone(),
-            Kind::Wall => material.is_stone() || material.is_wood(),
-            Kind::Gate => material.is_wood(),
+            Kind::Blockade => material.is_wood(),
         }
     }
 }
@@ -61,7 +58,7 @@ pub struct Construct {
 
 impl Construct {
     /// Every construct there is, a kind after a kind and each in every
-    /// material it is built of: the order a build panel lists them in.
+    /// material it is built of.
     pub fn all() -> impl Iterator<Item = Construct> {
         Kind::ALL.into_iter().flat_map(|kind| Material::ALL.into_iter().filter(move |&of| kind.built_of(of)).map(move |of| Construct { kind, of }))
     }
@@ -81,20 +78,19 @@ impl Construct {
         if self.of.is_stone() { Work::Mine } else { Work::Chop }
     }
 
-    fn content(self, open: bool) -> Content {
+    fn content(self) -> Content {
         match self.kind {
             Kind::Hearth => Content::Hearth(self.of),
-            Kind::Wall => Content::Wall(self.of),
-            Kind::Gate => Content::Gate { of: self.of, open },
+            Kind::Blockade => Content::Blockade(self.of),
         }
     }
 
-    /// `cover` with the construct standing on it, a gate shut, or None
-    /// where the tile cannot take it: its kind is not built of its
-    /// material, or a slot of the tile holds more than brush.
+    /// `cover` with the construct standing on it, or None where the tile
+    /// cannot take it: its kind is not built of its material, or a slot
+    /// of the tile holds more than brush.
     pub fn raised(self, cover: Cover) -> Option<Cover> {
         let free = |k: usize| matches!(cover.content(k), Content::Empty | Content::Brush);
-        (self.kind.built_of(self.of) && (0..TILE_SLOTS as usize).all(free)).then(|| stood(cover, self.content(false)))
+        (self.kind.built_of(self.of) && (0..TILE_SLOTS as usize).all(free)).then(|| stood(cover, self.content()))
     }
 }
 
@@ -256,20 +252,17 @@ pub fn rising(cover: Cover) -> Option<(Fixture, u8)> {
     }
 }
 
-/// `cover` with `content`, a wall, a gate or stakes, in the centre and
-/// every other slot its.
+/// `cover` with `content`, a construct or stakes, in the centre and
+/// every other slot filled by it.
 fn stood(cover: Cover, content: Content) -> Cover {
-    let rest = if content.is_solid() { Content::Filled } else { Content::Kept };
-    (0..TILE_SLOTS as usize).fold(cover, |cover, k| cover.with_content(k, if k == SLOT { content } else { rest }))
+    (0..TILE_SLOTS as usize).fold(cover, |cover, k| cover.with_content(k, if k == SLOT { content } else { Content::Filled }))
 }
 
-/// The construct standing on a tile with `cover`, and whether it is an
-/// open gate.
-pub fn standing(cover: Cover) -> Option<(Construct, bool)> {
+/// The construct standing on a tile with `cover`.
+pub fn standing(cover: Cover) -> Option<Construct> {
     match cover.content(SLOT) {
-        Content::Hearth(of) => Some((Construct { kind: Kind::Hearth, of }, false)),
-        Content::Wall(of) => Some((Construct { kind: Kind::Wall, of }, false)),
-        Content::Gate { of, open } => Some((Construct { kind: Kind::Gate, of }, open)),
+        Content::Hearth(of) => Some(Construct { kind: Kind::Hearth, of }),
+        Content::Blockade(of) => Some(Construct { kind: Kind::Blockade, of }),
         _ => None,
     }
 }
@@ -278,41 +271,34 @@ pub fn standing(cover: Cover) -> Option<(Construct, bool)> {
 /// what it was built of lying whole as a pile in the centre. None where no
 /// construct stands.
 pub fn razed(cover: Cover) -> Option<(Cover, Stack)> {
-    let (construct, _) = standing(cover)?;
+    let construct = standing(cover)?;
     let cleared = (0..TILE_SLOTS as usize).fold(cover, |cover, k| cover.with_content(k, Content::Empty));
     Some((left(cleared, SLOT, construct.of), construct.cost()))
 }
 
-/// `cover` with its gate swung: shut where it stood open, open where it
-/// stood shut. None where no gate stands.
-pub fn swung(cover: Cover) -> Option<Cover> {
-    match cover.content(SLOT) {
-        Content::Gate { of, open } => Some(stood(cover, Content::Gate { of, open: !open })),
-        _ => None,
-    }
-}
-
-/// Whether G uses what stands in slot `k`: a gate to swing, a hearth or
-/// a tent to make a home of.
+/// Whether G uses what stands in slot `k`: a hearth or a tent, to make a
+/// home of.
 pub fn used(cover: Cover, k: usize) -> bool {
-    k == SLOT && matches!(cover.content(k), Content::Gate { .. } | Content::Hearth(_) | Content::Tent)
+    k == SLOT && matches!(cover.content(k), Content::Hearth(_) | Content::Tent)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const OAK: Construct = Construct { kind: Kind::Wall, of: Material::Hardwood };
+    const OAK: Construct = Construct { kind: Kind::Blockade, of: Material::Hardwood };
 
-    /// A wall fills an empty tile and clears its brush; a tree, a stump, a
-    /// boulder or a pile in the way refuses it. Taken down, the tile is
-    /// bare but for the pile of what the wall was built of.
+    /// A blockade fills an empty tile and clears its brush; a tree, a
+    /// stump, a boulder or a pile in the way refuses it, and it is built
+    /// of wood alone. Taken down, the tile is bare but for the pile of
+    /// what it was built of.
     #[test]
-    fn a_wall_fills_its_tile_and_comes_down_whole() {
+    fn a_blockade_fills_its_tile_and_comes_down_whole() {
         let brush = Cover::NONE.with(0, Content::Brush);
         let walled = OAK.raised(brush).unwrap();
         assert_eq!(walled.fullness(), TILE_SLOTS);
-        assert_eq!(standing(walled), Some((OAK, false)));
+        assert_eq!(standing(walled), Some(OAK));
+        assert_eq!(Construct { kind: Kind::Blockade, of: Material::Limestone }.raised(Cover::NONE), None);
         assert_eq!(Cover::from_bits(walled.bits()), walled);
         for held in [Cover::NONE.with(0, Content::Pine), Cover::NONE.with_boulder(3), left(Cover::NONE, 5, Material::Softwood), walled] {
             assert_eq!(OAK.raised(held), None, "{held:?}");
@@ -325,29 +311,13 @@ mod tests {
         assert_eq!(razed(Cover::NONE), None);
     }
 
-    /// A gate is a wall while shut and nothing in a walker's way while
-    /// open, holding every slot either way; it is built of wood alone.
-    #[test]
-    fn a_gate_swings() {
-        let gate = Construct { kind: Kind::Gate, of: Material::Softwood };
-        let shut = gate.raised(Cover::NONE).unwrap();
-        let open = swung(shut).unwrap();
-        assert!(shut.fullness() == TILE_SLOTS && open.fullness() == 0);
-        assert_eq!((standing(shut), standing(open)), (Some((gate, false)), Some((gate, true))));
-        assert_eq!(swung(open), Some(shut));
-        assert_eq!(Cover::from_bits(open.bits()), open);
-        assert!((0..TILE_SLOTS as usize).all(|k| open.content(k) != Content::Empty), "nothing is laid in an open gate");
-        assert_eq!(Construct { kind: Kind::Gate, of: Material::Limestone }.raised(Cover::NONE), None);
-        assert_eq!(swung(OAK.raised(Cover::NONE).unwrap()), None);
-    }
-
-    /// A hearth fills its tile as a wall does, so a walker goes round it,
+    /// A hearth fills its tile as a blockade does, so a walker goes round it,
     /// wants the whole tile clear, and is built of stone alone.
     #[test]
     fn a_hearth_fills_its_tile() {
         let hearth = Construct { kind: Kind::Hearth, of: Material::Basement };
         let lit = hearth.raised(Cover::NONE.with(1, Content::Brush)).unwrap();
-        assert_eq!((standing(lit), lit.fullness()), (Some((hearth, false)), TILE_SLOTS));
+        assert_eq!((standing(lit), lit.fullness()), (Some(hearth), TILE_SLOTS));
         assert!(used(lit, SLOT) && !used(lit, 1));
         assert_eq!(razed(lit).unwrap().0, left(Cover::NONE, SLOT, Material::Basement));
         assert_eq!(hearth.raised(Cover::NONE.with(0, Content::Pine)), None, "a tree on its tile is felled first");
@@ -406,7 +376,7 @@ mod tests {
     #[test]
     fn every_construct_is_a_load() {
         let all: Vec<Construct> = Construct::all().collect();
-        assert_eq!(all.len(), 3 + 5 + 2);
+        assert_eq!(all.len(), 3 + 2);
         assert!(all.iter().all(|c| c.raised(Cover::NONE).is_some()));
         assert!(all.iter().all(|c| c.cost().weight() < 60), "the burden limit");
     }

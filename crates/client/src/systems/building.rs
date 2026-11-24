@@ -1,11 +1,11 @@
 //! Building on the client: B opens the build panel on the tile the player
-//! faces, which lists what the bag can pay for and the tile can take, or
+//! faces, which lists each kind the bag can pay for and the tile can take, or
 //! the taking down of what stands there; a digit asks the server for it.
 //! The server finds the tile itself, from where the player stands and
 //! faces.
 
 use bevy::prelude::*;
-use common::building::{self, Construct};
+use common::building::{self, Construct, Kind};
 use common_bevy::{
     components::{equipment::Inventory, heading::Heading, position::Position, Actor},
     message::{Do, Event, Try},
@@ -35,7 +35,7 @@ impl Choice {
         match self {
             Choice::Build(construct) => {
                 let cost = construct.cost();
-                format!("{} — {} {}", construct.name(), cost.count, cost.kind.name())
+                format!("{} — {} {}", construct.kind.name(), cost.count, cost.kind.name())
             }
             Choice::TakeDown(construct) => format!("Take down the {}", construct.name().to_lowercase()),
         }
@@ -63,18 +63,14 @@ pub fn faced(map: &Map, position: &Position, heading: Heading) -> Qrz {
 
 /// What the build panel offers on a tile with `cover` to a player whose
 /// bag is `bag`: the taking down of the construct standing there, or else
-/// every construct the tile can take and the bag can pay for, as many as
-/// there are digits.
+/// each kind the tile can take, once, in the first of its materials the
+/// bag pays for it whole.
 pub fn choices(cover: common::Cover, bag: &Inventory) -> Vec<Choice> {
-    if let Some((construct, _)) = building::standing(cover) {
+    if let Some(construct) = building::standing(cover) {
         return vec![Choice::TakeDown(construct)];
     }
-    Construct::all()
-        .filter(|construct| construct.raised(cover).is_some())
-        .filter(|construct| bag.count(construct.cost().kind) >= construct.cost().count)
-        .take(ENTRY_KEYS.len())
-        .map(Choice::Build)
-        .collect()
+    let pays = |construct: &Construct| construct.raised(cover).is_some() && bag.count(construct.cost().kind) >= construct.cost().count;
+    Kind::ALL.into_iter().filter_map(|kind| Construct::all().filter(|construct| construct.kind == kind).find(pays)).map(Choice::Build).collect()
 }
 
 /// Opens and shuts the panel on B, keeps its rows to the tile faced and
@@ -219,25 +215,28 @@ pub fn update(mut commands: Commands, panel: Res<BuildPanel>, mut rows: Query<(E
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::{building::Kind, Cover, Material, Stack, Stackable};
+    use common::{Cover, Material, Stack, Stackable};
 
-    /// The panel offers what the bag pays for and the tile takes, and on a
-    /// tile holding a construct only its taking down.
+    /// The panel offers what the bag pays for and the tile takes, a kind
+    /// once whatever the bag holds to build it of, and on a tile holding
+    /// a construct only its taking down.
     #[test]
     fn the_panel_offers_what_the_bag_and_the_tile_allow() {
         let mut bag = Inventory::default();
         assert!(choices(Cover::NONE, &bag).is_empty());
+        bag.add(Stack { kind: Stackable::Material(Material::Hardwood), count: 4 });
+        let blockade = Construct { kind: Kind::Blockade, of: Material::Hardwood };
+        assert_eq!(choices(Cover::NONE, &bag), vec![Choice::Build(blockade)]);
         bag.add(Stack { kind: Stackable::Material(Material::Softwood), count: 4 });
-        let wall = Construct { kind: Kind::Wall, of: Material::Softwood };
-        let gate = Construct { kind: Kind::Gate, of: Material::Softwood };
-        assert_eq!(choices(Cover::NONE, &bag), vec![Choice::Build(wall), Choice::Build(gate)]);
+        assert_eq!(choices(Cover::NONE, &bag).len(), 1, "one blockade, of either wood");
         let tree = Cover::NONE.with(0, common::Content::Pine);
-        assert!(choices(tree, &bag).is_empty(), "a wall needs the whole tile");
+        assert!(choices(tree, &bag).is_empty(), "a blockade needs the whole tile");
         bag.add(Stack { kind: Stackable::Material(Material::Basement), count: 6 });
         let hearth = Construct { kind: Kind::Hearth, of: Material::Basement };
         assert!(choices(tree, &bag).is_empty(), "as does a hearth");
-        assert!(choices(Cover::NONE, &bag).contains(&Choice::Build(hearth)));
-        let walled = wall.raised(Cover::NONE).unwrap();
-        assert_eq!(choices(walled, &bag), vec![Choice::TakeDown(wall)]);
+        assert_eq!(choices(Cover::NONE, &bag).first(), Some(&Choice::Build(hearth)));
+        assert_eq!(choices(Cover::NONE, &bag).len(), Kind::ALL.len());
+        let staked = blockade.raised(Cover::NONE).unwrap();
+        assert_eq!(choices(staked, &bag), vec![Choice::TakeDown(blockade)]);
     }
 }
