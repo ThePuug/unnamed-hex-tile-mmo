@@ -346,10 +346,7 @@ fn tint(share: f32) -> Color {
 
 use crate::{
     components::{Moon, Sun},
-    plugins::{
-        diagnostics::DiagnosticsState,
-        weather::{CloudDeck, CloudMaterial, SkyWeather, DECK_HEIGHT},
-    },
+    plugins::weather::{CloudDeck, CloudMaterial, SkyWeather, DECK_HEIGHT},
     systems::camera::HAZE_COLOR,
     resources::{
         LodTriangleStats, LoadedChunks,
@@ -514,6 +511,20 @@ pub fn do_calendar(
     for message in reader.read() {
         let Do { event: Event::Calendar { calendar } } = message else { continue };
         server.calendar = *calendar;
+    }
+}
+
+/// Takes the server's settings as it tells of them: those in force, and
+/// those it keeps.
+pub fn do_settings(
+    mut reader: MessageReader<Do>,
+    mut settings: ResMut<common_bevy::settings::Settings>,
+    mut held: ResMut<common_bevy::settings::Kept>,
+) {
+    for message in reader.read() {
+        let Do { event: Event::Settings { running, kept } } = message else { continue };
+        settings.set_if_neq(*running);
+        held.set_if_neq(common_bevy::settings::Kept(*kept));
     }
 }
 
@@ -1015,9 +1026,7 @@ pub fn update_terrain_cut(
     time: Res<Time>,
     render_origin: Res<crate::resources::RenderOrigin>,
     player_query: Query<&Transform, With<crate::components::Viewed>>,
-    diagnostics_state: Res<DiagnosticsState>,
 ) {
-    let parts_on = u32::from(!diagnostics_state.canopy_parts_off);
     let Some(origin) = player_query.single().ok().map(|t| render_origin.world(t.translation)) else { return };
 
     let bands = horizon_bands(0.0);
@@ -1028,19 +1037,13 @@ pub fn update_terrain_cut(
     // origin has changed: a changed material is prepared again and every
     // region wearing it specialised again, which for the terrain is every
     // mesh it has.
-    let last = *common_bevy::summary::LOD_LEVELS.last().expect("a ladder");
     let terrain_origin = crate::resources::TerrainOrigin::of(&render_origin);
     let mut band = *card_band;
     for (&r, handle) in &terrain_material.by_level {
         let cut = level_cut(r, &bands, &edges.0, target).rendered(render_origin.world_vec().xz());
         let Some(material) = materials.get(handle) else { continue };
-        // Bared for a measurement, the last level reads no parts, and a
-        // closed density past any reading and an empty relief window turn
-        // its tint and relief off in the shader.
-        let bare = diagnostics_state.canopy_last_off && r == last;
-        let on = if bare { 0 } else { parts_on };
+        let on = 1;
         let look = terrain_material.canopy_for(r);
-        let look = if bare { crate::resources::CanopyLook { full: f32::MAX, relief_from: 0.0, relief_to: 0.0, ..look } } else { look };
         let extension = &material.extension;
         if extension.cut != cut || extension.lattice.on != on || extension.canopy != look || extension.origin != terrain_origin {
             if let Some(mut material) = materials.get_mut(handle) {

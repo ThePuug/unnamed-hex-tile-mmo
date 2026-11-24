@@ -52,7 +52,7 @@ pub struct RenderCensus {
     pub cover: Group,
     pub actors: Group,
     /// Everything else drawn: the sky dome, the water plane, the sun and
-    /// moon discs, the grid overlay.
+    /// moon discs.
     pub other: Group,
 }
 

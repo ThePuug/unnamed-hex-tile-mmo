@@ -50,10 +50,6 @@ pub struct Viewed;
 #[derive(Component)]
 pub struct ViewHud;
 
-/// Debug sphere marker - shows actor origin position (toggles with terrain grid)
-#[derive(Component)]
-pub struct PlayerOriginDebug;
-
 /// Floating text component for damage numbers and other temporary text
 /// Used with UI Node entities that follow world-space positions
 #[derive(Component)]

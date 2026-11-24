@@ -3,27 +3,11 @@ use common_bevy::systems::{DAY_MS, HOUR_MS, MINUTE_MS, SEASON_MS, WEEK_MS};
 
 #[derive(Resource, Default)]
 pub struct DiagnosticsState {
-    pub grid_visible: bool,
     /// The weather the sky is held in, or the forecast.
     pub weather: WeatherHold,
-    /// Every terrain mesh is hidden.
-    pub terrain_hidden: bool,
-    /// Every stand of models and cards is hidden. A stand is an entity of
-    /// its own, gathering every region's instances, so hiding the terrain
-    /// leaves it drawn; this hides the cover alone, leaving the ground to
-    /// be measured by itself.
-    pub cover_hidden: bool,
     /// The camera holds its lowest pose — the boom at its shortest, looking
     /// up — instead of following the ground: an actor seen close.
     pub camera_closeup: bool,
-    /// The ground wears the one canopy each summary's vertices carry
-    /// instead of reading its parts, the two drawn in the same frame for a
-    /// measurement of what the parts cost.
-    pub canopy_parts_off: bool,
-    /// The last summary level wears no wood: its parts unread, its tint
-    /// and its relief off, the two drawn in the same frame for a
-    /// measurement of what the horizon's wood costs.
-    pub canopy_last_off: bool,
 }
 
 /// An hour of the day typed as `HHMM` or `HH`, in ms of the day.

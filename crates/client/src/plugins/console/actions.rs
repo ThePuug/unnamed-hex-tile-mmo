@@ -1,16 +1,11 @@
 use bevy::prelude::*;
 
-use crate::{
-    plugins::diagnostics::{DiagnosticsState, grid::HexGridOverlay},
-    components::PlayerOriginDebug,
-};
+use crate::plugins::diagnostics::DiagnosticsState;
 use common_bevy::components::Actor;
 
 /// Events that can be triggered from the developer console
 #[derive(Event, Message, Debug)]
 pub enum DevConsoleAction {
-    // Terrain actions
-    ToggleGrid,
     /// Move the world's clock to an hour of its day, in ms.
     SetClockHour(u128),
     /// Move the world's clock this many ms, either way.
@@ -21,11 +16,7 @@ pub enum DevConsoleAction {
     ResetClock,
     /// Roll the whole world back this many ms, of game time or of real.
     Rollback { game: bool, ms: u64 },
-    ToggleTerrainHidden,
-    ToggleCoverHidden,
     ToggleCameraCloseup,
-    ToggleCanopyParts,
-    ToggleCanopyLast,
     /// Hold the sky in the next weather, round again to the forecast.
     CycleWeather,
 
@@ -42,90 +33,22 @@ pub enum DevConsoleAction {
     /// Stage a party of this archetype ahead of the actor the client sees
     /// as: a den, a party out of its reach, or one engaging it.
     SpawnParty { archetype: common_bevy::archetype::EnemyArchetype, staging: super::state::Staging },
+    /// Have the server set a setting to a value.
+    Set(common_bevy::settings::Setting, i32),
 }
 
 /// System that executes console actions
 #[allow(clippy::too_many_arguments)]
 pub fn execute_console_actions(
-    mut commands: Commands,
     mut state: ResMut<DiagnosticsState>,
     mut added: ResMut<crate::network::AddedLatency>,
     mut reader: MessageReader<DevConsoleAction>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut grid_query: Query<(&mut Visibility, &mut HexGridOverlay)>,
-    actor_query: Query<Entity, With<Actor>>,
-    debug_sphere_query: Query<Entity, With<PlayerOriginDebug>>,
-    mut terrain: Query<&mut Visibility, (With<crate::resources::SummaryMesh>, Without<HexGridOverlay>)>,
-    mut cover: Query<
-        &mut Visibility,
-        (
-            Or<(
-                With<crate::plugins::cover::draw::ModelStand>,
-                With<crate::plugins::cover::draw::CardStand>,
-            )>,
-            Without<crate::resources::SummaryMesh>,
-            Without<HexGridOverlay>,
-        ),
-    >,
 ) {
     for action in reader.read() {
         match action {
-            DevConsoleAction::ToggleGrid => {
-                state.grid_visible = !state.grid_visible;
-
-                if let Ok((mut visibility, mut overlay)) = grid_query.single_mut() {
-                    *visibility = if state.grid_visible {
-                        Visibility::Visible
-                    } else {
-                        Visibility::Hidden
-                    };
-                    if state.grid_visible {
-                        overlay.needs_regeneration = true;
-                    }
-                }
-
-                if state.grid_visible {
-                    for actor_entity in actor_query.iter() {
-                        crate::systems::actor::spawn_debug_sphere(
-                            &mut commands, &mut meshes, &mut materials, actor_entity,
-                        );
-                    }
-                } else {
-                    for entity in debug_sphere_query.iter() {
-                        commands.entity(entity).despawn();
-                    }
-                }
-
-                info!("Grid overlay: {}", if state.grid_visible { "ON" } else { "OFF" });
-            }
-            DevConsoleAction::ToggleTerrainHidden => {
-                state.terrain_hidden = !state.terrain_hidden;
-                let shown = if state.terrain_hidden { Visibility::Hidden } else { Visibility::Inherited };
-                for mut visibility in terrain.iter_mut() {
-                    *visibility = shown;
-                }
-                info!("Terrain: {}", if state.terrain_hidden { "HIDDEN" } else { "shown" });
-            }
-            DevConsoleAction::ToggleCoverHidden => {
-                state.cover_hidden = !state.cover_hidden;
-                let shown = if state.cover_hidden { Visibility::Hidden } else { Visibility::Inherited };
-                for mut visibility in cover.iter_mut() {
-                    *visibility = shown;
-                }
-                info!("Cover: {}", if state.cover_hidden { "HIDDEN" } else { "shown" });
-            }
             DevConsoleAction::ToggleCameraCloseup => {
                 state.camera_closeup = !state.camera_closeup;
                 info!("Camera close-up: {}", if state.camera_closeup { "ON" } else { "off" });
-            }
-            DevConsoleAction::ToggleCanopyParts => {
-                state.canopy_parts_off = !state.canopy_parts_off;
-                info!("Canopy: {}", if state.canopy_parts_off { "vertices" } else { "parts" });
-            }
-            DevConsoleAction::ToggleCanopyLast => {
-                state.canopy_last_off = !state.canopy_last_off;
-                info!("Last level wood: {}", if state.canopy_last_off { "bare" } else { "worn" });
             }
             DevConsoleAction::CycleWeather => {
                 state.weather = state.weather.next();
@@ -137,6 +60,7 @@ pub fn execute_console_actions(
             DevConsoleAction::ViewTarget | DevConsoleAction::StopViewing => {}
             DevConsoleAction::SpawnParty { .. } => {}
             DevConsoleAction::Rollback { .. } => {}
+            DevConsoleAction::Set(..) => {}
             DevConsoleAction::SetClockHour(_)
             | DevConsoleAction::ShiftClock(_)
             | DevConsoleAction::ToggleClockHold
@@ -151,6 +75,15 @@ pub fn execute_console_actions(
     }
 }
 
+
+/// Asks the server to set what the Settings menu set.
+pub fn send_settings(mut reader: MessageReader<DevConsoleAction>, mut writer: MessageWriter<common_bevy::message::Try>) {
+    for action in reader.read() {
+        let DevConsoleAction::Set(setting, value) = *action else { continue };
+        info!("Setting asked: {} = {value}", setting.name());
+        writer.write(common_bevy::message::Try { event: common_bevy::message::Event::Set { setting, value } });
+    }
+}
 
 /// Asks the server to see the world as the target of the actor the client
 /// sees as, or stops the view.

@@ -27,7 +27,7 @@
 //! ground it stands on and [`OPEN`] tiles past it is cleared of all that
 //! grew or lay there as long as it stands, thinning back into what stood
 //! there over [`THIN`] more, so the den is seen over the wood round it,
-//! and every player within [`sight`] is told of it as it is
+//! and every player within `Setting::DenSight` is told of it as it is
 //! (`show_dens`). A den is drawn once the map holds all the ground it
 //! clears, which is cleared from the map's tiles, never read from the
 //! world's generator: that may be busy building elsewhere for longer than
@@ -396,13 +396,6 @@ fn spawn_nest(tuning: &Tuning, pack: Entity, at: Qrz, archetype: EnemyArchetype,
     nest
 }
 
-/// How far a player sees a den from, in tiles: the outer edge of the
-/// level past the first summary level, the furthest a den is drawn.
-pub fn sight() -> i32 {
-    let edge = common_bevy::summary::threshold_horiz(common_bevy::summary::LOD_LEVELS[2]);
-    (edge / (common::grid::HEX_RADIUS * 3f32.sqrt())).ceil() as i32
-}
-
 /// The den on `site` as drawn, about the tile its pack stands on, once
 /// it has first stood: its seed and turn the site's own, from a slot past
 /// the tile's, so no tree's sway is its.
@@ -448,14 +441,15 @@ pub struct Drawn {
 /// Lays back what each den gone from the map took and takes its circles
 /// off, stands every den's circles on the map as it now is, clears the
 /// ground of each that has come to stand once the map holds all of it,
-/// and tells each player of every den drawn within its [`sight`] it has
-/// not been told of as it is, and of each it was told of that is gone or
-/// out of sight.
+/// and tells each player of every den drawn within `Setting::DenSight`
+/// it has not been told of as it is, and of each it was told of that is
+/// gone or out of sight.
 pub fn show_dens(
     dens: Res<Dens>,
     map: Res<Map>,
     mut ground: Ground,
     lobby: Res<Lobby>,
+    settings: Res<common_bevy::settings::Settings>,
     players: Query<&Loc>,
     mut drawn: Local<HashMap<Qrz, Drawn>>,
     mut told: Local<HashMap<Entity, HashMap<Qrz, DenLook>>>,
@@ -499,7 +493,7 @@ pub fn show_dens(
         drawn.insert(at, Drawn { look, took });
     }
 
-    let sight = sight();
+    let sight = settings.get(common_bevy::settings::Setting::DenSight);
     told.retain(|player, _| lobby.get_by_right(player).is_some());
     for &player in lobby.right_values() {
         let Ok(loc) = players.get(player) else { continue };

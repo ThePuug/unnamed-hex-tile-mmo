@@ -104,7 +104,12 @@ pub enum Fixture {
     /// ground is bordered by.
     Stakes,
     Wagon,
+    /// A hitching post, where a settler's horse is tied.
+    Post,
 }
+
+/// What a blank map is drawn on, and a copy of one: so much fibre.
+pub const MAP_COST: Stack = Stack { kind: Stackable::Material(Material::Fibre), count: 6 };
 
 /// What raising a fixture takes: so many hides, so much wood of either
 /// kind and so much stone of any.
@@ -127,8 +132,10 @@ impl Needs {
             self.wood
         } else if material.is_stone() {
             self.stone
-        } else {
+        } else if material == Material::Hide {
             self.hide
+        } else {
+            0
         }
     }
 
@@ -152,7 +159,15 @@ impl Needs {
         let mut taken = Vec::new();
         for stack in held {
             let Stackable::Material(material) = stack.kind;
-            let want = if material.is_wood() { &mut left.wood } else if material.is_stone() { &mut left.stone } else { &mut left.hide };
+            let want = if material.is_wood() {
+                &mut left.wood
+            } else if material.is_stone() {
+                &mut left.stone
+            } else if material == Material::Hide {
+                &mut left.hide
+            } else {
+                continue;
+            };
             let count = stack.count.min(*want);
             *want -= count;
             if count > 0 {
@@ -171,14 +186,24 @@ pub struct Wants {
     pub needs: Needs,
 }
 
+/// What a settler whose camp's line is raised says of its wagon: what
+/// is loaded on it, and the hubs the map in the player's hand would send
+/// it to, each by the tile it is known by, none with no such map.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Wagon {
+    pub load: Vec<Stack>,
+    pub hubs: Vec<(i32, i32)>,
+}
+
 impl Fixture {
-    pub const ALL: [Fixture; 3] = [Fixture::Tent, Fixture::Stakes, Fixture::Wagon];
+    pub const ALL: [Fixture; 4] = [Fixture::Tent, Fixture::Stakes, Fixture::Wagon, Fixture::Post];
 
     pub fn name(self) -> &'static str {
         match self {
             Fixture::Tent => "Tent",
             Fixture::Stakes => "Stakes",
             Fixture::Wagon => "Wagon",
+            Fixture::Post => "Hitching post",
         }
     }
 
@@ -188,6 +213,7 @@ impl Fixture {
             Fixture::Tent => "tent",
             Fixture::Stakes => "stakes",
             Fixture::Wagon => "wagon",
+            Fixture::Post => "hitching-post",
         }
     }
 
@@ -200,6 +226,7 @@ impl Fixture {
             Fixture::Tent => Needs { hide: 4, wood: 4, stone: 0 },
             Fixture::Stakes => Needs { hide: 0, wood: 16, stone: 8 },
             Fixture::Wagon => Needs { hide: 0, wood: 24, stone: 0 },
+            Fixture::Post => Needs { hide: 0, wood: 6, stone: 0 },
         }
     }
 
@@ -208,6 +235,7 @@ impl Fixture {
             Fixture::Tent => Content::Tent,
             Fixture::Stakes => Content::Stakes,
             Fixture::Wagon => Content::Wagon,
+            Fixture::Post => Content::Post,
         }
     }
 
@@ -221,6 +249,35 @@ impl Fixture {
         let cleared = || (0..TILE_SLOTS as usize).fold(cover, |cover, k| cover.with_content(k, Content::Empty));
         (0..TILE_SLOTS as usize).all(free).then(|| cleared().with_content(SLOT, Content::Raising(self, 1)))
     }
+}
+
+/// `cover` with the horse tied at its hitching post led away, the post
+/// left standing empty; None where no horse is tied there.
+pub fn untied(cover: Cover) -> Option<Cover> {
+    (cover.content(SLOT) == Content::Post).then(|| cover.with_content(SLOT, Content::PostEmpty))
+}
+
+/// `cover` with a horse tied at its empty hitching post; None where no
+/// empty post stands there.
+pub fn tied(cover: Cover) -> Option<Cover> {
+    emptied_post(cover).then(|| cover.with_content(SLOT, Content::Post))
+}
+
+/// Whether a hitching post stands empty on a tile with `cover`.
+pub fn emptied_post(cover: Cover) -> bool {
+    cover.content(SLOT) == Content::PostEmpty
+}
+
+/// `cover` with the wagon standing on it gone, out on the road; None
+/// where none stands there.
+pub fn driven(cover: Cover) -> Option<Cover> {
+    (fixture(cover) == Some(Fixture::Wagon)).then(|| cover.with_content(SLOT, Content::Empty))
+}
+
+/// `cover` with a wagon come to stand on it, whole; None where the tile
+/// cannot take one ([`Fixture::begun`]).
+pub fn parked(cover: Cover) -> Option<Cover> {
+    Fixture::Wagon.begun(cover).map(|cover| cover.with_content(SLOT, Content::Wagon))
 }
 
 /// How many stages a fixture stands at between begun and raised, each
@@ -285,6 +342,30 @@ pub fn used(cover: Cover, k: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A wagon leaves its tile open and comes to stand on an open one.
+    #[test]
+    fn a_wagon_leaves_its_tile_and_stands_again() {
+        let stood = parked(Cover::NONE.with(0, Content::Brush)).unwrap();
+        assert_eq!(fixture(stood), Some(Fixture::Wagon));
+        assert_eq!(driven(stood), Some(Cover::NONE));
+        assert_eq!((driven(Cover::NONE), parked(stood)), (None, None));
+    }
+
+    /// A horse is led from its post and tied at it again, and the post
+    /// is kept as it stands either way.
+    #[test]
+    fn a_horse_is_led_from_its_post_and_tied_again() {
+        let mut cover = Fixture::Post.begun(Cover::NONE).unwrap();
+        for _ in 0..STAGES {
+            assert_eq!(Cover::from_bits(cover.bits()), cover);
+            cover = advanced(cover).unwrap();
+        }
+        assert_eq!(fixture(cover), Some(Fixture::Post));
+        let empty = untied(cover).unwrap();
+        assert!(emptied_post(empty) && fixture(empty).is_none());
+        assert_eq!((Cover::from_bits(empty.bits()), tied(empty), untied(empty), tied(cover)), (empty, Some(cover), None, None));
+    }
 
     const OAK: Construct = Construct { kind: Kind::Blockade, of: Material::Hardwood };
 

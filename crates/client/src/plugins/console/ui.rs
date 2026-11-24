@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use super::state::{DevConsole, MenuPath};
 use crate::plugins::diagnostics::{DateField, DiagnosticsState, WeatherHold};
+use common_bevy::settings::{Kept, Setting, Settings};
 use common_bevy::systems::{Date, DAY_MS, HOUR_MS, MINUTE_MS, SEASONS, WEEKS};
 
 #[derive(Component)]
@@ -102,6 +103,8 @@ pub fn update_console_menu(
     diagnostics_state: Res<DiagnosticsState>,
     added: Res<crate::network::AddedLatency>,
     server: Res<crate::resources::Server>,
+    settings: Res<Settings>,
+    kept: Res<Kept>,
     time: Res<Time>,
     mut breadcrumb_query: Query<&mut Text, (With<BreadcrumbText>, Without<MenuItemsContainer>)>,
     menu_query: Query<(Entity, Option<&Children>), With<MenuItemsContainer>>,
@@ -110,7 +113,7 @@ pub fn update_console_menu(
 ) {
     // The clock's row reads the calendar the server last sent
     let calendar_changed = shown.replace(server.calendar) != Some(server.calendar);
-    if !console.is_changed() && !diagnostics_state.is_changed() && !added.is_changed() && !calendar_changed {
+    if !console.is_changed() && !diagnostics_state.is_changed() && !added.is_changed() && !calendar_changed && !settings.is_changed() && !kept.is_changed() {
         return;
     }
 
@@ -127,40 +130,58 @@ pub fn update_console_menu(
 
         commands.entity(container_entity).with_children(|parent| {
             match console.current_menu {
-                MenuPath::Root => {
-                    line(parent, "1. Terrain", 16.0, Color::WHITE);
-                    {
-                        line(parent, "2. Goto Coordinates", 16.0, Color::WHITE);
-                        line(parent, format!("3. Added Latency      [{}ms]", added.0.as_millis()), 16.0, state_color(!added.0.is_zero()));
-                    }
-                    line(parent, "4. Rollback", 16.0, Color::WHITE);
-                    gap(parent);
-                    for text in ["5. Spawn Den", "6. View", "7. Stage Party", "8. Stage Opposition"] {
-                        line(parent, text, 16.0, Color::WHITE);
-                    }
-                    gap(parent);
-                    line(parent, "0. Close Console", 16.0, BACK);
-                }
-                MenuPath::Terrain => {
+                MenuPath::Root | MenuPath::World | MenuPath::Travel | MenuPath::Stages => {
                     let held = server.calendar.held.map(hour);
+                    for (row, menu) in super::navigation::rows(&console.current_menu).iter().enumerate() {
+                        let text = match menu {
+                            MenuPath::WorldClock => format!("{}. World Clock              [{}]", row + 1, held.as_ref().map_or("Running".to_string(), |at| format!("Held {at}"))),
+                            _ => format!("{}. {}", row + 1, menu.display_name()),
+                        };
+                        let color = if *menu == MenuPath::WorldClock { state_color(held.is_some()) } else { Color::WHITE };
+                        line(parent, text, 16.0, color);
+                    }
+                    gap(parent);
+                    line(parent, if console.current_menu == MenuPath::Root { "0. Close Console" } else { "0. Back" }, 16.0, BACK);
+                }
+                MenuPath::Settings => {
+                    for (row, setting) in Setting::ALL.into_iter().enumerate() {
+                        let text = format!("{}. {:<25}[{}]", row + 1, setting.name(), stands(setting, &settings, &kept));
+                        line(parent, text, 16.0, state_color(kept.0.get(setting) == setting.default()));
+                    }
+                    for text in ["The server's, for every player, and kept: green is as built", "A cold setting holds from the server's next start"] {
+                        line(parent, text, 12.0, Color::srgb(0.6, 0.6, 0.6));
+                    }
+                    gap(parent);
+                    line(parent, "0. Back", 16.0, BACK);
+                }
+                MenuPath::Setting(setting) => {
+                    let buf = &console.setting_buf;
+                    let display = if buf.is_empty() { "_" } else { buf };
+                    line(parent, format!("Value = {display}"), 16.0, Color::srgb(0.9, 0.9, 0.4));
+                    line(parent, format!("Now = {}", stands(setting, &settings, &kept)), 16.0, Color::srgb(0.9, 0.9, 0.4));
+                    let (least, most) = setting.range();
+                    for text in [
+                        setting.says().to_string(),
+                        format!("From {least} to {most}, {} as built", setting.default()),
+                        if setting.hot() { "Hot: holds at once, for every player" } else { "Cold: kept at once, holds from the server's next start" }.to_string(),
+                        "Type a value, press Enter (empty = as built)".to_string(),
+                    ] {
+                        line(parent, text, 12.0, Color::srgb(0.6, 0.6, 0.6));
+                    }
+                    gap(parent);
+                    line(parent, "Esc. Back", 16.0, BACK);
+                }
+                MenuPath::Client => {
                     let rows = [
-                        (format!("1. Toggle Grid Overlay      [{}]", on_off(diagnostics_state.grid_visible)), diagnostics_state.grid_visible),
-                        (
-                            format!("2. World Clock              [{}]", held.as_ref().map_or("Running".to_string(), |at| format!("Held {at}"))),
-                            held.is_some(),
-                        ),
-                        (format!("3. Terrain                  [{}]", if diagnostics_state.terrain_hidden { "Hidden" } else { "Shown" }), !diagnostics_state.terrain_hidden),
-                        (format!("4. Camera Close-up          [{}]", if diagnostics_state.camera_closeup { "On" } else { "Off" }), !diagnostics_state.camera_closeup),
-                        (format!("5. Cover                    [{}]", if diagnostics_state.cover_hidden { "Hidden" } else { "Shown" }), !diagnostics_state.cover_hidden),
-                        (format!("6. Canopy                   [{}]", if diagnostics_state.canopy_parts_off { "Vertices" } else { "Parts" }), !diagnostics_state.canopy_parts_off),
-                        (format!("7. Last Level Wood          [{}]", if diagnostics_state.canopy_last_off { "Bare" } else { "Worn" }), !diagnostics_state.canopy_last_off),
-                        (format!("8. Weather                  [{:?}]", diagnostics_state.weather), diagnostics_state.weather == WeatherHold::Forecast),
+                        (format!("1. Camera Close-up          [{}]", if diagnostics_state.camera_closeup { "On" } else { "Off" }), !diagnostics_state.camera_closeup),
+                        (format!("2. Weather                  [{:?}]", diagnostics_state.weather), diagnostics_state.weather == WeatherHold::Forecast),
+                        (format!("3. Added Latency            [{}ms]", added.0.as_millis()), added.0.is_zero()),
                     ];
                     for (text, on) in rows {
                         line(parent, text, 16.0, state_color(on));
                     }
                     gap(parent);
-                    line(parent, "0. Back to Main Menu", 16.0, BACK);
+                    line(parent, "0. Back", 16.0, BACK);
                 }
                 MenuPath::WorldClock => {
                     let buf = &console.clock_buf;
@@ -267,8 +288,11 @@ pub fn update_console_menu(
     }
 }
 
-fn on_off(state: bool) -> &'static str {
-    if state { "ON" } else { "OFF" }
+/// A setting as it is in force, and what is kept for the server's next
+/// start where that differs.
+fn stands(setting: Setting, settings: &Settings, kept: &Kept) -> String {
+    let (now, next) = (settings.get(setting), kept.0.get(setting));
+    if next == now { now.to_string() } else { format!("{now}, {next} at restart") }
 }
 
 fn state_color(state: bool) -> Color {

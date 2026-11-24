@@ -197,3 +197,68 @@ fn vantage_points() {
     let near: Vec<((i32, i32), u8)> = views.iter().filter(|(_, (_, f))| *f >= 3).map(|(k, (_, f))| (*k, *f)).take(5).collect();
     println!("wooded tiles near the spawn: {near:?}");
 }
+
+/// A census of the reeds in the served world about the haven: what share
+/// of the fresh wet tiles hold them, by the water's depth, how wide the
+/// water is there, and how fast it falls. The time is the ground built under the
+/// window and not the tiles read in it, so the window is small and whole:
+/// a step saves nothing, nor do threads.
+#[test]
+#[ignore]
+fn reed_census() {
+    use common::Content;
+    const HAVEN: (i32, i32) = (107289, -7677);
+    let half: i32 = std::env::var("HALF").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
+    let step: i32 = std::env::var("STEP").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+    let c = Composite::standard(world::WORLD_SEED);
+    let t = Instant::now();
+    let wet = |q: i32, r: i32| c.water_at(q, r).filter(|&s| s >= 1);
+    let (mut tiles, mut fresh, mut reedy, mut sites) = (0u32, 0u32, 0u32, 0u32);
+    // by depth 1, 2, 3+: (wet, reedy)
+    let mut by_depth = [(0u32, 0u32); 3];
+    // by wet neighbours 0..=6: (wet at depth 1, reedy)
+    let mut by_width = [(0u32, 0u32); 7];
+    // by the water's fall a tile: still, then 0.04 a bin: (shallow, reedy)
+    let mut by_fall = [(0u32, 0u32); 12];
+    // by whether a neighbour is deeper: (shallow, reedy)
+    let mut by_margin = [(0u32, 0u32); 2];
+    for (q, r) in window(HAVEN, half, step) {
+        tiles += 1;
+        let Some(surface) = wet(q, r) else { continue };
+        let v = c.tile_at(q, r);
+        fresh += 1;
+        let depth = surface - v.elevation.round() as i32;
+        let reeds = v.cover.filled().filter(|&(_, g)| g == Content::Reed).count() as u32;
+        let has = (reeds > 0) as u32;
+        reedy += has;
+        sites += reeds;
+        let d = &mut by_depth[(depth.clamp(1, 3) - 1) as usize];
+        d.0 += 1;
+        d.1 += has;
+        if depth != 1 {
+            continue;
+        }
+        let around = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
+        let mut n = 0;
+        let mut deeper = false;
+        for (dq, dr) in around {
+            if let Some(s) = wet(q + dq, r + dr) {
+                n += 1;
+                deeper |= s - c.elevation_at(q + dq, r + dr) > 1;
+            }
+        }
+        by_width[n].0 += 1;
+        by_width[n].1 += has;
+        by_margin[deeper as usize].0 += 1;
+        by_margin[deeper as usize].1 += has;
+        let b = &mut by_fall[if v.fall <= 0.0 { 0 } else { ((v.fall / 0.04) as usize + 1).min(11) }];
+        b.0 += 1;
+        b.1 += has;
+    }
+    println!("{tiles} tiles in {:.1}s", t.elapsed().as_secs_f64());
+    println!("fresh wet {fresh} ({:.2}% of tiles), with reeds {reedy} ({:.1}% of wet), {sites} reed sites", 100.0 * fresh as f64 / tiles as f64, 100.0 * reedy as f64 / fresh.max(1) as f64);
+    println!("by depth 1,2,3+ (wet, reedy): {by_depth:?}");
+    println!("depth 1 by wet neighbours 0..6 (tiles, reedy): {by_width:?}");
+    println!("depth 1 by a deeper neighbour no,yes: {by_margin:?}");
+    println!("depth 1 by fall: still, then 0.04 a bin: {by_fall:?}");
+}

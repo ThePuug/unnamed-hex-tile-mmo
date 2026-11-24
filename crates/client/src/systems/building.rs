@@ -1,13 +1,19 @@
 //! Building on the client: B opens the build panel on the tile the player
 //! faces, which lists each kind the bag can pay for and the tile can take, or
-//! the taking down of what stands there; a digit asks the server for it.
+//! the taking down of what stands there, and under them a map drawn of
+//! the bag's fibre; a digit asks the server for it.
 //! The server finds the tile itself, from where the player stands and
 //! faces.
 
 use bevy::prelude::*;
 use common::building::{self, Construct, Kind};
 use common_bevy::{
-    components::{equipment::Inventory, heading::Heading, position::Position, Actor},
+    components::{
+        equipment::{Equipment, Inventory, Item, Slot},
+        heading::Heading,
+        position::Position,
+        Actor,
+    },
     message::{Do, Event, Try},
     resources::map::Map,
 };
@@ -22,12 +28,14 @@ use crate::systems::{
 /// The key that opens the build panel, and shuts it.
 pub const KEYCODE_BUILD: KeyCode = KeyCode::KeyB;
 
-/// What a row of the build panel asks for: a construct built, or the one
-/// standing on the tile taken down.
+/// What a row of the build panel asks for: a construct built, the one
+/// standing on the tile taken down, or a map drawn, blank or a copy of
+/// the one in hand.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Choice {
     Build(Construct),
     TakeDown(Construct),
+    Draw { copy: bool },
 }
 
 impl Choice {
@@ -38,6 +46,10 @@ impl Choice {
                 format!("{} — {} {}", construct.kind.name(), cost.count, cost.kind.name())
             }
             Choice::TakeDown(construct) => format!("Take down the {}", construct.name().to_lowercase()),
+            Choice::Draw { copy } => {
+                let cost = building::MAP_COST;
+                format!("{} — {} {}", if copy { "Copy of the map in hand" } else { "Blank map" }, cost.count, cost.kind.name())
+            }
         }
     }
 }
@@ -73,6 +85,17 @@ pub fn choices(cover: common::Cover, bag: &Inventory) -> Vec<Choice> {
     Kind::ALL.into_iter().filter_map(|kind| Construct::all().filter(|construct| construct.kind == kind).find(pays)).map(Choice::Build).collect()
 }
 
+/// The maps a player whose bag is `bag` may draw, wearing `worn`: a blank
+/// one where the bag holds the fibre, and a copy where a map is in hand.
+pub fn drawn(bag: &Inventory, worn: &Equipment) -> Vec<Choice> {
+    let cost = building::MAP_COST;
+    if bag.count(cost.kind) < cost.count {
+        return Vec::new();
+    }
+    let holds = worn.worn(Slot::MainHand).and_then(Item::map).is_some();
+    [false, true].into_iter().filter(|&copy| !copy || holds).map(|copy| Choice::Draw { copy }).collect()
+}
+
 /// Opens and shuts the panel on B, keeps its rows to the tile faced and
 /// the bag, and asks the server for the row whose digit is pressed.
 pub fn request(
@@ -81,12 +104,12 @@ pub fn request(
     focus: Res<NumpadFocus>,
     map: Res<Map>,
     mut panel: ResMut<BuildPanel>,
-    player: Query<(Entity, &Position, &Heading, &Inventory), With<Actor>>,
+    player: Query<(Entity, &Position, &Heading, &Inventory, &Equipment), With<Actor>>,
     mut writer: MessageWriter<Try>,
     mut settling: ResMut<crate::systems::input::Settling>,
     predicted: crate::systems::movement::Predicted,
 ) {
-    let Ok((ent, position, heading, bag)) = player.single() else {
+    let Ok((ent, position, heading, bag, worn)) = player.single() else {
         panel.open = false;
         return;
     };
@@ -100,7 +123,8 @@ pub fn request(
         return;
     }
     let tile = faced(&map, &predicted.position().unwrap_or(*position), *heading);
-    let offered = choices(map.cover_at(tile.q, tile.r), bag);
+    let mut offered = choices(map.cover_at(tile.q, tile.r), bag);
+    offered.extend(drawn(bag, worn));
     if panel.choices != offered {
         panel.choices = offered;
     }
@@ -112,13 +136,16 @@ pub fn request(
         return;
     }
     for (row, key) in ENTRY_KEYS.iter().enumerate().take(panel.choices.len()) {
-        if keys.take(*key, "Build this, or take it down") {
-            let construct = match panel.choices[row] {
-                Choice::Build(construct) => Some(construct),
-                Choice::TakeDown(_) => None,
+        if keys.take(*key, "Build this, take it down, or draw the map") {
+            let event = match panel.choices[row] {
+                Choice::Build(construct) => Event::Build { ent, construct: Some(construct) },
+                Choice::TakeDown(_) => Event::Build { ent, construct: None },
+                Choice::Draw { copy } => Event::Draw { ent, copy },
             };
-            settling.begin();
-            writer.write(Try { event: Event::Build { ent, construct } });
+            if matches!(event, Event::Build { .. }) {
+                settling.begin();
+            }
+            writer.write(Try { event });
             panel.open = false;
         }
     }
@@ -241,5 +268,16 @@ mod tests {
         assert_eq!(choices(Cover::NONE, &bag).len(), Kind::ALL.len());
         let staked = blockade.raised(Cover::NONE).unwrap();
         assert_eq!(choices(staked, &bag), vec![Choice::TakeDown(blockade)]);
+    }
+
+    /// A blank map is offered once the bag holds its fibre.
+    #[test]
+    fn a_map_is_offered_for_its_fibre() {
+        let mut bag = Inventory::default();
+        let cost = building::MAP_COST;
+        bag.add(Stack { kind: cost.kind, count: cost.count - 1 });
+        assert!(drawn(&bag, &Equipment::default()).is_empty());
+        bag.add(Stack { kind: cost.kind, count: 1 });
+        assert_eq!(drawn(&bag, &Equipment::default()), vec![Choice::Draw { copy: false }], "and no copy with no map in hand");
     }
 }

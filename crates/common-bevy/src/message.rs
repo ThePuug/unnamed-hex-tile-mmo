@@ -37,6 +37,14 @@ pub enum Event {
     /// Client → Server: change the world's calendar for everyone. An admin
     /// request, as ungated on the wire as `Teleport` (issue #21).
     ChangeCalendar { change: crate::systems::CalendarChange },
+    /// Client → Server: set `setting` to `value`, which the server holds
+    /// within its range and keeps. An admin's request, as ungated on the
+    /// wire as `Teleport`.
+    Set { setting: crate::settings::Setting, value: i32 },
+    /// Server → Client: every setting as it is in force and as it is
+    /// kept, sent to a client as it enters and to every client when one
+    /// changes. The two differ where a cold setting waits on a restart.
+    Settings { running: crate::settings::Settings, kept: crate::settings::Settings },
     /// Client → Server: roll the whole world back `ms` milliseconds, as
     /// the store kept it then: on the calendar where `game`, on the real
     /// clock otherwise. The calendar goes back with it, and the server
@@ -162,6 +170,17 @@ pub enum Event {
     /// ground its fortifications border, as it enters the world and
     /// whenever that changes. Sent to its owner only.
     Sheltered { ent: Entity, held: bool },
+    /// Server → Client: what the settler `ent` hailed says of its camp's
+    /// wagon, once the camp's line is raised; None where there is no
+    /// wagon to speak of. Sent to its owner only.
+    Wagon { ent: Entity, wagon: Option<common::building::Wagon> },
+    /// Client → Server (Try): `ent` hands the settler beside it the map
+    /// in its main hand and sends the camp's wagon by it to the hub
+    /// known by the tile `to`
+    Send { ent: Entity, to: (i32, i32) },
+    /// Client → Server (Try): `ent` draws a blank map of the fibre in its
+    /// bag, or with `copy` a copy of the map in its main hand
+    Draw { ent: Entity, copy: bool },
     /// Client → Server (Try): `ent` hails the settler nearest it, and with
     /// `give` hands it what its bag holds of what the settler lacks
     Hail { ent: Entity, give: bool },
@@ -230,6 +249,9 @@ impl Event {
             | Event::Build { ent, .. }
             | Event::Home { ent, .. }
             | Event::Hail { ent, .. }
+            | Event::Draw { ent, .. }
+            | Event::Wagon { ent, .. }
+            | Event::Send { ent, .. }
             | Event::Wants { ent, .. }
             | Event::Sheltered { ent, .. }
             | Event::RespecAttributes { ent, .. }
@@ -240,6 +262,8 @@ impl Event {
             | Event::Play
             | Event::Leave
             | Event::ChangeCalendar { .. }
+            | Event::Set { .. }
+            | Event::Settings { .. }
             | Event::Rollback { .. }
             | Event::Calendar { .. } => None,
         }

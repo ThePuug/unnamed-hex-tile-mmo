@@ -60,6 +60,8 @@ pub struct DevConsole {
     pub clock_date_field: DateField,
     /// How far back a rollback goes (when in the Rollback menu).
     pub rollback: Rollback,
+    /// Text buffer for the value typed (when in a Setting menu).
+    pub setting_buf: String,
 }
 
 impl Default for DevConsole {
@@ -74,6 +76,7 @@ impl Default for DevConsole {
             clock_scrub_secs: 0.0,
             clock_date_field: DateField::default(),
             rollback: Rollback::default(),
+            setting_buf: String::new(),
         }
     }
 }
@@ -123,7 +126,19 @@ impl Rollback {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum MenuPath {
     Root,
-    Terrain,
+    /// What every player shares: the clock and the rollback
+    World,
+    /// Where the client stands and whom it sees as
+    Travel,
+    /// What is staged ahead of the actor the client sees as
+    Stages,
+    /// The server's settings, for every player
+    Settings,
+    /// One setting, its value typed
+    Setting(common_bevy::settings::Setting),
+    /// What this client alone draws and sends: its overlays and its
+    /// added latency
+    Client,
     WorldClock,
     /// Roll the whole world back to an earlier moment
     #[cfg(feature = "admin")]
@@ -165,7 +180,12 @@ impl MenuPath {
     pub fn display_name(&self) -> &str {
         match self {
             MenuPath::Root => "Main Menu",
-            MenuPath::Terrain => "Terrain Settings",
+            MenuPath::World => "World",
+            MenuPath::Travel => "Travel",
+            MenuPath::Stages => "Stage",
+            MenuPath::Settings => "Settings",
+            MenuPath::Setting(setting) => setting.name(),
+            MenuPath::Client => "Client",
             MenuPath::WorldClock => "World Clock",
             #[cfg(feature = "admin")]
             MenuPath::Rollback => "Rollback",

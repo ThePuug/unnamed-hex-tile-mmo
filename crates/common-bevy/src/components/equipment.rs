@@ -90,6 +90,7 @@ impl Piece {
             (Kind::Heavy, _) => 3,
             (Kind::Sword | Kind::Shield, _) => 3,
             (Kind::Axe | Kind::Mace, _) => 4,
+            (Kind::Map, _) => 1,
         }
     }
 }
@@ -97,13 +98,27 @@ impl Piece {
 /// One make of a piece: the piece, and the seed of its set it is made
 /// in. A seed is the set's colours and which of the piece's shapes it is
 /// cut in, the same across the set, so the pieces of one seed match.
+/// Two items of one make are the same thing, but for a piece each of
+/// which is one of a kind: a map is `instance`, its own number, and
+/// what it has charted is kept by that.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Item {
     pub piece: Piece,
     pub seed: u16,
+    pub instance: Option<u32>,
 }
 
 impl Item {
+    /// The make of `piece` in `seed`, one like any other of it.
+    pub fn of(piece: Piece, seed: u16) -> Item {
+        Item { piece, seed, instance: None }
+    }
+
+    /// The number of the map this is, where it is one.
+    pub fn map(self) -> Option<u32> {
+        self.instance.filter(|_| self.piece.set().kind == Kind::Map)
+    }
+
     /// Which of the piece's shapes this seed is cut in, its glTF scenes
     /// in order: each in turn.
     pub fn shape(self) -> usize {
@@ -174,9 +189,9 @@ impl Equipment {
         const SEED: u16 = 2;
         let mut outfit = Equipment::default();
         for name in ["ranger-hood", "ranger-vest", "ranger-gloves", "ranger-girdle", "ranger-pants", "ranger-boots", "arming-sword"] {
-            outfit.wear(Item { piece: Piece::named(name), seed: SEED });
+            outfit.wear(Item::of(Piece::named(name), SEED));
         }
-        outfit.wear(Item { piece: Piece::named("sword-breaker"), seed: 0 });
+        outfit.wear(Item::of(Piece::named("sword-breaker"), 0));
         outfit
     }
 }
@@ -276,7 +291,7 @@ mod tests {
     use super::*;
 
     fn item(name: &str, seed: u16) -> Item {
-        Item { piece: Piece::named(name), seed }
+        Item::of(Piece::named(name), seed)
     }
 
     fn of(material: common::Material, count: u32) -> common::Stack {
@@ -387,7 +402,7 @@ mod tests {
     fn a_full_bag_takes_only_what_it_stacks() {
         let worn = Equipment::default();
         let mut bag = Inventory::default();
-        let pieces: Vec<Item> = Piece::all().flat_map(|piece| (0..piece.set().seeds.len() as u16).map(move |seed| Item { piece, seed })).collect();
+        let pieces: Vec<Item> = Piece::all().flat_map(|piece| (0..piece.set().seeds.len() as u16).map(move |seed| Item::of(piece, seed))).collect();
         bag.items = pieces.into_iter().cycle().take(BAG_STACKS - 1).collect();
         bag.add(of(common::Material::Softwood, 1));
         assert_eq!(bag.stacks(&worn), BAG_STACKS);
@@ -401,7 +416,7 @@ mod tests {
     fn any_seed_is_a_shape_and_a_shipped_seed() {
         for piece in Piece::all() {
             for seed in [0, 1, 7, 8, 31, 1000, u16::MAX] {
-                let item = Item { piece, seed };
+                let item = Item::of(piece, seed);
                 assert!(item.shape() < kit::PIECES[piece.0 as usize].shapes as usize);
                 assert!((item.shipped() as usize) < piece.set().seeds.len());
             }

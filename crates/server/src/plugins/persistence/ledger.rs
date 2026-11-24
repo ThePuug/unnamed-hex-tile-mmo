@@ -14,6 +14,7 @@ fn holder(holder: Holder, character: &impl Fn(Identity) -> Option<i64>) -> Optio
         Holder::Character(identity) => json!({"character": character(identity)?}),
         Holder::Pile(q, r, slot) => json!({"pile": [q, r, slot]}),
         Holder::Camp(q, r) => json!({"camp": [q, r]}),
+        Holder::Depot(q, r) => json!({"depot": [q, r]}),
     })
 }
 

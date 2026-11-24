@@ -238,8 +238,8 @@ pub fn member_offset(index: usize) -> Qrz {
 fn kit(archetype: EnemyArchetype) -> Equipment {
     let mut worn = Equipment::default();
     if archetype == EnemyArchetype::Defender {
-        worn.wear(Item { piece: Piece::named("sentinel-cuirass"), seed: 0 });
-        worn.wear(Item { piece: Piece::named("sword-breaker"), seed: 0 });
+        worn.wear(Item::of(Piece::named("sentinel-cuirass"), 0));
+        worn.wear(Item::of(Piece::named("sword-breaker"), 0));
     }
     worn
 }

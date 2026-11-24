@@ -1,3 +1,4 @@
+pub mod chart;
 pub mod chunk;
 pub mod components;
 pub mod den;
@@ -8,6 +9,7 @@ pub mod path;
 pub mod sky;
 pub mod plugins;
 pub mod resources;
+pub mod settings;
 pub mod archetype;
 pub mod haven;
 pub mod hubs;

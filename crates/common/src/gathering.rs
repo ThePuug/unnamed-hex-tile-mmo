@@ -7,7 +7,8 @@ use crate::cover::{Content, Cover, SITE_SLOTS};
 use crate::Rock;
 
 /// What is carried and built with: a tree's wood by its kind, a boulder's
-/// stone by its rock, and the hide a beast leaves.
+/// stone by its rock, the hide a beast leaves, and the fibre cut from
+/// reeds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Material {
     Softwood,
@@ -16,10 +17,12 @@ pub enum Material {
     Limestone,
     Basement,
     Hide,
+    Fibre,
 }
 
 impl Material {
-    pub const ALL: [Material; 6] = [Material::Softwood, Material::Hardwood, Material::Sandstone, Material::Limestone, Material::Basement, Material::Hide];
+    pub const ALL: [Material; 7] =
+        [Material::Softwood, Material::Hardwood, Material::Sandstone, Material::Limestone, Material::Basement, Material::Hide, Material::Fibre];
 
     /// The number a store keeps the material by. It is given once: a
     /// material renamed keeps it, a new one takes the next never used, and
@@ -33,6 +36,7 @@ impl Material {
             Material::Limestone => 4,
             Material::Basement => 5,
             Material::Hide => 6,
+            Material::Fibre => 7,
         }
     }
 
@@ -49,6 +53,7 @@ impl Material {
             Material::Limestone => "Limestone",
             Material::Basement => "Basement stone",
             Material::Hide => "Hide",
+            Material::Fibre => "Fibre",
         }
     }
 
@@ -61,13 +66,15 @@ impl Material {
             Material::Limestone => "limestone",
             Material::Basement => "basement",
             Material::Hide => "hide",
+            Material::Fibre => "fibre",
         }
     }
 
-    /// What one of it weighs in the bag: a hide least, wood less than
-    /// stone, and the hard of each more.
+    /// What one of it weighs in the bag: fibre least, then a hide, wood
+    /// less than stone, and the hard of each more.
     pub fn weight(self) -> u32 {
         match self {
+            Material::Fibre => 1,
             Material::Hide => 2,
             Material::Softwood => 3,
             Material::Hardwood => 4,
@@ -134,7 +141,7 @@ impl Stack {
 }
 
 /// The work an actor is seen at: a chop at a tree, a strike at a boulder,
-/// or busy with its hands at whatever it is raising.
+/// or busy with its hands at whatever it is raising or cutting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Work {
     Chop,
@@ -142,13 +149,15 @@ pub enum Work {
     Build,
 }
 
-/// What an actor is seen doing where it stands: at its work, stooped to
-/// the pile its loot window is open on, or asleep on the ground.
+/// What an actor is seen doing: at its work, stooped to the pile its
+/// loot window is open on, asleep on the ground, or on the road with a
+/// wagon behind it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Activity {
     Work(Work),
     Pickup,
     Sleep,
+    Haul,
 }
 
 // How far ahead of the actor's feet each gather's clip lands its work, as
@@ -164,7 +173,7 @@ pub fn reach(activity: Activity) -> f32 {
         Activity::Work(Work::Mine) => MINE_REACH,
         // Hands at the work, as at a pile
         Activity::Work(Work::Build) | Activity::Pickup => PICKUP_REACH,
-        Activity::Sleep => 0.0,
+        Activity::Sleep | Activity::Haul => 0.0,
     }
 }
 
@@ -175,7 +184,11 @@ pub const WORK_MS: u64 = 7500;
 /// stands there.
 pub fn work(cover: Cover, k: usize) -> Option<Work> {
     harvest(cover, k)?;
-    Some(if cover.content(anchor(cover, k)) == Content::Boulder { Work::Mine } else { Work::Chop })
+    Some(match cover.content(anchor(cover, k)) {
+        Content::Boulder => Work::Mine,
+        Content::Reed => Work::Build,
+        _ => Work::Chop,
+    })
 }
 
 /// How much one felled tree gives.
@@ -186,6 +199,9 @@ const BOULDER_YIELD: u32 = 3;
 
 /// How much one stump gives, the second gather of its tree.
 const STUMP_YIELD: u32 = 2;
+
+/// How much one stand of reeds gives.
+const REED_YIELD: u32 = 2;
 
 /// What gathering one slot takes and leaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,7 +251,7 @@ pub fn anchor(cover: Cover, k: usize) -> usize {
 /// where nothing gatherable stands. A tree, named by either slot it holds,
 /// leaves its stump in its first slot and frees its second; the stump,
 /// gathered after it, frees the first; a boulder of any rock but shale
-/// frees its slot. Brush is not gathered.
+/// frees its slot, as a stand of reeds does. Brush is not gathered.
 pub fn harvest(cover: Cover, k: usize) -> Option<Harvest> {
     let at = anchor(cover, k);
     let felled = |stump: Content, material: Material| {
@@ -262,6 +278,7 @@ pub fn harvest(cover: Cover, k: usize) -> Option<Harvest> {
             amount: BOULDER_YIELD,
             freed: at,
         }),
+        Content::Reed => Some(Harvest { cover: cover.with_content(at, Content::Empty), material: Material::Fibre, amount: REED_YIELD, freed: at }),
         _ => None,
     }
 }
@@ -322,6 +339,17 @@ mod tests {
         assert_eq!(work(ground, 0), Some(Work::Mine));
         assert_eq!(work(ground.with_rock(Rock::Shale), 0), None);
         assert_eq!(work(ground, 3), None);
+        assert_eq!(work(Cover::NONE.with(1, Content::Reed), SITE_SLOTS[1][0]), Some(Work::Build));
+    }
+
+    /// A stand of reeds is cut by hand for its fibre, and leaves its
+    /// slot free; it stands in no one's way.
+    #[test]
+    fn reeds_give_fibre() {
+        let reeds = Cover::NONE.with(0, Content::Reed);
+        assert_eq!((reeds.fullness(), Cover::from_bits(reeds.bits())), (0, reeds));
+        let cut = harvest(reeds, SITE_SLOTS[0][0]).unwrap();
+        assert_eq!((cut.material, cut.amount, cut.cover, cut.freed), (Material::Fibre, REED_YIELD, Cover::NONE, SITE_SLOTS[0][0]));
     }
 
     /// A boulder gives its rock's stone and frees its slot; shale gives

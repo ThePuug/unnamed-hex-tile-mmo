@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO depot (q, r, stacks)\n             SELECT q, r, stacks::JSONB FROM UNNEST($1::INT[], $2::INT[], $3::TEXT[]) AS t(q, r, stacks)\n             ON CONFLICT (q, r) DO UPDATE SET stacks = EXCLUDED.stacks",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4Array",
+        "Int4Array",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b0df034b77fcbb10dc4768f2bbcab3c785134b4164d48972ceb065dd1550863e"
+}

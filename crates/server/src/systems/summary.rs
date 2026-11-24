@@ -71,7 +71,7 @@ pub const MAX_SUMMARY_TASKS: usize = 16;
 /// The level whose band, and everything inside it, streams all round the
 /// player for context; beyond its outer edge only the sector around the
 /// bearing its camera looks along streams. The level past the first summary level, as far as a
-/// den is drawn (`dens::sight`).
+/// den is drawn (`Setting::DenSight`).
 const CONTEXT_LEVEL: u32 = LOD_LEVELS[2];
 
 /// Region rings past a band's reach a sent region is kept before it is

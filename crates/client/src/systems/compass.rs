@@ -7,8 +7,9 @@
 //! while it is off the strip: the haven's square and gold, the home's
 //! round and the colour of its fire, shown while the player has one. The
 //! strip itself is warmed a little while the player stands on ground a
-//! hub holds. Each den the server has told of stands at its bearing too, and
-//! drops off the strip with the rest of what lies behind.
+//! hub holds. The nearest dens the server has told of, as many as
+//! `Setting::DensShown`, stand at their bearings too, and drop off the
+//! strip with the rest of what lies behind.
 
 use bevy::prelude::*;
 use bevy::math::Rot2;
@@ -18,6 +19,7 @@ use common_bevy::{
     components::{ally_target::AllyTarget, heading::*, position::VisualPosition, target::Target},
     haven::Haven,
     resources::map::Map,
+    settings::{Setting, Settings},
     systems::targeting::FACING_ARC,
 };
 use qrz::Qrz;
@@ -287,6 +289,7 @@ pub fn update(
     haven: Res<Haven>,
     home: Res<crate::systems::building::HomeHearth>,
     sheltered: Res<crate::systems::building::Sheltered>,
+    settings: Res<Settings>,
     mut strip: Query<&mut BackgroundColor, With<Strip>>,
     viewed: Query<(&Heading, &VisualPosition, &Target, Option<&AllyTarget>), With<Viewed>>,
     positions: Query<&VisualPosition>,
@@ -305,8 +308,22 @@ pub fn update(
         let xz = Vec2::new(to.x, to.z);
         (xz.length_squared() > f32::EPSILON).then(|| relative(bearing(xz), view))
     };
+    let mut dens: Vec<(f32, Qrz)> = marks
+        .iter()
+        .filter_map(|(mark, ..)| {
+            let &Mark::Den(tile) = mark else { return None };
+            let to = origin.render_tile(&map, tile) - seer?.1.current();
+            Some((Vec2::new(to.x, to.z).length_squared(), tile))
+        })
+        .collect();
+    let shown = settings.get(Setting::DensShown) as usize;
+    if dens.len() > shown {
+        dens.select_nth_unstable_by(shown, |a, b| a.0.total_cmp(&b.0));
+        dens.truncate(shown);
+    }
     for (&mark, mut node, mut visibility) in &mut marks {
         let rel = match mark {
+            Mark::Den(tile) if !dens.iter().any(|&(_, near)| near == tile) => None,
             Mark::Bearing(degrees) => Some(relative(degrees, view)),
             Mark::Facing => seer.map(|(heading, ..)| relative(heading.degrees(), view)),
             Mark::Pin(lane) => toward(

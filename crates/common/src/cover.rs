@@ -13,6 +13,8 @@ pub enum Content {
     #[default]
     Empty,
     Brush,
+    /// A stand of reeds in the shallows, which fibre is cut from.
+    Reed,
     Pine,
     Deciduous,
     /// The second slot of the tree in the site's first.
@@ -31,11 +33,15 @@ pub enum Content {
     Hearth(Material),
     Blockade(Material),
     /// What a hub's settlers raise (`crate::building::Fixture`), each
-    /// standing in the tile's centre: a tent and a wagon there alone,
-    /// stakes holding every slot.
+    /// standing in the tile's centre: a tent, a wagon and a hitching
+    /// post there alone, stakes holding every slot. A hitching post has
+    /// its settler's horse tied at it, or stands empty while the horse
+    /// is away with the wagon.
     Tent,
     Stakes,
     Wagon,
+    Post,
+    PostEmpty,
     /// A fixture begun and not yet raised, in the tile's centre, at a
     /// stage of `crate::building::STAGES` from 1: in no one's way, and
     /// the tile no one else's to build on.
@@ -48,7 +54,7 @@ impl Content {
     pub fn slots(self) -> u8 {
         match self {
             Content::Empty | Content::Spanned | Content::Filled => 0,
-            Content::Brush | Content::Boulder | Content::PineStump | Content::DeciduousStump | Content::Tent | Content::Wagon | Content::Raising(..) => 1,
+            Content::Brush | Content::Reed | Content::Boulder | Content::PineStump | Content::DeciduousStump | Content::Tent | Content::Wagon | Content::Post | Content::PostEmpty | Content::Raising(..) => 1,
             Content::Hearth(_) | Content::Blockade(_) | Content::Stakes => TILE_SLOTS,
             Content::Pile(_) => 1,
             Content::Pine | Content::Deciduous => 2,
@@ -57,9 +63,9 @@ impl Content {
 
     /// Whether the slot stands in a walker's way: a tree's two do, a
     /// boulder's and a stump's do, and every slot of a hearth, a
-    /// blockade or stakes; brush's and a pile's do not.
+    /// blockade or stakes; brush's, a reed's and a pile's do not.
     pub fn is_solid(self) -> bool {
-        !matches!(self, Content::Empty | Content::Brush | Content::Raising(..)) && !self.is_pile()
+        !matches!(self, Content::Empty | Content::Brush | Content::Reed | Content::Raising(..)) && !self.is_pile()
     }
 
     /// Whether it is a pile a player left, which anyone may open.
@@ -67,9 +73,9 @@ impl Content {
         matches!(self, Content::Pile(_))
     }
 
-    /// Whether it grows at a site: brush or a tree.
+    /// Whether it grows at a site: brush, reeds or a tree.
     pub fn is_growth(self) -> bool {
-        matches!(self, Content::Brush | Content::Pine | Content::Deciduous)
+        matches!(self, Content::Brush | Content::Reed | Content::Pine | Content::Deciduous)
     }
 
     /// The bits a cover holds it as. A construct's are its kind's sixteen
@@ -90,15 +96,20 @@ impl Content {
             Content::Pile(Material::Limestone) => 11,
             Content::Pile(Material::Basement) => 12,
             Content::Pile(Material::Hide) => 15,
+            Content::Reed => 16,
+            Content::Pile(Material::Fibre) => 17,
             Content::Filled => 13,
             Content::Hearth(of) => HEARTH_BITS | of.id() as u64,
             Content::Blockade(of) => BLOCKADE_BITS | of.id() as u64,
             Content::Tent => 96,
             Content::Stakes => 97,
             Content::Wagon => 98,
+            Content::Post => 99,
+            Content::PostEmpty => 100,
             Content::Raising(crate::building::Fixture::Tent, stage) => RAISING_BITS | stage as u64 & 3,
             Content::Raising(crate::building::Fixture::Stakes, stage) => RAISING_BITS + 4 | stage as u64 & 3,
             Content::Raising(crate::building::Fixture::Wagon, stage) => RAISING_BITS + 8 | stage as u64 & 3,
+            Content::Raising(crate::building::Fixture::Post, stage) => RAISING_BITS + 12 | stage as u64 & 3,
         }
     }
 
@@ -125,12 +136,17 @@ impl Content {
             12 => Content::Pile(Material::Basement),
             13 => Content::Filled,
             15 => Content::Pile(Material::Hide),
+            16 => Content::Reed,
+            17 => Content::Pile(Material::Fibre),
             96 => Content::Tent,
             97 => Content::Stakes,
             98 => Content::Wagon,
+            99 => Content::Post,
+            100 => Content::PostEmpty,
             105..=107 => Content::Raising(crate::building::Fixture::Tent, (bits & 3) as u8),
             109..=111 => Content::Raising(crate::building::Fixture::Stakes, (bits & 3) as u8),
             113..=115 => Content::Raising(crate::building::Fixture::Wagon, (bits & 3) as u8),
+            117..=119 => Content::Raising(crate::building::Fixture::Post, (bits & 3) as u8),
             _ => Content::Empty,
         }
     }
@@ -466,7 +482,8 @@ impl Canopy {
         Self::of_counts(Self::tally(cover), SITES.len() as u32)
     }
 
-    /// The sites of one tile's cover holding pine, deciduous and brush.
+    /// The sites of one tile's cover holding pine, deciduous and brush,
+    /// reeds counted as brush.
     pub fn tally(cover: Cover) -> [u32; 3] {
         let mut counts = [0u32; 3];
         for (_, growth) in cover.filled() {
@@ -495,7 +512,7 @@ impl Canopy {
         match kind {
             Content::Pine => 0,
             Content::Deciduous => 1,
-            Content::Brush => 2,
+            Content::Brush | Content::Reed => 2,
             _ => unreachable!("only growth is counted"),
         }
     }

@@ -40,13 +40,15 @@ fn main() {
             custom_layer: |_| None,
             ..default()
         },
+        // First, so the settings it reads from the store are there for
+        // whatever is built with a cold one
+        crate::plugins::persistence::PersistencePlugin,
         crate::network::NetworkPlugin,
         nntree::NNTreePlugin,
         combat::BehaviourPlugin,
         combat::CombatPlugin,
         crate::plugins::metrics::MetricsPlugin,
         crate::plugins::world_streaming::WorldStreamingPlugin,
-        crate::plugins::persistence::PersistencePlugin,
         // Ctrl-C stops the server through `AppExit`, so what it holds is
         // written before it goes.
         bevy::app::TerminalCtrlCHandlerPlugin,
@@ -100,6 +102,12 @@ fn main() {
             crate::systems::building::shelter.run_if(on_timer(Duration::from_millis(500))),
             crate::systems::settlers::tend_camps,
             crate::systems::settlers::try_hail,
+            crate::systems::settlers::try_send,
+            crate::systems::settings::try_set,
+            crate::systems::settlers::heed_settings,
+            crate::systems::charts::chart,
+            crate::systems::charts::try_draw,
+            crate::systems::charts::relay,
         ),
         common_bevy::systems::movement::update_burden,
         engagement_cleanup::update_engagement_proximity.run_if(on_timer(Duration::from_secs(1))),
@@ -132,18 +140,12 @@ fn main() {
     // spawn are the same place, and the z comes from the terrain there.
     let haven = common_bevy::haven::launch();
     info!("the haven stands at ({}, {})", haven.q, haven.r);
-    // `HEARTH_PLAYERS=<n>` counts every hearth as that many players at home
-    // besides those who are: a fixture for seeing hubs grow and take each
-    // other in with no one else in the world.
-    let mut hubs = common_bevy::hubs::Hubs::new((haven.q, haven.r));
-    hubs.per_hearth = std::env::var("HEARTH_PLAYERS").map_or(0, |n| n.parse().expect("HEARTH_PLAYERS is a count of players"));
-    app.insert_resource(hubs);
+    app.insert_resource(common_bevy::hubs::Hubs::new((haven.q, haven.r)));
     app.init_resource::<crate::systems::building::Constructs>();
     app.init_resource::<crate::systems::settlers::Camps>();
-    // `SETTLER_HASTE=<n>` has settlers come and work n times as fast: a
-    // fixture for seeing a camp go up without the wait.
-    let haste: u32 = std::env::var("SETTLER_HASTE").map_or(1, |n| n.parse().expect("SETTLER_HASTE is a whole number of times"));
-    app.insert_resource(crate::systems::settlers::Settling::default().hastened(haste.max(1)));
+    app.init_resource::<crate::systems::charts::Charts>();
+    app.init_resource::<crate::systems::haul::Depots>();
+    app.init_resource::<crate::systems::settlers::Settling>();
     app.add_systems(FixedUpdate, crate::systems::settlers::settle);
     let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED);
     // `CLEARING=<radius>[@<q>,<r>][~]` fells and mines every tile that far

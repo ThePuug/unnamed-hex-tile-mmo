@@ -10,13 +10,16 @@ use common_bevy::{archetype::EnemyArchetype, components::equipment::Item};
 
 /// What holds an item: a player's character, a pile in one slot of a
 /// tile, the camp round the hearth on a tile, whose settler builds with
-/// it, or the world, which holds whatever is not in play.
+/// it and whose wagon carries it, the depot of the hub known by a tile,
+/// where wagons leave it, or the world, which holds whatever is not in
+/// play.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Holder {
     World,
     Character(Identity),
     Pile(i32, i32, usize),
     Camp(i32, i32),
+    Depot(i32, i32),
 }
 
 /// What moves: so many of a stackable kind, or a piece in a seed. Neither
@@ -48,6 +51,10 @@ pub enum Cause {
     Outfit,
     /// A player handed it to a settler to build with.
     Give,
+    /// A player drew a map: the fibre it is drawn on, and the map.
+    Draw,
+    /// A wagon carried it to a hub, or left by the map it used up.
+    Haul,
 }
 
 impl Cause {
@@ -65,6 +72,8 @@ impl Cause {
             Cause::Loot(_) => 7,
             Cause::Outfit => 8,
             Cause::Give => 9,
+            Cause::Draw => 10,
+            Cause::Haul => 11,
         }
     }
 }
@@ -92,7 +101,7 @@ mod tests {
     /// Two causes under one number would each be kept as the other.
     #[test]
     fn every_cause_has_its_own_number() {
-        let causes = [Cause::Gather, Cause::Take, Cause::Drop, Cause::LetGo, Cause::Build, Cause::TakeDown, Cause::Loot(EnemyArchetype::Berserker), Cause::Outfit, Cause::Give];
+        let causes = [Cause::Gather, Cause::Take, Cause::Drop, Cause::LetGo, Cause::Build, Cause::TakeDown, Cause::Loot(EnemyArchetype::Berserker), Cause::Outfit, Cause::Give, Cause::Draw, Cause::Haul];
         let mut ids: Vec<u32> = causes.iter().map(|cause| cause.id()).collect();
         ids.sort();
         ids.dedup();

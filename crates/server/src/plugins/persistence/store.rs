@@ -94,6 +94,16 @@ pub struct Batch {
     /// The calendar as an admin left it, where it changed: how far it
     /// stands from the wall clock, and the moment it is held at.
     pub calendar: Option<(i64, Option<i64>)>,
+    /// Each chunk a map charted, by the map's number, as its leaf is
+    /// kept; the ground as it lies now under map 0.
+    pub leaves: Vec<(i64, ChunkId, Vec<u8>)>,
+    /// Each map used up, by its number: nothing it charted is kept.
+    pub spent: Vec<i64>,
+    /// Each depot written, by the tile its hub is known by: what it
+    /// holds, as the JSON of its stacks.
+    pub depots: Vec<((i32, i32), String)>,
+    /// Each setting an admin changed, by its number, and its value.
+    pub settings: Vec<(i32, i32)>,
 }
 
 /// The chunks and accounts a write named under numbers since raised.
@@ -123,9 +133,10 @@ pub struct Entered {
 /// The tables a rollback leaves as they are, each for its reason: the
 /// journal itself and the migrations' own record; who owns a chunk and an
 /// account, since a rollback moves no ownership; and which account an
-/// identity names, since it forgets no player. Every other table the
+/// identity names, since it forgets no player; and the settings, since
+/// how the server is tuned is not the world's. Every other table the
 /// store holds journals its changes, or the store does not open.
-const UNJOURNALED: [&str; 5] = ["history", "_sqlx_migrations", "chunk_owner", "account", "identity"];
+const UNJOURNALED: [&str; 6] = ["history", "_sqlx_migrations", "chunk_owner", "account", "identity", "setting"];
 
 /// The one column a chunk is keyed by.
 fn key(chunk: ChunkId) -> i64 {
@@ -243,6 +254,36 @@ impl Store {
         .await?;
         tx.commit().await?;
         Ok(undone.unwrap_or(0))
+    }
+
+    /// A run of numbers no map has and none will be given again: the
+    /// first, and how many.
+    pub async fn numbers(&self) -> Result<(i64, i64), sqlx::Error> {
+        let first = sqlx::query_scalar!(r#"SELECT nextval('map_number') AS "first!""#).fetch_one(&self.pool).await?;
+        Ok((first, 1024))
+    }
+
+    /// Every chunk every map has charted, by the map's number, as its
+    /// leaf is kept; the ground as it lies now under map 0.
+    pub async fn charts(&self) -> Result<Vec<(i64, ChunkId, Vec<u8>)>, sqlx::Error> {
+        Ok(sqlx::query!("SELECT map, chunk, tiles FROM chart_leaf").fetch_all(&self.pool).await?.into_iter().map(|row| (row.map, chunk(row.chunk), row.tiles)).collect())
+    }
+
+    /// Every depot kept, by the tile its hub is known by, with what it
+    /// holds.
+    pub async fn depots(&self) -> Result<Vec<((i32, i32), Vec<serde_json::Value>)>, sqlx::Error> {
+        Ok(sqlx::query!(r#"SELECT q, r, stacks AS "stacks: Json<Vec<serde_json::Value>>" FROM depot"#)
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|row| ((row.q, row.r), row.stacks.0))
+            .collect())
+    }
+
+    /// Every setting kept, by its number, with its value: those an admin
+    /// has changed.
+    pub async fn settings(&self) -> Result<Vec<(i32, i32)>, sqlx::Error> {
+        Ok(sqlx::query!("SELECT id, value FROM setting").fetch_all(&self.pool).await?.into_iter().map(|row| (row.id, row.value)).collect())
     }
 
     /// The calendar as an admin left it: how far it stands from the wall
@@ -520,6 +561,36 @@ impl Store {
         )
         .execute(&mut *tx)
         .await?;
+        sqlx::query!(
+            "INSERT INTO chart_leaf (map, chunk, tiles)
+             SELECT * FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::BYTEA[])
+             ON CONFLICT (map, chunk) DO UPDATE SET tiles = EXCLUDED.tiles",
+            &batch.leaves.iter().map(|leaf| leaf.0).collect::<Vec<_>>(),
+            &batch.leaves.iter().map(|leaf| key(leaf.1)).collect::<Vec<_>>(),
+            &batch.leaves.iter().map(|leaf| leaf.2.clone()).collect::<Vec<_>>(),
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM chart_leaf WHERE map = ANY($1)", &batch.spent).execute(&mut *tx).await?;
+        sqlx::query!(
+            "INSERT INTO depot (q, r, stacks)
+             SELECT q, r, stacks::JSONB FROM UNNEST($1::INT[], $2::INT[], $3::TEXT[]) AS t(q, r, stacks)
+             ON CONFLICT (q, r) DO UPDATE SET stacks = EXCLUDED.stacks",
+            &batch.depots.iter().map(|depot| depot.0 .0).collect::<Vec<_>>(),
+            &batch.depots.iter().map(|depot| depot.0 .1).collect::<Vec<_>>(),
+            &batch.depots.iter().map(|depot| depot.1.clone()).collect::<Vec<_>>(),
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "INSERT INTO setting (id, value)
+             SELECT id, value FROM UNNEST($1::INT[], $2::INT[]) AS t(id, value)
+             ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value",
+            &batch.settings.iter().map(|setting| setting.0).collect::<Vec<_>>(),
+            &batch.settings.iter().map(|setting| setting.1).collect::<Vec<_>>(),
+        )
+        .execute(&mut *tx)
+        .await?;
         if let Some((shift, held)) = batch.calendar {
             sqlx::query!(
                 "INSERT INTO calendar (shift, held) VALUES ($1, $2)
@@ -670,6 +741,38 @@ mod tests {
         });
     }
 
+    /// What a map charted is kept under its number until the map is
+    /// used up, and each run of numbers is past the last.
+    #[test]
+    #[ignore = "needs the PostgreSQL the server keeps to"]
+    fn a_maps_leaves_are_kept_until_it_is_spent() {
+        scratch(async |store| {
+            let (first, count) = store.numbers().await.unwrap();
+            assert_eq!(store.numbers().await.unwrap().0, first + count);
+            let here = ChunkId(-3, 8);
+            let charted = Batch { leaves: vec![(first, here, vec![1, 2, 3]), (0, here, vec![4]), (first + 1, here, vec![5])], ..Default::default() };
+            assert!(store.write(charted).await.unwrap().is_empty());
+            let over = Batch { leaves: vec![(first, here, vec![9])], spent: vec![first + 1], ..Default::default() };
+            assert!(store.write(over).await.unwrap().is_empty());
+            let mut kept = store.charts().await.unwrap();
+            kept.sort_by_key(|leaf| leaf.0);
+            assert_eq!(kept, vec![(0, here, vec![4]), (first, here, vec![9])]);
+        });
+    }
+
+    /// A depot is kept as it was last written.
+    #[test]
+    #[ignore = "needs the PostgreSQL the server keeps to"]
+    fn a_depot_is_kept_as_last_written() {
+        scratch(async |store| {
+            let first = Batch { depots: vec![((7, -3), r#"[{"material":1,"count":2}]"#.into())], ..Default::default() };
+            assert!(store.write(first).await.unwrap().is_empty());
+            let more = Batch { depots: vec![((7, -3), r#"[{"material":1,"count":9}]"#.into())], ..Default::default() };
+            assert!(store.write(more).await.unwrap().is_empty());
+            assert_eq!(store.depots().await.unwrap(), vec![((7, -3), vec![serde_json::json!({"material": 1, "count": 9})])]);
+        });
+    }
+
     #[test]
     #[ignore = "needs the PostgreSQL the server keeps to"]
     fn a_den_is_kept_until_its_site_has_none() {
@@ -771,6 +874,20 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(in_play, 2);
+        });
+    }
+
+    /// A setting written is kept, and written again takes its new value.
+    #[test]
+    #[ignore = "needs the PostgreSQL the server keeps to"]
+    fn a_setting_written_is_kept_as_it_was_last_set() {
+        scratch(async |store| {
+            assert!(store.settings().await.unwrap().is_empty());
+            assert!(store.write(Batch { settings: vec![(1, 4), (3, 100)], ..Default::default() }).await.unwrap().is_empty());
+            assert!(store.write(Batch { settings: vec![(1, 7)], ..Default::default() }).await.unwrap().is_empty());
+            let mut kept = store.settings().await.unwrap();
+            kept.sort();
+            assert_eq!(kept, vec![(1, 7), (3, 100)]);
         });
     }
 

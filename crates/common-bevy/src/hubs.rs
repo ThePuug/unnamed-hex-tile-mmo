@@ -338,6 +338,13 @@ impl Hubs {
         warn!("hubs: the hearths did not settle");
     }
 
+    /// Counts every hearth as `players` at home besides those who are,
+    /// and settles the hubs as that leaves them.
+    pub fn count_per_hearth(&mut self, players: u32) {
+        self.per_hearth = players;
+        self.settle();
+    }
+
     /// Whether which hearths are one hub changed since the last call.
     pub fn take_changed(&mut self) -> bool {
         std::mem::take(&mut self.changed)

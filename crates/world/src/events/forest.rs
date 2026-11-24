@@ -497,6 +497,36 @@ pub fn cover_of(q: i32, r: i32, ground: Cover, density: f64, trees: f64, tempera
     cover
 }
 
+/// The deepest water reeds stand in, in z-levels over the ground under
+/// it: a step of water, to a walker's knee.
+pub const REED_DEPTH: f64 = 1.5;
+
+/// The share of a still shallow tile's sites that hold reeds.
+pub const REED_DENSITY: f64 = 0.4;
+
+/// The fall, in z-levels a tile, of the slowest water that holds no reeds:
+/// they root in the silt still water drops, and a current strips it.
+pub const REED_FALL: f64 = 0.1;
+
+/// The share of a shallow tile's sites that hold reeds in water falling
+/// `fall` a tile: [`REED_DENSITY`] where it stands still, thinning to
+/// nothing at [`REED_FALL`].
+pub fn reed_density(fall: f64) -> f64 {
+    REED_DENSITY * (1.0 - fall / REED_FALL).clamp(0.0, 1.0)
+}
+
+/// A shallow tile's cover over `ground` at a reed `density`: reeds at
+/// each site its own draw puts them at and `ground` has room for.
+pub fn reeds_of(q: i32, r: i32, ground: Cover, density: f64, seed: u64) -> Cover {
+    let mut cover = ground;
+    for k in 0..SITES.len() {
+        if slot_draws(q, r, k, seed).0 < density && ground.has_room(k, Content::Reed) {
+            cover = cover.with(k, Content::Reed);
+        }
+    }
+    cover
+}
+
 // ── The soil ────────────────────────────────────────────────────────────────
 
 /// The steepest ground that holds soil, in z-levels per tile: forty-five
@@ -555,15 +585,22 @@ impl WorldEvent for ForestEvent {
         cell: &(dyn Any + Send + Sync),
         seed: u64,
     ) -> Option<TileOutput> {
-        if below.water.is_some() || below.grade() >= self.soil {
+        if below.grade() >= self.soil {
             return None;
         }
-        let reach = cell.downcast_ref::<Reach>()?;
         let (wx, wy) = hex_to_world(q, r);
         let t = temperature(wx, wy, below.elevation, seed);
         if t <= TREELINE {
             return None;
         }
+        // Under water nothing grows but reeds, in fresh shallows still
+        // enough to hold them: the sea is the water at zero
+        if let Some(water) = below.water {
+            let cover = reeds_of(q, r, below.cover, reed_density(below.fall), seed);
+            let shallow = water.round() >= 1.0 && water - below.elevation <= REED_DEPTH;
+            return (shallow && cover != below.cover).then(|| TileOutput { cover, ..TileOutput::default() });
+        }
+        let reach = cell.downcast_ref::<Reach>()?;
         let (density, trees) = reach.at(wx, wy);
         let band = smoothstep((t - TREELINE) / TREELINE_BAND);
         let cover = cover_of(q, r, below.cover, density * band, trees * band, t, seed);
@@ -583,6 +620,31 @@ mod tests {
 
     const S: u64 = 0x9E3779B97F4A7C15;
     const SPAWN: (i32, i32) = (104_289, -4_677);
+
+    /// Reeds stand at some of a still shallow tile's sites and none a
+    /// boulder holds, the same every time; fewer as the water quickens,
+    /// and none in a current.
+    #[test]
+    fn reeds_stand_at_some_sites() {
+        let still = reed_density(0.0);
+        let (mut stood, mut sites) = (0, 0);
+        for q in 0..40 {
+            let cover = reeds_of(q, 7, Cover::NONE, still, S);
+            assert_eq!(cover, reeds_of(q, 7, Cover::NONE, still, S));
+            let mut last = cover.filled().count();
+            for i in 1..=10 {
+                let n = reeds_of(q, 7, Cover::NONE, reed_density(REED_FALL * i as f64 / 10.0), S).filled().count();
+                assert!(n <= last, "reeds thickened as the water quickened");
+                last = n;
+            }
+            assert_eq!(last, 0, "reeds in a current");
+            stood += cover.filled().filter(|&(_, growth)| growth == Content::Reed).count();
+            sites += SITES.len();
+        }
+        assert!(stood > 0 && stood < sites, "{stood} of {sites}");
+        let rock = (0..common::TILE_SLOTS as usize).fold(Cover::NONE, |c, k| c.with_boulder(k));
+        assert_eq!(reeds_of(3, 7, rock, still, S), rock);
+    }
 
     /// Density and the tree share rise with moisture, from nothing below
     /// the brush line to full at the closed line, and a stand never fills

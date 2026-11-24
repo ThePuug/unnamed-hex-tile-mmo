@@ -463,7 +463,7 @@ pub fn stand_point(
     let (x, z) = crate::geometry::slot_point(cover, (q, r), k, (tile.q, tile.r));
     let target = Vec2::new(x, z);
     let edge = match activity {
-        common::gathering::Activity::Pickup | common::gathering::Activity::Sleep => 0.0,
+        common::gathering::Activity::Pickup | common::gathering::Activity::Sleep | common::gathering::Activity::Haul => 0.0,
         common::gathering::Activity::Work(_) => solid_extent(cover, q, r, k).map_or(0.0, |(radius, _)| radius),
     };
     let stand = target - heading.to_world_dir() * (common::gathering::reach(activity) + edge);

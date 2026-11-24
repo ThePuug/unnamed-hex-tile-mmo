@@ -32,6 +32,7 @@ pub enum Kind {
     Pine,
     Deciduous,
     Brush,
+    Reed,
     Boulder,
     PineStump,
     DeciduousStump,
@@ -53,6 +54,7 @@ impl From<Content> for Kind {
             Content::Deciduous => Kind::Deciduous,
             Content::PineStump => Kind::PineStump,
             Content::DeciduousStump => Kind::DeciduousStump,
+            Content::Reed => Kind::Reed,
             _ => Kind::Brush,
         }
     }
@@ -90,6 +92,7 @@ const MODELS: &[(Kind, &str)] = &[
     (Kind::Brush, "models/scrub-mound.glb"),
     (Kind::Brush, "models/scrub-broom.glb"),
     (Kind::Brush, "models/scrub-sprawl.glb"),
+    (Kind::Reed, "models/reed.glb"),
     (Kind::Boulder, "models/boulder.glb"),
     (Kind::PineStump, "models/pine-stump.glb"),
     (Kind::DeciduousStump, "models/deciduous-stump.glb"),
@@ -99,6 +102,7 @@ const MODELS: &[(Kind, &str)] = &[
     (Kind::Pile(common::Material::Limestone), "models/stone-pile-limestone.glb"),
     (Kind::Pile(common::Material::Basement), "models/stone-pile-basement.glb"),
     (Kind::Pile(common::Material::Hide), "models/hide-pile.glb"),
+    (Kind::Pile(common::Material::Fibre), "models/fibre-pile.glb"),
 ];
 
 /// What a construct is drawn as: a hearth in its stone, and a blockade
@@ -118,15 +122,21 @@ fn hearth_models() -> impl Iterator<Item = (Kind, String)> {
     })
 }
 
+/// The stage a hitching post is drawn at while its horse is away.
+const POST_EMPTY: u8 = common::building::STAGES + 1;
+
 /// Where each fixture's GLB is: `models/<stem>.glb`, and
-/// `-raising-<stage>` for one being raised.
+/// `-raising-<stage>` for one being raised; and the hitching post's with
+/// no horse at it.
 fn fixture_models() -> impl Iterator<Item = (Kind, String)> {
-    common::building::Fixture::ALL.into_iter().flat_map(|fixture| {
+    let post = common::building::Fixture::Post;
+    let stages = common::building::Fixture::ALL.into_iter().flat_map(|fixture| {
         (0..=common::building::STAGES).map(move |stage| {
             let stem = fixture.stem();
             (Kind::Raised(fixture, stage), if stage == 0 { format!("models/{stem}.glb") } else { format!("models/{stem}-raising-{stage}.glb") })
         })
-    })
+    });
+    stages.chain(std::iter::once((Kind::Raised(post, POST_EMPTY), format!("models/{}-empty.glb", post.stem()))))
 }
 
 /// Where each den model's GLB is: `models/den-<stem>-<state>.glb`.
@@ -259,7 +269,7 @@ impl Kit {
         match kind {
             Kind::Den(..) | Kind::Hearth(..) | Kind::Raised(..) => 1.0,
             _ if kind.is_pile() => 1.0,
-            Kind::Brush => BRUSH_SMALL + (1.0 - BRUSH_SMALL) * growth,
+            Kind::Brush | Kind::Reed => BRUSH_SMALL + (1.0 - BRUSH_SMALL) * growth,
             Kind::Boulder => common::cover::boulder_scale(growth),
             _ => common::cover::tree_scale(model_height, growth),
         }
@@ -625,7 +635,8 @@ pub fn place_cover(
             // each turned its tile's own way but the stakes, which meet
             // their neighbours' edge to edge
             let raised = common::building::fixture(cover).map(|fixture| (fixture, 0));
-            if let Some((fixture, stage)) = raised.or_else(|| common::building::rising(cover)) {
+            let empty = common::building::emptied_post(cover).then_some((common::building::Fixture::Post, POST_EMPTY));
+            if let Some((fixture, stage)) = raised.or_else(|| common::building::rising(cover)).or(empty) {
                 let (x, z) = flat_top_tile_center(q - origin.q, r - origin.r, 1.0);
                 let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
                 let sway = common::cover::boulder_sway(q, r, common::building::SLOT);

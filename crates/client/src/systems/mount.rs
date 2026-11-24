@@ -5,6 +5,11 @@
 //! and the animator plays the horse's gaits in the rider's place while the
 //! rider sits its `mounted` clip, which lifts the hips so the seat lands on
 //! the saddle; a body without one holds its idle.
+//!
+//! An actor on the road with a wagon (`Activity::Haul`) is drawn the same
+//! way, but for where things stand: the wagon is where the actor is, the
+//! horse ahead of it at the end of its pole, and the rider sits the
+//! wagon's bench instead of the saddle.
 
 use std::collections::HashSet;
 
@@ -33,12 +38,23 @@ const HORSE: &str = "actors/horse-basic.glb";
 /// The rider's joint that sits on the saddle.
 const SEAT: &str = "pelvis";
 
+/// The wagon a horse draws.
+const WAGON: &str = "models/wagon.glb";
+
+/// How far ahead of a wagon's middle the horse drawing it stands, past
+/// the bed and the pole, and where the driver sits: how far ahead of
+/// the middle, and how high, on the bed's floor. World units.
+const DRAWN_AHEAD: f32 = 2.7;
+const BENCH: (f32, f32) = (0.5, 0.57);
+
 /// The horse under a mounted actor: its scene, a child of the actor, and
 /// once the rider is seated on it, where.
 #[derive(Component)]
 pub struct Mount {
     horse: Entity,
     seated: Option<Seated>,
+    /// The wagon the horse draws, where it draws one: the rider sits it.
+    wagon: Option<Entity>,
 }
 
 /// A rider on its horse: the horse's `AnimationPlayer`, and the rider's rig
@@ -82,31 +98,41 @@ pub fn request(
 
 /// Brings a horse under each actor the server says is mounted, once its own
 /// scene is animated, and takes it away from each that got down: the rider
-/// stands back where it stood.
+/// stands back where it stood. An actor on the road with a wagon gets the
+/// horse ahead of it and the wagon under it.
 pub fn saddle(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    actors: Query<(Entity, Option<&Status>, Option<&Mount>), With<Animates>>,
+    actors: Query<(Entity, Option<&Status>, Option<&Mount>, Option<&crate::systems::gathering::Gathering>), With<Animates>>,
 ) {
-    for (actor, status, mount) in &actors {
-        let mounted = status.is_some_and(|s| s.mounted);
+    for (actor, status, mount, doing) in &actors {
+        let hauling = doing.is_some_and(|doing| doing.0 == common::gathering::Activity::Haul);
+        let mounted = status.is_some_and(|s| s.mounted) || hauling;
         match mount {
             None if mounted => {
                 let horse = commands.spawn((
                     Name::new("mount:horse"),
                     WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(HORSE))),
                     Rig(asset_server.load(HORSE)),
-                    Transform::IDENTITY,
+                    if hauling { Transform::from_xyz(0.0, 0.0, -DRAWN_AHEAD) } else { Transform::IDENTITY },
                     ChildOf(actor),
                 )).id();
-                commands.entity(actor).insert(Mount { horse, seated: None });
-                info!("mount: a horse under {actor}");
+                let wagon = hauling.then(|| {
+                    commands
+                        .spawn((Name::new("mount:wagon"), WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(WAGON))), Transform::IDENTITY, ChildOf(actor)))
+                        .id()
+                });
+                commands.entity(actor).insert(Mount { horse, seated: None, wagon });
+                info!("mount: a horse {} {actor}", if hauling { "drawing the wagon of" } else { "under" });
             }
             Some(mount) if !mounted => {
                 if let Some(seated) = &mount.seated {
                     commands.entity(seated.rider).insert((ChildOf(seated.parent), seated.standing));
                 }
                 commands.entity(mount.horse).despawn();
+                if let Some(wagon) = mount.wagon {
+                    commands.entity(wagon).despawn();
+                }
                 // The gait and the jump were the horse's
                 commands.entity(actor).remove::<(Mount, Jumping)>();
                 info!("mount: {actor} got down");
@@ -162,8 +188,15 @@ pub fn seat(
 
         // The rig upright in the horse's frame, its seat on the saddle's
         // point, expressed under the socket
-        let upright = Mat4::from_translation(saddle.w_axis.truncate() - seat.w_axis.truncate()) * standing.to_matrix();
-        commands.entity(rider).insert((ChildOf(socket), Transform::from_matrix(saddle.inverse() * upright)));
+        if mount.wagon.is_some() {
+            // On the wagon's bench, where the rig stood but for that
+            let mut sat = standing;
+            sat.translation += Vec3::new(0.0, BENCH.1, -BENCH.0);
+            commands.entity(rider).insert(sat);
+        } else {
+            let upright = Mat4::from_translation(saddle.w_axis.truncate() - seat.w_axis.truncate()) * standing.to_matrix();
+            commands.entity(rider).insert((ChildOf(socket), Transform::from_matrix(saddle.inverse() * upright)));
+        }
         commands.entity(actor).remove::<Jumping>();
         mount.seated = Some(Seated { player, rider, parent: parent.parent(), standing });
         info!("mount: {actor} seated");

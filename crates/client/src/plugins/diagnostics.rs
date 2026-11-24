@@ -1,4 +1,4 @@
-//! The grid, the weather hold and the milestones in every build; in
+//! The weather hold and the milestones in every build; in
 //! admin builds, the metrics too, published for the console to read
 //! (`publish`). A player's build measures nothing for no one.
 
@@ -7,7 +7,6 @@ pub mod census;
 mod config;
 #[cfg(all(feature = "admin", debug_assertions))]
 mod heap;
-pub mod grid;
 mod milestones;
 pub mod network_ui;
 #[cfg(feature = "admin")]
@@ -34,16 +33,7 @@ impl Plugin for DiagnosticsPlugin {
         app.add_systems(PostStartup, milestones::log_started);
         app.add_systems(Update, (milestones::log_stage, milestones::log_video, milestones::log_window));
         app.init_resource::<network_ui::NetworkMetrics>();
-        app.init_resource::<grid::PendingGridMesh>();
-        app.add_systems(Startup, grid::setup_grid_overlay);
-        app.add_systems(
-            Update,
-            (
-                grid::spawn_grid_mesh_task,
-                grid::poll_grid_mesh_task,
-                network_ui::update_network_metrics,
-            ),
-        );
+        app.add_systems(Update, network_ui::update_network_metrics);
 
         #[cfg(feature = "admin")]
         metrics(app);

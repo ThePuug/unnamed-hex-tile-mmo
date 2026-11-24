@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO chart_leaf (map, chunk, tiles)\n             SELECT * FROM UNNEST($1::BIGINT[], $2::BIGINT[], $3::BYTEA[])\n             ON CONFLICT (map, chunk) DO UPDATE SET tiles = EXCLUDED.tiles",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8Array",
+        "ByteaArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3143ac615f7eab72e2d6708697fe7ab8cb43e53bbe31995977b381f605848f1c"
+}

@@ -90,15 +90,16 @@ impl Clip {
     }
 
     /// The clip what an actor does at a gather plays: its work's loop, or
-    /// the stoop to its pile.
-    pub fn of_gathering(activity: common::gathering::Activity) -> Clip {
-        match activity {
+    /// the stoop to its pile; none on the road, where it walks.
+    pub fn of_gathering(activity: common::gathering::Activity) -> Option<Clip> {
+        Some(match activity {
+            common::gathering::Activity::Haul => return None,
             common::gathering::Activity::Work(common::gathering::Work::Chop) => Clip::Chop,
             common::gathering::Activity::Work(common::gathering::Work::Mine) => Clip::Mine,
             common::gathering::Activity::Work(common::gathering::Work::Build) => Clip::Work,
             common::gathering::Activity::Pickup => Clip::Pickup,
             common::gathering::Activity::Sleep => Clip::Sleep,
-        }
+        })
     }
 
     /// The one-shot an ability plays: a swing, an Overpower and a Punish the attack,
@@ -645,7 +646,7 @@ pub fn update(
         // At work, the actor loops its work's clip; stooped to its pile and
         // standing, it plays the pickup to its freeze and holds there by
         // speed. Either where its asset has the clip.
-        let clip = gathering.map(|g| Clip::of_gathering(g.0));
+        let clip = gathering.and_then(|g| Clip::of_gathering(g.0));
         if let Some(node) = clip.filter(|&c| c != Clip::Pickup || !is_moving).and_then(|c| clips.node(c)) {
             if main != Some(node) {
                 let anim = transitions.play(&mut player, node, SETTLE).set_speed(1.);

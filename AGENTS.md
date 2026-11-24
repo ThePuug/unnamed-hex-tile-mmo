@@ -33,7 +33,6 @@ cargo build
 cargo run --bin server             # separate processes
 cargo run --bin client
 HAVEN=<q>,<r> cargo run --bin server   # the haven and the spawn elsewhere; the viewer's centre follows it too
-HEARTH_PLAYERS=<n> cargo run --bin server   # every hearth counts as n players at home: hubs grow with no one else in the world
 cargo run --bin music-player       # needs a SoundFont: $SOUNDFONT or ~/soundfonts/GeneralUser.sf2
 cargo run --bin arena               # archetype v archetype balance, headless; keys in arena/src/main.rs
 cargo run --bin arena -- tune screen|balance|minds|settle|loop|show|apply   # searches; bounds in arena/src/tune.toml
@@ -353,7 +352,7 @@ stem, and code that needs one piece asks for it by that name
 archetype and a ledger entry's cause by its `id()`, never by a name or a
 place in a table: a piece's from the assets (`kit.IDS` in modelgen,
 shipped in `kit.json`), `Material::id`, `AbilityType::id`,
-`EnemyArchetype::id` and `economy::Cause::id` in code. A number is given once. A rename or a rework
+`EnemyArchetype::id`, `economy::Cause::id` and `settings::Setting::id` in code. A number is given once. A rename or a rework
 keeps it, a new thing takes the next never used, and a removed thing's is
 never given again, or every one a player holds becomes the other thing.
 What a build has no number for stays in the store, carried beside its
@@ -382,6 +381,25 @@ so the two never differ. A thing being raised is its tile's cover
 of its own, `models/<stem>-raising-<stage>.glb`. It finds its way by `common_bevy::path`, A* over what
 `Map::neighbors` and fullness let a walker step on.
 
+**Maps.** A map is a piece of the kit's map kind and one of a kind:
+`Item::instance` is its number, and `server::systems::charts::Charts`
+holds what each number charted, a `common_bevy::chart::Leaf` to a chunk.
+A map is a snapshot: only being carried past a chunk again changes what
+it holds of it. Beside the maps `Charts::lies` holds the ground as it
+lies now, kept up as tiles change, and a way found on a map
+(`Chart::way`, a `Leg` to a chunk, never a tile at a time) is tried
+against it a leg at a time (`Chart::open`). Whatever travels by a map
+goes that way: plan on the map, try on `lies`, and never plan on `lies`,
+or a blockade stops no one.
+
+**Logistics.** A camp's wagon is sent by a map to another hub
+(`server::systems::haul`), and its `Trip` is the calendar's daytime
+passing: `settlers::haul` carries every trip on each tick, seen or not,
+and is the one authority on where a wagon is. The settler walking the
+road is drawn from the trip and never moves it, so nothing it meets
+changes when the wagon arrives; a blockade stops the trip itself,
+through `Charts::lies`.
+
 **Rollback.** Every table the store keeps of the world journals its
 changes (`history`, by the `journal` trigger), each stamped with the
 calendar moment its writer declared (`SET LOCAL mmo.when`), and
@@ -392,6 +410,18 @@ journaled table refuses a change that names no moment. A new kept table
 takes the trigger in its migration; a migration that changes kept rows
 sets `mmo.when` first. A rolled-back server writes nothing more and
 stops, since its memory is of a world that is gone.
+
+**Settings.** A number an admin may change without a build is a
+`common_bevy::settings::Setting`, never a `const`: the server owns it,
+keeps it in the store, tells every client of it, and takes a change from
+the admin console (`server::systems::settings::try_set`). A hot one is
+read from `Settings` each time it is used, on either side, so a change
+holds from the next frame; a cold one is read once as the server starts,
+and a change waits in `Kept` for the next start. A setting is hot only
+where nothing built from it is kept around. A reader that copies a hot
+one into its own state follows `Settings` as it changes, as
+`settlers::heed_settings` does. The table is not journaled: a rollback
+leaves the settings as they are.
 
 **Economy.** An item appearing, being consumed or changing holder is
 announced as a `server::systems::economy::Moved` the frame it happens,

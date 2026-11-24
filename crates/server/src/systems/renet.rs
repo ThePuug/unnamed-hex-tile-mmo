@@ -107,7 +107,7 @@ pub fn do_presence(
     mut loaded_by_query: Query<&mut common_bevy::components::loaded_by::LoadedBy>,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
-    runtime: Res<RunTime>,
+    (runtime, settings, kept): (Res<RunTime>, Res<common_bevy::settings::Settings>, Res<common_bevy::settings::Kept>),
     spawn_point: Option<Res<common_bevy::components::resources::SpawnPoint>>,
     mut admission: ResMut<Admission>,
     characters: Query<(), With<PlayerControlled>>,
@@ -182,6 +182,7 @@ pub fn do_presence(
                 // init client
                 let dt = runtime.now(&time);
                 conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Init { ent, dt, calendar: runtime.calendar, haven: spawn_point.0 }});
+                conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Settings { running: *settings, kept: kept.0 }});
 
                 // Send own Spawn + component states directly to connecting client
                 // AOI will handle discovering nearby entities via Changed<Loc>
@@ -343,7 +344,7 @@ pub fn write_try(
                 }
                 // An admin's party stands ahead of whichever actor it names,
                 // and an admin's calendar is the world's
-                Event::SpawnParty { .. } | Event::ChangeCalendar { .. } | Event::Rollback { .. } => {
+                Event::SpawnParty { .. } | Event::ChangeCalendar { .. } | Event::Rollback { .. } | Event::Set { .. } => {
                     writer.write(Try { event });
                 }
                 // An auto-attack is the server's to time, never a client's to ask for
@@ -355,6 +356,8 @@ pub fn write_try(
                 | Event::Drop { .. }
                 | Event::Build { .. }
                 | Event::Hail { .. }
+                | Event::Draw { .. }
+                | Event::Send { .. }
                 | Event::UseAbility { .. }
                 | Event::RespecAttributes { .. }
                 | Event::SetLoadout { .. }
@@ -412,13 +415,14 @@ fn route(event: &Event) -> Option<Route> {
         | Event::Den { ent, .. }
         | Event::Home { ent, .. }
         | Event::Wants { ent, .. }
+        | Event::Wagon { ent, .. }
         | Event::Sheltered { ent, .. }
         | Event::Loot { ent, .. } => Some(Route::Owner(*ent)),
         Event::ChunkData { ent, .. }
         | Event::EvictChunks { ent, .. }
         | Event::SummaryBatch { ent, .. } => Some(Route::OwnerUnordered(*ent)),
         Event::MovementIntent { ent, .. } | Event::Displace { ent, .. } => Some(Route::Moving(*ent)),
-        Event::Calendar { .. } => Some(Route::Everyone),
+        Event::Calendar { .. } | Event::Settings { .. } => Some(Route::Everyone),
         _ => None,
     }
 }

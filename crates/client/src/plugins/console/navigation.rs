@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use super::state::{GotoCoordType, GotoInputState, Staging};
+use common_bevy::settings::Setting;
 
 use super::{
     state::{DevConsole, MenuPath},
@@ -55,7 +56,7 @@ fn handle(
     // Back key: Numpad0 normally, Escape when numpad digits have other meaning
     let uses_escape_back = matches!(
         console.current_menu,
-        MenuPath::GotoInput | MenuPath::WorldClock
+        MenuPath::GotoInput | MenuPath::WorldClock | MenuPath::Setting(_)
     );
 
     let back_pressed = if uses_escape_back {
@@ -74,6 +75,9 @@ fn handle(
             if matches!(console.current_menu, MenuPath::WorldClock) {
                 console.clock_buf.clear();
             }
+            if matches!(console.current_menu, MenuPath::Setting(_)) {
+                console.setting_buf.clear();
+            }
             console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
         }
 
@@ -87,8 +91,10 @@ fn handle(
 
     // Handle menu-specific inputs
     match console.current_menu {
-        MenuPath::Root => handle_root_menu(keyboard, console),
-        MenuPath::Terrain => handle_terrain_menu(keyboard, console, action_writer),
+        MenuPath::Root | MenuPath::World | MenuPath::Travel | MenuPath::Stages => handle_group_menu(keyboard, console),
+        MenuPath::Settings => handle_settings_menu(keyboard, console),
+        MenuPath::Setting(setting) => handle_setting(keyboard, console, action_writer, setting),
+        MenuPath::Client => handle_client_menu(keyboard, console, action_writer),
         MenuPath::WorldClock => handle_world_clock(keyboard, console, action_writer, dt),
         MenuPath::Rollback => handle_rollback_menu(keyboard, console, action_writer),
         MenuPath::GotoSelect => handle_goto_select_menu(keyboard, console),
@@ -99,94 +105,113 @@ fn handle(
     }
 }
 
-fn handle_root_menu(
-    keyboard: &mut ButtonInput<KeyCode>,
-    console: &mut DevConsole,
-) {
-    let mut consumed = None;
-
-    // Submenus first
-    if keyboard.just_pressed(KeyCode::Numpad1) {
-        console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::Terrain;
-        consumed = Some(KeyCode::Numpad1);
-    }
-
-    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad2) {
-        console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::GotoSelect;
-        consumed = Some(KeyCode::Numpad2);
-    }
-
-    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad3) {
-        console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::Latency;
-        consumed = Some(KeyCode::Numpad3);
-    }
-
-    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad4) {
-        console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::Rollback;
-        console.rollback.armed = false;
-        consumed = Some(KeyCode::Numpad4);
-    }
-
-    if consumed.is_none() && keyboard.just_pressed(KeyCode::Numpad6) {
-        console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::View;
-        consumed = Some(KeyCode::Numpad6);
-    }
-
-    for (key, staging) in [(KeyCode::Numpad5, Staging::Den), (KeyCode::Numpad7, Staging::Party), (KeyCode::Numpad8, Staging::Opposition)] {
-        if consumed.is_none() && keyboard.just_pressed(key) {
-            console.history.push(console.current_menu.clone());
-            console.current_menu = MenuPath::Stage(staging);
-            consumed = Some(key);
-        }
-    }
-
-    if let Some(key) = consumed {
-        keyboard.clear_just_pressed(key);
+/// The menus a group's rows open, in row order from numpad 1.
+pub fn rows(menu: &MenuPath) -> &'static [MenuPath] {
+    match menu {
+        MenuPath::Root => &[MenuPath::World, MenuPath::Travel, MenuPath::Stages, MenuPath::Settings, MenuPath::Client],
+        MenuPath::World => &[MenuPath::WorldClock, MenuPath::Rollback],
+        MenuPath::Travel => &[MenuPath::GotoSelect, MenuPath::View],
+        MenuPath::Stages => &[MenuPath::Stage(Staging::Den), MenuPath::Stage(Staging::Party), MenuPath::Stage(Staging::Opposition)],
+        _ => &[],
     }
 }
 
-fn handle_terrain_menu(
+/// The numpad's digits, 1 on.
+const ROW_KEYS: [KeyCode; 9] = [
+    KeyCode::Numpad1, KeyCode::Numpad2, KeyCode::Numpad3, KeyCode::Numpad4, KeyCode::Numpad5,
+    KeyCode::Numpad6, KeyCode::Numpad7, KeyCode::Numpad8, KeyCode::Numpad9,
+];
+
+/// Opens `menu` from the one showing, as it is first shown.
+fn open(console: &mut DevConsole, menu: MenuPath) {
+    match menu {
+        MenuPath::WorldClock => console.clock_buf.clear(),
+        MenuPath::Setting(_) => console.setting_buf.clear(),
+        MenuPath::Rollback => console.rollback.armed = false,
+        _ => {}
+    }
+    console.history.push(console.current_menu.clone());
+    console.current_menu = menu;
+}
+
+/// A menu of menus: a digit opens the row it numbers.
+fn handle_group_menu(keyboard: &mut ButtonInput<KeyCode>, console: &mut DevConsole) {
+    for (key, menu) in ROW_KEYS.into_iter().zip(rows(&console.current_menu.clone())) {
+        if keyboard.just_pressed(key) {
+            keyboard.clear_just_pressed(key);
+            open(console, menu.clone());
+            return;
+        }
+    }
+}
+
+/// A digit opens the setting its row lists.
+fn handle_settings_menu(keyboard: &mut ButtonInput<KeyCode>, console: &mut DevConsole) {
+    // Every setting has a key, or the zip drops the rows past the last
+    const _: () = assert!(Setting::ALL.len() <= ROW_KEYS.len());
+    for (key, setting) in ROW_KEYS.into_iter().zip(Setting::ALL) {
+        if keyboard.just_pressed(key) {
+            keyboard.clear_just_pressed(key);
+            open(console, MenuPath::Setting(setting));
+            return;
+        }
+    }
+}
+
+/// One setting: digits typed and Enter ask the server to set it to that
+/// value, or with nothing typed to what it is where no admin has changed
+/// it. Either way the console goes back to the settings.
+fn handle_setting(
+    keyboard: &mut ButtonInput<KeyCode>,
+    console: &mut DevConsole,
+    action_writer: &mut MessageWriter<DevConsoleAction>,
+    setting: Setting,
+) {
+    if keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::NumpadEnter) {
+        keyboard.clear_just_pressed(KeyCode::Enter);
+        keyboard.clear_just_pressed(KeyCode::NumpadEnter);
+        let buf = console.setting_buf.trim();
+        let value = if buf.is_empty() { Some(setting.default()) } else { buf.parse().ok() };
+        let Some(value) = value else {
+            info!("Setting: invalid input '{buf}'");
+            return;
+        };
+        action_writer.write(DevConsoleAction::Set(setting, value));
+        console.setting_buf.clear();
+        console.current_menu = console.history.pop().unwrap_or(MenuPath::Root);
+        return;
+    }
+
+    for &(key, ch) in DIGIT_KEYS {
+        if keyboard.just_pressed(key) {
+            console.setting_buf.push(ch);
+            keyboard.clear_just_pressed(key);
+        }
+    }
+
+    if keyboard.just_pressed(KeyCode::Backspace) {
+        console.setting_buf.pop();
+        keyboard.clear_just_pressed(KeyCode::Backspace);
+    }
+}
+
+fn handle_client_menu(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
     action_writer: &mut MessageWriter<DevConsoleAction>,
 ) {
-    let mut consumed = None;
-
-    if keyboard.just_pressed(KeyCode::Numpad1) {
-        action_writer.write(DevConsoleAction::ToggleGrid);
-        consumed = Some(KeyCode::Numpad1);
-    } else if keyboard.just_pressed(KeyCode::Numpad2) {
-        console.history.push(console.current_menu.clone());
-        console.current_menu = MenuPath::WorldClock;
-        console.clock_buf.clear();
-        consumed = Some(KeyCode::Numpad2);
-    } else if keyboard.just_pressed(KeyCode::Numpad3) {
-        action_writer.write(DevConsoleAction::ToggleTerrainHidden);
-        consumed = Some(KeyCode::Numpad3);
-    } else if keyboard.just_pressed(KeyCode::Numpad4) {
-        action_writer.write(DevConsoleAction::ToggleCameraCloseup);
-        consumed = Some(KeyCode::Numpad4);
-    } else if keyboard.just_pressed(KeyCode::Numpad5) {
-        action_writer.write(DevConsoleAction::ToggleCoverHidden);
-        consumed = Some(KeyCode::Numpad5);
-    } else if keyboard.just_pressed(KeyCode::Numpad6) {
-        action_writer.write(DevConsoleAction::ToggleCanopyParts);
-        consumed = Some(KeyCode::Numpad6);
-    } else if keyboard.just_pressed(KeyCode::Numpad7) {
-        action_writer.write(DevConsoleAction::ToggleCanopyLast);
-        consumed = Some(KeyCode::Numpad7);
-    } else if keyboard.just_pressed(KeyCode::Numpad8) {
-        action_writer.write(DevConsoleAction::CycleWeather);
-        consumed = Some(KeyCode::Numpad8);
+    let toggles = [DevConsoleAction::ToggleCameraCloseup, DevConsoleAction::CycleWeather];
+    let latency = ROW_KEYS[toggles.len()];
+    for (key, action) in ROW_KEYS.into_iter().zip(toggles) {
+        if keyboard.just_pressed(key) {
+            action_writer.write(action);
+            keyboard.clear_just_pressed(key);
+            return;
+        }
     }
-
-    if let Some(key) = consumed {
-        keyboard.clear_just_pressed(key);
+    if keyboard.just_pressed(latency) {
+        keyboard.clear_just_pressed(latency);
+        open(console, MenuPath::Latency);
     }
 }
 
@@ -285,13 +310,9 @@ fn handle_stage_menu(
     action_writer: &mut MessageWriter<DevConsoleAction>,
     staging: Staging,
 ) {
-    const KEYS: [KeyCode; 9] = [
-        KeyCode::Numpad1, KeyCode::Numpad2, KeyCode::Numpad3, KeyCode::Numpad4, KeyCode::Numpad5,
-        KeyCode::Numpad6, KeyCode::Numpad7, KeyCode::Numpad8, KeyCode::Numpad9,
-    ];
     // Every archetype listed has a key, or the zip drops the rows past the last
-    const _: () = assert!(super::state::DENS.len() <= KEYS.len());
-    for (key, (_, archetype)) in KEYS.into_iter().zip(super::state::DENS) {
+    const _: () = assert!(super::state::DENS.len() <= ROW_KEYS.len());
+    for (key, (_, archetype)) in ROW_KEYS.into_iter().zip(super::state::DENS) {
         if keyboard.just_pressed(key) {
             action_writer.write(DevConsoleAction::SpawnParty { archetype, staging });
             keyboard.clear_just_pressed(key);

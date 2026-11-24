@@ -8,6 +8,7 @@ use renet_netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig};
 
 use common::network::*;
 use common_bevy::message::Do;
+use common_bevy::settings::{Setting, Settings};
 
 // ── Connection events ──
 
@@ -47,13 +48,14 @@ pub struct ServerNet {
 }
 
 impl ServerNet {
-    fn new() -> Self {
+    /// A server taking `slots` clients at once.
+    fn new(slots: usize) -> Self {
         let public_addr = format!("0.0.0.0:{}", common::network::port()).parse().unwrap();
         let socket = UdpSocket::bind(public_addr).unwrap();
         let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
         let server_config = ServerConfig {
             current_time,
-            max_clients: 64,
+            max_clients: slots,
             protocol_id: PROTOCOL_ID,
             public_addresses: vec![public_addr],
             authentication: ServerAuthentication::Unsecure,
@@ -221,7 +223,8 @@ pub struct NetworkPlugin;
 
 impl Plugin for NetworkPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(ServerNet::new());
+        let slots = app.world().resource::<Settings>().get(Setting::PlayerSlots);
+        app.insert_resource(ServerNet::new(slots as usize));
         app.add_systems(PreUpdate, net_receive);
         app.add_systems(PostUpdate, net_send);
     }

@@ -45,7 +45,8 @@ impl Slot {
     }
 }
 
-/// What a set is: an armour's weight, or what kind of thing is held.
+/// What a set is: an armour's weight, or what kind of thing is held. A
+/// map is held, and charts the ground round its holder.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Kind {
     Light,
@@ -55,6 +56,7 @@ pub enum Kind {
     Axe,
     Mace,
     Shield,
+    Map,
 }
 
 /// A material's colour by the name its glTF gives the material, linear RGB.

@@ -14,8 +14,13 @@ use common_bevy::{
 };
 use serde_json::{json, Value};
 
+/// An item, and its own number where it is one of a kind.
 pub fn item(item: Item) -> Value {
-    json!({"piece": item.piece.id(), "seed": item.seed})
+    let mut kept = json!({"piece": item.piece.id(), "seed": item.seed});
+    if let Some(instance) = item.instance {
+        kept["instance"] = json!(instance);
+    }
+    kept
 }
 
 /// A stackable kind, with no count.
@@ -41,7 +46,11 @@ fn number(value: &Value, field: &str) -> Option<u32> {
 }
 
 fn read_item(kept: &Value) -> Option<Item> {
-    Some(Item { piece: Piece::kept_as(number(kept, "piece")?)?, seed: number(kept, "seed")?.try_into().ok()? })
+    let instance = match kept.get("instance") {
+        Some(_) => Some(number(kept, "instance")?),
+        None => None,
+    };
+    Some(Item { piece: Piece::kept_as(number(kept, "piece")?)?, seed: number(kept, "seed")?.try_into().ok()?, instance })
 }
 
 fn read_stack(kept: &Value) -> Option<Stack> {
@@ -109,11 +118,13 @@ mod tests {
 
     #[test]
     fn what_is_kept_reads_back_and_what_is_unknown_stays_as_kept() {
-        let vest = Item { piece: Piece::named("ranger-vest"), seed: 5 };
+        let vest = Item::of(Piece::named("ranger-vest"), 5);
         let wood = Stack { kind: Stackable::Material(Material::Hardwood), count: 7 };
         let gone = json!({"piece": 4_000_000, "seed": 1});
         let odd = json!({"coin": 3, "count": 2});
         assert_eq!(items(vec![gone.clone(), item(vest)]), (vec![vest], vec![gone]));
+        let one = Item { instance: Some(9), ..vest };
+        assert_eq!(items(vec![item(one)]).0, vec![one], "one of a kind keeps its number");
         assert_eq!(stacks(vec![stack(wood), odd.clone()]), (vec![wood], vec![odd]));
     }
 

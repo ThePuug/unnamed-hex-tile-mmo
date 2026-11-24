@@ -120,9 +120,6 @@ pub fn do_spawn(
     mut reader: MessageReader<Do>,
     asset_server: Res<AssetServer>,
     map: Res<Map>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    diagnostics: Res<crate::plugins::diagnostics::DiagnosticsState>,
     origin: Res<crate::resources::RenderOrigin>,
 ) {
     for message in reader.read() {
@@ -180,12 +177,6 @@ pub fn do_spawn(
                         common_bevy::components::AttackRange::default(), // Auto-attack range (melee default)
                     ))
                     .observe(ready);
-
-                let actor_entity = entity_cmd.id();
-
-                if diagnostics.grid_visible {
-                    spawn_debug_sphere(&mut commands, &mut meshes, &mut materials, actor_entity);
-                }
 
                 // Health/Endurance/CombatState will be inserted by Incremental events from server
                 // (do_incremental handles inserting missing components)
@@ -245,29 +236,6 @@ pub fn actor_name(typ: EntityType) -> &'static str {
 
 pub(crate) fn get_asset(typ: EntityType) -> String {
     format!("actors/{}-basic.glb", actor_name(typ))
-}
-
-/// Spawn a debug sphere as a child of the given actor entity.
-/// Called at actor spawn time (if grid visible) and when grid is toggled on.
-pub fn spawn_debug_sphere(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    actor_entity: Entity,
-) {
-    let debug_sphere = commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.05))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.0, 0.0),
-            emissive: Color::srgb(1.0, 0.0, 0.0).into(),
-            ..default()
-        })),
-        Transform::from_xyz(0.0, 0.0, 0.0),
-        PlayerOriginDebug,
-        Visibility::Visible,
-    )).id();
-
-    commands.entity(actor_entity).add_child(debug_sphere);
 }
 
 #[cfg(test)]

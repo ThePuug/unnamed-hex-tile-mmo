@@ -67,6 +67,7 @@ use common_bevy::{
         ActorAttributes, Home, Loc,
     },
     moment::Moment,
+    settings::{Setting, Settings},
     systems::When,
 };
 use qrz::Qrz;
@@ -76,9 +77,11 @@ use crate::{
     systems::{
         building::Constructs,
         characters::{Character, Characters},
+        charts::Charts,
         dens::Dens,
         economy::Moved,
         gathering::{Piles, TileChanged, WorldChanges},
+        haul::Depots,
         settlers::Camps,
     },
 };
@@ -109,7 +112,23 @@ impl Plugin for PersistencePlugin {
             panic!("the store will not open: {e}\nThe server keeps to the PostgreSQL at DATABASE_URL, or to {LOCAL} where that is unset; AGENTS.md says how that one is made.")
         });
         info!("keeping the changed world and its characters in the store");
-        app.insert_resource(Keeper::new(store))
+        // Before anything is built, so a cold setting is read as kept by
+        // whatever starts after
+        let mut settings = Settings::default();
+        for (id, value) in block_on(store.settings()).unwrap_or_else(|e| panic!("the store's settings cannot be read: {e}")) {
+            match Setting::of(id) {
+                Some(setting) => {
+                    settings.set(setting, value);
+                    info!("store: {} is {}", setting.name(), settings.get(setting));
+                }
+                None => warn!("store: this build has no setting {id}; it stays kept at {value}"),
+            }
+        }
+        let mut keeper = Keeper::new(store);
+        keeper.settings = settings;
+        app.insert_resource(settings)
+            .insert_resource(common_bevy::settings::Kept(settings))
+            .insert_resource(keeper)
             .add_systems(Startup, keep.after(crate::systems::world::setup))
             .add_systems(Update, (roll_back, note, ask, receive, flush).chain())
             .add_systems(Last, flush_at_exit);
@@ -135,6 +154,13 @@ struct Carried {
     characters: Vec<(Identity, String)>,
     hubs: bool,
     calendar: bool,
+    settings: Vec<Setting>,
+    /// Each leaf a map charted, by the map's number and the chunk, and
+    /// each map used up.
+    leaves: Vec<(u32, ChunkId)>,
+    spent: Vec<u32>,
+    /// Each depot, by the tile its hub is known by.
+    depots: Vec<(i32, i32)>,
     /// The economy interactions it appends to the ledger.
     moved: Vec<Moved>,
     economy: bool,
@@ -142,7 +168,7 @@ struct Carried {
 
 impl Carried {
     fn is_empty(&self) -> bool {
-        self.tiles.is_empty() && self.dens.is_empty() && self.camps.is_empty() && self.characters.is_empty() && !self.hubs && !self.calendar && self.moved.is_empty()
+        self.tiles.is_empty() && self.dens.is_empty() && self.camps.is_empty() && self.characters.is_empty() && !self.hubs && !self.calendar && self.settings.is_empty() && self.leaves.is_empty() && self.spent.is_empty() && self.depots.is_empty() && self.moved.is_empty()
     }
 }
 
@@ -164,6 +190,12 @@ struct Keeper {
     camped: HashMap<(i32, i32), Vec<serde_json::Value>>,
     /// Whether a hub changed since the last write.
     changed_hubs: bool,
+    /// The leaves maps charted since the last write, each by its map's
+    /// number and its chunk, and the maps used up.
+    charted: HashSet<(u32, ChunkId)>,
+    spent: Vec<u32>,
+    /// Hubs whose depot changed since the last write.
+    changed_depots: HashSet<(i32, i32)>,
     /// The calendar's moment this frame.
     when: When,
     /// Where the calendar's zero stands with no admin's hand on it: the
@@ -173,6 +205,10 @@ struct Keeper {
     /// and where held, and whether it has changed since the last write.
     calendar: (i64, Option<i64>),
     changed_calendar: bool,
+    /// Every setting as the store holds it or the next write leaves it,
+    /// and those changed since the last write.
+    settings: Settings,
+    changed_settings: HashSet<Setting>,
     /// Whether the world was rolled back under this server: it writes
     /// nothing more.
     rolled: bool,
@@ -218,10 +254,15 @@ impl Keeper {
             changed_camps: HashSet::new(),
             camped: HashMap::new(),
             changed_hubs: false,
+            charted: HashSet::new(),
+            spent: Vec::new(),
+            changed_depots: HashSet::new(),
             when: When(0),
             anchor: 0,
             calendar: (0, None),
             changed_calendar: false,
+            settings: Settings::default(),
+            changed_settings: HashSet::new(),
             rolled: false,
             changed: HashSet::new(),
             written: HashMap::new(),
@@ -268,10 +309,12 @@ impl Keeper {
     /// state is as the store holds it is not written.
     #[allow(clippy::too_many_arguments)]
     fn batch(&mut self, world: &World, playing: &Query<Playing>, known: &Characters, every: bool) -> (Carried, Batch) {
-        let World { changes, piles, dens, constructs, hubs, camps } = world;
+        let World { changes, piles, dens, constructs, hubs, camps, charts, depots } = world;
         let mut batch = Batch { economy: std::mem::take(&mut self.due), when: self.when.0 as i64, ..default() };
         let calendar_changed = std::mem::take(&mut self.changed_calendar);
         batch.calendar = calendar_changed.then_some(self.calendar);
+        let settings: Vec<Setting> = self.changed_settings.drain().collect();
+        batch.settings = settings.iter().map(|&setting| (setting.id(), self.settings.get(setting))).collect();
         let hubs_changed = std::mem::take(&mut self.changed_hubs);
         if hubs_changed {
             batch.hubs = Some(hubs.kept());
@@ -327,6 +370,16 @@ impl Keeper {
             batch.camps.push((chunk, (q, r), camps.on((q, r)).map(|camp| camp::kept(camp, dormant))));
         }
 
+        let leaves: Vec<(u32, ChunkId)> = self.charted.drain().collect();
+        batch.leaves = leaves.iter().filter_map(|&(map, chunk)| Some((map as i64, chunk, charts.kept(map, chunk)?))).collect();
+        let spent = std::mem::take(&mut self.spent);
+        batch.spent = spent.iter().map(|&map| map as i64).collect();
+        let hubs_left_at: Vec<(i32, i32)> = self.changed_depots.drain().collect();
+        batch.depots = hubs_left_at
+            .iter()
+            .map(|&hub| (hub, serde_json::to_string(&depots.on(hub).iter().copied().map(stored::stack).collect::<Vec<_>>()).expect("stacks serialize")))
+            .collect();
+
         let mut changed = std::mem::take(&mut self.changed);
         let mut states: Vec<(Identity, String)> = Vec::new();
         let none = Dormant::default();
@@ -361,7 +414,7 @@ impl Keeper {
                 None => error!("store: {moved:?} names a player whose account this server does not hold; the ledger lacks it"),
             }
         }
-        (Carried { tiles, dens: sites, camps: hearths, characters, hubs: hubs_changed, calendar: calendar_changed, moved, economy: batch.economy }, batch)
+        (Carried { tiles, dens: sites, camps: hearths, characters, hubs: hubs_changed, calendar: calendar_changed, settings, leaves, spent, depots: hubs_left_at, moved, economy: batch.economy }, batch)
     }
 
     /// The write carrying `carried` landed, was refused or failed.
@@ -400,6 +453,10 @@ impl Keeper {
         self.changed_camps.extend(carried.camps);
         self.changed_hubs |= carried.hubs;
         self.changed_calendar |= carried.calendar;
+        self.changed_settings.extend(carried.settings);
+        self.charted.extend(carried.leaves);
+        self.spent.splice(0..0, carried.spent);
+        self.changed_depots.extend(carried.depots);
         self.changed.extend(carried.characters.into_iter().map(|(identity, _)| identity));
         // What it carried happened before anything noted since
         self.moved.splice(0..0, carried.moved);
@@ -416,12 +473,23 @@ struct World<'w> {
     camps: Res<'w, Camps>,
     constructs: Res<'w, Constructs>,
     hubs: Res<'w, Hubs>,
+    charts: Res<'w, Charts>,
+    depots: Res<'w, Depots>,
 }
 
 /// From the first frame, a chunk's changes are on the map only once
 /// recalled; the calendar stands where an admin left it; and the hubs,
-/// which are known whole, are recalled before anything is built.
-fn keep(mut changes: ResMut<WorldChanges>, mut hubs: ResMut<Hubs>, mut runtime: ResMut<combat::RunTime>, time: Res<Time>, mut keeper: ResMut<Keeper>) {
+/// which are known whole, are recalled before anything is built, as are
+/// the maps, with a run of numbers for those made from here on.
+fn keep(
+    mut changes: ResMut<WorldChanges>,
+    mut hubs: ResMut<Hubs>,
+    mut charts: ResMut<Charts>,
+    mut depots: ResMut<Depots>,
+    mut runtime: ResMut<combat::RunTime>,
+    time: Res<Time>,
+    mut keeper: ResMut<Keeper>,
+) {
     changes.keep();
     keeper.anchor = runtime.calendar.wall_at_zero;
     if let Some((shift, held)) = block_on(keeper.store.calendar()).unwrap_or_else(|e| panic!("the store's calendar cannot be read: {e}")) {
@@ -443,6 +511,30 @@ fn keep(mut changes: ResMut<WorldChanges>, mut hubs: ResMut<Hubs>, mut runtime: 
     info!("store: recalled {} hubs and {} players of late", settled.hubs.len(), residents.len());
     hubs.recall(settled.hubs, residents);
     hubs.take_changed();
+    let kept = block_on(keeper.store.charts()).unwrap_or_else(|e| panic!("the store's maps cannot be read: {e}"));
+    let leaves = kept.len();
+    for (map, chunk, tiles) in kept {
+        match (u32::try_from(map), common_bevy::chart::Leaf::recalled(chunk, &tiles)) {
+            (Ok(map), Some(leaf)) => charts.recall(map, leaf),
+            _ => error!("store: chunk {chunk:?} of map {map} cannot be read; the map lacks it"),
+        }
+    }
+    info!("store: recalled {leaves} charted chunks");
+    for (hub, held) in block_on(keeper.store.depots()).unwrap_or_else(|e| panic!("the store's depots cannot be read: {e}")) {
+        let (stacks, unplayable) = stored::stacks(held);
+        if !unplayable.is_empty() {
+            error!("store: the depot at {hub:?} holds {} things this build cannot play; the next wagon there writes over them", unplayable.len());
+        }
+        depots.recall(hub, stacks);
+    }
+    number(&keeper.store, &mut charts);
+}
+
+/// Hands `charts` a run of numbers no map has.
+fn number(store: &Store, charts: &mut Charts) {
+    let (first, count) = block_on(store.numbers()).unwrap_or_else(|e| panic!("the store gives no numbers for maps: {e}"));
+    let first = u32::try_from(first).expect("a map's number fits an item's");
+    charts.numbered(first..first + count as u32);
 }
 
 /// Takes an admin's rollback: lets the write in flight land, has the
@@ -475,13 +567,31 @@ fn note(
     mut dens: ResMut<Dens>,
     mut camps: ResMut<Camps>,
     mut hubs: ResMut<Hubs>,
+    mut charts: ResMut<Charts>,
+    mut depots: ResMut<Depots>,
     mut known: ResMut<Characters>,
     runtime: Res<combat::RunTime>,
+    settings: Res<common_bevy::settings::Kept>,
     time: Res<Time>,
     mut keeper: ResMut<Keeper>,
 ) {
     let keeper = &mut *keeper;
     keeper.when = runtime.when(&time);
+    for setting in Setting::ALL {
+        let value = settings.0.get(setting);
+        if keeper.settings.get(setting) != value {
+            keeper.settings.set(setting, value);
+            keeper.changed_settings.insert(setting);
+        }
+    }
+    if charts.numbers_left() == 0 {
+        number(&keeper.store, &mut charts);
+    }
+    let (charted, spent) = charts.take_changed();
+    keeper.charted.retain(|(map, _)| !spent.contains(map));
+    keeper.charted.extend(charted);
+    keeper.spent.extend(spent);
+    keeper.changed_depots.extend(depots.take_changed());
     let calendar = ((runtime.calendar.wall_at_zero as i128 - keeper.anchor as i128) as i64, runtime.calendar.held.map(|held| held as i64));
     if calendar != keeper.calendar {
         keeper.calendar = calendar;
@@ -679,7 +789,7 @@ fn flush(
 /// every character in the world with it.
 fn flush_at_exit(
     mut exit: MessageReader<AppExit>,
-    mut taking: ParamSet<(World, (ResMut<Dens>, ResMut<Hubs>, ResMut<Camps>))>,
+    mut taking: ParamSet<(World, (ResMut<Dens>, ResMut<Hubs>, ResMut<Camps>, ResMut<Charts>, ResMut<Depots>))>,
     playing: Query<Playing>,
     mut known: ResMut<Characters>,
     mut keeper: ResMut<Keeper>,
@@ -687,10 +797,14 @@ fn flush_at_exit(
     if exit.read().count() == 0 || keeper.rolled {
         return;
     }
-    let (mut dens, mut hubs, mut camps) = taking.p1();
+    let (mut dens, mut hubs, mut camps, mut charts, mut depots) = taking.p1();
+    keeper.changed_depots.extend(depots.take_changed());
     keeper.changed_dens.extend(dens.take_changed());
     keeper.changed_camps.extend(camps.take_changed());
     keeper.changed_hubs |= hubs.take_changed();
+    let (charted, spent) = charts.take_changed();
+    keeper.charted.extend(charted);
+    keeper.spent.extend(spent);
     if let Some((carried, task)) = keeper.write.take() {
         let result = block_on(task);
         keeper.wrote(carried, result, &mut known);

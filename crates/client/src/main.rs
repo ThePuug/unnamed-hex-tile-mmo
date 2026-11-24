@@ -173,6 +173,7 @@ fn main() {
     app.add_systems(Update, (
         world::do_init,
         world::do_calendar,
+        world::do_settings,
         (
             equipment::do_inventory,
             equipment::dress,
@@ -217,6 +218,8 @@ fn main() {
     app.init_resource::<input::Settling>();
     app.init_resource::<crate::systems::rope::RopeKit>();
     app.init_resource::<common_bevy::tuning::Tuning>();
+    app.init_resource::<common_bevy::settings::Settings>();
+    app.init_resource::<common_bevy::settings::Kept>();
     app.init_resource::<crate::resources::RenderOrigin>();
     app.init_resource::<common_bevy::haven::Haven>();
     app.init_resource::<gathering::LootWindow>();
@@ -224,6 +227,7 @@ fn main() {
     app.init_resource::<crate::systems::building::HomeHearth>();
     app.init_resource::<crate::systems::building::Sheltered>();
     app.init_resource::<crate::systems::settlers::Hailed>();
+    app.init_resource::<crate::systems::settlers::Carted>();
     app.init_resource::<movement::Corrections>();
     app.init_resource::<crate::systems::focus::NumpadFocus>();
     app.init_resource::<crate::systems::help::Help>();

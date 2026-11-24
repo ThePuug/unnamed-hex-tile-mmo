@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM chart_leaf WHERE map = ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "10884e83cb40f9fde0c013985b63533c56e8e7a1e323e6d30f73a0a539d6cb32"
+}

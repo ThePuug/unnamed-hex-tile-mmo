@@ -58,6 +58,11 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Build { .. } => "Build",
         Event::Home { .. } => "Home",
         Event::Hail { .. } => "Hail",
+        Event::Draw { .. } => "Draw",
+        Event::Set { .. } => "Set",
+        Event::Settings { .. } => "Settings",
+        Event::Wagon { .. } => "Wagon",
+        Event::Send { .. } => "Send",
         Event::Rollback { .. } => "Rollback",
         Event::Wants { .. } => "Wants",
         Event::Sheltered { .. } => "Sheltered",
@@ -192,7 +197,7 @@ pub fn write_do(
             Do { event: Event::Den { ent: _, at, den } } => {
                 do_writer.write(Do { event: Event::Den { ent: Entity::PLACEHOLDER, at, den } });
             }
-            Do { event: event @ (Event::Pong { .. } | Event::Calendar { .. }) } => {
+            Do { event: event @ (Event::Pong { .. } | Event::Calendar { .. } | Event::Settings { .. }) } => {
                 do_writer.write(Do { event });
             }
             // How a skill ended is told for whom it struck as much as for
@@ -216,6 +221,7 @@ pub fn write_do(
                 | Event::Loot { .. }
                 | Event::Home { .. }
                 | Event::Wants { .. }
+                | Event::Wagon { .. }
                 | Event::Sheltered { .. }
                 | Event::Activity { .. }
                 | Event::Activate { .. }
@@ -333,7 +339,7 @@ pub fn send_try(
         let mut event = message.event.clone();
         match event {
             // A spawn is asked for by the server's own id, and these are about no entity
-            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping | Event::ChangeCalendar { .. } | Event::Rollback { .. } => {}
+            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping | Event::ChangeCalendar { .. } | Event::Rollback { .. } | Event::Set { .. } => {}
             Event::Input { .. }
             | Event::UseAbility { .. }
             | Event::View { .. }
@@ -343,6 +349,8 @@ pub fn send_try(
             | Event::Drop { .. }
             | Event::Build { .. }
             | Event::Hail { .. }
+            | Event::Draw { .. }
+            | Event::Send { .. }
             | Event::Wear { .. }
             | Event::Mount { .. }
             | Event::Teleport { .. }
