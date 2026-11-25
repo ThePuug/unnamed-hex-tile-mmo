@@ -169,6 +169,13 @@ pub enum Event {
     /// wagon, once the camp's line is raised; None where there is no
     /// wagon to speak of. Sent to its owner only.
     Wagon { ent: Entity, wagon: Option<common::building::Wagon> },
+    /// Client → Server (Try): `ent` looks at the wagon standing beside
+    /// it, and loads on it so many of a material from its bag, where
+    /// `give` names them
+    Load { ent: Entity, give: Option<common::Stack> },
+    /// Server → Client: what the wagon `ent` looked at holds, or None
+    /// where none stands near enough. Sent to its owner only.
+    Loaded { ent: Entity, load: Option<Vec<common::Stack>> },
     /// Client → Server (Try): `ent` hands the settler beside it the map
     /// in its main hand and sends the camp's wagon by it to the hub
     /// known by the tile `to`
@@ -176,8 +183,23 @@ pub enum Event {
     /// Client → Server (Try): `ent` draws a blank map of the fibre in its
     /// bag, or with `copy` a copy of the map in its main hand
     Draw { ent: Entity, copy: bool },
+    /// Server → Client: chunks of map `map`, each drawn down to its
+    /// sketch, laid in turn over what the client held of them
+    /// (`picture::Atlas::lay`); with them each join of a part that is not
+    /// its chunk's main part, by its sketch's place among these, and each
+    /// hub whose hearth stood in them as they were charted, with the part
+    /// of the ground beside it. Sent to `ent`, a player carrying the map:
+    /// each chunk once, and again when the map charts it over.
+    Charted {
+        ent: Entity,
+        map: u32,
+        sketches: Vec<(ChunkId, crate::picture::Sketch)>,
+        links: Vec<(u8, crate::picture::Link)>,
+        hubs: Vec<((i32, i32), Option<crate::chart::Node>)>,
+    },
     /// Client → Server (Try): `ent` hails the settler nearest it, and with
-    /// `give` hands it what its bag holds of what the settler lacks
+    /// `give` hands it what its bag holds of what the settler lacks to
+    /// build with
     Hail { ent: Entity, give: bool },
     /// A player asks the settler it hails what growing its hub a tier,
     /// or shrinking it, would do, or to carry that out.
@@ -198,6 +220,9 @@ pub enum Event {
     /// Client → Server: put this connection's character in the world. The
     /// server answers with `Init`; a connection already playing is ignored.
     Play,
+    /// Client → Server: this connection's world has loaded. Its
+    /// character, held out of play since `Play`, steps into the world.
+    Arrive,
     /// Client → Server: take this connection's character out of the world,
     /// keeping the connection open to play again.
     Leave,
@@ -253,7 +278,10 @@ impl Event {
             | Event::Plan { ent, .. }
             | Event::Planned { ent, .. }
             | Event::Draw { ent, .. }
+            | Event::Charted { ent, .. }
             | Event::Wagon { ent, .. }
+            | Event::Load { ent, .. }
+            | Event::Loaded { ent, .. }
             | Event::Send { ent, .. }
             | Event::Wants { ent, .. }
             | Event::Sheltered { ent, .. }
@@ -263,6 +291,7 @@ impl Event {
             Event::Ping { .. }
             | Event::Pong { .. }
             | Event::Play
+            | Event::Arrive
             | Event::Leave
             | Event::ChangeCalendar { .. }
             | Event::Settings { .. }

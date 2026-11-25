@@ -61,8 +61,11 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Plan { .. } => "Plan",
         Event::Planned { .. } => "Planned",
         Event::Draw { .. } => "Draw",
+        Event::Charted { .. } => "Charted",
         Event::Settings { .. } => "Settings",
         Event::Wagon { .. } => "Wagon",
+        Event::Load { .. } => "Load",
+        Event::Loaded { .. } => "Loaded",
         Event::Send { .. } => "Send",
         Event::Rollback { .. } => "Rollback",
         Event::Wants { .. } => "Wants",
@@ -224,6 +227,8 @@ pub fn write_do(
                 | Event::Wants { .. }
                 | Event::Planned { .. }
                 | Event::Wagon { .. }
+                | Event::Loaded { .. }
+                | Event::Charted { .. }
                 | Event::Sheltered { .. }
                 | Event::Activity { .. }
                 | Event::Activate { .. }
@@ -341,7 +346,7 @@ pub fn send_try(
         let mut event = message.event.clone();
         match event {
             // A spawn is asked for by the server's own id, and these are about no entity
-            Event::Spawn { .. } | Event::Play | Event::Leave | Event::Ping | Event::ChangeCalendar { .. } | Event::Rollback { .. } => {}
+            Event::Spawn { .. } | Event::Play | Event::Arrive | Event::Leave | Event::Ping | Event::ChangeCalendar { .. } | Event::Rollback { .. } => {}
             Event::Input { .. }
             | Event::UseAbility { .. }
             | Event::View { .. }
@@ -353,6 +358,7 @@ pub fn send_try(
             | Event::Hail { .. }
             | Event::Plan { .. }
             | Event::Draw { .. }
+            | Event::Load { .. }
             | Event::Send { .. }
             | Event::Wear { .. }
             | Event::Mount { .. }

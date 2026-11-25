@@ -130,6 +130,7 @@ impl Plugin for ShellPlugin {
         app.add_systems(Update, (follow_link, menu::route_keys, menu::draw, credits::draw, screens::draw, screens::show_rtt));
         app.add_systems(Update, track_loading.run_if(in_state(Stage::Loading)));
         app.add_systems(OnEnter(Stage::Loading), start_loading);
+        app.add_systems(OnEnter(Stage::Playing), arrive);
         app.add_systems(OnEnter(Stage::CharacterSelect), dress_preview);
         app.add_systems(OnExit(InWorld), leave_world);
     }
@@ -151,6 +152,12 @@ pub fn play(writer: &mut MessageWriter<Try>, next: &mut NextState<Stage>, entere
     entered.0 = true;
     writer.write(Try { event: Event::Play });
     next.set(Stage::Loading);
+}
+
+/// Tells the server the world has loaded: the character it held out of
+/// play while the loading screen stood steps into the world.
+fn arrive(mut writer: MessageWriter<Try>) {
+    writer.write(Try { event: Event::Arrive });
 }
 
 /// Asks the server to take the character out of the world, keeping the

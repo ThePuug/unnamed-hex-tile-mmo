@@ -174,6 +174,8 @@ fn main() {
         world::do_init,
         world::do_calendar,
         world::do_settings,
+        // Told once as the character enters, while the world still loads
+        (crate::systems::building::do_home, crate::systems::building::do_sheltered),
         (
             equipment::do_inventory,
             equipment::dress,
@@ -193,8 +195,10 @@ fn main() {
         gathering::mark,
         gathering::do_loot,
         gathering::do_activity,
-        (crate::systems::building::request, crate::systems::building::update, crate::systems::building::do_home, crate::systems::building::do_sheltered).chain(),
-        (crate::systems::settlers::request, crate::systems::settlers::do_wants, crate::systems::settlers::update).chain(),
+        (crate::systems::building::request, crate::systems::building::update).chain(),
+        // The wagon is asked after before a hail is let go, or the T that lets a settler be would look at its wagon
+        (crate::systems::settlers::load, crate::systems::settlers::request, crate::systems::settlers::do_wants, crate::systems::settlers::do_loaded, crate::systems::settlers::update, crate::systems::settlers::update_wagon).chain(),
+        (crate::systems::chart::request, crate::systems::chart::update).chain(),
         (equipment::hold, equipment::bind_held, equipment::stow).chain(),
         crate::systems::rune::bind,
         crate::systems::rope::throw,
@@ -227,7 +231,13 @@ fn main() {
     app.init_resource::<crate::systems::building::Sheltered>();
     app.init_resource::<crate::systems::settlers::Hailed>();
     app.init_resource::<crate::systems::settlers::Carted>();
+    app.init_resource::<crate::systems::settlers::Loading>();
     app.init_resource::<crate::systems::settlers::Asked>();
+    app.init_resource::<crate::systems::chart::Reading>();
+    app.init_resource::<crate::systems::chart::Maps>();
+    // Whatever the screen: a map sent while another stands is still kept
+    app.add_systems(Update, crate::systems::chart::do_charted);
+    app.init_resource::<crate::systems::chart::Drawing>();
     app.init_resource::<movement::Corrections>();
     app.init_resource::<crate::systems::focus::NumpadFocus>();
     app.init_resource::<crate::systems::help::Help>();

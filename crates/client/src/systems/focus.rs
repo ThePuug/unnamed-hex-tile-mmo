@@ -13,6 +13,7 @@ pub enum Panel {
     Drop,
     Build,
     Settler,
+    Chart,
 }
 
 /// The open panels in the order they opened.
@@ -50,8 +51,10 @@ pub fn track(
     drop: Res<DropChoice>,
     build: Res<BuildPanel>,
     hailed: Res<crate::systems::settlers::Hailed>,
+    reading: Res<crate::systems::chart::Reading>,
     mut focus: ResMut<NumpadFocus>,
 ) {
+    focus.set(Panel::Chart, reading.open());
     focus.set(Panel::Settler, hailed.0.is_some());
     focus.set(Panel::Character, state.visible);
     focus.set(Panel::Loot, window.cells.is_some());

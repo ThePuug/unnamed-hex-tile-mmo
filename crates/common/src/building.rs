@@ -384,7 +384,7 @@ pub fn cleared(cover: Cover) -> Option<(Cover, Needs)> {
         },
     };
     let filled = |k: usize| k == SLOT || cover.content(k) == Content::Filled;
-    Some(((0..TILE_SLOTS as usize).filter(|&k| filled(k)).fold(cover, |cover, k| cover.with_content(k, Content::Empty)), back))
+    Some(((0..TILE_SLOTS as usize).filter(|&k| filled(k)).fold(cover.faced(None), |cover, k| cover.with_content(k, Content::Empty)), back))
 }
 
 /// Whether G uses what stands in slot `k`: a hearth or a tent, to make a

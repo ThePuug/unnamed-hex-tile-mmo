@@ -1,6 +1,8 @@
 //! The drop panel: how many of a bag stack to drop, typed on the numpad's
 //! digits or scrolled with + and -, in the bag tab's detail of the stack.
 //! It starts at the whole stack and never goes past what the bag holds.
+//! While the player looks at a wagon (`settlers::Loading`) what would be
+//! dropped is loaded on the wagon.
 
 use std::time::Duration;
 
@@ -63,16 +65,25 @@ pub fn scrolled(held_ms: u64) -> u32 {
 }
 
 /// A + or - held: which, since when, and the count it moves from.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Scroll {
     more: bool,
     since: Duration,
     from: u32,
 }
 
-/// The stack being dropped and how many of it: a text box the digits type
+/// How a frame's keys left a count being chosen.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Chose {
+    Still,
+    Cancelled,
+    /// So many, which may be none.
+    Taken(u32),
+}
+
+/// A stack and how many of it are chosen: a text box the digits type
 /// into, which + and - move from whatever it shows.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Choosing {
     pub kind: common::Stackable,
     pub count: u32,
@@ -84,6 +95,46 @@ pub struct Choosing {
 }
 
 impl Choosing {
+    /// The box opened on `stack`, choosing all of it.
+    pub fn of(stack: common::Stack) -> Self {
+        Choosing { kind: stack.kind, count: stack.count, typing: false, scroll: None }
+    }
+
+    /// Works the box for a frame at `now`, no further than `most`: where
+    /// its panel `works` the numpad, digits type the count, + and -
+    /// scroll it, `.` cancels and Enter takes the count, doing what
+    /// `takes` says. A + or - held goes on moving it either way.
+    pub fn work(&mut self, keys: &mut crate::systems::help::Keys, now: Duration, most: u32, works: bool, takes: &'static str) -> Chose {
+        self.count = self.count.min(most);
+        if works {
+            if keys.take(KEYCODE_CANCEL, "Cancel the count") {
+                return Chose::Cancelled;
+            }
+            if keys.take(KEYCODE_DROP, takes) {
+                return Chose::Taken(self.count);
+            }
+            for (digit, key) in DIGIT_KEYS.iter().enumerate() {
+                if keys.take(*key, "Type a digit of the count") {
+                    self.type_digit(digit as u32, most);
+                }
+            }
+            if keys.take(KEYCODE_ERASE, "Erase the count's last digit") {
+                self.erase();
+            }
+            for (key, more, does) in [(KEYCODE_MORE, true, MORE), (KEYCODE_LESS, false, LESS)] {
+                if keys.take(key, does) {
+                    self.press_scroll(more, now);
+                }
+            }
+        }
+        if let Some(scroll) = self.scroll {
+            let still = if scroll.more { keys.held(KEYCODE_MORE, MORE) } else { keys.held(KEYCODE_LESS, LESS) };
+            self.scroll = still.then_some(scroll);
+        }
+        self.hold_scroll(now, most);
+        Chose::Still
+    }
+
     /// Types `digit` into the box, no further than `most`.
     fn type_digit(&mut self, digit: u32, most: u32) {
         let before = if self.typing { self.count } else { 0 };
@@ -122,7 +173,7 @@ pub struct DropChoice(pub Option<Choosing>);
 impl DropChoice {
     /// Opens the panel on `stack`, choosing all of it.
     pub fn open(&mut self, stack: common::Stack) {
-        self.0 = Some(Choosing { kind: stack.kind, count: stack.count, typing: false, scroll: None });
+        self.0 = Some(Choosing::of(stack));
     }
 }
 
@@ -136,6 +187,7 @@ pub fn handle_keys(
     state: Res<CharacterPanelState>,
     time: Res<Time<Real>>,
     mut choice: ResMut<DropChoice>,
+    loading: Res<crate::systems::settlers::Loading>,
     player: Query<(Entity, &Inventory), With<Actor>>,
     mut writer: MessageWriter<Try>,
 ) {
@@ -146,49 +198,29 @@ pub fn handle_keys(
         choice.0 = None;
         return;
     }
-    chosen.count = chosen.count.min(most);
-    if focus.has(Panel::Drop) && !console.visible {
-        if keys.take(KEYCODE_CANCEL, "Cancel the drop") {
-            choice.0 = None;
-            return;
-        }
-        if keys.take(KEYCODE_DROP, "Drop the count chosen") {
-            if chosen.count > 0 {
-                writer.write(Try { event: Event::Drop { ent, lot: common::Stack { kind: chosen.kind, count: chosen.count }.into() } });
+    let wagon = loading.0.is_some();
+    let takes = if wagon { "Load the count chosen on the wagon" } else { "Drop the count chosen" };
+    match chosen.work(&mut keys, time.elapsed(), most, focus.has(Panel::Drop) && !console.visible, takes) {
+        Chose::Still => choice.0 = Some(chosen),
+        Chose::Cancelled => choice.0 = None,
+        Chose::Taken(count) => {
+            let stack = common::Stack { kind: chosen.kind, count };
+            if count > 0 {
+                writer.write(Try { event: if wagon { Event::Load { ent, give: Some(stack) } } else { Event::Drop { ent, lot: stack.into() } } });
             }
             choice.0 = None;
-            return;
-        }
-        for (digit, key) in DIGIT_KEYS.iter().enumerate() {
-            if keys.take(*key, "Type a digit of the count") {
-                chosen.type_digit(digit as u32, most);
-            }
-        }
-        if keys.take(KEYCODE_ERASE, "Erase the count's last digit") {
-            chosen.erase();
-        }
-        for (key, more, does) in [(KEYCODE_MORE, true, MORE), (KEYCODE_LESS, false, LESS)] {
-            if keys.take(key, does) {
-                chosen.press_scroll(more, time.elapsed());
-            }
         }
     }
-    if let Some(scroll) = chosen.scroll {
-        let still = if scroll.more { keys.held(KEYCODE_MORE, MORE) } else { keys.held(KEYCODE_LESS, LESS) };
-        chosen.scroll = still.then_some(scroll);
-    }
-    chosen.hold_scroll(time.elapsed(), most);
-    choice.0 = Some(chosen);
 }
 
 /// The count chosen, in the panel's text box.
 #[derive(Component)]
 pub struct DropCount;
 
-/// Spawns the panel under `parent`, the bag tab's detail of the stack it is
-/// open on, choosing `count`: the text box between the keys that move it,
-/// and the keys that drop and close.
-pub fn spawn_entry(parent: &mut ChildSpawnerCommands, count: u32) {
+/// Spawns the box under `parent`, choosing `count`: the text box between
+/// the keys that move it, and the keys that take the count, doing what
+/// `takes` says, and cancel.
+pub fn spawn_entry(parent: &mut ChildSpawnerCommands, count: u32, takes: &str) {
     use crate::systems::keycap::{hint_row, keycap, Hint};
     parent
         .spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(6.), ..default() })
@@ -211,7 +243,7 @@ pub fn spawn_entry(parent: &mut ChildSpawnerCommands, count: u32) {
             });
             keycap(line, KEYCODE_MORE);
         });
-    hint_row(parent, None, &[Hint::key(KEYCODE_DROP, "drop"), Hint::key(KEYCODE_CANCEL, "cancel")]);
+    hint_row(parent, None, &[Hint::key(KEYCODE_DROP, takes), Hint::key(KEYCODE_CANCEL, "cancel")]);
 }
 
 /// Writes the count chosen into the panel's text box.

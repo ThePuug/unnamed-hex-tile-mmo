@@ -506,6 +506,10 @@ fn keep(
     let leaves = kept.len();
     for (map, chunk, tiles) in kept {
         match (u32::try_from(map), common_bevy::chart::Leaf::recalled(chunk, &tiles)) {
+            // A leaf kept with nothing said of its hearths takes those the
+            // hubs have now, the nearest there is to what stood, and is
+            // kept again saying so
+            (Ok(map), Some(leaf)) if common_bevy::chart::Leaf::unmarked(&tiles) => charts.recall_changed(map, leaf.marked(hubs.each().map(|(_, hearth, _)| hearth))),
             (Ok(map), Some(leaf)) => charts.recall(map, leaf),
             _ => error!("store: chunk {chunk:?} of map {map} cannot be read; the map lacks it"),
         }

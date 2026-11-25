@@ -157,6 +157,23 @@ pub fn ground(sites: &[Site]) -> Ground {
     Ground { tiles, wall }
 }
 
+/// The way out of `ground` from `tile` of its wall, as a place in
+/// `common::cover::FACINGS`: the one nearest the way its tiles beside it
+/// that are off the ground lie, taken together.
+pub fn outward(ground: &Ground, tile: (i32, i32)) -> usize {
+    let here = flat(tile);
+    let out = qrz::DIRECTIONS.iter().map(|d| (tile.0 + d.q, tile.1 + d.r)).filter(|beside| ground.tiles.binary_search(beside).is_err()).fold((0.0, 0.0), |sum, beside| {
+        let at = flat(beside);
+        (sum.0 + at.0 - here.0, sum.1 + at.1 - here.1)
+    });
+    let along = |&(q, r): &(i32, i32)| {
+        let way = flat((q, r));
+        (way.0 * out.0 + way.1 * out.1) / apart(way, (0.0, 0.0))
+    };
+    let ways = common::cover::FACINGS;
+    (0..ways.len()).max_by(|&a, &b| along(&ways[a]).total_cmp(&along(&ways[b])).then(b.cmp(&a))).unwrap_or(0)
+}
+
 /// How many steps the shortest walk over `ground` from the tile `from`
 /// takes to each tile it reaches: a walk that crosses no build site and
 /// takes only steps `walked` allows, from one tile to the next.
@@ -506,6 +523,21 @@ mod tests {
         assert!(camp.sites.iter().all(|site| ground.tiles.contains(&site.at) && !ground.wall.contains(&site.at)));
         assert_eq!(ground.wall.len(), held(0), "its settler holds a camp");
         assert_eq!(held(0), held(1), "and so do a settler and a player");
+    }
+
+    /// Every tile of a wall faces out: a step that way from it leaves the
+    /// ground, and a step the other way does not.
+    #[test]
+    fn a_wall_faces_out_of_its_ground() {
+        for hub in [camp((0, 0)), town()] {
+            let ground = ground(&hub.sites);
+            for &tile in &ground.wall {
+                let (q, r) = common::cover::FACINGS[outward(&ground, tile)];
+                let off = |at: (i32, i32)| ground.tiles.binary_search(&at).is_err();
+                assert!(off((tile.0 + 2 * q, tile.1 + 2 * r)), "{tile:?} faces ({q}, {r}), which is no way out");
+                assert!(!off((tile.0 - 2 * q, tile.1 - 2 * r)), "{tile:?} faces ({q}, {r}), with open ground behind it");
+            }
+        }
     }
 
     /// A path runs from a hearth to a tile of its wall over ground that is

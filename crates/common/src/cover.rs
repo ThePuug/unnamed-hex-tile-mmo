@@ -331,7 +331,9 @@ fn mix(q: i32, r: i32, k: usize, channel: u64) -> u64 {
 /// What stands on a tile, in one `u64` so it crosses the wire as one:
 /// each of the seven slots' [`Content`] in [`CONTENT_BITS`], slot `k` from
 /// bit `k * CONTENT_BITS` in [`SLOT_TOWARD`] order; and the boulders' rock
-/// in the two bits past those, read only where a boulder stands. The
+/// in the two bits past those, read only where a boulder stands; and in
+/// the four past those the way what is built on the tile faces, where it
+/// faces any ([`FACINGS`]). The
 /// server's store keeps a changed tile as these bits, so changing the
 /// layout needs a migration of what it keeps.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -339,6 +341,15 @@ pub struct Cover(u64);
 
 /// The first rock bit.
 const ROCK_BIT: u32 = CONTENT_BITS * TILE_SLOTS as u32;
+
+/// The first bit of the way what is built on a tile faces: none where
+/// the four are 0, else one more than its place in [`FACINGS`].
+const FACING_BIT: u32 = ROCK_BIT + 2;
+
+/// The twelve ways a thing built on a tile may face, as steps over the
+/// grid, a twelfth of a turn apart and in turn: toward each of the six
+/// tiles beside it, and toward the corner between each two.
+pub const FACINGS: [(i32, i32); 12] = [(1, 0), (2, -1), (1, -1), (1, -2), (0, -1), (-1, -1), (-1, 0), (-2, 1), (-1, 1), (-1, 2), (0, 1), (1, 1)];
 
 impl Rock {
     /// The two bits a cover and an outcrop carry the rock as.
@@ -365,12 +376,25 @@ impl Rock {
 impl Cover {
     pub const NONE: Cover = Cover(0);
 
-    /// The cover these bits hold: bits past the rock's are dropped, and a
-    /// slot's bits that name no content read as empty.
+    /// The cover these bits hold: bits past the facing's are dropped, a
+    /// slot's bits that name no content read as empty, and a facing that
+    /// is none of [`FACINGS`] as none.
     pub fn from_bits(bits: u64) -> Cover {
-        (0..TILE_SLOTS as usize).fold(Cover(bits & (3 << ROCK_BIT)), |c, k| {
-            c.with_content(k, Content::from_bits(bits >> (k as u32 * CONTENT_BITS)))
-        })
+        let facing = Some((bits >> FACING_BIT & 15) as usize).filter(|&place| place > 0).map(|place| place - 1).filter(|&toward| toward < FACINGS.len());
+        (0..TILE_SLOTS as usize).fold(Cover(bits & (3 << ROCK_BIT)).faced(facing), |c, k| c.with_content(k, Content::from_bits(bits >> (k as u32 * CONTENT_BITS))))
+    }
+
+    /// Which of [`FACINGS`] what is built on the tile faces, by its place
+    /// there; none where it faces no way.
+    pub fn facing(self) -> Option<usize> {
+        ((self.0 >> FACING_BIT & 15) as usize).checked_sub(1)
+    }
+
+    /// This cover with what is built on it facing `toward`, a place in
+    /// [`FACINGS`], or no way.
+    pub fn faced(self, toward: Option<usize>) -> Cover {
+        debug_assert!(toward.is_none_or(|toward| toward < FACINGS.len()));
+        Cover((self.0 & !(15 << FACING_BIT)) | toward.map_or(0, |toward| toward as u64 + 1) << FACING_BIT)
     }
 
     pub fn bits(self) -> u64 {
@@ -602,6 +626,26 @@ impl Outcrop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cover keeps the way it faces through its bits and through a
+    /// change of what stands on it, and bits naming no way face none.
+    #[test]
+    fn a_facing_is_kept_with_the_cover() {
+        assert_eq!(Cover::NONE.facing(), None);
+        for toward in 0..FACINGS.len() {
+            let faced = Cover::NONE.with_content(0, Content::Stakes).faced(Some(toward));
+            assert_eq!((faced.facing(), faced.content(0)), (Some(toward), Content::Stakes));
+            assert_eq!(Cover::from_bits(faced.bits()), faced);
+            assert_eq!(faced.with_content(0, Content::Empty).facing(), Some(toward));
+            assert_eq!(faced.faced(None), Cover::NONE.with_content(0, Content::Stakes));
+        }
+        assert_eq!(Cover::from_bits(13 << FACING_BIT).facing(), None);
+        // In turn, a twelfth apart: each next is a step round from the last
+        for (k, &(q, r)) in FACINGS.iter().enumerate() {
+            let (nq, nr) = FACINGS[(k + 1) % FACINGS.len()];
+            assert!((q * nr - r * nq) < 0, "{k} turns the same way round as the rest");
+        }
+    }
 
     #[test]
     fn slots_pack_and_unpack() {

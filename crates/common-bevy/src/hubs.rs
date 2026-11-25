@@ -229,6 +229,12 @@ impl Hubs {
         self.hubs.get(&id).map_or(Vec::new(), |held| Self::staked(&held.ground.wall, held.gate))
     }
 
+    /// The way the stakes on `tile` of hub `id`'s wall face, out of its
+    /// ground, as a place in `common::cover::FACINGS`.
+    pub fn faces(&self, id: HubId, tile: (i32, i32)) -> Option<usize> {
+        Some(sites::outward(self.ground(id)?, tile))
+    }
+
     /// The way in through hub `id`'s wall.
     pub fn way_in(&self, id: HubId) -> Option<(i32, i32)> {
         self.hubs.get(&id)?.gate

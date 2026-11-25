@@ -47,6 +47,9 @@ pub enum Kind {
     /// What a hub's settlers raised, or are raising at this stage of it
     /// from 1; none is raised
     Raised(common::building::Fixture, u8),
+    /// A blockade a player built, whatever its wood: stakes bristling
+    /// every way, which a wall's do not
+    Blockade,
 }
 
 impl From<Content> for Kind {
@@ -107,14 +110,25 @@ const MODELS: &[(Kind, &str)] = &[
     (Kind::Pile(common::Material::Hide), "models/hide-pile.glb"),
     (Kind::Pile(common::Material::Fibre), "models/fibre-pile.glb"),
     (Kind::Bundle, "models/bundle.glb"),
+    (Kind::Blockade, "models/blockade.glb"),
 ];
 
+/// The yaw a model is drawn at to face `toward`, a place in
+/// `common::cover::FACINGS`: its front, the GLB's -z, turned to lie
+/// along that step over the grid. An instance's turn runs the other way
+/// about the vertical from a rotation about +y.
+fn facing_yaw(toward: usize) -> f32 {
+    let (q, r) = common::cover::FACINGS[toward];
+    let (x, z) = flat_top_tile_center(q, r, 1.0);
+    -(-x).atan2(-z)
+}
+
 /// What a construct is drawn as: a hearth in its stone, and a blockade
-/// as the stakes a camp is bordered by, whatever its wood.
+/// as one whatever its wood.
 fn built(construct: common::building::Construct) -> Kind {
     match construct.kind {
         common::building::Kind::Hearth => Kind::Hearth(construct.of),
-        common::building::Kind::Blockade => Kind::Raised(common::building::Fixture::Stakes, 0),
+        common::building::Kind::Blockade => Kind::Blockade,
     }
 }
 
@@ -636,8 +650,8 @@ pub fn place_cover(
                 });
             }
             // A fixture stands on its tile's centre as a construct does,
-            // each turned its tile's own way but the stakes, which meet
-            // their neighbours' edge to edge
+            // each turned its tile's own way but the stakes, which face
+            // the way their cover says: out of their hub
             let raised = common::building::fixture(cover).map(|fixture| (fixture, 0));
             let empty = common::building::emptied_post(cover).then_some((common::building::Fixture::Post, POST_EMPTY));
             if let Some((fixture, stage)) = raised.or_else(|| common::building::rising(cover)).or(empty) {
@@ -646,7 +660,7 @@ pub fn place_cover(
                 let sway = common::cover::boulder_sway(q, r, common::building::SLOT);
                 out.push(CoverInstance {
                     translation: Vec3::new(x, y, z),
-                    yaw: if fixture == common::building::Fixture::Stakes { 0.0 } else { sway.yaw as f32 },
+                    yaw: if fixture == common::building::Fixture::Stakes { cover.facing().map_or(0.0, facing_yaw) } else { sway.yaw as f32 },
                     tilt: Quat::IDENTITY,
                     growth: 1.0,
                     kind: Kind::Raised(fixture, stage),
@@ -903,6 +917,18 @@ mod tests {
     /// On flat wooded, rocky ground a region places one tree per filled
     /// site and one boulder per boulder slot, each standing on the surface
     /// within its own tile.
+    /// Stakes drawn facing a way have their front, the GLB's -z, along
+    /// that step over the grid: an instance's turn is a rotation about
+    /// +y the other way.
+    #[test]
+    fn stakes_are_turned_to_face_their_way() {
+        for (toward, &(q, r)) in common::cover::FACINGS.iter().enumerate() {
+            let (x, z) = flat_top_tile_center(q, r, 1.0);
+            let front = Quat::from_rotation_y(-facing_yaw(toward)) * Vec3::NEG_Z;
+            assert!(front.abs_diff_eq(Vec3::new(x, 0.0, z).normalize(), 1e-4), "{toward}: {front:?}");
+        }
+    }
+
     #[test]
     fn a_region_places_one_instance_per_filled_slot() {
         let map = Map::new(qrz::Map::new(1.0, 0.8));

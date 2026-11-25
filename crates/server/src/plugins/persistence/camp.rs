@@ -96,8 +96,8 @@ pub fn kept(camp: &Camp, dormant: &[Value]) -> String {
 
 /// The camp `state` keeps, known by `key`, and what it holds that this
 /// build cannot play. None where it cannot be read. One kept before hubs
-/// had sites is to take down what it stood off them, its hearth where
-/// that is on no site, and build with that again.
+/// had sites is to take down what it stood off them and what it had begun
+/// there, its hearth where that is on no site, and build with that again.
 pub fn recalled(key: (i32, i32), state: Value) -> Option<(Camp, Vec<Value>)> {
     let state: State = serde_json::from_value(state).ok()?;
     let (stock, mut dormant) = stored::stacks(state.stock);
@@ -110,16 +110,18 @@ pub fn recalled(key: (i32, i32), state: Value) -> Option<(Camp, Vec<Value>)> {
         dormant.extend(lost);
         Trip { to: road.to, way: road.way, done: road.done, spare: Duration::from_millis(road.spare), back: road.back, counted: road.counted, cargo }
     });
+    // What a camp of before hubs had sites had begun stands off them too
+    let (old, begun) = (state.claimed.is_some(), state.rising.map(|(_, at, _)| at));
     let camp = Camp {
         arrives: state.arrives,
         arrived: state.arrived,
-        rising: state.rising.and_then(|(step, at, left)| Some((Step::kept_as(step)?, at, Duration::from_millis(left)))),
+        rising: state.rising.filter(|_| !old).and_then(|(step, at, left)| Some((Step::kept_as(step)?, at, Duration::from_millis(left)))),
         credit: common::building::Needs { hide: state.credit.0, wood: state.credit.1, stone: state.credit.2 },
         clearing: state
             .clearing
             .into_iter()
-            .chain([state.post, state.own, state.spare, state.wagon].into_iter().flatten())
-            .chain(state.claimed.is_some().then_some(key).filter(|&key| common_bevy::sites::site_near(key) != key))
+            .chain([state.post, state.own, state.spare, state.wagon, begun.filter(|_| old)].into_iter().flatten())
+            .chain(old.then_some(key).filter(|&key| common_bevy::sites::site_near(key) != key))
             .collect(),
         stock,
         worked: state.worked,
@@ -156,8 +158,8 @@ mod tests {
         assert!(recalled((6, 3), serde_json::json!("no camp")).is_none());
         let old = serde_json::json!({"arrives": 5, "arrived": true, "post": [1, 2], "own": [3, -1], "spare": null, "wagon": null, "claimed": true, "fortifying": false, "stock": [], "worked": 9, "rising": [2, [4, 4], 100]});
         let (on, _) = recalled((6, 3), old.clone()).unwrap();
-        assert_eq!((on.clearing, on.rising.map(|(step, ..)| step)), (vec![(1, 2), (3, -1)], Some(Step::Home)), "what an old camp stood off its sites comes down");
+        assert_eq!((on.clearing, on.rising), (vec![(1, 2), (3, -1), (4, 4)], None), "what an old camp stood off its sites comes down, and what it had begun");
         let (off, _) = recalled((7, 3), old).unwrap();
-        assert_eq!(off.clearing, vec![(1, 2), (3, -1), (7, 3)], "and its hearth, where that is on no site");
+        assert_eq!(off.clearing, vec![(1, 2), (3, -1), (4, 4), (7, 3)], "and its hearth, where that is on no site");
     }
 }

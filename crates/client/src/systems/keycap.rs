@@ -38,6 +38,7 @@ pub fn label(key: KeyCode) -> String {
         KeyCode::NumpadDecimal => ".",
         KeyCode::NumpadSubtract => "-",
         KeyCode::NumpadAdd => "+",
+        KeyCode::NumpadMultiply => "*",
         KeyCode::ArrowUp => "Up",
         KeyCode::ArrowDown => "Dn",
         KeyCode::ArrowLeft => "Lt",

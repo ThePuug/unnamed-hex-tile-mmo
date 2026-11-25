@@ -2,7 +2,8 @@
 //! wear, every one of the bag's cells in rows of nine, a stack to a cell
 //! with its count on its icon, and what it all weighs. A digit selects the
 //! cell at that column of the cursor's row, and the detail beside the cells
-//! shows what is selected and what can be done with it.
+//! shows what is selected and what can be done with it: dropped, or
+//! while the player looks at a wagon (`settlers::Loading`), loaded on it.
 
 use bevy::prelude::*;
 
@@ -96,6 +97,7 @@ pub fn handle_numpad(
     state: Res<CharacterPanelState>,
     mut cursor: ResMut<BagCursor>,
     mut choice: ResMut<DropChoice>,
+    loading: Res<crate::systems::settlers::Loading>,
     player: Query<(Entity, &Inventory, &Equipment), With<Actor>>,
     mut writer: MessageWriter<Try>,
 ) {
@@ -112,9 +114,12 @@ pub fn handle_numpad(
             cursor.picked = cells.get(cursor.row * BAG_WIDTH + column).map(|&cell| Pick::of(cell));
         }
     }
-    if keys.take(KEYCODE_DROP, "Choose how much of the selected stack to drop, or drop the selected piece") {
+    let does = if loading.0.is_some() { "Choose how much of the selected stack to load on the wagon" } else { "Choose how much of the selected stack to drop, or drop the selected piece" };
+    if keys.take(KEYCODE_DROP, does) {
         match cursor.selected(&cells) {
             Some(Lot::Stack(stack)) => choice.open(stack),
+            // A wagon carries materials and no pieces
+            Some(Lot::Piece(_)) if loading.0.is_some() => {}
             Some(lot @ Lot::Piece(_)) => {
                 writer.write(Try { event: Event::Drop { ent, lot } });
             }
@@ -176,8 +181,9 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
 }
 
 /// What the tab last laid out: the cells, the cursor's row, what is
-/// selected, and the stack the drop panel is open on.
-type Shown = (Vec<Lot>, usize, Option<Lot>, Option<common::Stackable>);
+/// selected, the stack the drop panel is open on, and whether a wagon is
+/// being loaded.
+type Shown = (Vec<Lot>, usize, Option<Lot>, Option<common::Stackable>, bool);
 
 /// While the tab shows, writes the weight carried and lays the cells and
 /// the detail out again whenever the bag's stacks, the cursor's row, the
@@ -189,6 +195,7 @@ pub fn update(
     state: Res<CharacterPanelState>,
     mut cursor: ResMut<BagCursor>,
     choice: Res<DropChoice>,
+    loading: Res<crate::systems::settlers::Loading>,
     player: Query<(&Inventory, &Equipment), With<Actor>>,
     mut summary: Query<&mut Text, With<BagSummary>>,
     cells: Query<Entity, With<BagCells>>,
@@ -221,11 +228,11 @@ pub fn update(
         cursor.row = row;
         cursor.picked = selected.map(Pick::of);
     }
-    let now = (all, row, selected, choice.0.map(|c| c.kind));
+    let now = (all, row, selected, choice.0.map(|c| c.kind), loading.0.is_some());
     if shown.as_ref() == Some(&now) {
         return;
     }
-    let (all, row, selected, dropping) = &now;
+    let (all, row, selected, dropping, wagon) = &now;
 
     commands.entity(cells).despawn_related::<Children>();
     let slots: Vec<Option<Lot>> = (0..rows(all.len()) * BAG_WIDTH).map(|k| all.get(k).copied()).collect();
@@ -263,7 +270,7 @@ pub fn update(
 
     commands.entity(detail).despawn_related::<Children>();
     let count = choice.0.map_or(0, |c| c.count);
-    commands.entity(detail).with_children(|pane| spawn_detail(pane, &asset_server, *selected, dropping.map(|kind| (kind, count))));
+    commands.entity(detail).with_children(|pane| spawn_detail(pane, &asset_server, *selected, dropping.map(|kind| (kind, count)), *wagon));
     *shown = Some(now);
 }
 
@@ -296,8 +303,10 @@ fn piece_title(item: Item) -> String {
 /// The detail of `selected`: its icon, name and weight, and under them
 /// what can be done with it — the drop panel where it is open on the
 /// stack, choosing the count it carries, the key that opens it otherwise;
-/// for a piece, the key that drops it.
-fn spawn_detail(pane: &mut ChildSpawnerCommands, asset_server: &AssetServer, selected: Option<Lot>, dropping: Option<(common::Stackable, u32)>) {
+/// for a piece, the key that drops it. With `wagon`, a stack is loaded on
+/// the wagon looked at where it would be dropped, and a piece stays.
+fn spawn_detail(pane: &mut ChildSpawnerCommands, asset_server: &AssetServer, selected: Option<Lot>, dropping: Option<(common::Stackable, u32)>, wagon: bool) {
+    let does = if wagon { "load on the wagon" } else { "drop" };
     let line = |pane: &mut ChildSpawnerCommands, text: String, size: f32, color: Color| {
         pane.spawn((Text::new(text), TextFont { font_size: FontSize::Px(size), ..default() }, TextColor(color)));
     };
@@ -317,15 +326,19 @@ fn spawn_detail(pane: &mut ChildSpawnerCommands, asset_server: &AssetServer, sel
         Lot::Piece(item) => {
             line(pane, piece_title(item), 15.0, Color::srgb(0.9, 0.9, 0.9));
             line(pane, format!("Weighs {}", item.piece.weight()), 13.0, FAINT);
-            hint_row(pane, None, &[Hint::key(KEYCODE_DROP, "drop")]);
+            if wagon {
+                line(pane, "A wagon carries materials".into(), 13.0, FAINT);
+            } else {
+                hint_row(pane, None, &[Hint::key(KEYCODE_DROP, does)]);
+            }
         }
         Lot::Stack(stack) => {
             line(pane, stack.kind.name().into(), 15.0, Color::srgb(0.9, 0.9, 0.9));
             line(pane, format!("{} carried, weighing {}", stack.count, stack.weight()), 13.0, FAINT);
             if let Some((_, count)) = dropping.filter(|&(kind, _)| kind == stack.kind) {
-                crate::systems::drop_panel::spawn_entry(pane, count);
+                crate::systems::drop_panel::spawn_entry(pane, count, does);
             } else {
-                hint_row(pane, None, &[Hint::key(KEYCODE_DROP, "drop")]);
+                hint_row(pane, None, &[Hint::key(KEYCODE_DROP, does)]);
             }
         }
     }

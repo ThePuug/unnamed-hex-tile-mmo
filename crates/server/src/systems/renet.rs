@@ -40,9 +40,18 @@ use common_bevy::tuning::Tuning;
 #[derive(Event, Debug)]
 pub enum Presence {
     Enter { client_id: ::renet::ClientId },
+    /// The client's world has loaded, and its character steps into play.
+    Arrive { client_id: ::renet::ClientId },
     Leave { client_id: ::renet::ClientId },
     View { client_id: ::renet::ClientId, ent: Entity },
 }
+
+/// A character whose client is still loading the world: it is spawned,
+/// so the world streams to its client, and stands in no one's reach or
+/// sight, since it is not in the `NNTree` everything finds a body by.
+/// Its client's `Event::Arrive` puts it there.
+#[derive(Component)]
+pub struct Arriving;
 
 /// The haven's ground, read on a thread of its own, and the clients who
 /// asked to enter before they could: before it was read, or before their
@@ -107,7 +116,7 @@ pub fn do_presence(
     mut loaded_by_query: Query<&mut common_bevy::components::loaded_by::LoadedBy>,
     mut writer: MessageWriter<Do>,
     time: Res<Time>,
-    (runtime, settings): (Res<RunTime>, Res<common_bevy::settings::Settings>),
+    (runtime, settings, arriving): (Res<RunTime>, Res<common_bevy::settings::Settings>, Query<(), With<Arriving>>),
     spawn_point: Option<Res<common_bevy::components::resources::SpawnPoint>>,
     mut admission: ResMut<Admission>,
     characters: Query<(), With<PlayerControlled>>,
@@ -163,9 +172,9 @@ pub fn do_presence(
                     fighter,
                     (PlayerControlled, common_bevy::components::behaviour::Side::PLAYERS),
                     PlayerDiscoveryState::default(),
+                    Arriving,
                 )).id();
                 commands.entity(ent).insert((
-                    NearestNeighbor::new(ent, loc),
                     common_bevy::components::AttackRange::default(),
                     equipment,
                     bag.clone(),
@@ -215,6 +224,14 @@ pub fn do_presence(
                 writer.write(Do { event: Event::Spawn { ent, typ, qrz, attrs: Some(attrs) } });
 
                 lobby.insert(client_id, ent);
+            }
+            // Into the tree, and its place told anew, so those near it
+            // and it are shown each other
+            Presence::Arrive { client_id } => {
+                let Some(&ent) = lobby.get_by_left(client_id).filter(|&&ent| arriving.contains(ent)) else { return };
+                let Ok((_, &loc, _)) = actors.get(ent) else { return };
+                commands.entity(ent).remove::<Arriving>().insert((NearestNeighbor::new(ent, loc), loc));
+                info!("Player {} arrived in the world", client_id);
             }
             Presence::Leave { client_id } => {
                 let client_id = *client_id;
@@ -336,6 +353,7 @@ pub fn write_try(
                     conn.send(client_id, DefaultChannel::ReliableOrdered, &Do { event: Event::Pong { dt }});
                 }
                 Event::Play => commands.trigger(Presence::Enter { client_id }),
+                Event::Arrive => commands.trigger(Presence::Arrive { client_id }),
                 Event::Leave => commands.trigger(Presence::Leave { client_id }),
                 Event::View { ent } => commands.trigger(Presence::View { client_id, ent }),
                 // An entity the client was told of and has not spawned, named by the server's id
@@ -358,6 +376,7 @@ pub fn write_try(
                 | Event::Hail { .. }
                 | Event::Plan { .. }
                 | Event::Draw { .. }
+                | Event::Load { .. }
                 | Event::Send { .. }
                 | Event::UseAbility { .. }
                 | Event::RespecAttributes { .. }
@@ -418,6 +437,8 @@ fn route(event: &Event) -> Option<Route> {
         | Event::Wants { ent, .. }
         | Event::Planned { ent, .. }
         | Event::Wagon { ent, .. }
+        | Event::Loaded { ent, .. }
+        | Event::Charted { ent, .. }
         | Event::Sheltered { ent, .. }
         | Event::Loot { ent, .. } => Some(Route::Owner(*ent)),
         Event::ChunkData { ent, .. }

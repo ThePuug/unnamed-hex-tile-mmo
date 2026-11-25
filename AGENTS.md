@@ -381,7 +381,11 @@ nothing else; the rest of a hub is its settlers'. A construct stands in
 the centre slot and holds the other six as `Filled`, so fullness and
 every drop read the tile with no rule of their own. Whose it is, and
 its hub, are the server's
-(`building::Constructs`, `hubs::Hubs`), never the cover's.
+(`building::Constructs`, `hubs::Hubs`), never the cover's. Which way a
+thing built faces is the cover's (`Cover::facing`, one of
+`cover::FACINGS`): a wall's stakes face out of their hub, set as the
+settler drives them, and the client turns the model by it and asks no
+hub.
 
 **Hubs.** A hub is its build sites and the wall round them:
 `common_bevy::sites` is the one rule for both, a site on every third
@@ -414,7 +418,18 @@ of its own, `models/<stem>-raising-<stage>.glb`. It finds its way by `common_bev
 `Item::instance` is its number, and `server::systems::charts::Charts`
 holds what each number charted, a `common_bevy::chart::Leaf` to a chunk.
 A map is a snapshot: only being carried past a chunk again changes what
-it holds of it. Beside the maps `Charts::lies` holds the ground as it
+it holds of it, the hearths that stood there with the ground. What a
+client is sent of a map is a sketch to a chunk (`common_bevy::picture`):
+a few samples of its ground, how its parts join the chunks beside it,
+and the hubs that stood in it. Never the leaves. Each goes once to
+whoever carries the map, with nothing asked, and again when the map
+charts that chunk over (`charts::Carried`), so charting a chunk costs
+that chunk. One search finds a way's chunks (`chart::route`), over
+parts and how they join: the server runs it on a chart as a wagon is
+sent and fills in the steps inside each chunk, the client runs it on
+its sketches to draw, and the two cross the same chunks. A second
+search, or one that reads what a sketch does not carry, parts them. A
+reader sees nothing of the world as it is now but where it stands. Beside the maps `Charts::lies` holds the ground as it
 lies now, kept up as tiles change, and a way found on a map
 (`Chart::way`, a `Leg` to a chunk, never a tile at a time) is tried
 against it a leg at a time (`Chart::open`). Whatever travels by a map

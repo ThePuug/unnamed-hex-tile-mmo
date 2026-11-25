@@ -6,6 +6,7 @@ pub mod bag_panel;
 pub mod building;
 pub mod camera;
 pub mod character_panel;
+pub mod chart;
 pub mod character_panel_respec;
 pub mod skill_text;
 pub mod skills_panel;

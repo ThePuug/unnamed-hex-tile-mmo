@@ -8,8 +8,12 @@
 //! anyone is near. A leg is tried against the ground as it lies now as
 //! the wagon comes to it, and one the ground no longer gives stops the
 //! trip there until it does: a way blocked since the map was drawn is
-//! still gone toward. Come to its hub, the wagon leaves what it carried
-//! in that hub's depot and goes home by the way it came.
+//! still gone toward. The map says which chunks the wagon crosses and
+//! where a hub stood; the last stretch is found on the ground as it
+//! lies, to the hub standing there now ([`hub_at`]), so a hub that moved
+//! is still come to. The wagon leaves what it carried in that hub's
+//! depot and goes home by the way it came; where no hub stands there any
+//! more it goes home with its load.
 //!
 //! Unbuilt: taking from a depot.
 
@@ -19,15 +23,16 @@ use bevy::prelude::*;
 use common::Stack;
 use common_bevy::{
     chart::{reversed, Chart, Leg},
-    hubs::Hubs,
+    hubs::{HubId, Hubs},
+    picture::chunk_of,
     systems::When,
 };
 
 /// A wagon on the road.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Trip {
-    /// The hub it carries to, by the tile it is known by, the haven by
-    /// its own.
+    /// The hub it carries to, by the tile its hearth stood on as the map
+    /// it was sent by charted it.
     pub to: (i32, i32),
     /// The way it is on: out, or home again once it has `turned`.
     pub way: Vec<Leg>,
@@ -57,26 +62,66 @@ impl Trip {
         Trip { to, way, done: 0, spare: Duration::ZERO, back: false, counted: when, cargo }
     }
 
+    /// [`Trip::carry_to`] its way's end.
+    #[cfg(test)]
+    pub fn carry(&mut self, lies: &Chart, mut daytime: Duration, step: Duration) -> Road {
+        self.carry_to(lies, &mut daytime, step, usize::MAX)
+    }
+
     /// Carries the trip on through `daytime`, a step of its way taking
     /// `step`, over the ground as `lies` holds it: each leg tried as it
-    /// is come to. A stalled trip banks no time toward the leg it waits
-    /// at.
-    pub fn carry(&mut self, lies: &Chart, mut daytime: Duration, step: Duration) -> Road {
+    /// is come to, and none past the start of leg `bound`, where it is
+    /// still going with what is left of `daytime`. A stalled trip banks
+    /// no time toward the leg it waits at.
+    pub fn carry_to(&mut self, lies: &Chart, daytime: &mut Duration, step: Duration, bound: usize) -> Road {
         loop {
             let Some(&leg) = self.way.get(self.done) else { return Road::Arrived };
+            if self.done >= bound {
+                return Road::Going;
+            }
             if !lies.open(leg) {
                 self.spare = Duration::ZERO;
                 return Road::Stalled;
             }
             let takes = step * leg.steps;
-            if self.spare + daytime < takes {
-                self.spare += daytime;
+            if self.spare + *daytime < takes {
+                self.spare += std::mem::take(daytime);
                 return Road::Going;
             }
-            daytime -= takes.saturating_sub(self.spare);
+            *daytime -= takes.saturating_sub(self.spare);
             self.spare = Duration::ZERO;
             self.done += 1;
         }
+    }
+
+    /// Whether the wagon is on its way out and has come to the last leg
+    /// of it: where its end is found again ([`Trip::aim`]).
+    pub fn nearly(&self) -> bool {
+        !self.back && self.done + 1 == self.way.len()
+    }
+
+    /// Ends a trip come to its last leg out ([`Trip::nearly`]) beside
+    /// `hearth`, where its hub's hearth is laid now, by a way found on
+    /// the ground as `lies` holds it; or turns it for home with its load
+    /// where no hub stands there any more. False where the ground gives
+    /// no way to the hearth yet, and the wagon waits.
+    pub fn aim(&mut self, lies: &Chart, hearth: Option<(i32, i32)>) -> bool {
+        let leg = self.way[self.done];
+        let Some(hearth) = hearth else {
+            // Its way ends where it stands, as a way's last leg does
+            self.way.truncate(self.done);
+            self.way.push(Leg { from: leg.from, by: leg.from, to: leg.from, steps: 0 });
+            self.turned();
+            return true;
+        };
+        let Some(goal) = lies.beside(hearth) else { return false };
+        if goal == leg.to {
+            return true;
+        }
+        let Some(last) = lies.way(leg.from, goal) else { return false };
+        self.way.truncate(self.done);
+        self.way.extend(last);
+        true
     }
 
     /// The tile the wagon has come to: where the leg it is on begins, or
@@ -97,19 +142,30 @@ impl Trip {
     }
 }
 
+/// The hub standing where a map recorded one on `recorded`, with the
+/// tile its hearth is laid on now: the hub whose ground holds that tile,
+/// or else one whose hearth is laid in the same chunk. None where the
+/// hub is gone.
+pub fn hub_at(hubs: &Hubs, recorded: (i32, i32)) -> Option<(HubId, (i32, i32))> {
+    let near = || hubs.each().filter(|(_, hearth, _)| chunk_of(*hearth) == chunk_of(recorded)).map(|(id, ..)| id).min();
+    let id = hubs.holding(recorded).or_else(near)?;
+    Some((id, hubs.hearth(id)?))
+}
+
 /// Where a wagon from the camp round `hearth` may be sent by the map
-/// `chart`: each other hub, and the haven, that the map holds a way to,
-/// by the tile it is known by, with that way; the haven first.
+/// `chart`: each hub the map holds, as it stood when the map charted it,
+/// that the map holds a way to, by its hearth's tile, with that way. A
+/// map knows no hub founded since it passed, and still knows one razed
+/// since. The camp's own hub is not offered, whichever of its hearths
+/// the map holds.
 pub fn destinations(chart: &Chart, hubs: &Hubs, hearth: (i32, i32)) -> Vec<((i32, i32), Vec<Leg>)> {
     let Some(from) = chart.beside(hearth) else { return Vec::new() };
     let own = hubs.of_hearth(hearth);
-    let mut others: Vec<(i32, i32)> = hubs.each().map(|(id, ..)| id).filter(|&id| Some(id) != own).map(|id| (id.0, id.1)).collect();
+    let home = |tile: (i32, i32)| tile == hearth || own.is_some() && (hubs.of_hearth(tile) == own || hubs.holding(tile) == own);
+    let mut others: Vec<(i32, i32)> = chart.hearths().filter(|&tile| !home(tile)).collect();
     others.sort();
-    std::iter::once(hubs.haven())
-        .chain(others)
-        .filter_map(|hub| Some((hub, chart.way(from, chart.beside(hub)?)?)))
-        .filter(|(_, way)| !way.is_empty())
-        .collect()
+    others.dedup();
+    others.into_iter().filter_map(|hub| Some((hub, chart.way(from, chart.beside(hub)?)?))).filter(|(_, way)| !way.is_empty()).collect()
 }
 
 /// What wagons have left at each hub, by the tile the hub was known by
@@ -228,18 +284,72 @@ mod tests {
         assert_eq!(trip.carry(&was, STEP * 10_000, STEP), Road::Arrived, "the way opened, it goes on");
     }
 
-    /// A map offers the haven and every other hub it holds a way to, and
-    /// none it does not reach.
+    /// A map offers the hubs that stood on it as it was charted and it
+    /// holds a way to: one razed since still, one founded since not, and
+    /// never the haven or the camp's own.
     #[test]
-    fn a_map_offers_the_hubs_it_reaches() {
-        let chart = charted(4, |_, _| false);
-        let mut hubs = Hubs::new(centre(4, 0));
-        hubs.founded(centre(-4, 0));
-        hubs.founded(centre(0, 4));
-        hubs.founded(centre(20, 20));
-        let offered: Vec<(i32, i32)> = destinations(&chart, &hubs, centre(-4, 0)).into_iter().map(|(hub, _)| hub).collect();
-        assert_eq!(offered, vec![centre(4, 0), centre(0, 4)]);
-        assert!(destinations(&Chart::default(), &hubs, centre(-4, 0)).is_empty());
+    fn a_map_offers_the_hubs_it_recorded() {
+        let (own, stood, razed, since) = (centre(-4, 0), centre(4, 0), centre(0, 4), centre(2, -3));
+        let mut chart = Chart::default();
+        for leaf in charted(4, |_, _| false).leaves() {
+            chart.lay(Arc::new(leaf.marked([own, stood, razed].into_iter())));
+        }
+        let mut hubs = Hubs::new(centre(1, 1));
+        for hearth in [own, stood, since] {
+            hubs.founded(hearth);
+        }
+        let offered: Vec<(i32, i32)> = destinations(&chart, &hubs, own).into_iter().map(|(hub, _)| hub).collect();
+        let mut recorded = vec![stood, razed];
+        recorded.sort();
+        assert_eq!(offered, recorded);
+        assert!(destinations(&Chart::default(), &hubs, own).is_empty());
+    }
+
+    /// A wagon come to its last leg ends beside its hub's hearth where
+    /// that is laid now, not where the map recorded it; with no hub
+    /// there it turns for home, its load still on it, by the way it
+    /// came.
+    #[test]
+    fn a_wagon_finds_its_hub_where_it_now_stands() {
+        let open = charted(1, |_, _| false);
+        let (home, recorded) = (centre(-1, 0), centre(1, 0));
+        let moved = (recorded.0 + 3, recorded.1 - 5);
+        let way = open.way(home, recorded).unwrap();
+        let softwood = Stack { kind: Stackable::Material(Material::Softwood), count: 2 };
+
+        let mut trip = Trip::begun(recorded, way.clone(), vec![softwood], When(0));
+        let (mut day, bound) = (STEP * 10_000, way.len() - 1);
+        assert_eq!(trip.carry_to(&open, &mut day, STEP, bound), Road::Going);
+        assert!(trip.nearly() && !day.is_zero(), "it stops at its last leg with the day left to it");
+        assert!(trip.aim(&open, Some(moved)));
+        assert_eq!(trip.carry_to(&open, &mut day, STEP, usize::MAX), Road::Arrived);
+        assert_eq!(trip.at(), Some(moved));
+
+        let mut gone = Trip::begun(recorded, way.clone(), vec![softwood], When(0));
+        gone.carry_to(&open, &mut (STEP * 10_000), STEP, bound);
+        let stopped = gone.at();
+        assert!(gone.aim(&open, None));
+        assert!(gone.back && gone.cargo == vec![softwood] && gone.at() == stopped);
+        assert_eq!(gone.carry(&open, STEP * 10_000, STEP), Road::Arrived);
+        assert_eq!(gone.at(), Some(home));
+
+        let walled = charted(1, |q, r| qrz::hex_distance((q, r), moved) == 1);
+        let mut waits = Trip::begun(recorded, way.clone(), Vec::new(), When(0));
+        waits.carry_to(&open, &mut (STEP * 10_000), STEP, bound);
+        assert!(!waits.aim(&walled, Some(moved)) && !waits.back, "walled in, the hub is waited for");
+    }
+
+    /// A hub stands where a map recorded it while its ground holds that
+    /// tile or its hearth is laid in that chunk, and nowhere else.
+    #[test]
+    fn a_hub_stands_where_it_was_recorded() {
+        let mut hubs = Hubs::new(centre(9, 9));
+        let id = hubs.founded(centre(2, 0));
+        let hearth = hubs.hearth(id).unwrap();
+        assert_eq!(hub_at(&hubs, hearth), Some((id, hearth)));
+        let aside = (centre(2, 0).0 + 7, centre(2, 0).1 - 7);
+        assert_eq!(hub_at(&hubs, aside), Some((id, hearth)), "elsewhere in its chunk it is still found");
+        assert_eq!(hub_at(&hubs, centre(-3, 1)), None);
     }
 
     /// What wagons leave at a hub lies there together.
