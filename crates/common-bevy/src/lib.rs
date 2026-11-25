@@ -13,6 +13,7 @@ pub mod settings;
 pub mod archetype;
 pub mod haven;
 pub mod hubs;
+pub mod sites;
 pub mod summary;
 pub mod summary_mesh;
 pub mod surface;

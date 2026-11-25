@@ -34,13 +34,23 @@ struct Road {
 struct State {
     arrives: When,
     arrived: bool,
-    #[serde(default)]
+    /// The tiles a camp kept before hubs had sites stood its things on.
+    #[serde(default, skip_serializing)]
     post: Option<(i32, i32)>,
+    #[serde(default, skip_serializing)]
     own: Option<(i32, i32)>,
+    #[serde(default, skip_serializing)]
     spare: Option<(i32, i32)>,
+    #[serde(default, skip_serializing)]
     wagon: Option<(i32, i32)>,
-    claimed: bool,
-    fortifying: bool,
+    /// Kept only by a camp of before hubs had sites.
+    #[serde(default, skip_serializing)]
+    claimed: Option<bool>,
+    /// What it has of the things it took down: hide, wood, stone.
+    #[serde(default)]
+    credit: (u32, u32, u32),
+    #[serde(default)]
+    clearing: Vec<(i32, i32)>,
     stock: Vec<Value>,
     worked: When,
     /// What it has begun and not yet raised: the step of its line, by its
@@ -61,12 +71,13 @@ pub fn kept(camp: &Camp, dormant: &[Value]) -> String {
         arrives: camp.arrives,
         arrived: camp.arrived,
         rising: camp.rising.map(|(step, at, left)| (step.id(), at, left.as_millis() as u64)),
-        post: camp.post,
-        own: camp.own,
-        spare: camp.spare,
-        wagon: camp.wagon,
-        claimed: camp.claimed,
-        fortifying: camp.fortifying,
+        post: None,
+        own: None,
+        spare: None,
+        wagon: None,
+        claimed: None,
+        credit: (camp.credit.hide, camp.credit.wood, camp.credit.stone),
+        clearing: camp.clearing.clone(),
         stock: camp.stock.iter().copied().map(stored::stack).chain(dormant.iter().cloned()).collect(),
         worked: camp.worked,
         load: camp.load.iter().copied().map(stored::stack).collect(),
@@ -83,9 +94,11 @@ pub fn kept(camp: &Camp, dormant: &[Value]) -> String {
     serde_json::to_string(&state).expect("a camp serializes")
 }
 
-/// The camp `state` keeps, and what it holds that this build cannot play.
-/// None where it cannot be read.
-pub fn recalled(state: Value) -> Option<(Camp, Vec<Value>)> {
+/// The camp `state` keeps, known by `key`, and what it holds that this
+/// build cannot play. None where it cannot be read. One kept before hubs
+/// had sites is to take down what it stood off them, its hearth where
+/// that is on no site, and build with that again.
+pub fn recalled(key: (i32, i32), state: Value) -> Option<(Camp, Vec<Value>)> {
     let state: State = serde_json::from_value(state).ok()?;
     let (stock, mut dormant) = stored::stacks(state.stock);
     // What the wagon holds that this build cannot play stays kept, with
@@ -101,12 +114,13 @@ pub fn recalled(state: Value) -> Option<(Camp, Vec<Value>)> {
         arrives: state.arrives,
         arrived: state.arrived,
         rising: state.rising.and_then(|(step, at, left)| Some((Step::kept_as(step)?, at, Duration::from_millis(left)))),
-        post: state.post,
-        own: state.own,
-        spare: state.spare,
-        wagon: state.wagon,
-        claimed: state.claimed,
-        fortifying: state.fortifying,
+        credit: common::building::Needs { hide: state.credit.0, wood: state.credit.1, stone: state.credit.2 },
+        clearing: state
+            .clearing
+            .into_iter()
+            .chain([state.post, state.own, state.spare, state.wagon].into_iter().flatten())
+            .chain(state.claimed.is_some().then_some(key).filter(|&key| common_bevy::sites::site_near(key) != key))
+            .collect(),
         stock,
         worked: state.worked,
         load,
@@ -125,10 +139,9 @@ mod tests {
     #[test]
     fn a_camp_is_recalled_as_it_was_kept() {
         let mut camp = Camp::founded(When(1_000_000));
-        camp.post = Some((1, 2));
-        camp.own = Some((3, -1));
-        camp.rising = Some((Step::Spare, (5, 2), Duration::from_secs(40)));
-        camp.fortifying = true;
+        camp.rising = Some((Step::Clear, (5, 2), Duration::from_secs(40)));
+        camp.credit = common::building::Needs { hide: 1, wood: 8, stone: 2 };
+        camp.clearing = vec![(5, 2), (6, 2)];
         camp.worked = When(1_500_000);
         camp.stock = vec![Stack { kind: Stackable::Material(Material::Hide), count: 4 }];
         camp.load = vec![Stack { kind: Stackable::Material(Material::Fibre), count: 2 }];
@@ -138,8 +151,13 @@ mod tests {
         camp.trip = Some(trip);
         let coin = serde_json::json!({"coin": 1, "count": 2});
         let text = kept(&camp, &[coin.clone()]);
-        let (back, dormant) = recalled(serde_json::from_str(&text).unwrap()).unwrap();
+        let (back, dormant) = recalled((6, 3), serde_json::from_str(&text).unwrap()).unwrap();
         assert_eq!((back, dormant), (camp, vec![coin]));
-        assert!(recalled(serde_json::json!("no camp")).is_none());
+        assert!(recalled((6, 3), serde_json::json!("no camp")).is_none());
+        let old = serde_json::json!({"arrives": 5, "arrived": true, "post": [1, 2], "own": [3, -1], "spare": null, "wagon": null, "claimed": true, "fortifying": false, "stock": [], "worked": 9, "rising": [2, [4, 4], 100]});
+        let (on, _) = recalled((6, 3), old.clone()).unwrap();
+        assert_eq!((on.clearing, on.rising.map(|(step, ..)| step)), (vec![(1, 2), (3, -1)], Some(Step::Home)), "what an old camp stood off its sites comes down");
+        let (off, _) = recalled((7, 3), old).unwrap();
+        assert_eq!(off.clearing, vec![(1, 2), (3, -1), (7, 3)], "and its hearth, where that is on no site");
     }
 }

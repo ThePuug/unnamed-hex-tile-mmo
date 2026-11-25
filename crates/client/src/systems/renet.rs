@@ -58,6 +58,8 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Build { .. } => "Build",
         Event::Home { .. } => "Home",
         Event::Hail { .. } => "Hail",
+        Event::Plan { .. } => "Plan",
+        Event::Planned { .. } => "Planned",
         Event::Draw { .. } => "Draw",
         Event::Settings { .. } => "Settings",
         Event::Wagon { .. } => "Wagon",
@@ -220,6 +222,7 @@ pub fn write_do(
                 | Event::Loot { .. }
                 | Event::Home { .. }
                 | Event::Wants { .. }
+                | Event::Planned { .. }
                 | Event::Wagon { .. }
                 | Event::Sheltered { .. }
                 | Event::Activity { .. }
@@ -348,6 +351,7 @@ pub fn send_try(
             | Event::Drop { .. }
             | Event::Build { .. }
             | Event::Hail { .. }
+            | Event::Plan { .. }
             | Event::Draw { .. }
             | Event::Send { .. }
             | Event::Wear { .. }

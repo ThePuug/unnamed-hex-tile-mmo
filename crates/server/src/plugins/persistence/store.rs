@@ -2,7 +2,7 @@
 //! reads anything of the game but the values handed it.
 
 use common::Cover;
-use common_bevy::chunk::ChunkId;
+use common_bevy::{chunk::ChunkId, hubs::Kept};
 use sqlx::{postgres::PgPoolOptions, types::Json, PgPool};
 
 /// A connection pool to the store, and the name this server claims chunks
@@ -25,11 +25,10 @@ pub struct BuiltRow {
     pub camp: Option<(i32, i32)>,
 }
 
-/// Every hub kept, as its hearths' tiles, and every player that has
-/// played of late, by its provider and name, with its character's home
-/// as its JSON.
+/// Every hub kept, and every player that has played of late, by its
+/// provider and name, with its character's home as its JSON.
 pub struct Settled {
-    pub hubs: Vec<Vec<(i32, i32)>>,
+    pub hubs: Vec<Kept>,
     pub residents: Vec<(String, String, serde_json::Value)>,
 }
 
@@ -69,9 +68,9 @@ pub struct Batch {
     pub tiles: Vec<(ChunkId, i32, i32, Cover)>,
     pub piles: Vec<(ChunkId, PileKey, Vec<serde_json::Value>)>,
     pub constructs: Vec<(ChunkId, (i32, i32), BuiltRow)>,
-    /// Every hub as its hearths' tiles, where any changed: they are
+    /// Every hub, where any changed: they are
     /// written whole.
-    pub hubs: Option<Vec<Vec<(i32, i32)>>>,
+    pub hubs: Option<Vec<Kept>>,
     /// Each den site written, by its `(q, r)`: its den's JSON, or none
     /// where it has none any more.
     pub dens: Vec<(ChunkId, (i32, i32), Option<String>)>,
@@ -308,13 +307,15 @@ impl Store {
     }
 
     /// Every hub kept, and every player whose character was in the world
-    /// in the week before the calendar's moment `when`, with its home.
+    /// in the week before the calendar's moment `when`, with its home. A
+    /// hub kept as its hearths, before hubs had sites, is a camp round
+    /// the first.
     pub async fn settled(&self, when: i64) -> Result<Settled, sqlx::Error> {
-        let hubs = sqlx::query_scalar!(r#"SELECT hearths AS "hearths: Json<Vec<(i32, i32)>>" FROM hub ORDER BY id"#)
+        let hubs = sqlx::query!(r#"SELECT hearths AS "hearths?: Json<Vec<(i32, i32)>>", sites AS "sites?: Json<Kept>" FROM hub ORDER BY id"#)
             .fetch_all(&self.pool)
             .await?
             .into_iter()
-            .map(|hearths| hearths.0)
+            .filter_map(|row| row.sites.map(|kept| kept.0).or_else(|| Kept::of_hearths(&row.hearths?.0)))
             .collect();
         let residents = sqlx::query!(
             r#"SELECT DISTINCT ON (c.id) i.provider, i.name, c.state -> 'home' AS "home?: Json<serde_json::Value>"
@@ -508,8 +509,8 @@ impl Store {
         if let Some(hubs) = &batch.hubs {
             sqlx::query!("DELETE FROM hub").execute(&mut *tx).await?;
             sqlx::query!(
-                "INSERT INTO hub (hearths) SELECT hearths::JSONB FROM UNNEST($1::TEXT[]) WITH ORDINALITY AS t(hearths, place) ORDER BY place",
-                &hubs.iter().map(|hearths| serde_json::to_string(hearths).expect("hearths serialize")).collect::<Vec<_>>(),
+                "INSERT INTO hub (sites) SELECT sites::JSONB FROM UNNEST($1::TEXT[]) WITH ORDINALITY AS t(sites, place) ORDER BY place",
+                &hubs.iter().map(|hub| serde_json::to_string(hub).expect("a hub serializes")).collect::<Vec<_>>(),
             )
             .execute(&mut *tx)
             .await?;
@@ -693,7 +694,7 @@ mod tests {
             let epochs = store.recall(&[here]).await.unwrap().epochs;
             let wall = Cover::NONE.with_boulder(0);
             let whose = BuiltRow { provider: Some("key".into()), name: Some("ab".into()), camp: None };
-            let hubs = vec![vec![(-2, 5), (-1, 4)], vec![(20, 21)]];
+            let hubs = vec![Kept { id: (-2, 5), sites: vec![(-3, 6, 1), (0, 6, 4)], took: vec![(-1, 4)] }, Kept { id: (20, 21), sites: vec![(21, 21, 1)], took: Vec::new() }];
             let player = store.enter("key", "ab", 5_000).await.unwrap();
             let batch = Batch {
                 epochs: epochs.clone(),

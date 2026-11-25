@@ -134,6 +134,7 @@ let dist_3d = a.distance(&b);    // Includes elevation
 
 - `qrz.rs` - Core `Qrz` type, `DIRECTIONS`, `hex_distance`, rings, walks and lines
 - `map.rs` - `Map` geometry: world space conversion, vertices, faces, exits
+- `outline.rs` - The tightest outline round a set of tiles on the flat: its corners (`outline`), its length (`girth`) and the tiles it holds (`enclosed`), which have no hollow. Lengths are in tiles; elevation plays no part
 - `lib.rs` - Public exports (`Qrz`, `DIRECTIONS`, `hex_distance`, `Map`, `Convert`)
 
 ## Usage in Main Codebase
@@ -142,6 +143,7 @@ let dist_3d = a.distance(&b);    // Includes elevation
 - `common_bevy::resources::map::Map` holds the terrain and wraps a `qrz::Map` for its geometry
 - Physics, movement, pathfinding, chunking and summaries use hex distance
 - NNTree uses qrz for spatial queries
+- `common_bevy::sites` makes a hub's ground and wall from `outline::enclosed` round its build sites
 
 ## Testing
 

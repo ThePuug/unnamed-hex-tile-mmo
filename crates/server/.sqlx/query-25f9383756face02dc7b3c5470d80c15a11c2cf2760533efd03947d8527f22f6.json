@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT hearths AS \"hearths?: Json<Vec<(i32, i32)>>\", sites AS \"sites?: Json<Kept>\" FROM hub ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "hearths?: Json<Vec<(i32, i32)>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "hub",
+            "name": "hearths"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "sites?: Json<Kept>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "hub",
+            "name": "sites"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "25f9383756face02dc7b3c5470d80c15a11c2cf2760533efd03947d8527f22f6"
+}

@@ -130,6 +130,7 @@ fn main() {
             crate::systems::building::shelter.run_if(on_timer(Duration::from_millis(500))),
             crate::systems::settlers::tend_camps,
             crate::systems::settlers::try_hail,
+            crate::systems::settlers::try_plan,
             crate::systems::settlers::try_send,
             crate::systems::settlers::heed_settings,
             crate::systems::charts::chart,
@@ -167,7 +168,6 @@ fn main() {
     // spawn are the same place, and the z comes from the terrain there.
     let haven = common_bevy::haven::launch();
     info!("the haven stands at ({}, {})", haven.q, haven.r);
-    app.insert_resource(common_bevy::hubs::Hubs::new((haven.q, haven.r)));
     app.init_resource::<crate::systems::building::Constructs>();
     app.init_resource::<crate::systems::settlers::Camps>();
     app.init_resource::<crate::systems::charts::Charts>();
@@ -175,6 +175,9 @@ fn main() {
     app.init_resource::<crate::systems::settlers::Settling>();
     app.add_systems(FixedUpdate, crate::systems::settlers::settle);
     let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED);
+    // A wall's way in is placed by the ground as the world made it
+    let ground = registry.clone();
+    app.insert_resource(common_bevy::hubs::Hubs::new((haven.q, haven.r)).on(move |q, r| ground.elevation_at(q, r)));
     // `CLEARING=<radius>[@<q>,<r>][~]` fells and mines every tile that far
     // round the tile named, or the haven, before anything is served: a
     // fixture for seeing changes from afar. With `~` it thins out toward its

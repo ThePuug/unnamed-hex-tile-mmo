@@ -139,6 +139,16 @@ impl Needs {
         }
     }
 
+    /// It and `other` together.
+    pub fn plus(self, other: Needs) -> Needs {
+        Needs { hide: self.hide + other.hide, wood: self.wood + other.wood, stone: self.stone + other.stone }
+    }
+
+    /// What is left of it once `other` is counted toward it.
+    pub fn minus(self, other: Needs) -> Needs {
+        Needs { hide: self.hide.saturating_sub(other.hide), wood: self.wood.saturating_sub(other.wood), stone: self.stone.saturating_sub(other.stone) }
+    }
+
     /// What is left of it to find once `held` is counted toward it.
     pub fn less(self, held: &[Stack]) -> Needs {
         let have = |class: fn(Material) -> bool| held.iter().map(|stack| match stack.kind { Stackable::Material(m) if class(m) => stack.count, _ => 0 }).sum::<u32>();
@@ -178,15 +188,43 @@ impl Needs {
     }
 }
 
-/// What a settler says to a player who hails it: what it raises next,
-/// none once its camp's line is done, and what of that it still lacks.
+/// What a settler does to a tile: raises a fixture on it, lays its hub's
+/// hearth there, or takes down what a plan gave up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Task {
+    Raise(Fixture),
+    Hearth,
+    Clear,
+}
+
+/// What a settler says to a player who hails it: what it does next, none
+/// once the ground is as its hub's plan says, and what its camp still
+/// lacks for all it has yet to raise.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wants {
-    pub raising: Option<Fixture>,
+    pub task: Option<Task>,
     pub needs: Needs,
 }
 
-/// What a settler whose camp's line is raised says of its wagon: what
+/// What a settler says a plan would do: the tiles it builds on and gives
+/// up, the tiles it raises stakes on and pulls them from, the tiles its
+/// path comes to cross and those it crosses no more, how many hubs it
+/// takes in or parts off, and what its camp still lacks for it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Planned {
+    /// A tier up, or else drawn in to what its people hold.
+    pub grow: bool,
+    pub built: Vec<(i32, i32)>,
+    pub gone: Vec<(i32, i32)>,
+    pub raised: Vec<(i32, i32)>,
+    pub pulled: Vec<(i32, i32)>,
+    pub worn: Vec<(i32, i32)>,
+    pub faded: Vec<(i32, i32)>,
+    pub hubs: u32,
+    pub needs: Needs,
+}
+
+/// What a settler with nothing more to raise says of its wagon: what
 /// is loaded on it, and the hubs the map in the player's hand would send
 /// it to, each by the tile it is known by, none with no such map.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,13 +256,11 @@ impl Fixture {
     }
 
     /// What raising it takes: hide over wood for a tent, a great deal of
-    /// wood for a wagon, and for stakes the wood and stone of a whole
-    /// fortification, every stake along a hub's edge, found once before
-    /// the first is raised.
+    /// wood for a wagon, and for stakes the wood of one tile of a wall.
     pub fn needs(self) -> Needs {
         match self {
             Fixture::Tent => Needs { hide: 4, wood: 4, stone: 0 },
-            Fixture::Stakes => Needs { hide: 0, wood: 16, stone: 8 },
+            Fixture::Stakes => Needs { hide: 0, wood: 4, stone: 0 },
             Fixture::Wagon => Needs { hide: 0, wood: 24, stone: 0 },
             Fixture::Post => Needs { hide: 0, wood: 6, stone: 0 },
         }
@@ -331,6 +367,24 @@ pub fn razed(cover: Cover) -> Option<(Cover, Stack)> {
     let construct = standing(cover)?;
     let cleared = (0..TILE_SLOTS as usize).fold(cover, |cover, k| cover.with_content(k, Content::Empty));
     Some((left(cleared, SLOT, construct.of), construct.cost()))
+}
+
+/// `cover` with whatever is built on it taken down by its hub, every slot
+/// it held free, and what its hub has of it to build with again: all it
+/// took. None where nothing built stands there.
+pub fn cleared(cover: Cover) -> Option<(Cover, Needs)> {
+    let back = match cover.content(SLOT) {
+        Content::PostEmpty => Fixture::Post.needs(),
+        Content::Raising(fixture, _) => fixture.needs(),
+        _ => match (fixture(cover), standing(cover)) {
+            (Some(fixture), _) => fixture.needs(),
+            (None, Some(construct)) if construct.of.is_wood() => Needs { wood: construct.kind.cost(), ..Needs::default() },
+            (None, Some(construct)) => Needs { stone: construct.kind.cost(), ..Needs::default() },
+            (None, None) => return None,
+        },
+    };
+    let filled = |k: usize| k == SLOT || cover.content(k) == Content::Filled;
+    Some(((0..TILE_SLOTS as usize).filter(|&k| filled(k)).fold(cover, |cover, k| cover.with_content(k, Content::Empty)), back))
 }
 
 /// Whether G uses what stands in slot `k`: a hearth or a tent, to make a

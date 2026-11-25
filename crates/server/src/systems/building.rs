@@ -1,12 +1,12 @@
 //! Building: a player spends its bag's wood or stone on the tile it
 //! faces, works, and a construct stands there. Taking its own construct
-//! down is the same work, and lays what it was built of as a pile. G uses
-//! a hearth: it becomes the player's home.
-//! A hearth is a home in a hub ([`Hubs`]), founding one where no hub's
-//! ground reaches it, and a settler comes to it ([`Camps`]). What a
-//! settler raises is its hub's, and no player takes it down; a player
-//! who claims the tent one raised makes its home there, and the hearth it
-//! built is the hub's from then.
+//! down is the same work, and lays what it was built of as a pile.
+//! A hearth founds a hub ([`Hubs`]): it is laid on the build site nearest
+//! the tile faced, on no hub's ground, and a settler comes to it
+//! ([`Camps`]). What a settler raises is its hub's, and no player takes
+//! it down. G on a hub's hearth makes it the player's home, whoever it
+//! is; G on a tent no other player lives in does too, and the player
+//! lives in the hub from then, the hearth its builder laid the hub's.
 
 use std::collections::HashMap;
 
@@ -17,7 +17,8 @@ use common::{
 };
 use common_bevy::{
     components::{equipment::Inventory, heading::Heading, position::Position, Home, Loc},
-    hubs::{Hubs, OUTPOST_CORE},
+    hubs::Hubs,
+    sites,
     message::{Do, Event, Outcome, Try},
     moment::Moment,
     plugins::nntree::NNTree,
@@ -67,6 +68,11 @@ impl Constructs {
     pub fn raise(&mut self, tile: (i32, i32), built: Built) {
         self.0.insert(tile, built);
     }
+
+    /// What stood on `tile` came down.
+    pub fn fell(&mut self, tile: (i32, i32)) {
+        self.0.remove(&tile);
+    }
 }
 
 /// What a player is at work on, on the tile it faces.
@@ -97,20 +103,29 @@ enum Refusal {
     NoMaterials,
     /// An actor stands where the construct would.
     Occupied,
-    /// A den stands on the core a founding hearth would hold.
+    /// A den stands on the ground a founding hearth would hold.
     Den,
+    /// A hub holds the ground a hearth's camp would, or would touch it.
+    Held,
     /// No construct stands there to take down.
     Nothing,
     /// The construct is another player's.
     NotYours,
 }
 
-/// The tile a player on `loc` facing `heading` builds on: the one its
-/// heading is nearest.
-fn faced(loc: Qrz, heading: Heading) -> (i32, i32) {
+/// The tile a player on `loc` facing `heading` does `job` on: the one its
+/// heading is nearest, or for a hearth the build site nearest that.
+fn faced(loc: Qrz, heading: Heading, job: Job) -> (i32, i32) {
     let dir = heading.hex_dir();
-    (loc.q + dir.q, loc.r + dir.r)
+    let tile = (loc.q + dir.q, loc.r + dir.r);
+    match job {
+        Job::Build(Construct { kind: Kind::Hearth, .. }) => sites::site_near(tile),
+        _ => tile,
+    }
 }
+
+/// How far round a hearth its camp holds the ground, in tiles.
+const CAMP_REACH: i32 = sites::APART + sites::PAST as i32;
 
 /// Whether an actor stands on tile `(q, r)`, whose ground is at `z`.
 pub(crate) fn occupied(nntree: &NNTree, (q, r): (i32, i32), z: i32) -> bool {
@@ -134,7 +149,9 @@ impl Site<'_, '_> {
     /// Tile `tile`'s cover as `who`, standing at `loc`, would leave it by
     /// `job`, or why it cannot.
     fn planned(&self, who: Identity, loc: Qrz, tile: (i32, i32), job: Job, bag: &Inventory) -> Result<common::Cover, Refusal> {
-        let (z, cover) = self.ground.lies(tile.0, tile.1).filter(|&(z, _)| (z + 1 - loc.z).abs() <= 1).ok_or(Refusal::NoTile)?;
+        // A hearth's site may lie a tile or two further off than a step
+        let near = if matches!(job, Job::Build(Construct { kind: Kind::Hearth, .. })) { sites::APART } else { 1 };
+        let (z, cover) = self.ground.lies(tile.0, tile.1).filter(|&(z, _)| (z + 1 - loc.z).abs() <= near).ok_or(Refusal::NoTile)?;
         match job {
             Job::Build(construct) => {
                 let raised = construct.raised(cover).ok_or(Refusal::NoRoom)?;
@@ -145,9 +162,13 @@ impl Site<'_, '_> {
                 if occupied(&self.nntree, tile, z) {
                     return Err(Refusal::Occupied);
                 }
-                let founds = construct.kind == Kind::Hearth && self.hubs.holding(tile).is_none();
-                if founds && self.dens.stands_within(Qrz { q: tile.0, r: tile.1, z }, OUTPOST_CORE as i32) {
-                    return Err(Refusal::Den);
+                if construct.kind == Kind::Hearth {
+                    if !self.hubs.founds(tile) {
+                        return Err(Refusal::Held);
+                    }
+                    if self.dens.stands_within(Qrz { q: tile.0, r: tile.1, z }, CAMP_REACH) {
+                        return Err(Refusal::Den);
+                    }
                 }
                 Ok(raised)
             }
@@ -182,7 +203,7 @@ pub fn try_build(
         if working || building {
             continue;
         }
-        let (q, r) = faced(**loc, *heading);
+        let (q, r) = faced(**loc, *heading, job);
         let cover = match site.planned(who, **loc, (q, r), job, bag) {
             Ok(_) => site.ground.cover(q, r).unwrap_or_default(),
             Err(why) => {
@@ -221,7 +242,7 @@ pub fn finish_building(
     runtime: Res<combat::RunTime>,
     mut commands: Commands,
     mut players: Query<(Entity, &Loc, &Heading, &Position, &mut Inventory, &Character, &Building, &mut Stance)>,
-    homes: Query<(Entity, &Home)>,
+    homes: Query<(Entity, &Character, &Home)>,
 ) {
     let now = Moment::ZERO + time.elapsed();
     for (ent, loc, heading, position, mut bag, &Character(who), work, mut stance) in &mut players {
@@ -235,7 +256,7 @@ pub fn finish_building(
         stop(ent, &mut commands);
         let tile = (work.q, work.r);
         let cover = match site.planned(who, **loc, tile, work.job, &bag) {
-            Ok(cover) if faced(**loc, *heading) == tile => cover,
+            Ok(cover) if faced(**loc, *heading, work.job) == tile => cover,
             refused => {
                 info!("build: {ent} finished {:?} on {tile:?}, which it can no longer do: {refused:?}", work.job);
                 continue;
@@ -253,21 +274,22 @@ pub fn finish_building(
                 if construct.kind == Kind::Hearth {
                     let hub = site.hubs.founded(tile);
                     camps.found(tile, runtime.when(&time) + settling.arrives);
-                    info!("build: the hearth on {tile:?} is a home in {hub:?}, and a settler is on its way");
+                    info!("build: the hearth on {tile:?} founds {hub:?}, and a settler is on its way");
                 }
                 report(&site.hubs);
             }
             Job::TakeDown => {
                 let Some((_, stack)) = site.ground.cover(tile.0, tile.1).and_then(building::razed) else { continue };
-                let hearth = site.ground.cover(tile.0, tile.1).and_then(building::standing).is_some_and(|construct| construct.kind == Kind::Hearth);
-                site.constructs.0.remove(&tile);
-                if hearth {
-                    site.hubs.razed(tile);
-                    // Its camp goes with it: what the settler held is the
-                    // world's again, and what it raised stands, no one's
-                    let (held, settler) = camps.razed(tile);
+                // A hub goes with the hearth its founder takes down, and
+                // its camp: what the settler held is the world's again,
+                // and what it raised stands, no one's
+                let hub = site.hubs.of_hearth(tile).filter(|&id| site.hubs.hearth(id) == Some(tile));
+                site.constructs.fell(tile);
+                if let Some(id) = hub {
+                    site.hubs.razed(id);
+                    let (held, settler) = camps.razed((id.0, id.1));
                     for stack in held {
-                        site.moved.write(Moved::stack(stack, Holder::Camp(tile.0, tile.1), Holder::World, Cause::TakeDown));
+                        site.moved.write(Moved::stack(stack, Holder::Camp(id.0, id.1), Holder::World, Cause::TakeDown));
                     }
                     if let Some(settler) = settler {
                         commands.write_message(Do { event: Event::Despawn { ent: settler, died: false } });
@@ -276,11 +298,7 @@ pub fn finish_building(
                 site.piles.lay((tile.0, tile.1, building::SLOT), stack);
                 site.moved.write(Moved::stack(stack, Holder::World, Holder::Pile(tile.0, tile.1, building::SLOT), Cause::TakeDown));
                 site.ground.set(&mut site.writer, tile.0, tile.1, cover);
-                if hearth {
-                    for (resident, _) in homes.iter().filter(|(_, home)| (home.0.q, home.0.r) == tile) {
-                        commands.entity(resident).remove::<Home>();
-                    }
-                }
+                rehouse(&site, &homes, &mut commands);
                 info!("build: {ent} took down what stood on {tile:?}");
                 report(&site.hubs);
             }
@@ -290,8 +308,26 @@ pub fn finish_building(
 
 /// Says how every hub stands.
 fn report(hubs: &Hubs) {
-    for (id, centre, core, size) in hubs.each() {
-        info!("hubs: {id:?} is centred on {centre:?}, its core {core:.1} tiles, {size} at home");
+    for (id, hearth, size) in hubs.each() {
+        info!("hubs: {id:?} has its hearth on {hearth:?}, tier {}, {} sites, a wall of {}, {size} at home who hold {}", hubs.tier(id), hubs.sites(id).len(), hubs.ground(id).map_or(0, |ground| ground.wall.len()), hubs.held(id));
+    }
+}
+
+/// Holds each player's home to where the hubs say it is at home, and
+/// tells its client: at its hub's hearth where the one it was at home
+/// at is one no more, at the haven where its home stands on no site.
+pub fn rehouse(site: &Site, homes: &Query<(Entity, &Character, &Home)>, commands: &mut Commands) {
+    for (ent, &Character(who), home) in homes.iter() {
+        let now = site.hubs.home_of(who);
+        if now == Some((home.0.q, home.0.r)) {
+            continue;
+        }
+        let home = now.and_then(|(q, r)| Some(Qrz { q, r, z: site.ground.lies(q, r)?.0 + 1 }));
+        match home {
+            Some(home) => commands.entity(ent).insert(Home(home)),
+            None => commands.entity(ent).remove::<Home>(),
+        };
+        commands.write_message(Do { event: Event::Home { ent, home } });
     }
 }
 
@@ -305,17 +341,11 @@ pub fn interrupt_building(mut commands: Commands, mut reader: MessageReader<Do>,
     }
 }
 
-/// Answers each G a player presses on a construct in its reach: a hearth
-/// becomes the player's home, as does the tent a settler raised for a
-/// player to claim. The first to claim a tent makes it a home in its hub, and the
-/// hearth of its camp the hub's.
-pub fn try_use(
-    mut reader: MessageReader<Try>,
-    mut site: Site,
-    mut camps: ResMut<Camps>,
-    mut commands: Commands,
-    players: Query<(&Loc, &Heading, &Character)>,
-) {
+/// Answers each G a player presses on a hearth or a tent in its reach. A
+/// hub's hearth is the player's home from then, whoever it is. So is a
+/// tent that is a home of a hub and no other player's: the player lives
+/// in the hub, and the hearth its founder laid is the hub's from then.
+pub fn try_use(mut reader: MessageReader<Try>, mut site: Site, mut commands: Commands, players: Query<(&Loc, &Heading, &Character)>) {
     for message in reader.read() {
         let Try { event: Event::Gather { ent, q, r, slot } } = message else { continue };
         let (ent, q, r, slot) = (*ent, *q, *r, *slot as usize);
@@ -324,30 +354,20 @@ pub fn try_use(
         if slot >= common::TILE_SLOTS as usize || !building::used(cover, slot) || !crate::systems::gathering::in_reach(**loc, *heading, q, r) {
             continue;
         }
-        if building::fixture(cover) == Some(building::Fixture::Tent) {
-            let tile = (q, r);
-            let Some(hearth) = camps.of_spare(tile) else {
-                info!("build: {ent} cannot claim the tent on {tile:?}, which is its settler's own");
-                continue;
-            };
-            let home = Qrz { q, r, z: z + 1 };
-            commands.entity(ent).insert(Home(home));
-            let hub = site.hubs.founded(tile);
-            site.hubs.resident(who, Some(tile));
-            if camps.on(hearth).is_some_and(|camp| !camp.claimed) {
-                camps.claimed(hearth);
-                site.constructs.raise(hearth, Built { by: Owner::Camp(hearth.0, hearth.1) });
-                site.ground.piled(hearth.0, hearth.1);
-            }
-            site.writer.write(Do { event: Event::Home { ent, home: Some(home) } });
-            info!("build: {ent} is at home in the tent on {tile:?}, of {hub:?}");
+        let tile = (q, r);
+        site.hubs.resident(who, Some(tile));
+        let Some(hub) = site.hubs.holding(tile).filter(|_| site.hubs.home_of(who) == Some(tile)) else {
+            info!("build: {ent} cannot make its home on {tile:?}, which is another's or no hub's");
             continue;
-        }
+        };
         let home = Qrz { q, r, z: z + 1 };
         commands.entity(ent).insert(Home(home));
-        site.hubs.resident(who, Some((q, r)));
+        if let Some(hearth) = site.hubs.hearth(hub).filter(|_| building::fixture(cover).is_some()) {
+            site.constructs.raise(hearth, Built { by: Owner::Camp(hub.0, hub.1) });
+        }
         site.writer.write(Do { event: Event::Home { ent, home: Some(home) } });
-        info!("build: {ent} is at home at the hearth on ({q}, {r}), of {:?}", site.hubs.of_hearth((q, r)));
+        info!("build: {ent} is at home on {tile:?}, of {hub:?}");
+        report(&site.hubs);
     }
 }
 

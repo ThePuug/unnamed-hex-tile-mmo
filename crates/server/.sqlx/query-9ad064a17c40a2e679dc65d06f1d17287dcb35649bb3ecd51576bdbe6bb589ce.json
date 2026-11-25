@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO hub (sites) SELECT sites::JSONB FROM UNNEST($1::TEXT[]) WITH ORDINALITY AS t(sites, place) ORDER BY place",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9ad064a17c40a2e679dc65d06f1d17287dcb35649bb3ecd51576bdbe6bb589ce"
+}

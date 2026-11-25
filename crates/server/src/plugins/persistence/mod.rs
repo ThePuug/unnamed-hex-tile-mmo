@@ -679,7 +679,7 @@ fn receive(
                     }
                 }
                 for (hearth, state) in recalled.camps {
-                    match camp::recalled(state) {
+                    match camp::recalled(hearth, state) {
                         Some((camp, dormant)) => {
                             camps.recall(hearth, camp);
                             if !dormant.is_empty() {

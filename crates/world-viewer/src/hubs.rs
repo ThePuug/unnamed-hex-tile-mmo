@@ -1,12 +1,15 @@
 //! The hubs view: a scenario of hearths named on the command line,
 //! settled by the game's own rule (`common_bevy::hubs`) and drawn over
-//! whatever is beneath. It reads no world: where a hub's centre stands,
-//! what its core holds, what took what in and how far its influence
-//! reaches are all asked of [`Hubs`], tile by tile, so the picture is the
-//! rule and never a second one.
+//! whatever is beneath. It reads no world: what ground a hub holds,
+//! where its sites and its wall are and how far its influence reaches
+//! are all asked of [`Hubs`], tile by tile, so the picture is the rule
+//! and never a second one.
 
 use common::network::Identity;
-use common_bevy::hubs::{haven_reach, HubId, Hubs, HAVEN_GROUND, OUTPOST_CORE};
+use common_bevy::{
+    hubs::{HubId, Hubs, HAVEN_GROUND, HAVEN_REACH},
+    sites::{self, Lived, Standing},
+};
 
 /// A hearth of the scenario: its tile, and the players at home at it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -25,29 +28,47 @@ impl Hearth {
     }
 }
 
-/// The hubs the first `count` of `hearths` make, built in the order given
-/// round the haven at `haven`, each with its players at home. A hearth
-/// named again is not built again: the players at home at it become the
-/// number it is named with, the rest having stopped coming.
+/// The hubs the first `count` of `hearths` make, laid in the order given
+/// round the haven at `haven`, each on the build site nearest its tile.
+/// A hearth's players each claim a home of its hub, which grows a tier
+/// whenever it has none open. A hearth named again is not laid again:
+/// the players at home in its hub become the number it is named with,
+/// and with fewer the hub shrinks to what they hold. One a hub's ground
+/// already holds, or would touch, is not laid.
 pub fn settle(haven: (i32, i32), hearths: &[Hearth], count: usize) -> Hubs {
     let mut hubs = Hubs::new(haven);
-    hubs.sheds = true;
     let mut next = 0u32;
     let mut living: std::collections::HashMap<(i32, i32), Vec<Identity>> = std::collections::HashMap::new();
     for hearth in &hearths[..count.min(hearths.len())] {
-        if !living.contains_key(&hearth.tile) {
-            hubs.founded(hearth.tile);
+        let tile = sites::site_near(hearth.tile);
+        if !living.contains_key(&tile) && hubs.of_hearth(tile).is_none() {
+            if !hubs.founds(tile) {
+                log::warn!("  a hub holds the ground the hearth at {:?} would: it is not laid", hearth.tile);
+                continue;
+            }
+            hubs.founded(tile);
         }
-        let at = living.entry(hearth.tile).or_default();
+        let Some(id) = hubs.of_hearth(tile) else { continue };
+        let at = living.entry(tile).or_default();
+        let fewer = at.len() > hearth.players as usize;
         while at.len() > hearth.players as usize {
             hubs.gone(at.pop().expect("more than none"));
         }
         while at.len() < hearth.players as usize {
+            let open = hubs.sites(id).iter().find(|site| site.what == Standing::Home && site.lived != Lived::Player).map(|site| site.at);
+            let Some(home) = open else {
+                let Some(plan) = hubs.grown(id) else { break };
+                hubs.carry(&plan);
+                continue;
+            };
             let mut key = [0u8; 16];
             key[..4].copy_from_slice(&next.to_le_bytes());
             next += 1;
-            hubs.resident(Identity::Key(key), Some(hearth.tile));
+            hubs.resident(Identity::Key(key), Some(home));
             at.push(Identity::Key(key));
+        }
+        if let Some(plan) = fewer.then(|| hubs.shrunk(id)).flatten() {
+            hubs.carry(&plan);
         }
     }
     hubs
@@ -98,53 +119,32 @@ impl Canvas<'_> {
             }
         }
     }
-
-    fn line(&mut self, from: (i32, i32), to: (i32, i32), rgb: [f64; 3]) {
-        let at = |tile: (i32, i32)| {
-            let (wx, wy) = common::hex_to_world(tile.0, tile.1);
-            ((wx - self.origin.0) / self.scale, (wy - self.origin.1) / self.scale)
-        };
-        let ((x0, y0), (x1, y1)) = (at(from), at(to));
-        let steps = (x1 - x0).abs().max((y1 - y0).abs()).ceil().max(1.0) as i32;
-        for i in 0..=steps {
-            let t = i as f64 / steps as f64;
-            let (x, y) = ((x0 + (x1 - x0) * t).round() as i32, (y0 + (y1 - y0) * t).round() as i32);
-            if x >= 0 && y >= 0 && (x as usize) < self.w && (y as usize) < self.h {
-                self.blend(x as usize, y as usize, rgb, 0.9);
-            }
-        }
-    }
 }
 
-/// What a pixel's tile is to the hubs: the hub whose core holds it, which
-/// hubs' influence reaches it, which hearths' own ground it is, the core
-/// each would hold standing alone, and whether the haven's guard keeps it
-/// and its influence reaches it.
+/// What a pixel's tile is to the hubs: the hub whose ground holds it,
+/// which hubs' influence reaches it, and whether the haven's guard keeps
+/// it and its influence reaches it.
 #[derive(Clone, PartialEq)]
 struct Read {
     held: Option<HubId>,
     reached: Vec<HubId>,
-    alone: Vec<usize>,
     guarded: bool,
     haven: bool,
 }
 
 /// Draws `hubs` over `canvas`: the haven's and every hub's influence as a
-/// wash, whiter the stronger; a hub's core filled in its hue and
-/// outlined; its reach outlined thin; the core each of `hearths` would
-/// hold alone, dotted, so what was taken in shows inside what took it; a
-/// line from each hearth to its hub's centre, a dot at each hearth and a
-/// larger one at each centre. The haven is gold: its guarded ground
-/// outlined, its reach outlined thin, a ringed dot at its point.
-pub fn draw(canvas: &mut Canvas, hubs: &Hubs, hearths: &[Hearth]) {
-    let mut standing: Vec<(HubId, (i32, i32), f32, u32)> = hubs.each().collect();
-    standing.sort_by_key(|hub| hub.0);
+/// wash, whiter the stronger; a hub's ground filled in its hue and
+/// outlined, which is its wall; its reach outlined thin; a dot at each
+/// of its sites, white for a home a player lives in, grey for any other,
+/// and a larger one in its hue at its hearth. The haven is gold: its
+/// guarded ground outlined, its reach outlined thin, a ringed dot at its
+/// point.
+pub fn draw(canvas: &mut Canvas, hubs: &Hubs, _hearths: &[Hearth]) {
+    let standing: Vec<(HubId, (i32, i32), u32)> = hubs.each().collect();
     let place = |id: HubId| standing.iter().position(|hub| hub.0 == id).unwrap_or(0);
-    let far = |a: (i32, i32), b: (i32, i32)| ((a.0 - b.0).abs().max((a.1 - b.1).abs()).max((a.0 + a.1 - b.0 - b.1).abs())) as f32;
     let read = |tile: (i32, i32)| Read {
         held: hubs.holding(tile),
         reached: standing.iter().filter(|hub| hubs.reaches(hub.0, tile)).map(|hub| hub.0).collect(),
-        alone: hearths.iter().enumerate().filter(|(_, hearth)| far(hearth.tile, tile) <= OUTPOST_CORE).map(|(k, _)| k).collect(),
         guarded: hubs.guarded(tile),
         haven: hubs.haven_reaches(tile),
     };
@@ -172,9 +172,6 @@ pub fn draw(canvas: &mut Canvas, hubs: &Hubs, hearths: &[Hearth]) {
             if let Some(id) = crossed {
                 canvas.blend(px, py, hue(place(id)), 0.55);
             }
-            if edge(&|other| other.alone != here.alone) && (px + py) % 4 < 2 {
-                canvas.blend(px, py, [1.0, 1.0, 1.0], 0.8);
-            }
             if edge(&|other| other.held != here.held) {
                 let id = here.held.or(beside.iter().flatten().find_map(|other| other.held));
                 canvas.blend(px, py, id.map_or([1.0; 3], |id| hue(place(id))), 1.0);
@@ -182,33 +179,29 @@ pub fn draw(canvas: &mut Canvas, hubs: &Hubs, hearths: &[Hearth]) {
         }
     }
     let size = (2.0 / canvas.scale).clamp(2.0, 6.0) as i32;
-    for &(id, centre, ..) in &standing {
-        for hearth in hubs.hearths(id) {
-            canvas.line(hearth, centre, hue(place(id)));
+    for &(id, hearth, _) in &standing {
+        for site in hubs.sites(id).iter().filter(|site| site.what != Standing::Hearth) {
+            canvas.dot(site.at, size, if site.lived == Lived::Player { [1.0, 1.0, 1.0] } else { [0.55, 0.55, 0.55] });
         }
-    }
-    for &(id, centre, ..) in &standing {
-        for hearth in hubs.hearths(id) {
-            canvas.dot(hearth, size, [1.0, 1.0, 1.0]);
-        }
-        canvas.dot(centre, size + 2, [0.05, 0.05, 0.05]);
-        canvas.dot(centre, size + 1, hue(place(id)));
+        canvas.dot(hearth, size + 2, [0.05, 0.05, 0.05]);
+        canvas.dot(hearth, size + 1, hue(place(id)));
     }
     canvas.dot(hubs.haven(), size + 2, [0.05, 0.05, 0.05]);
     canvas.dot(hubs.haven(), size + 1, GOLD);
 }
 
-/// Says how every hub of `hubs` stands, and what was taken in by what.
+/// Says how every hub of `hubs` stands.
 pub fn report(hubs: &Hubs) {
-    log::info!("  the haven: at {:?}, guarding {HAVEN_GROUND:.0} tiles, influence whole reaching {:.0} tiles", hubs.haven(), haven_reach());
-    let mut standing: Vec<_> = hubs.each().collect();
-    standing.sort_by_key(|hub| hub.0);
-    for (id, centre, core, size) in standing {
+    log::info!("  the haven: at {:?}, guarding {HAVEN_GROUND:.0} tiles, influence whole reaching {HAVEN_REACH:.0} tiles", hubs.haven());
+    for (id, hearth, size) in hubs.each() {
         log::info!(
-            "  {id:?}: centre {centre:?}, {size} at home, core {core:.1} tiles, influence {:.2} reaching {:.0} tiles, {} hearths",
+            "  {id:?}: hearth {hearth:?}, tier {}, {} sites, a wall of {}, {size} at home who hold {}, influence {:.2} reaching {:.0} tiles",
+            hubs.tier(id),
+            hubs.sites(id).len(),
+            hubs.ground(id).map_or(0, |ground| ground.wall.len()),
+            hubs.held(id),
             hubs.strength(id),
-            hubs.reach(id),
-            hubs.hearths(id).count()
+            hubs.reach(id)
         );
     }
 }
@@ -225,18 +218,18 @@ mod tests {
     }
 
     /// A scenario settles as the game would settle it, a hearth at a time:
-    /// what stood apart is one once a hearth between joins it.
+    /// a hub grows to house its players, and shrinks when it is named
+    /// again with fewer.
     #[test]
     fn a_scenario_settles_a_hearth_at_a_time() {
         let hearth = |tile, players| Hearth { tile, players };
-        let hearths = [hearth((300, 0), 3), hearth((300, 40), 0), hearth((300, 24), 0)];
+        let hearths = [hearth((300, 0), 1), hearth((330, 0), 0), hearth((300, 0), 9), hearth((300, 0), 1)];
         let apart = settle((0, 0), &hearths, 2);
-        assert_eq!(apart.each().count(), 2, "two outposts");
-        let joined = settle((0, 0), &hearths, 3);
-        assert_eq!(joined.each().count(), 1);
-        assert_eq!(joined.size(HubId(300, 0)), 3);
-        let fewer = [hearths.as_slice(), &[hearth((300, 0), 1)]].concat();
-        let left = settle((0, 0), &fewer, 4);
-        assert_eq!((left.each().count(), left.size(HubId(300, 0))), (2, 1), "named again, a hearth's players change, and the shrunk hub sheds its far hearth");
+        assert_eq!((apart.each().count(), apart.tier(HubId(300, 0))), (2, 0), "two camps");
+        let grown = settle((0, 0), &hearths, 3);
+        assert_eq!((grown.size(HubId(300, 0)), grown.tier(HubId(300, 0))), (9, 2), "grown to house nine");
+        let shrunk = settle((0, 0), &hearths, 4);
+        assert_eq!(shrunk.size(HubId(300, 0)), 1);
+        assert!(shrunk.sites(HubId(300, 0)).len() < grown.sites(HubId(300, 0)).len());
     }
 }

@@ -227,6 +227,7 @@ fn main() {
     app.init_resource::<crate::systems::building::Sheltered>();
     app.init_resource::<crate::systems::settlers::Hailed>();
     app.init_resource::<crate::systems::settlers::Carted>();
+    app.init_resource::<crate::systems::settlers::Asked>();
     app.init_resource::<movement::Corrections>();
     app.init_resource::<crate::systems::focus::NumpadFocus>();
     app.init_resource::<crate::systems::help::Help>();

@@ -356,6 +356,7 @@ pub fn write_try(
                 | Event::Drop { .. }
                 | Event::Build { .. }
                 | Event::Hail { .. }
+                | Event::Plan { .. }
                 | Event::Draw { .. }
                 | Event::Send { .. }
                 | Event::UseAbility { .. }
@@ -415,6 +416,7 @@ fn route(event: &Event) -> Option<Route> {
         | Event::Den { ent, .. }
         | Event::Home { ent, .. }
         | Event::Wants { ent, .. }
+        | Event::Planned { ent, .. }
         | Event::Wagon { ent, .. }
         | Event::Sheltered { ent, .. }
         | Event::Loot { ent, .. } => Some(Route::Owner(*ent)),

@@ -383,12 +383,26 @@ every drop read the tile with no rule of their own. Whose it is, and
 its hub, are the server's
 (`building::Constructs`, `hubs::Hubs`), never the cover's.
 
+**Hubs.** A hub is its build sites and the wall round them:
+`common_bevy::sites` is the one rule for both, a site on every third
+tile of a lattice the world fixes and the wall the tightest outline
+round them (`qrz::outline`), and `common_bevy::hubs::Hubs` holds every
+hub by it. Nothing changes a hub's sites or its wall but a plan a player
+asked its settler for: `Hubs::grown` and `Hubs::shrunk` say what one
+would do and `Hubs::carry` does it. Players coming and going change who
+lives in its homes, and so the wall its people hold, never its ground. A
+hearth is laid on the build site nearest the tile faced, on no hub's
+ground, and a hub taken in keeps none of its own. A second rule for
+where a thing of a hub stands, a radius or a yard, puts it off its site.
+
 **Settlers.** A hub is built by its settlers, never the world and never
 by a rule of its own: `server::systems::settlers` holds a camp for every
-hearth a player built, and its settler raises the camp's line
-(`settlers::Step`) of `common::building::Fixture`s from what players
-handed it. A fixture is its hub's (`building::Owner::Camp`) and is never
-taken down. The settler is in the world only by day and near a player;
+hub, and its settler makes the ground what the hub's plan says
+(`settlers::next_step`): it takes down what a plan gave up, raises what
+each site wants, then stakes along the wall, of what players handed it
+and what it took down, which it builds with again (`Camp::credit`). What
+it raises is its hub's (`building::Owner::Camp`) and no player's to take
+down. The settler is in the world only by day and near a player;
 `settlers::catch_up` gives a camp found again the work of the daytime
 between, through the same `begin` and `advance` the walked work goes by,
 so the two never differ. A thing being raised is its tile's cover

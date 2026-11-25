@@ -179,6 +179,12 @@ pub enum Event {
     /// Client → Server (Try): `ent` hails the settler nearest it, and with
     /// `give` hands it what its bag holds of what the settler lacks
     Hail { ent: Entity, give: bool },
+    /// A player asks the settler it hails what growing its hub a tier,
+    /// or shrinking it, would do, or to carry that out.
+    Plan { ent: Entity, grow: bool, carry: bool },
+    /// What the settler says the plan asked after would do; none where
+    /// it makes none, or has carried it out.
+    Planned { ent: Entity, plan: Option<common::building::Planned> },
     /// Server → Client: what the settler `ent` hailed raises next and
     /// still lacks, or None where no settler is near enough to hail. Sent
     /// to its owner only.
@@ -244,6 +250,8 @@ impl Event {
             | Event::Build { ent, .. }
             | Event::Home { ent, .. }
             | Event::Hail { ent, .. }
+            | Event::Plan { ent, .. }
+            | Event::Planned { ent, .. }
             | Event::Draw { ent, .. }
             | Event::Wagon { ent, .. }
             | Event::Send { ent, .. }
