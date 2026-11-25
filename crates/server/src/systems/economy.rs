@@ -6,7 +6,7 @@
 
 use bevy::prelude::*;
 use common::network::Identity;
-use common_bevy::{archetype::EnemyArchetype, components::equipment::Item};
+use common_bevy::{archetype::EnemyArchetype, components::equipment::{Item, Lot}};
 
 /// What holds an item: a player's character, a pile in one slot of a
 /// tile, the camp round the hearth on a tile, whose settler builds with
@@ -91,6 +91,14 @@ pub struct Moved {
 impl Moved {
     pub fn stack(stack: common::Stack, from: Holder, to: Holder, cause: Cause) -> Self {
         Self { what: Thing::Stack(stack.kind), count: stack.count, from, to, cause }
+    }
+
+    /// A stack's count of its kind, or the one piece.
+    pub fn lot(lot: Lot, from: Holder, to: Holder, cause: Cause) -> Self {
+        match lot {
+            Lot::Stack(stack) => Self::stack(stack, from, to, cause),
+            Lot::Piece(item) => Self { what: Thing::Piece(item), count: 1, from, to, cause },
+        }
     }
 }
 

@@ -14,7 +14,7 @@ use bevy_light::NotShadowCaster;
 use bevy_mesh::Indices;
 
 use super::draw::{RegionCover, StandKey};
-use super::{CoverKit, Kind};
+use super::CoverKit;
 use crate::systems::closeup::CloseupCamera;
 
 /// The glints over one pile.
@@ -93,7 +93,10 @@ pub fn scatter(
     }
     for (region, cover) in &regions {
         for part in &cover.parts {
-            let StandKey::Model(kind @ Kind::Pile(_), k) = part.key else { continue };
+            let StandKey::Model(kind, k) = part.key else { continue };
+            if !kind.is_pile() {
+                continue;
+            }
             let Some(model) = kit.kit.of(kind).get(k) else { continue };
             for instance in &part.instances {
                 let [x, _, z, _] = instance.pos_scale;

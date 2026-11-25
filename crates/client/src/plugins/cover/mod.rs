@@ -37,6 +37,8 @@ pub enum Kind {
     PineStump,
     DeciduousStump,
     Pile(common::Material),
+    /// A piece lying on the ground, whichever it is
+    Bundle,
     /// A den's pieces: the model `common::den::MODELS` holds at this
     /// index, active or cleared, one variation to each of its meshes
     Den(u8, bool),
@@ -65,12 +67,13 @@ impl Kind {
     fn pile(content: Content) -> Option<Kind> {
         match content {
             Content::Pile(of) => Some(Kind::Pile(of)),
+            Content::Bundle => Some(Kind::Bundle),
             _ => None,
         }
     }
 
     fn is_pile(self) -> bool {
-        matches!(self, Kind::Pile(_))
+        matches!(self, Kind::Pile(_) | Kind::Bundle)
     }
 
     /// The tree a stump is the base of: it is built at that tree's scale,
@@ -103,6 +106,7 @@ const MODELS: &[(Kind, &str)] = &[
     (Kind::Pile(common::Material::Basement), "models/stone-pile-basement.glb"),
     (Kind::Pile(common::Material::Hide), "models/hide-pile.glb"),
     (Kind::Pile(common::Material::Fibre), "models/fibre-pile.glb"),
+    (Kind::Bundle, "models/bundle.glb"),
 ];
 
 /// What a construct is drawn as: a hearth in its stone, and a blockade

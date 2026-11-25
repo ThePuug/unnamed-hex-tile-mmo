@@ -141,16 +141,16 @@ pub enum Event {
     /// Server → Client: the loot window `ent` has open, a cell to each
     /// slot of its tile holding what `ent` may take there, or None where
     /// it has none open. Sent to its owner only.
-    Loot { ent: Entity, cells: Option<[Option<common::Stack>; common::TILE_SLOTS as usize]> },
+    Loot { ent: Entity, cells: Option<[Option<crate::components::equipment::Lot>; common::TILE_SLOTS as usize]> },
     /// Client → Server (Try): take the pile in slot `slot` of the tile
     /// the open loot window is on, the key pressed, or every pile where
     /// None
     Take { ent: Entity, slot: Option<u8> },
     /// Client → Server (Try): close the open loot window
     CloseLoot { ent: Entity },
-    /// Client → Server (Try): drop `count` of `kind` from the bag onto the
-    /// tile the player stands on
-    Drop { ent: Entity, kind: common::Stackable, count: u32 },
+    /// Client → Server (Try): drop `lot` from the bag, so many of a stack
+    /// or one piece it does not wear, onto the tile the player stands on
+    Drop { ent: Entity, lot: crate::components::equipment::Lot },
     /// Server → Client: what `ent` is seen doing at a gather, or nothing
     /// where None. Sent to every client that sees it, so each shows it.
     Activity { ent: Entity, activity: Option<common::gathering::Activity> },

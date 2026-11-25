@@ -132,6 +132,50 @@ impl Item {
     }
 }
 
+/// What lies in one slot of a tile or fills one cell of a bag: a stack
+/// of one kind, or one piece.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum Lot {
+    Stack(common::Stack),
+    Piece(Item),
+}
+
+impl Lot {
+    /// `cover` with this left lying in slot `k`: a stack as the pile of
+    /// its material, a piece in a bundle.
+    pub fn left(self, cover: common::Cover, k: usize) -> common::Cover {
+        match self {
+            Lot::Stack(common::Stack { kind: common::Stackable::Material(material), .. }) => common::gathering::left(cover, k, material),
+            Lot::Piece(_) => common::gathering::bundled(cover, k),
+        }
+    }
+
+    /// Adds `count` to the stack this is. A piece is one, and takes none.
+    pub fn grow(&mut self, count: u32) {
+        if let Lot::Stack(stack) = self {
+            stack.count += count;
+        }
+    }
+
+    /// Whether `other` lies on this as one pile: a stack of its kind. A
+    /// piece is its own, and nothing joins it.
+    pub fn joins(self, other: Lot) -> bool {
+        matches!((self, other), (Lot::Stack(a), Lot::Stack(b)) if a.kind == b.kind)
+    }
+}
+
+impl From<common::Stack> for Lot {
+    fn from(stack: common::Stack) -> Lot {
+        Lot::Stack(stack)
+    }
+}
+
+impl From<Item> for Lot {
+    fn from(item: Item) -> Lot {
+        Lot::Piece(item)
+    }
+}
+
 /// What an actor wears, one item to a slot, a piece that fills several
 /// slots (`Piece::slots`) held in each. Server authority, sent to every
 /// client that sees the actor.
@@ -284,6 +328,22 @@ impl Inventory {
         }
         CARRY_LIMIT.saturating_sub(self.weight()) / kind.weight().max(1)
     }
+
+    /// Whether `piece` goes in: a stack free for it, and its weight
+    /// under [`CARRY_LIMIT`].
+    pub fn takes(&self, worn: &Equipment, piece: Piece) -> bool {
+        self.stacks(worn) < BAG_STACKS && self.weight() + piece.weight() <= CARRY_LIMIT
+    }
+
+    /// Takes `item` out of the bag; false where it is worn or not owned,
+    /// and nothing is taken.
+    pub fn take_out(&mut self, worn: &Equipment, item: Item) -> bool {
+        let at = self.items.iter().position(|held| *held == item).filter(|_| !worn.is_worn(item));
+        if let Some(at) = at {
+            self.items.remove(at);
+        }
+        at.is_some()
+    }
 }
 
 #[cfg(test)]
@@ -379,6 +439,31 @@ mod tests {
         bag.add(of(stone, bag.room_for(&worn, kind)));
         assert_eq!(bag.room_for(&worn, kind), 0);
         assert!(bag.weight() <= CARRY_LIMIT && bag.weight() + stone.weight() > CARRY_LIMIT);
+    }
+
+    /// A piece leaves the bag only while it is not worn, goes back in
+    /// while there is a stack and the weight for it, and lies on the
+    /// ground as its own pile, which nothing joins.
+    #[test]
+    fn a_piece_is_dropped_from_the_bag_and_lies_alone() {
+        let mut worn = Equipment::starting_outfit();
+        let mut bag = Inventory::wearing(&worn);
+        let vest = worn.worn(Slot::Torso).unwrap();
+        assert!(!bag.take_out(&worn, vest), "what is worn stays on");
+        worn.take_off(vest);
+        assert!(bag.take_out(&worn, vest));
+        assert!(!bag.contains(vest) && !bag.take_out(&worn, vest));
+        assert!(bag.takes(&worn, vest.piece));
+        bag.add(of(common::Material::Fibre, bag.room_for(&worn, common::Stackable::Material(common::Material::Fibre))));
+        assert!(!bag.takes(&worn, vest.piece), "no weight left for it");
+
+        let (wood, lying) = (Lot::from(of(common::Material::Softwood, 2)), Lot::from(vest));
+        assert!(wood.joins(of(common::Material::Softwood, 5).into()));
+        assert!(!wood.joins(of(common::Material::Hardwood, 5).into()));
+        assert!(!lying.joins(lying) && !lying.joins(wood) && !wood.joins(lying));
+        let bare = common::Cover::NONE;
+        assert_eq!(lying.left(bare, 3).content(3), common::Content::Bundle);
+        assert_eq!(wood.left(bare, 3).content(3), common::Content::Pile(common::Material::Softwood));
     }
 
     /// Taking out never takes more than the bag holds; a stack emptied

@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 
 use crate::systems::{
-    bag_panel::{cell_contents, Cell},
+    bag_panel::cell_contents,
     equipment_panel::{CELL, CURSOR_ROW, OTHER_ROW, UNWORN},
     gathering::{LootWindow, ENTRY_KEYS},
 };
@@ -45,7 +45,7 @@ pub fn update(
         }
         _ => spawn(&mut commands),
     };
-    for (slot, stack) in lying.iter().enumerate() {
+    for (slot, lot) in lying.iter().enumerate() {
         commands
             .spawn((
                 Node {
@@ -57,13 +57,13 @@ pub fn update(
                     border_radius: BorderRadius::all(Val::Px(4.)),
                     ..default()
                 },
-                BackgroundColor(if stack.is_some() { CURSOR_ROW } else { OTHER_ROW }),
+                BackgroundColor(if lot.is_some() { CURSOR_ROW } else { OTHER_ROW }),
                 BorderColor::all(UNWORN),
                 ChildOf(cells),
             ))
             .with_children(|cell| {
-                if let Some(stack) = stack {
-                    cell_contents(cell, &asset_server, Cell::Stack(*stack), 1.0);
+                if let Some(lot) = lot {
+                    cell_contents(cell, &asset_server, *lot, 1.0);
                     crate::systems::keycap::corner_keycap(cell, ENTRY_KEYS[slot]);
                 }
             });

@@ -7,7 +7,7 @@
 use common::{Material, Stack, Stackable};
 use common_bevy::{
     components::{
-        equipment::{Item, Piece},
+        equipment::{Item, Lot, Piece},
         loadout::Loadout,
     },
     message::AbilityType,
@@ -34,6 +34,14 @@ pub fn stack(stack: Stack) -> Value {
     let mut kept = kind(stack.kind);
     kept["count"] = json!(stack.count);
     kept
+}
+
+/// What lies in a pile: a stack, or a piece.
+pub fn lot(lot: Lot) -> Value {
+    match lot {
+        Lot::Stack(held) => stack(held),
+        Lot::Piece(held) => item(held),
+    }
 }
 
 /// A bar, a skill's number to a slot.
@@ -73,6 +81,12 @@ fn sorted<T>(kept: Vec<Value>, read: impl Fn(&Value) -> Option<T>) -> (Vec<T>, V
 /// The items `kept` holds that this build has, and the rest as kept.
 pub fn items(kept: Vec<Value>) -> (Vec<Item>, Vec<Value>) {
     sorted(kept, read_item)
+}
+
+/// What `kept` holds lying in a pile that this build has, each a stack
+/// or a piece, and the rest as kept.
+pub fn lots(kept: Vec<Value>) -> (Vec<Lot>, Vec<Value>) {
+    sorted(kept, |value| read_stack(value).map(Lot::Stack).or_else(|| read_item(value).map(Lot::Piece)))
 }
 
 /// The stacks `kept` holds that this build has, and the rest as kept.
@@ -125,7 +139,8 @@ mod tests {
         assert_eq!(items(vec![gone.clone(), item(vest)]), (vec![vest], vec![gone]));
         let one = Item { instance: Some(9), ..vest };
         assert_eq!(items(vec![item(one)]).0, vec![one], "one of a kind keeps its number");
-        assert_eq!(stacks(vec![stack(wood), odd.clone()]), (vec![wood], vec![odd]));
+        assert_eq!(stacks(vec![stack(wood), odd.clone()]), (vec![wood], vec![odd.clone()]));
+        assert_eq!(lots(vec![lot(one.into()), odd.clone(), lot(wood.into())]), (vec![one.into(), wood.into()], vec![odd]), "a pile holds either");
     }
 
     #[test]

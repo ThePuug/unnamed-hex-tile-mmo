@@ -154,7 +154,7 @@ pub fn handle_keys(
         }
         if keys.take(KEYCODE_DROP, "Drop the count chosen") {
             if chosen.count > 0 {
-                writer.write(Try { event: Event::Drop { ent, kind: chosen.kind, count: chosen.count } });
+                writer.write(Try { event: Event::Drop { ent, lot: common::Stack { kind: chosen.kind, count: chosen.count }.into() } });
             }
             choice.0 = None;
             return;

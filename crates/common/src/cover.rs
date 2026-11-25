@@ -26,6 +26,9 @@ pub enum Content {
     /// What lies on the ground for anyone to take: a pile of one
     /// material, whatever ground it lies on.
     Pile(Material),
+    /// A piece lying on the ground for anyone to take: a bundle, whatever
+    /// piece it holds, since a cover has no room to say which.
+    Bundle,
     /// A slot what stands in the tile's centre fills.
     Filled,
     /// What players built (`crate::building`), each of its material,
@@ -56,7 +59,7 @@ impl Content {
             Content::Empty | Content::Spanned | Content::Filled => 0,
             Content::Brush | Content::Reed | Content::Boulder | Content::PineStump | Content::DeciduousStump | Content::Tent | Content::Wagon | Content::Post | Content::PostEmpty | Content::Raising(..) => 1,
             Content::Hearth(_) | Content::Blockade(_) | Content::Stakes => TILE_SLOTS,
-            Content::Pile(_) => 1,
+            Content::Pile(_) | Content::Bundle => 1,
             Content::Pine | Content::Deciduous => 2,
         }
     }
@@ -68,9 +71,10 @@ impl Content {
         !matches!(self, Content::Empty | Content::Brush | Content::Reed | Content::Raising(..)) && !self.is_pile()
     }
 
-    /// Whether it is a pile a player left, which anyone may open.
+    /// Whether it is a pile lying there, of a material or of a piece in a
+    /// bundle, which anyone may open.
     pub fn is_pile(self) -> bool {
-        matches!(self, Content::Pile(_))
+        matches!(self, Content::Pile(_) | Content::Bundle)
     }
 
     /// Whether it grows at a site: brush, reeds or a tree.
@@ -98,6 +102,7 @@ impl Content {
             Content::Pile(Material::Hide) => 15,
             Content::Reed => 16,
             Content::Pile(Material::Fibre) => 17,
+            Content::Bundle => 18,
             Content::Filled => 13,
             Content::Hearth(of) => HEARTH_BITS | of.id() as u64,
             Content::Blockade(of) => BLOCKADE_BITS | of.id() as u64,
@@ -138,6 +143,7 @@ impl Content {
             15 => Content::Pile(Material::Hide),
             16 => Content::Reed,
             17 => Content::Pile(Material::Fibre),
+            18 => Content::Bundle,
             96 => Content::Tent,
             97 => Content::Stakes,
             98 => Content::Wagon,

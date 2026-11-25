@@ -227,6 +227,11 @@ pub fn left(cover: Cover, k: usize, material: Material) -> Cover {
     cover.with_content(k, Content::Pile(material))
 }
 
+/// `cover` with a piece left in slot `k`, lying in a bundle.
+pub fn bundled(cover: Cover, k: usize) -> Cover {
+    cover.with_content(k, Content::Bundle)
+}
+
 /// `cover` with the pile in slot `k` emptied, the slot free again.
 pub fn emptied(cover: Cover, k: usize) -> Cover {
     cover.with_content(k, Content::Empty)
@@ -328,6 +333,11 @@ mod tests {
         let mined = harvest(crag, 4).unwrap();
         assert_eq!(left(mined.cover, mined.freed, mined.material).content(4), Content::Pile(Material::Basement));
         assert_eq!(left(Cover::NONE.with_rock(Rock::Shale), 2, Material::Limestone).content(2), Content::Pile(Material::Limestone), "whatever it lies on");
+        let bundle = bundled(cut.cover, cut.freed);
+        assert_eq!(Cover::from_bits(bundle.bits()).content(cut.freed), Content::Bundle);
+        assert_eq!(bundle.fullness(), cut.cover.fullness(), "a bundle stands in no one's way");
+        assert!(reachable(bundle, cut.freed) && harvest(bundle, cut.freed).is_none());
+        assert_eq!(emptied(bundle, cut.freed), cut.cover);
     }
 
     /// A tree takes a chop and a boulder a strike; what is not gathered

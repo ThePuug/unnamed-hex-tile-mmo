@@ -7,9 +7,10 @@
 use bevy::prelude::*;
 
 use common_bevy::components::{
-    equipment::{Equipment, Inventory, Item, BAG_STACKS, BURDEN_LIMIT, CARRY_LIMIT},
+    equipment::{Equipment, Inventory, Item, Lot, BAG_STACKS, BURDEN_LIMIT, CARRY_LIMIT},
     Actor,
 };
+use common_bevy::message::{Event, Try};
 
 use crate::{
     plugins::console::DevConsole,
@@ -40,13 +41,6 @@ pub struct BagCells;
 #[derive(Component)]
 pub struct BagDetail;
 
-/// What one of the bag's cells holds.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Cell {
-    Piece(Item),
-    Stack(common::Stack),
-}
-
 /// What a selection holds on to: a piece, or the stack of a kind however
 /// many it holds.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -55,19 +49,19 @@ pub enum Pick {
     Stack(common::Stackable),
 }
 
-impl Cell {
-    fn pick(self) -> Pick {
-        match self {
-            Cell::Piece(item) => Pick::Piece(item),
-            Cell::Stack(stack) => Pick::Stack(stack.kind),
+impl Pick {
+    fn of(cell: Lot) -> Pick {
+        match cell {
+            Lot::Piece(item) => Pick::Piece(item),
+            Lot::Stack(stack) => Pick::Stack(stack.kind),
         }
     }
 }
 
 /// The bag's cells in the order the tab lays them out: its pieces in the
 /// order the player came by them, then its stacks in the order they came.
-fn cells_of(bag: &Inventory, worn: &Equipment) -> Vec<Cell> {
-    bag.bagged(worn).map(Cell::Piece).chain(bag.stock.iter().copied().map(Cell::Stack)).collect()
+fn cells_of(bag: &Inventory, worn: &Equipment) -> Vec<Lot> {
+    bag.bagged(worn).map(Lot::Piece).chain(bag.stock.iter().copied().map(Lot::Stack)).collect()
 }
 
 /// How many rows the tab lays out for `cells`: every one of the bag's
@@ -86,15 +80,15 @@ pub struct BagCursor {
 
 impl BagCursor {
     /// The cell selected among `cells`, where it is still there.
-    fn selected(&self, cells: &[Cell]) -> Option<Cell> {
-        cells.iter().copied().find(|cell| Some(cell.pick()) == self.picked)
+    fn selected(&self, cells: &[Lot]) -> Option<Lot> {
+        cells.iter().copied().find(|&cell| Some(Pick::of(cell)) == self.picked)
     }
 }
 
 /// While the bag tab has the numpad, a digit selects the cell at that
 /// column of the cursor's row, or nothing where the cell is empty; `.`
 /// moves the cursor down a row, wrapping to the top; Enter opens the drop
-/// panel on the selected stack. A piece is not dropped.
+/// panel on the selected stack, or drops the selected piece.
 pub fn handle_numpad(
     mut keys: crate::systems::help::Keys,
     console: Res<DevConsole>,
@@ -102,24 +96,29 @@ pub fn handle_numpad(
     state: Res<CharacterPanelState>,
     mut cursor: ResMut<BagCursor>,
     mut choice: ResMut<DropChoice>,
-    player: Query<(&Inventory, &Equipment), With<Actor>>,
+    player: Query<(Entity, &Inventory, &Equipment), With<Actor>>,
+    mut writer: MessageWriter<Try>,
 ) {
     if !focus.has(Panel::Character) || console.visible || state.tab != PanelTab::Bag {
         return;
     }
-    let Ok((bag, worn)) = player.single() else { return };
+    let Ok((ent, bag, worn)) = player.single() else { return };
     let cells = cells_of(bag, worn);
     if keys.take(KeyCode::NumpadDecimal, "Show the bag's next row") {
         cursor.row = (cursor.row + 1) % rows(cells.len());
     }
     for (column, key) in ENTRY_KEYS.iter().enumerate() {
         if keys.take(*key, "Select the stack in this column") {
-            cursor.picked = cells.get(cursor.row * BAG_WIDTH + column).map(|cell| cell.pick());
+            cursor.picked = cells.get(cursor.row * BAG_WIDTH + column).map(|&cell| Pick::of(cell));
         }
     }
-    if keys.take(KEYCODE_DROP, "Choose how much of the selected stack to drop") {
-        if let Some(Cell::Stack(stack)) = cursor.selected(&cells) {
-            choice.open(stack);
+    if keys.take(KEYCODE_DROP, "Choose how much of the selected stack to drop, or drop the selected piece") {
+        match cursor.selected(&cells) {
+            Some(Lot::Stack(stack)) => choice.open(stack),
+            Some(lot @ Lot::Piece(_)) => {
+                writer.write(Try { event: Event::Drop { ent, lot } });
+            }
+            None => {}
         }
     }
 }
@@ -178,7 +177,7 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
 
 /// What the tab last laid out: the cells, the cursor's row, what is
 /// selected, and the stack the drop panel is open on.
-type Shown = (Vec<Cell>, usize, Option<Cell>, Option<common::Stackable>);
+type Shown = (Vec<Lot>, usize, Option<Lot>, Option<common::Stackable>);
 
 /// While the tab shows, writes the weight carried and lays the cells and
 /// the detail out again whenever the bag's stacks, the cursor's row, the
@@ -220,7 +219,7 @@ pub fn update(
     let selected = cursor.selected(&all);
     if cursor.row != row || (cursor.picked.is_some() && selected.is_none()) {
         cursor.row = row;
-        cursor.picked = selected.map(Cell::pick);
+        cursor.picked = selected.map(Pick::of);
     }
     let now = (all, row, selected, choice.0.map(|c| c.kind));
     if shown.as_ref() == Some(&now) {
@@ -229,7 +228,7 @@ pub fn update(
     let (all, row, selected, dropping) = &now;
 
     commands.entity(cells).despawn_related::<Children>();
-    let slots: Vec<Option<Cell>> = (0..rows(all.len()) * BAG_WIDTH).map(|k| all.get(k).copied()).collect();
+    let slots: Vec<Option<Lot>> = (0..rows(all.len()) * BAG_WIDTH).map(|k| all.get(k).copied()).collect();
     for (r, cells_of_row) in slots.chunks(BAG_WIDTH).enumerate() {
         let on_cursor = r == *row;
         commands
@@ -269,10 +268,10 @@ pub fn update(
 }
 
 /// A cell's icon, and a stack's count on it, at `scale` of a cell.
-pub(crate) fn cell_contents(cell: &mut ChildSpawnerCommands, asset_server: &AssetServer, slot: Cell, scale: f32) {
+pub(crate) fn cell_contents(cell: &mut ChildSpawnerCommands, asset_server: &AssetServer, slot: Lot, scale: f32) {
     let (image, count) = match slot {
-        Cell::Piece(item) => (icon(asset_server, item), None),
-        Cell::Stack(stack) => (stack_icon(asset_server, stack.kind), Some(stack.count)),
+        Lot::Piece(item) => (icon(asset_server, item), None),
+        Lot::Stack(stack) => (stack_icon(asset_server, stack.kind), Some(stack.count)),
     };
     let side = (CELL - 8.0) * scale;
     cell.spawn((ImageNode::new(image), Node { width: Val::Px(side), height: Val::Px(side), ..default() }));
@@ -296,8 +295,9 @@ fn piece_title(item: Item) -> String {
 
 /// The detail of `selected`: its icon, name and weight, and under them
 /// what can be done with it — the drop panel where it is open on the
-/// stack, choosing the count it carries, the key that opens it otherwise.
-fn spawn_detail(pane: &mut ChildSpawnerCommands, asset_server: &AssetServer, selected: Option<Cell>, dropping: Option<(common::Stackable, u32)>) {
+/// stack, choosing the count it carries, the key that opens it otherwise;
+/// for a piece, the key that drops it.
+fn spawn_detail(pane: &mut ChildSpawnerCommands, asset_server: &AssetServer, selected: Option<Lot>, dropping: Option<(common::Stackable, u32)>) {
     let line = |pane: &mut ChildSpawnerCommands, text: String, size: f32, color: Color| {
         pane.spawn((Text::new(text), TextFont { font_size: FontSize::Px(size), ..default() }, TextColor(color)));
     };
@@ -314,11 +314,12 @@ fn spawn_detail(pane: &mut ChildSpawnerCommands, asset_server: &AssetServer, sel
     })
     .with_children(|holder| cell_contents(holder, asset_server, slot, 1.25));
     match slot {
-        Cell::Piece(item) => {
+        Lot::Piece(item) => {
             line(pane, piece_title(item), 15.0, Color::srgb(0.9, 0.9, 0.9));
             line(pane, format!("Weighs {}", item.piece.weight()), 13.0, FAINT);
+            hint_row(pane, None, &[Hint::key(KEYCODE_DROP, "drop")]);
         }
-        Cell::Stack(stack) => {
+        Lot::Stack(stack) => {
             line(pane, stack.kind.name().into(), 15.0, Color::srgb(0.9, 0.9, 0.9));
             line(pane, format!("{} carried, weighing {}", stack.count, stack.weight()), 13.0, FAINT);
             if let Some((_, count)) = dropping.filter(|&(kind, _)| kind == stack.kind) {

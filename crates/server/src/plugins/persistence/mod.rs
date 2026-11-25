@@ -327,7 +327,7 @@ impl Keeper {
                 batch.constructs.push((chunk, (q, r), hub::built(built)));
             }
             for slot in 0..common::TILE_SLOTS as usize {
-                let playable = piles.held((q, r, slot)).map(stored::stack).into_iter();
+                let playable = piles.held((q, r, slot)).map(stored::lot).into_iter();
                 let held: Vec<_> = playable.chain(self.lying.get(&(q, r, slot)).into_iter().flatten().cloned()).collect();
                 if !held.is_empty() {
                     batch.piles.push((chunk, (q, r, slot), held));
@@ -661,13 +661,13 @@ fn receive(
                 debug!("store: recalled {} chunks, {} changed tiles, {} piles", chunks.len(), recalled.tiles.len(), recalled.piles.len());
                 changes.recall(recalled.tiles, generated);
                 for (key, held) in recalled.piles {
-                    let (stacks, mut unplayable) = stored::stacks(held);
-                    let mut stacks = stacks.into_iter();
-                    if let Some(stack) = stacks.next() {
-                        piles.recall(key, stack);
+                    let (lots, mut unplayable) = stored::lots(held);
+                    let mut lots = lots.into_iter();
+                    if let Some(lot) = lots.next() {
+                        piles.recall(key, lot);
                     }
-                    // A slot holds one stack: any more kept under it stay kept
-                    unplayable.extend(stacks.map(stored::stack));
+                    // A slot holds one stack or piece: any more kept under it stay kept
+                    unplayable.extend(lots.map(stored::lot));
                     if !unplayable.is_empty() {
                         error!("store: the pile at {key:?} holds {} things this build cannot lay there; they stay kept", unplayable.len());
                         keeper.lying.insert(key, unplayable);

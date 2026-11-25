@@ -41,7 +41,7 @@ pub const ENTRY_KEYS: [KeyCode; 9] = [
 /// place, or None where it has none open.
 #[derive(Resource, Default)]
 pub struct LootWindow {
-    pub cells: Option<[Option<common::Stack>; common::TILE_SLOTS as usize]>,
+    pub cells: Option<[Option<common_bevy::components::equipment::Lot>; common::TILE_SLOTS as usize]>,
 }
 
 /// Every tile the server has changed in the chunks the client holds, as its
