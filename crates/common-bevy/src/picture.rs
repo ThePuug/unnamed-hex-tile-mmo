@@ -64,6 +64,9 @@ pub struct Sketch {
     /// A bit to each side its main part joins the main part of the chunk
     /// on.
     open: u8,
+    /// How rough its ground is (`Leaf::rough`): what a way pays to
+    /// cross it.
+    rough: u8,
 }
 
 /// A part of a chunk joined to a part of the chunk on one of its sides,
@@ -88,7 +91,7 @@ impl Sketch {
             let sample = &mut round[NEAREST[at] as usize];
             *sample = (sample.0 + level as i64, sample.1 + full as u32, sample.2 + 1);
         }
-        let mut sketch = Sketch { base, rise: [0; SAMPLES], full: [0; SAMPLES.div_ceil(2)], main: leaf.main().unwrap_or(NO_PART), open: 0 };
+        let mut sketch = Sketch { base, rise: [0; SAMPLES], full: [0; SAMPLES.div_ceil(2)], main: leaf.main().unwrap_or(NO_PART), open: 0, rough: leaf.rough() };
         for (k, &(levels, full, count)) in round.iter().enumerate() {
             let count = count.max(1);
             sketch.rise[k] = (levels.div_euclid(count as i64) - base as i64).clamp(i8::MIN as i64, i8::MAX as i64) as i8;
@@ -183,7 +186,7 @@ impl Atlas {
     /// The parts a way from `from` to `to` crosses on this map
     /// (`chart::route`): the chunks the way a wagon is sent by crosses.
     pub fn route(&self, from: Node, to: Node) -> Option<Vec<Node>> {
-        route(from, to, |node| self.next(node))
+        route(from, to, |node| self.next(node), |chunk| self.sketches.get(&chunk).map_or(0, |sketch| sketch.rough))
     }
 
     /// The way the map gives between every two hubs it joins, each from
@@ -346,14 +349,17 @@ mod tests {
 
     /// A reader holding only a map's sketches finds, between any two
     /// places, the chunks the map's own way crosses: over open ground,
-    /// round a cliff by its one ramp, and none where the cliff is sheer.
-    /// It finds them the same whatever order the sketches came in.
+    /// round a cliff by its one ramp, round rough ground, and none where
+    /// the cliff is sheer. It finds them the same whatever order the
+    /// sketches came in.
     #[test]
     fn a_reader_finds_the_chunks_a_wagon_crosses() {
         let high = |q: i32| if q > 0 { 6 } else { 0 };
         let ramp = |(q, r): Tile| (if (0..=6).contains(&q) && (20..=22).contains(&r) { q } else { high(q) }, false);
+        let stepped = |(q, r): Tile| (if place(ChunkId(0, 0).center(), (q, r)).is_some() { q & 1 } else { 0 }, false);
         let (from, to) = (centre(-2, 0), centre(2, 0));
-        for chart in [charted(4, |_| (0, false), &[]), charted(4, ramp, &[])] {
+        assert!(!crossed(&charted(4, stepped, &[]), from, to).unwrap().contains(&ChunkId(0, 0)));
+        for chart in [charted(4, |_| (0, false), &[]), charted(4, ramp, &[]), charted(4, stepped, &[])] {
             let wagons = crossed(&chart, from, to).expect("a way");
             for atlas in [sent(&chart, |chunk| (chunk.0, chunk.1)), sent(&chart, |chunk| (-chunk.1, chunk.0 * 7 % 5))] {
                 let read = atlas.route(chart.node(from).unwrap(), chart.node(to).unwrap()).expect("the reader finds one too");

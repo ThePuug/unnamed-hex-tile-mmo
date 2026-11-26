@@ -10,8 +10,9 @@
 //! a leaf the tiles that reach each other are one part; a way crosses
 //! from a part of one leaf to a part of the next by one gate, the legal
 //! step between them nearest the middle of the side they share. The
-//! search is over parts alone ([`route`]): the fewest chunks crossed,
-//! knowing only which part joins which. Whoever holds that much of a
+//! search is over parts alone ([`route`]): the chunks cheapest to cross,
+//! each dearer the rougher its ground ([`Leaf::rough`]), knowing only
+//! that and which part joins which. Whoever holds that much of a
 //! chart, with none of its tiles, finds the same chunks
 //! (`crate::picture::Atlas`). The steps inside each chunk are filled in
 //! after, so a way is a [`Leg`] to a chunk. A chart is what was charted and stays so: a
@@ -63,6 +64,8 @@ pub struct Leaf {
     /// The part most of its open tiles are of, the lowest where two tie;
     /// none where every tile is full.
     main: Option<u16>,
+    /// The share of its ground that is not smooth ([`Leaf::rough`]).
+    rough: u8,
     /// The place of each tile a hub's hearth stands on, rising.
     hearths: Vec<u16>,
 }
@@ -104,7 +107,23 @@ impl Leaf {
             sizes[*part as usize] += 1;
         }
         let main = (0..next).max_by_key(|&part| (sizes[part as usize], std::cmp::Reverse(part)));
-        Some(Leaf { chunk, tiles, parts, main, hearths })
+        let (mut pairs, mut uneven) = (0u32, 0u32);
+        for (at, tile) in chunk_tiles(chunk).enumerate() {
+            for d in qrz::DIRECTIONS.iter() {
+                let Some(to) = place(centre, (tile.0 + d.q, tile.1 + d.r)) else { continue };
+                pairs += 1;
+                uneven += (tiles[at].1 || tiles[to].1 || tiles[at].0 != tiles[to].0) as u32;
+            }
+        }
+        let rough = ((uneven * u8::MAX as u32 + pairs / 2) / pairs.max(1)) as u8;
+        Some(Leaf { chunk, tiles, parts, main, rough, hearths })
+    }
+
+    /// How rough the chunk's ground is, from none of it to all: the
+    /// share of its pairs of tiles side by side that are not two open
+    /// tiles on one level. What a way pays to cross it ([`route`]).
+    pub fn rough(&self) -> u8 {
+        self.rough
     }
 
     /// The part most of the chunk's open tiles are of; none where every
@@ -250,12 +269,19 @@ pub fn side(chunk: ChunkId, beside: ChunkId) -> Option<usize> {
 /// A part of a chunk: what a way is searched over.
 pub type Node = (ChunkId, u16);
 
+/// What a way pays to come onto a chunk of smooth ground. The roughest
+/// ([`Leaf::rough`]) costs that and `u8::MAX` more, so this is how far
+/// round a way goes to keep off rough ground: the lower, the further.
+pub const SMOOTH: u32 = 128;
+
 /// The parts a way from `from` to `to` crosses, both ends among them,
-/// where `next` gives the parts each is joined to: the fewest there can
-/// be, and of those the ones met first, nearest `to` first. None where
-/// nothing joins them. The same parts and the same `next`, in the same
-/// order, give the same way, whoever asks.
-pub fn route(from: Node, to: Node, mut next: impl FnMut(Node) -> Vec<Node>) -> Option<Vec<Node>> {
+/// where `next` gives the parts each is joined to and `rough` how rough
+/// each chunk's ground is: the cheapest there can be, each part come
+/// onto costing [`SMOOTH`] and its chunk's roughness, and of those the
+/// ones met first, nearest `to` first. None where nothing joins them.
+/// The same parts, the same `next` in the same order and the same
+/// `rough` give the same way, whoever asks.
+pub fn route(from: Node, to: Node, mut next: impl FnMut(Node) -> Vec<Node>, rough: impl Fn(ChunkId) -> u8) -> Option<Vec<Node>> {
     let goal = to.0.center();
     let key = |node: Node| {
         let centre = node.0.center();
@@ -263,9 +289,9 @@ pub fn route(from: Node, to: Node, mut next: impl FnMut(Node) -> Vec<Node>) -> O
     };
     let mut came: HashMap<Node, (u32, Option<Node>)> = HashMap::from([(from, (0, None))]);
     let mut open = BinaryHeap::from([Reverse((0u32, key(from)))]);
-    while let Some(Reverse((crossed, (_, n, m, part)))) = open.pop() {
+    while let Some(Reverse((paid, (_, n, m, part)))) = open.pop() {
         let at = (ChunkId(n, m), part);
-        if came.get(&at).is_some_and(|&(best, _)| best < crossed) {
+        if came.get(&at).is_some_and(|&(best, _)| best < paid) {
             continue;
         }
         if at == to {
@@ -277,11 +303,12 @@ pub fn route(from: Node, to: Node, mut next: impl FnMut(Node) -> Vec<Node>) -> O
             return Some(way);
         }
         for onto in next(at) {
-            if came.get(&onto).is_some_and(|&(best, _)| best <= crossed + 1) {
+            let owed = paid + SMOOTH + rough(onto.0) as u32;
+            if came.get(&onto).is_some_and(|&(best, _)| best <= owed) {
                 continue;
             }
-            came.insert(onto, (crossed + 1, Some(at)));
-            open.push(Reverse((crossed + 1, key(onto))));
+            came.insert(onto, (owed, Some(at)));
+            open.push(Reverse((owed, key(onto))));
         }
     }
     None
@@ -436,16 +463,17 @@ impl Chart {
     /// The way from `from` to `to` over what the chart holds, a leg to a
     /// chunk; empty where they are one tile. None where either is not a
     /// tile the chart holds open, or no way joins them on it. It crosses
-    /// the chunks [`route`] gives over the chart's parts, and inside each
-    /// takes the fewest steps to the gate out. The same chart gives the
+    /// the chunks [`route`] gives over the chart's parts, round rough
+    /// ground where smooth is not much further, and inside each takes the fewest steps to the gate out. The same chart gives the
     /// same way.
     pub fn way(&self, from: Tile, to: Tile) -> Option<Vec<Leg>> {
         let (start, goal) = (self.node(from)?, self.node(to)?);
         let mut gates: HashMap<ChunkId, Vec<(u16, usize, u16, Tile, Tile)>> = HashMap::new();
-        let crossed = route(start, goal, |(chunk, part)| {
+        let next = |(chunk, part): Node| {
             let out = gates.entry(chunk).or_insert_with(|| self.leaves.get(&chunk).map_or(Vec::new(), |leaf| self.gates(leaf)));
             out.iter().filter(|gate| gate.0 == part).map(|gate| (ChunkId(chunk.0 + SIDES[gate.1].0, chunk.1 + SIDES[gate.1].1), gate.2)).collect()
-        })?;
+        };
+        let crossed = route(start, goal, next, |chunk| self.leaves.get(&chunk).map_or(0, |leaf| leaf.rough))?;
         let steps = |leaf: &Leaf, from: Tile, to: Tile| leaf.steps(from)[place(leaf.chunk.center(), to)?];
         let mut way = Vec::new();
         let mut at = from;
@@ -590,6 +618,31 @@ mod tests {
 
         let sheer = charted(&ground(4, |q, _| (high(q), common::Cover::NONE)), 4);
         assert_eq!(sheer.way(from, to), None);
+    }
+
+    /// Ground is rougher the more of it steps or is full, and a way goes
+    /// round a rough chunk a walker could cross, where over smooth
+    /// ground it goes straight through.
+    #[test]
+    fn a_way_goes_round_rough_ground() {
+        let middle = |q: i32, r: i32| qrz::hex_distance((q, r), (0, 0)) <= CHUNK_RADIUS;
+        let stepped = |q: i32, r: i32| (if middle(q, r) { q & 1 } else { 0 }, common::Cover::NONE);
+        let strewn = |q: i32, r: i32| (0, if middle(q, r) && q % 3 == 0 && r % 3 == 0 { full() } else { common::Cover::NONE });
+        let (from, to) = (centre(-2, 0), centre(2, 0));
+        let through = |chart: &Chart| {
+            let way = chart.way(from, to).expect("every chunk can be crossed");
+            whole(chart, &way, from, to);
+            way.iter().any(|leg| loc_to_chunk(Qrz { q: leg.from.0, r: leg.from.1, z: 0 }) == ChunkId(0, 0))
+        };
+
+        let smooth = charted(&ground(3, |_, _| (0, common::Cover::NONE)), 3);
+        let rough = charted(&ground(3, stepped), 3);
+        let rough_of = |chart: &Chart| chart.leaf(ChunkId(0, 0)).unwrap().rough();
+        assert_eq!(rough_of(&smooth), 0);
+        assert!(rough_of(&charted(&ground(0, strewn), 0)) > 0);
+        assert!(rough_of(&rough) > rough_of(&charted(&ground(0, |q, _| (q.div_euclid(4), common::Cover::NONE)), 0)), "more steps, rougher");
+        assert!(through(&smooth));
+        assert!(!through(&rough));
     }
 
     /// A map is what was charted: a wall raised since leaves its way as
