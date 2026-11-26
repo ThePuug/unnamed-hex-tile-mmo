@@ -172,10 +172,10 @@ pub enum Event {
     /// wagon, once the camp's line is raised; None where there is no
     /// wagon to speak of. Sent to its owner only.
     Wagon { ent: Entity, wagon: Option<common::building::Wagon> },
-    /// Server → Client: the tiles the stopped wagons that matter to `ent`
-    /// stand on, those of the hub it lives in and those carrying what it
-    /// loaded, as it enters the world and whenever they change. Sent to
-    /// its owner only.
+    /// Server → Client: the tiles the wagons on the road that matter to
+    /// `ent` have come to, stopped or going: those of the hub it lives in
+    /// or stands in and those carrying what it loaded, as it enters the
+    /// world and whenever they change. Sent to its owner only.
     Stopped { ent: Entity, wagons: Vec<(i32, i32)> },
     /// Client → Server (Try): `ent` looks at the wagon standing beside
     /// it, and loads on it so many of a material from its bag, where

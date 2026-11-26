@@ -437,8 +437,8 @@ upgrade, the server resolves the tile named through `holder`.
 
 **Planning.** P on a hub's ground opens the hub from above
 (`client::systems::planning`): the server sends it whole
-(`Event::Layout`, `settlers::laid_out`), a cursor moves over it, a
-planner is chosen and then one of its actions, and what the server
+(`Event::Layout`, `settlers::laid_out`), a cursor moves over it, each
+planner has a tab of its actions, and what the server
 says the action would change (`Event::Planned`) is drawn over the hub
 before Enter has it done. Orders are taken from anywhere on the hub's
 ground, by the planner whose they are; one at work says what an order

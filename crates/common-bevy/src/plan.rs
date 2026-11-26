@@ -469,13 +469,14 @@ impl Hub {
         Lie { ground, wall, gate, buildable: enclosed(&claim, 0.0).into_iter().collect() }
     }
 
-    /// Settles it once it has changed: its logistics zone on its hearth,
-    /// and its settlers as many as it takes and has room for. One who
+    /// Settles it once it has changed: its logistics zone on its hearth
+    /// where it has none yet, and its settlers as many as it takes and has
+    /// room for. One who
     /// comes takes the first room free, and the last to come is the first
     /// to go.
     pub fn peopled(mut self) -> Hub {
         if let Some(hearth) = self.hearth() {
-            self.zones.insert(Zone::Logistics, hearth);
+            self.zones.entry(Zone::Logistics).or_insert(hearth);
         }
         let need = self.takes();
         let mut have = self.settlers();
@@ -841,10 +842,11 @@ pub fn downgrade(hub: &Hub, id: u32) -> Option<Outcome> {
 /// `zone` of `hub` centred on `tile`, placed or moved: nothing standing
 /// changes, and what is built from then on follows it. None before the
 /// hub is planned for as many as the zone takes, or anywhere but inside
-/// its wall, or for the logistics zone, which is where the hearth is.
+/// its wall. The logistics zone starts on the hearth, as the residential
+/// does, and is moved as any other.
 pub fn zone(hub: &Hub, zone: Zone, tile: Tile) -> Option<Outcome> {
     let lie = hub.lies();
-    if zone == Zone::Logistics || hub.wants < zone.from() || lie.ground.binary_search(&tile).is_err() || lie.wall.contains(&tile) {
+    if hub.wants < zone.from() || lie.ground.binary_search(&tile).is_err() || lie.wall.contains(&tile) {
         return None;
     }
     let mut hub = hub.clone();
@@ -1163,7 +1165,7 @@ mod tests {
             }
         }
         assert_eq!(hub.items.iter().filter(|item| item.kind.what == What::Hearth).count(), 1, "a hub has one hearth");
-        assert_eq!(hub.zones.get(&Zone::Logistics).copied(), hub.hearth(), "the logistics zone is the hearth");
+        assert!(hub.zones.contains_key(&Zone::Logistics), "a hub has its logistics zone");
         for &centre in hub.zones.values() {
             assert!(lie.ground.binary_search(&centre).is_ok() && !lie.wall.contains(&centre), "a zone's centre is inside the wall");
         }
@@ -1280,7 +1282,9 @@ mod tests {
         assert!(zone(&small, Zone::Market, (2, 0)).is_none());
         assert!(raise(&small, What::Market).is_none());
         let hub = housed(done(plan(&camp((0, 0)), 20)));
-        assert!(zone(&hub, Zone::Logistics, (2, 0)).is_none());
+        let moved = done(zone(&hub, Zone::Logistics, (2, 0)));
+        assert_eq!((moved.zones[&Zone::Logistics], moved.hearth()), ((2, 0), hub.hearth()), "the logistics zone is moved as any other, and the hearth stays");
+        assert_eq!(moved.clone().peopled().zones[&Zone::Logistics], (2, 0), "and stays where it was put");
         let wall = hub.lies().wall[0];
         assert!(zone(&hub, Zone::Market, wall).is_none());
         let zoned = done(zone(&hub, Zone::Market, (4, -2)));

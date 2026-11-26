@@ -36,7 +36,6 @@ pub struct AnimatedBy(Entity);
 #[derive(Component)]
 pub enum Info {
     Time,
-    DistanceIndicator,  // Shows distance from haven
 }
 
 /// The actor the view follows: the camera, the skill bar and the

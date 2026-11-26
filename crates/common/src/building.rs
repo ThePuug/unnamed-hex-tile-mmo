@@ -325,21 +325,26 @@ pub struct Laid {
     pub stands: bool,
 }
 
-/// A hub as its planning shows it: how many live in it and how many it
-/// is planned for; which zones have a planner, which of them are at
+/// A hub as its planning shows it: how many live in it, how many its
+/// homes house and how many it is planned for; which zones have a planner, which of them are at
 /// work, each a bit by the number the zone is kept by, and the zone it
-/// may hire one for next, none as 0; whether its wall is to be raised;
+/// may hire one for next, none as 0; whether its wall is to be raised,
+/// and whether those who live in it defend the wall it is planned for;
 /// the ground it claims, the tiles its wall runs on, the tiles nothing
 /// is planned on as the ground lies, each zone's centre and every thing
 /// of it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Layout {
     pub residents: u32,
+    pub room: u32,
     pub wants: u32,
     pub hired: u8,
     pub busy: u8,
     pub hires: u8,
     pub walled: bool,
+    pub defended: bool,
+    /// The tile of its wall left open, the way in, where it has one.
+    pub gate: Option<(i32, i32)>,
     pub ground: Vec<(i32, i32)>,
     pub wall: Vec<(i32, i32)>,
     pub barred: Vec<(i32, i32)>,

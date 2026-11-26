@@ -3,9 +3,10 @@
 //! turn to. One press of a turn key moves it one mark. The six tile-to-tile
 //! bearings stand taller, the cardinals carry their letters, a bracket
 //! spans the arc the viewed actor strikes within, and a pin stands at each
-//! target's bearing, the haven's and the player's home's, held at the edge
-//! while it is off the strip: the haven's square and gold, the home's
-//! round and the colour of its fire, shown while the player has one. The
+//! target's bearing and the player's home's, held at the edge while it is
+//! off the strip: the home's round and the colour of its fire, shown
+//! while the player has one. The haven is where a player enters the
+//! world and nothing more, and has no pin. The
 //! strip itself is warmed a little while the player stands on ground a
 //! hub holds. The nearest dens the server has told of, as many as
 //! `Setting::DensShown`, stand at their bearings too, and drop off the
@@ -19,7 +20,6 @@ use bevy::ui::UiTransform;
 
 use common_bevy::{
     components::{ally_target::AllyTarget, heading::*, position::VisualPosition, target::Target},
-    haven::Haven,
     resources::map::Map,
     settings::{Setting, Settings},
     systems::targeting::FACING_ARC,
@@ -69,7 +69,6 @@ pub enum Mark {
     Pin(Lane),
     /// The den whose pack stands on a tile
     Den(Qrz),
-    Haven,
     /// The hearth or tent the local player is at home at
     Home,
     /// A stopped wagon, by the tile it stands on
@@ -84,13 +83,13 @@ impl Mark {
             Mark::Facing => 2. * FACING_ARC * PX_PER_DEGREE,
             Mark::Pin(_) => PIN_PX,
             Mark::Den(_) => DEN_PX,
-            Mark::Haven | Mark::Home | Mark::Wagon(_) => HAVEN_PX,
+            Mark::Home | Mark::Wagon(_) => HAVEN_PX,
         }
     }
 
     /// Whether it is held at the strip's edge while its bearing is off it.
     fn held(self) -> bool {
-        matches!(self, Mark::Pin(_) | Mark::Haven | Mark::Home | Mark::Wagon(_))
+        matches!(self, Mark::Pin(_) | Mark::Home | Mark::Wagon(_))
     }
 }
 
@@ -185,7 +184,6 @@ pub fn setup(
                 WagonPins,
             ));
 
-            bar.spawn(pin(Mark::Haven, GOLD, Color::WHITE));
             // Round, where every other pin is square
             let mut home = pin(Mark::Home, HEARTH, Color::WHITE);
             home.0.border_radius = BorderRadius::MAX;
@@ -316,13 +314,11 @@ pub fn sync_wagons(mut commands: Commands, stopped: Res<crate::systems::settlers
 }
 
 /// Slides every mark to its bearing off the camera's: a pin to its
-/// target's, its den's, the haven's or the player's home's from the
-/// viewed actor.
+/// target's, its den's or the player's home's from the viewed actor.
 pub fn update(
     camera: Res<CameraPose>,
     map: Res<Map>,
     origin: Res<RenderOrigin>,
-    haven: Res<Haven>,
     home: Res<crate::systems::building::HomeHearth>,
     sheltered: Res<crate::systems::building::Sheltered>,
     settings: Res<Settings>,
@@ -367,7 +363,6 @@ pub fn update(
                     .map(VisualPosition::current),
             ),
             Mark::Den(tile) | Mark::Wagon(tile) => toward(Some(origin.render_tile(&map, tile))),
-            Mark::Haven => toward(Some(origin.render_tile(&map, haven.0))),
             Mark::Home => toward(home.0.map(|at| origin.render_tile(&map, at))),
         };
         let Some(rel) = rel else {

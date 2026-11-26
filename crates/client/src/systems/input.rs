@@ -77,7 +77,9 @@ pub fn update_keybits(
     // an open one has the numpad, so the jump on it fires only with none
     // open.
     let modal = menu.open
-        || (console.visible && console.current_menu == crate::plugins::console::MenuPath::WorldClock);
+        || (console.visible && console.current_menu == crate::plugins::console::MenuPath::WorldClock)
+        // The plan of a hub has the arrows for its cursor
+        || focus.has(crate::systems::focus::Panel::Planning);
     let Ok((ent, mut keybits0, target, held, attrs)) = query.single_mut() else { return };
 
     let delta_ns = dt.delta().as_nanos();

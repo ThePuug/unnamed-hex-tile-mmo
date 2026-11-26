@@ -4,8 +4,6 @@ use crate::{
     resources::Server,
 };
 use common_bevy::{
-    components::Loc,
-    haven::Haven,
     systems::*,
 };
 
@@ -35,30 +33,14 @@ pub fn setup(
             Info::Time,
         ));
 
-        // Distance indicator - shows below time display
-        parent.spawn((
-            Text::new(""),
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(32.),  // Below time display (20px gap)
-                left: Val::Px(12.),
-                ..default()
-            },
-            TextColor(Color::srgb(0.9, 0.9, 0.9)),
-            Info::DistanceIndicator,
-        ));
-
     });
 }
 
 pub fn update(
     mut query: Query<(&mut Text, &Info)>,
-    player_query: Query<&Loc, With<crate::components::Viewed>>,
     server: Res<Server>,
-    haven: Res<Haven>,
     time: Res<Time>,
     mut time_cache: Local<Option<u128>>,
-    mut dist_cache: Local<Option<i32>>,
 ) {
     for (mut span, info) in &mut query {
         match info {
@@ -70,17 +52,6 @@ pub fn update(
                 let hour = wall % DAY_MS / HOUR_MS;
                 let minute = wall % HOUR_MS / MINUTE_MS;
                 **span = format!("{hour:02}:{minute:02} {}", Date::of(wall));
-            }
-            Info::DistanceIndicator => {
-                if let Ok(player_loc) = player_query.single() {
-                    let distance = haven.0.flat_distance(&**player_loc);
-                    if *dist_cache == Some(distance) { continue; }
-                    *dist_cache = Some(distance);
-                    **span = format!("Haven: {} tiles", distance);
-                } else {
-                    *dist_cache = None;
-                    **span = String::from("Haven: -- tiles");
-                }
             }
         }
     }

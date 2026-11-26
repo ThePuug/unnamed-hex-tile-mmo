@@ -1095,9 +1095,11 @@ pub fn tend_camps(
                 // new to the hub comes from far off
                 let home = homes[place as usize];
                 let beside = || map.get_by_qr(home.0, home.1).and_then(|(floor, _)| map.neighbors(floor).into_iter().map(|(tile, _)| tile).find(|tile| !common_bevy::systems::movement::is_full_cover(map, tile.q, tile.r)));
-                let Some(at) = far.filter(|_| place > joined).or_else(beside) else { continue };
+                // One new to the hub rides in, as its first settler did
+                let rides = far.is_some() && place > joined;
+                let Some(at) = far.filter(|_| rides).or_else(beside) else { continue };
                 let stands = at + Qrz::Z;
-                let settler = commands.spawn(body(hearth, place, stands, false, now)).id();
+                let settler = commands.spawn(body(hearth, place, stands, rides, now)).id();
                 commands.entity(settler).insert(NearestNeighbor::new(settler, Loc::new(stands)));
                 camps.others.insert((hearth, place), settler);
             }
@@ -1158,8 +1160,8 @@ pub fn settle(
             camp.joined = settler.place;
             camps.changed.push(hearth);
         }
-        // It gets down once it has come to its hearth
-        if settler.rides && camp.arrived {
+        // It gets down once it has come to its hearth, or, one that came after the first, onto its hub's ground
+        if settler.rides && if lead { camp.arrived } else { camp.joined >= settler.place } {
             settler.rides = false;
             commands.entity(ent).insert(Status::default());
             commands.write_message(Do { event: Event::Incremental { ent, component: common_bevy::message::Component::Status(Status::default()) } });
@@ -1452,21 +1454,24 @@ fn waits(camps: &Camps, hearth: (i32, i32), place: u8) -> Option<(i32, i32)> {
     camps.on(hearth)?.trip.as_ref().filter(|trip| place == 0 && trip.stopped)?.at()
 }
 
-/// Tells each player where the stopped wagons that matter to it stand,
-/// as it enters the world and whenever they change: those of the hub it
-/// lives in, and those carrying what it loaded.
+/// Tells each player where the wagons on the road that matter to it have
+/// come to, stopped or going, as it enters the world and whenever they
+/// change: those of the hub it lives in or stands in, and those carrying
+/// what it loaded.
 pub fn tell_stopped(
     camps: Res<Camps>,
     hubs: Res<Hubs>,
-    players: Query<(Entity, &Character, Option<&common_bevy::components::Lives>)>,
+    players: Query<(Entity, &Character, &Loc, Option<&common_bevy::components::Lives>)>,
     mut told: Local<HashMap<Entity, Vec<(i32, i32)>>>,
     mut writer: MessageWriter<Do>,
 ) {
-    let stopped: Vec<((i32, i32), &Trip, (i32, i32))> = camps.camps.iter().filter_map(|(&hearth, camp)| camp.trip.as_ref().filter(|trip| trip.stopped).and_then(|trip| Some((hearth, trip, trip.at()?)))).collect();
+    let stopped: Vec<((i32, i32), &Trip, (i32, i32))> = camps.camps.iter().filter_map(|(&hearth, camp)| camp.trip.as_ref().and_then(|trip| Some((hearth, trip, trip.at()?)))).collect();
     told.retain(|ent, _| players.contains(*ent));
-    for (ent, &Character(who), lives) in &players {
+    for (ent, &Character(who), loc, lives) in &players {
         let own = lives.and_then(|lives| hubs.holding((lives.0.q, lives.0.r)));
-        let matters = |hearth: (i32, i32), trip: &Trip| own.is_some() && hubs.of_hearth(hearth) == own || trip.cargo.iter().any(|owned| owned.who == Some(who));
+        let here = hubs.holding((loc.q, loc.r));
+        let of = |hearth: (i32, i32)| hubs.of_hearth(hearth);
+        let matters = |hearth: (i32, i32), trip: &Trip| own.is_some() && of(hearth) == own || here.is_some() && of(hearth) == here || trip.cargo.iter().any(|owned| owned.who == Some(who));
         let mut wagons: Vec<(i32, i32)> = stopped.iter().filter(|(hearth, trip, _)| matters(*hearth, trip)).map(|&(.., at)| at).collect();
         wagons.sort();
         if told.get(&ent).map_or(wagons.is_empty(), |said| *said == wagons) {
@@ -1816,11 +1821,14 @@ fn laid_out(site: &Site, camps: &Camps, id: common_bevy::hubs::HubId) -> Option<
         .collect();
     Some(common::building::Layout {
         residents: hub.residents(),
+        room: hub.room(),
         wants: hub.wants,
         hired: bits(&mut site.hubs.hired(id)),
         busy: bits(&mut camp.into_iter().flat_map(|camp| camp.rising.iter().map(|(step, ..)| step.zone()))),
         hires: Zone::ALL.into_iter().find(|&zone| site.hubs.hires(id, zone)).map_or(0, |zone| zone.id() as u8),
         walled: site.hubs.walled(id),
+        defended: ground.wall.len() <= common_bevy::plan::defended(hub),
+        gate: site.hubs.way_in(id),
         ground: ground.tiles.clone(),
         wall: ground.wall.clone(),
         barred: site.hubs.barred(id),
@@ -1910,8 +1918,10 @@ pub fn try_plan(
             Some((key, place)) => zone_of(&site.hubs, key, place),
             None => asked,
         };
+        // An order goes to the planner whose it is, whichever settler stands
+        // nearest: it is given from the plan of the hub, not to one settler.
         // One at work still says what an order would do, and only does none
-        let hailed = camp.filter(|&key| (asked.is_none() || asked == own) && !(carry && busy(key, asked)));
+        let hailed = camp.filter(|&key| !(carry && busy(key, asked)));
         if let (Order::Hire(zone), Some(key), true) = (order, hailed, carry) {
             let hired = site.hubs.of_hearth(key).is_some_and(|id| Zone::kept_as(zone).or_else(|| Zone::ALL.into_iter().find(|&zone| site.hubs.hires(id, zone))).is_some_and(|zone| site.hubs.hire(id, zone)));
             info!("settlers: {ent} asked the hub of {key:?} to hire a planner for zone {zone}: {}", if hired { "hired" } else { "refused" });

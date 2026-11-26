@@ -187,9 +187,6 @@ const CRAFTING: u32 = 4;
 const FARMING: u32 = 5;
 const PLAZA: u32 = 6;
 
-/// How many residents a key plans a hub for more, or fewer: a player and
-/// the settler who comes with it.
-const PAIR: i32 = 2;
 
 /// A row of a planner's panel: the order it asks for, what it is called,
 /// where its icon is, where it has one, and what it takes where that is
@@ -210,7 +207,7 @@ pub fn aims(order: Order) -> bool {
 }
 
 /// The home a `fixture` is upgraded to, and the one it is downgraded to.
-fn larger(fixture: Fixture) -> Option<Fixture> {
+pub(crate) fn larger(fixture: Fixture) -> Option<Fixture> {
     match fixture {
         Fixture::Tent => Some(Fixture::Pavilion),
         Fixture::Pavilion => Some(Fixture::House),
@@ -219,7 +216,7 @@ fn larger(fixture: Fixture) -> Option<Fixture> {
     }
 }
 
-fn smaller(fixture: Fixture) -> Option<Fixture> {
+pub(crate) fn smaller(fixture: Fixture) -> Option<Fixture> {
     [Fixture::Tent, Fixture::Pavilion, Fixture::House].into_iter().find(|&lesser| larger(lesser) == Some(fixture))
 }
 
@@ -241,12 +238,13 @@ pub fn offers(wants: Wants, (q, r): (i32, i32), faced: (i32, i32), home: Option<
     if !wants.busy {
         match wants.zone as u32 {
             LOGISTICS => rows.extend([
-                row(Order::Residents(PAIR), "+2 residents"),
-                row(Order::Residents(-PAIR), "-2 residents"),
+                // How many the hub is planned for: by how many more or fewer is set where it is asked
+                row(Order::Residents(0), "Occupancy"),
                 row(Order::Shrink, "Shrink to defended wall"),
                 Offer { icon: Some("icons/stakes.png".to_owned()), ..row(Order::Wall, "Wall") },
                 raise(Fixture::Wagon),
                 raise(Fixture::Storehouse),
+                row(Order::Zone(LOGISTICS, q, r), "Move zone here"),
             ]),
             RESIDENTIAL => rows.extend([
                 raise(Fixture::Tent),
@@ -472,10 +470,10 @@ pub fn request(
     if !focus.has(Panel::Settler) {
         return;
     }
-    // The rows it offers, as the player stands and faces
-    let faced = crate::systems::building::faced(&map, &position, *heading);
-    let stands = common::building::holder(|(q, r)| map.cover_at(q, r), (faced.q, faced.r));
-    let rows = offers(wants, (position.tile.q, position.tile.r), (faced.q, faced.r), common::building::fixture(map.cover_at(stands.0, stands.1)));
+    // A planner's orders are given from the plan of its hub (`planning`),
+    // where the whole of the hub is seen: hailed, it has none
+    let _ = (wants, heading);
+    let rows: Vec<Offer> = Vec::new();
     if asked.rows != rows {
         asked.rows = rows;
     }
@@ -787,9 +785,12 @@ pub fn do_wants(
     mut asked: ResMut<Asked>,
     player: Query<&Position, With<Actor>>,
     predicted: crate::systems::movement::Predicted,
+    planning: Res<crate::systems::planning::Planning>,
 ) {
     for message in reader.read() {
         match message {
+            // An order given from the plan of a hub is answered as a hail is, by the hub's settler; no settler was hailed, and none is from it
+            Do { event: Event::Wants { .. } } if planning.open() => {}
             Do { event: Event::Wants { ent, wants } } => {
                 let Ok(position) = player.get(*ent) else { continue };
                 let stood = predicted.position().unwrap_or(*position);
@@ -909,6 +910,7 @@ pub fn update(mut commands: Commands, hailed: Res<Hailed>, carted: Res<Carted>, 
                 } else if carted.0.as_ref().is_some_and(sends) {
                     hints.push(Hint::key(crate::cap!(KEYCODE_TAKE_ALL), "send the wagon by your map"));
                 }
+                hints.push(Hint::key(crate::cap!(crate::systems::planning::KEYCODE_PLAN), "plan"));
                 hints.push(Hint::key(crate::cap!(KEYCODE_CLOSE), "close"));
                 hint_row(list, None, &hints);
             }

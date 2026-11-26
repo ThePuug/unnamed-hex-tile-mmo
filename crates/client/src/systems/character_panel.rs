@@ -428,7 +428,8 @@ pub fn setup(
                 position_type: PositionType::Absolute,
                 left: Val::Px(20.),
                 top: Val::Px(100.),
-                flex_direction: FlexDirection::Row,
+                // Laid from the right, so the tabs, spawned first, stand to the right of the content
+                flex_direction: FlexDirection::RowReverse,
                 padding: UiRect::all(Val::Px(12.)),
                 border: UiRect::all(Val::Px(1.)),
                 border_radius: BorderRadius::all(Val::Px(8.)),
@@ -578,14 +579,17 @@ pub fn close(state: &mut CharacterPanelState, visibility: &mut Visibility) {
 }
 
 const PANE_WIDTH: f32 = 860.0;
-const PANE: Color = Color::srgba(0.1, 0.1, 0.1, 0.9);
-const PANE_EDGE: Color = Color::srgb(0.4, 0.4, 0.4);
-/// The frame round the strip and the content; a shut tab is its colour.
+pub(crate) const PANE: Color = Color::srgba(0.1, 0.1, 0.1, 0.9);
+pub(crate) const PANE_EDGE: Color = Color::srgb(0.4, 0.4, 0.4);
+/// The frame round the strip and the content.
 const FRAME: Color = Color::srgba(0.04, 0.04, 0.04, 0.95);
+/// A shut tab: a shade of its own, so the open one, in the pane's colour,
+/// is told from it at a glance.
+pub(crate) const SHUT: Color = Color::srgba(0.22, 0.22, 0.22, 0.9);
 
-/// A tab's frame in the strip. A shut tab is bordered all round in the
-/// frame's colour; the open one takes the content's colour, loses its right
-/// border and reaches under the content, so nothing parts the two.
+/// A tab's frame in the strip, with no line round it: a shut tab is a
+/// shade of its own, and the open one the content's colour, so nothing
+/// parts the two.
 #[derive(Component)]
 pub struct TabFrame(pub PanelTab);
 
@@ -602,19 +606,19 @@ fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
             ChildOf(panel),
         ))
         .with_children(|strip| {
+            // The key to the tab above stands over the tabs, and the key to the one below under them
+            crate::systems::keycap::keycap_at(strip, crate::cap!(KeyCode::NumpadSubtract), Node { margin: UiRect::left(Val::Px(8.)), ..default() });
             for tab in PanelTab::ALL {
                 strip
                     .spawn((
                         TabFrame(tab),
                         Node {
-                            justify_content: JustifyContent::FlexEnd,
+                            justify_content: JustifyContent::FlexStart,
                             padding: UiRect::axes(Val::Px(12.), Val::Px(8.)),
-                            border: UiRect::all(Val::Px(1.)),
-                            border_radius: BorderRadius::left(Val::Px(6.)),
+                            border_radius: BorderRadius::right(Val::Px(6.)),
                             ..default()
                         },
-                        BackgroundColor(FRAME),
-                        BorderColor::all(PANE_EDGE),
+                        BackgroundColor(SHUT),
                     ))
                     .with_children(|frame| {
                         frame.spawn((
@@ -625,12 +629,9 @@ fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
                         ));
                     });
             }
+            crate::systems::keycap::keycap_at(strip, crate::cap!(KeyCode::NumpadAdd), Node { margin: UiRect::left(Val::Px(8.)), ..default() });
             use crate::systems::keycap::{hint_column, Hint};
-            hint_column(
-                strip,
-                &[Hint::key(crate::cap!(KeyCode::NumpadSubtract), "prev"), Hint::key(crate::cap!(KeyCode::NumpadAdd), "next"), Hint::key(crate::cap!(KEYCODE_CHARACTER_PANEL), "close")],
-                Node { margin: UiRect::new(Val::Px(0.), Val::Px(8.), Val::Px(8.), Val::Px(0.)), align_self: AlignSelf::FlexEnd, ..default() },
-            );
+            hint_column(strip, &[Hint::key(crate::cap!(KEYCODE_CHARACTER_PANEL), "close")], Node { margin: UiRect::new(Val::Px(8.), Val::Px(0.), Val::Px(8.), Val::Px(0.)), align_self: AlignSelf::FlexStart, ..default() });
         });
 }
 
@@ -638,8 +639,8 @@ fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
 /// marks its label.
 pub fn update_tabs(
     state: Res<CharacterPanelState>,
-    mut contents: Query<(&TabContent, &mut Node), Without<TabFrame>>,
-    mut frames: Query<(&TabFrame, &mut Node, &mut BackgroundColor, &mut BorderColor)>,
+    mut contents: Query<(&TabContent, &mut Node)>,
+    mut frames: Query<(&TabFrame, &mut BackgroundColor)>,
     mut labels: Query<(&TabLabel, &mut TextColor)>,
 ) {
     if !state.is_changed() {
@@ -648,13 +649,9 @@ pub fn update_tabs(
     for (content, mut node) in &mut contents {
         node.display = if content.0 == state.tab { Display::Flex } else { Display::None };
     }
-    for (frame, mut node, mut background, mut border) in &mut frames {
-        let open = frame.0 == state.tab;
-        // The open frame reaches under the content, in the content's colour.
-        node.margin.right = if open { Val::Px(-2.) } else { Val::Px(0.) };
-        node.border.right = if open { Val::Px(0.) } else { Val::Px(1.) };
-        *background = BackgroundColor(if open { PANE } else { FRAME });
-        *border = BorderColor::all(PANE_EDGE);
+    for (frame, mut background) in &mut frames {
+        // The open frame is the content's colour, and a shut one a shade of its own
+        *background = BackgroundColor(if frame.0 == state.tab { PANE } else { SHUT });
     }
     for (label, mut color) in &mut labels {
         let open = label.0 == state.tab;
