@@ -122,7 +122,7 @@ pub fn chase(
             if from_home <= HOME {
                 commands.entity(npc).remove::<Returning>();
             } else if let Some((floor, next)) = floor.and_then(|floor| Some((floor, step(&map, &nntree, floor, *home)?))) {
-                body.step_toward(loc, floor, next, own, pace, dt_ms, &map, &nntree);
+                body.step_toward(floor, next, own, pace, dt_ms, &map, &nntree);
             }
             continue;
         }
@@ -236,7 +236,7 @@ pub fn chase(
         if next.flat_distance(&target_loc) > floor.flat_distance(&target_loc) {
             body.back_toward(loc, floor, next, *target_loc, own, pace, dt_ms, &map, &nntree);
         } else {
-            body.step_toward(loc, floor, next, own, pace, dt_ms, &map, &nntree);
+            body.step_toward(floor, next, own, pace, dt_ms, &map, &nntree);
         }
     }
 }

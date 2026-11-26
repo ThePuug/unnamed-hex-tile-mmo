@@ -29,6 +29,10 @@ pub enum Setting {
     HearthPlayers,
     /// How many clients the server takes at once.
     PlayerSlots,
+    /// Whether materials are provided, 1, or gathered, 0: a build by hand
+    /// is given exactly what it takes as it is asked for, and a camp what
+    /// its hub's plans still lack as it is hailed or given a plan.
+    FreeMaterials,
 }
 
 /// The furthest a den is drawn from, in tiles: the outer edge of the
@@ -39,7 +43,7 @@ pub const DEN_REACH: i32 = 1083;
 impl Setting {
     /// Every setting, in the order a `Settings` holds them and the
     /// admin console lists them.
-    pub const ALL: [Setting; 5] = [Setting::DensShown, Setting::DenSight, Setting::SettlerHaste, Setting::HearthPlayers, Setting::PlayerSlots];
+    pub const ALL: [Setting; 6] = [Setting::DensShown, Setting::DenSight, Setting::SettlerHaste, Setting::HearthPlayers, Setting::PlayerSlots, Setting::FreeMaterials];
 
     /// The number the store keeps it by: given once and never again, so
     /// a rename or a new order of [`Setting::ALL`] keeps it.
@@ -50,6 +54,7 @@ impl Setting {
             Setting::SettlerHaste => 3,
             Setting::HearthPlayers => 4,
             Setting::PlayerSlots => 5,
+            Setting::FreeMaterials => 6,
         }
     }
 
@@ -65,6 +70,7 @@ impl Setting {
             Setting::SettlerHaste => "Settler Haste",
             Setting::HearthPlayers => "Players per Hearth",
             Setting::PlayerSlots => "Player Slots",
+            Setting::FreeMaterials => "Free Materials",
         }
     }
 
@@ -76,6 +82,7 @@ impl Setting {
             Setting::SettlerHaste => "Settlers come and work this many times as fast",
             Setting::HearthPlayers => "Every hearth counts as this many more at home",
             Setting::PlayerSlots => "The server takes this many clients at once",
+            Setting::FreeMaterials => "On, a build and a settler are given what they lack, for trying things",
         }
     }
 
@@ -93,6 +100,7 @@ impl Setting {
             Setting::SettlerHaste => 1,
             Setting::HearthPlayers => 0,
             Setting::PlayerSlots => 64,
+            Setting::FreeMaterials => 0,
         }
     }
 
@@ -106,6 +114,7 @@ impl Setting {
             Setting::HearthPlayers => (0, 1000),
             // The transport takes no more
             Setting::PlayerSlots => (1, 1024),
+            Setting::FreeMaterials => (0, 1),
         }
     }
 

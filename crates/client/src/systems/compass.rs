@@ -9,7 +9,9 @@
 //! strip itself is warmed a little while the player stands on ground a
 //! hub holds. The nearest dens the server has told of, as many as
 //! `Setting::DensShown`, stand at their bearings too, and drop off the
-//! strip with the rest of what lies behind.
+//! strip with the rest of what lies behind. A wagon stopped on the road
+//! that the server has told of has a pin of its own, pale and held at the
+//! edge as the home's is, for as long as it waits.
 
 use bevy::prelude::*;
 use bevy::math::Rot2;
@@ -70,6 +72,8 @@ pub enum Mark {
     Haven,
     /// The hearth or tent the local player is at home at
     Home,
+    /// A stopped wagon, by the tile it stands on
+    Wagon(Qrz),
 }
 
 impl Mark {
@@ -80,19 +84,26 @@ impl Mark {
             Mark::Facing => 2. * FACING_ARC * PX_PER_DEGREE,
             Mark::Pin(_) => PIN_PX,
             Mark::Den(_) => DEN_PX,
-            Mark::Haven | Mark::Home => HAVEN_PX,
+            Mark::Haven | Mark::Home | Mark::Wagon(_) => HAVEN_PX,
         }
     }
 
     /// Whether it is held at the strip's edge while its bearing is off it.
     fn held(self) -> bool {
-        matches!(self, Mark::Pin(_) | Mark::Haven | Mark::Home)
+        matches!(self, Mark::Pin(_) | Mark::Haven | Mark::Home | Mark::Wagon(_))
     }
 }
 
 /// The node the dens' pins stand in, beneath every other pin.
 #[derive(Component)]
 pub struct DenPins;
+
+/// The node the stopped wagons' pins stand in.
+#[derive(Component)]
+pub struct WagonPins;
+
+/// A wagon's cover.
+const CANVAS: Color = Color::srgb(0.92, 0.88, 0.78);
 
 /// The bearing in degrees clockwise from north of a ground-plane direction
 /// given as (x, z), north at -z.
@@ -162,6 +173,16 @@ pub fn setup(
                     ..default()
                 },
                 DenPins,
+            ));
+            // Filled by `sync_wagons`
+            bar.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.),
+                    height: Val::Percent(100.),
+                    ..default()
+                },
+                WagonPins,
             ));
 
             bar.spawn(pin(Mark::Haven, GOLD, Color::WHITE));
@@ -279,6 +300,21 @@ pub fn sync_dens(mut commands: Commands, dens: Res<Dens>, pins: Query<Entity, Wi
     });
 }
 
+/// Stands a pin for each stopped wagon the server has told of, anew
+/// whenever they change.
+pub fn sync_wagons(mut commands: Commands, stopped: Res<crate::systems::settlers::Stopped>, pins: Query<Entity, With<WagonPins>>) {
+    if !stopped.is_changed() {
+        return;
+    }
+    let Ok(pins) = pins.single() else { return };
+    commands.entity(pins).despawn_related::<Children>();
+    commands.entity(pins).with_children(|pins| {
+        for &(q, r) in &stopped.0 {
+            pins.spawn(pin(Mark::Wagon(Qrz { q, r, z: 0 }), CANVAS, Color::BLACK));
+        }
+    });
+}
+
 /// Slides every mark to its bearing off the camera's: a pin to its
 /// target's, its den's, the haven's or the player's home's from the
 /// viewed actor.
@@ -330,7 +366,7 @@ pub fn update(
                 seer.and_then(|(_, _, target, ally)| positions.get(lane.held(target, ally)?).ok())
                     .map(VisualPosition::current),
             ),
-            Mark::Den(tile) => toward(Some(origin.render_tile(&map, tile))),
+            Mark::Den(tile) | Mark::Wagon(tile) => toward(Some(origin.render_tile(&map, tile))),
             Mark::Haven => toward(Some(origin.render_tile(&map, haven.0))),
             Mark::Home => toward(home.0.map(|at| origin.render_tile(&map, at))),
         };

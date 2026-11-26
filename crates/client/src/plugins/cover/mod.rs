@@ -9,6 +9,7 @@
 
 pub mod draw;
 pub mod fire;
+pub mod outline;
 pub mod sparkle;
 
 use std::collections::HashMap;
@@ -123,9 +124,21 @@ fn facing_yaw(toward: usize) -> f32 {
     -(-x).atan2(-z)
 }
 
+/// The yaw a model on more tiles than one is drawn at, turned `turn`
+/// sixths of a turn (`common::building::turned`): the way that lays the
+/// tiles it was built on over the ones it stands on. An instance's turn
+/// runs the other way about the vertical from a rotation about +y.
+fn turn_yaw(turn: u8) -> f32 {
+    let along = |(q, r): (i32, i32)| {
+        let (x, z) = flat_top_tile_center(q, r, 1.0);
+        z.atan2(x)
+    };
+    along(common::building::turned((1, 0), turn)) - along((1, 0))
+}
+
 /// What a construct is drawn as: a hearth in its stone, and a blockade
 /// as one whatever its wood.
-fn built(construct: common::building::Construct) -> Kind {
+pub(crate) fn built(construct: common::building::Construct) -> Kind {
     match construct.kind {
         common::building::Kind::Hearth => Kind::Hearth(construct.of),
         common::building::Kind::Blockade => Kind::Blockade,
@@ -294,11 +307,19 @@ impl Kit {
     }
 }
 
-/// The foot of what G will act on, in rendered coordinates, which the cover
-/// draws lit through; none while nothing is in reach.
+/// What the keys will act on (`systems::aim`), which the cover draws lit
+/// through and outlined (`outline`); none while nothing is in reach.
 #[derive(Resource, Clone, Copy, Default, PartialEq, bevy::render::extract_resource::ExtractResource)]
 #[extract_app(bevy::render::RenderApp)]
-pub struct Marked(pub Option<Vec3>);
+pub struct Marked(pub Option<Mark>);
+
+/// A thing marked: its foot, in rendered coordinates, and the tile it
+/// stands on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mark {
+    pub foot: Vec3,
+    pub tile: qrz::Qrz,
+}
 
 /// The kit, present once every model has loaded.
 #[derive(Resource)]
@@ -358,7 +379,7 @@ pub struct CoverPlugin;
 
 impl Plugin for CoverPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(draw::CoverDrawPlugin);
+        app.add_plugins((draw::CoverDrawPlugin, outline::OutlinePlugin));
         #[cfg(feature = "admin")]
         {
             app.init_resource::<CoverDraws>();
@@ -561,6 +582,63 @@ fn merge(gm: &GltfMesh, meshes: &Assets<Mesh>, materials: &Assets<bevy::gltf::Gl
         .with_inserted_indices(Indices::U32(indices))
 }
 
+/// One thing a tile stands: where, in xz from the centre of the tile it
+/// is measured from, its turn, how far it has grown, and which model.
+#[derive(Clone, Copy, Debug)]
+pub struct Stood {
+    pub at: Vec2,
+    pub yaw: f32,
+    pub growth: f32,
+    pub kind: Kind,
+    pub variation: u32,
+}
+
+/// Everything the tile `(q, r)` with `cover` stands, each handed to
+/// `stand` with its place measured from the centre of tile `from`: what
+/// grows at each site and each stump, each pile and boulder in its slot,
+/// and the construct or fixture on its centre. The one rule for what a
+/// tile's cover is drawn as, whoever draws it.
+pub fn standing_on(cover: common::Cover, (q, r): (i32, i32), from: (i32, i32), mut stand: impl FnMut(Stood)) {
+    let (dq, dr) = (q - from.0, r - from.1);
+    for (k, slot) in cover.filled().chain(cover.stumps()) {
+        let sway = common::sway(q, r, k);
+        stand(Stood { at: slot_center(dq, dr, k, &sway).into(), yaw: sway.yaw as f32, growth: sway.growth as f32, kind: slot.into(), variation: sway.variation });
+    }
+    // A pile lies in its slot as its model stands, turned and placed
+    // by the slot's own sway as a boulder's.
+    for k in 0..TILE_SLOTS as usize {
+        let Some(kind) = Kind::pile(cover.content(k)) else { continue };
+        let sway = common::boulder_sway(q, r, k);
+        stand(Stood { at: boulder_center(dq, dr, k, &sway).into(), yaw: sway.yaw as f32, growth: 1.0, kind, variation: sway.variation });
+    }
+    for k in cover.boulders() {
+        let sway = common::boulder_sway(q, r, k);
+        stand(Stood { at: boulder_center(dq, dr, k, &sway).into(), yaw: sway.yaw as f32, growth: common::cover::boulder_growth(cover, q, r, k), kind: Kind::Boulder, variation: sway.variation });
+    }
+    let centre = Vec2::from(flat_top_tile_center(dq, dr, 1.0));
+    // A construct stands square on its tile's centre, its corners
+    // the tile's, so a run of blockades meets edge to edge.
+    if let Some(construct) = common::building::standing(cover) {
+        stand(Stood { at: centre, yaw: 0.0, growth: 1.0, kind: built(construct), variation: 0 });
+    }
+    // A fixture stands on its tile's centre as a construct does,
+    // each turned its tile's own way but the stakes, which face
+    // the way their cover says: out of their hub
+    let raised = common::building::fixture(cover).map(|fixture| (fixture, 0));
+    let empty = common::building::emptied_post(cover).then_some((common::building::Fixture::Post, POST_EMPTY));
+    if let Some((fixture, stage)) = raised.or_else(|| common::building::rising(cover)).or(empty) {
+        let yaw = if fixture == common::building::Fixture::Stakes {
+            cover.facing().map_or(0.0, facing_yaw)
+        } else if fixture.tiles().len() > 1 {
+            // One on more tiles than its own lies on them as its cover is turned
+            turn_yaw(common::building::turn(cover))
+        } else {
+            common::cover::boulder_sway(q, r, common::building::SLOT).yaw as f32
+        };
+        stand(Stood { at: centre, yaw, growth: 1.0, kind: Kind::Raised(fixture, stage), variation: 0 });
+    }
+}
+
 /// The cover of a mesh region at level `radius`, from the map's covers:
 /// one instance per filled site, stump, pile and boulder slot of every
 /// tile the region's cells cover, standing on the level's drawn surface
@@ -589,85 +667,18 @@ pub fn place_cover(
             if cover.is_empty() {
                 continue;
             }
-            for (k, slot) in cover.filled().chain(cover.stumps()) {
-                let sway = common::sway(q, r, k);
-                let (x, z) = slot_center(q - origin.q, r - origin.r, k, &sway);
-                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
+            standing_on(cover, (q, r), (origin.q, origin.r), |stood| {
+                let y = surface.at(stood.at).map_or(height_y(cell_z.above(0)), |(y, _)| y);
                 out.push(CoverInstance {
-                    translation: Vec3::new(x, y, z),
-                    yaw: sway.yaw as f32,
+                    translation: Vec3::new(stood.at.x, y, stood.at.y),
+                    yaw: stood.yaw,
                     tilt: Quat::IDENTITY,
-                    growth: sway.growth as f32,
-                    kind: slot.into(),
-                    variation: sway.variation,
+                    growth: stood.growth,
+                    kind: stood.kind,
+                    variation: stood.variation,
                     far: false,
                 });
-            }
-            // A pile lies in its slot as its model stands, turned and placed
-            // by the slot's own sway as a boulder's.
-            for k in 0..TILE_SLOTS as usize {
-                let Some(kind) = Kind::pile(cover.content(k)) else { continue };
-                let sway = common::boulder_sway(q, r, k);
-                let (x, z) = boulder_center(q - origin.q, r - origin.r, k, &sway);
-                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
-                out.push(CoverInstance {
-                    translation: Vec3::new(x, y, z),
-                    yaw: sway.yaw as f32,
-                    tilt: Quat::IDENTITY,
-                    growth: 1.0,
-                    kind,
-                    variation: sway.variation,
-                    far: false,
-                });
-            }
-            for k in cover.boulders() {
-                let sway = common::boulder_sway(q, r, k);
-                let (x, z) = boulder_center(q - origin.q, r - origin.r, k, &sway);
-                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
-                out.push(CoverInstance {
-                    translation: Vec3::new(x, y, z),
-                    yaw: sway.yaw as f32,
-                    tilt: Quat::IDENTITY,
-                    growth: common::cover::boulder_growth(cover, q, r, k),
-                    kind: Kind::Boulder,
-                    variation: sway.variation,
-                    far: false,
-                });
-            }
-            // A construct stands square on its tile's centre, its corners
-            // the tile's, so a run of blockades meets edge to edge.
-            if let Some(construct) = common::building::standing(cover) {
-                let (x, z) = flat_top_tile_center(q - origin.q, r - origin.r, 1.0);
-                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
-                out.push(CoverInstance {
-                    translation: Vec3::new(x, y, z),
-                    yaw: 0.0,
-                    tilt: Quat::IDENTITY,
-                    growth: 1.0,
-                    kind: built(construct),
-                    variation: 0,
-                    far: false,
-                });
-            }
-            // A fixture stands on its tile's centre as a construct does,
-            // each turned its tile's own way but the stakes, which face
-            // the way their cover says: out of their hub
-            let raised = common::building::fixture(cover).map(|fixture| (fixture, 0));
-            let empty = common::building::emptied_post(cover).then_some((common::building::Fixture::Post, POST_EMPTY));
-            if let Some((fixture, stage)) = raised.or_else(|| common::building::rising(cover)).or(empty) {
-                let (x, z) = flat_top_tile_center(q - origin.q, r - origin.r, 1.0);
-                let y = surface.at(Vec2::new(x, z)).map_or(height_y(cell_z.above(0)), |(y, _)| y);
-                let sway = common::cover::boulder_sway(q, r, common::building::SLOT);
-                out.push(CoverInstance {
-                    translation: Vec3::new(x, y, z),
-                    yaw: if fixture == common::building::Fixture::Stakes { cover.facing().map_or(0.0, facing_yaw) } else { sway.yaw as f32 },
-                    tilt: Quat::IDENTITY,
-                    growth: 1.0,
-                    kind: Kind::Raised(fixture, stage),
-                    variation: 0,
-                    far: false,
-                });
-            }
+            });
         }
     }
     out
@@ -925,6 +936,17 @@ mod tests {
         for (toward, &(q, r)) in common::cover::FACINGS.iter().enumerate() {
             let (x, z) = flat_top_tile_center(q, r, 1.0);
             let front = Quat::from_rotation_y(-facing_yaw(toward)) * Vec3::NEG_Z;
+            // A model turned a sixth at a time lays each tile it was built on over the tile it is turned to
+            if toward % 2 == 0 {
+                let turn = (toward / 2) as u8;
+                for fixture in common::building::Fixture::ALL {
+                    for &tile in fixture.tiles() {
+                        let centre = |(q, r): (i32, i32)| { let (x, z) = flat_top_tile_center(q, r, 1.0); Vec3::new(x, 0.0, z) };
+                        let lain = Quat::from_rotation_y(-turn_yaw(turn)) * centre(tile);
+                        assert!(lain.distance(centre(common::building::turned(tile, turn))) < 1e-4, "{fixture:?} turned {turn}: {tile:?}");
+                    }
+                }
+            }
             assert!(front.abs_diff_eq(Vec3::new(x, 0.0, z).normalize(), 1e-4), "{toward}: {front:?}");
         }
     }

@@ -160,7 +160,7 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
                 TextFont { font_size: FontSize::Px(14.0), ..default() },
                 TextColor(Color::srgb(0.85, 0.85, 0.85)),
             ));
-            hint_row(tab, None, &[Hint::range(&ENTRY_KEYS, "select"), Hint::key(KeyCode::NumpadDecimal, "next row")]);
+            hint_row(tab, None, &[Hint::range(&crate::caps!(ENTRY_KEYS), "select"), Hint::key(crate::cap!(KeyCode::NumpadDecimal), "next row")]);
             tab.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(12.), ..default() }).with_children(|row| {
                 row.spawn((
                     BagCells,
@@ -266,7 +266,7 @@ pub fn update(
                             let Some(slot) = slot else { return };
                             cell_contents(cell, &asset_server, slot, 1.0);
                             if on_cursor {
-                                corner_keycap(cell, ENTRY_KEYS[column]);
+                                corner_keycap(cell, crate::caps!(ENTRY_KEYS)[column]);
                             }
                         });
                 }
@@ -335,7 +335,7 @@ fn spawn_detail(pane: &mut ChildSpawnerCommands, asset_server: &AssetServer, sel
             if let Some(kept) = kept {
                 line(pane, kept.refuses().into(), 13.0, FAINT);
             } else {
-                hint_row(pane, None, &[Hint::key(KEYCODE_DROP, does)]);
+                hint_row(pane, None, &[Hint::key(crate::cap!(KEYCODE_DROP), does)]);
             }
         }
         Lot::Stack(stack) => {
@@ -344,7 +344,7 @@ fn spawn_detail(pane: &mut ChildSpawnerCommands, asset_server: &AssetServer, sel
             if let Some((_, count)) = dropping.filter(|&(kind, _)| kind == stack.kind) {
                 crate::systems::drop_panel::spawn_entry(pane, count, does);
             } else {
-                hint_row(pane, None, &[Hint::key(KEYCODE_DROP, does)]);
+                hint_row(pane, None, &[Hint::key(crate::cap!(KEYCODE_DROP), does)]);
             }
         }
     }

@@ -14,13 +14,13 @@ use super::{
 pub fn handle_console_input(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut console: ResMut<DevConsole>,
-    panel: Res<crate::systems::character_panel::CharacterPanelState>,
+    focus: Res<crate::systems::focus::NumpadFocus>,
     mut action_writer: MessageWriter<DevConsoleAction>,
     time: Res<Time>,
 ) {
     let before = console.clone();
     let state = console.bypass_change_detection();
-    handle(&mut keyboard, state, &panel, &mut action_writer, time.delta_secs());
+    handle(&mut keyboard, state, !focus.is_empty(), &mut action_writer, time.delta_secs());
     if *state != before {
         console.set_changed();
     }
@@ -29,13 +29,14 @@ pub fn handle_console_input(
 fn handle(
     keyboard: &mut ButtonInput<KeyCode>,
     console: &mut DevConsole,
-    panel: &crate::systems::character_panel::CharacterPanelState,
+    panelled: bool,
     action_writer: &mut MessageWriter<DevConsoleAction>,
     dt: f32,
 ) {
-    // Toggle console visibility with NumpadDivide. The open character panel
-    // has the numpad, so the console does not open over it.
-    let panel_has_numpad = panel.visible && !console.visible;
+    // Toggle console visibility with NumpadDivide. A panel that is open
+    // (`panelled`) has the numpad, that key with the rest, so the console
+    // does not open over it.
+    let panel_has_numpad = panelled && !console.visible;
     if keyboard.just_pressed(KeyCode::NumpadDivide) && !panel_has_numpad {
         console.visible = !console.visible;
 

@@ -139,7 +139,7 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity) {
             })
             .with_children(|bag| {
                 use crate::systems::keycap::{hint_row, Hint};
-                hint_row(bag, Some("Wearables"), &[Hint::range(&crate::systems::gathering::ENTRY_KEYS, "wear or take off"), Hint::key(KeyCode::NumpadDecimal, "next row")]);
+                hint_row(bag, Some("Wearables"), &[Hint::range(&crate::caps!(crate::systems::gathering::ENTRY_KEYS), "wear or take off"), Hint::key(crate::cap!(KeyCode::NumpadDecimal), "next row")]);
                 bag.spawn((
                     BagGrid,
                     Node {
@@ -296,7 +296,7 @@ pub fn rebuild_bag(
                                 ImageNode::new(icon(&asset_server, item)),
                                 Node { width: Val::Px(CELL - 8.0), height: Val::Px(CELL - 8.0), ..default() },
                             ));
-                            crate::systems::keycap::corner_keycap(cell, crate::systems::gathering::ENTRY_KEYS[c]).insert((BagCellKey, Visibility::Hidden));
+                            crate::systems::keycap::corner_keycap(cell, crate::caps!(crate::systems::gathering::ENTRY_KEYS)[c]).insert((BagCellKey, Visibility::Hidden));
                         });
                 }
             });

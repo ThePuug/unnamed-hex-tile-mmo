@@ -35,7 +35,7 @@ use crate::{
 
 /// AOI radius: entities within this distance are visible to players.
 /// Covers FOV_CHUNK_RADIUS + 1 buffer chunk in all directions (hex chunks).
-const AOI_RADIUS: i32 = (FOV_CHUNK_RADIUS as i32 + 1) * CHUNK_SPACING as i32 + CHUNK_RADIUS as i32;
+pub(crate) const AOI_RADIUS: i32 = (FOV_CHUNK_RADIUS as i32 + 1) * CHUNK_SPACING as i32 + CHUNK_RADIUS as i32;
 
 /// Exit radius: hysteresis buffer to prevent enter/exit flicker at the boundary.
 pub(crate) const EXIT_RADIUS: i32 = AOI_RADIUS + CHUNK_SPACING as i32;

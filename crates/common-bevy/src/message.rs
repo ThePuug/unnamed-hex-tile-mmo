@@ -161,6 +161,9 @@ pub enum Event {
     /// its hearth, or None where its home is the haven. Sent to its owner
     /// only.
     Home { ent: Entity, home: Option<Qrz> },
+    /// Where a player lives, as the server holds it: the home it claimed,
+    /// or none.
+    Lives { ent: Entity, home: Option<Qrz> },
     /// Server → Client: whether `ent` stands on ground a hub holds, the
     /// ground its fortifications border, as it enters the world and
     /// whenever that changes. Sent to its owner only.
@@ -169,21 +172,27 @@ pub enum Event {
     /// wagon, once the camp's line is raised; None where there is no
     /// wagon to speak of. Sent to its owner only.
     Wagon { ent: Entity, wagon: Option<common::building::Wagon> },
+    /// Server → Client: the tiles the stopped wagons that matter to `ent`
+    /// stand on, those of the hub it lives in and those carrying what it
+    /// loaded, as it enters the world and whenever they change. Sent to
+    /// its owner only.
+    Stopped { ent: Entity, wagons: Vec<(i32, i32)> },
     /// Client → Server (Try): `ent` looks at the wagon standing beside
     /// it, and loads on it so many of a material from its bag, where
     /// `give` names them
-    Load { ent: Entity, give: Option<common::Stack> },
+    Load { ent: Entity, give: Option<common::Stack>, take: Option<common::Stack> },
     /// Server → Client: what the wagon `ent` looked at holds, or None
     /// where none stands near enough. Sent to its owner only.
     Loaded { ent: Entity, load: Option<Vec<common::Stack>> },
     /// Client → Server (Try): `ent` looks at the storehouse standing
     /// beside it, and leaves in it so many of a material from its bag,
-    /// where `give` names them, or takes so many of its own out of it,
-    /// where `take` does
-    Store { ent: Entity, give: Option<common::Stack>, take: Option<common::Stack> },
+    /// or moves so many of a material as `moved` says, where it names any
+    Store { ent: Entity, moved: Option<(common::building::Stowing, common::Stack)> },
     /// Server → Client: what `ent` has in the storehouse it looked at,
-    /// or None where none stands near enough. Sent to its owner only.
-    Stored { ent: Entity, held: Option<Vec<common::Stack>> },
+    /// or None where none stands near enough, and what it has on its
+    /// hub's wagon, None where that wagon is not at home to be loaded.
+    /// Sent to its owner only.
+    Stored { ent: Entity, held: Option<Vec<common::Stack>>, cart: Option<Vec<common::Stack>> },
     /// Client → Server (Try): `ent` hands the settler beside it the map
     /// in its main hand and sends the camp's wagon by it to the hub
     /// known by the tile `to`
@@ -211,7 +220,18 @@ pub enum Event {
     Hail { ent: Entity, give: bool },
     /// A player asks the settler it hails what growing its hub a tier,
     /// or shrinking it, would do, or to carry that out.
-    Plan { ent: Entity, grow: bool, carry: bool },
+    Plan { ent: Entity, order: common::building::Order, carry: bool },
+    /// A player raises a fixture of a hub by hand on tile `(q, r)`: its
+    /// hitching post, or one of its first tents.
+    Raise { ent: Entity, fixture: common::building::Fixture, q: i32, r: i32 },
+    /// A player asks for the hub it stands in as its planning shows it,
+    /// and the server answers its owner: none where no hub holds that
+    /// ground.
+    Layout { ent: Entity, layout: Option<common::building::Layout> },
+    /// A player asks where raising `fixture` would stand it were it to
+    /// name tile `(q, r)`, and the server answers its owner with the tile
+    /// it would stand on; `stands` false where it would stand nowhere.
+    Sited { ent: Entity, fixture: common::building::Fixture, q: i32, r: i32, stands: bool },
     /// What the settler says the plan asked after would do; none where
     /// it makes none, or has carried it out.
     Planned { ent: Entity, plan: Option<common::building::Planned> },
@@ -282,12 +302,17 @@ impl Event {
             | Event::Activity { ent, .. }
             | Event::Build { ent, .. }
             | Event::Home { ent, .. }
+            | Event::Lives { ent, .. }
             | Event::Hail { ent, .. }
             | Event::Plan { ent, .. }
+            | Event::Raise { ent, .. }
+            | Event::Sited { ent, .. }
+            | Event::Layout { ent, .. }
             | Event::Planned { ent, .. }
             | Event::Draw { ent, .. }
             | Event::Charted { ent, .. }
             | Event::Wagon { ent, .. }
+            | Event::Stopped { ent, .. }
             | Event::Load { ent, .. }
             | Event::Loaded { ent, .. }
             | Event::Store { ent, .. }

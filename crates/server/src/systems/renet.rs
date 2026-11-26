@@ -150,7 +150,7 @@ pub fn do_presence(
                 }
                 let (Some(spawn_point), true) = (spawn_point, known.knows(identity)) else { return wait() };
                 info!("Player {} entered the world", client_id);
-                let Kept { equipment, inventory: bag, attrs, loadout, at: qrz, heading, home } = known.as_left(identity).cloned().unwrap_or_else(|| {
+                let Kept { equipment, inventory: bag, attrs, loadout, at: qrz, heading, home, lives } = known.as_left(identity).cloned().unwrap_or_else(|| {
                     let fresh = Kept::fresh(spawn_point.0);
                     for &item in &fresh.inventory.items {
                         commands.write_message(Moved { what: Thing::Piece(item), count: 1, from: Holder::World, to: Holder::Character(identity), cause: Cause::Outfit });
@@ -182,6 +182,9 @@ pub fn do_presence(
                 ));
                 if let Some(home) = home {
                     commands.entity(ent).insert(common_bevy::components::Home(home));
+                }
+                if let Some(lives) = lives {
+                    commands.entity(ent).insert(common_bevy::components::Lives(lives));
                 }
 
                 // init input buffer for client
@@ -271,14 +274,15 @@ type Playing = (
     &'static Loc,
     &'static common_bevy::components::heading::Heading,
     Option<&'static common_bevy::components::Home>,
+    Option<&'static common_bevy::components::Lives>,
 );
 
 /// Keeps `ent` as it stands, where it is a character, for when its player
 /// next enters.
 fn remember(ent: Entity, playing: &Query<Playing>, known: &mut Characters) {
-    let Ok((&Character(identity), equipment, inventory, attrs, loadout, loc, heading, home)) = playing.get(ent) else { return };
-    let home = home.map(|home| home.0);
-    known.leave(identity, Kept { equipment: *equipment, inventory: inventory.clone(), attrs: *attrs, loadout: *loadout, at: **loc, heading: *heading, home });
+    let Ok((&Character(identity), equipment, inventory, attrs, loadout, loc, heading, home, lives)) = playing.get(ent) else { return };
+    let (home, lives) = (home.map(|home| home.0), lives.map(|lives| lives.0));
+    known.leave(identity, Kept { equipment: *equipment, inventory: inventory.clone(), attrs: *attrs, loadout: *loadout, at: **loc, heading: *heading, home, lives });
 }
 
 /// Takes `ent`, the lobby entry `client_id` just left, out of the client's
@@ -375,6 +379,9 @@ pub fn write_try(
                 | Event::Build { .. }
                 | Event::Hail { .. }
                 | Event::Plan { .. }
+                | Event::Raise { .. }
+                | Event::Sited { .. }
+                | Event::Layout { .. }
                 | Event::Draw { .. }
                 | Event::Load { .. }
                 | Event::Store { .. }
@@ -435,13 +442,17 @@ fn route(event: &Event) -> Option<Route> {
         | Event::CoverChanged { ent, .. }
         | Event::Den { ent, .. }
         | Event::Home { ent, .. }
+        | Event::Lives { ent, .. }
         | Event::Wants { ent, .. }
         | Event::Planned { ent, .. }
         | Event::Wagon { ent, .. }
+        | Event::Stopped { ent, .. }
         | Event::Loaded { ent, .. }
         | Event::Stored { ent, .. }
         | Event::Charted { ent, .. }
         | Event::Sheltered { ent, .. }
+        | Event::Sited { ent, .. }
+        | Event::Layout { ent, .. }
         | Event::Loot { ent, .. } => Some(Route::Owner(*ent)),
         Event::ChunkData { ent, .. }
         | Event::EvictChunks { ent, .. }

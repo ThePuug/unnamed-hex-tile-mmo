@@ -48,6 +48,21 @@ fn setup(
     light_config.color = LightGizmoColor::MatchLightColor;
 }
 
+/// Keeps what the client logs in a file beside its settings as well as
+/// on its terminal: `client.log` in its data folder, or
+/// `client-<name>.log` for the player `IDENTITY` names, and the run
+/// before it as `.previous.log`. A bug report has what the terminal had.
+fn log_file(_app: &mut App) -> Option<bevy::log::BoxedLayer> {
+    use bevy::log::tracing_subscriber::{self, Layer};
+    let folder = user_data::folder("client")?;
+    std::fs::create_dir_all(&folder).ok()?;
+    let stem = std::env::var("IDENTITY").map_or("client".to_owned(), |name| format!("client-{name}"));
+    let path = folder.join(format!("{stem}.log"));
+    let _ = std::fs::rename(&path, folder.join(format!("{stem}.previous.log")));
+    let file = std::fs::File::create(&path).ok()?;
+    Some(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(std::sync::Mutex::new(file)).boxed())
+}
+
 fn main() {
     let mut app = App::new();
     app.add_plugins((DefaultPlugins
@@ -65,7 +80,7 @@ fn main() {
                 "wgpu=error,naga=warn,polling=warn,winit=warn,offset_allocator=warn,gilrs=warn,\
                  cosmic_text=warn,renetcode=warn,renet=warn,client=trace,world=warn,bevy=warn,\
                  ureq=warn,ureq_proto=warn,rustls=warn".to_string(),
-            custom_layer: |_| None,
+            custom_layer: log_file,
             ..default()
         }),
         crate::network::NetworkPlugin,
@@ -175,7 +190,7 @@ fn main() {
         world::do_calendar,
         world::do_settings,
         // Told once as the character enters, while the world still loads
-        (crate::systems::building::do_home, crate::systems::building::do_sheltered),
+        (crate::systems::building::do_home, crate::systems::building::do_sheltered, crate::systems::building::do_sited),
         (
             equipment::do_inventory,
             equipment::dress,
@@ -192,10 +207,12 @@ fn main() {
 
     app.add_systems(Update, (
         gathering::request,
-        gathering::mark,
+        crate::systems::aim::mark,
         gathering::do_loot,
         gathering::do_activity,
         (crate::systems::building::request, crate::systems::building::update).chain(),
+        crate::systems::building::update_claim,
+        crate::systems::building::draw_ghost,
         // The wagon is asked after before a hail is let go, or the T that lets a settler be would look at its wagon
         (crate::systems::settlers::load, crate::systems::settlers::request, crate::systems::settlers::do_wants, crate::systems::settlers::do_loaded, crate::systems::settlers::update, crate::systems::settlers::update_wagon).chain(),
         (crate::systems::chart::request, crate::systems::chart::update).chain(),
@@ -228,15 +245,22 @@ fn main() {
     app.init_resource::<gathering::LootWindow>();
     app.init_resource::<crate::systems::building::BuildPanel>();
     app.init_resource::<crate::systems::building::HomeHearth>();
+    app.init_resource::<crate::systems::building::Claims>();
+    app.init_resource::<crate::systems::building::Ghosts>();
     app.init_resource::<crate::systems::building::Sheltered>();
     app.init_resource::<crate::systems::settlers::Hailed>();
     app.init_resource::<crate::systems::settlers::Carted>();
+    app.init_resource::<crate::systems::settlers::Stopped>();
     app.init_resource::<crate::systems::settlers::Loading>();
     app.init_resource::<crate::systems::settlers::Asked>();
+    app.init_resource::<crate::systems::planning::Planning>();
+    app.add_systems(Update, (crate::systems::planning::request, crate::systems::planning::hear, crate::systems::planning::update).chain());
     app.init_resource::<crate::systems::chart::Reading>();
     app.init_resource::<crate::systems::chart::Maps>();
     // Whatever the screen: a map sent while another stands is still kept
     app.add_systems(Update, crate::systems::chart::do_charted);
+    app.add_systems(Startup, crate::systems::chart::recall);
+    app.add_systems(Update, crate::systems::chart::keep);
     app.init_resource::<crate::systems::chart::Drawing>();
     app.init_resource::<movement::Corrections>();
     app.init_resource::<crate::systems::focus::NumpadFocus>();

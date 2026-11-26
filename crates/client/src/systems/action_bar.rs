@@ -127,7 +127,7 @@ pub fn sync_loadout(
     commands.entity(container).despawn_related::<Children>();
     let Some((_, typ, held)) = seer else { return };
     commands.entity(container).with_children(|parent| {
-        for (keybind, ability) in KEYS.into_iter().zip(loadout(typ, held)) {
+        for (keybind, ability) in crate::caps!(KEYS).into_iter().zip(loadout(typ, held)) {
             spawn_slot(parent, keybind, ability, ability.map(|a| asset_server.load(icon_path(a))));
         }
     });
@@ -168,7 +168,7 @@ pub fn bar_grid() -> Node {
 /// own, where help shows what the key does; one not is a picture of a
 /// slot, as a panel shows the bar. Returns the slot, for what else it
 /// holds.
-pub fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, keybind: KeyCode, icon: Option<Handle<Image>>, side: f32, named: bool) -> EntityCommands<'a> {
+pub fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, keybind: crate::systems::keycap::Cap, icon: Option<Handle<Image>>, side: f32, named: bool) -> EntityCommands<'a> {
     let mut slot = parent.spawn((
         Node {
             width: Val::Px(side),
@@ -195,7 +195,7 @@ pub fn slot_frame<'a>(parent: &'a mut ChildSpawnerCommands, keybind: KeyCode, ic
     slot
 }
 
-fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: KeyCode, ability: Option<AbilityType>, icon: Option<Handle<Image>>) {
+fn spawn_slot(parent: &mut ChildSpawnerCommands, keybind: crate::systems::keycap::Cap, ability: Option<AbilityType>, icon: Option<Handle<Image>>) {
     slot_frame(parent, keybind, icon, SLOT_PX, true).insert(AbilitySlot { ability }).with_children(|parent| {
         parent.spawn((
             Node {

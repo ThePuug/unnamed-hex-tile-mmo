@@ -57,13 +57,18 @@ fn get_message_type_name(message: &Do) -> &'static str {
         Event::Activity { .. } => "Activity",
         Event::Build { .. } => "Build",
         Event::Home { .. } => "Home",
+        Event::Lives { .. } => "Lives",
         Event::Hail { .. } => "Hail",
         Event::Plan { .. } => "Plan",
+        Event::Raise { .. } => "Raise",
+        Event::Sited { .. } => "Sited",
+        Event::Layout { .. } => "Layout",
         Event::Planned { .. } => "Planned",
         Event::Draw { .. } => "Draw",
         Event::Charted { .. } => "Charted",
         Event::Settings { .. } => "Settings",
         Event::Wagon { .. } => "Wagon",
+        Event::Stopped { .. } => "Stopped",
         Event::Load { .. } => "Load",
         Event::Loaded { .. } => "Loaded",
         Event::Store { .. } => "Store",
@@ -226,13 +231,17 @@ pub fn write_do(
                 | Event::Inventory { .. }
                 | Event::Loot { .. }
                 | Event::Home { .. }
+                | Event::Lives { .. }
                 | Event::Wants { .. }
                 | Event::Planned { .. }
                 | Event::Wagon { .. }
+                | Event::Stopped { .. }
                 | Event::Loaded { .. }
                 | Event::Stored { .. }
                 | Event::Charted { .. }
                 | Event::Sheltered { .. }
+                | Event::Sited { .. }
+                | Event::Layout { .. }
                 | Event::Activity { .. }
                 | Event::Activate { .. }
                 | Event::Recharge { .. }
@@ -360,6 +369,9 @@ pub fn send_try(
             | Event::Build { .. }
             | Event::Hail { .. }
             | Event::Plan { .. }
+            | Event::Raise { .. }
+            | Event::Sited { .. }
+            | Event::Layout { .. }
             | Event::Draw { .. }
             | Event::Load { .. }
             | Event::Store { .. }

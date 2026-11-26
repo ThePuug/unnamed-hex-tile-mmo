@@ -803,9 +803,9 @@ fn setup(mut commands: Commands) {
                 parent,
                 None,
                 &[
-                    Hint::either(&[KeyCode::ArrowUp, KeyCode::ArrowDown], "choose"),
-                    Hint::either(&[KeyCode::ArrowLeft, KeyCode::ArrowRight], "change"),
-                    Hint::either(&[KeyCode::Enter, KeyCode::Escape], "back"),
+                    Hint::either(&crate::caps!([KeyCode::ArrowUp, KeyCode::ArrowDown]), "choose"),
+                    Hint::either(&crate::caps!([KeyCode::ArrowLeft, KeyCode::ArrowRight]), "change"),
+                    Hint::either(&crate::caps!([KeyCode::Enter, KeyCode::Escape]), "back"),
                 ],
             );
         });

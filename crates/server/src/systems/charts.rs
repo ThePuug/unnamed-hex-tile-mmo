@@ -323,6 +323,7 @@ fn map_piece() -> Option<Piece> {
 pub fn try_draw(
     mut reader: MessageReader<Try>,
     mut charts: ResMut<Charts>,
+    settings: Res<common_bevy::settings::Settings>,
     mut players: Query<(&mut Inventory, &Equipment, &Character)>,
     mut writer: MessageWriter<Do>,
     mut moved: MessageWriter<Moved>,
@@ -333,9 +334,12 @@ pub fn try_draw(
         let Ok((mut bag, worn, &Character(who))) = players.get_mut(ent) else { continue };
         let (Some(piece), cost) = (map_piece(), common::building::MAP_COST) else { continue };
         let of = held(worn);
+        // Provided, the bag is given the fibre it lacks, once the map is one it may draw
+        let short = if crate::systems::settlers::provided(&settings) { cost.count.saturating_sub(bag.count(cost.kind)) } else { 0 };
+        let fibre = bag.count(cost.kind) + short;
         // The fibre spent frees its stack only where it is all the bag holds
-        let room = bag.stacks(worn) < BAG_STACKS || bag.count(cost.kind) == cost.count;
-        if bag.count(cost.kind) < cost.count || !room || (copy && of.is_none()) {
+        let room = bag.stacks(worn) < BAG_STACKS || fibre == cost.count;
+        if fibre < cost.count || !room || (copy && of.is_none()) {
             info!("charts: {ent} cannot draw a map");
             continue;
         }
@@ -347,6 +351,11 @@ pub fn try_draw(
             charts.copy(of, number);
         }
         let map = Item { piece, seed: (number % piece.set().seeds.len() as u32) as u16, instance: Some(number) };
+        if short > 0 {
+            let given = common::Stack { kind: cost.kind, count: short };
+            bag.add(given);
+            moved.write(Moved::stack(given, Holder::World, Holder::Character(who), Cause::Grant));
+        }
         let spent = bag.remove(cost.kind, cost.count);
         bag.items.push(map);
         moved.write(Moved::stack(spent, Holder::Character(who), Holder::World, Cause::Draw));

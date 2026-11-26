@@ -109,6 +109,47 @@ pub enum Fixture {
     /// Where a hub keeps what players leave in it and wagons bring them,
     /// each player's its own to take. It fills its tile.
     Storehouse,
+    /// The homes a tent is upgraded to, each on more tiles than the last
+    /// ([`Fixture::tiles`]): a pavilion, a house and a tenement.
+    Pavilion,
+    House,
+    Tenement,
+}
+
+/// Which way a player moves a stack at a storehouse: out of its bag into
+/// the store, out of the store into its bag, out of the store onto its
+/// hub's wagon, or off that wagon into the store. What is its own stays
+/// its own in the store and on the wagon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Stowing {
+    Leave,
+    Take,
+    Load,
+    Unload,
+}
+
+impl Stowing {
+    /// Moving a stack picked at a storehouse, from what is stored where
+    /// `stored` and else from the other side, the wagon where `wagon` and
+    /// else the bag.
+    pub fn of(stored: bool, wagon: bool) -> Stowing {
+        match (stored, wagon) {
+            (true, false) => Stowing::Take,
+            (true, true) => Stowing::Load,
+            (false, false) => Stowing::Leave,
+            (false, true) => Stowing::Unload,
+        }
+    }
+
+    /// What it does, said as the panel's heading.
+    pub fn says(self) -> &'static str {
+        match self {
+            Stowing::Leave => "Deposit: bag to storehouse",
+            Stowing::Take => "Withdraw: storehouse to bag",
+            Stowing::Load => "Load: storehouse to wagon",
+            Stowing::Unload => "Unload: wagon to storehouse",
+        }
+    }
 }
 
 /// What a blank map is drawn on, and a copy of one: so much fibre.
@@ -200,23 +241,67 @@ pub enum Task {
     Clear,
 }
 
-/// What a settler says to a player who hails it: what it does next, none
-/// once the ground is as its hub's plan says, and what its camp still
-/// lacks for all it has yet to raise.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// What a settler says to a player who hails it: what its hub's planners
+/// do next, none once the ground is as its plans say, what its camp still
+/// lacks for all it has yet to raise, and how its hub stands: how many
+/// residents it is planned for, which zones have a planner, each a bit by
+/// the number the zone is kept by, the zone it may hire one for next,
+/// none as 0, whether its wall is to be raised, the zone the settler
+/// hailed is the planner of, none as 0: what it does next, and what it
+/// may be asked for, are that zone's; and whether it is busy, its task
+/// begun and not yet done, and takes no order until it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wants {
     pub task: Option<Task>,
     pub needs: Needs,
+    pub planned: u32,
+    pub hired: u8,
+    pub hires: u8,
+    pub walled: bool,
+    pub zone: u8,
+    pub busy: bool,
 }
 
-/// What a settler says a plan would do: the tiles it builds on and gives
-/// up, the tiles it raises stakes on and pulls them from, the tiles its
-/// path comes to cross and those it crosses no more, how many hubs it
-/// takes in or parts off, and what its camp still lacks for it.
+/// What a player asks of a hub's planners. A zone is named by the number
+/// it is kept by.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Order {
+    /// The hub drawn in to what its residents defend.
+    #[default]
+    Shrink,
+    /// The hub planned for so many more residents, or fewer.
+    Residents(i32),
+    /// Its wall raised.
+    Wall,
+    /// A fixture raised where its zone's planner puts it.
+    Raise(Fixture),
+    /// A planner hired for a zone, or for the next the hub may hire one
+    /// for where the zone is 0.
+    Hire(u32),
+    /// A zone centred on a tile.
+    Zone(u32, i32, i32),
+    /// What stands on a tile upgraded, or downgraded.
+    Upgrade(i32, i32),
+    Downgrade(i32, i32),
+}
+
+impl Order {
+    /// Whether it takes materials before it is carried out: one that
+    /// only gives ground or buildings up is carried whatever its camp
+    /// has.
+    pub fn builds(self) -> bool {
+        !matches!(self, Order::Shrink | Order::Downgrade(..))
+    }
+}
+
+/// What a settler says a plan would do: the order it answers, the tiles
+/// it builds on and gives up, the tiles it raises stakes on and pulls
+/// them from, the tiles its path comes to cross and those it crosses no
+/// more, how many hubs it takes in or parts off, and what its camp still
+/// lacks for it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Planned {
-    /// A tier up, or else drawn in to what its people hold.
-    pub grow: bool,
+    pub order: Order,
     pub built: Vec<(i32, i32)>,
     pub gone: Vec<(i32, i32)>,
     pub raised: Vec<(i32, i32)>,
@@ -227,17 +312,55 @@ pub struct Planned {
     pub needs: Needs,
 }
 
+/// A thing of a hub as its planning shows it: what it is and its level,
+/// by the numbers they are kept by, the tiles it lies on, who lives in
+/// it, and whether it stands yet or is only planned.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Laid {
+    pub what: u8,
+    pub level: u8,
+    pub tiles: Vec<(i32, i32)>,
+    pub players: u8,
+    pub settlers: u8,
+    pub stands: bool,
+}
+
+/// A hub as its planning shows it: how many live in it and how many it
+/// is planned for; which zones have a planner, which of them are at
+/// work, each a bit by the number the zone is kept by, and the zone it
+/// may hire one for next, none as 0; whether its wall is to be raised;
+/// the ground it claims, the tiles its wall runs on, the tiles nothing
+/// is planned on as the ground lies, each zone's centre and every thing
+/// of it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Layout {
+    pub residents: u32,
+    pub wants: u32,
+    pub hired: u8,
+    pub busy: u8,
+    pub hires: u8,
+    pub walled: bool,
+    pub ground: Vec<(i32, i32)>,
+    pub wall: Vec<(i32, i32)>,
+    pub barred: Vec<(i32, i32)>,
+    pub zones: Vec<(u8, i32, i32)>,
+    pub items: Vec<Laid>,
+}
+
 /// What a settler with nothing more to raise says of its wagon: what
 /// is loaded on it, and the hubs the map in the player's hand would send
-/// it to, each by the tile it is known by, none with no such map.
+/// it to, each by the tile it is known by, none with no such map. Away,
+/// it is the driver of a wagon stopped on the road that speaks: of what
+/// the wagon carries, and its own hub is among those it may be sent to.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wagon {
     pub load: Vec<Stack>,
     pub hubs: Vec<(i32, i32)>,
+    pub away: bool,
 }
 
 impl Fixture {
-    pub const ALL: [Fixture; 5] = [Fixture::Tent, Fixture::Stakes, Fixture::Wagon, Fixture::Post, Fixture::Storehouse];
+    pub const ALL: [Fixture; 8] = [Fixture::Tent, Fixture::Stakes, Fixture::Wagon, Fixture::Post, Fixture::Storehouse, Fixture::Pavilion, Fixture::House, Fixture::Tenement];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -246,6 +369,9 @@ impl Fixture {
             Fixture::Wagon => "Wagon",
             Fixture::Post => "Hitching post",
             Fixture::Storehouse => "Storehouse",
+            Fixture::Pavilion => "Pavilion",
+            Fixture::House => "House",
+            Fixture::Tenement => "Tenement",
         }
     }
 
@@ -257,6 +383,9 @@ impl Fixture {
             Fixture::Wagon => "wagon",
             Fixture::Post => "hitching-post",
             Fixture::Storehouse => "storehouse",
+            Fixture::Pavilion => "pavilion",
+            Fixture::House => "house",
+            Fixture::Tenement => "tenement",
         }
     }
 
@@ -270,12 +399,15 @@ impl Fixture {
             Fixture::Wagon => Needs { hide: 0, wood: 24, stone: 0 },
             Fixture::Post => Needs { hide: 0, wood: 6, stone: 0 },
             Fixture::Storehouse => Needs { hide: 0, wood: 16, stone: 4 },
+            Fixture::Pavilion => Needs { hide: 20, wood: 20, stone: 0 },
+            Fixture::House => Needs { hide: 0, wood: 60, stone: 36 },
+            Fixture::Tenement => Needs { hide: 0, wood: 128, stone: 96 },
         }
     }
 
     /// Whether it fills its tile once raised, so a walker goes round it.
     pub fn fills(self) -> bool {
-        matches!(self, Fixture::Stakes | Fixture::Storehouse)
+        !matches!(self, Fixture::Wagon)
     }
 
     fn content(self) -> Content {
@@ -285,19 +417,110 @@ impl Fixture {
             Fixture::Wagon => Content::Wagon,
             Fixture::Post => Content::Post,
             Fixture::Storehouse => Content::Storehouse,
+            Fixture::Pavilion => Content::Pavilion,
+            Fixture::House => Content::House,
+            Fixture::Tenement => Content::Tenement,
         }
+    }
+
+    /// The tiles it stands on, about the first, which holds it: the
+    /// footprint its model is built on, before it is turned
+    /// ([`turned`]).
+    pub fn tiles(self) -> &'static [(i32, i32)] {
+        match self {
+            Fixture::Pavilion => &[(0, 0), (1, 0), (0, 1)],
+            Fixture::House => &[(0, 0), (1, 0), (0, 1), (1, 1)],
+            Fixture::Tenement => &[(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (0, 2)],
+            _ => &[(0, 0)],
+        }
+    }
+
+    /// Where it stands to lie on exactly `tiles`: the tile that holds it
+    /// and how many sixths of a turn it is turned. None where its
+    /// footprint lies on them no way.
+    pub fn lies(self, tiles: &[(i32, i32)]) -> Option<((i32, i32), u8)> {
+        let mut wanted = tiles.to_vec();
+        wanted.sort();
+        (0..6u8).flat_map(|turn| tiles.iter().map(move |&first| (first, turn))).find(|&(first, turn)| {
+            let mut lain: Vec<(i32, i32)> = self.tiles().iter().map(|&tile| { let (q, r) = turned(tile, turn); (first.0 + q, first.1 + r) }).collect();
+            lain.sort();
+            lain == wanted
+        })
+    }
+
+    /// The tiles it lies on standing on `first`, turned `turn` sixths.
+    pub fn lain(self, first: (i32, i32), turn: u8) -> Vec<(i32, i32)> {
+        self.tiles().iter().map(|&tile| { let (q, r) = turned(tile, turn); (first.0 + q, first.1 + r) }).collect()
     }
 
     /// `cover` with the fixture begun on it, at its first stage, its
     /// brush cleared, or None where the tile cannot take it: any slot of
-    /// it holds more than brush. A tent and a wagon want the whole tile
-    /// clear though they hold its centre alone, so each stands in the
+    /// it holds more than brush. A wagon wants the whole tile
+    /// clear though it holds its centre alone, so it stands in the
     /// open. One begun fills no slot until it is raised.
     pub fn begun(self, cover: Cover) -> Option<Cover> {
         let free = |k: usize| matches!(cover.content(k), Content::Empty | Content::Brush);
         let cleared = || (0..TILE_SLOTS as usize).fold(cover, |cover, k| cover.with_content(k, Content::Empty));
         (0..TILE_SLOTS as usize).all(free).then(|| cleared().with_content(SLOT, Content::Raising(self, 1)))
     }
+}
+
+/// The step `tile` over the grid, turned `turn` sixths of a turn about
+/// the tile it is counted from.
+pub fn turned(tile: (i32, i32), turn: u8) -> (i32, i32) {
+    (0..turn % 6).fold(tile, |(q, r), _| (-r, q + r))
+}
+
+/// How many sixths of a turn the building on a tile with `cover` is
+/// turned: the way its cover faces, none as none.
+pub fn turn(cover: Cover) -> u8 {
+    cover.facing().map_or(0, |facing| (facing / 2) as u8)
+}
+
+/// `cover` with the building on it turned `turn` sixths of a turn.
+pub fn turning(cover: Cover, turn: u8) -> Cover {
+    cover.faced(Some((turn % 6) as usize * 2))
+}
+
+/// `cover` as a tile of a building that stands beside it, its brush
+/// cleared, or None where a slot of it holds more than brush. It faces
+/// no way: [`annexed_to`] says where its building stands.
+pub fn annexed(cover: Cover) -> Option<Cover> {
+    let free = |k: usize| matches!(cover.content(k), Content::Empty | Content::Brush);
+    (0..TILE_SLOTS as usize).all(free).then(|| stood(cover, Content::Annex).faced(None))
+}
+
+/// `cover`, on `tile`, as a tile of the building that stands on
+/// `holder`: it faces the tile of that building next toward it, which is
+/// the holder itself or another of its tiles, so [`holder`] finds the
+/// building from any of them by steps and no search. None where the tile
+/// cannot be one, or lies further off than any building's tile does.
+pub fn annexed_to(cover: Cover, tile: (i32, i32), holder: (i32, i32)) -> Option<Cover> {
+    let (q, r) = (holder.0 - tile.0, holder.1 - tile.1);
+    // Two tiles off in a line, the tile between is the building's too
+    let step = if q % 2 == 0 && r % 2 == 0 { (q / 2, r / 2) } else { (q, r) };
+    let toward = crate::cover::FACINGS.iter().position(|&facing| facing == step)?;
+    Some(annexed(cover)?.faced(Some(toward)))
+}
+
+/// The tile the building `tile` is one of stands on, read through
+/// `cover_at`: `tile` itself where it is no building's other tile.
+pub fn holder(cover_at: impl Fn((i32, i32)) -> Cover, tile: (i32, i32)) -> (i32, i32) {
+    let mut at = tile;
+    // A building's furthest tile is two steps from the one that holds it
+    for _ in 0..2 {
+        let cover = cover_at(at);
+        let Some(toward) = cover.facing().filter(|_| annex(cover)) else { break };
+        let (q, r) = crate::cover::FACINGS[toward];
+        at = (at.0 + q, at.1 + r);
+    }
+    at
+}
+
+/// Whether a tile with `cover` is one of a building that stands beside
+/// it.
+pub fn annex(cover: Cover) -> bool {
+    cover.content(SLOT) == Content::Annex
 }
 
 /// `cover` with the horse tied at its hitching post led away, the post
@@ -387,6 +610,7 @@ pub fn razed(cover: Cover) -> Option<(Cover, Stack)> {
 /// took. None where nothing built stands there.
 pub fn cleared(cover: Cover) -> Option<(Cover, Needs)> {
     let back = match cover.content(SLOT) {
+        Content::Annex => Needs::default(),
         Content::PostEmpty => Fixture::Post.needs(),
         Content::Raising(fixture, _) => fixture.needs(),
         _ => match (fixture(cover), standing(cover)) {
@@ -400,10 +624,16 @@ pub fn cleared(cover: Cover) -> Option<(Cover, Needs)> {
     Some(((0..TILE_SLOTS as usize).filter(|&k| filled(k)).fold(cover.faced(None), |cover, k| cover.with_content(k, Content::Empty)), back))
 }
 
-/// Whether G uses what stands in slot `k`: a hearth or a tent, to make a
-/// home of.
+/// How near a player hails a settler from, and looks into a wagon or a
+/// storehouse from, in tiles, any way it faces. The server reaches by it
+/// and the client aims by it.
+pub const HAIL: i32 = 2;
+
+/// Whether a player claims what stands in slot `k`: a hearth, to return
+/// to, or a home, to live in. A home on more tiles than one is claimed
+/// on the tile that holds it.
 pub fn used(cover: Cover, k: usize) -> bool {
-    k == SLOT && matches!(cover.content(k), Content::Hearth(_) | Content::Tent)
+    k == SLOT && matches!(cover.content(k), Content::Hearth(_) | Content::Tent | Content::Pavilion | Content::House | Content::Tenement)
 }
 
 #[cfg(test)]
@@ -500,7 +730,38 @@ mod tests {
             assert!(Fixture::ALL.iter().all(|other| other.begun(up).is_none()));
         }
         assert!(Fixture::ALL.into_iter().all(|fixture| (raised(fixture).fullness() == TILE_SLOTS) == fixture.fills()));
-        assert!(raised(Fixture::Tent).fullness() == 1 && used(raised(Fixture::Tent), SLOT));
+        assert!(raised(Fixture::Wagon).fullness() == 1 && used(raised(Fixture::Tent), SLOT));
+    }
+
+    /// A home on more tiles than one is found again from the tiles it
+    /// lies on, wherever it stands and however it is turned, and fills
+    /// every one of them.
+    #[test]
+    fn a_building_is_found_from_the_tiles_it_lies_on() {
+        for fixture in Fixture::ALL {
+            for turn in 0..6 {
+                let lain = fixture.lain((7, -3), turn);
+                assert_eq!(lain.len(), fixture.tiles().len());
+                let (first, found) = fixture.lies(&lain).unwrap();
+                let mut again = fixture.lain(first, found);
+                let mut lain = lain;
+                (again.sort(), lain.sort());
+                assert_eq!(again, lain, "{fixture:?} turned {turn}");
+            }
+        }
+        assert_eq!(Fixture::Pavilion.lies(&[(0, 0), (1, 0), (2, 0)]), None, "three in a row is no pavilion");
+        let held = annexed(Cover::NONE).unwrap();
+        assert!(annex(held) && held.fullness() == TILE_SLOTS && cleared(held) == Some((Cover::NONE, Needs::default())));
+        // Every tile of a building, however it is turned, leads to the one that holds it
+        for fixture in Fixture::ALL {
+            for turn in 0..6 {
+                let (first, lain) = ((7, -3), fixture.lain((7, -3), turn));
+                let cover_at = |tile: (i32, i32)| if tile == first { Cover::NONE } else if lain.contains(&tile) { annexed_to(Cover::NONE, tile, first).unwrap() } else { Cover::NONE };
+                assert!(lain.iter().all(|&tile| holder(cover_at, tile) == first), "{fixture:?} turned {turn}");
+            }
+        }
+        assert_eq!(holder(|_| Cover::NONE, (2, 2)), (2, 2), "a tile of no building is its own");
+        assert_eq!(turn(turning(Cover::NONE, 4)), 4);
     }
 
     /// Needs are met by a class of material, whichever of it is held, and

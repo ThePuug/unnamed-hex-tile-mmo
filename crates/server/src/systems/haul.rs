@@ -8,7 +8,8 @@
 //! anyone is near. A leg is tried against the ground as it lies now as
 //! the wagon comes to it, and one the ground no longer gives stops the
 //! trip there until it does: a way blocked since the map was drawn is
-//! still gone toward. The map says which chunks the wagon crosses and
+//! still gone toward. A wagon stopped takes a new way from where it
+//! stands by a map handed its driver there ([`destinations`]). The map says which chunks the wagon crosses and
 //! where a hub stood; the last stretch is found on the ground as it
 //! lies, to the hub standing there now ([`hub_at`]), so a hub that moved
 //! is still come to. The wagon leaves what it carried in that hub's
@@ -44,6 +45,9 @@ pub struct Trip {
     pub done: usize,
     /// The daytime it has put into the leg it is on.
     pub spare: Duration,
+    /// Whether it waits where it stands, for a leg to open or for a way
+    /// to its hub's hearth: as `settlers::haul` last found it, never kept.
+    pub stopped: bool,
     /// Whether it has left its cargo and is on its way home.
     pub back: bool,
     /// The moment its travel is counted up to.
@@ -63,7 +67,7 @@ pub enum Road {
 
 impl Trip {
     pub fn begun(to: (i32, i32), way: Vec<Leg>, cargo: Vec<Owned>, when: When) -> Trip {
-        Trip { to, way, done: 0, spare: Duration::ZERO, back: false, counted: when, cargo }
+        Trip { to, way, done: 0, spare: Duration::ZERO, stopped: false, back: false, counted: when, cargo }
     }
 
     /// [`Trip::carry_to`] its way's end.
@@ -156,19 +160,28 @@ pub fn hub_at(hubs: &Hubs, recorded: (i32, i32)) -> Option<(HubId, (i32, i32))> 
     Some((id, hubs.hearth(id)?))
 }
 
+/// Whether `tile`, a hearth's as a map holds it, is of the hub of the
+/// camp round `hearth`: its hearth, or on its ground.
+pub fn homes(hubs: &Hubs, hearth: (i32, i32), tile: (i32, i32)) -> bool {
+    let own = hubs.of_hearth(hearth);
+    tile == hearth || own.is_some() && (hubs.of_hearth(tile) == own || hubs.holding(tile) == own)
+}
+
 /// Where a wagon from the camp round `hearth` may be sent by the map
 /// `chart`: each hub the map holds, as it stood when the map charted it,
 /// that the map holds a way to, by its hearth's tile, with that way. A
 /// map knows no hub founded since it passed, and still knows one razed
 /// since. The camp's own hub is not offered, whichever of its hearths
-/// the map holds.
-pub fn destinations(chart: &Chart, hubs: &Hubs, hearth: (i32, i32)) -> Vec<((i32, i32), Vec<Leg>)> {
-    let Some(from) = chart.beside(hearth) else { return Vec::new() };
-    let own = hubs.of_hearth(hearth);
-    let home = |tile: (i32, i32)| tile == hearth || own.is_some() && (hubs.of_hearth(tile) == own || hubs.holding(tile) == own);
-    let mut others: Vec<(i32, i32)> = chart.hearths().filter(|&tile| !home(tile)).collect();
+/// the map holds; but to a wagon stopped on the road, on `stands`, where
+/// each way is from that tile and its own hub is one more to go to, by
+/// the first of its hearths the map holds.
+pub fn destinations(chart: &Chart, hubs: &Hubs, hearth: (i32, i32), stands: Option<(i32, i32)>) -> Vec<((i32, i32), Vec<Leg>)> {
+    let Some(from) = chart.beside(stands.unwrap_or(hearth)) else { return Vec::new() };
+    let home = |tile: &(i32, i32)| homes(hubs, hearth, *tile);
+    let mut others: Vec<(i32, i32)> = chart.hearths().filter(|tile| !home(tile)).collect();
     others.sort();
     others.dedup();
+    others.extend(stands.and_then(|_| chart.hearths().filter(home).min()));
     others.into_iter().filter_map(|hub| Some((hub, chart.way(from, chart.beside(hub)?)?))).filter(|(_, way)| !way.is_empty()).collect()
 }
 
@@ -361,7 +374,8 @@ mod tests {
 
     /// A map offers the hubs that stood on it as it was charted and it
     /// holds a way to: one razed since still, one founded since not, and
-    /// never the haven or the camp's own.
+    /// never the haven or the camp's own. A wagon stopped on the road is
+    /// offered its own hub besides, each way from where it stands.
     #[test]
     fn a_map_offers_the_hubs_it_recorded() {
         let (own, stood, razed, since) = (centre(-4, 0), centre(4, 0), centre(0, 4), centre(2, -3));
@@ -373,11 +387,18 @@ mod tests {
         for hearth in [own, stood, since] {
             hubs.founded(hearth);
         }
-        let offered: Vec<(i32, i32)> = destinations(&chart, &hubs, own).into_iter().map(|(hub, _)| hub).collect();
+        let offered: Vec<(i32, i32)> = destinations(&chart, &hubs, own, None).into_iter().map(|(hub, _)| hub).collect();
         let mut recorded = vec![stood, razed];
         recorded.sort();
         assert_eq!(offered, recorded);
-        assert!(destinations(&Chart::default(), &hubs, own).is_empty());
+        assert!(destinations(&Chart::default(), &hubs, own, None).is_empty());
+
+        let stands = centre(1, 0);
+        let on_road = destinations(&chart, &hubs, own, Some(stands));
+        assert_eq!(on_road.len(), 3);
+        assert!(on_road.iter().all(|(_, way)| way[0].from == stands));
+        let homeward: Vec<(i32, i32)> = on_road.iter().map(|(hub, _)| *hub).filter(|hub| homes(&hubs, own, *hub)).collect();
+        assert_eq!(homeward, vec![own]);
     }
 
     /// A wagon come to its last leg ends beside its hub's hearth where

@@ -136,7 +136,7 @@ fn pool_tile(parent: &mut ChildSpawnerCommands, entry: PoolEntry, asset_server: 
     parent
         .spawn(Node { width: Val::Px(TILE_PX), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: Val::Px(2.), ..default() })
         .with_children(|tile| {
-            slot_frame(tile, ENTRY_KEYS[entry.column], Some(asset_server.load(icon_path(skill))), POOL_PX, true).insert(entry);
+            slot_frame(tile, crate::caps!(ENTRY_KEYS)[entry.column], Some(asset_server.load(icon_path(skill))), POOL_PX, true).insert(entry);
             tile.spawn((
                 entry,
                 Text::new(name(skill)),
@@ -255,9 +255,9 @@ pub fn spawn_tab(commands: &mut Commands, content: Entity, asset_server: &AssetS
         ))
         .with_children(|tab| {
             hint_row(tab, None, &[
-                Hint::key(KEYCODE_NEXT_ROW, "next row"),
-                Hint::range(&ENTRY_KEYS, "pick"),
-                Hint::range(&KEYS, "put it on that key, out of combat"),
+                Hint::key(crate::cap!(KEYCODE_NEXT_ROW), "next row"),
+                Hint::range(&crate::caps!(ENTRY_KEYS), "pick"),
+                Hint::range(&crate::caps!(KEYS), "put it on that key, out of combat"),
             ]);
             // The bar, and beside it what the skill picked is
             tab.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(20.), ..default() }).with_children(|top| {
@@ -363,7 +363,7 @@ pub fn sync_bar(
     *shown = Some(*held);
     commands.entity(bar).despawn_related::<Children>();
     commands.entity(bar).with_children(|bar| {
-        for (at, (key, skill)) in KEYS.into_iter().zip(held.0).enumerate() {
+        for (at, (key, skill)) in crate::caps!(KEYS).into_iter().zip(held.0).enumerate() {
             slot_frame(bar, key, Some(asset_server.load(icon_path(skill))), SLOT_PX, false).insert(BarSlot(at));
         }
     });

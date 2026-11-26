@@ -15,8 +15,8 @@ pub use state::{DevConsole, MenuPath};
 /// own (`crates/console`) the server's settings are changed from. Every build holds its state (`DevConsole`), which
 /// the keys and panels read to stand aside while it is open.
 ///
-/// NumpadDivide opens and closes it, except over the open character
-/// panel, which has the numpad. A digit picks the row it numbers. Numpad0
+/// NumpadDivide opens and closes it, except over an open panel
+/// (`focus::NumpadFocus`), which has the numpad. A digit picks the row it numbers. Numpad0
 /// goes back a menu, or closes the console from the main menu; where the
 /// digits type instead — the world clock's hour and the goto coordinates —
 /// Escape goes back.

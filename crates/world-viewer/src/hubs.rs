@@ -8,7 +8,7 @@
 use common::network::Identity;
 use common_bevy::{
     hubs::{HubId, Hubs, HAVEN_GROUND, HAVEN_REACH},
-    sites::{self, Lived, Standing},
+    plan::What,
 };
 
 /// A hearth of the scenario: its tile, and the players at home at it.
@@ -29,24 +29,28 @@ impl Hearth {
 }
 
 /// The hubs the first `count` of `hearths` make, laid in the order given
-/// round the haven at `haven`, each on the build site nearest its tile.
-/// A hearth's players each claim a home of its hub, which grows a tier
-/// whenever it has none open. A hearth named again is not laid again:
-/// the players at home in its hub become the number it is named with,
-/// and with fewer the hub shrinks to what they hold. One a hub's ground
-/// already holds, or would touch, is not laid.
+/// round the haven at `haven`, each with a hitching post raised. A
+/// hearth's players each claim a home of its hub, which is planned for
+/// two more residents and raises a home whenever it has none open. A
+/// hearth named again is not laid again: the players at home in its hub
+/// become the number it is named with, and with fewer the hub shrinks to
+/// what they defend. One a hub's ground already holds, or would touch, is
+/// not laid.
 pub fn settle(haven: (i32, i32), hearths: &[Hearth], count: usize) -> Hubs {
     let mut hubs = Hubs::new(haven);
     let mut next = 0u32;
     let mut living: std::collections::HashMap<(i32, i32), Vec<Identity>> = std::collections::HashMap::new();
     for hearth in &hearths[..count.min(hearths.len())] {
-        let tile = sites::site_near(hearth.tile);
+        let tile = hearth.tile;
         if !living.contains_key(&tile) && hubs.of_hearth(tile).is_none() {
             if !hubs.founds(tile) {
                 log::warn!("  a hub holds the ground the hearth at {:?} would: it is not laid", hearth.tile);
                 continue;
             }
-            hubs.founded(tile);
+            let id = hubs.founded(tile);
+            if let Some(plan) = hubs.raised(id, What::Post) {
+                hubs.carry(&plan);
+            }
         }
         let Some(id) = hubs.of_hearth(tile) else { continue };
         let at = living.entry(tile).or_default();
@@ -55,9 +59,10 @@ pub fn settle(haven: (i32, i32), hearths: &[Hearth], count: usize) -> Hubs {
             hubs.gone(at.pop().expect("more than none"));
         }
         while at.len() < hearth.players as usize {
-            let open = hubs.sites(id).iter().find(|site| site.what == Standing::Home && site.lived != Lived::Player).map(|site| site.at);
+            let open = hubs.items(id).iter().filter(|item| item.kind.what == What::Home).map(|item| item.tiles[0]).find(|&home| hubs.open(home).is_some());
             let Some(home) = open else {
-                let Some(plan) = hubs.grown(id) else { break };
+                // No home has room: one more is raised, on ground planned for two more where it has none
+                let Some(plan) = hubs.raised(id, What::Home).or_else(|| hubs.planned(id, hubs.wants(id) + 2)) else { break };
                 hubs.carry(&plan);
                 continue;
             };
@@ -180,8 +185,10 @@ pub fn draw(canvas: &mut Canvas, hubs: &Hubs, _hearths: &[Hearth]) {
     }
     let size = (2.0 / canvas.scale).clamp(2.0, 6.0) as i32;
     for &(id, hearth, _) in &standing {
-        for site in hubs.sites(id).iter().filter(|site| site.what != Standing::Hearth) {
-            canvas.dot(site.at, size, if site.lived == Lived::Player { [1.0, 1.0, 1.0] } else { [0.55, 0.55, 0.55] });
+        for item in hubs.items(id).iter().filter(|item| item.kind.what != What::Hearth) {
+            for &tile in &item.tiles {
+                canvas.dot(tile, size, if item.players > 0 { [1.0, 1.0, 1.0] } else { [0.55, 0.55, 0.55] });
+            }
         }
         canvas.dot(hearth, size + 2, [0.05, 0.05, 0.05]);
         canvas.dot(hearth, size + 1, hue(place(id)));
@@ -195,9 +202,9 @@ pub fn report(hubs: &Hubs) {
     log::info!("  the haven: at {:?}, guarding {HAVEN_GROUND:.0} tiles, influence whole reaching {HAVEN_REACH:.0} tiles", hubs.haven());
     for (id, hearth, size) in hubs.each() {
         log::info!(
-            "  {id:?}: hearth {hearth:?}, tier {}, {} sites, a wall of {}, {size} at home who hold {}, influence {:.2} reaching {:.0} tiles",
-            hubs.tier(id),
-            hubs.sites(id).len(),
+            "  {id:?}: hearth {hearth:?}, planned for {}, {} things, a wall of {}, {size} players who defend {}, influence {:.2} reaching {:.0} tiles",
+            hubs.wants(id),
+            hubs.items(id).len(),
             hubs.ground(id).map_or(0, |ground| ground.wall.len()),
             hubs.held(id),
             hubs.strength(id),
@@ -225,11 +232,12 @@ mod tests {
         let hearth = |tile, players| Hearth { tile, players };
         let hearths = [hearth((300, 0), 1), hearth((330, 0), 0), hearth((300, 0), 9), hearth((300, 0), 1)];
         let apart = settle((0, 0), &hearths, 2);
-        assert_eq!((apart.each().count(), apart.tier(HubId(300, 0))), (2, 0), "two camps");
+        assert_eq!((apart.each().count(), apart.size(HubId(300, 0))), (2, 1), "two camps");
         let grown = settle((0, 0), &hearths, 3);
-        assert_eq!((grown.size(HubId(300, 0)), grown.tier(HubId(300, 0))), (9, 2), "grown to house nine");
+        assert_eq!(grown.size(HubId(300, 0)), 9, "grown to house nine");
+        assert!(grown.wants(HubId(300, 0)) > apart.wants(HubId(300, 0)));
         let shrunk = settle((0, 0), &hearths, 4);
         assert_eq!(shrunk.size(HubId(300, 0)), 1);
-        assert!(shrunk.sites(HubId(300, 0)).len() < grown.sites(HubId(300, 0)).len());
+        assert!(shrunk.ground(HubId(300, 0)).unwrap().wall.len() < grown.ground(HubId(300, 0)).unwrap().wall.len());
     }
 }

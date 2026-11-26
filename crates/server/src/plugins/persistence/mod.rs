@@ -64,7 +64,7 @@ use common_bevy::{
         equipment::{Equipment, Inventory},
         heading::Heading,
         loadout::Loadout,
-        ActorAttributes, Home, Loc,
+        ActorAttributes, Home, Lives, Loc,
     },
     moment::Moment,
     settings::{Setting, Settings},
@@ -234,7 +234,7 @@ struct Keeper {
 }
 
 /// A character in the world, and everything of it that is kept.
-type Playing = (&'static Character, &'static Equipment, &'static Inventory, &'static ActorAttributes, &'static Loadout, &'static Loc, &'static Heading, Option<&'static Home>);
+type Playing = (&'static Character, &'static Equipment, &'static Inventory, &'static ActorAttributes, &'static Loadout, &'static Loc, &'static Heading, Option<&'static Home>, Option<&'static Lives>);
 
 impl Keeper {
     fn new(store: Store) -> Self {
@@ -371,10 +371,10 @@ impl Keeper {
         let mut changed = std::mem::take(&mut self.changed);
         let mut states: Vec<(Identity, String)> = Vec::new();
         let none = Dormant::default();
-        for (&Character(identity), equipment, inventory, attrs, loadout, loc, heading, home) in playing {
+        for (&Character(identity), equipment, inventory, attrs, loadout, loc, heading, home, lives) in playing {
             if changed.remove(&identity) || every {
                 let dormant = self.dormant.get(&identity).unwrap_or(&none);
-                states.push((identity, character::state(equipment, inventory, attrs, loadout, **loc, *heading, home.map(|home| home.0), dormant)));
+                states.push((identity, character::state(equipment, inventory, attrs, loadout, **loc, *heading, home.map(|home| home.0), lives.map(|lives| lives.0), dormant)));
             }
         }
         // Those left are out of the world, as they left it
@@ -680,7 +680,7 @@ fn receive(
                     }
                 }
                 for (hearth, state) in recalled.camps {
-                    match camp::recalled(hearth, state) {
+                    match camp::recalled(state) {
                         Some((camp, dormant)) => {
                             camps.recall(hearth, camp);
                             if !dormant.is_empty() {

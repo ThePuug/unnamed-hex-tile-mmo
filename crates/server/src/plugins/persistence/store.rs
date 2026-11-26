@@ -694,7 +694,7 @@ mod tests {
             let epochs = store.recall(&[here]).await.unwrap().epochs;
             let wall = Cover::NONE.with_boulder(0);
             let whose = BuiltRow { provider: Some("key".into()), name: Some("ab".into()), camp: None };
-            let hubs = vec![Kept { id: (-2, 5), sites: vec![(-3, 6, 1), (0, 6, 4)], took: vec![(-1, 4)] }, Kept { id: (20, 21), sites: vec![(21, 21, 1)], took: Vec::new() }];
+            let hubs = vec![Kept { id: (-2, 5), sites: vec![(-3, 6, 1), (0, 6, 4)], took: vec![(-1, 4)], ..Default::default() }, Kept { id: (20, 21), wants: 4, walled: true, hired: vec![1], ..Default::default() }];
             let player = store.enter("key", "ab", 5_000).await.unwrap();
             let batch = Batch {
                 epochs: epochs.clone(),

@@ -13,7 +13,7 @@ use common_bevy::{
     components::{heading::Heading, position::Position, AirTime, Loc, Turn},
     plugins::nntree::NNTree,
     resources::map::Map,
-    systems::{physics::{self, Walk, WALK_ARC}, targeting::is_in_facing_cone},
+    systems::{physics::{self, Walk}, targeting::is_in_facing_cone},
 };
 
 /// The skills an NPC weighs using: its archetype's
@@ -75,9 +75,6 @@ pub fn hostiles_near<'a>(
 /// up and goes home.
 pub const LEASH_DISTANCE: i32 = 60;
 
-/// Airtime an NPC leaps with to climb onto a neighbouring tile.
-const CLIMB_MS: i16 = 125;
-
 /// An NPC's body as its behaviour moves it: where it stands, which way it
 /// faces, the turn clock that paces its turning as a player's is paced, and
 /// its airborne state.
@@ -107,17 +104,14 @@ impl BodyItem<'_, '_> {
     }
 
     /// Carries it `dt` milliseconds toward `next`, a neighbour of the floor
-    /// tile `start` it stands on at `loc`, leaping when the step climbs and
-    /// it faces the way to take it.
+    /// tile `start` it stands on. A step is walked, never leapt: a way an
+    /// NPC takes climbs no more than the level the ground carries a walker
+    /// up.
     #[allow(clippy::too_many_arguments)]
-    pub fn step_toward(&mut self, loc: &Loc, start: Qrz, next: Qrz, movement_speed: f32, pace: f32, dt: i16, map: &Map, nntree: &NNTree) {
+    pub fn step_toward(&mut self, start: Qrz, next: Qrz, movement_speed: f32, pace: f32, dt: i16, map: &Map, nntree: &NNTree) {
         let Some(goal) = Heading::between(start, next) else {
             return;
         };
-        let facing = self.turn.heading.turn_toward(goal).1 <= WALK_ARC;
-        if facing && loc.z <= next.z && self.airtime.state.is_none() {
-            self.airtime.state = Some(CLIMB_MS);
-        }
         self.steer(goal, Walk::Forward, movement_speed, pace, dt, map, nntree);
     }
 

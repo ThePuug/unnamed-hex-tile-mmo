@@ -59,6 +59,8 @@ pub enum Cause {
     Store,
     /// A player took its own out of a storehouse.
     Withdraw,
+    /// An admin had it provided, ungathered.
+    Grant,
 }
 
 impl Cause {
@@ -80,6 +82,7 @@ impl Cause {
             Cause::Haul => 11,
             Cause::Store => 12,
             Cause::Withdraw => 13,
+            Cause::Grant => 14,
         }
     }
 }

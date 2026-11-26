@@ -46,6 +46,15 @@ pub enum Content {
     Post,
     PostEmpty,
     Storehouse,
+    /// A home on more tiles than one (`crate::building::Fixture`), in the
+    /// centre of the first of them, turned the way the cover faces
+    /// (`Cover::facing`).
+    Pavilion,
+    House,
+    Tenement,
+    /// A tile of a building that stands on a tile beside it: full, and
+    /// drawn as nothing of its own.
+    Annex,
     /// A fixture begun and not yet raised, in the tile's centre, at a
     /// stage of `crate::building::STAGES` from 1: in no one's way, and
     /// the tile no one else's to build on.
@@ -58,8 +67,9 @@ impl Content {
     pub fn slots(self) -> u8 {
         match self {
             Content::Empty | Content::Spanned | Content::Filled => 0,
-            Content::Brush | Content::Reed | Content::Boulder | Content::PineStump | Content::DeciduousStump | Content::Tent | Content::Wagon | Content::Post | Content::PostEmpty | Content::Raising(..) => 1,
-            Content::Hearth(_) | Content::Blockade(_) | Content::Stakes | Content::Storehouse => TILE_SLOTS,
+            Content::Brush | Content::Reed | Content::Boulder | Content::PineStump | Content::DeciduousStump | Content::Wagon | Content::Raising(..) => 1,
+            Content::Hearth(_) | Content::Blockade(_) | Content::Stakes | Content::Storehouse | Content::Tent | Content::Post | Content::PostEmpty => TILE_SLOTS,
+            Content::Pavilion | Content::House | Content::Tenement | Content::Annex => TILE_SLOTS,
             Content::Pile(_) | Content::Bundle => 1,
             Content::Pine | Content::Deciduous => 2,
         }
@@ -118,6 +128,13 @@ impl Content {
             Content::Raising(crate::building::Fixture::Wagon, stage) => RAISING_BITS + 8 | stage as u64 & 3,
             Content::Raising(crate::building::Fixture::Post, stage) => RAISING_BITS + 12 | stage as u64 & 3,
             Content::Raising(crate::building::Fixture::Storehouse, stage) => RAISING_BITS + 16 | stage as u64 & 3,
+            Content::Raising(crate::building::Fixture::Pavilion, stage) => RAISING_BITS + 20 | stage as u64 & 3,
+            Content::Raising(crate::building::Fixture::House, stage) => RAISING_BITS + 24 | stage as u64 & 3,
+            Content::Raising(crate::building::Fixture::Tenement, stage) => RAISING_BITS + 28 | stage as u64 & 3,
+            Content::Pavilion => 140,
+            Content::House => 141,
+            Content::Tenement => 142,
+            Content::Annex => 143,
         }
     }
 
@@ -158,6 +175,13 @@ impl Content {
             113..=115 => Content::Raising(crate::building::Fixture::Wagon, (bits & 3) as u8),
             117..=119 => Content::Raising(crate::building::Fixture::Post, (bits & 3) as u8),
             121..=123 => Content::Raising(crate::building::Fixture::Storehouse, (bits & 3) as u8),
+            125..=127 => Content::Raising(crate::building::Fixture::Pavilion, (bits & 3) as u8),
+            129..=131 => Content::Raising(crate::building::Fixture::House, (bits & 3) as u8),
+            133..=135 => Content::Raising(crate::building::Fixture::Tenement, (bits & 3) as u8),
+            140 => Content::Pavilion,
+            141 => Content::House,
+            142 => Content::Tenement,
+            143 => Content::Annex,
             _ => Content::Empty,
         }
     }

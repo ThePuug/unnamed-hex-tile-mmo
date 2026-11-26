@@ -213,8 +213,8 @@ pub fn handle_keys(
             if count > 0 {
                 writer.write(Try {
                     event: match loading.what() {
-                        Some(Kept::Wagon) => Event::Load { ent, give: Some(stack) },
-                        Some(Kept::Store) => Event::Store { ent, give: Some(stack), take: None },
+                        Some(Kept::Wagon) => Event::Load { ent, give: Some(stack), take: None },
+                        Some(Kept::Store) => Event::Store { ent, moved: Some((common::building::Stowing::Leave, stack)) },
                         None => Event::Drop { ent, lot: stack.into() },
                     },
                 });
@@ -236,7 +236,7 @@ pub fn spawn_entry(parent: &mut ChildSpawnerCommands, count: u32, takes: &str) {
     parent
         .spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(6.), ..default() })
         .with_children(|line| {
-            keycap(line, KEYCODE_LESS);
+            keycap(line, crate::cap!(KEYCODE_LESS));
             line.spawn((
                 Node {
                     min_width: Val::Px(80.),
@@ -252,9 +252,9 @@ pub fn spawn_entry(parent: &mut ChildSpawnerCommands, count: u32, takes: &str) {
             .with_children(|field| {
                 field.spawn((DropCount, Text::new(count.to_string()), TextFont { font_size: FontSize::Px(20.0), ..default() }, TextColor(Color::WHITE)));
             });
-            keycap(line, KEYCODE_MORE);
+            keycap(line, crate::cap!(KEYCODE_MORE));
         });
-    hint_row(parent, None, &[Hint::key(KEYCODE_DROP, takes), Hint::key(KEYCODE_CANCEL, "cancel")]);
+    hint_row(parent, None, &[Hint::key(crate::cap!(KEYCODE_DROP), takes), Hint::key(crate::cap!(KEYCODE_CANCEL), "cancel")]);
 }
 
 /// Writes the count chosen into the panel's text box.

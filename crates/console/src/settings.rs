@@ -134,34 +134,62 @@ impl Page {
             return;
         }
 
-        draw_section(ui, "SETTINGS", |ui| {
-            let mut editing = None;
-            for (at, setting) in Setting::ALL.into_iter().enumerate() {
-                let kept = self.kept(setting);
-                let (least, most) = setting.range();
-                ui.horizontal(|ui| {
-                    ui.label(colored_mono(&format!("{:<22}", setting.name()), COLOR_NORMAL));
-                    let field = ui.add_sized([90.0, 18.0], egui::DragValue::new(&mut self.shown[at]).range(least..=most));
-                    if field.has_focus() || field.dragged() {
+        // Apart, since a change to one holds at once and to the other waits
+        let mut editing = None;
+        for (hot, title, holds) in [(true, "HOT SETTINGS", "A change holds at once, for every player."), (false, "COLD SETTINGS", "A change waits for the server's next start.")] {
+            draw_section(ui, title, |ui| {
+                for (at, setting) in Setting::ALL.into_iter().enumerate() {
+                    if setting.hot() == hot && self.draw_setting(ui, at, setting) {
                         editing = Some(setting);
                     }
-                    let done = field.lost_focus() || field.drag_stopped();
-                    if done && self.shown[at] != kept {
-                        self.ask(Ask::Set(setting, self.shown[at]));
-                    }
-                    if button(ui, &format!("AS BUILT {}", setting.default()), COLOR_NORMAL, kept != setting.default()) {
-                        self.shown[at] = setting.default();
-                        self.ask(Ask::Set(setting, setting.default()));
-                    }
-                    let (tag, color) = if setting.hot() { ("HOT ", COLOR_NORMAL) } else { ("COLD", COLOR_WARN) };
-                    ui.label(colored_mono(&format!(" {tag}  {least}..{most}  "), color));
-                    let waits = if setting.hot() { "" } else { ", from the server's next start" };
-                    ui.label(colored_mono(&format!("{}{waits}", setting.says()), COLOR_DIM));
-                });
+                }
+                ui.label(colored_mono(holds, COLOR_BORDER));
+            });
+            ui.add_space(8.0);
+        }
+        self.editing = editing;
+        ui.label(colored_mono("  Click a value to type it, or drag it; click a switch to flip it.", COLOR_BORDER));
+    }
+
+    /// One setting's row, `at` its place in `Setting::ALL`: its value, to
+    /// change, and what it is. Whether its value is being typed or dragged.
+    fn draw_setting(&mut self, ui: &mut egui::Ui, at: usize, setting: Setting) -> bool {
+        let kept = self.kept(setting);
+        let (least, most) = setting.range();
+        let mut editing = false;
+        ui.horizontal(|ui| {
+            ui.label(colored_mono(&format!("{:<22}", setting.name()), COLOR_NORMAL));
+            // A setting that is either 0 or 1 is a switch
+            let switch = (least, most) == (0, 1);
+            let says = |value: i32| match (switch, value) {
+                (false, _) => value.to_string(),
+                (true, 0) => "OFF".to_string(),
+                (true, _) => "ON".to_string(),
+            };
+            if switch {
+                let on = self.shown[at] != 0;
+                let flip = egui::Button::new(colored_mono(&says(self.shown[at]), if on { COLOR_WARN } else { COLOR_DIM })).fill(COLOR_FIELD);
+                if ui.add_sized([90.0, 18.0], flip).clicked() {
+                    self.shown[at] = 1 - on as i32;
+                    self.ask(Ask::Set(setting, self.shown[at]));
+                }
+            } else {
+                let field = ui.add_sized([90.0, 18.0], egui::DragValue::new(&mut self.shown[at]).range(least..=most));
+                editing = field.has_focus() || field.dragged();
+                let done = field.lost_focus() || field.drag_stopped();
+                if done && self.shown[at] != kept {
+                    self.ask(Ask::Set(setting, self.shown[at]));
+                }
             }
-            self.editing = editing;
-            ui.label(colored_mono("Click a value to type it, or drag it. HOT holds at once for every player; COLD waits for a restart.", COLOR_BORDER));
+            if button(ui, &format!("AS BUILT {}", says(setting.default())), COLOR_NORMAL, kept != setting.default()) {
+                self.shown[at] = setting.default();
+                self.ask(Ask::Set(setting, setting.default()));
+            }
+            let range = if switch { "OFF/ON".to_string() } else { format!("{least}..{most}") };
+            ui.label(colored_mono(&format!(" {range:<10} "), COLOR_NORMAL));
+            ui.label(colored_mono(setting.says(), COLOR_DIM));
         });
+        editing
     }
 
     /// The server's row: how it stands, and the buttons that start, stop

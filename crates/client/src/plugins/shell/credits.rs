@@ -77,7 +77,7 @@ pub fn setup(mut commands: Commands) {
                 entry(parent, font, format!("{by} · SIL Open Font License 1.1"));
             }
             use crate::systems::keycap::{hint_row, Hint};
-            hint_row(parent, None, &[Hint::either(&[KeyCode::Enter, KeyCode::Escape], "back")]);
+            hint_row(parent, None, &[Hint::either(&crate::caps!([KeyCode::Enter, KeyCode::Escape]), "back")]);
         });
 }
 

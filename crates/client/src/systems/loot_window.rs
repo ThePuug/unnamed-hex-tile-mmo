@@ -64,7 +64,7 @@ pub fn update(
             .with_children(|cell| {
                 if let Some(lot) = lot {
                     cell_contents(cell, &asset_server, *lot, 1.0);
-                    crate::systems::keycap::corner_keycap(cell, ENTRY_KEYS[slot]);
+                    crate::systems::keycap::corner_keycap(cell, crate::caps!(ENTRY_KEYS)[slot]);
                 }
             });
     }
@@ -96,7 +96,7 @@ fn spawn(commands: &mut Commands) -> Entity {
             panel
                 .spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(4.), ..default() })
                 .with_children(|buttons| {
-                    for (does, key) in [("Take all", crate::systems::gathering::KEYCODE_TAKE_ALL), ("Close", crate::systems::gathering::KEYCODE_CLOSE)] {
+                    for (does, key) in [("Take all", crate::cap!(crate::systems::gathering::KEYCODE_TAKE_ALL)), ("Close", crate::cap!(crate::systems::gathering::KEYCODE_CLOSE))] {
                         buttons
                             .spawn((
                                 Node {

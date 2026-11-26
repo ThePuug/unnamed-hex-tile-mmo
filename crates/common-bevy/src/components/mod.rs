@@ -23,10 +23,15 @@ use crate::tuning::Tuning;
 #[derive(Clone, Component, Copy, Debug, Default, Deref, DerefMut, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Loc(Qrz);
 
-/// Where a player stands again when it falls: at the hearth it made its
-/// home. One with none returns to the haven.
+/// Where a player stands again when it falls: at the hearth it last
+/// claimed. One with none returns to the haven.
 #[derive(Clone, Component, Copy, Debug, Eq, PartialEq)]
 pub struct Home(pub Qrz);
+
+/// Where a player lives: the home it last claimed in a hub, which makes it
+/// one of that hub's residents. Not where it returns ([`Home`]).
+#[derive(Clone, Component, Copy, Debug, Eq, PartialEq)]
+pub struct Lives(pub Qrz);
 
 impl Loc {
     pub fn from_qrz(q: i32, r: i32, z: i32) -> Self {

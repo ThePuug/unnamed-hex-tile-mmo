@@ -517,14 +517,14 @@ pub fn setup(
             // The keys are laid out as a pair is drawn: spectrum over its
             // bar, axis at its ends, shift along it.
             hint_row(parent, None, &[
-                Hint::either(&[KeyCode::Numpad7, KeyCode::Numpad9], "spectrum -/+"),
-                Hint::either(&[KeyCode::Numpad4, KeyCode::Numpad6], "axis left/right"),
-                Hint::either(&[KeyCode::Numpad1, KeyCode::Numpad3], "shift left/right"),
+                Hint::either(&crate::caps!([KeyCode::Numpad7, KeyCode::Numpad9]), "spectrum -/+"),
+                Hint::either(&crate::caps!([KeyCode::Numpad4, KeyCode::Numpad6]), "axis left/right"),
+                Hint::either(&crate::caps!([KeyCode::Numpad1, KeyCode::Numpad3]), "shift left/right"),
             ]);
             parent
                 .spawn(Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(12.), ..default() })
                 .with_children(|row| {
-                    hint_row(row, None, &[Hint::key(KeyCode::NumpadDecimal, "next pair")]);
+                    hint_row(row, None, &[Hint::key(crate::cap!(KeyCode::NumpadDecimal), "next pair")]);
                     // Hidden until a respec is in hand.
                     row.spawn((
                         ApplyRespecLabel,
@@ -539,7 +539,7 @@ pub fn setup(
                         Visibility::Hidden,
                     ))
                     .with_children(|label| {
-                        keycap(label, KeyCode::NumpadEnter);
+                        keycap(label, crate::cap!(KeyCode::NumpadEnter));
                         label.spawn((
                             ApplyLabelText,
                             Text::new("Apply Changes"),
@@ -628,7 +628,7 @@ fn spawn_tab_strip(commands: &mut Commands, panel: Entity) {
             use crate::systems::keycap::{hint_column, Hint};
             hint_column(
                 strip,
-                &[Hint::key(KeyCode::NumpadSubtract, "prev"), Hint::key(KeyCode::NumpadAdd, "next"), Hint::key(KEYCODE_CHARACTER_PANEL, "close")],
+                &[Hint::key(crate::cap!(KeyCode::NumpadSubtract), "prev"), Hint::key(crate::cap!(KeyCode::NumpadAdd), "next"), Hint::key(crate::cap!(KEYCODE_CHARACTER_PANEL), "close")],
                 Node { margin: UiRect::new(Val::Px(0.), Val::Px(8.), Val::Px(8.), Val::Px(0.)), align_self: AlignSelf::FlexEnd, ..default() },
             );
         });

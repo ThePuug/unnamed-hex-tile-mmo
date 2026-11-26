@@ -272,8 +272,19 @@ puts an actor on the ground.
 **Keys.** Every key a player presses is read through
 `client::systems::help::Keys`, which takes what the key does: held Right
 Alt turns a press into that statement beside the cap naming the key
-(`keycap::Names`). Only the dev console reads raw `ButtonInput`, and
+(`keycap::Names`). A cap is drawn only from a `keycap::Cap`, made by
+`cap!` or `caps!` where the compiler evaluates it, so a key with no
+name for a cap does not build. A panel chooses on a row's key and does
+on Enter; how many of a stack is asked by `drop_panel::Choosing` and
+drawn by `drop_panel::spawn_entry`, wherever it is asked. A panel says
+what it can in signs from the glyph font and pictures, not words. Only the dev console reads raw `ButtonInput`, and
 has no help.
+
+**Aim.** G and T act on one thing: the nearest in reach of everything
+either key acts on (`client::systems::aim`), cover or settler, drawn
+outlined (`cover::outline`). The key that is not
+the thing's does nothing. A key that finds a target of its own acts on
+something the player was not shown.
 
 **Two consoles.** The dev console is the menu a client draws over the
 game in admin builds (`client::plugins::console`, `DevConsole`): it acts
@@ -378,8 +389,9 @@ character or pile (`persistence::stored`).
 **Constructs.** What players build is a tile's cover like a tree or a
 pile: `common::building` is the one rule for what a tile takes and what a
 construct leaves when it comes down, which the server applies and the
-client offers its choices by. A player builds a hearth or a blockade and
-nothing else; the rest of a hub is its settlers'. A construct stands in
+client offers its choices by. A player builds a hearth or a blockade,
+and raises a hub its hitching post and first tents; the rest of a hub
+is its planners'. A construct stands in
 the centre slot and holds the other six as `Filled`, so fullness and
 every drop read the tile with no rule of their own. Whose it is, and
 its hub, are the server's
@@ -389,33 +401,76 @@ thing built faces is the cover's (`Cover::facing`, one of
 settler drives them, and the client turns the model by it and asks no
 hub.
 
-**Hubs.** A hub is its build sites and the wall round them:
-`common_bevy::sites` is the one rule for both, a site on every third
-tile of a lattice the world fixes and the wall the tightest outline
-round them (`qrz::outline`), and `common_bevy::hubs::Hubs` holds every
-hub by it. Nothing changes a hub's sites or its wall but a plan a player
-asked its settler for: `Hubs::grown` and `Hubs::shrunk` say what one
-would do and `Hubs::carry` does it. The one plan no player asks for
-lays an essential on a hub laid before hubs had it (`Hubs::completed`). Players coming and going change who
-lives in its homes, and so the wall its people hold, never its ground. A
-hearth is laid on the build site nearest the tile faced, on no hub's
-ground, and a hub taken in keeps none of its own. A second rule for
-where a thing of a hub stands, a radius or a yard, puts it off its site.
+**Hubs.** A hub is the ground it claims, its zones and what stands in
+it: `common_bevy::plan` is the one rule for all three, and for the wall,
+the tightest outline round the claim (`qrz::outline`). It is planned for
+a number of residents and claims ground out to the wall that number
+takes (`plan::wall_for`); a zone is a centre, a tile lying in the zone
+whose centre is nearest; a building stands in its own zone, apart from
+every other (`plan::SPACE`). `common_bevy::hubs::Hubs` holds every hub
+by those rules. Nothing changes a hub but a plan: each asking method of
+`Hubs` (`planned`, `raised`, `raised_at`, `zoned`, `walling`, `shrunk`)
+says what one would do and `Hubs::carry` does it. Players coming and
+going change who lives in its homes, and so the wall its residents
+defend, never its ground. A zone is its planner's (`Hubs::hire`), and a
+hub with no logistics planner has no stakes. A hearth is laid on the
+tile faced, on no hub's ground, and a hub taken in keeps none of its
+own. A second rule for where a thing of a hub stands, a lattice or a
+yard, puts it off the one the planners place by. The rules plan round
+the ground: nothing on a tile the hub was told is barred, a tree, a
+boulder, water, and nothing on both of two tiles with a cliff between
+(`plan::Hub::grounded`). What the ground bars is the world's to say,
+and the server says it again before anything is planned
+(`settlers::survey`, `Hubs::survey`); a path that plans without it
+plans a home through a tree.
 
-**Settlers.** A hub is built by its settlers, never the world and never
-by a rule of its own: `server::systems::settlers` holds a camp for every
-hub, and its settler makes the ground what the hub's plan says
-(`settlers::next_step`): it takes down what a plan gave up, raises what
-each site wants, then stakes along the wall, of what players handed it
-and what it took down, which it builds with again (`Camp::credit`). What
-it raises is its hub's (`building::Owner::Camp`) and no player's to take
-down. The settler is in the world only by day and near a player;
-`settlers::catch_up` gives a camp found again the work of the daytime
-between, through the same `begin` and `advance` the walked work goes by,
-so the two never differ. A thing being raised is its tile's cover
-(`Content::Raising`, a stage of `building::STAGES`), each stage a model
-of its own, `models/<stem>-raising-<stage>.glb`. It finds its way by `common_bevy::path`, A* over what
-`Map::neighbors` and fullness let a walker step on.
+**Buildings on more tiles than one.** A home is upgraded through
+`building::Fixture::{Pavilion, House, Tenement}`, each on the
+footprint its model is built on (`Fixture::tiles`, the planner's
+`plan::shape` and modelgen's `homes.TILES`, which must stay the same
+three lists). It stands on the first of its tiles, turned in sixths
+by the way its cover faces (`building::turn`), and its other tiles
+hold `Content::Annex`, each facing the next tile toward the one that
+holds it: `building::holder` finds the building from any tile by
+steps, never a search. Whatever acts on a building, a claim, an
+upgrade, the server resolves the tile named through `holder`.
+
+**Planning.** P on a hub's ground opens the hub from above
+(`client::systems::planning`): the server sends it whole
+(`Event::Layout`, `settlers::laid_out`), a cursor moves over it, a
+planner is chosen and then one of its actions, and what the server
+says the action would change (`Event::Planned`) is drawn over the hub
+before Enter has it done. Orders are taken from anywhere on the hub's
+ground, by the planner whose they are; one at work says what an order
+would do and does none. The panel draws and asks; every plan is the
+server's.
+
+**Settlers.** A hub is raised by its players and its planners, never
+the world and never by a rule of its own. A player raises its hitching
+post and its first tents by hand (`server::systems::building`,
+`Job::Raise`), and no settler comes before the post stands.
+`server::systems::settlers` holds a camp for every hub, and makes the
+ground what the hub's plans say (`settlers::next_step`): what a plan
+gave up taken down, each thing a planner was asked for raised, then
+stakes along the wall, of what players handed over and what was taken
+down, which is built with again (`Camp::credit`). A step is its zone's
+planner's (`Step::zone`) and waits while that zone has none; each
+planner has one thing begun at a time (`Camp::rising`), all of them at
+once, and takes only its own zone's orders. Every settler a hub houses
+has a body: a planner with nothing to do stands on its own side of its
+zone's centre (`settlers::side`), any other walks the hub. Where a
+player returns (`Home`, a hearth) and where it lives (`Lives`, a home
+of a hub) are two things, and the client asks twice before either is
+changed for another. What is
+raised for a hub is the hub's (`building::Owner::Camp`) and no player's
+to take down. A settler is in the world only by day and near a
+player; `settlers::catch_up` gives a camp found again the work of the
+daytime between, each planner the whole of it, through the same `begin` and `advance` the walked work
+goes by, so the two never differ. A thing being raised is its tile's
+cover (`Content::Raising`, a stage of `building::STAGES`), each stage a
+model of its own, `models/<stem>-raising-<stage>.glb`. It finds its way
+by `common_bevy::path`, A* over what `Map::neighbors` and fullness let a
+walker step on.
 
 **Maps.** A map is a piece of the kit's map kind and one of a kind:
 `Item::instance` is its number, and `server::systems::charts::Charts`
@@ -453,7 +508,10 @@ passing: `settlers::haul` carries every trip on each tick, seen or not,
 and is the one authority on where a wagon is. The settler walking the
 road is drawn from the trip and never moves it, so nothing it meets
 changes when the wagon arrives; a blockade stops the trip itself,
-through `Charts::lies`.
+through `Charts::lies`. A stopped wagon waits, however long, pinned on
+the compass of those it matters to (`settlers::tell_stopped`), and goes
+on when its leg opens or its driver is handed a map there: a new trip
+from where it stands (`haul::destinations`), never a way found on `lies`.
 
 **Rollback.** Every table the store keeps of the world journals its
 changes (`history`, by the `journal` trigger), each stamped with the
@@ -465,6 +523,14 @@ journaled table refuses a change that names no moment. A new kept table
 takes the trigger in its migration; a migration that changes kept rows
 sets `mmo.when` first. A rolled-back server writes nothing more and
 stops, since its memory is of a world that is gone.
+
+**Free materials.** `Setting::FreeMaterials` is for trying what is
+built without the gathering: a build by hand is given exactly what it
+lacks as it is asked for (`building::lacking`), a map drawn its fibre
+(`charts::try_draw`), and a camp what its
+hub's plans lack as it is hailed or given a plan (`settlers::grant`),
+each announced as a `Moved` from the world. Nothing is kept in a bag
+for it.
 
 **Settings.** A number an admin may change without a build is a
 `common::settings::Setting`, never a `const`, and a row of the store's

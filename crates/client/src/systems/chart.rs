@@ -56,12 +56,17 @@ pub const KEYCODE_MAP: KeyCode = KeyCode::KeyM;
 /// The keys that move the window on the map, in rows as they lie on the
 /// numpad, each with the way it moves it: across and down the picture.
 /// The one at the middle brings the window back to the player.
-const COMPASS: [[(KeyCode, IVec2, &str); 3]; 3] = [
-    [(KeyCode::Numpad7, IVec2::new(-1, -1), "north-west"), (KeyCode::Numpad8, IVec2::new(0, -1), "north"), (KeyCode::Numpad9, IVec2::new(1, -1), "north-east")],
-    [(KeyCode::Numpad4, IVec2::new(-1, 0), "west"), (KEYCODE_HERE, IVec2::ZERO, "where you stand"), (KeyCode::Numpad6, IVec2::new(1, 0), "east")],
-    [(KeyCode::Numpad1, IVec2::new(-1, 1), "south-west"), (KeyCode::Numpad2, IVec2::new(0, 1), "south"), (KeyCode::Numpad3, IVec2::new(1, 1), "south-east")],
+const COMPASS: [[(crate::systems::keycap::Cap, IVec2, &str); 3]; 3] = [
+    [(cap(KeyCode::Numpad7), IVec2::new(-1, -1), "north-west"), (cap(KeyCode::Numpad8), IVec2::new(0, -1), "north"), (cap(KeyCode::Numpad9), IVec2::new(1, -1), "north-east")],
+    [(cap(KeyCode::Numpad4), IVec2::new(-1, 0), "west"), (cap(KEYCODE_HERE), IVec2::ZERO, "where you stand"), (cap(KeyCode::Numpad6), IVec2::new(1, 0), "east")],
+    [(cap(KeyCode::Numpad1), IVec2::new(-1, 1), "south-west"), (cap(KeyCode::Numpad2), IVec2::new(0, 1), "south"), (cap(KeyCode::Numpad3), IVec2::new(1, 1), "south-east")],
 ];
 const KEYCODE_HERE: KeyCode = KeyCode::Numpad5;
+use crate::systems::keycap::Cap;
+/// A cap in the compass table, which the compiler evaluates.
+const fn cap(key: KeyCode) -> Cap {
+    Cap::of(key)
+}
 /// The keys that move the window to the next hub a wagon may be sent to,
 /// and send it to the one picked.
 const KEYCODE_NEXT: KeyCode = KeyCode::NumpadMultiply;
@@ -120,7 +125,7 @@ pub struct Maps(HashMap<u32, Arc<Atlas>>);
 
 /// A window on a map: the tile at its middle, its scale, and whether it
 /// follows the player. A map not yet read is opened on the player.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct Window {
     at: Tile,
     scale: usize,
@@ -192,6 +197,48 @@ impl Reading {
         }
         self.window = held.and_then(|number| self.left.get(&number).copied()).unwrap_or_default();
         self.map = held;
+    }
+}
+
+/// Where the window each map was last read through is kept between runs.
+fn windows_path() -> Option<std::path::PathBuf> {
+    user_data::folder("client").map(|folder| folder.join("maps.json"))
+}
+
+/// Has each map read in an earlier run opened as it was left then.
+pub fn recall(mut reading: ResMut<Reading>) {
+    let Some(text) = windows_path().and_then(|path| std::fs::read_to_string(path).ok()) else { return };
+    match serde_json::from_str::<HashMap<u32, Window>>(&text) {
+        // A scale this build has no more reads as the widest it has
+        Ok(left) => reading.left = left.into_iter().map(|(map, window)| (map, Window { scale: window.scale.min(SCALES.len() - 1), ..window })).collect(),
+        Err(e) => warn!("map: the windows kept cannot be read: {e}"),
+    }
+}
+
+/// Keeps the window every map was last read through as the map is put
+/// away, for the next run. Written beside the file and renamed over it,
+/// so a run that stops mid-write leaves the last whole one.
+pub fn keep(reading: Res<Reading>, mut was_open: Local<bool>) {
+    let closed = *was_open && !reading.open;
+    *was_open = reading.open;
+    if !closed {
+        return;
+    }
+    let Some(path) = windows_path() else { return };
+    let mut windows = reading.left.clone();
+    if let Some(map) = reading.map {
+        windows.insert(map, reading.window);
+    }
+    let written = (|| {
+        if let Some(folder) = path.parent() {
+            std::fs::create_dir_all(folder)?;
+        }
+        let partial = path.with_extension("json.partial");
+        std::fs::write(&partial, serde_json::to_string_pretty(&windows).map_err(std::io::Error::other)?)?;
+        std::fs::rename(&partial, &path)
+    })();
+    if let Err(e) = written {
+        warn!("map: {}: {e}", path.display());
     }
 }
 
@@ -314,7 +361,7 @@ pub fn request(
             (reading.window.at, reading.window.follows) = (offered[at], false);
         }
     }
-    for (key, by, way) in COMPASS.into_iter().flatten() {
+    for (key, by, way) in COMPASS.into_iter().flatten().map(|(cap, by, way)| (cap.key(), by, way)) {
         if !keys.take(key, if key == KEYCODE_HERE { "Look where you stand on the map".to_owned() } else { format!("Look {way} on the map") }) {
             continue;
         }
@@ -522,8 +569,8 @@ fn spawn(commands: &mut Commands) {
                     });
                     keys.spawn(Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(4.), ..default() }).with_children(|rest| {
                         rest.spawn(line("move the map, north up; the middle key finds you"));
-                        hint_row(rest, None, &[Hint::key(KEYCODE_NEARER, "nearer"), Hint::key(KEYCODE_FURTHER, "further"), Hint::key(KEYCODE_CLOSE, "close")]);
-                        hint_row(rest, Some("sending a wagon"), &[Hint::key(KEYCODE_NEXT, "next hub"), Hint::key(KEYCODE_SEND, "send it to the hub picked")]);
+                        hint_row(rest, None, &[Hint::key(crate::cap!(KEYCODE_NEARER), "nearer"), Hint::key(crate::cap!(KEYCODE_FURTHER), "further"), Hint::key(crate::cap!(KEYCODE_CLOSE), "close")]);
+                        hint_row(rest, Some("sending a wagon"), &[Hint::key(crate::cap!(KEYCODE_NEXT), "next hub"), Hint::key(crate::cap!(KEYCODE_SEND), "send it to the hub picked")]);
                     });
                 });
             });

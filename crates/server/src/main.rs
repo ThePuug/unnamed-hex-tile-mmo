@@ -123,6 +123,7 @@ fn main() {
         (
             crate::systems::gathering::try_drop,
             crate::systems::building::try_build,
+            crate::systems::building::try_site,
             crate::systems::building::finish_building,
             crate::systems::building::interrupt_building,
             crate::systems::building::try_use,
@@ -133,6 +134,7 @@ fn main() {
             crate::systems::settlers::try_load,
             crate::systems::settlers::try_store,
             crate::systems::settlers::try_plan,
+            crate::systems::settlers::try_layout,
             crate::systems::settlers::try_send,
             crate::systems::settlers::heed_settings,
             crate::systems::charts::chart,
@@ -177,6 +179,7 @@ fn main() {
     app.init_resource::<crate::systems::haul::Depots>();
     app.init_resource::<crate::systems::settlers::Settling>();
     app.add_systems(FixedUpdate, crate::systems::settlers::settle);
+    app.add_systems(Update, crate::systems::settlers::tell_stopped.run_if(on_timer(Duration::from_secs(1))));
     let registry = crate::resources::event_registry::EventRegistry::new(::world::WORLD_SEED);
     // A wall's way in is placed by the ground as the world made it
     let ground = registry.clone();

@@ -14,6 +14,8 @@ pub enum Panel {
     Build,
     Settler,
     Chart,
+    Store,
+    Planning,
 }
 
 /// The open panels in the order they opened.
@@ -52,6 +54,8 @@ pub fn track(
     build: Res<BuildPanel>,
     hailed: Res<crate::systems::settlers::Hailed>,
     reading: Res<crate::systems::chart::Reading>,
+    loading: Res<crate::systems::settlers::Loading>,
+    planning: Res<crate::systems::planning::Planning>,
     mut focus: ResMut<NumpadFocus>,
 ) {
     focus.set(Panel::Chart, reading.open());
@@ -60,6 +64,8 @@ pub fn track(
     focus.set(Panel::Loot, window.cells.is_some());
     focus.set(Panel::Drop, drop.0.is_some());
     focus.set(Panel::Build, build.open);
+    focus.set(Panel::Store, loading.0.is_some());
+    focus.set(Panel::Planning, planning.open());
 }
 
 #[cfg(test)]
