@@ -1,6 +1,6 @@
-//! Gathering on the client: G asks the server to gather the nearest thing
-//! in the player's reach, which is marked while it is; the tiles the
-//! server changes are laid over the map as they arrive.
+//! Gathering on the client: G asks the server to gather what the keys
+//! act on (`aim`); the tiles the server changes are laid over the map as
+//! they arrive.
 
 use std::collections::HashMap;
 
@@ -8,11 +8,9 @@ use bevy::prelude::*;
 use common_bevy::{
     components::{
         entity_type::{decorator::Decorator, EntityType},
-        heading::Heading,
         position::Position,
         Actor,
     },
-    geometry::slot_point,
     message::{Do, Event, Try},
     resources::map::Map,
     summary::{mesh_region_lattice, summary_lattice, LOD_LEVELS},
@@ -20,7 +18,7 @@ use common_bevy::{
 };
 use qrz::Qrz;
 
-use crate::resources::{RenderOrigin, SummaryMeshes};
+use crate::resources::SummaryMeshes;
 
 /// The key that gathers, or opens a pile.
 pub const KEYCODE_GATHER: KeyCode = KeyCode::KeyG;
@@ -60,52 +58,18 @@ impl CoverChanges {
     }
 }
 
-/// What G would gather: slot `slot` of the tile at `tile`, standing at
-/// `at`, xz in world units from the centre of the tile `position` is
-/// measured from.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GatherTarget {
-    pub tile: Qrz,
-    pub slot: usize,
-    pub at: Vec2,
-}
-
-/// The nearest gatherable thing in reach of an entity at `position`
-/// facing `heading`: in the tile it stands on or one of the three in its
-/// front half. Measured in the frame of `position`'s tile, so it picks the same
-/// however far out the world is.
-pub fn gather_target(map: &Map, position: &Position, heading: Heading) -> Option<GatherTarget> {
-    let here = position.reached(map);
-    let from = position.offset.xz();
-    std::iter::once(here)
-        .chain(heading.front_dirs().map(|d| here + d))
-        .filter_map(|tile| map.get_by_qr(tile.q, tile.r))
-        .flat_map(|(tile, typ)| {
-            let EntityType::Decorator(decorator) = typ else { return Vec::new() };
-            let cover = decorator.cover;
-            (0..common::TILE_SLOTS as usize)
-                .filter(|&k| common::gathering::anchor(cover, k) == k)
-                .filter(|&k| common::gathering::reachable(cover, k))
-                .map(|k| {
-                    let (x, z) = slot_point(cover, (tile.q, tile.r), k, (position.tile.q, position.tile.r));
-                    GatherTarget { tile, slot: k, at: Vec2::new(x, z) }
-                })
-                .collect()
-        })
-        .min_by(|a, b| a.at.distance_squared(from).total_cmp(&b.at.distance_squared(from)))
-}
-
-/// Asks the server to gather the target when G is pressed; the menu holds
-/// it as it holds every gameplay key.
+/// Asks the server to gather what the keys act on (`aim`) when G is
+/// pressed, where G is the key that acts on it; the menu holds it as it
+/// holds every gameplay key.
 pub fn request(
     mut keys: crate::systems::help::Keys,
     menu: Res<crate::plugins::shell::menu::GameMenu>,
     focus: Res<crate::systems::focus::NumpadFocus>,
     window: Res<LootWindow>,
     loading: Res<crate::systems::settlers::Loading>,
-    map: Res<Map>,
-    predicted: crate::systems::movement::Predicted,
-    player: Query<(Entity, &Heading), With<Actor>>,
+    aiming: crate::systems::aim::Aiming,
+    claims: Res<crate::systems::building::Claims>,
+    player: Query<Entity, (With<Actor>, With<Position>)>,
     mut writer: MessageWriter<Try>,
     mut settling: ResMut<crate::systems::input::Settling>,
 ) {
@@ -113,7 +77,7 @@ pub fn request(
         return;
     }
     // A view has no character, and nothing to gather with
-    let (Ok((ent, heading)), Some(position)) = (player.single(), predicted.position()) else { return };
+    let Ok(ent) = player.single() else { return };
     // An open loot window works the numpad while it is the panel opened
     // last. One open on a storehouse is the storehouse's to work
     // (`settlers::load`).
@@ -131,46 +95,23 @@ pub fn request(
             writer.write(Try { event: Event::CloseLoot { ent } });
         }
     }
-    if !keys.pressed(KEYCODE_GATHER, "Gather what you face, or open the pile") {
+    if !keys.pressed(KEYCODE_GATHER, "Gather the tree, boulder or reeds outlined, or open the pile") {
         return;
     }
-    let here = position.reached(&map);
-    let Some(target) = gather_target(&map, &position, *heading) else {
-        info!("gather: nothing in reach at {here:?} facing {:?}", heading.hex_dir());
+    let Some((_, aim)) = aiming.aim(claims.lives) else {
+        info!("gather: nothing in reach");
         return;
     };
-    info!("gather: asking for slot {} of {:?}", target.slot, target.tile);
+    if aim.acts != crate::systems::aim::Acts::Gather {
+        info!("gather: {:?} on {:?} is the interact key's", aim.acts, aim.stands);
+        return;
+    }
+    info!("gather: asking for slot {} of {:?}", aim.slot, aim.tile);
     // The server turns the player to face what it gathers and steps it to
     // where the work reaches, which the input opened behind the press
     // brings back confirmed.
     settling.begin();
-    writer.write(Try { event: Event::Gather { ent, q: target.tile.q, r: target.tile.r, slot: target.slot as u8 } });
-}
-
-/// Marks what G would gather, or the tile the open build panel builds
-/// on, for the cover to draw lit through.
-pub fn mark(
-    mut marked: ResMut<crate::plugins::cover::Marked>,
-    map: Res<Map>,
-    origin: Res<RenderOrigin>,
-    build: Res<crate::systems::building::BuildPanel>,
-    predicted: crate::systems::movement::Predicted,
-    player: Query<&Heading, With<Actor>>,
-) {
-    let foot = player.single().ok().zip(predicted.position()).and_then(|(heading, position)| {
-        let position = &position;
-        let target = if build.open {
-            let tile = crate::systems::building::faced(&map, position, *heading);
-            let tile = map.get_by_qr(tile.q, tile.r)?.0;
-            let at = Vec2::from(common_bevy::geometry::flat_top_tile_center(tile.q - position.tile.q, tile.r - position.tile.r, 1.0));
-            GatherTarget { tile, slot: common::building::SLOT, at }
-        } else {
-            gather_target(&map, position, *heading)?
-        };
-        let rise = common_bevy::systems::movement::surface_y_from(position.tile, target.at, target.tile, &map);
-        Some(origin.render_tile(&map, position.tile) + Vec3::new(target.at.x, rise, target.at.y))
-    });
-    marked.set_if_neq(crate::plugins::cover::Marked(foot));
+    writer.write(Try { event: Event::Gather { ent, q: aim.tile.q, r: aim.tile.r, slot: aim.slot as u8 } });
 }
 
 /// What an actor is doing at a gather, as the server says: at its work,
@@ -224,43 +165,5 @@ pub fn apply(
                 state.stale = true;
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use common::Content;
-
-    fn map_with(tiles: &[(Qrz, common::Cover)]) -> Map {
-        let map = Map::new(qrz::Map::new(common::grid::HEX_RADIUS, common::grid::RISE));
-        for &(qrz, cover) in tiles {
-            map.insert(qrz, EntityType::Decorator(Decorator { cover, is_solid: true }));
-        }
-        map
-    }
-
-    /// G reaches the tile underfoot and the three of the front half, never
-    /// one behind, and takes the nearest thing there.
-    #[test]
-    fn the_target_is_the_nearest_in_reach() {
-        let here = Qrz { q: 0, r: 0, z: 0 };
-        let heading = Heading::NORTH;
-        let ahead = here + heading.hex_dir();
-        let behind = here + heading.reversed().hex_dir();
-        let trees = common::Cover::NONE.with(0, Content::Pine).with(1, Content::Pine);
-        let crag = common::Cover::NONE.with_boulder(0).with_rock(common::Rock::Sandstone);
-
-        let map = map_with(&[(here, common::Cover::NONE), (ahead, crag), (behind, trees)]);
-        let target = gather_target(&map, &Position::at_tile(here), heading).unwrap();
-        assert_eq!((target.tile, target.slot), (ahead, 0), "the boulder ahead, not the trees behind");
-
-        let map = map_with(&[(here, trees), (ahead, crag), (behind, trees)]);
-        let target = gather_target(&map, &Position::at_tile(here), heading).unwrap();
-        assert_eq!(target.tile, here, "a tree underfoot is nearer than the boulder ahead");
-        assert!(common::SITE_SLOTS.iter().any(|s| s[0] == target.slot), "a tree is named by its first slot");
-
-        let map = map_with(&[(here, common::Cover::NONE), (behind, trees)]);
-        assert_eq!(gather_target(&map, &Position::at_tile(here), heading), None);
     }
 }

@@ -799,7 +799,7 @@ fn prepare_cover_buffers(
     let (ring, dissolve, far_in, far_out) = band.map_or((Vec4::ZERO, Vec4::ZERO, Vec4::ZERO, Vec4::ZERO), |b| {
         (Vec4::new(b.center.x, b.center.y, b.inner, b.overlap), b.dissolve, b.far_in, b.far_out)
     });
-    let marked = marked.and_then(|m| m.0).map_or(Vec4::ZERO, |foot| foot.extend(1.0));
+    let marked = marked.and_then(|m| m.0).map_or(Vec4::ZERO, |mark| mark.foot.extend(1.0));
     buffers.cover.set(CoverUniform { band: ring, dissolve, far_in, far_out, marked, near_fade: NEAR_FADE_RADIUS });
     buffers.cover.write_buffer(&render_device, &render_queue);
     buffers.frames.set(table.frames.clone());
