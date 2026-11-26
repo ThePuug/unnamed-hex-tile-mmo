@@ -167,11 +167,12 @@ pub fn simulate_remote(
     for (ent, mut motion, heading, mut position, mut airtime, mut visual, attrs, status, typ) in &mut query {
         if buffers.get(&ent).is_some() { continue; }
         // Only a player's pill goes round what stands in a tile.
-        let player = matches!(
-            typ,
-            Some(common_bevy::components::entity_type::EntityType::Actor(a))
-                if a.identity == common_bevy::components::entity_type::actor::ActorIdentity::Player
-        );
+        let identity = match typ {
+            Some(common_bevy::components::entity_type::EntityType::Actor(a)) => Some(a.identity),
+            _ => None,
+        };
+        let player = identity == Some(common_bevy::components::entity_type::actor::ActorIdentity::Player);
+        let pace = Status::pace_of(status);
         motion.residual_us += delta_us;
         let dt = (motion.residual_us / 1000) as u16;
         motion.residual_us %= 1000;
@@ -185,7 +186,7 @@ pub fn simulate_remote(
                 since_step_ms: TURN_REPEAT_MS,
                 airtime: airtime.state,
                 movement_speed: attrs.map_or(MOVEMENT_SPEED, |a| a.movement_speed()),
-                pace: Status::pace_of(status),
+                pace: identity.map_or(pace, |identity| identity.pace(pace)),
                 turn_pace: Status::turn_pace_of(status),
                 collides: player,
             }, dt as i16, &map, &nntree);

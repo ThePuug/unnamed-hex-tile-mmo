@@ -15,7 +15,22 @@ pub enum ActorIdentity {
     Settler,
 }
 
+/// The share of a run a settler walks at, on foot or riding in.
+pub const SETTLER_PACE: f32 = 0.5;
+
 impl ActorIdentity {
+    /// The pace this actor moves at where its status leaves it `status`:
+    /// a settler walks at [`SETTLER_PACE`] whatever its status, its horse
+    /// included. The server steers by this and a client simulates by it;
+    /// a pace only one of them knows is drawn running ahead and pulled
+    /// back at every tile.
+    pub fn pace(&self, status: f32) -> f32 {
+        match self {
+            ActorIdentity::Settler => SETTLER_PACE,
+            _ => status,
+        }
+    }
+
     /// Get human-readable display name for this actor
     pub fn display_name(&self) -> &'static str {
         match self {
