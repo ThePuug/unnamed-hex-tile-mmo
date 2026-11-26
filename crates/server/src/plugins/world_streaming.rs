@@ -15,6 +15,7 @@ impl Plugin for WorldStreamingPlugin {
         app.init_resource::<summary::SummaryTaskQueue>();
         app.init_resource::<warming::Warming>();
 
+        app.init_resource::<world::Anchor>();
         app.add_systems(Startup, world::setup);
 
         app.add_systems(Update, (

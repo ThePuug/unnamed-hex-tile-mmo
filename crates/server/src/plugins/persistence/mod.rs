@@ -198,9 +198,6 @@ struct Keeper {
     changed_depots: HashSet<(i32, i32)>,
     /// The calendar's moment this frame.
     when: When,
-    /// Where the calendar's zero stands with no admin's hand on it: the
-    /// wall clock as the game clock read 0.
-    anchor: u128,
     /// The calendar as the store holds it, how far from the wall clock
     /// and where held, and whether it has changed since the last write.
     calendar: (i64, Option<i64>),
@@ -254,7 +251,6 @@ impl Keeper {
             spent: Vec::new(),
             changed_depots: HashSet::new(),
             when: When(0),
-            anchor: 0,
             calendar: (0, None),
             changed_calendar: false,
             rolled: false,
@@ -478,13 +474,13 @@ fn keep(
     mut charts: ResMut<Charts>,
     mut depots: ResMut<Depots>,
     mut runtime: ResMut<combat::RunTime>,
+    anchor: Res<crate::systems::world::Anchor>,
     time: Res<Time>,
     mut keeper: ResMut<Keeper>,
 ) {
     changes.keep();
-    keeper.anchor = runtime.calendar.wall_at_zero;
     if let Some((shift, held)) = block_on(keeper.store.calendar()).unwrap_or_else(|e| panic!("the store's calendar cannot be read: {e}")) {
-        runtime.calendar.wall_at_zero = (keeper.anchor as i128 + shift as i128).max(0) as u128;
+        runtime.calendar.wall_at_zero = (anchor.0 as i128 + shift as i128).max(0) as u128;
         runtime.calendar.held = held.map(|held| held as u128);
         keeper.calendar = (shift, held);
         info!("store: the calendar stands {shift} ms from the wall clock{}", if held.is_some() { ", held" } else { "" });
@@ -596,6 +592,7 @@ fn note(
     mut depots: ResMut<Depots>,
     mut known: ResMut<Characters>,
     runtime: Res<combat::RunTime>,
+    anchor: Res<crate::systems::world::Anchor>,
     time: Res<Time>,
     mut keeper: ResMut<Keeper>,
 ) {
@@ -609,7 +606,7 @@ fn note(
     keeper.charted.extend(charted);
     keeper.spent.extend(spent);
     keeper.changed_depots.extend(depots.take_changed());
-    let calendar = ((runtime.calendar.wall_at_zero as i128 - keeper.anchor as i128) as i64, runtime.calendar.held.map(|held| held as i64));
+    let calendar = ((runtime.calendar.wall_at_zero as i128 - anchor.0 as i128) as i64, runtime.calendar.held.map(|held| held as i64));
     if calendar != keeper.calendar {
         keeper.calendar = calendar;
         keeper.changed_calendar = true;

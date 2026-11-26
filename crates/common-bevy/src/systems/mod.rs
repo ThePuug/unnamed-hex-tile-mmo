@@ -181,8 +181,9 @@ impl Calendar {
         self.held.unwrap_or(self.wall_at_zero.saturating_add(game.since(Moment::ZERO).as_millis()))
     }
 
-    /// Takes `change` at game time `game`, the wall clock reading
-    /// `wall_at_zero` at the server's 0 for a reset. Never moves before
+    /// Takes `change` at game time `game`; a reset runs it from
+    /// `wall_at_zero`, the server's anchor, so nothing of an admin's
+    /// shift is left between the two. Never moves before
     /// `EARLIEST`.
     pub fn change(&mut self, change: CalendarChange, game: Moment, wall_at_zero: u128) {
         let elapsed = game.since(Moment::ZERO).as_millis();
